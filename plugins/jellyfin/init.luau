@@ -64,14 +64,17 @@ local active_sessions = require("@self/protocol/active_sessions")
 local audio_routes = require("@self/routes/audio")
 local catalog = require("@self/protocol/items/catalog")
 local discovery = require("@self/protocol/discovery")
+local instant_mix = require("@self/protocol/items/instant_mix")
 local item_ids = require("@self/protocol/items/identifiers")
+local items_options = require("@self/protocol/items/options")
+local listing = require("@self/protocol/items/listing")
 local playback = require("@self/protocol/items/playback")
 local playlist_access = require("@self/protocol/playlist_access")
 local preferences = require("@self/protocol/preferences")
 local requests = require("@self/protocol/items/requests")
 local responses = require("@self/protocol/items/responses")
-local results = require("@self/protocol/items/results")
 local session = require("@self/protocol/session")
+local similar = require("@self/protocol/items/similar")
 local statics = require("@self/protocol/statics")
 local syncplay = require("@self/routes/syncplay")
 local user_data = require("@self/protocol/items/user_data")
@@ -413,12 +416,12 @@ local function empty_query_result(): JsonObject
 end
 
 local function item_count_for(principal: session.Principal, include_item_type: string, is_favorite: boolean): number
-	local options = catalog.with_user_query_options(catalog.coerce_items_query(nil), principal.user_id)
+	local options = items_options.for_user(items_options.parse(nil), principal.user_id)
 	options.include_item_types = { include_item_type }
 	options.limit = 0
-	options.is_favorite = is_favorite
+	options.is_favorite = if is_favorite then true else nil
 
-	local ok, _items, total_count = pcall(catalog.list_items, options)
+	local ok, _items, total_count = pcall(listing.list_items, options)
 	if not ok or type(total_count) ~= "number" then
 		return 0
 	end
@@ -732,11 +735,8 @@ api.get(P .. "/Users/Me", function(ctx: ApiContext)
 end, "public", true)
 local function respond_with_user_views(ctx: ApiContext): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = catalog.coerce_items_query(query)
-	local views = catalog.to_music_view_items()
-	views = catalog.apply_search_filter(views, options.search_term)
-	catalog.apply_sort(views, options)
-	local items, total_count, start_index = results.paginate_items(views, options.start_index, options.limit)
+	local options = items_options.parse(query)
+	local items, total_count, start_index = listing.list_views(options)
 	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
 end
 
@@ -799,7 +799,7 @@ api.get(P .. "/Items/Root", handle_root_folder_route, "public", true)
 api.get(P .. "/Users/{userId}/Items/Root", handle_root_folder_route, "public", true)
 local function respond_with_items_listing(ctx: ApiContext, principal: session.Principal): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = catalog.with_user_query_options(catalog.coerce_items_query(query), principal.user_id)
+	local options = items_options.for_user(items_options.parse(query), principal.user_id)
 
 	-- Jellyfin returns the user root's direct children (library views) when ParentId/Ids are absent and Recursive isn't true.
 	if
@@ -807,14 +807,11 @@ local function respond_with_items_listing(ctx: ApiContext, principal: session.Pr
 		and #options.ids == 0
 		and options.recursive == false
 	then
-		local views = catalog.to_music_view_items()
-		views = catalog.apply_search_filter(views, options.search_term)
-		catalog.apply_sort(views, options)
-		local items, total_count, start_index = results.paginate_items(views, options.start_index, options.limit)
+		local items, total_count, start_index = listing.list_views(options)
 		return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
 	end
 
-	local items, total_count, start_index = catalog.list_items(options)
+	local items, total_count, start_index = listing.list_items(options)
 	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
 end
 
@@ -864,8 +861,8 @@ local function handle_similar_items_route(ctx: ApiContext): ApiResponse
 	end
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = catalog.with_user_query_options(catalog.coerce_items_query(query), principal.user_id)
-	local items, total_count, start_index, found = catalog.list_similar_items(item_id, options)
+	local options = items_options.for_user(items_options.parse(query), principal.user_id)
+	local items, total_count, start_index, found = similar.list_similar_items(item_id, options)
 	if not found then
 		return responses.not_found("item not found")
 	end
@@ -898,8 +895,8 @@ local function handle_instant_mix_route(ctx: ApiContext): ApiResponse
 	end
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = catalog.with_user_query_options(catalog.coerce_items_query(query), principal.user_id)
-	local items, total_count, start_index, found = catalog.list_instant_mix_audio(item_id, options)
+	local options = items_options.for_user(items_options.parse(query), principal.user_id)
+	local items, total_count, start_index, found = instant_mix.list_instant_mix_audio(item_id, options)
 	if not found then
 		return responses.not_found("item not found")
 	end
@@ -924,8 +921,8 @@ local function handle_instant_mix_genre_name_route(ctx: ApiContext): ApiResponse
 	end
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = catalog.with_user_query_options(catalog.coerce_items_query(query), principal.user_id)
-	local items, total_count, start_index, found = catalog.list_instant_mix_audio_from_genre_name(name, options)
+	local options = items_options.for_user(items_options.parse(query), principal.user_id)
+	local items, total_count, start_index, found = instant_mix.list_instant_mix_audio_from_genre_name(name, options)
 	if not found then
 		return responses.not_found("genre not found")
 	end
@@ -941,8 +938,8 @@ api.get(P .. "/Playlists/{itemId}/InstantMix", handle_instant_mix_route, "public
 api.get(P .. "/MusicGenres/{name}/InstantMix", handle_instant_mix_genre_name_route, "public", true)
 local function respond_with_latest_items(ctx: ApiContext, principal: session.Principal): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = catalog.with_user_query_options(catalog.coerce_items_query(query), principal.user_id)
-	local items = catalog.list_latest_items(options)
+	local options = items_options.for_user(items_options.parse(query), principal.user_id)
+	local items = listing.list_latest_items(options)
 	return api.response.json(200, catalog.items_to_json(items))
 end
 
@@ -974,7 +971,7 @@ api.get(P .. "/Users/{userId}/Items/{itemId}", function(ctx: ApiContext)
 		return responses.bad_request("missing item id")
 	end
 
-	local item = catalog.find_item_by_id(item_ids.decode_jellyfin_item_id(raw_item_id), principal.user_id, true)
+	local item = listing.find_item_by_id(item_ids.decode_jellyfin_item_id(raw_item_id), principal.user_id, true)
 	if not item then
 		return responses.not_found("item not found")
 	end
@@ -999,7 +996,7 @@ api.get(P .. "/Items/{id}", function(ctx: ApiContext)
 		return api.response.json(200, root_folder_json(principal.user_id))
 	end
 
-	local item = catalog.find_item_by_id(item_ids.decode_jellyfin_item_id(raw_id), principal.user_id, true)
+	local item = listing.find_item_by_id(item_ids.decode_jellyfin_item_id(raw_id), principal.user_id, true)
 	if not item then
 		return responses.not_found("item not found")
 	end
@@ -1027,7 +1024,7 @@ local function handle_item_user_data_route(ctx: ApiContext): ApiResponse
 		return responses.not_found("item not found")
 	end
 
-	local item = catalog.find_item_by_id(item_id, principal.user_id)
+	local item = listing.find_item_by_id(item_id, principal.user_id)
 	if not item then
 		return responses.not_found("item not found")
 	end
@@ -1085,7 +1082,7 @@ local function handle_favorite_item_route(ctx: ApiContext, should_favorite: bool
 		return responses.not_found("item not found")
 	end
 
-	local item = catalog.find_item_by_id(target_id, principal.user_id)
+	local item = listing.find_item_by_id(target_id, principal.user_id)
 	if not item then
 		return responses.not_found("item not found")
 	end
@@ -1141,7 +1138,7 @@ api.get(P .. "/Playlists/{playlistId}/Items", function(ctx: ApiContext)
 	end
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = catalog.with_user_query_options(catalog.coerce_items_query(query), principal.user_id)
+	local options = items_options.for_user(items_options.parse(query), principal.user_id)
 	local items, total_count, start_index = catalog.list_playlist_track_items(playlist, options)
 	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
 end, "public", true)
@@ -1449,8 +1446,8 @@ api.get(P .. "/Artists", function(ctx: ApiContext)
 	end
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = catalog.with_user_query_options(catalog.coerce_items_query(query), principal.user_id)
-	local items, total_count, start_index = catalog.list_artist_items(options)
+	local options = items_options.for_user(items_options.parse(query), principal.user_id)
+	local items, total_count, start_index = listing.list_artist_items(options, nil)
 	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
 end, "public", true)
 api.get(P .. "/Persons", function(ctx: ApiContext)
@@ -1460,8 +1457,8 @@ api.get(P .. "/Persons", function(ctx: ApiContext)
 	end
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = catalog.with_user_query_options(catalog.coerce_items_query(query), principal.user_id)
-	local items, total_count, start_index = catalog.list_person_items(options)
+	local options = items_options.for_user(items_options.parse(query), principal.user_id)
+	local items, total_count, start_index = listing.list_person_items(options)
 	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
 end, "public", true)
 api.get(P .. "/Artists/AlbumArtists", function(ctx: ApiContext)
@@ -1475,8 +1472,8 @@ api.get(P .. "/Artists/AlbumArtists", function(ctx: ApiContext)
 	end
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = catalog.with_user_query_options(catalog.coerce_items_query(query), principal.user_id)
-	local items, total_count, start_index = catalog.list_artist_items(options)
+	local options = items_options.for_user(items_options.parse(query), principal.user_id)
+	local items, total_count, start_index = listing.list_artist_items(options, "release")
 	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
 end, "public", true)
 local function handle_genres_route(ctx: ApiContext): ApiResponse
@@ -1486,8 +1483,8 @@ local function handle_genres_route(ctx: ApiContext): ApiResponse
 	end
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = catalog.with_user_query_options(catalog.coerce_items_query(query), principal.user_id)
-	local items, total_count, start_index = catalog.list_genre_items(options)
+	local options = items_options.for_user(items_options.parse(query), principal.user_id)
+	local items, total_count, start_index = listing.list_genre_items(options)
 	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
 end
 
@@ -1498,7 +1495,7 @@ local function handle_studios_route(ctx: ApiContext): ApiResponse
 	end
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = catalog.with_user_query_options(catalog.coerce_items_query(query), principal.user_id)
+	local options = items_options.for_user(items_options.parse(query), principal.user_id)
 	local empty_items = {}
 	return api.response.json(200, catalog.build_item_query_result(empty_items, 0, options.start_index))
 end
@@ -2121,7 +2118,7 @@ api.get(P .. "/Items/Counts", function(ctx: ApiContext)
 	end
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = catalog.coerce_items_query(query)
+	local options = items_options.parse(query)
 	local is_favorite = options.is_favorite == true
 	return api.response.json(200, {
 		MovieCount = 0,
@@ -2180,7 +2177,7 @@ api.get(P .. "/Items/{id}/Ancestors", function(ctx: ApiContext)
 		return responses.not_found("item not found")
 	end
 
-	local chain, item_found = catalog.ancestors_chain(item_id, principal.user_id)
+	local chain, item_found = listing.ancestors_chain(item_id, principal.user_id)
 	if not item_found then
 		return responses.not_found("item not found")
 	end
@@ -2227,7 +2224,7 @@ api.get(P .. "/Artists/{name}", function(ctx: ApiContext)
 		return responses.bad_request("missing artist name")
 	end
 
-	local found = catalog.find_artist_by_name(name, principal.user_id)
+	local found = listing.find_artist_by_name(name, principal.user_id)
 	if not found then
 		return responses.not_found("artist not found")
 	end
@@ -2245,7 +2242,7 @@ api.get(P .. "/Persons/{name}", function(ctx: ApiContext)
 		return responses.bad_request("missing person name")
 	end
 
-	local found = catalog.find_person_by_name(name, principal.user_id)
+	local found = listing.find_person_by_name(name, principal.user_id)
 	if not found then
 		return responses.not_found("person not found")
 	end
@@ -2263,7 +2260,7 @@ local function handle_genre_by_name_route(ctx: ApiContext): ApiResponse
 		return responses.bad_request("missing genre name")
 	end
 
-	local found = catalog.find_genre_by_name(name, principal.user_id)
+	local found = listing.find_genre_by_name(name, principal.user_id)
 	if not found then
 		return responses.not_found("genre not found")
 	end

@@ -162,24 +162,4 @@ function module.resolve_jellyfin_ids_exact(raw_ids: string | { string }): { numb
 	return result
 end
 
-function module.encode_jellyfin_db_ids(db_ids: { number }): { [number]: string? }
-	if #db_ids == 0 then
-		return {}
-	end
-
-	local ok, nanoid_map = pcall(ids.get_ids, db_ids)
-	if not ok or type(nanoid_map) ~= "table" then
-		return {}
-	end
-
-	local result: { [number]: string? } = {}
-	for _, db_id in db_ids do
-		local nanoid = nanoid_map[db_id]
-		if nanoid then
-			result[db_id] = module.nanoid_to_hex(nanoid)
-		end
-	end
-	return result
-end
-
 return module

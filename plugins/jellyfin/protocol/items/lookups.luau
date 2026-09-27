@@ -6,19 +6,21 @@
 
 -- Catalog lookups by scope and by relation, as the caller sees them.
 
-local artists_module = require("@lyra/artists")
 local entities = require("@lyra/entities")
 local releases = require("@lyra/releases")
 local tracks = require("@lyra/tracks")
 
-type Artist = artists_module.Artist
-type ArtistQuery = artists_module.ArtistQuery
+local item_ids = require("./identifiers")
+
 type CreditRole = releases.CreditRole
 type Release = releases.Release
 type ReleasePage = releases.ReleasePage
 type ReleaseQuery = releases.ReleaseQuery
 type Track = tracks.Track
 type TrackQuery = tracks.TrackQuery
+
+-- An item a listing is scoped to, and what kind of entity it is.
+export type Scope = { db_id: number?, entity_type: string? }
 
 local module = {}
 
@@ -28,6 +30,12 @@ function module.scope_entity_type(scope: number?): string?
 	end
 	local ok, element_type = pcall(entities.get_type, scope)
 	return if ok and type(element_type) == "string" then element_type else nil
+end
+
+-- The scope a Jellyfin item id names; empty for no id or an unknown one.
+function module.scope(item_id: string?): Scope
+	local db_id = if item_id then item_ids.decode_jellyfin_item_id(item_id) else nil
+	return { db_id = db_id, entity_type = module.scope_entity_type(db_id) }
 end
 
 function module.tracks_of_release(release_id: number?): { Track }
@@ -54,23 +62,12 @@ function module.tracks_of_artists(artist_ids: { number }): { [number]: { Track }
 	return tracks_by_artist
 end
 
-function module.releases_credited_to(
-	artist_id: number,
-	role: CreditRole?,
-	excluded: CreditRole?,
-	limit: number?
-): ReleasePage
+function module.releases_credited_to(artist_id: number, role: CreditRole?, limit: number?): ReleasePage
 	local query: ReleaseQuery = {}
 	query.artist_ids = { artist_id }
 	query.credit_role = role
-	query.exclude_credit_role = excluded
 	query.limit = limit
 	return releases.query(query)
-end
-
--- Releases with the artist's tracks that don't credit the artist themselves.
-function module.appearances_of_artist(artist_id: number): { Release }
-	return module.releases_credited_to(artist_id, "track", "release").items
 end
 
 function module.releases_of_track(track_id: number?): { Release }
@@ -78,53 +75,6 @@ function module.releases_of_track(track_id: number?): { Release }
 		return {}
 	end
 	return releases.by_track({ track_id })[track_id] or {}
-end
-
-function module.tracks_in_scope(scope: number?): { Track }
-	local scope_type = module.scope_entity_type(scope)
-	local query: TrackQuery = {}
-	if scope_type == "Release" then
-		return module.tracks_of_release(scope)
-	elseif scope_type == "Artist" then
-		return module.tracks_of_artist(scope)
-	elseif scope_type == "Library" then
-		query.library_id = scope
-	elseif scope ~= nil then
-		return {}
-	end
-	return tracks.query(query).items
-end
-
-function module.releases_in_scope(scope: number?): { Release }
-	local scope_type = module.scope_entity_type(scope)
-	local query: ReleaseQuery = {}
-	if scope_type == "Genre" and scope ~= nil then
-		return releases.by_genre({ scope })[scope] or {}
-	elseif scope_type == "Track" then
-		return module.releases_of_track(scope)
-	elseif scope_type == "Artist" and scope ~= nil then
-		return module.releases_credited_to(scope).items
-	elseif scope_type == "Library" then
-		query.library_id = scope
-	elseif scope ~= nil then
-		return {}
-	end
-	return releases.query(query).items
-end
-
-function module.artists_in_scope(scope: number?): { Artist }
-	local scope_type = module.scope_entity_type(scope)
-	local query: ArtistQuery = {}
-	if scope_type == "Release" and scope ~= nil then
-		return artists_module.by_release({ scope })[scope] or {}
-	elseif scope_type == "Track" and scope ~= nil then
-		return artists_module.by_track({ scope })[scope] or {}
-	elseif scope_type == "Library" then
-		query.library_id = scope
-	elseif scope ~= nil then
-		return {}
-	end
-	return artists_module.query(query).items
 end
 
 return module

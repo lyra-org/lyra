@@ -167,6 +167,8 @@ local function query_lookup(query: api.ApiQueryParams?, keys: { string }): strin
 	return nil
 end
 
+module.query_lookup = query_lookup
+
 function module.parse_query_string(query: api.ApiQueryParams?, keys: { string }, default_value: string?): string?
 	local value = query_lookup(query, keys)
 	if value == nil then

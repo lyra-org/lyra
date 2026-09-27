@@ -9,6 +9,7 @@ local lyra_lyrics = require("@lyra/lyrics")
 
 local catalog = require("./items/catalog")
 local item_ids = require("./items/identifiers")
+local listing = require("./items/listing")
 local requests = require("./items/requests")
 local responses = require("./items/responses")
 local session = require("./session")
@@ -48,7 +49,7 @@ function module.resolve_audio_item(ctx: ApiContext): (number?, catalog.ItemInfo?
 	end
 
 	local track_id = item_ids.decode_jellyfin_item_id(raw_item_id)
-	local item = catalog.find_item_by_id(track_id, principal.user_id)
+	local item = listing.find_item_by_id(track_id, principal.user_id)
 	if not item or item.Type ~= "Audio" then
 		return nil, nil, responses.not_found("item not found")
 	end
