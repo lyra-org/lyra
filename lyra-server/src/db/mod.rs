@@ -258,54 +258,10 @@ pub(crate) enum SortDirection {
     Descending,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum SortKey {
-    SortName,
-    Name,
-    DateCreated,
-    ReleaseDate,
-    DbId,
-}
-
-impl SortKey {
-    pub(crate) fn from_token(token: &str) -> Option<Self> {
-        match token {
-            "sort_name" => Some(Self::SortName),
-            "name" => Some(Self::Name),
-            "date_created" => Some(Self::DateCreated),
-            "release_date" => Some(Self::ReleaseDate),
-            "id" => Some(Self::DbId),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct SortSpec {
-    pub key: SortKey,
-    pub direction: SortDirection,
-}
-
 #[derive(Clone, Debug, thiserror::Error)]
 pub(crate) enum SortSpecParseError {
     #[error("unsupported sort_order value: {0}")]
     UnsupportedSortOrder(String),
-    #[error("unsupported sort_by value(s): {}", .0.join(", "))]
-    UnsupportedSortByValues(Vec<String>),
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct ListOptions {
-    pub sort: Vec<SortSpec>,
-    pub offset: Option<u64>,
-    pub limit: Option<u64>,
-    pub search_term: Option<String>,
-}
-
-pub(crate) struct PagedResult<T> {
-    pub entries: Vec<T>,
-    pub total_count: u64,
-    pub offset: u64,
 }
 
 /// Deduplicate a slice of `DbId`s, discarding non-positive IDs and preserving
@@ -358,50 +314,6 @@ pub(crate) fn parse_sort_direction(
             }
         }
     }
-}
-
-pub(crate) fn parse_sort_specs_tokens<F>(
-    sort_by: Option<Vec<String>>,
-    direction: SortDirection,
-    is_supported_key: F,
-    strict: bool,
-) -> Result<Vec<SortSpec>, SortSpecParseError>
-where
-    F: Fn(SortKey) -> bool,
-{
-    let mut sort = Vec::new();
-    let mut unknown = Vec::new();
-
-    if let Some(values) = sort_by {
-        for value in values {
-            for entry in value.split(',') {
-                let entry = entry.trim();
-                if entry.is_empty() {
-                    continue;
-                }
-
-                let token = entry.to_ascii_lowercase();
-                let Some(key) = SortKey::from_token(&token) else {
-                    if strict {
-                        unknown.push(token);
-                    }
-                    continue;
-                };
-
-                if is_supported_key(key) {
-                    sort.push(SortSpec { key, direction });
-                } else if strict {
-                    unknown.push(token);
-                }
-            }
-        }
-    }
-
-    if strict && !unknown.is_empty() {
-        return Err(SortSpecParseError::UnsupportedSortByValues(unknown));
-    }
-
-    Ok(sort)
 }
 
 pub(crate) use artists::Artist;

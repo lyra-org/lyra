@@ -13,14 +13,10 @@ use harmony_luau::{
     LuauType,
     LuauTypeInfo,
 };
-use serde::Serialize;
 
 use crate::plugins::db::{
     self,
-    ListOptions,
     ResolveId,
-    parse_sort_direction,
-    parse_sort_specs_tokens,
 };
 
 /// The ids of a Luau array in array order, each once.
@@ -185,44 +181,6 @@ pub(crate) fn optional_u64(
             describe(&other)
         ))),
     }
-}
-
-pub(crate) fn list_options(
-    vm: &luau::Vm,
-    table: &luau::Table,
-) -> luau::runtime::Result<ListOptions> {
-    let direction = parse_sort_direction(
-        luau::table::optional_string_field(vm, table, "sort_order")?,
-        true,
-    )
-    .map_err(crate::plugins::runtime_error)?;
-    let sort_by = luau::table::optional_table_field(vm, table, "sort_by")?
-        .map(|sort_by| strings(vm, &sort_by))
-        .transpose()?;
-    let sort = parse_sort_specs_tokens(sort_by, direction, |_| true, false)
-        .map_err(crate::plugins::runtime_error)?;
-
-    Ok(ListOptions {
-        sort,
-        offset: optional_u64(vm, table, "offset")?,
-        limit: optional_u64(vm, table, "limit")?,
-        search_term: luau::table::optional_string_field(vm, table, "search_term")?,
-    })
-}
-
-pub(crate) fn page_table<T: Serialize>(
-    entries: Vec<T>,
-    total_count: u64,
-    offset: u64,
-) -> luau::runtime::Result<luau::OwnedTable> {
-    let mut table = luau::OwnedTable::with_capacity(0, 3);
-    table.set_field(
-        "entities",
-        harmony_luau::serializable_to_luau_owned(entries)?,
-    );
-    table.set_field("total_count", luau::Value::from(total_count as i64));
-    table.set_field("offset", luau::Value::from(offset as i64));
-    Ok(table)
 }
 
 /// A value for an error message: numbers as themselves, anything else by type.

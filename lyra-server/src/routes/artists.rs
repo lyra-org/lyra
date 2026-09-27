@@ -28,21 +28,11 @@ use serde::{
     Deserialize,
     Serialize,
 };
-use std::{
-    cmp::Ordering,
-    collections::{
-        HashMap,
-        HashSet,
-    },
-};
 
 use crate::{
     STATE,
     db::{
         self,
-        ListOptions,
-        SortDirection,
-        SortKey,
     },
     routes::AppError,
     routes::{
@@ -65,6 +55,14 @@ use crate::{
             Principal,
             access,
             require_authenticated,
+        },
+        catalog::{
+            self,
+            artists::{
+                ArtistFilter,
+                Artists,
+            },
+            pipeline::Catalog,
         },
         covers,
         pagination::SnapshotKey,
@@ -109,7 +107,7 @@ struct ArtistListQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Comma-separated or repeated values: sort_name, name, date_created, last_played_at, listen_count, release_count, track_count, total_duration, id."
+            description = "Comma-separated or repeated values: name, sort_name, date_created, release_count, track_count, total_duration, listen_count, last_played_at, relevance (with query), random, id."
         )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
@@ -193,288 +191,6 @@ fn parse_inc(inc: Option<Vec<String>>) -> Result<ArtistRouteIncludes, AppError> 
         }
     }
     Ok(result)
-}
-
-#[derive(Clone, Copy, Debug)]
-enum ArtistRouteSortKey {
-    Field(SortKey),
-    ListenCount,
-    LastPlayedAt,
-    ReleaseCount,
-    TrackCount,
-    TotalDuration,
-}
-
-type ArtistRouteSortSpec = super::RouteSortSpec<ArtistRouteSortKey>;
-
-fn default_artist_sort() -> Vec<ArtistRouteSortSpec> {
-    vec![ArtistRouteSortSpec {
-        key: ArtistRouteSortKey::Field(SortKey::SortName),
-        direction: SortDirection::Ascending,
-    }]
-}
-
-fn artist_sort_supported_values() -> &'static str {
-    "sort_name, name, date_created, last_played_at, listen_count, release_count, track_count, total_duration, id"
-}
-
-fn parse_artist_sort_specs(
-    sort_by: Option<Vec<String>>,
-    sort_order: Option<String>,
-) -> Result<Vec<ArtistRouteSortSpec>, AppError> {
-    super::parse_route_sort_specs(
-        sort_by,
-        sort_order,
-        |token| match token {
-            "listen_count" => Some(ArtistRouteSortKey::ListenCount),
-            "last_played_at" => Some(ArtistRouteSortKey::LastPlayedAt),
-            "release_count" => Some(ArtistRouteSortKey::ReleaseCount),
-            "track_count" => Some(ArtistRouteSortKey::TrackCount),
-            "total_duration" => Some(ArtistRouteSortKey::TotalDuration),
-            _ => SortKey::from_token(token).and_then(|key| match key {
-                SortKey::SortName | SortKey::Name | SortKey::DateCreated | SortKey::DbId => {
-                    Some(ArtistRouteSortKey::Field(key))
-                }
-                SortKey::ReleaseDate => None,
-            }),
-        },
-        artist_sort_supported_values(),
-    )
-}
-
-struct ArtistRouteSortEntry {
-    artist: db::Artist,
-    lower_name: String,
-    lower_sort_name: Option<String>,
-    db_id: Option<i64>,
-    date_created: Option<u64>,
-    listen_count: u64,
-    last_played_at: Option<u64>,
-    release_count: u64,
-    track_count: u64,
-    total_duration: u64,
-    match_score: u32,
-}
-
-impl ArtistRouteSortEntry {
-    fn new(
-        artist: db::Artist,
-        listen_count: u64,
-        last_played_at: Option<u64>,
-        release_count: u64,
-        track_count: u64,
-        total_duration: u64,
-    ) -> Self {
-        Self {
-            lower_name: artist.artist_name.to_lowercase(),
-            lower_sort_name: artist.sort_name.as_ref().map(|value| value.to_lowercase()),
-            db_id: artist.db_id.as_ref().map(|id| DbId::from(id.clone()).0),
-            date_created: artist.created_at,
-            artist,
-            listen_count,
-            last_played_at,
-            release_count,
-            track_count,
-            total_duration,
-            match_score: 0,
-        }
-    }
-}
-
-fn compare_artist_route_field(
-    a: &ArtistRouteSortEntry,
-    b: &ArtistRouteSortEntry,
-    key: ArtistRouteSortKey,
-) -> Ordering {
-    match key {
-        ArtistRouteSortKey::Field(SortKey::SortName) => a
-            .lower_sort_name
-            .as_deref()
-            .unwrap_or(a.lower_name.as_str())
-            .cmp(
-                b.lower_sort_name
-                    .as_deref()
-                    .unwrap_or(b.lower_name.as_str()),
-            ),
-        ArtistRouteSortKey::Field(SortKey::Name) => a.lower_name.cmp(&b.lower_name),
-        ArtistRouteSortKey::Field(SortKey::DateCreated) => {
-            db::compare_option(&a.date_created, &b.date_created)
-        }
-        ArtistRouteSortKey::Field(SortKey::DbId) => db::compare_option(&a.db_id, &b.db_id),
-        ArtistRouteSortKey::ListenCount => a.listen_count.cmp(&b.listen_count),
-        ArtistRouteSortKey::LastPlayedAt => {
-            db::compare_option(&a.last_played_at, &b.last_played_at)
-        }
-        ArtistRouteSortKey::ReleaseCount => a.release_count.cmp(&b.release_count),
-        ArtistRouteSortKey::TrackCount => a.track_count.cmp(&b.track_count),
-        ArtistRouteSortKey::TotalDuration => a.total_duration.cmp(&b.total_duration),
-        ArtistRouteSortKey::Field(SortKey::ReleaseDate) => Ordering::Equal,
-    }
-}
-
-fn compare_artist_route_entries(
-    a: &ArtistRouteSortEntry,
-    b: &ArtistRouteSortEntry,
-    sort: &[ArtistRouteSortSpec],
-) -> Ordering {
-    for spec in sort {
-        let ord = db::apply_direction(compare_artist_route_field(a, b, spec.key), spec.direction);
-        if ord != Ordering::Equal {
-            return ord;
-        }
-    }
-
-    b.match_score
-        .cmp(&a.match_score)
-        .then_with(|| a.lower_name.cmp(&b.lower_name))
-        .then_with(|| db::compare_option(&a.db_id, &b.db_id))
-}
-
-fn artist_sort_needs_release_count(sort: &[ArtistRouteSortSpec]) -> bool {
-    sort.iter()
-        .any(|spec| matches!(spec.key, ArtistRouteSortKey::ReleaseCount))
-}
-
-fn artist_sort_needs_track_metrics(sort: &[ArtistRouteSortSpec]) -> bool {
-    sort.iter().any(|spec| {
-        matches!(
-            spec.key,
-            ArtistRouteSortKey::ListenCount
-                | ArtistRouteSortKey::LastPlayedAt
-                | ArtistRouteSortKey::TrackCount
-                | ArtistRouteSortKey::TotalDuration
-        )
-    })
-}
-
-fn artist_sort_needs_listens(sort: &[ArtistRouteSortSpec]) -> bool {
-    sort.iter().any(|spec| {
-        matches!(
-            spec.key,
-            ArtistRouteSortKey::ListenCount | ArtistRouteSortKey::LastPlayedAt
-        )
-    })
-}
-
-fn query_artist_route_items(
-    db: &DbAny,
-    artists: Vec<db::Artist>,
-    sort: &[ArtistRouteSortSpec],
-    search_term: Option<&str>,
-    principal: &Principal,
-) -> anyhow::Result<Vec<db::Artist>> {
-    let mut release_ids_by_artist: HashMap<DbId, HashSet<DbId>> = HashMap::new();
-    let mut tracks_by_artist: HashMap<DbId, Vec<db::Track>> = HashMap::new();
-    let mut all_track_ids = Vec::new();
-    let mut seen_all_track_ids = HashSet::new();
-    let needs_release_count = artist_sort_needs_release_count(sort);
-    let needs_track_metrics = artist_sort_needs_track_metrics(sort);
-    let needs_listens = artist_sort_needs_listens(sort);
-
-    for artist in &artists {
-        let Some(artist_db_id) = artist.db_id.clone().map(DbId::from) else {
-            continue;
-        };
-
-        if needs_release_count {
-            let mut release_ids = HashSet::new();
-            for release in db::releases::get_by_artist(db, artist_db_id)? {
-                let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
-                    continue;
-                };
-                if release_accessible_to_principal(db, principal, release_db_id)? {
-                    release_ids.insert(release_db_id);
-                }
-            }
-            release_ids_by_artist.insert(artist_db_id, release_ids);
-        }
-
-        if needs_track_metrics {
-            let mut tracks = db::tracks::get_by_artist(db, artist_db_id)?;
-            tracks.extend(db::tracks::get_by_release_artists(db, &[artist_db_id])?);
-            tracks = filter_accessible_tracks(db, principal, tracks)?;
-            if needs_listens {
-                for track in &tracks {
-                    let Some(track_db_id) = track.db_id.clone().map(DbId::from) else {
-                        continue;
-                    };
-                    if seen_all_track_ids.insert(track_db_id) {
-                        all_track_ids.push(track_db_id);
-                    }
-                }
-            }
-            tracks_by_artist.insert(artist_db_id, tracks);
-        }
-    }
-
-    let listen_stats: HashMap<DbId, db::listens::ListenStats> = if needs_listens {
-        db::listens::get_stats(db, &all_track_ids, principal.require(db)?)?
-            .into_iter()
-            .map(|stats| (stats.db_id, stats))
-            .collect()
-    } else {
-        HashMap::new()
-    };
-
-    let mut entries: Vec<ArtistRouteSortEntry> = artists
-        .into_iter()
-        .map(|artist| {
-            let artist_db_id = artist.db_id.clone().map(DbId::from);
-            let release_count = artist_db_id
-                .and_then(|id| release_ids_by_artist.get(&id))
-                .map(|ids| ids.len() as u64)
-                .unwrap_or(0);
-            let mut seen_artist_track_ids = HashSet::new();
-            let mut listen_count = 0u64;
-            let mut last_played_at = None;
-            let mut track_count = 0u64;
-            let mut total_duration = 0u64;
-
-            if let Some(tracks) = artist_db_id.and_then(|id| tracks_by_artist.get(&id)) {
-                for track in tracks {
-                    let Some(track_db_id) = track.db_id.clone().map(DbId::from) else {
-                        track_count = track_count.saturating_add(1);
-                        if let Some(duration) = track.duration_ms {
-                            total_duration = total_duration.saturating_add(duration);
-                        }
-                        continue;
-                    };
-                    if !seen_artist_track_ids.insert(track_db_id) {
-                        continue;
-                    }
-                    track_count = track_count.saturating_add(1);
-                    if let Some(duration) = track.duration_ms {
-                        total_duration = total_duration.saturating_add(duration);
-                    }
-                    if let Some(stats) = listen_stats.get(&track_db_id) {
-                        listen_count = listen_count.saturating_add(stats.count);
-                        last_played_at = last_played_at.max(stats.last_played);
-                    }
-                }
-            }
-
-            ArtistRouteSortEntry::new(
-                artist,
-                listen_count,
-                last_played_at,
-                release_count,
-                track_count,
-                total_duration,
-            )
-        })
-        .collect();
-
-    if let Some(term) = search_term {
-        db::search::fuzzy_filter(
-            &mut entries,
-            term,
-            |entry| entry.artist.artist_name.as_str(),
-            |entry, score| entry.match_score = score,
-        );
-    }
-
-    entries.sort_by(|a, b| compare_artist_route_entries(a, b, sort));
-    Ok(entries.into_iter().map(|entry| entry.artist).collect())
 }
 
 fn is_admin(principal: &Principal) -> bool {
@@ -715,11 +431,8 @@ pub(crate) async fn list_artist_responses(
         .field(min_rating_context.as_deref())
         .field(max_rating_context.as_deref())
         .finish();
-    let mut sort = parse_artist_sort_specs(sort_by, sort_order)?;
-    if sort.is_empty() && search_term.is_none() {
-        sort = default_artist_sort();
-    }
-    let library_scope = crate::services::auth::access::resolve_optional_library_filter(
+    let sort = super::parse_catalog_sort(sort_by, sort_order)?;
+    let library = crate::services::auth::access::resolve_optional_library_filter(
         db,
         principal,
         library_id.as_deref(),
@@ -734,59 +447,21 @@ pub(crate) async fn list_artist_responses(
         )?;
         (artists, page.next_cursor)
     } else {
-        let mut accessible_artists = match library_scope {
-            Some(library_db_id) => {
-                artist_service::query_credited(
-                    db,
-                    Some(&db::ResolveId::DbId(library_db_id)),
-                    &artist_service::CreditedArtistFilters::default(),
-                    &ListOptions {
-                        sort: Vec::new(),
-                        offset: None,
-                        limit: None,
-                        search_term: None,
-                    },
-                )?
-                .entries
-            }
-            None => {
-                let artists = db::artists::get(db, "artists")?;
-                let mut accessible_artists = Vec::with_capacity(artists.len());
-                for artist in artists {
-                    let Some(artist_db_id) = artist.db_id.clone().map(DbId::from) else {
-                        continue;
-                    };
-                    if artist_accessible_to_principal(db, principal, artist_db_id)? {
-                        accessible_artists.push(artist);
-                    }
-                }
-                accessible_artists
-            }
-        };
-        if !rating_filter.is_empty() {
-            let rated_target_ids =
-                db::ratings::target_ids_matching(db, principal.require(db)?, rating_filter)?;
-            accessible_artists.retain(|artist| {
-                artist
-                    .db_id
-                    .clone()
-                    .map(DbId::from)
-                    .is_some_and(|db_id| rated_target_ids.contains(&db_id))
-            });
-        }
-        let mut artists = query_artist_route_items(
-            db,
-            accessible_artists,
-            &sort,
-            search_term.as_deref(),
-            principal,
-        )?;
-        let page = page_request.start(
-            &snapshot_key,
-            artists.iter().map(|artist| artist.id.clone()).collect(),
-        )?;
-        artists.truncate(page.item_ids.len());
-        (artists, page.next_cursor)
+        let viewer = catalog::Viewer::user(db, principal.clone())?;
+        let mut query = catalog::Query::<Artists>::new(ArtistFilter {
+            library,
+            rating: rating_filter,
+            ..ArtistFilter::default()
+        });
+        query.search = search_term;
+        query.sort = sort;
+        query.seed = rand::random();
+        let ids = catalog::order(db, &viewer, &query)?;
+        let page = page_request.start(&snapshot_key, super::public_ids(db, &ids)?)?;
+        (
+            Artists::hydrate(db, &ids[..page.item_ids.len()])?,
+            page.next_cursor,
+        )
     };
     let details = artist_service::list_details_for_artists(db, includes.service, artists)?;
 
@@ -950,7 +625,6 @@ mod tests {
             insert_library,
             insert_release,
             insert_track,
-            new_test_db,
         },
         testing::{
             LibraryFixtureConfig,
@@ -1032,26 +706,21 @@ mod tests {
         Ok(headers)
     }
 
-    fn admin_principal(accessible_library_ids: HashSet<String>) -> Principal {
-        Principal::from_parts(
-            DbId(1),
-            "admin".to_string(),
-            "admin".to_string(),
-            vec![db::Permission::Admin],
-            Some("admin".to_string()),
-            accessible_library_ids,
-        )
+    async fn principal(
+        permissions: Vec<db::Permission>,
+        accessible_library_ids: HashSet<String>,
+    ) -> Principal {
+        let mut db = STATE.db.write().await;
+        let user_db_id = db::test_db::insert_user(&mut db, &nanoid!()).expect("insert user");
+        Principal::for_user(&*db, user_db_id, permissions, accessible_library_ids)
     }
 
-    fn user_principal(accessible_library_ids: HashSet<String>) -> Principal {
-        Principal::from_parts(
-            DbId(1),
-            "user".to_string(),
-            "user".to_string(),
-            Vec::new(),
-            Some("user".to_string()),
-            accessible_library_ids,
-        )
+    async fn admin_principal(accessible_library_ids: HashSet<String>) -> Principal {
+        principal(vec![db::Permission::Admin], accessible_library_ids).await
+    }
+
+    async fn user_principal(accessible_library_ids: HashSet<String>) -> Principal {
+        principal(Vec::new(), accessible_library_ids).await
     }
 
     fn insert_cover_for(db: &mut DbAny, owner_db_id: DbId) -> anyhow::Result<db::Cover> {
@@ -1071,59 +740,47 @@ mod tests {
         })
     }
 
-    #[test]
-    fn query_artist_route_items_counts_only_accessible_releases() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        let visible_library =
-            insert_library(&mut db, "Visible Artist Counts", "/tmp/lyra-visible-counts")?;
-        let hidden_library =
-            insert_library(&mut db, "Hidden Artist Counts", "/tmp/lyra-hidden-counts")?;
-        let visible_library_id = db::libraries::get_by_id(&db, visible_library)?
-            .ok_or_else(|| anyhow::anyhow!("visible library missing"))?
-            .id;
+    #[tokio::test]
+    async fn list_artist_responses_counts_only_accessible_releases() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let _test_dir = initialize_test_runtime().await?;
 
-        let mostly_hidden = insert_artist(&mut db, "Mostly Hidden Artist")?;
-        let visible_heavy = insert_artist(&mut db, "Visible Heavy Artist")?;
+        let visible_library_id = {
+            let mut db = STATE.db.write().await;
+            let visible_library =
+                insert_library(&mut db, "Visible Artist Counts", "/tmp/lyra-visible-counts")?;
+            let hidden_library =
+                insert_library(&mut db, "Hidden Artist Counts", "/tmp/lyra-hidden-counts")?;
+            let mostly_hidden = insert_artist(&mut db, "Mostly Hidden Artist")?;
+            let visible_heavy = insert_artist(&mut db, "Visible Heavy Artist")?;
 
-        let visible_release = insert_release(&mut db, "Only Visible Release")?;
-        connect(&mut db, visible_library, visible_release)?;
-        connect_artist(&mut db, visible_release, mostly_hidden)?;
+            let visible_release = insert_release(&mut db, "Only Visible Release")?;
+            connect(&mut db, visible_library, visible_release)?;
+            connect_artist(&mut db, visible_release, mostly_hidden)?;
+            for title in ["Hidden One", "Hidden Two", "Hidden Three"] {
+                let release = insert_release(&mut db, title)?;
+                connect(&mut db, hidden_library, release)?;
+                connect_artist(&mut db, release, mostly_hidden)?;
+            }
+            for title in ["Visible One", "Visible Two"] {
+                let release = insert_release(&mut db, title)?;
+                connect(&mut db, visible_library, release)?;
+                connect_artist(&mut db, release, visible_heavy)?;
+            }
+            db::libraries::get_by_id(&db, visible_library)?
+                .ok_or_else(|| anyhow::anyhow!("visible library missing"))?
+                .id
+        };
+        let principal = user_principal(HashSet::from([visible_library_id])).await;
 
-        for title in ["Hidden One", "Hidden Two", "Hidden Three"] {
-            let release = insert_release(&mut db, title)?;
-            connect(&mut db, hidden_library, release)?;
-            connect_artist(&mut db, release, mostly_hidden)?;
-        }
-        for title in ["Visible One", "Visible Two"] {
-            let release = insert_release(&mut db, title)?;
-            connect(&mut db, visible_library, release)?;
-            connect_artist(&mut db, release, visible_heavy)?;
-        }
-
-        let artists = vec![
-            db::artists::get_by_id(&db, mostly_hidden)?
-                .ok_or_else(|| anyhow::anyhow!("mostly hidden artist missing"))?,
-            db::artists::get_by_id(&db, visible_heavy)?
-                .ok_or_else(|| anyhow::anyhow!("visible heavy artist missing"))?,
-        ];
-        let principal = user_principal(HashSet::from([visible_library_id]));
-
-        let artists = query_artist_route_items(
-            &db,
-            artists,
-            &[ArtistRouteSortSpec {
-                key: ArtistRouteSortKey::ReleaseCount,
-                direction: SortDirection::Descending,
-            }],
-            None,
-            &principal,
-        )?;
-
-        let names: Vec<String> = artists
-            .into_iter()
-            .map(|artist| artist.artist_name)
-            .collect();
-        assert_eq!(names, vec!["Visible Heavy Artist", "Mostly Hidden Artist"]);
+        assert_eq!(
+            list_artist_names(
+                &principal,
+                list_options(Some("release_count"), Some("descending"))
+            )
+            .await?,
+            vec!["Visible Heavy Artist", "Mostly Hidden Artist"]
+        );
         Ok(())
     }
 
@@ -1146,91 +803,6 @@ mod tests {
         assert!(parsed.artist_covers);
     }
 
-    #[test]
-    fn parse_artist_sort_specs_accepts_supported_values() -> anyhow::Result<()> {
-        let specs = match parse_artist_sort_specs(
-            Some(vec![
-                "sort_name,name".to_string(),
-                "date_created,last_played_at,listen_count,release_count,track_count,total_duration,id".to_string(),
-            ]),
-            Some("descending".to_string()),
-        ) {
-            Ok(specs) => specs,
-            Err(_) => return Err(anyhow::anyhow!("expected valid artist sort specs")),
-        };
-
-        assert_eq!(specs.len(), 9);
-        assert!(matches!(
-            specs[0].key,
-            ArtistRouteSortKey::Field(SortKey::SortName)
-        ));
-        assert!(matches!(
-            specs[1].key,
-            ArtistRouteSortKey::Field(SortKey::Name)
-        ));
-        assert!(matches!(
-            specs[2].key,
-            ArtistRouteSortKey::Field(SortKey::DateCreated)
-        ));
-        assert!(matches!(specs[3].key, ArtistRouteSortKey::LastPlayedAt));
-        assert!(matches!(specs[4].key, ArtistRouteSortKey::ListenCount));
-        assert!(matches!(specs[5].key, ArtistRouteSortKey::ReleaseCount));
-        assert!(matches!(specs[6].key, ArtistRouteSortKey::TrackCount));
-        assert!(matches!(specs[7].key, ArtistRouteSortKey::TotalDuration));
-        assert!(matches!(
-            specs[8].key,
-            ArtistRouteSortKey::Field(SortKey::DbId)
-        ));
-        assert!(
-            specs
-                .iter()
-                .all(|spec| matches!(spec.direction, SortDirection::Descending))
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn parse_artist_sort_specs_rejects_track_only_values() {
-        assert!(parse_artist_sort_specs(Some(vec!["disc,track".to_string()]), None).is_err());
-    }
-
-    #[test]
-    fn query_artist_route_items_sorts_by_release_count() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        let one_release_artist_id = insert_artist(&mut db, "One Release Artist")?;
-        let two_release_artist_id = insert_artist(&mut db, "Two Release Artist")?;
-        let first_release = insert_release(&mut db, "First Release")?;
-        let second_release = insert_release(&mut db, "Second Release")?;
-        let third_release = insert_release(&mut db, "Third Release")?;
-        connect_artist(&mut db, first_release, one_release_artist_id)?;
-        connect_artist(&mut db, second_release, two_release_artist_id)?;
-        connect_artist(&mut db, third_release, two_release_artist_id)?;
-        let artists = vec![
-            db::artists::get_by_id(&db, one_release_artist_id)?
-                .ok_or_else(|| anyhow::anyhow!("one release artist missing"))?,
-            db::artists::get_by_id(&db, two_release_artist_id)?
-                .ok_or_else(|| anyhow::anyhow!("two release artist missing"))?,
-        ];
-
-        let artists = query_artist_route_items(
-            &db,
-            artists,
-            &[ArtistRouteSortSpec {
-                key: ArtistRouteSortKey::ReleaseCount,
-                direction: SortDirection::Descending,
-            }],
-            None,
-            &admin_principal(HashSet::new()),
-        )?;
-
-        let names: Vec<String> = artists
-            .into_iter()
-            .map(|artist| artist.artist_name)
-            .collect();
-        assert_eq!(names, vec!["Two Release Artist", "One Release Artist"]);
-        Ok(())
-    }
-
     #[tokio::test]
     async fn get_artist_response_keeps_cover_includes_separate() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
@@ -1247,7 +819,7 @@ mod tests {
                 .ok_or_else(|| anyhow::anyhow!("artist should exist"))?
                 .id
         };
-        let principal = admin_principal(HashSet::new());
+        let principal = admin_principal(HashSet::new()).await;
 
         let shallow = get_artist_response(
             &principal,
@@ -1309,7 +881,7 @@ mod tests {
                 .id;
             (artist_public_id, cover_id)
         };
-        let principal = admin_principal(HashSet::new());
+        let principal = admin_principal(HashSet::new()).await;
 
         let artist = get_artist_response(
             &principal,
@@ -1386,7 +958,7 @@ mod tests {
                 .id;
             (artist_public_id, visible_library_id)
         };
-        let principal = user_principal(HashSet::from([visible_library_id]));
+        let principal = user_principal(HashSet::from([visible_library_id])).await;
 
         let artist = get_artist_response(
             &principal,
@@ -1424,7 +996,7 @@ mod tests {
                 insert_artist(&mut db, name)?;
             }
         }
-        let principal = admin_principal(HashSet::new());
+        let principal = admin_principal(HashSet::new()).await;
 
         let page = list_artist_responses(
             &principal,
@@ -1484,7 +1056,8 @@ mod tests {
         let principal = admin_principal(HashSet::from([
             visible_library_id.clone(),
             hidden_library_id,
-        ]));
+        ]))
+        .await;
 
         let page = list_artist_responses(
             &principal,
@@ -1615,7 +1188,7 @@ mod tests {
                 db::artists::update(&mut db, &artist)?;
             }
         }
-        let principal = admin_principal(HashSet::new());
+        let principal = admin_principal(HashSet::new()).await;
 
         assert_eq!(
             list_artist_names(&principal, list_options(None, None)).await?,
@@ -1651,7 +1224,7 @@ mod tests {
                 .id;
             (library_id, library, release)
         };
-        let principal = user_principal(HashSet::from([library_id]));
+        let principal = user_principal(HashSet::from([library_id])).await;
         let page = |cursor: Option<String>| ArtistListOptions {
             page_request: super::super::PageQuery {
                 limit: Some(1),
@@ -1723,7 +1296,7 @@ mod tests {
                 public_id(hidden_artist)?,
             )
         };
-        let principal = user_principal(HashSet::from([visible_library_id]));
+        let principal = user_principal(HashSet::from([visible_library_id])).await;
 
         assert_eq!(
             list_artist_names(&principal, list_options(None, None)).await?,
@@ -1752,7 +1325,7 @@ mod tests {
             insert_artist(&mut db, "Charlie")?;
             insert_artist(&mut db, "Bravo")?;
         }
-        let principal = admin_principal(HashSet::new());
+        let principal = admin_principal(HashSet::new()).await;
 
         let page = list_artist_responses(
             &principal,

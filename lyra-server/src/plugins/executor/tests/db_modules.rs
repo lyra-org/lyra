@@ -576,13 +576,12 @@ fn plugin_executor_exposes_db_backed_lyra_artists_module() -> Result<()> {
                 local many = artists.list_many({{ release_db_id }})
                 local relations = artists.list_relations_many({{ actor_db_id }})
                 local queried = artists.query({{
-                    search_term = "Module",
+                    search = "Module",
                     artist_type = artists.ArtistType.Person,
-                    sort_by = {{ "name" }},
-                    sort_order = "ascending",
+                    sort = {{ {{ key = "name" }} }},
                 }})
-                local credited = artists.query_credited({{
-                    scope = release_db_id,
+                local credited = artists.query({{
+                    release_ids = {{ release_db_id }},
                     artist_type = artists.ArtistType.Person,
                     credit_types = {{ artists.CreditType.Artist }},
                 }})
@@ -596,10 +595,10 @@ fn plugin_executor_exposes_db_backed_lyra_artists_module() -> Result<()> {
                     relations[actor_db_id][1].relation_type,
                     relations[actor_db_id][1].direction,
                     relations[actor_db_id][1].artist.artist_name,
-                    queried.entities[1].artist_name,
-                    credited.entities[1].artist_name,
-                    queried.total_count,
-                    credited.total_count
+                    queried.items[1].artist_name,
+                    credited.items[1].artist_name,
+                    queried.total,
+                    credited.total
             "#,
             library_db_id = library_db_id.0,
             release_db_id = release_db_id.0,

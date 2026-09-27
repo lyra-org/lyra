@@ -387,28 +387,6 @@ pub(crate) fn get_by_releases(db: &DbAny, release_db_ids: &[DbId]) -> anyhow::Re
     Ok(deduped)
 }
 
-pub(crate) fn get_by_release_artists(
-    db: &DbAny,
-    artist_db_ids: &[DbId],
-) -> anyhow::Result<Vec<Track>> {
-    let releases = super::releases::get_by_artists(db, artist_db_ids)?;
-    let mut release_db_ids = Vec::new();
-    let mut seen_release_db_ids = HashSet::new();
-    for release in releases {
-        if let Some(release_db_id) = release.db_id.clone().map(DbId::from)
-            && seen_release_db_ids.insert(release_db_id)
-        {
-            release_db_ids.push(release_db_id);
-        }
-    }
-
-    if release_db_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    get_by_releases(db, &release_db_ids)
-}
-
 pub(crate) fn get_by_entry(db: &DbAny, entry_db_id: DbId) -> anyhow::Result<Vec<Track>> {
     let tracks: Vec<Track> = db
         .exec(
