@@ -433,3 +433,84 @@ fn track_query_ignores_ids_that_do_not_exist() -> Result<()> {
     assert_eq!(system, vec![luau::Value::Number(0.0)]);
     Ok(())
 }
+
+#[test]
+fn track_query_treats_missing_and_hidden_ids_alike() -> Result<()> {
+    let mut db = test_db::new_test_db()?;
+    let visible_library = test_db::insert_library(&mut db, "Visible", "/tmp/lyra-oracle-visible")?;
+    let hidden_library = test_db::insert_library(&mut db, "Hidden", "/tmp/lyra-oracle-hidden")?;
+    let hidden_artist = test_db::insert_artist(&mut db, "Hidden Artist")?;
+    let mut hidden_release = None;
+    for (library, title) in [(visible_library, "Visible"), (hidden_library, "Hidden")] {
+        let release = test_db::insert_release(&mut db, title)?;
+        let track = test_db::insert_track(&mut db, title)?;
+        test_db::connect(&mut db, library, release)?;
+        test_db::connect(&mut db, release, track)?;
+        if library == hidden_library {
+            test_db::connect_artist(&mut db, track, hidden_artist)?;
+            db::genres::sync_release_genres(&mut db, release, &["Hidden Genre".to_string()])?;
+            hidden_release = Some(release);
+        }
+    }
+    let hidden_genre = db::genres::get_for_release(&db, hidden_release.context("hidden release")?)?
+        .into_iter()
+        .find_map(|genre| genre.db_id.map(agdb::DbId::from))
+        .context("hidden genre")?;
+    let user = test_db::insert_user(&mut db, "oracle-viewer")?;
+    let visible_library_id = db::libraries::get_by_id(&db, visible_library)?
+        .context("library exists")?
+        .id;
+    let principal = crate::services::auth::Principal::for_user(
+        &db,
+        user,
+        Vec::new(),
+        std::collections::HashSet::from([visible_library_id]),
+    );
+    let runtime = tracks_runtime(db)?;
+    let total = |query: String| -> Result<Vec<luau::Value>> {
+        let mut context = CallContext {
+            origin: plugin_origin("demo", "init.luau"),
+            ..CallContext::default()
+        };
+        seed_caller_principal(&mut context, principal.clone());
+        runtime.eval_plugin_source_with_call_context(
+            format!(
+                r#"
+                    local tracks = require("@lyra/tracks")
+                    local ok, page = pcall(tracks.query, {query})
+                    return ok, if ok then page.total else tostring(page)
+                "#
+            )
+            .into_bytes(),
+            context,
+        )
+    };
+    let empty = vec![luau::Value::Boolean(true), luau::Value::Number(0.0)];
+    let missing = 999_999;
+    for (field, hidden) in [
+        ("library_id", format!("{}", hidden_library.0)),
+        ("genre_ids", format!("{{ {} }}", hidden_genre.0)),
+        ("artist_ids", format!("{{ {} }}", hidden_artist.0)),
+        (
+            "release_ids",
+            format!("{{ {} }}", hidden_release.context("release")?.0),
+        ),
+    ] {
+        let missing = if field == "library_id" {
+            format!("{missing}")
+        } else {
+            format!("{{ {missing} }}")
+        };
+        assert_eq!(
+            total(format!("{{ {field} = {hidden} }}"))?,
+            empty,
+            "hidden {field}"
+        );
+        assert_eq!(
+            total(format!("{{ {field} = {missing} }}"))?,
+            empty,
+            "missing {field}"
+        );
+    }
+    Ok(())
+}
