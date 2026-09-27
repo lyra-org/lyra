@@ -241,9 +241,8 @@ mixer:from_release(function(ctx: MixContext): MixResult
 end)
 
 mixer:from_artist(function(ctx: MixContext): MixResult
-	-- tracks.list lacks the artist→track edge traversal; use the artist-scoped query API.
-	local result = tracks.query({ artist_ids = { ctx.seed_id } })
-	local artist_tracks = result.entities
+	local result = tracks.query({ artist_ids = { ctx.seed_id }, credit_role = "track" })
+	local artist_tracks = result.items
 	if #artist_tracks == 0 then
 		warn(`from_artist: seed {ctx.seed_id} has no tracks; returning empty mix`)
 		return { tracks = {} }
