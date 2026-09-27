@@ -1575,6 +1575,120 @@ mod tests {
         Ok(())
     }
 
+    fn list_options(sort_by: Option<&str>, sort_order: Option<&str>) -> ArtistListOptions {
+        ArtistListOptions {
+            inc: None,
+            query: None,
+            library_id: None,
+            sort_by: sort_by.map(|value| vec![value.to_string()]),
+            sort_order: sort_order.map(str::to_string),
+            rating_filter: db::ratings::RatingFilter::default(),
+            page_request: super::super::SnapshotPageRequest::first_page(100),
+        }
+    }
+
+    async fn list_artist_names(
+        principal: &Principal,
+        options: ArtistListOptions,
+    ) -> anyhow::Result<Vec<String>> {
+        let page = list_artist_responses(principal, options)
+            .await
+            .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        Ok(page.items.into_iter().map(|artist| artist.name).collect())
+    }
+
+    #[tokio::test]
+    async fn list_artist_responses_defaults_to_sort_name_then_name_then_id() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let _test_dir = initialize_test_runtime().await?;
+
+        {
+            let mut db = STATE.db.write().await;
+            insert_artist(&mut db, "Charlie")?;
+            let zulu = insert_artist(&mut db, "Zulu")?;
+            let mut artist = db::artists::get_by_id(&db, zulu)?
+                .ok_or_else(|| anyhow::anyhow!("artist missing"))?;
+            artist.set_sort_name("Alpha".to_string());
+            db::artists::update(&mut db, &artist)?;
+            insert_artist(&mut db, "Beta")?;
+            insert_artist(&mut db, "beta")?;
+        }
+        let principal = admin_principal(HashSet::new());
+
+        assert_eq!(
+            list_artist_names(&principal, list_options(None, None)).await?,
+            vec!["Zulu", "Beta", "beta", "Charlie"]
+        );
+        assert_eq!(
+            list_artist_names(
+                &principal,
+                list_options(Some("sort_name"), Some("descending"))
+            )
+            .await?,
+            vec!["Charlie", "Beta", "beta", "Zulu"]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn artists_credited_only_on_tracks_follow_track_visibility() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let _test_dir = initialize_test_runtime().await?;
+
+        let (visible_library_id, visible_artist_id, hidden_artist_id) = {
+            let mut db = STATE.db.write().await;
+            let visible_library = insert_library(
+                &mut db,
+                "Track Credit Visible",
+                "/tmp/lyra-track-credit-vis",
+            )?;
+            let hidden_library =
+                insert_library(&mut db, "Track Credit Hidden", "/tmp/lyra-track-credit-hid")?;
+            let visible_release = insert_release(&mut db, "Visible Compilation")?;
+            let hidden_release = insert_release(&mut db, "Hidden Compilation")?;
+            let visible_track = insert_track(&mut db, "Visible Feature")?;
+            let hidden_track = insert_track(&mut db, "Hidden Feature")?;
+            let visible_artist = insert_artist(&mut db, "Featured Visible")?;
+            let hidden_artist = insert_artist(&mut db, "Featured Hidden")?;
+            connect(&mut db, visible_library, visible_release)?;
+            connect(&mut db, visible_release, visible_track)?;
+            connect_artist(&mut db, visible_track, visible_artist)?;
+            connect(&mut db, hidden_library, hidden_release)?;
+            connect(&mut db, hidden_release, hidden_track)?;
+            connect_artist(&mut db, hidden_track, hidden_artist)?;
+
+            let visible_library_id = db::libraries::get_by_id(&db, visible_library)?
+                .ok_or_else(|| anyhow::anyhow!("visible library missing"))?
+                .id;
+            let public_id = |artist| -> anyhow::Result<String> {
+                Ok(db::artists::get_by_id(&db, artist)?
+                    .ok_or_else(|| anyhow::anyhow!("artist missing"))?
+                    .id)
+            };
+            (
+                visible_library_id,
+                public_id(visible_artist)?,
+                public_id(hidden_artist)?,
+            )
+        };
+        let principal = user_principal(HashSet::from([visible_library_id]));
+
+        assert_eq!(
+            list_artist_names(&principal, list_options(None, None)).await?,
+            vec!["Featured Visible"]
+        );
+        let artist = get_artist_response(&principal, visible_artist_id, None)
+            .await
+            .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert_eq!(artist.name, "Featured Visible");
+        assert!(
+            get_artist_response(&principal, hidden_artist_id, None)
+                .await
+                .is_err()
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     async fn list_artist_responses_applies_sort_options() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
