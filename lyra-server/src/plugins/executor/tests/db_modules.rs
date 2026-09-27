@@ -23,7 +23,7 @@ fn plugin_executor_exposes_db_backed_lyra_ids_module() -> Result<()> {
                 local track_public_id = "{track_public_id}"
 
                 executor_public_id = ids.get_id(track_db_id)
-                executor_public_ids = ids.get_ids({{ track_db_id, -1, track_db_id, 999999 }})
+                executor_public_ids = ids.get_ids({{ track_db_id, track_db_id, 999999 }})
                 executor_db_id = ids.get_db_id(track_public_id)
                 executor_db_ids = ids.get_db_ids({{ track_public_id, " ", track_public_id, "missing-public-id" }})
             "#,
@@ -62,6 +62,33 @@ fn plugin_executor_exposes_db_backed_lyra_ids_module() -> Result<()> {
             luau::Value::Boolean(true),
         ]
     );
+    Ok(())
+}
+
+#[test]
+fn id_list_arguments_reject_ids_that_are_not_positive() -> Result<()> {
+    let db = crate::plugins::db::test_db::new_test_db()?;
+    let runtime = PluginExecutor::with_database(
+        Arc::from(vec![manifest("demo", &["lyra.ids"])]),
+        default_server_info(),
+        std::sync::Arc::new(tokio::sync::RwLock::new(db)),
+    )?;
+    let values = runtime.eval_plugin_source(
+        "demo",
+        "init.luau",
+        r#"
+            local ids = require("@lyra/ids")
+            local function rejected(list)
+                local ok, err = pcall(ids.get_ids, list)
+                return not ok and string.find(tostring(err), "must be a positive integer", 1, true) ~= nil
+            end
+            return rejected({ 1, -1 }), rejected({ 0 }), rejected({ "1" }), rejected({ 1.5 })
+        "#
+        .as_bytes()
+        .to_vec(),
+    )?;
+
+    assert_eq!(values, vec![luau::Value::Boolean(true); 4]);
     Ok(())
 }
 
@@ -379,7 +406,7 @@ fn plugin_executor_exposes_db_backed_lyra_listens_module() -> Result<()> {
                 local listens = require("@lyra/listens")
                 local track_db_id = {track_db_id}
                 executor_listen_count = listens.get_count(track_db_id)
-                executor_listen_counts = listens.get_counts({{ track_db_id, -1, track_db_id }})
+                executor_listen_counts = listens.get_counts({{ track_db_id, track_db_id }})
                 executor_listen_stats = listens.get_stats({{ track_db_id }})
             "#,
             track_db_id = track_db_id.0,
@@ -457,7 +484,7 @@ fn plugin_executor_exposes_db_backed_lyra_favorites_module() -> Result<()> {
 
                 executor_favorite_add = favorites.add(track_db_id)
                 executor_favorite_has = favorites.has(track_db_id)
-                executor_favorite_many = favorites.has_many({{ track_db_id, -1, track_db_id, 999999 }})
+                executor_favorite_many = favorites.has_many({{ track_db_id, track_db_id, 999999 }})
                 executor_favorite_ids = favorites.list_ids("track")
                 executor_favorite_remove = favorites.remove(track_db_id)
                 executor_favorite_has_after_remove = favorites.has(track_db_id)
@@ -650,7 +677,7 @@ fn plugin_executor_exposes_db_backed_lyra_tracks_module() -> Result<()> {
 
                 local listed = tracks.list(release_db_id)
                 local all = tracks.list()
-                local fetched = tracks.get_by_ids({{ track_db_id, -1, track_db_id }})
+                local fetched = tracks.get_by_ids({{ track_db_id, track_db_id }})
                 local related = tracks.list_many({{ release_db_id }})
                 local queried = tracks.query({{
                     scope = release_db_id,
@@ -826,7 +853,7 @@ fn plugin_executor_exposes_db_backed_lyra_track_sources_module() -> Result<()> {
                 local track_sources = require("@lyra/track_sources")
                 local track_db_id = {track_db_id}
 
-                local many = track_sources.get_primary_containers({{ track_db_id, -1, track_db_id }})
+                local many = track_sources.get_primary_containers({{ track_db_id, track_db_id }})
                 return track_sources.get_primary_source_key(track_db_id),
                     track_sources.get_primary_container(track_db_id),
                     many[track_db_id],
@@ -925,7 +952,7 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
                 local track_db_id = {track_db_id}
 
                 executor_playback_source_rows = playback_sources.get(track_db_id, true)
-                executor_playback_source_many = playback_sources.get_many({{ track_db_id, -1, track_db_id, 999999 }}, true)
+                executor_playback_source_many = playback_sources.get_many({{ track_db_id, track_db_id, 999999 }}, true)
             "#,
             track_db_id = track_db_id.0,
         )
@@ -1031,7 +1058,7 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
                 executor_user_playlists = playlists.list_owned()
                 executor_playlist_entry_id = playlists.add_track(executor_playlist_id, track_db_id)
                 executor_playlist_tracks = playlists.get_tracks(executor_playlist_id)
-                executor_playlist_tracks_many = playlists.get_tracks_many({{ executor_playlist_id, -1, executor_playlist_id }})
+                executor_playlist_tracks_many = playlists.get_tracks_many({{ executor_playlist_id, executor_playlist_id }})
                 executor_updated_playlist = playlists.update({{
                     playlist_id = executor_playlist_id,
                     name = "Raw Updated Playlist",
@@ -1131,7 +1158,7 @@ fn plugin_executor_exposes_db_backed_lyra_covers_module() -> Result<()> {
 
                 executor_cover_release = covers.get(release_db_id)
                 executor_cover_track = covers.get(track_db_id)
-                executor_covers_many = covers.get_many({{ release_db_id, track_db_id, -1, release_db_id, 999999 }})
+                executor_covers_many = covers.get_many({{ release_db_id, track_db_id, release_db_id, 999999 }})
             "#,
             release_db_id = release_db_id.0,
             track_db_id = track_db_id.0,
@@ -1338,7 +1365,7 @@ fn plugin_executor_exposes_db_backed_lyra_releases_module() -> Result<()> {
                 local all = releases.list()
                 local by_artist = releases.get_by_artist(album_artist_id)
                 local appearances = releases.get_appearances(guest_artist_id)
-                local many = releases.list_many({{ track_db_id, -1, track_db_id }})
+                local many = releases.list_many({{ track_db_id, track_db_id }})
                 local queried = releases.query({{
                     scope = "releases",
                     search_term = "Module",
@@ -1696,7 +1723,7 @@ fn plugin_executor_exposes_db_backed_lyra_tags_module() -> Result<()> {
 
                 executor_tag_name = tags.add(track_id, " Workout ", "#335577")
                 executor_has = tags.has(track_id, "Workout")
-                executor_has_many = tags.has_many({{ track_id, -1, track_id, 999999 }}, "Workout")
+                executor_has_many = tags.has_many({{ track_id, track_id, 999999 }}, "Workout")
                 executor_for_target = tags.get_for_target(track_id)
                 executor_for_targets = tags.get_for_targets_many({{ track_id, 999999 }})
                 executor_tagged = tags.get_tagged("Workout")

@@ -3,10 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::{
-    collections::HashSet,
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use agdb::DbId;
 use harmony_core::{
@@ -25,6 +22,7 @@ use harmony_luau::{
     render_definition_file_with_support,
 };
 
+use crate::plugins::args;
 use crate::{
     plugins::db::{
         self,
@@ -182,7 +180,7 @@ fn has_many_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let target_ids: luau::Table = frame.args.read_named("target_ids")?;
-    let target_ids = parse_db_ids(frame.vm, &target_ids)?;
+    let target_ids = args::unique_ids(frame.vm, &target_ids)?;
     let db = frame.vm.data().get::<FavoritesModuleStore>()?.db()?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
@@ -237,53 +235,6 @@ fn list_ids_callback(
 
 fn parse_kind(value: &str) -> luau::runtime::Result<FavoriteKind> {
     FavoriteKind::try_from(value).map_err(crate::plugins::runtime_error)
-}
-
-fn parse_db_ids(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
-    let mut values = Vec::new();
-    for (key, value) in table.pairs_raw(vm)? {
-        let Some(index) = array_index(key) else {
-            continue;
-        };
-        let Some(id) = db_id_value(value)? else {
-            continue;
-        };
-        values.push((index, id));
-    }
-    values.sort_by_key(|(index, _)| *index);
-
-    let mut ids = Vec::new();
-    let mut seen = HashSet::new();
-    for (_, id) in values {
-        if seen.insert(id) {
-            ids.push(id);
-        }
-    }
-    Ok(ids)
-}
-
-fn array_index(value: luau::Value) -> Option<i64> {
-    match value {
-        luau::Value::Integer(value) if value > 0 => Some(value),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
-            Some(value as i64)
-        }
-        _ => None,
-    }
-}
-
-fn db_id_value(value: luau::Value) -> luau::runtime::Result<Option<DbId>> {
-    match value {
-        luau::Value::Integer(value) if value > 0 => Ok(Some(DbId(value))),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
-            Ok(Some(DbId(value as i64)))
-        }
-        luau::Value::Integer(_) | luau::Value::Number(_) => Ok(None),
-        other => Err(crate::plugins::runtime_error(format!(
-            "id entries must be positive integers, got {}",
-            other.type_name()
-        ))),
-    }
 }
 
 fn db_id_array(ids: Vec<DbId>) -> luau::OwnedTable {

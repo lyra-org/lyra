@@ -3,7 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use agdb::DbId;
@@ -35,6 +34,7 @@ use serde::{
     de::DeserializeOwned,
 };
 
+use crate::plugins::args;
 use crate::{
     STATE,
     plugins::db::{
@@ -427,7 +427,7 @@ fn upsert_personal_callback(
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
-        let track_db_id = require_positive_id(track_id, "track_id")?;
+        let track_db_id = args::positive_id(track_id, "track_id")?;
         let now = lyrics_service::now_ms().map_err(crate::plugins::runtime_error)?;
         let PersonalLyricsUploadInput {
             content_type,
@@ -463,7 +463,7 @@ fn delete_personal_for_track_callback(
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
-        let track_db_id = require_positive_id(track_id, "track_id")?;
+        let track_db_id = args::positive_id(track_id, "track_id")?;
         let mut db = STATE.db.write().await;
         let deleted = lyrics_service::delete_personal_lyrics_for_track_by_db_id(
             &mut db,
@@ -482,7 +482,7 @@ fn delete_for_track_callback(
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
-        let track_db_id = require_positive_id(track_id, "track_id")?;
+        let track_db_id = args::positive_id(track_id, "track_id")?;
         crate::services::auth::require_permission(&principal, db::Permission::ManageMetadata)
             .map_err(crate::plugins::runtime_error)?;
         let mut db = STATE.db.write().await;
@@ -532,7 +532,7 @@ fn has_many_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let track_ids_table: luau::Table = frame.args.read_named("track_ids")?;
-    let track_ids = parse_db_ids(frame.vm, &track_ids_table)?;
+    let track_ids = args::unique_ids(frame.vm, &track_ids_table)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -637,62 +637,6 @@ where
 {
     serde_json::from_value(harmony_serde::luau_to_json(vm, value, 0)?)
         .map_err(crate::plugins::runtime_error)
-}
-
-fn require_positive_id(value: i64, field_name: &str) -> luau::runtime::Result<DbId> {
-    if value <= 0 {
-        return Err(crate::plugins::runtime_error(format!(
-            "{field_name} must be a positive id"
-        )));
-    }
-    Ok(DbId(value))
-}
-
-fn parse_db_ids(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
-    let mut values = Vec::new();
-    for (key, value) in table.pairs_raw(vm)? {
-        let Some(index) = array_index(key) else {
-            continue;
-        };
-        let Some(id) = db_id_value(value)? else {
-            continue;
-        };
-        values.push((index, id));
-    }
-    values.sort_by_key(|(index, _)| *index);
-
-    let mut ids = Vec::new();
-    let mut seen = HashSet::new();
-    for (_, id) in values {
-        if seen.insert(id) {
-            ids.push(id);
-        }
-    }
-    Ok(ids)
-}
-
-fn array_index(value: luau::Value) -> Option<i64> {
-    match value {
-        luau::Value::Integer(index) if index > 0 => Some(index),
-        luau::Value::Number(index) if index.is_finite() && index.fract() == 0.0 && index > 0.0 => {
-            Some(index as i64)
-        }
-        _ => None,
-    }
-}
-
-fn db_id_value(value: luau::Value) -> luau::runtime::Result<Option<DbId>> {
-    let id = match value {
-        luau::Value::Integer(id) => id,
-        luau::Value::Number(id) if id.is_finite() && id.fract() == 0.0 => id as i64,
-        luau::Value::Nil => return Ok(None),
-        _ => return Err(crate::plugins::runtime_error("expected numeric id")),
-    };
-
-    if id <= 0 {
-        return Ok(None);
-    }
-    Ok(Some(DbId(id)))
 }
 
 impl LuauTypeInfo for PluginLyricWordInput {

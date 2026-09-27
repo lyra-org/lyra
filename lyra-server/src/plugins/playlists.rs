@@ -3,10 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::{
-    collections::HashSet,
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use agdb::{
     DbAny,
@@ -35,6 +32,7 @@ use harmony_luau::{
 };
 use serde::Serialize;
 
+use crate::plugins::args;
 use crate::{
     plugins::db::{
         self,
@@ -325,7 +323,7 @@ fn list_callback(frame: luau::AsyncCallFrame<'_>) -> luau::runtime::Result<luau:
 fn get_by_id_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let id = parse_resolve_id(frame.args.read_named::<luau::Value>("id")?)?;
+    let id = args::resolve_id(frame.args.read_named::<luau::Value>("id")?)?;
     let store = frame
         .vm
         .data()
@@ -385,7 +383,7 @@ fn list_owned_callback(
 fn get_owner_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let playlist_id = parse_resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
+    let playlist_id = args::resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
     let store = frame
         .vm
         .data()
@@ -433,7 +431,7 @@ fn get_owner_callback(
 fn get_tracks_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let playlist_id = parse_resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
+    let playlist_id = args::resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
     let store = frame
         .vm
         .data()
@@ -462,7 +460,7 @@ fn get_tracks_many_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let playlist_ids: luau::Table = frame.args.read_named("playlist_ids")?;
-    let playlist_ids = parse_db_ids(frame.vm, &playlist_ids)?;
+    let playlist_ids = args::unique_ids(frame.vm, &playlist_ids)?;
     let store = frame
         .vm
         .data()
@@ -567,7 +565,7 @@ fn update_callback(
 fn delete_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let playlist_id = parse_resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
+    let playlist_id = args::resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
     let db = frame.vm.data().get::<PlaylistsModuleStore>()?.db()?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
     Ok(luau::ScheduledFuture::new(async move {
@@ -592,8 +590,8 @@ fn delete_callback(
 fn add_track_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let playlist_id = parse_resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
-    let track_id = parse_resolve_id(frame.args.read_named::<luau::Value>("track_id")?)?;
+    let playlist_id = args::resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
+    let track_id = args::resolve_id(frame.args.read_named::<luau::Value>("track_id")?)?;
     let store = frame
         .vm
         .data()
@@ -643,7 +641,7 @@ fn add_track_callback(
 fn remove_track_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let playlist_id = parse_resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
+    let playlist_id = args::resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
     let entry_id: String = frame.args.read_named("entry_id")?;
     let db = frame.vm.data().get::<PlaylistsModuleStore>()?.db()?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
@@ -664,7 +662,7 @@ fn remove_track_callback(
 fn move_track_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let playlist_id = parse_resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
+    let playlist_id = args::resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
     let entry_id: String = frame.args.read_named("entry_id")?;
     let new_position = match frame.args.read_named::<luau::Value>("new_position")? {
         luau::Value::Integer(value) if value >= 0 => value as u64,
@@ -765,8 +763,8 @@ fn parse_create_request(
         name: parse_required_string_field(vm, &table, "name")?,
         description: parse_optional_string_field(vm, &table, "description")?,
         is_public: parse_optional_bool_field(vm, &table, "is_public")?,
-        created_at: parse_optional_u64_field(vm, &table, "created_at")?,
-        updated_at: parse_optional_u64_field(vm, &table, "updated_at")?,
+        created_at: args::optional_u64(vm, &table, "created_at")?,
+        updated_at: args::optional_u64(vm, &table, "updated_at")?,
     })
 }
 
@@ -780,33 +778,15 @@ fn parse_update_request(
                 "missing required field: playlist_id",
             ));
         }
-        value => parse_resolve_id(value)?,
+        value => args::resolve_id(value)?,
     };
     Ok(PlaylistUpdateRequest {
         playlist_id,
         name: parse_optional_string_field(vm, &table, "name")?,
         description: parse_optional_string_field(vm, &table, "description")?,
         is_public: parse_optional_bool_field(vm, &table, "is_public")?,
-        updated_at: parse_optional_u64_field(vm, &table, "updated_at")?,
+        updated_at: args::optional_u64(vm, &table, "updated_at")?,
     })
-}
-
-fn parse_optional_u64_field(
-    vm: &luau::Vm,
-    table: &luau::Table,
-    key: &str,
-) -> luau::runtime::Result<Option<u64>> {
-    match table.get_raw(vm, key)? {
-        luau::Value::Nil => Ok(None),
-        luau::Value::Integer(value) if value >= 0 => Ok(Some(value as u64)),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value >= 0.0 => {
-            Ok(Some(value as u64))
-        }
-        other => Err(crate::plugins::runtime_error(format!(
-            "{key} must be a non-negative integer, got {}",
-            other.type_name()
-        ))),
-    }
 }
 
 fn parse_required_string_field(
@@ -855,74 +835,6 @@ fn parse_optional_bool_field(
         luau::Value::Boolean(value) => Ok(Some(value)),
         other => Err(crate::plugins::runtime_error(format!(
             "{key} must be a boolean, got {}",
-            other.type_name()
-        ))),
-    }
-}
-
-fn parse_resolve_id(value: luau::Value) -> luau::runtime::Result<ResolveId> {
-    match value {
-        luau::Value::Integer(value) => Ok(ResolveId::DbId(DbId(value))),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 => {
-            Ok(ResolveId::DbId(DbId(value as i64)))
-        }
-        luau::Value::String(bytes) => {
-            let text = String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?;
-            if db::ROOT_COLLECTION_ALIASES.contains(&text.as_str()) {
-                Ok(ResolveId::Alias(text))
-            } else {
-                Ok(ResolveId::Nanoid(text))
-            }
-        }
-        other => Err(crate::plugins::runtime_error(format!(
-            "expected integer or string id, got {}",
-            other.type_name()
-        ))),
-    }
-}
-
-fn parse_db_ids(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
-    let mut values = Vec::new();
-    for (key, value) in table.pairs_raw(vm)? {
-        let Some(index) = array_index(key) else {
-            continue;
-        };
-        let Some(id) = db_id_value(value)? else {
-            continue;
-        };
-        values.push((index, id));
-    }
-    values.sort_by_key(|(index, _)| *index);
-
-    let mut ids = Vec::new();
-    let mut seen = HashSet::new();
-    for (_, id) in values {
-        if seen.insert(id) {
-            ids.push(id);
-        }
-    }
-    Ok(ids)
-}
-
-fn array_index(value: luau::Value) -> Option<i64> {
-    match value {
-        luau::Value::Integer(value) if value > 0 => Some(value),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
-            Some(value as i64)
-        }
-        _ => None,
-    }
-}
-
-fn db_id_value(value: luau::Value) -> luau::runtime::Result<Option<DbId>> {
-    match value {
-        luau::Value::Integer(value) if value > 0 => Ok(Some(DbId(value))),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
-            Ok(Some(DbId(value as i64)))
-        }
-        luau::Value::Integer(_) | luau::Value::Number(_) => Ok(None),
-        other => Err(crate::plugins::runtime_error(format!(
-            "id entries must be positive integers, got {}",
             other.type_name()
         ))),
     }
@@ -998,7 +910,7 @@ impl DescribeInterface for PlaylistUpdateRequest {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("PlaylistUpdateRequest", None);
         descriptor.fields.extend([
-            field("playlist_id", resolve_id_type()),
+            field("playlist_id", args::resolve_id_type()),
             field("name", Option::<String>::luau_type()),
             field("description", Option::<String>::luau_type()),
             field("is_public", Option::<bool>::luau_type()),
@@ -1026,10 +938,6 @@ fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
     }
 }
 
-fn resolve_id_type() -> LuauType {
-    LuauType::union(vec![i64::luau_type(), String::luau_type()])
-}
-
 #[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
@@ -1048,7 +956,7 @@ fn module_descriptor() -> ModuleDescriptor {
             ModuleFunctionDescriptor {
                 path: vec!["get_by_id"],
                 description: None,
-                params: vec![param("id", resolve_id_type())],
+                params: vec![param("id", args::resolve_id_type())],
                 returns: vec![Option::<PlaylistInfo>::luau_type()],
                 yields: true,
             },
@@ -1062,14 +970,14 @@ fn module_descriptor() -> ModuleDescriptor {
             ModuleFunctionDescriptor {
                 path: vec!["get_owner"],
                 description: Some("The owning user's public id."),
-                params: vec![param("playlist_id", resolve_id_type())],
+                params: vec![param("playlist_id", args::resolve_id_type())],
                 returns: vec![Option::<String>::luau_type()],
                 yields: true,
             },
             ModuleFunctionDescriptor {
                 path: vec!["get_tracks"],
                 description: None,
-                params: vec![param("playlist_id", resolve_id_type())],
+                params: vec![param("playlist_id", args::resolve_id_type())],
                 returns: vec![Vec::<PlaylistTrackLink>::luau_type()],
                 yields: true,
             },
@@ -1104,7 +1012,7 @@ fn module_descriptor() -> ModuleDescriptor {
                 description: Some(
                     "Returns true when deleted, or false if the playlist is missing or not owned by the caller.",
                 ),
-                params: vec![param("playlist_id", resolve_id_type())],
+                params: vec![param("playlist_id", args::resolve_id_type())],
                 returns: vec![bool::luau_type()],
                 yields: true,
             },
@@ -1114,8 +1022,8 @@ fn module_descriptor() -> ModuleDescriptor {
                     "Returns the entry ID, or nil if the playlist or track is missing or inaccessible.",
                 ),
                 params: vec![
-                    param("playlist_id", resolve_id_type()),
-                    param("track_id", resolve_id_type()),
+                    param("playlist_id", args::resolve_id_type()),
+                    param("track_id", args::resolve_id_type()),
                 ],
                 returns: vec![Option::<String>::luau_type()],
                 yields: true,
@@ -1126,7 +1034,7 @@ fn module_descriptor() -> ModuleDescriptor {
                     "Returns true when removed, or false if the playlist is not owned by the caller or the entry is not in it.",
                 ),
                 params: vec![
-                    param("playlist_id", resolve_id_type()),
+                    param("playlist_id", args::resolve_id_type()),
                     param("entry_id", String::luau_type()),
                 ],
                 returns: vec![bool::luau_type()],
@@ -1138,7 +1046,7 @@ fn module_descriptor() -> ModuleDescriptor {
                     "Moves an entry to a zero-based position, clamping past the end. Returns false if the playlist is not owned by the caller or the entry is not in it. A move to the current position succeeds.",
                 ),
                 params: vec![
-                    param("playlist_id", resolve_id_type()),
+                    param("playlist_id", args::resolve_id_type()),
                     param("entry_id", String::luau_type()),
                     param("new_position", u64::luau_type()),
                 ],

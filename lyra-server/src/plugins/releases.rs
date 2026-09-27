@@ -3,8 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashSet;
-
 use agdb::DbId;
 use harmony_core::{
     FunctionSpec,
@@ -26,6 +24,7 @@ use harmony_luau::{
     render_definition_file_with_support,
 };
 
+use crate::plugins::args;
 use crate::{
     plugins::db::{
         self,
@@ -33,8 +32,6 @@ use crate::{
         ListOptions,
         Release,
         ResolveId,
-        parse_sort_direction,
-        parse_sort_specs_tokens,
     },
     services::releases as release_service,
 };
@@ -134,7 +131,7 @@ fn list_callback(
     let scope = frame
         .args
         .read_optional_named::<luau::Value>("scope")?
-        .map(parse_resolve_id)
+        .map(args::resolve_id)
         .transpose()?;
     let store = frame
         .vm
@@ -188,7 +185,7 @@ fn query_callback(
             )
             .map_err(crate::plugins::runtime_error)
         }?;
-        query_result_table(result.entries, result.total_count, result.offset)?.into_luau_return()
+        args::page_table(result.entries, result.total_count, result.offset)?.into_luau_return()
     }))
 }
 
@@ -236,7 +233,7 @@ fn list_many_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids_table: luau::Table = frame.args.read_named("ids")?;
-    let ids = parse_db_ids(frame.vm, &ids_table)?;
+    let ids = args::unique_ids(frame.vm, &ids_table)?;
     let store = frame
         .vm
         .data()
@@ -361,192 +358,16 @@ fn parse_query_options(
 ) -> luau::runtime::Result<ReleaseQueryRequest> {
     let scope = match opts.get_raw(vm, "scope")? {
         luau::Value::Nil => None,
-        value => Some(parse_resolve_id(value)?),
+        value => Some(args::resolve_id(value)?),
     };
-    let artist_ids = parse_optional_db_ids(vm, opts, "artist_ids")?;
-    let list_options = parse_list_options(vm, opts)?;
+    let artist_ids = args::optional_unique_ids(vm, opts, "artist_ids")?;
+    let list_options = args::list_options(vm, opts)?;
 
     Ok(ReleaseQueryRequest {
         scope,
         artist_ids,
         list_options,
     })
-}
-
-fn parse_list_options(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<ListOptions> {
-    let sort_by = match table.get_raw(vm, "sort_by")? {
-        luau::Value::Nil => None,
-        luau::Value::Table(table) => {
-            let mut values = Vec::new();
-            for (_, value) in table.pairs_raw(vm)? {
-                let luau::Value::String(bytes) = value else {
-                    return Err(crate::plugins::runtime_error(
-                        "sort_by entries must be strings",
-                    ));
-                };
-                values.push(String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?);
-            }
-            Some(values)
-        }
-        other => {
-            return Err(crate::plugins::runtime_error(format!(
-                "sort_by must be an array of strings, got {}",
-                other.type_name()
-            )));
-        }
-    };
-    let sort_order = match table.get_raw(vm, "sort_order")? {
-        luau::Value::Nil => None,
-        luau::Value::String(bytes) => {
-            Some(String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?)
-        }
-        other => {
-            return Err(crate::plugins::runtime_error(format!(
-                "sort_order must be a string, got {}",
-                other.type_name()
-            )));
-        }
-    };
-    let direction =
-        parse_sort_direction(sort_order, true).map_err(crate::plugins::runtime_error)?;
-    let sort = parse_sort_specs_tokens(sort_by, direction, |_| true, false)
-        .map_err(crate::plugins::runtime_error)?;
-    let offset = parse_optional_u64(vm, table, "offset")?;
-    let limit = parse_optional_u64(vm, table, "limit")?;
-    let search_term = match table.get_raw(vm, "search_term")? {
-        luau::Value::Nil => None,
-        luau::Value::String(bytes) => {
-            Some(String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?)
-        }
-        other => {
-            return Err(crate::plugins::runtime_error(format!(
-                "search_term must be a string, got {}",
-                other.type_name()
-            )));
-        }
-    };
-
-    Ok(ListOptions {
-        sort,
-        offset,
-        limit,
-        search_term,
-    })
-}
-
-fn parse_optional_db_ids(
-    vm: &luau::Vm,
-    table: &luau::Table,
-    key: &str,
-) -> luau::runtime::Result<Vec<DbId>> {
-    match table.get_raw(vm, key)? {
-        luau::Value::Nil => Ok(Vec::new()),
-        luau::Value::Table(table) => parse_db_ids(vm, &table),
-        other => Err(crate::plugins::runtime_error(format!(
-            "{key} must be an array of positive integer ids, got {}",
-            other.type_name()
-        ))),
-    }
-}
-
-fn parse_db_ids(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
-    let mut values = Vec::new();
-    for (key, value) in table.pairs_raw(vm)? {
-        let Some(index) = array_index(key) else {
-            continue;
-        };
-        let Some(id) = db_id_value(value)? else {
-            continue;
-        };
-        values.push((index, id));
-    }
-    values.sort_by_key(|(index, _)| *index);
-
-    let mut ids = Vec::new();
-    let mut seen = HashSet::new();
-    for (_, id) in values {
-        if seen.insert(id) {
-            ids.push(id);
-        }
-    }
-    Ok(ids)
-}
-
-fn array_index(value: luau::Value) -> Option<i64> {
-    match value {
-        luau::Value::Integer(value) if value > 0 => Some(value),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
-            Some(value as i64)
-        }
-        _ => None,
-    }
-}
-
-fn db_id_value(value: luau::Value) -> luau::runtime::Result<Option<DbId>> {
-    match value {
-        luau::Value::Integer(value) if value > 0 => Ok(Some(DbId(value))),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
-            Ok(Some(DbId(value as i64)))
-        }
-        luau::Value::Integer(_) | luau::Value::Number(_) => Ok(None),
-        other => Err(crate::plugins::runtime_error(format!(
-            "id entries must be positive integers, got {}",
-            other.type_name()
-        ))),
-    }
-}
-
-fn parse_resolve_id(value: luau::Value) -> luau::runtime::Result<ResolveId> {
-    match value {
-        luau::Value::Integer(value) => Ok(ResolveId::DbId(DbId(value))),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 => {
-            Ok(ResolveId::DbId(DbId(value as i64)))
-        }
-        luau::Value::String(bytes) => {
-            let text = String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?;
-            if db::ROOT_COLLECTION_ALIASES.contains(&text.as_str()) {
-                Ok(ResolveId::Alias(text))
-            } else {
-                Ok(ResolveId::Nanoid(text))
-            }
-        }
-        other => Err(crate::plugins::runtime_error(format!(
-            "expected integer or string id, got {}",
-            other.type_name()
-        ))),
-    }
-}
-
-fn parse_optional_u64(
-    vm: &luau::Vm,
-    table: &luau::Table,
-    key: &str,
-) -> luau::runtime::Result<Option<u64>> {
-    match table.get_raw(vm, key)? {
-        luau::Value::Nil => Ok(None),
-        luau::Value::Integer(value) if value >= 0 => Ok(Some(value as u64)),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value >= 0.0 => {
-            Ok(Some(value as u64))
-        }
-        _ => Err(crate::plugins::runtime_error(format!(
-            "{key} must be a non-negative integer when provided"
-        ))),
-    }
-}
-
-fn query_result_table(
-    entries: Vec<Release>,
-    total_count: u64,
-    offset: u64,
-) -> luau::runtime::Result<luau::OwnedTable> {
-    let mut table = luau::OwnedTable::with_capacity(0, 3);
-    table.set_field(
-        "entities",
-        harmony_luau::serializable_to_luau_owned(entries)?,
-    );
-    table.set_field("total_count", luau::Value::from(total_count as i64));
-    table.set_field("offset", luau::Value::from(offset as i64));
-    Ok(table)
 }
 
 #[cfg(feature = "docgen")]
@@ -575,19 +396,6 @@ fn described_field(name: &'static str, ty: LuauType, description: &'static str) 
         ty,
         description: Some(description),
     }
-}
-
-#[cfg(feature = "docgen")]
-fn resolve_id_type() -> LuauType {
-    LuauType::union(vec![i64::luau_type(), String::luau_type()])
-}
-
-#[cfg(feature = "docgen")]
-fn sort_order_type() -> LuauType {
-    LuauType::union(vec![
-        LuauType::string_literal("ascending"),
-        LuauType::string_literal("descending"),
-    ])
 }
 
 #[cfg(feature = "docgen")]
@@ -649,10 +457,10 @@ fn release_type_aliases() -> Vec<TypeAliasDescriptor> {
 fn release_query_options() -> InterfaceDescriptor {
     let mut descriptor = InterfaceDescriptor::new("ReleaseQueryOptions", None);
     descriptor.fields.extend([
-        field("scope", LuauType::optional(resolve_id_type())),
+        field("scope", LuauType::optional(args::resolve_id_type())),
         field("artist_ids", Option::<Vec<u64>>::luau_type()),
         field("sort_by", Option::<Vec<String>>::luau_type()),
-        field("sort_order", LuauType::optional(sort_order_type())),
+        field("sort_order", LuauType::optional(args::sort_order_type())),
         field("offset", Option::<i64>::luau_type()),
         field("limit", Option::<i64>::luau_type()),
         field("search_term", Option::<String>::luau_type()),
@@ -682,7 +490,7 @@ fn module_descriptor() -> ModuleDescriptor {
             ModuleFunctionDescriptor {
                 path: vec!["list"],
                 description: None,
-                params: vec![param("scope", LuauType::optional(resolve_id_type()))],
+                params: vec![param("scope", LuauType::optional(args::resolve_id_type()))],
                 returns: vec![LuauType::array(LuauType::named("Release"))],
                 yields: true,
             },

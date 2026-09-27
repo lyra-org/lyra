@@ -26,6 +26,7 @@ use harmony_luau::{
     TypeAliasDescriptor,
 };
 
+use crate::plugins::args;
 #[cfg(feature = "docgen")]
 use crate::services::entities::{
     ArtistProjectionIncludes,
@@ -223,7 +224,7 @@ fn get_type_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let id_value: luau::Value = frame.args.read_named("id")?;
-    let resolve_id = parse_resolve_id(id_value)?;
+    let resolve_id = args::resolve_id(id_value)?;
     let store = frame
         .vm
         .data()
@@ -367,7 +368,7 @@ fn parse_query_request(
     vm: &luau::Vm,
     request: &luau::Table,
 ) -> luau::runtime::Result<(ResolveId, Vec<EntityInclude>, Option<agdb::DbId>)> {
-    let id = parse_resolve_id(required_value(vm, request, "id")?)?;
+    let id = args::resolve_id(required_value(vm, request, "id")?)?;
     let includes = parse_includes(vm, request.get_raw(vm, "include")?)?;
     let library_id = parse_optional_db_id(vm, request, "library_id")?;
     Ok((id, includes, library_id))
@@ -393,7 +394,7 @@ fn parse_query_many_request(
                     }
                     _ => continue,
                 };
-                ids.push((key, parse_resolve_id(value)?));
+                ids.push((key, args::resolve_id(value)?));
             }
             ids
         }
@@ -454,27 +455,6 @@ fn parse_includes(vm: &luau::Vm, value: luau::Value) -> luau::runtime::Result<Ve
         }
     }
     Ok(includes)
-}
-
-fn parse_resolve_id(value: luau::Value) -> luau::runtime::Result<ResolveId> {
-    match value {
-        luau::Value::Integer(value) => Ok(ResolveId::DbId(agdb::DbId(value))),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 => {
-            Ok(ResolveId::DbId(agdb::DbId(value as i64)))
-        }
-        luau::Value::String(bytes) => {
-            let text = String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?;
-            if db::ROOT_COLLECTION_ALIASES.contains(&text.as_str()) {
-                Ok(ResolveId::Alias(text))
-            } else {
-                Ok(ResolveId::Nanoid(text))
-            }
-        }
-        other => Err(crate::plugins::runtime_error(format!(
-            "expected integer or string id, got {}",
-            other.type_name()
-        ))),
-    }
 }
 
 fn parse_optional_db_id(
@@ -588,11 +568,6 @@ fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
         ty,
         description: None,
     }
-}
-
-#[cfg(feature = "docgen")]
-fn resolve_id_type() -> LuauType {
-    LuauType::union(vec![i64::luau_type(), String::luau_type()])
 }
 
 #[cfg(feature = "docgen")]
@@ -724,7 +699,7 @@ fn entity_type_aliases() -> Vec<TypeAliasDescriptor> {
         TypeAliasDescriptor::new(
             "EntityQueryRequest",
             LuauType::object(vec![
-                field("id", resolve_id_type()),
+                field("id", args::resolve_id_type()),
                 field(
                     "include",
                     LuauType::optional(LuauType::named("EntityIncludeSelector")),
@@ -736,7 +711,7 @@ fn entity_type_aliases() -> Vec<TypeAliasDescriptor> {
         TypeAliasDescriptor::new(
             "EntityQueryManyRequest",
             LuauType::object(vec![
-                field("ids", LuauType::array(resolve_id_type())),
+                field("ids", LuauType::array(args::resolve_id_type())),
                 field(
                     "include",
                     LuauType::optional(LuauType::named("EntityIncludeSelector")),
@@ -836,7 +811,7 @@ fn module_descriptor() -> ModuleDescriptor {
             ModuleFunctionDescriptor {
                 path: vec!["get_type"],
                 description: None,
-                params: vec![param("id", resolve_id_type())],
+                params: vec![param("id", args::resolve_id_type())],
                 returns: vec![Option::<String>::luau_type()],
                 yields: true,
             },

@@ -35,6 +35,7 @@ use harmony_luau::{
     render_definition_file_with_support,
 };
 
+use crate::plugins::args;
 use crate::plugins::db::{
     self,
     Cover,
@@ -120,7 +121,7 @@ fn get_playlist_sources_many_spec() -> FunctionSpec {
 fn get_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let id = parse_resolve_id(frame.args.read_named::<luau::Value>("id")?)?;
+    let id = args::resolve_id(frame.args.read_named::<luau::Value>("id")?)?;
     let db = frame.vm.data().get::<CoversModuleStore>()?.db()?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -153,7 +154,7 @@ fn get_many_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids: luau::Table = frame.args.read_named("ids")?;
-    let item_ids = parse_db_ids(frame.vm, &ids)?;
+    let item_ids = args::unique_ids(frame.vm, &ids)?;
     let db = frame.vm.data().get::<CoversModuleStore>()?.db()?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -186,7 +187,7 @@ fn get_many_callback(
 fn get_playlist_sources_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let id = parse_resolve_id(frame.args.read_named::<luau::Value>("id")?)?;
+    let id = args::resolve_id(frame.args.read_named::<luau::Value>("id")?)?;
     let db = frame.vm.data().get::<CoversModuleStore>()?.db()?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -218,7 +219,7 @@ fn get_playlist_sources_many_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids: luau::Table = frame.args.read_named("ids")?;
-    let playlist_ids = parse_db_ids(frame.vm, &ids)?;
+    let playlist_ids = args::unique_ids(frame.vm, &ids)?;
     let db = frame.vm.data().get::<CoversModuleStore>()?.db()?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -420,74 +421,6 @@ fn cover_to_table(owner_db_id: DbId, cover: Cover) -> luau::OwnedTable {
     table
 }
 
-fn parse_resolve_id(value: luau::Value) -> luau::runtime::Result<ResolveId> {
-    match value {
-        luau::Value::Integer(value) => Ok(ResolveId::DbId(DbId(value))),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 => {
-            Ok(ResolveId::DbId(DbId(value as i64)))
-        }
-        luau::Value::String(bytes) => {
-            let text = String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?;
-            if db::ROOT_COLLECTION_ALIASES.contains(&text.as_str()) {
-                Ok(ResolveId::Alias(text))
-            } else {
-                Ok(ResolveId::Nanoid(text))
-            }
-        }
-        other => Err(crate::plugins::runtime_error(format!(
-            "expected integer or string id, got {}",
-            other.type_name()
-        ))),
-    }
-}
-
-fn parse_db_ids(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
-    let mut values = Vec::new();
-    for (key, value) in table.pairs_raw(vm)? {
-        let Some(index) = array_index(key) else {
-            continue;
-        };
-        let Some(id) = db_id_value(value)? else {
-            continue;
-        };
-        values.push((index, id));
-    }
-    values.sort_by_key(|(index, _)| *index);
-
-    let mut ids = Vec::new();
-    let mut seen = HashSet::new();
-    for (_, id) in values {
-        if seen.insert(id) {
-            ids.push(id);
-        }
-    }
-    Ok(ids)
-}
-
-fn array_index(value: luau::Value) -> Option<i64> {
-    match value {
-        luau::Value::Integer(value) if value > 0 => Some(value),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
-            Some(value as i64)
-        }
-        _ => None,
-    }
-}
-
-fn db_id_value(value: luau::Value) -> luau::runtime::Result<Option<DbId>> {
-    match value {
-        luau::Value::Integer(value) if value > 0 => Ok(Some(DbId(value))),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
-            Ok(Some(DbId(value as i64)))
-        }
-        luau::Value::Integer(_) | luau::Value::Number(_) => Ok(None),
-        other => Err(crate::plugins::runtime_error(format!(
-            "id entries must be positive integers, got {}",
-            other.type_name()
-        ))),
-    }
-}
-
 #[cfg(feature = "docgen")]
 impl LuauTypeInfo for CoverInfo {
     fn luau_type() -> LuauType {
@@ -541,11 +474,6 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
 }
 
 #[cfg(feature = "docgen")]
-fn resolve_id_type() -> LuauType {
-    LuauType::union(vec![i64::luau_type(), String::luau_type()])
-}
-
-#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Covers",
@@ -556,7 +484,7 @@ fn module_descriptor() -> ModuleDescriptor {
             ModuleFunctionDescriptor {
                 path: vec!["get"],
                 description: None,
-                params: vec![param("id", resolve_id_type())],
+                params: vec![param("id", args::resolve_id_type())],
                 returns: vec![Option::<CoverInfo>::luau_type()],
                 yields: true,
             },
@@ -575,7 +503,7 @@ fn module_descriptor() -> ModuleDescriptor {
                 description: Some(
                     "Returns up to four release covers that make up a playlist's collage, in display order. Unknown or non-playlist ids yield an empty array.",
                 ),
-                params: vec![param("id", resolve_id_type())],
+                params: vec![param("id", args::resolve_id_type())],
                 returns: vec![Vec::<CoverInfo>::luau_type()],
                 yields: true,
             },

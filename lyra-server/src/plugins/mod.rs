@@ -12,6 +12,7 @@ use harmony_luau::{
 };
 
 pub(crate) mod api;
+pub(crate) mod args;
 pub(crate) mod artists;
 pub(crate) mod auth;
 pub(crate) mod bootstrap;

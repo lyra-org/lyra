@@ -8,7 +8,6 @@ use std::{
     sync::Arc,
 };
 
-use agdb::DbId;
 use harmony_core::{
     CallContext,
     CapabilityId,
@@ -42,6 +41,7 @@ use serde::{
     de::DeserializeOwned,
 };
 
+use crate::plugins::args;
 #[cfg(feature = "docgen")]
 use crate::services::playback_sessions::PlaybackUpdatePayload;
 use crate::{
@@ -278,7 +278,7 @@ fn report_session_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let session_key = require_non_empty_string(request.session_key, "session_key")?;
-        let track_db_id = require_positive_id(request.track_id, "track_id")?;
+        let track_db_id = args::positive_id(request.track_id, "track_id")?;
         let active_event = playbacks::classify_active_event(request.event)
             .map_err(crate::plugins::runtime_error)?;
         let current_ms = playbacks::now_ms().map_err(crate::plugins::runtime_error)?;
@@ -569,15 +569,6 @@ fn playback_mutation(
         duration_ms,
         state,
     }
-}
-
-fn require_positive_id(value: i64, field_name: &str) -> luau::runtime::Result<DbId> {
-    if value <= 0 {
-        return Err(crate::plugins::runtime_error(format!(
-            "{field_name} must be a positive id"
-        )));
-    }
-    Ok(DbId(value))
 }
 
 fn require_non_empty_string(value: String, field_name: &str) -> luau::runtime::Result<String> {

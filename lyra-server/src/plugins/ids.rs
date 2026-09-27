@@ -25,6 +25,7 @@ use harmony_luau::{
 
 use agdb::DbId;
 
+use crate::plugins::args;
 use crate::plugins::db;
 
 struct IdsModule;
@@ -88,7 +89,7 @@ fn get_ids_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let table: luau::Table = frame.args.read_named("db_ids")?;
-    let ids = parse_db_ids(frame.vm, &table)?;
+    let ids = args::unique_ids(frame.vm, &table)?;
     let store = frame
         .vm
         .data()
@@ -205,27 +206,6 @@ impl IdsLookupModuleStore {
         db::lookup::find_node_ids_by_ids(&*db, ids).map_err(crate::plugins::runtime_error)
     }
 }
-fn parse_db_ids(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
-    let mut entries = table
-        .pairs_raw(vm)?
-        .into_iter()
-        .filter_map(|(key, value)| Some((sequence_index(key)?, integer_value(value)?)))
-        .collect::<Vec<_>>();
-    entries.sort_by_key(|(index, _)| *index);
-
-    let mut ids = Vec::new();
-    let mut seen = HashSet::new();
-    for (_, id_value) in entries {
-        if id_value <= 0 {
-            continue;
-        }
-        let id = DbId(id_value);
-        if seen.insert(id) {
-            ids.push(id);
-        }
-    }
-    Ok(ids)
-}
 fn parse_strings(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<String>> {
     let mut entries = Vec::new();
     for (key, value) in table.pairs_raw(vm)? {
@@ -255,15 +235,6 @@ fn sequence_index(value: luau::Value) -> Option<i64> {
     match value {
         luau::Value::Integer(value) if value > 0 => Some(value),
         luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
-            Some(value as i64)
-        }
-        _ => None,
-    }
-}
-fn integer_value(value: luau::Value) -> Option<i64> {
-    match value {
-        luau::Value::Integer(value) => Some(value),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 => {
             Some(value as i64)
         }
         _ => None,
