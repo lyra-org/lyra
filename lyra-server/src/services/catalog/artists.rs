@@ -20,6 +20,7 @@ use super::{
     Direction,
     SortSpec,
     Viewer,
+    all_releases,
     credited_owners,
     pipeline::{
         Catalog,
@@ -28,6 +29,7 @@ use super::{
         SortKey,
         SortValue,
     },
+    scoped_releases,
     track_totals,
     tracks_of_releases,
 };
@@ -139,10 +141,9 @@ impl Catalog for Artists {
         viewer: &Viewer,
         filter: &ArtistFilter,
     ) -> Result<Vec<DbId>, CatalogError> {
-        let visible = viewer.visible_releases(db)?;
         let mut artists = Candidates::default();
-        if visible.is_some() || filter.narrows_credits() {
-            artists.restrict(credited_artists(db, visible, filter)?);
+        if viewer.visible_releases(db)?.is_some() || filter.narrows_credits() {
+            artists.restrict(credited_artists(db, viewer, filter)?);
         }
         if let Some(ids) = &filter.ids {
             artists.restrict(db::graph::existing_ids(db, ids, "Artist")?);
@@ -276,28 +277,17 @@ impl Catalog for Artists {
 /// The artists holding a credit the filter allows on an owner the viewer can see.
 fn credited_artists(
     db: &DbAny,
-    visible: Option<HashSet<DbId>>,
+    viewer: &Viewer,
     filter: &ArtistFilter,
 ) -> anyhow::Result<HashSet<DbId>> {
-    let mut releases = Candidates::default();
-    if let Some(visible) = visible {
-        releases.restrict(visible);
-    }
-    if let Some(library) = filter.library {
-        let mut library_releases = Vec::new();
-        for library in db::graph::existing_ids(db, &[library], "Library")? {
-            library_releases.extend(db::graph::neighbor_ids(db, library, "Release")?);
-        }
-        releases.restrict(library_releases);
-    }
-    if let Some(ids) = &filter.releases {
-        releases.restrict(db::graph::existing_ids(db, ids, "Release")?);
-    }
-    if !filter.genres.is_empty() {
-        let genres = db::graph::existing_ids(db, &filter.genres, "Genre")?;
-        releases.restrict(db::genres::release_ids_matching_genre_ids(db, &genres)?);
-    }
-    let releases = releases.resolve(&[], || db::graph::neighbor_ids(db, "releases", "Release"))?;
+    let releases = scoped_releases(
+        db,
+        viewer,
+        filter.library,
+        filter.releases.as_deref(),
+        &filter.genres,
+    )?;
+    let releases = releases.resolve(&[], || all_releases(db))?;
     let mut tracks = Candidates::default();
     tracks.restrict(tracks_of_releases(db, releases.iter().copied())?);
     if let Some(ids) = &filter.tracks {

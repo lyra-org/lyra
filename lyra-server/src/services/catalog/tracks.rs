@@ -29,6 +29,7 @@ use super::{
         SortKey,
         SortValue,
     },
+    scoped_releases,
     tracks_of_releases,
 };
 use crate::db::{
@@ -153,25 +154,13 @@ impl Catalog for Tracks {
         viewer: &Viewer,
         filter: &TrackFilter,
     ) -> Result<Vec<DbId>, CatalogError> {
-        let mut releases = Candidates::default();
-        if let Some(visible) = viewer.visible_releases(db)? {
-            releases.restrict(visible);
-        }
-        if let Some(library) = filter.library {
-            let mut library_releases = Vec::new();
-            for library in db::graph::existing_ids(db, &[library], "Library")? {
-                library_releases.extend(db::graph::neighbor_ids(db, library, "Release")?);
-            }
-            releases.restrict(library_releases);
-        }
-        if let Some(ids) = &filter.releases {
-            releases.restrict(db::graph::existing_ids(db, ids, "Release")?);
-        }
-        if !filter.genres.is_empty() {
-            let genres = db::graph::existing_ids(db, &filter.genres, "Genre")?;
-            releases.restrict(db::genres::release_ids_matching_genre_ids(db, &genres)?);
-        }
-
+        let releases = scoped_releases(
+            db,
+            viewer,
+            filter.library,
+            filter.releases.as_deref(),
+            &filter.genres,
+        )?;
         let mut tracks = Candidates::default();
         if let Some(releases) = releases.ids() {
             tracks.restrict(tracks_of_releases(db, releases.iter().copied())?);

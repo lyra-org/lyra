@@ -4,14 +4,14 @@
 // www.meshiplaw.com/lyra.
 
 use crate::{
-    db,
     routes::AppError,
+    services::catalog::Direction,
 };
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct RouteSortSpec<K> {
     pub(crate) key: K,
-    pub(crate) direction: db::SortDirection,
+    pub(crate) direction: Direction,
 }
 
 pub(crate) fn parse_route_sort_specs<K>(
@@ -20,13 +20,11 @@ pub(crate) fn parse_route_sort_specs<K>(
     map_token: impl Fn(&str) -> Option<K>,
     supported_values: &'static str,
 ) -> Result<Vec<RouteSortSpec<K>>, AppError> {
-    let direction = db::parse_sort_direction(sort_order, true).map_err(|err| match err {
-        db::SortSpecParseError::UnsupportedSortOrder(raw) => AppError::bad_request(format!(
-            "Unsupported sort_order value: {}. Supported values: ascending, descending",
-            raw
-        )),
-        other => AppError::bad_request(other.to_string()),
-    })?;
+    let direction = sort_order
+        .as_deref()
+        .map(Direction::parse)
+        .transpose()?
+        .unwrap_or(Direction::Ascending);
 
     let mut sort = Vec::new();
     let mut unknown = Vec::new();

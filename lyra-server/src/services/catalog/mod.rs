@@ -6,6 +6,7 @@
 //! Catalog queries: every catalog entity is filtered, sorted and paged by [`pipeline`].
 
 pub(crate) mod artists;
+pub(crate) mod genres;
 pub(crate) mod pipeline;
 pub(crate) mod releases;
 pub(crate) mod tracks;
@@ -105,7 +106,7 @@ impl Direction {
         }
     }
 
-    fn apply(self, ordering: Ordering) -> Ordering {
+    pub(crate) fn apply(self, ordering: Ordering) -> Ordering {
         match self {
             Self::Ascending => ordering,
             Self::Descending => ordering.reverse(),
@@ -193,6 +194,40 @@ impl ArtistCredit {
         }
         Ok(matching)
     }
+}
+
+/// The releases the viewer can see, narrowed to `library`, to `releases` and to releases in any
+/// of `genres` when each is given. Ids that name nothing are dropped.
+pub(crate) fn scoped_releases(
+    db: &DbAny,
+    viewer: &Viewer,
+    library: Option<DbId>,
+    releases: Option<&[DbId]>,
+    genres: &[DbId],
+) -> anyhow::Result<Candidates> {
+    let mut scoped = Candidates::default();
+    if let Some(visible) = viewer.visible_releases(db)? {
+        scoped.restrict(visible);
+    }
+    if let Some(library) = library {
+        let mut library_releases = Vec::new();
+        for library in db::graph::existing_ids(db, &[library], "Library")? {
+            library_releases.extend(db::graph::neighbor_ids(db, library, "Release")?);
+        }
+        scoped.restrict(library_releases);
+    }
+    if let Some(releases) = releases {
+        scoped.restrict(db::graph::existing_ids(db, releases, "Release")?);
+    }
+    if !genres.is_empty() {
+        let genres = db::graph::existing_ids(db, genres, "Genre")?;
+        scoped.restrict(db::genres::release_ids_matching_genre_ids(db, &genres)?);
+    }
+    Ok(scoped)
+}
+
+pub(crate) fn all_releases(db: &DbAny) -> anyhow::Result<Vec<DbId>> {
+    db::graph::neighbor_ids(db, "releases", "Release")
 }
 
 /// The owners of kind `Owner` that credit any of `artists`.

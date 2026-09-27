@@ -1481,12 +1481,11 @@ mod benches {
         new_test_db,
         test_user,
     };
+    use crate::services::catalog::artists::ArtistKey;
 
     struct ArtistSortBench {
         db: DbAny,
-        user_db_id: DbId,
-        principal: Principal,
-        artists: Vec<db::Artist>,
+        viewer: catalog::Viewer,
     }
 
     fn update_track_duration(db: &mut DbAny, track_db_id: DbId, duration_ms: u64) {
@@ -1538,7 +1537,6 @@ mod benches {
         let mut db = new_test_db().unwrap();
         let user_db_id =
             db::users::create(&mut db, &test_user("artist-sort-bench").unwrap()).unwrap();
-        let mut artists = Vec::with_capacity(artist_count);
         for artist_idx in 0..artist_count {
             let artist_db_id = insert_artist(&mut db, &format!("Artist {artist_idx:04}")).unwrap();
             for release_idx in 0..releases_per_artist {
@@ -1576,77 +1574,47 @@ mod benches {
                     connect(&mut db, release_db_id, track_db_id).unwrap();
                 }
             }
-            artists.push(
-                db::artists::get_by_id(&db, artist_db_id)
-                    .unwrap()
-                    .expect("artist exists"),
-            );
         }
 
-        ArtistSortBench {
-            db,
+        let principal = Principal::for_user(
+            &db,
             user_db_id,
-            principal: Principal::for_user(
-                &db,
-                user_db_id,
-                vec![db::Permission::Admin],
-                HashSet::new(),
-            ),
-            artists,
-        }
+            vec![db::Permission::Admin],
+            Default::default(),
+        );
+        let viewer = catalog::Viewer::user(&db, principal).unwrap();
+        ArtistSortBench { db, viewer }
+    }
+
+    fn bench_order(b: &mut Bencher, setup: &ArtistSortBench, sort: catalog::SortSpec<ArtistKey>) {
+        let mut query = catalog::Query::<Artists>::new(ArtistFilter::default());
+        query.sort = sort;
+        b.iter(|| catalog::order(&setup.db, &setup.viewer, black_box(&query)).unwrap());
     }
 
     #[bench]
     fn route_sort_artists_sort_name_500(b: &mut Bencher) {
         let setup = seed_artist_sort_bench(500, 0, 0, 0);
-        let sort = default_artist_sort();
-        b.iter(|| {
-            query_artist_route_items(
-                &setup.db,
-                black_box(setup.artists.clone()),
-                &sort,
-                None,
-                &setup.principal,
-            )
-            .unwrap()
-        });
+        bench_order(b, &setup, Vec::new());
     }
 
     #[bench]
     fn route_sort_artists_total_duration_100_artists_2000_tracks(b: &mut Bencher) {
         let setup = seed_artist_sort_bench(100, 5, 4, 0);
-        let sort = vec![ArtistRouteSortSpec {
-            key: ArtistRouteSortKey::TotalDuration,
-            direction: SortDirection::Descending,
-        }];
-        b.iter(|| {
-            query_artist_route_items(
-                &setup.db,
-                black_box(setup.artists.clone()),
-                &sort,
-                None,
-                &setup.principal,
-            )
-            .unwrap()
-        });
+        bench_order(
+            b,
+            &setup,
+            vec![(ArtistKey::TotalDuration, catalog::Direction::Descending)],
+        );
     }
 
     #[bench]
     fn route_sort_artists_listen_count_100_artists_2000_listens(b: &mut Bencher) {
         let setup = seed_artist_sort_bench(100, 5, 4, 1);
-        let sort = vec![ArtistRouteSortSpec {
-            key: ArtistRouteSortKey::ListenCount,
-            direction: SortDirection::Descending,
-        }];
-        b.iter(|| {
-            query_artist_route_items(
-                &setup.db,
-                black_box(setup.artists.clone()),
-                &sort,
-                None,
-                &setup.principal,
-            )
-            .unwrap()
-        });
+        bench_order(
+            b,
+            &setup,
+            vec![(ArtistKey::ListenCount, catalog::Direction::Descending)],
+        );
     }
 }

@@ -252,18 +252,6 @@ pub(crate) use ids::{
     ResolveId,
 };
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum SortDirection {
-    Ascending,
-    Descending,
-}
-
-#[derive(Clone, Debug, thiserror::Error)]
-pub(crate) enum SortSpecParseError {
-    #[error("unsupported sort_order value: {0}")]
-    UnsupportedSortOrder(String),
-}
-
 /// Deduplicate a slice of `DbId`s, discarding non-positive IDs and preserving
 /// insertion order. Used by batch-fetch helpers in tracks, artists, and covers.
 pub(crate) fn dedup_positive_ids(ids: &[DbId]) -> Vec<DbId> {
@@ -285,34 +273,6 @@ pub(crate) fn compare_option<T: Ord>(a: &Option<T>, b: &Option<T>) -> Ordering {
         (Some(_), None) => Ordering::Less,
         (None, Some(_)) => Ordering::Greater,
         (None, None) => Ordering::Equal,
-    }
-}
-
-/// Apply direction to an ordering.
-pub(crate) fn apply_direction(ord: Ordering, direction: SortDirection) -> Ordering {
-    match direction {
-        SortDirection::Ascending => ord,
-        SortDirection::Descending => ord.reverse(),
-    }
-}
-
-/// Parse a sort direction from a raw string, returning an error for unrecognised
-/// values when `strict` is `true`.
-pub(crate) fn parse_sort_direction(
-    raw: Option<String>,
-    strict: bool,
-) -> Result<SortDirection, SortSpecParseError> {
-    match raw {
-        None => Ok(SortDirection::Ascending),
-        Some(raw) if raw.eq_ignore_ascii_case("ascending") => Ok(SortDirection::Ascending),
-        Some(raw) if raw.eq_ignore_ascii_case("descending") => Ok(SortDirection::Descending),
-        Some(raw) => {
-            if strict {
-                Err(SortSpecParseError::UnsupportedSortOrder(raw))
-            } else {
-                Ok(SortDirection::Ascending)
-            }
-        }
     }
 }
 

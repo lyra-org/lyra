@@ -1378,11 +1378,11 @@ mod benches {
         new_test_db,
         test_user,
     };
+    use crate::services::catalog::releases::ReleaseKey;
 
     struct ReleaseSortBench {
         db: DbAny,
-        user_db_id: DbId,
-        releases: Vec<db::Release>,
+        viewer: catalog::Viewer,
     }
 
     fn update_track_duration(db: &mut DbAny, track_db_id: DbId, duration_ms: u64) {
@@ -1433,7 +1433,6 @@ mod benches {
         let mut db = new_test_db().unwrap();
         let user_db_id =
             db::users::create(&mut db, &test_user("release-sort-bench").unwrap()).unwrap();
-        let mut releases = Vec::with_capacity(release_count);
         for release_idx in 0..release_count {
             let release_db_id =
                 insert_test_release(&mut db, &format!("Release {release_idx:04}")).unwrap();
@@ -1461,71 +1460,47 @@ mod benches {
                 }
                 connect(&mut db, release_db_id, track_db_id).unwrap();
             }
-            releases.push(
-                db::releases::get_by_id(&db, release_db_id)
-                    .unwrap()
-                    .expect("release exists"),
-            );
         }
 
-        ReleaseSortBench {
-            db,
+        let principal = crate::services::auth::Principal::for_user(
+            &db,
             user_db_id,
-            releases,
-        }
+            vec![db::Permission::Admin],
+            Default::default(),
+        );
+        let viewer = catalog::Viewer::user(&db, principal).unwrap();
+        ReleaseSortBench { db, viewer }
+    }
+
+    fn bench_order(b: &mut Bencher, setup: &ReleaseSortBench, sort: catalog::SortSpec<ReleaseKey>) {
+        let mut query = catalog::Query::<Releases>::new(ReleaseFilter::default());
+        query.sort = sort;
+        b.iter(|| catalog::order(&setup.db, &setup.viewer, black_box(&query)).unwrap());
     }
 
     #[bench]
     fn route_sort_releases_sort_name_500(b: &mut Bencher) {
         let setup = seed_release_sort_bench(500, 0, 0);
-        let sort = default_release_sort();
-        b.iter(|| {
-            query_release_route_items(
-                &setup.db,
-                black_box(setup.releases.clone()),
-                &sort,
-                None,
-                setup.user_db_id,
-            )
-            .unwrap()
-        });
+        bench_order(b, &setup, Vec::new());
     }
 
     #[bench]
     fn route_sort_releases_total_duration_500_releases_4000_tracks(b: &mut Bencher) {
         let setup = seed_release_sort_bench(500, 8, 0);
-        let sort = vec![ReleaseRouteSortSpec {
-            key: ReleaseRouteSortKey::TotalDuration,
-            direction: SortDirection::Descending,
-        }];
-        b.iter(|| {
-            query_release_route_items(
-                &setup.db,
-                black_box(setup.releases.clone()),
-                &sort,
-                None,
-                setup.user_db_id,
-            )
-            .unwrap()
-        });
+        bench_order(
+            b,
+            &setup,
+            vec![(ReleaseKey::TotalDuration, catalog::Direction::Descending)],
+        );
     }
 
     #[bench]
     fn route_sort_releases_listen_count_500_releases_4000_listens(b: &mut Bencher) {
         let setup = seed_release_sort_bench(500, 8, 1);
-        let sort = vec![ReleaseRouteSortSpec {
-            key: ReleaseRouteSortKey::ListenCount,
-            direction: SortDirection::Descending,
-        }];
-        b.iter(|| {
-            query_release_route_items(
-                &setup.db,
-                black_box(setup.releases.clone()),
-                &sort,
-                None,
-                setup.user_db_id,
-            )
-            .unwrap()
-        });
+        bench_order(
+            b,
+            &setup,
+            vec![(ReleaseKey::ListenCount, catalog::Direction::Descending)],
+        );
     }
 }
