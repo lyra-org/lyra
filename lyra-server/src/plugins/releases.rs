@@ -261,6 +261,7 @@ fn read_filter(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Rele
     Ok(ReleaseFilter {
         ids: catalog::optional_ids(vm, table, "ids")?,
         exclude_ids: args::optional_unique_ids(vm, table, "exclude_ids")?,
+        exclude_artists: args::optional_unique_ids(vm, table, "exclude_artist_ids")?,
         library: args::optional_positive_id(vm, table, "library_id")?,
         artists: catalog::read_artist_credit(vm, table)?,
         genres: args::optional_unique_ids(vm, table, "genre_ids")?,

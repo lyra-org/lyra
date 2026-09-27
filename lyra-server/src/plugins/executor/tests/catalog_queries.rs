@@ -181,6 +181,7 @@ struct Catalog {
     admin: crate::services::auth::Principal,
     album: agdb::DbId,
     amy: agdb::DbId,
+    zed: agdb::DbId,
 }
 
 fn catalog() -> Result<Catalog> {
@@ -265,6 +266,7 @@ fn catalog() -> Result<Catalog> {
         admin,
         album,
         amy,
+        zed,
     })
 }
 
@@ -631,3 +633,24 @@ fn genre_query_follows_releases_and_ranks_searches() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn track_and_release_queries_leave_out_excluded_artists() -> Result<()> {
+    let catalog = catalog()?;
+    let (amy, zed) = (catalog.amy.0, catalog.zed.0);
+    assert_eq!(
+        catalog.titles(&format!("{{ exclude_artist_ids = {{ {zed} }} }}"))?,
+        vec!["Alpha", "Bravo", "Charlie", "Delta"]
+    );
+    assert_eq!(
+        catalog.release_titles(&format!("{{ exclude_artist_ids = {{ {zed} }} }}"))?,
+        vec!["Album"]
+    );
+    assert!(
+        catalog
+            .release_titles(&format!("{{ exclude_artist_ids = {{ {amy} }} }}"))?
+            .is_empty()
+    );
+    Ok(())
+}
+

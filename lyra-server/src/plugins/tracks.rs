@@ -137,6 +137,7 @@ fn read_filter(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Trac
     Ok(TrackFilter {
         ids: catalog::optional_ids(vm, table, "ids")?,
         exclude_ids: args::optional_unique_ids(vm, table, "exclude_ids")?,
+        exclude_artists: args::optional_unique_ids(vm, table, "exclude_artist_ids")?,
         library: args::optional_positive_id(vm, table, "library_id")?,
         releases: catalog::optional_ids(vm, table, "release_ids")?,
         artists: catalog::read_artist_credit(vm, table)?,

@@ -92,6 +92,8 @@ impl SortKey for ReleaseKey {
 pub(crate) struct ReleaseFilter {
     pub(crate) ids: Option<Vec<DbId>>,
     pub(crate) exclude_ids: Vec<DbId>,
+    /// Leaves out releases credited to these artists in either role.
+    pub(crate) exclude_artists: Vec<DbId>,
     pub(crate) library: Option<DbId>,
     pub(crate) artists: Option<ArtistCredit>,
     pub(crate) genres: Vec<DbId>,
@@ -132,11 +134,12 @@ impl Catalog for Releases {
             filter.ids.as_deref(),
             &filter.genres,
         )?;
+        let reach = |artists: &[DbId], role| match role {
+            CreditRole::Track => releases_of_tracks(db, credited_owners::<Track>(db, artists)?),
+            _ => credited_owners::<Release>(db, artists),
+        };
         if let Some(credit) = &filter.artists {
-            releases.restrict(credit.matching(db, |artists, role| match role {
-                CreditRole::Track => releases_of_tracks(db, credited_owners::<Track>(db, artists)?),
-                _ => credited_owners::<Release>(db, artists),
-            })?);
+            releases.restrict(credit.matching(db, reach)?);
         }
         if !filter.years.is_empty() {
             let mut matching = HashSet::new();
@@ -169,7 +172,11 @@ impl Catalog for Releases {
             releases.restrict(db::ratings::target_ids_matching(db, user, filter.rating)?);
         }
 
-        Ok(releases.resolve(&filter.exclude_ids, || all_releases(db))?)
+        let mut excluded = filter.exclude_ids.clone();
+        if !filter.exclude_artists.is_empty() {
+            excluded.extend(ArtistCredit::any(filter.exclude_artists.clone()).matching(db, reach)?);
+        }
+        Ok(releases.resolve(&excluded, || all_releases(db))?)
     }
 
     fn rows(

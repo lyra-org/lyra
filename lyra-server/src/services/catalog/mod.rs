@@ -170,6 +170,15 @@ pub(crate) struct ArtistCredit {
 }
 
 impl ArtistCredit {
+    /// Entities credited to any of `artists` in either role.
+    pub(crate) fn any(artists: Vec<DbId>) -> Self {
+        Self {
+            artists,
+            role: CreditRole::Any,
+            excluding: None,
+        }
+    }
+
     /// The entities the filter keeps, given the entities each single role reaches from a set of
     /// existing artists.
     pub(crate) fn matching(
