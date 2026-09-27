@@ -16,6 +16,7 @@ pub(crate) mod args;
 pub(crate) mod artists;
 pub(crate) mod auth;
 pub(crate) mod bootstrap;
+pub(crate) mod catalog;
 pub(crate) mod chromaprint;
 pub(crate) mod covers;
 pub(crate) mod datastore;

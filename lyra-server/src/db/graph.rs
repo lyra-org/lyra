@@ -12,9 +12,11 @@ use agdb::{
     CountComparison,
     DbElement,
     DbId,
+    DbKeyValue,
     DbType,
     DbValue,
     QueryBuilder,
+    QueryId,
 };
 
 use super::DbAccess;
@@ -119,6 +121,143 @@ pub(crate) fn edge_count_map(
     }
 
     Ok(counts)
+}
+
+/// The `kind` nodes one outgoing edge from `from`.
+pub(crate) fn neighbor_ids(
+    db: &impl DbAccess,
+    from: impl Into<QueryId>,
+    kind: &str,
+) -> anyhow::Result<Vec<DbId>> {
+    Ok(db
+        .exec(
+            QueryBuilder::search()
+                .from(from)
+                .where_()
+                .neighbor()
+                .and()
+                .key("db_element_id")
+                .value(kind)
+                .query(),
+        )?
+        .ids())
+}
+
+/// The ids that name an existing `kind` node, in order.
+pub(crate) fn existing_ids(
+    db: &impl DbAccess,
+    ids: &[DbId],
+    kind: &str,
+) -> anyhow::Result<Vec<DbId>> {
+    let nodes = ids
+        .iter()
+        .copied()
+        .filter(|id| id.0 > 0)
+        .collect::<Vec<_>>();
+    if nodes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let elements = match db.exec(
+        QueryBuilder::select()
+            .values(["db_element_id"])
+            .ids(&nodes)
+            .query(),
+    ) {
+        Ok(result) => result.elements,
+        Err(error) if error.ty == agdb::DbErrorType::NotFound => {
+            let mut elements = Vec::new();
+            for id in nodes {
+                match db.exec(
+                    QueryBuilder::select()
+                        .values(["db_element_id"])
+                        .ids(id)
+                        .query(),
+                ) {
+                    Ok(result) => elements.extend(result.elements),
+                    Err(error) if error.ty == agdb::DbErrorType::NotFound => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            elements
+        }
+        Err(error) => return Err(error.into()),
+    };
+    Ok(elements
+        .into_iter()
+        .filter(|element| is_element_type(element, kind))
+        .map(|element| element.id)
+        .collect())
+}
+
+/// Some stored values of one element.
+pub(crate) struct Fields(Vec<DbKeyValue>);
+
+impl Fields {
+    fn get(&self, key: &str) -> Option<&DbValue> {
+        self.0
+            .iter()
+            .find(|kv| kv.key.string().is_ok_and(|stored| stored == key))
+            .map(|kv| &kv.value)
+    }
+
+    pub(crate) fn text(&self, key: &str) -> Option<&str> {
+        self.get(key)?.string().ok().map(String::as_str)
+    }
+
+    pub(crate) fn number(&self, key: &str) -> Option<u64> {
+        self.get(key)?.to_u64().ok()
+    }
+}
+
+/// The values `keys` hold on each of the existing `ids`, leaving out any key an element lacks.
+///
+/// agdb rejects an explicit-id select when an element lacks a selected key, so the ids are
+/// grouped by the keys they have and each group is read once.
+pub(crate) fn select_fields(
+    db: &impl DbAccess,
+    ids: &[DbId],
+    keys: &[&str],
+) -> anyhow::Result<HashMap<DbId, Fields>> {
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let mut groups: HashMap<Vec<bool>, Vec<DbId>> = HashMap::new();
+    for element in db
+        .exec(QueryBuilder::select().keys().ids(ids).query())?
+        .elements
+    {
+        let present = keys
+            .iter()
+            .map(|key| {
+                element
+                    .values
+                    .iter()
+                    .any(|kv| kv.key.string().is_ok_and(|stored| stored == key))
+            })
+            .collect::<Vec<_>>();
+        groups.entry(present).or_default().push(element.id);
+    }
+
+    let mut fields = HashMap::with_capacity(ids.len());
+    for (present, group) in groups {
+        let group_keys = keys
+            .iter()
+            .zip(&present)
+            .filter(|(_, present)| **present)
+            .map(|(key, _)| DbValue::from(*key))
+            .collect::<Vec<_>>();
+        if group_keys.is_empty() {
+            fields.extend(group.into_iter().map(|id| (id, Fields(Vec::new()))));
+            continue;
+        }
+        for element in db
+            .exec(QueryBuilder::select().values(group_keys).ids(group).query())?
+            .elements
+        {
+            fields.insert(element.id, Fields(element.values));
+        }
+    }
+    Ok(fields)
 }
 
 /// Result of [`collect_related_ids_by_owner`]: per-owner related IDs and a

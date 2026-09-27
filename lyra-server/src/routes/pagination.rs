@@ -69,6 +69,19 @@ impl SnapshotPageRequest {
     }
 }
 
+/// The public ids of `db_ids`, in the same order, for a cursor snapshot.
+pub(crate) fn public_ids(db: &agdb::DbAny, db_ids: &[agdb::DbId]) -> anyhow::Result<Vec<String>> {
+    let mut public_ids = db::lookup::find_ids_by_db_ids(db, db_ids)?;
+    db_ids
+        .iter()
+        .map(|db_id| {
+            public_ids
+                .remove(db_id)
+                .ok_or_else(|| anyhow::anyhow!("element {} has no public id", db_id.0))
+        })
+        .collect()
+}
+
 pub(crate) fn load_snapshot_items<T>(
     db: &agdb::DbAny,
     item_ids: &[String],

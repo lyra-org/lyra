@@ -5,10 +5,7 @@
 
 mod lyrics;
 
-use agdb::{
-    DbAny,
-    DbId,
-};
+use agdb::DbId;
 #[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
@@ -34,11 +31,7 @@ use url::form_urlencoded;
 
 use crate::{
     STATE,
-    db::{
-        self,
-        SortDirection,
-        SortKey,
-    },
+    db,
     routes::AppError,
     routes::{
         covers as route_covers,
@@ -61,13 +54,17 @@ use crate::{
             require_authenticated,
             require_permission,
         },
+        catalog::{
+            self,
+            pipeline::Catalog,
+            tracks::{
+                TrackFilter,
+                Tracks,
+            },
+        },
         pagination::SnapshotKey,
         tracks as track_service,
     },
-};
-use std::{
-    cmp::Ordering,
-    collections::HashMap,
 };
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -112,7 +109,7 @@ struct TrackListQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Comma-separated or repeated values: sort_name, name, date_created, last_played_at, listen_count, duration, id. When release_id is present, disc and track are also supported."
+            description = "Comma-separated or repeated values: name, sort_name, date_created, year, duration, disc, track, release_title (with release_id), artist_name, listen_count, last_played_at, relevance (with query), random, id."
         )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
@@ -171,82 +168,6 @@ pub(crate) fn parse_inc(inc: Option<Vec<String>>) -> Result<TrackRouteIncludes, 
     Ok(result)
 }
 
-#[derive(Clone, Copy, Debug)]
-enum TrackRouteSortKey {
-    Field(SortKey),
-    ListenCount,
-    LastPlayedAt,
-}
-
-type TrackRouteSortSpec = super::RouteSortSpec<TrackRouteSortKey>;
-
-fn default_track_sort(release_scoped: bool) -> Vec<TrackRouteSortSpec> {
-    if release_scoped {
-        return vec![
-            TrackRouteSortSpec {
-                key: TrackRouteSortKey::Field(SortKey::DiscNumber),
-                direction: SortDirection::Ascending,
-            },
-            TrackRouteSortSpec {
-                key: TrackRouteSortKey::Field(SortKey::TrackNumber),
-                direction: SortDirection::Ascending,
-            },
-            TrackRouteSortSpec {
-                key: TrackRouteSortKey::Field(SortKey::SortName),
-                direction: SortDirection::Ascending,
-            },
-            TrackRouteSortSpec {
-                key: TrackRouteSortKey::Field(SortKey::DbId),
-                direction: SortDirection::Ascending,
-            },
-        ];
-    }
-
-    vec![TrackRouteSortSpec {
-        key: TrackRouteSortKey::Field(SortKey::SortName),
-        direction: SortDirection::Ascending,
-    }]
-}
-
-fn is_supported_track_sort_key(key: SortKey, release_scoped: bool) -> bool {
-    match key {
-        SortKey::SortName
-        | SortKey::Name
-        | SortKey::DateCreated
-        | SortKey::Duration
-        | SortKey::DbId => true,
-        SortKey::DiscNumber | SortKey::TrackNumber => release_scoped,
-        SortKey::ReleaseDate => false,
-    }
-}
-
-fn track_sort_supported_values(release_scoped: bool) -> &'static str {
-    if release_scoped {
-        "sort_name, name, date_created, last_played_at, listen_count, disc, track, duration, id"
-    } else {
-        "sort_name, name, date_created, last_played_at, listen_count, duration, id"
-    }
-}
-
-fn parse_track_sort_specs(
-    sort_by: Option<Vec<String>>,
-    sort_order: Option<String>,
-    release_scoped: bool,
-) -> Result<Vec<TrackRouteSortSpec>, AppError> {
-    super::parse_route_sort_specs(
-        sort_by,
-        sort_order,
-        |token| match token {
-            "listen_count" => Some(TrackRouteSortKey::ListenCount),
-            "last_played_at" => Some(TrackRouteSortKey::LastPlayedAt),
-            _ => SortKey::from_token(token)
-                .filter(|key| is_supported_track_sort_key(*key, release_scoped))
-                .map(TrackRouteSortKey::Field),
-        },
-        track_sort_supported_values(release_scoped),
-    )
-}
-
 fn resolve_optional_release_filter(
     db: &impl db::DbAccess,
     principal: &Principal,
@@ -268,148 +189,6 @@ fn resolve_optional_release_filter(
         AppError::not_found(format!("Release not found: {release_id}"))
     })?;
     Ok(Some(release_db_id))
-}
-
-fn release_belongs_to_library(
-    db: &impl db::DbAccess,
-    release_db_id: DbId,
-    library_db_id: DbId,
-) -> anyhow::Result<bool> {
-    Ok(db::libraries::get_by_release(db, release_db_id)?
-        .into_iter()
-        .any(|library| library.db_id == Some(library_db_id)))
-}
-
-struct TrackRouteSortEntry {
-    track: db::Track,
-    lower_title: String,
-    lower_sort_title: Option<String>,
-    db_id: Option<i64>,
-    date_created: Option<u64>,
-    disc_number: Option<u32>,
-    track_number: Option<u32>,
-    duration: Option<u64>,
-    listen_count: u64,
-    last_played_at: Option<u64>,
-    match_score: u32,
-}
-
-impl TrackRouteSortEntry {
-    fn new(track: db::Track, listen_stats: Option<&db::listens::ListenStats>) -> Self {
-        Self {
-            lower_title: track.track_title.to_lowercase(),
-            lower_sort_title: track.sort_title.as_ref().map(|value| value.to_lowercase()),
-            db_id: track.db_id.as_ref().map(|id| DbId::from(id.clone()).0),
-            date_created: track.ctime.or(track.created_at),
-            disc_number: track.disc,
-            track_number: track.track,
-            duration: track.duration_ms,
-            listen_count: listen_stats.map(|stats| stats.count).unwrap_or(0),
-            last_played_at: listen_stats.and_then(|stats| stats.last_played),
-            track,
-            match_score: 0,
-        }
-    }
-}
-
-fn compare_track_route_field(
-    a: &TrackRouteSortEntry,
-    b: &TrackRouteSortEntry,
-    key: TrackRouteSortKey,
-) -> Ordering {
-    match key {
-        TrackRouteSortKey::Field(SortKey::SortName) => a
-            .lower_sort_title
-            .as_deref()
-            .unwrap_or(a.lower_title.as_str())
-            .cmp(
-                b.lower_sort_title
-                    .as_deref()
-                    .unwrap_or(b.lower_title.as_str()),
-            ),
-        TrackRouteSortKey::Field(SortKey::Name) => a.lower_title.cmp(&b.lower_title),
-        TrackRouteSortKey::Field(SortKey::DateCreated) => {
-            db::compare_option(&a.date_created, &b.date_created)
-        }
-        TrackRouteSortKey::Field(SortKey::TrackNumber) => {
-            db::compare_option(&a.track_number, &b.track_number)
-        }
-        TrackRouteSortKey::Field(SortKey::DiscNumber) => {
-            a.disc_number.unwrap_or(1).cmp(&b.disc_number.unwrap_or(1))
-        }
-        TrackRouteSortKey::Field(SortKey::Duration) => db::compare_option(&a.duration, &b.duration),
-        TrackRouteSortKey::Field(SortKey::DbId) => db::compare_option(&a.db_id, &b.db_id),
-        TrackRouteSortKey::ListenCount => a.listen_count.cmp(&b.listen_count),
-        TrackRouteSortKey::LastPlayedAt => db::compare_option(&a.last_played_at, &b.last_played_at),
-        TrackRouteSortKey::Field(SortKey::ReleaseDate) => Ordering::Equal,
-    }
-}
-
-fn compare_track_route_entries(
-    a: &TrackRouteSortEntry,
-    b: &TrackRouteSortEntry,
-    sort: &[TrackRouteSortSpec],
-) -> Ordering {
-    for spec in sort {
-        let ord = db::apply_direction(compare_track_route_field(a, b, spec.key), spec.direction);
-        if ord != Ordering::Equal {
-            return ord;
-        }
-    }
-
-    b.match_score
-        .cmp(&a.match_score)
-        .then_with(|| a.lower_title.cmp(&b.lower_title))
-        .then_with(|| db::compare_option(&a.db_id, &b.db_id))
-}
-
-fn track_sort_needs_listens(sort: &[TrackRouteSortSpec]) -> bool {
-    sort.iter().any(|spec| {
-        matches!(
-            spec.key,
-            TrackRouteSortKey::ListenCount | TrackRouteSortKey::LastPlayedAt
-        )
-    })
-}
-
-fn query_track_route_items(
-    db: &DbAny,
-    tracks: Vec<db::Track>,
-    sort: &[TrackRouteSortSpec],
-    search_term: Option<&str>,
-    user_db_id: DbId,
-) -> anyhow::Result<Vec<db::Track>> {
-    let listen_stats: HashMap<DbId, db::listens::ListenStats> = if track_sort_needs_listens(sort) {
-        let track_ids: Vec<DbId> = tracks
-            .iter()
-            .filter_map(|track| track.db_id.clone().map(DbId::from))
-            .collect();
-        db::listens::get_stats(db, &track_ids, user_db_id)?
-            .into_iter()
-            .map(|stats| (stats.db_id, stats))
-            .collect()
-    } else {
-        HashMap::new()
-    };
-    let mut entries: Vec<TrackRouteSortEntry> = tracks
-        .into_iter()
-        .map(|track| {
-            let track_db_id = track.db_id.clone().map(DbId::from);
-            TrackRouteSortEntry::new(track, track_db_id.and_then(|id| listen_stats.get(&id)))
-        })
-        .collect();
-
-    if let Some(term) = search_term {
-        db::search::fuzzy_filter(
-            &mut entries,
-            term,
-            |entry| entry.track.track_title.as_str(),
-            |entry, score| entry.match_score = score,
-        );
-    }
-
-    entries.sort_by(|a, b| compare_track_route_entries(a, b, sort));
-    Ok(entries.into_iter().map(|entry| entry.track).collect())
 }
 
 fn release_to_response(
@@ -497,16 +276,13 @@ pub(crate) async fn list_track_responses(
         .field(min_rating_context.as_deref())
         .field(max_rating_context.as_deref())
         .finish();
-    let library_scope = crate::services::auth::access::resolve_optional_library_filter(
+    let library = crate::services::auth::access::resolve_optional_library_filter(
         db,
         principal,
         library_id.as_deref(),
     )?;
-    let release_scope = resolve_optional_release_filter(db, principal, release_id.as_deref())?;
-    let mut sort = parse_track_sort_specs(sort_by, sort_order, release_scope.is_some())?;
-    if sort.is_empty() && search_term.is_none() {
-        sort = default_track_sort(release_scope.is_some());
-    }
+    let release = resolve_optional_release_filter(db, principal, release_id.as_deref())?;
+    let sort = super::parse_catalog_sort(sort_by, sort_order)?;
     let (tracks, next_cursor) = if let Some(page) = page_request.resume(&snapshot_key)? {
         let tracks = super::load_snapshot_items(
             db,
@@ -518,53 +294,22 @@ pub(crate) async fn list_track_responses(
         )?;
         (tracks, page.next_cursor)
     } else {
-        let mut accessible_tracks = match (release_scope, library_scope) {
-            (Some(release_db_id), Some(library_db_id))
-                if !release_belongs_to_library(db, release_db_id, library_db_id)? =>
-            {
-                Vec::new()
-            }
-            (Some(release_db_id), _) => db::tracks::get_by_releases(db, &[release_db_id])?,
-            (None, Some(library_db_id)) => db::tracks::get_by_library(db, library_db_id)?,
-            (None, None) => {
-                let tracks = db::tracks::get(db, "tracks")?;
-                let mut accessible_tracks = Vec::with_capacity(tracks.len());
-                for track in tracks {
-                    let Some(track_db_id) = track.db_id.clone().map(agdb::DbId::from) else {
-                        continue;
-                    };
-                    if crate::services::auth::access::entity_accessible(db, principal, track_db_id)?
-                    {
-                        accessible_tracks.push(track);
-                    }
-                }
-                accessible_tracks
-            }
-        };
-        let user_db_id = principal.require(db)?;
-        if !rating_filter.is_empty() {
-            let rated_target_ids = db::ratings::target_ids_matching(db, user_db_id, rating_filter)?;
-            accessible_tracks.retain(|track| {
-                track
-                    .db_id
-                    .clone()
-                    .map(DbId::from)
-                    .is_some_and(|db_id| rated_target_ids.contains(&db_id))
-            });
-        }
-        let mut tracks = query_track_route_items(
-            db,
-            accessible_tracks,
-            &sort,
-            search_term.as_deref(),
-            user_db_id,
-        )?;
-        let page = page_request.start(
-            &snapshot_key,
-            tracks.iter().map(|track| track.id.clone()).collect(),
-        )?;
-        tracks.truncate(page.item_ids.len());
-        (tracks, page.next_cursor)
+        let viewer = catalog::Viewer::user(db, principal.clone())?;
+        let mut query = catalog::Query::<Tracks>::new(TrackFilter {
+            library,
+            releases: release.map(|release| vec![release]),
+            rating: rating_filter,
+            ..TrackFilter::default()
+        });
+        query.search = search_term;
+        query.sort = sort;
+        query.seed = rand::random();
+        let ids = catalog::order(db, &viewer, &query)?;
+        let page = page_request.start(&snapshot_key, super::public_ids(db, &ids)?)?;
+        (
+            Tracks::hydrate(db, &ids[..page.item_ids.len()])?,
+            page.next_cursor,
+        )
     };
     let details = track_service::list_details_for_tracks(db, includes.service, tracks)?;
 
@@ -814,7 +559,7 @@ async fn get_track(
 #[cfg(feature = "docgen")]
 fn list_tracks_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List tracks").description(
-        "Returns tracks as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `release_id`, `sort_by`, `sort_order`, `min_rating`, `max_rating`, `limit`, `cursor`. `min_rating` and `max_rating` filter tracks by the authenticated user's inclusive personal rating range; either bound excludes unrated tracks. `library_id` scopes results to tracks belonging to that public library ID. `release_id` scopes results to one public release ID and defaults ordering to album order: disc, track, sort name, id. `sort_by` supports `sort_name`, `name`, `date_created`, `last_played_at`, `listen_count`, `duration`, and `id`; when `release_id` is present it also supports `disc` and `track`. `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against track titles and defaults ordering to relevance. Use `inc` to include releases and/or artists. When `inc=releases,release_covers`, nested release metadata includes a public cover image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
+        "Returns tracks as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `release_id`, `sort_by`, `sort_order`, `min_rating`, `max_rating`, `limit`, `cursor`. `min_rating` and `max_rating` filter tracks by the authenticated user's inclusive personal rating range; either bound excludes unrated tracks. `library_id` scopes results to tracks belonging to that public library ID. `release_id` scopes results to one public release ID and defaults ordering to album order: disc, track, sort name, id. `sort_by` supports `name`, `sort_name`, `date_created`, `year`, `duration`, `disc`, `track`, `release_title` (with `release_id`), `artist_name` (the first credited artist), `listen_count`, `last_played_at`, `relevance` (with `query`), `random`, and `id`. `sort_order` supports `ascending` and `descending` and applies to every key. Tracks without a value for a key sort last in both directions, except missing disc and track numbers, which sort first. Ties fall back to sort name, name, then id. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against track titles and defaults ordering to relevance. Use `inc` to include releases and/or artists. When `inc=releases,release_covers`, nested release metadata includes a public cover image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
     )
 }
 
@@ -1080,101 +825,6 @@ mod tests {
         assert!(includes.service.releases);
         assert!(includes.release_covers);
         assert!(includes.artist_covers);
-        Ok(())
-    }
-
-    #[test]
-    fn parse_track_sort_specs_accepts_global_supported_values() -> anyhow::Result<()> {
-        let specs = match parse_track_sort_specs(
-            Some(vec![
-                "sort_name,name".to_string(),
-                "date_created,last_played_at,listen_count,duration,id".to_string(),
-            ]),
-            Some("descending".to_string()),
-            false,
-        ) {
-            Ok(specs) => specs,
-            Err(_) => return Err(anyhow::anyhow!("expected valid track sort specs")),
-        };
-
-        assert_eq!(specs.len(), 7);
-        assert!(matches!(
-            specs[0].key,
-            TrackRouteSortKey::Field(SortKey::SortName)
-        ));
-        assert!(matches!(
-            specs[1].key,
-            TrackRouteSortKey::Field(SortKey::Name)
-        ));
-        assert!(matches!(
-            specs[2].key,
-            TrackRouteSortKey::Field(SortKey::DateCreated)
-        ));
-        assert!(matches!(specs[3].key, TrackRouteSortKey::LastPlayedAt));
-        assert!(matches!(specs[4].key, TrackRouteSortKey::ListenCount));
-        assert!(matches!(
-            specs[5].key,
-            TrackRouteSortKey::Field(SortKey::Duration)
-        ));
-        assert!(matches!(
-            specs[6].key,
-            TrackRouteSortKey::Field(SortKey::DbId)
-        ));
-        assert!(
-            specs
-                .iter()
-                .all(|spec| matches!(spec.direction, SortDirection::Descending))
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn query_track_route_items_sorts_by_listen_count() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        let user_db_id = db::users::create(&mut db, &db::test_db::test_user("track-sort-user")?)?;
-        let one_listen = insert_track(&mut db, "One Listen")?;
-        let two_listens = insert_track(&mut db, "Two Listens")?;
-        record_listen(&mut db, user_db_id, one_listen, 1_000)?;
-        record_listen(&mut db, user_db_id, two_listens, 2_000)?;
-        record_listen(&mut db, user_db_id, two_listens, 3_000)?;
-        let tracks = vec![
-            db::tracks::get_by_id(&db, one_listen)?.ok_or_else(|| anyhow::anyhow!("missing"))?,
-            db::tracks::get_by_id(&db, two_listens)?.ok_or_else(|| anyhow::anyhow!("missing"))?,
-        ];
-
-        let tracks = query_track_route_items(
-            &db,
-            tracks,
-            &[TrackRouteSortSpec {
-                key: TrackRouteSortKey::ListenCount,
-                direction: SortDirection::Descending,
-            }],
-            None,
-            user_db_id,
-        )?;
-
-        let titles: Vec<String> = tracks.into_iter().map(|track| track.track_title).collect();
-        assert_eq!(titles, vec!["Two Listens", "One Listen"]);
-        Ok(())
-    }
-
-    #[test]
-    fn parse_track_sort_specs_scopes_disc_and_track_to_release_filter() -> anyhow::Result<()> {
-        assert!(parse_track_sort_specs(Some(vec!["disc,track".to_string()]), None, false).is_err());
-
-        let specs = match parse_track_sort_specs(Some(vec!["disc,track".to_string()]), None, true) {
-            Ok(specs) => specs,
-            Err(_) => return Err(anyhow::anyhow!("expected release-scoped track sort specs")),
-        };
-        assert_eq!(specs.len(), 2);
-        assert!(matches!(
-            specs[0].key,
-            TrackRouteSortKey::Field(SortKey::DiscNumber)
-        ));
-        assert!(matches!(
-            specs[1].key,
-            TrackRouteSortKey::Field(SortKey::TrackNumber)
-        ));
         Ok(())
     }
 
@@ -1771,7 +1421,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "missing disc and track numbers still count as disc 1 and sort last"]
     async fn list_track_responses_sorts_missing_disc_and_track_first() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         setup_route_test().await?;
@@ -1808,7 +1457,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "empty values still sort first when descending"]
     async fn list_track_responses_sorts_never_played_last_in_both_directions() -> anyhow::Result<()>
     {
         let _guard = runtime_test_lock().await;
@@ -1838,6 +1486,55 @@ mod tests {
             list_titles(&principal, None, Some("last_played_at"), Some("descending")).await?,
             vec!["Late", "Early", "Never"]
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_track_responses_sorts_by_listen_count() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let principal = {
+            let mut db = STATE.db.write().await;
+            let user_db_id = db::test_db::insert_user(&mut db, "track-sort-user")?;
+            let one_listen = insert_track(&mut db, "One Listen")?;
+            let two_listens = insert_track(&mut db, "Two Listens")?;
+            record_listen(&mut db, user_db_id, one_listen, 1_000)?;
+            record_listen(&mut db, user_db_id, two_listens, 2_000)?;
+            record_listen(&mut db, user_db_id, two_listens, 3_000)?;
+            Principal::for_user(
+                &*db,
+                user_db_id,
+                vec![db::Permission::Admin],
+                HashSet::new(),
+            )
+        };
+
+        assert_eq!(
+            list_titles(&principal, None, Some("listen_count"), Some("descending")).await?,
+            vec!["Two Listens", "One Listen"]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_track_responses_rejects_unknown_sort_keys() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+        let principal = admin_principal(HashSet::new()).await;
+
+        let error = list_titles(&principal, None, Some("release_date"), None)
+            .await
+            .expect_err("tracks have no release_date key");
+        assert!(
+            error
+                .to_string()
+                .contains("Supported keys: name, sort_name")
+        );
+        let error = list_titles(&principal, None, Some("release_title"), None)
+            .await
+            .expect_err("release_title needs a release scope");
+        assert!(error.to_string().contains("scoped to one release"));
         Ok(())
     }
 
@@ -2102,11 +1799,11 @@ mod benches {
         new_test_db,
         test_user,
     };
+    use crate::services::catalog::tracks::TrackKey;
 
     struct TrackSortBench {
         db: DbAny,
-        user_db_id: DbId,
-        tracks: Vec<db::Track>,
+        viewer: catalog::Viewer,
     }
 
     fn record_listen(db: &mut DbAny, user_db_id: DbId, track_db_id: DbId, listened_at_ms: u64) {
@@ -2145,7 +1842,6 @@ mod benches {
         let mut db = new_test_db().unwrap();
         let user_db_id =
             db::users::create(&mut db, &test_user("track-sort-bench").unwrap()).unwrap();
-        let mut tracks = Vec::with_capacity(track_count);
         for i in 0..track_count {
             let track_db_id = insert_track(&mut db, &format!("Track {i:04}")).unwrap();
             for listen_idx in 0..listens_per_track {
@@ -2156,52 +1852,37 @@ mod benches {
                     ((i * listens_per_track + listen_idx) as u64) * 1_000,
                 );
             }
-            tracks.push(
-                db::tracks::get_by_id(&db, track_db_id)
-                    .unwrap()
-                    .expect("track exists"),
-            );
         }
 
-        TrackSortBench {
-            db,
+        let principal = Principal::for_user(
+            &db,
             user_db_id,
-            tracks,
-        }
+            vec![db::Permission::Admin],
+            Default::default(),
+        );
+        let viewer = catalog::Viewer::user(&db, principal).unwrap();
+        TrackSortBench { db, viewer }
+    }
+
+    fn bench_order(b: &mut Bencher, setup: &TrackSortBench, sort: catalog::SortSpec<TrackKey>) {
+        let mut query = catalog::Query::<Tracks>::new(TrackFilter::default());
+        query.sort = sort;
+        b.iter(|| catalog::order(&setup.db, &setup.viewer, black_box(&query)).unwrap());
     }
 
     #[bench]
     fn route_sort_tracks_sort_name_1000(b: &mut Bencher) {
         let setup = seed_track_sort_bench(1_000, 0);
-        let sort = default_track_sort(false);
-        b.iter(|| {
-            query_track_route_items(
-                &setup.db,
-                black_box(setup.tracks.clone()),
-                &sort,
-                None,
-                setup.user_db_id,
-            )
-            .unwrap()
-        });
+        bench_order(b, &setup, Vec::new());
     }
 
     #[bench]
     fn route_sort_tracks_listen_count_1000_tracks_3000_listens(b: &mut Bencher) {
         let setup = seed_track_sort_bench(1_000, 3);
-        let sort = vec![TrackRouteSortSpec {
-            key: TrackRouteSortKey::ListenCount,
-            direction: SortDirection::Descending,
-        }];
-        b.iter(|| {
-            query_track_route_items(
-                &setup.db,
-                black_box(setup.tracks.clone()),
-                &sort,
-                None,
-                setup.user_db_id,
-            )
-            .unwrap()
-        });
+        bench_order(
+            b,
+            &setup,
+            vec![(TrackKey::ListenCount, catalog::Direction::Descending)],
+        );
     }
 }

@@ -235,10 +235,7 @@ fn parse_artist_sort_specs(
                 SortKey::SortName | SortKey::Name | SortKey::DateCreated | SortKey::DbId => {
                     Some(ArtistRouteSortKey::Field(key))
                 }
-                SortKey::ReleaseDate
-                | SortKey::TrackNumber
-                | SortKey::DiscNumber
-                | SortKey::Duration => None,
+                SortKey::ReleaseDate => None,
             }),
         },
         artist_sort_supported_values(),
@@ -311,9 +308,7 @@ fn compare_artist_route_field(
         ArtistRouteSortKey::ReleaseCount => a.release_count.cmp(&b.release_count),
         ArtistRouteSortKey::TrackCount => a.track_count.cmp(&b.track_count),
         ArtistRouteSortKey::TotalDuration => a.total_duration.cmp(&b.total_duration),
-        ArtistRouteSortKey::Field(
-            SortKey::ReleaseDate | SortKey::TrackNumber | SortKey::DiscNumber | SortKey::Duration,
-        ) => Ordering::Equal,
+        ArtistRouteSortKey::Field(SortKey::ReleaseDate) => Ordering::Equal,
     }
 }
 

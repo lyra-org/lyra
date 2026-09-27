@@ -25,12 +25,21 @@ use harmony_luau::{
 };
 
 use crate::plugins::args;
+use crate::plugins::catalog;
 use crate::plugins::db::{
     self,
     DbAsync,
-    ListOptions,
     ResolveId,
     Track,
+};
+#[cfg(feature = "docgen")]
+use crate::services::catalog::tracks::TrackKey;
+use crate::services::{
+    self,
+    catalog::tracks::{
+        TrackFilter,
+        Tracks,
+    },
 };
 
 #[derive(Clone, Default)]
@@ -78,7 +87,8 @@ fn list_spec() -> FunctionSpec {
 
 fn query_spec() -> FunctionSpec {
     FunctionSpec::async_fn("query")
-        .arg_name("opts")
+        .context::<crate::plugins::auth::DispatchAuth>()
+        .arg_name("query")
         .args::<luau::Table>()
         .returns::<luau::Value>()
         .call_async(std::sync::Arc::new(query_callback))
@@ -134,50 +144,20 @@ fn list_callback(
 fn query_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let opts: luau::Table = frame.args.read_named("opts")?;
-    let request = parse_query_options(frame.vm, &opts)?;
+    let opts: luau::Table = frame.args.read_named("query")?;
+    let filter = read_filter(frame.vm, &opts)?;
+    let request = catalog::read_query::<Tracks>(frame.vm, &opts, filter)?;
+    let principal = crate::plugins::auth::dispatch_principal(&frame.context)?;
     let store = frame.vm.data().get::<TracksModuleStore>()?.as_ref().clone();
     let db = store.db()?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        let scope = request
-            .scope
-            .map(|id| id.to_query_id(&db).map_err(crate::plugins::runtime_error))
-            .transpose()?
-            .flatten();
-        let result = if !request.artist_ids.is_empty() && !request.release_artist_ids.is_empty() {
-            db::tracks::query_by_artist_filters(
-                &db,
-                &request.artist_ids,
-                &request.release_artist_ids,
-                scope,
-                &request.list_options,
-            )
-            .map_err(crate::plugins::runtime_error)
-        } else if !request.release_artist_ids.is_empty() {
-            db::tracks::query_by_release_artists(
-                &db,
-                &request.release_artist_ids,
-                scope,
-                &request.list_options,
-            )
-            .map_err(crate::plugins::runtime_error)
-        } else if !request.artist_ids.is_empty() {
-            db::tracks::query_by_artists(&db, &request.artist_ids, scope, &request.list_options)
-                .map_err(crate::plugins::runtime_error)
-        } else {
-            let query_id = match scope {
-                Some(query_id) => query_id,
-                None => ResolveId::alias("tracks")
-                    .to_query_id(&db)
-                    .map_err(crate::plugins::runtime_error)?
-                    .ok_or_else(|| crate::plugins::runtime_error("could not resolve scope"))?,
-            };
-            db::tracks::query(&db, query_id, &request.list_options)
-                .map_err(crate::plugins::runtime_error)
-        }?;
-        args::page_table(result.entries, result.total_count, result.offset)?.into_luau_return()
+        let viewer = catalog::viewer(&*db, principal)?;
+        let page =
+            services::catalog::page(&db, &viewer, &request.query, request.offset, request.limit)
+                .map_err(catalog::error)?;
+        catalog::page_table(page)?.into_luau_return()
     }))
 }
 
@@ -246,30 +226,25 @@ fn list_many_callback(
     }))
 }
 
-struct TrackQueryRequest {
-    scope: Option<ResolveId>,
-    artist_ids: Vec<DbId>,
-    release_artist_ids: Vec<DbId>,
-    list_options: ListOptions,
-}
-
-fn parse_query_options(
-    vm: &luau::Vm,
-    opts: &luau::Table,
-) -> luau::runtime::Result<TrackQueryRequest> {
-    let scope = match opts.get_raw(vm, "scope")? {
-        luau::Value::Nil => None,
-        value => Some(args::resolve_id(value)?),
-    };
-    let artist_ids = args::optional_unique_ids(vm, opts, "artist_ids")?;
-    let release_artist_ids = args::optional_unique_ids(vm, opts, "release_artist_ids")?;
-    let list_options = args::list_options(vm, opts)?;
-
-    Ok(TrackQueryRequest {
-        scope,
-        artist_ids,
-        release_artist_ids,
-        list_options,
+fn read_filter(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<TrackFilter> {
+    Ok(TrackFilter {
+        ids: luau::table::optional_table_field(vm, table, "ids")?
+            .map(|ids| args::unique_ids(vm, &ids))
+            .transpose()?,
+        exclude_ids: args::optional_unique_ids(vm, table, "exclude_ids")?,
+        library: args::optional_positive_id(vm, table, "library_id")?,
+        releases: luau::table::optional_table_field(vm, table, "release_ids")?
+            .map(|ids| args::unique_ids(vm, &ids))
+            .transpose()?,
+        artists: catalog::read_artist_credit(vm, table)?,
+        genres: args::optional_unique_ids(vm, table, "genre_ids")?,
+        years: luau::table::optional_table_field(vm, table, "years")?
+            .map(|years| args::integers(vm, &years))
+            .transpose()?
+            .unwrap_or_default(),
+        favorite: luau::table::optional_bool_field(vm, table, "favorite")?,
+        listened: luau::table::optional_bool_field(vm, table, "listened")?,
+        rating: Default::default(),
     })
 }
 
@@ -321,31 +296,34 @@ fn track_type() -> LuauType {
 fn track_type_aliases() -> Vec<TypeAliasDescriptor> {
     vec![
         TypeAliasDescriptor::new("Track", track_type(), None),
-        TypeAliasDescriptor::new(
-            "TrackQueryResult",
-            LuauType::object(vec![
-                field("entities", LuauType::array(LuauType::named("Track"))),
-                field("total_count", i64::luau_type()),
-                field("offset", i64::luau_type()),
-            ]),
-            None,
-        ),
+        catalog::credit_role_alias(),
     ]
+    .into_iter()
+    .chain(catalog::type_aliases::<TrackKey>(
+        "TrackSortKey",
+        "TrackPage",
+        "Track",
+    ))
+    .collect()
 }
 
 #[cfg(feature = "docgen")]
-fn track_query_options() -> InterfaceDescriptor {
-    let mut descriptor = InterfaceDescriptor::new("TrackQueryOptions", None);
+fn track_query() -> InterfaceDescriptor {
+    let mut descriptor = InterfaceDescriptor::new("TrackQuery", None);
     descriptor.fields.extend([
-        field("scope", LuauType::optional(args::resolve_id_type())),
-        field("artist_ids", Option::<Vec<u64>>::luau_type()),
-        field("release_artist_ids", Option::<Vec<u64>>::luau_type()),
-        field("sort_by", Option::<Vec<String>>::luau_type()),
-        field("sort_order", LuauType::optional(args::sort_order_type())),
-        field("offset", Option::<i64>::luau_type()),
-        field("limit", Option::<i64>::luau_type()),
-        field("search_term", Option::<String>::luau_type()),
+        field("ids", Option::<Vec<u64>>::luau_type()),
+        field("exclude_ids", Option::<Vec<u64>>::luau_type()),
+        field("library_id", Option::<u64>::luau_type()),
+        field("release_ids", Option::<Vec<u64>>::luau_type()),
+        field("genre_ids", Option::<Vec<u64>>::luau_type()),
+        field("years", Option::<Vec<u32>>::luau_type()),
+        field("favorite", Option::<bool>::luau_type()),
+        field("listened", Option::<bool>::luau_type()),
     ]);
+    descriptor.fields.extend(catalog::credit_fields());
+    descriptor
+        .fields
+        .extend(catalog::query_fields("TrackSortKey"));
     descriptor
 }
 
@@ -366,9 +344,11 @@ fn module_descriptor() -> ModuleDescriptor {
             },
             ModuleFunctionDescriptor {
                 path: vec!["query"],
-                description: None,
-                params: vec![param("opts", LuauType::named("TrackQueryOptions"))],
-                returns: vec![LuauType::named("TrackQueryResult")],
+                description: Some(
+                    "The tracks the caller can see that pass every filter, sorted and paged. Without `sort`, a search ranks by relevance, a query scoped to one release is in disc and track order, and anything else is by sort name.",
+                ),
+                params: vec![param("query", LuauType::named("TrackQuery"))],
+                returns: vec![LuauType::named("TrackPage")],
                 yields: true,
             },
             ModuleFunctionDescriptor {
@@ -407,7 +387,7 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
     render_definition_file_with_support(
         &module_descriptor(),
         &track_type_aliases(),
-        &[track_query_options()],
+        &[track_query()],
         &[],
     )
 }

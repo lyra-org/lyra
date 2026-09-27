@@ -3,7 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::cmp::Ordering;
 use std::collections::{
     HashMap,
     HashSet,
@@ -23,14 +22,6 @@ use serde::{
 };
 
 use super::NodeId;
-use super::{
-    ListOptions,
-    PagedResult,
-    SortKey,
-    SortSpec,
-    apply_direction,
-    compare_option,
-};
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(DbElement, Serialize, Deserialize, Clone, Debug)]
@@ -239,6 +230,21 @@ pub(crate) fn get_existing_by_ids(
     super::graph::bulk_fetch_typed(db, existing_ids, "Track")
 }
 
+pub(crate) fn ids_with_year(db: &impl super::DbAccess, year: u32) -> anyhow::Result<Vec<DbId>> {
+    Ok(db
+        .exec(
+            QueryBuilder::search()
+                .from("tracks")
+                .where_()
+                .neighbor()
+                .and()
+                .key("year")
+                .value(u64::from(year))
+                .query(),
+        )?
+        .ids())
+}
+
 /// Returns all tracks belonging to a library via its releases.
 pub(crate) fn get_by_library(db: &DbAny, library_id: DbId) -> anyhow::Result<Vec<Track>> {
     let release_ids: Vec<DbId> = super::releases::get_direct(db, library_id)?
@@ -343,24 +349,6 @@ pub(crate) fn get_bounded_ids_by_artist(
     }
 
     Ok(result)
-}
-pub(crate) fn get_by_artists(db: &DbAny, artist_db_ids: &[DbId]) -> anyhow::Result<Vec<Track>> {
-    let mut tracks = Vec::new();
-    let mut seen = HashSet::new();
-
-    for artist_db_id in artist_db_ids {
-        for track in get_by_artist(db, *artist_db_id)? {
-            if let Some(track_db_id) = track.db_id.clone().map(DbId::from) {
-                if seen.insert(track_db_id) {
-                    tracks.push(track);
-                }
-                continue;
-            }
-            tracks.push(track);
-        }
-    }
-
-    Ok(tracks)
 }
 
 pub(crate) fn get_by_releases(db: &DbAny, release_db_ids: &[DbId]) -> anyhow::Result<Vec<Track>> {
@@ -480,323 +468,6 @@ pub(crate) fn update_in_transaction(
         ],
         track,
     )
-}
-
-#[derive(Clone)]
-struct TrackSortEntry {
-    track: Track,
-    lower_title: String,
-    lower_sort_title: Option<String>,
-    db_id: Option<i64>,
-    date_created: Option<u64>,
-    track_number: Option<u32>,
-    disc_number: Option<u32>,
-    duration: Option<u64>,
-    match_score: u32,
-}
-
-impl TrackSortEntry {
-    fn new(track: Track) -> Self {
-        Self {
-            lower_title: track.track_title.to_lowercase(),
-            lower_sort_title: track.sort_title.as_ref().map(|value| value.to_lowercase()),
-            db_id: track.db_id.as_ref().map(|id| DbId::from(id.clone()).0),
-            date_created: track.ctime.or(track.created_at),
-            track_number: track.track,
-            disc_number: track.disc,
-            duration: track.duration_ms,
-            track,
-            match_score: 0,
-        }
-    }
-}
-
-fn compare_track_field(a: &TrackSortEntry, b: &TrackSortEntry, key: SortKey) -> Ordering {
-    match key {
-        SortKey::SortName => a
-            .lower_sort_title
-            .as_deref()
-            .unwrap_or(a.lower_title.as_str())
-            .cmp(
-                b.lower_sort_title
-                    .as_deref()
-                    .unwrap_or(b.lower_title.as_str()),
-            ),
-        SortKey::Name => a.lower_title.cmp(&b.lower_title),
-        SortKey::DateCreated => compare_option(&a.date_created, &b.date_created),
-        SortKey::TrackNumber => compare_option(&a.track_number, &b.track_number),
-        SortKey::DiscNumber => a.disc_number.unwrap_or(1).cmp(&b.disc_number.unwrap_or(1)),
-        SortKey::Duration => compare_option(&a.duration, &b.duration),
-        SortKey::DbId => compare_option(&a.db_id, &b.db_id),
-        SortKey::ReleaseDate => Ordering::Equal,
-    }
-}
-
-fn compare_track_entries(a: &TrackSortEntry, b: &TrackSortEntry, sort: &[SortSpec]) -> Ordering {
-    for spec in sort {
-        let ord = apply_direction(compare_track_field(a, b, spec.key), spec.direction);
-        if ord != Ordering::Equal {
-            return ord;
-        }
-    }
-
-    let score_ord = b.match_score.cmp(&a.match_score);
-    if score_ord != Ordering::Equal {
-        return score_ord;
-    }
-
-    let name_ord = a.lower_title.cmp(&b.lower_title);
-    if name_ord != Ordering::Equal {
-        return name_ord;
-    }
-
-    compare_option(&a.db_id, &b.db_id)
-}
-
-fn u64_to_usize_saturating(value: u64) -> usize {
-    usize::try_from(value).unwrap_or(usize::MAX)
-}
-
-fn append_unique_tracks(
-    target: &mut Vec<Track>,
-    seen_track_ids: &mut HashSet<DbId>,
-    tracks: Vec<Track>,
-) {
-    for track in tracks {
-        if let Some(track_db_id) = track.db_id.clone().map(DbId::from) {
-            if seen_track_ids.insert(track_db_id) {
-                target.push(track);
-            }
-            continue;
-        }
-        target.push(track);
-    }
-}
-
-fn apply_track_scope_filter(
-    db: &DbAny,
-    tracks: &mut Vec<Track>,
-    scope: QueryId,
-) -> anyhow::Result<()> {
-    let scoped_ids: HashSet<DbId> = get(db, scope)?
-        .into_iter()
-        .filter_map(|track| track.db_id.map(DbId::from))
-        .collect();
-    tracks.retain(|track| {
-        track
-            .db_id
-            .clone()
-            .map(DbId::from)
-            .is_some_and(|track_db_id| scoped_ids.contains(&track_db_id))
-    });
-    Ok(())
-}
-
-fn query_tracks_from_candidates(
-    tracks: Vec<Track>,
-    options: &ListOptions,
-) -> anyhow::Result<PagedResult<Track>> {
-    if options.search_term.is_none() && options.sort.is_empty() {
-        return Ok(paginate_tracks(tracks, options));
-    }
-
-    let mut entries: Vec<TrackSortEntry> = tracks.into_iter().map(TrackSortEntry::new).collect();
-
-    if let Some(ref term) = options.search_term {
-        super::search::fuzzy_filter(
-            &mut entries,
-            term,
-            |entry| entry.track.track_title.as_str(),
-            |entry, score| entry.match_score = score,
-        );
-    }
-
-    Ok(sort_and_paginate_tracks(entries, options))
-}
-
-fn paginate_tracks(mut tracks: Vec<Track>, options: &ListOptions) -> PagedResult<Track> {
-    let total_count = tracks.len() as u64;
-    let offset = options.offset.unwrap_or(0).min(total_count);
-    let offset = u64_to_usize_saturating(offset).min(tracks.len());
-    let limit = options.limit.map(u64_to_usize_saturating);
-
-    let entries = match limit {
-        Some(limit) => tracks.drain(offset..).take(limit).collect(),
-        None => tracks.drain(offset..).collect(),
-    };
-
-    PagedResult {
-        entries,
-        total_count,
-        offset: offset as u64,
-    }
-}
-
-fn sort_and_paginate_tracks(
-    mut entries: Vec<TrackSortEntry>,
-    options: &ListOptions,
-) -> PagedResult<Track> {
-    let total_count = entries.len() as u64;
-    let offset = options.offset.unwrap_or(0).min(total_count);
-    let offset = u64_to_usize_saturating(offset).min(entries.len());
-    let limit = options.limit.map(u64_to_usize_saturating);
-
-    if entries.is_empty() {
-        return PagedResult {
-            entries: Vec::new(),
-            total_count,
-            offset: offset as u64,
-        };
-    }
-
-    if options.sort.is_empty() {
-        let entries = match limit {
-            Some(limit) => entries
-                .into_iter()
-                .skip(offset)
-                .take(limit)
-                .map(|entry| entry.track)
-                .collect(),
-            None => entries
-                .into_iter()
-                .skip(offset)
-                .map(|entry| entry.track)
-                .collect(),
-        };
-
-        return PagedResult {
-            entries,
-            total_count,
-            offset: offset as u64,
-        };
-    }
-
-    let page_end = match limit {
-        Some(limit) => offset.saturating_add(limit).min(entries.len()),
-        None => entries.len(),
-    };
-    if page_end == 0 || offset >= page_end {
-        return PagedResult {
-            entries: Vec::new(),
-            total_count,
-            offset: offset as u64,
-        };
-    }
-
-    if page_end < entries.len() {
-        let pivot = page_end - 1;
-        entries.select_nth_unstable_by(pivot, |a, b| compare_track_entries(a, b, &options.sort));
-        entries.truncate(page_end);
-    }
-
-    entries.sort_by(|a, b| compare_track_entries(a, b, &options.sort));
-    PagedResult {
-        entries: match limit {
-            Some(limit) => entries
-                .into_iter()
-                .skip(offset)
-                .take(limit)
-                .map(|entry| entry.track)
-                .collect(),
-            None => entries
-                .into_iter()
-                .skip(offset)
-                .map(|entry| entry.track)
-                .collect(),
-        },
-        total_count,
-        offset: offset as u64,
-    }
-}
-
-pub(crate) fn query(
-    db: &DbAny,
-    from: impl Into<QueryId>,
-    options: &ListOptions,
-) -> anyhow::Result<PagedResult<Track>> {
-    let tracks = get(db, from)?;
-
-    Ok(query_items(tracks, options))
-}
-
-pub(crate) fn query_items(tracks: Vec<Track>, options: &ListOptions) -> PagedResult<Track> {
-    if options.search_term.is_none() && options.sort.is_empty() {
-        return paginate_tracks(tracks, options);
-    }
-
-    let mut entries: Vec<TrackSortEntry> = tracks.into_iter().map(TrackSortEntry::new).collect();
-
-    if let Some(ref term) = options.search_term {
-        super::search::fuzzy_filter(
-            &mut entries,
-            term,
-            |entry| entry.track.track_title.as_str(),
-            |entry, score| entry.match_score = score,
-        );
-    }
-
-    sort_and_paginate_tracks(entries, options)
-}
-
-pub(crate) fn query_by_artists(
-    db: &DbAny,
-    artist_db_ids: &[DbId],
-    scope: Option<QueryId>,
-    options: &ListOptions,
-) -> anyhow::Result<PagedResult<Track>> {
-    let mut tracks = get_by_artists(db, artist_db_ids)?;
-    if let Some(scope) = scope {
-        apply_track_scope_filter(db, &mut tracks, scope)?;
-    }
-
-    query_tracks_from_candidates(tracks, options)
-}
-
-pub(crate) fn query_by_release_artists(
-    db: &DbAny,
-    artist_db_ids: &[DbId],
-    scope: Option<QueryId>,
-    options: &ListOptions,
-) -> anyhow::Result<PagedResult<Track>> {
-    let mut tracks = get_by_release_artists(db, artist_db_ids)?;
-    if let Some(scope) = scope {
-        apply_track_scope_filter(db, &mut tracks, scope)?;
-    }
-
-    query_tracks_from_candidates(tracks, options)
-}
-
-pub(crate) fn query_by_artist_filters(
-    db: &DbAny,
-    artist_db_ids: &[DbId],
-    release_artist_db_ids: &[DbId],
-    scope: Option<QueryId>,
-    options: &ListOptions,
-) -> anyhow::Result<PagedResult<Track>> {
-    let mut tracks = Vec::new();
-    let mut seen_track_ids = HashSet::new();
-
-    if !artist_db_ids.is_empty() {
-        append_unique_tracks(
-            &mut tracks,
-            &mut seen_track_ids,
-            get_by_artists(db, artist_db_ids)?,
-        );
-    }
-
-    if !release_artist_db_ids.is_empty() {
-        append_unique_tracks(
-            &mut tracks,
-            &mut seen_track_ids,
-            get_by_release_artists(db, release_artist_db_ids)?,
-        );
-    }
-
-    if let Some(scope) = scope {
-        apply_track_scope_filter(db, &mut tracks, scope)?;
-    }
-
-    query_tracks_from_candidates(tracks, options)
 }
 
 #[cfg(test)]
@@ -1064,29 +735,6 @@ mod tests {
                 .map(|track| track.track_title.as_str()),
             Some("Existing Track")
         );
-        Ok(())
-    }
-
-    #[test]
-    fn query_with_search_term_filters_and_orders_by_score() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        insert_track(&mut db, "Alpha Rock")?;
-        insert_track(&mut db, "Jazz Tune")?;
-        insert_track(&mut db, "Rock Solid")?;
-
-        let options = ListOptions {
-            sort: vec![],
-            offset: None,
-            limit: None,
-            search_term: Some("rock".to_string()),
-        };
-        let result = query(&db, "tracks", &options)?;
-        let titles: Vec<&str> = result
-            .entries
-            .iter()
-            .map(|t| t.track_title.as_str())
-            .collect();
-        assert_eq!(titles, vec!["Rock Solid", "Alpha Rock"]);
         Ok(())
     }
 }

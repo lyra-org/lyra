@@ -33,6 +33,12 @@ use crate::services::{
         access::AccessError,
         api_keys::ApiKeyServiceError,
     },
+    catalog::{
+        CatalogError,
+        Direction,
+        SortSpec,
+        pipeline::SortKey,
+    },
     entries::EntryServiceError,
     hls::HlsError,
     playback_sessions::PlaybackServiceError,
@@ -191,6 +197,39 @@ impl From<AccessError> for AppError {
             AccessError::Internal(err) => err.into(),
         }
     }
+}
+
+impl From<CatalogError> for AppError {
+    fn from(err: CatalogError) -> Self {
+        match err {
+            CatalogError::Invalid(message) => Self::bad_request(message),
+            CatalogError::Auth(err) => err.into(),
+            CatalogError::Internal(err) => err.into(),
+        }
+    }
+}
+
+/// Catalog sort keys from `sort_by` tokens, all in the `sort_order` direction.
+pub(crate) fn parse_catalog_sort<K: SortKey>(
+    sort_by: Option<Vec<String>>,
+    sort_order: Option<String>,
+) -> Result<SortSpec<K>, AppError> {
+    let direction = sort_order
+        .as_deref()
+        .map(Direction::parse)
+        .transpose()?
+        .unwrap_or(Direction::Ascending);
+    let mut sort = Vec::new();
+    for value in sort_by.into_iter().flatten() {
+        for token in value
+            .split(',')
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+        {
+            sort.push((K::parse(&token.to_ascii_lowercase())?, direction));
+        }
+    }
+    Ok(sort)
 }
 
 impl From<ApiKeyServiceError> for AppError {
