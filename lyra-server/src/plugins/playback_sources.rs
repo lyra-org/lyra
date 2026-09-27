@@ -3,10 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::{
-    collections::HashSet,
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use agdb::DbId;
 use harmony_core::{
@@ -28,6 +25,7 @@ use harmony_luau::{
     render_definition_file_with_support,
 };
 
+use crate::plugins::args;
 use crate::{
     plugins::db::{
         self,
@@ -105,7 +103,7 @@ fn get_callback(
     let id = frame
         .args
         .read_optional_named::<luau::Value>("id")?
-        .map(parse_resolve_id)
+        .map(args::resolve_id)
         .transpose()?
         .unwrap_or_else(|| ResolveId::alias("tracks"));
     let include_entry = frame
@@ -161,7 +159,7 @@ fn get_many_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let track_ids: luau::Table = frame.args.read_named("track_ids")?;
-    let track_ids = parse_db_ids(frame.vm, &track_ids)?;
+    let track_ids = args::unique_ids(frame.vm, &track_ids)?;
     let include_entry = frame
         .args
         .read_optional_named::<bool>("include_entry")?
@@ -282,74 +280,6 @@ fn entry_to_table(entry: db::Entry, include_full_path: bool) -> luau::OwnedTable
 
 fn optional_u64(value: Option<u64>) -> luau::Value {
     value.map(luau::Value::from).unwrap_or(luau::Value::Nil)
-}
-
-fn parse_resolve_id(value: luau::Value) -> luau::runtime::Result<ResolveId> {
-    match value {
-        luau::Value::Integer(value) => Ok(ResolveId::DbId(DbId(value))),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 => {
-            Ok(ResolveId::DbId(DbId(value as i64)))
-        }
-        luau::Value::String(bytes) => {
-            let text = String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?;
-            if db::ROOT_COLLECTION_ALIASES.contains(&text.as_str()) {
-                Ok(ResolveId::Alias(text))
-            } else {
-                Ok(ResolveId::Nanoid(text))
-            }
-        }
-        other => Err(crate::plugins::runtime_error(format!(
-            "expected integer or string id, got {}",
-            other.type_name()
-        ))),
-    }
-}
-
-fn parse_db_ids(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
-    let mut values = Vec::new();
-    for (key, value) in table.pairs_raw(vm)? {
-        let Some(index) = array_index(key) else {
-            continue;
-        };
-        let Some(id) = db_id_value(value)? else {
-            continue;
-        };
-        values.push((index, id));
-    }
-    values.sort_by_key(|(index, _)| *index);
-
-    let mut ids = Vec::new();
-    let mut seen = HashSet::new();
-    for (_, id) in values {
-        if seen.insert(id) {
-            ids.push(id);
-        }
-    }
-    Ok(ids)
-}
-
-fn array_index(value: luau::Value) -> Option<i64> {
-    match value {
-        luau::Value::Integer(value) if value > 0 => Some(value),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
-            Some(value as i64)
-        }
-        _ => None,
-    }
-}
-
-fn db_id_value(value: luau::Value) -> luau::runtime::Result<Option<DbId>> {
-    match value {
-        luau::Value::Integer(value) if value > 0 => Ok(Some(DbId(value))),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
-            Ok(Some(DbId(value as i64)))
-        }
-        luau::Value::Integer(_) | luau::Value::Number(_) => Ok(None),
-        other => Err(crate::plugins::runtime_error(format!(
-            "id entries must be positive integers, got {}",
-            other.type_name()
-        ))),
-    }
 }
 
 #[cfg(feature = "docgen")]
@@ -482,11 +412,6 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
 }
 
 #[cfg(feature = "docgen")]
-fn resolve_id_type() -> LuauType {
-    LuauType::union(vec![i64::luau_type(), String::luau_type()])
-}
-
-#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "PlaybackSources",
@@ -498,7 +423,7 @@ fn module_descriptor() -> ModuleDescriptor {
                 path: vec!["get"],
                 description: None,
                 params: vec![
-                    param("id", LuauType::optional(resolve_id_type())),
+                    param("id", LuauType::optional(args::resolve_id_type())),
                     param("include_entry", Option::<bool>::luau_type()),
                 ],
                 returns: vec![Vec::<PlaybackSourceInfo>::luau_type()],

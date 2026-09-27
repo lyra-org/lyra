@@ -25,6 +25,7 @@ use harmony_luau::{
     render_definition_file_with_support,
 };
 
+use crate::plugins::args;
 use crate::{
     STATE,
     plugins::db::{
@@ -137,10 +138,7 @@ fn resolve_callback(
 fn get_by_id_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let label_id = DbId(require_positive_id(
-        frame.args.read_named("label_id")?,
-        "label_id",
-    )?);
+    let label_id = args::positive_id(frame.args.read_named("label_id")?, "label_id")?;
     Ok(luau::ScheduledFuture::new(async move {
         let label = {
             let db = STATE.db.read().await;
@@ -155,10 +153,7 @@ fn get_by_id_callback(
 fn get_for_release_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let release_id = DbId(require_positive_id(
-        frame.args.read_named("release_id")?,
-        "release_id",
-    )?);
+    let release_id = args::positive_id(frame.args.read_named("release_id")?, "release_id")?;
     let principal = caller_principal(&frame.context)?;
     Ok(luau::ScheduledFuture::new(async move {
         let labels = {
@@ -178,7 +173,7 @@ fn get_for_releases_many_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids_table: luau::Table = frame.args.read_named("release_ids")?;
-    let ids = parse_db_ids(frame.vm, &ids_table)?;
+    let ids = args::unique_ids(frame.vm, &ids_table)?;
     let principal = caller_principal(&frame.context)?;
     Ok(luau::ScheduledFuture::new(async move {
         let labels = {
@@ -203,10 +198,7 @@ fn get_for_releases_many_callback(
 fn get_releases_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let label_id = DbId(require_positive_id(
-        frame.args.read_named("label_id")?,
-        "label_id",
-    )?);
+    let label_id = args::positive_id(frame.args.read_named("label_id")?, "label_id")?;
     Ok(luau::ScheduledFuture::new(async move {
         let release_ids = {
             let db = STATE.db.read().await;
@@ -220,7 +212,7 @@ fn get_releases_many_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids_table: luau::Table = frame.args.read_named("label_ids")?;
-    let ids = parse_db_ids(frame.vm, &ids_table)?;
+    let ids = args::unique_ids(frame.vm, &ids_table)?;
     Ok(luau::ScheduledFuture::new(async move {
         let release_ids = {
             let db = STATE.db.read().await;
@@ -313,67 +305,6 @@ fn optional_string(
             "{key} must be a string, got {}",
             other.type_name()
         ))),
-    }
-}
-
-fn ordered_array_values(
-    vm: &luau::Vm,
-    table: &luau::Table,
-) -> luau::runtime::Result<Vec<(i64, luau::Value)>> {
-    let mut values = Vec::new();
-    for (key, value) in table.pairs_raw(vm)? {
-        let Some(index) = sequence_index(key) else {
-            continue;
-        };
-        values.push((index, value));
-    }
-    values.sort_by_key(|(index, _)| *index);
-    Ok(values)
-}
-
-fn parse_db_ids(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
-    let mut ids = Vec::new();
-    for (_, value) in ordered_array_values(vm, table)? {
-        if let Some(id) = db_id_from_value(value)? {
-            ids.push(id);
-        }
-    }
-    ids.sort_by_key(|id| id.0);
-    ids.dedup();
-    Ok(ids)
-}
-
-fn sequence_index(value: luau::Value) -> Option<i64> {
-    match value {
-        luau::Value::Integer(value) if value > 0 => Some(value),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
-            Some(value as i64)
-        }
-        _ => None,
-    }
-}
-
-fn db_id_from_value(value: luau::Value) -> luau::runtime::Result<Option<DbId>> {
-    match value {
-        luau::Value::Integer(value) if value > 0 => Ok(Some(DbId(value))),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
-            Ok(Some(DbId(value as i64)))
-        }
-        luau::Value::Integer(_) | luau::Value::Number(_) => Ok(None),
-        other => Err(crate::plugins::runtime_error(format!(
-            "id entries must be positive integers, got {}",
-            other.type_name()
-        ))),
-    }
-}
-
-fn require_positive_id(value: i64, name: &str) -> luau::runtime::Result<i64> {
-    if value > 0 {
-        Ok(value)
-    } else {
-        Err(crate::plugins::runtime_error(format!(
-            "{name} must be positive"
-        )))
     }
 }
 

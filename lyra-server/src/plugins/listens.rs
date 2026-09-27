@@ -28,6 +28,7 @@ use harmony_luau::{
     render_definition_file_with_support,
 };
 
+use crate::plugins::args;
 use crate::{
     plugins::db::{
         self,
@@ -145,7 +146,7 @@ fn get_counts_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let track_ids: luau::Table = frame.args.read_named("track_ids")?;
-    let track_ids = parse_db_ids(frame.vm, &track_ids)?;
+    let track_ids = args::unique_ids(frame.vm, &track_ids)?;
     let merge = frame
         .args
         .read_optional_named::<bool>("merge_unique_external_ids")?
@@ -169,7 +170,7 @@ fn get_stats_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let track_ids: luau::Table = frame.args.read_named("track_ids")?;
-    let track_ids = parse_db_ids(frame.vm, &track_ids)?;
+    let track_ids = args::unique_ids(frame.vm, &track_ids)?;
     let merge = frame
         .args
         .read_optional_named::<bool>("merge_unique_external_ids")?
@@ -298,53 +299,6 @@ async fn resolve_stats(
         counts,
         last_played,
     })
-}
-
-fn parse_db_ids(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
-    let mut values = Vec::new();
-    for (key, value) in table.pairs_raw(vm)? {
-        let Some(index) = array_index(key) else {
-            continue;
-        };
-        let Some(id) = db_id_value(value)? else {
-            continue;
-        };
-        values.push((index, id));
-    }
-    values.sort_by_key(|(index, _)| *index);
-
-    let mut ids = Vec::new();
-    let mut seen = HashSet::new();
-    for (_, id) in values {
-        if seen.insert(id) {
-            ids.push(id);
-        }
-    }
-    Ok(ids)
-}
-
-fn array_index(value: luau::Value) -> Option<i64> {
-    match value {
-        luau::Value::Integer(value) if value > 0 => Some(value),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
-            Some(value as i64)
-        }
-        _ => None,
-    }
-}
-
-fn db_id_value(value: luau::Value) -> luau::runtime::Result<Option<DbId>> {
-    match value {
-        luau::Value::Integer(value) if value > 0 => Ok(Some(DbId(value))),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
-            Ok(Some(DbId(value as i64)))
-        }
-        luau::Value::Integer(_) | luau::Value::Number(_) => Ok(None),
-        other => Err(crate::plugins::runtime_error(format!(
-            "id entries must be positive integers, got {}",
-            other.type_name()
-        ))),
-    }
 }
 
 fn dbid_map_to_table(map: &HashMap<DbId, u64>) -> luau::OwnedTable {

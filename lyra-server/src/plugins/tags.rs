@@ -2,7 +2,6 @@
 // v1.0. If a copy of the Lyra Public License was not distributed with this file,
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use agdb::DbId;
@@ -28,6 +27,7 @@ use harmony_luau::{
 };
 use serde::Serialize;
 
+use crate::plugins::args;
 use crate::{
     plugins::db::{
         self,
@@ -176,7 +176,7 @@ fn has_many_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
     let target_ids: luau::Table = frame.args.read_named("target_ids")?;
-    let target_ids = parse_db_ids(frame.vm, &target_ids)?;
+    let target_ids = args::unique_ids(frame.vm, &target_ids)?;
     let tag: String = frame.args.read_named("tag")?;
     let store = frame.vm.data().get::<TagsModuleStore>()?.as_ref().clone();
     Ok(luau::ScheduledFuture::new(async move {
@@ -207,7 +207,7 @@ fn get_for_targets_many_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
     let target_ids: luau::Table = frame.args.read_named("target_ids")?;
-    let target_ids = parse_db_ids(frame.vm, &target_ids)?;
+    let target_ids = args::unique_ids(frame.vm, &target_ids)?;
     let store = frame.vm.data().get::<TagsModuleStore>()?.as_ref().clone();
     Ok(luau::ScheduledFuture::new(async move {
         let mut result = store
@@ -387,45 +387,6 @@ fn read_db_id_arg(
     name: &'static str,
 ) -> luau::runtime::Result<DbId> {
     Ok(DbId(args.read_named::<i64>(name)?))
-}
-fn parse_db_ids(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
-    let mut entries = table
-        .pairs_raw(vm)?
-        .into_iter()
-        .filter_map(|(key, value)| Some((sequence_index(key)?, integer_value(value)?)))
-        .collect::<Vec<_>>();
-    entries.sort_by_key(|(index, _)| *index);
-
-    let mut ids = Vec::new();
-    let mut seen = HashSet::new();
-    for (_, id_value) in entries {
-        if id_value <= 0 {
-            continue;
-        }
-        let id = DbId(id_value);
-        if seen.insert(id) {
-            ids.push(id);
-        }
-    }
-    Ok(ids)
-}
-fn sequence_index(value: luau::Value) -> Option<i64> {
-    match value {
-        luau::Value::Integer(value) if value > 0 => Some(value),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
-            Some(value as i64)
-        }
-        _ => None,
-    }
-}
-fn integer_value(value: luau::Value) -> Option<i64> {
-    match value {
-        luau::Value::Integer(value) => Some(value),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 => {
-            Some(value as i64)
-        }
-        _ => None,
-    }
 }
 
 impl LuauTypeInfo for TagInfo {

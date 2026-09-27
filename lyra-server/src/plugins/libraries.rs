@@ -3,10 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::{
-    HashMap,
-    HashSet,
-};
+use std::collections::HashMap;
 
 use agdb::{
     DbId,
@@ -35,6 +32,7 @@ use harmony_luau::{
 };
 use serde::Serialize;
 
+use crate::plugins::args;
 use crate::plugins::db::{
     self,
     DbAsync,
@@ -112,7 +110,7 @@ fn list_callback(
     let id = frame
         .args
         .read_optional_named::<luau::Value>("id")?
-        .map(parse_resolve_id)
+        .map(args::resolve_id)
         .transpose()?;
     let store = frame
         .vm
@@ -221,7 +219,7 @@ fn get_for_entities_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids_table: luau::Table = frame.args.read_named("entity_ids")?;
-    let ids = parse_db_ids(frame.vm, &ids_table)?;
+    let ids = args::unique_ids(frame.vm, &ids_table)?;
     let store = frame
         .vm
         .data()
@@ -317,74 +315,6 @@ fn caller_principal(context: &luau::CallContext) -> luau::runtime::Result<Option
     crate::plugins::auth::dispatch_principal(context)
 }
 
-fn parse_db_ids(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
-    let mut values = Vec::new();
-    for (key, value) in table.pairs_raw(vm)? {
-        let Some(index) = array_index(key) else {
-            continue;
-        };
-        let Some(id) = db_id_value(value)? else {
-            continue;
-        };
-        values.push((index, id));
-    }
-    values.sort_by_key(|(index, _)| *index);
-
-    let mut ids = Vec::new();
-    let mut seen = HashSet::new();
-    for (_, id) in values {
-        if seen.insert(id) {
-            ids.push(id);
-        }
-    }
-    Ok(ids)
-}
-
-fn array_index(value: luau::Value) -> Option<i64> {
-    match value {
-        luau::Value::Integer(value) if value > 0 => Some(value),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
-            Some(value as i64)
-        }
-        _ => None,
-    }
-}
-
-fn db_id_value(value: luau::Value) -> luau::runtime::Result<Option<DbId>> {
-    match value {
-        luau::Value::Integer(value) if value > 0 => Ok(Some(DbId(value))),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
-            Ok(Some(DbId(value as i64)))
-        }
-        luau::Value::Integer(_) | luau::Value::Number(_) => Ok(None),
-        other => Err(crate::plugins::runtime_error(format!(
-            "id entries must be positive integers, got {}",
-            other.type_name()
-        ))),
-    }
-}
-
-fn parse_resolve_id(value: luau::Value) -> luau::runtime::Result<ResolveId> {
-    match value {
-        luau::Value::Integer(value) => Ok(ResolveId::DbId(DbId(value))),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 => {
-            Ok(ResolveId::DbId(DbId(value as i64)))
-        }
-        luau::Value::String(bytes) => {
-            let text = String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?;
-            if db::ROOT_COLLECTION_ALIASES.contains(&text.as_str()) {
-                Ok(ResolveId::Alias(text))
-            } else {
-                Ok(ResolveId::Nanoid(text))
-            }
-        }
-        other => Err(crate::plugins::runtime_error(format!(
-            "expected integer or string id, got {}",
-            other.type_name()
-        ))),
-    }
-}
-
 impl LuauTypeInfo for LibraryRecord {
     fn luau_type() -> LuauType {
         LuauType::named("Library")
@@ -441,11 +371,6 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
 }
 
 #[cfg(feature = "docgen")]
-fn resolve_id_type() -> LuauType {
-    LuauType::union(vec![i64::luau_type(), String::luau_type()])
-}
-
-#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Libraries",
@@ -456,7 +381,7 @@ fn module_descriptor() -> ModuleDescriptor {
             ModuleFunctionDescriptor {
                 path: vec!["list"],
                 description: None,
-                params: vec![param("id", LuauType::optional(resolve_id_type()))],
+                params: vec![param("id", LuauType::optional(args::resolve_id_type()))],
                 returns: vec![Vec::<LibraryRecord>::luau_type()],
                 yields: true,
             },

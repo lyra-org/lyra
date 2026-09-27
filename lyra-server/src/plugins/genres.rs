@@ -3,8 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashSet;
-
 use agdb::DbId;
 use harmony_core::{
     FunctionSpec,
@@ -31,6 +29,7 @@ use serde::{
     Serialize,
 };
 
+use crate::plugins::args;
 use crate::plugins::db::{
     self,
     DbAsync,
@@ -304,7 +303,7 @@ fn get_releases_many_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids_table: luau::Table = frame.args.read_named("genre_ids")?;
-    let ids = parse_db_ids(frame.vm, &ids_table)?;
+    let ids = args::unique_ids(frame.vm, &ids_table)?;
     let store = frame.vm.data().get::<GenresModuleStore>()?.as_ref().clone();
     let db = store.db()?;
 
@@ -359,7 +358,7 @@ fn get_for_releases_many_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids_table: luau::Table = frame.args.read_named("release_ids")?;
-    let ids = parse_db_ids(frame.vm, &ids_table)?;
+    let ids = args::unique_ids(frame.vm, &ids_table)?;
     let store = frame.vm.data().get::<GenresModuleStore>()?.as_ref().clone();
     let db = store.db()?;
 
@@ -470,53 +469,6 @@ fn optional_genre_value(genre: Option<db::genres::Genre>) -> luau::runtime::Resu
     match genre {
         Some(genre) => harmony_luau::serializable_to_luau_owned(GenreRecord::from(genre)),
         None => Ok(luau::Value::Nil),
-    }
-}
-
-fn parse_db_ids(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
-    let mut values = Vec::new();
-    for (key, value) in table.pairs_raw(vm)? {
-        let Some(index) = array_index(key) else {
-            continue;
-        };
-        let Some(id) = db_id_value(value)? else {
-            continue;
-        };
-        values.push((index, id));
-    }
-    values.sort_by_key(|(index, _)| *index);
-
-    let mut ids = Vec::new();
-    let mut seen = HashSet::new();
-    for (_, id) in values {
-        if seen.insert(id) {
-            ids.push(id);
-        }
-    }
-    Ok(ids)
-}
-
-fn array_index(value: luau::Value) -> Option<i64> {
-    match value {
-        luau::Value::Integer(value) if value > 0 => Some(value),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
-            Some(value as i64)
-        }
-        _ => None,
-    }
-}
-
-fn db_id_value(value: luau::Value) -> luau::runtime::Result<Option<DbId>> {
-    match value {
-        luau::Value::Integer(value) if value > 0 => Ok(Some(DbId(value))),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
-            Ok(Some(DbId(value as i64)))
-        }
-        luau::Value::Integer(_) | luau::Value::Number(_) => Ok(None),
-        other => Err(crate::plugins::runtime_error(format!(
-            "id entries must be positive integers, got {}",
-            other.type_name()
-        ))),
     }
 }
 

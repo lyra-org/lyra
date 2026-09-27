@@ -3,10 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use agdb::{
-    DbId,
-    QueryId,
-};
+use agdb::QueryId;
 use harmony_core::{
     FunctionSpec,
     ModuleExport,
@@ -29,6 +26,7 @@ use harmony_luau::{
 };
 use serde::Serialize;
 
+use crate::plugins::args;
 use crate::plugins::db::{
     self,
     DbAsync,
@@ -80,7 +78,7 @@ fn get_callback(
     let id = frame
         .args
         .read_optional_named::<luau::Value>("id")?
-        .map(parse_resolve_id)
+        .map(args::resolve_id)
         .transpose()?;
     let store = frame
         .vm
@@ -151,27 +149,6 @@ impl From<db::Entry> for EntryRecord {
     }
 }
 
-fn parse_resolve_id(value: luau::Value) -> luau::runtime::Result<ResolveId> {
-    match value {
-        luau::Value::Integer(value) => Ok(ResolveId::DbId(DbId(value))),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 => {
-            Ok(ResolveId::DbId(DbId(value as i64)))
-        }
-        luau::Value::String(bytes) => {
-            let text = String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?;
-            if db::ROOT_COLLECTION_ALIASES.contains(&text.as_str()) {
-                Ok(ResolveId::Alias(text))
-            } else {
-                Ok(ResolveId::Nanoid(text))
-            }
-        }
-        other => Err(crate::plugins::runtime_error(format!(
-            "expected integer or string id, got {}",
-            other.type_name()
-        ))),
-    }
-}
-
 impl LuauTypeInfo for EntryRecord {
     fn luau_type() -> LuauType {
         LuauType::named("EntryInfo")
@@ -238,11 +215,6 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
 }
 
 #[cfg(feature = "docgen")]
-fn resolve_id_type() -> LuauType {
-    LuauType::union(vec![i64::luau_type(), String::luau_type()])
-}
-
-#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Entries",
@@ -252,7 +224,7 @@ fn module_descriptor() -> ModuleDescriptor {
         functions: vec![ModuleFunctionDescriptor {
             path: vec!["get"],
             description: None,
-            params: vec![param("id", LuauType::optional(resolve_id_type()))],
+            params: vec![param("id", LuauType::optional(args::resolve_id_type()))],
             returns: vec![Vec::<EntryRecord>::luau_type()],
             yields: true,
         }],
