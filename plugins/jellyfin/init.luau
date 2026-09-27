@@ -1139,7 +1139,7 @@ api.get(P .. "/Playlists/{playlistId}/Items", function(ctx: ApiContext)
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
 	local options = items_options.for_user(items_options.parse(query), principal.user_id)
-	local items, total_count, start_index = catalog.list_playlist_track_items(playlist, options)
+	local items, total_count, start_index = listing.list_playlist_track_items(playlist, options)
 	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
 end, "public", true)
 api.post(P .. "/Playlists", function(ctx: ApiContext)

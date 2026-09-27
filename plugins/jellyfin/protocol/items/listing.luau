@@ -142,13 +142,34 @@ local function playlist_source(options: ItemsQueryOptions, scope: Scope): Source
 		candidates = playlist_access.list_owned()
 	end
 
+	local shown: { PlaylistInfo } = {}
+	for _, playlist in candidates do
+		local id = playlist.db_id
+		if
+			id == nil
+			or excluded[id]
+			or (favorite ~= nil and (favorite[id] == true) ~= is_favorite)
+			or (search ~= nil and string.find(string.lower(playlist.name or ""), search, 1, true) == nil)
+		then
+			continue
+		end
+		table.insert(shown, playlist)
+	end
+
+	local shown_ids: { number } = {}
+	for _, playlist in shown do
+		table.insert(shown_ids, playlist.db_id :: number)
+	end
+	local entries: { [number]: { playlists.PlaylistTrackLink } } = if #shown_ids > 0
+		then playlists.get_tracks_many(shown_ids)
+		else {}
 	-- As upstream, a playlist is played once none of the tracks the caller can see is unplayed.
 	local unplayed: { [number]: boolean } = {}
 	if is_played ~= nil then
 		local track_ids: { number } = {}
-		for _, playlist in candidates do
-			for _, track_id in playlist_access.track_ids(playlist) do
-				table.insert(track_ids, track_id)
+		for _, links in entries do
+			for _, link in links do
+				table.insert(track_ids, link.track_id)
 			end
 		end
 		if #track_ids > 0 then
@@ -159,23 +180,13 @@ local function playlist_source(options: ItemsQueryOptions, scope: Scope): Source
 			end
 		end
 	end
-
 	local stubs: { ItemInfo } = {}
-	for _, playlist in candidates do
-		local id = playlist.db_id
-		if
-			id == nil
-			or not playlist_access.can_view(playlist, options.user_id)
-			or excluded[id]
-			or (favorite ~= nil and (favorite[id] == true) ~= is_favorite)
-			or (search ~= nil and string.find(string.lower(playlist.name or ""), search, 1, true) == nil)
-		then
-			continue
-		end
+	for _, playlist in shown do
+		local links = entries[playlist.db_id :: number]
 		if is_played ~= nil then
 			local played = true
-			for _, track_id in playlist_access.track_ids(playlist) do
-				if unplayed[track_id] then
+			for _, link in links or {} do
+				if unplayed[link.track_id] then
 					played = false
 					break
 				end
@@ -184,20 +195,19 @@ local function playlist_source(options: ItemsQueryOptions, scope: Scope): Source
 				continue
 			end
 		end
-		local stub = catalog.playlist_stub(playlist)
+		local stub = catalog.playlist_stub(playlist, if links then #links else 0)
 		if stub then
 			table.insert(stubs, stub)
 		end
 	end
+	local descending = query.direction(options.sort_order) == "descending"
 	table.sort(stubs, function(a: ItemInfo, b: ItemInfo): boolean
-		return string.lower(a.SortName or "") < string.lower(b.SortName or "")
-	end)
-	if string.lower(options.sort_order or "") == "descending" then
-		local count = #stubs
-		for index = 1, count // 2 do
-			stubs[index], stubs[count - index + 1] = stubs[count - index + 1], stubs[index]
+		local a_name, b_name = string.lower(a.SortName or ""), string.lower(b.SortName or "")
+		if descending then
+			return a_name > b_name
 		end
-	end
+		return a_name < b_name
+	end)
 
 	return function(offset, limit)
 		local page = results.paginate_items(stubs, offset, limit)
@@ -281,20 +291,25 @@ local function named_extras(options: ItemsQueryOptions): { ItemInfo }
 	if #options.ids == 0 then
 		return extras
 	end
-	local ids = item_ids.parse_jellyfin_ids_array(options.ids)
 	if options_module.wants_item_type(options, "musicgenre") then
-		for _, genre in genres.get(ids) do
-			local item = catalog.genre_item(genre.name, genre.id, nil, nil, nil, nil)
+		local ids = item_ids.parse_jellyfin_ids_array(options.ids)
+		local found = genres.get(ids)
+		for _, id in ids do
+			local genre = found[id]
+			local item = if genre then catalog.genre_item(genre.name, genre.id, nil, nil, nil) else nil
 			if item then
 				table.insert(extras, item)
 			end
 		end
 	end
 	if options_module.wants_item_type(options, "collectionfolder") then
-		for _, id in ids do
-			local item = catalog.library_view_item(id)
-			if item then
-				table.insert(extras, item)
+		local wanted: { [string]: boolean } = {}
+		for _, id in options.ids do
+			wanted[string.lower((string.gsub(id, "-", "")))] = true
+		end
+		for _, view in catalog.to_music_view_items() do
+			if view.Id and wanted[view.Id] then
+				table.insert(extras, view)
 			end
 		end
 	end
@@ -365,10 +380,17 @@ local function list(options: ItemsQueryOptions, playlist_order: boolean): ({ Ite
 		add(playlist_source(options, scope))
 	end
 
+	local extras = named_extras(options)
 	local stubs: { ItemInfo }, total: number
 	if #options.ids > 0 and (if playlist_order then not sorted(options) else #options.sort_by == 0) then
-		stubs, total = in_request_order(sources, options, named_extras(options))
+		stubs, total = in_request_order(sources, options, extras)
 	else
+		-- Named genres and libraries follow the catalog items, in request order.
+		if #extras > 0 then
+			table.insert(sources, function(offset, limit)
+				return results.paginate_items(extras, offset, limit), #extras
+			end)
+		end
 		stubs, total = page_sources(sources, options.start_index, options.limit)
 	end
 	return catalog.realize(stubs, options), total, options.start_index
@@ -403,7 +425,7 @@ end
 -- The newest albums by the date they were added; `IsPlayed` is ignored, as upstream. Audio
 -- groups into its albums unless `GroupItems=false` asks for the newest tracks themselves.
 function module.list_latest_items(options: ItemsQueryOptions): { ItemInfo }
-	local latest = options_module.clone(options)
+	local latest = table.clone(options)
 	latest.is_played = nil
 	latest.start_index = 0
 	latest.limit = options.limit or LATEST_DEFAULT_LIMIT
@@ -446,15 +468,6 @@ function module.list_person_items(options: ItemsQueryOptions): ({ ItemInfo }, nu
 	return catalog.realize(stubs, options), total, options.start_index
 end
 
--- Albums, songs and artists in a genre, within the listing's library.
-local function genre_counts(genre_id: number, library_id: number?): catalog.GenreCounts
-	return {
-		release_count = releases.query({ genre_ids = { genre_id }, library_id = library_id, limit = 0 }).total,
-		song_count = tracks.query({ genre_ids = { genre_id }, library_id = library_id, limit = 0 }).total,
-		artist_count = artists.query({ genre_ids = { genre_id }, library_id = library_id, limit = 0 }).total,
-	}
-end
-
 function module.list_genre_items(options: ItemsQueryOptions): ({ ItemInfo }, number, number)
 	local built = query.genres(options, lookups.scope(options.parent_id))
 	if not built then
@@ -486,8 +499,7 @@ function module.list_genre_items(options: ItemsQueryOptions): ({ ItemInfo }, num
 		local item = catalog.genre_item(
 			genre.name,
 			genre.id,
-			nil,
-			genre_counts(genre_id, built.library_id),
+			{ release_count = genre.release_count, song_count = genre.track_count },
 			library_hex_id,
 			catalog.genre_image_tag(release_ids, genre.id)
 		)
@@ -507,7 +519,7 @@ function module.list_views(options: ItemsQueryOptions): ({ ItemInfo }, number, n
 			table.insert(views, view)
 		end
 	end
-	local descending = string.lower(options.sort_order or "") == "descending"
+	local descending = query.direction(options.sort_order) == "descending"
 	table.sort(views, function(a: ItemInfo, b: ItemInfo): boolean
 		local a_name, b_name = string.lower(a.SortName or a.Name or ""), string.lower(b.SortName or b.Name or "")
 		if descending then
@@ -612,6 +624,40 @@ function module.ancestors_chain(item_id: number, user_id: string): ({ ItemInfo }
 		current = parent
 	end
 	return chain, true
+end
+
+-- Playlist order, as upstream, which honours only `StartIndex` and `Limit` here.
+function module.list_playlist_track_items(
+	playlist: PlaylistInfo?,
+	options: ItemsQueryOptions
+): ({ ItemInfo }, number, number)
+	if not playlist or not playlist.db_id then
+		return {}, 0, options.start_index
+	end
+
+	local track_refs = playlist_access.track_refs(playlist)
+	local track_ids: { number } = {}
+	for _, track_ref in track_refs do
+		table.insert(track_ids, track_ref.track_id)
+	end
+	local tracks_by_id: { [number]: tracks.Track } = if #track_ids > 0 then tracks.get(track_ids) else {}
+
+	local entries: { tracks.Track } = {}
+	local entry_ids: { string? } = {}
+	for _, track_ref in track_refs do
+		local track = tracks_by_id[track_ref.track_id]
+		if track then
+			table.insert(entries, track)
+			table.insert(entry_ids, item_ids.encode_jellyfin_item_id(track_ref.entry_id))
+		end
+	end
+
+	local page, total_count, start_index = results.paginate_items(entries, options.start_index, options.limit)
+	local items = catalog.realize(catalog.track_stubs(page), options)
+	for index, item in items do
+		item.PlaylistItemId = entry_ids[start_index + index]
+	end
+	return items, total_count, start_index
 end
 
 return module

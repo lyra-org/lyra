@@ -85,14 +85,6 @@ type ReleaseRecord = {
 	created_at: index<Release, "created_at">,
 	ctime: index<Release, "ctime">,
 }
-type ArtistRecord = {
-	id: index<Artist, "id">,
-	db_id: index<Artist, "db_id">,
-	artist_name: index<Artist, "artist_name">,
-	sort_name: index<Artist, "sort_name">,
-	description: index<Artist, "description">,
-	created_at: index<Artist, "created_at">,
-}
 type TrackRecord = {
 	id: index<Track, "id">,
 	db_id: index<Track, "db_id">,
@@ -112,7 +104,8 @@ type TrackRecord = {
 	ctime: index<Track, "ctime">,
 }
 type ReleaseLike = Release | ReleaseRecord
-type ArtistLike = Artist | ArtistRecord
+-- Artists list through catalog queries, which carry their counts.
+type ArtistLike = artists_module.ArtistSummary
 type TrackLike = Track | TrackRecord
 type ItemRaw = ReleaseLike | ArtistLike | TrackLike | PlaylistInfo
 type ItemKind = "release" | "artist" | "track" | "playlist"
@@ -160,7 +153,6 @@ type ItemContext = {
 	credited_artists_by_owner_id: CreditRelationMap,
 	release_tracks_by_release_id: TrackRelationMap,
 	track_releases_by_track_id: ReleaseRelationMap,
-	artist_tracks_by_artist_id: TrackRelationMap,
 	playback_source_by_track_id: PlaybackSourceMap,
 	container_by_track_id: ContainerMap,
 	lyrics_by_track_id: LyricsLookup,
@@ -172,7 +164,6 @@ type ItemContext = {
 	has_track_releases_prefetch: boolean?,
 	has_release_artists_prefetch: boolean?,
 	has_release_tracks_prefetch: boolean?,
-	has_artist_tracks_prefetch: boolean?,
 	has_artist_relations_prefetch: boolean?,
 	genre_infos_by_release_id: { [number]: { genres.GenreInfo } }?,
 	tag_infos_by_item_id: TagInfoMap?,
@@ -333,18 +324,6 @@ function helpers.compose_covers(cover_infos: { covers.CoverInfo }): artwork.Reso
 end
 
 local module = {}
-module.trim = requests.trim
-module.unquote = requests.unquote
-module.split_csv_preserving_quotes = requests.split_csv_preserving_quotes
-module.parse_query_string = requests.parse_query_string
-module.parse_query_int = requests.parse_query_int
-module.encode_jellyfin_item_id = item_ids.encode_jellyfin_item_id
-module.get_cover_info = artwork.get_cover_info
-module.get_user_data = user_data.get_user_data
-module.build_query_result = results.build_query_result
-module.paginate_items = results.paginate_items
-module.extension_from_path = media.extension_from_path
-module.resolve_playback_source_for_track = media.resolve_playback_source_for_track
 
 function module.item_to_json(item: ItemInfo): JsonObject
 	return serialization.item_to_json(item)
@@ -359,7 +338,7 @@ function module.items_to_json(items: { ItemInfo }): { JsonValue }
 end
 
 function module.build_item_query_result(items: { ItemInfo }, total_count: number, start_index: number): JsonValue
-	return module.build_query_result(module.items_to_json(items), total_count, start_index)
+	return results.build_query_result(module.items_to_json(items), total_count, start_index)
 end
 
 function helpers.resolve_cover_info(release_db_id: number?, context: ItemContext?): artwork.ResolvedCoverInfo?
@@ -378,7 +357,7 @@ function helpers.resolve_cover_info(release_db_id: number?, context: ItemContext
 			return nil
 		end
 	end
-	return module.get_cover_info(release_db_id)
+	return artwork.get_cover_info(release_db_id)
 end
 
 function helpers.resolve_artist_cover_info(artist_db_id: number?, context: ItemContext?): artwork.ResolvedCoverInfo?
@@ -396,7 +375,7 @@ function helpers.resolve_artist_cover_info(artist_db_id: number?, context: ItemC
 			return nil
 		end
 	end
-	return module.get_cover_info(artist_db_id)
+	return artwork.get_cover_info(artist_db_id)
 end
 
 function helpers.default_image_tags(): nil
@@ -438,7 +417,7 @@ function helpers.build_item_user_data(
 		return nil
 	end
 
-	return module.get_user_data({
+	return user_data.get_user_data({
 		item_id = item_id,
 		user_id = user_id,
 		include_favorite = true,
@@ -488,7 +467,7 @@ function helpers.tag_names(infos: { TagInfo }?): { string }
 		return names
 	end
 	for _, info in infos do
-		local name = module.trim(info.tag)
+		local name = requests.trim(info.tag)
 		if name then
 			local lookup_key = string.lower(name)
 			if not seen[lookup_key] then
@@ -529,12 +508,7 @@ function helpers.release_like_from_raw(raw: ItemRaw?): ReleaseLike?
 end
 
 function helpers.artist_like_from_raw(raw: ItemRaw?): ArtistLike?
-	local artist_record = raw :: ArtistRecord?
-	if artist_record ~= nil and type(artist_record.artist_name) == "string" then
-		return artist_record
-	end
-
-	local artist = raw :: Artist?
+	local artist = raw :: ArtistLike?
 	if artist ~= nil and type(artist.artist_name) == "string" then
 		return artist
 	end
@@ -560,26 +534,6 @@ function helpers.playlist_info_from_raw(raw: ItemRaw?): PlaylistInfo?
 	local playlist = raw :: PlaylistInfo?
 	if playlist ~= nil and type(playlist.name) == "string" then
 		return playlist
-	end
-
-	return nil
-end
-
-function helpers.decode_jellyfin_item_id(value: JsonValue): number?
-	if value == nil then
-		return nil
-	end
-
-	if type(value) == "number" then
-		local numeric = math.floor(value)
-		if numeric <= 0 then
-			return nil
-		end
-		return numeric
-	end
-
-	if type(value) == "string" then
-		return item_ids.decode_jellyfin_item_id(value)
 	end
 
 	return nil
@@ -613,14 +567,6 @@ function helpers.unix_to_iso8601(unix_seconds: number | string?): string?
 		math.floor((rem % 3600) / 60),
 		rem % 60
 	)
-end
-
-function helpers.first_or_nil<T>(items: { T }?): T?
-	if type(items) ~= "table" or #items == 0 then
-		return nil
-	end
-
-	return items[1]
 end
 
 function helpers.resolve_library_hex_id_from_parent(parent_id: string?): string?
@@ -942,12 +888,12 @@ function helpers.build_media_info(
 	has_lyrics: boolean?
 ): ({ MediaSourceInfo }, { MediaStreamInfo }, string?)
 	local entry = if source then source.entry else nil
-	local media_item_id = module.encode_jellyfin_item_id(item_id)
-	local container = module.extension_from_path(if entry then entry.full_path else nil)
+	local media_item_id = item_ids.encode_jellyfin_item_id(item_id)
+	local container = media.extension_from_path(if entry then entry.full_path else nil)
 	local codec = helpers.codec_for_extension(container)
 	local size = if entry and entry.size then tonumber(entry.size) else nil
 	local bitrate = if track then track.bitrate_bps else nil
-	local full_path = if entry then module.trim(entry.full_path) else nil
+	local full_path = if entry then requests.trim(entry.full_path) else nil
 	local direct_stream_url = if full_path and media_item_id then `{ROUTE_PREFIX}/Items/{media_item_id}/File` else nil
 
 	local media_stream: MediaStreamInfo = {
@@ -1030,7 +976,7 @@ function helpers.resolve_track_container(track: TrackLike?): string?
 	end
 
 	local container = track_sources.get_primary_container(track_id)
-	return module.trim(container)
+	return requests.trim(container)
 end
 
 function helpers.person_type_for_credit(credit_type: CreditType, source: ArtistCreditSource): PersonType
@@ -1069,8 +1015,8 @@ function helpers.people_from_credits(credits: { CreditedArtistProjectionInfo }?)
 
 	for _, credited_artist: CreditedArtistProjectionInfo in credits do
 		local artist = credited_artist.artist
-		local artist_name = module.trim(artist.artist_name)
-		local artist_id = module.encode_jellyfin_item_id(artist.id)
+		local artist_name = requests.trim(artist.artist_name)
+		local artist_id = item_ids.encode_jellyfin_item_id(artist.id)
 		if artist_name == nil or artist_id == nil then
 			continue
 		end
@@ -1080,7 +1026,7 @@ function helpers.people_from_credits(credits: { CreditedArtistProjectionInfo }?)
 			continue
 		end
 		local person_type = helpers.person_type_for_credit(credit.type, credited_artist.source)
-		local role = module.trim(credit.detail)
+		local role = requests.trim(credit.detail)
 		local key = `{artist_id}\t{person_type}\t{role or ""}`
 		if seen[key] then
 			continue
@@ -1119,8 +1065,8 @@ function helpers.people_from_artist_relations(relations: { ArtistRelationInfo }?
 			continue
 		end
 
-		local artist_name = module.trim(artist.artist_name)
-		local artist_id = module.encode_jellyfin_item_id(artist.id)
+		local artist_name = requests.trim(artist.artist_name)
+		local artist_id = item_ids.encode_jellyfin_item_id(artist.id)
 		if artist_name == nil or artist_id == nil or seen[artist_id] then
 			continue
 		end
@@ -1205,8 +1151,8 @@ function helpers.collect_artist_projection(
 			continue
 		end
 		local artist = credited_artist.artist
-		local artist_name = module.trim(artist.artist_name)
-		local artist_id = module.encode_jellyfin_item_id(artist.id)
+		local artist_name = requests.trim(artist.artist_name)
+		local artist_id = item_ids.encode_jellyfin_item_id(artist.id)
 		if artist_name == nil or artist_id == nil or seen[artist_id] then
 			continue
 		end
@@ -1231,37 +1177,30 @@ function helpers.to_artist_item(
 		return nil
 	end
 
-	local sort_name = module.trim(artist.sort_name) or module.trim(artist.artist_name) or "Unknown Artist"
-	local artist_item_id = module.encode_jellyfin_item_id(artist.id)
-	local artist_tracks =
-		helpers.lookup_by_id(if context then context.artist_tracks_by_artist_id else nil, artist.db_id)
-	if artist_tracks == nil then
-		artist_tracks = lookups.tracks_of_artist(artist.db_id)
-	end
-	local runtime_ticks = enrichment.sum_runtime_ticks(artist_tracks)
-	local album_count = lookups.releases_credited_to(artist.db_id :: number, "release", 0).total
+	local sort_name = requests.trim(artist.sort_name) or requests.trim(artist.artist_name) or "Unknown Artist"
+	local artist_item_id = item_ids.encode_jellyfin_item_id(artist.id)
 	local include_images = helpers.should_include_images(context)
 	local cover_info = if include_images then helpers.resolve_artist_cover_info(artist.db_id, context) else nil
 	-- Mirrors upstream `MusicArtist.IsFolder => !IsAccessedByName`.
 	local in_library, parent_id = helpers.resolve_entity_library_attribution(artist.db_id, context)
 	local item: ItemInfo = {
 		Id = artist_item_id,
-		Name = module.trim(artist.artist_name) or "Unknown Artist",
+		Name = requests.trim(artist.artist_name) or "Unknown Artist",
 		Type = "MusicArtist",
 		IsFolder = in_library,
 		ParentId = if context == nil or context.include_parent_id == true then parent_id else nil,
 		SortName = sort_name,
-		RunTimeTicks = runtime_ticks,
+		RunTimeTicks = enrichment.ms_to_ticks(artist.total_duration),
 		DateCreated = helpers.unix_to_iso8601(artist.created_at),
-		AlbumCount = album_count,
-		SongCount = if artist_tracks then #artist_tracks else 0,
+		AlbumCount = artist.release_count,
+		SongCount = artist.track_count,
 		ImageTags = if cover_info then { Primary = cover_info.hash } else nil,
 		ImageBlurHashes = helpers.default_image_blur_hashes(cover_info),
 		UserData = helpers.build_item_user_data(
 			artist.db_id,
 			artist_item_id,
 			user_id,
-			`Artist-{module.trim(artist.artist_name) or ""}`,
+			`Artist-{requests.trim(artist.artist_name) or ""}`,
 			true,
 			favorite_lookup,
 			context
@@ -1270,7 +1209,9 @@ function helpers.to_artist_item(
 		LocationType = "FileSystem",
 		MediaType = "Unknown",
 		Tags = helpers.tag_names(helpers.resolve_tag_infos(artist.db_id, context)),
-		Overview = if context == nil or context.include_overview == true then module.trim(artist.description) else nil,
+		Overview = if context == nil or context.include_overview == true
+			then requests.trim(artist.description)
+			else nil,
 	}
 	return item
 end
@@ -1295,18 +1236,16 @@ end
 export type GenreCounts = {
 	release_count: number,
 	song_count: number,
-	artist_count: number,
 }
 
 function helpers.to_genre_item(
 	genre_name: string?,
 	genre_id: string?,
-	runtime_ticks: number?,
 	counts: GenreCounts?,
 	library_hex_id: string?,
 	image_tag: string?
 ): ItemInfo?
-	local safe_name = module.trim(genre_name)
+	local safe_name = requests.trim(genre_name)
 	if not safe_name or not genre_id then
 		return nil
 	end
@@ -1323,12 +1262,10 @@ function helpers.to_genre_item(
 		IsFolder = true,
 		ParentId = library_hex_id,
 		SortName = safe_name,
-		RunTimeTicks = runtime_ticks,
 		AlbumCount = if counts then counts.release_count else nil,
 		SongCount = if counts then counts.song_count else nil,
-		ArtistCount = if counts then counts.artist_count else nil,
-		ChildCount = if counts then counts.release_count + counts.song_count + counts.artist_count else nil,
-		UserData = module.get_user_data({ key = `MusicGenre-{safe_name}`, item_hex_id = hex_id }),
+		ChildCount = if counts then counts.release_count + counts.song_count else nil,
+		UserData = user_data.get_user_data({ key = `MusicGenre-{safe_name}`, item_hex_id = hex_id }),
 		ImageTags = if image_tag then { Primary = image_tag } else nil,
 		ImageBlurHashes = nil,
 		LocationType = "FileSystem",
@@ -1353,7 +1290,7 @@ function helpers.to_library_view_item(lib: LibraryInfo?): ItemInfo?
 		Type = "CollectionFolder",
 		CollectionType = "music",
 		IsFolder = true,
-		UserData = module.get_user_data({ key = hex_id, item_hex_id = constants.ROOT_ITEM_ID }),
+		UserData = user_data.get_user_data({ key = hex_id, item_hex_id = constants.ROOT_ITEM_ID }),
 		LocationType = "FileSystem",
 		MediaType = "Unknown",
 		DisplayPreferencesId = hex_id,
@@ -1382,15 +1319,6 @@ function helpers.to_library_view_item(lib: LibraryInfo?): ItemInfo?
 	} :: ItemInfo
 end
 
-function helpers.find_library_view_item_by_id(library_db_id: number): ItemInfo?
-	local ok, libs = pcall(libraries.list, library_db_id)
-	if not ok or type(libs) ~= "table" then
-		return nil
-	end
-
-	return helpers.to_library_view_item(helpers.first_or_nil(libs :: { LibraryInfo }))
-end
-
 function module.to_music_view_items(): { ItemInfo }
 	local ok, libs = pcall(libraries.list, nil)
 	if not ok or type(libs) ~= "table" then
@@ -1417,8 +1345,8 @@ function helpers.to_playlist_item(
 	end
 
 	local include_images = helpers.should_include_images(context)
-	local playlist_name = module.trim(playlist.name) or "Untitled Playlist"
-	local playlist_item_id = module.encode_jellyfin_item_id(playlist.id)
+	local playlist_name = requests.trim(playlist.name) or "Untitled Playlist"
+	local playlist_item_id = item_ids.encode_jellyfin_item_id(playlist.id)
 
 	local image_tag: string? = nil
 	if include_images then
@@ -1479,18 +1407,18 @@ function helpers.to_release_item(
 	local runtime_ticks = enrichment.sum_runtime_ticks(release_tracks)
 	-- Jellyfin exposes image tags by default, but honors EnableImages=false.
 	local cover_info = if include_images then helpers.resolve_cover_info(release.db_id, context) else nil
-	local release_item_id = module.encode_jellyfin_item_id(release.id)
+	local release_item_id = item_ids.encode_jellyfin_item_id(release.id)
 	local release_genres = helpers.lookup_by_id(
 		if context then context.genre_infos_by_release_id else nil,
 		release.db_id
 	) or helpers.resolve_release_genres(release.db_id)
 	local item: ItemInfo = {
 		Id = release_item_id,
-		Name = module.trim(release.release_title) or "Unknown Album",
+		Name = requests.trim(release.release_title) or "Unknown Album",
 		Type = "MusicAlbum",
 		IsFolder = true,
 		MediaType = "Unknown",
-		SortName = module.trim(release.sort_title) or module.trim(release.release_title) or "Unknown Album",
+		SortName = requests.trim(release.sort_title) or requests.trim(release.release_title) or "Unknown Album",
 		ProductionYear = enrichment.release_year(release.release_date),
 		PremiereDate = enrichment.release_date_to_premiere_date(release.release_date),
 		DateCreated = helpers.unix_to_iso8601(release.ctime or release.created_at),
@@ -1515,7 +1443,7 @@ function helpers.to_release_item(
 			release.db_id,
 			release_item_id,
 			user_id,
-			`{release_artist or ""}-{module.trim(release.release_title) or ""}`,
+			`{release_artist or ""}-{requests.trim(release.release_title) or ""}`,
 			true,
 			favorite_lookup,
 			context
@@ -1661,19 +1589,19 @@ function helpers.to_track_item(
 		if context and context.has_source_prefetch then
 			source = helpers.lookup_by_id(context.playback_source_by_track_id, track.db_id)
 		else
-			source = module.resolve_playback_source_for_track(track, true)
+			source = media.resolve_playback_source_for_track(track, true)
 		end
 		media_sources, media_streams, container =
 			helpers.build_media_info(track, source, track.id, track.track_title, has_lyrics)
 	else
 		if context and context.has_container_prefetch then
-			container = module.trim(helpers.lookup_by_id(context.container_by_track_id, track.db_id))
+			container = requests.trim(helpers.lookup_by_id(context.container_by_track_id, track.db_id))
 		else
 			container = helpers.resolve_track_container(track)
 		end
 	end
-	local release_id = if release and release.id then module.encode_jellyfin_item_id(release.id) else nil
-	local track_item_id = module.encode_jellyfin_item_id(track.id)
+	local release_id = if release and release.id then item_ids.encode_jellyfin_item_id(release.id) else nil
+	local track_item_id = item_ids.encode_jellyfin_item_id(track.id)
 	local album_primary_image_tag = if release_cover_info then release_cover_info.hash else nil
 	local release_db_id = if release then release.db_id else nil
 	local release_date = if release then release.release_date else nil
@@ -1683,7 +1611,7 @@ function helpers.to_track_item(
 
 	local item: ItemInfo = {
 		Id = track_item_id,
-		Name = module.trim(track.track_title) or "Unknown Track",
+		Name = requests.trim(track.track_title) or "Unknown Track",
 		Type = "Audio",
 		IsFolder = false,
 		MediaType = "Audio",
@@ -1717,7 +1645,7 @@ function helpers.to_track_item(
 			track.db_id,
 			track_item_id,
 			user_id,
-			`{track.disc or 0}-{track.track or 0}{module.trim(track.track_title) or ""}`,
+			`{track.disc or 0}-{track.track or 0}{requests.trim(track.track_title) or ""}`,
 			true,
 			favorite_lookup,
 			context
@@ -1729,7 +1657,7 @@ function helpers.to_track_item(
 end
 
 function helpers.track_sort_name(track: TrackLike?): string
-	local title = if track then module.trim(track.sort_title) or module.trim(track.track_title) else nil
+	local title = if track then requests.trim(track.sort_title) or requests.trim(track.track_title) else nil
 	local sort_name: string = if type(title) == "string" then title else "Unknown Track"
 	local prefix: string = ""
 
@@ -1753,10 +1681,10 @@ function helpers.to_release_stub(release: ReleaseLike?): ItemInfo?
 	local item: ItemInfo = {
 		_type = "release",
 		_raw = release,
-		Id = module.encode_jellyfin_item_id(release.id),
-		Name = module.trim(release.release_title) or "Unknown Album",
-		SortName = module.trim(release.sort_title) or module.trim(release.release_title) or "Unknown Album",
-		Album = module.trim(release.release_title) or "Unknown Album",
+		Id = item_ids.encode_jellyfin_item_id(release.id),
+		Name = requests.trim(release.release_title) or "Unknown Album",
+		SortName = requests.trim(release.sort_title) or requests.trim(release.release_title) or "Unknown Album",
+		Album = requests.trim(release.release_title) or "Unknown Album",
 		DateCreated = helpers.unix_to_iso8601(release.ctime or release.created_at),
 		PremiereDate = enrichment.release_date_to_premiere_date(release.release_date),
 		ProductionYear = enrichment.release_year(release.release_date),
@@ -1771,8 +1699,8 @@ function helpers.to_track_stub(track: TrackLike?): ItemInfo?
 	local item: ItemInfo = {
 		_type = "track",
 		_raw = track,
-		Id = module.encode_jellyfin_item_id(track.id),
-		Name = module.trim(track.track_title) or "Unknown Track",
+		Id = item_ids.encode_jellyfin_item_id(track.id),
+		Name = requests.trim(track.track_title) or "Unknown Track",
 		SortName = helpers.track_sort_name(track),
 		IndexNumber = track.track,
 		ParentIndexNumber = track.disc,
@@ -1788,9 +1716,9 @@ function helpers.to_artist_stub(artist: ArtistLike?): ItemInfo?
 	local item: ItemInfo = {
 		_type = "artist",
 		_raw = artist,
-		Id = module.encode_jellyfin_item_id(artist.id),
-		Name = module.trim(artist.artist_name) or "Unknown Artist",
-		SortName = module.trim(artist.sort_name) or module.trim(artist.artist_name) or "Unknown Artist",
+		Id = item_ids.encode_jellyfin_item_id(artist.id),
+		Name = requests.trim(artist.artist_name) or "Unknown Artist",
+		SortName = requests.trim(artist.sort_name) or requests.trim(artist.artist_name) or "Unknown Artist",
 		DateCreated = helpers.unix_to_iso8601(artist.created_at),
 	}
 	return item
@@ -1812,12 +1740,12 @@ function helpers.to_playlist_stub(playlist: PlaylistInfo?, child_count: number?)
 	end
 
 	local count = if child_count ~= nil then child_count else playlist_access.track_count(playlist)
-	local playlist_name = module.trim(playlist.name) or "Untitled Playlist"
+	local playlist_name = requests.trim(playlist.name) or "Untitled Playlist"
 	local item: ItemInfo = {
 		_type = "playlist",
 		_raw = playlist,
 		_child_count = count,
-		Id = module.encode_jellyfin_item_id(playlist.id),
+		Id = item_ids.encode_jellyfin_item_id(playlist.id),
 		Name = playlist_name,
 		SortName = playlist_name,
 		ChildCount = count,
@@ -1835,8 +1763,8 @@ function helpers.append_release_stubs(stubs: { ItemInfo }, release_items: { Rele
 	end
 end
 
-function helpers.append_artist_stubs(stubs: { ItemInfo }, artist_items: { Artist }): ()
-	for _, artist: Artist in artist_items do
+function helpers.append_artist_stubs(stubs: { ItemInfo }, artist_items: { ArtistLike }): ()
+	for _, artist: ArtistLike in artist_items do
 		local stub = helpers.to_artist_stub(artist)
 		if stub then
 			table.insert(stubs, stub)
@@ -1844,8 +1772,8 @@ function helpers.append_artist_stubs(stubs: { ItemInfo }, artist_items: { Artist
 	end
 end
 
-function helpers.append_person_stubs(stubs: { ItemInfo }, artist_items: { Artist }): ()
-	for _, artist: Artist in artist_items do
+function helpers.append_person_stubs(stubs: { ItemInfo }, artist_items: { ArtistLike }): ()
+	for _, artist: ArtistLike in artist_items do
 		if artist.artist_type ~= "person" then
 			continue
 		end
@@ -1926,7 +1854,6 @@ function helpers.new_realization_context(options: ItemsQueryOptions): ItemContex
 		credited_artists_by_owner_id = {},
 		release_tracks_by_release_id = {},
 		track_releases_by_track_id = {},
-		artist_tracks_by_artist_id = {},
 		playback_source_by_track_id = {},
 		container_by_track_id = {},
 		lyrics_by_track_id = {},
@@ -2174,16 +2101,6 @@ function helpers.prefetch_release_tracks(context: ItemContext, seed: Realization
 	context.has_release_tracks_prefetch = helpers.relation_map_has_entries(release_tracks_map)
 end
 
-function helpers.prefetch_artist_tracks(context: ItemContext, seed: RealizationSeedInfo): ()
-	if not seed.has_artist_stubs or #seed.artist_ids == 0 then
-		return
-	end
-
-	local artist_tracks_map = lookups.tracks_of_artists(seed.artist_ids)
-	helpers.merge_track_relation_map(context.artist_tracks_by_artist_id, artist_tracks_map)
-	context.has_artist_tracks_prefetch = helpers.relation_map_has_entries(artist_tracks_map)
-end
-
 function helpers.prefetch_artist_people_relations(context: ItemContext, seed: RealizationSeedInfo): ()
 	if context.include_people ~= true or not seed.has_artist_stubs or #seed.artist_ids == 0 then
 		return
@@ -2335,7 +2252,6 @@ function helpers.build_realization_context(stubs: { ItemInfo }, options: ItemsQu
 	helpers.prefetch_credit_relations(context, seed)
 	helpers.prefetch_provider_ids(context, seed)
 	helpers.prefetch_release_tracks(context, seed)
-	helpers.prefetch_artist_tracks(context, seed)
 	helpers.prefetch_artist_people_relations(context, seed)
 	helpers.prefetch_track_stats_and_media(context, seed, options)
 	helpers.prefetch_track_lyrics(context, seed)
@@ -2386,42 +2302,6 @@ function helpers.realize_stubs(stubs: { ItemInfo }, options: ItemsQueryOptions):
 		end
 	end
 	return items
-end
-
--- Playlist order, as upstream, which honours only `StartIndex` and `Limit` here.
-function module.list_playlist_track_items(
-	playlist: PlaylistInfo?,
-	options: ItemsQueryOptions
-): ({ ItemInfo }, number, number)
-	if not playlist or not playlist.db_id then
-		return {}, 0, options.start_index
-	end
-
-	local track_refs = playlist_access.track_refs(playlist)
-	local track_ids: { number } = {}
-	for _, track_ref in track_refs do
-		if track_ref.track_id > 0 then
-			table.insert(track_ids, track_ref.track_id)
-		end
-	end
-	local tracks_by_id: { [number]: Track } = if #track_ids > 0 then tracks.get(track_ids) else {}
-
-	local stubs: { ItemInfo } = {}
-	local entry_ids: { string? } = {}
-	for _, track_ref in track_refs do
-		local stub = helpers.to_track_stub(tracks_by_id[track_ref.track_id])
-		if stub then
-			table.insert(stubs, stub)
-			table.insert(entry_ids, module.encode_jellyfin_item_id(track_ref.entry_id))
-		end
-	end
-
-	local page, total_count, start_index = module.paginate_items(stubs, options.start_index, options.limit)
-	local items = helpers.realize_stubs(page, options)
-	for index, item in items do
-		item.PlaylistItemId = entry_ids[start_index + index]
-	end
-	return items, total_count, start_index
 end
 
 -- Resolve a composed cover image for a genre by its db_id.
@@ -2523,7 +2403,6 @@ end
 module.realize = helpers.realize_stubs
 module.playlist_stub = helpers.to_playlist_stub
 module.genre_item = helpers.to_genre_item
-module.library_view_item = helpers.find_library_view_item_by_id
 module.library_hex_id_from_parent = helpers.resolve_library_hex_id_from_parent
 
 function module.track_stubs(items: { Track }): { ItemInfo }
@@ -2538,14 +2417,14 @@ function module.release_stubs(items: { Release }): { ItemInfo }
 	return stubs
 end
 
-function module.artist_stubs(items: { Artist }): { ItemInfo }
+function module.artist_stubs(items: { ArtistLike }): { ItemInfo }
 	local stubs: { ItemInfo } = {}
 	helpers.append_artist_stubs(stubs, items)
 	return stubs
 end
 
 -- Only person artists list as people.
-function module.person_stubs(items: { Artist }): { ItemInfo }
+function module.person_stubs(items: { ArtistLike }): { ItemInfo }
 	local stubs: { ItemInfo } = {}
 	helpers.append_person_stubs(stubs, items)
 	return stubs

@@ -11,7 +11,7 @@ local mix = require("@lyra/mix")
 local tracks = require("@lyra/tracks")
 
 local catalog = require("./catalog")
-local listing = require("./listing")
+local lookups = require("./lookups")
 local options_module = require("./options")
 local requests = require("./requests")
 
@@ -83,24 +83,23 @@ function module.list_instant_mix_audio(
 		return empty_items, 0, start_index, false
 	end
 
-	local target = listing.find_item_by_id(item_id, options.user_id)
-	if not target then
+	local kind = lookups.visible_kind(item_id)
+	if not kind then
 		return empty_items, 0, start_index, false
 	end
 
 	local consumer_opts, requested_limit = build_consumer_opts(options)
-	local item_type = string.lower(target.Type or "")
 	local mix_tracks: { tracks.Track }? = nil
 
-	if item_type == "audio" then
+	if kind == "Track" then
 		mix_tracks = mix.instant_mix_from_audio(item_id, consumer_opts)
-	elseif item_type == "musicalbum" then
+	elseif kind == "Release" then
 		mix_tracks = mix.from_release(item_id, consumer_opts)
-	elseif item_type == "musicartist" then
+	elseif kind == "Artist" then
 		mix_tracks = mix.from_artist(item_id, consumer_opts)
-	elseif item_type == "playlist" then
+	elseif kind == "Playlist" then
 		mix_tracks = mix.from_playlist(item_id, consumer_opts)
-	elseif item_type == "musicgenre" then
+	elseif kind == "Genre" then
 		mix_tracks = mix.from_genre(item_id, consumer_opts)
 	else
 		-- Unsupported seed type (folder, library) — match upstream: 200 with empty.

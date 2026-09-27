@@ -252,13 +252,8 @@ function module.parse(query: ApiQueryParams?): ItemsQueryOptions
 	}
 end
 
-function module.clone(options: ItemsQueryOptions): ItemsQueryOptions
-	local copy = table.clone(options)
-	return copy
-end
-
 function module.for_user(options: ItemsQueryOptions, user_id: string): ItemsQueryOptions
-	local scoped = module.clone(options)
+	local scoped = table.clone(options)
 	scoped.user_id = user_id
 	return scoped
 end
