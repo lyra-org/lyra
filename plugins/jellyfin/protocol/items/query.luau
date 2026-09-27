@@ -92,6 +92,11 @@ local function direction(value: string?): "ascending" | "descending"
 	return "ascending"
 end
 
+-- The first `SortOrder`, for listings sorted by a single key.
+function module.direction(sort_order: string?): "ascending" | "descending"
+	return direction(string.split(sort_order or "", ",")[1])
+end
+
 -- Pairs each `SortBy` key with the `SortOrder` at its index; keys past the orders take the first.
 local function translate_sort(
 	entity: Entity,
@@ -315,6 +320,21 @@ local function artist_credit(options: ItemsQueryOptions): ({ number }?, CreditRo
 	return ids, if ids then "any" else nil, nil, ok
 end
 
+-- Narrows the artist filter to a parent artist, keeping the filter's role, or `role` when there
+-- is no filter; false when the parent isn't among the filter's artists.
+local function scope_artist(
+	artist_ids: { number }?,
+	credit_role: CreditRole?,
+	artist_id: number,
+	role: CreditRole
+): ({ number }?, CreditRole?, boolean)
+	if artist_ids == nil then
+		return { artist_id }, role, true
+	end
+	local scoped = intersect(artist_ids, { artist_id }) :: { number }
+	return scoped, credit_role, #scoped > 0
+end
+
 local function page(options: ItemsQueryOptions): (number, number?)
 	return options.start_index, options.limit
 end
@@ -340,11 +360,7 @@ function module.tracks(options: ItemsQueryOptions, scope: Scope): TrackQuery?
 		elseif scope.entity_type == "Release" then
 			release_ids = intersect(release_ids, { scope_id })
 		elseif scope.entity_type == "Artist" then
-			if artist_ids == nil then
-				artist_ids, credit_role = { scope_id }, "any"
-			else
-				ok = false
-			end
+			artist_ids, credit_role, ok = scope_artist(artist_ids, credit_role, scope_id, "any")
 		elseif scope.entity_type == "Genre" then
 			genre_ids, ok = scope_genres(genre_ids, scope_id)
 		else
@@ -399,11 +415,7 @@ function module.releases(options: ItemsQueryOptions, scope: Scope): ReleaseQuery
 			query.library_id = scope_id
 		elseif scope.entity_type == "Artist" then
 			-- An artist's children are the albums it is credited on.
-			if artist_ids == nil then
-				artist_ids, credit_role = { scope_id }, "release"
-			else
-				ok = false
-			end
+			artist_ids, credit_role, ok = scope_artist(artist_ids, credit_role, scope_id, "release")
 		elseif scope.entity_type == "Genre" then
 			genre_ids, ok = scope_genres(genre_ids, scope_id)
 		else

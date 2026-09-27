@@ -13,25 +13,13 @@ local tracks = require("@lyra/tracks")
 
 local catalog = require("./catalog")
 local item_ids = require("./identifiers")
-local listing = require("./listing")
 local lookups = require("./lookups")
 local options_module = require("./options")
 
 type ItemsQueryOptions = options_module.ItemsQueryOptions
 type ItemInfo = catalog.ItemInfo
-type Release = releases.Release
 
 local module = {}
-
-local function release_ids(items: { Release }): { number }
-	local ids: { number } = {}
-	for _, release in items do
-		if release.db_id then
-			table.insert(ids, release.db_id)
-		end
-	end
-	return ids
-end
 
 -- The genres of these releases, each once.
 local function genres_of(release_db_ids: { number }): { number }
@@ -63,28 +51,9 @@ local function ids_of<T>(items: { T }): { number }
 	return ids
 end
 
--- The item itself, `ExcludeItemIds`, and whatever `ExcludeArtistIds` credits.
-local function excluded(item_id: number, kind: string, options: ItemsQueryOptions): { number }
-	local ids = item_ids.parse_jellyfin_ids_array(options.exclude_item_ids)
-	table.insert(ids, item_id)
-	local artist_ids = item_ids.parse_jellyfin_ids_array(options.exclude_artist_ids)
-	if #artist_ids == 0 then
-		return ids
-	end
-	local credited: { number }
-	if kind == "musicalbum" then
-		credited = ids_of(releases.query({ artist_ids = artist_ids }).items)
-	elseif kind == "audio" then
-		credited = ids_of(tracks.query({ artist_ids = artist_ids }).items)
-	else
-		credited = artist_ids
-	end
-	table.move(credited, 1, #credited, #ids + 1, ids)
-	return ids
-end
-
 local RANDOM = { { key = "random", order = "ascending" } }
 
+-- Returns `(items, total_count, start_index, found)`; an item the caller can't see isn't found.
 function module.list_similar_items(
 	item_id: number?,
 	options: ItemsQueryOptions
@@ -92,21 +61,24 @@ function module.list_similar_items(
 	if not item_id or item_id <= 0 then
 		return {}, 0, 0, false
 	end
-	local target = listing.find_item_by_id(item_id, options.user_id)
-	if not target then
+
+	local kind = lookups.visible_kind(item_id)
+	if kind == nil then
 		return {}, 0, 0, false
 	end
-
-	local kind = string.lower(target.Type or "")
+	local exclude_ids = item_ids.parse_jellyfin_ids_array(options.exclude_item_ids)
+	table.insert(exclude_ids, item_id)
+	local exclude_artist_ids = item_ids.parse_jellyfin_ids_array(options.exclude_artist_ids)
 	local seed = math.random(1, 2147483647)
 	local stubs: { ItemInfo } = {}
 	local total = 0
-	if kind == "musicalbum" then
+	if kind == "Release" then
 		local genre_ids = genres_of({ item_id })
 		if #genre_ids > 0 then
 			local page = releases.query({
 				genre_ids = genre_ids,
-				exclude_ids = excluded(item_id, kind, options),
+				exclude_ids = exclude_ids,
+				exclude_artist_ids = exclude_artist_ids,
 				sort = RANDOM :: any,
 				seed = seed,
 				limit = options.limit,
@@ -114,12 +86,13 @@ function module.list_similar_items(
 			stubs = catalog.release_stubs(page.items)
 			total = page.total
 		end
-	elseif kind == "audio" then
-		local genre_ids = genres_of(release_ids(lookups.releases_of_track(item_id)))
+	elseif kind == "Track" then
+		local genre_ids = genres_of(ids_of(lookups.releases_of_track(item_id)))
 		if #genre_ids > 0 then
 			local page = tracks.query({
 				genre_ids = genre_ids,
-				exclude_ids = excluded(item_id, kind, options),
+				exclude_ids = exclude_ids,
+				exclude_artist_ids = exclude_artist_ids,
 				sort = RANDOM :: any,
 				seed = seed,
 				limit = options.limit,
@@ -127,12 +100,13 @@ function module.list_similar_items(
 			stubs = catalog.track_stubs(page.items)
 			total = page.total
 		end
-	elseif kind == "musicartist" then
-		local genre_ids = genres_of(release_ids(lookups.releases_credited_to(item_id).items))
+	elseif kind == "Artist" then
+		local genre_ids = genres_of(ids_of(releases.query({ artist_ids = { item_id } }).items))
 		if #genre_ids > 0 then
+			table.move(exclude_artist_ids, 1, #exclude_artist_ids, #exclude_ids + 1, exclude_ids)
 			local page = artists.query({
 				genre_ids = genre_ids,
-				exclude_ids = excluded(item_id, kind, options),
+				exclude_ids = exclude_ids,
 				sort = RANDOM :: any,
 				seed = seed,
 				limit = options.limit,
