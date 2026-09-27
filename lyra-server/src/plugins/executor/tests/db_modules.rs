@@ -2044,6 +2044,7 @@ fn stale_principal_cannot_use_playlists_of_a_user_with_its_recycled_db_id() -> R
             is_public: Some(false),
             created_at: Some(1),
             updated_at: Some(1),
+            track_db_ids: Vec::new(),
         },
     )?;
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));

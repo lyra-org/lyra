@@ -38,6 +38,7 @@ pub(crate) struct CreatePlaylistRequest {
     pub(crate) is_public: Option<bool>,
     pub(crate) created_at: Option<u64>,
     pub(crate) updated_at: Option<u64>,
+    pub(crate) track_db_ids: Vec<DbId>,
 }
 
 #[derive(Clone, Debug)]
@@ -218,8 +219,26 @@ pub(crate) fn create(db: &mut DbAny, request: &CreatePlaylistRequest) -> anyhow:
         created_at: request.created_at,
         updated_at: request.updated_at,
     };
+    require_tracks(db, &request.track_db_ids)?;
 
-    db::playlists::create(db, &playlist, request.user_db_id)
+    db.transaction_mut(|t| -> anyhow::Result<DbId> {
+        let playlist_db_id =
+            db::playlists::create_in_transaction(t, &playlist, request.user_db_id)?;
+        if !request.track_db_ids.is_empty() {
+            db::playlists::add_tracks(t, playlist_db_id, &request.track_db_ids)?;
+            db::covers::display::sync_playlist_cover(t, playlist_db_id)?;
+        }
+        Ok(playlist_db_id)
+    })
+}
+
+fn require_tracks(db: &DbAny, track_db_ids: &[DbId]) -> anyhow::Result<()> {
+    for &track_db_id in track_db_ids {
+        if db::tracks::get_by_id(db, track_db_id)?.is_none() {
+            bail!("track not found: {}", track_db_id.0);
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn delete(db: &mut DbAny, playlist_id: QueryId) -> anyhow::Result<Option<Playlist>> {
@@ -244,7 +263,13 @@ pub(crate) fn update(
     let Some(mut playlist) = db::playlists::get_by_id(db, playlist_db_id)? else {
         return Ok(None);
     };
+    apply_update(&mut playlist, request)?;
 
+    db::playlists::update(db, &playlist)?;
+    Ok(Some(playlist))
+}
+
+fn apply_update(playlist: &mut Playlist, request: &UpdatePlaylistRequest) -> anyhow::Result<()> {
     if let Some(name) = &request.name {
         playlist.name = validate_name(name)?;
     }
@@ -257,8 +282,34 @@ pub(crate) fn update(
     if let Some(updated_at) = request.updated_at {
         playlist.updated_at = Some(updated_at);
     }
+    Ok(())
+}
 
-    db::playlists::update(db, &playlist)?;
+/// Applies `request` and makes `track_db_ids` the playlist's entries, in order and with
+/// repeats, as one transaction.
+pub(crate) fn replace(
+    db: &mut DbAny,
+    request: &UpdatePlaylistRequest,
+    track_db_ids: &[DbId],
+) -> anyhow::Result<Option<Playlist>> {
+    let Some(playlist_db_id) = resolve_optional_id(db, request.playlist_id.clone())? else {
+        return Ok(None);
+    };
+    let Some(mut playlist) = db::playlists::get_by_id(db, playlist_db_id)? else {
+        return Ok(None);
+    };
+    apply_update(&mut playlist, request)?;
+    require_tracks(db, track_db_ids)?;
+    let entries = db::playlists::get_tracks(db, playlist_db_id)?;
+
+    db.transaction_mut(|t| -> anyhow::Result<()> {
+        db::playlists::update_in_transaction(t, &playlist)?;
+        for entry in &entries {
+            db::playlists::remove_track(t, entry.edge_id)?;
+        }
+        db::playlists::add_tracks(t, playlist_db_id, track_db_ids)?;
+        db::covers::display::sync_playlist_cover(t, playlist_db_id)
+    })?;
     Ok(Some(playlist))
 }
 
@@ -403,6 +454,7 @@ mod tests {
                 is_public: None,
                 created_at: None,
                 updated_at: None,
+                track_db_ids: Vec::new(),
             },
         )
     }
@@ -474,6 +526,7 @@ mod tests {
                 is_public: None,
                 created_at: None,
                 updated_at: None,
+                track_db_ids: Vec::new(),
             },
         )?;
 
@@ -506,6 +559,82 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("playlist missing"))?;
         assert_eq!(stored.description, None);
         assert_eq!(stored.name, "Renamed");
+        Ok(())
+    }
+
+    fn replacement(playlist_db_id: DbId, name: Option<&str>) -> UpdatePlaylistRequest {
+        UpdatePlaylistRequest {
+            playlist_id: QueryId::Id(playlist_db_id),
+            name: name.map(str::to_string),
+            description: None,
+            is_public: None,
+            updated_at: None,
+        }
+    }
+
+    fn entry_tracks(db: &DbAny, playlist_db_id: DbId) -> anyhow::Result<Vec<DbId>> {
+        Ok(get_tracks(db, QueryId::Id(playlist_db_id))?
+            .into_iter()
+            .map(|link| link.track_db_id)
+            .collect())
+    }
+
+    #[test]
+    fn replace_updates_fields_and_entries_keeping_order_and_repeats() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = db::users::create(&mut db, &test_user("replacer")?)?;
+        let first = insert_track(&mut db, "First")?;
+        let second = insert_track(&mut db, "Second")?;
+        let playlist_db_id = create_playlist(&mut db, user_db_id, "Before")?;
+        add_tracks(
+            &mut db,
+            QueryId::Id(playlist_db_id),
+            &[QueryId::Id(first), QueryId::Id(second)],
+        )?;
+
+        let replaced = replace(
+            &mut db,
+            &replacement(playlist_db_id, Some("After")),
+            &[second, first, second],
+        )?
+        .ok_or_else(|| anyhow::anyhow!("playlist missing"))?;
+
+        assert_eq!(replaced.name, "After");
+        assert_eq!(
+            entry_tracks(&db, playlist_db_id)?,
+            vec![second, first, second]
+        );
+        let positions = get_tracks(&db, QueryId::Id(playlist_db_id))?
+            .into_iter()
+            .map(|link| link.position)
+            .collect::<Vec<_>>();
+        assert_eq!(positions, vec![0, 1, 2]);
+        Ok(())
+    }
+
+    #[test]
+    fn replace_changes_nothing_when_a_track_is_missing() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = db::users::create(&mut db, &test_user("failed-replacer")?)?;
+        let kept = insert_track(&mut db, "Kept")?;
+        let deleted = insert_track(&mut db, "Deleted")?;
+        db.exec_mut(QueryBuilder::remove().ids(deleted).query())?;
+        let playlist_db_id = create_playlist(&mut db, user_db_id, "Unchanged")?;
+        add_tracks(&mut db, QueryId::Id(playlist_db_id), &[QueryId::Id(kept)])?;
+
+        assert!(
+            replace(
+                &mut db,
+                &replacement(playlist_db_id, Some("Renamed")),
+                &[kept, deleted],
+            )
+            .is_err()
+        );
+
+        let stored = db::playlists::get_by_id(&db, playlist_db_id)?
+            .ok_or_else(|| anyhow::anyhow!("playlist missing"))?;
+        assert_eq!(stored.name, "Unchanged");
+        assert_eq!(entry_tracks(&db, playlist_db_id)?, vec![kept]);
         Ok(())
     }
 

@@ -62,9 +62,27 @@ pub(crate) fn optional_unique_ids(
     table: &luau::Table,
     key: &str,
 ) -> luau::runtime::Result<Vec<DbId>> {
+    optional_id_array(vm, table, key, unique_ids)
+}
+
+/// [`id_sequence`] of the optional array field `key`, empty when absent.
+pub(crate) fn optional_id_sequence(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    key: &str,
+) -> luau::runtime::Result<Vec<DbId>> {
+    optional_id_array(vm, table, key, id_sequence)
+}
+
+fn optional_id_array(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    key: &str,
+    read: fn(&luau::Vm, &luau::Table) -> luau::runtime::Result<Vec<DbId>>,
+) -> luau::runtime::Result<Vec<DbId>> {
     match table.get_raw(vm, key)? {
         luau::Value::Nil => Ok(Vec::new()),
-        luau::Value::Table(table) => unique_ids(vm, &table),
+        luau::Value::Table(table) => read(vm, &table),
         other => Err(crate::plugins::runtime_error(format!(
             "{key} must be an array of ids, got {}",
             other.type_name()
