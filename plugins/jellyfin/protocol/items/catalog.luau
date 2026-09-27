@@ -116,6 +116,14 @@ local function scope_track_query(parent_scope: ParentScopeInfo, query: TrackQuer
 	return ok
 end
 
+-- Scopes an artist query to the parent library or release; false when the parent is neither.
+local function scope_artist_query(parent_scope: ParentScopeInfo, query: ArtistQuery): boolean
+	local ok, library_id, release_id = parent_filter(parent_scope)
+	query.library_id = library_id
+	query.release_ids = if release_id then { release_id } else nil
+	return ok
+end
+
 -- Scopes a release query to the parent library; false when the parent is anything else.
 local function scope_release_query(parent_scope: ParentScopeInfo, query: ReleaseQuery): boolean
 	local ok, library_id, release_id = parent_filter(parent_scope)
@@ -147,9 +155,8 @@ type ArtistCreditSource = entities.ArtistCreditSource
 local CreditType = entities.CreditType
 local ArtistCreditSource = entities.ArtistCreditSource
 type ApiQueryParams = api.ApiQueryParams
-type ArtistQueryOptions = artists_module.ArtistQueryOptions
-type CreditedArtistQueryOptions = artists_module.CreditedArtistQueryOptions
-type ArtistQueryResult = artists_module.ArtistQueryResult
+type ArtistQuery = artists_module.ArtistQuery
+type ArtistPage = artists_module.ArtistPage
 type ArtistRelationInfo = artists_module.ArtistRelationInfo
 type TrackQuery = tracks.TrackQuery
 type CreditRole = tracks.CreditRole
@@ -4097,21 +4104,26 @@ function helpers.query_person_artists(
 	options: ItemsQueryOptions,
 	sort_tokens: { string }?,
 	paginated: boolean
-): ArtistQueryResult?
-	local query_opts: CreditedArtistQueryOptions = {
-		scope = scope,
-		sort_by = if sort_tokens then sorting.server_sort_keys(sort_tokens) else nil,
-		sort_order = if sort_tokens then normalize_sort_order(options.sort_order) else nil,
+): ArtistPage?
+	local query: ArtistQuery = {
+		sort = if sort_tokens then catalog_sort(sort_tokens, options.sort_order) :: any else nil,
 		offset = if paginated then options.start_index else nil,
 		limit = if paginated then options.limit else nil,
-		search_term = options.search_term,
+		search = options.search_term,
 		artist_type = artists_module.ArtistType.Person,
-		credit_types = nil,
 		exclude_credit_types = { artists_module.CreditType.Artist },
 	}
-	local ok, result = pcall(artists_module.query_credited, query_opts)
+	local scope_type = helpers.scope_entity_type(scope)
+	if scope_type == "Library" then
+		query.library_id = scope
+	elseif scope_type == "Release" then
+		query.release_ids = { scope :: number }
+	elseif scope_type == "Track" then
+		query.track_ids = { scope :: number }
+	end
+	local ok, result = pcall(artists_module.query, query)
 	if ok and type(result) == "table" then
-		return result :: ArtistQueryResult
+		return result :: ArtistPage
 	end
 	return nil
 end
@@ -4762,14 +4774,11 @@ function helpers.query_single_type_with_sort(
 	entity_type: ItemKind,
 	options: ItemsQueryOptions,
 	parent_scope: ParentScopeInfo,
-	sort_by: { string },
-	sort_order: "ascending" | "descending"
+	sort: { SortTerm }
 ): ({ ItemInfo }?, number?, number?)
-	local scope = parent_scope.db_id
-
 	if entity_type == "release" then
 		local query: ReleaseQuery = {
-			sort = catalog_sort(sorting.tokens(options), options.sort_order) :: any,
+			sort = sort :: any,
 			offset = options.start_index,
 			limit = options.limit,
 			search = options.search_term,
@@ -4788,27 +4797,28 @@ function helpers.query_single_type_with_sort(
 		local items = helpers.realize_stubs(stubs, options)
 		return items, result.total, result.offset
 	elseif entity_type == "artist" then
-		local query_opts: ArtistQueryOptions = {
-			scope = scope,
-			sort_by = sort_by,
-			sort_order = sort_order,
+		local query: ArtistQuery = {
+			sort = sort :: any,
 			offset = options.start_index,
 			limit = options.limit,
-			search_term = options.search_term,
+			search = options.search_term,
 		}
-		local ok, result = pcall(artists_module.query, query_opts)
+		if not scope_artist_query(parent_scope, query) then
+			return nil, nil, nil
+		end
+		local ok, result = pcall(artists_module.query, query)
 		if not ok or type(result) ~= "table" then
 			return nil, nil, nil
 		end
 
 		local stubs: { ItemInfo } = {}
-		helpers.append_artist_stubs(stubs, result.entities)
+		helpers.append_artist_stubs(stubs, result.items)
 
 		local items = helpers.realize_stubs(stubs, options)
-		return items, result.total_count, result.offset
+		return items, result.total, result.offset
 	elseif entity_type == "track" then
 		local query: TrackQuery = {
-			sort = catalog_sort(sorting.tokens(options), options.sort_order) :: any,
+			sort = sort :: any,
 			offset = options.start_index,
 			limit = options.limit,
 			search = options.search_term,
@@ -4855,8 +4865,7 @@ function helpers.try_query_single_type_items(
 		entity_type,
 		options,
 		parent_scope,
-		sorting.server_sort_keys(sort_tokens),
-		normalize_sort_order(options.sort_order)
+		catalog_sort(sort_tokens, options.sort_order)
 	)
 end
 
@@ -5078,8 +5087,12 @@ function module.list_latest_items(options: ItemsQueryOptions): ({ ItemInfo }, nu
 		and not options.group_items
 		and not helpers.uses_authenticated_root_listing(options, parent_scope)
 	if use_paginated_query and entity_type then
-		local items, total_count, offset =
-			helpers.query_single_type_with_sort(entity_type, options, parent_scope, { "id" }, "descending")
+		local items, total_count, offset = helpers.query_single_type_with_sort(
+			entity_type,
+			options,
+			parent_scope,
+			{ { key = "id", order = "descending" } }
+		)
 		if items and total_count ~= nil and offset ~= nil then
 			return items, total_count, offset
 		end
@@ -5787,27 +5800,21 @@ function module.list_artist_items(options: ItemsQueryOptions): ({ ItemInfo }, nu
 		and not helpers.wants_favorite_only(options)
 		and helpers.can_use_paginated_query(options)
 	then
-		local sort_order = normalize_sort_order(options.sort_order)
-		local query_opts: ArtistQueryOptions = {
-			scope = scope,
-			sort_by = sorting.server_sort_keys(sort_tokens),
-			sort_order = sort_order,
+		local query: ArtistQuery = {
+			sort = catalog_sort(sort_tokens, options.sort_order) :: any,
 			offset = options.start_index,
 			limit = options.limit,
-			search_term = options.search_term,
+			search = options.search_term,
 		}
+		if scope_artist_query(parent_scope, query) then
+			local ok, result = pcall(artists_module.query, query)
+			if ok and type(result) == "table" then
+				local stubs: { ItemInfo } = {}
+				helpers.append_artist_stubs(stubs, result.items)
 
-		local ok, result = pcall(artists_module.query, query_opts)
-		if ok and type(result) == "table" then
-			local raw_items = result.entities
-			local total_count = result.total_count
-			local offset = result.offset
-
-			local stubs: { ItemInfo } = {}
-			helpers.append_artist_stubs(stubs, raw_items)
-
-			local items = helpers.realize_stubs(stubs, options)
-			return items, total_count, offset
+				local items = helpers.realize_stubs(stubs, options)
+				return items, result.total, result.offset
+			end
 		end
 	end
 
@@ -5841,10 +5848,10 @@ function module.list_person_items(options: ItemsQueryOptions): ({ ItemInfo }, nu
 		local result = helpers.query_person_artists(scope, options, sort_tokens, true)
 		if result then
 			local stubs: { ItemInfo } = {}
-			helpers.append_person_stubs(stubs, result.entities)
+			helpers.append_person_stubs(stubs, result.items)
 
 			local items = helpers.realize_stubs(stubs, options)
-			return items, result.total_count, result.offset
+			return items, result.total, result.offset
 		end
 	end
 
@@ -5857,7 +5864,7 @@ function module.list_person_items(options: ItemsQueryOptions): ({ ItemInfo }, nu
 
 		local result = helpers.query_person_artists(scope, options, query_sort_tokens, false)
 		if result then
-			helpers.append_person_stubs(stubs, result.entities)
+			helpers.append_person_stubs(stubs, result.items)
 		else
 			helpers.append_person_stubs(stubs, helpers.artist_items_by_scope(parent_scope.db_id))
 		end
@@ -6070,7 +6077,7 @@ function helpers.paginate_name_lookup(
 end
 
 -- Artwork routes are served without credentials, so these lookups skip user scoping.
-function helpers.paginate_artist_db_id_lookup(name: string, query: (number) -> ArtistQueryResult): number?
+function helpers.paginate_artist_db_id_lookup(name: string, query: (number) -> ArtistPage): number?
 	local lowered_name = string.lower(name)
 	local offset = 0
 	for _ = 1, NAME_LOOKUP_MAX_PAGES do
@@ -6078,13 +6085,13 @@ function helpers.paginate_artist_db_id_lookup(name: string, query: (number) -> A
 		if not ok or type(result) ~= "table" then
 			return nil
 		end
-		for _, artist in result.entities do
+		for _, artist in result.items do
 			if string.lower(artist.artist_name) == lowered_name then
 				return artist.db_id
 			end
 		end
-		offset += #result.entities
-		if #result.entities == 0 or offset >= result.total_count then
+		offset += #result.items
+		if #result.items == 0 or offset >= result.total then
 			return nil
 		end
 	end
@@ -6092,9 +6099,9 @@ function helpers.paginate_artist_db_id_lookup(name: string, query: (number) -> A
 end
 
 function module.find_artist_db_id_by_name(name: string): number?
-	return helpers.paginate_artist_db_id_lookup(name, function(offset: number): ArtistQueryResult
+	return helpers.paginate_artist_db_id_lookup(name, function(offset: number): ArtistPage
 		return artists_module.query({
-			search_term = name,
+			search = name,
 			offset = offset,
 			limit = NAME_LOOKUP_PAGE_SIZE,
 		})
@@ -6102,9 +6109,9 @@ function module.find_artist_db_id_by_name(name: string): number?
 end
 
 function module.find_person_db_id_by_name(name: string): number?
-	return helpers.paginate_artist_db_id_lookup(name, function(offset: number): ArtistQueryResult
-		return artists_module.query_credited({
-			search_term = name,
+	return helpers.paginate_artist_db_id_lookup(name, function(offset: number): ArtistPage
+		return artists_module.query({
+			search = name,
 			offset = offset,
 			limit = NAME_LOOKUP_PAGE_SIZE,
 			artist_type = artists_module.ArtistType.Person,
