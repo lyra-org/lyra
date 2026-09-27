@@ -121,7 +121,7 @@ function module.primary_releases_by_track(track_ids: { number }): { [number]: Re
 		return primary_releases
 	end
 
-	for track_id, release_list in releases.list_many(track_ids) do
+	for track_id, release_list in releases.by_track(track_ids) do
 		local release = module.primary_release(release_list)
 		if release then
 			primary_releases[track_id] = release
@@ -133,7 +133,7 @@ end
 -- Releases and artists aggregate the stats of their tracks.
 function module.play_stats(track_ids: { number }, owner_ids: { number }): { [number]: PlayStats }
 	local stats_by_id: { [number]: PlayStats } = {}
-	local tracks_by_owner: { [number]: { Track } } = if #owner_ids > 0 then tracks.list_many(owner_ids) else {}
+	local tracks_by_owner: { [number]: { Track } } = if #owner_ids > 0 then tracks.by_release(owner_ids) else {}
 	local lookup_ids: { number } = {}
 	local lookup_seen: { [number]: boolean } = {}
 	for _, track_id in track_ids do
@@ -194,7 +194,7 @@ function module.playlist_runtime_ticks(playlist_db_ids: { number }): { [number]:
 			append_unique_id(link.track_id, track_ids, track_seen)
 		end
 	end
-	local tracks_by_id: { [number]: Track? } = if #track_ids > 0 then tracks.get_by_ids(track_ids) else {}
+	local tracks_by_id: { [number]: Track } = if #track_ids > 0 then tracks.get(track_ids) else {}
 
 	for _, playlist_db_id in playlist_db_ids do
 		local total_ticks = 0
@@ -284,7 +284,7 @@ local function load_runtime_keys(items: { KeyedItem })
 		end
 	end
 
-	local tracks_by_owner: { [number]: { Track } } = if #owner_ids > 0 then tracks.list_many(owner_ids) else {}
+	local tracks_by_owner: { [number]: { Track } } = if #owner_ids > 0 then tracks.by_release(owner_ids) else {}
 	local playlist_runtimes = module.playlist_runtime_ticks(playlist_ids)
 	for _, item in items do
 		local db_id = item_db_id(item)

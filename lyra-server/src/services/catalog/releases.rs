@@ -109,6 +109,13 @@ impl Catalog for Releases {
     type Filter = ReleaseFilter;
     type Item = Release;
 
+    fn id_filter(ids: Vec<DbId>) -> ReleaseFilter {
+        ReleaseFilter {
+            ids: Some(ids),
+            ..ReleaseFilter::default()
+        }
+    }
+
     fn default_sort(_filter: &ReleaseFilter) -> SortSpec<ReleaseKey> {
         vec![(ReleaseKey::SortName, Direction::Ascending)]
     }

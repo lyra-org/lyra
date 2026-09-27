@@ -85,6 +85,9 @@ pub(crate) trait Catalog {
     type Filter;
     type Item;
 
+    /// The filter that keeps just these ids.
+    fn id_filter(ids: Vec<DbId>) -> Self::Filter;
+
     /// The order used when a query names no keys and has no search term.
     fn default_sort(filter: &Self::Filter) -> SortSpec<Self::Key>;
 

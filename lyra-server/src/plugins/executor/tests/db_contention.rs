@@ -76,7 +76,7 @@ fn database_waits_yield_to_other_plugin_tasks() -> Result<()> {
             "reader.luau",
             &br#"
             task.spawn(function()
-                tracks.list()
+                tracks.query({})
                 reader_done = true
             end)
         "#[..],

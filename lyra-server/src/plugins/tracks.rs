@@ -3,7 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use agdb::DbId;
 use harmony_core::{
     FunctionSpec,
     ModuleExport,
@@ -26,19 +25,17 @@ use harmony_luau::{
 
 use crate::plugins::args;
 use crate::plugins::catalog;
-use crate::plugins::db::{
-    self,
-    DbAsync,
-    ResolveId,
-    Track,
-};
+use crate::plugins::db::DbAsync;
 #[cfg(feature = "docgen")]
 use crate::services::catalog::tracks::TrackKey;
 use crate::services::{
     self,
-    catalog::tracks::{
-        TrackFilter,
-        Tracks,
+    catalog::{
+        lookups,
+        tracks::{
+            TrackFilter,
+            Tracks,
+        },
     },
 };
 
@@ -69,20 +66,28 @@ struct TracksModule;
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/tracks")
         .capability("lyra.tracks")
-        .function(list_spec())
+        .function(get_spec())
         .function(query_spec())
-        .function(get_by_ids_spec())
-        .function(list_by_library_spec())
-        .function(list_many_spec())
+        .function(by_release_spec())
         .install(|_| Ok(ModuleExport::new(TracksModule)))
 }
 
-fn list_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("list")
-        .arg_name("scope")
-        .args::<Option<ResolveId>>()
-        .returns::<Vec<Track>>()
-        .call_async(std::sync::Arc::new(list_callback))
+fn get_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("get")
+        .context::<crate::plugins::auth::DispatchAuth>()
+        .arg_name("ids")
+        .args::<Vec<u64>>()
+        .returns::<luau::Table>()
+        .call_async(std::sync::Arc::new(get_callback))
+}
+
+fn by_release_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("by_release")
+        .context::<crate::plugins::auth::DispatchAuth>()
+        .arg_name("release_ids")
+        .args::<Vec<u64>>()
+        .returns::<luau::Table>()
+        .call_async(std::sync::Arc::new(by_release_callback))
 }
 
 fn query_spec() -> FunctionSpec {
@@ -94,51 +99,18 @@ fn query_spec() -> FunctionSpec {
         .call_async(std::sync::Arc::new(query_callback))
 }
 
-fn get_by_ids_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_by_ids")
-        .arg_name("ids")
-        .args::<Vec<u64>>()
-        .returns::<luau::Table>()
-        .call_async(std::sync::Arc::new(get_by_ids_callback))
-}
-
-fn list_by_library_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("list_by_library")
-        .arg_name("library_id")
-        .args::<i64>()
-        .returns::<Vec<Track>>()
-        .call_async(std::sync::Arc::new(list_by_library_callback))
-}
-
-fn list_many_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("list_many")
-        .arg_name("ids")
-        .args::<Vec<u64>>()
-        .returns::<luau::Table>()
-        .call_async(std::sync::Arc::new(list_many_callback))
-}
-
-fn list_callback(
+fn get_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let scope = frame
-        .args
-        .read_optional_named::<luau::Value>("scope")?
-        .map(args::resolve_id)
-        .transpose()?
-        .unwrap_or_else(|| ResolveId::alias("tracks"));
-    let store = frame.vm.data().get::<TracksModuleStore>()?.as_ref().clone();
-    let db = store.db()?;
+    let db = frame.vm.data().get::<TracksModuleStore>()?.db()?;
+    catalog::keyed_lookup(&mut frame, db, "ids", lookups::get::<Tracks>)
+}
 
-    Ok(luau::ScheduledFuture::new(async move {
-        let db = db.read().await;
-        let query_id = scope
-            .to_query_id(&db)
-            .map_err(crate::plugins::runtime_error)?
-            .ok_or_else(|| crate::plugins::runtime_error("could not resolve scope"))?;
-        let tracks = db::tracks::get(&db, query_id).map_err(crate::plugins::runtime_error)?;
-        harmony_luau::serializable_to_luau_owned(tracks)
-    }))
+fn by_release_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let db = frame.vm.data().get::<TracksModuleStore>()?.db()?;
+    catalog::keyed_lookup(&mut frame, db, "release_ids", lookups::tracks_by_release)
 }
 
 fn query_callback(
@@ -158,71 +130,6 @@ fn query_callback(
             services::catalog::page(&db, &viewer, &request.query, request.offset, request.limit)
                 .map_err(catalog::error)?;
         catalog::page_table(page)?.into_luau_return()
-    }))
-}
-
-fn get_by_ids_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let ids_table: luau::Table = frame.args.read_named("ids")?;
-    let ids = args::unique_ids(frame.vm, &ids_table)?;
-    let store = frame.vm.data().get::<TracksModuleStore>()?.as_ref().clone();
-    let db = store.db()?;
-
-    Ok(luau::ScheduledFuture::new(async move {
-        let db = db.read().await;
-        let tracks = db::tracks::get_by_ids(&db, &ids).map_err(crate::plugins::runtime_error)?;
-
-        let mut table = luau::OwnedTable::with_entry_capacity(0, 0, ids.len());
-        for id in ids {
-            let value = tracks
-                .get(&id)
-                .map(harmony_luau::serializable_to_luau_owned)
-                .transpose()?
-                .unwrap_or(luau::Value::Nil);
-            table.set_key(luau::Value::from(id.0), value);
-        }
-        table.into_luau_return()
-    }))
-}
-
-fn list_by_library_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let library_id: i64 = frame.args.read_named("library_id")?;
-    let store = frame.vm.data().get::<TracksModuleStore>()?.as_ref().clone();
-    let db = store.db()?;
-
-    Ok(luau::ScheduledFuture::new(async move {
-        let db = db.read().await;
-        let tracks = db::tracks::get_by_library(&db, DbId(library_id))
-            .map_err(crate::plugins::runtime_error)?;
-        harmony_luau::serializable_to_luau_owned(tracks)
-    }))
-}
-
-fn list_many_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let ids_table: luau::Table = frame.args.read_named("ids")?;
-    let ids = args::unique_ids(frame.vm, &ids_table)?;
-    let store = frame.vm.data().get::<TracksModuleStore>()?.as_ref().clone();
-    let db = store.db()?;
-
-    Ok(luau::ScheduledFuture::new(async move {
-        let db = db.read().await;
-        let related =
-            db::tracks::get_direct_many(&db, &ids).map_err(crate::plugins::runtime_error)?;
-
-        let mut table = luau::OwnedTable::with_entry_capacity(0, 0, ids.len());
-        for id in ids {
-            let tracks = related.get(&id).cloned().unwrap_or_default();
-            table.set_key(
-                luau::Value::from(id.0),
-                harmony_luau::serializable_to_luau_owned(tracks)?,
-            );
-        }
-        table.into_luau_return()
     }))
 }
 
@@ -329,10 +236,12 @@ fn module_descriptor() -> ModuleDescriptor {
         fields: Vec::new(),
         functions: vec![
             ModuleFunctionDescriptor {
-                path: vec!["list"],
-                description: None,
-                params: vec![param("scope", LuauType::optional(args::resolve_id_type()))],
-                returns: vec![LuauType::array(LuauType::named("Track"))],
+                path: vec!["get"],
+                description: Some(
+                    "The tracks with these ids that the caller can see, keyed by id.",
+                ),
+                params: vec![param("ids", Vec::<u64>::luau_type())],
+                returns: vec![LuauType::map(u64::luau_type(), LuauType::named("Track"))],
                 yields: true,
             },
             ModuleFunctionDescriptor {
@@ -345,26 +254,11 @@ fn module_descriptor() -> ModuleDescriptor {
                 yields: true,
             },
             ModuleFunctionDescriptor {
-                path: vec!["get_by_ids"],
-                description: None,
-                params: vec![param("ids", Vec::<u64>::luau_type())],
-                returns: vec![LuauType::map(
-                    u64::luau_type(),
-                    LuauType::optional(LuauType::named("Track")),
-                )],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["list_by_library"],
-                description: None,
-                params: vec![param("library_id", i64::luau_type())],
-                returns: vec![LuauType::array(LuauType::named("Track"))],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["list_many"],
-                description: None,
-                params: vec![param("ids", Vec::<u64>::luau_type())],
+                path: vec!["by_release"],
+                description: Some(
+                    "The tracks on each of these releases that the caller can see, keyed by release id.",
+                ),
+                params: vec![param("release_ids", Vec::<u64>::luau_type())],
                 returns: vec![LuauType::map(
                     u64::luau_type(),
                     LuauType::array(LuauType::named("Track")),

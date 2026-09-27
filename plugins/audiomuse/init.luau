@@ -224,7 +224,7 @@ mixer:from_track(function(ctx: MixContext): MixResult
 end)
 
 mixer:from_release(function(ctx: MixContext): MixResult
-	local release_tracks = tracks.list(ctx.seed_id)
+	local release_tracks = tracks.by_release({ ctx.seed_id })[ctx.seed_id]
 	if not release_tracks or #release_tracks == 0 then
 		warn(`from_release: seed {ctx.seed_id} has no tracks; returning empty mix`)
 		return { tracks = {} }

@@ -118,9 +118,9 @@ function module.get_user_data(opts: UserDataOpts?): UserData
 		if lookup_count ~= nil then
 			play_count = tonumber(lookup_count) or 0
 		else
-			local ok, count = pcall(listens.get_count, item_id, RESOLVE_MERGE_TRACK_COUNT)
+			local ok, stats = pcall(listens.get_stats, { item_id }, RESOLVE_MERGE_TRACK_COUNT)
 			if ok then
-				play_count = count
+				play_count = stats.counts[item_id] or 0
 			end
 		end
 	end

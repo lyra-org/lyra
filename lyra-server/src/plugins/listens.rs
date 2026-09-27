@@ -73,32 +73,8 @@ struct ResolvedStats {
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/listens")
         .capability("lyra.listens")
-        .function(get_count_spec())
-        .function(get_counts_spec())
         .function(get_stats_spec())
         .install(|_| Ok(ModuleExport::new(ListensModule)))
-}
-
-fn get_count_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_count")
-        .context::<crate::plugins::auth::DispatchAuth>()
-        .arg_name("track_id")
-        .args::<i64>()
-        .arg_name("merge_unique_external_ids")
-        .args::<Option<bool>>()
-        .returns::<u64>()
-        .call_async(Arc::new(get_count_callback))
-}
-
-fn get_counts_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_counts")
-        .context::<crate::plugins::auth::DispatchAuth>()
-        .arg_name("track_ids")
-        .args::<luau::Table>()
-        .arg_name("merge_unique_external_ids")
-        .args::<Option<bool>>()
-        .returns::<luau::Table>()
-        .call_async(Arc::new(get_counts_callback))
 }
 
 fn get_stats_spec() -> FunctionSpec {
@@ -110,54 +86,6 @@ fn get_stats_spec() -> FunctionSpec {
         .args::<Option<bool>>()
         .returns::<luau::Table>()
         .call_async(Arc::new(get_stats_callback))
-}
-
-fn get_count_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let track_db_id = args::positive_id(frame.args.read_named("track_id")?, "track_id")?;
-    let merge = frame
-        .args
-        .read_optional_named::<bool>("merge_unique_external_ids")?
-        .unwrap_or(false);
-    let store = frame
-        .vm
-        .data()
-        .get::<ListensModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
-    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
-
-    Ok(luau::ScheduledFuture::new(async move {
-        let stats = resolve_stats(db, &[track_db_id], &principal, merge).await?;
-        let count = stats.counts.get(&track_db_id).copied().unwrap_or(0);
-        Ok(luau::Value::from(count))
-    }))
-}
-
-fn get_counts_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let track_ids: luau::Table = frame.args.read_named("track_ids")?;
-    let track_ids = args::unique_ids(frame.vm, &track_ids)?;
-    let merge = frame
-        .args
-        .read_optional_named::<bool>("merge_unique_external_ids")?
-        .unwrap_or(false);
-    let store = frame
-        .vm
-        .data()
-        .get::<ListensModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
-    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
-
-    Ok(luau::ScheduledFuture::new(async move {
-        let stats = resolve_stats(db, &track_ids, &principal, merge).await?;
-        Ok(luau::Value::TableData(dbid_map_to_table(&stats.counts)))
-    }))
 }
 
 fn get_stats_callback(
@@ -321,41 +249,19 @@ fn module_descriptor() -> ModuleDescriptor {
         local_name: "listens",
         description: Some("Listen counts of the dispatch principal."),
         fields: Vec::new(),
-        functions: vec![
-            ModuleFunctionDescriptor {
-                path: vec!["get_count"],
-                description: None,
-                params: vec![
-                    param("track_id", i64::luau_type()),
-                    param("merge_unique_external_ids", Option::<bool>::luau_type()),
-                ],
-                returns: vec![u64::luau_type()],
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["get_counts"],
-                description: None,
-                params: vec![
-                    param("track_ids", Vec::<u64>::luau_type()),
-                    param("merge_unique_external_ids", Option::<bool>::luau_type()),
-                ],
-                returns: vec![LuauType::map(u64::luau_type(), u64::luau_type())],
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["get_stats"],
-                description: None,
-                params: vec![
-                    param("track_ids", Vec::<u64>::luau_type()),
-                    param("merge_unique_external_ids", Option::<bool>::luau_type()),
-                ],
-                returns: vec![LuauType::map(
-                    String::luau_type(),
-                    LuauType::map(u64::luau_type(), u64::luau_type()),
-                )],
-                yields: false,
-            },
-        ],
+        functions: vec![ModuleFunctionDescriptor {
+            path: vec!["get_stats"],
+            description: None,
+            params: vec![
+                param("track_ids", Vec::<u64>::luau_type()),
+                param("merge_unique_external_ids", Option::<bool>::luau_type()),
+            ],
+            returns: vec![LuauType::map(
+                String::luau_type(),
+                LuauType::map(u64::luau_type(), u64::luau_type()),
+            )],
+            yields: false,
+        }],
     }
 }
 

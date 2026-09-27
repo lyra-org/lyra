@@ -132,6 +132,13 @@ impl Catalog for Artists {
     type Filter = ArtistFilter;
     type Item = Artist;
 
+    fn id_filter(ids: Vec<DbId>) -> ArtistFilter {
+        ArtistFilter {
+            ids: Some(ids),
+            ..ArtistFilter::default()
+        }
+    }
+
     fn default_sort(_filter: &ArtistFilter) -> SortSpec<ArtistKey> {
         vec![(ArtistKey::SortName, Direction::Ascending)]
     }
@@ -141,12 +148,25 @@ impl Catalog for Artists {
         viewer: &Viewer,
         filter: &ArtistFilter,
     ) -> Result<Vec<DbId>, CatalogError> {
+        let visible = viewer.visible_releases(db)?;
         let mut artists = Candidates::default();
-        if viewer.visible_releases(db)?.is_some() || filter.narrows_credits() {
-            artists.restrict(credited_artists(db, viewer, filter)?);
-        }
         if let Some(ids) = &filter.ids {
-            artists.restrict(db::graph::existing_ids(db, ids, "Artist")?);
+            let ids = db::graph::existing_ids(db, ids, "Artist")?;
+            match &visible {
+                Some(visible) => {
+                    let mut credited_visibly = Vec::new();
+                    for artist in ids {
+                        if credited_on_visible(db, artist, visible)? {
+                            credited_visibly.push(artist);
+                        }
+                    }
+                    artists.restrict(credited_visibly);
+                }
+                None => artists.restrict(ids),
+            }
+        }
+        if filter.narrows_credits() || (visible.is_some() && filter.ids.is_none()) {
+            artists.restrict(credited_artists(db, viewer, filter)?);
         }
         if let Some(artist_type) = filter.artist_type {
             artists.restrict(db::artists::ids_with_type(db, artist_type)?);
@@ -343,6 +363,20 @@ fn credited_artists(
         artists.retain(|artist| !excluded.contains(artist));
     }
     Ok(artists)
+}
+
+/// Whether the artist holds a credit on a visible release or on a track of one.
+fn credited_on_visible(db: &DbAny, artist: DbId, visible: &HashSet<DbId>) -> anyhow::Result<bool> {
+    for owner in db::credits::crediting_owner_ids(db, artist)? {
+        if visible.contains(&owner)
+            || db::graph::inbound_neighbor_ids(db, owner, "Release")?
+                .iter()
+                .any(|release| visible.contains(release))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn credited_artist_ids(db: &DbAny, owner: DbId) -> anyhow::Result<Vec<DbId>> {

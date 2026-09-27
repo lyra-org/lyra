@@ -126,6 +126,13 @@ impl Catalog for Tracks {
     type Filter = TrackFilter;
     type Item = Track;
 
+    fn id_filter(ids: Vec<DbId>) -> TrackFilter {
+        TrackFilter {
+            ids: Some(ids),
+            ..TrackFilter::default()
+        }
+    }
+
     fn default_sort(filter: &TrackFilter) -> SortSpec<TrackKey> {
         if filter.single_release().is_some() {
             vec![
@@ -162,11 +169,24 @@ impl Catalog for Tracks {
             &filter.genres,
         )?;
         let mut tracks = Candidates::default();
-        if let Some(releases) = releases.ids() {
-            tracks.restrict(tracks_of_releases(db, releases.iter().copied())?);
-        }
-        if let Some(ids) = &filter.ids {
-            tracks.restrict(db::graph::existing_ids(db, ids, "Track")?);
+        match (&filter.ids, releases.ids()) {
+            (Some(ids), Some(releases)) => {
+                let mut on_releases = Vec::new();
+                for track in db::graph::existing_ids(db, ids, "Track")? {
+                    if db::graph::inbound_neighbor_ids(db, track, "Release")?
+                        .iter()
+                        .any(|release| releases.contains(release))
+                    {
+                        on_releases.push(track);
+                    }
+                }
+                tracks.restrict(on_releases);
+            }
+            (Some(ids), None) => tracks.restrict(db::graph::existing_ids(db, ids, "Track")?),
+            (None, Some(releases)) => {
+                tracks.restrict(tracks_of_releases(db, releases.iter().copied())?);
+            }
+            (None, None) => {}
         }
         if let Some(credit) = &filter.artists {
             tracks.restrict(credit.matching(db, |artists, role| match role {
