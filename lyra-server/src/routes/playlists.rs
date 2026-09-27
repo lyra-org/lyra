@@ -582,6 +582,7 @@ async fn create_playlist(
             is_public: request.is_public,
             created_at: Some(now),
             updated_at: Some(now),
+            track_db_ids: Vec::new(),
         },
     )
     .map_err(|err| AppError::bad_request(err.to_string()))?;
@@ -1121,6 +1122,7 @@ mod tests {
                 is_public: None,
                 created_at: None,
                 updated_at: None,
+                track_db_ids: Vec::new(),
             },
         )
     }

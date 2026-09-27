@@ -2053,6 +2053,7 @@ fn run_playlist_binding_test(source: &str) -> Result<()> {
             is_public: Some(true),
             created_at: None,
             updated_at: None,
+            track_db_ids: Vec::new(),
         },
     )?;
     let foreign_entry =
@@ -2093,6 +2094,65 @@ fn playlist_binding_mutation_results() -> Result<()> {
     run_playlist_binding_test(include_str!(
         "../../../../lyra-harmony-test/tests/fixtures/playlists/mutations.luau"
     ))
+}
+
+#[test]
+fn playlist_binding_replace() -> Result<()> {
+    run_playlist_binding_test(include_str!(
+        "../../../../lyra-harmony-test/tests/fixtures/playlists/replace.luau"
+    ))
+}
+
+#[test]
+fn playlist_bulk_bindings_refuse_inaccessible_tracks() -> Result<()> {
+    use crate::plugins::db;
+    let mut db = db::test_db::TestDb::initialized()?.into_inner();
+    let owner = db::test_db::test_user("playlist-viewer")?;
+    let owner_id = db::users::create(&mut db, &owner)?;
+    let hidden_track = db::test_db::insert_track(&mut db, "Hidden Track")?;
+    let runtime = PluginExecutor::with_database(
+        Arc::from(vec![manifest("demo", &["lyra.playlists"])]),
+        default_server_info(),
+        Arc::new(tokio::sync::RwLock::new(db)),
+    )?;
+    let mut context = CallContext {
+        origin: plugin_origin("demo", "playlist-test.luau"),
+        ..CallContext::default()
+    };
+    seed_caller_principal(
+        &mut context,
+        crate::services::auth::Principal::from_parts(
+            owner_id,
+            owner.id,
+            "playlist-viewer".into(),
+            Vec::new(),
+            None,
+            Default::default(),
+        ),
+    );
+    let values = runtime.eval_plugin_source_with_call_context(
+        format!(
+            r#"
+                local playlists = require("@lyra/playlists")
+                local id = playlists.create({{ name = "Viewer" }})
+                local added = pcall(playlists.add_tracks, id, {{ {hidden_track} }})
+                local replaced = pcall(playlists.replace, id, {{ track_ids = {{ {hidden_track} }} }})
+                return added, replaced, #playlists.get_tracks(id)
+            "#,
+            hidden_track = hidden_track.0,
+        )
+        .into_bytes(),
+        context,
+    )?;
+    assert_eq!(
+        values,
+        vec![
+            luau::Value::Boolean(false),
+            luau::Value::Boolean(false),
+            luau::Value::Number(0.0),
+        ]
+    );
+    Ok(())
 }
 
 #[test]

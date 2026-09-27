@@ -40,44 +40,51 @@ pub(crate) struct PlaylistTrack {
     pub(crate) position: u64,
 }
 
+#[cfg(test)]
 pub(crate) fn create(
     db: &mut DbAny,
     playlist: &Playlist,
     owner_db_id: DbId,
 ) -> anyhow::Result<DbId> {
-    db.transaction_mut(|t| -> anyhow::Result<DbId> {
-        let playlist_db_id = t
-            .exec_mut(QueryBuilder::insert().element(playlist).query())?
-            .ids()[0];
+    db.transaction_mut(|t| create_in_transaction(t, playlist, owner_db_id))
+}
 
-        // Edge from "playlists" collection to this playlist node
-        t.exec_mut(
+pub(crate) fn create_in_transaction(
+    t: &mut DbAnyTransactionMut<'_>,
+    playlist: &Playlist,
+    owner_db_id: DbId,
+) -> anyhow::Result<DbId> {
+    let playlist_db_id = t
+        .exec_mut(QueryBuilder::insert().element(playlist).query())?
+        .ids()[0];
+
+    // Edge from "playlists" collection to this playlist node
+    t.exec_mut(
+        QueryBuilder::insert()
+            .edges()
+            .from("playlists")
+            .to(playlist_db_id)
+            .query(),
+    )?;
+
+    // Ownership edge from playlist to user, tagged with ("owner", 1)
+    let owner_edge = t
+        .exec_mut(
             QueryBuilder::insert()
                 .edges()
-                .from("playlists")
-                .to(playlist_db_id)
+                .from(playlist_db_id)
+                .to(owner_db_id)
                 .query(),
-        )?;
+        )?
+        .ids()[0];
+    t.exec_mut(
+        QueryBuilder::insert()
+            .values_uniform([("owner", 1).into()])
+            .ids(owner_edge)
+            .query(),
+    )?;
 
-        // Ownership edge from playlist to user, tagged with ("owner", 1)
-        let owner_edge = t
-            .exec_mut(
-                QueryBuilder::insert()
-                    .edges()
-                    .from(playlist_db_id)
-                    .to(owner_db_id)
-                    .query(),
-            )?
-            .ids()[0];
-        t.exec_mut(
-            QueryBuilder::insert()
-                .values_uniform([("owner", 1).into()])
-                .ids(owner_edge)
-                .query(),
-        )?;
-
-        Ok(playlist_db_id)
-    })
+    Ok(playlist_db_id)
 }
 
 pub(crate) fn get(db: &DbAny) -> anyhow::Result<Vec<Playlist>> {
