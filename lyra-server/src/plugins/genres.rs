@@ -85,6 +85,7 @@ pub(crate) fn module_spec() -> ModuleSpec {
         .function(get_spec())
         .function(by_release_spec())
         .function(find_by_name_spec())
+        .function(artwork_release_ids_spec())
         .install(|_| Ok(ModuleExport::new(GenresModule)))
 }
 
@@ -198,6 +199,38 @@ fn add_parent_spec() -> FunctionSpec {
         .named_arg::<i64>("parent_id")
         .returns::<()>()
         .call_async(std::sync::Arc::new(add_parent_callback))
+}
+
+// Unscoped: public artwork routes compose a genre's cover without a caller.
+fn artwork_release_ids_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("artwork_release_ids")
+        .arg_name("genre_id")
+        .args::<i64>()
+        .returns::<Vec<i64>>()
+        .call_async(std::sync::Arc::new(artwork_release_ids_callback))
+}
+
+fn artwork_release_ids_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let genre_id = args::positive_id(frame.args.read_named("genre_id")?, "genre_id")?;
+    let db = frame.vm.data().get::<GenresModuleStore>()?.db()?;
+    Ok(luau::ScheduledFuture::new(async move {
+        let db = db.read().await;
+        if db::genres::get_by_id(&*db, genre_id)
+            .map_err(crate::plugins::runtime_error)?
+            .is_none()
+        {
+            return harmony_luau::serializable_to_luau_owned(Vec::<i64>::new());
+        }
+        let releases = db::genres::get_releases_many(&*db, &[genre_id])
+            .map_err(crate::plugins::runtime_error)?
+            .remove(&genre_id)
+            .unwrap_or_default();
+        harmony_luau::serializable_to_luau_owned(
+            releases.into_iter().map(|id| id.0).collect::<Vec<_>>(),
+        )
+    }))
 }
 
 fn find_by_name_spec() -> FunctionSpec {
@@ -535,8 +568,19 @@ fn module_descriptor() -> ModuleDescriptor {
                 yields: true,
             },
             ModuleFunctionDescriptor {
+                path: vec!["artwork_release_ids"],
+                description: Some(
+                    "The ids of the releases in this genre. Not scoped to any caller: it is only for composing the genre's artwork on public artwork routes, which must return nothing but image bytes.",
+                ),
+                params: vec![param("genre_id", i64::luau_type())],
+                returns: vec![Vec::<i64>::luau_type()],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
                 path: vec!["find_by_name"],
-                description: None,
+                description: Some(
+                    "The genre with exactly this name, ignoring case. Not scoped to any caller.",
+                ),
                 params: vec![param("name", String::luau_type())],
                 returns: vec![Option::<GenreRecord>::luau_type()],
                 yields: true,

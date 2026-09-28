@@ -359,6 +359,40 @@ pub(crate) fn get_by_id(
     super::graph::fetch_typed_by_id(db, artist_db_id, "Artist")
 }
 
+/// The artist whose scan name is `name`, ignoring case: an exact hit on the scan name index,
+/// else a pass over every artist's scan name.
+pub(crate) fn find_by_scan_name(
+    db: &impl super::DbAccess,
+    name: &str,
+) -> anyhow::Result<Option<DbId>> {
+    if let Ok(result) = db.exec(
+        QueryBuilder::search()
+            .index("scan_name")
+            .value(name)
+            .query(),
+    ) {
+        for id in result.ids().into_iter().filter(|id| id.0 > 0) {
+            if super::lookup::collection_contains_id(db, "artists", id)? {
+                return Ok(Some(id));
+            }
+        }
+    }
+    let lowered = name.to_lowercase();
+    let scan_names = db.exec(
+        QueryBuilder::select()
+            .values(["scan_name"])
+            .search()
+            .from("artists")
+            .where_()
+            .neighbor()
+            .query(),
+    )?;
+    Ok(scan_names.elements.into_iter().find_map(|element| {
+        let scan_name = element.values.first()?.value.string().ok()?;
+        (scan_name.to_lowercase() == lowered).then_some(element.id)
+    }))
+}
+
 /// Atomically aligns the stored row to `artist`.
 pub(crate) fn update(db: &mut DbAny, artist: &Artist) -> anyhow::Result<()> {
     db.transaction_mut(|t| update_in_transaction(t, artist))
@@ -583,6 +617,27 @@ mod tests {
             .collect(),
             "only non-Option keys may remain after an all-None update"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn find_by_scan_name_ignores_case_and_other_entities() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let lowered = insert_artist(&mut db, "Miles Davis")?;
+        let cased = insert_artist(&mut db, "placeholder")?;
+        let mut stored = get_by_id(&db, cased)?.ok_or_else(|| anyhow!("artist exists"))?;
+        stored.artist_name = "Sade Adu".to_string();
+        stored.scan_name = "Sade Adu".to_string();
+        update(&mut db, &stored)?;
+        let release = insert_release(&mut db, "Standards")?;
+        crate::db::genres::sync_release_genres(&mut db, release, &["Jazz".to_string()])?;
+
+        assert_eq!(find_by_scan_name(&db, "miles davis")?, Some(lowered));
+        assert_eq!(find_by_scan_name(&db, "MILES DAVIS")?, Some(lowered));
+        assert_eq!(find_by_scan_name(&db, "Sade Adu")?, Some(cased));
+        assert_eq!(find_by_scan_name(&db, "sade adu")?, Some(cased));
+        assert_eq!(find_by_scan_name(&db, "jazz")?, None);
+        assert_eq!(find_by_scan_name(&db, "Nobody")?, None);
         Ok(())
     }
 
