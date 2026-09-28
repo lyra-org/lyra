@@ -815,7 +815,7 @@ end
 
 function module.handle_person_image_request(ctx: ApiContext?): ApiResponse
 	return serve_public_image_by_name(ctx, function(name)
-		return artwork.get_cover_info(catalog.find_person_db_id_by_name(name))
+		return artwork.get_cover_info(catalog.find_artist_db_id_by_name(name))
 	end)
 end
 

@@ -66,7 +66,6 @@ type ArtistCreditSource = entities.ArtistCreditSource
 
 local CreditType = entities.CreditType
 local ArtistCreditSource = entities.ArtistCreditSource
-type ArtistPage = artists_module.ArtistPage
 type ArtistRelationInfo = artists_module.ArtistRelationInfo
 type Track = tracks.Track
 type Release = releases.Release
@@ -2307,17 +2306,7 @@ end
 -- Resolve a composed cover image for a genre by its db_id.
 -- Used by the image endpoint to serve genre covers on demand.
 function module.resolve_genre_cover(genre_db_id: number): artwork.ResolvedCoverInfo?
-	local ok, releases_by_genre = pcall(releases.by_genre, { genre_db_id })
-	if not ok then
-		return nil
-	end
-	local release_ids: { number } = {}
-	local genre_releases: { Release } = releases_by_genre[genre_db_id] or {}
-	for _, release: Release in genre_releases do
-		if release.db_id then
-			table.insert(release_ids, release.db_id)
-		end
-	end
+	local release_ids = genres.artwork_release_ids(genre_db_id)
 	if #release_ids == 0 then
 		return nil
 	end
@@ -2343,52 +2332,10 @@ function module.resolve_playlist_cover(playlist_db_id: number): artwork.Resolved
 	return helpers.compose_covers(covers.get_playlist_sources(playlist_db_id))
 end
 
-local NAME_LOOKUP_PAGE_SIZE = 200
--- Caps DB walk per name-miss; path is attacker-controlled so unbounded pagination amplifies.
-local NAME_LOOKUP_MAX_PAGES = 5
-
--- Artwork routes are served without credentials, so these lookups skip user scoping.
-function helpers.paginate_artist_db_id_lookup(name: string, query: (number) -> ArtistPage): number?
-	local lowered_name = string.lower(name)
-	local offset = 0
-	for _ = 1, NAME_LOOKUP_MAX_PAGES do
-		local ok, result = pcall(query, offset)
-		if not ok or type(result) ~= "table" then
-			return nil
-		end
-		for _, artist in result.items do
-			if string.lower(artist.artist_name) == lowered_name then
-				return artist.db_id
-			end
-		end
-		offset += #result.items
-		if #result.items == 0 or offset >= result.total then
-			return nil
-		end
-	end
-	return nil
-end
-
+-- Artwork routes are public, so this resolves names without a caller; it only ever leads to
+-- image bytes. People are artists, so it serves both.
 function module.find_artist_db_id_by_name(name: string): number?
-	return helpers.paginate_artist_db_id_lookup(name, function(offset: number): ArtistPage
-		return artists_module.query({
-			search = name,
-			offset = offset,
-			limit = NAME_LOOKUP_PAGE_SIZE,
-		})
-	end)
-end
-
-function module.find_person_db_id_by_name(name: string): number?
-	return helpers.paginate_artist_db_id_lookup(name, function(offset: number): ArtistPage
-		return artists_module.query({
-			search = name,
-			offset = offset,
-			limit = NAME_LOOKUP_PAGE_SIZE,
-			artist_type = artists_module.ArtistType.Person,
-			exclude_credit_types = { artists_module.CreditType.Artist },
-		})
-	end)
+	return artists_module.artwork_id_by_name(name)
 end
 
 function module.genre_image_tag(release_ids: { number }, genre_public_id: string): string?
