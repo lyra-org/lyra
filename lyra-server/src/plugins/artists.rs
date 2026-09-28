@@ -96,10 +96,37 @@ pub(crate) fn module_spec() -> ModuleSpec {
         .function(by_release_spec())
         .function(by_track_spec())
         .function(relations_spec())
+        .function(artwork_id_by_name_spec())
         .userdata(ArtistType::_harmony_userdata_spec())
         .userdata(ArtistRelationType::_harmony_userdata_spec())
         .userdata(CreditType::_harmony_userdata_spec())
         .install(|_| Ok(ModuleExport::new(ArtistsModule)))
+}
+
+// Unscoped: public artwork routes resolve names without a caller.
+fn artwork_id_by_name_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("artwork_id_by_name")
+        .arg_name("name")
+        .args::<String>()
+        .returns::<Option<i64>>()
+        .call_async(std::sync::Arc::new(artwork_id_by_name_callback))
+}
+
+fn artwork_id_by_name_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let name: String = frame.args.read_named("name")?;
+    let db = frame.vm.data().get::<ArtistsModuleStore>()?.db()?;
+    Ok(luau::ScheduledFuture::new(async move {
+        let name = name.trim();
+        if name.is_empty() {
+            return Ok(luau::Value::Nil);
+        }
+        let db = db.read().await;
+        let id = crate::plugins::db::artists::find_by_scan_name(&*db, name)
+            .map_err(crate::plugins::runtime_error)?;
+        Ok(id.map_or(luau::Value::Nil, |id| luau::Value::from(id.0)))
+    }))
 }
 
 fn query_spec() -> FunctionSpec {
@@ -524,6 +551,15 @@ fn module_descriptor() -> ModuleDescriptor {
                     u64::luau_type(),
                     LuauType::array(LuauType::named("Artist")),
                 )],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["artwork_id_by_name"],
+                description: Some(
+                    "The id of the artist with exactly this name, ignoring case. Not scoped to any caller: it is only for resolving artwork on public artwork routes, which must return nothing but image bytes.",
+                ),
+                params: vec![param("name", String::luau_type())],
+                returns: vec![Option::<i64>::luau_type()],
                 yields: true,
             },
             ModuleFunctionDescriptor {
