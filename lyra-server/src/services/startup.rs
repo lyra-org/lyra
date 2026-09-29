@@ -189,7 +189,7 @@ const REQUEST_BODY_LIMIT_BYTES: usize = 256 * 1024;
 
 async fn serve(
     app: Router,
-    config: &crate::config::Config,
+    config: &crate::services::settings::server::Config,
     listener: TcpListener,
     shutdown_token: CancellationToken,
 ) -> Result<()> {

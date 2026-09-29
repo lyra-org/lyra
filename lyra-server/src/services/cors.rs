@@ -59,7 +59,7 @@ mod tests {
     use tokio::sync::MutexGuard;
     use tower::ServiceExt;
 
-    use crate::config::Config;
+    use crate::services::settings::server::Config;
     use crate::testing::{
         init_default_test_state,
         publish_config,

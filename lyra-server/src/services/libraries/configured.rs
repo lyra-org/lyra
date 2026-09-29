@@ -8,22 +8,83 @@ use std::path::PathBuf;
 use agdb::DbAny;
 use nanoid::nanoid;
 
+use anyhow::{
+    Result,
+    anyhow,
+};
+
 use crate::{
     STATE,
-    config::{
-        Config,
-        LibraryConfig,
-    },
+    config::LibraryFile,
     db::{
         self,
         Library,
+        libraries::normalize_library_name_display,
     },
+    locale::{
+        validate_country,
+        validate_language,
+    },
+    services::settings::server::Config,
 };
 
 use super::{
     start_library_sync,
     sync_library,
 };
+
+/// The config `library` block: a developer bootstrap that seeds one library
+/// at startup. Not the supported way to add a library — that is
+/// `POST /api/libraries`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct LibraryConfig {
+    pub(crate) path: Option<PathBuf>,
+    /// Display name; defaults to `"Music"`. Override when another library
+    /// already uses the default — names are unique.
+    pub(crate) name: Option<String>,
+    pub(crate) language: Option<String>,
+    pub(crate) country: Option<String>,
+}
+
+impl LibraryConfig {
+    /// Validates the name and locale inputs up front so a bad file fails
+    /// before any directory or database is touched.
+    pub(crate) fn resolve(file: Option<&LibraryFile>) -> Result<Option<Self>> {
+        file.map(|library| -> Result<Self> {
+            Ok(Self {
+                path: library.path.clone(),
+                name: library
+                    .name
+                    .as_deref()
+                    .map(|raw| {
+                        normalize_library_name_display(raw).map_err(|err| {
+                            anyhow!("invalid config library.name '{}': {err}", raw.trim())
+                        })
+                    })
+                    .transpose()?,
+                language: library
+                    .language
+                    .as_deref()
+                    .map(|raw| {
+                        validate_language(raw).map_err(|err| {
+                            anyhow!("invalid config library.language '{}': {err}", raw.trim())
+                        })
+                    })
+                    .transpose()?,
+                country: library
+                    .country
+                    .as_deref()
+                    .map(|raw| {
+                        validate_country(raw).map_err(|err| {
+                            anyhow!("invalid config library.country '{}': {err}", raw.trim())
+                        })
+                    })
+                    .transpose()?,
+            })
+        })
+        .transpose()
+    }
+}
 
 /// Override via `library.name` in config.json on collision.
 const DEFAULT_BOOTSTRAP_LIBRARY_NAME: &str = "Music";
@@ -178,12 +239,15 @@ mod tests {
     use agdb::DbAny;
     use nanoid::nanoid;
 
+    use std::path::Path;
+
     use super::{
         BootstrapSource,
+        LibraryConfig,
         find_or_create_library_locked,
     };
     use crate::{
-        config::LibraryConfig,
+        config::ConfigFile,
         db::{
             Library,
             libraries::path_key_for,
@@ -242,5 +306,48 @@ mod tests {
         assert!(capture_msg.contains("--library"), "{capture_msg}");
         assert!(!capture_msg.contains("config.json"), "{capture_msg}");
         Ok(())
+    }
+
+    fn resolve_library(json: &str) -> anyhow::Result<Option<LibraryConfig>> {
+        LibraryConfig::resolve(ConfigFile::parse(json)?.library.as_ref())
+    }
+
+    #[test]
+    fn config_library_locale_inputs_are_normalized() -> anyhow::Result<()> {
+        let library = resolve_library(
+            r#"{"library": {"path": "/music", "language": "Japanese", "country": "Japan"}}"#,
+        )?
+        .expect("library should be present");
+
+        assert_eq!(library.path.as_deref(), Some(Path::new("/music")));
+        assert_eq!(library.language.as_deref(), Some("jpn"));
+        assert_eq!(library.country.as_deref(), Some("JP"));
+        Ok(())
+    }
+
+    #[test]
+    fn missing_library_resolves_to_none() -> anyhow::Result<()> {
+        assert!(resolve_library("{}")?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_library_language_returns_error() {
+        let error = resolve_library(r#"{"library": {"language": "not-a-language"}}"#)
+            .expect_err("expected error");
+
+        assert!(
+            error
+                .to_string()
+                .contains("invalid config library.language")
+        );
+    }
+
+    #[test]
+    fn invalid_library_name_returns_error() {
+        let error =
+            resolve_library(r#"{"library": {"name": " \u200b "}}"#).expect_err("expected error");
+
+        assert!(error.to_string().contains("invalid config library.name"));
     }
 }

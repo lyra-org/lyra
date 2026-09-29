@@ -38,11 +38,7 @@ mod routes;
 mod services;
 pub mod testing;
 
-use config::{
-    BootConfig,
-    Config,
-    LibraryConfig,
-};
+use config::BootConfig;
 pub(crate) use db::Library;
 use db::{
     DbAsync,
@@ -66,6 +62,10 @@ use services::settings::server::{
     ResolvedSettings,
 };
 pub use services::startup::CaptureArgs;
+use services::{
+    libraries::LibraryConfig,
+    settings::server::Config,
+};
 
 #[derive(Clone)]
 pub(crate) struct SwapHandle<T: Clone> {

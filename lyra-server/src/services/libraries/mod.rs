@@ -10,6 +10,7 @@ pub(crate) mod scanning;
 mod sync;
 
 pub(crate) use configured::{
+    LibraryConfig,
     prepare_capture_library,
     prepare_configured_library,
 };
