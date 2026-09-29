@@ -255,10 +255,10 @@ fn plugin_executor_exposes_db_backed_lyra_chromaprint_module() -> Result<()> {
         format!(
             r#"
                 local chromaprint = require("@lyra/chromaprint")
-                local result = chromaprint.compute({entry_db_id})
+                -- The one-second asset decodes but is too short to fingerprint.
+                local ok, err = pcall(chromaprint.compute, {entry_db_id})
                 executor_chromaprint_result =
-                    type(result.fingerprint) == "string"
-                    and result.duration == nil
+                    not ok and string.find(tostring(err), "too short to fingerprint", 1, true) ~= nil
             "#,
             entry_db_id = entry_db_id.0,
         )
