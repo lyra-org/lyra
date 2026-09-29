@@ -48,6 +48,8 @@ pub enum Error {
     Ffmpeg(#[from] lyra_ffmpeg::Error),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("audio too short to fingerprint")]
+    EmptyFingerprint,
 }
 
 /// Computes a compressed Chromaprint fingerprint for an audio file.
@@ -73,7 +75,11 @@ pub fn compute_raw_fingerprint_from_file(
     let duration = duration_secs.unwrap_or(DEFAULT_DURATION_SECS);
     let pcm_bytes = decode_pcm_bytes(path, duration, timeout)?;
     let samples = pcm_bytes_to_i16(&pcm_bytes);
-    Ok(compute_fingerprint_from_samples(&samples, Some(duration)))
+    let fingerprint = compute_fingerprint_from_samples(&samples, Some(duration));
+    if fingerprint.is_empty() {
+        return Err(Error::EmptyFingerprint);
+    }
+    Ok(fingerprint)
 }
 
 pub fn compute_fingerprint_from_samples(samples: &[i16], duration_secs: Option<u32>) -> Vec<u32> {
