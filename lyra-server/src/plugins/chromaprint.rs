@@ -99,12 +99,11 @@ fn compute_callback(
                 .ok_or_else(|| crate::plugins::runtime_error("entry not found"))?;
             entry.full_path
         };
-        let (fingerprint, duration) =
+        let (fingerprint, _) =
             lyra_chromaprint::compute_fingerprint_from_file(&path, None, Some(DECODE_TIMEOUT))
                 .map_err(crate::plugins::runtime_error)?;
-        let mut table = luau::OwnedTable::with_capacity(0, 2);
+        let mut table = luau::OwnedTable::with_capacity(0, 1);
         table.set_field("fingerprint", luau::Value::String(fingerprint.into_bytes()));
-        table.set_field("duration", luau::Value::Number(f64::from(duration)));
         Ok(luau::Value::TableData(table))
     }))
 }
@@ -120,18 +119,11 @@ impl LuauTypeInfo for ChromaprintResult {
 impl DescribeInterface for ChromaprintResult {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("ChromaprintResult", None);
-        descriptor.fields.extend([
-            FieldDescriptor {
-                name: "fingerprint",
-                ty: String::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "duration",
-                ty: f64::luau_type(),
-                description: None,
-            },
-        ]);
+        descriptor.fields.push(FieldDescriptor {
+            name: "fingerprint",
+            ty: String::luau_type(),
+            description: None,
+        });
         descriptor
     }
 }
