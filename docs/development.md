@@ -5,7 +5,7 @@ Install [rustup](https://rustup.rs/) before working from a checkout. Cargo uses
 Local builds also require FFmpeg 8 development libraries, Clang, pkg-config, and
 C/C++ build tools; the [Dockerfile](../Dockerfile) records the Linux build dependencies.
 
-Run the same lint check used by CI before submitting changes:
+Before submitting changes, run the lint check used by CI and the server tests:
 
 ```bash
 cargo clippy --locked --workspace --all-targets -- -D warnings
@@ -33,10 +33,10 @@ See [commit conventions](commits.md) when preparing changes.
 
 ## Cargo installation
 
-For local development, install the build prerequisites above, then install the server:
+For local development, install the build prerequisites above, then install the server from a checkout so the pinned toolchain applies:
 
 ```sh
-cargo install --locked --git https://git.lyra.pub/lyra/lyra lyra-server
+cargo install --locked --path lyra-server
 lyra serve
 ```
 
@@ -46,7 +46,7 @@ See [plugin repositories](plugin-repositories.md) to install plugins.
 
 ## Docker builds
 
-Docker builds require a lyra-web commit SHA in `LYRA_WEB_GIT_HASH`. To build with its current `main`, as CI does:
+Full image builds require a lyra-web commit SHA in `LYRA_WEB_GIT_HASH`. To build with its current `main`, as CI does:
 
 ```sh
 LYRA_WEB_GIT_HASH=$(git ls-remote https://github.com/lyra-org/lyra-web.git refs/heads/main | cut -f1)
