@@ -82,23 +82,24 @@ function module.select_track(tracks: { LocalTrack }): LocalTrack?
 	return best
 end
 
-function module.compute_fingerprint(track_db_id: number): (string?, number?)
+function module.compute_fingerprint(track_db_id: number): string?
 	local entry_db_id = get_entry_db_id_for_track(track_db_id)
 	if entry_db_id == nil then
-		return nil, nil
+		return nil
 	end
 	local ok, result = pcall(chromaprint.compute, entry_db_id)
 	if not ok or type(result) ~= "table" then
-		return nil, nil
+		return nil
 	end
-	return result.fingerprint, result.duration
+	return result.fingerprint
 end
 
-function module.lookup(fingerprint: string, duration: number): AcoustIdResult?
+-- `duration_ms` is the track's scanned duration; AcoustID takes whole seconds.
+function module.lookup(fingerprint: string, duration_ms: number): AcoustIdResult?
 	local url =
 		`{ACOUSTID_API}?client={http.encode_uri_component(ACOUSTID_CLIENT_ID)}&meta=recordings&fingerprint={http.encode_uri_component(
 			fingerprint
-		)}&duration={math.floor(duration)}`
+		)}&duration={math.floor(duration_ms / 1000)}`
 
 	local request: HttpRequestOptions = {
 		url = url,

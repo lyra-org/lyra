@@ -2947,9 +2947,9 @@ function module.register_refresh(provider_instance: Provider, acoustid_config: A
 				if tracks and #tracks > 0 then
 					local track = acoustid_mod.select_track(tracks)
 					if track and track.db_id then
-						local fingerprint, duration = acoustid_mod.compute_fingerprint(track.db_id)
-						if fingerprint and duration then
-							local result = acoustid_mod.lookup(fingerprint, duration)
+						local fingerprint = acoustid_mod.compute_fingerprint(track.db_id)
+						if fingerprint and track.duration_ms then
+							local result = acoustid_mod.lookup(fingerprint, track.duration_ms)
 							if result then
 								local recording_id = result.recording_ids[1]
 								if recording_id then
