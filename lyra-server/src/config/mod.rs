@@ -14,6 +14,7 @@ use std::{
 };
 
 use crate::{
+    db::libraries::normalize_library_name_display,
     locale::{
         validate_country,
         validate_language,
@@ -159,13 +160,21 @@ pub(crate) struct LibraryConfig {
 }
 
 impl LibraryConfig {
-    /// Validates the locale inputs up front so a bad file fails before any
-    /// directory or database is touched.
+    /// Validates the name and locale inputs up front so a bad file fails
+    /// before any directory or database is touched.
     pub(crate) fn resolve(file: Option<&LibraryFile>) -> Result<Option<Self>> {
         file.map(|library| -> Result<Self> {
             Ok(Self {
                 path: library.path.clone(),
-                name: library.name.clone(),
+                name: library
+                    .name
+                    .as_deref()
+                    .map(|raw| {
+                        normalize_library_name_display(raw).map_err(|err| {
+                            anyhow!("invalid config library.name '{}': {err}", raw.trim())
+                        })
+                    })
+                    .transpose()?,
                 language: library
                     .language
                     .as_deref()
@@ -259,5 +268,13 @@ mod tests {
                 .to_string()
                 .contains("invalid config library.language")
         );
+    }
+
+    #[test]
+    fn invalid_library_name_returns_error() {
+        let error =
+            resolve_library(r#"{"library": {"name": " \u200b "}}"#).expect_err("expected error");
+
+        assert!(error.to_string().contains("invalid config library.name"));
     }
 }
