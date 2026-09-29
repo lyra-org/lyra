@@ -113,11 +113,10 @@ fn find_or_create_library_locked(
     path_key: String,
     source: BootstrapSource,
 ) -> anyhow::Result<Library> {
-    let display_name = match config.name.as_deref() {
-        Some(raw) => db::libraries::normalize_library_name_display(raw)
-            .map_err(|e| anyhow::anyhow!("invalid library name '{raw}': {e}"))?,
-        None => DEFAULT_BOOTSTRAP_LIBRARY_NAME.to_string(),
-    };
+    let display_name = config
+        .name
+        .clone()
+        .unwrap_or_else(|| DEFAULT_BOOTSTRAP_LIBRARY_NAME.to_string());
 
     // One txn so a crash between node and edge can't orphan a Library.
     let lookup_path = path.clone();

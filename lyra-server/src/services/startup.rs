@@ -120,7 +120,6 @@ pub(crate) async fn run_server(capture: Option<CaptureArgs>, listener: TcpListen
 
         if let Err(err) = services::libraries::prepare_configured_library(&config_for_bg).await {
             tracing::error!(error = %err, "configured library preparation failed");
-            return;
         }
 
         services::providers::run_provider_sync_loop(shutdown_bg).await;
