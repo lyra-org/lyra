@@ -33,10 +33,7 @@ use serde::{
 };
 
 use crate::STATE;
-use crate::config::{
-    self,
-    LibraryConfig,
-};
+use crate::config;
 use crate::db::{
     self,
     Entry,
@@ -136,7 +133,7 @@ pub(crate) async fn create_session(
 /// provenance and file layer. For tests that poke typed config fields;
 /// the settings API tests resolve real values instead.
 #[cfg(test)]
-pub(crate) fn publish_config(config: config::Config) {
+pub(crate) fn publish_config(config: services::settings::server::Config) {
     let current = STATE.settings.get();
     STATE.publish_settings(Arc::new(services::settings::server::ResolvedSettings {
         config: Arc::new(config),
@@ -246,7 +243,7 @@ fn initialize_state(file: config::ConfigFile) -> anyhow::Result<()> {
         matches!(boot.db.kind, config::DbKind::Memory),
         "test state must use a memory database"
     );
-    let library = LibraryConfig::resolve(file.library.as_ref())?;
+    let library = services::libraries::LibraryConfig::resolve(file.library.as_ref())?;
     let file_settings = services::settings::server::normalize_file(&file.settings, &boot)?;
     let mut created = db::create(&boot.db)?;
     let resolved = crate::resolve_settings(&mut created, &boot, library, file_settings)?;

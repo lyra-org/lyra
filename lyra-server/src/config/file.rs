@@ -42,7 +42,7 @@ pub(crate) struct ConfigFile {
     pub(crate) settings: FileSettings,
 }
 
-/// Dev-only bootstrap; see [`crate::config::LibraryConfig`].
+/// Dev-only bootstrap; see [`crate::services::libraries::LibraryConfig`].
 #[derive(Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct LibraryFile {

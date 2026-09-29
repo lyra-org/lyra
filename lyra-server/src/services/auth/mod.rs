@@ -27,11 +27,11 @@ use axum::http::HeaderMap;
 
 use crate::{
     STATE,
-    config::Config,
     db::{
         self,
         Permission,
     },
+    services::settings::server::Config,
 };
 
 // Defeat user-enumeration via response timing: the miss branch of login_with_password

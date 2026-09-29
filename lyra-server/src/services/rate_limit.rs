@@ -51,7 +51,7 @@ use axum::{
     },
 };
 
-use crate::config::{
+use crate::services::settings::server::{
     Config,
     RateLimitConfig,
 };

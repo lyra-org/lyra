@@ -21,17 +21,22 @@ use anyhow::{
 use crate::{
     config::{
         BootConfig,
-        Config,
         FileSettings,
-        LibraryConfig,
     },
     db,
+    services::libraries::LibraryConfig,
 };
 
+mod config;
 mod definitions;
 mod kind;
 mod update;
 
+pub(crate) use config::{
+    AuthConfig,
+    Config,
+    RateLimitConfig,
+};
 pub(crate) use kind::Kind;
 pub(crate) use update::{
     UpdateError,
@@ -288,13 +293,13 @@ mod tests {
     use agdb::DbId;
     use serde_json::json;
 
-    use super::*;
-    use crate::config::{
-        AuthConfig,
-        CorsConfig,
-        HlsConfig,
-        RateLimitConfig,
-        SyncConfig,
+    use super::{
+        config::{
+            CorsConfig,
+            HlsConfig,
+            SyncConfig,
+        },
+        *,
     };
 
     fn boot() -> BootConfig {

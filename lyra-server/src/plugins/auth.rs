@@ -118,7 +118,7 @@ pub(crate) struct AuthCapabilities {
 }
 
 impl AuthCapabilities {
-    pub(crate) fn from_config(config: &crate::config::AuthConfig) -> Self {
+    pub(crate) fn from_config(config: &crate::services::settings::server::AuthConfig) -> Self {
         Self {
             enabled: config.enabled,
             allow_default_login_when_disabled: config.allow_default_login_when_disabled,
