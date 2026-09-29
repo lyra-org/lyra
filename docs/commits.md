@@ -47,6 +47,7 @@ Server scopes:
 ```text
 server
 server/auth
+server/config
 server/cors
 server/covers
 server/db
