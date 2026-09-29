@@ -51,37 +51,29 @@ pub enum Error {
 }
 
 /// Computes a compressed Chromaprint fingerprint for an audio file.
-///
-/// Returns `(fingerprint, duration_secs)` where `duration_secs` is the actual
-/// duration of the full audio file in seconds (not capped by the fingerprint
-/// duration limit). Minimum returned duration is 1.
 pub fn compute_fingerprint_from_file(
     path: &Path,
     duration_secs: Option<u32>,
     timeout: Option<Duration>,
-) -> Result<(String, u32), Error> {
-    let (raw, total_duration) = compute_raw_fingerprint_from_file(path, duration_secs, timeout)?;
+) -> Result<String, Error> {
+    let raw = compute_raw_fingerprint_from_file(path, duration_secs, timeout)?;
     let compressed = compress(&raw);
-    Ok((BASE64.encode(&compressed), total_duration))
+    Ok(BASE64.encode(&compressed))
 }
 
 /// Computes a raw (uncompressed) Chromaprint fingerprint for an audio file.
 ///
-/// Returns `(fingerprint, duration_secs)` where `duration_secs` is the actual
-/// duration of the full audio file in seconds. Minimum returned duration is 1.
+/// Decoding stops after `duration_secs` (120 by default), so damage later in
+/// the file doesn't affect the result.
 pub fn compute_raw_fingerprint_from_file(
     path: &Path,
     duration_secs: Option<u32>,
     timeout: Option<Duration>,
-) -> Result<(Vec<u32>, u32), Error> {
+) -> Result<Vec<u32>, Error> {
     let duration = duration_secs.unwrap_or(DEFAULT_DURATION_SECS);
-    let (pcm_bytes, total_bytes) = decode_pcm_bytes(path, duration, timeout)?;
+    let pcm_bytes = decode_pcm_bytes(path, duration, timeout)?;
     let samples = pcm_bytes_to_i16(&pcm_bytes);
-    let total_duration = (total_bytes / (SAMPLE_RATE as usize * BYTES_PER_FRAME)).max(1) as u32;
-    Ok((
-        compute_fingerprint_from_samples(&samples, Some(duration)),
-        total_duration,
-    ))
+    Ok(compute_fingerprint_from_samples(&samples, Some(duration)))
 }
 
 pub fn compute_fingerprint_from_samples(samples: &[i16], duration_secs: Option<u32>) -> Vec<u32> {
@@ -126,7 +118,7 @@ fn decode_pcm_bytes(
     path: &Path,
     duration_secs: u32,
     timeout: Option<Duration>,
-) -> Result<(Vec<u8>, usize), Error> {
+) -> Result<Vec<u8>, Error> {
     let pcm_bytes: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
     let write_callback = {
         let pcm_bytes = Arc::clone(&pcm_bytes);
@@ -142,6 +134,7 @@ fn decode_pcm_bytes(
     let context = FfmpegContext::builder()
         .input(path.to_string_lossy().into_owned())
         .output(output)
+        .end_ms(Some(u64::from(duration_secs) * 1000))
         .build()?;
 
     match timeout {
@@ -150,14 +143,13 @@ fn decode_pcm_bytes(
     }
 
     let bytes = pcm_bytes.lock().unwrap();
-    let total_bytes = bytes.len();
     let max_bytes = duration_secs as usize * SAMPLE_RATE as usize * BYTES_PER_FRAME;
     let mut output = bytes.clone();
     if output.len() > max_bytes {
         output.truncate(max_bytes);
     }
 
-    Ok((output, total_bytes))
+    Ok(output)
 }
 
 fn pcm_bytes_to_i16(bytes: &[u8]) -> Vec<i16> {
