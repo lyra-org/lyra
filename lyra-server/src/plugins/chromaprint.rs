@@ -99,7 +99,7 @@ fn compute_callback(
                 .ok_or_else(|| crate::plugins::runtime_error("entry not found"))?;
             entry.full_path
         };
-        let (fingerprint, _) =
+        let fingerprint =
             lyra_chromaprint::compute_fingerprint_from_file(&path, None, Some(DECODE_TIMEOUT))
                 .map_err(crate::plugins::runtime_error)?;
         let mut table = luau::OwnedTable::with_capacity(0, 1);
