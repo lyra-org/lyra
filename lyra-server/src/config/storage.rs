@@ -25,19 +25,20 @@ pub(crate) fn ensure_writable_directory(path: &Path, description: &str) -> Resul
 
 pub(crate) fn write_error(operation: &str, path: &Path, error: io::Error) -> anyhow::Error {
     let mut context = format!("failed to {operation} at '{}'", path.display());
-    #[cfg(unix)]
-    let (uid, gid) = {
-        // These calls read process identity and have no preconditions.
-        unsafe { (libc::geteuid(), libc::getegid()) }
-    };
-    #[cfg(unix)]
-    context.push_str(&format!(" (effective UID {uid}, GID {gid})"));
     match error.kind() {
+        #[cfg(unix)]
         io::ErrorKind::PermissionDenied => {
-            context
-                .push_str("; grant this user write access to the storage path and existing files");
-            #[cfg(unix)]
-            context.push_str(". For bind mounts without user namespaces, set Compose user: \"<host-uid>:<host-gid>\" to the folder owner. With rootless Docker, prefer named volumes or use user: \"0:0\" for folders owned by the daemon's host user. Ownership repairs must use mapped host IDs under user namespaces");
+            // These calls read process identity and have no preconditions.
+            let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
+            context.push_str(&format!(
+                ": Lyra runs as user {uid} (group {gid}), which cannot write to this folder. \
+                 Make that user the owner of the folder and its files, \
+                 or see \"Storage permissions\" in the installation guide"
+            ));
+        }
+        #[cfg(not(unix))]
+        io::ErrorKind::PermissionDenied => {
+            context.push_str(": Lyra cannot write to this folder. Give it write access to the folder and its files");
         }
         io::ErrorKind::ReadOnlyFilesystem => {
             context.push_str("; this storage must be writable: remove the read-only mount option or choose a writable path");
@@ -66,7 +67,10 @@ mod tests {
     #[test]
     fn recovery_matches_the_io_failure() {
         for (kind, expected) in [
-            (io::ErrorKind::PermissionDenied, "grant this user"),
+            (
+                io::ErrorKind::PermissionDenied,
+                "cannot write to this folder",
+            ),
             (io::ErrorKind::ReadOnlyFilesystem, "read-only mount"),
             (io::ErrorKind::StorageFull, ""),
         ] {
@@ -74,22 +78,20 @@ mod tests {
             let message = error.to_string();
             assert!(message.contains("write at '/storage'"));
             assert!(message.contains(expected));
-            #[cfg(unix)]
-            assert_eq!(
-                message.contains("Compose user:"),
-                kind == io::ErrorKind::PermissionDenied
-            );
             assert_eq!(
                 message.contains("read-only mount"),
                 kind == io::ErrorKind::ReadOnlyFilesystem
             );
             assert_eq!(error.downcast_ref::<io::Error>().unwrap().kind(), kind);
             #[cfg(unix)]
-            assert!(message.contains(&format!(
-                "effective UID {}, GID {}",
-                unsafe { libc::geteuid() },
-                unsafe { libc::getegid() }
-            )));
+            assert_eq!(
+                message.contains(&format!(
+                    "runs as user {} (group {})",
+                    unsafe { libc::geteuid() },
+                    unsafe { libc::getegid() }
+                )),
+                kind == io::ErrorKind::PermissionDenied
+            );
         }
     }
 }
