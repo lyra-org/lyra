@@ -44,6 +44,23 @@ For a frontend, build [lyra-web](https://github.com/lyra-org/lyra-web) and set `
 
 See [plugin repositories](plugin-repositories.md) to install plugins.
 
+## Startup library
+
+To create and scan a library at startup, add a `library` block to [`config.json`](configuration.md):
+
+```json
+{
+  "library": {
+    "path": "/music",
+    "name": "Music",
+    "language": "en",
+    "country": "US"
+  }
+}
+```
+
+Use a path visible to the server. `path` is required. `name` defaults to `Music`. `language` and `country` are optional; language accepts ISO 639-1 or 639-3 codes or English names, and country accepts country codes or names.
+
 ## Docker builds
 
 Full image builds require a lyra-web commit SHA in `LYRA_WEB_GIT_HASH`. To build with its current `main`, as CI does:

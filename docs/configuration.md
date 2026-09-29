@@ -22,7 +22,7 @@ Add this line under `volumes` in the `lyra` service:
 
 Run `docker compose up -d` to apply it. After editing the file later, run `docker compose restart`.
 
-Settings in this file override saved settings. Remove a setting from the file to allow it to be changed through the API again.
+Settings in this file override saved settings. Remove a setting from the file to allow it to be changed from Lyra again.
 
 ## Reset saved settings
 
@@ -39,11 +39,11 @@ This clears all saved server settings. It does not remove values from `config.js
 
 ### File loading and defaults
 
-- Lyra searches for `config.json` in the working directory, beside the binary, in the binary's parent directory, and in the source tree. `LYRA_CONFIG_PATH` selects an exact file; it must exist.
+- Lyra searches for `config.json` in the working directory, beside the binary, and in the binary's parent directory. `LYRA_CONFIG_PATH` selects an exact file; it must exist.
 - Unknown keys and invalid values prevent startup. The error identifies the problem.
-- `port`, `db`, and `library` are startup options. Other settings use the file value first, then the saved value, then the default.
+- `port` and `db` are startup options. Other settings use the file value first, then the saved value, then the default.
 - In the file, `null` explicitly unsets `published_url` or `hls.temp_disk_budget_bytes`. Other settings reject `null`, except startup options, which treat it as omitted.
-- Most API changes apply immediately. `rate_limit.*` and `hls.cleanup_startup_purge` require a restart.
+- Most setting changes apply immediately. `rate_limit.*` and `hls.cleanup_startup_purge` require a restart.
 
 ### Environment variables
 
@@ -59,18 +59,6 @@ This clears all saved server settings. It does not remove values from `config.js
 
 Docker uses `/data` and `/plugins`; update their mounts if you change these paths. For a frontend override, see [custom web interface](installation.md#optional-use-a-custom-web-interface).
 
-### Settings API
-
-These endpoints require `manage_server` permission. Writes also require a session token; API keys allow reads only.
-
-| Request | Effect |
-| --- | --- |
-| `GET /api/server/settings` | Read settings, defaults, sources, file locks, and pending restarts. |
-| `PATCH /api/server/settings` | Save values, for example `{"values":{"sync.interval_secs":300}}`. Use `null` to reset a saved value to its default. |
-| `DELETE /api/server/settings` | Clear all saved settings. |
-
-All three return the settings view. It includes `boot` for active startup paths and port, and `pending_restart` for changes awaiting restart. PATCH rejects invalid values or unknown keys with `400`, and file-locked settings with `409`; rejected requests write nothing.
-
 ### Full configuration example
 
 Copy [`config.example.json`](../config.example.json) to `config.json`, keeping only your overrides.
@@ -80,18 +68,3 @@ Copy [`config.example.json`](../config.example.json) to `config.json`, keeping o
 - `db.kind` accepts `mmap`, `file`, or `memory`. `memory` never writes the database to disk.
 - Durations are in seconds. `sync.interval_secs` sets how often provider metadata is refreshed; `0` disables periodic refreshes, but one still runs at startup.
 - The HLS disk budget is in bytes; `null` or `0` means no budget. `max_concurrent_transcodes: 0` means no limit.
-
-For development only, you can add a `library` block to create and scan a library at startup. Normally, [add a library](installation.md#2-add-your-music).
-
-```json
-{
-  "library": {
-    "path": "/music",
-    "name": "Music",
-    "language": "en",
-    "country": "US"
-  }
-}
-```
-
-Use a path visible to the server. `path` is required. `name` defaults to `Music`. `language` and `country` are optional; language accepts ISO 639-1 or 639-3 codes or English names, and country accepts country codes or names.
