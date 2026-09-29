@@ -258,8 +258,7 @@ fn plugin_executor_exposes_db_backed_lyra_chromaprint_module() -> Result<()> {
                 local result = chromaprint.compute({entry_db_id})
                 executor_chromaprint_result =
                     type(result.fingerprint) == "string"
-                    and type(result.duration) == "number"
-                    and result.duration > 0
+                    and result.duration == nil
             "#,
             entry_db_id = entry_db_id.0,
         )
