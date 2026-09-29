@@ -6,6 +6,7 @@
 - `lyra-server/src/services/`: shared business logic used by both `routes/` and `plugins/`.
 - `lyra-server/src/plugins/`: plugin system integration and core capabilities such as metadata providers.
 - `lyra-server/src/routes/`: REST API route definitions and handlers.
+- `lyra-server/src/config/`: startup configuration read before the database opens: `config.json`, environment variables, and storage directories. Runtime settings belong to `services/settings`.
 - Do not add new top-level modules to `lyra-server/src/` — each one represents a major domain layer and should only be introduced with an explicit decision about what boundary it owns.
 - Split files into subdirectory modules when they grow multiple distinct sub-responsibilities that would each benefit from independent navigation and ownership.
 - `docs/reference/agdb.md`: agdb behavior reference (read before DB changes).
