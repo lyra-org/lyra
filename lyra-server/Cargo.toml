@@ -29,7 +29,7 @@ harmony-macros = { path = "../harmony-macros" }
 harmony-repository = { path = "../harmony-repository" }
 harmony-task = { path = "../harmony-task" }
 harmony-net = { path = "../harmony-net" }
-agdb = { version = "0.14.0", features = ["serde"] }
+agdb = { git = "https://github.com/StayBlue/agdb.git", rev = "0f71ea0c38abff412052d75097ba4da6763da365", features = ["serde"] }
 anyhow = { workspace = true }
 argon2 = { version = "0.5", features = ["std", "password-hash"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio", "macros", "tracing", "ws"] }
