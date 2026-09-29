@@ -101,6 +101,9 @@ local flatten_release_tracks = track_helpers.flatten_release_tracks
 local assign_mb_tracks_to_local_tracks = track_helpers.assign_mb_tracks_to_local_tracks
 local count_track_title_overlap = track_helpers.count_track_title_overlap
 local release_has_track_title = track_helpers.release_has_track_title
+local title_matched_recording_ids = track_helpers.title_matched_recording_ids
+local release_has_any_recording = track_helpers.release_has_any_recording
+local release_lists_tracks = track_helpers.release_lists_tracks
 local validate_release_durations = track_helpers.validate_release_durations
 local should_preserve_local_track_positions = track_helpers.should_preserve_local_track_positions
 local single_track_duration_diff = track_helpers.single_track_duration_diff
@@ -2483,6 +2486,30 @@ local function select_release_group_candidate(
 ): Release?
 	if not candidates or #candidates == 0 then
 		return nil
+	end
+	-- A release group can hold a different song's release, such as a digital
+	-- single split from a double A-side. Editions must share a local track,
+	-- by title or by a recording the selected release matched to one; the
+	-- recording covers editions whose track titles are translated. Editions
+	-- browsed without a track listing can't be checked and are kept.
+	if selected_release then
+		local selected_with_media = release_from_candidates(candidates, selected_release.id, selected_release)
+		local anchor_recording_ids = if selected_with_media
+			then title_matched_recording_ids(local_tracks, selected_with_media)
+			else {}
+		if next(anchor_recording_ids) ~= nil then
+			local sharing_candidates: { Release } = {}
+			for _, candidate: Release in candidates do
+				if
+					not release_lists_tracks(candidate)
+					or count_track_title_overlap(local_tracks, candidate) > 0
+					or release_has_any_recording(candidate, anchor_recording_ids)
+				then
+					table.insert(sharing_candidates, candidate)
+				end
+			end
+			candidates = sharing_candidates
+		end
 	end
 	local partial_release = select_partial_release_candidate(
 		candidates,

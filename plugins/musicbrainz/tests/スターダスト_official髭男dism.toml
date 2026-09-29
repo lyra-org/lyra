@@ -1,0 +1,28 @@
+# This test is meant to test if the MusicBrainz plugin keeps release group editions to the recording it matched, instead of switching to a single for the double A-side's other song
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Official髭男dism — スターダスト (2026) [WEB-FLAC]/01. スターダスト.flac"
+album = "スターダスト"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "スターダスト"
+date = "2026"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 288716
+
+[expect.release]
+ids = { release_id = "8c7a5d8f-053a-4310-a5e1-26b44fb25aba" }
+fields = { release_title = "Stardust", release_date = "2026-04-13" }
+
+[expect.artists."6dddd7a2-5583-49d0-a8b2-9ee46d04f27e"]
+fields = { artist_name = "Official髭男dism", sort_name = "Official HIGE DANdism" }
+
+[expect.tracks."9a22dd59-bd0c-43e5-a3eb-ad521cf481b2"]
+fields = { disc = 1, track = 1, track_title = "Stardust", work_id = "c667c5ef-e970-47b7-a6fc-0245823bd720" }

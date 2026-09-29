@@ -460,6 +460,70 @@ function module.count_track_title_overlap(local_tracks: { LocalTrack }?, release
 	return matches
 end
 
+-- Recording IDs on `release` whose track titles match a local track title.
+function module.title_matched_recording_ids(local_tracks: { LocalTrack }?, release: Release): { [string]: boolean }
+	local recording_ids: { [string]: boolean } = {}
+	local media_list = release.media
+	if not local_tracks or media_list == nil then
+		return recording_ids
+	end
+	local local_titles: { [string]: boolean } = {}
+	for _, lt in local_tracks do
+		local norm = normalize_overlap_title(lt.track_title)
+		if norm ~= "" then
+			local_titles[norm] = true
+		end
+	end
+	for _, medium in media_list do
+		local medium_tracks = medium.tracks
+		if medium_tracks == nil then
+			continue
+		end
+		for _, track in medium_tracks do
+			local recording = track.recording
+			local recording_id = recording and recording.id
+			if recording_id and local_titles[normalize_overlap_title(track.title)] then
+				recording_ids[recording_id] = true
+			end
+		end
+	end
+	return recording_ids
+end
+
+function module.release_lists_tracks(release: Release): boolean
+	local media_list = release.media
+	if media_list == nil then
+		return false
+	end
+	for _, medium in media_list do
+		local medium_tracks = medium.tracks
+		if medium_tracks ~= nil and #medium_tracks > 0 then
+			return true
+		end
+	end
+	return false
+end
+
+function module.release_has_any_recording(release: Release, recording_ids: { [string]: boolean }): boolean
+	local media_list = release.media
+	if media_list == nil then
+		return false
+	end
+	for _, medium in media_list do
+		local medium_tracks = medium.tracks
+		if medium_tracks == nil then
+			continue
+		end
+		for _, track in medium_tracks do
+			local recording = track.recording
+			if recording and recording.id and recording_ids[recording.id] then
+				return true
+			end
+		end
+	end
+	return false
+end
+
 function module.release_has_track_title(release: Release, title: string?): boolean
 	local norm_title = normalize_overlap_title(title)
 	if norm_title == "" then
