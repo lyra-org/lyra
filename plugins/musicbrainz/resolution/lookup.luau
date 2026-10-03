@@ -27,6 +27,7 @@ type Provider = metadata.Provider
 type ArtistRefreshContext = metadata.ArtistRefreshContext
 
 local clean_release_title = text_helpers.clean_release_title
+local release_lists_tracks = track_helpers.release_lists_tracks
 local browse_release_group = musicbrainz_api.browse_release_group
 local fetch_release_details = musicbrainz_api.fetch_release_details
 local release_from_candidates = release_group.release_from_candidates
@@ -172,7 +173,7 @@ function module.resolve_cover_release_id(release_context: ReleaseContext): strin
 		return nil
 	end
 
-	local best_cover_release = select_release_group_candidate(
+	local best_cover_release, identity_release = select_release_group_candidate(
 		cover_candidates,
 		local_release_info,
 		search_title,
@@ -180,6 +181,11 @@ function module.resolve_cover_release_id(release_context: ReleaseContext): strin
 		selected_release,
 		false
 	)
+	-- A localized edition browsed without its track list is unverified; use the
+	-- edition it would stand in for.
+	if best_cover_release and not release_lists_tracks(best_cover_release) then
+		best_cover_release = identity_release
+	end
 	return if best_cover_release then best_cover_release.id else nil
 end
 

@@ -90,8 +90,8 @@ end
 
 -- Applies the best edition from `selected_release`'s release group. The edition
 -- must pass acceptance with `selected_release` as its anchor. A localized
--- edition stands in for it only if it keeps the edition's recordings and
--- passes acceptance against it.
+-- edition stands in for it only if, with its full track list, it keeps the
+-- edition's recordings and passes acceptance against it.
 function module.try_release_group(
 	selected_release: Release,
 	local_release_info: LocalRelease,
@@ -124,13 +124,14 @@ function module.try_release_group(
 	end
 	local edition = identity
 	if selected_edition.id ~= identity.id then
-		local localized = selected_edition
+		local localized = with_track_list(selected_edition)
 		local verified_info = local_release.with_verified_recordings(
 			local_release_info,
 			acceptance.assigned_recording_ids(identity, local_release_info.context.tracks)
 		)
 		if
-			acceptance.localization_keeps_recordings(localized, identity)
+			localized
+			and acceptance.localization_keeps_recordings(localized, identity)
 			and check(localized, verified_info, identity)
 		then
 			edition = localized

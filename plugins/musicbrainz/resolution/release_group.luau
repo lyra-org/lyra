@@ -129,10 +129,14 @@ local function localize_edition(
 			score += 25
 		end
 
-		if not acceptance.localization_keeps_recordings(candidate, best) then
-			continue
+		-- A candidate browsed without its track list can't be checked here; the
+		-- caller fetches it and checks it before using it.
+		if release_lists_tracks(candidate) then
+			if not acceptance.localization_keeps_recordings(candidate, best) then
+				continue
+			end
+			score += acceptance.shared_recording_count(candidate, best)
 		end
-		score += acceptance.shared_recording_count(candidate, best)
 		if score > best_loc_score or (score == best_loc_score and should_prefer_on_tie(candidate, best_localized)) then
 			best_loc_score = score
 			best_localized = candidate
