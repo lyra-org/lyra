@@ -225,6 +225,7 @@ local function normalize_release_recording(raw_recording: JsonObject?): ReleaseR
 	local raw_relations = json_array_field(raw_recording, "relations")
 	return {
 		id = json_string_field(raw_recording, "id"),
+		video = if type(raw_recording.video) == "boolean" then raw_recording.video else nil,
 		relations = if raw_relations ~= nil then normalize_relations(raw_relations) else nil,
 	}
 end
