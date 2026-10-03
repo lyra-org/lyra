@@ -54,9 +54,10 @@ export type RecordingResult = {
 local compute_track_count = track_helpers.compute_track_count
 
 local BASE_URL = "https://musicbrainz.org"
--- Everything a release needs to be checked and applied.
+-- Everything a release needs to be checked and applied, including its
+-- recordings' works and the works' own credits (composer, lyricist).
 local RELEASE_INCLUDES =
-	"recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels"
+	"recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels"
 local API_BASE = `{BASE_URL}/ws/2`
 
 local module = {}
@@ -163,7 +164,17 @@ local function normalize_release_group(raw_group: JsonObject?): ReleaseGroup?
 	}
 end
 
-local function normalize_relations(raw_relations: { JsonValue }?): { Relation }
+local normalize_relations: ({ JsonValue }?) -> { Relation }
+
+local function normalize_work(raw_work: JsonObject): { id: string?, relations: { Relation }? }
+	local raw_relations = json_array_field(raw_work, "relations")
+	return {
+		id = json_string_field(raw_work, "id"),
+		relations = if raw_relations ~= nil then normalize_relations(raw_relations) else nil,
+	}
+end
+
+function normalize_relations(raw_relations: { JsonValue }?): { Relation }
 	local relations: { Relation } = {}
 	if raw_relations == nil then
 		return relations
@@ -191,7 +202,7 @@ local function normalize_relations(raw_relations: { JsonValue }?): { Relation }
 			type = json_string_field(relation, "type"),
 			["target-type"] = json_string_field(relation, "target-type"),
 			direction = json_string_field(relation, "direction"),
-			work = if raw_work ~= nil then { id = json_string_field(raw_work, "id") } else nil,
+			work = if raw_work ~= nil then normalize_work(raw_work) else nil,
 			artist = if raw_artist ~= nil
 				then {
 					id = json_string_field(raw_artist, "id"),

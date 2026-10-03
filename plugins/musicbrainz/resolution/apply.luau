@@ -324,7 +324,7 @@ local function refresh_artist_by_id(artist_db_id: number, mb_artist_id: string):
 	return import_artist_relations_from_response(artist_db_id, response)
 end
 
-type Work = { id: string? }
+type Work = { id: string?, relations: { Relation }? }
 
 -- The work a recording performs, preferring a performance relationship.
 local function track_work_from_relations(relations: { Relation }?): Work?
@@ -364,29 +364,12 @@ local function fetch_recording_result(recording_id: string?, recording_cache: Re
 		end
 		return cached :: RecordingResult
 	end
-	local recording_response = mb_get(`/recording/{recording_id}?inc=work-rels+artist-rels`)
+	local recording_response = mb_get(`/recording/{recording_id}?inc=work-rels+work-level-rels+artist-rels`)
 	local result = if recording_response then normalize_recording_result(recording_response) else nil
 	if recording_cache then
 		recording_cache[recording_id] = result or false
 	end
 	return result
-end
-
-type WorkCache = { [string]: { Relation } | false }
-
--- The work's own relationships, such as its composer and lyricist.
-local function fetch_work_relations(work_id: string, work_cache: WorkCache): { Relation }?
-	local cached = work_cache[work_id]
-	if cached == false then
-		return nil
-	end
-	if cached ~= nil then
-		return cached :: { Relation }
-	end
-	local work_response = mb_get(`/work/{work_id}?inc=artist-rels`)
-	local relations = if work_response then normalize_relations(json_array_field(work_response, "relations")) else nil
-	work_cache[work_id] = relations or false
-	return relations
 end
 
 type CreditType = metadata.CreditType
@@ -774,7 +757,6 @@ local function process_release(
 		local preserve_local_position = preserve_single_track_position or preserve_local_multidisc_position
 		local should_lookup_track_work = #local_tracks == 1
 		local recording_cache: RecordingCache = {}
-		local work_cache: WorkCache = {}
 		local track_artist_count = 0
 
 		for i: number, local_track: LocalTrack in local_tracks do
@@ -820,9 +802,8 @@ local function process_release(
 					end
 					if work and work.id then
 						track_layer:set_field("work_id", work.id)
-						local work_relations = fetch_work_relations(work.id :: string, work_cache)
-						if work_relations and local_track.db_id then
-							link_artist_credits_from_relations(local_track.db_id, work_relations)
+						if work.relations and local_track.db_id then
+							link_artist_credits_from_relations(local_track.db_id, work.relations)
 						end
 					end
 				end
