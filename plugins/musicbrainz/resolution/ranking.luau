@@ -42,6 +42,12 @@ local function max_track_count_diff(track_count, is_edition_mode)
 	return math.max(2, math.floor(track_count * 0.2))
 end
 
+-- Unset packaging and "None" both count as no packaging.
+local function has_physical_packaging(release: Release): boolean
+	local packaging = release.packaging
+	return packaging ~= nil and packaging ~= "" and packaging ~= "None"
+end
+
 local function should_prefer_release_on_tie(
 	candidate: Release,
 	current: Release,
@@ -68,8 +74,8 @@ local function should_prefer_release_on_tie(
 	if candidate_official ~= current_official then
 		return candidate_official
 	end
-	local candidate_packaging = candidate.packaging and candidate.packaging ~= "" and candidate.packaging ~= "None"
-	local current_packaging = current.packaging and current.packaging ~= "" and current.packaging ~= "None"
+	local candidate_packaging = has_physical_packaging(candidate)
+	local current_packaging = has_physical_packaging(current)
 	if candidate_packaging ~= current_packaging then
 		return not candidate_packaging
 	end
