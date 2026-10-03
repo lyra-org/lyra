@@ -1,0 +1,23 @@
+# This test is meant to test if the MusicBrainz plugin leaves a single-track release unmatched when no MusicBrainz release matches its title or track, instead of matching the artist's other single
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ツユ — 「アンダーキッズ」ピアノアレンジCD (2023) {DSP-02365} [CD-FLAC]/01. 「アンダーキッズ」ピアノアレンジ.flac"
+album = "「アンダーキッズ」ピアノアレンジCD"
+album_artists = ["ツユ"]
+artists = ["ツユ"]
+title = "「アンダーキッズ」ピアノアレンジ"
+date = "2023"
+genre = "J-Pop"
+label = "ポニーキャニオン"
+catalog_number = "DSP-02365"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 232613
+
+[expect.artists.""]
