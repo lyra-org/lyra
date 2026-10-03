@@ -23,6 +23,7 @@ local normalize_overlap_title = text_helpers.normalize_overlap_title
 local contains_multibyte = text_helpers.contains_multibyte
 local compute_track_count = track_helpers.compute_track_count
 local max_declared_track_total = track_helpers.max_declared_track_total
+local video_recording_count = track_helpers.video_recording_count
 
 local module = {}
 
@@ -78,6 +79,13 @@ local function should_prefer_release_on_tie(
 	local current_packaging = has_physical_packaging(current)
 	if candidate_packaging ~= current_packaging then
 		return not candidate_packaging
+	end
+	-- Local files are audio; a release of the same songs as music videos is
+	-- another release.
+	local candidate_videos = video_recording_count(candidate)
+	local current_videos = video_recording_count(current)
+	if candidate_videos ~= current_videos then
+		return candidate_videos < current_videos
 	end
 	local candidate_date = candidate.date or ""
 	local current_date = current.date or ""

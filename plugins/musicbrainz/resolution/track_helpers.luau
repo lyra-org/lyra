@@ -72,6 +72,7 @@ export type Relation = {
 
 export type ReleaseRecording = {
 	id: string?,
+	video: boolean?,
 	relations: { Relation }?,
 }
 
@@ -462,6 +463,19 @@ function module.count_track_title_overlap(local_tracks: { LocalTrack }?, release
 		end
 	end
 	return matches
+end
+
+-- How many of the release's tracks are video recordings, such as music videos.
+function module.video_recording_count(release: Release): number
+	local count = 0
+	for _, medium in release.media or {} do
+		for _, track in medium.tracks or {} do
+			if track.recording and track.recording.video == true then
+				count += 1
+			end
+		end
+	end
+	return count
 end
 
 function module.release_lists_tracks(release: Release): boolean
