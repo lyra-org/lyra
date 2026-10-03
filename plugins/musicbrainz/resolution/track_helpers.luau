@@ -63,7 +63,8 @@ export type Relation = {
 	type: string?,
 	["target-type"]: string?,
 	direction: string?,
-	work: { id: string? }?,
+	-- With work-level-rels, the work's own relationships, such as its composer.
+	work: { id: string?, relations: { Relation }? }?,
 	artist: { id: string?, name: string?, ["sort-name"]: string?, ["type"]: string? }?,
 	url: { resource: string? }?,
 	attributes: { string }?,
