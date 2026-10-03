@@ -11,13 +11,15 @@ local serde = require("@harmony/serde")
 local json = serde.json
 
 local json_helpers = require("./json_helpers")
-local release_search = require("./release_search")
+local local_release = require("./local_release")
+local musicbrainz_api = require("./musicbrainz_api")
+local resolve = require("./resolve")
 local track_helpers = require("./track_helpers")
 
 type JsonValue = serde.JsonValue
 type JsonObject = { [string]: JsonValue }
 type HttpRequestOptions = http.HttpRequestOptions
-type ReleaseContext = release_search.ReleaseContext
+type LocalRelease = local_release.LocalRelease
 type LocalTrack = track_helpers.LocalTrack
 
 local as_json_object = json_helpers.as_json_object
@@ -178,27 +180,16 @@ function module.lookup(fingerprint: string, duration_ms: number): AcoustIdResult
 	}
 end
 
-export type ResolveDeps = {
-	mb_get: (endpoint: string) -> JsonObject?,
-	fetch_release_by_id: (release_id: string, release_context: ReleaseContext) -> boolean,
-	json_string_field: (obj: JsonObject?, key: string) -> string?,
-	json_number_field: (obj: JsonObject?, key: string) -> number?,
-}
-
--- Tries track-count matching releases first, then falls back to others.
--- Each candidate goes through fetch_release_by_id for full validation.
-function module.resolve_recording_to_release(
-	recording_id: string,
-	release_context: ReleaseContext,
-	local_track_count: number,
-	deps: ResolveDeps
-): boolean
+-- Tries the recording's releases with a matching track count first, then the
+-- rest. Each goes through acceptance, with the recording as evidence.
+function module.resolve_recording_to_release(recording_id: string, local_release_info: LocalRelease): boolean
+	local local_track_count = #local_release_info.context.tracks
 	-- validate recording ID format
 	if not string.match(recording_id, "^[%x%-]+$") then
 		return false
 	end
 
-	local recording_data = deps.mb_get(`/recording/{http.encode_uri_component(recording_id)}?inc=releases`)
+	local recording_data = musicbrainz_api.mb_get(`/recording/{http.encode_uri_component(recording_id)}?inc=releases`)
 	if not recording_data then
 		return false
 	end
@@ -208,9 +199,7 @@ function module.resolve_recording_to_release(
 		return false
 	end
 
-	-- collect candidate release IDs, prioritizing track-count matches.
-	-- fetch_release_by_id validates durations and applies via process_release,
-	-- which handles language/country preference and edition scoring.
+	local fingerprinted = local_release.with_verified_recordings(local_release_info, { [recording_id] = true })
 	local matching_ids: { string } = {}
 	local other_ids: { string } = {}
 	for _, release_value in releases do
@@ -218,11 +207,11 @@ function module.resolve_recording_to_release(
 		if release == nil then
 			continue
 		end
-		local release_id = deps.json_string_field(release, "id")
+		local release_id = musicbrainz_api.json_string_field(release, "id")
 		if not release_id then
 			continue
 		end
-		local track_count = deps.json_number_field(release, "track-count")
+		local track_count = musicbrainz_api.json_number_field(release, "track-count")
 		if track_count and math.floor(track_count) == local_track_count then
 			table.insert(matching_ids, release_id)
 		else
@@ -230,14 +219,13 @@ function module.resolve_recording_to_release(
 		end
 	end
 
-	-- try track-count matches first, then others as fallback
 	for _, release_id in matching_ids do
-		if deps.fetch_release_by_id(release_id, release_context) then
+		if resolve.try_release_id(release_id, fingerprinted) then
 			return true
 		end
 	end
 	for _, release_id in other_ids do
-		if deps.fetch_release_by_id(release_id, release_context) then
+		if resolve.try_release_id(release_id, fingerprinted) then
 			return true
 		end
 	end

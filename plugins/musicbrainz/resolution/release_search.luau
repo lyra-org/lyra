@@ -4,504 +4,147 @@
 -- You can obtain one here:
 -- www.meshiplaw.com/lyra.
 
-local serde = require("@harmony/serde")
-local json = serde.json
-local metadata = require("@lyra/metadata")
-
+local apply = require("./apply")
+local local_release = require("./local_release")
+local musicbrainz_api = require("./musicbrainz_api")
+local ranking = require("./ranking")
+local resolve = require("./resolve")
 local text_helpers = require("./text_helpers")
 local track_helpers = require("./track_helpers")
 
-local module = {}
+local http = require("@harmony/http")
 
-type JsonValue = serde.JsonValue
-type JsonObject = { [string]: JsonValue }
-type LookupHints = text_helpers.LookupHints
-type LookupArtist = text_helpers.LookupHintArtist
-type LookupTrack = text_helpers.LookupHintTrack
-type LookupHintLibrary = text_helpers.LookupHintLibrary
-type LookupHintReleaseContext = text_helpers.LookupHintReleaseContext
+type ArtistIdSet = local_release.ArtistIdSet
+type LocalRelease = local_release.LocalRelease
 type LocalArtist = track_helpers.LocalArtist
 type LocalTrack = track_helpers.LocalTrack
 type ReleaseArtist = track_helpers.ReleaseArtist
-type ReleaseArtistCredit = track_helpers.ReleaseArtistCredit
-type ReleaseGroup = track_helpers.ReleaseGroup
-type RecordingRelation = track_helpers.RecordingRelation
-type ReleaseRecording = track_helpers.ReleaseRecording
-type ReleaseMediumTrack = track_helpers.ReleaseMediumTrack
-type ReleaseMedium = track_helpers.ReleaseMedium
 type Release = track_helpers.Release
+type ReleaseSearchResult = musicbrainz_api.ReleaseSearchResult
+type Recording = musicbrainz_api.Recording
 
-export type ArtistIdSet = { [string]: boolean }
+local is_blank_text = text_helpers.is_blank_text
+local is_generic_artist = text_helpers.is_generic_artist
+local clean_release_title = text_helpers.clean_release_title
+local contains_multibyte = text_helpers.contains_multibyte
+local infer_lookup_hints = text_helpers.infer_lookup_hints
+local normalize_title = text_helpers.normalize_title
+local normalize_overlap_title = text_helpers.normalize_overlap_title
+local normalize_artist_name_for_lookup = text_helpers.normalize_artist_name_for_lookup
+local artist_name_matches = text_helpers.artist_name_matches
+local trim_text = text_helpers.trim_text
+local titles_match_search = text_helpers.titles_match_search
+local sort_tracks_for_refresh = track_helpers.sort_tracks_for_refresh
+local compute_track_count = track_helpers.compute_track_count
+local medium_has_track_count = track_helpers.medium_has_track_count
+local max_declared_track_total = track_helpers.max_declared_track_total
+local mb_get = musicbrainz_api.mb_get
+local escape_lucene = musicbrainz_api.escape_lucene
+local normalize_artist_search_result = musicbrainz_api.normalize_artist_search_result
+local normalize_release_search_result = musicbrainz_api.normalize_release_search_result
+local normalize_recording_search_result = musicbrainz_api.normalize_recording_search_result
+local select_best_release = ranking.select_best_release
+local release_matches_artist_ids = ranking.release_matches_artist_ids
+local try_release = resolve.try_release
+local try_release_id = resolve.try_release_id
+local try_release_group = resolve.try_release_group
+local for_each_local_artist = local_release.for_each_local_artist
+local normalize_lookup_context = local_release.normalize_lookup_context
 
-export type ReleaseIds = {
-	release_id: string?,
-	release_group_id: string?,
-	[string]: JsonValue,
-}
+-- Alias search can list many releases; fetching each to check it is slow.
+local MAX_ALIAS_RELEASE_FETCHES = 5
 
-type Recording = {
-	id: string?,
-	title: string?,
-	length: number?,
-	releases: { Release }?,
-	["artist-credit"]: { ReleaseArtistCredit }?,
-}
+local module = {}
 
-type RelationWork = {
-	id: string?,
-}
-
-type Relation = {
-	type: string?,
-	["target-type"]: string?,
-	work: RelationWork?,
-}
-
-type ArtistSearchResult = {
-	count: number,
-	artists: { ReleaseArtist },
-}
-
-type ReleaseSearchResult = {
-	count: number,
-	releases: { Release },
-}
-
-type RecordingSearchResult = {
-	count: number,
-	recordings: { Recording },
-}
-
-export type ReleaseContext = {
-	db_id: number?,
-	lookup_hints: LookupHints?,
-	release_title: string?,
-	artists: { LocalArtist }?,
-	tracks: { LocalTrack },
-	library: LookupHintLibrary?,
-	library_id: number?,
-	media_formats: { string }?,
-	barcode: string?,
-	ids: ReleaseIds?,
-	external_ids: metadata.ExternalIdsByProvider?,
-	[string]: JsonValue,
-}
-
-export type ProviderLayer = {
-	set_id: (ProviderLayer, string, string) -> (),
-	save: (ProviderLayer) -> (),
-}
-
-export type ProviderHandle = {
-	layer: (ProviderHandle, number) -> ProviderLayer,
-	mark_unmatched: (ProviderHandle, number, { string }) -> (),
-}
-
-export type SearchDeps = {
-	is_blank_text: (string?) -> boolean,
-	is_generic_artist: (string?) -> boolean,
-	clean_release_title: (string?) -> string,
-	contains_multibyte: (string?) -> boolean,
-	infer_lookup_hints: (LookupHintReleaseContext?) -> (string?, string?, number?),
-	sort_tracks_for_refresh: ({ LocalTrack }) -> (),
-	normalize_title: (string?) -> string,
-	normalize_overlap_title: (string?) -> string,
-	normalize_artist_name_for_lookup: (string?) -> string,
-	artist_name_matches: (string?, string?) -> boolean,
-	select_artist_country_hint: (string, { ReleaseArtist }) -> (string?, number),
-	mb_get: (string) -> (JsonObject?, number),
-	http: {
-		encode_uri_component: (string) -> string,
-	},
-	escape_lucene: (string) -> string,
-	trim_text: (string?) -> string,
-	titles_match_search: (string?, string?) -> boolean,
-	compute_track_count: (Release) -> number,
-	fetch_release_by_id: (string, ReleaseContext) -> boolean,
-	select_best_release: (
-		{ Release },
-		number?,
-		string?,
-		string?,
-		string?,
-		ArtistIdSet?,
-		{ LocalTrack }?,
-		number?,
-		track_helpers.EditionHints?
-	) -> Release?,
-	release_matches_artist_ids: (Release, ArtistIdSet?) -> boolean,
-	process_release_via_group: (
-		Release,
-		number?,
-		string?,
-		string?,
-		string?,
-		ArtistIdSet?,
-		ReleaseContext,
-		boolean,
-		boolean
-	) -> (boolean | "skip")?,
-	release_has_track_title: (Release, string?) -> boolean,
-	count_track_title_overlap: ({ LocalTrack }?, Release) -> number,
-	validate_release_durations: ({ LocalTrack }, Release) -> boolean,
-	process_release: (Release, ReleaseContext, string?, ReleaseGroup?) -> boolean,
-	max_declared_track_total: ({ LocalTrack }?) -> number,
-	single_track_duration_diff: ({ LocalTrack }?, Release?) -> number?,
-	provider: ProviderHandle,
-	for_each_local_artist: (ReleaseContext, (LocalArtist) -> ()) -> (),
-}
-
-local function json_string_field(object: JsonObject?, key: string): string?
-	if object == nil then
-		return nil
-	end
-	local value = object[key]
-	return if type(value) == "string" then value else nil
-end
-
-local function json_number_field(object: JsonObject?, key: string): number?
-	if object == nil then
-		return nil
-	end
-	local value = object[key]
-	return if type(value) == "number" then value else nil
-end
-
-local function json_object_field(object: JsonObject?, key: string): JsonObject?
-	if object == nil then
-		return nil
-	end
-	local value = object[key]
-	if type(value) ~= "table" then
-		return nil
-	end
-	return value :: JsonObject
-end
-
-local function json_array_field(object: JsonObject?, key: string): { JsonValue }?
-	if object == nil then
-		return nil
-	end
-	local value = object[key]
-	if type(value) ~= "table" then
-		return nil
-	end
-	return value :: { JsonValue }
-end
-
-local function normalize_release_artist(raw_artist: JsonValue): ReleaseArtist?
-	if type(raw_artist) ~= "table" then
-		return nil
-	end
-	local artist = raw_artist :: JsonObject
-	return {
-		id = json_string_field(artist, "id"),
-		name = json_string_field(artist, "name"),
-		["sort-name"] = json_string_field(artist, "sort-name"),
-		country = json_string_field(artist, "country"),
-		score = json_number_field(artist, "score"),
-		["type"] = json_string_field(artist, "type"),
-	}
-end
-
-local function normalize_release_artist_list(raw_artists: { JsonValue }?): { ReleaseArtist }
-	local artists: { ReleaseArtist } = {}
-	if raw_artists == nil then
-		return artists
-	end
-	for _, raw_artist: JsonValue in raw_artists do
-		local artist = normalize_release_artist(raw_artist)
-		if artist ~= nil then
-			table.insert(artists, artist)
-		end
-	end
-	return artists
-end
-
-local function normalize_artist_credit(raw_credit: JsonValue): ReleaseArtistCredit?
-	if type(raw_credit) ~= "table" then
-		return nil
-	end
-	local credit = raw_credit :: JsonObject
-	return {
-		name = json_string_field(credit, "name"),
-		joinphrase = json_string_field(credit, "joinphrase"),
-		artist = normalize_release_artist(json_object_field(credit, "artist")),
-	}
-end
-
-local function normalize_artist_credit_list(raw_credits: { JsonValue }?): { ReleaseArtistCredit }
-	local credits: { ReleaseArtistCredit } = {}
-	if raw_credits == nil then
-		return credits
-	end
-	for _, raw_credit: JsonValue in raw_credits do
-		local credit = normalize_artist_credit(raw_credit)
-		if credit ~= nil then
-			table.insert(credits, credit)
-		end
-	end
-	return credits
-end
-
-local function normalize_release_group(raw_group: JsonObject?): ReleaseGroup?
-	if raw_group == nil then
-		return nil
-	end
-	return {
-		id = json_string_field(raw_group, "id"),
-		["first-release-date"] = json_string_field(raw_group, "first-release-date"),
-		["primary-type"] = json_string_field(raw_group, "primary-type"),
-	}
-end
-
-local function normalize_release_recording(raw_recording: JsonObject?): ReleaseRecording?
-	if raw_recording == nil then
-		return nil
-	end
-	return {
-		id = json_string_field(raw_recording, "id"),
-		relations = json_array_field(raw_recording, "relations") :: { RecordingRelation }?,
-	}
-end
-
-local function normalize_release_medium_track(raw_track: JsonValue): ReleaseMediumTrack?
-	if type(raw_track) ~= "table" then
-		return nil
-	end
-	local track = raw_track :: JsonObject
-	local title = json_string_field(track, "title")
-	if title == nil then
-		return nil
-	end
-	return {
-		id = json_string_field(track, "id"),
-		title = title,
-		position = json_number_field(track, "position"),
-		recording = normalize_release_recording(json_object_field(track, "recording")),
-		length = json_number_field(track, "length"),
-		["artist-credit"] = normalize_artist_credit_list(json_array_field(track, "artist-credit")),
-	}
-end
-
-local function normalize_release_mediums(raw_media: { JsonValue }?): { ReleaseMedium }
-	local media: { ReleaseMedium } = {}
-	if raw_media == nil then
-		return media
-	end
-	for _, raw_medium: JsonValue in raw_media do
-		if type(raw_medium) == "table" then
-			local medium = raw_medium :: JsonObject
-			local tracks: { ReleaseMediumTrack } = {}
-			local raw_tracks = json_array_field(medium, "tracks")
-			if raw_tracks ~= nil then
-				for _, raw_track: JsonValue in raw_tracks do
-					local track = normalize_release_medium_track(raw_track)
-					if track ~= nil then
-						table.insert(tracks, track)
-					end
-				end
-			end
-			table.insert(media, {
-				position = json_number_field(medium, "position"),
-				format = json_string_field(medium, "format"),
-				["track-count"] = json_number_field(medium, "track-count"),
-				tracks = tracks,
-			})
-		end
-	end
-	return media
-end
-
-local function normalize_release(raw_release: JsonValue): Release?
-	if type(raw_release) ~= "table" then
-		return nil
-	end
-	local release = raw_release :: JsonObject
-	local text_representation = json_object_field(release, "text-representation")
-	local cover_art_archive = json_object_field(release, "cover-art-archive")
-	return {
-		id = json_string_field(release, "id"),
-		title = json_string_field(release, "title"),
-		status = json_string_field(release, "status"),
-		country = json_string_field(release, "country"),
-		date = json_string_field(release, "date"),
-		barcode = json_string_field(release, "barcode"),
-		packaging = json_string_field(release, "packaging"),
-		score = json_number_field(release, "score"),
-		media = normalize_release_mediums(json_array_field(release, "media")),
-		["track-count"] = json_number_field(release, "track-count"),
-		["artist-credit"] = normalize_artist_credit_list(json_array_field(release, "artist-credit")),
-		["release-group"] = normalize_release_group(json_object_field(release, "release-group")),
-		["text-representation"] = if text_representation ~= nil
-			then {
-				language = json_string_field(text_representation, "language"),
-			}
-			else nil,
-		["cover-art-archive"] = if cover_art_archive ~= nil
-			then {
-				front = if cover_art_archive ~= nil then cover_art_archive["front"] == true else nil,
-			}
-			else nil,
-	}
-end
-
-local function normalize_release_list(raw_releases: { JsonValue }?): { Release }
-	local releases: { Release } = {}
-	if raw_releases == nil then
-		return releases
-	end
-	for _, raw_release: JsonValue in raw_releases do
-		local release = normalize_release(raw_release)
-		if release ~= nil then
-			table.insert(releases, release)
-		end
-	end
-	return releases
-end
-
-local function normalize_recording(raw_recording: JsonValue): Recording?
-	if type(raw_recording) ~= "table" then
-		return nil
-	end
-	local recording = raw_recording :: JsonObject
-	return {
-		id = json_string_field(recording, "id"),
-		title = json_string_field(recording, "title"),
-		length = json_number_field(recording, "length"),
-		releases = normalize_release_list(json_array_field(recording, "releases")),
-		["artist-credit"] = normalize_artist_credit_list(json_array_field(recording, "artist-credit")),
-	}
-end
-
-local function normalize_artist_search_result(raw_data: JsonObject): ArtistSearchResult
-	return {
-		count = json_number_field(raw_data, "count") or 0,
-		artists = normalize_release_artist_list(json_array_field(raw_data, "artists")),
-	}
-end
-
-local function normalize_release_search_result(raw_data: JsonObject): ReleaseSearchResult
-	return {
-		count = json_number_field(raw_data, "count") or 0,
-		releases = normalize_release_list(json_array_field(raw_data, "releases")),
-	}
-end
-
-local function normalize_recording_search_result(raw_data: JsonObject): RecordingSearchResult
-	local recordings: { Recording } = {}
-	local raw_recordings = json_array_field(raw_data, "recordings")
-	if raw_recordings ~= nil then
-		for _, raw_recording: JsonValue in raw_recordings do
-			local recording = normalize_recording(raw_recording)
-			if recording ~= nil then
-				table.insert(recordings, recording)
-			end
-		end
-	end
-	return {
-		count = json_number_field(raw_data, "count") or 0,
-		recordings = recordings,
-	}
-end
-
-local function normalize_lookup_artists(artists: { LocalArtist }?): { LookupArtist }?
-	if artists == nil then
-		return nil
-	end
-	local normalized_artists: { LookupArtist } = {}
-	for _, artist: LocalArtist in artists do
-		local normalized_artist: LookupArtist = {
-			artist_name = artist.artist_name,
-		}
-		table.insert(normalized_artists, normalized_artist)
-	end
-	return normalized_artists
-end
-
-local function normalize_lookup_tracks(tracks: { LocalTrack }): { LookupTrack }
-	local normalized_tracks: { LookupTrack } = {}
-	for _, track: LocalTrack in tracks do
-		local normalized_track: LookupTrack = {
-			lookup_hints = nil,
-			track_title = track.track_title,
-			track_total = track.track_total,
-			artists = normalize_lookup_artists(track.artists),
-			disc = track.disc,
-			track = track.track,
-			duration_ms = track.duration_ms,
-		}
-		table.insert(normalized_tracks, normalized_track)
-	end
-	return normalized_tracks
-end
-
-local function normalize_lookup_context(release_context: ReleaseContext): LookupHintReleaseContext
-	return {
-		lookup_hints = release_context.lookup_hints,
-		release_title = release_context.release_title,
-		artists = normalize_lookup_artists(release_context.artists),
-		tracks = normalize_lookup_tracks(release_context.tracks),
-		library = release_context.library,
-		library_id = release_context.library_id,
-	}
-end
-
-local function search_and_fetch_release(
-	deps: SearchDeps,
-	artist_name: string?,
-	release_title: string?,
-	track_count: number,
-	release_context: ReleaseContext,
-	preferred_language: string?,
+local function score_artist_candidate_match(
+	local_name: string?,
+	candidate: ReleaseArtist,
 	preferred_country: string?
-)
-	local is_blank_text = deps.is_blank_text
-	local is_generic_artist = deps.is_generic_artist
-	local clean_release_title = deps.clean_release_title
-	local contains_multibyte = deps.contains_multibyte
-	local infer_lookup_hints = deps.infer_lookup_hints
-	local sort_tracks_for_refresh = deps.sort_tracks_for_refresh
-	local normalize_title = deps.normalize_title
-	local normalize_overlap_title = deps.normalize_overlap_title
-	local normalize_artist_name_for_lookup = deps.normalize_artist_name_for_lookup
-	local artist_name_matches = deps.artist_name_matches
-	local select_artist_country_hint = deps.select_artist_country_hint
-	local mb_get = deps.mb_get
-	local http = deps.http
-	local escape_lucene = deps.escape_lucene
-	local trim_text = deps.trim_text
-	local titles_match_search = deps.titles_match_search
-	local compute_track_count = deps.compute_track_count
-	local fetch_release_by_id = deps.fetch_release_by_id
-	local select_best_release = deps.select_best_release
-	local release_matches_artist_ids = deps.release_matches_artist_ids
-	local process_release_via_group = deps.process_release_via_group
-	local release_has_track_title = deps.release_has_track_title
-	local count_track_title_overlap = deps.count_track_title_overlap
-	local validate_release_durations = deps.validate_release_durations
-	local process_release = deps.process_release
-	local max_declared_track_total = deps.max_declared_track_total
-	local single_track_duration_diff = deps.single_track_duration_diff
-	local provider = deps.provider
-	local for_each_local_artist = deps.for_each_local_artist
+): number
+	if type(local_name) ~= "string" or type(candidate.name) ~= "string" then
+		return -1
+	end
+	local local_lower = string.lower(local_name)
+	local candidate_lower = string.lower(candidate.name)
+	local norm_local = normalize_artist_name_for_lookup(local_name)
+	local norm_candidate = normalize_artist_name_for_lookup(candidate.name)
+	local score = -1
+	if local_lower == candidate_lower then
+		score = 1200
+	elseif norm_local ~= "" and norm_local == norm_candidate then
+		score = 1100
+	elseif norm_local ~= "" and norm_candidate ~= "" then
+		if #norm_candidate >= 3 and string.find(norm_local, norm_candidate, 1, true) then
+			score = 700 + math.min(#norm_candidate, 30)
+		elseif #norm_local >= 3 and string.find(norm_candidate, norm_local, 1, true) then
+			score = 650 + math.min(#norm_local, 30)
+		elseif artist_name_matches(local_name, candidate.name) then
+			score = 500
+		end
+	elseif artist_name_matches(local_name, candidate.name) then
+		score = 500
+	end
+	if score < 0 then
+		return -1
+	end
+	if candidate.score then
+		score += candidate.score
+	end
+	if preferred_country and candidate.country == preferred_country then
+		score += 75
+	end
+	return score
+end
+
+local function select_artist_country_hint(local_name: string, candidates: { ReleaseArtist }): (string?, number)
+	if type(local_name) ~= "string" then
+		return nil, -1
+	end
+	if #candidates == 0 then
+		return nil, -1
+	end
+	local best_country: string? = nil
+	local best_score = -1
+	for _, candidate: ReleaseArtist in candidates do
+		local score = score_artist_candidate_match(local_name, candidate, nil)
+		if score < 0 then
+			if candidate.score and candidate.score >= 99 then
+				score = candidate.score
+			end
+		end
+		if score > best_score then
+			local country = trim_text(candidate.country)
+			best_score = score
+			if country ~= "" then
+				best_country = string.upper(country)
+			else
+				best_country = nil
+			end
+		end
+	end
+	return best_country, best_score
+end
+
+function module.search_and_fetch_release(local_release_info: LocalRelease): boolean
+	local release_context = local_release_info.context
+	local artist_name = local_release_info.artist_name
+	local release_title = local_release_info.release_title
+	local track_count = local_release_info.track_count
+	local preferred_language = local_release_info.preferred_language
+	local preferred_country = local_release_info.preferred_country
 
 	local marked_artist_ids: { [number]: boolean } = {}
 	local function mark_artist_unmatched(artist: LocalArtist)
 		if artist.db_id and not marked_artist_ids[artist.db_id] then
 			marked_artist_ids[artist.db_id] = true
-			provider:mark_unmatched(artist.db_id, { "artist_id" })
+			apply.mark_unmatched(artist.db_id, { "artist_id" })
 		end
-	end
-	local function mark_artist_ids_unmatched(): boolean
-		for_each_local_artist(release_context, mark_artist_unmatched)
-		return false
 	end
 	local function mark_lookup_ids_unmatched(): boolean
 		for_each_local_artist(release_context, mark_artist_unmatched)
 		for _, track: LocalTrack in release_context.tracks do
 			if track.db_id then
-				provider:mark_unmatched(track.db_id, { "recording_id", "release_track_id" })
+				apply.mark_unmatched(track.db_id, { "recording_id", "release_track_id" })
 			end
 		end
 		return false
@@ -656,16 +299,18 @@ local function search_and_fetch_release(
 		end
 		if not preferred_country and inferred_artist_country then
 			preferred_country = inferred_artist_country
+			local_release_info = local_release.with_preferred_country(local_release_info, preferred_country)
 		end
 		if not artist_ids and top_artist_id then
 			artist_ids = { [top_artist_id] = true }
 		end
 		if not artist_ids then
-			return mark_artist_ids_unmatched()
+			return mark_lookup_ids_unmatched()
 		end
 		if top_artist_id then
 			top_artist_ids = { [top_artist_id] = true }
 		end
+		local_release_info = local_release.with_artist_search(local_release_info, artist_ids, not has_artist_name_match)
 	end
 	local function normalize_release_query_title(raw_title)
 		local normalized_title = raw_title
@@ -838,11 +483,10 @@ local function search_and_fetch_release(
 					if
 						titles_match_search(candidate.title, hint_search_title)
 						and compute_track_count(candidate) == track_count
+						and candidate.id
+						and try_release_id(candidate.id, local_release_info)
 					then
-						local artist_ok = not top_artist_id or release_matches_artist_ids(candidate, top_artist_ids)
-						if artist_ok and candidate.id and fetch_release_by_id(candidate.id, release_context) then
-							return true
-						end
+						return true
 					end
 				end
 			end
@@ -855,34 +499,6 @@ local function search_and_fetch_release(
 	end
 	if not releases_data or releases_data.count == 0 then
 		return mark_lookup_ids_unmatched()
-	end
-
-	local function medium_has_track_count(release: Release, expected_count: number): boolean
-		local release_track_count = release["track-count"]
-		if type(release_track_count) == "number" and release_track_count == expected_count then
-			return true
-		end
-		local summed_track_count = 0
-		local media = release.media
-		if media == nil then
-			return false
-		end
-		for _, medium: ReleaseMedium in media do
-			local medium_count = medium["track-count"]
-			if not medium_count and medium.tracks then
-				medium_count = #medium.tracks
-			end
-			if medium_count == expected_count then
-				return true
-			end
-			if type(medium_count) == "number" then
-				summed_track_count += medium_count
-			end
-		end
-		if summed_track_count > 0 and summed_track_count == expected_count then
-			return true
-		end
-		return false
 	end
 
 	local function medium_count(release: Release): number
@@ -980,9 +596,8 @@ local function search_and_fetch_release(
 
 		if seed_release and seed_release["release-group"] and seed_release["release-group"].id then
 			local release_group_id = seed_release["release-group"].id
-			local group_response = mb_get(
-				`/release?release-group={release_group_id}&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100`
-			)
+			local group_response =
+				mb_get(`/release?release-group={release_group_id}&inc={musicbrainz_api.RELEASE_INCLUDES}&limit=100`)
 			local group_data = if group_response then normalize_release_search_result(group_response) else nil
 			local group_releases = if group_data then group_data.releases else nil
 			if group_releases and #group_releases > 0 then
@@ -1022,16 +637,11 @@ local function search_and_fetch_release(
 						end
 					end
 				end
-				local is_strong_country_seed = best_group_release
-					and preferred_country
-					and best_group_release.country == preferred_country
-					and trim_text(best_group_release.barcode) ~= ""
 				if
 					best_group_release
-					and (validate_release_durations(release_context.tracks, best_group_release) or is_strong_country_seed)
-					and process_release(
+					and try_release(
 						best_group_release,
-						release_context,
+						local_release_info,
 						release_group_id,
 						best_group_release["release-group"]
 					)
@@ -1099,32 +709,18 @@ local function search_and_fetch_release(
 			selected_release = nil
 		end
 	end
-	local selected_release_was_group_skipped = false
+	local selected_release_rejected = false
 	if selected_release then
-		local group_result = process_release_via_group(
-			selected_release,
-			track_count,
-			preferred_language,
-			preferred_country,
-			search_title,
-			artist_ids,
-			release_context,
-			true,
-			false
-		)
-		if group_result == true then
+		if try_release_group(selected_release, local_release_info, search_title, artist_ids, true) then
 			return true
 		end
-		if group_result == "skip" then
-			selected_release_was_group_skipped = true
-			selected_release = nil
-		end
-		if selected_release and selected_release.id and fetch_release_by_id(selected_release.id, release_context) then
+		if selected_release.id and try_release_id(selected_release.id, local_release_info) then
 			return true
 		end
+		selected_release_rejected = true
 	end
 	local skip_arid_fallback = top_artist_id
-		and not selected_release_was_group_skipped
+		and not selected_release_rejected
 		and track_count > 1
 		and (
 			(not deferred_release and not search_title_has_multibyte and contains_multibyte(first_track_title))
@@ -1191,44 +787,11 @@ local function search_and_fetch_release(
 				fallback_release = fallback_candidates[1]
 			end
 			if fallback_release then
-				local title_ok = titles_match_search(fallback_release.title, search_title)
-				if not title_ok and first_track_title then
-					title_ok = normalize_title(search_title) == normalize_title(first_track_title)
-						and (not fallback_release.media or release_has_track_title(fallback_release, first_track_title))
+				if try_release_group(fallback_release, local_release_info, search_title, fallback_ids, true) then
+					return true
 				end
-				if
-					not title_ok
-					and track_count == 1
-					and not search_title_has_multibyte
-					and fallback_data.releases
-					and #fallback_data.releases == 1
-				then
-					title_ok = true
-				end
-				if title_ok then
-					local group_result = process_release_via_group(
-						fallback_release,
-						track_count,
-						preferred_language,
-						preferred_country,
-						search_title,
-						fallback_ids,
-						release_context,
-						true,
-						true
-					)
-					if group_result == true then
-						return true
-					end
-					if group_result == false then
-						return mark_lookup_ids_unmatched()
-					end
-					if fallback_release.id then
-						if fetch_release_by_id(fallback_release.id, release_context) then
-							return true
-						end
-						return mark_lookup_ids_unmatched()
-					end
+				if fallback_release.id and try_release_id(fallback_release.id, local_release_info) then
+					return true
 				end
 			end
 		end
@@ -1309,26 +872,7 @@ local function search_and_fetch_release(
 			end
 			return (a.date or "") < (b.date or "")
 		end)
-		local best_release: Release? = fallback_candidates[1]
-		local current_best_release = best_release
-		if
-			current_best_release
-			and (not current_best_release.media or #current_best_release.media == 0)
-			and current_best_release.id
-		then
-			local best_release_response = mb_get(
-				`/release/{current_best_release.id}?inc=recordings+genres+artist-credits+media+release-groups+recording-level-rels+work-rels+artist-rels`
-			)
-			best_release = if best_release_response then normalize_release(best_release_response) else nil
-		end
-		if not best_release or compute_track_count(best_release) ~= 1 then
-			return false
-		end
-		local duration_diff = single_track_duration_diff(release_context.tracks, best_release)
-		if duration_diff ~= nil and duration_diff > 15000 then
-			return false
-		end
-		return process_release(best_release, release_context)
+		return try_release(fallback_candidates[1], local_release_info)
 	end
 	if defer_to_deferred_release and try_artist_year_fallback() then
 		return true
@@ -1345,84 +889,41 @@ local function search_and_fetch_release(
 		if use_broad_alias_query then
 			alias_query = `alias:{escape_lucene(search_title)}`
 		end
-		local can_use_inline_alias_release = local_track_count == 1 and track_count == 1
-		local local_track_title_set: { [string]: boolean }? = nil
-		if track_count > 1 then
-			local resolved_title_set: { [string]: boolean } = {}
-			local_track_title_set = resolved_title_set
-			for _, local_track: LocalTrack in release_context.tracks do
-				local norm_local = normalize_overlap_title(local_track.track_title)
-				if norm_local ~= "" then
-					resolved_title_set[norm_local] = true
-				end
-			end
+		-- For several tracks, a release must also carry the title or a local
+		-- track as the recording; one track is identified by the alias itself.
+		local local_track_titles: { [string]: boolean } = {}
+		for _, local_track: LocalTrack in release_context.tracks do
+			local_track_titles[normalize_overlap_title(local_track.track_title)] = true
 		end
 		local recording_response = mb_get(`/recording?query={http.encode_uri_component(alias_query)}`)
 		local recording_data = if recording_response then normalize_recording_search_result(recording_response) else nil
+		local fetches = 0
 		if recording_data then
 			for _, recording: Recording in recording_data.recordings do
 				local recording_releases = recording.releases
 				if recording_releases == nil then
 					continue
 				end
+				local recording_is_local_track = local_track_titles[normalize_overlap_title(recording.title)] == true
 				for _, release: Release in recording_releases do
-					if release["track-count"] == track_count then
-						if local_track_title_set then
-							local title_matches = titles_match_search(release.title, search_title)
-							local recording_matches = false
-							local norm_recording = normalize_overlap_title(recording.title)
-							if norm_recording ~= "" and local_track_title_set[norm_recording] then
-								recording_matches = true
-							end
-							if not title_matches and not recording_matches then
-								continue
-							end
-						end
-						if can_use_inline_alias_release and recording.id and recording.title then
-							local release_stub: Release = {
-								id = release.id,
-								title = release.title or recording.title,
-								status = release.status,
-								country = release.country,
-								date = if release.date == nil and inferred_year
-									then `{inferred_year}-01-01`
-									else release.date,
-								barcode = release.barcode,
-								packaging = release.packaging,
-								score = release.score,
-								media = {
-									{
-										position = 1,
-										["track-count"] = 1,
-										tracks = {
-											{
-												title = recording.title,
-												position = 1,
-												length = recording.length,
-												recording = { id = recording.id, relations = {} },
-												["artist-credit"] = recording["artist-credit"],
-											},
-										},
-									},
-								},
-								["track-count"] = 1,
-								["artist-credit"] = if release["artist-credit"]
-										and #release["artist-credit"] > 0
-									then release["artist-credit"]
-									else recording["artist-credit"],
-								["release-group"] = release["release-group"],
-								["text-representation"] = release["text-representation"],
-								["cover-art-archive"] = release["cover-art-archive"],
-							}
-							local release_group = release_stub["release-group"]
-							local release_group_id = release_group and release_group.id
-							if process_release(release_stub, release_context, release_group_id, release_group) then
-								return true
-							end
-						end
-						if release.id and fetch_release_by_id(release.id, release_context) then
-							return true
-						end
+					local release_id = release.id
+					if
+						not release_id
+						or release["track-count"] ~= track_count
+						or (
+							track_count > 1
+							and not recording_is_local_track
+							and not titles_match_search(release.title, search_title)
+						)
+					then
+						continue
+					end
+					if fetches >= MAX_ALIAS_RELEASE_FETCHES then
+						break
+					end
+					fetches += 1
+					if try_release_id(release_id, local_release_info) then
+						return true
 					end
 				end
 			end
@@ -1456,24 +957,10 @@ local function search_and_fetch_release(
 					translit_release = translit_data.releases[1]
 				end
 				if translit_release then
-					local group_result = process_release_via_group(
-						translit_release,
-						track_count,
-						preferred_language,
-						preferred_country,
-						search_title,
-						translit_ids,
-						release_context,
-						false,
-						true
-					)
-					if group_result == true then
+					if try_release_group(translit_release, local_release_info, search_title, translit_ids, false) then
 						return true
 					end
-					if group_result == false then
-						return mark_lookup_ids_unmatched()
-					end
-					if translit_release.id and fetch_release_by_id(translit_release.id, release_context) then
+					if translit_release.id and try_release_id(translit_release.id, local_release_info) then
 						return true
 					end
 				end
@@ -1483,68 +970,10 @@ local function search_and_fetch_release(
 	if not defer_to_deferred_release and try_artist_year_fallback() then
 		return true
 	end
-	if deferred_release then
-		local deferred_track_count = #release_context.tracks
-		if deferred_track_count >= 2 and deferred_release.id then
-			local deferred_response = mb_get(
-				`/release/{deferred_release.id}?inc=recordings+genres+artist-credits+media+release-groups+recording-level-rels+work-rels+artist-rels`
-			)
-			local deferred_data = if deferred_response then normalize_release(deferred_response) else nil
-			if deferred_data then
-				local artist_ok = true
-				if artist_ids and has_artist_name_match then
-					artist_ok = release_matches_artist_ids(deferred_data, artist_ids)
-				end
-				local overlap = count_track_title_overlap(release_context.tracks, deferred_data)
-				local allow_partial_release_mismatch = declared_track_total > deferred_track_count
-				local artist_mismatch = not artist_ok and not allow_partial_release_mismatch
-				local required_overlap_for_artist_mismatch = math.max(2, math.floor(deferred_track_count / 2))
-				local rejected_for_artist = artist_mismatch
-					and (deferred_track_count <= 2 or overlap < required_overlap_for_artist_mismatch)
-				if
-					not rejected_for_artist
-					and overlap >= 1
-					and validate_release_durations(release_context.tracks, deferred_data)
-				then
-					if process_release(deferred_data, release_context) then
-						return true
-					end
-				end
-			end
-		elseif deferred_track_count == 1 and deferred_release.id then
-			local norm_title = normalize_title(search_title)
-			local declared_total = max_declared_track_total(release_context.tracks)
-			local deferred_response = mb_get(
-				`/release/{deferred_release.id}?inc=recordings+genres+artist-credits+media+release-groups+recording-level-rels+work-rels+artist-rels`
-			)
-			local deferred_data = if deferred_response then normalize_release(deferred_response) else nil
-			if deferred_data then
-				local allow_partial_release_mismatch = declared_total > deferred_track_count
-				local artist_mismatch = artist_ids and not release_matches_artist_ids(deferred_data, artist_ids)
-				local strict_artist_guard = has_artist_name_match or not search_title_has_multibyte
-				local rejected_for_artist = artist_mismatch
-					and not allow_partial_release_mismatch
-					and strict_artist_guard
-				if
-					not rejected_for_artist
-					and count_track_title_overlap(release_context.tracks, deferred_data) >= 1
-					and #norm_title >= 6
-				then
-					if process_release(deferred_data, release_context) then
-						return true
-					end
-				end
-			end
-		elseif deferred_release.id then
-			if fetch_release_by_id(deferred_release.id, release_context) then
-				return true
-			end
-		end
+	if deferred_release and deferred_release.id and try_release_id(deferred_release.id, local_release_info) then
+		return true
 	end
 	return mark_lookup_ids_unmatched()
 end
-
-module.normalize_release_mediums = normalize_release_mediums
-module.search_and_fetch_release = search_and_fetch_release
 
 return module
