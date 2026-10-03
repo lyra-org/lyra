@@ -6,14 +6,13 @@
 
 local datastore = require("@lyra/datastore")
 local http = require("@harmony/http")
-local serde = require("@harmony/serde")
-local json = serde.json
 local metadata = require("@lyra/metadata")
+local serde = require("@harmony/serde")
 
-local acoustid = require("@self/resolution/acoustid")
 local json_helpers = require("@self/resolution/json_helpers")
+local local_release = require("@self/resolution/local_release")
 local lookup = require("@self/resolution/lookup")
-local release_search = require("@self/resolution/release_search")
+local musicbrainz_api = require("@self/resolution/musicbrainz_api")
 local text_helpers = require("@self/resolution/text_helpers")
 local track_helpers = require("@self/resolution/track_helpers")
 
@@ -28,8 +27,7 @@ http.set_rate_limit({
 
 local ET = metadata.EntityType
 local provider = metadata.Provider.new("musicbrainz", { display_name = "MusicBrainz" })
-local BASE_URL = lookup.get_base_url()
-local API_BASE = `{BASE_URL}/ws/2`
+local BASE_URL = musicbrainz_api.BASE_URL
 local COVER_CACHE_STORE_NAME = "musicbrainz"
 local COVER_CACHE_KEY_PREFIX = "cover:release:"
 local COVER_CACHE_HIT_TTL = 30 * 24 * 60 * 60
@@ -37,8 +35,6 @@ local COVER_CACHE_MISS_TTL = 7 * 24 * 60 * 60
 
 type JsonValue = serde.JsonValue
 type JsonObject = { [string]: JsonValue }
-type JsonArray = { JsonValue }
-type HttpRequestOptions = http.HttpRequestOptions
 type DataStore = datastore.DataStore
 type DataStoreJsonValue = datastore.JsonValue
 type ProviderCoverCandidate = metadata.ProviderCoverCandidate
@@ -49,9 +45,10 @@ type SimilarReleasesResult = metadata.SimilarReleasesResult
 type LookupHintLibrary = text_helpers.LookupHintLibrary
 type LocalArtist = track_helpers.LocalArtist
 type LocalTrack = track_helpers.LocalTrack
-type ReleaseIds = release_search.ReleaseIds
-type ReleaseContext = release_search.ReleaseContext
-type CoverCacheContext = typeof(lookup.cover_cache_context(nil))
+type ReleaseArtistCredit = track_helpers.ReleaseArtistCredit
+type ReleaseIds = local_release.ReleaseIds
+type ReleaseContext = local_release.ReleaseContext
+type CoverCacheContext = lookup.CoverCacheContext
 
 type CoverCacheEntry = {
 	context: CoverCacheContext,
@@ -67,12 +64,10 @@ type ProviderIdSpec = {
 }
 
 type SearchResultItem = { [string]: JsonValue }
-type SearchMapFn = (JsonObject) -> SearchResultItem
 
 local cover_store: DataStore? = nil
 
 local as_json_object = json_helpers.as_json_object
-local as_json_array = json_helpers.as_json_array
 
 local function json_string_field(value: JsonObject?, key: string): string?
 	local field = if value then value[key] else nil
@@ -88,22 +83,6 @@ local function json_number_field(value: JsonObject?, key: string): number?
 		return field
 	end
 	return nil
-end
-
-local function json_boolean_field(value: JsonObject?, key: string): boolean?
-	local field = if value then value[key] else nil
-	if type(field) == "boolean" then
-		return field
-	end
-	return nil
-end
-
-local function json_object_field(value: JsonObject?, key: string): JsonObject?
-	return as_json_object(if value then value[key] else nil)
-end
-
-local function json_array_field(value: JsonObject?, key: string): JsonArray?
-	return as_json_array(if value then value[key] else nil)
 end
 
 local function normalize_cover_cache_context(value: DataStoreJsonValue): CoverCacheContext?
@@ -216,29 +195,6 @@ local function normalize_release_context(ctx: ProviderCoverContext?): ReleaseCon
 		ids = normalize_lookup_ids(if ctx then ctx.ids else nil),
 		external_ids = nil,
 	}
-end
-
-local function search_mb_get(endpoint: string): JsonObject?
-	local request: HttpRequestOptions = {
-		url = `{API_BASE}{endpoint}`,
-		method = http.HttpMethod.Get,
-		headers = {
-			Accept = "application/json",
-		},
-	}
-	local ok, response = pcall(http.request, request)
-
-	if not ok or type(response) ~= "table" then
-		return nil
-	end
-	if not response.success or response.status_code ~= 200 then
-		return nil
-	end
-	local decoded_ok, data = pcall(json.decode, response.body :: string)
-	if not decoded_ok then
-		return nil
-	end
-	return as_json_object(data)
 end
 
 local function get_cover_store(): DataStore?
@@ -416,10 +372,16 @@ provider:cover(ET.Release, {
 	},
 }, release_cover_handler)
 
-local function first_credit_name(credits: JsonValue): string?
-	local credits_array = as_json_array(credits)
-	local first_credit = if credits_array then as_json_object(credits_array[1]) else nil
-	return json_string_field(first_credit, "name")
+local function nonempty(value: string?): string?
+	if value == "" then
+		return nil
+	end
+	return value
+end
+
+local function first_credit_name(credits: { ReleaseArtistCredit }?): string?
+	local first_credit = if credits then credits[1] else nil
+	return nonempty(if first_credit then first_credit.name else nil)
 end
 
 local function redirect_url(entity: string, id: string?): string
@@ -429,96 +391,91 @@ local function redirect_url(entity: string, id: string?): string
 	return ""
 end
 
-local function search_handler(
-	endpoint: string,
-	list_key: string,
-	map_item: SearchMapFn
-): (string) -> { SearchResultItem }
-	return function(query: string): { SearchResultItem }
-		local data = search_mb_get(`/{endpoint}?query={http.encode_uri_component(query)}`)
-		if not data then
-			return {}
-		end
-		local results: { SearchResultItem } = {}
-		local items = json_array_field(data, list_key)
-		if items == nil then
-			return results
-		end
-		for _, item in items do
-			local item_object = as_json_object(item)
-			if item_object then
-				table.insert(results, map_item(item_object))
-			end
-		end
-		return results
+local function search_ids(ids: { [string]: string? }): JsonValue
+	local result: { [string]: JsonValue } = {}
+	for id_type, id_value in ids do
+		result[id_type] = id_value
 	end
+	return result
 end
 
-provider:search(
-	ET.Release,
-	search_handler("release", "releases", function(release: JsonObject): SearchResultItem
-		local cover_archive = json_object_field(release, "cover-art-archive")
-		local release_group = json_object_field(release, "release-group")
-		local release_id = json_string_field(release, "id")
-		local release_group_id = json_string_field(release_group, "id")
-		local release_title = json_string_field(release, "title")
-		local release_date = json_string_field(release, "date")
+local function search_musicbrainz(endpoint: string, query: string): JsonObject?
+	return (musicbrainz_api.mb_get(`/{endpoint}?query={http.encode_uri_component(query)}`))
+end
+
+provider:search(ET.Release, function(query: string): { SearchResultItem }
+	local data = search_musicbrainz("release", query)
+	local results: { SearchResultItem } = {}
+	if not data then
+		return results
+	end
+	for _, release in musicbrainz_api.normalize_release_search_result(data).releases do
+		local release_id = nonempty(release.id)
+		local release_group = release["release-group"]
+		local cover_archive = release["cover-art-archive"]
 		local cover_url: string? = nil
-		if json_boolean_field(cover_archive, "front") == true and release_id then
+		if cover_archive and cover_archive.front == true and release_id then
 			cover_url = `https://coverartarchive.org/release/{release_id}/front`
 		end
-		return {
-			title = release_title,
-			release_date = release_date,
+		local item: SearchResultItem = {
+			title = nonempty(release.title),
+			release_date = nonempty(release.date),
 			artist_name = first_credit_name(release["artist-credit"]),
 			cover_url = cover_url,
 			redirect_url = redirect_url("release", release_id),
-			ids = {
+			ids = search_ids({
 				release_id = release_id,
-				release_group_id = release_group_id,
-			},
+				release_group_id = nonempty(if release_group then release_group.id else nil),
+			}),
 		}
-	end)
-)
+		table.insert(results, item)
+	end
+	return results
+end)
 
-provider:search(
-	ET.Artist,
-	search_handler("artist", "artists", function(artist: JsonObject): SearchResultItem
-		local artist_id = json_string_field(artist, "id")
-		local artist_name = json_string_field(artist, "name")
-		return {
+provider:search(ET.Artist, function(query: string): { SearchResultItem }
+	local data = search_musicbrainz("artist", query)
+	local results: { SearchResultItem } = {}
+	if not data then
+		return results
+	end
+	for _, artist in musicbrainz_api.normalize_artist_search_result(data).artists do
+		local artist_id = nonempty(artist.id)
+		local artist_name = nonempty(artist.name)
+		local item: SearchResultItem = {
 			title = artist_name,
 			artist_name = artist_name,
-			sort_name = json_string_field(artist, "sort-name"),
+			sort_name = nonempty(artist["sort-name"]),
 			redirect_url = redirect_url("artist", artist_id),
-			ids = { artist_id = artist_id },
+			ids = search_ids({ artist_id = artist_id }),
 		}
-	end)
-)
+		table.insert(results, item)
+	end
+	return results
+end)
 
-provider:search(
-	ET.Track,
-	search_handler("recording", "recordings", function(recording: JsonObject): SearchResultItem
-		local recording_id = json_string_field(recording, "id")
-		local releases = json_array_field(recording, "releases")
-		local release = if releases then as_json_object(releases[1]) else nil
-		return {
-			title = json_string_field(recording, "title"),
+provider:search(ET.Track, function(query: string): { SearchResultItem }
+	local data = search_musicbrainz("recording", query)
+	local results: { SearchResultItem } = {}
+	if not data then
+		return results
+	end
+	for _, recording in musicbrainz_api.normalize_recording_search_result(data).recordings do
+		local recording_id = nonempty(recording.id)
+		local releases = recording.releases
+		local release = if releases then releases[1] else nil
+		local item: SearchResultItem = {
+			title = nonempty(recording.title),
 			artist_name = first_credit_name(recording["artist-credit"]),
-			release_title = json_string_field(release, "title"),
-			duration_ms = json_number_field(recording, "length"),
+			release_title = nonempty(if release then release.title else nil),
+			duration_ms = recording.length,
 			redirect_url = redirect_url("recording", recording_id),
-			ids = { recording_id = recording_id },
+			ids = search_ids({ recording_id = recording_id }),
 		}
-	end)
-)
-
-local acoustid_deps: acoustid.ResolveDeps = {
-	mb_get = search_mb_get,
-	fetch_release_by_id = lookup.fetch_release_by_id,
-	json_string_field = json_string_field,
-	json_number_field = json_number_field,
-}
+		table.insert(results, item)
+	end
+	return results
+end)
 
 provider:id({
 	id_type = "wikidata_qid",
@@ -541,7 +498,4 @@ provider:declare_option({
 	default = false,
 })
 
-lookup.register_refresh(provider, {
-	deps = acoustid_deps,
-	module = acoustid,
-})
+lookup.register_refresh(provider)

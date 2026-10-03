@@ -5,7 +5,6 @@
 -- www.meshiplaw.com/lyra.
 
 local serde = require("@harmony/serde")
-local json = serde.json
 
 local module = {}
 
@@ -150,12 +149,19 @@ function module.is_blank_text(value: string?): boolean
 	return module.trim_text(value) == ""
 end
 
+-- Values taggers write when the real one is unknown. A bare "unknown" is a
+-- real album title (ReoNa's), so it is not one of them.
+local PLACEHOLDER_WORDS: { [string]: boolean } = {
+	["unknown album"] = true,
+	["unknown artist"] = true,
+}
+
 function module.is_placeholder_text(value: string?): boolean
 	if type(value) ~= "string" then
 		return false
 	end
 	local trimmed = module.trim_text(value)
-	if trimmed == "" then
+	if trimmed == "" or PLACEHOLDER_WORDS[string.lower(trimmed)] then
 		return true
 	end
 	if string.match(trimmed, "^[%?？]+$") then
@@ -255,11 +261,23 @@ function module.contains_multibyte(s: string?): boolean
 	return false
 end
 
+-- Dash variants that MusicBrainz and tags use interchangeably, such as the
+-- U+2010 hyphen in "Da‐iCE".
+local DASH_VARIANTS = { "‐", "‑", "‒", "–", "—", "―", "−", "－" }
+
+local function fold_dashes(text: string): string
+	local folded = text
+	for _, dash in DASH_VARIANTS do
+		folded = string.gsub(folded, dash, "-")
+	end
+	return folded
+end
+
 function module.normalize_artist_name_for_lookup(name: string?): string
 	if type(name) ~= "string" then
 		return ""
 	end
-	local normalized = string.lower(name)
+	local normalized = fold_dashes(string.lower(name))
 	normalized = string.gsub(normalized, "[%s%p]+", "")
 	return normalized
 end
@@ -288,6 +306,55 @@ function module.artist_name_matches(local_name: string?, candidate_name: string?
 		return true
 	end
 	return false
+end
+
+-- Name tokens in sorted order, so "Sawano, Hiroyuki" and "Hiroyuki Sawano" agree.
+local function artist_name_tokens(name: string): string
+	local tokens: { string } = {}
+	for token in string.gmatch(fold_dashes(string.lower(name)), "[^%s%p]+") do
+		table.insert(tokens, token)
+	end
+	table.sort(tokens)
+	return table.concat(tokens, " ")
+end
+
+-- Whether two artist names plausibly name the same artist, in either direction.
+function module.artist_names_agree(a: string?, b: string?): boolean
+	if type(a) ~= "string" or type(b) ~= "string" then
+		return false
+	end
+	if module.artist_name_matches(a, b) or module.artist_name_matches(b, a) then
+		return true
+	end
+	local tokens_a = artist_name_tokens(a)
+	return tokens_a ~= "" and tokens_a == artist_name_tokens(b)
+end
+
+-- Characters in UTF-8 `text`: every byte that doesn't continue a character.
+local function character_count(text: string): number
+	local _, continuation_bytes = string.gsub(text, "[\128-\191]", "")
+	return #text - continuation_bytes
+end
+
+-- Whether one normalized title equals the other or starts it. A prefix must
+-- be at least three characters and, in scripts that space words, end on a
+-- word boundary, so "Love" doesn't start "Lovers".
+function module.titles_match_search(candidate_title: string?, search_title: string?): boolean
+	local norm_candidate = module.normalize_title(candidate_title)
+	local norm_search = module.normalize_title(search_title)
+	if norm_candidate == norm_search then
+		return true
+	end
+	local shorter, longer = norm_candidate, norm_search
+	if #shorter > #longer then
+		shorter, longer = longer, shorter
+	end
+	if character_count(shorter) < 3 or string.sub(longer, 1, #shorter) ~= shorter then
+		return false
+	end
+	local last_char = string.sub(shorter, -1)
+	local next_char = string.sub(longer, #shorter + 1, #shorter + 1)
+	return not (string.match(last_char, "^%w$") and string.match(next_char, "^%w$"))
 end
 
 return module

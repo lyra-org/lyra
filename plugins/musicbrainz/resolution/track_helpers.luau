@@ -58,17 +58,20 @@ export type ReleaseCoverArchive = {
 	front: boolean?,
 }
 
-export type RecordingRelation = {
+-- A MusicBrainz relationship, from any entity's `relations`.
+export type Relation = {
 	type: string?,
 	["target-type"]: string?,
+	direction: string?,
 	work: { id: string? }?,
-	artist: { id: string?, name: string?, ["sort-name"]: string? }?,
+	artist: { id: string?, name: string?, ["sort-name"]: string?, ["type"]: string? }?,
+	url: { resource: string? }?,
 	attributes: { string }?,
 }
 
 export type ReleaseRecording = {
 	id: string?,
-	relations: { RecordingRelation }?,
+	relations: { Relation }?,
 }
 
 export type ReleaseGenre = {
@@ -121,7 +124,7 @@ type FlattenedMbTrack = {
 	track: number?,
 	release_track_id: string?,
 	recording_id: string?,
-	recording_relations: { RecordingRelation }?,
+	recording_relations: { Relation }?,
 	duration_ms: number?,
 	artist_credits: { ReleaseArtistCredit }?,
 }
@@ -460,36 +463,6 @@ function module.count_track_title_overlap(local_tracks: { LocalTrack }?, release
 	return matches
 end
 
--- Recording IDs on `release` whose track titles match a local track title.
-function module.title_matched_recording_ids(local_tracks: { LocalTrack }?, release: Release): { [string]: boolean }
-	local recording_ids: { [string]: boolean } = {}
-	local media_list = release.media
-	if not local_tracks or media_list == nil then
-		return recording_ids
-	end
-	local local_titles: { [string]: boolean } = {}
-	for _, lt in local_tracks do
-		local norm = normalize_overlap_title(lt.track_title)
-		if norm ~= "" then
-			local_titles[norm] = true
-		end
-	end
-	for _, medium in media_list do
-		local medium_tracks = medium.tracks
-		if medium_tracks == nil then
-			continue
-		end
-		for _, track in medium_tracks do
-			local recording = track.recording
-			local recording_id = recording and recording.id
-			if recording_id and local_titles[normalize_overlap_title(track.title)] then
-				recording_ids[recording_id] = true
-			end
-		end
-	end
-	return recording_ids
-end
-
 function module.release_lists_tracks(release: Release): boolean
 	local media_list = release.media
 	if media_list == nil then
@@ -547,17 +520,21 @@ function module.release_has_track_title(release: Release, title: string?): boole
 	return false
 end
 
+-- The local tracks in refresh order, and the release track assigned to each.
+function module.assign_release_tracks(
+	local_tracks: { LocalTrack },
+	release: Release
+): ({ LocalTrack }, TrackAssignments)
+	local sorted_local: { LocalTrack } = table.clone(local_tracks)
+	module.sort_tracks_for_refresh(sorted_local)
+	return sorted_local, module.assign_mb_tracks_to_local_tracks(sorted_local, module.flatten_release_tracks(release))
+end
+
 function module.validate_release_durations(local_tracks: { LocalTrack }, release: Release): boolean
-	local mb_tracks = module.flatten_release_tracks(release)
-	if #mb_tracks == 0 then
+	if not module.release_lists_tracks(release) then
 		return true
 	end
-	local sorted_local: { LocalTrack } = {}
-	for _, track in local_tracks do
-		table.insert(sorted_local, track)
-	end
-	module.sort_tracks_for_refresh(sorted_local)
-	local assignments = module.assign_mb_tracks_to_local_tracks(sorted_local, mb_tracks)
+	local sorted_local, assignments = module.assign_release_tracks(local_tracks, release)
 	local compared = 0
 	local failed = 0
 	for i, local_track in sorted_local do
@@ -576,6 +553,22 @@ function module.validate_release_durations(local_tracks: { LocalTrack }, release
 		return true
 	end
 	return failed <= compared / 2
+end
+
+-- How many local tracks have a length to compare with their assigned
+-- MusicBrainz track, and the largest difference among them.
+function module.max_assigned_duration_diff(local_tracks: { LocalTrack }, release: Release): (number, number)
+	local sorted_local, assignments = module.assign_release_tracks(local_tracks, release)
+	local compared = 0
+	local max_diff = 0
+	for i, local_track in sorted_local do
+		local mb_track = assignments[i]
+		if mb_track and mb_track.duration_ms and local_track.duration_ms then
+			compared += 1
+			max_diff = math.max(max_diff, math.abs(mb_track.duration_ms - local_track.duration_ms))
+		end
+	end
+	return compared, max_diff
 end
 
 function module.should_preserve_local_track_positions(local_tracks: { LocalTrack }?, release: Release?): boolean
@@ -619,17 +612,64 @@ function module.single_track_duration_diff(local_tracks: { LocalTrack }?, releas
 	if local_track.duration_ms == nil then
 		return nil
 	end
-	local mb_tracks = module.flatten_release_tracks(release)
-	if #mb_tracks == 0 then
-		return nil
-	end
-	local single_track_list: { LocalTrack } = { local_track }
-	local assignments = module.assign_mb_tracks_to_local_tracks(single_track_list, mb_tracks)
+	local _, assignments = module.assign_release_tracks({ local_track }, release)
 	local matched = assignments[1]
 	if not matched or matched.duration_ms == nil then
 		return nil
 	end
 	return math.abs(matched.duration_ms - local_track.duration_ms)
+end
+
+function module.compute_track_count(release: Release): number
+	local release_track_count = release["track-count"]
+	if type(release_track_count) == "number" then
+		return release_track_count
+	end
+
+	local total = 0
+	local media = release.media
+	if media == nil then
+		return total
+	end
+	for _, medium: ReleaseMedium in media do
+		local medium_count = medium["track-count"]
+		if not medium_count and medium.tracks then
+			medium_count = #medium.tracks
+		end
+		total += (medium_count or 0)
+	end
+	if total > 0 then
+		release["track-count"] = total
+	end
+	return total
+end
+
+function module.medium_has_track_count(release: Release, expected_count: number): boolean
+	local release_track_count = release["track-count"]
+	if type(release_track_count) == "number" and release_track_count == expected_count then
+		return true
+	end
+	local summed_track_count = 0
+	local media = release.media
+	if media == nil then
+		return false
+	end
+	for _, medium: ReleaseMedium in media do
+		local medium_count = medium["track-count"]
+		if not medium_count and medium.tracks then
+			medium_count = #medium.tracks
+		end
+		if medium_count == expected_count then
+			return true
+		end
+		if type(medium_count) == "number" then
+			summed_track_count += medium_count
+		end
+	end
+	if summed_track_count > 0 and summed_track_count == expected_count then
+		return true
+	end
+	return false
 end
 
 return module
