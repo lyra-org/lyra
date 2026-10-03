@@ -1,0 +1,24 @@
+{
+  "test_name": "文明ep_reol",
+  "scenario_id": "3e6dee157c240b07",
+  "responses": [
+    {
+      "cache_key": "3bff3d7fcfb5b7dc",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Reol",
+      "status_code": 200,
+      "body_hash": "dde574f29080c3ee"
+    },
+    {
+      "cache_key": "9cedf4dd44d66c8c",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E6%96%87%E6%98%8EEP&limit=100",
+      "status_code": 200,
+      "body_hash": "aefe95f1f4632a70"
+    },
+    {
+      "cache_key": "c38e6ea51a978a6e",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=6e816b6d-8985-4401-b016-94302ebee200&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "603d84c0fcef7b7f"
+    }
+  ]
+}

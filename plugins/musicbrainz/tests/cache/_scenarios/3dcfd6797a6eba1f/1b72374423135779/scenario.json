@@ -1,0 +1,24 @@
+{
+  "test_name": "overdose_なとり",
+  "scenario_id": "1b72374423135779",
+  "responses": [
+    {
+      "cache_key": "132d774064fd7cb1",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=70f840ec-ea36-48cc-9959-6e9118b811be&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "710396ff9117fe95"
+    },
+    {
+      "cache_key": "1eda84b84e8191cb",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%AA%E3%81%A8%E3%82%8A",
+      "status_code": 200,
+      "body_hash": "6694dfca520ef243"
+    },
+    {
+      "cache_key": "4efac41bfc152b6c",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3Acad9e169-893d-4432-a23f-3aa16beb9f0e%20AND%20(release%3AOverdose%20OR%20recording%3AOverdose)&limit=100",
+      "status_code": 200,
+      "body_hash": "831e961cf3b7ffd3"
+    }
+  ]
+}

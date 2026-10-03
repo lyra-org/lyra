@@ -1,0 +1,24 @@
+{
+  "test_name": "メリー_鹿乃",
+  "scenario_id": "caf66f85417ab964",
+  "responses": [
+    {
+      "cache_key": "1f991aef7315725f",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E9%B9%BF%E4%B9%83",
+      "status_code": 200,
+      "body_hash": "16f493fd923d421d"
+    },
+    {
+      "cache_key": "237463604afba1b7",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=1a910ac7-e646-4e80-a01e-56d9ce08ec91&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "7a5335f3770be7f2"
+    },
+    {
+      "cache_key": "513783b66b53ff5c",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%83%A1%E3%83%AA%E3%83%BC&limit=100",
+      "status_code": 200,
+      "body_hash": "22d02cbe76a9eb0d"
+    }
+  ]
+}

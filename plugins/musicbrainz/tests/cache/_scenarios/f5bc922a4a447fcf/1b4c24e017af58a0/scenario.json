@@ -1,0 +1,30 @@
+{
+  "test_name": "君のせい_the_peggies",
+  "scenario_id": "1b4c24e017af58a0",
+  "responses": [
+    {
+      "cache_key": "2052a00daa9bad66",
+      "url": "https://musicbrainz.org/ws/2/artist?query=the%20peggies",
+      "status_code": 200,
+      "body_hash": "a0598b905830ebad"
+    },
+    {
+      "cache_key": "52dcaf4d0295fb35",
+      "url": "https://musicbrainz.org/ws/2/artist/d2418949-fc2f-4b6d-98f8-2188e34cca94?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "566698fa461de4a3"
+    },
+    {
+      "cache_key": "d00187c54b3193a0",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E5%90%9B%E3%81%AE%E3%81%9B%E3%81%84&limit=100",
+      "status_code": 200,
+      "body_hash": "b8d17b106edf0ecc"
+    },
+    {
+      "cache_key": "dffc703e3233c302",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=11f0976b-bd51-4556-aa4e-59942492d262&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "594d226863c45ec8"
+    }
+  ]
+}

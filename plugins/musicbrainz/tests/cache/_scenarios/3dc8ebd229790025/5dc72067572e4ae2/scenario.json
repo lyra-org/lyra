@@ -1,0 +1,24 @@
+{
+  "test_name": "attack_on_titan_season_2_original_soundtrack_hiroyuki_sawano",
+  "scenario_id": "5dc72067572e4ae2",
+  "responses": [
+    {
+      "cache_key": "4d7ca242679b4d87",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=f17d521f-f8e9-41d8-9b0e-e270d5d905ed&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "04d8bf40a8943efa"
+    },
+    {
+      "cache_key": "a193daac3cf72b4c",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A'Attack%20On%20Titan'%20Season%202%20Original%20Soundtrack&limit=100",
+      "status_code": 200,
+      "body_hash": "fa8a7fff074c32bf"
+    },
+    {
+      "cache_key": "a4e9954c01964c65",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Hiroyuki%20Sawano",
+      "status_code": 200,
+      "body_hash": "e8c6d68691977f2d"
+    }
+  ]
+}

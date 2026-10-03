@@ -1,0 +1,24 @@
+{
+  "test_name": "pop_cube_imase",
+  "scenario_id": "c4adf8479724fbfa",
+  "responses": [
+    {
+      "cache_key": "12a3b0cfef930e10",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=6fa39021-9f83-4da1-94e8-75700ee7cca1&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "69a395286aad9cea"
+    },
+    {
+      "cache_key": "92185022c0b3be87",
+      "url": "https://musicbrainz.org/ws/2/artist?query=imase",
+      "status_code": 200,
+      "body_hash": "555640f26366c91d"
+    },
+    {
+      "cache_key": "98d91bc75fc78ca4",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3APOP%20CUBE&limit=100",
+      "status_code": 200,
+      "body_hash": "91dfea54f62b45c6"
+    }
+  ]
+}

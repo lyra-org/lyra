@@ -1,0 +1,30 @@
+{
+  "test_name": "天気の子_radwimps",
+  "scenario_id": "818d79db0194929e",
+  "responses": [
+    {
+      "cache_key": "3d290031050ca297",
+      "url": "https://musicbrainz.org/ws/2/artist?query=RADWIMPS",
+      "status_code": 200,
+      "body_hash": "7bf28545525c3434"
+    },
+    {
+      "cache_key": "4f8cf81adf81625c",
+      "url": "https://musicbrainz.org/ws/2/artist/6f500293-7396-4903-b4fd-118127d06f9e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e96a5c78be7c201a"
+    },
+    {
+      "cache_key": "8e493183261a79e8",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=9cfd0ffd-fd69-4d34-af4d-e2421b419a7b&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "a6317b47a3ad6668"
+    },
+    {
+      "cache_key": "a5e22b7ce3f607f7",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E5%A4%A9%E6%B0%97%E3%81%AE%E5%AD%90&limit=100",
+      "status_code": 200,
+      "body_hash": "1d4f0f7fb75e7566"
+    }
+  ]
+}

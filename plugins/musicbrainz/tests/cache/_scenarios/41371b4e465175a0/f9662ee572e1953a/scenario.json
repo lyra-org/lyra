@@ -1,0 +1,24 @@
+{
+  "test_name": "help_ever_hurt_never_藤井風",
+  "scenario_id": "f9662ee572e1953a",
+  "responses": [
+    {
+      "cache_key": "9fe8ae471e54f260",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AHELP%20EVER%20HURT%20NEVER&limit=100",
+      "status_code": 200,
+      "body_hash": "42a5eb0c2e292067"
+    },
+    {
+      "cache_key": "a15df95c563e5430",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=77b3bbd2-a07e-4580-b6c9-ac90c91078cc&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "852137c643e0836e"
+    },
+    {
+      "cache_key": "bd96934d5d4d2fa7",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E8%97%A4%E4%BA%95%E9%A2%A8",
+      "status_code": 200,
+      "body_hash": "379c7170bade508f"
+    }
+  ]
+}

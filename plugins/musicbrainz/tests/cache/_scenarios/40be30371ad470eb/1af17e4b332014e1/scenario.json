@@ -1,0 +1,24 @@
+{
+  "test_name": "no_title_in_nippon_budokan_reol",
+  "scenario_id": "1af17e4b332014e1",
+  "responses": [
+    {
+      "cache_key": "3bff3d7fcfb5b7dc",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Reol",
+      "status_code": 200,
+      "body_hash": "dde574f29080c3ee"
+    },
+    {
+      "cache_key": "4fe66e2f664a8458",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=8ba841f0-a017-4f4e-8120-08f9533c679e&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "1b63b25cadfa0eb1"
+    },
+    {
+      "cache_key": "c18fdc840072c3c6",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E2%80%9CNo%20title%E2%80%9D%20in%20NIPPON%20BUDOKAN&limit=100",
+      "status_code": 200,
+      "body_hash": "f0135506413fa31c"
+    }
+  ]
+}

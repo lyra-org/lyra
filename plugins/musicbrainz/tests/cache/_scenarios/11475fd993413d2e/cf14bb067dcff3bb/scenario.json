@@ -1,0 +1,36 @@
+{
+  "test_name": "out_of_frame_inui_toko",
+  "scenario_id": "cf14bb067dcff3bb",
+  "responses": [
+    {
+      "cache_key": "531d0321075c2e87",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=a39c8572-0f17-4161-84d3-72d960324095&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "e708cfea747a45a4"
+    },
+    {
+      "cache_key": "5a87bf6b9345dd4e",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Hoshimachi%20Suisei%20%26%20Inui%20Toko",
+      "status_code": 200,
+      "body_hash": "18e174e584847a37"
+    },
+    {
+      "cache_key": "9bc1763ecfce7439",
+      "url": "https://musicbrainz.org/ws/2/artist/d9d0ee47-1381-4e93-915d-a6ab9503655a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "fa6a5828b8c9dba7"
+    },
+    {
+      "cache_key": "af2f790bf6eff4bc",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AOUT%20OF%20FRAME&limit=100",
+      "status_code": 200,
+      "body_hash": "506250bf285892ea"
+    },
+    {
+      "cache_key": "cfbaf84da135f9eb",
+      "url": "https://musicbrainz.org/ws/2/artist/8eeb59f4-0071-4261-b1f8-91d8294622d2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "88c42cb305c1147d"
+    }
+  ]
+}

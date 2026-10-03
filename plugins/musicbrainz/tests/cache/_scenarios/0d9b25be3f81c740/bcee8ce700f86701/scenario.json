@@ -1,0 +1,30 @@
+{
+  "test_name": "wild_side_ali",
+  "scenario_id": "bcee8ce700f86701",
+  "responses": [
+    {
+      "cache_key": "64d7652f71ef4c5f",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AWild%20Side&limit=100",
+      "status_code": 200,
+      "body_hash": "bfb381672accc79d"
+    },
+    {
+      "cache_key": "7b5ee65e76828efd",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=6428bc0b-8604-4a42-aea2-81c362fe3726&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "389818284b4d04be"
+    },
+    {
+      "cache_key": "c657e8452c1d3b1d",
+      "url": "https://musicbrainz.org/ws/2/artist/a0bb95b8-9fd9-47dd-af28-d4210f7f2a11?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "dcb05461e7f13257"
+    },
+    {
+      "cache_key": "eea588962f023828",
+      "url": "https://musicbrainz.org/ws/2/artist?query=ALI",
+      "status_code": 200,
+      "body_hash": "01a35211c2f4f22f"
+    }
+  ]
+}

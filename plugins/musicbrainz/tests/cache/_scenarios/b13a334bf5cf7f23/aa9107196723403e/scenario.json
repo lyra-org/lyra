@@ -1,0 +1,30 @@
+{
+  "test_name": "today_is_a_beautiful_day_supercell",
+  "scenario_id": "aa9107196723403e",
+  "responses": [
+    {
+      "cache_key": "6568c5a97b0a47e1",
+      "url": "https://musicbrainz.org/ws/2/artist/9b15ff5e-5bd1-43c2-821d-e31240aad334?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "25754707c3bdc747"
+    },
+    {
+      "cache_key": "853952b3b237d29f",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AToday%20Is%20A%20Beautiful%20Day&limit=100",
+      "status_code": 200,
+      "body_hash": "01c8c37bfcc8967f"
+    },
+    {
+      "cache_key": "8bda0701490aff25",
+      "url": "https://musicbrainz.org/ws/2/artist?query=supercell",
+      "status_code": 200,
+      "body_hash": "33e89e6781da6682"
+    },
+    {
+      "cache_key": "dc9a2b78d840145a",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=93bb79c2-2995-4607-af5e-061a25a4e06f&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "37ae71adb9a6119f"
+    }
+  ]
+}

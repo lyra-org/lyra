@@ -1,0 +1,24 @@
+{
+  "test_name": "love_is_show_reni_takagi",
+  "scenario_id": "258545759f721942",
+  "responses": [
+    {
+      "cache_key": "46706e9a02bf68aa",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ALove%20is%20Show&limit=100",
+      "status_code": 200,
+      "body_hash": "878ca4f54d2685b9"
+    },
+    {
+      "cache_key": "591f435deec89626",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Masayuki%20Suzuki",
+      "status_code": 200,
+      "body_hash": "7a4710539741d12b"
+    },
+    {
+      "cache_key": "e0a85aa4cc822c2c",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=db556e97-d02a-4697-8115-7ba13d9963f7&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "8810f70813ec185a"
+    }
+  ]
+}

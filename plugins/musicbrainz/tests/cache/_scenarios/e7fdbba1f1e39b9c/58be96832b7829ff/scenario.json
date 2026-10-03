@@ -1,0 +1,24 @@
+{
+  "test_name": "地球儀_米津玄師",
+  "scenario_id": "58be96832b7829ff",
+  "responses": [
+    {
+      "cache_key": "7486d43c1629f3e4",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=ebd647c2-d69f-4513-8409-e0a4779c5a2f&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "ab66d9ca7eda5286"
+    },
+    {
+      "cache_key": "d2b8e13976d8eb53",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E5%9C%B0%E7%90%83%E5%84%80&limit=100",
+      "status_code": 200,
+      "body_hash": "c022abc16a9bda4d"
+    },
+    {
+      "cache_key": "e4e1d482d3625ce7",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E7%B1%B3%E6%B4%A5%E7%8E%84%E5%B8%AB",
+      "status_code": 200,
+      "body_hash": "dcdf9eeb355cf63d"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "test_name": "reveal_yu_ka",
+  "scenario_id": "0435a62e38840021",
+  "responses": [
+    {
+      "cache_key": "c440460b8d18c21c",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=1f002bf7-abdc-4267-99c4-9b9b5e494d25&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "bd8dde2b36eb7654"
+    },
+    {
+      "cache_key": "cd5b85814658bfcd",
+      "url": "https://musicbrainz.org/ws/2/artist?query=YU-KA",
+      "status_code": 200,
+      "body_hash": "17306e4c7ae64588"
+    },
+    {
+      "cache_key": "e96b248b5d1385e3",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AReveal&limit=100",
+      "status_code": 200,
+      "body_hash": "023890e6fdd70ad4"
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "test_name": "unity_expanded_edition_mrs_green_apple",
+  "scenario_id": "6576c64f71e3bf3c",
+  "responses": [
+    {
+      "cache_key": "27dddfcc5a781497",
+      "url": "https://musicbrainz.org/ws/2/artist/9ce674b7-5180-41f7-9ac2-95dc0d8a0ed2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c34a4d333adf2674"
+    },
+    {
+      "cache_key": "75a60d65d07322d1",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A9ce674b7-5180-41f7-9ac2-95dc0d8a0ed2%20AND%20(release%3AUnity%20%5C(Expanded%20Edition%5C)%20OR%20recording%3A%E3%83%8B%E3%83%A5%E3%83%BC%E3%83%BB%E3%83%9E%E3%82%A4%E3%83%BB%E3%83%8E%E3%83%BC%E3%83%9E%E3%83%AB)",
+      "status_code": 200,
+      "body_hash": "71c99bc35df46091"
+    },
+    {
+      "cache_key": "8f273c9ddb461dbc",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AUnity&limit=100",
+      "status_code": 200,
+      "body_hash": "52cf5668b3360f38"
+    },
+    {
+      "cache_key": "91beeae230e60cc9",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Mrs.%20GREEN%20APPLE",
+      "status_code": 200,
+      "body_hash": "1bb538396733c43c"
+    },
+    {
+      "cache_key": "c255dedb14eaf82b",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=05b6ee03-78f4-426c-84ff-a0c4f47e7fc1&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "595ddba4397fad1d"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "test_name": "君の名は_radwimps",
+  "scenario_id": "785d453acec90c54",
+  "responses": [
+    {
+      "cache_key": "3d290031050ca297",
+      "url": "https://musicbrainz.org/ws/2/artist?query=RADWIMPS",
+      "status_code": 200,
+      "body_hash": "5d71aa353f169f88"
+    },
+    {
+      "cache_key": "404cfb6154eb2eb4",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E5%90%9B%E3%81%AE%E5%90%8D%E3%81%AF%E3%80%82&limit=100",
+      "status_code": 200,
+      "body_hash": "bdcb594384eab4d2"
+    },
+    {
+      "cache_key": "44b782e163e2c44b",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=f2c10017-ead9-47a4-8ef1-928cff3ac1ec&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "2ac97fccf1caabae"
+    },
+    {
+      "cache_key": "4f8cf81adf81625c",
+      "url": "https://musicbrainz.org/ws/2/artist/6f500293-7396-4903-b4fd-118127d06f9e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "89e6118310cc18b2"
+    }
+  ]
+}

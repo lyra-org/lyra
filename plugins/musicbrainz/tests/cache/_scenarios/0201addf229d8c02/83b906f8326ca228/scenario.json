@@ -1,0 +1,30 @@
+{
+  "test_name": "editorial_official髭男dism",
+  "scenario_id": "83b906f8326ca228",
+  "responses": [
+    {
+      "cache_key": "355dbb26f4825b46",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AEditorial&limit=100",
+      "status_code": 200,
+      "body_hash": "878e12af25faf920"
+    },
+    {
+      "cache_key": "690cfa2bea292ce6",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=dc593316-6b5b-4133-940e-f3b0258311e4&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "3ba83009ebb25061"
+    },
+    {
+      "cache_key": "ac202f410fb14406",
+      "url": "https://musicbrainz.org/ws/2/artist/6dddd7a2-5583-49d0-a8b2-9ee46d04f27e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "771f6a5e8f4990ef"
+    },
+    {
+      "cache_key": "e632cd6797fe55ad",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Official%E9%AB%AD%E7%94%B7dism",
+      "status_code": 200,
+      "body_hash": "7dc790efa5a1476d"
+    }
+  ]
+}

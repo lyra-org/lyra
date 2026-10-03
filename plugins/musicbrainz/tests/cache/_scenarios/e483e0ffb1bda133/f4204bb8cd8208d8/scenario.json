@@ -1,0 +1,30 @@
+{
+  "test_name": "bet_da_ice",
+  "scenario_id": "f4204bb8cd8208d8",
+  "responses": [
+    {
+      "cache_key": "1ebac8df2fe9da16",
+      "url": "https://musicbrainz.org/ws/2/artist/2fc5c58a-711b-4a11-9b7a-7b5ba1f58e04?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "44e46005deae5797"
+    },
+    {
+      "cache_key": "6ee583f11205612c",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=60b22e6b-4163-497f-af49-1073e2a30e4a&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "06d698b182de9177"
+    },
+    {
+      "cache_key": "94091b2dceb78412",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Da-iCE",
+      "status_code": 200,
+      "body_hash": "1f9fd8c1b9cf9406"
+    },
+    {
+      "cache_key": "b0b7072fedbbce67",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ABET&limit=100",
+      "status_code": 200,
+      "body_hash": "999e3069f51123eb"
+    }
+  ]
+}

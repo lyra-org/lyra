@@ -1,0 +1,30 @@
+{
+  "test_name": "忠犬ハチ_ツユ",
+  "scenario_id": "dac999fb51dd2baf",
+  "responses": [
+    {
+      "cache_key": "0b4a6a61daba7e21",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E5%BF%A0%E7%8A%AC%E3%83%8F%E3%83%81&limit=100",
+      "status_code": 200,
+      "body_hash": "950dd8bca9561f6e"
+    },
+    {
+      "cache_key": "383568b2984357a3",
+      "url": "https://musicbrainz.org/ws/2/artist/2b0a8be6-bfb8-4f62-b21d-f47a3104157e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "17e3cb66a267ee3f"
+    },
+    {
+      "cache_key": "4f00c44fba590d06",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%83%84%E3%83%A6",
+      "status_code": 200,
+      "body_hash": "6759558770402f1b"
+    },
+    {
+      "cache_key": "8326b9e5cb89fcc8",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=b5601010-6bd8-4e87-84e4-42886affc290&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "1bf3118b691328ef"
+    }
+  ]
+}

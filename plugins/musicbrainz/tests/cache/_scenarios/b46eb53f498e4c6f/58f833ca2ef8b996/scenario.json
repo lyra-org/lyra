@@ -1,0 +1,36 @@
+{
+  "test_name": "ienai_ep_limited_edition_miminari",
+  "scenario_id": "58f833ca2ef8b996",
+  "responses": [
+    {
+      "cache_key": "6093477c6c39a4b2",
+      "url": "https://musicbrainz.org/ws/2/artist/04490e5c-f43e-43f5-9963-4a3a4701ad80?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "654c301871de9a00"
+    },
+    {
+      "cache_key": "78c2e520dfca339d",
+      "url": "https://musicbrainz.org/ws/2/artist?query=MIMiNARI",
+      "status_code": 200,
+      "body_hash": "ab703c0a3c680cce"
+    },
+    {
+      "cache_key": "7fddc04ddd6aa150",
+      "url": "https://musicbrainz.org/ws/2/release/c48fbd2c-da95-4a15-b3f9-ae0e542bbd47?inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels",
+      "status_code": 200,
+      "body_hash": "af8a43d30abb4a33"
+    },
+    {
+      "cache_key": "b887bd4111a94f8d",
+      "url": "https://musicbrainz.org/ws/2/recording?query=alias%3AIenai%20EP%20AND%20arid%3A04490e5c-f43e-43f5-9963-4a3a4701ad80",
+      "status_code": 200,
+      "body_hash": "5f3c7e5987cc1325"
+    },
+    {
+      "cache_key": "fae541211bfc1378",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AIenai%20EP&limit=100",
+      "status_code": 200,
+      "body_hash": "a29b5cf420a4cef5"
+    }
+  ]
+}

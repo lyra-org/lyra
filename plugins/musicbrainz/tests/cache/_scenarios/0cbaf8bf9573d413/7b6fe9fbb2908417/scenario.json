@@ -1,0 +1,24 @@
+{
+  "test_name": "kinjitou_reol",
+  "scenario_id": "7b6fe9fbb2908417",
+  "responses": [
+    {
+      "cache_key": "51fcad02bc8cbfb7",
+      "url": "https://musicbrainz.org/ws/2/artist?query=reol",
+      "status_code": 200,
+      "body_hash": "ce17e8e8b821b725"
+    },
+    {
+      "cache_key": "80aaaefe4e9c3d83",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=d9b5f4da-cc8b-4305-8a04-53a80e995b11&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "ba5bfc1499ff2cdb"
+    },
+    {
+      "cache_key": "cc8795922edc4c90",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AKinjitou&limit=100",
+      "status_code": 200,
+      "body_hash": "d9b77f1e1c24843d"
+    }
+  ]
+}

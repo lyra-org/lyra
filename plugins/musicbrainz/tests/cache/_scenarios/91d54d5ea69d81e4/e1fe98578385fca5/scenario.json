@@ -1,0 +1,30 @@
+{
+  "test_name": "ex_machina_vesperbell",
+  "scenario_id": "e1fe98578385fca5",
+  "responses": [
+    {
+      "cache_key": "1e941e8987b69ad3",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=924b0fd0-a86d-4f04-aad0-3feb27b186ca&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "e07b81d5eb986e72"
+    },
+    {
+      "cache_key": "53a97991d2999ce3",
+      "url": "https://musicbrainz.org/ws/2/artist?query=VESPERBELL",
+      "status_code": 200,
+      "body_hash": "d63cc8291dd44f0c"
+    },
+    {
+      "cache_key": "8f0903ed2a8a6b02",
+      "url": "https://musicbrainz.org/ws/2/artist/1b2e0427-80bc-42ad-9ab0-0f2521a049c5?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a8342ff8e3719359"
+    },
+    {
+      "cache_key": "e8dd0d4f16095a18",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AEX%20MACHINA&limit=100",
+      "status_code": 200,
+      "body_hash": "2a89b72605ab7436"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "test_name": "すずめの戸締まり_陣内一真",
+  "scenario_id": "f1810da18eb196a5",
+  "responses": [
+    {
+      "cache_key": "4f8cf81adf81625c",
+      "url": "https://musicbrainz.org/ws/2/artist/6f500293-7396-4903-b4fd-118127d06f9e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5355fa3ebdf03ea5"
+    },
+    {
+      "cache_key": "61b526f238e8932c",
+      "url": "https://musicbrainz.org/ws/2/artist?query=RADWIMPS%20%26%20%E9%99%A3%E5%86%85%E4%B8%80%E7%9C%9F",
+      "status_code": 200,
+      "body_hash": "8111da5bb9702092"
+    },
+    {
+      "cache_key": "7fa7853f00d55181",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=575df7d0-d1a1-4ca0-82dd-6ef4a1f03f4e&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "a656040a57c75d3c"
+    },
+    {
+      "cache_key": "977d90dd3aa6d40a",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%81%99%E3%81%9A%E3%82%81%E3%81%AE%E6%88%B8%E7%B7%A0%E3%81%BE%E3%82%8A&limit=100",
+      "status_code": 200,
+      "body_hash": "12ac4457f107a779"
+    }
+  ]
+}

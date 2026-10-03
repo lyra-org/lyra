@@ -1,0 +1,24 @@
+{
+  "test_name": "landspace_lisa",
+  "scenario_id": "966e3ccc7bcd20df",
+  "responses": [
+    {
+      "cache_key": "2d25b823736081d6",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=47eca8de-f468-4fa8-9a51-f3bc33bca9b3&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "4fd707426efbc04d"
+    },
+    {
+      "cache_key": "5a5c9d841ba74bdf",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ALANDSPACE&limit=100",
+      "status_code": 200,
+      "body_hash": "f295276f9a631be7"
+    },
+    {
+      "cache_key": "e0c0aa371e6cda29",
+      "url": "https://musicbrainz.org/ws/2/artist?query=LiSA",
+      "status_code": 200,
+      "body_hash": "bf242bde19289aea"
+    }
+  ]
+}

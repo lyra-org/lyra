@@ -1,0 +1,24 @@
+{
+  "test_name": "ミカヅキの航海_さユり",
+  "scenario_id": "eef99ef7fefeb442",
+  "responses": [
+    {
+      "cache_key": "3429f5d86bd36fce",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=673ec982-6d0c-4968-8506-d2b151e3893b&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "619da61d8a9c1b62"
+    },
+    {
+      "cache_key": "48d1f383b8ae8e03",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%95%E3%83%A6%E3%82%8A",
+      "status_code": 200,
+      "body_hash": "3bb994008d83ad36"
+    },
+    {
+      "cache_key": "734b4e1cad8d19e2",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%83%9F%E3%82%AB%E3%83%85%E3%82%AD%E3%81%AE%E8%88%AA%E6%B5%B7&limit=100",
+      "status_code": 200,
+      "body_hash": "70e7ad00b8890d8a"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "test_name": "assort_novelbright",
+  "scenario_id": "bda60bf96427beaa",
+  "responses": [
+    {
+      "cache_key": "905dbb34ccec8ca1",
+      "url": "https://musicbrainz.org/ws/2/artist/f1d9bc16-a8a2-4733-9b9d-2e101e010ea0?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d4d549683c4f4137"
+    },
+    {
+      "cache_key": "9f8fafcaac7bffff",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AAssort&limit=100",
+      "status_code": 200,
+      "body_hash": "67eec77e886b9382"
+    },
+    {
+      "cache_key": "a9e9d7e4a521c24d",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Novelbright",
+      "status_code": 200,
+      "body_hash": "28e5dfbfe92bec7d"
+    },
+    {
+      "cache_key": "bf97cfa4edeb0f1d",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=c52dc1c9-4984-47a8-b384-c19433e58f63&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "957423bb588c304b"
+    }
+  ]
+}

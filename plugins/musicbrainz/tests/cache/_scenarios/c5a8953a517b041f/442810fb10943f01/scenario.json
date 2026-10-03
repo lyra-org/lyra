@@ -1,0 +1,30 @@
+{
+  "test_name": "black_bride_gyze",
+  "scenario_id": "442810fb10943f01",
+  "responses": [
+    {
+      "cache_key": "03fbc8ebd22135f4",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=10c9cc61-ae32-455d-abd8-f8faf4362552&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "533aefb1230a9cd4"
+    },
+    {
+      "cache_key": "8e22f7e543444ecd",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Gyze",
+      "status_code": 200,
+      "body_hash": "8cd76224edac1552"
+    },
+    {
+      "cache_key": "e293df4f0a239ded",
+      "url": "https://musicbrainz.org/ws/2/artist/e0efb258-e7fc-4305-96fa-45e8bac2200e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "de823333e2c3d4b7"
+    },
+    {
+      "cache_key": "efa546bb4cdc7e46",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ABlack%20Bride&limit=100",
+      "status_code": 200,
+      "body_hash": "11941e4213d3a157"
+    }
+  ]
+}

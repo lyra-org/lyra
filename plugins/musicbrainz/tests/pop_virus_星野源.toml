@@ -219,7 +219,7 @@ fields = { disc = 1, track = 8, track_title = "KIDS" }
 [expect.tracks."ad584234-8eec-490a-96b0-ce21cf73ec98"]
 fields = { disc = 1, track = 1, track_title = "Pop Virus" }
 
-[expect.tracks."b274add9-838c-4ca5-8925-d14096af63e0"]
+[expect.tracks."92cbdc33-d865-40da-9cd5-32a753673335"]
 fields = { disc = 1, track = 9, track_title = "Continues" }
 
 [expect.tracks."bdb6ed99-5d97-40fe-8366-bfdcf29c4f99"]

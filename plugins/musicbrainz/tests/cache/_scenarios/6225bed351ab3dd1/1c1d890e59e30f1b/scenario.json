@@ -1,0 +1,30 @@
+{
+  "test_name": "seisyun_complex_kessoku_band",
+  "scenario_id": "1c1d890e59e30f1b",
+  "responses": [
+    {
+      "cache_key": "3936beea59f7c89c",
+      "url": "https://musicbrainz.org/ws/2/artist?query=kessoku%20band",
+      "status_code": 200,
+      "body_hash": "3a11944fc33b4b14"
+    },
+    {
+      "cache_key": "71f1911849577131",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=cb8b43d3-a221-48b4-92d4-ab1e11bc76bd&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "311d98cc15bbea47"
+    },
+    {
+      "cache_key": "c63da08baa1bcd90",
+      "url": "https://musicbrainz.org/ws/2/artist/c1b0fe0a-779d-43ed-b193-4370f0d0f88f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "eb673570663d5473"
+    },
+    {
+      "cache_key": "f3f59377e2dee73a",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3Aseisyun%20complex&limit=100",
+      "status_code": 200,
+      "body_hash": "9d8c11340b021d96"
+    }
+  ]
+}

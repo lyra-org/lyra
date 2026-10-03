@@ -1,0 +1,24 @@
+{
+  "test_name": "bed_in_wonderland_ぜったくん",
+  "scenario_id": "4177e1791d7b9211",
+  "responses": [
+    {
+      "cache_key": "4e730536f93e4287",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ABed%20in%20Wonderland&limit=100",
+      "status_code": 200,
+      "body_hash": "2dc346d3116b730c"
+    },
+    {
+      "cache_key": "7e44604c5783c56f",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%9C%E3%81%A3%E3%81%9F%E3%81%8F%E3%82%93",
+      "status_code": 200,
+      "body_hash": "140bd617d07caf7c"
+    },
+    {
+      "cache_key": "86858ce44f3fa232",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=b36f52bb-a1a2-4760-81fb-33247cc24481&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "e26a741b7be4c9c6"
+    }
+  ]
+}

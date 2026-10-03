@@ -1,0 +1,24 @@
+{
+  "test_name": "replica_vaundy",
+  "scenario_id": "8d88c50601da8ceb",
+  "responses": [
+    {
+      "cache_key": "0824eb2c62e9feb7",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Vaundy",
+      "status_code": 200,
+      "body_hash": "00dfb3d6add842d3"
+    },
+    {
+      "cache_key": "39eeed728ec10a0c",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3Areplica&limit=100",
+      "status_code": 200,
+      "body_hash": "043b98fc4fbe38de"
+    },
+    {
+      "cache_key": "fa5016e007b19338",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=46c9158a-6d3d-4886-9590-22dc75b2efa3&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "267c7d54bdd0a0f6"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "test_name": "結束バンド_extra_music_結束バンド",
+  "scenario_id": "180732b206961922",
+  "responses": [
+    {
+      "cache_key": "357a0e024a64e49d",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E7%B5%90%E6%9D%9F%E3%83%90%E3%83%B3%E3%83%89",
+      "status_code": 200,
+      "body_hash": "3a3e205279eed1f2"
+    },
+    {
+      "cache_key": "c63da08baa1bcd90",
+      "url": "https://musicbrainz.org/ws/2/artist/c1b0fe0a-779d-43ed-b193-4370f0d0f88f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c2d4a391659c46be"
+    },
+    {
+      "cache_key": "f10a687a8e20788a",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E7%B5%90%E6%9D%9F%E3%83%90%E3%83%B3%E3%83%89%20EXTRA%20MUSIC&limit=100",
+      "status_code": 200,
+      "body_hash": "7789405c3bbaccda"
+    },
+    {
+      "cache_key": "f2f31c901f4d2033",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=8e6fd968-e20c-4822-9923-354edc4ab0df&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "ac738c9d0e03d488"
+    }
+  ]
+}

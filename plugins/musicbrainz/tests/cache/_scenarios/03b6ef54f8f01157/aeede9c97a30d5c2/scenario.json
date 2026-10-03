@@ -1,0 +1,30 @@
+{
+  "test_name": "ファタール_gemn",
+  "scenario_id": "aeede9c97a30d5c2",
+  "responses": [
+    {
+      "cache_key": "76b579dde68b984c",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%83%95%E3%82%A1%E3%82%BF%E3%83%BC%E3%83%AB&limit=100",
+      "status_code": 200,
+      "body_hash": "46fbba0f2e3341d1"
+    },
+    {
+      "cache_key": "8343bd3ca72041d1",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=df2820a9-8c96-4876-b6f4-e35ad931de40&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "f1019414cbc2afda"
+    },
+    {
+      "cache_key": "9cb44d0136e49403",
+      "url": "https://musicbrainz.org/ws/2/artist?query=GEMN",
+      "status_code": 200,
+      "body_hash": "6dcd2300edfce9c2"
+    },
+    {
+      "cache_key": "9faf868a75199f01",
+      "url": "https://musicbrainz.org/ws/2/artist/b87e5312-c743-4d1c-a59d-a14274f20206?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a47b294b4a91d3b5"
+    }
+  ]
+}

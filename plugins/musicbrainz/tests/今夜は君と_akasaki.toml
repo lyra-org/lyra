@@ -63,13 +63,13 @@ fields = { release_title = "今夜は君と", release_date = "2024-11-04" }
 fields = { artist_name = "AKASAKI", sort_name = "AKASAKI" }
 
 [expect.tracks."229108ec-e70c-45bd-8f6c-ec01bf17eca7"]
-fields = { disc = 1, track = 2, track_title = "今夜は君と - Sped Up" }
+fields = { disc = 1, track = 2, track_title = "今夜は君と (Sped Up)" }
 
 [expect.tracks."d1e2fabd-3d5d-4292-9702-ae77db094634"]
-fields = { disc = 1, track = 3, track_title = "今夜は君と - Slowed Down" }
+fields = { disc = 1, track = 3, track_title = "今夜は君と (Slowed Down)" }
 
 [expect.tracks."e241913e-ef21-48ca-a53c-03258de93941"]
 fields = { disc = 1, track = 1, track_title = "今夜は君と" }
 
 [expect.tracks."f4cc9ae0-f1c9-4936-ad8b-afdaf37e83bf"]
-fields = { disc = 1, track = 4, track_title = "今夜は君と - Instrumental" }
+fields = { disc = 1, track = 4, track_title = "今夜は君と (Instrumental)" }

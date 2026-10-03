@@ -1,0 +1,24 @@
+{
+  "test_name": "響_優里",
+  "scenario_id": "3c3341a024d25c67",
+  "responses": [
+    {
+      "cache_key": "535f8ba596a3c459",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E5%84%AA%E9%87%8C",
+      "status_code": 200,
+      "body_hash": "f07cc96c81250ac2"
+    },
+    {
+      "cache_key": "9185a573a0770951",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=633077f1-ce3b-4992-8ee5-85e6e0cd4ded&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "7b757ebb88fdd5db"
+    },
+    {
+      "cache_key": "f0a0e57a3368c030",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E9%9F%BF&limit=100",
+      "status_code": 200,
+      "body_hash": "5fa27c5ea48a2387"
+    }
+  ]
+}

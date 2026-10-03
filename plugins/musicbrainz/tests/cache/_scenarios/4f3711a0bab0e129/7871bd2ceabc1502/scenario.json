@@ -1,0 +1,36 @@
+{
+  "test_name": "love_amplified_キタニタツヤ",
+  "scenario_id": "7871bd2ceabc1502",
+  "responses": [
+    {
+      "cache_key": "7f88978c3dcf556b",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ALOVE%5C%3A%20AMPLIFIED&limit=100",
+      "status_code": 200,
+      "body_hash": "e9afc01aa3a94627"
+    },
+    {
+      "cache_key": "c38e0cc332f3dd51",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=5c07c6df-e4b4-4dd1-9cba-531f63a83729&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "4e192658972b3044"
+    },
+    {
+      "cache_key": "c7cfdecf3e975191",
+      "url": "https://musicbrainz.org/ws/2/artist/8d17b65b-8ccf-495c-8b79-1f53d6226448?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "bea98f82a34e0edb"
+    },
+    {
+      "cache_key": "d5c10760f4493df0",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%82%AD%E3%82%BF%E3%83%8B%E3%82%BF%E3%83%84%E3%83%A4",
+      "status_code": 200,
+      "body_hash": "12e8c5fb0a8c6f39"
+    },
+    {
+      "cache_key": "f3dd3f26f2d0368e",
+      "url": "https://musicbrainz.org/ws/2/artist/3f53eb17-3338-4920-8b79-31c26a90ef28?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a0d8d2b4fe97ae19"
+    }
+  ]
+}

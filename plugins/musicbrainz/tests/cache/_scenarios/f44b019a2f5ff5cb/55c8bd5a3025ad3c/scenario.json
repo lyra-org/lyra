@@ -1,0 +1,30 @@
+{
+  "test_name": "緑黄色社会_緑黄色社会",
+  "scenario_id": "55c8bd5a3025ad3c",
+  "responses": [
+    {
+      "cache_key": "09983854ce876874",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=cd161094-0246-4105-96a6-31e701124270&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "ccdc20bca00d8f9f"
+    },
+    {
+      "cache_key": "0dda4350497eba9a",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E7%B7%91%E9%BB%84%E8%89%B2%E7%A4%BE%E4%BC%9A",
+      "status_code": 200,
+      "body_hash": "fb87396a633bd46c"
+    },
+    {
+      "cache_key": "161230a29d71dfc3",
+      "url": "https://musicbrainz.org/ws/2/artist/3ed40054-97ab-4783-b3c3-15c2c7b06546?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "011c7b7b5ce7b3d2"
+    },
+    {
+      "cache_key": "4693fdb959ea1ece",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E7%B7%91%E9%BB%84%E8%89%B2%E7%A4%BE%E4%BC%9A&limit=100",
+      "status_code": 200,
+      "body_hash": "f9b40ee5214ec3c5"
+    }
+  ]
+}

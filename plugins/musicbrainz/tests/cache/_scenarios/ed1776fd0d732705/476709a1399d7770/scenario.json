@@ -1,0 +1,24 @@
+{
+  "test_name": "pocket_park_",
+  "scenario_id": "476709a1399d7770",
+  "responses": [
+    {
+      "cache_key": "56007d4bc4224795",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E6%9D%BE%E5%8E%9F%E3%81%BF%E3%81%8D",
+      "status_code": 200,
+      "body_hash": "039037764b7df2c9"
+    },
+    {
+      "cache_key": "a4838935c5c17201",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3APocket%20Park&limit=100",
+      "status_code": 200,
+      "body_hash": "b29919c8d1dd8bb4"
+    },
+    {
+      "cache_key": "e90e9dc79b357e13",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=eb4c739a-f1da-470e-86f3-4640b0f66243&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "2d8d1ad51764a75e"
+    }
+  ]
+}

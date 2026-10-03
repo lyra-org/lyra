@@ -1,0 +1,24 @@
+{
+  "test_name": "akasaki_18才_akasaki",
+  "scenario_id": "b4ce58a91fd3b5fd",
+  "responses": [
+    {
+      "cache_key": "4c69d491be109839",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AAKASAKI%20%E2%80%93%2018%E6%89%8D&limit=100",
+      "status_code": 200,
+      "body_hash": "dbe7bef740d31a04"
+    },
+    {
+      "cache_key": "a2756dafd9bbe4bc",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=4cee8630-c15c-4ac7-97a7-94e46655fb2c&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "bb818341f1620dba"
+    },
+    {
+      "cache_key": "be980f1a11921090",
+      "url": "https://musicbrainz.org/ws/2/artist?query=AKASAKI",
+      "status_code": 200,
+      "body_hash": "9c73b9c2182043d4"
+    }
+  ]
+}

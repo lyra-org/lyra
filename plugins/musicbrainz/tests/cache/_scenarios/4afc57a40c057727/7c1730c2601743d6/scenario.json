@@ -1,0 +1,24 @@
+{
+  "test_name": "lady_米津玄師",
+  "scenario_id": "7c1730c2601743d6",
+  "responses": [
+    {
+      "cache_key": "e4e1d482d3625ce7",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E7%B1%B3%E6%B4%A5%E7%8E%84%E5%B8%AB",
+      "status_code": 200,
+      "body_hash": "e3be91fb3d6fb424"
+    },
+    {
+      "cache_key": "f44b468b0d73a998",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A09d4a85c-4916-4b4e-bc96-c4cfcf371046%20AND%20(release%3ALADY%20OR%20recording%3ALADY)&limit=100",
+      "status_code": 200,
+      "body_hash": "9c6f084deff08e10"
+    },
+    {
+      "cache_key": "f5dd0cfee227495a",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=f01899ea-0cb6-43df-98ae-9d9ed6a0319d&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "664c8fd61e70d461"
+    }
+  ]
+}

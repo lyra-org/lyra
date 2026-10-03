@@ -1,0 +1,30 @@
+{
+  "test_name": "elza_神崎エルザ_starring_reona",
+  "scenario_id": "cb6187756a23a386",
+  "responses": [
+    {
+      "cache_key": "67f389994a469810",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E7%A5%9E%E5%B4%8E%E3%82%A8%E3%83%AB%E3%82%B6%20starring%20ReoNa",
+      "status_code": 200,
+      "body_hash": "c49aa1c67d248ca0"
+    },
+    {
+      "cache_key": "6811f7d99277340d",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AELZA&limit=100",
+      "status_code": 200,
+      "body_hash": "0a80e7915a316337"
+    },
+    {
+      "cache_key": "77e989043aae4d27",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=ca6e9844-3e11-4dda-9d2e-9ee0af31c3d5&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "aaa6e41a44c47b60"
+    },
+    {
+      "cache_key": "f8f11428dd7f4d03",
+      "url": "https://musicbrainz.org/ws/2/artist/2d8e8cd4-cd36-4c50-a2cf-c9fd967f085e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f109597e6c0d3b6f"
+    }
+  ]
+}

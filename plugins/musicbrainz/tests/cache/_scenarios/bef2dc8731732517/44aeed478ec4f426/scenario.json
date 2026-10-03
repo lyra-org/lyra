@@ -1,0 +1,30 @@
+{
+  "test_name": "エルマ_ヨルシカ",
+  "scenario_id": "44aeed478ec4f426",
+  "responses": [
+    {
+      "cache_key": "266c2bc5c6705fb3",
+      "url": "https://musicbrainz.org/ws/2/artist/dfc6a151-3792-4695-8fda-f64723eaa788?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "31ca08c6bb7bac29"
+    },
+    {
+      "cache_key": "781e5a6d34dc95ea",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%83%A8%E3%83%AB%E3%82%B7%E3%82%AB",
+      "status_code": 200,
+      "body_hash": "103ccacd0cd2663f"
+    },
+    {
+      "cache_key": "78ececb24fe58066",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%82%A8%E3%83%AB%E3%83%9E&limit=100",
+      "status_code": 200,
+      "body_hash": "00fae4fd227a47f4"
+    },
+    {
+      "cache_key": "ef082c189e447dd0",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=58d7e065-9069-4c0b-be8b-6dc55667880d&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "f3e0d673081abca9"
+    }
+  ]
+}

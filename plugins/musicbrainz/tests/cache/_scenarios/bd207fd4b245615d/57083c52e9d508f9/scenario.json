@@ -1,0 +1,30 @@
+{
+  "test_name": "rockman_holic_the_25th_anniversary_sound_holic",
+  "scenario_id": "57083c52e9d508f9",
+  "responses": [
+    {
+      "cache_key": "b34724c120464095",
+      "url": "https://musicbrainz.org/ws/2/artist/3e46dcce-77fe-4fa3-965b-f513189e97e3?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0f5518d2363613af"
+    },
+    {
+      "cache_key": "b99ff55f9f3b51fc",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ARockman%20Holic%20%5C-The%2025th%20Anniversary%5C-&limit=100",
+      "status_code": 200,
+      "body_hash": "e4cab181cdb53355"
+    },
+    {
+      "cache_key": "d8be1b0a02a78fe8",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Sound%20Holic",
+      "status_code": 200,
+      "body_hash": "c28ae8991b0323e1"
+    },
+    {
+      "cache_key": "e1d8db3d39a2dab4",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=a8cecb89-606f-4d71-bd6e-83f183318f5c&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "3df971122c32037f"
+    }
+  ]
+}

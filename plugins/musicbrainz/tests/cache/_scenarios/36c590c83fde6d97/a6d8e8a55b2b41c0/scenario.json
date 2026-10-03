@@ -1,0 +1,24 @@
+{
+  "test_name": "lost_corner_米津玄師",
+  "scenario_id": "a6d8e8a55b2b41c0",
+  "responses": [
+    {
+      "cache_key": "3db741f5be28cba3",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=3d764b39-b548-4157-9129-5770d4b5ed40&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "937cffb8667dced9"
+    },
+    {
+      "cache_key": "c1f795e799600fff",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ALOST%20CORNER&limit=100",
+      "status_code": 200,
+      "body_hash": "302dca96e217fa70"
+    },
+    {
+      "cache_key": "e4e1d482d3625ce7",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E7%B1%B3%E6%B4%A5%E7%8E%84%E5%B8%AB",
+      "status_code": 200,
+      "body_hash": "e3be91fb3d6fb424"
+    }
+  ]
+}
