@@ -134,8 +134,8 @@ track_total = 10
 duration_ms = 131200
 
 [expect.release]
-ids = { release_group_id = "23913d4f-68ba-41fe-8567-0d69de17ba10", release_id = "4dbb1bf7-876d-453b-9d53-ee77ecee2073" }
-fields = { release_title = "Laundry", genres = ["r&b", "soul"], release_date = "2024-11-06" }
+ids = { release_group_id = "23913d4f-68ba-41fe-8567-0d69de17ba10", release_id = "1e68ca87-966f-4849-a1cc-87248d7d2a1e" }
+fields = { release_title = "Laundry", release_date = "2024-11-06" }
 
 [expect.artists."55baa3aa-1914-4a9c-a0ec-636eaaaba904"]
 fields = { artist_name = "9m88", sort_name = "9m88" }
@@ -150,25 +150,25 @@ fields = { disc = 1, track = 4, track_title = "Raise Your Hands Up" }
 fields = { disc = 1, track = 1, track_title = "Taxi to the Moon" }
 
 [expect.tracks."69ecc9e2-e0bb-4f33-a7fe-3e721276e845"]
-fields = { disc = 1, track = 9, track_title = "Identify" }
+fields = { disc = 1, track = 9, track_title = "アイデンティファイ" }
 
 [expect.tracks."6f1ac85c-4a21-4931-b24b-bcb5703a8919"]
-fields = { disc = 1, track = 5, track_title = "Friday’s High" }
+fields = { disc = 1, track = 5, track_title = "フライデーズハイ" }
 
 [expect.tracks."726f0ba1-cf02-4f41-90fc-fff760e118c2"]
 fields = { disc = 1, track = 8, track_title = "Kitchen" }
 
 [expect.tracks."836233c0-7abe-43aa-ba80-b23918fadb30"]
-fields = { disc = 1, track = 3, track_title = "Wish upon the Summer" }
+fields = { disc = 1, track = 3, track_title = "夏に願いを" }
 
 [expect.tracks."a9107a61-d067-48b5-8047-c182b2b184da"]
 fields = { disc = 1, track = 2, track_title = "我愛你" }
 
 [expect.tracks."b640e071-ab63-40a9-a394-d700e1f8778a"]
-fields = { disc = 1, track = 7, track_title = "Undertaker" }
+fields = { disc = 1, track = 7, track_title = "一難" }
 
 [expect.tracks."ecae9817-d729-4360-8cc3-b339accd30a2"]
-fields = { disc = 1, track = 6, track_title = "Bouquet" }
+fields = { disc = 1, track = 6, track_title = "花束のような人生を君に" }
 
 [expect.tracks."f3be6639-6d07-4dbe-be65-7c4c04149ee8"]
 fields = { disc = 1, track = 10, track_title = "Whiskey And Coke" }

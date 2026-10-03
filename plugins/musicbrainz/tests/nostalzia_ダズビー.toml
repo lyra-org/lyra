@@ -121,11 +121,11 @@ fields = { disc = 1, track = 7, track_title = "bamu" }
 [expect.tracks."5fc036dc-f38d-4ca1-94f9-e5078f50b2f7"]
 fields = { disc = 1, track = 1, track_title = "LoveXposer" }
 
-[expect.tracks."8f4d020b-e913-412d-acf2-979aec16d4c1"]
+[expect.tracks."80c64dfa-e4c3-4b09-92fb-8df7487c8c65"]
 fields = { disc = 1, track = 4, track_title = "ビターロス" }
 
 [expect.tracks."9e7d8505-cd34-4f2c-8997-8816fd3135e5"]
 fields = { disc = 1, track = 6, track_title = "シンパシー" }
 
-[expect.tracks."f9b7e2d8-3e1f-4b7b-a6a8-dc3c7da6f50c"]
+[expect.tracks."5ae0e53f-3e6d-4515-99d9-108162350486"]
 fields = { disc = 1, track = 2, track_title = "やまない" }
