@@ -695,26 +695,14 @@ fn ensure_artist_callback(
         if resolved_artist_id.is_none()
             && let Some(scan_name) = artist_name.as_deref()
         {
-            let existing_name_matches = db_write
-                .exec(
-                    QueryBuilder::search()
-                        .index("scan_name")
-                        .value(scan_name)
-                        .query(),
-                )
-                .map_err(crate::plugins::runtime_error)?;
-            let mut candidate_ids = existing_name_matches.ids().to_vec();
-            candidate_ids.sort_by_key(|id| id.0);
+            let mut candidates = server_db::artists::with_scan_name(&db_write, scan_name)
+                .map_err(crate::plugins::runtime_error)?
+                .into_iter()
+                .filter_map(|artist| Some((DbId::from(artist.db_id.clone()?), artist)))
+                .collect::<Vec<_>>();
+            candidates.sort_by_key(|(id, _)| id.0);
 
-            for candidate_id in candidate_ids {
-                let Some(candidate_artist) = server_db::artists::get_by_id(&db_write, candidate_id)
-                    .map_err(crate::plugins::runtime_error)?
-                else {
-                    continue;
-                };
-                if candidate_artist.scan_name != scan_name {
-                    continue;
-                }
+            for (candidate_id, candidate_artist) in candidates {
                 if let (Some(existing_type), Some(incoming_type)) =
                     (candidate_artist.artist_type, artist_type)
                     && existing_type != incoming_type

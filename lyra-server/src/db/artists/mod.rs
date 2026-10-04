@@ -359,6 +359,14 @@ pub(crate) fn get_by_id(
     super::graph::fetch_typed_by_id(db, artist_db_id, "Artist")
 }
 
+/// Every artist whose scan name is exactly `scan_name`.
+pub(crate) fn with_scan_name(
+    db: &impl super::DbAccess,
+    scan_name: &str,
+) -> anyhow::Result<Vec<Artist>> {
+    super::graph::fetch_all_typed_by_index(db, "scan_name", scan_name, "Artist")
+}
+
 /// The artist whose scan name is `name`, ignoring case: an exact hit on the scan name index,
 /// else a pass over every artist's scan name.
 pub(crate) fn find_by_scan_name(
@@ -558,6 +566,28 @@ mod tests {
         insert_release,
         new_test_db,
     };
+
+    #[test]
+    fn with_scan_name_skips_other_scan_name_holders() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let artist_db_id = insert_artist(&mut db, "Rock")?;
+        let genre_db_id = super::super::genres::resolve_by_name(&mut db, "Rock")?;
+        assert_eq!(
+            super::super::genres::find_by_name(&db, "Rock")?,
+            Some(genre_db_id)
+        );
+
+        let artists = with_scan_name(&db, "rock")?;
+
+        assert_eq!(
+            artists
+                .into_iter()
+                .map(|artist| artist.db_id.map(DbId::from))
+                .collect::<Vec<_>>(),
+            vec![Some(artist_db_id)]
+        );
+        Ok(())
+    }
 
     #[test]
     fn update_clears_absent_optional_fields() -> anyhow::Result<()> {
