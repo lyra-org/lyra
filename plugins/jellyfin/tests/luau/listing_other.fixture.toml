@@ -1,0 +1,114 @@
+run_as = "other"
+
+# "Solo" (2001, Rock, added last) is credited to Amy and holds S1 and S2, added first. "Various"
+# (2005, added first) is credited to Various Artists and holds V1, added last and credited to
+# Aaron. The admin listened to S1 and S2, favorited S2, and owns the playlists "Mix" (V1, S2, S1,
+# S2), "Played" (S1, S2), "Liked" (empty, favorited) and the public "Shared" (S1). Another admin
+# owns nothing.
+
+[[users]]
+key = "admin"
+admin = true
+
+[[users]]
+key = "other"
+admin = true
+
+[[artists]]
+key = "amy"
+name = "Amy"
+
+[[artists]]
+key = "aaron"
+name = "Aaron"
+
+[[artists]]
+key = "various_artists"
+name = "Various Artists"
+
+[[genres]]
+key = "rock"
+name = "Rock"
+
+[[releases]]
+key = "solo"
+title = "Solo"
+added = 400
+artists = ["amy"]
+genres = ["rock"]
+
+[[releases]]
+key = "compilation"
+title = "Various"
+added = 200
+artists = ["various_artists"]
+
+[[tracks]]
+key = "s1"
+title = "S1"
+release = "solo"
+disc = 1
+track = 1
+year = 2001
+added = 50
+artists = ["amy"]
+
+[[tracks]]
+key = "s2"
+title = "S2"
+release = "solo"
+disc = 1
+track = 2
+year = 2001
+added = 50
+artists = ["amy"]
+
+[[tracks]]
+key = "v1"
+title = "V1"
+release = "compilation"
+disc = 1
+track = 1
+year = 2005
+added = 300
+artists = ["aaron"]
+
+[[playlists]]
+key = "mix"
+owner = "admin"
+name = "Mix"
+tracks = ["v1", "s2", "s1", "s2"]
+
+[[playlists]]
+key = "played"
+owner = "admin"
+name = "Played"
+tracks = ["s1", "s2"]
+
+[[playlists]]
+key = "liked"
+owner = "admin"
+name = "Liked"
+
+[[playlists]]
+key = "shared"
+owner = "admin"
+name = "Shared"
+public = true
+tracks = ["s1"]
+
+[[listens]]
+user = "admin"
+track = "s1"
+
+[[listens]]
+user = "admin"
+track = "s2"
+
+[[favorites]]
+user = "admin"
+target = "s2"
+
+[[favorites]]
+user = "admin"
+target = "liked"

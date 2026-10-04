@@ -1640,8 +1640,6 @@ mod catalog_queries;
 mod db_contention;
 #[path = "tests/db_modules.rs"]
 mod db_modules;
-#[path = "tests/jellyfin_listing.rs"]
-mod jellyfin_listing;
 
 #[test]
 fn plugin_executor_exposes_lyra_locale_module() -> Result<()> {
