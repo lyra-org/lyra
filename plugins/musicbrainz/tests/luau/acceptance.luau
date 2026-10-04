@@ -1,5 +1,5 @@
-local acceptance = require("../resolution/acceptance")
-local local_release = require("../resolution/local_release")
+local acceptance = require("../../resolution/acceptance")
+local local_release = require("../../resolution/local_release")
 
 type TrackSpec = { title: string, recording: string, length: number? }
 

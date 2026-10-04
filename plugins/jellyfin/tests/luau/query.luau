@@ -1,6 +1,6 @@
-local enrichment = require("../protocol/items/enrichment")
-local options = require("../protocol/items/options")
-local query = require("../protocol/items/query")
+local enrichment = require("../../protocol/items/enrichment")
+local options = require("../../protocol/items/options")
+local query = require("../../protocol/items/query")
 
 local function parse(params: { [string]: string }): options.ItemsQueryOptions
 	local raw: { [string]: { string } } = {}
