@@ -1166,6 +1166,16 @@ impl Runtime {
         source: impl Into<Arc<[u8]>>,
         context: CallContext,
     ) -> anyhow::Result<Vec<luau::Value>> {
+        self.eval_source_with_args(source, context, Vec::new())
+    }
+
+    /// Evaluates `source` with `args` as the chunk's `...`.
+    pub fn eval_source_with_args(
+        &self,
+        source: impl Into<Arc<[u8]>>,
+        context: CallContext,
+        args: Vec<luau::Value>,
+    ) -> anyhow::Result<Vec<luau::Value>> {
         let origin = context.origin.clone();
         let function = self
             .vm
@@ -1173,7 +1183,7 @@ impl Runtime {
         let thread = self.vm.create_thread(&function)?;
         self.vm.sandbox_thread(&thread)?;
         let scheduler = self.vm.data().get::<LocalScheduler>()?;
-        scheduler.spawn_luau_thread(context, self.vm.clone(), thread.clone(), Vec::new());
+        scheduler.spawn_luau_thread(context, self.vm.clone(), thread.clone(), args);
         drive_thread(
             &self.tokio_runtime,
             &scheduler,
@@ -1573,6 +1583,21 @@ mod tests {
                 "#[..],
             ),
             CallContext::default(),
+        )?;
+
+        assert_eq!(values, vec![luau::Value::Number(42.0)]);
+        Ok(())
+    }
+
+    #[test]
+    fn eval_passes_args_as_chunk_varargs() -> anyhow::Result<()> {
+        let runtime =
+            RuntimeBuilder::new(MemorySourceLoader::new(), manifest_arc(Vec::new())).build()?;
+
+        let values = runtime.eval_source_with_args(
+            Arc::<[u8]>::from(&b"local first, second = ...\nreturn first + second"[..]),
+            CallContext::default(),
+            vec![luau::Value::Number(40.0), luau::Value::Number(2.0)],
         )?;
 
         assert_eq!(values, vec![luau::Value::Number(42.0)]);
