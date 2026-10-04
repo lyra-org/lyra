@@ -208,7 +208,7 @@ pub(crate) fn expire_reported_for_user(
                 .keys("reported")
                 .and()
                 .key("updated_at_ms")
-                .value(agdb::Comparison::LessThan(cutoff.into()))
+                .less_than(cutoff)
                 .query(),
         )?
         .ids();
@@ -233,7 +233,7 @@ pub(crate) fn expire_reported(db: &mut impl DbAccess, now_ms: u64) -> anyhow::Re
                 .keys("reported")
                 .and()
                 .key("updated_at_ms")
-                .value(agdb::Comparison::LessThan(cutoff.into()))
+                .less_than(cutoff)
                 .query(),
         )?
         .ids();

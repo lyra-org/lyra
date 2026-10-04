@@ -9,7 +9,6 @@ use std::collections::{
 };
 
 use agdb::{
-    Comparison,
     CountComparison,
     DbAny,
     DbAnyTransactionMut,
@@ -282,7 +281,7 @@ pub(crate) fn ids_with_year(db: &impl DbAccess, year: u32) -> anyhow::Result<Vec
                 .neighbor()
                 .and()
                 .key("release_date")
-                .value(Comparison::StartsWith(DbValue::from(format!("{year:04}"))))
+                .starts_with(format!("{year:04}"))
                 .query(),
         )?
         .ids())
