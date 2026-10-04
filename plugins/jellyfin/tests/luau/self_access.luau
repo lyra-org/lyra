@@ -1,9 +1,9 @@
 local playlists = require("@lyra/playlists")
 
-local item_ids = require("../protocol/items/identifiers")
-local playlist_access = require("../protocol/playlist_access")
-local preferences = require("../protocol/preferences")
-local session = require("../protocol/session")
+local item_ids = require("../../protocol/items/identifiers")
+local playlist_access = require("../../protocol/playlist_access")
+local preferences = require("../../protocol/preferences")
+local session = require("../../protocol/session")
 
 local function context(query, params, json)
 	return {
