@@ -3,6 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+mod fixture;
+
+pub use fixture::Fixture;
+
 use std::collections::{
     BTreeMap,
     BTreeSet,
@@ -479,14 +483,16 @@ pub async fn exec_plugins(
     Ok(isolated)
 }
 
-/// Username of the user every Luau test file dispatches as.
+/// Username of the user a Luau test without a fixture dispatches as.
 const LUAU_TEST_USERNAME: &str = "luau-tester";
 
-/// Runs one `.luau` file as `plugin`, without executing the plugin's entrypoint, dispatching as
-/// a fresh non-admin user named `LUAU_TEST_USERNAME`.
+/// Runs one `.luau` file as `plugin`, without executing the plugin's entrypoint. With a fixture,
+/// the fixture is seeded, the test dispatches as its `run_as` user and receives the seeded ids
+/// as its `...`; otherwise it dispatches as a fresh non-admin user named `LUAU_TEST_USERNAME`.
 pub async fn run_luau_plugin_test_file(
     plugin: &PluginUnderTest,
     test_path: &Path,
+    fixture: Option<&Fixture>,
 ) -> anyhow::Result<()> {
     let _guard = runtime_test_lock().await;
     initialize_runtime(&LibraryFixtureConfig {
@@ -508,16 +514,33 @@ pub async fn run_luau_plugin_test_file(
     })?;
     let relative_path_text = relative_path.to_string_lossy().replace('\\', "/");
 
-    let principal = {
+    let (principal, args) = {
         let mut db = STATE.db.write().await;
-        let user = db::users::User {
-            db_id: None,
-            id: nanoid!(),
-            username: LUAU_TEST_USERNAME.to_string(),
-            password: String::new(),
+        let (user_db_id, args) = match fixture {
+            Some(fixture) => {
+                let (seeded, run_as) = fixture
+                    .seed(&mut db)
+                    .with_context(|| format!("seed fixture for {}", test_path.display()))?;
+                (
+                    run_as,
+                    vec![harmony_luau::serializable_to_luau_owned(seeded)?],
+                )
+            }
+            None => {
+                let user = db::users::User {
+                    db_id: None,
+                    id: nanoid!(),
+                    username: LUAU_TEST_USERNAME.to_string(),
+                    password: String::new(),
+                };
+                (db::users::create(&mut db, &user)?, Vec::new())
+            }
         };
-        let user_db_id = db::users::create(&mut db, &user)?;
-        services::auth::resolve_principal(&db, user_db_id, user)
+        let user = db::users::get_by_id(&db, user_db_id)?.context("test user exists")?;
+        (
+            services::auth::resolve_principal(&db, user_db_id, user),
+            args,
+        )
     };
 
     let isolated = TempPluginsDir::new(plugin)?;
@@ -535,7 +558,7 @@ pub async fn run_luau_plugin_test_file(
     let source = std::fs::read(&test_path)
         .with_context(|| format!("read Luau test {}", test_path.display()))?;
     runtime
-        .run_plugin_source_as(plugin.id(), &relative_path_text, source, principal)
+        .run_plugin_source_as(plugin.id(), &relative_path_text, source, args, principal)
         .with_context(|| format!("run Luau test {}", test_path.display()))
 }
 

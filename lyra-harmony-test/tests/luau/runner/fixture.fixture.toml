@@ -1,0 +1,19 @@
+run_as = "owner"
+
+[[users]]
+key = "owner"
+admin = true
+
+[[users]]
+key = "other"
+
+[[tracks]]
+key = "song"
+title = "Song"
+
+[[playlists]]
+key = "shared"
+owner = "other"
+name = "Shared"
+public = true
+tracks = ["song", "song"]

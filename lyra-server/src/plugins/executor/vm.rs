@@ -24,7 +24,6 @@ use harmony_core::{
         RuntimeBuilder,
     },
 };
-#[cfg(test)]
 use harmony_luau as luau;
 
 use super::{
@@ -214,12 +213,13 @@ impl PluginExecutor {
         self.runtime.run_plugin_source(plugin_id, path, source)
     }
 
-    /// Runs `source` as a dispatch acting for `principal`.
+    /// Runs `source` with `args` as its `...`, as a dispatch acting for `principal`.
     pub(crate) fn run_plugin_source_as(
         &self,
         plugin_id: &str,
         path: &str,
         source: impl Into<Arc<[u8]>>,
+        args: Vec<luau::Value>,
         principal: crate::services::auth::Principal,
     ) -> Result<()> {
         let dispatch_auth = crate::plugins::auth::DispatchAuth::default();
@@ -230,7 +230,7 @@ impl PluginExecutor {
         };
         context.caller.insert(dispatch_auth);
         self.runtime
-            .eval_source_with_context(source, context)
+            .eval_source_with_args(source, context, args)
             .map(|_| ())
     }
 

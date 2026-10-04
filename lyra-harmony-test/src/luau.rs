@@ -20,7 +20,18 @@ pub async fn run(root: &Path, tests: Vec<PathBuf>) -> anyhow::Result<Summary> {
     let mut failed = 0usize;
     for test_path in tests {
         let name = test_name(root, &test_path);
-        match lyra_server::testing::run_luau_plugin_test_file(&plugin, &test_path).await {
+        let outcome = match load_fixture(&test_path) {
+            Ok(fixture) => {
+                lyra_server::testing::run_luau_plugin_test_file(
+                    &plugin,
+                    &test_path,
+                    fixture.as_ref(),
+                )
+                .await
+            }
+            Err(error) => Err(error),
+        };
+        match outcome {
             Ok(()) => {
                 println!("PASS {name}");
                 passed += 1;
@@ -33,6 +44,19 @@ pub async fn run(root: &Path, tests: Vec<PathBuf>) -> anyhow::Result<Summary> {
         }
     }
     Ok(Summary { passed, failed })
+}
+
+/// The fixture a Luau test declares in a `<test>.fixture.toml` beside it, if any.
+fn load_fixture(test_path: &Path) -> anyhow::Result<Option<lyra_server::testing::Fixture>> {
+    let path = test_path.with_extension("fixture.toml");
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let content = std::fs::read_to_string(&path)
+        .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
+    let fixture = toml::from_str(&content)
+        .map_err(|error| anyhow::anyhow!("parse {}: {error}", path.display()))?;
+    Ok(Some(fixture))
 }
 
 /// Whether `dir` lies within a test directory's `luau/` tree.
