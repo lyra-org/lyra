@@ -141,7 +141,7 @@ project-local guidance for using agdb in Lyra.
 - Intended for **nodes only**. Avoid aliasing edges.
 - Inserting an alias replaces any existing alias for that element, and if the
   alias is already in use it is moved to the new element.
-- `InsertAliasesQuery` **does not support search** IDs (it returns an error).
+- `InsertAliasesQuery` accepts search IDs; see [Insert Aliases](#insert-aliases).
 - `SelectAliasesQuery`:
   - With explicit IDs: all must have aliases (otherwise error).
   - With search: only elements that have aliases are returned (no error).
@@ -153,7 +153,8 @@ project-local guidance for using agdb in Lyra.
 - Creating an index scans **existing** data and indexes it.
 - `insert().index(key)` errors if the index already exists.
 - `remove().index(key)` is a no-op if the index does not exist.
-- Index search is **exact match** (key + value). Comparators are ignored.
+- Index lookup is **exact match** (key + value); further conditions only
+  filter the hits. See [Index Search](#index-search).
 
 ## Insert Queries
 
@@ -205,9 +206,12 @@ project-local guidance for using agdb in Lyra.
 
 ### Insert Aliases
 
-- Requires explicit ID list (no search).
 - IDs must exist; aliases must be non-empty.
 - Length of IDs and aliases must match.
+- `insert().aliases(..).search()` (or a search passed to `ids`) assigns the
+  aliases to the search results in result order. A count mismatch is a
+  `NotEnoughData` error; nothing stops a search from aliasing edges, so filter
+  with `where_().node()`.
 
 ### Insert Index
 
@@ -287,7 +291,8 @@ project-local guidance for using agdb in Lyra.
 - **BreadthFirst** (default): level-by-level, edges first, newest to oldest.
 - **DepthFirst**: follows one path until dead end, then backtracks.
 - **Elements**: full scan of all elements (slow).
-- **Index**: bypasses graph, uses key/value index (exact match only).
+- **Index**: bypasses graph, uses key/value index (exact match), then filters
+  the hits with any further conditions.
 
 ### Order, Limit, Offset
 
@@ -303,6 +308,7 @@ project-local guidance for using agdb in Lyra.
 - For `order_by` or path search, the search runs to completion **before**
   `offset`/`limit` are applied. Avoid large scans if you can.
 - When using `order_by`, ensure `offset <= result count`; slicing is not guarded.
+  Index search slices the same way even without `order_by`.
 
 ### Origin/Destination
 
@@ -319,6 +325,16 @@ project-local guidance for using agdb in Lyra.
   - `Contains(Vec)` requires all values to be present.
   - `StartsWith(VecString)` and `EndsWith(VecString)` use concatenation.
   - Integral `Contains` is only defined for vectors (not scalars).
+- `Any` passes when **any** value matches: a vector key containing any of
+  the given values, a scalar key equal to one of a given vector, or a string
+  key containing any of the given substrings. An empty list never matches.
+- `Regex` matches `String` keys, or `VecString` keys where any element
+  matches. It requires the `regex` crate feature; without it, and for invalid
+  patterns, it silently matches nothing.
+- `WhereKey` has shorthands for every comparison (`.key(k).less_than(v)`,
+  `.starts_with(v)`, `.any(v)`, ...) and `Where` has them for count
+  comparisons (`.distance_less_than(n)`, `.edge_count_greater_than(n)`, ...).
+  They are equivalent to `.value(Comparison::..)` / `CountComparison::..`.
 - `distance` counts **every element**, including edges. Neighboring nodes
   are at distance `2`.
 - `beyond` / `not_beyond` can stop or continue traversal past elements.
@@ -329,8 +345,21 @@ project-local guidance for using agdb in Lyra.
 
 ### Index Search
 
-- Uses the first KeyValue condition only (exact match).
-- Ignores `limit`, `offset`, `order_by`, and graph traversal settings.
+- The **first** condition must be the KeyValue set by `.index(k).value(v)`;
+  it is looked up in the index for key `k` (exact match).
+- `.where_()` after `.value(v)` returns a restricted builder (`WhereFilter`)
+  whose conditions filter the hits: `node()`, `edge()`, `element::<T>()`,
+  `key(..)`, `keys(..)`, `ids(..)`, edge counts, `not()`, and nesting. Graph
+  conditions (`distance`, `beyond`, `not_beyond`, `neighbor`) are not offered.
+- The index covers edges too; add `where_().node()` when only nodes are wanted.
+- Hit order is unspecified. `order_by` sorts the filtered hits; `offset` and
+  `limit` then slice them.
+- `offset` past the end, or `offset + limit` past the end when both are set,
+  **panics** (unguarded slice). `limit` alone is safe.
+- `select().elements::<T>().search().index(..)` does **not** work: the
+  injected `db_element_id` condition comes first and is treated as the index
+  key, failing with `Index 'db_element_id' not found`. Filter with
+  `where_().element::<T>()` instead.
 
 ## Type System and Derives
 
@@ -421,14 +450,15 @@ let young_users: Vec<User> = db.exec(
         .query(),
 )?.try_into()?;
 
-// Index search: create index and then query exact match.
+// Index search: create index, query exact match, filter the hits.
 db.exec_mut(QueryBuilder::insert().index("username").query())?;
 let bob: User = db.exec(
     QueryBuilder::select()
-        .elements::<User>()
         .search()
         .index("username")
         .value("bob")
+        .where_()
+        .element::<User>()
         .query(),
 )?.try_into()?;
 
