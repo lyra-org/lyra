@@ -19,10 +19,6 @@ use serde::{
 use crate::cached_http::AccessedKeys;
 use crate::cached_http::CachedHttpState;
 use crate::expect::Expectations;
-use crate::fixture::{
-    Fixture,
-    RunMode,
-};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunResult {
@@ -40,9 +36,35 @@ impl RunResult {
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Scenario {
+    #[serde(default)]
+    pub run: RunMode,
+    pub library: LibraryConfig,
+    pub raw_tags: Vec<lyra_metadata::RawTrackTags>,
+    #[serde(default)]
+    pub expect: Expectations,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum RunMode {
+    #[default]
+    Refresh,
+    Sync,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LibraryConfig {
+    pub directory: String,
+    pub language: Option<String>,
+    pub country: Option<String>,
+}
+
 pub(crate) struct RunOptions<'a> {
     pub(crate) test_name: &'a str,
-    pub(crate) fixture: &'a Fixture,
+    pub(crate) scenario: &'a Scenario,
     pub(crate) plugin: &'a lyra_server::testing::PluginUnderTest,
     pub(crate) base_cache_dir: &'a Path,
     pub(crate) overlay_cache_dir: Option<&'a Path>,
@@ -54,7 +76,7 @@ pub(crate) struct RunOptions<'a> {
 pub async fn run(options: RunOptions<'_>) -> anyhow::Result<RunResult> {
     let RunOptions {
         test_name,
-        fixture,
+        scenario,
         plugin,
         base_cache_dir,
         overlay_cache_dir,
@@ -70,9 +92,9 @@ pub async fn run(options: RunOptions<'_>) -> anyhow::Result<RunResult> {
     let cache_misses = crate::cached_http::new_cache_misses();
     let request_trace = crate::cached_http::new_request_trace();
     let library = lyra_server::testing::LibraryFixtureConfig {
-        directory: PathBuf::from(&fixture.library.directory),
-        language: fixture.library.language.clone(),
-        country: fixture.library.country.clone(),
+        directory: PathBuf::from(&scenario.library.directory),
+        language: scenario.library.language.clone(),
+        country: scenario.library.country.clone(),
     };
 
     let started = Instant::now();
@@ -80,7 +102,7 @@ pub async fn run(options: RunOptions<'_>) -> anyhow::Result<RunResult> {
     log_timing(debug_timing, test_name, "initialize_runtime", started);
     let started = Instant::now();
     let prepared =
-        lyra_server::testing::prepare_fixture(&library, fixture.raw_tags.clone()).await?;
+        lyra_server::testing::prepare_fixture(&library, scenario.raw_tags.clone()).await?;
     log_timing(debug_timing, test_name, "prepare_fixture", started);
 
     let http_module = crate::cached_http::module_spec(CachedHttpState {
@@ -104,7 +126,7 @@ pub async fn run(options: RunOptions<'_>) -> anyhow::Result<RunResult> {
     request_count.store(0, Ordering::Relaxed);
     live_request_count.store(0, Ordering::Relaxed);
     let started = Instant::now();
-    match fixture.run {
+    match scenario.run {
         RunMode::Refresh => {
             lyra_server::testing::refresh_release(prepared.release_id).await?;
         }
@@ -130,7 +152,7 @@ pub async fn run(options: RunOptions<'_>) -> anyhow::Result<RunResult> {
         ));
     }
 
-    fixture.expect.check(&snapshot, &mut failures);
+    scenario.expect.check(&snapshot, &mut failures);
     let captured = Expectations::capture(&snapshot);
 
     let mut accessed_cache_keys: Vec<String> = accessed_keys.read().await.iter().cloned().collect();
