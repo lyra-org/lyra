@@ -1,0 +1,19 @@
+run_as = "owner"
+
+[[users]]
+key = "owner"
+admin = true
+
+[[users]]
+key = "other"
+
+[[tracks]]
+key = "track"
+title = "Playlist Track"
+
+[[playlists]]
+key = "foreign"
+owner = "other"
+name = "Other playlist"
+public = true
+tracks = ["track"]

@@ -2033,80 +2033,6 @@ fn plugin_executor_handle_restart_runs_new_entrypoint_on_runtime_thread() -> Res
     Ok(())
 }
 
-fn run_playlist_binding_test(source: &str) -> Result<()> {
-    use crate::{
-        plugins::db,
-        services::playlists,
-    };
-    use agdb::{
-        DbId,
-        QueryId,
-    };
-    let mut db = db::test_db::TestDb::initialized()?.into_inner();
-    let owner = db::test_db::test_user("playlist-owner")?;
-    let owner_id = db::users::create(&mut db, &owner)?;
-    let other = db::test_db::test_user("playlist-other")?;
-    let other_id = db::users::create(&mut db, &other)?;
-    let track_id = db::test_db::insert_track(&mut db, "Playlist Track")?;
-    let foreign_id = playlists::create(
-        &mut db,
-        &playlists::CreatePlaylistRequest {
-            user_db_id: other_id,
-            name: "Other playlist".into(),
-            description: None,
-            is_public: Some(true),
-            created_at: None,
-            updated_at: None,
-            track_db_ids: Vec::new(),
-        },
-    )?;
-    let foreign_entry =
-        playlists::add_track(&mut db, QueryId::Id(foreign_id), QueryId::Id(track_id))?.entry_id;
-    let fixture = format!(
-        "local fixture = {{track_id={}, foreign_id={}, foreign_entry=\"{}\"}}\n",
-        track_id.0, foreign_id.0, foreign_entry
-    );
-    let runtime = PluginExecutor::with_database(
-        Arc::from(vec![manifest("demo", &["lyra.playlists"])]),
-        default_server_info(),
-        Arc::new(tokio::sync::RwLock::new(db)),
-    )?;
-    let mut context = CallContext {
-        origin: plugin_origin("demo", "playlist-test.luau"),
-        ..CallContext::default()
-    };
-    seed_caller_principal(
-        &mut context,
-        crate::services::auth::Principal::from_parts(
-            DbId(owner_id.0),
-            owner.id,
-            "playlist-owner".into(),
-            vec![db::Permission::Admin],
-            None,
-            Default::default(),
-        ),
-    );
-    runtime.eval_plugin_source_with_call_context(
-        format!("{fixture}local run = (function()\n{source}\nend)()\nrun(fixture)").as_bytes(),
-        context,
-    )?;
-    Ok(())
-}
-
-#[test]
-fn playlist_binding_mutation_results() -> Result<()> {
-    run_playlist_binding_test(include_str!(
-        "../../../../lyra-harmony-test/tests/fixtures/playlists/mutations.luau"
-    ))
-}
-
-#[test]
-fn playlist_binding_replace() -> Result<()> {
-    run_playlist_binding_test(include_str!(
-        "../../../../lyra-harmony-test/tests/fixtures/playlists/replace.luau"
-    ))
-}
-
 #[test]
 fn playlist_bulk_bindings_refuse_inaccessible_tracks() -> Result<()> {
     use crate::plugins::db;
@@ -2157,11 +2083,4 @@ fn playlist_bulk_bindings_refuse_inaccessible_tracks() -> Result<()> {
         ]
     );
     Ok(())
-}
-
-#[test]
-fn playlist_binding_delete() -> Result<()> {
-    run_playlist_binding_test(include_str!(
-        "../../../../lyra-harmony-test/tests/fixtures/playlists/delete.luau"
-    ))
 }
