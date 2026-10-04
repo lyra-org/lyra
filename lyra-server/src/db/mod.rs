@@ -94,6 +94,7 @@ pub(crate) mod datastore;
 pub(crate) mod entities;
 pub(crate) mod entries;
 pub(crate) mod favorites;
+pub(crate) mod fixtures;
 pub(crate) mod genres;
 pub(crate) mod graph;
 pub(crate) mod ids;

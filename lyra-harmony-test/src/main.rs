@@ -128,7 +128,7 @@ fn discover_scenarios(dir: &Path, filter: Option<&str>) -> anyhow::Result<Vec<(S
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "toml") {
+        if path.extension().is_some_and(|ext| ext == "toml") && !is_luau_fixture(&path) {
             let name = path
                 .file_stem()
                 .unwrap_or_default()
@@ -145,6 +145,11 @@ fn discover_scenarios(dir: &Path, filter: Option<&str>) -> anyhow::Result<Vec<(S
 
     tests.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(tests)
+}
+
+fn is_luau_fixture(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|name| name.to_string_lossy().ends_with(".fixture.toml"))
 }
 
 struct LoadedScenario {
@@ -386,6 +391,10 @@ async fn main() -> anyhow::Result<()> {
     let (base_dir, scenarios, luau_tests) = if test_dir.is_file() {
         let base_dir = test_dir.parent().unwrap_or(&test_dir).to_path_buf();
         match test_dir.extension().and_then(|ext| ext.to_str()) {
+            Some("toml") if is_luau_fixture(&test_dir) => anyhow::bail!(
+                "{} is a Luau test's fixture; run the test instead",
+                test_dir.display()
+            ),
             Some("toml") => {
                 let name = test_dir
                     .file_stem()
