@@ -178,20 +178,10 @@ pub(crate) fn get_owner(
     id_value: &str,
     owner_discriminator: Option<&str>,
 ) -> anyhow::Result<Option<DbId>> {
-    let indexed_ids = match indexed_external_id_ids(db, id_value) {
-        Ok(ids) => ids,
-        Err(_) => return Ok(None),
+    let Ok(matching_ids) = matching_external_id_ids(db, provider_id, id_type, id_value) else {
+        return Ok(None);
     };
-    for ext_id_db_id in indexed_ids {
-        let ext_ids: Vec<ExternalId> = db
-            .exec(QueryBuilder::select().ids(ext_id_db_id).query())?
-            .try_into()?;
-        let Some(ext) = ext_ids.into_iter().next() else {
-            continue;
-        };
-        if ext.provider_id != provider_id || ext.id_type != id_type {
-            continue;
-        }
+    for ext_id_db_id in matching_ids {
         let Some(owner_id) = get_owner_id(db, ext_id_db_id)? else {
             continue;
         };
@@ -266,32 +256,22 @@ fn matching_external_id_ids(
     id_type: &str,
     id_value: &str,
 ) -> anyhow::Result<Vec<DbId>> {
-    let indexed_ids = indexed_external_id_ids(db, id_value)?;
-    let external_ids =
-        super::super::graph::bulk_fetch_typed::<ExternalId>(db, indexed_ids.clone(), "ExternalId")?;
-    Ok(indexed_ids
-        .into_iter()
-        .filter(|id| {
-            external_ids.get(id).is_some_and(|external_id| {
-                external_id.provider_id == provider_id && external_id.id_type == id_type
-            })
-        })
-        .collect())
-}
-
-fn indexed_external_id_ids(db: &impl DbAccess, id_value: &str) -> anyhow::Result<Vec<DbId>> {
-    let index_result = db.exec(
-        QueryBuilder::search()
-            .index("id_value")
-            .value(id_value)
-            .query(),
-    )?;
-
-    Ok(index_result
-        .ids()
-        .into_iter()
-        .filter(|id| id.0 > 0)
-        .collect())
+    Ok(db
+        .exec(
+            QueryBuilder::search()
+                .index("id_value")
+                .value(id_value)
+                .where_()
+                .element::<ExternalId>()
+                .and()
+                .key("provider_id")
+                .value(provider_id)
+                .and()
+                .key("id_type")
+                .value(id_type)
+                .query(),
+        )?
+        .ids())
 }
 
 pub(crate) fn get(

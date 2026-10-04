@@ -17,7 +17,6 @@ use agdb::{
     DbError,
     DbId,
     DbKeyValue,
-    DbType,
     DbTypeMarker,
     DbValue,
     QueryBuilder,
@@ -336,46 +335,46 @@ fn u64_value(element: &DbElement, key: &str) -> Option<u64> {
     }
 }
 
-fn search_identity(db: &impl DbAccess, identity: &str) -> anyhow::Result<Vec<DbElement>> {
-    let result = db.exec(
-        QueryBuilder::search()
-            .index("identity")
-            .value(identity)
-            .query(),
-    )?;
-    let ids = result.ids();
-    if ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    Ok(db.exec(QueryBuilder::select().ids(ids).query())?.elements)
-}
-
 fn find_edge_by_identity(db: &impl DbAccess, identity: &str) -> anyhow::Result<Option<DbElement>> {
-    Ok(search_identity(db, identity)?
+    Ok(db
+        .exec(
+            QueryBuilder::select()
+                .search()
+                .index("identity")
+                .value(identity)
+                .limit(1)
+                .where_()
+                .edge()
+                .query(),
+        )?
+        .elements
         .into_iter()
-        .find(|element| element.id.0 < 0))
+        .next())
 }
 
 pub(crate) fn find_profile_by_identity(
     db: &impl DbAccess,
     identity: &str,
 ) -> anyhow::Result<Option<(DbId, DisplayCoverProfile)>> {
-    for element in search_identity(db, identity)? {
-        if element.id.0 <= 0 || !graph::is_element_type(&element, "DisplayCoverProfile") {
-            continue;
-        }
-        return Ok(Some((
-            element.id,
-            DisplayCoverProfile::from_db_element(&element)?,
-        )));
-    }
-    Ok(None)
+    let profile: Option<DisplayCoverProfile> =
+        graph::fetch_typed_by_index(db, "identity", identity, "DisplayCoverProfile")?;
+    Ok(profile.and_then(|profile| Some((profile.db_id.clone()?.into(), profile))))
 }
 
 fn repair_exists(db: &impl DbAccess, identity: &str) -> anyhow::Result<bool> {
-    Ok(search_identity(db, identity)?
-        .into_iter()
-        .any(|element| element.id.0 > 0 && graph::is_element_type(&element, "DisplayCoverRepair")))
+    let repairs = db.exec(
+        QueryBuilder::search()
+            .index("identity")
+            .value(identity)
+            .limit(1)
+            .where_()
+            .node()
+            .and()
+            .key("db_element_id")
+            .value("DisplayCoverRepair")
+            .query(),
+    )?;
+    Ok(repairs.result > 0)
 }
 
 fn enqueue_repair(
