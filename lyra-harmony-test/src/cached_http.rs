@@ -865,12 +865,12 @@ pub fn traces_root(cache_dir: &Path) -> PathBuf {
     cache_dir.join("_traces")
 }
 
-pub fn fixture_traces_root(cache_dir: &Path, test_name: &str) -> PathBuf {
+pub fn scenario_traces_root(cache_dir: &Path, test_name: &str) -> PathBuf {
     traces_root(cache_dir).join(xxh3_hex(test_name))
 }
 
 pub fn trace_cache_dir(cache_dir: &Path, test_name: &str, trace_id: &str) -> PathBuf {
-    fixture_traces_root(cache_dir, test_name).join(trace_id)
+    scenario_traces_root(cache_dir, test_name).join(trace_id)
 }
 
 fn trace_manifest_path(trace_cache_dir: &Path) -> PathBuf {
@@ -1095,13 +1095,13 @@ pub fn persist_trace(
     Ok(is_new)
 }
 
-pub fn prune_fixture_traces(
+pub fn prune_scenario_traces(
     cache_dir: &Path,
     test_name: &str,
     keep_trace_ids: &HashSet<String>,
 ) -> std::io::Result<usize> {
-    let fixture_root = fixture_traces_root(cache_dir, test_name);
-    let entries = match std::fs::read_dir(&fixture_root) {
+    let scenario_root = scenario_traces_root(cache_dir, test_name);
+    let entries = match std::fs::read_dir(&scenario_root) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
         Err(e) => return Err(e),
@@ -1129,16 +1129,19 @@ pub fn prune_fixture_traces(
         pruned += 1;
     }
 
-    if pruned > 0 && fixture_root.is_dir() && std::fs::read_dir(&fixture_root)?.next().is_none() {
-        std::fs::remove_dir(&fixture_root)?;
+    if pruned > 0 && scenario_root.is_dir() && std::fs::read_dir(&scenario_root)?.next().is_none() {
+        std::fs::remove_dir(&scenario_root)?;
     }
 
     Ok(pruned)
 }
 
-pub fn load_fixture_traces(cache_dir: &Path, test_name: &str) -> std::io::Result<Vec<StoredTrace>> {
-    let fixture_root = fixture_traces_root(cache_dir, test_name);
-    let entries = match std::fs::read_dir(&fixture_root) {
+pub fn load_scenario_traces(
+    cache_dir: &Path,
+    test_name: &str,
+) -> std::io::Result<Vec<StoredTrace>> {
+    let scenario_root = scenario_traces_root(cache_dir, test_name);
+    let entries = match std::fs::read_dir(&scenario_root) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e),
@@ -1183,12 +1186,12 @@ pub fn prune_stale_traces(
 
     let mut pruned = 0;
     for entry in entries.flatten() {
-        let fixture_root = entry.path();
-        if !fixture_root.is_dir() {
+        let scenario_root = entry.path();
+        if !scenario_root.is_dir() {
             continue;
         }
-        let mut remove_fixture_root = true;
-        if let Ok(trace_entries) = std::fs::read_dir(&fixture_root) {
+        let mut remove_scenario_root = true;
+        if let Ok(trace_entries) = std::fs::read_dir(&scenario_root) {
             for trace_entry in trace_entries.flatten() {
                 let trace_dir = trace_entry.path();
                 if !trace_dir.is_dir() {
@@ -1202,13 +1205,13 @@ pub fn prune_stale_traces(
                     continue;
                 };
                 if active_test_names.contains(&manifest.test_name) {
-                    remove_fixture_root = false;
+                    remove_scenario_root = false;
                     break;
                 }
             }
         }
-        if remove_fixture_root {
-            std::fs::remove_dir_all(fixture_root)?;
+        if remove_scenario_root {
+            std::fs::remove_dir_all(scenario_root)?;
             pruned += 1;
         }
     }
@@ -1219,12 +1222,12 @@ pub fn prune_unreferenced_responses(cache_dir: &Path) -> std::io::Result<usize> 
     let mut referenced = HashSet::new();
     let traces_dir = traces_root(cache_dir);
     if traces_dir.is_dir() {
-        for fixture_entry in std::fs::read_dir(&traces_dir)?.flatten() {
-            let fixture_root = fixture_entry.path();
-            if !fixture_root.is_dir() {
+        for scenario_entry in std::fs::read_dir(&traces_dir)?.flatten() {
+            let scenario_root = scenario_entry.path();
+            if !scenario_root.is_dir() {
                 continue;
             }
-            for trace_entry in std::fs::read_dir(fixture_root)?.flatten() {
+            for trace_entry in std::fs::read_dir(scenario_root)?.flatten() {
                 let trace_dir = trace_entry.path();
                 if !trace_dir.is_dir() {
                     continue;

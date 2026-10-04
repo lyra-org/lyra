@@ -5,7 +5,6 @@
 
 mod cached_http;
 mod expect;
-mod fixture;
 mod generate;
 mod luau;
 mod scenario;
@@ -16,8 +15,8 @@ use std::path::{
     PathBuf,
 };
 
-use fixture::Fixture;
 use lyra_server::testing::PluginUnderTest;
+use scenario::Scenario;
 
 #[derive(Default)]
 struct Args {
@@ -150,10 +149,10 @@ fn discover_tests(dir: &Path, filter: Option<&str>) -> anyhow::Result<Vec<(Strin
     Ok(tests)
 }
 
-struct LoadedTest {
+struct LoadedScenario {
     name: String,
     path: PathBuf,
-    fixture: Fixture,
+    scenario: Scenario,
 }
 
 struct TraceExecution {
@@ -161,15 +160,15 @@ struct TraceExecution {
     outcome: anyhow::Result<scenario::RunResult>,
 }
 
-struct FixtureExecution<'a> {
-    test: &'a LoadedTest,
+struct ScenarioExecution<'a> {
+    test: &'a LoadedScenario,
     trace_runs: Vec<TraceExecution>,
     discovered_trace_ids: Option<HashSet<String>>,
     discovery_complete: bool,
 }
 
 async fn replay_trace(
-    test: &LoadedTest,
+    test: &LoadedScenario,
     plugin: &PluginUnderTest,
     trace: &cached_http::StoredTrace,
     max_release_requests: Option<usize>,
@@ -177,7 +176,7 @@ async fn replay_trace(
     let accessed_keys = cached_http::new_accessed_keys();
     let outcome = scenario::run(scenario::RunOptions {
         test_name: &test.name,
-        fixture: &test.fixture,
+        scenario: &test.scenario,
         plugin,
         base_cache_dir: &trace.cache_dir,
         overlay_cache_dir: None,
@@ -194,7 +193,7 @@ async fn replay_trace(
 }
 
 async fn discover_seeded_trace(
-    test: &LoadedTest,
+    test: &LoadedScenario,
     plugin: &PluginUnderTest,
     cache_dir: &Path,
     trace: &cached_http::StoredTrace,
@@ -206,7 +205,7 @@ async fn discover_seeded_trace(
     let _ = std::fs::remove_dir_all(&staging_cache_dir);
     let outcome = scenario::run(scenario::RunOptions {
         test_name: &test.name,
-        fixture: &test.fixture,
+        scenario: &test.scenario,
         plugin,
         base_cache_dir: &trace.cache_dir,
         overlay_cache_dir: Some(&staging_cache_dir),
@@ -238,7 +237,7 @@ async fn discover_seeded_trace(
 }
 
 async fn discover_trace(
-    test: &LoadedTest,
+    test: &LoadedScenario,
     plugin: &PluginUnderTest,
     cache_dir: &Path,
     max_release_requests: Option<usize>,
@@ -249,7 +248,7 @@ async fn discover_trace(
     let _ = std::fs::remove_dir_all(&staging_cache_dir);
     let outcome = scenario::run(scenario::RunOptions {
         test_name: &test.name,
-        fixture: &test.fixture,
+        scenario: &test.scenario,
         plugin,
         base_cache_dir: &staging_cache_dir,
         overlay_cache_dir: None,
@@ -280,15 +279,15 @@ async fn discover_trace(
     }
 }
 
-async fn run_fixture<'a>(
-    test: &'a LoadedTest,
+async fn run_scenario<'a>(
+    test: &'a LoadedScenario,
     plugin: &PluginUnderTest,
     cache_dir: &Path,
     discover: bool,
     max_release_requests: Option<usize>,
     max_traces: Option<usize>,
-) -> anyhow::Result<FixtureExecution<'a>> {
-    let traces = cached_http::load_fixture_traces(cache_dir, &test.name)?;
+) -> anyhow::Result<ScenarioExecution<'a>> {
+    let traces = cached_http::load_scenario_traces(cache_dir, &test.name)?;
     let (trace_runs, discovered_trace_ids, discovery_complete) = if traces.is_empty() {
         if discover {
             let run = discover_trace(test, plugin, cache_dir, max_release_requests).await;
@@ -304,7 +303,7 @@ async fn run_fixture<'a>(
             (
                 vec![TraceExecution {
                     trace_id: "missing".to_string(),
-                    outcome: Err(anyhow::anyhow!("no stored traces for fixture")),
+                    outcome: Err(anyhow::anyhow!("no stored traces for scenario")),
                 }],
                 None,
                 false,
@@ -329,7 +328,7 @@ async fn run_fixture<'a>(
                             discovered_ids.insert(result.trace_id.clone());
                         }
                         runs.push(run);
-                        return Ok(FixtureExecution {
+                        return Ok(ScenarioExecution {
                             test,
                             trace_runs: vec![TraceExecution {
                                 trace_id: "max-traces".to_string(),
@@ -362,7 +361,7 @@ async fn run_fixture<'a>(
         )
     };
 
-    Ok(FixtureExecution {
+    Ok(ScenarioExecution {
         test,
         trace_runs,
         discovered_trace_ids,
@@ -408,20 +407,20 @@ async fn main() -> anyhow::Result<()> {
         (dir.clone(), discover_tests(&dir, args.filter.as_deref())?)
     };
     if tests.is_empty() {
-        eprintln!("No test cases found in {}", test_base_dir.display());
+        eprintln!("No scenarios found in {}", test_base_dir.display());
         std::process::exit(1);
     }
 
-    let loaded_tests: Vec<LoadedTest> = tests
+    let loaded_tests: Vec<LoadedScenario> = tests
         .into_iter()
         .map(|(name, path)| {
             let content = std::fs::read_to_string(&path)?;
-            let fixture: Fixture = toml::from_str(&content)
+            let scenario: Scenario = toml::from_str(&content)
                 .map_err(|e| anyhow::anyhow!("Failed to parse {}: {}", path.display(), e))?;
-            Ok(LoadedTest {
+            Ok(LoadedScenario {
                 name,
                 path,
-                fixture,
+                scenario,
             })
         })
         .collect::<anyhow::Result<_>>()?;
@@ -435,7 +434,7 @@ async fn main() -> anyhow::Result<()> {
     let mut results = Vec::new();
     let mut executions = Vec::with_capacity(loaded_tests.len());
     for test in &loaded_tests {
-        let execution = run_fixture(
+        let execution = run_scenario(
             test,
             &plugin,
             &cache_dir,
@@ -449,7 +448,7 @@ async fn main() -> anyhow::Result<()> {
             && execution.discovery_complete
             && let Some(discovered_trace_ids) = execution.discovered_trace_ids.as_ref()
         {
-            pruned_traces += cached_http::prune_fixture_traces(
+            pruned_traces += cached_http::prune_scenario_traces(
                 &cache_dir,
                 &execution.test.name,
                 discovered_trace_ids,
@@ -468,7 +467,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     for execution in executions {
-        record_fixture_result(execution, &mut passed, &mut failed, &mut results);
+        record_scenario_result(execution, &mut passed, &mut failed, &mut results);
     }
 
     if args.prune && pruned_traces > 0 {
@@ -480,18 +479,18 @@ async fn main() -> anyhow::Result<()> {
 
     // Preserve existing expectations when a test fails.
     if args.record {
-        for (path, fixture, result) in &results {
+        for (path, scenario, result) in &results {
             if result.captured.is_empty() {
                 continue;
             }
-            if !result.passed() && !fixture.expect.is_empty() {
+            if !result.passed() && !scenario.expect.is_empty() {
                 println!(
                     "  skipped recording for {} (test failed, keeping existing expects)",
                     result.test_name
                 );
                 continue;
             }
-            let merged = merge_recorded_ids(&fixture.expect, &result.captured);
+            let merged = merge_recorded_ids(&scenario.expect, &result.captured);
             write_expect_section(path, &merged)?;
             println!("  recorded expectations for {}", result.test_name);
         }
@@ -507,14 +506,14 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn record_fixture_result<'a>(
-    execution: FixtureExecution<'a>,
+fn record_scenario_result<'a>(
+    execution: ScenarioExecution<'a>,
     passed: &mut usize,
     failed: &mut usize,
-    results: &mut Vec<(&'a PathBuf, &'a Fixture, scenario::RunResult)>,
+    results: &mut Vec<(&'a PathBuf, &'a Scenario, scenario::RunResult)>,
 ) {
     let multiple_traces = execution.trace_runs.len() > 1;
-    let mut fixture_failed = false;
+    let mut scenario_failed = false;
     let mut detail_lines = Vec::new();
     let mut recordable_result = None;
 
@@ -528,14 +527,14 @@ fn record_fixture_result<'a>(
                     continue;
                 }
 
-                fixture_failed = true;
+                scenario_failed = true;
                 if multiple_traces {
                     detail_lines.push(format!("  trace {}", short_trace_id(&trace_run.trace_id)));
                 }
                 detail_lines.extend(result.failures);
             }
             Err(err) => {
-                fixture_failed = true;
+                scenario_failed = true;
                 if multiple_traces {
                     detail_lines.push(format!(
                         "  trace {} error: {err}",
@@ -548,7 +547,7 @@ fn record_fixture_result<'a>(
         }
     }
 
-    if fixture_failed {
+    if scenario_failed {
         println!("FAIL {}", execution.test.name);
         for line in detail_lines {
             println!("{line}");
@@ -558,7 +557,7 @@ fn record_fixture_result<'a>(
         println!("PASS {}", execution.test.name);
         *passed += 1;
         if let Some(result) = recordable_result {
-            results.push((&execution.test.path, &execution.test.fixture, result));
+            results.push((&execution.test.path, &execution.test.scenario, result));
         }
     }
 }
