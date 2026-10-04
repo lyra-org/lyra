@@ -48,6 +48,7 @@ use crate::services::hls::init as hls_init;
 use tokio::sync::{
     Mutex,
     MutexGuard,
+    oneshot,
 };
 
 #[derive(Debug, Clone)]
@@ -514,17 +515,14 @@ pub async fn run_luau_plugin_test_file(
     })?;
     let relative_path_text = relative_path.to_string_lossy().replace('\\', "/");
 
-    let (principal, args) = {
+    let (principal, seeded) = {
         let mut db = STATE.db.write().await;
-        let (user_db_id, args) = match fixture {
+        let (user_db_id, seeded) = match fixture {
             Some(fixture) => {
                 let (seeded, run_as) = fixture
                     .seed(&mut db)
                     .with_context(|| format!("seed fixture for {}", test_path.display()))?;
-                (
-                    run_as,
-                    vec![harmony_luau::serializable_to_luau_owned(seeded)?],
-                )
+                (run_as, Some(seeded))
             }
             None => {
                 let user = db::users::User {
@@ -533,13 +531,13 @@ pub async fn run_luau_plugin_test_file(
                     username: LUAU_TEST_USERNAME.to_string(),
                     password: String::new(),
                 };
-                (db::users::create(&mut db, &user)?, Vec::new())
+                (db::users::create(&mut db, &user)?, None)
             }
         };
         let user = db::users::get_by_id(&db, user_db_id)?.context("test user exists")?;
         (
             services::auth::resolve_principal(&db, user_db_id, user),
-            args,
+            seeded,
         )
     };
 
@@ -547,18 +545,49 @@ pub async fn run_luau_plugin_test_file(
     let server_info = crate::plugins::server::load_server_info().await?;
     let auth_capabilities =
         crate::plugins::auth::AuthCapabilities::from_config(&STATE.config().auth);
-    let runtime = crate::plugins::executor::PluginExecutor::with_filesystem_sources(
-        Arc::from(vec![plugin.manifest.clone()]),
-        server_info,
-        auth_capabilities,
-        STATE.db.get(),
-        isolated.source_root(),
-        isolated.plugins_dir(),
-    )?;
+    let manifest = plugin.manifest.clone();
+    let db = STATE.db.get();
+    let source_root = isolated.source_root();
+    let plugins_dir = isolated.plugins_dir();
     let source = std::fs::read(&test_path)
         .with_context(|| format!("read Luau test {}", test_path.display()))?;
-    runtime
-        .run_plugin_source_as(plugin.id(), &relative_path_text, source, args, principal)
+
+    // Like the server's plugin executor, the test runs on its own thread rather than blocking a
+    // task of this runtime.
+    let (result_tx, result_rx) = oneshot::channel();
+    std::thread::Builder::new()
+        .name("lyra-luau-test".to_string())
+        .spawn(move || {
+            let run = || {
+                let args = seeded
+                    .map(harmony_luau::serializable_to_luau_owned)
+                    .transpose()?
+                    .into_iter()
+                    .collect();
+                let plugin_id = manifest.id.clone();
+                crate::plugins::executor::PluginExecutor::with_filesystem_sources(
+                    Arc::from(vec![manifest]),
+                    server_info,
+                    auth_capabilities,
+                    db,
+                    source_root,
+                    plugins_dir,
+                )?
+                .run_plugin_source_as(
+                    &plugin_id,
+                    &relative_path_text,
+                    source,
+                    args,
+                    principal,
+                )
+            };
+            let result: anyhow::Result<()> = run();
+            let _ = result_tx.send(result);
+        })
+        .context("spawn Luau test thread")?;
+    result_rx
+        .await
+        .context("Luau test thread exited without a result")?
         .with_context(|| format!("run Luau test {}", test_path.display()))
 }
 
