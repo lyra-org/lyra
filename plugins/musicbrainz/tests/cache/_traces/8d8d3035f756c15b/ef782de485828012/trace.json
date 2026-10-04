@@ -1,0 +1,24 @@
+{
+  "test_name": "demagog_キタニタツヤ",
+  "trace_id": "ef782de485828012",
+  "responses": [
+    {
+      "cache_key": "396adcd1b79d00bc",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ADEMAGOG&limit=100",
+      "status_code": 200,
+      "body_hash": "3f9a7f6e27b34fed"
+    },
+    {
+      "cache_key": "77b6d2d402e0f749",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=4c72672e-f795-4fa6-9c2c-51f73776a828&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "138931607eb6d0d9"
+    },
+    {
+      "cache_key": "d5c10760f4493df0",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%82%AD%E3%82%BF%E3%83%8B%E3%82%BF%E3%83%84%E3%83%A4",
+      "status_code": 200,
+      "body_hash": "12e8c5fb0a8c6f39"
+    }
+  ]
+}

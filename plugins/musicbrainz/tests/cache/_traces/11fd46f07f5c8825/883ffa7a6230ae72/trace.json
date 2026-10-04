@@ -1,0 +1,24 @@
+{
+  "test_name": "love_like_this_藤井風",
+  "trace_id": "883ffa7a6230ae72",
+  "responses": [
+    {
+      "cache_key": "af2f5b462fc6b023",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3Ac3a4aeca-8f02-4d22-b1ff-693434ab09a8%20AND%20(release%3ALove%20Like%20This%20OR%20recording%3ALove%20Like%20This)&limit=100",
+      "status_code": 200,
+      "body_hash": "bfa788e63e12da81"
+    },
+    {
+      "cache_key": "bd96934d5d4d2fa7",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E8%97%A4%E4%BA%95%E9%A2%A8",
+      "status_code": 200,
+      "body_hash": "379c7170bade508f"
+    },
+    {
+      "cache_key": "ed7c0d26f52fbfb7",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=5591307d-420e-4aa9-9a7b-bcb22217194f&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "9e8539dd55f16bc4"
+    }
+  ]
+}

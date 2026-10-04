@@ -1,0 +1,30 @@
+{
+  "test_name": "cowboy_bebop_tank_the_best_シートベルツ",
+  "trace_id": "311c76120936ab96",
+  "responses": [
+    {
+      "cache_key": "2ea4a4bf504522fb",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=ea45e38c-6882-30e2-b58b-a85945c700b6&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "809375c30f76a618"
+    },
+    {
+      "cache_key": "a311f451fbe75295",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%82%B7%E3%83%BC%E3%83%88%E3%83%99%E3%83%AB%E3%83%84",
+      "status_code": 200,
+      "body_hash": "106c0f0ec704f890"
+    },
+    {
+      "cache_key": "e3a0a98e5c2dd2dc",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ACowboy%20Bebop%5C%3A%20Tank%5C!%20THE%5C!%20BEST%5C!&limit=100",
+      "status_code": 200,
+      "body_hash": "af6f6f0e1f919866"
+    },
+    {
+      "cache_key": "ececd93f73b9246f",
+      "url": "https://musicbrainz.org/ws/2/artist/b5fb0f1a-2cd4-4759-9d80-648643f70c43?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "fa58edae488ff4f1"
+    }
+  ]
+}

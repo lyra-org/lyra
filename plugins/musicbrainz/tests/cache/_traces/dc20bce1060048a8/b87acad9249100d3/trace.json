@@ -1,0 +1,48 @@
+{
+  "test_name": "羊は眠らない_susumu",
+  "trace_id": "b87acad9249100d3",
+  "responses": [
+    {
+      "cache_key": "38c135c36978eed5",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A7b05d6fe-91e8-4cb9-a401-2a13b1578716%20AND%20(release%3A%E7%BE%8A%E3%81%AF%E7%9C%A0%E3%82%89%E3%81%AA%E3%81%84%20OR%20recording%3A%E7%BE%8A%E3%81%AF%E7%9C%A0%E3%82%89%E3%81%AA%E3%81%84)",
+      "status_code": 200,
+      "body_hash": "7e6d631f87374464"
+    },
+    {
+      "cache_key": "60421524416ea6b5",
+      "url": "https://musicbrainz.org/ws/2/artist?query=susumu.",
+      "status_code": 200,
+      "body_hash": "bfe96506e98a551c"
+    },
+    {
+      "cache_key": "94f3811241f18966",
+      "url": "https://musicbrainz.org/ws/2/recording?query=alias%3A%E7%BE%8A%E3%81%AF%E7%9C%A0%E3%82%89%E3%81%AA%E3%81%84%20AND%20arid%3A7b05d6fe-91e8-4cb9-a401-2a13b1578716",
+      "status_code": 200,
+      "body_hash": "064647e9b4efb2c3"
+    },
+    {
+      "cache_key": "b5bdc9a9bc1191cc",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=794ba69c-27e3-36fc-92b0-1a8d663d837c&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "12eb9df741cadbec"
+    },
+    {
+      "cache_key": "b6e830df758bcf37",
+      "url": "https://musicbrainz.org/ws/2/release/dec3efe3-1ffc-4108-9a5c-4b68213daf39?inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels",
+      "status_code": 200,
+      "body_hash": "4d16ecb1bcf10b98"
+    },
+    {
+      "cache_key": "d183f800242026f2",
+      "url": "https://musicbrainz.org/ws/2/release/6ef8d9da-6483-4122-b5f5-a34e2096c172?inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels",
+      "status_code": 200,
+      "body_hash": "727890c19778a817"
+    },
+    {
+      "cache_key": "ec5e0a40fafb47e0",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E7%BE%8A%E3%81%AF%E7%9C%A0%E3%82%89%E3%81%AA%E3%81%84&limit=100",
+      "status_code": 200,
+      "body_hash": "cf0e19496369fbf6"
+    }
+  ]
+}

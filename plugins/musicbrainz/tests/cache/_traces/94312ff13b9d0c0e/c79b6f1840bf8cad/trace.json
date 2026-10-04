@@ -1,0 +1,36 @@
+{
+  "test_name": "wonderland_novelbright",
+  "trace_id": "c79b6f1840bf8cad",
+  "responses": [
+    {
+      "cache_key": "2bd2266b2b9568bd",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=ab9a392b-6da3-450c-a884-ee923a734ddf&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "3cee5dc72c538b32"
+    },
+    {
+      "cache_key": "3e24a75a1e7a3e8a",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3Af1d9bc16-a8a2-4733-9b9d-2e101e010ea0%20AND%20(release%3AWONDERLAND%20OR%20recording%3A%E3%83%A9%E3%83%B3%E3%83%8A%E3%83%BC%E3%82%BA%E3%83%8F%E3%82%A4)",
+      "status_code": 200,
+      "body_hash": "ab1090284b901b5b"
+    },
+    {
+      "cache_key": "44d2117ccbee2d9d",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AWONDERLAND&limit=100",
+      "status_code": 200,
+      "body_hash": "c733928b2a9285a0"
+    },
+    {
+      "cache_key": "905dbb34ccec8ca1",
+      "url": "https://musicbrainz.org/ws/2/artist/f1d9bc16-a8a2-4733-9b9d-2e101e010ea0?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "effd65d54ef76989"
+    },
+    {
+      "cache_key": "a9e9d7e4a521c24d",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Novelbright",
+      "status_code": 200,
+      "body_hash": "3481dbef36b442de"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "test_name": "青春のエキサイトメント_あいみょん",
+  "trace_id": "dd998bcf7387a008",
+  "responses": [
+    {
+      "cache_key": "566529eaac894cbb",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%82%E3%81%84%E3%81%BF%E3%82%87%E3%82%93",
+      "status_code": 200,
+      "body_hash": "06dcd99f9e7e93d0"
+    },
+    {
+      "cache_key": "696e3edfc177e851",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E9%9D%92%E6%98%A5%E3%81%AE%E3%82%A8%E3%82%AD%E3%82%B5%E3%82%A4%E3%83%88%E3%83%A1%E3%83%B3%E3%83%88&limit=100",
+      "status_code": 200,
+      "body_hash": "0d78edf2621d57e2"
+    },
+    {
+      "cache_key": "a89c05504591a521",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=413d3b68-6a32-4d0a-a6c9-0e19e129be96&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "c4c35d05bfdfa859"
+    }
+  ]
+}

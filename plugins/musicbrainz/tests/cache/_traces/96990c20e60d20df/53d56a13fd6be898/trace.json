@@ -1,0 +1,24 @@
+{
+  "test_name": "喜劇_ep_web_星野源",
+  "trace_id": "53d56a13fd6be898",
+  "responses": [
+    {
+      "cache_key": "3cd1035e93761b6f",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E6%98%9F%E9%87%8E%E6%BA%90",
+      "status_code": 200,
+      "body_hash": "42e99e6685b13ff8"
+    },
+    {
+      "cache_key": "75da447f033e411b",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=bd6baef9-5256-4f75-84c6-89d7857d614a&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "3ea32650641bddcf"
+    },
+    {
+      "cache_key": "f87ee58c99290ad5",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E5%96%9C%E5%8A%87&limit=100",
+      "status_code": 200,
+      "body_hash": "d93da869cfc2c063"
+    }
+  ]
+}

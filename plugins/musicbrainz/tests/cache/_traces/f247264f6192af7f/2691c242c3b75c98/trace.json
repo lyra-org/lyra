@@ -1,0 +1,24 @@
+{
+  "test_name": "bremen_米津玄師",
+  "trace_id": "2691c242c3b75c98",
+  "responses": [
+    {
+      "cache_key": "35630f445b62c18f",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ABremen&limit=100",
+      "status_code": 200,
+      "body_hash": "87ff23ec33f2a17e"
+    },
+    {
+      "cache_key": "e4e1d482d3625ce7",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E7%B1%B3%E6%B4%A5%E7%8E%84%E5%B8%AB",
+      "status_code": 200,
+      "body_hash": "a3c1c46e484f3658"
+    },
+    {
+      "cache_key": "f0261894d7604323",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=f46ed688-66e6-4d64-812b-7f68093a1766&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "8ebf90a043c92aa2"
+    }
+  ]
+}

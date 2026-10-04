@@ -1,0 +1,24 @@
+{
+  "test_name": "follow_my_tracks_やなぎなぎ",
+  "trace_id": "11bf09620b0e8f6d",
+  "responses": [
+    {
+      "cache_key": "0a05344a1c349c44",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%82%84%E3%81%AA%E3%81%8E%E3%81%AA%E3%81%8E",
+      "status_code": 200,
+      "body_hash": "2a87439c19fddeed"
+    },
+    {
+      "cache_key": "13ebe0a149ae1159",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=aa8388eb-b8e3-4d7c-b1bf-1bc7a4d15bc8&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "31a068d998a7e1f8"
+    },
+    {
+      "cache_key": "edc13af3b16cddfe",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AFollow%20My%20Tracks&limit=100",
+      "status_code": 200,
+      "body_hash": "e87bb2c4db1be815"
+    }
+  ]
+}

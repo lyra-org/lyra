@@ -31,7 +31,7 @@ pub struct RunResult {
     pub captured: Expectations,
     pub accessed_cache_keys: Vec<String>,
     pub live_requests: usize,
-    pub scenario_id: String,
+    pub trace_id: String,
 }
 
 impl RunResult {
@@ -135,9 +135,9 @@ pub async fn run(options: RunOptions<'_>) -> anyhow::Result<RunResult> {
 
     let mut accessed_cache_keys: Vec<String> = accessed_keys.read().await.iter().cloned().collect();
     accessed_cache_keys.sort();
-    let scenario_id = {
+    let trace_id = {
         let trace = request_trace.read().await;
-        crate::cached_http::scenario_id_for_trace(&trace)?
+        crate::cached_http::trace_id_for_requests(&trace)?
     };
 
     Ok(RunResult {
@@ -146,7 +146,7 @@ pub async fn run(options: RunOptions<'_>) -> anyhow::Result<RunResult> {
         captured,
         accessed_cache_keys,
         live_requests,
-        scenario_id,
+        trace_id,
     })
     .inspect(|_| log_timing(debug_timing, test_name, "run_test_total", total_started))
 }

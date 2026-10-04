@@ -1,0 +1,36 @@
+{
+  "test_name": "six_da_ice",
+  "trace_id": "fd2f3de65af39eec",
+  "responses": [
+    {
+      "cache_key": "0d6c36000be0bd69",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A2fc5c58a-711b-4a11-9b7a-7b5ba1f58e04%20AND%20(release%3ASiX%20OR%20recording%3ASiX)",
+      "status_code": 200,
+      "body_hash": "08d7b075649d1363"
+    },
+    {
+      "cache_key": "1ebac8df2fe9da16",
+      "url": "https://musicbrainz.org/ws/2/artist/2fc5c58a-711b-4a11-9b7a-7b5ba1f58e04?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2f0862ae8187b1c4"
+    },
+    {
+      "cache_key": "8468e9321f3daefd",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=94115250-ebc7-402b-8b02-2e8eecc771e2&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "e6166549826f9012"
+    },
+    {
+      "cache_key": "94091b2dceb78412",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Da-iCE",
+      "status_code": 200,
+      "body_hash": "0e8bcfd37cf59721"
+    },
+    {
+      "cache_key": "f9709b947384bca7",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ASiX&limit=100",
+      "status_code": 200,
+      "body_hash": "be87f0cdf39521f8"
+    }
+  ]
+}

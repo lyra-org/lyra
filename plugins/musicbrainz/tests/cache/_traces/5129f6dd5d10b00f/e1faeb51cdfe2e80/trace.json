@@ -1,0 +1,30 @@
+{
+  "test_name": "なにが悪い_結束バンド",
+  "trace_id": "e1faeb51cdfe2e80",
+  "responses": [
+    {
+      "cache_key": "1fff40d58307d20f",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=96eceb31-6285-47e5-a974-e9e02c813cf2&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "9e353f4886f6338b"
+    },
+    {
+      "cache_key": "357a0e024a64e49d",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E7%B5%90%E6%9D%9F%E3%83%90%E3%83%B3%E3%83%89",
+      "status_code": 200,
+      "body_hash": "ffc73dde112f97a6"
+    },
+    {
+      "cache_key": "c0a4650e23cf62d8",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%81%AA%E3%81%AB%E3%81%8C%E6%82%AA%E3%81%84&limit=100",
+      "status_code": 200,
+      "body_hash": "ffd2a3c1953ddf47"
+    },
+    {
+      "cache_key": "c63da08baa1bcd90",
+      "url": "https://musicbrainz.org/ws/2/artist/c1b0fe0a-779d-43ed-b193-4370f0d0f88f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c97ac76b052570d3"
+    }
+  ]
+}

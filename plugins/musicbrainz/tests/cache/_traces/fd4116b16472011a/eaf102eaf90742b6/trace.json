@@ -1,0 +1,30 @@
+{
+  "test_name": "つよがるガール_ぼっちぼろまる",
+  "trace_id": "eaf102eaf90742b6",
+  "responses": [
+    {
+      "cache_key": "20416168f3e1ff5f",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%81%A4%E3%82%88%E3%81%8C%E3%82%8B%E3%82%AC%E3%83%BC%E3%83%AB&limit=100",
+      "status_code": 200,
+      "body_hash": "1cf63db6ffbc8241"
+    },
+    {
+      "cache_key": "aad0538cd999fbaa",
+      "url": "https://musicbrainz.org/ws/2/artist/ca4adf5e-55c6-4b1b-a545-f97efe337a5a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7e6ec3a3d7a70071"
+    },
+    {
+      "cache_key": "d5503ef94770f6cb",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=2379abd6-b253-4234-8c4b-ebeb2ada652a&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "3582fa839600ccf0"
+    },
+    {
+      "cache_key": "fa50d51f7fc3533e",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%BC%E3%81%A3%E3%81%A1%E3%81%BC%E3%82%8D%E3%81%BE%E3%82%8B",
+      "status_code": 200,
+      "body_hash": "e324735c9f40ba1b"
+    }
+  ]
+}

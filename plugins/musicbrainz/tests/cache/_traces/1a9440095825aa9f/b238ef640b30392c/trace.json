@@ -1,0 +1,30 @@
+{
+  "test_name": "nicheシンドローム_one_ok_rock",
+  "trace_id": "b238ef640b30392c",
+  "responses": [
+    {
+      "cache_key": "5638899b4ee551e7",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=d540a95f-2462-4c02-992f-8b34fa3c6f37&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "ba320508945a1761"
+    },
+    {
+      "cache_key": "64ca984385996069",
+      "url": "https://musicbrainz.org/ws/2/artist?query=ONE%20OK%20ROCK",
+      "status_code": 200,
+      "body_hash": "128f2e758a976389"
+    },
+    {
+      "cache_key": "7b42f6a646f25daf",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ANiche%E3%82%B7%E3%83%B3%E3%83%89%E3%83%AD%E3%83%BC%E3%83%A0&limit=100",
+      "status_code": 200,
+      "body_hash": "07d2e99b5f6cfe5c"
+    },
+    {
+      "cache_key": "ce695d4b46931372",
+      "url": "https://musicbrainz.org/ws/2/artist/6ef00829-fa94-4fee-a5a6-b28e1208e96a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "375ce6955ce1b4fd"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "test_name": "シルエット_kana_boon",
+  "trace_id": "00e647573bf2fa9b",
+  "responses": [
+    {
+      "cache_key": "449fe97006cd5cf1",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%82%B7%E3%83%AB%E3%82%A8%E3%83%83%E3%83%88&limit=100",
+      "status_code": 200,
+      "body_hash": "3bf3ec4534ab0008"
+    },
+    {
+      "cache_key": "bb548f095ef3dc30",
+      "url": "https://musicbrainz.org/ws/2/artist/33ff8a92-2f3b-4cac-8ea0-5eebfa995626?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "420b85450d17dcf3"
+    },
+    {
+      "cache_key": "c04b7353f4ae6ddc",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=1c6fc72e-780d-4a2c-b1ce-c4fda92879e9&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "10dec08807e4ac97"
+    },
+    {
+      "cache_key": "f36f49885ea9ea04",
+      "url": "https://musicbrainz.org/ws/2/artist?query=KANA-BOON",
+      "status_code": 200,
+      "body_hash": "6b3973583c296051"
+    }
+  ]
+}

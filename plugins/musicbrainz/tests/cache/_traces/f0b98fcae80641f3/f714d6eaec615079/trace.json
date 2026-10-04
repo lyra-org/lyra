@@ -1,0 +1,36 @@
+{
+  "test_name": "persona5_original_soundtrack_atlus_sound_team",
+  "trace_id": "f714d6eaec615079",
+  "responses": [
+    {
+      "cache_key": "0cfa217b69664cae",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3APERSONA5%20ORIGINAL%20SOUNDTRACK&limit=100",
+      "status_code": 200,
+      "body_hash": "91db7d44c39a41fd"
+    },
+    {
+      "cache_key": "222d47b700bb9f1a",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=249e1abc-3479-4e85-9f23-2bda4d1d0c66&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "55604f1c407fed47"
+    },
+    {
+      "cache_key": "c539e6a81967c20c",
+      "url": "https://musicbrainz.org/ws/2/artist/37e85ee8-366a-4f17-a011-de94b6632408?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9c5789be6453fea9"
+    },
+    {
+      "cache_key": "efec1db9709dbe0f",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=249e1abc-3479-4e85-9f23-2bda4d1d0c66&limit=100",
+      "status_code": 200,
+      "body_hash": "167ce66bb2f08cf6"
+    },
+    {
+      "cache_key": "f7045b3906dc26b8",
+      "url": "https://musicbrainz.org/ws/2/artist?query=ATLUS%20Sound%20Team",
+      "status_code": 200,
+      "body_hash": "d9da82376d21b74b"
+    }
+  ]
+}

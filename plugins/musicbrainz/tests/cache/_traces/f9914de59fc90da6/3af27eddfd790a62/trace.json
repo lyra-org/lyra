@@ -1,0 +1,24 @@
+{
+  "test_name": "starry_wish_水瀬いのり",
+  "trace_id": "3af27eddfd790a62",
+  "responses": [
+    {
+      "cache_key": "12f14f483ad11605",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E6%B0%B4%E7%80%AC%E3%81%84%E3%81%AE%E3%82%8A",
+      "status_code": 200,
+      "body_hash": "087a6b27dc751090"
+    },
+    {
+      "cache_key": "47a2716226d62012",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AStarry%20Wish&limit=100",
+      "status_code": 200,
+      "body_hash": "de1267a232145a25"
+    },
+    {
+      "cache_key": "9bb0f0000c35fc03",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=48c2a978-4e45-4e1e-8aa5-61c2661b772d&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "16001d6500b21fbc"
+    }
+  ]
+}

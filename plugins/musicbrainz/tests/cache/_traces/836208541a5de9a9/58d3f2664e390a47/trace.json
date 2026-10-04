@@ -1,0 +1,30 @@
+{
+  "test_name": "mode_mood_mode_unison_square_garden",
+  "trace_id": "58d3f2664e390a47",
+  "responses": [
+    {
+      "cache_key": "22619219709371fd",
+      "url": "https://musicbrainz.org/ws/2/artist/265a2fb6-dde5-48d3-9e6e-47708aa5e10a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8d307f8db6759beb"
+    },
+    {
+      "cache_key": "8421a26ef60b3237",
+      "url": "https://musicbrainz.org/ws/2/artist?query=UNISON%20SQUARE%20GARDEN",
+      "status_code": 200,
+      "body_hash": "fc497c6c0b9b21c9"
+    },
+    {
+      "cache_key": "8978b72064094495",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=13dcd942-f069-4f56-9634-0a17f4c265ad&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "fcc68bc45da371fd"
+    },
+    {
+      "cache_key": "98acdb28ae6cf652",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AMODE%20MOOD%20MODE&limit=100",
+      "status_code": 200,
+      "body_hash": "d76b1987894f91f5"
+    }
+  ]
+}

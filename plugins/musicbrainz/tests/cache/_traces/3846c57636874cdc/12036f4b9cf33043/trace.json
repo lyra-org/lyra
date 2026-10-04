@@ -1,0 +1,24 @@
+{
+  "test_name": "holo27_originals_vol1_various_artists",
+  "trace_id": "12036f4b9cf33043",
+  "responses": [
+    {
+      "cache_key": "24877c86eed65f88",
+      "url": "https://musicbrainz.org/ws/2/artist/c0528c1e-e61b-4f85-9a2c-84c69e8f4b1e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ec991d81fca1fd50"
+    },
+    {
+      "cache_key": "5f54e43f7670df7a",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3Aholo%5C*27%20Originals%20Vol.1&limit=100",
+      "status_code": 200,
+      "body_hash": "013708ab58ece95d"
+    },
+    {
+      "cache_key": "bd825f3e33dadb3b",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=304f842a-f428-4b16-979f-b87e562ad963&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "f0530ef24e573017"
+    }
+  ]
+}

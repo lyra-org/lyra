@@ -1,0 +1,30 @@
+{
+  "test_name": "ぐされ_ずっと真夜中でいいのに",
+  "trace_id": "fce60deed7c417c0",
+  "responses": [
+    {
+      "cache_key": "811f6fd695c139b9",
+      "url": "https://musicbrainz.org/ws/2/artist/14d2a235-30e2-489f-b490-f9dc7d2c0861?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "229b2a02635ea782"
+    },
+    {
+      "cache_key": "85eb1ab59a7c0ed4",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%81%90%E3%81%95%E3%82%8C&limit=100",
+      "status_code": 200,
+      "body_hash": "763f3b102b6d8105"
+    },
+    {
+      "cache_key": "b55c2c8f136cd473",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%9A%E3%81%A3%E3%81%A8%E7%9C%9F%E5%A4%9C%E4%B8%AD%E3%81%A7%E3%81%84%E3%81%84%E3%81%AE%E3%81%AB%E3%80%82",
+      "status_code": 200,
+      "body_hash": "1aa5805a9fbc3188"
+    },
+    {
+      "cache_key": "ca10682173a1f946",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=11159944-a346-4f66-88cd-7d4e6a0fc0fe&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "9ebc35f591420098"
+    }
+  ]
+}

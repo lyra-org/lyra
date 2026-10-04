@@ -1,0 +1,30 @@
+{
+  "test_name": "盗作_ヨルシカ",
+  "trace_id": "ea52225a851112b7",
+  "responses": [
+    {
+      "cache_key": "266c2bc5c6705fb3",
+      "url": "https://musicbrainz.org/ws/2/artist/dfc6a151-3792-4695-8fda-f64723eaa788?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2551dfe33171b5fb"
+    },
+    {
+      "cache_key": "36dc1808fa84a3b9",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E7%9B%97%E4%BD%9C&limit=100",
+      "status_code": 200,
+      "body_hash": "1f4c4cddd7d749fe"
+    },
+    {
+      "cache_key": "781e5a6d34dc95ea",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%83%A8%E3%83%AB%E3%82%B7%E3%82%AB",
+      "status_code": 200,
+      "body_hash": "1cb0f6d8dc20473c"
+    },
+    {
+      "cache_key": "e5ddf2d0a2a85479",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=5f2bc852-a016-46c6-96f0-69cdf0796988&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "a209833648582e2e"
+    }
+  ]
+}

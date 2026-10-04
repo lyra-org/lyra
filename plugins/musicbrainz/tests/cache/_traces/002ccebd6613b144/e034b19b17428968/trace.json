@@ -1,0 +1,24 @@
+{
+  "test_name": "prema_藤井_風",
+  "trace_id": "e034b19b17428968",
+  "responses": [
+    {
+      "cache_key": "1c97b647319c3596",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E8%97%A4%E4%BA%95%20%E9%A2%A8",
+      "status_code": 200,
+      "body_hash": "b4c59c37a6f84b30"
+    },
+    {
+      "cache_key": "41489a1e22179cbe",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3APrema&limit=100",
+      "status_code": 200,
+      "body_hash": "9330397c0ca66fc7"
+    },
+    {
+      "cache_key": "720b8cd7e74643a0",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=937eacf6-5bf6-416b-891b-05fd9f8ddd45&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "5e2ec2bc340c4ea1"
+    }
+  ]
+}

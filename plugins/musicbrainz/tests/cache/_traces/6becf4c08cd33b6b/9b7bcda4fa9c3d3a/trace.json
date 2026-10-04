@@ -1,0 +1,36 @@
+{
+  "test_name": "tvアニメドメスティックな彼女サウンドコレクション_4824_甲田雅人",
+  "trace_id": "9b7bcda4fa9c3d3a",
+  "responses": [
+    {
+      "cache_key": "02f93892f5f0baff",
+      "url": "https://musicbrainz.org/ws/2/artist/3eeba1cf-368c-4395-ac54-7a5fc64e2683?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0bc27d2fa439d224"
+    },
+    {
+      "cache_key": "5d35f6b8d59a00d4",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ATV%E3%82%A2%E3%83%8B%E3%83%A1%E3%80%8C%E3%83%89%E3%83%A1%E3%82%B9%E3%83%86%E3%82%A3%E3%83%83%E3%82%AF%E3%81%AA%E5%BD%BC%E5%A5%B3%E3%80%8D%E3%82%B5%E3%82%A6%E3%83%B3%E3%83%89%E3%82%B3%E3%83%AC%E3%82%AF%E3%82%B7%E3%83%A7%E3%83%B3&limit=100",
+      "status_code": 200,
+      "body_hash": "966b09b03766506a"
+    },
+    {
+      "cache_key": "609bc559e22866e1",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=d6680dd1-bd5b-4911-a7b9-350bc7ffb23d&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "025c45404f3da46b"
+    },
+    {
+      "cache_key": "c7cb3d2cb8a7f366",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E7%94%B2%E7%94%B0%E9%9B%85%E4%BA%BA",
+      "status_code": 200,
+      "body_hash": "2691d81620640c5d"
+    },
+    {
+      "cache_key": "e298479cf862d46c",
+      "url": "https://musicbrainz.org/ws/2/artist/e9c21bdc-5626-4d0c-a3d7-61a9a413cfa7?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "4a08c1c13ed7fe93"
+    }
+  ]
+}

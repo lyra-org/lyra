@@ -1,0 +1,24 @@
+{
+  "test_name": "emotional_water_minami",
+  "trace_id": "56ed7ba68fa58d45",
+  "responses": [
+    {
+      "cache_key": "3113a1518be72c01",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=67ac452d-4eca-40b3-b2f3-69d8b622e00c&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "82661a837e23ab4a"
+    },
+    {
+      "cache_key": "3b317b57c3d0fc31",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Minami",
+      "status_code": 200,
+      "body_hash": "ae9a5bea6e017b9c"
+    },
+    {
+      "cache_key": "df3108b79cfa7fcb",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AEmotional%20Water&limit=100",
+      "status_code": 200,
+      "body_hash": "11811d1e7661b54a"
+    }
+  ]
+}

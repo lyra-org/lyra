@@ -1,0 +1,24 @@
+{
+  "test_name": "giri_giri_ep_web_鈴木雅之",
+  "trace_id": "5951e1a519d37743",
+  "responses": [
+    {
+      "cache_key": "219b3b890fdef2a2",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=cd0200a3-a0f2-4356-93b4-f0ed11634573&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "4be918355d624f89"
+    },
+    {
+      "cache_key": "25c7f7349bf5b01c",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E9%88%B4%E6%9C%A8%E9%9B%85%E4%B9%8B",
+      "status_code": 200,
+      "body_hash": "6e6dfcddc2359efc"
+    },
+    {
+      "cache_key": "29398ce34b298bed",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A30f851bb-dba3-4e9b-811c-5f27f595c86a%20AND%20(release%3AGIRI%20GIRI%20OR%20recording%3AGIRI%20GIRI)&limit=100",
+      "status_code": 200,
+      "body_hash": "aceef45a9ad03370"
+    }
+  ]
+}

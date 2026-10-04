@@ -1,0 +1,24 @@
+{
+  "test_name": "ウェザーステーション_稲葉曇",
+  "trace_id": "1bfc736b6baf2e6a",
+  "responses": [
+    {
+      "cache_key": "3e7ea44eb49f1f11",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E7%A8%B2%E8%91%89%E6%9B%87",
+      "status_code": 200,
+      "body_hash": "895274b0e8cb07ea"
+    },
+    {
+      "cache_key": "4c52fd5596086f1f",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=16a3a5f3-5108-442e-9454-990367f5a490&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "038f06185c81f1f8"
+    },
+    {
+      "cache_key": "9635041f9611c0d0",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%82%A6%E3%82%A7%E3%82%B6%E3%83%BC%E3%82%B9%E3%83%86%E3%83%BC%E3%82%B7%E3%83%A7%E3%83%B3&limit=100",
+      "status_code": 200,
+      "body_hash": "3571ab004520c6bc"
+    }
+  ]
+}

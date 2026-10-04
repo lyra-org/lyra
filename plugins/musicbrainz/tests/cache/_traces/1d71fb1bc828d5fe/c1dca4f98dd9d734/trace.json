@@ -1,0 +1,36 @@
+{
+  "test_name": "all_time_rock_n_roll_鈴木雅之",
+  "trace_id": "c1dca4f98dd9d734",
+  "responses": [
+    {
+      "cache_key": "25c7f7349bf5b01c",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E9%88%B4%E6%9C%A8%E9%9B%85%E4%B9%8B",
+      "status_code": 200,
+      "body_hash": "48a22804d94b439c"
+    },
+    {
+      "cache_key": "7bef5c0f5bd425ff",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AALL%20TIME%20ROCK%20'N'%20ROLL&limit=100",
+      "status_code": 200,
+      "body_hash": "23464aeb49af79e5"
+    },
+    {
+      "cache_key": "9b4fcfb36c6d48a1",
+      "url": "https://musicbrainz.org/ws/2/artist/2f79df84-a6b5-4b2c-a515-42b2821cf1a2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f4e992ae37b89ead"
+    },
+    {
+      "cache_key": "c73fed65047cf649",
+      "url": "https://musicbrainz.org/ws/2/artist/5c281371-5d95-43ae-9019-6375707648de?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a0ecc478d93d6dd3"
+    },
+    {
+      "cache_key": "cb5fc108c4a64f18",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=f976fa04-a47b-404a-acd3-615091d484be&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "c5e6d76136786c6d"
+    }
+  ]
+}

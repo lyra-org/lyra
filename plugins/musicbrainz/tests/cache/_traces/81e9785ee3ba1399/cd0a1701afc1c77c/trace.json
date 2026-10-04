@@ -1,0 +1,24 @@
+{
+  "test_name": "エメラロタイプ_やなぎなぎ",
+  "trace_id": "cd0a1701afc1c77c",
+  "responses": [
+    {
+      "cache_key": "0a05344a1c349c44",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%82%84%E3%81%AA%E3%81%8E%E3%81%AA%E3%81%8E",
+      "status_code": 200,
+      "body_hash": "2a87439c19fddeed"
+    },
+    {
+      "cache_key": "807a101a3be8e731",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=a0fb8f40-2dac-42c7-972c-a543f549d40a&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "a90494267f6a0b32"
+    },
+    {
+      "cache_key": "f0dd8367f27b3afc",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%82%A8%E3%83%A1%E3%83%A9%E3%83%AD%E3%82%BF%E3%82%A4%E3%83%97&limit=100",
+      "status_code": 200,
+      "body_hash": "9e23e17c08401ae8"
+    }
+  ]
+}

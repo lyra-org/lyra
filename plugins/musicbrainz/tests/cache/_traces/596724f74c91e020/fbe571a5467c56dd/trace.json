@@ -1,0 +1,24 @@
+{
+  "test_name": "アイリス_藍井エイル",
+  "trace_id": "fbe571a5467c56dd",
+  "responses": [
+    {
+      "cache_key": "343515226fca4a6f",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E8%97%8D%E4%BA%95%E3%82%A8%E3%82%A4%E3%83%AB",
+      "status_code": 200,
+      "body_hash": "3e0cb3626401ff0e"
+    },
+    {
+      "cache_key": "725556c0ef37124a",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%82%A2%E3%82%A4%E3%83%AA%E3%82%B9&limit=100",
+      "status_code": 200,
+      "body_hash": "86b0f2cdd34d99bc"
+    },
+    {
+      "cache_key": "79b488156df47ab9",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=b654837f-24e5-494f-aca1-56ae45e97400&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "3643d6dd6e808f8c"
+    }
+  ]
+}

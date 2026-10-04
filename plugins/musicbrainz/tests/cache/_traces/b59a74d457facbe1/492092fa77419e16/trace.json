@@ -1,0 +1,24 @@
+{
+  "test_name": "狂言_ado",
+  "trace_id": "492092fa77419e16",
+  "responses": [
+    {
+      "cache_key": "831e4d1e440e146f",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=000b747c-a83b-4b00-aa47-a839f6527a92&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "db531d71f9071a4a"
+    },
+    {
+      "cache_key": "9540247bcbf53f6b",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Ado",
+      "status_code": 200,
+      "body_hash": "bceff4bc462d8653"
+    },
+    {
+      "cache_key": "cc2df5b27abb0638",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E7%8B%82%E8%A8%80&limit=100",
+      "status_code": 200,
+      "body_hash": "5a7c7f651205f3fb"
+    }
+  ]
+}

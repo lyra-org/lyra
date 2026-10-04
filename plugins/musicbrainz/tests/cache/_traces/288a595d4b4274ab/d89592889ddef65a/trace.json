@@ -1,0 +1,36 @@
+{
+  "test_name": "沈香学_ずっと真夜中でいいのに",
+  "trace_id": "d89592889ddef65a",
+  "responses": [
+    {
+      "cache_key": "7615582c42b28a88",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E6%B2%88%E9%A6%99%E5%AD%A6&limit=100",
+      "status_code": 200,
+      "body_hash": "5d0958436bf0c9e3"
+    },
+    {
+      "cache_key": "811f6fd695c139b9",
+      "url": "https://musicbrainz.org/ws/2/artist/14d2a235-30e2-489f-b490-f9dc7d2c0861?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "4bfcc0b8be3588ed"
+    },
+    {
+      "cache_key": "b55c2c8f136cd473",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%9A%E3%81%A3%E3%81%A8%E7%9C%9F%E5%A4%9C%E4%B8%AD%E3%81%A7%E3%81%84%E3%81%84%E3%81%AE%E3%81%AB%E3%80%82",
+      "status_code": 200,
+      "body_hash": "d7c0bce408f90ecc"
+    },
+    {
+      "cache_key": "b70b5caf67f5f971",
+      "url": "https://musicbrainz.org/ws/2/artist/8a9d0b90-951e-4ab8-b2dc-9d3618af3d28?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "4201a90eec335082"
+    },
+    {
+      "cache_key": "ddf7ff8a59a0beba",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=43359016-cb2b-46b4-87be-952cc59a2ca8&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "8bd702f4deb83a61"
+    }
+  ]
+}

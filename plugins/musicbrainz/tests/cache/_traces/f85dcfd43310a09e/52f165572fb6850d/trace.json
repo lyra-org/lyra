@@ -1,0 +1,30 @@
+{
+  "test_name": "劇上_yoasobi",
+  "trace_id": "52f165572fb6850d",
+  "responses": [
+    {
+      "cache_key": "14d56903f7f04bed",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=0823b10d-389d-4b8e-8429-e2cf5d015f73&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "0fb26dfe6f2e33ff"
+    },
+    {
+      "cache_key": "52a497a70ee5743a",
+      "url": "https://musicbrainz.org/ws/2/artist/df6c619f-4334-43e2-8b6a-4a32af1e4f85?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "58c45e6af3cae791"
+    },
+    {
+      "cache_key": "9f896e1e04fd8bb2",
+      "url": "https://musicbrainz.org/ws/2/artist?query=YOASOBI",
+      "status_code": 200,
+      "body_hash": "1a72644d0fe57a2a"
+    },
+    {
+      "cache_key": "acd16def6bc8266a",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E5%8A%87%E4%B8%8A&limit=100",
+      "status_code": 200,
+      "body_hash": "787a263b43c6870f"
+    }
+  ]
+}

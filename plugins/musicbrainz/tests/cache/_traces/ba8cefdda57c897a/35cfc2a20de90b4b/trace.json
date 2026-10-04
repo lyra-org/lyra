@@ -1,0 +1,24 @@
+{
+  "test_name": "これからもウォルピス社の提供でお送りします_ウォルピスカーター",
+  "trace_id": "35cfc2a20de90b4b",
+  "responses": [
+    {
+      "cache_key": "32c385a80d1d17cf",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%82%A6%E3%82%A9%E3%83%AB%E3%83%94%E3%82%B9%E3%82%AB%E3%83%BC%E3%82%BF%E3%83%BC",
+      "status_code": 200,
+      "body_hash": "031ea4052d13f787"
+    },
+    {
+      "cache_key": "9e13178aea86923d",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%81%93%E3%82%8C%E3%81%8B%E3%82%89%E3%82%82%E3%82%A6%E3%82%A9%E3%83%AB%E3%83%94%E3%82%B9%E7%A4%BE%E3%81%AE%E6%8F%90%E4%BE%9B%E3%81%A7%E3%81%8A%E9%80%81%E3%82%8A%E3%81%97%E3%81%BE%E3%81%99%E3%80%82&limit=100",
+      "status_code": 200,
+      "body_hash": "fa5031d8bbb702e2"
+    },
+    {
+      "cache_key": "fc386e9cb0ee6e01",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=e3e7ead0-d791-474e-9bdb-713752206471&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "3731b39ed61553f9"
+    }
+  ]
+}

@@ -80,14 +80,14 @@ pub struct RequestTraceEntry {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct ScenarioManifest {
+struct TraceManifest {
     test_name: String,
-    scenario_id: String,
-    responses: Vec<ScenarioResponse>,
+    trace_id: String,
+    responses: Vec<TraceResponse>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct ScenarioResponse {
+struct TraceResponse {
     cache_key: String,
     url: String,
     status_code: u16,
@@ -95,8 +95,8 @@ struct ScenarioResponse {
 }
 
 #[derive(Clone, Debug)]
-pub struct StoredScenario {
-    pub scenario_id: String,
+pub struct StoredTrace {
+    pub trace_id: String,
     pub cache_dir: PathBuf,
 }
 
@@ -300,17 +300,17 @@ fn extract_domain(url_str: &str) -> Option<String> {
 }
 
 fn read_cache(
-    scenario_cache_dir: &Path,
+    trace_cache_dir: &Path,
     cache_key: &str,
     url: &str,
 ) -> std::io::Result<Option<CachedResponse>> {
-    let Some(entry) = read_response_entry(scenario_cache_dir, cache_key)? else {
+    let Some(entry) = read_response_entry(trace_cache_dir, cache_key)? else {
         return Ok(None);
     };
     if entry.url != url || !(200..400).contains(&entry.status_code) {
         return Ok(None);
     }
-    let body = read_response_body(scenario_cache_dir, &entry.body_hash)?;
+    let body = read_response_body(trace_cache_dir, &entry.body_hash)?;
     Ok(Some(CachedResponse {
         url: entry.url,
         status_code: entry.status_code,
@@ -319,7 +319,7 @@ fn read_cache(
 }
 
 fn write_cache(
-    scenario_cache_dir: &Path,
+    trace_cache_dir: &Path,
     cache_key: &str,
     response: &CachedResponse,
 ) -> std::io::Result<()> {
@@ -327,15 +327,15 @@ fn write_cache(
         return Ok(());
     }
     let body_hash = response_body_hash(&response.body);
-    write_response_body(scenario_cache_dir, &body_hash, &response.body)?;
-    let mut manifest = match read_scenario_manifest(scenario_cache_dir) {
+    write_response_body(trace_cache_dir, &body_hash, &response.body)?;
+    let mut manifest = match read_trace_manifest(trace_cache_dir) {
         Ok(manifest) => manifest,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            default_scenario_manifest(scenario_cache_dir)
+            default_trace_manifest(trace_cache_dir)
         }
         Err(e) => return Err(e),
     };
-    let entry = ScenarioResponse {
+    let entry = TraceResponse {
         cache_key: cache_key.to_string(),
         url: response.url.clone(),
         status_code: response.status_code,
@@ -353,7 +353,7 @@ fn write_cache(
     manifest
         .responses
         .sort_by(|a, b| a.cache_key.cmp(&b.cache_key));
-    write_scenario_manifest(scenario_cache_dir, &manifest)
+    write_trace_manifest(trace_cache_dir, &manifest)
 }
 
 async fn record_trace_entry(
@@ -856,31 +856,31 @@ fn status_message(code: u16) -> &'static str {
     }
 }
 
-pub fn scenario_id_for_trace(entries: &[RequestTraceEntry]) -> std::io::Result<String> {
+pub fn trace_id_for_requests(entries: &[RequestTraceEntry]) -> std::io::Result<String> {
     let encoded = serde_json::to_vec(entries).map_err(std::io::Error::other)?;
     Ok(xxh3_hex_bytes(&encoded))
 }
 
-pub fn scenarios_root(cache_dir: &Path) -> PathBuf {
-    cache_dir.join("_scenarios")
+pub fn traces_root(cache_dir: &Path) -> PathBuf {
+    cache_dir.join("_traces")
 }
 
-pub fn fixture_scenarios_root(cache_dir: &Path, test_name: &str) -> PathBuf {
-    scenarios_root(cache_dir).join(xxh3_hex(test_name))
+pub fn fixture_traces_root(cache_dir: &Path, test_name: &str) -> PathBuf {
+    traces_root(cache_dir).join(xxh3_hex(test_name))
 }
 
-pub fn scenario_cache_dir(cache_dir: &Path, test_name: &str, scenario_id: &str) -> PathBuf {
-    fixture_scenarios_root(cache_dir, test_name).join(scenario_id)
+pub fn trace_cache_dir(cache_dir: &Path, test_name: &str, trace_id: &str) -> PathBuf {
+    fixture_traces_root(cache_dir, test_name).join(trace_id)
 }
 
-fn scenario_manifest_path(scenario_cache_dir: &Path) -> PathBuf {
-    scenario_cache_dir.join("scenario.json")
+fn trace_manifest_path(trace_cache_dir: &Path) -> PathBuf {
+    trace_cache_dir.join("trace.json")
 }
 
-fn default_scenario_manifest(scenario_cache_dir: &Path) -> ScenarioManifest {
-    ScenarioManifest {
+fn default_trace_manifest(trace_cache_dir: &Path) -> TraceManifest {
+    TraceManifest {
         test_name: String::new(),
-        scenario_id: scenario_cache_dir
+        trace_id: trace_cache_dir
             .file_name()
             .unwrap_or_default()
             .to_string_lossy()
@@ -889,26 +889,23 @@ fn default_scenario_manifest(scenario_cache_dir: &Path) -> ScenarioManifest {
     }
 }
 
-fn read_scenario_manifest(scenario_cache_dir: &Path) -> std::io::Result<ScenarioManifest> {
-    let data = std::fs::read(scenario_manifest_path(scenario_cache_dir))?;
+fn read_trace_manifest(trace_cache_dir: &Path) -> std::io::Result<TraceManifest> {
+    let data = std::fs::read(trace_manifest_path(trace_cache_dir))?;
     serde_json::from_slice(&data).map_err(std::io::Error::other)
 }
 
-fn write_scenario_manifest(
-    scenario_cache_dir: &Path,
-    manifest: &ScenarioManifest,
-) -> std::io::Result<()> {
-    std::fs::create_dir_all(scenario_cache_dir)?;
+fn write_trace_manifest(trace_cache_dir: &Path, manifest: &TraceManifest) -> std::io::Result<()> {
+    std::fs::create_dir_all(trace_cache_dir)?;
     let mut json = serde_json::to_vec_pretty(manifest).map_err(std::io::Error::other)?;
     json.push(b'\n');
-    std::fs::write(scenario_manifest_path(scenario_cache_dir), json)
+    std::fs::write(trace_manifest_path(trace_cache_dir), json)
 }
 
 fn read_response_entry(
-    scenario_cache_dir: &Path,
+    trace_cache_dir: &Path,
     cache_key: &str,
-) -> std::io::Result<Option<ScenarioResponse>> {
-    let manifest = match read_scenario_manifest(scenario_cache_dir) {
+) -> std::io::Result<Option<TraceResponse>> {
+    let manifest = match read_trace_manifest(trace_cache_dir) {
         Ok(manifest) => manifest,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e),
@@ -919,40 +916,37 @@ fn read_response_entry(
         .find(|entry| entry.cache_key == cache_key))
 }
 
-fn cache_root_for_scenario_dir(scenario_cache_dir: &Path) -> std::io::Result<PathBuf> {
-    let scenarios_dir = scenario_cache_dir
+fn cache_root_for_trace_dir(trace_cache_dir: &Path) -> std::io::Result<PathBuf> {
+    let traces_dir = trace_cache_dir
         .parent()
         .and_then(Path::parent)
         .ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 format!(
-                    "scenario cache path is not under a cache/_scenarios tree: {}",
-                    scenario_cache_dir.display()
+                    "trace cache path is not under a cache/_traces tree: {}",
+                    trace_cache_dir.display()
                 ),
             )
         })?;
-    if scenarios_dir.file_name().and_then(|name| name.to_str()) != Some("_scenarios") {
+    if traces_dir.file_name().and_then(|name| name.to_str()) != Some("_traces") {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             format!(
-                "scenario cache path is not under a cache/_scenarios tree: {}",
-                scenario_cache_dir.display()
+                "trace cache path is not under a cache/_traces tree: {}",
+                trace_cache_dir.display()
             ),
         ));
     }
-    scenarios_dir
-        .parent()
-        .map(Path::to_path_buf)
-        .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!(
-                    "scenario cache path has no cache root: {}",
-                    scenario_cache_dir.display()
-                ),
-            )
-        })
+    traces_dir.parent().map(Path::to_path_buf).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "trace cache path has no cache root: {}",
+                trace_cache_dir.display()
+            ),
+        )
+    })
 }
 
 fn response_body_hash(body: &str) -> String {
@@ -967,8 +961,8 @@ fn response_body_path(cache_root: &Path, body_hash: &str) -> PathBuf {
         .join(format!("{body_hash}.body.gz"))
 }
 
-fn read_response_body(scenario_cache_dir: &Path, body_hash: &str) -> std::io::Result<String> {
-    let cache_root = cache_root_for_scenario_dir(scenario_cache_dir)?;
+fn read_response_body(trace_cache_dir: &Path, body_hash: &str) -> std::io::Result<String> {
+    let cache_root = cache_root_for_trace_dir(trace_cache_dir)?;
     read_response_body_file(&response_body_path(&cache_root, body_hash), body_hash)
 }
 
@@ -1000,12 +994,8 @@ fn validate_response_body_hash(
     ))
 }
 
-fn write_response_body(
-    scenario_cache_dir: &Path,
-    body_hash: &str,
-    body: &str,
-) -> std::io::Result<()> {
-    let cache_root = cache_root_for_scenario_dir(scenario_cache_dir)?;
+fn write_response_body(trace_cache_dir: &Path, body_hash: &str, body: &str) -> std::io::Result<()> {
+    let cache_root = cache_root_for_trace_dir(trace_cache_dir)?;
     let path = response_body_path(&cache_root, body_hash);
     if path.is_file() {
         let existing_body = read_response_body_file(&path, body_hash)?;
@@ -1041,12 +1031,12 @@ fn write_response_body(
 }
 
 fn copy_response_body(
-    source_scenario_cache_dir: &Path,
-    dest_scenario_cache_dir: &Path,
+    source_trace_cache_dir: &Path,
+    dest_trace_cache_dir: &Path,
     body_hash: &str,
 ) -> std::io::Result<()> {
-    let source_root = cache_root_for_scenario_dir(source_scenario_cache_dir)?;
-    let dest_root = cache_root_for_scenario_dir(dest_scenario_cache_dir)?;
+    let source_root = cache_root_for_trace_dir(source_trace_cache_dir)?;
+    let dest_root = cache_root_for_trace_dir(dest_trace_cache_dir)?;
     let source = response_body_path(&source_root, body_hash);
     read_response_body_file(&source, body_hash)?;
     if source_root == dest_root {
@@ -1065,17 +1055,17 @@ fn copy_response_body(
     Ok(())
 }
 
-pub fn persist_scenario(
+pub fn persist_trace(
     cache_dir: &Path,
     test_name: &str,
-    scenario_id: &str,
+    trace_id: &str,
     seed_cache_dir: &Path,
     overlay_cache_dir: &Path,
     cache_keys: &[String],
 ) -> std::io::Result<bool> {
-    let scenario_dir = scenario_cache_dir(cache_dir, test_name, scenario_id);
-    let is_new = !scenario_dir.exists();
-    std::fs::create_dir_all(&scenario_dir)?;
+    let trace_dir = trace_cache_dir(cache_dir, test_name, trace_id);
+    let is_new = !trace_dir.exists();
+    std::fs::create_dir_all(&trace_dir)?;
 
     let mut responses = Vec::with_capacity(cache_keys.len());
     for cache_key in cache_keys {
@@ -1091,26 +1081,26 @@ pub fn persist_scenario(
                 }
             },
         };
-        copy_response_body(source_dir, &scenario_dir, &entry.body_hash)?;
+        copy_response_body(source_dir, &trace_dir, &entry.body_hash)?;
         responses.push(entry);
     }
     responses.sort_by(|a, b| a.cache_key.cmp(&b.cache_key));
 
-    let manifest = ScenarioManifest {
+    let manifest = TraceManifest {
         test_name: test_name.to_string(),
-        scenario_id: scenario_id.to_string(),
+        trace_id: trace_id.to_string(),
         responses,
     };
-    write_scenario_manifest(&scenario_dir, &manifest)?;
+    write_trace_manifest(&trace_dir, &manifest)?;
     Ok(is_new)
 }
 
-pub fn prune_fixture_scenarios(
+pub fn prune_fixture_traces(
     cache_dir: &Path,
     test_name: &str,
-    keep_scenario_ids: &HashSet<String>,
+    keep_trace_ids: &HashSet<String>,
 ) -> std::io::Result<usize> {
-    let fixture_root = fixture_scenarios_root(cache_dir, test_name);
+    let fixture_root = fixture_traces_root(cache_dir, test_name);
     let entries = match std::fs::read_dir(&fixture_root) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
@@ -1119,23 +1109,23 @@ pub fn prune_fixture_scenarios(
 
     let mut pruned = 0;
     for entry in entries.flatten() {
-        let scenario_dir = entry.path();
-        if !scenario_dir.is_dir() {
+        let trace_dir = entry.path();
+        if !trace_dir.is_dir() {
             continue;
         }
 
-        let keep_dir = std::fs::read(scenario_manifest_path(&scenario_dir))
+        let keep_dir = std::fs::read(trace_manifest_path(&trace_dir))
             .ok()
-            .and_then(|content| serde_json::from_slice::<ScenarioManifest>(&content).ok())
+            .and_then(|content| serde_json::from_slice::<TraceManifest>(&content).ok())
             .is_some_and(|manifest| {
-                manifest.test_name == test_name && keep_scenario_ids.contains(&manifest.scenario_id)
+                manifest.test_name == test_name && keep_trace_ids.contains(&manifest.trace_id)
             });
 
         if keep_dir {
             continue;
         }
 
-        std::fs::remove_dir_all(&scenario_dir)?;
+        std::fs::remove_dir_all(&trace_dir)?;
         pruned += 1;
     }
 
@@ -1146,49 +1136,46 @@ pub fn prune_fixture_scenarios(
     Ok(pruned)
 }
 
-pub fn load_fixture_scenarios(
-    cache_dir: &Path,
-    test_name: &str,
-) -> std::io::Result<Vec<StoredScenario>> {
-    let fixture_root = fixture_scenarios_root(cache_dir, test_name);
+pub fn load_fixture_traces(cache_dir: &Path, test_name: &str) -> std::io::Result<Vec<StoredTrace>> {
+    let fixture_root = fixture_traces_root(cache_dir, test_name);
     let entries = match std::fs::read_dir(&fixture_root) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e),
     };
 
-    let mut scenarios = Vec::new();
+    let mut traces = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_dir() {
             continue;
         }
-        let manifest_path = scenario_manifest_path(&path);
+        let manifest_path = trace_manifest_path(&path);
         let content = match std::fs::read(&manifest_path) {
             Ok(content) => content,
             Err(_) => continue,
         };
-        let manifest: ScenarioManifest = match serde_json::from_slice(&content) {
+        let manifest: TraceManifest = match serde_json::from_slice(&content) {
             Ok(manifest) => manifest,
             Err(_) => continue,
         };
         if manifest.test_name != test_name {
             continue;
         }
-        scenarios.push(StoredScenario {
-            scenario_id: manifest.scenario_id,
+        traces.push(StoredTrace {
+            trace_id: manifest.trace_id,
             cache_dir: path,
         });
     }
-    scenarios.sort_by(|a, b| a.scenario_id.cmp(&b.scenario_id));
-    Ok(scenarios)
+    traces.sort_by(|a, b| a.trace_id.cmp(&b.trace_id));
+    Ok(traces)
 }
 
-pub fn prune_stale_scenarios(
+pub fn prune_stale_traces(
     cache_dir: &Path,
     active_test_names: &HashSet<String>,
 ) -> std::io::Result<usize> {
-    let entries = match std::fs::read_dir(scenarios_root(cache_dir)) {
+    let entries = match std::fs::read_dir(traces_root(cache_dir)) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
         Err(e) => return Err(e),
@@ -1201,17 +1188,17 @@ pub fn prune_stale_scenarios(
             continue;
         }
         let mut remove_fixture_root = true;
-        if let Ok(scenario_entries) = std::fs::read_dir(&fixture_root) {
-            for scenario_entry in scenario_entries.flatten() {
-                let scenario_dir = scenario_entry.path();
-                if !scenario_dir.is_dir() {
+        if let Ok(trace_entries) = std::fs::read_dir(&fixture_root) {
+            for trace_entry in trace_entries.flatten() {
+                let trace_dir = trace_entry.path();
+                if !trace_dir.is_dir() {
                     continue;
                 }
-                let manifest_path = scenario_manifest_path(&scenario_dir);
+                let manifest_path = trace_manifest_path(&trace_dir);
                 let Ok(content) = std::fs::read(&manifest_path) else {
                     continue;
                 };
-                let Ok(manifest) = serde_json::from_slice::<ScenarioManifest>(&content) else {
+                let Ok(manifest) = serde_json::from_slice::<TraceManifest>(&content) else {
                     continue;
                 };
                 if active_test_names.contains(&manifest.test_name) {
@@ -1230,19 +1217,19 @@ pub fn prune_stale_scenarios(
 
 pub fn prune_unreferenced_responses(cache_dir: &Path) -> std::io::Result<usize> {
     let mut referenced = HashSet::new();
-    let scenarios_dir = scenarios_root(cache_dir);
-    if scenarios_dir.is_dir() {
-        for fixture_entry in std::fs::read_dir(&scenarios_dir)?.flatten() {
+    let traces_dir = traces_root(cache_dir);
+    if traces_dir.is_dir() {
+        for fixture_entry in std::fs::read_dir(&traces_dir)?.flatten() {
             let fixture_root = fixture_entry.path();
             if !fixture_root.is_dir() {
                 continue;
             }
-            for scenario_entry in std::fs::read_dir(fixture_root)?.flatten() {
-                let scenario_dir = scenario_entry.path();
-                if !scenario_dir.is_dir() {
+            for trace_entry in std::fs::read_dir(fixture_root)?.flatten() {
+                let trace_dir = trace_entry.path();
+                if !trace_dir.is_dir() {
                     continue;
                 }
-                let manifest = match read_scenario_manifest(&scenario_dir) {
+                let manifest = match read_trace_manifest(&trace_dir) {
                     Ok(manifest) => manifest,
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
                     Err(e) => return Err(e),

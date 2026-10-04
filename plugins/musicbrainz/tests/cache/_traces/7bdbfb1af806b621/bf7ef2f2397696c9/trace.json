@@ -1,0 +1,30 @@
+{
+  "test_name": "the_book_3_yoasobi",
+  "trace_id": "bf7ef2f2397696c9",
+  "responses": [
+    {
+      "cache_key": "52a497a70ee5743a",
+      "url": "https://musicbrainz.org/ws/2/artist/df6c619f-4334-43e2-8b6a-4a32af1e4f85?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5d78ef7b0087a500"
+    },
+    {
+      "cache_key": "9f896e1e04fd8bb2",
+      "url": "https://musicbrainz.org/ws/2/artist?query=YOASOBI",
+      "status_code": 200,
+      "body_hash": "ea0513612b58ff2f"
+    },
+    {
+      "cache_key": "d544ff4c13467246",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ATHE%20BOOK%203&limit=100",
+      "status_code": 200,
+      "body_hash": "87cb0d0470faa6b3"
+    },
+    {
+      "cache_key": "d86e2547fbc0a443",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=763ff344-f4ea-4bf9-9429-930ca03fddb9&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "0dfd61bb77353e88"
+    }
+  ]
+}

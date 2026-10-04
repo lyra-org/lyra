@@ -31,7 +31,7 @@ struct Args {
     include_all: bool,
     luau: bool,
     max_release_requests: Option<usize>,
-    max_scenarios: Option<usize>,
+    max_traces: Option<usize>,
 }
 
 fn parse_args() -> anyhow::Result<Args> {
@@ -50,7 +50,7 @@ fn parse_args() -> anyhow::Result<Args> {
     args.output_dir = extract_path_flag(&mut raw_args, "--output-dir")?;
     args.max_release_requests =
         extract_positive_usize_flag(&mut raw_args, "--max-release-requests")?;
-    args.max_scenarios = extract_positive_usize_flag(&mut raw_args, "--max-scenarios")?;
+    args.max_traces = extract_positive_usize_flag(&mut raw_args, "--max-traces")?;
 
     if args.generate.is_some() {
         if !raw_args.is_empty() {
@@ -62,7 +62,7 @@ fn parse_args() -> anyhow::Result<Args> {
     // Last positional arg is the test directory
     if raw_args.is_empty() {
         anyhow::bail!(
-            "Usage: lyra-harmony-test [--filter PATTERN] [--prune] [--record] [--discover] [--max-release-requests N] [--max-scenarios N] <test-dir>\n       lyra-harmony-test --luau [--filter PATTERN] <test-dir>\n       lyra-harmony-test --generate <capture.json> --output-dir <dir>"
+            "Usage: lyra-harmony-test [--filter PATTERN] [--prune] [--record] [--discover] [--max-release-requests N] [--max-traces N] <test-dir>\n       lyra-harmony-test --luau [--filter PATTERN] <test-dir>\n       lyra-harmony-test --generate <capture.json> --output-dir <dir>"
         );
     }
     args.test_dir = PathBuf::from(raw_args.remove(0));
@@ -156,30 +156,30 @@ struct LoadedTest {
     fixture: Fixture,
 }
 
-struct ScenarioExecution {
-    scenario_id: String,
+struct TraceExecution {
+    trace_id: String,
     outcome: anyhow::Result<scenario::RunResult>,
 }
 
 struct FixtureExecution<'a> {
     test: &'a LoadedTest,
-    scenario_runs: Vec<ScenarioExecution>,
-    discovered_scenario_ids: Option<HashSet<String>>,
+    trace_runs: Vec<TraceExecution>,
+    discovered_trace_ids: Option<HashSet<String>>,
     discovery_complete: bool,
 }
 
-async fn replay_scenario(
+async fn replay_trace(
     test: &LoadedTest,
     plugin: &PluginUnderTest,
-    scenario: &cached_http::StoredScenario,
+    trace: &cached_http::StoredTrace,
     max_release_requests: Option<usize>,
-) -> ScenarioExecution {
+) -> TraceExecution {
     let accessed_keys = cached_http::new_accessed_keys();
     let outcome = scenario::run(scenario::RunOptions {
         test_name: &test.name,
         fixture: &test.fixture,
         plugin,
-        base_cache_dir: &scenario.cache_dir,
+        base_cache_dir: &trace.cache_dir,
         overlay_cache_dir: None,
         live_policy: cached_http::LivePolicy::CacheOnly,
         accessed_keys: &accessed_keys,
@@ -187,29 +187,28 @@ async fn replay_scenario(
     })
     .await;
 
-    ScenarioExecution {
-        scenario_id: scenario.scenario_id.clone(),
+    TraceExecution {
+        trace_id: trace.trace_id.clone(),
         outcome,
     }
 }
 
-async fn discover_seeded_scenario(
+async fn discover_seeded_trace(
     test: &LoadedTest,
     plugin: &PluginUnderTest,
     cache_dir: &Path,
-    scenario: &cached_http::StoredScenario,
+    trace: &cached_http::StoredTrace,
     max_release_requests: Option<usize>,
-) -> ScenarioExecution {
+) -> TraceExecution {
     let accessed_keys = cached_http::new_accessed_keys();
-    let staging_scenario_id = format!("_discover-{}", scenario.scenario_id);
-    let staging_cache_dir =
-        cached_http::scenario_cache_dir(cache_dir, &test.name, &staging_scenario_id);
+    let staging_trace_id = format!("_discover-{}", trace.trace_id);
+    let staging_cache_dir = cached_http::trace_cache_dir(cache_dir, &test.name, &staging_trace_id);
     let _ = std::fs::remove_dir_all(&staging_cache_dir);
     let outcome = scenario::run(scenario::RunOptions {
         test_name: &test.name,
         fixture: &test.fixture,
         plugin,
-        base_cache_dir: &scenario.cache_dir,
+        base_cache_dir: &trace.cache_dir,
         overlay_cache_dir: Some(&staging_cache_dir),
         live_policy: cached_http::LivePolicy::AllowLive,
         accessed_keys: &accessed_keys,
@@ -217,11 +216,11 @@ async fn discover_seeded_scenario(
     })
     .await
     .and_then(|result| {
-        cached_http::persist_scenario(
+        cached_http::persist_trace(
             cache_dir,
             &test.name,
-            &result.scenario_id,
-            &scenario.cache_dir,
+            &result.trace_id,
+            &trace.cache_dir,
             &staging_cache_dir,
             &result.accessed_cache_keys,
         )?;
@@ -229,25 +228,24 @@ async fn discover_seeded_scenario(
     });
     let _ = std::fs::remove_dir_all(&staging_cache_dir);
 
-    ScenarioExecution {
-        scenario_id: outcome
+    TraceExecution {
+        trace_id: outcome
             .as_ref()
-            .map(|result| result.scenario_id.clone())
-            .unwrap_or_else(|_| scenario.scenario_id.clone()),
+            .map(|result| result.trace_id.clone())
+            .unwrap_or_else(|_| trace.trace_id.clone()),
         outcome,
     }
 }
 
-async fn discover_scenario(
+async fn discover_trace(
     test: &LoadedTest,
     plugin: &PluginUnderTest,
     cache_dir: &Path,
     max_release_requests: Option<usize>,
-) -> ScenarioExecution {
+) -> TraceExecution {
     let accessed_keys = cached_http::new_accessed_keys();
-    let staging_scenario_id = "_discover";
-    let staging_cache_dir =
-        cached_http::scenario_cache_dir(cache_dir, &test.name, staging_scenario_id);
+    let staging_trace_id = "_discover";
+    let staging_cache_dir = cached_http::trace_cache_dir(cache_dir, &test.name, staging_trace_id);
     let _ = std::fs::remove_dir_all(&staging_cache_dir);
     let outcome = scenario::run(scenario::RunOptions {
         test_name: &test.name,
@@ -261,10 +259,10 @@ async fn discover_scenario(
     })
     .await
     .and_then(|result| {
-        cached_http::persist_scenario(
+        cached_http::persist_trace(
             cache_dir,
             &test.name,
-            &result.scenario_id,
+            &result.trace_id,
             &staging_cache_dir,
             &staging_cache_dir,
             &result.accessed_cache_keys,
@@ -273,11 +271,11 @@ async fn discover_scenario(
     });
     let _ = std::fs::remove_dir_all(&staging_cache_dir);
 
-    ScenarioExecution {
-        scenario_id: outcome
+    TraceExecution {
+        trace_id: outcome
             .as_ref()
-            .map(|result| result.scenario_id.clone())
-            .unwrap_or_else(|_| staging_scenario_id.to_string()),
+            .map(|result| result.trace_id.clone())
+            .unwrap_or_else(|_| staging_trace_id.to_string()),
         outcome,
     }
 }
@@ -288,15 +286,15 @@ async fn run_fixture<'a>(
     cache_dir: &Path,
     discover: bool,
     max_release_requests: Option<usize>,
-    max_scenarios: Option<usize>,
+    max_traces: Option<usize>,
 ) -> anyhow::Result<FixtureExecution<'a>> {
-    let scenarios = cached_http::load_fixture_scenarios(cache_dir, &test.name)?;
-    let (scenario_runs, discovered_scenario_ids, discovery_complete) = if scenarios.is_empty() {
+    let traces = cached_http::load_fixture_traces(cache_dir, &test.name)?;
+    let (trace_runs, discovered_trace_ids, discovery_complete) = if traces.is_empty() {
         if discover {
-            let run = discover_scenario(test, plugin, cache_dir, max_release_requests).await;
+            let run = discover_trace(test, plugin, cache_dir, max_release_requests).await;
             let mut discovered_ids = HashSet::new();
             let discovery_complete = if let Ok(result) = &run.outcome {
-                discovered_ids.insert(result.scenario_id.clone());
+                discovered_ids.insert(result.trace_id.clone());
                 true
             } else {
                 false
@@ -304,58 +302,53 @@ async fn run_fixture<'a>(
             (vec![run], Some(discovered_ids), discovery_complete)
         } else {
             (
-                vec![ScenarioExecution {
-                    scenario_id: "missing".to_string(),
-                    outcome: Err(anyhow::anyhow!("no stored scenarios for fixture")),
+                vec![TraceExecution {
+                    trace_id: "missing".to_string(),
+                    outcome: Err(anyhow::anyhow!("no stored traces for fixture")),
                 }],
                 None,
                 false,
             )
         }
     } else {
-        let mut runs = Vec::with_capacity(scenarios.len());
+        let mut runs = Vec::with_capacity(traces.len());
         let mut discovered_ids = HashSet::new();
         let mut discovery_complete = true;
-        let mut scenarios_discovered = 0usize;
-        for scenario in &scenarios {
+        let mut traces_discovered = 0usize;
+        for trace in &traces {
             let run = if discover {
-                let run = discover_seeded_scenario(
-                    test,
-                    plugin,
-                    cache_dir,
-                    scenario,
-                    max_release_requests,
-                )
-                .await;
+                let run =
+                    discover_seeded_trace(test, plugin, cache_dir, trace, max_release_requests)
+                        .await;
                 if run.outcome.is_ok() {
-                    scenarios_discovered += 1;
-                    if let Some(max) = max_scenarios
-                        && scenarios_discovered >= max
+                    traces_discovered += 1;
+                    if let Some(max) = max_traces
+                        && traces_discovered >= max
                     {
                         if let Ok(result) = &run.outcome {
-                            discovered_ids.insert(result.scenario_id.clone());
+                            discovered_ids.insert(result.trace_id.clone());
                         }
                         runs.push(run);
                         return Ok(FixtureExecution {
                             test,
-                            scenario_runs: vec![ScenarioExecution {
-                                scenario_id: "max-scenarios".to_string(),
+                            trace_runs: vec![TraceExecution {
+                                trace_id: "max-traces".to_string(),
                                 outcome: Err(anyhow::anyhow!(
-                                    "hit --max-scenarios limit ({max} scenarios discovered)"
+                                    "hit --max-traces limit ({max} traces discovered)"
                                 )),
                             }],
-                            discovered_scenario_ids: Some(discovered_ids),
+                            discovered_trace_ids: Some(discovered_ids),
                             discovery_complete: false,
                         });
                     }
                 }
                 run
             } else {
-                replay_scenario(test, plugin, scenario, max_release_requests).await
+                replay_trace(test, plugin, trace, max_release_requests).await
             };
             if discover {
                 if let Ok(result) = &run.outcome {
-                    discovered_ids.insert(result.scenario_id.clone());
+                    discovered_ids.insert(result.trace_id.clone());
                 } else {
                     discovery_complete = false;
                 }
@@ -371,8 +364,8 @@ async fn run_fixture<'a>(
 
     Ok(FixtureExecution {
         test,
-        scenario_runs,
-        discovered_scenario_ids,
+        trace_runs,
+        discovered_trace_ids,
         discovery_complete,
     })
 }
@@ -437,7 +430,7 @@ async fn main() -> anyhow::Result<()> {
     let cache_dir = test_base_dir.join("cache");
     let mut passed = 0usize;
     let mut failed = 0usize;
-    let mut pruned_scenarios = 0usize;
+    let mut pruned_traces = 0usize;
     let mut pruned_responses = 0usize;
     let mut results = Vec::new();
     let mut executions = Vec::with_capacity(loaded_tests.len());
@@ -448,18 +441,18 @@ async fn main() -> anyhow::Result<()> {
             &cache_dir,
             args.discover,
             args.max_release_requests,
-            args.max_scenarios,
+            args.max_traces,
         )
         .await?;
         if args.discover
             && args.prune
             && execution.discovery_complete
-            && let Some(discovered_scenario_ids) = execution.discovered_scenario_ids.as_ref()
+            && let Some(discovered_trace_ids) = execution.discovered_trace_ids.as_ref()
         {
-            pruned_scenarios += cached_http::prune_fixture_scenarios(
+            pruned_traces += cached_http::prune_fixture_traces(
                 &cache_dir,
                 &execution.test.name,
-                discovered_scenario_ids,
+                discovered_trace_ids,
             )?;
         }
         executions.push(execution);
@@ -468,7 +461,7 @@ async fn main() -> anyhow::Result<()> {
     if args.prune && args.test_dir.is_dir() && args.filter.is_none() {
         let active_test_names: HashSet<String> =
             loaded_tests.iter().map(|test| test.name.clone()).collect();
-        pruned_scenarios += cached_http::prune_stale_scenarios(&cache_dir, &active_test_names)?;
+        pruned_traces += cached_http::prune_stale_traces(&cache_dir, &active_test_names)?;
     }
     if args.prune {
         pruned_responses += cached_http::prune_unreferenced_responses(&cache_dir)?;
@@ -478,8 +471,8 @@ async fn main() -> anyhow::Result<()> {
         record_fixture_result(execution, &mut passed, &mut failed, &mut results);
     }
 
-    if args.prune && pruned_scenarios > 0 {
-        println!("Pruned {pruned_scenarios} stale scenario entries");
+    if args.prune && pruned_traces > 0 {
+        println!("Pruned {pruned_traces} stale trace entries");
     }
     if args.prune && pruned_responses > 0 {
         println!("Pruned {pruned_responses} unreferenced response entries");
@@ -520,36 +513,33 @@ fn record_fixture_result<'a>(
     failed: &mut usize,
     results: &mut Vec<(&'a PathBuf, &'a Fixture, scenario::RunResult)>,
 ) {
-    let multiple_scenarios = execution.scenario_runs.len() > 1;
+    let multiple_traces = execution.trace_runs.len() > 1;
     let mut fixture_failed = false;
     let mut detail_lines = Vec::new();
     let mut recordable_result = None;
 
-    for scenario_run in execution.scenario_runs {
-        match scenario_run.outcome {
+    for trace_run in execution.trace_runs {
+        match trace_run.outcome {
             Ok(result) => {
                 if result.passed() {
-                    if !multiple_scenarios && recordable_result.is_none() {
+                    if !multiple_traces && recordable_result.is_none() {
                         recordable_result = Some(result);
                     }
                     continue;
                 }
 
                 fixture_failed = true;
-                if multiple_scenarios {
-                    detail_lines.push(format!(
-                        "  scenario {}",
-                        short_scenario_id(&scenario_run.scenario_id)
-                    ));
+                if multiple_traces {
+                    detail_lines.push(format!("  trace {}", short_trace_id(&trace_run.trace_id)));
                 }
                 detail_lines.extend(result.failures);
             }
             Err(err) => {
                 fixture_failed = true;
-                if multiple_scenarios {
+                if multiple_traces {
                     detail_lines.push(format!(
-                        "  scenario {} error: {err}",
-                        short_scenario_id(&scenario_run.scenario_id)
+                        "  trace {} error: {err}",
+                        short_trace_id(&trace_run.trace_id)
                     ));
                 } else {
                     detail_lines.push(format!("  {err}"));
@@ -573,8 +563,8 @@ fn record_fixture_result<'a>(
     }
 }
 
-fn short_scenario_id(scenario_id: &str) -> &str {
-    scenario_id.get(..8).unwrap_or(scenario_id)
+fn short_trace_id(trace_id: &str) -> &str {
+    trace_id.get(..8).unwrap_or(trace_id)
 }
 
 /// Keep accepted ID alternatives when they include the recorded value.

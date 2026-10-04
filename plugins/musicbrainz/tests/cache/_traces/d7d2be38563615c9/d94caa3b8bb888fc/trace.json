@@ -1,0 +1,24 @@
+{
+  "test_name": "青のすみか_キタニタツヤ",
+  "trace_id": "d94caa3b8bb888fc",
+  "responses": [
+    {
+      "cache_key": "0b00eb48eec7adbf",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=89069d92-e495-462c-b189-3431551868ed&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "e61b737c47f76fc0"
+    },
+    {
+      "cache_key": "166284d47994d683",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E9%9D%92%E3%81%AE%E3%81%99%E3%81%BF%E3%81%8B&limit=100",
+      "status_code": 200,
+      "body_hash": "42b8a32a8b8706c1"
+    },
+    {
+      "cache_key": "d5c10760f4493df0",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%82%AD%E3%82%BF%E3%83%8B%E3%82%BF%E3%83%84%E3%83%A4",
+      "status_code": 200,
+      "body_hash": "a99f3b4538a68502"
+    }
+  ]
+}

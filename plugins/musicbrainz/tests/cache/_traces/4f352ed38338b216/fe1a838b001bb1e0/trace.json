@@ -1,0 +1,30 @@
+{
+  "test_name": "houkai_amplifier_asian_kung_fu_generation",
+  "trace_id": "fe1a838b001bb1e0",
+  "responses": [
+    {
+      "cache_key": "274949ff5814ddf5",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Asian%20Kung-Fu%20Generation",
+      "status_code": 200,
+      "body_hash": "1549b4e1bbd44a45"
+    },
+    {
+      "cache_key": "3180c3465f4a30f4",
+      "url": "https://musicbrainz.org/ws/2/artist/14e410f5-97f2-48ba-b1f7-a3a44cbea05c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "91148f5164fd51ce"
+    },
+    {
+      "cache_key": "f9bc1767e8fba73e",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=5dd266a0-9d2e-3e6b-bbd4-55414f7668df&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "0f7736e8ab12ea26"
+    },
+    {
+      "cache_key": "fa76dbca05d75331",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AHoukai%20Amplifier&limit=100",
+      "status_code": 200,
+      "body_hash": "552d8d00b29c91cc"
+    }
+  ]
+}

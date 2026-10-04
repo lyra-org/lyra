@@ -1,0 +1,30 @@
+{
+  "test_name": "story_has_ended_cordelia",
+  "trace_id": "eb0099d09a54b89d",
+  "responses": [
+    {
+      "cache_key": "0504d2cb5b7b51bc",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=99715104-183b-4244-884f-384c602e4b5b&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "dbd3e6fab1ca0b98"
+    },
+    {
+      "cache_key": "2d9c8a018e0d4177",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AStory%20has%20ended&limit=100",
+      "status_code": 200,
+      "body_hash": "e0e585c9a1b2598f"
+    },
+    {
+      "cache_key": "6bab336e3ca0e54b",
+      "url": "https://musicbrainz.org/ws/2/artist?query=cordelia",
+      "status_code": 200,
+      "body_hash": "5eeb6f5ccdec7a70"
+    },
+    {
+      "cache_key": "9db5d6b7a95e3801",
+      "url": "https://musicbrainz.org/ws/2/artist/16e6fc5d-89c4-49cf-ae18-53fd1906ec44?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "acdb6cf5c8e0a94e"
+    }
+  ]
+}

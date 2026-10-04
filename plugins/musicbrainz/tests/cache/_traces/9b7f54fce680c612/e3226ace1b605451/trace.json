@@ -1,0 +1,24 @@
+{
+  "test_name": "deal_with_the_devil_tia",
+  "trace_id": "e3226ace1b605451",
+  "responses": [
+    {
+      "cache_key": "0e6a603a86872f37",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Tia",
+      "status_code": 200,
+      "body_hash": "d564fef6f09f46c4"
+    },
+    {
+      "cache_key": "44480296f663864e",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ADeal%20with%20the%20devil&limit=100",
+      "status_code": 200,
+      "body_hash": "646a16505206c270"
+    },
+    {
+      "cache_key": "67c241de2eaf003e",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=e900ef1a-5c84-47c0-a414-0d6f0977ba01&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "8bb2a9adb3d904ca"
+    }
+  ]
+}

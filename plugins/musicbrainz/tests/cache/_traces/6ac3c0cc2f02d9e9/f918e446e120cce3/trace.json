@@ -1,0 +1,24 @@
+{
+  "test_name": "attack_on_titan_進撃の巨人_original_soundtrack_hiroyuki_sawano_澤野弘之",
+  "trace_id": "f918e446e120cce3",
+  "responses": [
+    {
+      "cache_key": "bdade2d8d08f9bde",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AAttack%20on%20Titan%20%5C(%E9%80%B2%E6%92%83%E3%81%AE%E5%B7%A8%E4%BA%BA%5C)%20Original%20Soundtrack&limit=100",
+      "status_code": 200,
+      "body_hash": "68dd21c6a4ced8d6"
+    },
+    {
+      "cache_key": "cf50557f1c81a4b6",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=a75812d1-c4d3-4583-bb77-7cdbd82a8ab6&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "7b7d3c07411a1748"
+    },
+    {
+      "cache_key": "f5571a8bba067a4f",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Hiroyuki%20Sawano%20(%E6%BE%A4%E9%87%8E%E5%BC%98%E4%B9%8B)",
+      "status_code": 200,
+      "body_hash": "e2d69282e4341dba"
+    }
+  ]
+}

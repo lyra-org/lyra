@@ -1,0 +1,24 @@
+{
+  "test_name": "test_me_ちゃんみな",
+  "trace_id": "f4c42cf712d3ca9c",
+  "responses": [
+    {
+      "cache_key": "6137ea22d92a7ae8",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=010de730-6aea-4ed0-afcd-15e21406bfc8&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "8393b68bd5e4d95b"
+    },
+    {
+      "cache_key": "749a3c83d3466587",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%A1%E3%82%83%E3%82%93%E3%81%BF%E3%81%AA",
+      "status_code": 200,
+      "body_hash": "ef42da6f782b1ac9"
+    },
+    {
+      "cache_key": "7b66a06c43d92872",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A96ec7174-5836-4ff8-8d6a-11d90c7a5e62%20AND%20(release%3ATEST%20ME%20OR%20recording%3ATEST%20ME)&limit=100",
+      "status_code": 200,
+      "body_hash": "3e14d734f1913280"
+    }
+  ]
+}

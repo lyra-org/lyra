@@ -1,0 +1,30 @@
+{
+  "test_name": "introduction_mrs_green_apple",
+  "trace_id": "5807a3b51eb5d8cf",
+  "responses": [
+    {
+      "cache_key": "02bd31ced4e76732",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AIntroduction&limit=100",
+      "status_code": 200,
+      "body_hash": "ca828d645d9a67f7"
+    },
+    {
+      "cache_key": "166dcecc678565e7",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=bc48f928-f359-4a14-95f5-0ab7ff7a6039&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+work-level-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "d0f4900002ce2b15"
+    },
+    {
+      "cache_key": "27dddfcc5a781497",
+      "url": "https://musicbrainz.org/ws/2/artist/9ce674b7-5180-41f7-9ac2-95dc0d8a0ed2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c34a4d333adf2674"
+    },
+    {
+      "cache_key": "91beeae230e60cc9",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Mrs.%20GREEN%20APPLE",
+      "status_code": 200,
+      "body_hash": "f857954e86ebfaf6"
+    }
+  ]
+}
