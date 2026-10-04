@@ -66,15 +66,10 @@ pub(crate) fn find_by_name(db: &impl DbAccess, name: &str) -> anyhow::Result<Opt
 
 pub(crate) fn find_by_alias(db: &impl DbAccess, alias: &str) -> anyhow::Result<Option<DbId>> {
     let scan = normalize(alias);
-    let Ok(index_result) = db.exec(
-        QueryBuilder::search()
-            .index("scan_name")
-            .value(&scan)
-            .query(),
-    ) else {
+    let Ok(alias_db_ids) = super::indexes::node_ids(db, "scan_name", &scan) else {
         return Ok(None);
     };
-    for alias_db_id in index_result.ids().into_iter().filter(|id| id.0 > 0) {
+    for alias_db_id in alias_db_ids {
         let owners: Vec<Genre> = db
             .exec(
                 QueryBuilder::select()

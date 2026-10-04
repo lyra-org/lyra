@@ -381,6 +381,32 @@ pub(crate) fn fetch_typed_by_id<T: DbType<ValueType = T>>(
     Ok(Some(T::from_db_element(&element)?))
 }
 
+/// Nodes of the expected `DbElement` discriminator type whose `index` key holds `value`, up to
+/// `limit` (0 for all).
+fn select_typed_by_index(
+    db: &impl DbAccess,
+    index: &str,
+    value: &str,
+    discriminator: &str,
+    limit: u64,
+) -> anyhow::Result<Vec<DbElement>> {
+    Ok(db
+        .exec(
+            QueryBuilder::select()
+                .search()
+                .index(index)
+                .value(value)
+                .limit(limit)
+                .where_()
+                .node()
+                .and()
+                .key("db_element_id")
+                .value(discriminator)
+                .query(),
+        )?
+        .elements)
+}
+
 /// Fetch the first node of the expected `DbElement` discriminator type whose `index` key holds
 /// `value`, or `None` when no such node exists.
 pub(crate) fn fetch_typed_by_index<T: DbType<ValueType = T>>(
@@ -389,13 +415,25 @@ pub(crate) fn fetch_typed_by_index<T: DbType<ValueType = T>>(
     value: &str,
     discriminator: &str,
 ) -> anyhow::Result<Option<T>> {
-    let result = db.exec(QueryBuilder::search().index(index).value(value).query())?;
-    for id in result.ids().into_iter().filter(|id| id.0 > 0) {
-        if let Some(found) = fetch_typed_by_id(db, id, discriminator)? {
-            return Ok(Some(found));
-        }
-    }
-    Ok(None)
+    select_typed_by_index(db, index, value, discriminator, 1)?
+        .first()
+        .map(T::from_db_element)
+        .transpose()
+        .map_err(Into::into)
+}
+
+/// Fetch every node of the expected `DbElement` discriminator type whose `index` key holds
+/// `value`.
+pub(crate) fn fetch_all_typed_by_index<T: DbType<ValueType = T>>(
+    db: &impl DbAccess,
+    index: &str,
+    value: &str,
+    discriminator: &str,
+) -> anyhow::Result<Vec<T>> {
+    select_typed_by_index(db, index, value, discriminator, 0)?
+        .iter()
+        .map(|element| T::from_db_element(element).map_err(Into::into))
+        .collect()
 }
 
 /// Bulk-fetch nodes by ID, filter to a single `DbElement` discriminator type,
@@ -468,5 +506,61 @@ mod tests {
             error.downcast_ref::<agdb::DbError>().unwrap().ty,
             agdb::DbErrorType::TypeError
         );
+    }
+
+    #[derive(agdb::DbElement)]
+    struct IndexedNode {
+        db_id: Option<DbId>,
+        lookup_key: String,
+    }
+
+    #[derive(agdb::DbElement)]
+    struct OtherNode {
+        lookup_key: String,
+    }
+
+    #[test]
+    fn typed_index_lookup_skips_edges_and_other_types() -> anyhow::Result<()> {
+        let mut db = super::super::test_db::new_test_db()?;
+        db.exec_mut(QueryBuilder::insert().index("lookup_key").query())?;
+        let other = db
+            .exec_mut(
+                QueryBuilder::insert()
+                    .element(&OtherNode {
+                        lookup_key: "shared".to_string(),
+                    })
+                    .query(),
+            )?
+            .ids()[0];
+        let wanted = db
+            .exec_mut(
+                QueryBuilder::insert()
+                    .element(&IndexedNode {
+                        db_id: None,
+                        lookup_key: "shared".to_string(),
+                    })
+                    .query(),
+            )?
+            .ids()[0];
+        db.exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from(other)
+                .to(wanted)
+                .values_uniform([("lookup_key", "shared").into()])
+                .query(),
+        )?;
+
+        let found: Option<IndexedNode> =
+            fetch_typed_by_index(&db, "lookup_key", "shared", "IndexedNode")?;
+        assert_eq!(found.and_then(|node| node.db_id), Some(wanted));
+
+        let all: Vec<IndexedNode> =
+            fetch_all_typed_by_index(&db, "lookup_key", "shared", "IndexedNode")?;
+        assert_eq!(
+            all.into_iter().map(|node| node.db_id).collect::<Vec<_>>(),
+            vec![Some(wanted)]
+        );
+        Ok(())
     }
 }

@@ -294,13 +294,9 @@ pub(crate) fn find_tag_id_by_owner_and_name(
 }
 
 fn find_tag_id_by_owner_name_key(db: &impl DbAccess, key: &str) -> anyhow::Result<Option<DbId>> {
-    let result = db.exec(
-        QueryBuilder::search()
-            .index(TAG_OWNER_NAME_KEY)
-            .value(key)
-            .query(),
-    )?;
-    Ok(result.ids().into_iter().find(|id| id.0 > 0))
+    Ok(super::indexes::node_ids(db, TAG_OWNER_NAME_KEY, key)?
+        .into_iter()
+        .next())
 }
 
 pub(crate) fn owner_tag_ids(db: &impl DbAccess, owner_db_id: DbId) -> anyhow::Result<Vec<DbId>> {

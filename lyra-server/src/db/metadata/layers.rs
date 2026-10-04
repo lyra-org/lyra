@@ -50,16 +50,9 @@ pub(crate) fn entity_ids_for_source(
     db: &impl DbAccess,
     source_id: &str,
 ) -> anyhow::Result<Vec<DbId>> {
-    let layer_ids = db
-        .exec(
-            QueryBuilder::search()
-                .index("source_id")
-                .value(source_id)
-                .query(),
-        )?
-        .ids();
+    let layer_ids = super::super::indexes::node_ids(db, "source_id", source_id)?;
     let mut entity_ids = Vec::with_capacity(layer_ids.len());
-    for layer_id in layer_ids.into_iter().filter(|id| id.0 > 0) {
+    for layer_id in layer_ids {
         let result = db.exec(
             QueryBuilder::search()
                 .to(layer_id)

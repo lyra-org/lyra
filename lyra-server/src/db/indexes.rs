@@ -6,6 +6,7 @@
 use std::collections::HashSet;
 
 use agdb::{
+    DbId,
     QueryBuilder,
     QueryResult,
 };
@@ -19,6 +20,20 @@ fn query_result_has_index(result: &QueryResult, name: &str) -> bool {
             .iter()
             .any(|kv| matches!(&kv.key, agdb::DbValue::String(key) if key == name))
     })
+}
+
+/// Nodes whose indexed `key` holds `value`; the index also covers edges.
+pub(crate) fn node_ids(db: &impl DbAccess, key: &str, value: &str) -> anyhow::Result<Vec<DbId>> {
+    Ok(db
+        .exec(
+            QueryBuilder::search()
+                .index(key)
+                .value(value)
+                .where_()
+                .node()
+                .query(),
+        )?
+        .ids())
 }
 
 pub(crate) fn has_index(db: &impl DbAccess, name: &str) -> anyhow::Result<bool> {

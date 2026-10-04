@@ -365,13 +365,8 @@ pub(crate) fn find_by_scan_name(
     db: &impl super::DbAccess,
     name: &str,
 ) -> anyhow::Result<Option<DbId>> {
-    if let Ok(result) = db.exec(
-        QueryBuilder::search()
-            .index("scan_name")
-            .value(name)
-            .query(),
-    ) {
-        for id in result.ids().into_iter().filter(|id| id.0 > 0) {
+    if let Ok(ids) = super::indexes::node_ids(db, "scan_name", name) {
+        for id in ids {
             if super::lookup::collection_contains_id(db, "artists", id)? {
                 return Ok(Some(id));
             }

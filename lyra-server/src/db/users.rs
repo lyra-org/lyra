@@ -129,15 +129,11 @@ pub(crate) fn find_by_session_token_hash(
     db: &impl super::DbAccess,
     token_hash: &str,
 ) -> anyhow::Result<Option<(User, Session, DbId)>> {
-    let index_result = db.exec(
-        QueryBuilder::search()
-            .index("token_hash")
-            .value(token_hash)
-            .query(),
-    )?;
+    let sessions: Vec<Session> =
+        super::graph::fetch_all_typed_by_index(db, "token_hash", token_hash, "Session")?;
 
-    for session_db_id in index_result.ids().into_iter().filter(|id| id.0 > 0) {
-        let Some(session) = find_session_by_id(db, session_db_id)? else {
+    for session in sessions {
+        let Some(session_db_id) = session.db_id.clone().map(DbId::from) else {
             continue;
         };
         let mut users: Vec<User> = db

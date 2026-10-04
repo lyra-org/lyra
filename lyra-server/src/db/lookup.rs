@@ -47,8 +47,7 @@ pub(crate) fn collection_contains_id(
 }
 
 pub(crate) fn find_node_id_by_id(db: &impl DbAccess, id: &str) -> anyhow::Result<Option<DbId>> {
-    let result = db.exec(QueryBuilder::search().index("id").value(id).query())?;
-    Ok(result.ids().into_iter().find(|id| id.0 > 0))
+    Ok(super::indexes::node_ids(db, "id", id)?.into_iter().next())
 }
 
 pub(crate) fn find_id_by_db_id(db: &impl DbAccess, db_id: DbId) -> anyhow::Result<Option<String>> {
@@ -156,14 +155,8 @@ pub(crate) fn find_id_by_indexed_string_field(
     index_name: &str,
     value: &str,
 ) -> anyhow::Result<Option<DbId>> {
-    let indexed = db.exec(
-        QueryBuilder::search()
-            .index(index_name)
-            .value(value)
-            .query(),
-    );
-    if let Ok(result) = indexed {
-        for id in result.ids().into_iter().filter(|id| id.0 > 0) {
+    if let Ok(ids) = super::indexes::node_ids(db, index_name, value) {
+        for id in ids {
             if collection_contains_id(db, collection_alias, id)? {
                 return Ok(Some(id));
             }

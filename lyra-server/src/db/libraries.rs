@@ -165,18 +165,7 @@ fn find_indexed_library(
     index_name: &str,
     value: &str,
 ) -> anyhow::Result<Option<Library>> {
-    let candidate_ids: Vec<DbId> = db
-        .exec(
-            QueryBuilder::search()
-                .index(index_name)
-                .value(value)
-                .query(),
-        )?
-        .ids()
-        .into_iter()
-        .filter(|id| id.0 > 0)
-        .collect();
-    for id in candidate_ids {
+    for id in super::indexes::node_ids(db, index_name, value)? {
         if !super::lookup::collection_contains_id(db, "libraries", id)? {
             continue;
         }
