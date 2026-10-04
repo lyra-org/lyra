@@ -28,7 +28,6 @@ struct Args {
     generate: Option<PathBuf>,
     output_dir: Option<PathBuf>,
     include_all: bool,
-    luau: bool,
     max_release_requests: Option<usize>,
     max_traces: Option<usize>,
 }
@@ -42,7 +41,6 @@ fn parse_args() -> anyhow::Result<Args> {
     args.record = extract_flag(&mut raw_args, "--record");
     args.discover = extract_flag(&mut raw_args, "--discover");
     args.include_all = extract_flag(&mut raw_args, "--include-all");
-    args.luau = extract_flag(&mut raw_args, "--luau");
 
     args.filter = extract_string_flag(&mut raw_args, "--filter")?;
     args.generate = extract_path_flag(&mut raw_args, "--generate")?;
@@ -61,7 +59,7 @@ fn parse_args() -> anyhow::Result<Args> {
     // Last positional arg is the test directory
     if raw_args.is_empty() {
         anyhow::bail!(
-            "Usage: lyra-harmony-test [--filter PATTERN] [--prune] [--record] [--discover] [--max-release-requests N] [--max-traces N] <test-dir>\n       lyra-harmony-test --luau [--filter PATTERN] <test-dir>\n       lyra-harmony-test --generate <capture.json> --output-dir <dir>"
+            "Usage: lyra-harmony-test [--filter PATTERN] [--prune] [--record] [--discover] [--max-release-requests N] [--max-traces N] <test-dir|test-file>\n       lyra-harmony-test --generate <capture.json> --output-dir <dir>"
         );
     }
     args.test_dir = PathBuf::from(raw_args.remove(0));
@@ -124,7 +122,7 @@ fn extract_positive_usize_flag(
     Ok(Some(parsed))
 }
 
-fn discover_tests(dir: &Path, filter: Option<&str>) -> anyhow::Result<Vec<(String, PathBuf)>> {
+fn discover_scenarios(dir: &Path, filter: Option<&str>) -> anyhow::Result<Vec<(String, PathBuf)>> {
     let mut tests = Vec::new();
     let entries = std::fs::read_dir(dir)?;
 
@@ -381,36 +379,72 @@ async fn main() -> anyhow::Result<()> {
         return generate::run_generate(capture_path, output_dir, args.include_all);
     }
 
-    if args.luau {
-        let summary = luau::run(&args.test_dir, args.filter.as_deref()).await?;
-        if summary.failed > 0 {
-            std::process::exit(1);
+    let test_dir = args
+        .test_dir
+        .canonicalize()
+        .map_err(|error| anyhow::anyhow!("canonicalize {}: {error}", args.test_dir.display()))?;
+    let (base_dir, scenarios, luau_tests) = if test_dir.is_file() {
+        let base_dir = test_dir.parent().unwrap_or(&test_dir).to_path_buf();
+        match test_dir.extension().and_then(|ext| ext.to_str()) {
+            Some("toml") => {
+                let name = test_dir
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                (base_dir, vec![(name, test_dir.clone())], Vec::new())
+            }
+            Some("luau") => (base_dir, Vec::new(), vec![test_dir.clone()]),
+            _ => anyhow::bail!(
+                "{} is neither a scenario nor a Luau test",
+                test_dir.display()
+            ),
         }
-        return Ok(());
-    }
-
-    let (test_base_dir, tests) = if args.test_dir.is_file() {
-        let name = args
-            .test_dir
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        let dir = args
-            .test_dir
-            .parent()
-            .unwrap_or(&args.test_dir)
-            .to_path_buf();
-        (dir, vec![(name, args.test_dir.clone())])
     } else {
-        let dir = args.test_dir.clone();
-        (dir.clone(), discover_tests(&dir, args.filter.as_deref())?)
+        let filter = args.filter.as_deref();
+        let scenarios = if luau::within_tree(&test_dir) {
+            Vec::new()
+        } else {
+            discover_scenarios(&test_dir, filter)?
+        };
+        let luau_tests = luau::discover(&test_dir, filter)?;
+        (test_dir, scenarios, luau_tests)
     };
-    if tests.is_empty() {
-        eprintln!("No scenarios found in {}", test_base_dir.display());
+    if scenarios.is_empty() && luau_tests.is_empty() {
+        eprintln!("No tests found in {}", base_dir.display());
         std::process::exit(1);
     }
 
+    let mut passed = 0usize;
+    let mut failed = 0usize;
+    if !scenarios.is_empty() {
+        let (scenarios_passed, scenarios_failed) =
+            run_scenarios(&args, &base_dir, scenarios).await?;
+        passed += scenarios_passed;
+        failed += scenarios_failed;
+    }
+    if !luau_tests.is_empty() {
+        let summary = luau::run(&base_dir, luau_tests).await?;
+        passed += summary.passed;
+        failed += summary.failed;
+    }
+
+    let total = passed + failed;
+    println!("{total} tests: {passed} passed, {failed} failed");
+
+    if failed > 0 {
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+/// Runs the scenario TOMLs in `base_dir`, returning how many passed and failed.
+async fn run_scenarios(
+    args: &Args,
+    base_dir: &Path,
+    tests: Vec<(String, PathBuf)>,
+) -> anyhow::Result<(usize, usize)> {
     let loaded_tests: Vec<LoadedScenario> = tests
         .into_iter()
         .map(|(name, path)| {
@@ -425,8 +459,8 @@ async fn main() -> anyhow::Result<()> {
         })
         .collect::<anyhow::Result<_>>()?;
 
-    let plugin = PluginUnderTest::locate(&test_base_dir)?;
-    let cache_dir = test_base_dir.join("cache");
+    let plugin = PluginUnderTest::locate(base_dir)?;
+    let cache_dir = base_dir.join("cache");
     let mut passed = 0usize;
     let mut failed = 0usize;
     let mut pruned_traces = 0usize;
@@ -496,14 +530,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let total = passed + failed;
-    println!("{total} tests: {passed} passed, {failed} failed");
-
-    if failed > 0 {
-        std::process::exit(1);
-    }
-
-    Ok(())
+    Ok((passed, failed))
 }
 
 fn record_scenario_result<'a>(

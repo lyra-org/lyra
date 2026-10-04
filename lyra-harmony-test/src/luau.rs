@@ -9,23 +9,17 @@ use std::path::{
 };
 
 pub struct Summary {
+    pub passed: usize,
     pub failed: usize,
 }
 
-pub async fn run(root: &Path, filter: Option<&str>) -> anyhow::Result<Summary> {
-    let root = root
-        .canonicalize()
-        .map_err(|error| anyhow::anyhow!("canonicalize {}: {error}", root.display()))?;
-    let plugin = lyra_server::testing::PluginUnderTest::locate(&root)?;
-    let tests = discover(&root, filter)?;
-    if tests.is_empty() {
-        anyhow::bail!("no Luau test files found under {}", root.display());
-    }
-
+/// Runs `tests`, which `discover` found under `root`, as the plugin owning `root`.
+pub async fn run(root: &Path, tests: Vec<PathBuf>) -> anyhow::Result<Summary> {
+    let plugin = lyra_server::testing::PluginUnderTest::locate(root)?;
     let mut passed = 0usize;
     let mut failed = 0usize;
     for test_path in tests {
-        let name = test_name(&root, &test_path);
+        let name = test_name(root, &test_path);
         match lyra_server::testing::run_luau_plugin_test_file(&plugin, &test_path).await {
             Ok(()) => {
                 println!("PASS {name}");
@@ -38,17 +32,32 @@ pub async fn run(root: &Path, filter: Option<&str>) -> anyhow::Result<Summary> {
             }
         }
     }
-
-    println!(
-        "{} Luau tests: {passed} passed, {failed} failed",
-        passed + failed
-    );
-    Ok(Summary { failed })
+    Ok(Summary { passed, failed })
 }
 
-fn discover(root: &Path, filter: Option<&str>) -> anyhow::Result<Vec<PathBuf>> {
+/// Whether `dir` lies within a test directory's `luau/` tree.
+pub fn within_tree(dir: &Path) -> bool {
+    dir.ancestors().any(|ancestor| {
+        ancestor.file_name().is_some_and(|name| name == "luau")
+            && ancestor
+                .parent()
+                .and_then(Path::file_name)
+                .is_some_and(|name| name == "tests")
+    })
+}
+
+/// The `.luau` tests under `dir`'s `luau/` tree, or under `dir` itself when it lies within one,
+/// skipping `_`-prefixed helpers.
+pub fn discover(dir: &Path, filter: Option<&str>) -> anyhow::Result<Vec<PathBuf>> {
     let mut tests = Vec::new();
-    discover_recursive(root, root, filter, &mut tests)?;
+    let root = if within_tree(dir) {
+        dir.to_path_buf()
+    } else {
+        dir.join("luau")
+    };
+    if root.is_dir() {
+        discover_recursive(&root, &root, filter, &mut tests)?;
+    }
     tests.sort();
     Ok(tests)
 }
@@ -64,9 +73,6 @@ fn discover_recursive(
         let path = entry.path();
         let file_name = entry.file_name();
         let file_name = file_name.to_string_lossy();
-        if file_name == "fixtures" {
-            continue;
-        }
         if path.is_dir() {
             discover_recursive(root, &path, filter, tests)?;
             continue;
@@ -100,8 +106,12 @@ mod tests {
 
     #[tokio::test]
     async fn runs_checked_in_luau_tests() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests");
-        let summary = run(&root, None).await.expect("run checked-in Luau tests");
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .canonicalize()
+            .expect("canonicalize checked-in Luau tests");
+        let tests = discover(&root, None).expect("discover checked-in Luau tests");
+        let summary = run(&root, tests).await.expect("run checked-in Luau tests");
 
         assert_eq!(summary.failed, 0);
     }
