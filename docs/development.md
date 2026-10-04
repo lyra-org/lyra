@@ -29,7 +29,7 @@ cargo +nightly fmt
 
 When updating `rust-toolchain.toml`, resolve new lint and test failures in the same change.
 
-See [commit conventions](commits.md) when preparing changes.
+See [testing](testing.md) for plugin scenarios and Luau tests, and [commit conventions](commits.md) when preparing changes.
 
 ## Cargo installation
 
