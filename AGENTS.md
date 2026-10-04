@@ -38,7 +38,8 @@ Run `cargo run -p lyra-docs -- setup` before Luau analysis after changing Rust-d
 
 ## Testing Guidelines
 - Metadata tests rely on audio fixtures in `lyra-server/tests/assets/metadata`.
-- Standalone plugin-facing `.luau` tests belong in `lyra-harmony-test/tests`; keep Rust tests for Rust-side assertions such as registry state, executor internals, dispatch handles, or DB fixture setup.
+- Follow `docs/testing.md` for test vocabulary, layout, and Luau fixtures.
+- Luau tests of server-provided plugin modules belong in `lyra-harmony-test/tests/luau`; a plugin's own Luau tests belong in `plugins/<plugin>/tests/luau`. Keep Rust tests for Rust-side assertions such as registry state, executor internals, or dispatch handles, and keep plugin behavior out of Rust tests.
 - Keep `lyra-harmony-test`, `lyra-metadata`, and `lyra-server` behaviorally consistent. Changes to metadata parsing, lookup hints, matching, or artist resolution should be mirrored and validated across all three.
 
 ## Commit & Pull Request Guidelines
