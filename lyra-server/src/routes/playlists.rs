@@ -95,6 +95,14 @@ struct UpdatePlaylistRequest {
 #[derive(Deserialize)]
 struct AddPlaylistTracksRequest {
     track_ids: Vec<String>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "0-based index to insert the tracks at, in order. Positions past the end append; omit to append."
+        )
+    )]
+    #[serde(default)]
+    position: Option<u64>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -827,15 +835,20 @@ async fn add_playlist_tracks(
         track_query_ids.push(QueryId::Id(track_db_id));
     }
 
-    let results = playlists::add_tracks(&mut db, QueryId::Id(playlist_db_id), &track_query_ids)
-        .map_err(|err| {
-            let message = err.to_string();
-            if message.starts_with("track not found") {
-                AppError::not_found(message)
-            } else {
-                AppError::from(err)
-            }
-        })?;
+    let results = playlists::add_tracks(
+        &mut db,
+        QueryId::Id(playlist_db_id),
+        &track_query_ids,
+        request.position,
+    )
+    .map_err(|err| {
+        let message = err.to_string();
+        if message.starts_with("track not found") {
+            AppError::not_found(message)
+        } else {
+            AppError::from(err)
+        }
+    })?;
 
     let mut added = Vec::with_capacity(results.len());
     for playlist_track in results {
@@ -982,7 +995,7 @@ fn delete_playlist_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn add_tracks_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Add tracks to playlist")
-        .description("Adds one or more tracks to the end of the playlist. Returns the added items without artists or release details.")
+        .description("Adds one or more tracks to the playlist, in order, at `position` or at the end. Returns the added items without artists or release details.")
 }
 
 #[cfg(feature = "docgen")]
@@ -1291,6 +1304,7 @@ mod tests {
                 Path(request.playlist_id),
                 Json(AddPlaylistTracksRequest {
                     track_ids: vec![request.track_id],
+                    position: None,
                 }),
             )
             .await,
@@ -1475,7 +1489,7 @@ mod tests {
         let empty = seed_playlist(&mut db, user_db_id, "Zebra")?;
         let filled = seed_playlist(&mut db, user_db_id, "Alpha")?;
         let track = insert_track(&mut db, "Track")?;
-        playlists::add_tracks(&mut db, QueryId::Id(filled), &[QueryId::Id(track)])?;
+        playlists::add_tracks(&mut db, QueryId::Id(filled), &[QueryId::Id(track)], None)?;
 
         let sort = parse_playlist_sort_specs(
             Some(vec!["track_count".to_string()]),

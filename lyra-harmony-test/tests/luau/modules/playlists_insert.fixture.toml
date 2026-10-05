@@ -1,0 +1,24 @@
+run_as = "owner"
+
+[[users]]
+key = "owner"
+admin = true
+
+[[tracks]]
+key = "a"
+title = "A"
+
+[[tracks]]
+key = "b"
+title = "B"
+
+[[tracks]]
+key = "c"
+title = "C"
+
+[[playlists]]
+key = "mix"
+owner = "owner"
+name = "Mix"
+public = false
+tracks = ["a", "b"]
