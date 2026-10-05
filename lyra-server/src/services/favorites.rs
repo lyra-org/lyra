@@ -345,55 +345,6 @@ mod tests {
     };
     use nanoid::nanoid;
 
-    fn add(
-        db: &mut DbAny,
-        user_db_id: DbId,
-        public_target_id: &str,
-    ) -> anyhow::Result<MutationOutcome> {
-        let now_ms = now_ms()?;
-        db.transaction_mut(|t| -> anyhow::Result<MutationOutcome> {
-            let Some((target_db_id, kind)) = resolve_targetable(t, user_db_id, public_target_id)?
-            else {
-                return Ok(MutationOutcome::NotTargetable);
-            };
-            db::favorites::add(t, user_db_id, target_db_id, kind, now_ms)?;
-            Ok(MutationOutcome::Applied(kind))
-        })
-    }
-
-    fn has(db: &DbAny, user_db_id: DbId, public_target_id: &str) -> anyhow::Result<bool> {
-        let Some((target_db_id, _kind)) = resolve_targetable(db, user_db_id, public_target_id)?
-        else {
-            return Ok(false);
-        };
-        db::favorites::has(db, user_db_id, target_db_id)
-    }
-
-    fn resolve_targetable(
-        db: &impl db::DbAccess,
-        user_db_id: DbId,
-        public_target_id: &str,
-    ) -> anyhow::Result<Option<(DbId, FavoriteKind)>> {
-        let Some(target_db_id) = db::lookup::find_node_id_by_id(db, public_target_id)? else {
-            return Ok(None);
-        };
-        resolve_targetable_by_db_id(db, user_db_id, target_db_id)
-    }
-
-    fn resolve_targetable_by_db_id(
-        db: &impl db::DbAccess,
-        user_db_id: DbId,
-        target_db_id: DbId,
-    ) -> anyhow::Result<Option<(DbId, FavoriteKind)>> {
-        let Some((target_db_id, kind)) = resolve_whitelisted_by_db_id(db, target_db_id)? else {
-            return Ok(None);
-        };
-        if kind == FavoriteKind::Playlist && !playlist_is_visible(db, user_db_id, target_db_id)? {
-            return Ok(None);
-        }
-        Ok(Some((target_db_id, kind)))
-    }
-
     fn create_user(db: &mut DbAny, username: &str) -> anyhow::Result<DbId> {
         users::create(db, &test_user(username)?)
     }
@@ -453,15 +404,20 @@ mod tests {
         let mut db = new_test_db()?;
         setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
+        let library_db_id = insert_library(&mut db, "Favorites", "/tmp/lyra-favorites-add")?;
+        let library_public_id = db::lookup::find_id_by_db_id(&db, library_db_id)?
+            .expect("library should have a public id");
         let track_id = nanoid!();
-        create_track(&mut db, &track_id)?;
+        let track_db_id = create_track(&mut db, &track_id)?;
+        connect(&mut db, library_db_id, track_db_id)?;
 
-        let outcome = add(&mut db, user, &track_id)?;
+        let principal = principal_for(&db, user, HashSet::from([library_public_id]));
+        let outcome = add_for_principal(&mut db, &principal, &track_id)?;
         assert!(matches!(
             outcome,
             MutationOutcome::Applied(FavoriteKind::Track)
         ));
-        assert!(has(&db, user, &track_id)?);
+        assert!(has_for_principal(&db, &principal, &track_id)?);
 
         Ok(())
     }
@@ -472,7 +428,8 @@ mod tests {
         setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
 
-        let outcome = add(&mut db, user, "unknown-id-string")?;
+        let principal = principal_for(&db, user, HashSet::new());
+        let outcome = add_for_principal(&mut db, &principal, "unknown-id-string")?;
         assert_eq!(outcome, MutationOutcome::NotTargetable);
 
         Ok(())
@@ -492,7 +449,8 @@ mod tests {
         )?;
         let _ = (user, other_user);
 
-        let outcome = add(&mut db, user, &other_user_id)?;
+        let principal = principal_for(&db, user, HashSet::new());
+        let outcome = add_for_principal(&mut db, &principal, &other_user_id)?;
         assert_eq!(outcome, MutationOutcome::NotTargetable);
 
         Ok(())
@@ -508,7 +466,8 @@ mod tests {
             .expect("bob should exist")
             .id;
 
-        let outcome = add(&mut db, caller, &bob_public_id)?;
+        let principal = principal_for(&db, caller, HashSet::new());
+        let outcome = add_for_principal(&mut db, &principal, &bob_public_id)?;
         assert_eq!(
             outcome,
             MutationOutcome::NotTargetable,
@@ -527,7 +486,8 @@ mod tests {
         let pub_id = nanoid!();
         create_playlist(&mut db, owner, &pub_id, /* is_public= */ false)?;
 
-        let outcome = add(&mut db, intruder, &pub_id)?;
+        let principal = principal_for(&db, intruder, HashSet::new());
+        let outcome = add_for_principal(&mut db, &principal, &pub_id)?;
         assert_eq!(
             outcome,
             MutationOutcome::NotTargetable,
@@ -535,7 +495,7 @@ mod tests {
         );
 
         assert!(
-            !has(&db, intruder, &pub_id)?,
+            !has_for_principal(&db, &principal, &pub_id)?,
             "has must return false for a non-visible private playlist",
         );
 
@@ -550,12 +510,13 @@ mod tests {
         let pub_id = nanoid!();
         create_playlist(&mut db, owner, &pub_id, false)?;
 
-        let outcome = add(&mut db, owner, &pub_id)?;
+        let principal = principal_for(&db, owner, HashSet::new());
+        let outcome = add_for_principal(&mut db, &principal, &pub_id)?;
         assert!(matches!(
             outcome,
             MutationOutcome::Applied(FavoriteKind::Playlist)
         ));
-        assert!(has(&db, owner, &pub_id)?);
+        assert!(has_for_principal(&db, &principal, &pub_id)?);
 
         Ok(())
     }
@@ -569,7 +530,8 @@ mod tests {
         let pub_id = nanoid!();
         create_playlist(&mut db, owner, &pub_id, true)?;
 
-        let outcome = add(&mut db, other, &pub_id)?;
+        let principal = principal_for(&db, other, HashSet::new());
+        let outcome = add_for_principal(&mut db, &principal, &pub_id)?;
         assert!(matches!(
             outcome,
             MutationOutcome::Applied(FavoriteKind::Playlist)
@@ -586,8 +548,8 @@ mod tests {
         let pub_id = nanoid!();
         let playlist_db_id = create_playlist(&mut db, owner, &pub_id, true)?;
 
-        add(&mut db, other, &pub_id)?;
         let other_principal = principal_for(&db, other, HashSet::new());
+        add_for_principal(&mut db, &other_principal, &pub_id)?;
         assert_eq!(
             list(&db, &other_principal, FavoriteKind::Playlist)?.len(),
             1,
@@ -725,7 +687,8 @@ mod tests {
         let pub_id = nanoid!();
         let playlist_db_id = create_playlist(&mut db, owner, &pub_id, /* is_public= */ true)?;
 
-        let added = add(&mut db, other, &pub_id)?;
+        let principal = principal_for(&db, other, HashSet::new());
+        let added = add_for_principal(&mut db, &principal, &pub_id)?;
         assert!(matches!(
             added,
             MutationOutcome::Applied(FavoriteKind::Playlist)
@@ -744,7 +707,7 @@ mod tests {
             },
         )?;
 
-        assert!(!has(&db, other, &pub_id)?);
+        assert!(!has_for_principal(&db, &principal, &pub_id)?);
 
         let removed = remove(&mut db, other, &pub_id)?;
         assert!(
@@ -765,7 +728,7 @@ mod tests {
             },
         )?;
         assert!(
-            !has(&db, other, &pub_id)?,
+            !has_for_principal(&db, &principal, &pub_id)?,
             "after DELETE, re-visibility must not resurrect a ghost favorite",
         );
 
