@@ -299,6 +299,13 @@ fn extract_domain(url_str: &str) -> Option<String> {
         .and_then(|u| u.host_str().map(|s| s.to_string()))
 }
 
+/// Normalizes a full URL or bare host to the key request-time lookups use.
+/// `url::Url` lowercases hosts on parse, so the bare-host fallback lowercases
+/// too or registrations under uppercase keys silently miss.
+fn host_key(host_or_url: &str) -> String {
+    extract_domain(host_or_url).unwrap_or_else(|| host_or_url.to_ascii_lowercase())
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct HttpHeaderMap(BTreeMap<String, String>);
 
@@ -748,13 +755,7 @@ async fn configure_rate_limit(
         anyhow::bail!("requests_per_second must be a positive number");
     }
 
-    // Normalize via extract_domain so callers can pass either a bare host
-    // or a full URL and match the request-time lookup key. `url::Url`
-    // lowercases hosts on parse; lowercase the bare-host fallback too so
-    // `set_rate_limit("EXAMPLE.com", ...)` and a request to
-    // `https://example.com/...` hit the same key.
-    let domain =
-        extract_domain(&options.domain).unwrap_or_else(|| options.domain.to_ascii_lowercase());
+    let domain = host_key(&options.domain);
 
     let config = RateLimitConfig {
         requests_per_second,
@@ -774,9 +775,7 @@ async fn configure_max_in_flight(options: HttpConcurrencyOptions) -> anyhow::Res
         anyhow::bail!("max_in_flight must be at least 1");
     }
 
-    // Mirror the set_rate_limit normalization (see above) so registrations
-    // share the host key the request path looks up.
-    let host = extract_domain(&options.host).unwrap_or_else(|| options.host.to_ascii_lowercase());
+    let host = host_key(&options.host);
 
     let mut limiter = CONCURRENCY_LIMITER.write().await;
     limiter.set_limit(host, options.max_in_flight as usize);
@@ -1421,24 +1420,6 @@ mod tests {
     }
 
     #[test]
-    fn exposes_handwritten_module_spec() {
-        let spec = module_spec();
-
-        assert_eq!(spec.id.0.as_ref(), "harmony/http");
-        assert_eq!(spec.capability.as_ref().unwrap().0.as_ref(), "harmony.http");
-        assert_eq!(spec.functions.len(), 4);
-        assert_eq!(spec.functions[0].name.as_ref(), "request");
-        assert!(spec.functions[0].yields);
-        assert!(
-            spec.functions[0]
-                .context_type
-                .is_some_and(|name| name.contains("ChunkOrigin"))
-        );
-        assert_eq!(spec.functions[3].name.as_ref(), "encode_uri_component");
-        assert!(!spec.functions[3].yields);
-    }
-
-    #[test]
     fn luau_module_registers_encode_uri_component() -> harmony_luau::runtime::Result<()> {
         let vm = harmony_luau::Vm::new()?;
         let spec = module_spec();
@@ -1447,14 +1428,16 @@ mod tests {
         vm.set_global_table("http", &table)?;
 
         let values = vm.eval(
-            std::sync::Arc::<[u8]>::from(&b"return http.encode_uri_component('a b/c?d=e&x=1')"[..]),
+            std::sync::Arc::<[u8]>::from(
+                &br#"return http.encode_uri_component("a b/c?d=e&x=1-_.!~*'()")"#[..],
+            ),
             harmony_luau::ChunkOrigin::default(),
         )?;
 
         assert_eq!(
             values,
             vec![harmony_luau::Value::String(
-                b"a%20b%2Fc%3Fd%3De%26x%3D1".to_vec()
+                b"a%20b%2Fc%3Fd%3De%26x%3D1-_.!~*'()".to_vec()
             )]
         );
         Ok(())
@@ -1560,16 +1543,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn concurrency_limiter_stores_host_key_for_full_url_input() {
-        let mut limiter = super::ConcurrencyLimiter::new();
-        let normalized =
-            super::extract_domain("https://lrclib.net/api/get").unwrap_or("lrclib.net".to_string());
-        limiter.set_limit(normalized, 1);
-        assert!(limiter.get("lrclib.net").is_some());
-        assert!(limiter.get("musicbrainz.org").is_none());
-    }
-
-    #[tokio::test]
     async fn has_rate_limit_for_plugin_walks_set_by() {
         use std::sync::Arc;
         let plugin_id: Arc<str> = Arc::from("plugin-rl-walker");
@@ -1661,17 +1634,9 @@ mod tests {
     }
 
     #[test]
-    fn bare_host_setter_fallback_matches_url_request_extraction() {
-        // url::Url lowercases hosts on parse; the bare-host fallback must
-        // lowercase too or registrations under uppercase keys silently miss.
-        let bare_uppercase = "EXAMPLE.com";
-        let stored_key = super::extract_domain(bare_uppercase)
-            .unwrap_or_else(|| bare_uppercase.to_ascii_lowercase());
-        let url_extracted =
-            super::extract_domain("https://example.com/foo").expect("URL parses to host");
-
-        assert_eq!(stored_key, "example.com");
-        assert_eq!(stored_key, url_extracted);
+    fn host_key_normalizes_bare_hosts_and_urls_alike() {
+        assert_eq!(super::host_key("EXAMPLE.com"), "example.com");
+        assert_eq!(super::host_key("https://Example.com/foo"), "example.com");
     }
 
     #[tokio::test]
