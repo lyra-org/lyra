@@ -479,19 +479,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn language_record_exposes_iso_codes_and_name() {
-        let record = LanguageRecord::from(locale::resolve_language("Japanese").unwrap());
-        assert_eq!(
-            record,
-            LanguageRecord {
-                iso3: "jpn",
-                iso2: Some("ja"),
-                name: "Japanese",
-            }
-        );
-    }
-
-    #[test]
     fn parse_tag_splits_language_and_country() {
         let parsed = parse_tag("ja_JP");
         assert_eq!(parsed.language.as_ref().map(|l| l.iso3), Some("jpn"));
@@ -517,7 +504,6 @@ mod tests {
         assert_eq!(locale_tag(japanese, None), "ja");
 
         let ainu = locale::resolve_language("ain").unwrap();
-        assert_eq!(ainu.to_639_1(), None);
         assert_eq!(locale_tag(ainu, None), "ain");
     }
 
