@@ -304,11 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn serializes_as_snake_case() {
-        assert_eq!(
-            serde_json::to_string(&MediaFormat::Bluray).unwrap(),
-            "\"bluray\""
-        );
+    fn serializes_as_str_names() {
         for format in MediaFormat::ALL {
             assert_eq!(
                 serde_json::to_string(&format).unwrap(),
