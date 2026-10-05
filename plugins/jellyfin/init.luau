@@ -1234,7 +1234,13 @@ api.post(P .. "/Playlists/{playlistId}/Items", function(ctx: ApiContext)
 	if playlist_db_id == nil then
 		return responses.not_found("playlist not found")
 	end
-	local added, entry_ids = pcall(playlists.add_tracks, playlist_db_id, track_ids)
+	-- Upstream inserts at the 0-based `position`, from the start when it's negative, and appends
+	-- without it.
+	local position = requests.parse_query_int(query, { "position", "Position" }, nil, nil, nil)
+	if position ~= nil then
+		position = math.max(position, 0)
+	end
+	local added, entry_ids = pcall(playlists.add_tracks, playlist_db_id, track_ids, position)
 	if not added or entry_ids == nil then
 		return responses.bad_request("failed to add track to playlist")
 	end
