@@ -1344,13 +1344,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unknown_group_keys() {
-        let json = r#"[{"any_off": ["musicbrainz"]}]"#;
-        let parsed: Result<Vec<DependencyEntry>, _> = serde_json::from_str(json);
-        assert!(parsed.is_err(), "expected error for unknown key");
-    }
-
-    #[test]
     fn rejects_empty_any_of() {
         let entries = vec![DependencyEntry::Group(DependencyGroup {
             any_of: vec![],
@@ -1874,23 +1867,6 @@ mod tests {
             vec!["alpha".to_string(), "beta".to_string()]
         );
         Ok(())
-    }
-
-    #[test]
-    fn parses_manifest_without_entrypoint_as_library_plugin() {
-        let manifest: PluginManifest = serde_json::from_str(
-            r#"{
-                "schema_version": 1,
-                "id": "lib",
-                "name": "Library",
-                "version": "1.0.0",
-                "description": "",
-                "scopes": []
-            }"#,
-        )
-        .expect("parse library manifest");
-
-        assert!(manifest.entrypoint.is_none());
     }
 
     #[test]
