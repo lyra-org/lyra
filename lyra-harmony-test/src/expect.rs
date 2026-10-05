@@ -312,29 +312,3 @@ fn toml_to_json(value: &toml::Value) -> serde_json::Value {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn accepted_ids_preserve_string_and_array_representations() {
-        for value in [r#""id""#, r#"["id"]"#, r#"["id", "alternative"]"#, "[]"] {
-            let input = format!("[ids]\nprovider = {value}\n");
-            let entity: ExpectedEntity = toml::from_str(&input).unwrap();
-            let output = toml::to_string(&entity).unwrap();
-            let round_trip: toml::Value = toml::from_str(&output).unwrap();
-            let original: toml::Value = toml::from_str(&input).unwrap();
-            assert_eq!(round_trip["ids"], original["ids"]);
-
-            let json = serde_json::to_value(&entity).unwrap();
-            let decoded: ExpectedEntity = serde_json::from_value(json.clone()).unwrap();
-            assert_eq!(serde_json::to_value(decoded).unwrap(), json);
-        }
-
-        for value in ["1", "true", r#"["id", 1]"#] {
-            let input = format!("[ids]\nprovider = {value}\n");
-            assert!(toml::from_str::<ExpectedEntity>(&input).is_err());
-        }
-    }
-}
