@@ -29,6 +29,7 @@ local ACOUSTID_API = "https://api.acoustid.org/v2/lookup"
 local ACOUSTID_CLIENT_ID = "hrpiiKRyqd"
 local MIN_DURATION_MS = 30000
 local MIN_SCORE = 0.7
+local MAX_RELEASE_TRIES = 5
 
 local module = {}
 
@@ -219,14 +220,18 @@ function module.resolve_recording_to_release(recording_id: string, local_release
 		end
 	end
 
-	for _, release_id in matching_ids do
-		if resolve.try_release_id(release_id, fingerprinted) then
-			return true
-		end
-	end
-	for _, release_id in other_ids do
-		if resolve.try_release_id(release_id, fingerprinted) then
-			return true
+	-- A popular recording sits on dozens of releases, mostly compilations;
+	-- each try fetches one, so stop after a few.
+	local tries = 0
+	for _, candidates in { matching_ids, other_ids } do
+		for _, release_id in candidates do
+			if tries >= MAX_RELEASE_TRIES then
+				return false
+			end
+			tries += 1
+			if resolve.try_release_id(release_id, fingerprinted) then
+				return true
+			end
 		end
 	end
 
