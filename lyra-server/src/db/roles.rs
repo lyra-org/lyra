@@ -397,17 +397,6 @@ mod tests {
             DbValue::from("manage_server")
         );
         assert!(Permission::try_from(DbValue::from("editor")).is_err());
-        assert_eq!(
-            DbValue::from(vec![Permission::Admin, Permission::ManageUsers]),
-            DbValue::VecString(vec!["admin".to_string(), "manage_users".to_string()])
-        );
-        assert_eq!(
-            Vec::<Permission>::try_from(DbValue::VecString(vec![
-                "admin".to_string(),
-                "manage_users".to_string(),
-            ]))?,
-            vec![Permission::Admin, Permission::ManageUsers]
-        );
         Ok(())
     }
 

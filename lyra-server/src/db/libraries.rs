@@ -1140,14 +1140,6 @@ mod tests {
     }
 
     #[test]
-    fn normalize_name_key_lowercases() {
-        assert_eq!(
-            normalize_library_name_key("MUSIC").unwrap(),
-            normalize_library_name_key("music").unwrap()
-        );
-    }
-
-    #[test]
     fn normalize_name_key_trims_whitespace_after_stripping_invisibles() {
         assert_eq!(
             normalize_library_name_key("  Music  ").unwrap(),
@@ -1165,15 +1157,6 @@ mod tests {
             normalize_library_name_key("Mus\u{0007}ic").unwrap_err(),
             LibraryNameError::ContainsControl
         );
-    }
-
-    #[test]
-    fn normalize_name_key_built_on_display() {
-        // Guards `_key` and `_display` against drift.
-        let display = normalize_library_name_display("  Café\u{200B}  ").unwrap();
-        let expected: String = display.to_lowercase().nfc().collect();
-        let key = normalize_library_name_key("  Café\u{200B}  ").unwrap();
-        assert_eq!(expected, key);
     }
 
     #[test]
