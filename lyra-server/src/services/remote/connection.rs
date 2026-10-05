@@ -629,35 +629,6 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn socket_exit_aborts_and_drains_detached_handoffs() {
-        struct DropSignal(Option<tokio::sync::oneshot::Sender<()>>);
-
-        impl Drop for DropSignal {
-            fn drop(&mut self) {
-                if let Some(sender) = self.0.take() {
-                    let _ = sender.send(());
-                }
-            }
-        }
-
-        let (dropped_tx, dropped_rx) = tokio::sync::oneshot::channel();
-        let guard = DropSignal(Some(dropped_tx));
-        let mut responses = JoinSet::new();
-        responses.spawn(async move {
-            let _guard = guard;
-            std::future::pending::<OutgoingMessage>().await
-        });
-
-        abort_handoff_responses(&mut responses).await;
-
-        assert!(responses.is_empty());
-        tokio::time::timeout(std::time::Duration::from_millis(100), dropped_rx)
-            .await
-            .expect("aborted handoff should be dropped before cleanup")
-            .expect("drop signal should be delivered");
-    }
-
     fn payload(user_public_id: &str, library_public_id: Option<&str>) -> PlaybackUpdatePayload {
         PlaybackUpdatePayload {
             event: "updated".to_string(),

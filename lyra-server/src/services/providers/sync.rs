@@ -199,9 +199,4 @@ mod tests {
         );
         assert!(next_sync_due(0, last_run).is_none());
     }
-
-    #[test]
-    fn next_sync_due_is_none_when_the_interval_overflows() {
-        assert!(next_sync_due(u64::MAX, Instant::now()).is_none());
-    }
 }

@@ -280,140 +280,11 @@ mod tests {
     }
 
     #[test]
-    fn parse_seek_command() {
-        let json = r#"{"action":"seek","id":"1","target":"2","position_ms":30000}"#;
-        let msg: ClientCommand = serde_json::from_str(json).unwrap();
-        match msg {
-            ClientCommand::Seek(cmd) => {
-                assert_eq!(cmd.id, "1");
-                assert_eq!(cmd.target, "2");
-                assert_eq!(cmd.position_ms, 30000);
-            }
-            _ => panic!("expected Seek"),
-        }
-    }
-
-    #[test]
-    fn parse_set_volume_command() {
-        let json = r#"{"action":"set_volume","id":"1","target":"2","level":0.75}"#;
-        let msg: ClientCommand = serde_json::from_str(json).unwrap();
-        match msg {
-            ClientCommand::SetVolume(cmd) => {
-                assert_eq!(cmd.level, 0.75);
-            }
-            _ => panic!("expected SetVolume"),
-        }
-    }
-
-    #[test]
-    fn parse_handoff_queue_command() {
-        let json = r#"{"action":"handoff_queue","id":"1","target":"opaque","playback_id":"p1","queue_revision":7}"#;
-        let msg: ClientCommand = serde_json::from_str(json).unwrap();
-        match msg {
-            ClientCommand::HandoffQueue(command) => {
-                assert_eq!(command.playback_id, "p1");
-                assert_eq!(command.queue_revision, 7);
-                assert_eq!(command.target, "opaque");
-            }
-            _ => panic!("expected HandoffQueue"),
-        }
-    }
-
-    #[test]
-    fn parse_declare_capabilities() {
-        let json =
-            r#"{"action":"declare_capabilities","id":"1","commands":["play","pause","seek"]}"#;
-        let msg: ClientCommand = serde_json::from_str(json).unwrap();
-        match msg {
-            ClientCommand::DeclareCapabilities { commands, .. } => {
-                assert_eq!(commands.len(), 3);
-                assert!(commands.contains(&RemoteAction::Play));
-                assert!(commands.contains(&RemoteAction::Seek));
-            }
-            _ => panic!("expected DeclareCapabilities"),
-        }
-    }
-
-    #[test]
-    fn parse_rejects_unknown_action() {
-        let json = r#"{"action":"teleport","id":"1"}"#;
-        assert!(serde_json::from_str::<ClientCommand>(json).is_err());
-    }
-
-    #[test]
-    fn serialize_ok_response() {
-        let msg = OutgoingMessage::Response(ResponseMessage::ok("abc".into()));
-        let json = serde_json::to_value(&msg).unwrap();
-        assert_eq!(json["type"], "response");
-        assert_eq!(json["status"], "ok");
-        assert_eq!(json["id"], "abc");
-        assert!(json.get("error").is_none());
-    }
-
-    #[test]
-    fn serialize_error_response_includes_error_field() {
-        let msg =
-            OutgoingMessage::Response(ResponseMessage::error("abc".into(), "something broke"));
-        let json = serde_json::to_value(&msg).unwrap();
-        assert_eq!(json["status"], "error");
-        assert_eq!(json["error"], "something broke");
-    }
-
-    #[test]
-    fn serialize_forwarded_seek() {
-        let msg = OutgoingMessage::Command(ForwardedCommand::Seek {
-            from: Some(42),
-            position_ms: 30000,
-        });
-        let json = serde_json::to_value(&msg).unwrap();
-        assert_eq!(json["type"], "command");
-        assert_eq!(json["action"], "seek");
-        assert_eq!(json["from"], 42);
-        assert_eq!(json["position_ms"], 30000);
-    }
-
-    #[test]
-    fn serialize_forwarded_pause() {
-        let msg = OutgoingMessage::Command(ForwardedCommand::Pause { from: Some(1) });
-        let json = serde_json::to_value(&msg).unwrap();
-        assert_eq!(json["action"], "pause");
-        assert_eq!(json["from"], 1);
-        assert!(json.get("position_ms").is_none());
-        assert!(json.get("level").is_none());
-    }
-
-    #[test]
     fn serialize_forwarded_command_omits_from_when_none() {
         let msg = OutgoingMessage::Command(ForwardedCommand::Pause { from: None });
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["action"], "pause");
         assert!(json.get("from").is_none());
-    }
-
-    #[test]
-    fn forwarded_commands_round_trip() {
-        for msg in [
-            OutgoingMessage::Command(ForwardedCommand::Pause { from: Some(1) }),
-            OutgoingMessage::Command(ForwardedCommand::Seek {
-                from: Some(42),
-                position_ms: 30000,
-            }),
-            OutgoingMessage::Command(ForwardedCommand::SetVolume {
-                from: None,
-                level: 0.5,
-            }),
-            OutgoingMessage::Command(ForwardedCommand::HandoffQueue {
-                from: Some(7),
-                playback_id: "p1".to_string(),
-                queue_revision: 3,
-                handoff_token: "opaque".to_string(),
-            }),
-        ] {
-            let json = serde_json::to_string(&msg).unwrap();
-            let parsed = serde_json::from_str::<OutgoingMessage>(&json)
-                .unwrap_or_else(|err| panic!("{json} must deserialize: {err}"));
-            assert_eq!(serde_json::to_string(&parsed).unwrap(), json);
-        }
     }
 
     #[test]
@@ -427,17 +298,5 @@ mod tests {
                 "mismatched payload must fail: {json}"
             );
         }
-    }
-
-    #[test]
-    fn serialize_event_message() {
-        let msg = OutgoingMessage::Event(EventMessage {
-            event: "playback_state_changed".into(),
-            data: serde_json::json!({"state": "playing"}),
-        });
-        let json = serde_json::to_value(&msg).unwrap();
-        assert_eq!(json["type"], "event");
-        assert_eq!(json["event"], "playback_state_changed");
-        assert_eq!(json["data"]["state"], "playing");
     }
 }

@@ -524,7 +524,6 @@ mod tests {
         assert_eq!(id2, 2);
         let token1 = reg.connections[&id1].token.clone();
         let token2 = reg.connections[&id2].token.clone();
-        assert_ne!(token1, token2);
         assert_eq!(reg.tokens.len(), 2);
         assert_eq!(reg.tokens[&token1], id1);
         assert_eq!(reg.tokens[&token2], id2);

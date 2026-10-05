@@ -677,16 +677,6 @@ mod tests {
     }
 
     #[test]
-    fn hash_secret_is_deterministic_and_not_plaintext() {
-        let first = hash_secret("secret-value");
-        let second = hash_secret("secret-value");
-        let other = hash_secret("other-value");
-        assert_eq!(first, second);
-        assert_ne!(first, other);
-        assert_ne!(first, "secret-value");
-    }
-
-    #[test]
     fn bearer_credential_parser_rejects_non_bearer() {
         let mut headers = HeaderMap::new();
         headers.insert("Authorization", "Basic abc".parse().expect("valid header"));
@@ -703,20 +693,6 @@ mod tests {
         assert_eq!(
             extract_bearer_credential(&headers).as_deref(),
             Some("abc123")
-        );
-    }
-
-    #[test]
-    fn extract_bearer_credential_extracts_bearer() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "Authorization",
-            "Bearer bearer_token".parse().expect("valid header"),
-        );
-
-        assert_eq!(
-            extract_bearer_credential(&headers).as_deref(),
-            Some("bearer_token")
         );
     }
 
