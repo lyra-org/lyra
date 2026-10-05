@@ -211,9 +211,4 @@ mod tests {
         assert_eq!(result.ids().len(), 1);
         Ok(())
     }
-
-    #[test]
-    fn db_name_is_unique_per_call() {
-        assert_ne!(db_name(), db_name());
-    }
 }

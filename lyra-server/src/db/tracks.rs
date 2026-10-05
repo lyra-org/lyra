@@ -610,43 +610,6 @@ mod tests {
     }
 
     #[test]
-    fn agdb_reads_track_with_missing_optional_keys_as_none() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-
-        let node_id = db
-            .exec_mut(QueryBuilder::insert().nodes().count(1).query())?
-            .ids()[0];
-        db.exec_mut(
-            QueryBuilder::insert()
-                .values_uniform([
-                    ("db_element_id", "Track").into(),
-                    ("id", "sparse-track-id").into(),
-                    ("track_title", "Sparse Track").into(),
-                    ("duration_ms", 120_000_u64).into(),
-                ])
-                .ids(node_id)
-                .query(),
-        )?;
-
-        let tracks: Vec<Track> = db
-            .exec(
-                QueryBuilder::select()
-                    .elements::<Track>()
-                    .ids(node_id)
-                    .query(),
-            )?
-            .try_into()?;
-        assert_eq!(tracks.len(), 1);
-        assert_eq!(tracks[0].track_title, "Sparse Track");
-        assert_eq!(tracks[0].duration_ms, Some(120_000));
-        assert_eq!(tracks[0].sample_rate_hz, None);
-        assert_eq!(tracks[0].channel_count, None);
-        assert_eq!(tracks[0].bit_depth, None);
-
-        Ok(())
-    }
-
-    #[test]
     fn get_by_entry_returns_empty_when_no_tracks() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
 

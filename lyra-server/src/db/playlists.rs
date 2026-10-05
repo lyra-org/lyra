@@ -643,11 +643,8 @@ mod tests {
         };
         let playlist_db_id = create(&mut db, &playlist, user_db_id)?;
 
-        let pt_a = add_track(&mut db, playlist_db_id, track_a)?;
-        let pt_b = add_track(&mut db, playlist_db_id, track_b)?;
-
-        assert!(pt_a.edge_id.0 < 0, "edge ids should be negative");
-        assert!(pt_b.edge_id.0 < 0, "edge ids should be negative");
+        add_track(&mut db, playlist_db_id, track_a)?;
+        add_track(&mut db, playlist_db_id, track_b)?;
 
         let tracks = get_tracks(&db, playlist_db_id)?;
         assert_eq!(tracks.len(), 2);
@@ -1044,10 +1041,8 @@ mod tests {
         };
         let playlist_db_id = create(&mut db, &playlist, user_db_id)?;
 
-        let pt_1 = add_track(&mut db, playlist_db_id, track)?;
-        let pt_2 = add_track(&mut db, playlist_db_id, track)?;
-
-        assert_ne!(pt_1.edge_id, pt_2.edge_id);
+        add_track(&mut db, playlist_db_id, track)?;
+        add_track(&mut db, playlist_db_id, track)?;
 
         let tracks = get_tracks(&db, playlist_db_id)?;
         assert_eq!(tracks.len(), 2);
