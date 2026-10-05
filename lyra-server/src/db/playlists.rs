@@ -249,7 +249,40 @@ pub(crate) fn add_tracks(
     playlist_db_id: DbId,
     track_db_ids: &[DbId],
 ) -> anyhow::Result<Vec<PlaylistTrack>> {
-    let positions = next_position(db, playlist_db_id)?..;
+    let first_position = next_position(db, playlist_db_id)?;
+    insert_entries(db, playlist_db_id, track_db_ids, first_position)
+}
+
+/// Inserts `track_db_ids` in order at the 0-based `position`, clamped to the playlist's length,
+/// renumbering every entry as [`move_track`] does. Returns a `PlaylistTrack` per track.
+pub(crate) fn insert_tracks(
+    db: &mut impl DbAccess,
+    playlist_db_id: DbId,
+    track_db_ids: &[DbId],
+    position: u64,
+) -> anyhow::Result<Vec<PlaylistTrack>> {
+    let tracks = get_tracks(db, playlist_db_id)?;
+    let insert_at = usize::try_from(position)
+        .unwrap_or(usize::MAX)
+        .min(tracks.len());
+    for (i, t) in tracks.iter().enumerate() {
+        let index = if i < insert_at {
+            i
+        } else {
+            i + track_db_ids.len()
+        };
+        set_position(db, t.edge_id, index as u64)?;
+    }
+    insert_entries(db, playlist_db_id, track_db_ids, insert_at as u64)
+}
+
+fn insert_entries(
+    db: &mut impl DbAccess,
+    playlist_db_id: DbId,
+    track_db_ids: &[DbId],
+    first_position: u64,
+) -> anyhow::Result<Vec<PlaylistTrack>> {
+    let positions = first_position..;
     let mut results = Vec::with_capacity(track_db_ids.len());
 
     for (position, &track_db_id) in positions.zip(track_db_ids) {
@@ -388,14 +421,19 @@ pub(crate) fn move_track(
 
     // Renumber all positions sequentially
     for (i, t) in tracks.iter().enumerate() {
-        db.exec_mut(
-            QueryBuilder::insert()
-                .values_uniform([("position", (i as u64)).into()])
-                .ids(t.edge_id)
-                .query(),
-        )?;
+        set_position(db, t.edge_id, i as u64)?;
     }
 
+    Ok(())
+}
+
+fn set_position(db: &mut impl DbAccess, edge_id: DbId, position: u64) -> anyhow::Result<()> {
+    db.exec_mut(
+        QueryBuilder::insert()
+            .values_uniform([("position", position).into()])
+            .ids(edge_id)
+            .query(),
+    )?;
     Ok(())
 }
 
@@ -680,6 +718,52 @@ mod tests {
         let bulk = add_tracks(&mut db, empty, &[track_a, track_b])?;
         assert_eq!(bulk[0].position, 0);
         assert_eq!(bulk[1].position, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn insert_tracks_opens_a_gap_at_the_clamped_position() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = create_test_user(&mut db)?;
+        let track_a = create_test_track(&mut db, "Track A")?;
+        let track_b = create_test_track(&mut db, "Track B")?;
+        let track_c = create_test_track(&mut db, "Track C")?;
+        let playlist_db_id = create(
+            &mut db,
+            &Playlist {
+                db_id: None,
+                id: nanoid!(),
+                name: "Inserted".to_string(),
+                description: None,
+                is_public: None,
+                created_at: None,
+                updated_at: None,
+            },
+            user_db_id,
+        )?;
+        let appended = add_tracks(&mut db, playlist_db_id, &[track_a, track_b, track_a])?;
+        // A removal leaves a gap in the stored positions; insertion counts entries, not positions.
+        remove_track(&mut db, appended[1].edge_id)?;
+
+        let inserted = insert_tracks(&mut db, playlist_db_id, &[track_c, track_b], 1)?;
+        assert_eq!(
+            inserted.iter().map(|t| t.position).collect::<Vec<_>>(),
+            [1, 2]
+        );
+        let past_end = insert_tracks(&mut db, playlist_db_id, &[track_c], 99)?;
+        assert_eq!(past_end[0].position, 4);
+
+        let tracks = get_tracks(&db, playlist_db_id)?;
+        assert_eq!(
+            tracks.iter().map(|t| t.position).collect::<Vec<_>>(),
+            [0, 1, 2, 3, 4]
+        );
+        let edge_ids = tracks.iter().map(|t| t.edge_id).collect::<Vec<_>>();
+        assert_eq!(
+            resolve_edge_targets(&db, &edge_ids)?,
+            [track_a, track_c, track_b, track_a, track_c]
+        );
 
         Ok(())
     }

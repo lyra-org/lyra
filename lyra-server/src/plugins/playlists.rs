@@ -284,6 +284,8 @@ fn add_tracks_spec() -> FunctionSpec {
         .args::<ResolveId>()
         .arg_name("track_ids")
         .args::<luau::Table>()
+        .arg_name("position")
+        .args::<Option<u64>>()
         .returns::<Option<Vec<String>>>()
         .call_async(Arc::new(add_tracks_callback))
 }
@@ -722,6 +724,11 @@ fn add_tracks_callback(
     let playlist_id = args::resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
     let track_ids: luau::Table = frame.args.read_named("track_ids")?;
     let track_ids = args::id_sequence(frame.vm, &track_ids)?;
+    let position = frame
+        .args
+        .read_optional_named::<luau::Value>("position")?
+        .map(|value| playlist_position(value, "position"))
+        .transpose()?;
     let db = frame.vm.data().get::<PlaylistsModuleStore>()?.db()?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
@@ -732,12 +739,16 @@ fn add_tracks_callback(
         };
         require_accessible_tracks(&db, &principal, &track_ids)?;
         let track_ids = track_ids.into_iter().map(QueryId::Id).collect::<Vec<_>>();
-        let entry_ids =
-            playlist_service::add_tracks(&mut db, QueryId::Id(playlist_db_id), &track_ids)
-                .map_err(crate::plugins::runtime_error)?
-                .into_iter()
-                .map(|link| link.entry_id)
-                .collect::<Vec<_>>();
+        let entry_ids = playlist_service::add_tracks(
+            &mut db,
+            QueryId::Id(playlist_db_id),
+            &track_ids,
+            position,
+        )
+        .map_err(crate::plugins::runtime_error)?
+        .into_iter()
+        .map(|link| link.entry_id)
+        .collect::<Vec<_>>();
         harmony_luau::serializable_to_luau_owned(entry_ids)
     }))
 }
@@ -831,26 +842,32 @@ fn remove_tracks_callback(
     }))
 }
 
-fn move_track_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let playlist_id = args::resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
-    let entry_id: String = frame.args.read_named("entry_id")?;
-    let new_position = match frame.args.read_named::<luau::Value>("new_position")? {
-        luau::Value::Integer(value) if value >= 0 => value as u64,
+/// A non-negative integer playlist position read from `value`.
+fn playlist_position(value: luau::Value, name: &str) -> luau::runtime::Result<u64> {
+    match value {
+        luau::Value::Integer(value) if value >= 0 => Ok(value as u64),
         luau::Value::Number(value)
             if value.is_finite()
                 && value.fract() == 0.0
                 && (0.0..=9_007_199_254_740_991.0).contains(&value) =>
         {
-            value as u64
+            Ok(value as u64)
         }
-        _ => {
-            return Err(crate::plugins::runtime_error(
-                "new_position must be a non-negative integer within the exact numeric range",
-            ));
-        }
-    };
+        _ => Err(crate::plugins::runtime_error(format!(
+            "{name} must be a non-negative integer within the exact numeric range"
+        ))),
+    }
+}
+
+fn move_track_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let playlist_id = args::resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
+    let entry_id: String = frame.args.read_named("entry_id")?;
+    let new_position = playlist_position(
+        frame.args.read_named::<luau::Value>("new_position")?,
+        "new_position",
+    )?;
     let db = frame.vm.data().get::<PlaylistsModuleStore>()?.db()?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
     Ok(luau::ScheduledFuture::new(async move {
@@ -1216,11 +1233,12 @@ fn module_descriptor() -> ModuleDescriptor {
             ModuleFunctionDescriptor {
                 path: vec!["add_tracks"],
                 description: Some(
-                    "Appends `track_ids`, in order and with repeats, in one transaction. Returns their entry IDs, or nil if the playlist is missing or not owned by the caller. Raises an error, adding nothing, when a track is missing or inaccessible.",
+                    "Adds `track_ids`, in order and with repeats, in one transaction: at the 0-based `position` when given (past the end appends), and at the end otherwise. Returns their entry IDs, or nil if the playlist is missing or not owned by the caller. Raises an error, adding nothing, when a track is missing or inaccessible.",
                 ),
                 params: vec![
                     param("playlist_id", args::resolve_id_type()),
                     param("track_ids", Vec::<u64>::luau_type()),
+                    param("position", Option::<u64>::luau_type()),
                 ],
                 returns: vec![Option::<Vec<String>>::luau_type()],
                 yields: true,

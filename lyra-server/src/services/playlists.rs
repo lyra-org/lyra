@@ -327,10 +327,13 @@ pub(crate) fn add_track(
     })
 }
 
+/// Adds `track_ids` in order: at the 0-based `position` when given, clamped to the playlist's
+/// length, and at the end otherwise.
 pub(crate) fn add_tracks(
     db: &mut DbAny,
     playlist_id: QueryId,
     track_ids: &[QueryId],
+    position: Option<u64>,
 ) -> anyhow::Result<Vec<PlaylistTrackLink>> {
     let playlist_db_id = resolve_id(db, playlist_id)?;
     let mut resolved_track_ids = Vec::with_capacity(track_ids.len());
@@ -343,7 +346,12 @@ pub(crate) fn add_tracks(
     }
 
     let results = db.transaction_mut(|t| -> anyhow::Result<_> {
-        let results = db::playlists::add_tracks(t, playlist_db_id, &resolved_track_ids)?;
+        let results = match position {
+            Some(position) => {
+                db::playlists::insert_tracks(t, playlist_db_id, &resolved_track_ids, position)?
+            }
+            None => db::playlists::add_tracks(t, playlist_db_id, &resolved_track_ids)?,
+        };
         db::covers::display::sync_playlist_cover(t, playlist_db_id)?;
         Ok(results)
     })?;
@@ -590,6 +598,7 @@ mod tests {
             &mut db,
             QueryId::Id(playlist_db_id),
             &[QueryId::Id(first), QueryId::Id(second)],
+            None,
         )?;
 
         let replaced = replace(
@@ -620,7 +629,12 @@ mod tests {
         let deleted = insert_track(&mut db, "Deleted")?;
         db.exec_mut(QueryBuilder::remove().ids(deleted).query())?;
         let playlist_db_id = create_playlist(&mut db, user_db_id, "Unchanged")?;
-        add_tracks(&mut db, QueryId::Id(playlist_db_id), &[QueryId::Id(kept)])?;
+        add_tracks(
+            &mut db,
+            QueryId::Id(playlist_db_id),
+            &[QueryId::Id(kept)],
+            None,
+        )?;
 
         assert!(
             replace(
@@ -658,6 +672,7 @@ mod tests {
                 // A duplicate entry counts twice.
                 QueryId::Id(short),
             ],
+            None,
         )?;
 
         let summaries = summaries(
@@ -682,7 +697,12 @@ mod tests {
         let user_db_id = db::users::create(&mut db, &test_user("summary-access")?)?;
         let track = insert_track_with_duration(&mut db, "Private", 9_000)?;
         let playlist_db_id = create_playlist(&mut db, user_db_id, "Public Playlist")?;
-        add_tracks(&mut db, QueryId::Id(playlist_db_id), &[QueryId::Id(track)])?;
+        add_tracks(
+            &mut db,
+            QueryId::Id(playlist_db_id),
+            &[QueryId::Id(track)],
+            None,
+        )?;
 
         // The track belongs to no library this principal can reach. The entry
         // still counts — `inc=tracks` shows it as `unavailable` — but its
@@ -712,7 +732,12 @@ mod tests {
         let user_db_id = db::users::create(&mut db, &test_user("summary-removal")?)?;
         let track = insert_track_with_duration(&mut db, "Track", 4_000)?;
         let playlist_db_id = create_playlist(&mut db, user_db_id, "Shrinking")?;
-        let added = add_tracks(&mut db, QueryId::Id(playlist_db_id), &[QueryId::Id(track)])?;
+        let added = add_tracks(
+            &mut db,
+            QueryId::Id(playlist_db_id),
+            &[QueryId::Id(track)],
+            None,
+        )?;
 
         remove_tracks(&mut db, playlist_db_id, &[added[0].entry_id.clone()])?;
 
