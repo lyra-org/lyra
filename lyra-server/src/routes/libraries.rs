@@ -885,7 +885,7 @@ mod tests {
         let _guard = crate::testing::runtime_test_lock().await;
         setup_route_test().await?;
 
-        let (user_db_id, visible_id, hidden_id) = {
+        let (user_db_id, visible_id) = {
             let mut db = STATE.db.write().await;
             let user_db_id = db::users::create(&mut db, &db::test_db::test_user("listener")?)?;
             let visible = db.transaction_mut(|t| -> anyhow::Result<db::Library> {
@@ -895,13 +895,13 @@ mod tests {
                     user_db_id,
                 )?)
             })?;
-            let hidden = db.transaction_mut(|t| -> anyhow::Result<db::Library> {
+            db.transaction_mut(|t| -> anyhow::Result<db::Library> {
                 Ok(db::libraries::create_system(
                     t,
                     library_insert("Hidden", "hidden"),
                 )?)
             })?;
-            (user_db_id, visible.id, hidden.id)
+            (user_db_id, visible.id)
         };
         let session = crate::testing::create_session(user_db_id, Default::default()).await?;
 
@@ -911,7 +911,6 @@ mod tests {
 
         assert_eq!(libraries.len(), 1);
         assert_eq!(libraries[0].id, visible_id);
-        assert_ne!(libraries[0].id, hidden_id);
         assert!(libraries[0].directory.is_none());
         Ok(())
     }

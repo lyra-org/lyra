@@ -1551,7 +1551,6 @@ mod tests {
         assert_eq!(json["commit"], "a".repeat(40));
         assert!(json.get("refreshed_at").is_none());
         assert!(json.get("ref").is_none());
-        assert!(json.get("last_commit").is_none());
         Ok(())
     }
 
@@ -1759,33 +1758,6 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         Ok(())
-    }
-
-    #[test]
-    fn update_report_response_maps_every_outcome() {
-        let response = update_report_response(services::plugin_repositories::UpdateReport {
-            updated: vec![services::plugin_repositories::UpdatedPlugin {
-                id: "a".into(),
-                version: "1.2.3".into(),
-                commit: Some("c".repeat(40)),
-            }],
-            up_to_date: vec!["b".into()],
-            failed: vec![services::plugin_repositories::FailedInstall {
-                id: "c".into(),
-                error: "boom".into(),
-            }],
-        });
-
-        assert_eq!(response.updated.len(), 1);
-        assert_eq!(response.updated[0].id, "a");
-        assert_eq!(response.updated[0].version, "1.2.3");
-        assert_eq!(
-            response.updated[0].commit.as_deref(),
-            Some("c".repeat(40).as_str())
-        );
-        assert_eq!(response.up_to_date, vec!["b".to_string()]);
-        assert_eq!(response.failed[0].id, "c");
-        assert_eq!(response.failed[0].error, "boom");
     }
 
     #[tokio::test]

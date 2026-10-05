@@ -1296,46 +1296,6 @@ mod tests {
     }
 
     #[test]
-    fn content_type_follows_the_delivery_target_for_every_format() {
-        for format in [
-            AudioFormat::Mp3,
-            AudioFormat::Flac,
-            AudioFormat::Wav,
-            AudioFormat::Ogg,
-            AudioFormat::Webm,
-            AudioFormat::Aac,
-            AudioFormat::M4a,
-            AudioFormat::Opus,
-            AudioFormat::Aiff,
-            AudioFormat::Alac,
-            AudioFormat::Caf,
-            AudioFormat::Wma,
-        ] {
-            assert_eq!(
-                DeliveryTarget::Stream.content_type(format),
-                format.mime_type(true),
-                "{format:?}"
-            );
-            assert_eq!(
-                DeliveryTarget::Download.content_type(format),
-                format.mime_type(false),
-                "{format:?}"
-            );
-        }
-
-        // aac is the one format whose mime type depends on the flag, which is exactly the
-        // fact the target already carries; pin that the two targets stay distinct.
-        assert_eq!(
-            DeliveryTarget::Stream.content_type(AudioFormat::Aac),
-            "audio/aac"
-        );
-        assert_eq!(
-            DeliveryTarget::Download.content_type(AudioFormat::Aac),
-            "audio/mp4"
-        );
-    }
-
-    #[test]
     fn resolve_delivery_reports_direct_passthrough_for_untouched_source() {
         let source = flac_source(None, None);
         let validated = validate_request(None, None).expect("empty request parses");

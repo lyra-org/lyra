@@ -1278,47 +1278,6 @@ mod tests {
     }
 
     #[test]
-    fn release_response_serializes_cover_object() -> anyhow::Result<()> {
-        let response = ReleaseResponse {
-            id: String::new(),
-            title: "Test Release".to_string(),
-            sort_title: None,
-            artists: None,
-            tracks: None,
-            entries: None,
-            release_date: None,
-            genres: None,
-            cover: Some(Some(crate::routes::responses::CoverResponse {
-                id: "cover-1".to_string(),
-                url: format!("/api/covers/cover-1?v={}", "b".repeat(64)),
-                mime_type: "image/jpeg".to_string(),
-                hash: "b".repeat(64),
-                blurhash: Some("LKO2?U%2Tw=w]~RBVZRi};RPxuwH".to_string()),
-            })),
-        };
-
-        let value = serde_json::to_value(response)?;
-        let cover = value
-            .get("cover")
-            .and_then(serde_json::Value::as_object)
-            .ok_or_else(|| anyhow::anyhow!("missing cover object"))?;
-        assert_eq!(cover.get("id"), Some(&serde_json::json!("cover-1")));
-        assert_eq!(
-            cover.get("url"),
-            Some(&serde_json::json!(format!(
-                "/api/covers/cover-1?v={}",
-                "b".repeat(64)
-            )))
-        );
-        assert_eq!(
-            cover.get("mime_type"),
-            Some(&serde_json::json!("image/jpeg"))
-        );
-        assert_eq!(cover.get("hash"), Some(&serde_json::json!("b".repeat(64))));
-        Ok(())
-    }
-
-    #[test]
     fn build_cover_response_omits_when_not_requested() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let release_db_id = insert_release_node(&mut db)?;

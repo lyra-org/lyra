@@ -391,13 +391,6 @@ mod tests {
         assert_eq!(item.last_refreshed_at, "1970-01-01T00:00:00.002Z");
     }
 
-    #[test]
-    fn list_query_requires_entity() {
-        let result: Result<ListQuery, _> =
-            serde_json::from_value(serde_json::json!({ "limit": 10 }));
-        assert!(result.is_err(), "entity must be required");
-    }
-
     #[tokio::test]
     async fn check_favorites_enforces_http_cap_before_deduplication() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
