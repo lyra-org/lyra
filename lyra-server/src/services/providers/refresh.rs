@@ -55,7 +55,7 @@ use crate::{
             SyncTotalState,
             SyncWorkDetails,
         },
-        options::coerce_option_value,
+        options::provider_options,
         providers::{
             ProviderCallStage,
             ProviderCallbackHandle,
@@ -814,18 +814,11 @@ async fn context_with_options(
 
     let options = {
         let registry = provider_registry().read_owned().await;
-        let declared = registry.get_options(provider_id);
-        passed_options
-            .iter()
-            .filter_map(|(key, raw_value)| {
-                declared.iter().find(|decl| decl.name == *key).map(|decl| {
-                    (
-                        key.clone(),
-                        coerce_option_value(raw_value, &decl.option_type),
-                    )
-                })
-            })
-            .collect::<serde_json::Map<_, _>>()
+        provider_options(
+            provider_id,
+            registry.get_options(provider_id),
+            passed_options,
+        )
     };
     if options.is_empty() {
         return context;

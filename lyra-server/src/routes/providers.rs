@@ -675,7 +675,9 @@ fn refresh_entity_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Refresh entity metadata").description(
         "Triggers a metadata refresh for an entity from all enabled providers.\n\n\
             For release and artist entities, cover downloads replace only missing covers by default.\
-            Set `replace_cover=true` to overwrite an existing cover. Requires SyncMetadata permission.",
+            Set `replace_cover=true` to overwrite an existing cover.\n\n\
+            Pass provider options listed by `GET /providers` as `<provider_id>.<option>=<value>`; \
+            each provider receives only its own declared options. Requires SyncMetadata permission.",
     )
 }
 
