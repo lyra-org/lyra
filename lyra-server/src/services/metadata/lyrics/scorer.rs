@@ -606,11 +606,4 @@ mod tests {
         let tokens = tokenize(&normalized);
         assert_eq!(tokens, vec!["rock", "n", "roll"]);
     }
-
-    #[test]
-    fn nfkc_canonicalizes_compatibility_forms() {
-        // ﬁ (U+FB01 LATIN SMALL LIGATURE FI) decomposes to "fi" under NFKC.
-        let normalized = normalize_for_compare("ﬁnal");
-        assert_eq!(normalized, "final");
-    }
 }

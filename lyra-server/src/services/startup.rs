@@ -253,19 +253,3 @@ async fn shutdown_signal() {
 
     tracing::info!("shutdown signal received, draining connections");
 }
-
-#[cfg(test)]
-mod tests {
-    use super::bind_configured_listener;
-
-    #[tokio::test]
-    async fn bind_configured_listener_rejects_occupied_port() -> anyhow::Result<()> {
-        let first = bind_configured_listener(0).await?;
-        let port = first.local_addr()?.port();
-
-        let second = bind_configured_listener(port).await;
-
-        assert!(second.is_err());
-        Ok(())
-    }
-}

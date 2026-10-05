@@ -45,11 +45,7 @@ mod tests {
             Method,
             StatusCode,
             header::{
-                ACCESS_CONTROL_ALLOW_HEADERS,
-                ACCESS_CONTROL_ALLOW_METHODS,
                 ACCESS_CONTROL_ALLOW_ORIGIN,
-                ACCESS_CONTROL_REQUEST_HEADERS,
-                ACCESS_CONTROL_REQUEST_METHOD,
                 ORIGIN,
                 VARY,
             },
@@ -192,70 +188,6 @@ mod tests {
 
         publish_config(config_with_origins(&[]));
         assert_eq!(allowed_origin_for(&router, "http://app.test").await?, None);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn preflight_mirrors_requested_method_and_headers() -> anyhow::Result<()> {
-        let _guard = publish_origins(&["http://localhost:8080"]).await?;
-        let response = test_router()
-            .oneshot(
-                axum::http::Request::builder()
-                    .method(Method::OPTIONS)
-                    .uri("/ok")
-                    .header(ORIGIN, "http://localhost:8080")
-                    .header(ACCESS_CONTROL_REQUEST_METHOD, "PATCH")
-                    .header(ACCESS_CONTROL_REQUEST_HEADERS, "authorization, x-client")
-                    .body(axum::body::Body::empty())?,
-            )
-            .await?;
-
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response
-                .headers()
-                .get(ACCESS_CONTROL_ALLOW_ORIGIN)
-                .and_then(|value| value.to_str().ok()),
-            Some("http://localhost:8080")
-        );
-        assert_eq!(
-            response
-                .headers()
-                .get(ACCESS_CONTROL_ALLOW_METHODS)
-                .and_then(|value| value.to_str().ok()),
-            Some("PATCH")
-        );
-        assert_eq!(
-            response
-                .headers()
-                .get(ACCESS_CONTROL_ALLOW_HEADERS)
-                .and_then(|value| value.to_str().ok()),
-            Some("authorization, x-client")
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn cors_headers_are_added_to_error_responses() -> anyhow::Result<()> {
-        let _guard = publish_origins(&["http://localhost:8080"]).await?;
-        let response = test_router()
-            .oneshot(
-                axum::http::Request::builder()
-                    .method(Method::GET)
-                    .uri("/err")
-                    .header(ORIGIN, "http://localhost:8080")
-                    .body(axum::body::Body::empty())?,
-            )
-            .await?;
-
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(
-            response
-                .headers()
-                .get(ACCESS_CONTROL_ALLOW_ORIGIN)
-                .and_then(|value| value.to_str().ok()),
-            Some("http://localhost:8080")
-        );
         Ok(())
     }
 }

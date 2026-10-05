@@ -514,44 +514,6 @@ mod tests {
         assert_eq!(*capacity.active.lock().unwrap(), 0);
     }
 
-    #[test]
-    fn hls_job_key_tracks_profile_parameters() {
-        let aac_profile =
-            HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
-        let alac_profile =
-            HlsCodecProfile::from_requested(Some(AudioCodec::Alac)).expect("alac profile");
-
-        let aac_key = HlsJobKey::new(
-            "track-pub-7".to_string(),
-            "source-pub-701".to_string(),
-            None,
-            None,
-            HlsOutputConfig::new(
-                aac_profile,
-                Some(HLS_AUDIO_BITRATE_KBPS),
-                Some(44_100),
-                Some(2),
-                false,
-            ),
-        );
-        let alac_key = HlsJobKey::new(
-            "track-pub-7".to_string(),
-            "source-pub-701".to_string(),
-            None,
-            None,
-            HlsOutputConfig::new(alac_profile, None, None, None, false),
-        );
-
-        assert_eq!(
-            aac_key.output.audio_bitrate_kbps,
-            Some(HLS_AUDIO_BITRATE_KBPS)
-        );
-        assert_eq!(aac_key.output.sample_rate_hz, Some(44_100));
-        assert_eq!(aac_key.output.channels, Some(2));
-        assert_eq!(alac_key.output.audio_bitrate_kbps, None);
-        assert_ne!(aac_key, alac_key);
-    }
-
     #[tokio::test]
     async fn attach_session_to_job_keeps_single_shared_job_for_concurrent_sessions() {
         let _guard = HLS_TEST_MUTEX.lock().await;

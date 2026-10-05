@@ -188,8 +188,6 @@ pub(crate) fn normalize_cors_origin(raw: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use super::*;
 
     fn boot() -> BootConfig {
@@ -350,10 +348,6 @@ mod tests {
         assert_eq!(kind.default(&boot()).unwrap(), json!("/srv/lyra/covers"));
         assert!(normalize(kind, json!("  ")).is_err());
         assert!(normalize(kind, json!(null)).is_err());
-        assert_eq!(
-            Path::new("/srv/lyra/./covers"),
-            Path::new("/srv/lyra/covers")
-        );
     }
 
     #[cfg(unix)]

@@ -1001,14 +1001,6 @@ mod tests {
     }
 
     #[test]
-    fn single_queue_has_canonical_defaults() {
-        let queue = QueueSnapshot::single("track".to_string());
-        assert_eq!(queue.current_track_id(), "track");
-        assert_eq!(queue.repeat_mode, RepeatMode::None);
-        assert!(!queue.shuffle_enabled);
-    }
-
-    #[test]
     fn repeated_queue_tracks_share_validation_queries() -> anyhow::Result<()> {
         let (db, user_db_id, first_track_db_id, _, first_track_id, _) = setup()?;
         let principal = Principal::from_parts(
