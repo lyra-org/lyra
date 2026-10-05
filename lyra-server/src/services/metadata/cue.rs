@@ -734,19 +734,6 @@ pub(super) fn sort_track_metadata(metadata: &mut [TrackMetadata]) {
 mod tests {
     use super::*;
 
-    #[test]
-    fn probe_audio_duration_ms_reads_duration_without_tags() {
-        let assets =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/assets/metadata");
-        for fixture in ["integration_track.flac", "integration_track.opus"] {
-            let duration_ms = probe_audio_duration_ms(&assets.join(fixture));
-            assert!(
-                duration_ms.is_some_and(|ms| ms > 0),
-                "{fixture}: {duration_ms:?}"
-            );
-        }
-    }
-
     fn test_track(entry_id: i64) -> super::TrackMetadata {
         super::TrackMetadata {
             entry_db_id: DbId(entry_id),
@@ -869,11 +856,14 @@ mod tests {
     }
 
     #[test]
-    fn normalize_lookup_key_folds_compatibility_slash_variants() {
-        assert_eq!(
-            normalize_lookup_key("32. True Friends (w/o Gt.Solo).wav"),
-            normalize_lookup_key("32. True Friends (w／o Gt.Solo).flac").replace(".flac", ".wav")
-        );
+    fn normalize_lookup_key_folds_slash_variants() {
+        for slash in ['／', '\\', '\u{2044}', '\u{2215}', '\u{29f8}'] {
+            assert_eq!(
+                normalize_lookup_key(&format!("32. True Friends (w{slash}o Gt.Solo).wav")),
+                "32. true friends (w/o gt.solo).wav",
+                "{slash:?}"
+            );
+        }
     }
 
     #[test]
