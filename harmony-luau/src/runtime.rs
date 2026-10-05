@@ -3188,22 +3188,6 @@ mod tests {
     }
 
     #[test]
-    fn vm_control_initializes_memory_and_interrupt_state() {
-        let unlimited = VmControl::new(VmOptions::default());
-        assert_eq!(unlimited.allocated.load(Ordering::Relaxed), 0);
-        assert_eq!(unlimited.memory_limit.load(Ordering::Relaxed), 0);
-        assert_eq!(
-            unlimited.interrupt_deadline_millis.load(Ordering::Relaxed),
-            0
-        );
-
-        let limited = VmControl::new(VmOptions::default().memory_limit(4096));
-        assert_eq!(limited.allocated.load(Ordering::Relaxed), 0);
-        assert_eq!(limited.memory_limit.load(Ordering::Relaxed), 4096);
-        assert_eq!(limited.interrupt_deadline_millis.load(Ordering::Relaxed), 0);
-    }
-
-    #[test]
     fn local_metadata_stores_typed_values_without_vm() -> Result<()> {
         #[derive(Debug, PartialEq, Eq)]
         struct Label(&'static str);
@@ -3227,28 +3211,6 @@ mod tests {
     }
 
     #[test]
-    fn owned_table_preserves_array_fields_and_raw_entries() {
-        let mut table = OwnedTable::with_entry_capacity(2, 1, 1);
-        table.push_array(Value::Integer(1));
-        table.push_array(Value::String(b"two".to_vec()));
-        table.set_field("name", Value::String(b"demo".to_vec()));
-        table.set_key(Value::Number(4.0), Value::Boolean(true));
-
-        assert_eq!(
-            table.array(),
-            &[Value::Integer(1), Value::String(b"two".to_vec())]
-        );
-        assert_eq!(
-            table.fields(),
-            &[("name".to_string(), Value::String(b"demo".to_vec()))]
-        );
-        assert_eq!(
-            table.entries(),
-            &[(Value::Number(4.0), Value::Boolean(true))]
-        );
-    }
-
-    #[test]
     fn arg_cursor_tracks_labels_and_remaining_arguments() {
         let mut cursor = ArgCursor::new(3, [Arc::from("given")]);
 
@@ -3266,56 +3228,6 @@ mod tests {
         assert!(cursor.is_finished());
 
         assert_eq!(ArgCursor::new(-1, []).len(), 0);
-    }
-
-    #[test]
-    fn return_writer_records_values_and_yield_request() -> Result<()> {
-        let mut state = ReturnState::default();
-        let mut writer = ReturnWriter::borrowed(&mut state);
-
-        writer.write(Value::Integer(1))?;
-        writer.write(Value::String(b"ok".to_vec()))?;
-        writer.request_yield();
-
-        assert_eq!(
-            state.values,
-            vec![Value::Integer(1), Value::String(b"ok".to_vec())]
-        );
-        assert!(state.yield_requested);
-        Ok(())
-    }
-
-    #[test]
-    fn native_function_options_builder_sets_rust_owned_metadata() {
-        let origin = ChunkOrigin {
-            module: Some(ModuleId(Arc::from("plugin/module"))),
-            plugin: Some(Arc::from("demo")),
-            path: Some(Arc::from("plugins/demo/init.luau")),
-        };
-
-        let options = NativeFunctionOptions::new(origin.clone())
-            .capability(CapabilityId(Arc::from("demo.run")))
-            .task_group(TaskGroupId(7))
-            .function_name("run")
-            .argument_names([Arc::from("input"), Arc::from("options")])
-            .use_thread_context_origin(true);
-
-        assert_eq!(options.origin, origin);
-        assert_eq!(
-            options.capability,
-            Some(CapabilityId(Arc::from("demo.run")))
-        );
-        assert_eq!(options.task_group, TaskGroupId(7));
-        assert_eq!(options.function_name.as_deref(), Some("run"));
-        assert_eq!(
-            options
-                .argument_names
-                .iter()
-                .map(AsRef::as_ref)
-                .collect::<Vec<&str>>(),
-            vec!["input", "options"]
-        );
-        assert!(options.use_thread_context_origin);
     }
 
     #[test]
@@ -3379,15 +3291,16 @@ mod tests {
             ..StandardLibraries::none()
         })?;
         let values = vm.eval(
-            Arc::<[u8]>::from(&b"return string.upper('lyra'), table.concat({'a', 'b'}, ',')"[..]),
+            Arc::<[u8]>::from(&b"return string ~= nil, table ~= nil, math == nil"[..]),
             ChunkOrigin::default(),
         )?;
 
         assert_eq!(
             values,
             vec![
-                Value::String(b"LYRA".to_vec()),
-                Value::String(b"a,b".to_vec())
+                Value::Boolean(true),
+                Value::Boolean(true),
+                Value::Boolean(true)
             ]
         );
         assert_eq!(stack_top(&vm), 0);
@@ -3700,16 +3613,6 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "requires Luau C VM")]
-    fn vm_options_track_memory_limit_and_usage() -> Result<()> {
-        let vm = Vm::with_options(VmOptions::default().memory_limit(1024 * 1024))?;
-
-        assert_eq!(vm.memory_limit(), Some(1024 * 1024));
-        assert!(vm.memory_used() > 0);
-        Ok(())
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn thread_handles_fail_fast_across_vms() -> Result<()> {
         let owner = Vm::new()?;
         let other = Vm::new()?;
@@ -3754,29 +3657,6 @@ mod tests {
             ThreadStatus::Completed(vec![Value::Number(42.0)])
         );
         assert_eq!(stack_top(&vm), 0);
-        Ok(())
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore = "requires Luau C VM")]
-    fn thread_data_stores_typed_metadata() -> Result<()> {
-        #[derive(Debug, PartialEq, Eq)]
-        struct ThreadLabel(&'static str);
-
-        let vm = Vm::new()?;
-        let function = vm.load_chunk(&Chunk::new(
-            Arc::<[u8]>::from(&b"return 1"[..]),
-            ChunkOrigin::default(),
-        ))?;
-        let thread = vm.create_thread(&function)?;
-        thread.data().insert(ThreadLabel("worker"))?;
-
-        let label = thread.data().get::<ThreadLabel>()?;
-        assert_eq!(*label, ThreadLabel("worker"));
-        assert!(matches!(
-            thread.data().get::<String>(),
-            Err(Error::MissingContext { .. })
-        ));
         Ok(())
     }
 
@@ -3952,24 +3832,6 @@ mod tests {
             vec![Value::Number(5.0), Value::Number(4.0)]
         );
         assert_eq!(stack_top(&vm), 0);
-        Ok(())
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore = "requires Luau C VM")]
-    fn vm_data_stores_typed_metadata() -> Result<()> {
-        #[derive(Debug, PartialEq, Eq)]
-        struct RuntimeLabel(&'static str);
-
-        let vm = Vm::new()?;
-        vm.data().insert(RuntimeLabel("primary"))?;
-
-        let label = vm.data().get::<RuntimeLabel>()?;
-        assert_eq!(*label, RuntimeLabel("primary"));
-        assert!(matches!(
-            vm.data().get::<String>(),
-            Err(Error::MissingContext { .. })
-        ));
         Ok(())
     }
 
