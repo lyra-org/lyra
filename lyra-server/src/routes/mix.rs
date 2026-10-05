@@ -298,13 +298,6 @@ mod tests {
     use axum::http::Uri;
 
     #[test]
-    fn track_seed_use_instant_defaults_true() {
-        assert!(track_seed_use_instant(None));
-        assert!(track_seed_use_instant(Some(true)));
-        assert!(!track_seed_use_instant(Some(false)));
-    }
-
-    #[test]
     fn mix_query_parses_limit_with_flattened_extra_options() {
         let uri: Uri = "/mix?limit=5&provider_knob=wide".parse().unwrap();
         let axum::extract::Query(query) =

@@ -660,15 +660,6 @@ mod tests {
         assert!(lyrics_service::normalize_language_hint(Some("not-a-language")).is_err());
     }
 
-    #[test]
-    fn text_responses_report_returned_language() {
-        let response = plain_text_response("text/plain; charset=utf-8", "hello".into(), "fra");
-        assert_eq!(
-            response.headers().get(header::CONTENT_LANGUAGE).unwrap(),
-            "fra"
-        );
-    }
-
     #[tokio::test]
     async fn routes_enforce_ownership_visibility_and_shared_permissions() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;

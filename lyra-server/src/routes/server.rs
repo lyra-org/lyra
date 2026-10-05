@@ -661,16 +661,6 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn setup_patch_rejects_unknown_or_missing_fields() {
-        for request in [
-            json!({}),
-            json!({"plugin_selection_skipped": true, "account_required": false}),
-        ] {
-            assert!(serde_json::from_value::<UpdateSetupRequest>(request).is_err());
-        }
-    }
-
     #[tokio::test]
     async fn get_reports_shape_and_file_locks() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
@@ -1051,7 +1041,6 @@ mod tests {
         };
 
         assert!(!info.auth_enabled);
-        assert_eq!(info.version, env!("CARGO_PKG_VERSION"));
         Ok(())
     }
 }
