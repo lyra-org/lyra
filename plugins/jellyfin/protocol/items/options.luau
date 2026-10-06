@@ -260,6 +260,53 @@ function module.for_user(options: ItemsQueryOptions, user_id: string): ItemsQuer
 	return scoped
 end
 
+-- The `Filters` values a listing applies, matching nothing where Lyra has no such state.
+local APPLIED_FILTERS: { [string]: boolean } = {
+	isfavorite = true,
+	isfavoriteorlikes = true,
+	isplayed = true,
+	isunplayed = true,
+	likes = true,
+	isresumable = true,
+}
+
+-- Whether the listing narrows its results by a filter it applies. Upstream searches the libraries
+-- for any filtered request at the user root; a filter the listing ignores would turn that search
+-- into an unfiltered one, so only the applied filters count.
+function module.has_filters(options: ItemsQueryOptions): boolean
+	for _, list in
+		{
+			options.include_item_types,
+			options.exclude_item_types,
+			options.media_types,
+			options.exclude_item_ids,
+			options.studio_ids,
+			options.artist_ids,
+			options.release_artist_ids,
+			options.contributing_artist_ids,
+			options.album_ids,
+			options.genre_ids,
+			options.years,
+		} :: { { any } }
+	do
+		if #list > 0 then
+			return true
+		end
+	end
+	for _, filter in options.filters do
+		if APPLIED_FILTERS[string.lower(filter)] then
+			return true
+		end
+	end
+	return options.is_favorite ~= nil
+		or options.is_played ~= nil
+		or options.requires_rating
+		or options.name_starts_with ~= nil
+		or options.name_starts_with_or_greater ~= nil
+		or options.name_less_than ~= nil
+		or options.search_term ~= nil
+end
+
 local CONFLICTING_FILTERS: { [string]: string } = {
 	isfolder = "isnotfolder",
 	isplayed = "isunplayed",
