@@ -803,6 +803,10 @@ local function respond_with_items_listing(ctx: ApiContext, principal: session.Pr
 	if items_options.has_conflicting_filters(options) then
 		return responses.bad_request("Conflicting filters")
 	end
+	-- Upstream ranks searches by relevance whatever `SortBy` asks for.
+	if options.search_term ~= nil then
+		options.sort_by = {}
+	end
 
 	-- Jellyfin returns the user root's direct children (library views) when ParentId/Ids are absent and Recursive isn't true.
 	if
