@@ -61,9 +61,11 @@ function module.set_track_id(track_db_id: number, id_type: string, id_value: str
 	end
 end
 
+-- Does nothing once a request has failed on this refresh: an outage must not
+-- discard a match that a later refresh would confirm.
 function module.mark_unmatched(db_id: number, id_types: { string })
 	local current_provider = provider
-	if current_provider ~= nil then
+	if current_provider ~= nil and not musicbrainz_api.request_failed() then
 		current_provider:mark_unmatched(db_id, id_types)
 	end
 end

@@ -8,7 +8,6 @@ local chromaprint = require("@lyra/chromaprint")
 local entries = require("@lyra/entries")
 local http = require("@harmony/http")
 local serde = require("@harmony/serde")
-local json = serde.json
 
 local json_helpers = require("./json_helpers")
 local local_release = require("./local_release")
@@ -112,21 +111,12 @@ function module.lookup(fingerprint: string, duration_ms: number): AcoustIdResult
 		},
 	}
 
-	local ok, response = pcall(http.request, request)
-	if not ok or type(response) ~= "table" then
+	local root = musicbrainz_api.response_object(pcall(http.request, request))
+	if root == nil then
 		return nil
 	end
-	if not response.success or response.status_code ~= 200 then
-		return nil
-	end
-
-	local decoded_ok, data = pcall(json.decode, response.body :: string)
-	if not decoded_ok then
-		return nil
-	end
-
-	local root = as_json_object(data)
-	if root == nil or root.status ~= "ok" then
+	if root.status ~= "ok" then
+		musicbrainz_api.note_request_failure()
 		return nil
 	end
 
