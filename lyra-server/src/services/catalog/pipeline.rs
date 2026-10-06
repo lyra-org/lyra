@@ -141,6 +141,10 @@ impl NameRange {
         }
     }
 
+    fn is_unbounded(&self) -> bool {
+        self.prefix.is_none() && self.at_least.is_none() && self.below.is_none()
+    }
+
     fn contains(&self, sort_name: &str) -> bool {
         self.prefix
             .as_deref()
@@ -218,8 +222,11 @@ pub(crate) fn page<C: Catalog>(
     limit: Option<u64>,
 ) -> Result<Page<C::Item>, CatalogError> {
     let offset_len = usize::try_from(offset).unwrap_or(usize::MAX);
-    let end =
-        limit.map(|limit| offset_len.saturating_add(usize::try_from(limit).unwrap_or(usize::MAX)));
+    // A page of no items keeps none, wherever it starts.
+    let end = limit.map(|limit| match limit {
+        0 => 0,
+        limit => offset_len.saturating_add(usize::try_from(limit).unwrap_or(usize::MAX)),
+    });
     let (entries, total) = sorted(db, viewer, query, end)?;
     let ids = entries
         .into_iter()
@@ -271,6 +278,12 @@ fn sorted<C: Catalog>(
         .collect::<Vec<_>>();
 
     let ids = C::candidates(db, viewer, &query.filter)?;
+    // Without a search or name bounds every candidate makes a row, so keeping none needs only the
+    // count. Reading no rows still raises any error the sort keys would.
+    if keep == Some(0) && search.is_none() && query.names.is_unbounded() {
+        C::rows(db, viewer, &query.filter, Vec::new(), &fields)?;
+        return Ok((Vec::new(), ids.len()));
+    }
     let mut entries = C::rows(db, viewer, &query.filter, ids, &fields)?
         .into_iter()
         .filter(|row| query.names.contains(&row.sort_name))
