@@ -119,6 +119,20 @@ assert(options.wants_item_type(parse({ IncludeItemTypes = "Audio", ExcludeItemTy
 assert(not options.wants_item_type(parse({ ExcludeItemTypes = "Audio" }), "Audio"))
 assert(not options.wants_item_type(parse({ MediaTypes = "Audio" }), "MusicAlbum"))
 
+-- At the user root, upstream lists the views only for a request without filters; filters the
+-- listing ignores don't count.
+assert(not options.has_filters(parse({ Recursive = "false", SortBy = "SortName", Limit = "10" })))
+assert(options.has_filters(parse({ IncludeItemTypes = "MusicAlbum" })))
+assert(options.has_filters(parse({ IsFavorite = "true" })))
+assert(options.has_filters(parse({ Filters = "IsFavorite" })))
+assert(options.has_filters(parse({ Filters = "IsResumable" })))
+assert(options.has_filters(parse({ SearchTerm = "x" })))
+assert(options.has_filters(parse({ Years = "1999" })))
+assert(options.has_filters(parse({ MinCommunityRating = "5" })))
+assert(not options.has_filters(parse({ Filters = "IsFolder" })))
+assert(not options.has_filters(parse({ ExcludeArtistIds = "0123456789abcdef0123456789abcdef" })))
+assert(not options.has_filters(parse({ Genres = "Rock", ImageTypes = "Primary" })))
+
 -- Upstream rejects `Filters` naming both sides of a pair.
 assert(options.has_conflicting_filters(parse({ Filters = "IsPlayed,IsUnplayed" })))
 assert(options.has_conflicting_filters(parse({ Filters = "isnotfolder,IsFolder" })))

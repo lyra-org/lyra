@@ -808,11 +808,13 @@ local function respond_with_items_listing(ctx: ApiContext, principal: session.Pr
 		options.sort_by = {}
 	end
 
-	-- Jellyfin returns the user root's direct children (library views) when ParentId/Ids are absent and Recursive isn't true.
+	-- Jellyfin returns the user root's direct children (library views) for an unfiltered,
+	-- non-recursive listing without ParentId or Ids.
 	if
 		(options.parent_id == nil or constants.is_root_item_id(options.parent_id))
 		and #options.ids == 0
 		and options.recursive == false
+		and not items_options.has_filters(options)
 	then
 		local items, total_count, start_index = listing.list_views(options)
 		return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
