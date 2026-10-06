@@ -1273,7 +1273,9 @@ function helpers.to_genre_item(
 	return item
 end
 
-function helpers.to_library_view_item(lib: LibraryInfo?): ItemInfo?
+-- Upstream counts a library's top-level entries only when asked; a Lyra library's nearest
+-- equivalent is its albums.
+function helpers.to_library_view_item(lib: LibraryInfo?, include_child_count: boolean): ItemInfo?
 	if not lib then
 		return nil
 	end
@@ -1313,19 +1315,20 @@ function helpers.to_library_view_item(lib: LibraryInfo?): ItemInfo?
 		LockData = false,
 		PlayAccess = "Full",
 		SpecialFeatureCount = 0,
-		-- Mirrors upstream's CollectionFolder fast-path: a positive placeholder value.
-		ChildCount = math.random(1, 9),
+		ChildCount = if include_child_count and lib.db_id ~= nil
+			then releases.query({ library_id = lib.db_id, limit = 0 }).total
+			else nil,
 	} :: ItemInfo
 end
 
-function module.to_music_view_items(): { ItemInfo }
+function module.to_music_view_items(include_child_count: boolean): { ItemInfo }
 	local ok, libs = pcall(libraries.list, nil)
 	if not ok or type(libs) ~= "table" then
 		return {}
 	end
 	local items: { ItemInfo } = {}
 	for _, lib in libs :: { LibraryInfo } do
-		local item = helpers.to_library_view_item(lib)
+		local item = helpers.to_library_view_item(lib, include_child_count)
 		if item then
 			table.insert(items, item)
 		end

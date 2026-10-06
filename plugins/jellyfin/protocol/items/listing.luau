@@ -307,7 +307,7 @@ local function named_extras(options: ItemsQueryOptions): { ItemInfo }
 		for _, id in options.ids do
 			wanted[string.lower((string.gsub(id, "-", "")))] = true
 		end
-		for _, view in catalog.to_music_view_items() do
+		for _, view in catalog.to_music_view_items(options.include_child_count) do
 			if view.Id and wanted[view.Id] then
 				table.insert(extras, view)
 			end
@@ -514,7 +514,7 @@ end
 function module.list_views(options: ItemsQueryOptions): ({ ItemInfo }, number, number)
 	local search = if options.search_term then string.lower(options.search_term) else nil
 	local views: { ItemInfo } = {}
-	for _, view in catalog.to_music_view_items() do
+	for _, view in catalog.to_music_view_items(options.include_child_count) do
 		if search == nil or string.find(string.lower(view.Name or ""), search, 1, true) ~= nil then
 			table.insert(views, view)
 		end
