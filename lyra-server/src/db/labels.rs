@@ -220,7 +220,7 @@ pub(crate) fn resolve_inside_tx(
             ext.provider_id,
             ext.id_type,
             ext.id_value,
-            super::IdSource::Plugin,
+            super::IdSource::Resolved,
         )?;
     }
 

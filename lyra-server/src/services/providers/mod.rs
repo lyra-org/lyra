@@ -51,6 +51,7 @@ pub(crate) use admin::{
     EntityExternalIdRecord,
     ProviderAdminError,
     SetEntityExternalIdRequest,
+    inherit_entity_external_id,
     list_entity_external_ids,
     list_provider_configs,
     refresh_entity_by_id,
@@ -258,7 +259,7 @@ mod tests {
             "musicbrainz",
             "release_id",
             "same-release",
-            IdSource::Plugin,
+            IdSource::Resolved,
         )?;
         external_ids::upsert(
             &mut db,
@@ -266,7 +267,7 @@ mod tests {
             "musicbrainz",
             "release_id",
             "same-release",
-            IdSource::Plugin,
+            IdSource::Resolved,
         )?;
 
         let unique_pairs = HashSet::from([("musicbrainz".to_string(), "release_id".to_string())]);
@@ -304,7 +305,7 @@ mod tests {
             "musicbrainz",
             "release_id",
             "shared-release",
-            IdSource::Plugin,
+            IdSource::Resolved,
         )?;
         external_ids::upsert(
             &mut db,
@@ -312,7 +313,7 @@ mod tests {
             "musicbrainz",
             "release_id",
             "shared-release",
-            IdSource::Plugin,
+            IdSource::Resolved,
         )?;
 
         let unique_pairs = HashSet::from([("musicbrainz".to_string(), "release_id".to_string())]);
@@ -367,7 +368,7 @@ mod tests {
                 "musicbrainz",
                 "release_id",
                 "same-release",
-                IdSource::Plugin,
+                IdSource::Resolved,
             )?;
         }
 
@@ -377,7 +378,7 @@ mod tests {
             "musicbrainz",
             "recording_id",
             "rec-1",
-            IdSource::Plugin,
+            IdSource::Resolved,
         )?;
         external_ids::upsert(
             &mut db,
@@ -385,7 +386,7 @@ mod tests {
             "musicbrainz",
             "recording_id",
             "rec-2",
-            IdSource::Plugin,
+            IdSource::Resolved,
         )?;
         external_ids::upsert(
             &mut db,
@@ -393,7 +394,7 @@ mod tests {
             "musicbrainz",
             "recording_id",
             "rec-2",
-            IdSource::Plugin,
+            IdSource::Resolved,
         )?;
 
         let release_pairs = HashSet::from([("musicbrainz".to_string(), "release_id".to_string())]);
@@ -433,7 +434,7 @@ mod tests {
                 "musicbrainz",
                 "release_id",
                 "same-release",
-                IdSource::Plugin,
+                IdSource::Resolved,
             )?;
         }
 
@@ -443,7 +444,7 @@ mod tests {
             "musicbrainz",
             "recording_id",
             "rec-1",
-            IdSource::Plugin,
+            IdSource::Resolved,
         )?;
         external_ids::upsert(
             &mut db,
@@ -451,7 +452,7 @@ mod tests {
             "musicbrainz",
             "recording_id",
             "rec-2",
-            IdSource::Plugin,
+            IdSource::Resolved,
         )?;
 
         let release_pairs = HashSet::from([("musicbrainz".to_string(), "release_id".to_string())]);

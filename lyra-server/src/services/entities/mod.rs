@@ -1192,7 +1192,7 @@ mod tests {
             "alpha",
             "thing_id",
             value,
-            db::IdSource::Plugin,
+            db::IdSource::Resolved,
         )?;
         db::external_ids::upsert(
             db,
@@ -1200,7 +1200,7 @@ mod tests {
             "alpha",
             "unlabeled_id",
             "hidden",
-            db::IdSource::Plugin,
+            db::IdSource::Resolved,
         )?;
         Ok(())
     }

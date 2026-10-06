@@ -127,19 +127,10 @@ fn merge_release_into_inside_tx(
     }
 
     for external_id in db::external_ids::get_for_entity_inside_tx(db, loser)? {
-        let id_value = external_id.id_value.trim();
-        if id_value.is_empty() {
+        if external_id.id_value.trim().is_empty() {
             continue;
         }
-
-        db::external_ids::upsert_inside_tx(
-            db,
-            winner,
-            &external_id.provider_id,
-            &external_id.id_type,
-            id_value,
-            external_id.source,
-        )?;
+        db::external_ids::copy_inside_tx(db, winner, &external_id)?;
     }
 
     let mut winner_layers_by_source = HashMap::new();

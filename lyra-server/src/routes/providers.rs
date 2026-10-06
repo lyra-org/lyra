@@ -14,7 +14,10 @@ use axum::{
         Path,
         Query,
     },
-    http::HeaderMap,
+    http::{
+        HeaderMap,
+        StatusCode,
+    },
 };
 use serde::{
     Deserialize,
@@ -45,6 +48,7 @@ use crate::{
         providers::{
             EntityExternalIdRecord,
             SetEntityExternalIdRequest as ProviderSetEntityExternalIdRequest,
+            inherit_entity_external_id as inherit_entity_external_id_service,
             list_entity_external_ids as list_entity_external_ids_service,
             list_provider_configs,
             refresh_entity_by_id,
@@ -89,6 +93,7 @@ impl From<EntityExternalIdRecord> for ExternalIdResponse {
             id_type: value.id_type,
             id_value: value.id_value,
             source: value.source,
+            resolved_value: value.resolved_value,
         }
     }
 }
@@ -316,7 +321,12 @@ pub struct ExternalIdResponse {
     pub provider_id: String,
     pub id_type: String,
     pub id_value: String,
+    /// `manual` when a user set the value, `resolved` when a provider did.
     pub source: String,
+    /// The provider's value beneath a manual one, which returns when the ID is
+    /// inherited again.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_value: Option<String>,
 }
 
 async fn list_providers(headers: HeaderMap) -> Result<Json<Vec<ProviderResponse>>, AppError> {
@@ -542,6 +552,16 @@ async fn set_entity_external_id(
     Ok(Json(record.into()))
 }
 
+async fn inherit_entity_external_id(
+    headers: HeaderMap,
+    Path((entity_id, provider_id, id_type)): Path<(String, String, String)>,
+) -> Result<StatusCode, AppError> {
+    let _principal = require_manage_metadata(&headers).await?;
+    inherit_entity_external_id_service(&entity_id, &provider_id, &id_type).await?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn lock_entity(
     headers: HeaderMap,
     Path(entity_id): Path<String>,
@@ -654,7 +674,14 @@ fn get_external_ids_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn set_external_id_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Set entity external ID").description(
-        "Creates or replaces one external ID on an entity, keyed by `provider_id` and `id_type` in the path. User-set IDs take priority over plugin-set IDs. Requires ManageMetadata permission.",
+        "Sets the manual value of one external ID on an entity, keyed by `provider_id` and `id_type` in the path. It takes effect over the resolved value, which is kept and returns when the ID is inherited again. Requires ManageMetadata permission.",
+    )
+}
+
+#[cfg(feature = "docgen")]
+fn inherit_external_id_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Inherit entity external ID").description(
+        "Removes the manual value of one external ID on an entity, so the resolved value takes effect again. Returns 404 when the ID has no manual value. Requires ManageMetadata permission.",
     )
 }
 
@@ -759,7 +786,7 @@ pub fn entity_routes() -> Router {
         .route("/{id}/external-ids", get(get_entity_external_ids))
         .route(
             "/{id}/external-ids/{provider_id}/{id_type}",
-            put(set_entity_external_id),
+            put(set_entity_external_id).delete(inherit_entity_external_id),
         )
         .route("/{id}/lock", put(lock_entity))
         .route("/{id}/lock", delete(unlock_entity))
@@ -782,7 +809,8 @@ pub(crate) fn entity_openapi_routes() -> aide::axum::ApiRouter {
         )
         .api_route(
             "/{id}/external-ids/{provider_id}/{id_type}",
-            put_with(set_entity_external_id, set_external_id_docs),
+            put_with(set_entity_external_id, set_external_id_docs)
+                .delete_with(inherit_entity_external_id, inherit_external_id_docs),
         )
         .api_route("/{id}/lock", put_with(lock_entity, lock_entity_docs))
         .api_route("/{id}/lock", delete_with(unlock_entity, unlock_entity_docs))
@@ -1026,7 +1054,7 @@ mod tests {
             "musicbrainz",
             "recording_id",
             "recording-123",
-            IdSource::Plugin,
+            IdSource::Resolved,
         )?;
 
         let context = build_release_context(&db, release_db_id, None, &IdSchemes::default())?;

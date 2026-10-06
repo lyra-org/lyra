@@ -549,7 +549,8 @@ mod tests {
             provider_id: provider_id.to_string(),
             id_type: id_type.to_string(),
             id_value: id_value.to_string(),
-            source: IdSource::Plugin,
+            source: IdSource::Resolved,
+            resolved_value: None,
         }
     }
 

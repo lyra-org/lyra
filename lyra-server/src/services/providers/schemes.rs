@@ -73,8 +73,8 @@ impl IdSchemes {
                 continue;
             }
             let rank = match id.source {
-                IdSource::User => 0,
-                IdSource::Plugin => 1,
+                IdSource::Manual => 0,
+                IdSource::Resolved => 1,
             };
             let key = (rank, id.provider_id.as_str(), id.id_type.as_str());
             match best.entry(scheme) {
@@ -128,6 +128,7 @@ mod tests {
             id_type: id_type.to_string(),
             id_value: id_value.to_string(),
             source,
+            resolved_value: None,
         }
     }
 
@@ -142,10 +143,10 @@ mod tests {
     #[test]
     fn resolve_maps_rows_to_schemes_and_omits_unregistered() {
         let resolved = schemes().resolve(&[
-            id("alpha", "thing_id", "a-1", IdSource::Plugin),
-            id("beta", "code", "c-1", IdSource::Plugin),
-            id("beta", "other", "o-1", IdSource::Plugin),
-            id("gamma", "thing_id", "g-1", IdSource::User),
+            id("alpha", "thing_id", "a-1", IdSource::Resolved),
+            id("beta", "code", "c-1", IdSource::Resolved),
+            id("beta", "other", "o-1", IdSource::Resolved),
+            id("gamma", "thing_id", "g-1", IdSource::Manual),
         ]);
 
         assert_eq!(
@@ -161,14 +162,14 @@ mod tests {
     fn resolve_prefers_user_ids_then_lowest_provider() {
         let schemes = schemes();
         let user_wins = schemes.resolve(&[
-            id("alpha", "thing_id", "from-plugin", IdSource::Plugin),
-            id("beta", "thing_ref", "from-user", IdSource::User),
+            id("alpha", "thing_id", "from-plugin", IdSource::Resolved),
+            id("beta", "thing_ref", "from-user", IdSource::Manual),
         ]);
         assert_eq!(user_wins["example:thing"], "from-user");
 
         let tie = [
-            id("beta", "thing_ref", "from-beta", IdSource::Plugin),
-            id("alpha", "thing_id", "from-alpha", IdSource::Plugin),
+            id("beta", "thing_ref", "from-beta", IdSource::Resolved),
+            id("alpha", "thing_id", "from-alpha", IdSource::Resolved),
         ];
         assert_eq!(schemes.resolve(&tie)["example:thing"], "from-alpha");
         let reversed = [tie[1].clone(), tie[0].clone()];

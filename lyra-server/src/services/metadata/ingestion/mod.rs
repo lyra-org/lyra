@@ -708,7 +708,8 @@ mod tests {
             provider_id: "test-provider".to_string(),
             id_type: "track_db_id".to_string(),
             id_value: "abc123".to_string(),
-            source: IdSource::Plugin,
+            source: IdSource::Resolved,
+            resolved_value: None,
         };
         let ext_qr = db.exec_mut(QueryBuilder::insert().element(&ext).query())?;
         let ext_id = ext_qr.elements[0].id;
@@ -1204,7 +1205,7 @@ mod tests {
                 "test",
                 "artist_id",
                 name,
-                db::IdSource::Plugin,
+                db::IdSource::Resolved,
             )?;
             desired.push(db::credits::ArtistCreditInput {
                 artist_id,

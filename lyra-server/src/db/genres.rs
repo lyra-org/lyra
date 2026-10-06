@@ -216,7 +216,7 @@ pub(crate) fn resolve(db: &mut DbAny, request: &ResolveGenre) -> anyhow::Result<
             ext.provider_id,
             ext.id_type,
             ext.id_value,
-            super::IdSource::Plugin,
+            super::IdSource::Resolved,
         )?;
     }
 
