@@ -4,9 +4,10 @@
 -- You can obtain one here:
 -- www.meshiplaw.com/lyra.
 
--- The only way a release gets applied: every candidate, from any path, is
--- checked by acceptance against its full track list first. A rejected
--- candidate returns false and the caller moves on to its next candidate.
+-- Every candidate, from any path, is checked by acceptance against its full
+-- track list before it is applied. A rejected candidate returns false and the
+-- caller moves on to its next candidate. Only a release the user set manually
+-- skips the check.
 
 local acceptance = require("./acceptance")
 local apply = require("./apply")
@@ -25,6 +26,7 @@ local fetch_release_details = musicbrainz_api.fetch_release_details
 local release_from_candidates = release_group.release_from_candidates
 local select_release_group_candidate = release_group.select_release_group_candidate
 local release_lists_tracks = track_helpers.release_lists_tracks
+local assign_release_tracks = track_helpers.assign_release_tracks
 
 local module = {}
 
@@ -86,6 +88,24 @@ function module.try_release_id(release_id: string, local_release_info: LocalRele
 		return false
 	end
 	return apply.process_release(release, local_release_info)
+end
+
+-- Applies a release the user chose without checking it: acceptance exists to
+-- catch wrong guesses, and this one is not a guess. Without acceptance the
+-- release may list fewer tracks than the local album, so local tracks it has
+-- no place for are unmatched rather than left on a previous match.
+function module.apply_release_id(release_id: string, local_release_info: LocalRelease): boolean
+	local release = fetch_release_details(release_id)
+	if not release or not apply.process_release(release, local_release_info) then
+		return false
+	end
+	local local_tracks, assignments = assign_release_tracks(local_release_info.context.tracks, release)
+	for i, local_track in local_tracks do
+		if assignments[i] == nil and local_track.db_id then
+			apply.mark_unmatched(local_track.db_id, { "recording_id", "release_track_id" })
+		end
+	end
+	return true
 end
 
 -- Applies the best edition from `selected_release`'s release group. The edition

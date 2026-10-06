@@ -239,6 +239,14 @@ function module.register_refresh(provider_instance: Provider): ()
 	provider_instance:refresh(metadata.EntityType.Release, function(ctx: metadata.ReleaseRefreshContext)
 		local release: ReleaseContext = ctx :: ReleaseContext
 		local local_release_info = local_release.from_context(release)
+		local manual_ids = musicbrainz_external_ids(release.manual_ids)
+		local manual_release_id = manual_ids and manual_ids.release_id
+		if type(manual_release_id) == "string" and manual_release_id ~= "" then
+			-- A failed fetch keeps what is stored rather than searching past the user's choice.
+			resolve.apply_release_id(manual_release_id, local_release_info)
+			return nil
+		end
+
 		local musicbrainz_ids = musicbrainz_external_ids(release.external_ids)
 		if musicbrainz_ids and musicbrainz_ids.release_id then
 			if resolve.try_release_id(musicbrainz_ids.release_id, local_release_info) then
