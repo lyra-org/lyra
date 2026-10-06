@@ -119,6 +119,12 @@ assert(options.wants_item_type(parse({ IncludeItemTypes = "Audio", ExcludeItemTy
 assert(not options.wants_item_type(parse({ ExcludeItemTypes = "Audio" }), "Audio"))
 assert(not options.wants_item_type(parse({ MediaTypes = "Audio" }), "MusicAlbum"))
 
+-- Upstream rejects `Filters` naming both sides of a pair.
+assert(options.has_conflicting_filters(parse({ Filters = "IsPlayed,IsUnplayed" })))
+assert(options.has_conflicting_filters(parse({ Filters = "isnotfolder,IsFolder" })))
+assert(options.has_conflicting_filters(parse({ Filters = "Likes,Dislikes" })))
+assert(not options.has_conflicting_filters(parse({ Filters = "IsFavorite,IsPlayed" })))
+
 assert(enrichment.release_year("2004-05-06") == 2004)
 assert(enrichment.release_date_to_premiere_date("2004") == "2004-01-01T00:00:00.0000000Z")
 assert(enrichment.sum_runtime_ticks({}) == 0)
