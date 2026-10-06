@@ -72,14 +72,39 @@ impl Viewer {
         }
     }
 
+    /// The user principal whose libraries limit what the viewer sees, or `None` when the viewer
+    /// sees every library.
+    fn restricted(&self) -> Option<&Principal> {
+        match self {
+            Self::User { principal, .. }
+                if !principal.permissions.contains(&db::Permission::Admin) =>
+            {
+                Some(principal)
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether the viewer sees every release.
+    pub(crate) fn sees_everything(&self) -> bool {
+        self.restricted().is_none()
+    }
+
+    /// Whether the viewer can see every one of `libraries`.
+    fn sees_libraries(&self, db: &DbAny, libraries: &[DbId]) -> anyhow::Result<bool> {
+        let Some(principal) = self.restricted() else {
+            return Ok(true);
+        };
+        let accessible =
+            db::libraries::db_ids_for_public_ids(db, &principal.accessible_library_ids)?;
+        Ok(libraries.iter().all(|library| accessible.contains(library)))
+    }
+
     /// The releases in the viewer's libraries, or `None` when the viewer sees every release.
     pub(crate) fn visible_releases(&self, db: &DbAny) -> anyhow::Result<Option<HashSet<DbId>>> {
-        let Self::User { principal, .. } = self else {
+        let Some(principal) = self.restricted() else {
             return Ok(None);
         };
-        if principal.permissions.contains(&db::Permission::Admin) {
-            return Ok(None);
-        }
         let mut releases = HashSet::new();
         for library in db::libraries::db_ids_for_public_ids(db, &principal.accessible_library_ids)?
         {
@@ -217,12 +242,22 @@ pub(crate) fn scoped_releases(
     genres: &[DbId],
 ) -> anyhow::Result<Candidates> {
     let mut scoped = Candidates::default();
-    if let Some(visible) = viewer.visible_releases(db)? {
+    let libraries = match library {
+        Some(library) => Some(db::graph::existing_ids(db, &[library], "Library")?),
+        None => None,
+    };
+    // The visible releases are those of the viewer's libraries, so a scope of libraries the
+    // viewer can see already lies within them.
+    let within_visible = match &libraries {
+        Some(libraries) => viewer.sees_libraries(db, libraries)?,
+        None => false,
+    };
+    if !within_visible && let Some(visible) = viewer.visible_releases(db)? {
         scoped.restrict(visible);
     }
-    if let Some(library) = library {
+    if let Some(libraries) = libraries {
         let mut library_releases = Vec::new();
-        for library in db::graph::existing_ids(db, &[library], "Library")? {
+        for library in libraries {
             library_releases.extend(db::graph::neighbor_ids(db, library, "Release")?);
         }
         scoped.restrict(library_releases);

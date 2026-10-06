@@ -148,11 +148,10 @@ impl Catalog for Artists {
         viewer: &Viewer,
         filter: &ArtistFilter,
     ) -> Result<Vec<DbId>, CatalogError> {
-        let visible = viewer.visible_releases(db)?;
         let mut artists = Candidates::default();
         if let Some(ids) = &filter.ids {
             let ids = db::graph::existing_ids(db, ids, "Artist")?;
-            match &visible {
+            match &viewer.visible_releases(db)? {
                 Some(visible) => {
                     let mut credited_visibly = Vec::new();
                     for artist in ids {
@@ -165,7 +164,7 @@ impl Catalog for Artists {
                 None => artists.restrict(ids),
             }
         }
-        if filter.narrows_credits() || (visible.is_some() && filter.ids.is_none()) {
+        if filter.narrows_credits() || (!viewer.sees_everything() && filter.ids.is_none()) {
             artists.restrict(credited_artists(db, viewer, filter)?);
         }
         if let Some(artist_type) = filter.artist_type {

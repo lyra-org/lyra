@@ -292,28 +292,111 @@ impl Catalog {
     }
 
     fn names(&self, module: &str, name: &str, query: &str) -> Result<Vec<String>> {
-        let mut context = CallContext {
-            origin: plugin_origin("demo", "init.luau"),
-            ..CallContext::default()
-        };
-        seed_caller_principal(&mut context, self.admin.clone());
-        let values = self.runtime.eval_plugin_source_with_call_context(
-            format!(
-                r#"
-                    local catalog = require("@lyra/{module}")
-                    local page = catalog.query({query})
-                    local names = {{}}
-                    for _, item in page.items do
-                        table.insert(names, item.{name})
-                    end
-                    return table.unpack(names)
-                "#
-            )
-            .into_bytes(),
-            context,
-        )?;
-        Ok(track_titles(values))
+        names_as(&self.runtime, &self.admin, module, name, query)
     }
+}
+
+/// The `name` field of each item `<module>.query(<query>)` returns for `principal`.
+fn names_as(
+    runtime: &PluginExecutor,
+    principal: &crate::services::auth::Principal,
+    module: &str,
+    name: &str,
+    query: &str,
+) -> Result<Vec<String>> {
+    let mut context = CallContext {
+        origin: plugin_origin("demo", "init.luau"),
+        ..CallContext::default()
+    };
+    seed_caller_principal(&mut context, principal.clone());
+    let values = runtime.eval_plugin_source_with_call_context(
+        format!(
+            r#"
+                local catalog = require("@lyra/{module}")
+                local page = catalog.query({query})
+                local names = {{}}
+                for _, item in page.items do
+                    table.insert(names, item.{name})
+                end
+                return table.unpack(names)
+            "#
+        )
+        .into_bytes(),
+        context,
+    )?;
+    Ok(track_titles(values))
+}
+
+#[test]
+fn plugin_catalog_query_scopes_a_library_to_what_the_principal_sees() -> Result<()> {
+    let mut db = test_db::new_test_db()?;
+    let visible = test_db::insert_library(&mut db, "Visible", "/tmp/lyra-scope-visible")?;
+    let hidden = test_db::insert_library(&mut db, "Hidden", "/tmp/lyra-scope-hidden")?;
+    for (libraries, title, artist) in [
+        (vec![visible], "Seen", "Ann"),
+        (vec![hidden], "Unseen", "Hal"),
+        (vec![visible, hidden], "Shared", "Sam"),
+    ] {
+        let release = test_db::insert_release(&mut db, title)?;
+        let track = test_db::insert_track(&mut db, title)?;
+        let artist = test_db::insert_artist(&mut db, artist)?;
+        for library in libraries {
+            test_db::connect(&mut db, library, release)?;
+        }
+        test_db::connect(&mut db, release, track)?;
+        test_db::connect_artist(&mut db, release, artist)?;
+    }
+    let user = test_db::insert_user(&mut db, "scope-viewer")?;
+    let admin_user = test_db::insert_user(&mut db, "scope-admin")?;
+    let visible_id = db::libraries::get_by_id(&db, visible)?
+        .context("library exists")?
+        .id;
+    let viewer = crate::services::auth::Principal::for_user(
+        &db,
+        user,
+        Vec::new(),
+        std::collections::HashSet::from([visible_id]),
+    );
+    let admin = crate::services::auth::Principal::for_user(
+        &db,
+        admin_user,
+        vec![db::Permission::Admin],
+        Default::default(),
+    );
+    let runtime = tracks_runtime(db)?;
+    let releases =
+        |principal, query: &str| names_as(&runtime, principal, "releases", "release_title", query);
+    let (visible, hidden) = (visible.0, hidden.0);
+
+    assert_eq!(releases(&viewer, "{}")?, ["Seen", "Shared"]);
+    assert_eq!(
+        releases(&viewer, &format!("{{ library_id = {visible} }}"))?,
+        ["Seen", "Shared"]
+    );
+    // A release in a library the viewer can't see stays visible through another library.
+    assert_eq!(
+        releases(&viewer, &format!("{{ library_id = {hidden} }}"))?,
+        ["Shared"]
+    );
+    assert!(releases(&viewer, "{ library_id = 999999 }")?.is_empty());
+    assert_eq!(
+        releases(&admin, &format!("{{ library_id = {hidden} }}"))?,
+        ["Shared", "Unseen"]
+    );
+    assert_eq!(
+        names_as(
+            &runtime,
+            &viewer,
+            "tracks",
+            "track_title",
+            &format!("{{ library_id = {hidden} }}")
+        )?,
+        ["Shared"]
+    );
+    let artists = |query: &str| names_as(&runtime, &viewer, "artists", "artist_name", query);
+    assert_eq!(artists("{}")?, ["Ann", "Sam"]);
+    assert_eq!(artists(&format!("{{ library_id = {hidden} }}"))?, ["Sam"]);
+    Ok(())
 }
 
 #[test]
