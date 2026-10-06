@@ -41,6 +41,7 @@ export type ReleaseContext = {
 	barcode: string?,
 	ids: ReleaseIds?,
 	external_ids: metadata.ExternalIdsByProvider?,
+	manual_ids: metadata.ExternalIdsByProvider?,
 	[string]: JsonValue,
 }
 
