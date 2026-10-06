@@ -2178,6 +2178,8 @@ api.get(P .. "/Items/Filters2", function(ctx: ApiContext)
 	return api.response.json(200, {
 		Genres = {},
 		Tags = {},
+		AudioLanguages = {},
+		SubtitleLanguages = {},
 	})
 end, "public", true)
 api.get(P .. "/Items/{id}/Ancestors", function(ctx: ApiContext)
