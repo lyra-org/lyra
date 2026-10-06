@@ -880,7 +880,7 @@ mod tests {
                     "similartest",
                     "release_group_id",
                     "group-1",
-                    db::IdSource::Plugin,
+                    db::IdSource::Resolved,
                 )?;
             }
             (seed, same_library)

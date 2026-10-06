@@ -30,30 +30,47 @@ pub(crate) struct ExternalId {
     pub(crate) db_id: Option<NodeId>,
     pub(crate) provider_id: String,
     pub(crate) id_type: String,
+    /// The effective value: the manual value when present, else the resolved one.
     pub(crate) id_value: String,
     pub(crate) source: IdSource,
+    /// The resolved value, kept beneath a manual one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) resolved_value: Option<String>,
+}
+
+impl ExternalId {
+    /// The value a plugin last set, whether or not a manual value hides it.
+    pub(crate) fn resolved_value(&self) -> Option<&str> {
+        match self.source {
+            IdSource::Resolved => Some(&self.id_value),
+            IdSource::Manual => self.resolved_value.as_deref(),
+        }
+    }
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, DbTypeMarker)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum IdSource {
-    Plugin,
-    User,
+    /// Set by a provider plugin.
+    Resolved,
+    /// Set by a user; it takes effect over a resolved value.
+    Manual,
 }
 
 impl IdSource {
+    // Stored under the names these had before, so existing rows still load.
     fn as_db_str(self) -> &'static str {
         match self {
-            Self::Plugin => "plugin",
-            Self::User => "user",
+            Self::Resolved => "plugin",
+            Self::Manual => "user",
         }
     }
 
     fn from_db_str(value: &str) -> Result<Self, DbError> {
         match value {
-            "plugin" => Ok(Self::Plugin),
-            "user" => Ok(Self::User),
+            "plugin" => Ok(Self::Resolved),
+            "user" => Ok(Self::Manual),
             _ => Err(DbError::serialization(
                 agdb::DbErrorType::TypeError,
                 format!("invalid IdSource value '{value}'"),
@@ -64,7 +81,10 @@ impl IdSource {
 
 impl fmt::Display for IdSource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_db_str())
+        f.write_str(match self {
+            Self::Resolved => "resolved",
+            Self::Manual => "manual",
+        })
     }
 }
 
@@ -310,6 +330,9 @@ pub(crate) fn upsert(
 }
 
 /// Transaction-capable variant of [`upsert`].
+///
+/// A manual write keeps the resolved value beneath it, and a resolved write
+/// under a manual value updates only that kept value.
 pub(crate) fn upsert_inside_tx(
     db: &mut impl DbAccess,
     node_id: DbId,
@@ -318,53 +341,47 @@ pub(crate) fn upsert_inside_tx(
     id_value: &str,
     source: IdSource,
 ) -> anyhow::Result<DbId> {
-    let ids: Vec<ExternalId> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<ExternalId>()
-                .search()
-                .from(node_id)
-                .where_()
-                .neighbor()
-                .end_where()
-                .query(),
-        )?
-        .try_into()?;
-    let existing = ids
-        .into_iter()
-        .find(|id| id.provider_id == provider_id && id.id_type == id_type);
+    let existing = get_inside_tx(db, node_id, provider_id, id_type)?;
 
-    // User-set IDs take priority over plugin-set IDs
-    if let Some(existing_id) = &existing
-        && existing_id.source == IdSource::User
-        && source == IdSource::Plugin
-        && let Some(db_id) = &existing_id.db_id
-    {
-        return Ok(db_id.clone().into());
-    }
+    let (effective, new_source, resolved_value) = match (&existing, source) {
+        (Some(existing), IdSource::Resolved) if existing.source == IdSource::Manual => (
+            existing.id_value.clone(),
+            IdSource::Manual,
+            Some(id_value.to_string()),
+        ),
+        (Some(existing), IdSource::Manual) => (
+            id_value.to_string(),
+            IdSource::Manual,
+            existing.resolved_value().map(str::to_string),
+        ),
+        _ => (id_value.to_string(), source, None),
+    };
 
     // Avoid no-op rewrites when a provider repeatedly submits the same ID.
     if let Some(existing_id) = &existing
-        && existing_id.id_value == id_value
-        && existing_id.source == source
+        && existing_id.id_value == effective
+        && existing_id.source == new_source
+        && existing_id.resolved_value == resolved_value
         && let Some(db_id) = &existing_id.db_id
     {
         return Ok(db_id.clone().into());
     }
 
+    let existing_db_id = existing
+        .as_ref()
+        .and_then(|e| e.db_id.clone())
+        .map(DbId::from);
     let external_id = ExternalId {
-        db_id: existing.as_ref().and_then(|e| e.db_id.clone()),
+        db_id: existing_db_id.map(Into::into),
         provider_id: provider_id.to_string(),
         id_type: id_type.to_string(),
-        id_value: id_value.to_string(),
-        source,
+        id_value: effective,
+        source: new_source,
+        resolved_value,
     };
 
     let result = db.exec_mut(QueryBuilder::insert().element(&external_id).query())?;
-    let id_db_id = existing
-        .as_ref()
-        .and_then(|e| e.db_id.clone())
-        .map(DbId::from)
+    let id_db_id = existing_db_id
         .or_else(|| result.elements.first().map(|element| element.id))
         .ok_or_else(|| {
             anyhow::anyhow!(
@@ -387,6 +404,83 @@ pub(crate) fn upsert_inside_tx(
     }
 
     Ok(id_db_id)
+}
+
+/// Copies both layers of `external_id` onto `node_id`, the way a plugin write
+/// and then a user write would land.
+pub(crate) fn copy_inside_tx(
+    db: &mut impl DbAccess,
+    node_id: DbId,
+    external_id: &ExternalId,
+) -> anyhow::Result<()> {
+    if let Some(resolved_value) = external_id.resolved_value() {
+        upsert_inside_tx(
+            db,
+            node_id,
+            &external_id.provider_id,
+            &external_id.id_type,
+            resolved_value,
+            IdSource::Resolved,
+        )?;
+    }
+    if external_id.source == IdSource::Manual {
+        upsert_inside_tx(
+            db,
+            node_id,
+            &external_id.provider_id,
+            &external_id.id_type,
+            &external_id.id_value,
+            IdSource::Manual,
+        )?;
+    }
+    Ok(())
+}
+
+/// Removes the manual value, so the resolved one takes effect again. Returns
+/// false when there was no manual value.
+pub(crate) fn remove_manual(
+    db: &mut DbAny,
+    node_id: DbId,
+    provider_id: &str,
+    id_type: &str,
+) -> anyhow::Result<bool> {
+    db.transaction_mut(|t| -> anyhow::Result<bool> {
+        let Some(existing) = get_inside_tx(t, node_id, provider_id, id_type)? else {
+            return Ok(false);
+        };
+        if existing.source != IdSource::Manual {
+            return Ok(false);
+        }
+        let db_id = existing
+            .db_id
+            .clone()
+            .map(DbId::from)
+            .ok_or_else(|| anyhow::anyhow!("external id row has no db id"))?;
+        match existing.resolved_value {
+            Some(resolved_value) => {
+                let restored = ExternalId {
+                    db_id: Some(db_id.into()),
+                    provider_id: provider_id.to_string(),
+                    id_type: id_type.to_string(),
+                    id_value: resolved_value,
+                    source: IdSource::Resolved,
+                    resolved_value: None,
+                };
+                t.exec_mut(QueryBuilder::insert().element(&restored).query())?;
+                // Inserting an element leaves the keys its `None` fields omit.
+                t.exec_mut(
+                    QueryBuilder::remove()
+                        .values([DbValue::from("resolved_value")])
+                        .ids(db_id)
+                        .query(),
+                )?;
+            }
+            None => {
+                t.exec_mut(QueryBuilder::remove().ids(db_id).query())?;
+            }
+        }
+        Ok(true)
+    })
 }
 
 /// Remove every `ExternalId` attached to an owner. Call before deleting the
@@ -458,8 +552,8 @@ mod tests {
 
     #[test]
     fn id_source_uses_stable_string_db_values() -> anyhow::Result<()> {
-        assert_eq!(DbValue::from(IdSource::Plugin), DbValue::from("plugin"));
-        assert_eq!(IdSource::try_from(DbValue::from("user"))?, IdSource::User);
+        assert_eq!(DbValue::from(IdSource::Resolved), DbValue::from("plugin"));
+        assert_eq!(IdSource::try_from(DbValue::from("user"))?, IdSource::Manual);
         assert!(IdSource::try_from(DbValue::from("imported")).is_err());
         Ok(())
     }
@@ -475,7 +569,7 @@ mod tests {
             "discogs",
             "release_id",
             "abc-1",
-            IdSource::User,
+            IdSource::Manual,
         )?;
         let second_id = upsert(
             &mut db,
@@ -483,7 +577,7 @@ mod tests {
             "discogs",
             "release_id",
             "abc-2",
-            IdSource::User,
+            IdSource::Manual,
         )?;
 
         assert_eq!(first_id, second_id);
@@ -508,7 +602,7 @@ mod tests {
             "discogs",
             "release_id",
             "abc-1",
-            IdSource::Plugin,
+            IdSource::Resolved,
         )?;
         let second_id = upsert(
             &mut db,
@@ -516,7 +610,7 @@ mod tests {
             "discogs",
             "release_id",
             "abc-1",
-            IdSource::Plugin,
+            IdSource::Resolved,
         )?;
 
         assert_eq!(first_id, second_id);
@@ -524,7 +618,7 @@ mod tests {
         let external_ids = get_for_entity(&db, node_id)?;
         assert_eq!(external_ids.len(), 1);
         assert_eq!(external_ids[0].id_value, "abc-1");
-        assert_eq!(external_ids[0].source, IdSource::Plugin);
+        assert_eq!(external_ids[0].source, IdSource::Resolved);
 
         Ok(())
     }
@@ -539,7 +633,7 @@ mod tests {
             "discogs",
             "release_id",
             "abc-1",
-            IdSource::Plugin,
+            IdSource::Resolved,
         )?;
 
         let element = db
@@ -553,6 +647,209 @@ mod tests {
             element_value(&element, "source"),
             Some(DbValue::from("plugin"))
         );
+        Ok(())
+    }
+
+    fn get_release_id(db: &DbAny, node_id: DbId) -> anyhow::Result<ExternalId> {
+        get(db, node_id, "musicbrainz", "release_id")?.ok_or_else(|| anyhow!("release_id missing"))
+    }
+
+    #[test]
+    fn resolved_write_under_manual_id_keeps_both_values() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let node_id = insert_entity(&mut db)?;
+
+        upsert(
+            &mut db,
+            node_id,
+            "musicbrainz",
+            "release_id",
+            "plugin-1",
+            IdSource::Resolved,
+        )?;
+        upsert(
+            &mut db,
+            node_id,
+            "musicbrainz",
+            "release_id",
+            "user",
+            IdSource::Manual,
+        )?;
+        let manual = get_release_id(&db, node_id)?;
+        assert_eq!(manual.id_value, "user");
+        assert_eq!(manual.source, IdSource::Manual);
+        assert_eq!(manual.resolved_value(), Some("plugin-1"));
+
+        upsert(
+            &mut db,
+            node_id,
+            "musicbrainz",
+            "release_id",
+            "plugin-2",
+            IdSource::Resolved,
+        )?;
+        let manual = get_release_id(&db, node_id)?;
+        assert_eq!(manual.id_value, "user");
+        assert_eq!(manual.source, IdSource::Manual);
+        assert_eq!(manual.resolved_value(), Some("plugin-2"));
+
+        upsert(
+            &mut db,
+            node_id,
+            "musicbrainz",
+            "release_id",
+            "user-2",
+            IdSource::Manual,
+        )?;
+        let manual = get_release_id(&db, node_id)?;
+        assert_eq!(manual.id_value, "user-2");
+        assert_eq!(manual.resolved_value(), Some("plugin-2"));
+        assert_eq!(get_for_entity(&db, node_id)?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn owner_lookup_finds_only_the_effective_value() -> anyhow::Result<()> {
+        let mut db = new_initialized_test_db()?;
+        let release = crate::db::test_db::insert_release(&mut db, "Release")?;
+
+        upsert(
+            &mut db,
+            release,
+            "musicbrainz",
+            "release_id",
+            "plugin",
+            IdSource::Resolved,
+        )?;
+        upsert(
+            &mut db,
+            release,
+            "musicbrainz",
+            "release_id",
+            "user",
+            IdSource::Manual,
+        )?;
+
+        assert_eq!(
+            get_owner(&db, "musicbrainz", "release_id", "user", None)?,
+            Some(release)
+        );
+        assert_eq!(
+            get_owner(&db, "musicbrainz", "release_id", "plugin", None)?,
+            None
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn removing_manual_id_restores_resolved_value() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let node_id = insert_entity(&mut db)?;
+
+        let row_id = upsert(
+            &mut db,
+            node_id,
+            "musicbrainz",
+            "release_id",
+            "plugin",
+            IdSource::Resolved,
+        )?;
+        upsert(
+            &mut db,
+            node_id,
+            "musicbrainz",
+            "release_id",
+            "user",
+            IdSource::Manual,
+        )?;
+
+        assert!(remove_manual(
+            &mut db,
+            node_id,
+            "musicbrainz",
+            "release_id"
+        )?);
+        let restored = get_release_id(&db, node_id)?;
+        assert_eq!(restored.id_value, "plugin");
+        assert_eq!(restored.source, IdSource::Resolved);
+        assert_eq!(restored.resolved_value, None);
+
+        let element = db
+            .exec(QueryBuilder::select().ids(row_id).query())?
+            .elements
+            .into_iter()
+            .next()
+            .expect("external id element");
+        assert_eq!(element_value(&element, "resolved_value"), None);
+
+        assert!(!remove_manual(
+            &mut db,
+            node_id,
+            "musicbrainz",
+            "release_id"
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn removing_manual_id_without_resolved_value_removes_the_id() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let node_id = insert_entity(&mut db)?;
+
+        upsert(
+            &mut db,
+            node_id,
+            "musicbrainz",
+            "release_id",
+            "user",
+            IdSource::Manual,
+        )?;
+
+        assert!(remove_manual(
+            &mut db,
+            node_id,
+            "musicbrainz",
+            "release_id"
+        )?);
+        assert!(get_for_entity(&db, node_id)?.is_empty());
+        assert!(!remove_manual(
+            &mut db,
+            node_id,
+            "musicbrainz",
+            "release_id"
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn copy_carries_manual_and_resolved_values() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let from = insert_entity(&mut db)?;
+        let to = insert_entity(&mut db)?;
+
+        upsert(
+            &mut db,
+            from,
+            "musicbrainz",
+            "release_id",
+            "plugin",
+            IdSource::Resolved,
+        )?;
+        upsert(
+            &mut db,
+            from,
+            "musicbrainz",
+            "release_id",
+            "user",
+            IdSource::Manual,
+        )?;
+        let source = get_release_id(&db, from)?;
+        db.transaction_mut(|t| copy_inside_tx(t, to, &source))?;
+
+        let copied = get_release_id(&db, to)?;
+        assert_eq!(copied.id_value, "user");
+        assert_eq!(copied.source, IdSource::Manual);
+        assert_eq!(copied.resolved_value(), Some("plugin"));
         Ok(())
     }
 
@@ -581,7 +878,7 @@ mod tests {
             "musicbrainz",
             "release_group_id",
             "group-1",
-            IdSource::Plugin,
+            IdSource::Resolved,
         )?;
         upsert(
             &mut db,
@@ -589,7 +886,7 @@ mod tests {
             "musicbrainz",
             "release_group_id",
             "group-1",
-            IdSource::Plugin,
+            IdSource::Resolved,
         )?;
         upsert(
             &mut db,
@@ -597,7 +894,7 @@ mod tests {
             "musicbrainz",
             "release_group_id",
             "group-1",
-            IdSource::Plugin,
+            IdSource::Resolved,
         )?;
 
         assert_eq!(

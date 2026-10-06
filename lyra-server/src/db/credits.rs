@@ -561,7 +561,7 @@ mod reconciliation_tests {
             "test",
             "artist_id",
             name,
-            db::IdSource::Plugin,
+            db::IdSource::Resolved,
         )?;
         Ok(ArtistCreditInput {
             artist_id,
@@ -804,7 +804,7 @@ mod reconciliation_tests {
             "another",
             "artist_id",
             "band",
-            db::IdSource::Plugin,
+            db::IdSource::Resolved,
         )?;
         db.transaction_mut(|tx| reconcile_artists(tx, owner, "test", &desired))?;
         assert_eq!(links(&db, owner)?.len(), 3);

@@ -48,7 +48,7 @@ pub(crate) fn recompute_artist_verified(
             .or_default()
             .insert(value.to_string());
 
-        if external_id.source == db::IdSource::User {
+        if external_id.source == db::IdSource::Manual {
             has_user_artist_id = true;
         }
     }
@@ -141,7 +141,7 @@ mod tests {
             "musicbrainz",
             "artist_db_id",
             "   ",
-            IdSource::Plugin,
+            IdSource::Resolved,
         )?;
 
         let verified = recompute_artist_verified(&mut db, artist_db_id)?;
@@ -162,7 +162,7 @@ mod tests {
             "musicbrainz",
             "artist_db_id",
             "user-artist-id",
-            IdSource::User,
+            IdSource::Manual,
         )?;
 
         let verified = recompute_artist_verified(&mut db, artist_db_id)?;
@@ -183,7 +183,7 @@ mod tests {
             "musicbrainz",
             "artist_db_id",
             "plugin-artist-id",
-            IdSource::Plugin,
+            IdSource::Resolved,
         )?;
 
         let verified_before_links = recompute_artist_verified(&mut db, artist_db_id)?;
@@ -211,7 +211,8 @@ mod tests {
             provider_id: "musicbrainz".to_string(),
             id_type: "artist_db_id".to_string(),
             id_value: "artist-a".to_string(),
-            source: IdSource::Plugin,
+            source: IdSource::Resolved,
+            resolved_value: None,
         };
         let first_qr = db.exec_mut(QueryBuilder::insert().element(&first).query())?;
         let first_id = first_qr
@@ -226,7 +227,8 @@ mod tests {
             provider_id: "musicbrainz".to_string(),
             id_type: "artist_db_id".to_string(),
             id_value: "artist-b".to_string(),
-            source: IdSource::Plugin,
+            source: IdSource::Resolved,
+            resolved_value: None,
         };
         let second_qr = db.exec_mut(QueryBuilder::insert().element(&second).query())?;
         let second_id = second_qr

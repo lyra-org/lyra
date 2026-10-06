@@ -25,6 +25,8 @@ pub(crate) enum ProviderAdminError {
     ProviderNotFound(String),
     #[error("Entity not found: {0}")]
     EntityNotFound(String),
+    #[error("No manual external ID: {0}")]
+    ManualIdNotFound(String),
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -35,6 +37,19 @@ pub(crate) struct EntityExternalIdRecord {
     pub(crate) id_type: String,
     pub(crate) id_value: String,
     pub(crate) source: String,
+    pub(crate) resolved_value: Option<String>,
+}
+
+impl From<db::external_ids::ExternalId> for EntityExternalIdRecord {
+    fn from(id: db::external_ids::ExternalId) -> Self {
+        Self {
+            provider_id: id.provider_id,
+            id_type: id.id_type,
+            id_value: id.id_value,
+            source: id.source.to_string(),
+            resolved_value: id.resolved_value,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -80,15 +95,7 @@ pub(crate) async fn list_entity_external_ids(
         .ok_or_else(|| ProviderAdminError::EntityNotFound(entity_id.to_string()))?;
     let ids = db::external_ids::get_for_entity(&db, entity_db_id)?;
 
-    Ok(ids
-        .into_iter()
-        .map(|id| EntityExternalIdRecord {
-            provider_id: id.provider_id,
-            id_type: id.id_type,
-            id_value: id.id_value,
-            source: id.source.to_string(),
-        })
-        .collect())
+    Ok(ids.into_iter().map(Into::into).collect())
 }
 
 pub(crate) async fn set_entity_external_id(
@@ -108,7 +115,7 @@ pub(crate) async fn set_entity_external_id(
         &request.provider_id,
         &request.id_type,
         &request.id_value,
-        IdSource::User,
+        IdSource::Manual,
     )?;
 
     if request.id_type == "artist_db_id" && db::artists::get_by_id(&db, entity_db_id)?.is_some() {
@@ -118,12 +125,34 @@ pub(crate) async fn set_entity_external_id(
         );
     }
 
-    Ok(EntityExternalIdRecord {
-        provider_id: request.provider_id,
-        id_type: request.id_type,
-        id_value: request.id_value,
-        source: "user".to_string(),
-    })
+    db::external_ids::get(&db, entity_db_id, &request.provider_id, &request.id_type)?
+        .map(Into::into)
+        .ok_or_else(|| anyhow::anyhow!("external id missing after it was set").into())
+}
+
+pub(crate) async fn inherit_entity_external_id(
+    entity_id: &str,
+    provider_id: &str,
+    id_type: &str,
+) -> Result<(), ProviderAdminError> {
+    let mut db = STATE.db.write().await;
+    let entity_db_id = db::lookup::find_node_id_by_id(&db, entity_id)?
+        .ok_or_else(|| ProviderAdminError::EntityNotFound(entity_id.to_string()))?;
+
+    if !db::external_ids::remove_manual(&mut db, entity_db_id, provider_id, id_type)? {
+        return Err(ProviderAdminError::ManualIdNotFound(format!(
+            "{provider_id}/{id_type}"
+        )));
+    }
+
+    if id_type == "artist_db_id" && db::artists::get_by_id(&db, entity_db_id)?.is_some() {
+        let _ = crate::services::metadata::verification::recompute_artist_verified(
+            &mut db,
+            entity_db_id,
+        );
+    }
+
+    Ok(())
 }
 
 pub(crate) async fn set_entity_locked(

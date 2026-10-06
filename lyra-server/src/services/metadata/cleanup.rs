@@ -512,14 +512,7 @@ fn migrate_metadata(
         if existing.is_some() {
             continue;
         }
-        db::external_ids::upsert_inside_tx(
-            db,
-            winner,
-            &ext_id.provider_id,
-            &ext_id.id_type,
-            &ext_id.id_value,
-            ext_id.source,
-        )?;
+        db::external_ids::copy_inside_tx(db, winner, ext_id)?;
     }
 
     db::metadata::custom_fields::copy_between_entities(db, loser, winner)?;
@@ -569,7 +562,7 @@ mod tests {
             "musicbrainz",
             "artist_id",
             "mbid-123",
-            IdSource::Plugin,
+            IdSource::Resolved,
         )?;
         db::external_ids::upsert(
             &mut db,
@@ -577,7 +570,7 @@ mod tests {
             "musicbrainz",
             "artist_id",
             "mbid-123",
-            IdSource::Plugin,
+            IdSource::Resolved,
         )?;
 
         // Artist B (the loser) has a layer from a different provider
@@ -649,7 +642,7 @@ mod tests {
             "provider-a",
             "artist_id",
             "shared-id",
-            IdSource::Plugin,
+            IdSource::Resolved,
         )?;
         db::external_ids::upsert(
             &mut db,
@@ -657,7 +650,7 @@ mod tests {
             "provider-a",
             "artist_id",
             "shared-id",
-            IdSource::Plugin,
+            IdSource::Resolved,
         )?;
 
         // Artist B (the loser) also has an ID from provider B
@@ -667,7 +660,7 @@ mod tests {
             "provider-b",
             "artist_id",
             "provider-b-id",
-            IdSource::Plugin,
+            IdSource::Resolved,
         )?;
 
         let merged_count = deduplicate_artists_by_external_id(&mut db)?;

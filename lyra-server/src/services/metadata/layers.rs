@@ -241,10 +241,10 @@ pub(crate) fn save_provider_layer(
             let incoming_artist_id = id_value.trim();
             if !incoming_artist_id.is_empty()
                 && artist_is_verified
-                && let Some(existing) = existing_id.as_ref()
-                && existing.source == IdSource::Plugin
+                && let Some(existing_artist_id) =
+                    existing_id.as_ref().and_then(|e| e.resolved_value())
             {
-                let existing_artist_id = existing.id_value.trim();
+                let existing_artist_id = existing_artist_id.trim();
                 if !existing_artist_id.is_empty() && existing_artist_id != incoming_artist_id {
                     tracing::warn!(
                         node_id = node_id.0,
@@ -258,9 +258,9 @@ pub(crate) fn save_provider_layer(
             }
         }
 
-        let external_id_changed = existing_id.as_ref().is_none_or(|existing| {
-            existing.id_value != *id_value || existing.source != IdSource::Plugin
-        });
+        let external_id_changed = existing_id
+            .as_ref()
+            .is_none_or(|existing| existing.resolved_value() != Some(id_value.as_str()));
         if !external_id_changed {
             continue;
         }
@@ -271,7 +271,7 @@ pub(crate) fn save_provider_layer(
             provider_id,
             id_type,
             id_value,
-            IdSource::Plugin,
+            IdSource::Resolved,
         )?;
 
         if is_artist_entity && id_type == "artist_db_id" {
@@ -285,3 +285,4 @@ pub(crate) fn save_provider_layer(
 
     Ok(())
 }
+

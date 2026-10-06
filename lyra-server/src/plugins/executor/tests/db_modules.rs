@@ -2065,7 +2065,7 @@ fn entities_links_include_resolves_templates_and_functions() -> Result<()> {
                 "link-provider",
                 id_type,
                 value,
-                IdSource::Plugin,
+                IdSource::Resolved,
             )?;
         }
         Ok::<_, anyhow::Error>(release)
@@ -2161,7 +2161,7 @@ fn insert_release_with_ids(provider_id: &str, ids: &[(&str, &str)]) -> Result<ag
                 provider_id,
                 id_type,
                 value,
-                IdSource::Plugin,
+                IdSource::Resolved,
             )?;
         }
         Ok(release)

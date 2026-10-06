@@ -889,21 +889,24 @@ mod tests {
                 provider_id: "musicbrainz".to_string(),
                 id_type: "recording_id".to_string(),
                 id_value: "abc123".to_string(),
-                source: IdSource::Plugin,
+                source: IdSource::Resolved,
+                resolved_value: None,
             },
             db::external_ids::ExternalId {
                 db_id: Some(NodeId::from(DbId(2))),
                 provider_id: "musicbrainz".to_string(),
                 id_type: "release_id".to_string(),
                 id_value: "release-1".to_string(),
-                source: IdSource::Plugin,
+                source: IdSource::Resolved,
+                resolved_value: None,
             },
             db::external_ids::ExternalId {
                 db_id: Some(NodeId::from(DbId(3))),
                 provider_id: "discogs".to_string(),
                 id_type: "recording_id".to_string(),
                 id_value: "x".to_string(),
-                source: IdSource::Plugin,
+                source: IdSource::Resolved,
+                resolved_value: None,
             },
         ];
         let unique_track_id_pairs =
@@ -925,7 +928,8 @@ mod tests {
             provider_id: "musicbrainz".to_string(),
             id_type: "recording_id".to_string(),
             id_value: "   ".to_string(),
-            source: IdSource::Plugin,
+            source: IdSource::Resolved,
+            resolved_value: None,
         }];
         let unique_track_id_pairs =
             HashSet::from_iter([("musicbrainz".to_string(), "recording_id".to_string())]);
@@ -948,7 +952,7 @@ mod tests {
             "musicbrainz",
             "recording_id",
             "rec-123",
-            db::external_ids::IdSource::Plugin,
+            db::external_ids::IdSource::Resolved,
         )?;
         db::external_ids::upsert(
             &mut db,
@@ -956,7 +960,7 @@ mod tests {
             "musicbrainz",
             "recording_id",
             "rec-123",
-            db::external_ids::IdSource::Plugin,
+            db::external_ids::IdSource::Resolved,
         )?;
         db::external_ids::upsert(
             &mut db,
@@ -964,7 +968,7 @@ mod tests {
             "musicbrainz",
             "recording_id",
             "rec-other",
-            db::external_ids::IdSource::Plugin,
+            db::external_ids::IdSource::Resolved,
         )?;
 
         let pairs = HashSet::from_iter([("musicbrainz".to_string(), "recording_id".to_string())]);
