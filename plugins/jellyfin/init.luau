@@ -387,7 +387,7 @@ local function find_public_user_by_id(user_id: string): PublicUser?
 end
 
 local function root_folder_json(user_id: string): JsonObject
-	local views = catalog.to_music_view_items()
+	local views = catalog.to_music_view_items(false)
 	return {
 		Id = constants.ROOT_ITEM_ID,
 		Name = "Root",
@@ -703,7 +703,7 @@ api.get(P .. "/Library/MediaFolders", function(ctx: ApiContext)
 		return session.unauthorized()
 	end
 
-	local views = catalog.to_music_view_items()
+	local views = catalog.to_music_view_items(false)
 	return api.response.json(200, catalog.build_item_query_result(views, #views, 0))
 end, "public", true)
 api.get(P .. "/Channels", function(ctx: ApiContext)
