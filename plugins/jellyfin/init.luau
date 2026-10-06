@@ -800,6 +800,9 @@ api.get(P .. "/Users/{userId}/Items/Root", handle_root_folder_route, "public", t
 local function respond_with_items_listing(ctx: ApiContext, principal: session.Principal): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
 	local options = items_options.for_user(items_options.parse(query), principal.user_id)
+	if items_options.has_conflicting_filters(options) then
+		return responses.bad_request("Conflicting filters")
+	end
 
 	-- Jellyfin returns the user root's direct children (library views) when ParentId/Ids are absent and Recursive isn't true.
 	if
@@ -1453,6 +1456,9 @@ api.get(P .. "/Artists", function(ctx: ApiContext)
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
 	local options = items_options.for_user(items_options.parse(query), principal.user_id)
+	if items_options.has_conflicting_filters(options) then
+		return responses.bad_request("Conflicting filters")
+	end
 	local items, total_count, start_index = listing.list_artist_items(options, nil)
 	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
 end, "public", true)
@@ -1479,6 +1485,9 @@ api.get(P .. "/Artists/AlbumArtists", function(ctx: ApiContext)
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
 	local options = items_options.for_user(items_options.parse(query), principal.user_id)
+	if items_options.has_conflicting_filters(options) then
+		return responses.bad_request("Conflicting filters")
+	end
 	local items, total_count, start_index = listing.list_artist_items(options, "release")
 	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
 end, "public", true)

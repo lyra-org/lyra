@@ -260,6 +260,26 @@ function module.for_user(options: ItemsQueryOptions, user_id: string): ItemsQuer
 	return scoped
 end
 
+local CONFLICTING_FILTERS: { [string]: string } = {
+	isfolder = "isnotfolder",
+	isplayed = "isunplayed",
+	likes = "dislikes",
+}
+
+-- Whether `Filters` names both sides of a pair, which upstream rejects.
+function module.has_conflicting_filters(options: ItemsQueryOptions): boolean
+	local present: { [string]: boolean } = {}
+	for _, filter in options.filters do
+		present[string.lower(filter)] = true
+	end
+	for filter, opposite in CONFLICTING_FILTERS do
+		if present[filter] and present[opposite] then
+			return true
+		end
+	end
+	return false
+end
+
 -- Whether a listing asked for this Jellyfin item type; `IncludeItemTypes` wins over
 -- `ExcludeItemTypes`, as upstream.
 function module.wants_item_type(options: ItemsQueryOptions, item_type: string): boolean
