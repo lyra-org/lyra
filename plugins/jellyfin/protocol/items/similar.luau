@@ -53,6 +53,9 @@ end
 
 local RANDOM = { { key = "random", order = "ascending" } }
 
+-- Upstream's limit when the request names none.
+local DEFAULT_LIMIT = 50
+
 -- Returns `(items, total_count, start_index, found)`; an item the caller can't see isn't found.
 function module.list_similar_items(
 	item_id: number?,
@@ -70,6 +73,7 @@ function module.list_similar_items(
 	table.insert(exclude_ids, item_id)
 	local exclude_artist_ids = item_ids.parse_jellyfin_ids_array(options.exclude_artist_ids)
 	local seed = math.random(1, 2147483647)
+	local limit = options.limit or DEFAULT_LIMIT
 	local stubs: { ItemInfo } = {}
 	local total = 0
 	if kind == "Release" then
@@ -81,7 +85,7 @@ function module.list_similar_items(
 				exclude_artist_ids = exclude_artist_ids,
 				sort = RANDOM :: any,
 				seed = seed,
-				limit = options.limit,
+				limit = limit,
 			})
 			stubs = catalog.release_stubs(page.items)
 			total = page.total
@@ -95,7 +99,7 @@ function module.list_similar_items(
 				exclude_artist_ids = exclude_artist_ids,
 				sort = RANDOM :: any,
 				seed = seed,
-				limit = options.limit,
+				limit = limit,
 			})
 			stubs = catalog.track_stubs(page.items)
 			total = page.total
@@ -109,7 +113,7 @@ function module.list_similar_items(
 				exclude_ids = exclude_ids,
 				sort = RANDOM :: any,
 				seed = seed,
-				limit = options.limit,
+				limit = limit,
 			})
 			stubs = catalog.artist_stubs(page.items)
 			total = page.total
