@@ -2215,6 +2215,25 @@ api.get(P .. "/Items/{itemId}/Intros", function(ctx: ApiContext)
 
 	return api.response.json(200, empty_query_result())
 end, "public", true)
+-- Lyra has no collections, so every visible item is in none.
+api.get(P .. "/Items/{itemId}/Collections", function(ctx: ApiContext)
+	local principal = session.require_jellyfin_principal(ctx)
+	if not principal then
+		return session.unauthorized()
+	end
+	if not session.require_matching_user_scope(ctx, principal) then
+		return session.unauthorized()
+	end
+
+	local params = if ctx then ctx.params else nil
+	local raw_item_id = if params then params.itemId else nil
+	local item_id = if raw_item_id then item_ids.decode_jellyfin_item_id(raw_item_id) else nil
+	if not item_id or not listing.find_item_by_id(item_id, principal.user_id) then
+		return responses.not_found("item not found")
+	end
+
+	return api.response.json(200, empty_query_result())
+end, "public", true)
 local function handle_empty_item_array_route(ctx: ApiContext): ApiResponse
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
