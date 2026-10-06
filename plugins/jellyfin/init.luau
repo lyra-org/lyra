@@ -1640,13 +1640,13 @@ local function handle_send_command_error(err: unknown): ApiResponse
 		return responses.not_found("session not found")
 	end
 	if string.find(tostring(err), "not authorized") then
-		return session.unauthorized()
+		return responses.forbidden()
 	end
 	return api.response.empty(500)
 end
 
 -- Remote-control commands aren't idempotent, so scope mismatch surfaces as
--- 401 and send failure as 404 rather than collapsing to 204.
+-- 403 and send failure as 404 rather than collapsing to 204.
 local function resolve_ws_entry_for_dispatch(
 	principal: session.Principal,
 	session_id: string?
@@ -1664,7 +1664,7 @@ local function resolve_ws_entry_for_dispatch(
 	end
 	if not session.can_control_user(principal, entry.user_id) then
 		warn(`dispatch scope mismatch: principal={principal.user_id}, entry={entry.user_id}, session_id={session_id}`)
-		return nil, session.unauthorized()
+		return nil, responses.forbidden()
 	end
 	return entry, nil
 end
@@ -1696,7 +1696,7 @@ local function resolve_native_target(
 	ws_entry: SessionEntry?
 ): (playback_sessions.ConnectionInfo?, ApiResponse?)
 	if ws_entry and not session.can_control_user(principal, ws_entry.user_id) then
-		return nil, session.unauthorized()
+		return nil, responses.forbidden()
 	end
 	if ws_entry and ws_entry.user_id ~= principal.user_id then
 		return nil, nil
