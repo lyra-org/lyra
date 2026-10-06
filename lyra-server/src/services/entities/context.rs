@@ -155,6 +155,44 @@ fn attach_custom_fields_to_context(db: &DbAny, context: &mut Value) -> anyhow::R
     attach(db, context, &mut cache)
 }
 
+/// Adds `manual_ids`, the user-set values among `external_ids`, to each entity
+/// in the context, so a provider can tell a user's choice from its own match.
+fn attach_manual_ids_to_context(db: &DbAny, value: &mut Value) -> anyhow::Result<()> {
+    match value {
+        Value::Object(object) => {
+            for (key, child) in object.iter_mut() {
+                if key != "external_ids" {
+                    attach_manual_ids_to_context(db, child)?;
+                }
+            }
+
+            if object.contains_key("external_ids")
+                && let Some(entity_id) = object.get("db_id").and_then(Value::as_i64)
+                && entity_id > 0
+            {
+                let manual = db::external_ids::get_for_entity(db, DbId(entity_id))?
+                    .into_iter()
+                    .filter(|id| id.source == db::IdSource::Manual)
+                    .collect::<Vec<_>>();
+                if !manual.is_empty() {
+                    object.insert(
+                        "manual_ids".to_string(),
+                        serde_json::to_value(super::relations::external_ids_by_provider(&manual))?,
+                    );
+                }
+            }
+        }
+        Value::Array(items) => {
+            for child in items {
+                attach_manual_ids_to_context(db, child)?;
+            }
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
 fn flatten_projection_for_provider_context(
     projection: EntityProjectionInfo,
 ) -> anyhow::Result<Value> {
@@ -212,6 +250,7 @@ pub(crate) fn build_release_context(
         map.insert("library_id".to_string(), serde_json::json!(lib_id.0));
     }
     attach_custom_fields_to_context(db, &mut context)?;
+    attach_manual_ids_to_context(db, &mut context)?;
     Ok(context)
 }
 
@@ -230,6 +269,7 @@ fn build_track_context(db: &DbAny, entity_id: DbId, schemes: &IdSchemes) -> anyh
     )?;
     let mut context = flatten_projection_for_provider_context(projection)?;
     attach_custom_fields_to_context(db, &mut context)?;
+    attach_manual_ids_to_context(db, &mut context)?;
     Ok(context)
 }
 
@@ -243,6 +283,7 @@ fn build_artist_context(db: &DbAny, entity_id: DbId, schemes: &IdSchemes) -> any
     )?;
     let mut context = flatten_projection_for_provider_context(projection)?;
     attach_custom_fields_to_context(db, &mut context)?;
+    attach_manual_ids_to_context(db, &mut context)?;
     Ok(context)
 }
 

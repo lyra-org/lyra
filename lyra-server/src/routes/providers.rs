@@ -1081,6 +1081,52 @@ mod tests {
     }
 
     #[test]
+    fn build_release_context_lists_manual_ids_apart_from_resolved_ids() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release_db_id = insert_release(&mut db, "Manual Release")?;
+        let track_db_id = insert_track(&mut db, "Plugin Track", Some(1), Some(1))?;
+        connect(&mut db, release_db_id, track_db_id)?;
+
+        db::external_ids::upsert(
+            &mut db,
+            release_db_id,
+            "musicbrainz",
+            "release_id",
+            "plugin-release",
+            IdSource::Resolved,
+        )?;
+        db::external_ids::upsert(
+            &mut db,
+            release_db_id,
+            "musicbrainz",
+            "release_id",
+            "user-release",
+            IdSource::Manual,
+        )?;
+        db::external_ids::upsert(
+            &mut db,
+            track_db_id,
+            "musicbrainz",
+            "recording_id",
+            "plugin-recording",
+            IdSource::Resolved,
+        )?;
+
+        let context = build_release_context(&db, release_db_id, None, &IdSchemes::default())?;
+        assert_eq!(
+            context.pointer("/external_ids/musicbrainz/release_id"),
+            Some(&Value::from("user-release"))
+        );
+        assert_eq!(
+            context.get("manual_ids"),
+            Some(&serde_json::json!({ "musicbrainz": { "release_id": "user-release" } }))
+        );
+        assert_eq!(context.pointer("/tracks/0/manual_ids"), None);
+
+        Ok(())
+    }
+
+    #[test]
     fn build_release_context_includes_lookup_hints() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let release_db_id = insert_release(&mut db, "Lookup Hints Release")?;
