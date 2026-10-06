@@ -428,6 +428,43 @@ local function escape_lucene(str: string): string
 	return table.concat(out)
 end
 
+-- Threads that saw a request fail. Each refresh handler runs on a thread of its
+-- own, while concurrent refreshes share this module.
+local failed_threads: { [thread]: boolean } = setmetatable({}, { __mode = "k" }) :: any
+
+-- Records that a request failed, as opposed to answering that nothing matched.
+local function note_request_failure()
+	failed_threads[coroutine.running()] = true
+end
+
+-- Whether a request failed on the running refresh, so an empty result may not
+-- mean that nothing matches.
+local function request_failed(): boolean
+	return failed_threads[coroutine.running()] == true
+end
+
+-- The JSON object a request returned, given `pcall(http.request, ...)`. A 404
+-- is an answer, not a failure: the entity was removed. Any other failure is
+-- recorded for the running refresh.
+local function response_object(ok: boolean, response: any): JsonObject?
+	if not ok or type(response) ~= "table" then
+		note_request_failure()
+		return nil
+	end
+	if not response.success or response.status_code ~= 200 then
+		if response.status_code ~= 404 then
+			note_request_failure()
+		end
+		return nil
+	end
+	local decoded_ok, data = pcall(json.decode, response.body :: string)
+	if not decoded_ok or type(data) ~= "table" then
+		note_request_failure()
+		return nil
+	end
+	return data :: JsonObject
+end
+
 -- Helper for MusicBrainz API GET requests.
 local function mb_get(endpoint: string): (JsonObject?, number)
 	local request_options: HttpRequestOptions = {
@@ -438,21 +475,8 @@ local function mb_get(endpoint: string): (JsonObject?, number)
 		},
 	}
 	local ok, response = pcall(http.request, request_options)
-
-	if not ok or type(response) ~= "table" then
-		return nil, 0
-	end
-	if not response.success or response.status_code ~= 200 then
-		return nil, response.retries
-	end
-	local decoded_ok, data = pcall(json.decode, response.body :: string)
-	if not decoded_ok then
-		return nil, response.retries
-	end
-	if type(data) ~= "table" then
-		return nil, response.retries
-	end
-	return data :: JsonObject, response.retries
+	local retries = if ok and type(response) == "table" then response.retries else 0
+	return response_object(ok, response), retries
 end
 
 local function browse_release_group(release_group_id: string, fast_mode: boolean, track_count: number?): { Release }?
@@ -513,6 +537,9 @@ local function fetch_release_details(release_id: string): Release?
 	return release
 end
 
+module.note_request_failure = note_request_failure
+module.response_object = response_object
+module.request_failed = request_failed
 module.json_string_field = json_string_field
 module.json_number_field = json_number_field
 module.json_object_field = json_object_field
