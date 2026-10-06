@@ -294,6 +294,68 @@ impl Catalog {
     fn names(&self, module: &str, name: &str, query: &str) -> Result<Vec<String>> {
         names_as(&self.runtime, &self.admin, module, name, query)
     }
+
+    /// `<module>.query(<query>)`'s total for the admin, and whether `limit = 0` gives the same.
+    fn total(&self, module: &str, query: &str) -> Result<(f64, bool)> {
+        let mut context = CallContext {
+            origin: plugin_origin("demo", "init.luau"),
+            ..CallContext::default()
+        };
+        seed_caller_principal(&mut context, self.admin.clone());
+        let values = self.runtime.eval_plugin_source_with_call_context(
+            format!(
+                r#"
+                    local catalog = require("@lyra/{module}")
+                    local query = {query}
+                    local full = catalog.query(query)
+                    query.limit = 0
+                    local counted = catalog.query(query)
+                    return full.total, #counted.items == 0 and counted.total == full.total
+                "#
+            )
+            .into_bytes(),
+            context,
+        )?;
+        match values.as_slice() {
+            [luau::Value::Number(total), luau::Value::Boolean(same)] => Ok((*total, *same)),
+            [luau::Value::Integer(total), luau::Value::Boolean(same)] => Ok((*total as f64, *same)),
+            other => anyhow::bail!("unexpected totals: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn catalog_query_counts_without_rows_as_it_pages() -> Result<()> {
+    let catalog = catalog()?;
+    for (module, query, expected) in [
+        ("tracks", "{}", 5.0),
+        ("tracks", r#"{ search = "alpha" }"#, 1.0),
+        ("tracks", r#"{ sort_name_prefix = "b" }"#, 1.0),
+        ("tracks", "{ years = { 2001 } }", 2.0),
+        ("releases", "{}", 2.0),
+        ("artists", "{}", 2.0),
+        ("genres", "{}", 3.0),
+    ] {
+        assert_eq!(
+            catalog.total(module, query)?,
+            (expected, true),
+            "{module}.query({query})"
+        );
+    }
+
+    let values = catalog.runtime.eval_plugin_source(
+        "demo",
+        "init.luau",
+        r#"
+            local tracks = require("@lyra/tracks")
+            local ok, err = pcall(tracks.query, { limit = 0, sort = { { key = "listen_count" } } })
+            return not ok and string.find(tostring(err), "needs a user", 1, true) ~= nil
+        "#
+        .as_bytes()
+        .to_vec(),
+    )?;
+    assert_eq!(values, vec![luau::Value::Boolean(true)]);
+    Ok(())
 }
 
 /// The `name` field of each item `<module>.query(<query>)` returns for `principal`.
