@@ -137,6 +137,26 @@ pub(crate) fn upsert_inside_tx(
     Ok(layer_db_id)
 }
 
+/// Removes the layer `source_id` contributed to an entity. Returns false when
+/// there was none.
+pub(crate) fn remove_inside_tx(
+    db: &mut impl DbAccess,
+    node_id: DbId,
+    source_id: &str,
+) -> anyhow::Result<bool> {
+    let Some(layer_db_id) = get_for_entity(db, node_id)?
+        .into_iter()
+        .find(|layer| layer.source_id == source_id)
+        .and_then(|layer| layer.db_id)
+        .map(DbId::from)
+    else {
+        return Ok(false);
+    };
+
+    db.exec_mut(QueryBuilder::remove().ids(layer_db_id).query())?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

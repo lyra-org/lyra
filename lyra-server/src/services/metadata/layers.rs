@@ -286,3 +286,88 @@ pub(crate) fn save_provider_layer(
     Ok(())
 }
 
+/// Removes everything `provider_id` contributed to an entity's metadata, its
+/// layer and custom fields, and re-applies what the other layers resolve to.
+/// External IDs are left to the caller.
+pub(crate) fn clear_provider_layer(
+    db: &mut DbAny,
+    node_id: DbId,
+    provider_id: &str,
+) -> anyhow::Result<()> {
+    db.transaction_mut(|t| -> anyhow::Result<()> {
+        let removed_layer = db::metadata::layers::remove_inside_tx(t, node_id, provider_id)?;
+        let mut removed_custom_fields = false;
+        for row in db::metadata::custom_fields::get_for_entity(t, node_id)? {
+            if row.provider_id == provider_id {
+                removed_custom_fields |=
+                    db::metadata::custom_fields::remove(t, node_id, provider_id, row.version)?;
+            }
+        }
+        if removed_layer || removed_custom_fields {
+            super::merging::apply_merged_metadata_to_entity_inside_tx(t, node_id)?;
+        }
+        Ok(())
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{
+        HashMap,
+        HashSet,
+    };
+
+    use serde_json::json;
+
+    use super::*;
+    use crate::db::test_db::{
+        insert_release,
+        new_test_db,
+    };
+
+    #[test]
+    fn clearing_a_provider_layer_drops_its_fields_and_custom_fields() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release_id = insert_release(&mut db, "Local Title")?;
+        db::providers::upsert(
+            &mut db,
+            &db::ProviderConfig {
+                db_id: None,
+                provider_id: "provider".to_string(),
+                priority: 100,
+                enabled: true,
+            },
+        )?;
+        let mut local = LocalLayer::default();
+        local.supply(ManualMetadataField::ReleaseTitle, Some("Local Title"));
+        db.transaction_mut(|t| local.save(t, release_id))?;
+        save_provider_layer(
+            &mut db,
+            release_id,
+            "provider",
+            &HashMap::from([
+                ("release_title".to_string(), json!("Wrong Title")),
+                ("release_date".to_string(), json!("1999")),
+            ]),
+            &HashMap::new(),
+            &HashMap::from([(1, HashMap::from([("barcode".to_string(), json!("123"))]))]),
+            &HashSet::new(),
+        )?;
+        let matched = db::releases::get_by_id(&db, release_id)?.expect("release exists");
+        assert_eq!(matched.release_title, "Wrong Title");
+        assert_eq!(matched.release_date.as_deref(), Some("1999"));
+
+        clear_provider_layer(&mut db, release_id, "provider")?;
+
+        let cleared = db::releases::get_by_id(&db, release_id)?.expect("release exists");
+        assert_eq!(cleared.release_title, "Local Title");
+        assert_eq!(cleared.release_date, None);
+        assert!(
+            db::metadata::layers::get_for_entity(&db, release_id)?
+                .iter()
+                .all(|layer| layer.source_id != "provider")
+        );
+        assert!(db::metadata::custom_fields::get_for_entity(&db, release_id)?.is_empty());
+        Ok(())
+    }
+}
