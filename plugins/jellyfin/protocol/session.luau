@@ -18,6 +18,7 @@ local constants = require("../constants")
 local item_ids = require("./items/identifiers")
 local playback = require("./items/playback")
 local playlist_access = require("./playlist_access")
+local preferences = require("./preferences")
 local requests = require("./items/requests")
 local responses = require("./items/responses")
 
@@ -189,24 +190,6 @@ local function get_query_token(query: ApiQueryParams?): string?
 		or requests.parse_query_string(query, { "api_key" }, nil)
 end
 
-local function build_jellyfin_user_configuration(): JsonObject
-	return {
-		PlayDefaultAudioTrack = false,
-		DisplayMissingEpisodes = false,
-		GroupedFolders = {},
-		SubtitleMode = "Default",
-		DisplayCollectionsView = false,
-		EnableLocalPassword = false,
-		OrderedViews = {},
-		LatestItemsExcludes = {},
-		MyMediaExcludes = {},
-		HidePlayedInLatest = false,
-		RememberAudioSelections = false,
-		RememberSubtitleSelections = false,
-		EnableNextEpisodeAutoPlay = false,
-	}
-end
-
 local function build_jellyfin_user_policy(is_administrator: boolean, enable_shared_device_control: boolean): JsonObject
 	return {
 		IsAdministrator = is_administrator,
@@ -272,7 +255,7 @@ function module.to_jellyfin_user(principal: UserIdentity): JsonValue
 		HasPassword = auth_enabled,
 		HasConfiguredPassword = auth_enabled,
 		HasConfiguredEasyPassword = false,
-		Configuration = build_jellyfin_user_configuration(),
+		Configuration = preferences.user_configuration(principal.user_id),
 		Policy = build_jellyfin_user_policy(false, false),
 	}
 end
@@ -287,7 +270,7 @@ function module.to_jellyfin_principal_user(principal: Principal): JsonValue
 		HasPassword = auth_enabled,
 		HasConfiguredPassword = auth_enabled,
 		HasConfiguredEasyPassword = false,
-		Configuration = build_jellyfin_user_configuration(),
+		Configuration = preferences.user_configuration(principal.user_id),
 		Policy = build_jellyfin_user_policy(is_admin, true),
 	}
 end
