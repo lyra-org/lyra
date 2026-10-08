@@ -14,6 +14,7 @@ use crate::{
     db::{
         self,
         DbAccess,
+        MetadataField,
     },
     services::auth::Principal,
 };
@@ -24,7 +25,6 @@ use super::{
         FieldState,
         MetadataChangeRequest,
         MetadataEditOperation,
-        MetadataField,
         MetadataFieldDiff,
         MetadataValueSource,
     },
@@ -33,10 +33,7 @@ use super::{
         normalized_set_value,
         validate_target,
     },
-    state::{
-        EntityState,
-        internal_field_name,
-    },
+    state::EntityState,
 };
 
 fn provider_value(
@@ -44,23 +41,20 @@ fn provider_value(
     state: &EntityState,
     field: MetadataField,
 ) -> Result<Option<Value>, MetadataEditingError> {
-    let internal_field = internal_field_name(state.entity_type, field)
-        .ok_or_else(|| MetadataEditingError::BadRequest("invalid metadata field".to_string()))?;
     let layers = db::metadata::layers::get_for_entity(db, state.db_id)?;
     let providers = db::providers::get(db)?;
     let merged = crate::services::metadata::merging::merge_layers(layers, &providers);
-    Ok(merged.fields.get(internal_field.as_str()).cloned())
+    Ok(merged.fields.get(&field).cloned())
 }
 
 fn cleared_value(state: &EntityState, field: MetadataField) -> Result<Value, MetadataEditingError> {
-    match field {
-        MetadataField::Genres
-        | MetadataField::Labels
-        | MetadataField::Credits
-        | MetadataField::Relations => Ok(Value::Array(Vec::new())),
+    if field.is_graph() {
+        Ok(Value::Array(Vec::new()))
+    } else if field.is_required() {
         // Required titles and names keep their stored values when unresolved.
-        MetadataField::Title | MetadataField::Name => Ok(state.field_state(field)?.value.clone()),
-        _ => Ok(Value::Null),
+        Ok(state.field_state(field)?.value.clone())
+    } else {
+        Ok(Value::Null)
     }
 }
 

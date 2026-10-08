@@ -10,12 +10,28 @@ use agdb::{
     DbValue,
     QueryBuilder,
 };
+use serde::{
+    Deserialize,
+    Serialize,
+};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum MetadataEntityType {
     Release,
     Track,
     Artist,
+}
+
+impl MetadataEntityType {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Release => "release",
+            Self::Track => "track",
+            Self::Artist => "artist",
+        }
+    }
 }
 
 fn classify_element(element: &DbElement) -> Option<MetadataEntityType> {

@@ -10,71 +10,13 @@ use agdb::{
     DbId,
     QueryBuilder,
 };
-use serde::{
-    Deserialize,
-    Serialize,
-};
 use serde_json::Value;
 
 use crate::db::{
     DbAccess,
+    MetadataField,
     NodeId,
 };
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ManualMetadataField {
-    ReleaseTitle,
-    TrackTitle,
-    ArtistName,
-    SortTitle,
-    SortName,
-    ReleaseType,
-    ReleaseDate,
-    Genres,
-    Labels,
-    Credits,
-    Year,
-    Disc,
-    DiscTotal,
-    Track,
-    TrackTotal,
-    ArtistType,
-    Description,
-    Relations,
-}
-
-impl ManualMetadataField {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::ReleaseTitle => "release_title",
-            Self::TrackTitle => "track_title",
-            Self::ArtistName => "artist_name",
-            Self::SortTitle => "sort_title",
-            Self::SortName => "sort_name",
-            Self::ReleaseType => "release_type",
-            Self::ReleaseDate => "release_date",
-            Self::Genres => "genres",
-            Self::Labels => "labels",
-            Self::Credits => "credits",
-            Self::Year => "year",
-            Self::Disc => "disc",
-            Self::DiscTotal => "disc_total",
-            Self::Track => "track",
-            Self::TrackTotal => "track_total",
-            Self::ArtistType => "artist_type",
-            Self::Description => "description",
-            Self::Relations => "relations",
-        }
-    }
-
-    pub(crate) const fn is_graph(self) -> bool {
-        matches!(
-            self,
-            Self::Genres | Self::Labels | Self::Credits | Self::Relations
-        )
-    }
-}
 
 #[derive(DbElement, Clone, Debug)]
 pub(crate) struct ManualMetadataOverride {
@@ -83,14 +25,14 @@ pub(crate) struct ManualMetadataOverride {
 }
 
 impl ManualMetadataOverride {
-    pub(crate) fn parsed_fields(&self) -> anyhow::Result<BTreeMap<ManualMetadataField, Value>> {
-        let fields: BTreeMap<ManualMetadataField, Value> = serde_json::from_str(&self.fields)?;
+    pub(crate) fn parsed_fields(&self) -> anyhow::Result<BTreeMap<MetadataField, Value>> {
+        let fields: BTreeMap<MetadataField, Value> = serde_json::from_str(&self.fields)?;
         validate_fields(&fields)?;
         Ok(fields)
     }
 }
 
-fn validate_fields(fields: &BTreeMap<ManualMetadataField, Value>) -> anyhow::Result<()> {
+fn validate_fields(fields: &BTreeMap<MetadataField, Value>) -> anyhow::Result<()> {
     if fields.is_empty() {
         anyhow::bail!("manual metadata override cannot own zero fields");
     }
@@ -135,7 +77,7 @@ pub(crate) fn get(
 pub(crate) fn field_names(
     db: &impl DbAccess,
     entity_id: DbId,
-) -> anyhow::Result<Vec<ManualMetadataField>> {
+) -> anyhow::Result<Vec<MetadataField>> {
     let Some(row) = get(db, entity_id)? else {
         return Ok(Vec::new());
     };
@@ -145,7 +87,7 @@ pub(crate) fn field_names(
 pub(crate) fn owns_field(
     db: &impl DbAccess,
     entity_id: DbId,
-    field: ManualMetadataField,
+    field: MetadataField,
 ) -> anyhow::Result<bool> {
     let Some(row) = get(db, entity_id)? else {
         return Ok(false);
@@ -156,7 +98,7 @@ pub(crate) fn owns_field(
 pub(crate) fn upsert(
     db: &mut impl DbAccess,
     entity_id: DbId,
-    fields: &BTreeMap<ManualMetadataField, Value>,
+    fields: &BTreeMap<MetadataField, Value>,
 ) -> anyhow::Result<DbId> {
     validate_fields(fields)?;
     let existing = get(db, entity_id)?;
@@ -188,7 +130,7 @@ pub(crate) fn upsert(
 pub(crate) fn replace(
     db: &mut impl DbAccess,
     entity_id: DbId,
-    fields: &BTreeMap<ManualMetadataField, Value>,
+    fields: &BTreeMap<MetadataField, Value>,
 ) -> anyhow::Result<Option<DbId>> {
     if !fields.is_empty() {
         return upsert(db, entity_id, fields).map(Some);
@@ -240,11 +182,10 @@ mod tests {
         let entity_id = db
             .exec_mut(QueryBuilder::insert().nodes().count(1).query())?
             .ids()[0];
-        let first =
-            BTreeMap::from([(ManualMetadataField::TrackTitle, Value::String("One".into()))]);
+        let first = BTreeMap::from([(MetadataField::TrackTitle, Value::String("One".into()))]);
         let second = BTreeMap::from([
-            (ManualMetadataField::SortTitle, Value::Null),
-            (ManualMetadataField::TrackTitle, Value::String("Two".into())),
+            (MetadataField::SortTitle, Value::Null),
+            (MetadataField::TrackTitle, Value::String("Two".into())),
         ]);
 
         let first_id = upsert(&mut db, entity_id, &first)?;
@@ -260,10 +201,7 @@ mod tests {
     fn entity_cascade_removes_manual_override_row() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let track_id = insert_track(&mut db, "Track")?;
-        let fields = BTreeMap::from([(
-            ManualMetadataField::TrackTitle,
-            Value::String("Manual".into()),
-        )]);
+        let fields = BTreeMap::from([(MetadataField::TrackTitle, Value::String("Manual".into()))]);
         let row_id = upsert(&mut db, track_id, &fields)?;
 
         crate::db::metadata::cascade_remove_entities(&mut db, &[track_id])?;
@@ -284,7 +222,7 @@ mod tests {
         upsert(
             &mut db,
             entity_id,
-            &BTreeMap::from([(ManualMetadataField::Credits, Value::Bool(true))]),
+            &BTreeMap::from([(MetadataField::Credits, Value::Bool(true))]),
         )?;
 
         replace(&mut db, entity_id, &BTreeMap::new())?;

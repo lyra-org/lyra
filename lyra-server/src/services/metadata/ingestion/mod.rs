@@ -230,9 +230,9 @@ mod tests {
         UNIX_EPOCH,
     };
 
+    use crate::db::MetadataField;
     use crate::db::external_ids::ExternalId;
     use crate::db::metadata::layers::MetadataLayer;
-    use crate::db::metadata::manual_overrides::ManualMetadataField;
     use crate::services::metadata::layers::LOCAL_SOURCE_ID;
     use std::collections::BTreeMap;
 
@@ -3155,10 +3155,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         db::metadata::manual_overrides::replace(
             &mut db,
             track_db_id,
-            &BTreeMap::from([(
-                ManualMetadataField::TrackTitle,
-                serde_json::json!("Manual Title"),
-            )]),
+            &BTreeMap::from([(MetadataField::TrackTitle, serde_json::json!("Manual Title"))]),
         )?;
         crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track_db_id)?;
 
@@ -3180,12 +3177,12 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         db::metadata::manual_overrides::replace(
             &mut db,
             track_db_id,
-            &BTreeMap::from([(ManualMetadataField::Year, serde_json::json!(2020))]),
+            &BTreeMap::from([(MetadataField::Year, serde_json::json!(2020))]),
         )?;
         db::metadata::manual_overrides::replace(
             &mut db,
             release_db_id,
-            &BTreeMap::from([(ManualMetadataField::Genres, serde_json::Value::Bool(true))]),
+            &BTreeMap::from([(MetadataField::Genres, serde_json::Value::Bool(true))]),
         )?;
         db::genres::sync_release_genres(&mut db, release_db_id, &["Manual Genre".to_string()])?;
         crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track_db_id)?;

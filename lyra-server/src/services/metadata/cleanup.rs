@@ -322,12 +322,12 @@ pub(crate) fn deduplicate_artists_by_external_id(db: &mut DbAny) -> anyhow::Resu
             let winner_relations_are_manual = db::metadata::manual_overrides::owns_field(
                 db,
                 winner,
-                db::metadata::manual_overrides::ManualMetadataField::Relations,
+                db::MetadataField::Relations,
             )?;
             let loser_relations_are_manual = db::metadata::manual_overrides::owns_field(
                 db,
                 loser,
-                db::metadata::manual_overrides::ManualMetadataField::Relations,
+                db::MetadataField::Relations,
             )?;
             db.transaction_mut(|t| {
                 migrate_metadata(t, winner, loser)?;

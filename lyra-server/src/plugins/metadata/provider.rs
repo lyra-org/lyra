@@ -770,22 +770,18 @@ fn ensure_artist_callback(
             inner_artist_db_id
         };
 
-        let mut fields = HashMap::new();
-        if let Some(name) = artist_name {
-            fields.insert("artist_name".to_string(), JsonValue::String(name));
-        }
-        if let Some(artist_type) = &artist_type {
-            fields.insert(
-                "artist_type".to_string(),
-                JsonValue::String(artist_type.to_string()),
-            );
-        }
-        if let Some(sort_name) = sort_name {
-            fields.insert("sort_name".to_string(), JsonValue::String(sort_name));
-        }
-        if let Some(description) = description {
-            fields.insert("description".to_string(), JsonValue::String(description));
-        }
+        let fields = [
+            (db::MetadataField::ArtistName, artist_name),
+            (
+                db::MetadataField::ArtistType,
+                artist_type.as_ref().map(ToString::to_string),
+            ),
+            (db::MetadataField::SortName, sort_name),
+            (db::MetadataField::Description, description),
+        ]
+        .into_iter()
+        .filter_map(|(field, value)| Some((field, JsonValue::String(value?))))
+        .collect();
 
         let mut external_ids = HashMap::new();
         external_ids.insert(id_type, id_value);
@@ -930,7 +926,7 @@ fn link_credit_callback(
                 "provider:link_credit: artist_id does not reference an artist",
             ));
         }
-        if db::manual_metadata_owns_field(&db_write, owner_id, db::ManualMetadataField::Credits)
+        if db::manual_metadata_owns_field(&db_write, owner_id, db::MetadataField::Credits)
             .map_err(crate::plugins::runtime_error)?
         {
             return Ok(());
@@ -1100,12 +1096,8 @@ fn link_artist_relation_callback(
                 "provider:link_artist_relation: to_artist_id does not reference an artist",
             ));
         }
-        if db::manual_metadata_owns_field(
-            &db_write,
-            from_artist_id,
-            db::ManualMetadataField::Relations,
-        )
-        .map_err(crate::plugins::runtime_error)?
+        if db::manual_metadata_owns_field(&db_write, from_artist_id, db::MetadataField::Relations)
+            .map_err(crate::plugins::runtime_error)?
         {
             return Ok(());
         }

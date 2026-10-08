@@ -838,7 +838,11 @@ fn merged_provider_fields(
 
     let providers = db::providers::get(db)?;
     let merged = crate::services::metadata::merging::merge_layers(layers, &providers);
-    Ok(merged.fields.into_iter().collect())
+    Ok(merged
+        .fields
+        .into_iter()
+        .map(|(field, value)| (field.as_str().to_string(), value))
+        .collect())
 }
 
 /// A temporary directory holding the test plugin under its manifest ID.

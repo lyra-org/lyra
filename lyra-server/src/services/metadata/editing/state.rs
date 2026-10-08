@@ -14,7 +14,8 @@ use serde_json::Value;
 use crate::db::{
     self,
     DbAccess,
-    metadata::manual_overrides::ManualMetadataField,
+    MetadataField,
+    entities::MetadataEntityType,
 };
 use crate::services::auth::{
     Principal,
@@ -26,8 +27,6 @@ use super::{
     model::{
         FieldState,
         MetadataCreditValue,
-        MetadataEntityType,
-        MetadataField,
         MetadataLabelValue,
         MetadataRelationValue,
         MetadataSnapshot,
@@ -51,7 +50,7 @@ impl EntityState {
             MetadataEditingError::BadRequest(format!(
                 "field '{}' is not editable for {}",
                 field.as_str(),
-                entity_type_name(self.entity_type),
+                self.entity_type.as_str(),
             ))
         })
     }
@@ -67,75 +66,6 @@ impl EntityState {
                 .collect(),
         }
     }
-}
-
-fn entity_type_name(entity_type: MetadataEntityType) -> &'static str {
-    match entity_type {
-        MetadataEntityType::Release => "release",
-        MetadataEntityType::Track => "track",
-        MetadataEntityType::Artist => "artist",
-    }
-}
-
-pub(super) fn internal_field_name(
-    entity_type: MetadataEntityType,
-    field: MetadataField,
-) -> Option<ManualMetadataField> {
-    match (entity_type, field) {
-        (MetadataEntityType::Release, MetadataField::Title) => {
-            Some(ManualMetadataField::ReleaseTitle)
-        }
-        (MetadataEntityType::Release, MetadataField::SortTitle) => {
-            Some(ManualMetadataField::SortTitle)
-        }
-        (MetadataEntityType::Release, MetadataField::ReleaseType) => {
-            Some(ManualMetadataField::ReleaseType)
-        }
-        (MetadataEntityType::Release, MetadataField::ReleaseDate) => {
-            Some(ManualMetadataField::ReleaseDate)
-        }
-        (MetadataEntityType::Release, MetadataField::Genres) => Some(ManualMetadataField::Genres),
-        (MetadataEntityType::Release, MetadataField::Labels) => Some(ManualMetadataField::Labels),
-        (MetadataEntityType::Release, MetadataField::Credits) => Some(ManualMetadataField::Credits),
-        (MetadataEntityType::Track, MetadataField::Title) => Some(ManualMetadataField::TrackTitle),
-        (MetadataEntityType::Track, MetadataField::SortTitle) => {
-            Some(ManualMetadataField::SortTitle)
-        }
-        (MetadataEntityType::Track, MetadataField::Year) => Some(ManualMetadataField::Year),
-        (MetadataEntityType::Track, MetadataField::Disc) => Some(ManualMetadataField::Disc),
-        (MetadataEntityType::Track, MetadataField::DiscTotal) => {
-            Some(ManualMetadataField::DiscTotal)
-        }
-        (MetadataEntityType::Track, MetadataField::Track) => Some(ManualMetadataField::Track),
-        (MetadataEntityType::Track, MetadataField::TrackTotal) => {
-            Some(ManualMetadataField::TrackTotal)
-        }
-        (MetadataEntityType::Track, MetadataField::Credits) => Some(ManualMetadataField::Credits),
-        (MetadataEntityType::Artist, MetadataField::Name) => Some(ManualMetadataField::ArtistName),
-        (MetadataEntityType::Artist, MetadataField::SortName) => {
-            Some(ManualMetadataField::SortName)
-        }
-        (MetadataEntityType::Artist, MetadataField::ArtistType) => {
-            Some(ManualMetadataField::ArtistType)
-        }
-        (MetadataEntityType::Artist, MetadataField::Description) => {
-            Some(ManualMetadataField::Description)
-        }
-        (MetadataEntityType::Artist, MetadataField::Relations) => {
-            Some(ManualMetadataField::Relations)
-        }
-        _ => None,
-    }
-}
-
-fn api_field_from_internal(
-    entity_type: MetadataEntityType,
-    mut fields: impl Iterator<Item = MetadataField>,
-    internal_name: ManualMetadataField,
-) -> Option<MetadataField> {
-    fields.find(|field| {
-        internal_field_name(entity_type, *field).is_some_and(|name| name == internal_name)
-    })
 }
 
 fn optional_value<T: serde::Serialize>(value: Option<T>) -> anyhow::Result<Value> {
@@ -183,7 +113,10 @@ fn release_fields(
     });
 
     Ok(BTreeMap::from([
-        (MetadataField::Title, Value::String(release.release_title)),
+        (
+            MetadataField::ReleaseTitle,
+            Value::String(release.release_title),
+        ),
         (
             MetadataField::SortTitle,
             optional_value(release.sort_title)?,
@@ -211,7 +144,7 @@ fn track_fields(
     track_id: DbId,
 ) -> anyhow::Result<BTreeMap<MetadataField, Value>> {
     Ok(BTreeMap::from([
-        (MetadataField::Title, Value::String(track.track_title)),
+        (MetadataField::TrackTitle, Value::String(track.track_title)),
         (MetadataField::SortTitle, optional_value(track.sort_title)?),
         (MetadataField::Year, optional_value(track.year)?),
         (MetadataField::Disc, optional_value(track.disc)?),
@@ -235,7 +168,7 @@ fn artist_fields(
     artist_id: DbId,
 ) -> anyhow::Result<BTreeMap<MetadataField, Value>> {
     let mut fields = BTreeMap::from([
-        (MetadataField::Name, Value::String(artist.artist_name)),
+        (MetadataField::ArtistName, Value::String(artist.artist_name)),
         (MetadataField::SortName, optional_value(artist.sort_name)?),
         (
             MetadataField::ArtistType,
@@ -307,22 +240,15 @@ pub(super) fn load_entity_state(
         };
 
     let mut manual = BTreeSet::new();
-    for internal_name in db::metadata::manual_overrides::field_names(db, db_id)? {
-        let Some(field) =
-            api_field_from_internal(entity_type, fields.keys().copied(), internal_name)
-        else {
-            if entity_type == MetadataEntityType::Artist
-                && internal_name == ManualMetadataField::Relations
-            {
-                continue;
-            }
+    for field in db::metadata::manual_overrides::field_names(db, db_id)? {
+        if !entity_type.supports(field) {
             return Err(MetadataEditingError::Internal(anyhow::anyhow!(
                 "stored manual metadata field '{}' is invalid for {} {}",
-                internal_name.as_str(),
-                entity_type_name(entity_type),
+                field.as_str(),
+                entity_type.as_str(),
                 public_id,
             )));
-        };
+        }
         manual.insert(field);
     }
     let fields = fields

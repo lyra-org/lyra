@@ -16,6 +16,8 @@ use crate::{
     db::{
         self,
         DbAccess,
+        MetadataField,
+        entities::MetadataEntityType,
     },
     services::auth::{
         Principal,
@@ -27,8 +29,6 @@ use super::{
     MetadataEditingError,
     model::{
         MetadataCreditValue,
-        MetadataEntityType,
-        MetadataField,
         MetadataFieldDiff,
         MetadataLabelEditValue,
         MetadataLabelValue,
@@ -192,12 +192,11 @@ pub(super) fn normalize_provider_labels(
     db: &impl DbAccess,
     value: &Value,
 ) -> Result<Value, MetadataEditingError> {
-    let inputs =
-        crate::services::metadata::merging::parse_label_inputs(value).ok_or_else(|| {
-            MetadataEditingError::BadRequest(
-                "resolved provider labels have an invalid schema".to_string(),
-            )
-        })?;
+    let inputs = db::metadata::layers::label_inputs(value).map_err(|error| {
+        MetadataEditingError::BadRequest(format!(
+            "resolved provider labels have an invalid schema: {error:#}"
+        ))
+    })?;
     let mut labels = Vec::with_capacity(inputs.len());
     let mut external_keys = HashSet::new();
     let mut name_keys = HashSet::new();
@@ -361,27 +360,27 @@ pub(super) fn normalized_set_value(
     value: &Value,
 ) -> Result<Value, MetadataEditingError> {
     if value.is_null() {
-        return match field {
-            MetadataField::Title | MetadataField::Name => Err(MetadataEditingError::BadRequest(
-                format!("field '{}' cannot be cleared", field.as_str()),
-            )),
-            MetadataField::Genres
-            | MetadataField::Labels
-            | MetadataField::Credits
-            | MetadataField::Relations => Err(MetadataEditingError::BadRequest(format!(
+        return if field.is_required() {
+            Err(MetadataEditingError::BadRequest(format!(
+                "field '{}' cannot be cleared",
+                field.as_str(),
+            )))
+        } else if field.is_graph() {
+            Err(MetadataEditingError::BadRequest(format!(
                 "field '{}' must be a list; use [] to clear it",
                 field.as_str(),
-            ))),
-            _ => Ok(Value::Null),
+            )))
+        } else {
+            Ok(Value::Null)
         };
     }
     match field {
-        MetadataField::Title | MetadataField::Name => {
-            Ok(Value::String(normalize_nonempty_string(value, field)?))
-        }
-        MetadataField::SortTitle | MetadataField::SortName | MetadataField::Description => {
-            Ok(Value::String(normalize_nonempty_string(value, field)?))
-        }
+        MetadataField::ReleaseTitle
+        | MetadataField::TrackTitle
+        | MetadataField::ArtistName
+        | MetadataField::SortTitle
+        | MetadataField::SortName
+        | MetadataField::Description => Ok(Value::String(normalize_nonempty_string(value, field)?)),
         MetadataField::ReleaseType => {
             let value: db::releases::ReleaseType = decode_value(value, field)?;
             Ok(serde_json::to_value(value)?)

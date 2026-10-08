@@ -96,10 +96,8 @@ fn merge_release_into_inside_tx(
     let loser_manual_fields: HashSet<_> = db::metadata::manual_overrides::field_names(db, loser)?
         .into_iter()
         .collect();
-    let winner_genres_are_manual =
-        winner_manual_fields.contains(&db::metadata::manual_overrides::ManualMetadataField::Genres);
-    let loser_genres_are_manual =
-        loser_manual_fields.contains(&db::metadata::manual_overrides::ManualMetadataField::Genres);
+    let winner_genres_are_manual = winner_manual_fields.contains(&db::MetadataField::Genres);
+    let loser_genres_are_manual = loser_manual_fields.contains(&db::MetadataField::Genres);
     if !winner_genres_are_manual && loser_genres_are_manual {
         let genres = db::genres::get_for_release(db, loser)?
             .into_iter()
@@ -108,10 +106,8 @@ fn merge_release_into_inside_tx(
         db::genres::sync_release_genres(db, winner, &genres)?;
     }
 
-    let winner_credits_are_manual = winner_manual_fields
-        .contains(&db::metadata::manual_overrides::ManualMetadataField::Credits);
-    let loser_credits_are_manual =
-        loser_manual_fields.contains(&db::metadata::manual_overrides::ManualMetadataField::Credits);
+    let winner_credits_are_manual = winner_manual_fields.contains(&db::MetadataField::Credits);
+    let loser_credits_are_manual = loser_manual_fields.contains(&db::MetadataField::Credits);
     if !winner_credits_are_manual && loser_credits_are_manual {
         db::credits::replace_for_owner(db, winner, &[])?;
     }
@@ -152,10 +148,8 @@ fn merge_release_into_inside_tx(
         winner_layers_by_source.insert(layer.source_id.clone(), layer);
         wrote_layer = true;
     }
-    let winner_labels_are_manual =
-        winner_manual_fields.contains(&db::metadata::manual_overrides::ManualMetadataField::Labels);
-    let loser_labels_are_manual =
-        loser_manual_fields.contains(&db::metadata::manual_overrides::ManualMetadataField::Labels);
+    let winner_labels_are_manual = winner_manual_fields.contains(&db::MetadataField::Labels);
+    let loser_labels_are_manual = loser_manual_fields.contains(&db::MetadataField::Labels);
     if !winner_labels_are_manual {
         if loser_labels_are_manual {
             db::labels::sync_release_labels_inside_tx(db, winner, &[])?;
@@ -332,8 +326,8 @@ mod tests {
 
     use super::*;
     use crate::db::{
+        MetadataField,
         labels::LabelInput,
-        metadata::manual_overrides::ManualMetadataField,
         test_db::{
             connect_credit,
             insert_artist,
@@ -360,7 +354,7 @@ mod tests {
         db::metadata::manual_overrides::upsert(
             &mut db,
             winner,
-            &BTreeMap::from([(ManualMetadataField::Labels, Value::Bool(true))]),
+            &BTreeMap::from([(MetadataField::Labels, Value::Bool(true))]),
         )?;
 
         merge_release_into(&mut db, winner, loser)?;
