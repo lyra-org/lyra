@@ -20,4 +20,5 @@ fields = { release_title = "Again", release_date = "2019-04-05" }
 fields = { artist_name = "Beverly", sort_name = "Beverly" }
 
 [expect.tracks."41999970-c087-41dc-bdcf-9c49db67ca02"]
-fields = { disc = 1, track = 1, track_title = "Again", work_id = "414d5f9a-a58c-4188-a8b4-e703924ec5a3" }
+ids = { work_id = "414d5f9a-a58c-4188-a8b4-e703924ec5a3" }
+fields = { disc = 1, track = 1, track_title = "Again" }

@@ -24,4 +24,5 @@ fields = { release_title = "LADY", release_date = "2023-03-21" }
 fields = { artist_name = "米津玄師", sort_name = "Yonezu, Kenshi" }
 
 [expect.tracks."7fb0dd4b-517a-4ff6-846b-3c87c02f1e46"]
-fields = { disc = 1, track = 1, track_title = "LADY", work_id = "8e9b33e4-8952-44f4-876a-7a09de91ca74" }
+ids = { work_id = "8e9b33e4-8952-44f4-876a-7a09de91ca74" }
+fields = { disc = 1, track = 1, track_title = "LADY" }

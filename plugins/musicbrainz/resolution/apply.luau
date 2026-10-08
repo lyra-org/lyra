@@ -101,8 +101,9 @@ local function set_artist_metadata(db_id: number?, mb_artist: ReleaseArtist?): b
 	if mb_artist["sort-name"] then
 		artist_layer:set_field("sort_name", mb_artist["sort-name"])
 	end
-	if mb_artist["type"] then
-		artist_layer:set_field("artist_type", string.lower(mb_artist["type"]))
+	local mb_artist_type = mb_artist["type"]
+	if mb_artist_type and artist_type_for_musicbrainz(mb_artist_type) then
+		artist_layer:set_field("artist_type", string.lower(mb_artist_type))
 	end
 	artist_layer:set_id("artist_id", mb_artist.id)
 	artist_layer:save()
@@ -803,10 +804,12 @@ local function process_release(
 						end
 					end
 					if work and work.id then
-						track_layer:set_field("work_id", work.id)
+						track_layer:set_id("work_id", work.id)
 						if work.relations and local_track.db_id then
 							link_artist_credits_from_relations(local_track.db_id, work.relations)
 						end
+					elseif recording_relations ~= nil then
+						track_layer:set_id("work_id", "")
 					end
 				end
 				track_layer:save()

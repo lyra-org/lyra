@@ -317,6 +317,7 @@ local id_specs: { ProviderIdSpec } = {
 	{ id_type = "artist", entity = ET.Artist },
 	{ id_type = "recording", entity = ET.Track, unique = true },
 	{ id_type = "track", field = "release_track_id", entity = ET.Track, unique = true },
+	{ id_type = "work", entity = ET.Track },
 }
 
 for _, id_spec in id_specs do

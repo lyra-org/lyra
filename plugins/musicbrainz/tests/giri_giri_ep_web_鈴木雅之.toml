@@ -27,4 +27,5 @@ fields = { artist_name = "鈴木雅之", sort_name = "Suzuki, Masayuki" }
 fields = { artist_name = "吉田菫", sort_name = "Yoshida, Sumire" }
 
 [expect.tracks."ee9ec664-b579-4dca-9e5a-76190439b2b4"]
-fields = { disc = 1, track = 1, track_title = "GIRI GIRI", work_id = "7a5a8e4a-4ad6-480b-8cce-7ace31c152bc" }
+ids = { work_id = "7a5a8e4a-4ad6-480b-8cce-7ace31c152bc" }
+fields = { disc = 1, track = 1, track_title = "GIRI GIRI" }

@@ -25,4 +25,5 @@ fields = { release_title = "Stardust", release_date = "2026-04-13" }
 fields = { artist_name = "Official髭男dism", sort_name = "Official HIGE DANdism" }
 
 [expect.tracks."9a22dd59-bd0c-43e5-a3eb-ad521cf481b2"]
-fields = { disc = 1, track = 1, track_title = "Stardust", work_id = "c667c5ef-e970-47b7-a6fc-0245823bd720" }
+ids = { work_id = "c667c5ef-e970-47b7-a6fc-0245823bd720" }
+fields = { disc = 1, track = 1, track_title = "Stardust" }

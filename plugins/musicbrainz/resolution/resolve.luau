@@ -102,7 +102,7 @@ function module.apply_release_id(release_id: string, local_release_info: LocalRe
 	local local_tracks, assignments = assign_release_tracks(local_release_info.context.tracks, release)
 	for i, local_track in local_tracks do
 		if assignments[i] == nil and local_track.db_id then
-			apply.mark_unmatched(local_track.db_id, { "recording_id", "release_track_id" })
+			apply.mark_unmatched(local_track.db_id, { "recording_id", "release_track_id", "work_id" })
 		end
 	end
 	return true

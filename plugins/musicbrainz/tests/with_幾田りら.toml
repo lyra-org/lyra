@@ -24,4 +24,5 @@ fields = { release_title = "With", release_date = "2023-10-06" }
 fields = { artist_name = "幾田りら", sort_name = "Ikuta, Lilas" }
 
 [expect.tracks."31e154bb-4c5f-4d65-9e3e-2c3477e25604"]
-fields = { disc = 1, track = 1, track_title = "With", work_id = "bfbc59a6-c543-4441-87ee-1068ff61eeec" }
+ids = { work_id = "bfbc59a6-c543-4441-87ee-1068ff61eeec" }
+fields = { disc = 1, track = 1, track_title = "With" }
