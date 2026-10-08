@@ -511,6 +511,41 @@ api.get(P .. "/Users/{id}", function(ctx: ApiContext): ApiResponse
 	end
 	return api.response.json(200, session.to_jellyfin_user(user))
 end, "public", true)
+-- The caller's own configuration, or with `userId` another user's; only an admin may change
+-- someone else's.
+local function handle_user_configuration_post(ctx: ApiContext, raw_user_id: string?): ApiResponse
+	local principal = session.require_jellyfin_principal(ctx)
+	if not principal then
+		return session.unauthorized()
+	end
+
+	local user_id = principal.user_id
+	if raw_user_id then
+		local decoded = item_ids.decode_jellyfin_user_id(raw_user_id)
+		if not decoded then
+			return responses.not_found("user not found")
+		end
+		user_id = decoded
+	end
+	if user_id ~= principal.user_id then
+		if not find_public_user_by_id(user_id) then
+			return responses.not_found("user not found")
+		end
+		if not session.is_admin(principal) then
+			return responses.forbidden("User configuration update not allowed")
+		end
+	end
+	return preferences.user_configuration_set(ctx, user_id)
+end
+
+api.post(P .. "/Users/Configuration", function(ctx: ApiContext): ApiResponse
+	local query = if ctx and ctx.request then ctx.request.query else nil
+	return handle_user_configuration_post(ctx, requests.parse_query_string(query, { "userId" }, nil))
+end, "public", true)
+api.post(P .. "/Users/{userId}/Configuration", function(ctx: ApiContext): ApiResponse
+	local params = if ctx then ctx.params else nil
+	return handle_user_configuration_post(ctx, if params then params.userId else nil)
+end, "public", true)
 api.get(P .. "/QuickConnect/Enabled", function(): ApiResponse
 	return api.response.json(200, false)
 end, "public", true)

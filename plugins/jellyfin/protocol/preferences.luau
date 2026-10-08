@@ -7,6 +7,7 @@
 local api = require("@lyra/api")
 local datastore = require("@lyra/datastore")
 
+local constants = require("../constants")
 local requests = require("./items/requests")
 local responses = require("./items/responses")
 
@@ -20,6 +21,7 @@ type StoredObject = { [string]: StoredValue }
 
 local DISPLAY_PREFS_STORE_NAME = "jellyfin:display_prefs"
 local DEVICE_OPTIONS_STORE_NAME = "jellyfin:device_options"
+local USER_CONFIGURATION_STORE_NAME = "jellyfin:user_configuration"
 local MAX_BLOB_BYTES = 64 * 1024
 local MAX_CLIENT_SEGMENT_LENGTH = 128
 local MAX_PREFS_ID_LENGTH = 128
@@ -30,6 +32,28 @@ local SAFE_SEGMENT_PATTERN = "^[%w_%-%.:]+$"
 
 local display_prefs_store: DataStore? = nil
 local device_options_store: DataStore? = nil
+local user_configuration_store: DataStore? = nil
+
+-- Jellyfin's `UserConfiguration` fields by the JSON type each takes.
+local USER_CONFIGURATION_STRING_FIELDS = { "AudioLanguagePreference", "SubtitleLanguagePreference", "CastReceiverId" }
+local USER_CONFIGURATION_BOOL_FIELDS = {
+	"PlayDefaultAudioTrack",
+	"DisplayMissingEpisodes",
+	"DisplayCollectionsView",
+	"EnableLocalPassword",
+	"HidePlayedInLatest",
+	"RememberAudioSelections",
+	"RememberSubtitleSelections",
+	"EnableNextEpisodeAutoPlay",
+}
+local USER_CONFIGURATION_ID_LIST_FIELDS = { "GroupedFolders", "OrderedViews", "LatestItemsExcludes", "MyMediaExcludes" }
+local SUBTITLE_MODES: { [string]: boolean } = {
+	Default = true,
+	Always = true,
+	OnlyForced = true,
+	None = true,
+	Smart = true,
+}
 
 local module = {}
 
@@ -53,6 +77,12 @@ end
 local function get_device_options_store(): DataStore?
 	local store, cache_value = resolve_store(device_options_store, DEVICE_OPTIONS_STORE_NAME)
 	device_options_store = cache_value
+	return store
+end
+
+local function get_user_configuration_store(): DataStore?
+	local store, cache_value = resolve_store(user_configuration_store, USER_CONFIGURATION_STORE_NAME)
+	user_configuration_store = cache_value
 	return store
 end
 
@@ -112,6 +142,71 @@ local function default_device_options(device_id: string): JsonObject
 		Id = device_id,
 		DeviceId = device_id,
 	}
+end
+
+-- Upstream's defaults for a user who never saved a configuration.
+local function default_user_configuration(): JsonObject
+	return {
+		PlayDefaultAudioTrack = true,
+		DisplayMissingEpisodes = false,
+		GroupedFolders = {},
+		SubtitleMode = "Default",
+		DisplayCollectionsView = false,
+		EnableLocalPassword = false,
+		OrderedViews = {},
+		LatestItemsExcludes = {},
+		MyMediaExcludes = {},
+		HidePlayedInLatest = true,
+		RememberAudioSelections = true,
+		RememberSubtitleSelections = true,
+		EnableNextEpisodeAutoPlay = true,
+	}
+end
+
+-- The body's `UserConfiguration` fields, or nil when one has the wrong type. Unknown fields are
+-- dropped, as upstream's model binding drops them.
+local function parse_user_configuration(body: JsonObject): JsonObject?
+	local parsed: JsonObject = {}
+	for _, field in USER_CONFIGURATION_STRING_FIELDS do
+		local value = body[field]
+		if value ~= nil and type(value) ~= "string" then
+			return nil
+		end
+		parsed[field] = value
+	end
+	for _, field in USER_CONFIGURATION_BOOL_FIELDS do
+		local value = body[field]
+		if value ~= nil and type(value) ~= "boolean" then
+			return nil
+		end
+		parsed[field] = value
+	end
+	for _, field in USER_CONFIGURATION_ID_LIST_FIELDS do
+		local value = body[field]
+		if value == nil then
+			continue
+		end
+		if type(value) ~= "table" then
+			return nil
+		end
+		local ids: { JsonValue } = {}
+		for _, raw in value :: { JsonValue } do
+			local id = constants.normalize_item_id(if type(raw) == "string" then raw else nil)
+			if not id then
+				return nil
+			end
+			table.insert(ids, id)
+		end
+		parsed[field] = ids
+	end
+	local subtitle_mode = body.SubtitleMode
+	if subtitle_mode ~= nil then
+		if type(subtitle_mode) ~= "string" or not SUBTITLE_MODES[subtitle_mode] then
+			return nil
+		end
+		parsed.SubtitleMode = subtitle_mode
+	end
+	return parsed
 end
 
 local function body_within_size_cap(ctx: ApiContext): boolean
@@ -241,6 +336,50 @@ function module.device_options_set(ctx: ApiContext, user_id: string): ApiRespons
 
 	local key = device_options_key(user_id, device_id)
 	local set_ok = pcall(store.set, store, key, payload :: StoredValue)
+	if not set_ok then
+		return api.response.empty(500)
+	end
+	return api.response.empty(204)
+end
+
+-- The user's saved configuration over upstream's defaults. An unreadable store gives the defaults,
+-- so a user response never fails over a preference.
+function module.user_configuration(user_id: string): JsonObject
+	local configuration = default_user_configuration()
+	local store = get_user_configuration_store()
+	if not store then
+		return configuration
+	end
+	local get_ok, existing = pcall(store.get, store, user_id)
+	if get_ok and type(existing) == "table" then
+		for field, value in existing :: StoredObject do
+			configuration[field] = value :: JsonValue
+		end
+	end
+	return configuration
+end
+
+-- Replaces the user's configuration, as upstream's `POST /Users/Configuration` does.
+function module.user_configuration_set(ctx: ApiContext, user_id: string): ApiResponse
+	local request = if ctx then ctx.request else nil
+	local request_json = if request then request.json else nil
+	if type(request_json) ~= "table" then
+		return responses.bad_request("invalid user configuration body")
+	end
+	if not body_within_size_cap(ctx) then
+		return responses.bad_request("user configuration body exceeds size cap")
+	end
+	local configuration = parse_user_configuration(request_json :: JsonObject)
+	if not configuration then
+		return responses.bad_request("invalid user configuration body")
+	end
+
+	local store = get_user_configuration_store()
+	if not store then
+		return api.response.empty(500)
+	end
+
+	local set_ok = pcall(store.set, store, user_id, configuration :: StoredValue)
 	if not set_ok then
 		return api.response.empty(500)
 	end
