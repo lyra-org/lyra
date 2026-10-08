@@ -25,6 +25,7 @@ use crate::db::{
     ProviderCustomFields,
     metadata::manual_overrides::ManualMetadataField,
 };
+use crate::services::EntityType;
 
 /// Reserved source for file-derived metadata; plugin registration rejects it.
 pub(crate) const LOCAL_SOURCE_ID: &str = "local";
@@ -286,6 +287,43 @@ pub(crate) fn save_provider_layer(
     Ok(())
 }
 
+/// Records that `provider_id` found no match for an entity: blanks `id_types`
+/// and clears the provider's layer. Artists are shared across releases, so one
+/// release failing to match says nothing about them: an artist keeps its layer
+/// and any ID the provider already set.
+pub(crate) fn mark_unmatched(
+    db: &mut DbAny,
+    node_id: DbId,
+    provider_id: &str,
+    entity_type: EntityType,
+    id_types: Vec<String>,
+) -> anyhow::Result<()> {
+    let is_artist = entity_type == EntityType::Artist;
+    let mut external_ids = HashMap::new();
+    for id_type in id_types {
+        if is_artist
+            && db::external_ids::get(db, node_id, provider_id, &id_type)?
+                .is_some_and(|id| id.resolved_value().is_some_and(|value| !value.is_empty()))
+        {
+            continue;
+        }
+        external_ids.insert(id_type, String::new());
+    }
+    save_provider_layer(
+        db,
+        node_id,
+        provider_id,
+        &HashMap::new(),
+        &external_ids,
+        &HashMap::new(),
+        &HashSet::new(),
+    )?;
+    if !is_artist {
+        clear_provider_layer(db, node_id, provider_id)?;
+    }
+    Ok(())
+}
+
 /// Removes everything `provider_id` contributed to an entity's metadata, its
 /// layer and custom fields, and re-applies what the other layers resolve to.
 /// External IDs are left to the caller.
@@ -321,6 +359,7 @@ mod tests {
 
     use super::*;
     use crate::db::test_db::{
+        insert_artist,
         insert_release,
         new_test_db,
     };
@@ -368,6 +407,80 @@ mod tests {
                 .all(|layer| layer.source_id != "provider")
         );
         assert!(db::metadata::custom_fields::get_for_entity(&db, release_id)?.is_empty());
+        Ok(())
+    }
+
+    fn musicbrainz_id(db: &DbAny, node_id: DbId, id_type: &str) -> anyhow::Result<Option<String>> {
+        Ok(db::external_ids::get(db, node_id, "musicbrainz", id_type)?.map(|id| id.id_value))
+    }
+
+    #[test]
+    fn unmatching_an_artist_keeps_the_id_the_provider_set() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let matched = insert_artist(&mut db, "Matched")?;
+        let unknown = insert_artist(&mut db, "Unknown")?;
+        save_provider_layer(
+            &mut db,
+            matched,
+            "musicbrainz",
+            &HashMap::from([("artist_name".to_string(), json!("Matched"))]),
+            &HashMap::from([("artist_id".to_string(), "artist-1".to_string())]),
+            &HashMap::new(),
+            &HashSet::new(),
+        )?;
+
+        for artist in [matched, unknown] {
+            mark_unmatched(
+                &mut db,
+                artist,
+                "musicbrainz",
+                EntityType::Artist,
+                vec!["artist_id".to_string()],
+            )?;
+        }
+
+        assert_eq!(
+            musicbrainz_id(&db, matched, "artist_id")?.as_deref(),
+            Some("artist-1")
+        );
+        assert!(
+            db::metadata::layers::get_for_entity(&db, matched)?
+                .iter()
+                .any(|layer| layer.source_id == "musicbrainz")
+        );
+        assert_eq!(
+            musicbrainz_id(&db, unknown, "artist_id")?.as_deref(),
+            Some("")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unmatching_a_release_blanks_its_ids() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release_id = insert_release(&mut db, "Release")?;
+        save_provider_layer(
+            &mut db,
+            release_id,
+            "musicbrainz",
+            &HashMap::new(),
+            &HashMap::from([("release_id".to_string(), "release-1".to_string())]),
+            &HashMap::new(),
+            &HashSet::new(),
+        )?;
+
+        mark_unmatched(
+            &mut db,
+            release_id,
+            "musicbrainz",
+            EntityType::Release,
+            vec!["release_id".to_string()],
+        )?;
+
+        assert_eq!(
+            musicbrainz_id(&db, release_id, "release_id")?.as_deref(),
+            Some("")
+        );
         Ok(())
     }
 }

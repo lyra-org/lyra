@@ -869,32 +869,14 @@ fn mark_unmatched_callback(
             }
         }
 
-        let external_ids = normalized_id_types
-            .into_iter()
-            .map(|id_type| (id_type, String::new()))
-            .collect::<HashMap<_, _>>();
-        crate::services::metadata::layers::save_provider_layer(
+        crate::services::metadata::layers::mark_unmatched(
             &mut db_write,
             node_id,
             &provider_id,
-            &HashMap::new(),
-            &external_ids,
-            &HashMap::new(),
-            &HashSet::new(),
+            entity_type,
+            normalized_id_types,
         )
-        .map_err(crate::plugins::runtime_error)?;
-
-        // Artists are shared across releases, so one release failing to match
-        // must not discard what the provider supplied for them.
-        if entity_type != EntityType::Artist {
-            crate::services::metadata::layers::clear_provider_layer(
-                &mut db_write,
-                node_id,
-                &provider_id,
-            )
-            .map_err(crate::plugins::runtime_error)?;
-        }
-        Ok(())
+        .map_err(crate::plugins::runtime_error)
     }))
 }
 
