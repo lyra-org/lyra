@@ -1,0 +1,47 @@
+run_as = "admin"
+
+# "Album" is credited to the group Band and produced by Prod. Its track "Song" is sung by Singer
+# and composed by Comp; its track "Other" has no credits of its own. Loner holds no credit.
+
+[[users]]
+key = "admin"
+admin = true
+
+[[artists]]
+key = "band"
+name = "Band"
+type = "group"
+
+[[artists]]
+key = "singer"
+name = "Singer"
+
+[[artists]]
+key = "comp"
+name = "Comp"
+
+[[artists]]
+key = "prod"
+name = "Prod"
+
+[[artists]]
+key = "loner"
+name = "Loner"
+
+[[releases]]
+key = "album"
+title = "Album"
+artists = ["band"]
+credits = [{ artist = "prod", type = "producer" }]
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+artists = ["singer"]
+credits = [{ artist = "comp", type = "composer" }]
+
+[[tracks]]
+key = "other"
+title = "Other"
+release = "album"
