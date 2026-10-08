@@ -21,4 +21,5 @@ fields = { release_title = "BALALAIKA", release_date = "2024-02-14" }
 fields = { artist_name = "9Lana", sort_name = "Kurana" }
 
 [expect.tracks."d8ca4ab3-05b7-445d-806b-d134c6187092"]
-fields = { disc = 1, track = 1, track_title = "BALALAIKA", work_id = "cc49255f-54a5-4cbb-a3e6-7da5878c699c" }
+ids = { work_id = "cc49255f-54a5-4cbb-a3e6-7da5878c699c" }
+fields = { disc = 1, track = 1, track_title = "BALALAIKA" }

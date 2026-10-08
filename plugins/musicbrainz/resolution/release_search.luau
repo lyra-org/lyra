@@ -144,7 +144,7 @@ function module.search_and_fetch_release(local_release_info: LocalRelease): bool
 		for_each_local_artist(release_context, mark_artist_unmatched)
 		for _, track: LocalTrack in release_context.tracks do
 			if track.db_id then
-				apply.mark_unmatched(track.db_id, { "recording_id", "release_track_id" })
+				apply.mark_unmatched(track.db_id, { "recording_id", "release_track_id", "work_id" })
 			end
 		end
 		return false

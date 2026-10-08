@@ -22,4 +22,5 @@ fields = { release_title = "fake face dance music", release_date = "2023-07-11" 
 fields = { artist_name = "音田雅則", sort_name = "Otoda, Masanori" }
 
 [expect.tracks."c4c6b62a-90b3-48ca-af21-67334d106593"]
-fields = { disc = 1, track = 1, track_title = "fake face dance music", work_id = "037ab1f1-68aa-430b-9207-2db2295f7a22" }
+ids = { work_id = "037ab1f1-68aa-430b-9207-2db2295f7a22" }
+fields = { disc = 1, track = 1, track_title = "fake face dance music" }

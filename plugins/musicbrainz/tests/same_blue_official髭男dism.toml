@@ -22,4 +22,5 @@ fields = { release_title = "Same Blue", release_date = "2024-10-02" }
 fields = { artist_name = "Official髭男dism", sort_name = "Official HIGE DANdism" }
 
 [expect.tracks."02b1bca5-dbd3-464f-8156-3d3a04c4f2ca"]
-fields = { disc = 1, track = 1, track_title = "Same Blue", work_id = "2f5d4ef2-4dd7-4476-877c-90127c99c98a" }
+ids = { work_id = "2f5d4ef2-4dd7-4476-877c-90127c99c98a" }
+fields = { disc = 1, track = 1, track_title = "Same Blue" }

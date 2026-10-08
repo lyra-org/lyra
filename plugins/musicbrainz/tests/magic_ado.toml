@@ -23,4 +23,5 @@ fields = { release_title = "MAGIC", release_date = "2025-10-31" }
 fields = { artist_name = "Ado", sort_name = "Ado" }
 
 [expect.tracks."d6313032-74bf-44f0-8ee3-01123e963c14"]
-fields = { disc = 1, track = 1, track_title = "MAGIC", work_id = "1fa1574e-1df6-4e58-a67e-f784b0cc437c" }
+ids = { work_id = "1fa1574e-1df6-4e58-a67e-f784b0cc437c" }
+fields = { disc = 1, track = 1, track_title = "MAGIC" }

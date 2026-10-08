@@ -21,4 +21,5 @@ fields = { release_title = "LOVE 2000", genres = ["asian rock", "j-rock", "pop r
 fields = { artist_name = "八奈見杏菜", sort_name = "Yanami, Anna" }
 
 [expect.tracks."05196c50-9c65-4f9f-a3b1-403e0aeab574"]
-fields = { disc = 1, track = 1, track_title = "LOVE 2000", work_id = "2e06f71a-0690-45b5-98fa-b86f9beba389" }
+ids = { work_id = "2e06f71a-0690-45b5-98fa-b86f9beba389" }
+fields = { disc = 1, track = 1, track_title = "LOVE 2000" }

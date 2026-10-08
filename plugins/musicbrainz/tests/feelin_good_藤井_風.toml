@@ -24,4 +24,5 @@ fields = { release_title = "Feelin’ Go(o)d", release_date = "2024-07-26" }
 fields = { artist_name = "藤井風", sort_name = "Fujii, Kaze" }
 
 [expect.tracks."051a3b7b-7966-4d01-9ef1-8f201021c670"]
-fields = { disc = 1, track = 1, track_title = "Feelin’ Go(o)d", work_id = "7972c937-f838-40e5-8607-407ab8489b14" }
+ids = { work_id = "7972c937-f838-40e5-8607-407ab8489b14" }
+fields = { disc = 1, track = 1, track_title = "Feelin’ Go(o)d" }

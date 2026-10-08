@@ -21,4 +21,5 @@ fields = { release_title = "HEART BEAT", release_date = "2023-12-26" }
 fields = { artist_name = "YOASOBI", sort_name = "YOASOBI" }
 
 [expect.tracks."20e8fe88-1dfa-43c1-80c4-6734d2ae45bf"]
-fields = { disc = 1, track = 1, track_title = "HEART BEAT", work_id = "849e524f-c16e-4b2a-9f21-e27dd6279b5b" }
+ids = { work_id = "849e524f-c16e-4b2a-9f21-e27dd6279b5b" }
+fields = { disc = 1, track = 1, track_title = "HEART BEAT" }

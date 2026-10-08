@@ -25,4 +25,5 @@ fields = { release_title = "Love Like This", release_date = "2025-08-01" }
 fields = { artist_name = "藤井風", sort_name = "Fujii, Kaze" }
 
 [expect.tracks."6f68f220-df9f-4254-ab63-cc3aee6ce9b7"]
-fields = { disc = 1, track = 1, track_title = "Love Like This", work_id = "5386bb81-7903-44be-afb2-f65d8554a287" }
+ids = { work_id = "5386bb81-7903-44be-afb2-f65d8554a287" }
+fields = { disc = 1, track = 1, track_title = "Love Like This" }

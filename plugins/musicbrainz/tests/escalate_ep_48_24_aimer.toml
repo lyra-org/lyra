@@ -24,4 +24,5 @@ fields = { release_title = "escalate", genres = ["j-pop"], release_date = "2023-
 fields = { artist_name = "Aimer", sort_name = "Aimer" }
 
 [expect.tracks."fa3cc916-e072-4821-9d61-2bf2aa7fb5a9"]
-fields = { disc = 1, track = 1, track_title = "escalate", work_id = "869841e1-466a-4c94-a4fa-437dee3b8a6f" }
+ids = { work_id = "869841e1-466a-4c94-a4fa-437dee3b8a6f" }
+fields = { disc = 1, track = 1, track_title = "escalate" }

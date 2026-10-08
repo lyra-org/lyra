@@ -23,4 +23,5 @@ fields = { release_title = "Overdose", release_date = "2022-09-07" }
 fields = { artist_name = "なとり", sort_name = "natori" }
 
 [expect.tracks."0b44c47b-8045-4f3a-bfd0-ebbbd47bae6a"]
-fields = { disc = 1, track = 1, track_title = "Overdose", work_id = "ebbc0f56-437b-490f-9f9d-534bddb94a85" }
+ids = { work_id = "ebbc0f56-437b-490f-9f9d-534bddb94a85" }
+fields = { disc = 1, track = 1, track_title = "Overdose" }

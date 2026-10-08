@@ -20,4 +20,5 @@ fields = { release_title = "CapSule", release_date = "2022-04-04" }
 fields = { artist_name = "Mori Calliope", sort_name = "Mori, Calliope" }
 
 [expect.tracks."710d0fe4-14cc-4b32-9657-0dc15677c4a7"]
-fields = { disc = 1, track = 1, track_title = "CapSule", work_id = "4b8dac46-eabd-468c-9c82-393d23ee3b21" }
+ids = { work_id = "4b8dac46-eabd-468c-9c82-393d23ee3b21" }
+fields = { disc = 1, track = 1, track_title = "CapSule" }

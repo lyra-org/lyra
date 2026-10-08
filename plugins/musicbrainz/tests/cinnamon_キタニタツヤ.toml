@@ -25,4 +25,5 @@ fields = { release_title = "Cinnamon", release_date = "2021-01-27" }
 fields = { artist_name = "キタニタツヤ", sort_name = "Kitani, Tatsuya" }
 
 [expect.tracks."acb51239-38f8-4eb6-b778-7d8ca3d9d2b8"]
-fields = { disc = 1, track = 1, track_title = "Cinnamon", work_id = "a56db8f7-6c1f-4742-9869-b5c7675bdd48" }
+ids = { work_id = "a56db8f7-6c1f-4742-9869-b5c7675bdd48" }
+fields = { disc = 1, track = 1, track_title = "Cinnamon" }
