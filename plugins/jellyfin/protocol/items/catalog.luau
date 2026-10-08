@@ -1025,9 +1025,6 @@ function helpers.people_from_credits(credits: { CreditedArtistProjectionInfo }?)
 		end
 
 		local credit = credited_artist.credit
-		if credit.type == CreditType.Artist then
-			continue
-		end
 		local person_type = helpers.person_type_for_credit(credit.type, credited_artist.source)
 		local role = requests.trim(credit.detail)
 		local key = `{artist_id}\t{person_type}\t{role or ""}`
@@ -1780,10 +1777,6 @@ end
 
 function helpers.append_person_stubs(stubs: { ItemInfo }, artist_items: { ArtistLike }): ()
 	for _, artist: ArtistLike in artist_items do
-		if artist.artist_type ~= "person" then
-			continue
-		end
-
 		local stub = helpers.to_person_stub(artist)
 		if stub then
 			table.insert(stubs, stub)

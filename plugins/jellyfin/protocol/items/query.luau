@@ -19,6 +19,7 @@ local options_module = require("./options")
 type ItemsQueryOptions = options_module.ItemsQueryOptions
 type ArtistQuery = artists.ArtistQuery
 type CreditRole = tracks.CreditRole
+type CreditType = artists.CreditType
 type GenreQuery = genres.GenreQuery
 type ReleaseQuery = releases.ReleaseQuery
 type TrackQuery = tracks.TrackQuery
@@ -513,15 +514,70 @@ function module.artists(options: ItemsQueryOptions, scope: Scope, role: CreditRo
 	return query
 end
 
--- People are person artists with a credit other than "artist", such as composer or performer.
--- `appears_in` is `AppearsInItemId`: people credited on a release or track, or voicing an artist.
+-- The credit types behind each person type, the reverse of `catalog.person_type_for_credit`.
+local CREDIT_TYPES_BY_PERSON_TYPE: { [string]: { CreditType } } = {
+	Artist = { artists.CreditType.Artist },
+	AlbumArtist = { artists.CreditType.Artist },
+	Actor = { artists.CreditType.Vocalist, artists.CreditType.Instrumentalist },
+	Composer = { artists.CreditType.Composer },
+	Lyricist = { artists.CreditType.Lyricist },
+	Arranger = { artists.CreditType.Arranger },
+	Writer = { artists.CreditType.Writer },
+	Producer = { artists.CreditType.Producer },
+	Conductor = { artists.CreditType.Conductor },
+	Engineer = { artists.CreditType.Engineer },
+	Mixer = { artists.CreditType.Mixer },
+	Remixer = { artists.CreditType.Remixer },
+}
+
+local ANY_CREDIT_TYPES: { CreditType } = {}
+for _, credit_types in CREDIT_TYPES_BY_PERSON_TYPE do
+	for _, credit_type in credit_types do
+		if not table.find(ANY_CREDIT_TYPES, credit_type) then
+			table.insert(ANY_CREDIT_TYPES, credit_type)
+		end
+	end
+end
+
+local function credit_types_for(person_types: { string }): { CreditType }
+	local credit_types: { CreditType } = {}
+	for _, person_type in person_types do
+		for _, credit_type in CREDIT_TYPES_BY_PERSON_TYPE[person_type] or {} do
+			if not table.find(credit_types, credit_type) then
+				table.insert(credit_types, credit_type)
+			end
+		end
+	end
+	return credit_types
+end
+
+-- People are artists holding a credit of the requested person types, any credit by default.
+-- Artist credits count as both Artist and AlbumArtist, except that AlbumArtist alone asks for
+-- release credits. `appears_in` is `AppearsInItemId`: people credited on a release or track, or
+-- voicing an artist.
 function module.people(options: ItemsQueryOptions, scope: Scope, appears_in: Scope?): ArtistQuery?
 	local query = module.artists(options, scope, nil)
 	if not query then
 		return nil
 	end
-	query.artist_type = artists.ArtistType.Person
-	query.exclude_credit_types = { artists.CreditType.Artist }
+	query.credit_types = ANY_CREDIT_TYPES
+	if #options.person_types > 0 then
+		local credit_types = credit_types_for(options.person_types)
+		if #credit_types == 0 then
+			return nil
+		end
+		query.credit_types = credit_types
+		if
+			table.find(options.person_types, "AlbumArtist")
+			and not table.find(options.person_types, "Artist")
+			and #credit_types == 1
+		then
+			query.credit_role = "release"
+		end
+	end
+	if #options.exclude_person_types > 0 then
+		query.exclude_credit_types = credit_types_for(options.exclude_person_types)
+	end
 
 	if appears_in == nil then
 		return query
@@ -544,6 +600,7 @@ function module.people(options: ItemsQueryOptions, scope: Scope, appears_in: Sco
 		end
 		query.ids = intersect(query.ids, voices)
 		-- A voice actor needn't have a credit of their own.
+		query.credit_types = nil
 		query.exclude_credit_types = nil
 	else
 		return nil

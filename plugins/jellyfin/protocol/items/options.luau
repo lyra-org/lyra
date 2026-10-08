@@ -49,6 +49,8 @@ export type ItemsQueryOptions = {
 	-- `MinCommunityRating` or `MinCriticRating`; music has no ratings, so nothing matches.
 	requires_rating: boolean,
 	appears_in_item_id: string?,
+	person_types: { string },
+	exclude_person_types: { string },
 	parent_id: string?,
 	start_index: number,
 	limit: number?,
@@ -229,6 +231,8 @@ function module.parse(query: ApiQueryParams?): ItemsQueryOptions
 		requires_rating = requests.query_lookup(query, { "MinCommunityRating" }) ~= nil
 			or requests.query_lookup(query, { "MinCriticRating" }) ~= nil,
 		appears_in_item_id = requests.parse_query_string(query, { "AppearsInItemId" }, nil),
+		person_types = parse_csv(query, { "PersonTypes" }),
+		exclude_person_types = parse_csv(query, { "ExcludePersonTypes" }),
 		parent_id = requests.parse_query_string(query, { "ParentId" }, nil),
 		start_index = requests.parse_query_int(query, { "StartIndex" }, 0, 0, nil) or 0,
 		limit = requests.parse_query_int(query, { "Limit" }, nil, 0, nil),
