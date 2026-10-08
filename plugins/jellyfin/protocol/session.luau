@@ -840,8 +840,6 @@ local CAPABILITY_STRING_FIELDS = { "AppStoreUrl", "IconUrl" }
 local CAPABILITY_BOOL_FIELDS = {
 	"SupportsMediaControl",
 	"SupportsPersistentIdentifier",
-	"SupportsSync",
-	"SupportsContentUploading",
 }
 local CAPABILITY_STRING_ARRAY_FIELDS = { "PlayableMediaTypes", "SupportedCommands" }
 
@@ -904,7 +902,7 @@ function module.parse_client_capabilities_query(query: ApiQueryParams?): JsonObj
 	if media_types then
 		result.PlayableMediaTypes = media_types
 	end
-	for _, key in { "SupportsMediaControl", "SupportsPersistentIdentifier", "SupportsSync" } do
+	for _, key in CAPABILITY_BOOL_FIELDS do
 		local raw = requests.parse_query_string(query, { key }, nil)
 		local parsed = parse_bool_string(raw)
 		if parsed ~= nil then
