@@ -468,11 +468,7 @@ pub(crate) fn reconcile_artists(
         );
         target_ids.insert(input.artist_id);
     }
-    if super::metadata::manual_overrides::owns_field(
-        db,
-        owner_id,
-        super::metadata::manual_overrides::ManualMetadataField::Credits,
-    )? {
+    if super::metadata::manual_overrides::owns_field(db, owner_id, super::MetadataField::Credits)? {
         return Ok(());
     }
     let existing = links_for_owner(db, owner_id)?;
@@ -509,7 +505,7 @@ pub(crate) fn reconcile_artists(
             || super::metadata::manual_overrides::owns_field(
                 db,
                 artist_id,
-                super::metadata::manual_overrides::ManualMetadataField::ArtistName,
+                super::MetadataField::ArtistName,
             )?
             || !super::external_ids::get_for_entity_inside_tx(db, artist_id)?
                 .iter()
@@ -773,14 +769,14 @@ mod reconciliation_tests {
             destination(&mut db, "A", " & ")?,
             destination(&mut db, "B", "")?,
         ];
-        use db::metadata::manual_overrides::{
-            self,
-            ManualMetadataField,
+        use db::{
+            MetadataField,
+            metadata::manual_overrides,
         };
         manual_overrides::upsert(
             &mut db,
             owner,
-            &[(ManualMetadataField::Credits, serde_json::json!(true))].into(),
+            &[(MetadataField::Credits, serde_json::json!(true))].into(),
         )?;
         let before = links(&db, owner)?;
         db.transaction_mut(|tx| reconcile_artists(tx, owner, "test", &desired))?;
@@ -790,7 +786,7 @@ mod reconciliation_tests {
             &mut db,
             combined,
             &[(
-                ManualMetadataField::ArtistName,
+                MetadataField::ArtistName,
                 serde_json::json!("Collaboration Band"),
             )]
             .into(),

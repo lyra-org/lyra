@@ -294,6 +294,7 @@ pub(crate) use libraries::Library;
 pub(crate) use listens::Listen;
 pub(crate) use lyrics::Lyrics;
 pub(crate) use metadata::custom_fields::ProviderCustomFields;
+pub(crate) use metadata::fields::MetadataField;
 pub(crate) use metadata::layers::MetadataLayer;
 pub(crate) use playback_sessions::{
     EvictedPlayback,

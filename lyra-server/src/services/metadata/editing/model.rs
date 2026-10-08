@@ -11,63 +11,11 @@ use serde::{
 };
 use serde_json::Value;
 
-use crate::db;
-
-#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum MetadataEntityType {
-    Release,
-    Track,
-    Artist,
-}
-
-#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum MetadataField {
-    Title,
-    SortTitle,
-    ReleaseType,
-    ReleaseDate,
-    Genres,
-    Labels,
-    Credits,
-    Year,
-    Disc,
-    DiscTotal,
-    Track,
-    TrackTotal,
-    Name,
-    SortName,
-    ArtistType,
-    Description,
-    Relations,
-}
-
-impl MetadataField {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Title => "title",
-            Self::SortTitle => "sort_title",
-            Self::ReleaseType => "release_type",
-            Self::ReleaseDate => "release_date",
-            Self::Genres => "genres",
-            Self::Labels => "labels",
-            Self::Credits => "credits",
-            Self::Year => "year",
-            Self::Disc => "disc",
-            Self::DiscTotal => "disc_total",
-            Self::Track => "track",
-            Self::TrackTotal => "track_total",
-            Self::Name => "name",
-            Self::SortName => "sort_name",
-            Self::ArtistType => "artist_type",
-            Self::Description => "description",
-            Self::Relations => "relations",
-        }
-    }
-}
+use crate::db::{
+    self,
+    MetadataField,
+    entities::MetadataEntityType,
+};
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

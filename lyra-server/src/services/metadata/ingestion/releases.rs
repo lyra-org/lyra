@@ -31,11 +31,11 @@ use crate::db::{
     ArtistRelationType,
     ArtistType,
     DbAccess,
+    MetadataField,
     Release,
     Track,
     graph::ensure_owned_edge,
     indexes::ensure_index,
-    metadata::manual_overrides::ManualMetadataField,
 };
 
 pub(crate) struct TrackIngest {
@@ -134,7 +134,7 @@ fn manual_relations_owned(
         return Ok(*owned);
     }
     let owned =
-        db::metadata::manual_overrides::owns_field(db, artist_id, ManualMetadataField::Relations)?;
+        db::metadata::manual_overrides::owns_field(db, artist_id, MetadataField::Relations)?;
     owned_by_artist.insert(artist_id, owned);
     Ok(owned)
 }
@@ -325,23 +325,20 @@ fn persist_release_inner(
     ensure_owned_edge(db, library_db_id, release_db_id)?;
 
     let mut release_layer = LocalLayer::default();
+    release_layer.supply(MetadataField::ReleaseTitle, Some(release_title.to_string()))?;
+    release_layer.supply(MetadataField::ReleaseDate, release_date)?;
     release_layer.supply(
-        ManualMetadataField::ReleaseTitle,
-        Some(release_title.to_string()),
-    );
-    release_layer.supply(ManualMetadataField::ReleaseDate, release_date);
-    release_layer.supply(
-        ManualMetadataField::Genres,
+        MetadataField::Genres,
         release_tracks[0]
             .meta
             .genres
             .clone()
             .filter(|genres| !genres.is_empty()),
-    );
+    )?;
     release_layer.supply(
-        ManualMetadataField::Labels,
+        MetadataField::Labels,
         scanned_release_labels(&release_tracks),
-    );
+    )?;
     release_layer.save(db, release_db_id)?;
 
     // Derive release artists: explicit tag > majority track artists > empty (compilation)
@@ -358,8 +355,7 @@ fn persist_release_inner(
     } else {
         resolve_artist_ids(db, &release_artists, &mut artist_cache)?
     };
-    if !db::metadata::manual_overrides::owns_field(db, release_db_id, ManualMetadataField::Credits)?
-    {
+    if !db::metadata::manual_overrides::owns_field(db, release_db_id, MetadataField::Credits)? {
         db::credits::replace_primary_for_owner(db, release_db_id, &release_artist_ids)?;
     }
 
@@ -498,12 +494,12 @@ fn persist_release_inner(
         };
 
         let mut track_layer = LocalLayer::default();
-        track_layer.supply(ManualMetadataField::TrackTitle, title);
-        track_layer.supply(ManualMetadataField::Year, year);
-        track_layer.supply(ManualMetadataField::Disc, disc);
-        track_layer.supply(ManualMetadataField::DiscTotal, effective_disc_total);
-        track_layer.supply(ManualMetadataField::Track, track_number);
-        track_layer.supply(ManualMetadataField::TrackTotal, track_total);
+        track_layer.supply(MetadataField::TrackTitle, title)?;
+        track_layer.supply(MetadataField::Year, year)?;
+        track_layer.supply(MetadataField::Disc, disc)?;
+        track_layer.supply(MetadataField::DiscTotal, effective_disc_total)?;
+        track_layer.supply(MetadataField::Track, track_number)?;
+        track_layer.supply(MetadataField::TrackTotal, track_total)?;
         track_layer.save(db, track_db_id)?;
 
         let source_kind = source_kind.unwrap_or_else(|| "embedded_tags".to_string());
@@ -575,11 +571,7 @@ fn persist_release_inner(
         } else {
             resolve_artist_ids(db, &track_artist_names, &mut artist_cache)?
         };
-        if !db::metadata::manual_overrides::owns_field(
-            db,
-            track_db_id,
-            ManualMetadataField::Credits,
-        )? {
+        if !db::metadata::manual_overrides::owns_field(db, track_db_id, MetadataField::Credits)? {
             db::credits::replace_primary_for_owner(db, track_db_id, &track_artist_ids)?;
         }
         sync_scanned_artist_relations(
@@ -602,13 +594,13 @@ fn persist_release_inner(
 
     for (scan_name, artist_db_id) in artist_cache {
         let mut artist_layer = LocalLayer::default();
-        artist_layer.supply(ManualMetadataField::ArtistName, Some(scan_name));
+        artist_layer.supply(MetadataField::ArtistName, Some(scan_name))?;
         artist_layer.supply(
-            ManualMetadataField::ArtistType,
+            MetadataField::ArtistType,
             scanned_artist_types
                 .get(&artist_db_id)
                 .map(ArtistType::to_string),
-        );
+        )?;
         artist_layer.save(db, artist_db_id)?;
     }
 

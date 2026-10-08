@@ -57,6 +57,16 @@ fn metadata_type_aliases() -> Vec<TypeAliasDescriptor> {
             "JsonValue",
             ty("(boolean | number | string | { JsonValue } | { [string]: JsonValue })?"),
         ),
+        alias(
+            "MetadataLayerField",
+            LuauType::union(
+                server_db::MetadataField::ALL
+                    .into_iter()
+                    .filter(|field| field.is_layered())
+                    .map(|field| LuauType::string_literal(field.as_str()))
+                    .collect(),
+            ),
+        ),
         alias("ProviderExternalIdMap", map(string(), string())),
         alias(
             "ExternalIdsByProvider",
@@ -633,7 +643,10 @@ fn layer_class() -> ClassDescriptor {
     class.methods.extend([
         method(
             "set_field",
-            vec![param("name", string()), param("value", ty("JsonValue"))],
+            vec![
+                param("name", ty("MetadataLayerField")),
+                param("value", ty("JsonValue")),
+            ],
             vec![],
         ),
         method(

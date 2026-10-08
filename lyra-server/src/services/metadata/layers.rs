@@ -21,9 +21,13 @@ use agdb::{
 use crate::db::{
     self,
     IdSource,
+    MetadataField,
     MetadataLayer,
     ProviderCustomFields,
-    metadata::manual_overrides::ManualMetadataField,
+    metadata::layers::{
+        LayerFields,
+        normalize_value,
+    },
 };
 use crate::services::EntityType;
 
@@ -33,18 +37,20 @@ pub(crate) const LOCAL_SOURCE_ID: &str = "local";
 /// File-derived metadata; omitted fields express no opinion, while null clears.
 #[derive(Default)]
 pub(crate) struct LocalLayer {
-    fields: serde_json::Map<String, serde_json::Value>,
+    fields: LayerFields,
 }
 
 impl LocalLayer {
     pub(crate) fn supply<T: Into<serde_json::Value>>(
         &mut self,
-        field: ManualMetadataField,
+        field: MetadataField,
         value: Option<T>,
-    ) {
+    ) -> anyhow::Result<()> {
         if let Some(value) = value {
-            self.fields.insert(field.as_str().to_string(), value.into());
+            self.fields
+                .insert(field, normalize_value(field, value.into())?);
         }
+        Ok(())
     }
 
     pub(crate) fn save(
@@ -52,26 +58,31 @@ impl LocalLayer {
         db: &mut DbAnyTransactionMut<'_>,
         node_id: DbId,
     ) -> anyhow::Result<()> {
-        let layer = MetadataLayer {
-            db_id: None,
-            source_id: LOCAL_SOURCE_ID.to_string(),
-            fields: serde_json::to_string(&self.fields)?,
-            updated_at: now_secs(),
-        };
+        let layer = MetadataLayer::new(LOCAL_SOURCE_ID, &self.fields, now_secs())?;
         db::metadata::layers::upsert_inside_tx(db, node_id, &layer)?;
         super::merging::apply_merged_metadata_to_entity_inside_tx(db, node_id)
     }
 }
 
-pub(crate) fn ensure_entity_exists(db: &DbAny, node_id: DbId) -> anyhow::Result<()> {
-    let exists = db::releases::get_by_id(db, node_id)?.is_some()
-        || db::tracks::get_by_id(db, node_id)?.is_some()
-        || db::artists::get_by_id(db, node_id)?.is_some();
-    if exists {
-        return Ok(());
-    }
-
-    anyhow::bail!("Entity not found: {}", node_id.0);
+/// Validates provider-supplied fields for the entity they describe.
+fn validated_fields(
+    db: &DbAny,
+    node_id: DbId,
+    fields: &LayerFields,
+) -> anyhow::Result<LayerFields> {
+    let entity_type = db::entities::metadata_entity_type(db, node_id)?
+        .ok_or_else(|| anyhow::anyhow!("Entity not found: {}", node_id.0))?;
+    fields
+        .iter()
+        .map(|(&field, value)| {
+            anyhow::ensure!(
+                entity_type.supports(field),
+                "a {} has no '{field}' field",
+                entity_type.as_str()
+            );
+            Ok((field, normalize_value(field, value.clone())?))
+        })
+        .collect()
 }
 
 fn now_secs() -> u64 {
@@ -81,50 +92,25 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-fn layer_artist_type(
-    fields: &HashMap<String, serde_json::Value>,
-    node_id: DbId,
-    provider_id: &str,
-) -> Option<db::ArtistType> {
-    let value = fields.get("artist_type")?;
-    let Some(raw) = value.as_str() else {
-        tracing::warn!(
-            node_id = node_id.0,
-            provider_id,
-            "ignoring non-string artist_type in provider metadata layer"
-        );
-        return None;
-    };
-
-    match db::ArtistType::from_db_str(raw) {
-        Ok(artist_type) => Some(artist_type),
-        Err(err) => {
-            tracing::warn!(
-                node_id = node_id.0,
-                provider_id,
-                artist_type = raw,
-                error = %err,
-                "ignoring unrecognized artist_type in provider metadata layer"
-            );
-            None
-        }
-    }
-}
-
 fn artist_type_conflicts_with_layer(
     artist: Option<&db::Artist>,
-    fields: &HashMap<String, serde_json::Value>,
+    fields: &LayerFields,
     node_id: DbId,
     provider_id: &str,
-) -> bool {
+) -> anyhow::Result<bool> {
     let Some(existing_type) = artist.and_then(|artist| artist.artist_type) else {
-        return false;
+        return Ok(false);
     };
-    let Some(incoming_type) = layer_artist_type(fields, node_id, provider_id) else {
-        return false;
+    let Some(incoming) = fields
+        .get(&MetadataField::ArtistType)
+        .filter(|value| !value.is_null())
+    else {
+        return Ok(false);
     };
+    let incoming_type: db::ArtistType =
+        db::metadata::layers::decode(MetadataField::ArtistType, incoming)?;
     if existing_type == incoming_type {
-        return false;
+        return Ok(false);
     }
 
     tracing::warn!(
@@ -134,7 +120,7 @@ fn artist_type_conflicts_with_layer(
         incoming_artist_type = %incoming_type,
         "skipping provider artist identity update with conflicting artist_type"
     );
-    true
+    Ok(true)
 }
 
 fn save_provider_custom_fields(
@@ -179,35 +165,27 @@ pub(crate) fn save_provider_layer(
     db: &mut DbAny,
     node_id: DbId,
     provider_id: &str,
-    fields: &HashMap<String, serde_json::Value>,
+    fields: &LayerFields,
     external_ids: &HashMap<String, String>,
     custom_fields: &HashMap<u64, HashMap<String, serde_json::Value>>,
     remove_custom_field_versions: &HashSet<u64>,
 ) -> anyhow::Result<()> {
-    ensure_entity_exists(db, node_id)?;
-
+    let fields = validated_fields(db, node_id, fields)?;
     let artist = db::artists::get_by_id(db, node_id)?;
     let artist_type_conflict =
-        artist_type_conflicts_with_layer(artist.as_ref(), fields, node_id, provider_id);
+        artist_type_conflicts_with_layer(artist.as_ref(), &fields, node_id, provider_id)?;
 
     // Save layers while locked; only application is suppressed.
     if !artist_type_conflict && !fields.is_empty() {
-        let fields_json = serde_json::to_string(fields)?;
+        let layer = MetadataLayer::new(provider_id, &fields, now_secs())?;
         let existing_layer = db::metadata::layers::get_for_entity(db, node_id)?
             .into_iter()
-            .find(|layer| layer.source_id == provider_id);
+            .find(|existing| existing.source_id == provider_id);
         let layer_changed = existing_layer
             .as_ref()
-            .is_none_or(|existing| existing.fields != fields_json);
+            .is_none_or(|existing| existing.fields != layer.fields);
 
         if layer_changed {
-            let layer = MetadataLayer {
-                db_id: None,
-                source_id: provider_id.to_string(),
-                fields: fields_json,
-                updated_at: now_secs(),
-            };
-
             db::metadata::layers::upsert(db, node_id, &layer)?;
             super::merging::apply_merged_metadata_to_entity(db, node_id)?;
         }
@@ -313,7 +291,7 @@ pub(crate) fn mark_unmatched(
         db,
         node_id,
         provider_id,
-        &HashMap::new(),
+        &LayerFields::new(),
         &external_ids,
         &HashMap::new(),
         &HashSet::new(),
@@ -378,15 +356,15 @@ mod tests {
             },
         )?;
         let mut local = LocalLayer::default();
-        local.supply(ManualMetadataField::ReleaseTitle, Some("Local Title"));
+        local.supply(MetadataField::ReleaseTitle, Some("Local Title"))?;
         db.transaction_mut(|t| local.save(t, release_id))?;
         save_provider_layer(
             &mut db,
             release_id,
             "provider",
-            &HashMap::from([
-                ("release_title".to_string(), json!("Wrong Title")),
-                ("release_date".to_string(), json!("1999")),
+            &LayerFields::from([
+                (MetadataField::ReleaseTitle, json!("Wrong Title")),
+                (MetadataField::ReleaseDate, json!("1999")),
             ]),
             &HashMap::new(),
             &HashMap::from([(1, HashMap::from([("barcode".to_string(), json!("123"))]))]),
@@ -423,7 +401,7 @@ mod tests {
             &mut db,
             matched,
             "musicbrainz",
-            &HashMap::from([("artist_name".to_string(), json!("Matched"))]),
+            &LayerFields::from([(MetadataField::ArtistName, json!("Matched"))]),
             &HashMap::from([("artist_id".to_string(), "artist-1".to_string())]),
             &HashMap::new(),
             &HashSet::new(),
@@ -463,7 +441,7 @@ mod tests {
             &mut db,
             release_id,
             "musicbrainz",
-            &HashMap::new(),
+            &LayerFields::new(),
             &HashMap::from([("release_id".to_string(), "release-1".to_string())]),
             &HashMap::new(),
             &HashSet::new(),

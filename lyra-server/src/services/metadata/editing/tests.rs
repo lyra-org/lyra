@@ -4,6 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 use std::collections::{
+    BTreeMap,
     HashMap,
     HashSet,
 };
@@ -22,7 +23,6 @@ use super::{
         FieldState,
         MetadataChangeRequest,
         MetadataEditOperation,
-        MetadataField,
         MetadataFieldDiff,
         MetadataValueSource,
     },
@@ -31,8 +31,8 @@ use super::{
 use crate::{
     db::{
         self,
+        MetadataField,
         Permission,
-        metadata::manual_overrides::ManualMetadataField,
         test_db::{
             connect_artist,
             insert_artist,
@@ -89,9 +89,9 @@ fn preview_edit(
 
 #[test]
 fn requests_deny_unknown_fields() {
-    let change = json!({"field": "title", "operation": "set", "value": "Title"});
+    let change = json!({"field": "track_title", "operation": "set", "value": "Title"});
     let field_state = json!({"value": "Title", "source": "manual"});
-    let diff = json!({"field": "title", "before": field_state, "after": field_state});
+    let diff = json!({"field": "track_title", "before": field_state, "after": field_state});
     assert!(serde_json::from_value::<MetadataPreviewRequest>(json!({"changes": [change]})).is_ok());
     assert!(
         serde_json::from_value::<MetadataApplyRequest>(json!({
@@ -134,13 +134,13 @@ fn preview_is_read_only_and_apply_persists_normalized_edit() -> anyhow::Result<(
         &db,
         &principal,
         track_id,
-        vec![set(MetadataField::Title, json!("  New title  "))],
+        vec![set(MetadataField::TrackTitle, json!("  New title  "))],
     )?;
     assert_eq!(edit.expected[0].after.value, json!("New title"));
     let preview_json = serde_json::to_value(&edit.expected)?;
     let entry = &preview_json.as_array().expect("diff array")[0];
     assert_eq!(entry.as_object().expect("diff entry").len(), 3);
-    assert_eq!(entry["field"], json!("title"));
+    assert_eq!(entry["field"], json!("track_title"));
     assert_eq!(
         entry["before"],
         json!({"value": "Old title", "source": "resolved"})
@@ -161,12 +161,15 @@ fn preview_is_read_only_and_apply_persists_normalized_edit() -> anyhow::Result<(
     assert!(result_json.get("entity_id").is_some());
     assert!(result_json.get("entity").is_none());
     assert!(result_json.get("diff").is_none());
-    assert_eq!(result.fields["title"].value, json!("New title"));
-    assert_eq!(result.fields["title"].source, MetadataValueSource::Manual);
+    assert_eq!(result.fields["track_title"].value, json!("New title"));
+    assert_eq!(
+        result.fields["track_title"].source,
+        MetadataValueSource::Manual
+    );
     assert_eq!(
         db::metadata::manual_overrides::get(&db, track_id)?
             .expect("manual override exists")
-            .parsed_fields()?[&ManualMetadataField::TrackTitle],
+            .parsed_fields()?[&MetadataField::TrackTitle],
         json!("New title")
     );
     Ok(())
@@ -181,7 +184,7 @@ fn apply_rejects_a_field_changed_after_preview() -> anyhow::Result<()> {
         &db,
         &principal,
         track_id,
-        vec![set(MetadataField::Title, json!("Second"))],
+        vec![set(MetadataField::TrackTitle, json!("Second"))],
     )?;
 
     let mut concurrent = db::tracks::get_by_id(&db, track_id)?.expect("track exists");
@@ -194,7 +197,7 @@ fn apply_rejects_a_field_changed_after_preview() -> anyhow::Result<()> {
         panic!("expected a metadata conflict");
     };
     assert_eq!(current.len(), 1);
-    assert_eq!(current[0].field, MetadataField::Title);
+    assert_eq!(current[0].field, MetadataField::TrackTitle);
     assert_eq!(current[0].before.value, json!("Concurrent"));
     assert_eq!(current[0].after.value, json!("Second"));
     assert!(db::metadata::manual_overrides::get(&db, track_id)?.is_none());
@@ -207,7 +210,7 @@ fn apply_conflicts_with_an_empty_diff_when_the_edit_was_already_applied() -> any
     let other_user = principal("user-2");
     let principal = principal("user-1");
     let track_id = insert_track(&mut db, "First")?;
-    let changes = vec![set(MetadataField::Title, json!("Second"))];
+    let changes = vec![set(MetadataField::TrackTitle, json!("Second"))];
     let edit = preview_edit(&db, &principal, track_id, changes.clone())?;
     let other = preview_edit(&db, &other_user, track_id, changes)?;
     apply(&mut db, &other_user, track_id, &other)?;
@@ -226,7 +229,7 @@ fn apply_requires_expected_to_cover_only_requested_changes() -> anyhow::Result<(
     let mut db = new_test_db()?;
     let principal = principal("user-1");
     let track_id = insert_track(&mut db, "First")?;
-    let changes = vec![set(MetadataField::Title, json!("Second"))];
+    let changes = vec![set(MetadataField::TrackTitle, json!("Second"))];
     let diff = preview(
         &db,
         &principal,
@@ -289,7 +292,7 @@ fn apply_accepts_the_preview_diff_as_expected() -> anyhow::Result<()> {
     let principal = principal("user-1");
     let track_id = insert_track(&mut db, "First")?;
     let changes = vec![
-        set(MetadataField::Title, json!("Second")),
+        set(MetadataField::TrackTitle, json!("Second")),
         set(MetadataField::Year, json!(2001)),
     ];
     let diff = preview(
@@ -308,7 +311,7 @@ fn apply_accepts_the_preview_diff_as_expected() -> anyhow::Result<()> {
         track_id,
         &MetadataApplyRequest { changes, expected },
     )?;
-    assert_eq!(result.fields["title"].value, json!("Second"));
+    assert_eq!(result.fields["track_title"].value, json!("Second"));
     assert_eq!(result.fields["year"].value, json!(2001));
     assert_eq!(result.fields["year"].source, MetadataValueSource::Manual);
     Ok(())
@@ -403,7 +406,7 @@ fn set_accepts_null_and_empty_lists_only_for_clearable_fields() -> anyhow::Resul
         &db,
         &principal,
         release_id,
-        vec![set(MetadataField::Title, Value::Null)],
+        vec![set(MetadataField::ReleaseTitle, Value::Null)],
     )
     .expect_err("title cannot be cleared");
     let MetadataEditingError::BadRequest(message) = error else {
@@ -464,7 +467,7 @@ fn inherit_relinquishes_ownership_and_restores_resolved_value() -> anyhow::Resul
         &db,
         &principal,
         track_id,
-        vec![set(MetadataField::Title, json!("Manual"))],
+        vec![set(MetadataField::TrackTitle, json!("Manual"))],
     )?;
     apply(&mut db, &principal, track_id, &manual)?;
 
@@ -499,7 +502,7 @@ fn inherit_relinquishes_ownership_and_restores_resolved_value() -> anyhow::Resul
         &db,
         &principal,
         track_id,
-        vec![inherit(MetadataField::Title)],
+        vec![inherit(MetadataField::TrackTitle)],
     )?;
     assert_eq!(inherited.expected[0].after.value, json!("Resolved"));
     assert_eq!(
@@ -507,7 +510,7 @@ fn inherit_relinquishes_ownership_and_restores_resolved_value() -> anyhow::Resul
         MetadataValueSource::Resolved
     );
     let result = apply(&mut db, &principal, track_id, &inherited)?;
-    assert_eq!(result.fields["title"].value, json!("Resolved"));
+    assert_eq!(result.fields["track_title"].value, json!("Resolved"));
     assert!(
         result
             .fields
@@ -624,7 +627,7 @@ fn inherit_conflicts_when_provider_resolution_changes_after_preview() -> anyhow:
     assert!(db::metadata::manual_overrides::owns_field(
         &db,
         release_id,
-        ManualMetadataField::Genres,
+        MetadataField::Genres,
     )?);
     Ok(())
 }
@@ -905,7 +908,7 @@ fn inherit_labels_does_not_fall_back_by_name_for_an_external_identity() -> anyho
     assert!(db::metadata::manual_overrides::owns_field(
         &db,
         release_id,
-        ManualMetadataField::Labels,
+        MetadataField::Labels,
     )?);
     Ok(())
 }
@@ -925,8 +928,8 @@ fn unchanged_provider_refresh_rematerializes_a_manually_masked_label() -> anyhow
             enabled: true,
         },
     )?;
-    let fields = HashMap::from([(
-        "labels".to_string(),
+    let fields = BTreeMap::from([(
+        MetadataField::Labels,
         json!([{
             "name": "Provider Label",
             "catalog_number": "PROV-1",
@@ -1163,7 +1166,7 @@ fn inherited_label_disappearance_after_preview_is_rejected() -> anyhow::Result<(
     assert!(db::metadata::manual_overrides::owns_field(
         &db,
         release_id,
-        ManualMetadataField::Labels,
+        MetadataField::Labels,
     )?);
     Ok(())
 }
@@ -1216,7 +1219,7 @@ fn graph_edits_store_only_ownership_markers() -> anyhow::Result<()> {
     let fields = db::metadata::manual_overrides::get(&db, release_id)?
         .expect("manual override exists")
         .parsed_fields()?;
-    assert_eq!(fields[&ManualMetadataField::Credits], Value::Bool(true));
+    assert_eq!(fields[&MetadataField::Credits], Value::Bool(true));
     Ok(())
 }
 

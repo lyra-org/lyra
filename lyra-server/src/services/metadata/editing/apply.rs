@@ -14,22 +14,19 @@ use serde_json::Value;
 use crate::db::{
     self,
     DbAccess,
+    MetadataField,
+    entities::MetadataEntityType,
 };
 
 use super::{
     model::{
         MetadataCreditValue,
-        MetadataEntityType,
-        MetadataField,
         MetadataFieldDiff,
         MetadataLabelValue,
         MetadataRelationValue,
         MetadataValueSource,
     },
-    state::{
-        EntityState,
-        internal_field_name,
-    },
+    state::EntityState,
 };
 
 fn normalized<T: DeserializeOwned>(value: &Value) -> anyhow::Result<T> {
@@ -70,7 +67,7 @@ fn apply_release_fields(
     for entry in diff {
         let value = &entry.after.value;
         match entry.field {
-            MetadataField::Title => {
+            MetadataField::ReleaseTitle => {
                 release.release_title = normalized(value)?;
                 scalar_changed = true;
             }
@@ -131,7 +128,7 @@ fn apply_track_fields(
     for entry in diff {
         let value = &entry.after.value;
         match entry.field {
-            MetadataField::Title => track.track_title = normalized(value)?,
+            MetadataField::TrackTitle => track.track_title = normalized(value)?,
             MetadataField::SortTitle => {
                 if let Some(sort_title) = normalized(value)? {
                     track.set_sort_title(sort_title);
@@ -170,7 +167,7 @@ fn apply_artist_fields(
     for entry in diff {
         let value = &entry.after.value;
         match entry.field {
-            MetadataField::Name => artist.artist_name = normalized(value)?,
+            MetadataField::ArtistName => artist.artist_name = normalized(value)?,
             MetadataField::SortName => {
                 if let Some(sort_name) = normalized(value)? {
                     artist.set_sort_name(sort_name);
@@ -228,14 +225,12 @@ pub(super) fn apply_diff(
             .transpose()?
             .unwrap_or_default();
         for entry in diff {
-            let internal_name = internal_field_name(state.entity_type, entry.field)
-                .ok_or_else(|| anyhow::anyhow!("invalid manual metadata field"))?;
             if entry.after.source == MetadataValueSource::Resolved {
-                overrides.remove(&internal_name);
-            } else if internal_name.is_graph() {
-                overrides.insert(internal_name, Value::Bool(true));
+                overrides.remove(&entry.field);
+            } else if entry.field.is_graph() {
+                overrides.insert(entry.field, Value::Bool(true));
             } else {
-                overrides.insert(internal_name, entry.after.value.clone());
+                overrides.insert(entry.field, entry.after.value.clone());
             }
         }
         db::metadata::manual_overrides::replace(transaction, state.db_id, &overrides)?;

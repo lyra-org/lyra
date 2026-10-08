@@ -195,6 +195,7 @@ pub(crate) async fn refresh_entity_by_id(
 #[cfg(test)]
 mod tests {
     use std::collections::{
+        BTreeMap,
         HashMap,
         HashSet,
     };
@@ -227,8 +228,8 @@ mod tests {
                 &mut db,
                 track_db_id,
                 "test",
-                &HashMap::from([(
-                    "track_title".to_string(),
+                &BTreeMap::from([(
+                    db::MetadataField::TrackTitle,
                     serde_json::json!("Provider Title"),
                 )]),
                 &HashMap::new(),
@@ -282,7 +283,7 @@ mod tests {
                     &mut db,
                     track_db_id,
                     provider_id,
-                    &HashMap::from([("track_title".to_string(), serde_json::json!(title))]),
+                    &BTreeMap::from([(db::MetadataField::TrackTitle, serde_json::json!(title))]),
                     &HashMap::new(),
                     &HashMap::new(),
                     &HashSet::new(),

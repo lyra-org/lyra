@@ -4,6 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 pub(crate) mod custom_fields;
+pub(crate) mod fields;
 pub(crate) mod layers;
 pub(crate) mod manual_overrides;
 pub(crate) mod mapping_config;

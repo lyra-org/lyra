@@ -20,6 +20,11 @@ use serde_json::Value as JsonValue;
 
 use super::MetadataModuleStore;
 use super::parsing::parse_custom_field_version;
+use crate::plugins::db::{
+    LayerFields,
+    MetadataField,
+    normalize_value,
+};
 
 #[harmony_macros::userdata(name = "Layer", description = "Metadata layer builder.")]
 #[derive(Clone)]
@@ -32,7 +37,7 @@ pub(super) struct MetadataLayer {
 struct LayerBuilderState {
     node_id: DbId,
     provider_id: String,
-    fields: HashMap<String, JsonValue>,
+    fields: LayerFields,
     external_ids: HashMap<String, String>,
     custom_fields: HashMap<u64, HashMap<String, JsonValue>>,
     remove_custom_field_versions: HashSet<u64>,
@@ -61,22 +66,16 @@ impl MetadataLayer {
         name: String,
         value: luau::Value,
     ) -> luau::runtime::Result<()> {
-        if name.trim().is_empty() {
-            return Err(crate::plugins::runtime_error(
-                "metadata layer field key must not be empty",
-            ));
-        }
-        if name == "duration_ms" {
-            return Err(crate::plugins::runtime_error(
-                "duration_ms is read-only and cannot be set by plugins",
-            ));
-        }
-        let value = harmony_serde::luau_to_json(vm, &value, 0)?;
+        let field = MetadataField::from_name(&name).ok_or_else(|| {
+            crate::plugins::runtime_error(format!("unknown metadata layer field '{name}'"))
+        })?;
+        let value = normalize_value(field, harmony_serde::luau_to_json(vm, &value, 0)?)
+            .map_err(crate::plugins::runtime_error)?;
         self.state
             .lock()
             .expect("metadata layer mutex poisoned")
             .fields
-            .insert(name, value);
+            .insert(field, value);
         Ok(())
     }
 
@@ -175,7 +174,7 @@ impl MetadataLayer {
             state: Arc::new(Mutex::new(LayerBuilderState {
                 node_id,
                 provider_id,
-                fields: HashMap::new(),
+                fields: LayerFields::new(),
                 external_ids: HashMap::new(),
                 custom_fields: HashMap::new(),
                 remove_custom_field_versions: HashSet::new(),
