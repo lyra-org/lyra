@@ -58,6 +58,7 @@ admin = true
 [[artists]]
 key = "amy"
 name = "Amy"
+type = "person"      # optional artist type
 
 [[genres]]
 key = "rock"
@@ -78,7 +79,8 @@ disc = 1
 track = 1
 year = 2001
 added = 50
-artists = ["amy"]
+artists = ["amy"]    # artist credits, in order
+credits = [{ artist = "amy", type = "instrumentalist", detail = "piano" }]  # any credit type, after `artists`
 
 [[playlists]]
 key = "mix"

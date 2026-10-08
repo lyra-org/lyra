@@ -60,6 +60,8 @@ struct User {
 struct Artist {
     key: String,
     name: String,
+    #[serde(rename = "type")]
+    artist_type: Option<db::ArtistType>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -78,6 +80,8 @@ struct Release {
     #[serde(default)]
     artists: Vec<String>,
     #[serde(default)]
+    credits: Vec<Credit>,
+    #[serde(default)]
     genres: Vec<String>,
 }
 
@@ -93,6 +97,18 @@ struct Track {
     added: Option<u64>,
     #[serde(default)]
     artists: Vec<String>,
+    #[serde(default)]
+    credits: Vec<Credit>,
+}
+
+/// A credit of any type, listed after the owner's `artists`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Credit {
+    artist: String,
+    #[serde(rename = "type")]
+    credit_type: db::CreditType,
+    detail: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -198,6 +214,12 @@ impl Fixture {
         for artist in &self.artists {
             keys.claim(&artist.key)?;
             let artist_db_id = fixtures::insert_artist(db, &artist.name)?;
+            if let Some(artist_type) = artist.artist_type {
+                let mut stored =
+                    db::artists::get_by_id(db, artist_db_id)?.context("artist exists")?;
+                stored.set_artist_type(artist_type);
+                db::artists::update(db, &stored)?;
+            }
             keys.entities.insert(
                 artist.key.clone(),
                 (artist_db_id, db::favorites::FavoriteKind::Artist),
@@ -213,7 +235,7 @@ impl Fixture {
                 stored.ctime = release.added;
                 db.transaction_mut(|t| db::releases::update_in_transaction(t, &stored))?;
             }
-            credit(db, &keys, release_db_id, &release.artists)?;
+            credit(db, &keys, release_db_id, &release.artists, &release.credits)?;
             let genre_names = release
                 .genres
                 .iter()
@@ -246,7 +268,7 @@ impl Fixture {
                 let (release_db_id, _) = keys.entity(release)?;
                 fixtures::connect(db, release_db_id, track_db_id)?;
             }
-            credit(db, &keys, track_db_id, &track.artists)?;
+            credit(db, &keys, track_db_id, &track.artists, &track.credits)?;
             keys.entities.insert(
                 track.key.clone(),
                 (track_db_id, db::favorites::FavoriteKind::Track),
@@ -306,17 +328,22 @@ impl Fixture {
     }
 }
 
-fn credit(db: &mut DbAny, keys: &Keys, owner: DbId, artists: &[String]) -> anyhow::Result<()> {
-    for (order, key) in artists.iter().enumerate() {
+fn credit(
+    db: &mut DbAny,
+    keys: &Keys,
+    owner: DbId,
+    artists: &[String],
+    credits: &[Credit],
+) -> anyhow::Result<()> {
+    let artist_credits = artists
+        .iter()
+        .map(|key| (key, db::CreditType::Artist, None));
+    let other_credits = credits
+        .iter()
+        .map(|credit| (&credit.artist, credit.credit_type, credit.detail.as_deref()));
+    for (order, (key, credit_type, detail)) in artist_credits.chain(other_credits).enumerate() {
         let (artist_db_id, _) = keys.entity(key)?;
-        fixtures::connect_credit(
-            db,
-            owner,
-            artist_db_id,
-            db::CreditType::Artist,
-            None,
-            order as u64,
-        )?;
+        fixtures::connect_credit(db, owner, artist_db_id, credit_type, detail, order as u64)?;
     }
     Ok(())
 }
