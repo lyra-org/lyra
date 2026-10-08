@@ -731,9 +731,27 @@ local function respond_with_primary_image(ctx: ApiContext?, cover_info: artwork.
 		or requested_max_width ~= nil
 		or requested_max_height ~= nil
 
+	-- Upstream's caching: a request naming the image `tag` gets an immutable response validated by
+	-- that tag, and `Cache-Control: no-cache` turns caching off.
+	local request_headers = if ctx and ctx.request then ctx.request.headers else nil
+	local tag = requests.parse_query_string(query, { "tag" }, nil)
 	local headers = {
-		["etag"] = cover_info.hash,
+		["vary"] = "Accept",
+		["content-disposition"] = "attachment",
 	}
+	if request_headers and requests.trim(request_headers["cache-control"]) == "no-cache" then
+		headers["cache-control"] = "no-cache, no-store, must-revalidate"
+		headers["pragma"] = "no-cache, no-store, must-revalidate"
+	elseif tag then
+		headers["cache-control"] = "public, max-age=31536000, immutable"
+		headers["etag"] = `"{tag}"`
+		local if_none_match = if request_headers then request_headers["if-none-match"] else nil
+		if if_none_match == `"{tag}"` or if_none_match == tag then
+			return api.response.empty(304, headers)
+		end
+	else
+		headers["cache-control"] = "public"
+	end
 
 	if not use_transforms then
 		headers["content-type"] = cover_info.mime_type
