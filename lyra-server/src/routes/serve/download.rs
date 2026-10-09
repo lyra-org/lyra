@@ -97,30 +97,30 @@ struct DownloadQuery {
     start_offset_ms: Option<u64>,
 }
 
-pub(crate) struct DownloadTrackRequest {
-    pub(crate) output: ServeTrackOptions,
-    pub(crate) media_token: Option<String>,
-}
-
 async fn get_download(
     Path(track_id): Path<String>,
     Query(query): Query<DownloadQuery>,
     headers: HeaderMap,
 ) -> Result<Response<Body>, AppError> {
+    let access = super::require_track_access(
+        &headers,
+        query.media_token.as_deref(),
+        MediaTokenPurpose::Download,
+        &track_id,
+    )
+    .await?;
     download_track_response(
         &headers,
         &track_id,
-        DownloadTrackRequest {
-            output: ServeTrackOptions {
-                format: query.format,
-                codec: query.codec,
-                bitrate_bps: query.bitrate_bps,
-                sample_rate_hz: query.sample_rate_hz,
-                channels: query.channels,
-                prefer_vbr: query.prefer_vbr,
-                start_offset_ms: query.start_offset_ms,
-            },
-            media_token: query.media_token,
+        &access,
+        ServeTrackOptions {
+            format: query.format,
+            codec: query.codec,
+            bitrate_bps: query.bitrate_bps,
+            sample_rate_hz: query.sample_rate_hz,
+            channels: query.channels,
+            prefer_vbr: query.prefer_vbr,
+            start_offset_ms: query.start_offset_ms,
         },
     )
     .await
@@ -129,31 +129,21 @@ async fn get_download(
 pub(crate) async fn download_track_response(
     headers: &HeaderMap,
     track_id: &str,
-    request: DownloadTrackRequest,
+    access: &super::TrackAccess,
+    options: ServeTrackOptions,
 ) -> Result<Response<Body>, AppError> {
-    let DownloadTrackRequest {
-        output:
-            ServeTrackOptions {
-                format,
-                codec,
-                bitrate_bps,
-                sample_rate_hz,
-                channels,
-                prefer_vbr,
-                start_offset_ms,
-            },
-        media_token,
-    } = request;
-    let access = super::require_track_access(
-        headers,
-        media_token.as_deref(),
-        MediaTokenPurpose::Download,
-        track_id,
-    )
-    .await?;
+    let ServeTrackOptions {
+        format,
+        codec,
+        bitrate_bps,
+        sample_rate_hz,
+        channels,
+        prefer_vbr,
+        start_offset_ms,
+    } = options;
     let validated = validate_request(format, codec)?;
     let source = apply_request_start_offset(
-        validate_and_get_track_source(track_id, &access).await?,
+        validate_and_get_track_source(track_id, access).await?,
         start_offset_ms,
     )?;
 

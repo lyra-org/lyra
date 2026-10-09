@@ -168,7 +168,6 @@ use crate::plugins::auth::{
     Principal as AuthPrincipal,
 };
 use crate::routes::{
-    DownloadTrackRequest,
     HlsPlaylistOptions,
     ServeTrackOptions,
     TrackAccess,

@@ -4,13 +4,10 @@
 // www.meshiplaw.com/lyra.
 
 use super::*;
-use crate::plugins::db::Permission;
 use crate::plugins::executor::ApiResponseKind;
 use crate::routes::AppError;
-use crate::services::auth::{
-    Principal,
-    require_permission,
-};
+use crate::services::auth::Principal;
+use crate::services::auth::media_tokens::MediaTokenPurpose;
 
 pub(super) fn header_pairs(headers: &HeaderMap) -> Vec<(String, String)> {
     headers
@@ -26,16 +23,14 @@ pub(super) fn header_pairs(headers: &HeaderMap) -> Vec<(String, String)> {
 async fn require_plugin_track_access(
     principal: Option<&Principal>,
     track_db_id: agdb::DbId,
-    permission: Option<Permission>,
+    purpose: MediaTokenPurpose,
 ) -> Result<(String, TrackAccess), AppError> {
     let Some(principal) = principal else {
         return Err(AppError::unauthorized("authentication required"));
     };
     let db = crate::STATE.db.read().await;
     principal.require(&*db)?;
-    if let Some(permission) = permission {
-        require_permission(principal, permission)?;
-    }
+    crate::routes::authorize_track_purpose(principal, purpose)?;
     let not_found = || AppError::not_found(format!("Track not found: {}", track_db_id.0));
     crate::services::auth::access::require_entity_accessible(
         &*db,
@@ -80,11 +75,16 @@ pub(super) async fn plugin_api_response_to_axum(
             let track_id = response
                 .track_id
                 .ok_or_else(|| anyhow::anyhow!("stream_track response requires track_id"))?;
-            let (track_id, access) =
-                match require_plugin_track_access(principal, agdb::DbId(track_id), None).await {
-                    Ok(resolved) => resolved,
-                    Err(error) => return Ok(error.into_response()),
-                };
+            let (track_id, access) = match require_plugin_track_access(
+                principal,
+                agdb::DbId(track_id),
+                MediaTokenPurpose::Stream,
+            )
+            .await
+            {
+                Ok(resolved) => resolved,
+                Err(error) => return Ok(error.into_response()),
+            };
             let options = parse_track_serve_options(response.options.as_ref())?;
             return Ok(
                 match stream_track_response(
@@ -112,10 +112,10 @@ pub(super) async fn plugin_api_response_to_axum(
             let track_id = response
                 .track_id
                 .ok_or_else(|| anyhow::anyhow!("download_track response requires track_id"))?;
-            let (track_id, _) = match require_plugin_track_access(
+            let (track_id, access) = match require_plugin_track_access(
                 principal,
                 agdb::DbId(track_id),
-                Some(Permission::Download),
+                MediaTokenPurpose::Download,
             )
             .await
             {
@@ -127,17 +127,15 @@ pub(super) async fn plugin_api_response_to_axum(
                 match download_track_response(
                     request_headers,
                     &track_id,
-                    DownloadTrackRequest {
-                        output: ServeTrackOptions {
-                            format: options.format,
-                            codec: join_preferred_codecs(options.preferred_codecs),
-                            bitrate_bps: options.bitrate_bps,
-                            sample_rate_hz: options.sample_rate_hz,
-                            channels: options.channels,
-                            prefer_vbr: options.prefer_vbr,
-                            start_offset_ms: options.start_offset_ms,
-                        },
-                        media_token: None,
+                    &access,
+                    ServeTrackOptions {
+                        format: options.format,
+                        codec: join_preferred_codecs(options.preferred_codecs),
+                        bitrate_bps: options.bitrate_bps,
+                        sample_rate_hz: options.sample_rate_hz,
+                        channels: options.channels,
+                        prefer_vbr: options.prefer_vbr,
+                        start_offset_ms: options.start_offset_ms,
                     },
                 )
                 .await
@@ -151,11 +149,16 @@ pub(super) async fn plugin_api_response_to_axum(
             let track_id = response
                 .track_id
                 .ok_or_else(|| anyhow::anyhow!("hls_playlist response requires track_id"))?;
-            let (track_id, access) =
-                match require_plugin_track_access(principal, agdb::DbId(track_id), None).await {
-                    Ok(resolved) => resolved,
-                    Err(error) => return Ok(error.into_response()),
-                };
+            let (track_id, access) = match require_plugin_track_access(
+                principal,
+                agdb::DbId(track_id),
+                MediaTokenPurpose::HlsPlaylist,
+            )
+            .await
+            {
+                Ok(resolved) => resolved,
+                Err(error) => return Ok(error.into_response()),
+            };
             let options = parse_hls_serve_options(response.options.as_ref())?;
             return Ok(
                 match serve_hls_playlist_for_track(
@@ -301,7 +304,10 @@ mod tests {
             self,
             Permission,
         },
-        services::auth::Principal,
+        services::auth::{
+            Principal,
+            media_tokens::MediaTokenPurpose,
+        },
         testing::{
             LibraryFixtureConfig,
             initialize_runtime,
@@ -312,9 +318,9 @@ mod tests {
     async fn status_of(
         principal: Option<&Principal>,
         track_db_id: agdb::DbId,
-        permission: Option<Permission>,
+        purpose: MediaTokenPurpose,
     ) -> Result<(), StatusCode> {
-        require_plugin_track_access(principal, track_db_id, permission)
+        require_plugin_track_access(principal, track_db_id, purpose)
             .await
             .map(|_| ())
             .map_err(|error| error.into_response().status())
@@ -367,34 +373,39 @@ mod tests {
         let accessible_libraries = HashSet::from([library_public_id.clone()]);
 
         assert_eq!(
-            status_of(None, track_db_id, None).await,
+            status_of(None, track_db_id, MediaTokenPurpose::Stream).await,
             Err(StatusCode::UNAUTHORIZED),
             "responses without a resolved principal must not serve tracks"
         );
 
         let no_library_access = principal(Vec::new(), HashSet::new());
         assert_eq!(
-            status_of(Some(&no_library_access), track_db_id, None).await,
+            status_of(
+                Some(&no_library_access),
+                track_db_id,
+                MediaTokenPurpose::Stream
+            )
+            .await,
             Err(StatusCode::NOT_FOUND),
             "tracks outside the caller's libraries must read as not found"
         );
 
         let with_access = principal(Vec::new(), accessible_libraries.clone());
         assert_eq!(
-            status_of(Some(&with_access), track_db_id, None).await,
+            status_of(Some(&with_access), track_db_id, MediaTokenPurpose::Stream).await,
             Ok(()),
             "library access must allow streaming"
         );
 
         assert_eq!(
-            status_of(Some(&with_access), track_db_id, Some(Permission::Download)).await,
+            status_of(Some(&with_access), track_db_id, MediaTokenPurpose::Download).await,
             Err(StatusCode::FORBIDDEN),
             "downloads require the download permission even with library access"
         );
 
         let downloader = principal(vec![Permission::Download], accessible_libraries.clone());
         assert_eq!(
-            status_of(Some(&downloader), track_db_id, Some(Permission::Download)).await,
+            status_of(Some(&downloader), track_db_id, MediaTokenPurpose::Download).await,
             Ok(()),
             "download permission plus library access must allow downloads"
         );

@@ -18,10 +18,7 @@ pub(crate) use decision::{
     validate_request,
 };
 pub use download::download_routes;
-pub(crate) use download::{
-    DownloadTrackRequest,
-    download_track_response,
-};
+pub(crate) use download::download_track_response;
 pub(crate) use hls::{
     HlsPlaylistOptions,
     resolve_hls_profile,
@@ -68,7 +65,7 @@ use crate::{
                 validate_media_token,
             },
             require_authenticated,
-            require_download,
+            require_permission,
         },
         playback_sources as playback_source_service,
     },
@@ -146,8 +143,17 @@ pub fn apply_request_start_offset(
     Ok(source)
 }
 
-pub(crate) async fn require_download_access(headers: &HeaderMap) -> Result<Principal, AppError> {
-    require_download(headers).await.map_err(Into::into)
+/// Checks that `principal` may be served a track for `purpose`.
+pub(crate) fn authorize_track_purpose(
+    principal: &Principal,
+    purpose: MediaTokenPurpose,
+) -> Result<(), AppError> {
+    match purpose {
+        MediaTokenPurpose::Stream | MediaTokenPurpose::HlsPlaylist => Ok(()),
+        MediaTokenPurpose::Download => {
+            require_permission(principal, db::Permission::Download).map_err(Into::into)
+        }
+    }
 }
 
 /// How a request reached a track. A principal's library access is checked under the guard that
@@ -181,12 +187,9 @@ async fn authorize_track_request(
     headers: &HeaderMap,
     purpose: MediaTokenPurpose,
 ) -> Result<Principal, AppError> {
-    match purpose {
-        MediaTokenPurpose::Stream | MediaTokenPurpose::HlsPlaylist => {
-            Ok(require_authenticated(headers).await?)
-        }
-        MediaTokenPurpose::Download => require_download_access(headers).await,
-    }
+    let principal = require_authenticated(headers).await?;
+    authorize_track_purpose(&principal, purpose)?;
+    Ok(principal)
 }
 
 /// Grants access to a track for `purpose` through a media token bound to it, or else the
@@ -380,7 +383,6 @@ mod tests {
         ServeTrackOptions,
         ValidatedTrackSource,
         apply_request_start_offset,
-        require_download_access,
         require_track_access,
     };
     use std::{
@@ -497,13 +499,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn require_download_access_rejects_user_without_download_permission() -> anyhow::Result<()>
-    {
+    async fn download_access_rejects_user_without_download_permission() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         let test_dir = initialize_test_runtime().await?;
         let headers = create_user_with_permissions("listener", vec![]).await?;
 
-        let status = require_download_access(&headers)
+        let status = require_track_access(&headers, None, MediaTokenPurpose::Download, "unused")
             .await
             .expect_err("user without permission should be rejected")
             .into_response()
@@ -515,16 +516,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn require_download_access_allows_user_with_download_permission() -> anyhow::Result<()> {
+    async fn download_access_allows_user_with_download_permission() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         let test_dir = initialize_test_runtime().await?;
         let headers =
             create_user_with_permissions("downloader", vec![Permission::Download]).await?;
 
-        let principal = require_download_access(&headers)
+        let access = require_track_access(&headers, None, MediaTokenPurpose::Download, "unused")
             .await
             .expect("user with download permission should be allowed");
 
+        let super::TrackAccess::Principal(principal) = access else {
+            panic!("bearer access should resolve a principal");
+        };
         assert_eq!(principal.username, "downloader");
 
         let _ = std::fs::remove_dir_all(test_dir);
@@ -761,6 +765,31 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("prepare_fixture produced no track ids"))?;
         db::lookup::find_id_by_db_id(&*STATE.db.read().await, agdb::DbId(track_db_id))?
             .ok_or_else(|| anyhow::anyhow!("fixture track has no public id"))
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn download_serves_resolved_access_without_request_credentials() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let headers =
+            create_user_with_permissions("plugin-downloader", vec![Permission::Download]).await?;
+        let principal = crate::services::auth::require_authenticated(&headers).await?;
+
+        let response = super::download::download_track_response(
+            &HeaderMap::new(),
+            &track_id,
+            &super::TrackAccess::Principal(principal),
+            ServeTrackOptions::default(),
+        )
+        .await
+        .map_err(|error| {
+            anyhow::anyhow!("download failed: {:?}", error.into_response().status())
+        })?;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
     }
 
     #[tokio::test(flavor = "multi_thread")]

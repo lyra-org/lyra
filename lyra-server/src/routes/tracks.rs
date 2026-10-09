@@ -52,7 +52,6 @@ use crate::{
                 issue_media_token,
             },
             require_authenticated,
-            require_permission,
         },
         catalog::{
             self,
@@ -495,13 +494,14 @@ async fn create_track_playback_url(
         None
     };
 
-    let download_url = if require_permission(&principal, db::Permission::Download).is_ok() {
-        let download_token = issue_media_token(&id, MediaTokenPurpose::Download);
-        expires_at = expires_at.min(download_token.expires_at);
-        Some(build_download_url(&id, &download_token.token, &query))
-    } else {
-        None
-    };
+    let download_url =
+        if super::serve::authorize_track_purpose(&principal, MediaTokenPurpose::Download).is_ok() {
+            let download_token = issue_media_token(&id, MediaTokenPurpose::Download);
+            expires_at = expires_at.min(download_token.expires_at);
+            Some(build_download_url(&id, &download_token.token, &query))
+        } else {
+            None
+        };
 
     Ok(Json(PlaybackUrlResponse {
         stream_url,
