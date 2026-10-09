@@ -235,7 +235,6 @@ macro_rules! define_permission_guard {
     };
 }
 
-define_permission_guard!(require_download, Permission::Download);
 define_permission_guard!(require_manage_metadata, Permission::ManageMetadata);
 define_permission_guard!(require_manage_plugins, Permission::ManagePlugins);
 define_permission_guard!(require_manage_providers, Permission::ManageProviders);

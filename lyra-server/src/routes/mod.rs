@@ -93,10 +93,10 @@ pub use releases::release_routes;
 pub use roles::role_routes;
 pub use search::search_routes;
 pub(crate) use serve::{
-    DownloadTrackRequest,
     HlsPlaylistOptions,
     ServeTrackOptions,
     TrackAccess,
+    authorize_track_purpose,
     build_ranged_file_body,
     download_track_response,
     serve_hls_playlist_for_track,
