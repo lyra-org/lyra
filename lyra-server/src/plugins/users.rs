@@ -34,6 +34,7 @@ struct PublicUser {
     user_id: String,
     username: String,
     role: Option<String>,
+    permissions: Vec<db::Permission>,
 }
 
 #[derive(Clone, Default)]
@@ -84,14 +85,15 @@ fn list_callback(frame: luau::AsyncCallFrame<'_>) -> luau::runtime::Result<luau:
             .into_iter()
             .filter_map(|user| {
                 let user_db_id = user.db_id?;
-                let role = db::roles::get_role_for_user(&db, user_db_id)
-                    .ok()
-                    .flatten()
-                    .map(|role| role.name);
+                let role = db::roles::get_role_for_user(&db, user_db_id).ok().flatten();
                 Some(PublicUser {
                     user_id: user.id,
                     username: user.username,
-                    role,
+                    permissions: role
+                        .as_ref()
+                        .map(|role| role.permissions.clone())
+                        .unwrap_or_default(),
+                    role: role.map(|role| role.name),
                 })
             })
             .collect::<Vec<_>>();
@@ -122,6 +124,11 @@ impl DescribeInterface for PublicUser {
             FieldDescriptor {
                 name: "role",
                 ty: Option::<String>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "permissions",
+                ty: Vec::<String>::luau_type(),
                 description: None,
             },
         ]);
