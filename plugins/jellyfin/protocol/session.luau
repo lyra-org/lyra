@@ -1038,33 +1038,49 @@ function module.devices_info_response(ctx: ApiContext?, user_id: string): ApiRes
 	})
 end
 
-function module.handle_item_file_stream_request(ctx: ApiContext?): ApiResponse
+local function resolve_item_file_track_id(ctx: ApiContext?): (number?, ApiResponse?)
 	local principal = module.require_jellyfin_principal(ctx)
 	if not principal then
-		return module.unauthorized()
+		return nil, module.unauthorized()
 	end
 
 	if not module.require_matching_user_scope(ctx, principal) then
-		return module.unauthorized()
+		return nil, module.unauthorized()
 	end
 
 	local params = if ctx then ctx.params else nil
 	local item_id = if params then params.itemId else nil
 	if not item_id then
-		return responses.bad_request("missing item id")
+		return nil, responses.bad_request("missing item id")
 	end
 
 	local track = playback.resolve_track_for_playback(item_ids.decode_jellyfin_item_id(item_id))
 	if not track then
-		return responses.not_found("item not found")
+		return nil, responses.not_found("item not found")
 	end
 
 	local track_id = track.db_id
 	if track_id == nil or track_id <= 0 then
-		return responses.not_found("item not found")
+		return nil, responses.not_found("item not found")
 	end
 
+	return track_id, nil
+end
+
+function module.handle_item_file_stream_request(ctx: ApiContext?): ApiResponse
+	local track_id, err = resolve_item_file_track_id(ctx)
+	if not track_id then
+		return err or responses.not_found("item not found")
+	end
 	return api.response.stream_track(track_id)
+end
+
+function module.handle_item_download_request(ctx: ApiContext?): ApiResponse
+	local track_id, err = resolve_item_file_track_id(ctx)
+	if not track_id then
+		return err or responses.not_found("item not found")
+	end
+	return api.response.download_track(track_id)
 end
 
 return module

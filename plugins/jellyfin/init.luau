@@ -2058,7 +2058,7 @@ api.get(P .. "/Items/{itemId}/File", function(ctx: ApiContext)
 	return session.handle_item_file_stream_request(ctx)
 end, "public", true)
 api.get(P .. "/Items/{itemId}/Download", function(ctx: ApiContext)
-	return session.handle_item_file_stream_request(ctx)
+	return session.handle_item_download_request(ctx)
 end, "public", true)
 
 -- Returns (value, err) so the handler can distinguish "absent" (value=nil, err=nil)
