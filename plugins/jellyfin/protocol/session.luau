@@ -39,6 +39,7 @@ type PlaylistTrackLink = playlists.PlaylistTrackLink
 type UserIdentity = {
 	user_id: string,
 	username: string,
+	permissions: { string },
 }
 type AuthenticateRequest = {
 	username: string,
@@ -68,9 +69,10 @@ export type ClientIdentity = {
 	version: string,
 }
 
-function module.has_permission(principal: Principal, permission_name: string): boolean
-	for _, permission in principal.permissions do
-		if permission == permission_name then
+-- Mirrors the server: the admin permission grants every other permission.
+function module.has_permission(user: { permissions: { string } }, permission_name: string): boolean
+	for _, permission in user.permissions do
+		if permission == permission_name or permission == "admin" then
 			return true
 		end
 	end
@@ -190,7 +192,8 @@ local function get_query_token(query: ApiQueryParams?): string?
 		or requests.parse_query_string(query, { "api_key" }, nil)
 end
 
-local function build_jellyfin_user_policy(is_administrator: boolean, enable_shared_device_control: boolean): JsonObject
+local function build_jellyfin_user_policy(user: UserIdentity): JsonObject
+	local is_administrator = module.has_permission(user, "admin")
 	return {
 		IsAdministrator = is_administrator,
 		IsHidden = false,
@@ -201,7 +204,7 @@ local function build_jellyfin_user_policy(is_administrator: boolean, enable_shar
 		AccessSchedules = {},
 		BlockUnratedItems = {},
 		EnableRemoteControlOfOtherUsers = is_administrator,
-		EnableSharedDeviceControl = enable_shared_device_control,
+		EnableSharedDeviceControl = true,
 		EnableRemoteAccess = true,
 		EnableLiveTvManagement = false,
 		EnableLiveTvAccess = false,
@@ -212,7 +215,7 @@ local function build_jellyfin_user_policy(is_administrator: boolean, enable_shar
 		ForceRemoteSourceTranscoding = false,
 		EnableContentDeletion = false,
 		EnableContentDeletionFromFolders = {},
-		EnableContentDownloading = true,
+		EnableContentDownloading = module.has_permission(user, "download"),
 		EnableSyncTranscoding = false,
 		EnableMediaConversion = false,
 		EnabledDevices = {},
@@ -246,39 +249,24 @@ local function get_legacy_header_token(headers: { [string]: string }?): string?
 	return requests.trim(headers["x-emby-token"]) or requests.trim(headers["x-mediabrowser-token"])
 end
 
-function module.to_jellyfin_user(principal: UserIdentity): JsonValue
+function module.to_jellyfin_user(user: UserIdentity): JsonValue
 	local auth_enabled = auth.capabilities().enabled
 	return {
-		Id = item_ids.encode_jellyfin_item_id(principal.user_id),
-		Name = principal.username,
+		Id = item_ids.encode_jellyfin_item_id(user.user_id),
+		Name = user.username,
 		ServerId = SERVER_ID,
 		HasPassword = auth_enabled,
 		HasConfiguredPassword = auth_enabled,
 		HasConfiguredEasyPassword = false,
-		Configuration = preferences.user_configuration(principal.user_id),
-		Policy = build_jellyfin_user_policy(false, false),
-	}
-end
-
-function module.to_jellyfin_principal_user(principal: Principal): JsonValue
-	local auth_enabled = auth.capabilities().enabled
-	local is_admin = module.is_admin(principal)
-	return {
-		Id = item_ids.encode_jellyfin_item_id(principal.user_id),
-		Name = principal.username,
-		ServerId = SERVER_ID,
-		HasPassword = auth_enabled,
-		HasConfiguredPassword = auth_enabled,
-		HasConfiguredEasyPassword = false,
-		Configuration = preferences.user_configuration(principal.user_id),
-		Policy = build_jellyfin_user_policy(is_admin, true),
+		Configuration = preferences.user_configuration(user.user_id),
+		Policy = build_jellyfin_user_policy(user),
 	}
 end
 
 function module.to_authentication_result(login_result: LoginResult): JsonValue
 	local principal = login_result.principal
 	return {
-		User = module.to_jellyfin_principal_user(principal),
+		User = module.to_jellyfin_user(principal),
 		AccessToken = tostring(login_result.token),
 		ServerId = SERVER_ID,
 		SessionInfo = nil,

@@ -470,18 +470,12 @@ api.get(P .. "/Users", function(ctx: ApiContext): ApiResponse
 	end
 
 	if not session.is_admin(principal) then
-		return api.response.json(200, { session.to_jellyfin_principal_user(principal) })
+		return api.response.json(200, { session.to_jellyfin_user(principal) })
 	end
 
 	local result: { JsonValue } = {}
 	for _, user in users.list() do
-		table.insert(
-			result,
-			session.to_jellyfin_user({
-				user_id = user.user_id,
-				username = user.username,
-			})
-		)
+		table.insert(result, session.to_jellyfin_user(user))
 	end
 
 	return api.response.json(200, result)
@@ -502,7 +496,7 @@ api.get(P .. "/Users/{id}", function(ctx: ApiContext): ApiResponse
 		return session.unauthorized()
 	end
 	if user_id == principal.user_id then
-		return api.response.json(200, session.to_jellyfin_principal_user(principal))
+		return api.response.json(200, session.to_jellyfin_user(principal))
 	end
 
 	local user = find_public_user_by_id(user_id)
@@ -766,7 +760,7 @@ api.get(P .. "/Users/Me", function(ctx: ApiContext)
 		return session.unauthorized()
 	end
 
-	return api.response.json(200, session.to_jellyfin_principal_user(principal))
+	return api.response.json(200, session.to_jellyfin_user(principal))
 end, "public", true)
 local function respond_with_user_views(ctx: ApiContext): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
