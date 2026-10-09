@@ -1,0 +1,10 @@
+run_as = "admin"
+
+# An admin, and a listener whose missing role grants no permissions.
+
+[[users]]
+key = "admin"
+admin = true
+
+[[users]]
+key = "listener"
