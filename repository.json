@@ -19,6 +19,9 @@
       "path": "plugins/musicbrainz"
     },
     {
+      "path": "plugins/opensubsonic"
+    },
+    {
       "path": "plugins/theaudiodb"
     },
     {

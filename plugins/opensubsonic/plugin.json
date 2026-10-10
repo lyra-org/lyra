@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "opensubsonic",
+  "name": "OpenSubsonic Compatibility",
+  "version": "0.0.1",
+  "description": "Plugin for creating OpenSubsonic-compatible routes",
+  "entrypoint": "init.luau",
+  "scopes": [
+    "harmony.serde",
+    "lyra.api",
+    "lyra.auth",
+    "lyra.server"
+  ]
+}

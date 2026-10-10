@@ -79,6 +79,7 @@ plugins/jellyfin
 plugins/listenbrainz
 plugins/lrclib
 plugins/musicbrainz
+plugins/opensubsonic
 plugins/theaudiodb
 plugins/wikidata
 ```
