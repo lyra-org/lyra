@@ -55,6 +55,10 @@ run_as = "owner"
 key = "owner"
 admin = true
 
+[[api_keys]]
+key = "phone"
+user = "owner"
+
 [[artists]]
 key = "amy"
 name = "Amy"
@@ -101,6 +105,7 @@ target = "mix"       # any artist, release, track or playlist key
 ```luau
 local fixture = ...
 fixture.users.owner     -- the user's public id
+fixture.api_keys.phone  -- an API key's secret
 fixture.ids.s1          -- an entity's database id, by fixture key
 fixture.entries.mix[1]  -- a playlist's entry ids, in order
 ```

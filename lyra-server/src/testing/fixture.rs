@@ -5,7 +5,10 @@
 
 //! Data a Luau test runs against, which the test runner reads from a `<test>.fixture.toml`.
 
-use std::collections::BTreeMap;
+use std::collections::{
+    BTreeMap,
+    BTreeSet,
+};
 
 use agdb::{
     DbAny,
@@ -32,6 +35,8 @@ pub struct Fixture {
     #[serde(default)]
     users: Vec<User>,
     #[serde(default)]
+    api_keys: Vec<ApiKey>,
+    #[serde(default)]
     artists: Vec<Artist>,
     #[serde(default)]
     genres: Vec<Genre>,
@@ -53,6 +58,13 @@ struct User {
     key: String,
     #[serde(default)]
     admin: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ApiKey {
+    key: String,
+    user: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -137,17 +149,19 @@ struct Favorite {
     target: String,
 }
 
-/// What the test receives as its chunk's `...`: user ids and entity ids by fixture key, and each
-/// playlist's entry ids in order.
+/// What the test receives as its chunk's `...`: user ids, API key secrets and entity ids by
+/// fixture key, and each playlist's entry ids in order.
 #[derive(Debug, Default, Serialize)]
 pub(crate) struct Seeded {
     users: BTreeMap<String, String>,
+    api_keys: BTreeMap<String, String>,
     ids: BTreeMap<String, i64>,
     entries: BTreeMap<String, Vec<String>>,
 }
 
 struct Keys {
     users: BTreeMap<String, (DbId, String)>,
+    api_keys: BTreeSet<String>,
     entities: BTreeMap<String, (DbId, db::favorites::FavoriteKind)>,
     genres: BTreeMap<String, String>,
 }
@@ -170,6 +184,7 @@ impl Keys {
     fn claim(&self, key: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
             !self.users.contains_key(key)
+                && !self.api_keys.contains(key)
                 && !self.entities.contains_key(key)
                 && !self.genres.contains_key(key),
             "fixture key `{key}` is used twice"
@@ -183,6 +198,7 @@ impl Fixture {
     pub(crate) fn seed(&self, db: &mut DbAny) -> anyhow::Result<(Seeded, DbId)> {
         let mut keys = Keys {
             users: BTreeMap::new(),
+            api_keys: BTreeSet::new(),
             entities: BTreeMap::new(),
             genres: BTreeMap::new(),
         };
@@ -204,6 +220,20 @@ impl Fixture {
             }
             seeded.users.insert(user.key.clone(), public_id.clone());
             keys.users.insert(user.key.clone(), (user_db_id, public_id));
+        }
+
+        for api_key in &self.api_keys {
+            keys.claim(&api_key.key)?;
+            let secret = services::auth::random_hex_secret::<16>();
+            db::api_keys::create(
+                db,
+                keys.user(&api_key.user)?,
+                &api_key.key,
+                &services::auth::hash_secret(&secret),
+                db::users::now_secs(),
+            )?;
+            seeded.api_keys.insert(api_key.key.clone(), secret);
+            keys.api_keys.insert(api_key.key.clone());
         }
 
         for genre in &self.genres {
