@@ -55,9 +55,7 @@ pub(crate) fn viewer(
     db: &impl DbAccess,
     principal: Option<Principal>,
 ) -> luau::runtime::Result<Viewer> {
-    principal.map_or(Ok(Viewer::System), |principal| {
-        Viewer::user(db, principal).map_err(crate::plugins::runtime_error)
-    })
+    Viewer::of(db, principal).map_err(crate::plugins::runtime_error)
 }
 
 pub(crate) fn error(error: CatalogError) -> luau::Error {
