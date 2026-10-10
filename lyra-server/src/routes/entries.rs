@@ -35,6 +35,7 @@ use crate::{
     },
     services::{
         auth::require_authenticated,
+        catalog::Viewer,
         entries::{
             EntryDetails,
             EntryIncludes,
@@ -100,16 +101,10 @@ async fn get_entries(
         db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
     let include = parse_inc(query.inc)?;
     let db = &*STATE.db.read().await;
-    let details = list_details(db, include)?;
+    let viewer = Viewer::user(db, principal)?;
+    let details = list_details(db, &viewer, include)?;
     let mut response = Vec::with_capacity(details.len());
     for detail in details {
-        let entry_db_id = detail
-            .entry
-            .db_id
-            .ok_or_else(|| anyhow::anyhow!("entry missing db_id"))?;
-        if !crate::services::auth::access::entity_accessible(db, &principal, entry_db_id)? {
-            continue;
-        }
         response.push(detail_to_entry_response(db, detail, include_full_path)?);
     }
     Ok(Json(response))
@@ -125,14 +120,8 @@ async fn get_entry(
         db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
     let include = parse_inc(query.inc)?;
     let db = &*STATE.db.read().await;
-    let detail = get_details(db, &id, include)?;
-    let entry_db_id = detail
-        .entry
-        .db_id
-        .ok_or_else(|| anyhow::anyhow!("entry missing db_id"))?;
-    crate::services::auth::access::require_entity_accessible(db, &principal, entry_db_id, || {
-        AppError::not_found(format!("Entry not found: {id}"))
-    })?;
+    let viewer = Viewer::user(db, principal)?;
+    let detail = get_details(db, &viewer, &id, include)?;
     Ok(Json(detail_to_entry_response(
         db,
         detail,
