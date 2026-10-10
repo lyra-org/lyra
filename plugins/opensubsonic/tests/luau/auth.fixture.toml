@@ -1,0 +1,17 @@
+run_as = "owner"
+
+# Two users, each with an API key.
+
+[[users]]
+key = "owner"
+
+[[users]]
+key = "other"
+
+[[api_keys]]
+key = "phone"
+user = "owner"
+
+[[api_keys]]
+key = "tablet"
+user = "other"
