@@ -36,7 +36,6 @@ use crate::plugins::args;
 use crate::{
     plugins::db::{
         self,
-        DbAsync,
         ResolveId,
     },
     services::{
@@ -44,30 +43,6 @@ use crate::{
         playlists as playlist_service,
     },
 };
-
-#[derive(Clone, Default)]
-pub(crate) struct PlaylistsModuleStore {
-    db: Option<DbAsync>,
-}
-
-impl PlaylistsModuleStore {
-    #[cfg(test)]
-    pub(crate) fn empty() -> Self {
-        Self { db: None }
-    }
-
-    pub(crate) fn with_db(db: DbAsync) -> Self {
-        Self { db: Some(db) }
-    }
-
-    fn db(&self) -> luau::runtime::Result<DbAsync> {
-        self.db.clone().ok_or_else(|| {
-            crate::plugins::runtime_error(
-                "lyra/playlists requires a database-backed plugin executor",
-            )
-        })
-    }
-}
 
 struct PlaylistsModule;
 
@@ -337,13 +312,7 @@ fn move_track_spec() -> FunctionSpec {
 }
 
 fn list_callback(frame: luau::AsyncCallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let store = frame
-        .vm
-        .data()
-        .get::<PlaylistsModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -374,13 +343,7 @@ fn get_by_id_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let id = args::resolve_id(frame.args.read_named::<luau::Value>("id")?)?;
-    let store = frame
-        .vm
-        .data()
-        .get::<PlaylistsModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -415,7 +378,7 @@ fn get_by_id_callback(
 fn list_owned_callback(
     frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let db = frame.vm.data().get::<PlaylistsModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -434,13 +397,7 @@ fn get_owner_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let playlist_id = args::resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
-    let store = frame
-        .vm
-        .data()
-        .get::<PlaylistsModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -482,13 +439,7 @@ fn get_tracks_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let playlist_id = args::resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
-    let store = frame
-        .vm
-        .data()
-        .get::<PlaylistsModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -511,13 +462,7 @@ fn get_tracks_many_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let playlist_ids: luau::Table = frame.args.read_named("playlist_ids")?;
     let playlist_ids = args::unique_ids(frame.vm, &playlist_ids)?;
-    let store = frame
-        .vm
-        .data()
-        .get::<PlaylistsModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -554,13 +499,7 @@ fn create_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let request: luau::Table = frame.args.read_named("request")?;
     let request = parse_create_request(frame.vm, request)?;
-    let store = frame
-        .vm
-        .data()
-        .get::<PlaylistsModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -579,13 +518,7 @@ fn update_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let request: luau::Table = frame.args.read_named("request")?;
     let request = parse_update_request(frame.vm, request)?;
-    let store = frame
-        .vm
-        .data()
-        .get::<PlaylistsModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -619,7 +552,7 @@ fn delete_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let playlist_id = args::resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
-    let db = frame.vm.data().get::<PlaylistsModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
     Ok(luau::ScheduledFuture::new(async move {
         let mut db = db.write().await;
@@ -645,13 +578,7 @@ fn add_track_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let playlist_id = args::resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
     let track_id = args::resolve_id(frame.args.read_named::<luau::Value>("track_id")?)?;
-    let store = frame
-        .vm
-        .data()
-        .get::<PlaylistsModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -697,7 +624,7 @@ fn replace_callback(
     let playlist_id = args::resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
     let request: luau::Table = frame.args.read_named("request")?;
     let request = parse_replace_request(frame.vm, request)?;
-    let db = frame.vm.data().get::<PlaylistsModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -729,7 +656,7 @@ fn add_tracks_callback(
         .read_optional_named::<luau::Value>("position")?
         .map(|value| playlist_position(value, "position"))
         .transpose()?;
-    let db = frame.vm.data().get::<PlaylistsModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -798,7 +725,7 @@ fn remove_track_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let playlist_id = args::resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
     let entry_id: String = frame.args.read_named("entry_id")?;
-    let db = frame.vm.data().get::<PlaylistsModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -820,7 +747,7 @@ fn remove_tracks_callback(
     let playlist_id = args::resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
     let entry_ids: luau::Table = frame.args.read_named("entry_ids")?;
     let entry_ids = args::strings(frame.vm, &entry_ids)?;
-    let db = frame.vm.data().get::<PlaylistsModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -868,7 +795,7 @@ fn move_track_callback(
         frame.args.read_named::<luau::Value>("new_position")?,
         "new_position",
     )?;
-    let db = frame.vm.data().get::<PlaylistsModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
     Ok(luau::ScheduledFuture::new(async move {
         let mut db = db.write().await;

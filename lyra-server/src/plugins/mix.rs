@@ -340,6 +340,7 @@ fn mixer_new_callback(
         .map_err(crate::plugins::runtime_error)?;
     let vm = frame.vm.clone();
     let origin = frame.context.origin.clone();
+    let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let generation = STATE.generation();
         let _registration = generation
@@ -353,7 +354,7 @@ fn mixer_new_callback(
             .register(plugin_id, id.clone())
             .map_err(crate::plugins::runtime_error)?;
 
-        let mut db = STATE.db.write().await;
+        let mut db = db.write().await;
         if db::mixers::get_by_mixer_id(&db, &id)
             .map_err(crate::plugins::runtime_error)?
             .is_none()
@@ -385,8 +386,9 @@ fn consumer_callback(
         frame.args.read_optional_named("opts")?,
         &principal,
     )?;
+    let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
-        let Some(seed) = seed_public_id(seed).await? else {
+        let Some(seed) = seed_public_id(db, seed).await? else {
             return tracks_to_luau(None);
         };
         let tracks = mix_service::from_seed(variant(seed), &options)
@@ -436,8 +438,9 @@ fn instant_mix_from_audio_callback(
         frame.args.read_optional_named("opts")?,
         &principal,
     )?;
+    let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
-        let Some(seed) = seed_public_id(seed).await? else {
+        let Some(seed) = seed_public_id(db, seed).await? else {
             return tracks_to_luau(None);
         };
         let tracks = mix_service::instant_mix_from_audio(&seed, &options)
@@ -596,8 +599,8 @@ fn core_call_context(context: &luau::CallContext) -> harmony_core::CallContext {
 }
 
 /// The mix service seeds by public id, which it re-resolves under each guard it takes.
-async fn seed_public_id(seed: DbId) -> luau::runtime::Result<Option<String>> {
-    let db = STATE.db.read().await;
+async fn seed_public_id(db: db::DbAsync, seed: DbId) -> luau::runtime::Result<Option<String>> {
+    let db = db.read().await;
     crate::plugins::db::lookup::find_id_by_db_id(&*db, seed).map_err(crate::plugins::runtime_error)
 }
 

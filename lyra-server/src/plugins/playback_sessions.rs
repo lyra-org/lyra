@@ -45,10 +45,7 @@ use crate::plugins::args;
 #[cfg(feature = "docgen")]
 use crate::services::playback_sessions::PlaybackUpdatePayload;
 use crate::{
-    plugins::db::{
-        self,
-        DbAsync,
-    },
+    plugins::db,
     plugins::lifecycle::PluginId,
     services::{
         playback_sessions::{
@@ -65,30 +62,6 @@ use crate::{
         },
     },
 };
-
-#[derive(Clone, Default)]
-pub(crate) struct PlaybackSessionsModuleStore {
-    db: Option<DbAsync>,
-}
-
-impl PlaybackSessionsModuleStore {
-    #[cfg(test)]
-    pub(crate) fn empty() -> Self {
-        Self { db: None }
-    }
-
-    pub(crate) fn with_db(db: DbAsync) -> Self {
-        Self { db: Some(db) }
-    }
-
-    fn db(&self) -> luau::runtime::Result<DbAsync> {
-        self.db.clone().ok_or_else(|| {
-            crate::plugins::runtime_error(
-                "lyra/playback_sessions requires a database-backed plugin executor",
-            )
-        })
-    }
-}
 
 #[derive(Clone)]
 pub(crate) struct RegisteredPlaybackUpdateCallback {
@@ -262,13 +235,7 @@ fn report_session_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let request_value: luau::Value = frame.args.read_named("request")?;
     let request: PlaybackSessionReportRequest = from_luau_json(frame.vm, &request_value)?;
-    let store = frame
-        .vm
-        .data()
-        .get::<PlaybackSessionsModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
     let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
         luau::Error::Runtime(
@@ -345,13 +312,7 @@ fn report_session_callback(
 fn list_connections_callback(
     frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let store = frame
-        .vm
-        .data()
-        .get::<PlaybackSessionsModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -422,13 +383,7 @@ fn send_command_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let request_value: luau::Value = frame.args.read_named("request")?;
     let request: SendCommandRequest = from_luau_json(frame.vm, &request_value)?;
-    let store = frame
-        .vm
-        .data()
-        .get::<PlaybackSessionsModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {

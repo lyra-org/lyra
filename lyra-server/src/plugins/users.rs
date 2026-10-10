@@ -24,10 +24,7 @@ use harmony_luau::{
 };
 use serde::Serialize;
 
-use crate::plugins::db::{
-    self,
-    DbAsync,
-};
+use crate::plugins::db;
 
 #[derive(Clone, Debug, Serialize)]
 struct PublicUser {
@@ -35,28 +32,6 @@ struct PublicUser {
     username: String,
     role: Option<String>,
     permissions: Vec<db::Permission>,
-}
-
-#[derive(Clone, Default)]
-pub(crate) struct UsersModuleStore {
-    db: Option<DbAsync>,
-}
-
-impl UsersModuleStore {
-    #[cfg(test)]
-    pub(crate) fn empty() -> Self {
-        Self { db: None }
-    }
-
-    pub(crate) fn with_db(db: DbAsync) -> Self {
-        Self { db: Some(db) }
-    }
-
-    fn db(&self) -> luau::runtime::Result<DbAsync> {
-        self.db.clone().ok_or_else(|| {
-            crate::plugins::runtime_error("lyra/users requires a database-backed plugin executor")
-        })
-    }
 }
 
 struct UsersModule;
@@ -75,8 +50,7 @@ fn list_spec() -> FunctionSpec {
 }
 
 fn list_callback(frame: luau::AsyncCallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let store = frame.vm.data().get::<UsersModuleStore>()?.as_ref().clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;

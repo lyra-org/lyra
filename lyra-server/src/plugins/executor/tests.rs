@@ -272,7 +272,11 @@ fn plugin_executor_scopes_personal_lyrics_to_the_dispatch_principal() -> Result<
         ))
     })?;
 
-    let runtime = runtime_with_scopes(&["lyra.lyrics"])?;
+    let runtime = PluginExecutor::with_database(
+        Arc::from(vec![manifest("demo", &["lyra.lyrics"])]),
+        default_server_info(),
+        crate::STATE.db.get(),
+    )?;
     let principal = |user_db_id, user_public_id: String, can_access: bool| {
         crate::services::auth::Principal::from_parts(
             user_db_id,
@@ -1590,7 +1594,11 @@ async fn websocket_spawned_work_acts_as_the_verified_socket_principal() -> Resul
 fn plugin_executor_dispatches_registered_mix_handler() -> Result<()> {
     let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
     crate::testing::init_default_test_state()?;
-    let runtime = runtime_with_scopes(&["lyra.mix", "harmony.task"])?;
+    let runtime = PluginExecutor::with_database(
+        Arc::from(vec![manifest("demo", &["lyra.mix", "harmony.task"])]),
+        default_server_info(),
+        crate::STATE.db.get(),
+    )?;
     runtime.run_plugin_source(
         "demo",
         "init.luau",

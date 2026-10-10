@@ -43,6 +43,7 @@ use crate::services::{
     },
 };
 
+use super::MetadataCallbackRegistry;
 use super::layer::MetadataLayer;
 use super::parsing::{
     core_call_context,
@@ -58,10 +59,6 @@ use super::parsing::{
     parse_similar_releases_spec,
     required_table_string,
     string_array_from_table,
-};
-use super::{
-    MetadataCallbackRegistry,
-    MetadataModuleStore,
 };
 
 pub(super) fn provider_new_spec() -> FunctionSpec {
@@ -87,12 +84,7 @@ fn provider_new_callback(
         crate::plugins::runtime_error("metadata.Provider.new must be called from plugin Lua code")
     })?;
     let plugin_id = PluginId::new(plugin_id.to_string()).map_err(crate::plugins::runtime_error)?;
-    let store = frame
-        .vm
-        .data()
-        .get::<MetadataModuleStore>()?
-        .as_ref()
-        .clone();
+    let db = db::get_optional(frame.vm)?;
 
     let vm = frame.vm.clone();
     let origin = frame.context.origin.clone();
@@ -109,7 +101,7 @@ fn provider_new_callback(
             .map_err(crate::plugins::runtime_error)?;
         drop(registry);
 
-        if let Some(db) = store.db {
+        if let Some(db) = db {
             let mut db_write = db.write().await;
             if db::providers::get_by_provider_id(&db_write, &provider_id)
                 .map_err(crate::plugins::runtime_error)?
@@ -651,7 +643,7 @@ fn ensure_artist_callback(
     let artist_type = optional_artist_type(vm, &request, "artist_type")?;
     let description = optional_table_string(vm, &request, "description", "provider:ensure_artist")?;
     let provider_id = provider.provider_id.clone();
-    let store = vm.data().get::<MetadataModuleStore>()?.as_ref().clone();
+    let db = db::get_optional(vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let is_registered_artist_id = {
             let registry = provider_registry().read_owned().await;
@@ -663,7 +655,7 @@ fn ensure_artist_callback(
             )));
         }
 
-        let Some(db) = store.db else {
+        let Some(db) = db else {
             return Err(crate::plugins::runtime_error(
                 "provider:ensure_artist requires a database-backed plugin executor",
             ));
@@ -831,9 +823,9 @@ fn mark_unmatched_callback(
         }
     }
 
-    let store = vm.data().get::<MetadataModuleStore>()?.as_ref().clone();
+    let db = db::get_optional(vm)?;
     Ok(luau::ScheduledFuture::new(async move {
-        let Some(db) = store.db else {
+        let Some(db) = db else {
             return Err(crate::plugins::runtime_error(
                 "provider:mark_unmatched requires a database-backed plugin executor",
             ));
@@ -898,9 +890,9 @@ fn link_credit_callback(
         }
     });
 
-    let store = vm.data().get::<MetadataModuleStore>()?.as_ref().clone();
+    let db = db::get_optional(vm)?;
     Ok(luau::ScheduledFuture::new(async move {
-        let Some(db) = store.db else {
+        let Some(db) = db else {
             return Err(crate::plugins::runtime_error(
                 "provider:link_credit requires a database-backed plugin executor",
             ));
@@ -1034,9 +1026,9 @@ fn reconcile_artist_credits_callback(
         .map(|(_, credit)| credit)
         .collect::<Vec<_>>();
     let provider_id = provider.provider_id.clone();
-    let store = vm.data().get::<MetadataModuleStore>()?.as_ref().clone();
+    let db = db::get_optional(vm)?;
     Ok(luau::ScheduledFuture::new(async move {
-        let db = store.db.ok_or_else(|| {
+        let db = db.ok_or_else(|| {
             crate::plugins::runtime_error(
                 "provider:reconcile_artist_credits requires a database-backed plugin executor",
             )
@@ -1071,9 +1063,9 @@ fn link_artist_relation_callback(
         }
     });
 
-    let store = vm.data().get::<MetadataModuleStore>()?.as_ref().clone();
+    let db = db::get_optional(vm)?;
     Ok(luau::ScheduledFuture::new(async move {
-        let Some(db) = store.db else {
+        let Some(db) = db else {
             return Err(crate::plugins::runtime_error(
                 "provider:link_artist_relation requires a database-backed plugin executor",
             ));
@@ -1123,8 +1115,8 @@ fn layer_callback(
 ) -> luau::runtime::Result<luau::Value> {
     ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
     let node_id = args::positive_id(node_id, "node_id")?;
-    let store = vm.data().get::<MetadataModuleStore>()?.as_ref().clone();
-    MetadataLayer::new_value(vm, origin, store, node_id, provider.provider_id.clone())
+    let db = db::get_optional(vm)?;
+    MetadataLayer::new_value(vm, origin, db, node_id, provider.provider_id.clone())
 }
 
 #[cfg(test)]

@@ -25,36 +25,9 @@ use harmony_luau::{
     render_definition_file_with_support,
 };
 
-use crate::plugins::db::{
-    self,
-    DbAsync,
-};
+use crate::plugins::db;
 
 const DECODE_TIMEOUT: Duration = Duration::from_secs(30);
-
-#[derive(Clone, Default)]
-pub(crate) struct ChromaprintModuleStore {
-    db: Option<DbAsync>,
-}
-
-impl ChromaprintModuleStore {
-    #[cfg(test)]
-    pub(crate) fn empty() -> Self {
-        Self { db: None }
-    }
-
-    pub(crate) fn with_db(db: DbAsync) -> Self {
-        Self { db: Some(db) }
-    }
-
-    fn db(&self) -> luau::runtime::Result<DbAsync> {
-        self.db.clone().ok_or_else(|| {
-            crate::plugins::runtime_error(
-                "lyra/chromaprint requires a database-backed plugin executor",
-            )
-        })
-    }
-}
 
 struct ChromaprintModule;
 
@@ -83,13 +56,7 @@ fn compute_callback(
     if entry_id <= 0 {
         return Err(crate::plugins::runtime_error("entry not found"));
     }
-    let store = frame
-        .vm
-        .data()
-        .get::<ChromaprintModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let path = {

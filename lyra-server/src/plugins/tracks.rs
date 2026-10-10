@@ -25,7 +25,7 @@ use harmony_luau::{
 
 use crate::plugins::args;
 use crate::plugins::catalog;
-use crate::plugins::db::DbAsync;
+use crate::plugins::db;
 #[cfg(feature = "docgen")]
 use crate::services::catalog::tracks::TrackKey;
 use crate::services::{
@@ -38,28 +38,6 @@ use crate::services::{
         },
     },
 };
-
-#[derive(Clone, Default)]
-pub(crate) struct TracksModuleStore {
-    db: Option<DbAsync>,
-}
-
-impl TracksModuleStore {
-    #[cfg(test)]
-    pub(crate) fn empty() -> Self {
-        Self { db: None }
-    }
-
-    pub(crate) fn with_db(db: DbAsync) -> Self {
-        Self { db: Some(db) }
-    }
-
-    fn db(&self) -> luau::runtime::Result<DbAsync> {
-        self.db.clone().ok_or_else(|| {
-            crate::plugins::runtime_error("lyra/tracks requires a database-backed plugin executor")
-        })
-    }
-}
 
 struct TracksModule;
 
@@ -102,14 +80,14 @@ fn query_spec() -> FunctionSpec {
 fn get_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let db = frame.vm.data().get::<TracksModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
     catalog::keyed_lookup(&mut frame, db, "ids", lookups::get::<Tracks>)
 }
 
 fn by_release_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let db = frame.vm.data().get::<TracksModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
     catalog::keyed_lookup(&mut frame, db, "release_ids", lookups::tracks_by_release)
 }
 
@@ -120,8 +98,7 @@ fn query_callback(
     let filter = read_filter(frame.vm, &opts)?;
     let request = catalog::read_query::<Tracks>(frame.vm, &opts, filter)?;
     let principal = crate::plugins::auth::dispatch_principal(&frame.context)?;
-    let store = frame.vm.data().get::<TracksModuleStore>()?.as_ref().clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;

@@ -176,7 +176,7 @@ impl SettingsBuilder {
 #[harmony_macros::userdata(name = "UserSettingsAccessor")]
 #[derive(Clone)]
 pub(super) struct UserSettingsAccessor {
-    store: PluginSettingsModuleStore,
+    db: Option<DbAsync>,
     plugin_id: PluginId,
     schema: Schema,
 }
@@ -201,64 +201,50 @@ impl UserSettingsAccessor {
         }
         let accessor = self.clone();
         Ok(luau::ScheduledFuture::new(async move {
-            let stored = accessor
-                .store
-                .load_user_stored_values(&user_id, &accessor.plugin_id, &accessor.schema)
-                .await?;
+            let stored = load_user_stored_values(
+                accessor.db.as_ref(),
+                &user_id,
+                &accessor.plugin_id,
+                &accessor.schema,
+            )
+            .await?;
             let builder = settings_builder(stored);
             build_config_table(&accessor.schema.groups, &builder)
         }))
     }
 }
 
-#[derive(Clone, Default)]
-pub(crate) struct PluginSettingsModuleStore {
-    db: Option<DbAsync>,
+async fn load_stored_values(
+    db: Option<&DbAsync>,
+    plugin_id: &PluginId,
+) -> luau::runtime::Result<HashMap<String, serde_json::Value>> {
+    let Some(db) = db else {
+        return Ok(HashMap::new());
+    };
+    let db = db.read().await;
+    plugin_settings_service::load_stored_values(&db, plugin_id.as_str())
+        .map_err(crate::plugins::runtime_error)
 }
 
-impl PluginSettingsModuleStore {
-    #[cfg(test)]
-    pub(crate) fn empty() -> Self {
-        Self { db: None }
-    }
-
-    pub(crate) fn with_db(db: DbAsync) -> Self {
-        Self { db: Some(db) }
-    }
-
-    async fn load_stored_values(
-        &self,
-        plugin_id: &PluginId,
-    ) -> luau::runtime::Result<HashMap<String, serde_json::Value>> {
-        let Some(db) = &self.db else {
-            return Ok(HashMap::new());
-        };
-        let db = db.read().await;
-        plugin_settings_service::load_stored_values(&db, plugin_id.as_str())
-            .map_err(crate::plugins::runtime_error)
-    }
-
-    async fn load_user_stored_values(
-        &self,
-        user_public_id: &str,
-        plugin_id: &PluginId,
-        schema: &Schema,
-    ) -> luau::runtime::Result<HashMap<String, serde_json::Value>> {
-        let db = self.db.as_ref().ok_or_else(|| {
-            luau::Error::Runtime("plugin settings database is unavailable".into())
-        })?;
-        let db = db.read().await;
-        let user_db_id = crate::plugins::db::users::find_db_id_by_public_id(&*db, user_public_id)
-            .map_err(crate::plugins::runtime_error)?
-            .ok_or_else(|| crate::plugins::runtime_error("user not found"))?;
-        plugin_settings_service::load_validated_user_stored_values(
-            &db,
-            user_db_id,
-            plugin_id.as_str(),
-            schema,
-        )
-        .map_err(crate::plugins::runtime_error)
-    }
+async fn load_user_stored_values(
+    db: Option<&DbAsync>,
+    user_public_id: &str,
+    plugin_id: &PluginId,
+    schema: &Schema,
+) -> luau::runtime::Result<HashMap<String, serde_json::Value>> {
+    let db =
+        db.ok_or_else(|| luau::Error::Runtime("plugin settings database is unavailable".into()))?;
+    let db = db.read().await;
+    let user_db_id = crate::plugins::db::users::find_db_id_by_public_id(&*db, user_public_id)
+        .map_err(crate::plugins::runtime_error)?
+        .ok_or_else(|| crate::plugins::runtime_error("user not found"))?;
+    plugin_settings_service::load_validated_user_stored_values(
+        &db,
+        user_db_id,
+        plugin_id.as_str(),
+        schema,
+    )
+    .map_err(crate::plugins::runtime_error)
 }
 
 fn declare_settings_callback(
@@ -266,12 +252,7 @@ fn declare_settings_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let plugin_id = current_plugin_id(&frame.context)?;
     let callback: luau::Function = frame.args.read_named("callback")?;
-    let store = frame
-        .vm
-        .data()
-        .get::<PluginSettingsModuleStore>()?
-        .as_ref()
-        .clone();
+    let db = crate::plugins::db::get_optional(frame.vm)?;
     let vm = frame.vm.clone();
     let origin = frame.context.origin.clone();
     Ok(luau::ScheduledFuture::new(async move {
@@ -281,7 +262,7 @@ fn declare_settings_callback(
             .ensure_registrations_open(&plugin_id)
             .await
             .map_err(crate::plugins::runtime_error)?;
-        let stored_values = store.load_stored_values(&plugin_id).await?;
+        let stored_values = load_stored_values(db.as_ref(), &plugin_id).await?;
         let builder = settings_builder(stored_values);
         let builder_value = SettingsBuilder::_harmony_userdata_class().create_value(
             &vm,
@@ -316,12 +297,7 @@ fn declare_user_settings_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let plugin_id = current_plugin_id(&frame.context)?;
     let callback: luau::Function = frame.args.read_named("callback")?;
-    let store = frame
-        .vm
-        .data()
-        .get::<PluginSettingsModuleStore>()?
-        .as_ref()
-        .clone();
+    let db = crate::plugins::db::get_optional(frame.vm)?;
     let vm = frame.vm.clone();
     let origin = frame.context.origin.clone();
     Ok(luau::ScheduledFuture::new(async move {
@@ -353,7 +329,7 @@ fn declare_user_settings_callback(
             &vm,
             &origin,
             UserSettingsAccessor {
-                store,
+                db,
                 plugin_id,
                 schema,
             },

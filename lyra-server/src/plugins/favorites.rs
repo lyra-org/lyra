@@ -26,35 +26,10 @@ use crate::plugins::args;
 use crate::{
     plugins::db::{
         self,
-        DbAsync,
         favorites::FavoriteKind,
     },
     services::favorites as favorite_service,
 };
-
-#[derive(Clone, Default)]
-pub(crate) struct FavoritesModuleStore {
-    db: Option<DbAsync>,
-}
-
-impl FavoritesModuleStore {
-    #[cfg(test)]
-    pub(crate) fn empty() -> Self {
-        Self { db: None }
-    }
-
-    pub(crate) fn with_db(db: DbAsync) -> Self {
-        Self { db: Some(db) }
-    }
-
-    fn db(&self) -> luau::runtime::Result<DbAsync> {
-        self.db.clone().ok_or_else(|| {
-            crate::plugins::runtime_error(
-                "lyra/favorites requires a database-backed plugin executor",
-            )
-        })
-    }
-}
 
 struct FavoritesModule;
 
@@ -118,7 +93,7 @@ fn add_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let target_id = DbId(frame.args.read_named::<i64>("target_id")?);
-    let db = frame.vm.data().get::<FavoritesModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -141,7 +116,7 @@ fn remove_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let target_id = DbId(frame.args.read_named::<i64>("target_id")?);
-    let db = frame.vm.data().get::<FavoritesModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -160,7 +135,7 @@ fn has_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let target_id = DbId(frame.args.read_named::<i64>("target_id")?);
-    let db = frame.vm.data().get::<FavoritesModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -181,7 +156,7 @@ fn has_many_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let target_ids: luau::Table = frame.args.read_named("target_ids")?;
     let target_ids = args::unique_ids(frame.vm, &target_ids)?;
-    let db = frame.vm.data().get::<FavoritesModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -212,7 +187,7 @@ fn list_ids_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let entity: String = frame.args.read_named("entity")?;
     let kind = parse_kind(&entity)?;
-    let db = frame.vm.data().get::<FavoritesModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {

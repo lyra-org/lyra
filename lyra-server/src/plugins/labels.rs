@@ -27,7 +27,6 @@ use harmony_luau::{
 
 use crate::plugins::args;
 use crate::{
-    STATE,
     plugins::db::{
         self,
         Permission,
@@ -118,9 +117,10 @@ fn resolve_callback(
         return Ok(luau::ScheduledFuture::new(async { Ok(0_i64) }));
     }
 
+    let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let label_id = {
-            let mut db = STATE.db.write().await;
+            let mut db = db.write().await;
             db::labels::resolve(
                 &mut db,
                 &ResolveLabel {
@@ -139,9 +139,10 @@ fn get_by_id_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let label_id = args::positive_id(frame.args.read_named("label_id")?, "label_id")?;
+    let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let label = {
-            let db = STATE.db.read().await;
+            let db = db.read().await;
             db::labels::get_by_id(&db, label_id).map_err(crate::plugins::runtime_error)
         }?;
         Ok(label
@@ -155,9 +156,10 @@ fn get_for_release_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let release_id = args::positive_id(frame.args.read_named("release_id")?, "release_id")?;
     let principal = caller_principal(&frame.context)?;
+    let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let labels = {
-            let db = STATE.db.read().await;
+            let db = db.read().await;
             if can_read_entity(&db, principal.as_ref(), release_id)? {
                 db::labels::get_for_release(&db, release_id)
                     .map_err(crate::plugins::runtime_error)?
@@ -175,9 +177,10 @@ fn get_for_releases_many_callback(
     let ids_table: luau::Table = frame.args.read_named("release_ids")?;
     let ids = args::unique_ids(frame.vm, &ids_table)?;
     let principal = caller_principal(&frame.context)?;
+    let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let labels = {
-            let db = STATE.db.read().await;
+            let db = db.read().await;
             let readable = ids
                 .into_iter()
                 .filter(|id| can_read_entity(&db, principal.as_ref(), *id).unwrap_or(false))
@@ -199,9 +202,10 @@ fn get_releases_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let label_id = args::positive_id(frame.args.read_named("label_id")?, "label_id")?;
+    let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let release_ids = {
-            let db = STATE.db.read().await;
+            let db = db.read().await;
             db::labels::get_releases(&db, label_id).map_err(crate::plugins::runtime_error)
         }?;
         Ok(luau::Value::TableData(id_array(release_ids)))
@@ -213,9 +217,10 @@ fn get_releases_many_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids_table: luau::Table = frame.args.read_named("label_ids")?;
     let ids = args::unique_ids(frame.vm, &ids_table)?;
+    let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let release_ids = {
-            let db = STATE.db.read().await;
+            let db = db.read().await;
             db::labels::get_releases_many(&db, &ids).map_err(crate::plugins::runtime_error)
         }?;
         let mut table = luau::OwnedTable::with_capacity(0, release_ids.len());

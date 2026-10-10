@@ -41,28 +41,6 @@ use crate::{
     },
 };
 
-#[derive(Clone, Default)]
-pub(crate) struct ListensModuleStore {
-    db: Option<DbAsync>,
-}
-
-impl ListensModuleStore {
-    #[cfg(test)]
-    pub(crate) fn empty() -> Self {
-        Self { db: None }
-    }
-
-    pub(crate) fn with_db(db: DbAsync) -> Self {
-        Self { db: Some(db) }
-    }
-
-    fn db(&self) -> luau::runtime::Result<DbAsync> {
-        self.db.clone().ok_or_else(|| {
-            crate::plugins::runtime_error("lyra/listens requires a database-backed plugin executor")
-        })
-    }
-}
-
 struct ListensModule;
 
 struct ResolvedStats {
@@ -97,13 +75,7 @@ fn get_stats_callback(
         .args
         .read_optional_named::<bool>("merge_unique_external_ids")?
         .unwrap_or(false);
-    let store = frame
-        .vm
-        .data()
-        .get::<ListensModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {

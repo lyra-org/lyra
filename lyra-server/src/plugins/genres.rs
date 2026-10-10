@@ -34,7 +34,6 @@ use crate::plugins::args;
 use crate::plugins::catalog;
 use crate::plugins::db::{
     self,
-    DbAsync,
     genres::{
         ResolveExternalId,
         ResolveGenre,
@@ -51,28 +50,6 @@ use crate::services::{
         lookups,
     },
 };
-
-#[derive(Clone, Default)]
-pub(crate) struct GenresModuleStore {
-    db: Option<DbAsync>,
-}
-
-impl GenresModuleStore {
-    #[cfg(test)]
-    pub(crate) fn empty() -> Self {
-        Self { db: None }
-    }
-
-    pub(crate) fn with_db(db: DbAsync) -> Self {
-        Self { db: Some(db) }
-    }
-
-    fn db(&self) -> luau::runtime::Result<DbAsync> {
-        self.db.clone().ok_or_else(|| {
-            crate::plugins::runtime_error("lyra/genres requires a database-backed plugin executor")
-        })
-    }
-}
 
 struct GenresModule;
 
@@ -110,7 +87,7 @@ fn query_callback(
     };
     let request = catalog::read_query::<Genres>(frame.vm, &opts, filter)?;
     let principal = crate::plugins::auth::dispatch_principal(&frame.context)?;
-    let db = frame.vm.data().get::<GenresModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
@@ -156,7 +133,7 @@ fn by_release_spec() -> FunctionSpec {
 fn get_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let db = frame.vm.data().get::<GenresModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
     catalog::keyed_lookup(&mut frame, db, "ids", |db, viewer, ids| {
         Ok(lookups::get::<Genres>(db, viewer, ids)?
             .into_iter()
@@ -168,7 +145,7 @@ fn get_callback(
 fn by_release_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let db = frame.vm.data().get::<GenresModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
     catalog::keyed_lookup(&mut frame, db, "release_ids", |db, viewer, ids| {
         Ok(lookups::genres_by_release(db, viewer, ids)?
             .into_iter()
@@ -214,7 +191,7 @@ fn artwork_release_ids_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let genre_id = args::positive_id(frame.args.read_named("genre_id")?, "genre_id")?;
-    let db = frame.vm.data().get::<GenresModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         if db::genres::get_by_id(&*db, genre_id)
@@ -246,8 +223,7 @@ fn resolve_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let request_table: luau::Table = frame.args.read_named("request")?;
     let request = genre_request_from_table(frame.vm, request_table)?;
-    let store = frame.vm.data().get::<GenresModuleStore>()?.as_ref().clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let genre_id = {
@@ -264,8 +240,7 @@ fn add_parent_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let child_id: i64 = frame.args.read_named("child_id")?;
     let parent_id: i64 = frame.args.read_named("parent_id")?;
-    let store = frame.vm.data().get::<GenresModuleStore>()?.as_ref().clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let mut db = db.write().await;
@@ -278,8 +253,7 @@ fn find_by_name_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let name: String = frame.args.read_named("name")?;
-    let store = frame.vm.data().get::<GenresModuleStore>()?.as_ref().clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
 
     let trimmed = name.trim().to_string();
     if trimmed.is_empty() {
