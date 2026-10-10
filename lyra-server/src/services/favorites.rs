@@ -21,7 +21,10 @@ use crate::db::{
         HAS_MANY_CAP,
     },
 };
-use crate::services::auth::Principal;
+use crate::services::auth::{
+    Principal,
+    access,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MutationOutcome {
@@ -222,7 +225,7 @@ pub(crate) fn list_ids(
     if kind == FavoriteKind::Playlist {
         let mut visible = Vec::with_capacity(ids.len());
         for id in ids {
-            if playlist_is_visible(db, user_db_id, id)? {
+            if access::playlist_visible_to_user(db, user_db_id, id)? {
                 visible.push(id);
             }
         }
@@ -260,11 +263,10 @@ fn target_visible_to_principal(
     kind: FavoriteKind,
 ) -> anyhow::Result<bool> {
     match kind {
-        FavoriteKind::Playlist => playlist_is_visible(db, user_db_id, target_db_id),
-        FavoriteKind::Track | FavoriteKind::Release | FavoriteKind::Artist => {
-            Ok(db::libraries::get_for_entity(db, target_db_id)?
-                .into_iter()
-                .any(|library| principal.accessible_library_ids.contains(&library.id)))
+        FavoriteKind::Playlist => access::playlist_visible_to_user(db, user_db_id, target_db_id),
+        FavoriteKind::Artist => access::artist_accessible(db, principal, target_db_id),
+        FavoriteKind::Track | FavoriteKind::Release => {
+            access::entity_accessible(db, principal, target_db_id)
         }
     }
 }
@@ -302,21 +304,6 @@ pub(crate) fn remove_by_db_id(
         db::favorites::remove(t, user_db_id, target_db_id)?;
         Ok(MutationOutcome::Applied(kind))
     })
-}
-
-fn playlist_is_visible(
-    db: &impl db::DbAccess,
-    user_db_id: DbId,
-    playlist_db_id: DbId,
-) -> anyhow::Result<bool> {
-    let Some(playlist) = db::playlists::get_by_id(db, playlist_db_id)? else {
-        return Ok(false);
-    };
-    if playlist.is_public.unwrap_or(false) {
-        return Ok(true);
-    }
-    let owner = db::playlists::get_owner(db, playlist_db_id)?;
-    Ok(owner == Some(user_db_id))
 }
 
 fn now_ms() -> anyhow::Result<i64> {
