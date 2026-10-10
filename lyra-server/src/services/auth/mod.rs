@@ -132,6 +132,34 @@ impl Principal {
         }
     }
 
+    /// The principal of `user_db_id`, read under the caller's guard, or `None` when the user is
+    /// gone.
+    pub(crate) fn load(db: &impl db::DbAccess, user_db_id: DbId) -> anyhow::Result<Option<Self>> {
+        let Some(user) = db::users::get_by_id(db, user_db_id)? else {
+            return Ok(None);
+        };
+        let (permissions, role_name) = db::roles::get_role_for_user(db, user_db_id)?
+            .map_or((Vec::new(), None), |role| {
+                (role.permissions, Some(role.name))
+            });
+        let accessible_library_ids = if permissions.contains(&Permission::Admin) {
+            db::libraries::get(db)?
+                .into_iter()
+                .map(|library| library.id)
+                .collect()
+        } else {
+            db::libraries::accessible_library_ids(db, user_db_id)?
+        };
+        Ok(Some(Self {
+            user_db_id,
+            user_public_id: user.id,
+            username: user.username,
+            permissions,
+            role_name,
+            accessible_library_ids,
+        }))
+    }
+
     /// A principal for an existing user with the given grants.
     #[cfg(test)]
     pub(crate) fn for_user(

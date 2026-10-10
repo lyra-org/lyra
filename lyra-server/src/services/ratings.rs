@@ -111,7 +111,7 @@ pub(crate) fn values_for_principal(
         let Some(actual_kind) = target_kind(db, target_db_id)? else {
             continue;
         };
-        if !target_visible_to_principal(db, principal, target_db_id)? {
+        if !target_visible_to_principal(db, principal, target_db_id, actual_kind)? {
             continue;
         }
         if edge.kind == actual_kind {
@@ -130,7 +130,7 @@ fn resolve_targetable_for_principal(
     let Some((target_db_id, kind)) = resolve_whitelisted(db, public_target_id)? else {
         return Ok(None);
     };
-    if !target_visible_to_principal(db, principal, target_db_id)? {
+    if !target_visible_to_principal(db, principal, target_db_id, kind)? {
         return Ok(None);
     }
     Ok(Some((target_db_id, kind)))
@@ -154,10 +154,16 @@ fn target_visible_to_principal(
     db: &impl db::DbAccess,
     principal: &Principal,
     target_db_id: DbId,
+    kind: RatingKind,
 ) -> anyhow::Result<bool> {
-    Ok(db::libraries::get_for_entity(db, target_db_id)?
-        .into_iter()
-        .any(|library| principal.accessible_library_ids.contains(&library.id)))
+    match kind {
+        RatingKind::Artist => {
+            crate::services::auth::access::artist_accessible(db, principal, target_db_id)
+        }
+        RatingKind::Track | RatingKind::Release => {
+            crate::services::auth::access::entity_accessible(db, principal, target_db_id)
+        }
+    }
 }
 
 fn now_ms() -> anyhow::Result<i64> {
@@ -172,6 +178,7 @@ mod tests {
     use crate::db::{
         test_db::{
             connect,
+            connect_artist,
             insert_artist,
             insert_library,
             insert_release,
@@ -254,16 +261,10 @@ mod tests {
         let other_user_rating = insert_track(&mut db, "Other User Rating")?;
         let hidden = insert_track(&mut db, "Hidden Rating")?;
         let kind_mismatch = insert_track(&mut db, "Kind Mismatch")?;
-        for target in [
-            track,
-            release,
-            artist,
-            unrated,
-            other_user_rating,
-            kind_mismatch,
-        ] {
+        for target in [track, release, unrated, other_user_rating, kind_mismatch] {
             connect(&mut db, visible_library, target)?;
         }
+        connect_artist(&mut db, release, artist)?;
         connect(&mut db, hidden_library, hidden)?;
 
         for (target, kind, value) in [

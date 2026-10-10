@@ -302,6 +302,15 @@ pub(crate) fn playlist_accessible_as(
     if principal.permissions.contains(&db::Permission::Admin) {
         return Ok(true);
     }
+    playlist_visible_to_user(db, user_db_id, playlist_db_id)
+}
+
+/// Whether the user can see the playlist as a listener: a public playlist, or its own.
+pub(crate) fn playlist_visible_to_user(
+    db: &impl db::DbAccess,
+    user_db_id: DbId,
+    playlist_db_id: DbId,
+) -> anyhow::Result<bool> {
     let Some(playlist) = db::playlists::get_by_id(db, playlist_db_id)? else {
         return Ok(false);
     };

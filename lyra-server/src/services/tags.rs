@@ -3,10 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::{
-    HashMap,
-    HashSet,
-};
+use std::collections::HashMap;
 use std::time::{
     SystemTime,
     UNIX_EPOCH,
@@ -26,6 +23,10 @@ use crate::db::{
         RenameConflict,
         TagNormalizeError,
     },
+};
+use crate::services::auth::{
+    Principal,
+    access,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -608,23 +609,16 @@ enum TargetKind {
 
 struct TargetVisibility {
     user_db_id: DbId,
-    can_access_all_libraries: bool,
-    accessible_library_ids: HashSet<String>,
+    principal: Principal,
 }
 
 impl TargetVisibility {
     fn for_user(db: &impl db::DbAccess, user_db_id: DbId) -> anyhow::Result<Self> {
-        let can_access_all_libraries = db::roles::get_role_for_user(db, user_db_id)?
-            .is_some_and(|role| role.permissions.contains(&db::Permission::Admin));
-        let accessible_library_ids = if can_access_all_libraries {
-            HashSet::new()
-        } else {
-            db::libraries::accessible_library_ids(db, user_db_id)?
-        };
+        let principal = Principal::load(db, user_db_id)?
+            .ok_or_else(|| anyhow::anyhow!("tag owner {user_db_id:?} does not exist"))?;
         Ok(Self {
             user_db_id,
-            can_access_all_libraries,
-            accessible_library_ids,
+            principal,
         })
     }
 
@@ -634,33 +628,17 @@ impl TargetVisibility {
         target_db_id: DbId,
         kind: TargetKind,
     ) -> anyhow::Result<bool> {
+        let principal = &self.principal;
         match kind {
-            TargetKind::Playlist => playlist_is_visible(db, self.user_db_id, target_db_id),
-            TargetKind::Track | TargetKind::Release | TargetKind::Artist => {
-                if self.can_access_all_libraries {
-                    return Ok(true);
-                }
-                Ok(db::libraries::get_for_entity(db, target_db_id)?
-                    .into_iter()
-                    .any(|library| self.accessible_library_ids.contains(&library.id)))
+            TargetKind::Playlist => {
+                access::playlist_visible_to_user(db, self.user_db_id, target_db_id)
+            }
+            TargetKind::Artist => access::artist_accessible(db, principal, target_db_id),
+            TargetKind::Track | TargetKind::Release => {
+                access::entity_accessible(db, principal, target_db_id)
             }
         }
     }
-}
-
-fn playlist_is_visible(
-    db: &impl db::DbAccess,
-    user_db_id: DbId,
-    playlist_db_id: DbId,
-) -> anyhow::Result<bool> {
-    let Some(playlist) = db::playlists::get_by_id(db, playlist_db_id)? else {
-        return Ok(false);
-    };
-    if playlist.is_public.unwrap_or(false) {
-        return Ok(true);
-    }
-    let owner = db::playlists::get_owner(db, playlist_db_id)?;
-    Ok(owner == Some(user_db_id))
 }
 
 fn now_ms() -> anyhow::Result<i64> {

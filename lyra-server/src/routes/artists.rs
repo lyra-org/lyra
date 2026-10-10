@@ -193,50 +193,6 @@ fn parse_inc(inc: Option<Vec<String>>) -> Result<ArtistRouteIncludes, AppError> 
     Ok(result)
 }
 
-fn is_admin(principal: &Principal) -> bool {
-    principal.permissions.contains(&db::Permission::Admin)
-}
-
-fn release_accessible_to_principal(
-    db: &DbAny,
-    principal: &Principal,
-    release_db_id: DbId,
-) -> anyhow::Result<bool> {
-    if is_admin(principal) {
-        return Ok(true);
-    }
-    Ok(db::libraries::get_by_release(db, release_db_id)?
-        .into_iter()
-        .any(|library| principal.accessible_library_ids.contains(&library.id)))
-}
-
-fn track_accessible_to_principal(
-    db: &DbAny,
-    principal: &Principal,
-    track_db_id: DbId,
-) -> anyhow::Result<bool> {
-    if is_admin(principal) {
-        return Ok(true);
-    }
-    for release in db::releases::get_by_track(db, track_db_id)? {
-        let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
-            continue;
-        };
-        if release_accessible_to_principal(db, principal, release_db_id)? {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-fn artist_accessible_to_principal(
-    db: &DbAny,
-    principal: &Principal,
-    artist_db_id: DbId,
-) -> anyhow::Result<bool> {
-    access::artist_accessible(db, principal, artist_db_id)
-}
-
 fn filter_accessible_releases(
     db: &DbAny,
     principal: &Principal,
@@ -247,7 +203,7 @@ fn filter_accessible_releases(
         let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
             continue;
         };
-        if release_accessible_to_principal(db, principal, release_db_id)? {
+        if access::entity_accessible(db, principal, release_db_id)? {
             filtered.push(release);
         }
     }
@@ -264,7 +220,7 @@ fn filter_accessible_tracks(
         let Some(track_db_id) = track.db_id.clone().map(DbId::from) else {
             continue;
         };
-        if track_accessible_to_principal(db, principal, track_db_id)? {
+        if access::entity_accessible(db, principal, track_db_id)? {
             filtered.push(track);
         }
     }
@@ -281,7 +237,7 @@ fn filter_accessible_relations(
         let Some(artist_db_id) = relation.artist.db_id.clone().map(DbId::from) else {
             continue;
         };
-        if artist_accessible_to_principal(db, principal, artist_db_id)? {
+        if access::artist_accessible(db, principal, artist_db_id)? {
             filtered.push(relation);
         }
     }
@@ -443,7 +399,7 @@ pub(crate) async fn list_artist_responses(
             db,
             &page.item_ids,
             db::artists::get_by_id,
-            |db, artist_db_id| artist_accessible_to_principal(db, principal, artist_db_id),
+            |db, artist_db_id| access::artist_accessible(db, principal, artist_db_id),
         )?;
         (artists, page.next_cursor)
     } else {
@@ -481,7 +437,7 @@ pub(crate) async fn get_artist_response(
     let includes = parse_inc(inc)?;
     let artist_db_id = db::lookup::find_node_id_by_id(db, &id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
-    if !artist_accessible_to_principal(db, principal, artist_db_id)? {
+    if !access::artist_accessible(db, principal, artist_db_id)? {
         return Err(AppError::not_found(format!("Artist not found: {id}")));
     }
     let detail = artist_service::get_details(db, artist_db_id, includes.service)?
@@ -543,7 +499,7 @@ async fn search_artist_covers(
         let db = STATE.db.read().await;
         let artist_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
             .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
-        if !artist_accessible_to_principal(&db, &principal, artist_db_id)? {
+        if !access::artist_accessible(&db, &principal, artist_db_id)? {
             return Err(AppError::not_found(format!("Artist not found: {id}")));
         }
         if db::artists::get_by_id(&db, artist_db_id)?.is_none() {
