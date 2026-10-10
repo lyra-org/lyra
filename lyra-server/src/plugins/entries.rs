@@ -3,7 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use agdb::QueryId;
 use harmony_core::{
     FunctionSpec,
     ModuleExport,
@@ -32,6 +31,7 @@ use crate::plugins::db::{
     DbAsync,
     ResolveId,
 };
+use crate::services;
 
 #[derive(Clone, Default)]
 pub(crate) struct EntriesModuleStore {
@@ -80,6 +80,7 @@ fn get_callback(
         .read_optional_named::<luau::Value>("id")?
         .map(args::resolve_id)
         .transpose()?;
+    let principal = crate::plugins::auth::dispatch_principal(&frame.context)?;
     let store = frame
         .vm
         .data()
@@ -90,30 +91,16 @@ fn get_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        let entries = match id {
-            None => db::entries::get(&db, "libraries").map_err(crate::plugins::runtime_error)?,
-            Some(resolve_id) => {
-                let query_id = resolve_id
-                    .to_query_id(&db)
+        let viewer = crate::plugins::catalog::viewer(&*db, principal)?;
+        let from = id
+            .map(|id| {
+                id.to_db_id(&db)
                     .map_err(crate::plugins::runtime_error)?
-                    .ok_or_else(|| crate::plugins::runtime_error("could not resolve id"))?;
-                match query_id {
-                    QueryId::Id(node_id) => {
-                        if db::tracks::get_by_id(&db, node_id)
-                            .map_err(crate::plugins::runtime_error)?
-                            .is_some()
-                        {
-                            db::entries::get_by_track(&db, node_id)
-                                .map_err(crate::plugins::runtime_error)?
-                        } else {
-                            db::entries::get(&db, QueryId::Id(node_id))
-                                .map_err(crate::plugins::runtime_error)?
-                        }
-                    }
-                    other => db::entries::get(&db, other).map_err(crate::plugins::runtime_error)?,
-                }
-            }
-        };
+                    .ok_or_else(|| crate::plugins::runtime_error("could not resolve id"))
+            })
+            .transpose()?;
+        let entries = services::entries::visible(&db, &viewer, from)
+            .map_err(crate::plugins::runtime_error)?;
         let entries = entries
             .into_iter()
             .map(EntryRecord::from)

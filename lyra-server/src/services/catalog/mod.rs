@@ -100,6 +100,35 @@ impl Viewer {
         Ok(libraries.iter().all(|library| accessible.contains(library)))
     }
 
+    /// The viewer's libraries, or `None` when the viewer sees every library.
+    pub(crate) fn visible_libraries(
+        &self,
+        db: &impl db::DbAccess,
+    ) -> anyhow::Result<Option<Vec<DbId>>> {
+        let Some(principal) = self.restricted() else {
+            return Ok(None);
+        };
+        Ok(Some(db::libraries::db_ids_for_public_ids(
+            db,
+            &principal.accessible_library_ids,
+        )?))
+    }
+
+    /// Whether the viewer can see `entity_db_id`, which is visible through the libraries it
+    /// belongs to.
+    pub(crate) fn sees_entity(
+        &self,
+        db: &impl db::DbAccess,
+        entity_db_id: DbId,
+    ) -> anyhow::Result<bool> {
+        match self.restricted() {
+            None => Ok(true),
+            Some(principal) => {
+                crate::services::auth::access::entity_accessible(db, principal, entity_db_id)
+            }
+        }
+    }
+
     /// The releases in the viewer's libraries, or `None` when the viewer sees every release.
     pub(crate) fn visible_releases(&self, db: &DbAny) -> anyhow::Result<Option<HashSet<DbId>>> {
         let Some(principal) = self.restricted() else {
