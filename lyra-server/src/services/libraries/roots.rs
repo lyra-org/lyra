@@ -8,13 +8,23 @@ use std::path::PathBuf;
 use crate::{
     STATE,
     db,
+    services::{
+        auth::Principal,
+        catalog::Viewer,
+    },
 };
 
-/// Current library root directories, read live from the database.
-pub(crate) async fn library_roots() -> anyhow::Result<Vec<PathBuf>> {
+/// Root directories of the libraries `principal` can see, or of every library without one.
+pub(crate) async fn library_roots(principal: Option<&Principal>) -> anyhow::Result<Vec<PathBuf>> {
     let db = STATE.db.read().await;
+    let visible = Viewer::of(&*db, principal.cloned())?.visible_libraries(&*db)?;
     Ok(db::libraries::get(&*db)?
         .into_iter()
+        .filter(|library| {
+            visible
+                .as_ref()
+                .is_none_or(|ids| library.db_id.is_some_and(|id| ids.contains(&id)))
+        })
         .map(|library| library.path)
         .collect())
 }

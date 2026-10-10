@@ -44,13 +44,13 @@ async fn require_plugin_track_access(
 }
 
 /// Plugins may name any filesystem path in a file response, so resolve the
-/// target (following symlinks) and refuse anything outside the library roots
-/// and the configured cover storage root.
-async fn confine_file_response_path(path: &str) -> Result<PathBuf> {
+/// target (following symlinks) and refuse anything outside the roots of the
+/// libraries the principal can see and the configured cover storage root.
+async fn confine_file_response_path(path: &str, principal: Option<&Principal>) -> Result<PathBuf> {
     let canonical = tokio::fs::canonicalize(path)
         .await
         .with_context(|| format!("failed to resolve file response path '{path}'"))?;
-    let mut roots = crate::services::libraries::library_roots().await?;
+    let mut roots = crate::services::libraries::library_roots(principal).await?;
     roots.push(crate::services::covers::configured_covers_root());
     for root in roots {
         let Ok(root) = tokio::fs::canonicalize(&root).await else {
@@ -201,7 +201,7 @@ pub(super) async fn plugin_api_response_to_axum(
         if trimmed.is_empty() {
             bail!("file path must not be empty");
         }
-        let confined = confine_file_response_path(trimmed).await?;
+        let confined = confine_file_response_path(trimmed, principal).await?;
         if let Some(transform) = parse_image_transform_options(response.transform.as_ref())? {
             let owned_path = confined
                 .to_str()
@@ -443,14 +443,34 @@ mod tests {
         })
         .await?;
 
-        {
+        let hidden_dir = test_dir.join("hidden");
+        std::fs::create_dir_all(&hidden_dir)?;
+        let principal = {
             let mut db = STATE.db.write().await;
-            db::test_db::insert_library(
+            let library_db_id = db::test_db::insert_library(
                 &mut db,
                 "File Bridge Lib",
                 library_dir.to_str().context("library dir is utf-8")?,
             )?;
-        }
+            db::test_db::insert_library(
+                &mut db,
+                "File Bridge Hidden",
+                hidden_dir.to_str().context("hidden dir is utf-8")?,
+            )?;
+            let library_public_id = db::lookup::find_id_by_db_id(&*db, library_db_id)?
+                .context("inserted library has public id")?;
+            let user = db::test_db::test_user("file-bridge-user")?;
+            let user_public_id = user.id.clone();
+            let user_db_id = db::users::create(&mut db, &user)?;
+            Principal::from_parts(
+                user_db_id,
+                user_public_id,
+                "file-bridge-user".to_string(),
+                Vec::new(),
+                None,
+                HashSet::from([library_public_id]),
+            )
+        };
 
         let inside = library_dir.join("cover.jpg");
         std::fs::write(&inside, b"inside")?;
@@ -478,6 +498,26 @@ mod tests {
         assert!(
             symlinked.is_err_and(|err| err.to_string().contains("outside library")),
             "symlinks escaping a library root must be rejected"
+        );
+
+        let hidden = hidden_dir.join("cover.jpg");
+        std::fs::write(&hidden, b"hidden")?;
+        let as_principal = |path: &std::path::Path| ApiHandlerResponse {
+            principal: Some(principal.clone()),
+            ..file_response(path)
+        };
+        let served = plugin_api_response_to_axum(as_principal(&inside), &headers).await?;
+        assert_eq!(served.status(), StatusCode::OK);
+        let rejected = plugin_api_response_to_axum(as_principal(&hidden), &headers).await;
+        assert!(
+            rejected.is_err_and(|err| err.to_string().contains("outside library")),
+            "files in libraries the principal can't see must be rejected"
+        );
+        let served = plugin_api_response_to_axum(file_response(&hidden), &headers).await?;
+        assert_eq!(
+            served.status(),
+            StatusCode::OK,
+            "responses without a principal serve from every library"
         );
 
         let _ = std::fs::remove_dir_all(test_dir);

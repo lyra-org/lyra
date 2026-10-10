@@ -62,6 +62,14 @@ impl Viewer {
         })
     }
 
+    /// A viewer for `principal`, or the system without one.
+    pub(crate) fn of(
+        db: &impl db::DbAccess,
+        principal: Option<Principal>,
+    ) -> Result<Self, AuthError> {
+        principal.map_or(Ok(Self::System), |principal| Self::user(db, principal))
+    }
+
     /// The user a user-dependent filter or key reads, which a system query does not have.
     pub(crate) fn user_db_id(&self, needed_by: &str) -> Result<DbId, CatalogError> {
         match self {
