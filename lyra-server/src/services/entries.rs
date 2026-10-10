@@ -213,9 +213,9 @@ mod tests {
     use crate::{
         db::{
             entries::EntryKind,
-            libraries::LibraryInsert,
             test_db::{
                 connect,
+                insert_library,
                 insert_track,
                 new_test_db,
                 test_user,
@@ -223,21 +223,6 @@ mod tests {
         },
         services::auth::Principal,
     };
-
-    fn create_library(db: &mut DbAny, name: &str) -> anyhow::Result<db::libraries::Library> {
-        let path = PathBuf::from(format!("/tmp/lyra-entries-test-{}", nanoid!()));
-        let request = LibraryInsert {
-            id: nanoid!(),
-            name: name.to_string(),
-            path: path.clone(),
-            path_key: db::libraries::path_key_for(&path),
-            language: None,
-            country: None,
-        };
-        db.transaction_mut(|t| -> anyhow::Result<db::libraries::Library> {
-            Ok(db::libraries::create_system(t, request)?)
-        })
-    }
 
     fn insert_entry(db: &mut DbAny, parent: DbId, name: &str) -> anyhow::Result<DbId> {
         let entry = Entry {
@@ -267,9 +252,9 @@ mod tests {
     fn visible_entries_follow_library_access() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user_db_id = db::users::create(&mut db, &test_user("listener")?)?;
-        let shown = create_library(&mut db, "Shown")?;
-        let hidden = create_library(&mut db, "Hidden")?;
-        let (shown_db_id, hidden_db_id) = (shown.db_id.unwrap(), hidden.db_id.unwrap());
+        let shown_db_id = insert_library(&mut db, "Shown", "/music/shown")?;
+        let hidden_db_id = insert_library(&mut db, "Hidden", "/music/hidden")?;
+        let shown_public_id = db::libraries::get_by_id(&db, shown_db_id)?.unwrap().id;
         let shown_entry = insert_entry(&mut db, shown_db_id, "shown.flac")?;
         let hidden_entry = insert_entry(&mut db, hidden_db_id, "hidden.flac")?;
         let hidden_track = insert_track(&mut db, "Hidden")?;
@@ -278,7 +263,7 @@ mod tests {
 
         let listener = Viewer::user(
             &db,
-            Principal::for_user(&db, user_db_id, vec![], HashSet::from([shown.id.clone()])),
+            Principal::for_user(&db, user_db_id, vec![], HashSet::from([shown_public_id])),
         )?;
         let admin = Viewer::user(
             &db,

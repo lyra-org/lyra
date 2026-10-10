@@ -36,12 +36,14 @@ use harmony_luau::{
 };
 
 use crate::plugins::args;
+use crate::plugins::catalog;
 use crate::plugins::db::{
     self,
     Cover,
     DbAsync,
     ResolveId,
 };
+use crate::services::catalog::Viewer;
 
 enum CoverValidity {
     Valid(Cover),
@@ -61,56 +63,113 @@ pub(crate) fn module_spec() -> ModuleSpec {
         .function(get_many_spec())
         .function(get_playlist_sources_spec())
         .function(get_playlist_sources_many_spec())
+        .function(artwork_spec())
+        .function(artwork_many_spec())
+        .function(artwork_playlist_sources_spec())
         .install(|_| Ok(ModuleExport::new(CoversModule)))
 }
 
 fn get_spec() -> FunctionSpec {
     FunctionSpec::async_fn("get")
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("id")
         .args::<ResolveId>()
         .returns::<Option<luau::Table>>()
-        .call_async(Arc::new(get_callback))
+        .call_async(Arc::new(|frame| {
+            cover_callback(frame, crate::plugins::auth::dispatch_principal)
+        }))
 }
 
 fn get_many_spec() -> FunctionSpec {
     FunctionSpec::async_fn("get_many")
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("ids")
         .args::<luau::Table>()
         .returns::<luau::Table>()
-        .call_async(Arc::new(get_many_callback))
+        .call_async(Arc::new(|frame| {
+            covers_callback(frame, crate::plugins::auth::dispatch_principal)
+        }))
 }
 
 fn get_playlist_sources_spec() -> FunctionSpec {
     FunctionSpec::async_fn("get_playlist_sources")
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("id")
         .args::<ResolveId>()
         .returns::<luau::Table>()
-        .call_async(Arc::new(get_playlist_sources_callback))
+        .call_async(Arc::new(|frame| {
+            playlist_sources_callback(frame, crate::plugins::auth::dispatch_principal)
+        }))
 }
 
 fn get_playlist_sources_many_spec() -> FunctionSpec {
     FunctionSpec::async_fn("get_playlist_sources_many")
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("ids")
         .args::<luau::Table>()
         .returns::<luau::Table>()
         .call_async(Arc::new(get_playlist_sources_many_callback))
 }
 
-fn get_callback(
+fn artwork_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("artwork")
+        .arg_name("id")
+        .args::<ResolveId>()
+        .returns::<Option<luau::Table>>()
+        .call_async(Arc::new(|frame| cover_callback(frame, no_caller)))
+}
+
+fn artwork_many_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("artwork_many")
+        .arg_name("ids")
+        .args::<luau::Table>()
+        .returns::<luau::Table>()
+        .call_async(Arc::new(|frame| covers_callback(frame, no_caller)))
+}
+
+fn artwork_playlist_sources_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("artwork_playlist_sources")
+        .arg_name("id")
+        .args::<ResolveId>()
+        .returns::<luau::Table>()
+        .call_async(Arc::new(|frame| {
+            playlist_sources_callback(frame, no_caller)
+        }))
+}
+
+type Caller =
+    fn(&luau::CallContext) -> luau::runtime::Result<Option<crate::services::auth::Principal>>;
+
+fn no_caller(
+    _: &luau::CallContext,
+) -> luau::runtime::Result<Option<crate::services::auth::Principal>> {
+    Ok(None)
+}
+
+fn cover_callback(
     mut frame: luau::AsyncCallFrame<'_>,
+    caller: Caller,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let id = args::resolve_id(frame.args.read_named::<luau::Value>("id")?)?;
+    let principal = caller(&frame.context)?;
     let db = db::get(frame.vm)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let (resolved_cover, stale_owners) = {
             let db_read = db.read().await;
+            let viewer = catalog::viewer(&*db_read, principal)?;
             let Some(QueryId::Id(item_id)) = id
                 .to_query_id(&db_read)
                 .map_err(crate::plugins::runtime_error)?
             else {
                 return Ok(luau::Value::Nil);
             };
+            if !viewer
+                .sees(&db_read, item_id)
+                .map_err(crate::plugins::runtime_error)?
+            {
+                return Ok(luau::Value::Nil);
+            }
             let mut stale_owners = Vec::new();
             let result = resolve_persisted_cover(&db_read, item_id, &mut stale_owners)
                 .map_err(crate::plugins::runtime_error)?;
@@ -128,18 +187,30 @@ fn get_callback(
     }))
 }
 
-fn get_many_callback(
+fn covers_callback(
     mut frame: luau::AsyncCallFrame<'_>,
+    caller: Caller,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids: luau::Table = frame.args.read_named("ids")?;
     let item_ids = args::unique_ids(frame.vm, &ids)?;
+    let principal = caller(&frame.context)?;
     let db = db::get(frame.vm)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let (resolved, stale_owners) = {
             let db_read = db.read().await;
+            let viewer = catalog::viewer(&*db_read, principal)?;
+            let mut visible_ids = Vec::with_capacity(item_ids.len());
+            for item_id in &item_ids {
+                if viewer
+                    .sees(&db_read, *item_id)
+                    .map_err(crate::plugins::runtime_error)?
+                {
+                    visible_ids.push(*item_id);
+                }
+            }
             let mut stale_owners = Vec::new();
-            let result = resolve_persisted_covers(&db_read, &item_ids, &mut stale_owners)
+            let result = resolve_persisted_covers(&db_read, &visible_ids, &mut stale_owners)
                 .map_err(crate::plugins::runtime_error)?;
             (result, stale_owners)
         };
@@ -162,15 +233,18 @@ fn get_many_callback(
     }))
 }
 
-fn get_playlist_sources_callback(
+fn playlist_sources_callback(
     mut frame: luau::AsyncCallFrame<'_>,
+    caller: Caller,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let id = args::resolve_id(frame.args.read_named::<luau::Value>("id")?)?;
+    let principal = caller(&frame.context)?;
     let db = db::get(frame.vm)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let (sources, stale_owners) = {
             let db_read = db.read().await;
+            let viewer = catalog::viewer(&*db_read, principal)?;
             let Some(QueryId::Id(playlist_id)) = id
                 .to_query_id(&db_read)
                 .map_err(crate::plugins::runtime_error)?
@@ -180,8 +254,9 @@ fn get_playlist_sources_callback(
                 )));
             };
             let mut stale_owners = Vec::new();
-            let result = resolve_playlist_sources(&db_read, playlist_id, &mut stale_owners)
-                .map_err(crate::plugins::runtime_error)?;
+            let result =
+                resolve_playlist_sources(&db_read, &viewer, playlist_id, &mut stale_owners)
+                    .map_err(crate::plugins::runtime_error)?;
             (result, stale_owners)
         };
 
@@ -198,16 +273,19 @@ fn get_playlist_sources_many_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids: luau::Table = frame.args.read_named("ids")?;
     let playlist_ids = args::unique_ids(frame.vm, &ids)?;
+    let principal = crate::plugins::auth::dispatch_principal(&frame.context)?;
     let db = db::get(frame.vm)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let (resolved, stale_owners) = {
             let db_read = db.read().await;
+            let viewer = catalog::viewer(&*db_read, principal)?;
             let mut stale_owners = Vec::new();
             let mut resolved = Vec::with_capacity(playlist_ids.len());
             for playlist_id in &playlist_ids {
-                let sources = resolve_playlist_sources(&db_read, *playlist_id, &mut stale_owners)
-                    .map_err(crate::plugins::runtime_error)?;
+                let sources =
+                    resolve_playlist_sources(&db_read, &viewer, *playlist_id, &mut stale_owners)
+                        .map_err(crate::plugins::runtime_error)?;
                 resolved.push((*playlist_id, sources));
             }
             (resolved, stale_owners)
@@ -231,14 +309,21 @@ fn get_playlist_sources_many_callback(
 
 const PLAYLIST_SOURCE_LIMIT: usize = 4;
 
-/// The first valid covers of a playlist's collage sources, in display order.
+/// The first valid covers of a playlist's collage sources the viewer can see, in display order.
 fn resolve_playlist_sources(
     db: &DbAny,
+    viewer: &Viewer,
     playlist_id: DbId,
     stale_owners: &mut Vec<DbId>,
 ) -> anyhow::Result<Vec<(DbId, Cover)>> {
     let mut sources = Vec::new();
+    if !viewer.sees_playlist(db, playlist_id)? {
+        return Ok(sources);
+    }
     for (_, release_id) in db::covers::display::playlist_cover_sources(db, playlist_id)? {
+        if !viewer.sees_entity(db, release_id)? {
+            continue;
+        }
         if let Some(source) = resolve_persisted_cover(db, release_id, stale_owners)? {
             sources.push(source);
             if sources.len() == PLAYLIST_SOURCE_LIMIT {
@@ -461,14 +546,18 @@ fn module_descriptor() -> ModuleDescriptor {
         functions: vec![
             ModuleFunctionDescriptor {
                 path: vec!["get"],
-                description: None,
+                description: Some(
+                    "Returns an item's own cover, or for a track without one, its release's cover. Scoped to the caller's libraries and visible playlists; a client dispatch without a resolved credential is refused.",
+                ),
                 params: vec![param("id", args::resolve_id_type())],
                 returns: vec![Option::<CoverInfo>::luau_type()],
                 yields: true,
             },
             ModuleFunctionDescriptor {
                 path: vec!["get_many"],
-                description: None,
+                description: Some(
+                    "`get` for several ids, keyed by db id. Scoped to the caller's libraries and visible playlists; a client dispatch without a resolved credential is refused.",
+                ),
                 params: vec![param("ids", Vec::<u64>::luau_type())],
                 returns: vec![LuauType::map(
                     u64::luau_type(),
@@ -479,7 +568,7 @@ fn module_descriptor() -> ModuleDescriptor {
             ModuleFunctionDescriptor {
                 path: vec!["get_playlist_sources"],
                 description: Some(
-                    "Returns up to four release covers that make up a playlist's collage, in display order. Unknown or non-playlist ids yield an empty array.",
+                    "Returns up to four release covers that make up a playlist's collage, in display order. Unknown or non-playlist ids yield an empty array. Scoped to the caller's libraries and visible playlists; a client dispatch without a resolved credential is refused.",
                 ),
                 params: vec![param("id", args::resolve_id_type())],
                 returns: vec![Vec::<CoverInfo>::luau_type()],
@@ -488,13 +577,43 @@ fn module_descriptor() -> ModuleDescriptor {
             ModuleFunctionDescriptor {
                 path: vec!["get_playlist_sources_many"],
                 description: Some(
-                    "Returns the collage covers of several playlists keyed by playlist db id.",
+                    "Returns the collage covers of several playlists keyed by playlist db id. Scoped to the caller's libraries and visible playlists; a client dispatch without a resolved credential is refused.",
                 ),
                 params: vec![param("ids", Vec::<u64>::luau_type())],
                 returns: vec![LuauType::map(
                     u64::luau_type(),
                     Vec::<CoverInfo>::luau_type(),
                 )],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["artwork"],
+                description: Some(
+                    "`get` read as the system. Ignores library and playlist visibility, including private playlists, so it is only for public artwork routes, which must serve nothing from it but the image bytes.",
+                ),
+                params: vec![param("id", args::resolve_id_type())],
+                returns: vec![Option::<CoverInfo>::luau_type()],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["artwork_many"],
+                description: Some(
+                    "`get_many` read as the system. Ignores library and playlist visibility, including private playlists, so it is only for public artwork routes, which must serve nothing from it but the image bytes.",
+                ),
+                params: vec![param("ids", Vec::<u64>::luau_type())],
+                returns: vec![LuauType::map(
+                    u64::luau_type(),
+                    Option::<CoverInfo>::luau_type(),
+                )],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["artwork_playlist_sources"],
+                description: Some(
+                    "`get_playlist_sources` read as the system. Ignores library and playlist visibility, including private playlists, so it is only for public artwork routes, which must serve nothing from it but the image bytes.",
+                ),
+                params: vec![param("id", args::resolve_id_type())],
+                returns: vec![Vec::<CoverInfo>::luau_type()],
                 yields: true,
             },
         ],

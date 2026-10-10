@@ -59,8 +59,7 @@ use crate::{
             IdIncludes,
             apply_id_links,
             id_link_targets,
-            project_entities,
-            project_entity,
+            project_visible_entities,
         },
         providers::{
             provider_registry,
@@ -125,6 +124,7 @@ fn query_callback(
     let request: luau::Table = frame.args.read_named("request")?;
     let (resolve_id, includes, library_id) = parse_query_request(frame.vm, &request)?;
     let link_vm = link_generator_vm(&frame, &includes)?;
+    let principal = crate::plugins::auth::dispatch_principal(&frame.context)?;
     let db = db::get(frame.vm)?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -134,14 +134,22 @@ fn query_callback(
                     .to_query_id(db)
                     .map_err(crate::plugins::runtime_error)?
                     .ok_or_else(|| crate::plugins::runtime_error("could not resolve id"))?;
-                let projection = project_entity(db, query_id, &includes, library_id, id_includes)
-                    .map_err(crate::plugins::runtime_error)?;
-                Ok(vec![projection])
+                let viewer = crate::plugins::catalog::viewer(db, principal)?;
+                let projections = project_visible_entities(
+                    db,
+                    &viewer,
+                    vec![query_id],
+                    &includes,
+                    library_id,
+                    id_includes,
+                )
+                .map_err(crate::plugins::runtime_error)?;
+                Ok(projections.into_iter().flatten().collect())
             })
             .await?;
         let projection = projections
             .pop()
-            .ok_or_else(|| crate::plugins::runtime_error("projection missing"))?;
+            .ok_or_else(|| crate::plugins::runtime_error("could not resolve id"))?;
 
         let value = match (kind, projection) {
             (ProjectionKind::Any, projection) => projection_to_luau_owned(projection)?,
@@ -219,12 +227,14 @@ fn query_many_callback(
     let request: luau::Table = frame.args.read_named("request")?;
     let (ids, includes, library_id) = parse_query_many_request(frame.vm, &request)?;
     let link_vm = link_generator_vm(&frame, &includes)?;
+    let principal = crate::plugins::auth::dispatch_principal(&frame.context)?;
     let db = db::get(frame.vm)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let mut keys = Vec::new();
         let projections =
             project_with_links(db, link_vm, &includes, library_id, |db, id_includes| {
+                let mut resolved_keys = Vec::new();
                 let mut query_ids = Vec::new();
                 for (key, resolve_id) in ids {
                     let Some(query_id) = resolve_id
@@ -233,11 +243,27 @@ fn query_many_callback(
                     else {
                         continue;
                     };
-                    keys.push(key);
+                    resolved_keys.push(key);
                     query_ids.push(query_id);
                 }
-                project_entities(db, query_ids, &includes, library_id, id_includes)
-                    .map_err(crate::plugins::runtime_error)
+                let viewer = crate::plugins::catalog::viewer(db, principal)?;
+                let projections = project_visible_entities(
+                    db,
+                    &viewer,
+                    query_ids,
+                    &includes,
+                    library_id,
+                    id_includes,
+                )
+                .map_err(crate::plugins::runtime_error)?;
+                let mut visible = Vec::with_capacity(projections.len());
+                for (key, projection) in resolved_keys.into_iter().zip(projections) {
+                    if let Some(projection) = projection {
+                        keys.push(key);
+                        visible.push(projection);
+                    }
+                }
+                Ok(visible)
             })
             .await?;
 
