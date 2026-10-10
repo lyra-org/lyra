@@ -22,34 +22,7 @@ use harmony_luau::{
 };
 
 use crate::plugins::args;
-use crate::plugins::db::{
-    self,
-    DbAsync,
-};
-
-#[derive(Clone, Default)]
-pub(crate) struct TrackSourcesModuleStore {
-    db: Option<DbAsync>,
-}
-
-impl TrackSourcesModuleStore {
-    #[cfg(test)]
-    pub(crate) fn empty() -> Self {
-        Self { db: None }
-    }
-
-    pub(crate) fn with_db(db: DbAsync) -> Self {
-        Self { db: Some(db) }
-    }
-
-    fn db(&self) -> luau::runtime::Result<DbAsync> {
-        self.db.clone().ok_or_else(|| {
-            crate::plugins::runtime_error(
-                "lyra/track_sources requires a database-backed plugin executor",
-            )
-        })
-    }
-}
+use crate::plugins::db;
 
 struct TrackSourcesModule;
 
@@ -94,13 +67,7 @@ fn get_primary_source_key_callback(
         return Ok(luau::ScheduledFuture::new(async { Ok(luau::Value::Nil) }));
     }
 
-    let store = frame
-        .vm
-        .data()
-        .get::<TrackSourcesModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
@@ -121,13 +88,7 @@ fn get_primary_container_callback(
         return Ok(luau::ScheduledFuture::new(async { Ok(luau::Value::Nil) }));
     }
 
-    let store = frame
-        .vm
-        .data()
-        .get::<TrackSourcesModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
@@ -142,13 +103,7 @@ fn get_primary_containers_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids_table: luau::Table = frame.args.read_named("track_ids")?;
     let ids = args::unique_ids(frame.vm, &ids_table)?;
-    let store = frame
-        .vm
-        .data()
-        .get::<TrackSourcesModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;

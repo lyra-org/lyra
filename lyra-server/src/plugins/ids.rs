@@ -75,14 +75,9 @@ fn get_id_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let db_id: i64 = frame.args.read_named("db_id")?;
-    let store = frame
-        .vm
-        .data()
-        .get::<IdsLookupModuleStore>()?
-        .as_ref()
-        .clone();
+    let db = db::get_optional(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
-        store.find_id_by_db_id(DbId(db_id)).await
+        find_id_by_db_id(db, DbId(db_id)).await
     }))
 }
 fn get_ids_callback(
@@ -90,14 +85,9 @@ fn get_ids_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let table: luau::Table = frame.args.read_named("db_ids")?;
     let ids = args::unique_ids(frame.vm, &table)?;
-    let store = frame
-        .vm
-        .data()
-        .get::<IdsLookupModuleStore>()?
-        .as_ref()
-        .clone();
+    let db = db::get_optional(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
-        let resolved = store.find_ids_by_db_ids(&ids).await?;
+        let resolved = find_ids_by_db_ids(db, &ids).await?;
 
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, ids.len());
         for id in ids {
@@ -116,14 +106,9 @@ fn get_db_id_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let id: String = frame.args.read_named("id")?;
-    let store = frame
-        .vm
-        .data()
-        .get::<IdsLookupModuleStore>()?
-        .as_ref()
-        .clone();
+    let db = db::get_optional(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
-        Ok(store.find_node_id_by_id(&id).await?.map(|id| id.0))
+        Ok(find_node_id_by_id(db, &id).await?.map(|id| id.0))
     }))
 }
 fn get_db_ids_callback(
@@ -131,15 +116,10 @@ fn get_db_ids_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let table: luau::Table = frame.args.read_named("ids")?;
     let ids = parse_strings(frame.vm, &table)?;
-    let store = frame
-        .vm
-        .data()
-        .get::<IdsLookupModuleStore>()?
-        .as_ref()
-        .clone();
+    let db = db::get_optional(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let str_refs = ids.iter().map(String::as_str).collect::<Vec<_>>();
-        let resolved = store.find_node_ids_by_ids(&str_refs).await?;
+        let resolved = find_node_ids_by_ids(db, &str_refs).await?;
 
         let mut table = luau::OwnedTable::with_capacity(0, ids.len());
         for id in ids {
@@ -154,57 +134,48 @@ fn get_db_ids_callback(
         Ok(table)
     }))
 }
-#[derive(Clone, Default)]
-pub(crate) struct IdsLookupModuleStore {
+async fn find_id_by_db_id(
     db: Option<db::DbAsync>,
+    db_id: DbId,
+) -> luau::runtime::Result<Option<String>> {
+    let Some(db) = db else {
+        return Ok(None);
+    };
+    let db = db.read().await;
+    db::lookup::find_id_by_db_id(&*db, db_id).map_err(crate::plugins::runtime_error)
 }
-impl IdsLookupModuleStore {
-    #[cfg(test)]
-    pub(crate) fn empty() -> Self {
-        Self { db: None }
-    }
 
-    pub(crate) fn with_db(db: db::DbAsync) -> Self {
-        Self { db: Some(db) }
-    }
+async fn find_ids_by_db_ids(
+    db: Option<db::DbAsync>,
+    ids: &[DbId],
+) -> luau::runtime::Result<std::collections::HashMap<DbId, String>> {
+    let Some(db) = db else {
+        return Ok(std::collections::HashMap::new());
+    };
+    let db = db.read().await;
+    db::lookup::find_ids_by_db_ids(&*db, ids).map_err(crate::plugins::runtime_error)
+}
 
-    async fn find_id_by_db_id(&self, db_id: DbId) -> luau::runtime::Result<Option<String>> {
-        let Some(db) = &self.db else {
-            return Ok(None);
-        };
-        let db = db.read().await;
-        db::lookup::find_id_by_db_id(&*db, db_id).map_err(crate::plugins::runtime_error)
-    }
+async fn find_node_id_by_id(
+    db: Option<db::DbAsync>,
+    id: &str,
+) -> luau::runtime::Result<Option<DbId>> {
+    let Some(db) = db else {
+        return Ok(None);
+    };
+    let db = db.read().await;
+    db::lookup::find_node_id_by_id(&*db, id).map_err(crate::plugins::runtime_error)
+}
 
-    async fn find_ids_by_db_ids(
-        &self,
-        ids: &[DbId],
-    ) -> luau::runtime::Result<std::collections::HashMap<DbId, String>> {
-        let Some(db) = &self.db else {
-            return Ok(std::collections::HashMap::new());
-        };
-        let db = db.read().await;
-        db::lookup::find_ids_by_db_ids(&*db, ids).map_err(crate::plugins::runtime_error)
-    }
-
-    async fn find_node_id_by_id(&self, id: &str) -> luau::runtime::Result<Option<DbId>> {
-        let Some(db) = &self.db else {
-            return Ok(None);
-        };
-        let db = db.read().await;
-        db::lookup::find_node_id_by_id(&*db, id).map_err(crate::plugins::runtime_error)
-    }
-
-    async fn find_node_ids_by_ids(
-        &self,
-        ids: &[&str],
-    ) -> luau::runtime::Result<std::collections::HashMap<String, DbId>> {
-        let Some(db) = &self.db else {
-            return Ok(std::collections::HashMap::new());
-        };
-        let db = db.read().await;
-        db::lookup::find_node_ids_by_ids(&*db, ids).map_err(crate::plugins::runtime_error)
-    }
+async fn find_node_ids_by_ids(
+    db: Option<db::DbAsync>,
+    ids: &[&str],
+) -> luau::runtime::Result<std::collections::HashMap<String, DbId>> {
+    let Some(db) = db else {
+        return Ok(std::collections::HashMap::new());
+    };
+    let db = db.read().await;
+    db::lookup::find_node_ids_by_ids(&*db, ids).map_err(crate::plugins::runtime_error)
 }
 fn parse_strings(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<String>> {
     let mut seen = HashSet::new();

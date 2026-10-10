@@ -141,9 +141,9 @@ fn add_callback(
     let target_id = read_db_id_arg(&mut frame.args, "target_id")?;
     let tag: String = frame.args.read_named("tag")?;
     let color: String = frame.args.read_named("color")?;
-    let store = frame.vm.data().get::<TagsModuleStore>()?.as_ref().clone();
+    let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
-        let canonical = store.add(principal, target_id, tag, color).await?;
+        let canonical = add(db, principal, target_id, tag, color).await?;
         Ok(luau::Value::String(canonical.into_bytes()))
     }))
 }
@@ -153,9 +153,9 @@ fn remove_callback(
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
     let target_id = read_db_id_arg(&mut frame.args, "target_id")?;
     let tag: String = frame.args.read_named("tag")?;
-    let store = frame.vm.data().get::<TagsModuleStore>()?.as_ref().clone();
+    let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
-        store.remove(principal, target_id, tag).await?;
+        remove(db, principal, target_id, tag).await?;
         Ok(())
     }))
 }
@@ -165,9 +165,9 @@ fn has_callback(
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
     let target_id = read_db_id_arg(&mut frame.args, "target_id")?;
     let tag: String = frame.args.read_named("tag")?;
-    let store = frame.vm.data().get::<TagsModuleStore>()?.as_ref().clone();
+    let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
-        let has_tag = store.has(principal, target_id, tag).await?;
+        let has_tag = has(db, principal, target_id, tag).await?;
         Ok(luau::Value::Boolean(has_tag))
     }))
 }
@@ -178,9 +178,9 @@ fn has_many_callback(
     let target_ids: luau::Table = frame.args.read_named("target_ids")?;
     let target_ids = args::unique_ids(frame.vm, &target_ids)?;
     let tag: String = frame.args.read_named("tag")?;
-    let store = frame.vm.data().get::<TagsModuleStore>()?.as_ref().clone();
+    let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
-        let result = store.has_many(principal, target_ids.clone(), tag).await?;
+        let result = has_many(db, principal, target_ids.clone(), tag).await?;
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, target_ids.len());
         for id in target_ids {
             table.set_key(
@@ -196,9 +196,9 @@ fn get_for_target_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
     let target_id = read_db_id_arg(&mut frame.args, "target_id")?;
-    let store = frame.vm.data().get::<TagsModuleStore>()?.as_ref().clone();
+    let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
-        let tags = store.get_for_target(principal, target_id).await?;
+        let tags = get_for_target(db, principal, target_id).await?;
         Ok(luau::Value::TableData(tag_info_array(tags)))
     }))
 }
@@ -208,11 +208,9 @@ fn get_for_targets_many_callback(
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
     let target_ids: luau::Table = frame.args.read_named("target_ids")?;
     let target_ids = args::unique_ids(frame.vm, &target_ids)?;
-    let store = frame.vm.data().get::<TagsModuleStore>()?.as_ref().clone();
+    let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
-        let mut result = store
-            .get_for_targets_many(principal, target_ids.clone())
-            .await?;
+        let mut result = get_for_targets_many(db, principal, target_ids.clone()).await?;
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, target_ids.len());
         for id in target_ids {
             table.set_key(
@@ -228,128 +226,99 @@ fn get_tagged_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
     let tag: String = frame.args.read_named("tag")?;
-    let store = frame.vm.data().get::<TagsModuleStore>()?.as_ref().clone();
+    let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
-        let ids = store.get_tagged(principal, tag).await?;
+        let ids = get_tagged(db, principal, tag).await?;
         Ok(luau::Value::TableData(db_id_array(ids)))
     }))
 }
-#[derive(Clone, Default)]
-pub(crate) struct TagsModuleStore {
-    db: Option<db::DbAsync>,
+async fn add(
+    db: db::DbAsync,
+    principal: Principal,
+    target_id: DbId,
+    tag: String,
+    color: String,
+) -> luau::runtime::Result<String> {
+    let mut db = db.write().await;
+    let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
+    let (_, canonical) = tag_service::create_by_db_id(&mut db, user_id, target_id, &tag, &color)
+        .map_err(crate::plugins::runtime_error)?;
+    Ok(canonical)
 }
-impl TagsModuleStore {
-    #[cfg(test)]
-    pub(crate) fn empty() -> Self {
-        Self { db: None }
-    }
 
-    pub(crate) fn with_db(db: db::DbAsync) -> Self {
-        Self { db: Some(db) }
-    }
+async fn remove(
+    db: db::DbAsync,
+    principal: Principal,
+    target_id: DbId,
+    tag: String,
+) -> luau::runtime::Result<()> {
+    let mut db = db.write().await;
+    let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
+    tag_service::remove_target_by_db_id(&mut db, user_id, target_id, &tag)
+        .map_err(crate::plugins::runtime_error)
+}
 
-    async fn add(
-        &self,
-        principal: Principal,
-        target_id: DbId,
-        tag: String,
-        color: String,
-    ) -> luau::runtime::Result<String> {
-        let db = self.db()?;
-        let mut db = db.write().await;
-        let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let (_, canonical) =
-            tag_service::create_by_db_id(&mut db, user_id, target_id, &tag, &color)
-                .map_err(crate::plugins::runtime_error)?;
-        Ok(canonical)
-    }
+async fn has(
+    db: db::DbAsync,
+    principal: Principal,
+    target_id: DbId,
+    tag: String,
+) -> luau::runtime::Result<bool> {
+    let db = db.read().await;
+    let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
+    tag_service::has_target_by_db_id(&db, user_id, target_id, &tag)
+        .map_err(crate::plugins::runtime_error)
+}
 
-    async fn remove(
-        &self,
-        principal: Principal,
-        target_id: DbId,
-        tag: String,
-    ) -> luau::runtime::Result<()> {
-        let db = self.db()?;
-        let mut db = db.write().await;
-        let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        tag_service::remove_target_by_db_id(&mut db, user_id, target_id, &tag)
-            .map_err(crate::plugins::runtime_error)
-    }
+async fn has_many(
+    db: db::DbAsync,
+    principal: Principal,
+    target_ids: Vec<DbId>,
+    tag: String,
+) -> luau::runtime::Result<std::collections::HashMap<DbId, bool>> {
+    let db = db.read().await;
+    let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
+    tag_service::has_targets_by_db_id(&db, user_id, &target_ids, &tag)
+        .map_err(crate::plugins::runtime_error)
+}
 
-    async fn has(
-        &self,
-        principal: Principal,
-        target_id: DbId,
-        tag: String,
-    ) -> luau::runtime::Result<bool> {
-        let db = self.db()?;
-        let db = db.read().await;
-        let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        tag_service::has_target_by_db_id(&db, user_id, target_id, &tag)
-            .map_err(crate::plugins::runtime_error)
-    }
+async fn get_for_target(
+    db: db::DbAsync,
+    principal: Principal,
+    target_id: DbId,
+) -> luau::runtime::Result<Vec<TagInfo>> {
+    let db = db.read().await;
+    let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
+    let tags = tag_service::get_for_target_by_db_id(&db, user_id, target_id)
+        .map_err(crate::plugins::runtime_error)?;
+    Ok(tags.into_iter().map(tag_to_info).collect())
+}
 
-    async fn has_many(
-        &self,
-        principal: Principal,
-        target_ids: Vec<DbId>,
-        tag: String,
-    ) -> luau::runtime::Result<std::collections::HashMap<DbId, bool>> {
-        let db = self.db()?;
-        let db = db.read().await;
-        let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        tag_service::has_targets_by_db_id(&db, user_id, &target_ids, &tag)
-            .map_err(crate::plugins::runtime_error)
-    }
+async fn get_for_targets_many(
+    db: db::DbAsync,
+    principal: Principal,
+    target_ids: Vec<DbId>,
+) -> luau::runtime::Result<std::collections::HashMap<DbId, Vec<TagInfo>>> {
+    let db = db.read().await;
+    let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
+    let result = tag_service::get_for_targets_many_by_db_id(&db, user_id, &target_ids)
+        .map_err(crate::plugins::runtime_error)?;
+    Ok(result
+        .into_iter()
+        .map(|(id, tags)| (id, tags.into_iter().map(tag_to_info).collect()))
+        .collect())
+}
 
-    async fn get_for_target(
-        &self,
-        principal: Principal,
-        target_id: DbId,
-    ) -> luau::runtime::Result<Vec<TagInfo>> {
-        let db = self.db()?;
-        let db = db.read().await;
-        let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let tags = tag_service::get_for_target_by_db_id(&db, user_id, target_id)
-            .map_err(crate::plugins::runtime_error)?;
-        Ok(tags.into_iter().map(tag_to_info).collect())
-    }
-
-    async fn get_for_targets_many(
-        &self,
-        principal: Principal,
-        target_ids: Vec<DbId>,
-    ) -> luau::runtime::Result<std::collections::HashMap<DbId, Vec<TagInfo>>> {
-        let db = self.db()?;
-        let db = db.read().await;
-        let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let result = tag_service::get_for_targets_many_by_db_id(&db, user_id, &target_ids)
-            .map_err(crate::plugins::runtime_error)?;
-        Ok(result
-            .into_iter()
-            .map(|(id, tags)| (id, tags.into_iter().map(tag_to_info).collect()))
-            .collect())
-    }
-
-    async fn get_tagged(
-        &self,
-        principal: Principal,
-        tag: String,
-    ) -> luau::runtime::Result<Vec<DbId>> {
-        let db = self.db()?;
-        let db = db.read().await;
-        let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let (ids, _canonical) =
-            tag_service::get_tagged(&db, user_id, &tag).map_err(crate::plugins::runtime_error)?;
-        Ok(ids)
-    }
-
-    fn db(&self) -> luau::runtime::Result<db::DbAsync> {
-        self.db
-            .clone()
-            .ok_or_else(|| luau::Error::Runtime("lyra/tags database is unavailable".to_string()))
-    }
+async fn get_tagged(
+    db: db::DbAsync,
+    principal: Principal,
+    tag: String,
+) -> luau::runtime::Result<Vec<DbId>> {
+    let db = db.read().await;
+    let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
+    let (ids, _canonical) =
+        tag_service::get_tagged(&db, user_id, &tag).map_err(crate::plugins::runtime_error)?;
+    Ok(ids)
 }
 fn tag_info_array(tags: Vec<TagInfo>) -> luau::OwnedTable {
     let mut table = luau::OwnedTable::with_capacity(tags.len(), 0);

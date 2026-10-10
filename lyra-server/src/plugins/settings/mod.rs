@@ -11,7 +11,6 @@ mod registry;
 mod tests;
 
 pub(crate) use self::luau::{
-    PluginSettingsModuleStore,
     declare_settings_spec,
     declare_user_settings_spec,
     user_settings_accessor_spec,

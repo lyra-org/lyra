@@ -30,7 +30,7 @@ use crate::plugins::catalog;
 use crate::services::catalog::releases::ReleaseKey;
 use crate::{
     plugins::db::{
-        DbAsync,
+        self,
         Release,
     },
     services::{
@@ -45,30 +45,6 @@ use crate::{
         releases as release_service,
     },
 };
-
-#[derive(Clone, Default)]
-pub(crate) struct ReleasesModuleStore {
-    db: Option<DbAsync>,
-}
-
-impl ReleasesModuleStore {
-    #[cfg(test)]
-    pub(crate) fn empty() -> Self {
-        Self { db: None }
-    }
-
-    pub(crate) fn with_db(db: DbAsync) -> Self {
-        Self { db: Some(db) }
-    }
-
-    fn db(&self) -> luau::runtime::Result<DbAsync> {
-        self.db.clone().ok_or_else(|| {
-            crate::plugins::runtime_error(
-                "lyra/releases requires a database-backed plugin executor",
-            )
-        })
-    }
-}
 
 struct ReleasesModule;
 
@@ -133,21 +109,21 @@ fn similar_spec() -> FunctionSpec {
 fn get_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let db = frame.vm.data().get::<ReleasesModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
     catalog::keyed_lookup(&mut frame, db, "ids", lookups::get::<Releases>)
 }
 
 fn by_track_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let db = frame.vm.data().get::<ReleasesModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
     catalog::keyed_lookup(&mut frame, db, "track_ids", lookups::releases_by_track)
 }
 
 fn by_genre_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let db = frame.vm.data().get::<ReleasesModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
     catalog::keyed_lookup(&mut frame, db, "genre_ids", lookups::releases_by_genre)
 }
 
@@ -158,7 +134,7 @@ fn query_callback(
     let filter = read_filter(frame.vm, &opts)?;
     let request = catalog::read_query::<Releases>(frame.vm, &opts, filter)?;
     let principal = crate::plugins::auth::dispatch_principal(&frame.context)?;
-    let db = frame.vm.data().get::<ReleasesModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;

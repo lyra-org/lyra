@@ -36,7 +36,6 @@ use serde::{
 
 use crate::plugins::args;
 use crate::{
-    STATE,
     plugins::db::{
         self,
         NodeId,
@@ -379,13 +378,14 @@ fn get_callback(
     let provider: Option<String> = frame.args.read_optional_named("provider")?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
+    let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let track_db_id = DbId(track_id);
         if track_db_id.0 <= 0 {
             return Ok(luau::Value::Nil);
         }
 
-        let db = STATE.db.read().await;
+        let db = db.read().await;
         if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)
             .map_err(crate::plugins::runtime_error)?
         {
@@ -426,6 +426,7 @@ fn upsert_personal_callback(
     let upload: PersonalLyricsUploadInput = from_luau_json(frame.vm, &upload_value)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
+    let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let track_db_id = args::positive_id(track_id, "track_id")?;
         let now = lyrics_service::now_ms().map_err(crate::plugins::runtime_error)?;
@@ -438,7 +439,7 @@ fn upsert_personal_callback(
             lyrics_service::input_from_upload(&content_type, body.as_bytes(), language, now)
                 .map_err(crate::plugins::runtime_error)?;
 
-        let mut db = STATE.db.write().await;
+        let mut db = db.write().await;
         if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)
             .map_err(crate::plugins::runtime_error)?
         {
@@ -462,9 +463,10 @@ fn delete_personal_for_track_callback(
     let track_id: i64 = frame.args.read_named("track_id")?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
+    let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let track_db_id = args::positive_id(track_id, "track_id")?;
-        let mut db = STATE.db.write().await;
+        let mut db = db.write().await;
         let deleted = lyrics_service::delete_personal_lyrics_for_track_by_db_id(
             &mut db,
             track_db_id,
@@ -481,11 +483,12 @@ fn delete_for_track_callback(
     let track_id: i64 = frame.args.read_named("track_id")?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
+    let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let track_db_id = args::positive_id(track_id, "track_id")?;
         crate::services::auth::require_permission(&principal, db::Permission::ManageMetadata)
             .map_err(crate::plugins::runtime_error)?;
-        let mut db = STATE.db.write().await;
+        let mut db = db.write().await;
         if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)
             .map_err(crate::plugins::runtime_error)?
         {
@@ -503,13 +506,14 @@ fn has_callback(
     let track_id: i64 = frame.args.read_named("track_id")?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
+    let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let track_db_id = DbId(track_id);
         if track_db_id.0 <= 0 {
             return Ok(luau::Value::Boolean(false));
         }
 
-        let db = STATE.db.read().await;
+        let db = db.read().await;
         if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)
             .map_err(crate::plugins::runtime_error)?
         {
@@ -535,8 +539,9 @@ fn has_many_callback(
     let track_ids = args::unique_ids(frame.vm, &track_ids_table)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
+    let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
-        let db = STATE.db.read().await;
+        let db = db.read().await;
         let providers = db::providers::get(&db).map_err(crate::plugins::runtime_error)?;
         let owner = Some(crate::plugins::auth::require_user_db_id(&principal, &db)?);
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, track_ids.len());

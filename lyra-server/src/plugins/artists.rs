@@ -37,11 +37,11 @@ use crate::plugins::catalog;
 use crate::services::catalog::artists::ArtistKey;
 use crate::{
     plugins::db::{
+        self,
         Artist,
         ArtistRelationType,
         ArtistType,
         CreditType,
-        DbAsync,
     },
     services::{
         self,
@@ -63,28 +63,6 @@ use crate::{
         },
     },
 };
-
-#[derive(Clone, Default)]
-pub(crate) struct ArtistsModuleStore {
-    db: Option<DbAsync>,
-}
-
-impl ArtistsModuleStore {
-    #[cfg(test)]
-    pub(crate) fn empty() -> Self {
-        Self { db: None }
-    }
-
-    pub(crate) fn with_db(db: DbAsync) -> Self {
-        Self { db: Some(db) }
-    }
-
-    fn db(&self) -> luau::runtime::Result<DbAsync> {
-        self.db.clone().ok_or_else(|| {
-            crate::plugins::runtime_error("lyra/artists requires a database-backed plugin executor")
-        })
-    }
-}
 
 struct ArtistsModule;
 
@@ -116,7 +94,7 @@ fn artwork_id_by_name_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let name: String = frame.args.read_named("name")?;
-    let db = frame.vm.data().get::<ArtistsModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let name = name.trim();
         if name.is_empty() {
@@ -177,14 +155,14 @@ fn relations_spec() -> FunctionSpec {
 fn get_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let db = frame.vm.data().get::<ArtistsModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
     catalog::keyed_lookup(&mut frame, db, "ids", lookups::get::<Artists>)
 }
 
 fn by_release_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let db = frame.vm.data().get::<ArtistsModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
     catalog::keyed_lookup(
         &mut frame,
         db,
@@ -196,7 +174,7 @@ fn by_release_callback(
 fn by_track_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let db = frame.vm.data().get::<ArtistsModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
     catalog::keyed_lookup(
         &mut frame,
         db,
@@ -208,7 +186,7 @@ fn by_track_callback(
 fn relations_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let db = frame.vm.data().get::<ArtistsModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
     catalog::keyed_lookup(&mut frame, db, "ids", relation_infos)
 }
 
@@ -235,7 +213,7 @@ fn query_callback(
     let filter = read_filter(frame.vm, &opts)?;
     let request = catalog::read_query::<Artists>(frame.vm, &opts, filter)?;
     let principal = crate::plugins::auth::dispatch_principal(&frame.context)?;
-    let db = frame.vm.data().get::<ArtistsModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;

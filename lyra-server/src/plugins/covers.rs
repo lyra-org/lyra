@@ -43,28 +43,6 @@ use crate::plugins::db::{
     ResolveId,
 };
 
-#[derive(Clone, Default)]
-pub(crate) struct CoversModuleStore {
-    db: Option<DbAsync>,
-}
-
-impl CoversModuleStore {
-    #[cfg(test)]
-    pub(crate) fn empty() -> Self {
-        Self { db: None }
-    }
-
-    pub(crate) fn with_db(db: DbAsync) -> Self {
-        Self { db: Some(db) }
-    }
-
-    fn db(&self) -> luau::runtime::Result<DbAsync> {
-        self.db.clone().ok_or_else(|| {
-            crate::plugins::runtime_error("lyra/covers requires a database-backed plugin executor")
-        })
-    }
-}
-
 enum CoverValidity {
     Valid(Cover),
     NotFound,
@@ -122,7 +100,7 @@ fn get_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let id = args::resolve_id(frame.args.read_named::<luau::Value>("id")?)?;
-    let db = frame.vm.data().get::<CoversModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let (resolved_cover, stale_owners) = {
@@ -155,7 +133,7 @@ fn get_many_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids: luau::Table = frame.args.read_named("ids")?;
     let item_ids = args::unique_ids(frame.vm, &ids)?;
-    let db = frame.vm.data().get::<CoversModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let (resolved, stale_owners) = {
@@ -188,7 +166,7 @@ fn get_playlist_sources_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let id = args::resolve_id(frame.args.read_named::<luau::Value>("id")?)?;
-    let db = frame.vm.data().get::<CoversModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let (sources, stale_owners) = {
@@ -220,7 +198,7 @@ fn get_playlist_sources_many_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids: luau::Table = frame.args.read_named("ids")?;
     let playlist_ids = args::unique_ids(frame.vm, &ids)?;
-    let db = frame.vm.data().get::<CoversModuleStore>()?.db()?;
+    let db = db::get(frame.vm)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let (resolved, stale_owners) = {

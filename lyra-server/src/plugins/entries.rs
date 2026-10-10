@@ -28,32 +28,9 @@ use serde::Serialize;
 use crate::plugins::args;
 use crate::plugins::db::{
     self,
-    DbAsync,
     ResolveId,
 };
 use crate::services;
-
-#[derive(Clone, Default)]
-pub(crate) struct EntriesModuleStore {
-    db: Option<DbAsync>,
-}
-
-impl EntriesModuleStore {
-    #[cfg(test)]
-    pub(crate) fn empty() -> Self {
-        Self { db: None }
-    }
-
-    pub(crate) fn with_db(db: DbAsync) -> Self {
-        Self { db: Some(db) }
-    }
-
-    fn db(&self) -> luau::runtime::Result<DbAsync> {
-        self.db.clone().ok_or_else(|| {
-            crate::plugins::runtime_error("lyra/entries requires a database-backed plugin executor")
-        })
-    }
-}
 
 struct EntriesModule;
 
@@ -81,13 +58,7 @@ fn get_callback(
         .map(args::resolve_id)
         .transpose()?;
     let principal = crate::plugins::auth::dispatch_principal(&frame.context)?;
-    let store = frame
-        .vm
-        .data()
-        .get::<EntriesModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;

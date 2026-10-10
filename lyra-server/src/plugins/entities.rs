@@ -69,30 +69,6 @@ use crate::{
     },
 };
 
-#[derive(Clone, Default)]
-pub(crate) struct EntitiesModuleStore {
-    db: Option<DbAsync>,
-}
-
-impl EntitiesModuleStore {
-    #[cfg(test)]
-    pub(crate) fn empty() -> Self {
-        Self { db: None }
-    }
-
-    pub(crate) fn with_db(db: DbAsync) -> Self {
-        Self { db: Some(db) }
-    }
-
-    fn db(&self) -> luau::runtime::Result<DbAsync> {
-        self.db.clone().ok_or_else(|| {
-            crate::plugins::runtime_error(
-                "lyra/entities requires a database-backed plugin executor",
-            )
-        })
-    }
-}
-
 struct EntitiesModule;
 
 pub(crate) fn module_spec() -> ModuleSpec {
@@ -149,13 +125,7 @@ fn query_callback(
     let request: luau::Table = frame.args.read_named("request")?;
     let (resolve_id, includes, library_id) = parse_query_request(frame.vm, &request)?;
     let link_vm = link_generator_vm(&frame, &includes)?;
-    let store = frame
-        .vm
-        .data()
-        .get::<EntitiesModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let mut projections =
@@ -225,13 +195,7 @@ fn get_type_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let id_value: luau::Value = frame.args.read_named("id")?;
     let resolve_id = args::resolve_id(id_value)?;
-    let store = frame
-        .vm
-        .data()
-        .get::<EntitiesModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
@@ -255,13 +219,7 @@ fn query_many_callback(
     let request: luau::Table = frame.args.read_named("request")?;
     let (ids, includes, library_id) = parse_query_many_request(frame.vm, &request)?;
     let link_vm = link_generator_vm(&frame, &includes)?;
-    let store = frame
-        .vm
-        .data()
-        .get::<EntitiesModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let mut keys = Vec::new();

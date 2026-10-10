@@ -18,9 +18,9 @@ use agdb::DbId;
 use harmony_luau as luau;
 use serde_json::Value as JsonValue;
 
-use super::MetadataModuleStore;
 use super::parsing::parse_custom_field_version;
 use crate::plugins::db::{
+    DbAsync,
     LayerFields,
     MetadataField,
     normalize_value,
@@ -29,7 +29,7 @@ use crate::plugins::db::{
 #[harmony_macros::userdata(name = "Layer", description = "Metadata layer builder.")]
 #[derive(Clone)]
 pub(super) struct MetadataLayer {
-    store: MetadataModuleStore,
+    db: Option<DbAsync>,
     state: Arc<Mutex<LayerBuilderState>>,
 }
 
@@ -80,7 +80,7 @@ impl MetadataLayer {
     }
 
     fn save(&self) -> luau::runtime::Result<luau::ScheduledFuture> {
-        let Some(db) = self.store.db.clone() else {
+        let Some(db) = self.db.clone() else {
             return Err(crate::plugins::runtime_error(
                 "metadata layer save requires a database-backed plugin executor",
             ));
@@ -165,12 +165,12 @@ impl MetadataLayer {
     pub(super) fn new_value(
         vm: &luau::Vm,
         origin: &luau::ChunkOrigin,
-        store: MetadataModuleStore,
+        db: Option<DbAsync>,
         node_id: DbId,
         provider_id: String,
     ) -> luau::runtime::Result<luau::Value> {
         let layer = Self {
-            store,
+            db,
             state: Arc::new(Mutex::new(LayerBuilderState {
                 node_id,
                 provider_id,

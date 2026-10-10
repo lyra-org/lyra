@@ -15,10 +15,7 @@ use harmony_core::{
     ModuleSpec,
 };
 
-use crate::plugins::db::{
-    self as server_db,
-    DbAsync,
-};
+use crate::plugins::db as server_db;
 use crate::services::EntityType;
 
 use self::layer::MetadataLayer;
@@ -33,22 +30,6 @@ pub(crate) use self::registry::{
     MetadataCallback,
     MetadataCallbackRegistry,
 };
-
-#[derive(Clone, Default)]
-pub(crate) struct MetadataModuleStore {
-    db: Option<DbAsync>,
-}
-
-impl MetadataModuleStore {
-    #[cfg(test)]
-    pub(crate) fn empty() -> Self {
-        Self { db: None }
-    }
-
-    pub(crate) fn with_db(db: DbAsync) -> Self {
-        Self { db: Some(db) }
-    }
-}
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/metadata")

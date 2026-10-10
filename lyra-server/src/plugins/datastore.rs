@@ -44,7 +44,7 @@ struct DataStoreModule;
 #[harmony_macros::userdata(name = "DataStore", description = "A named persistent JSON store.")]
 #[derive(Clone)]
 struct DataStoreHandle {
-    store: DataStoreModuleStore,
+    db: DbAsync,
     datastore_id: agdb::DbId,
 }
 
@@ -56,7 +56,7 @@ impl DataStoreHandle {
         returns(Option<JsonValue>)
     )]
     async fn get(&self, key: String) -> luau::runtime::Result<luau::Value> {
-        self.store.get(self.datastore_id, key).await
+        read_value(&self.db, self.datastore_id, key).await
     }
 
     #[harmony(
@@ -72,7 +72,7 @@ impl DataStoreHandle {
         let json = harmony_serde::luau_to_json(vm, &value, 0)?;
         let handle = self.clone();
         Ok(luau::ScheduledFuture::new(async move {
-            handle.store.set(handle.datastore_id, key, json).await
+            write_value(&handle.db, handle.datastore_id, key, json).await
         }))
     }
 
@@ -80,7 +80,7 @@ impl DataStoreHandle {
         description = "Removes an entry from this store by key. Returns whether a value was removed."
     )]
     async fn remove(&self, key: String) -> luau::runtime::Result<bool> {
-        self.store.remove(self.datastore_id, key).await
+        remove_value(&self.db, self.datastore_id, key).await
     }
 
     #[harmony(
@@ -96,7 +96,7 @@ impl DataStoreHandle {
         let keys = read_string_array(vm, &keys)?;
         let handle = self.clone();
         Ok(luau::ScheduledFuture::new(async move {
-            handle.store.get_many(handle.datastore_id, keys).await
+            read_values(&handle.db, handle.datastore_id, keys).await
         }))
     }
 
@@ -112,14 +112,13 @@ impl DataStoreHandle {
         let entries = read_json_entries(vm, &entries)?;
         let handle = self.clone();
         Ok(luau::ScheduledFuture::new(async move {
-            handle.store.set_many(handle.datastore_id, entries).await
+            write_values(&handle.db, handle.datastore_id, entries).await
         }))
     }
 
     #[harmony(description = "Removes every entry from this store. Returns the number removed.")]
     async fn clear(&self) -> luau::runtime::Result<i64> {
-        self.store
-            .clear(self.datastore_id)
+        clear_values(&self.db, self.datastore_id)
             .await
             .map(|removed| removed as i64)
     }
@@ -145,169 +144,135 @@ fn get_or_create_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let name: String = frame.args.read_named("name")?;
-    let store = frame
-        .vm
-        .data()
-        .get::<DataStoreModuleStore>()?
-        .as_ref()
-        .clone();
+    let db = db::get(frame.vm)?;
     let vm = frame.vm.clone();
     let origin = frame.context.origin.clone();
     Ok(luau::ScheduledFuture::new(async move {
-        let datastore_id = store.get_or_create(name).await?;
+        let datastore_id = get_or_create(&db, name).await?;
         let userdata = DataStoreHandle::_harmony_userdata_class().create(
             &vm,
             &origin,
-            DataStoreHandle {
-                store,
-                datastore_id,
-            },
+            DataStoreHandle { db, datastore_id },
         )?;
         Ok(userdata)
     }))
 }
 
-#[derive(Clone, Default)]
-pub(crate) struct DataStoreModuleStore {
-    db: Option<DbAsync>,
-}
-impl DataStoreModuleStore {
-    #[cfg(test)]
-    pub(crate) fn empty() -> Self {
-        Self { db: None }
-    }
-
-    pub(crate) fn with_db(db: DbAsync) -> Self {
-        Self { db: Some(db) }
-    }
-
-    async fn get_or_create(&self, name: String) -> luau::runtime::Result<agdb::DbId> {
-        let db = self.db()?;
+async fn get_or_create(db: &DbAsync, name: String) -> luau::runtime::Result<agdb::DbId> {
+    {
+        let db = db.read().await;
+        if let Some(existing) =
+            db::datastore::find_by_name(&db, &name).map_err(crate::plugins::runtime_error)?
         {
-            let db = db.read().await;
-            if let Some(existing) =
-                db::datastore::find_by_name(&db, &name).map_err(crate::plugins::runtime_error)?
-            {
-                return datastore_db_id(existing);
+            return datastore_db_id(existing);
+        }
+    }
+
+    let mut db = db.write().await;
+    let datastore =
+        db::datastore::get_or_create(&mut db, name).map_err(crate::plugins::runtime_error)?;
+    datastore_db_id(datastore)
+}
+
+async fn read_value(
+    db: &DbAsync,
+    datastore_id: agdb::DbId,
+    key: String,
+) -> luau::runtime::Result<luau::Value> {
+    let stored_value = {
+        let db = db.read().await;
+        db::datastore::get_entry(&db, datastore_id, &key)
+            .map_err(crate::plugins::runtime_error)?
+            .map(|entry| entry.value)
+    };
+    let Some(stored_value) = stored_value else {
+        return Ok(luau::Value::Nil);
+    };
+    let json: serde_json::Value =
+        serde_json::from_str(&stored_value).map_err(crate::plugins::runtime_error)?;
+    harmony_serde::json_to_luau_owned(json, 0)
+}
+
+async fn write_value(
+    db: &DbAsync,
+    datastore_id: agdb::DbId,
+    key: String,
+    json: serde_json::Value,
+) -> luau::runtime::Result<()> {
+    let json = serde_json::to_string(&json).map_err(crate::plugins::runtime_error)?;
+    let mut db = db.write().await;
+    db::datastore::upsert_entry(&mut db, datastore_id, key, json)
+        .map(|_| ())
+        .map_err(crate::plugins::runtime_error)
+}
+
+async fn remove_value(
+    db: &DbAsync,
+    datastore_id: agdb::DbId,
+    key: String,
+) -> luau::runtime::Result<bool> {
+    let mut db = db.write().await;
+    db::datastore::remove_entry(&mut db, datastore_id, &key).map_err(crate::plugins::runtime_error)
+}
+
+async fn read_values(
+    db: &DbAsync,
+    datastore_id: agdb::DbId,
+    keys: Vec<String>,
+) -> luau::runtime::Result<luau::OwnedTable> {
+    let stored_values = {
+        let db = db.read().await;
+        let mut out = Vec::with_capacity(keys.len());
+        for key in &keys {
+            out.push(
+                db::datastore::get_entry(&db, datastore_id, key)
+                    .map_err(crate::plugins::runtime_error)?
+                    .map(|entry| entry.value),
+            );
+        }
+        out
+    };
+
+    let mut table = luau::OwnedTable::with_capacity(stored_values.len(), 0);
+    for stored_value in stored_values {
+        let value = match stored_value {
+            Some(stored_value) => {
+                let json: serde_json::Value =
+                    serde_json::from_str(&stored_value).map_err(crate::plugins::runtime_error)?;
+                harmony_serde::json_to_luau_owned(json, 0)?
             }
-        }
-
-        let mut db = db.write().await;
-        let datastore =
-            db::datastore::get_or_create(&mut db, name).map_err(crate::plugins::runtime_error)?;
-        datastore_db_id(datastore)
-    }
-
-    async fn get(
-        &self,
-        datastore_id: agdb::DbId,
-        key: String,
-    ) -> luau::runtime::Result<luau::Value> {
-        let stored_value = {
-            let db = self.db()?;
-            let db = db.read().await;
-            db::datastore::get_entry(&db, datastore_id, &key)
-                .map_err(crate::plugins::runtime_error)?
-                .map(|entry| entry.value)
+            None => luau::Value::Nil,
         };
-        let Some(stored_value) = stored_value else {
-            return Ok(luau::Value::Nil);
-        };
-        let json: serde_json::Value =
-            serde_json::from_str(&stored_value).map_err(crate::plugins::runtime_error)?;
-        harmony_serde::json_to_luau_owned(json, 0)
+        table.push_array(value);
     }
+    Ok(table)
+}
 
-    async fn set(
-        &self,
-        datastore_id: agdb::DbId,
-        key: String,
-        json: serde_json::Value,
-    ) -> luau::runtime::Result<()> {
-        let json = serde_json::to_string(&json).map_err(crate::plugins::runtime_error)?;
-        let db = self.db()?;
-        let mut db = db.write().await;
-        db::datastore::upsert_entry(&mut db, datastore_id, key, json)
-            .map(|_| ())
-            .map_err(crate::plugins::runtime_error)
+async fn write_values(
+    db: &DbAsync,
+    datastore_id: agdb::DbId,
+    entries: Vec<(String, serde_json::Value)>,
+) -> luau::runtime::Result<()> {
+    let mut prepared = Vec::with_capacity(entries.len());
+    for (key, value) in entries {
+        prepared.push((
+            key,
+            serde_json::to_string(&value).map_err(crate::plugins::runtime_error)?,
+        ));
     }
-
-    async fn remove(&self, datastore_id: agdb::DbId, key: String) -> luau::runtime::Result<bool> {
-        let db = self.db()?;
-        let mut db = db.write().await;
-        db::datastore::remove_entry(&mut db, datastore_id, &key)
-            .map_err(crate::plugins::runtime_error)
+    let mut db = db.write().await;
+    for (key, value) in prepared {
+        db::datastore::upsert_entry(&mut db, datastore_id, key, value)
+            .map_err(crate::plugins::runtime_error)?;
     }
+    Ok(())
+}
 
-    async fn get_many(
-        &self,
-        datastore_id: agdb::DbId,
-        keys: Vec<String>,
-    ) -> luau::runtime::Result<luau::OwnedTable> {
-        let stored_values = {
-            let db = self.db()?;
-            let db = db.read().await;
-            let mut out = Vec::with_capacity(keys.len());
-            for key in &keys {
-                out.push(
-                    db::datastore::get_entry(&db, datastore_id, key)
-                        .map_err(crate::plugins::runtime_error)?
-                        .map(|entry| entry.value),
-                );
-            }
-            out
-        };
-
-        let mut table = luau::OwnedTable::with_capacity(stored_values.len(), 0);
-        for stored_value in stored_values {
-            let value = match stored_value {
-                Some(stored_value) => {
-                    let json: serde_json::Value = serde_json::from_str(&stored_value)
-                        .map_err(crate::plugins::runtime_error)?;
-                    harmony_serde::json_to_luau_owned(json, 0)?
-                }
-                None => luau::Value::Nil,
-            };
-            table.push_array(value);
-        }
-        Ok(table)
-    }
-
-    async fn set_many(
-        &self,
-        datastore_id: agdb::DbId,
-        entries: Vec<(String, serde_json::Value)>,
-    ) -> luau::runtime::Result<()> {
-        let mut prepared = Vec::with_capacity(entries.len());
-        for (key, value) in entries {
-            prepared.push((
-                key,
-                serde_json::to_string(&value).map_err(crate::plugins::runtime_error)?,
-            ));
-        }
-
-        let db = self.db()?;
-        let mut db = db.write().await;
-        for (key, value) in prepared {
-            db::datastore::upsert_entry(&mut db, datastore_id, key, value)
-                .map_err(crate::plugins::runtime_error)?;
-        }
-        Ok(())
-    }
-
-    async fn clear(&self, datastore_id: agdb::DbId) -> luau::runtime::Result<u64> {
-        let db = self.db()?;
-        let mut db = db.write().await;
-        db::datastore::clear_entries(&mut db, datastore_id)
-            .map(|removed| removed as u64)
-            .map_err(crate::plugins::runtime_error)
-    }
-
-    fn db(&self) -> luau::runtime::Result<DbAsync> {
-        self.db.clone().ok_or_else(|| {
-            luau::Error::Runtime("lyra/datastore database is unavailable".to_string())
-        })
-    }
+async fn clear_values(db: &DbAsync, datastore_id: agdb::DbId) -> luau::runtime::Result<u64> {
+    let mut db = db.write().await;
+    db::datastore::clear_entries(&mut db, datastore_id)
+        .map(|removed| removed as u64)
+        .map_err(crate::plugins::runtime_error)
 }
 fn datastore_db_id(datastore: DataStore) -> luau::runtime::Result<agdb::DbId> {
     datastore

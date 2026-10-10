@@ -35,7 +35,6 @@ use serde::Serialize;
 use crate::plugins::args;
 use crate::plugins::db::{
     self,
-    DbAsync,
     ResolveId,
 };
 use crate::services::auth::Principal;
@@ -44,30 +43,6 @@ use crate::services::auth::access::{
     LibraryFull,
     LibraryView,
 };
-
-#[derive(Clone, Default)]
-pub(crate) struct LibrariesModuleStore {
-    db: Option<DbAsync>,
-}
-
-impl LibrariesModuleStore {
-    #[cfg(test)]
-    pub(crate) fn empty() -> Self {
-        Self { db: None }
-    }
-
-    pub(crate) fn with_db(db: DbAsync) -> Self {
-        Self { db: Some(db) }
-    }
-
-    fn db(&self) -> luau::runtime::Result<DbAsync> {
-        self.db.clone().ok_or_else(|| {
-            crate::plugins::runtime_error(
-                "lyra/libraries requires a database-backed plugin executor",
-            )
-        })
-    }
-}
 
 struct LibrariesModule;
 
@@ -112,13 +87,7 @@ fn list_callback(
         .read_optional_named::<luau::Value>("id")?
         .map(args::resolve_id)
         .transpose()?;
-    let store = frame
-        .vm
-        .data()
-        .get::<LibrariesModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
     let principal = caller_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -183,13 +152,7 @@ fn get_for_entity_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let entity_id: i64 = frame.args.read_named("entity_id")?;
-    let store = frame
-        .vm
-        .data()
-        .get::<LibrariesModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
     let principal = caller_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -220,13 +183,7 @@ fn get_for_entities_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids_table: luau::Table = frame.args.read_named("entity_ids")?;
     let ids = args::unique_ids(frame.vm, &ids_table)?;
-    let store = frame
-        .vm
-        .data()
-        .get::<LibrariesModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
     let principal = caller_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {

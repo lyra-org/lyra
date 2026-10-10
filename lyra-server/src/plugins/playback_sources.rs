@@ -29,35 +29,10 @@ use crate::plugins::args;
 use crate::{
     plugins::db::{
         self,
-        DbAsync,
         ResolveId,
     },
     services::playback_sources as playback_source_service,
 };
-
-#[derive(Clone, Default)]
-pub(crate) struct PlaybackSourcesModuleStore {
-    db: Option<DbAsync>,
-}
-
-impl PlaybackSourcesModuleStore {
-    #[cfg(test)]
-    pub(crate) fn empty() -> Self {
-        Self { db: None }
-    }
-
-    pub(crate) fn with_db(db: DbAsync) -> Self {
-        Self { db: Some(db) }
-    }
-
-    fn db(&self) -> luau::runtime::Result<DbAsync> {
-        self.db.clone().ok_or_else(|| {
-            crate::plugins::runtime_error(
-                "lyra/playback_sources requires a database-backed plugin executor",
-            )
-        })
-    }
-}
 
 struct PlaybackSourcesModule;
 
@@ -110,13 +85,7 @@ fn get_callback(
         .args
         .read_optional_named::<bool>("include_entry")?
         .unwrap_or(false);
-    let store = frame
-        .vm
-        .data()
-        .get::<PlaybackSourcesModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
@@ -164,13 +133,7 @@ fn get_many_callback(
         .args
         .read_optional_named::<bool>("include_entry")?
         .unwrap_or(false);
-    let store = frame
-        .vm
-        .data()
-        .get::<PlaybackSourcesModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let db = db::get(frame.vm)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {

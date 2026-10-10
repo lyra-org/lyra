@@ -24,3 +24,31 @@ pub(crate) use crate::db::{
     playlists,
     test_db,
 };
+
+#[derive(Clone, Default)]
+pub(crate) struct PluginDb {
+    db: Option<DbAsync>,
+}
+
+impl PluginDb {
+    #[cfg(test)]
+    pub(crate) fn empty() -> Self {
+        Self { db: None }
+    }
+
+    pub(crate) fn with_db(db: DbAsync) -> Self {
+        Self { db: Some(db) }
+    }
+}
+
+pub(crate) fn get(vm: &harmony_luau::Vm) -> harmony_luau::runtime::Result<DbAsync> {
+    get_optional(vm)?.ok_or_else(|| {
+        crate::plugins::runtime_error("this module requires a database-backed plugin executor")
+    })
+}
+
+pub(crate) fn get_optional(
+    vm: &harmony_luau::Vm,
+) -> harmony_luau::runtime::Result<Option<DbAsync>> {
+    Ok(vm.data().get::<PluginDb>()?.db.clone())
+}
