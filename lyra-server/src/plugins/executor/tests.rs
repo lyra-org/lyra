@@ -2090,3 +2090,338 @@ fn playlist_bulk_bindings_refuse_inaccessible_tracks() -> Result<()> {
     );
     Ok(())
 }
+
+/// A user who can see the `shown` library and not the `hidden` one.
+struct LibraryAccessFixture {
+    db: agdb::DbAny,
+    principal: crate::services::auth::Principal,
+    shown: agdb::DbId,
+    hidden: agdb::DbId,
+}
+
+fn library_access_fixture() -> Result<LibraryAccessFixture> {
+    use crate::plugins::db;
+    let mut db = db::test_db::TestDb::initialized()?.into_inner();
+    let user = db::test_db::test_user("library-viewer")?;
+    let user_db_id = db::users::create(&mut db, &user)?;
+    let shown = db::test_db::insert_library(&mut db, "Shown", "/music/shown")?;
+    let hidden = db::test_db::insert_library(&mut db, "Hidden", "/music/hidden")?;
+    let shown_public_id = db::libraries::get_by_id(&db, shown)?
+        .context("shown library exists")?
+        .id;
+    let principal = crate::services::auth::Principal::from_parts(
+        user_db_id,
+        user.id,
+        "library-viewer".into(),
+        Vec::new(),
+        None,
+        std::collections::HashSet::from([shown_public_id]),
+    );
+    Ok(LibraryAccessFixture {
+        db,
+        principal,
+        shown,
+        hidden,
+    })
+}
+
+impl LibraryAccessFixture {
+    /// Runs `source` as the restricted user, with `scopes` granted.
+    fn eval(self, scopes: &[&str], source: String) -> Result<Vec<luau::Value>> {
+        let runtime = PluginExecutor::with_database(
+            Arc::from(vec![manifest("demo", scopes)]),
+            default_server_info(),
+            Arc::new(tokio::sync::RwLock::new(self.db)),
+        )?;
+        let mut context = CallContext {
+            origin: plugin_origin("demo", "library-access.luau"),
+            ..CallContext::default()
+        };
+        seed_caller_principal(&mut context, self.principal);
+        runtime.eval_plugin_source_with_call_context(source.into_bytes(), context)
+    }
+}
+
+#[test]
+fn cover_bindings_hide_inaccessible_releases() -> Result<()> {
+    use crate::plugins::db;
+    let mut fixture = library_access_fixture()?;
+    let image = tempfile::NamedTempFile::new()?;
+    let mut releases = Vec::new();
+    for library in [fixture.shown, fixture.hidden] {
+        let release = db::test_db::insert_release(&mut fixture.db, "Release")?;
+        db::test_db::connect(&mut fixture.db, library, release)?;
+        fixture.db.transaction_mut(|t| -> Result<()> {
+            db::covers::upsert(
+                t,
+                release,
+                db::Cover {
+                    db_id: None,
+                    id: nanoid::nanoid!(),
+                    path: image.path().to_string_lossy().into_owned(),
+                    mime_type: "image/png".into(),
+                    hash: "hash".into(),
+                    blurhash: None,
+                },
+            )?;
+            Ok(())
+        })?;
+        releases.push(release.0);
+    }
+    let [shown, hidden] = releases[..] else {
+        unreachable!()
+    };
+    let values = fixture.eval(
+        &["lyra.covers"],
+        format!(
+            r#"
+                local covers = require("@lyra/covers")
+                local missing = 987654
+                local many = covers.get_many({{ {shown}, {hidden}, missing }})
+                return covers.get({shown}) ~= nil, covers.get({hidden}) == nil,
+                    many[{shown}] ~= nil, many[{hidden}] == nil,
+                    covers.get(missing) == nil, many[missing] == nil
+            "#
+        ),
+    )?;
+    assert_eq!(values, vec![luau::Value::Boolean(true); 6]);
+    Ok(())
+}
+
+#[test]
+fn cover_artwork_bindings_serve_anonymous_public_routes() -> Result<()> {
+    use crate::plugins::db;
+    // api::install resets the shared API route registry; serialize with the
+    // other global-registry mutators.
+    let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+    let mut database = db::test_db::TestDb::initialized()?.into_inner();
+    let owner = db::users::create(&mut database, &db::test_db::test_user("playlist-owner")?)?;
+    let library = db::test_db::insert_library(&mut database, "Library", "/music")?;
+    let release = db::test_db::insert_release(&mut database, "Release")?;
+    let track = db::test_db::insert_track(&mut database, "Track")?;
+    db::test_db::connect(&mut database, library, release)?;
+    db::test_db::connect(&mut database, release, track)?;
+    let image = tempfile::NamedTempFile::new()?;
+    database.transaction_mut(|t| -> Result<()> {
+        db::covers::upsert(
+            t,
+            release,
+            db::Cover {
+                db_id: None,
+                id: nanoid::nanoid!(),
+                path: image.path().to_string_lossy().into_owned(),
+                mime_type: "image/png".into(),
+                hash: "hash".into(),
+                blurhash: None,
+            },
+        )?;
+        Ok(())
+    })?;
+    let playlist = db::playlists::create(
+        &mut database,
+        &db::Playlist {
+            db_id: None,
+            id: nanoid::nanoid!(),
+            name: "Private".into(),
+            description: None,
+            is_public: Some(false),
+            created_at: None,
+            updated_at: None,
+        },
+        owner,
+    )?;
+    database.transaction_mut(|t| db::playlists::add_track(t, playlist, track))?;
+
+    let _ = futures::executor::block_on(crate::plugins::api::install(
+        axum::Router::new(),
+        std::collections::HashSet::new(),
+    ))?;
+    let runtime = PluginExecutor::with_database(
+        Arc::from(vec![manifest("demo", &["lyra.api", "lyra.covers"])]),
+        default_server_info(),
+        Arc::new(tokio::sync::RwLock::new(database)),
+    )?;
+    runtime.run_plugin_source(
+        "demo",
+        "init.luau",
+        &br#"
+            local api = require("@lyra/api")
+            local covers = require("@lyra/covers")
+
+            api.get("/artwork/{release}/{playlist}", function(ctx)
+                local release = tonumber(ctx.params.release)
+                local playlist = tonumber(ctx.params.playlist)
+                return api.response.json(200, {
+                    cover = covers.artwork(release) ~= nil,
+                    many = covers.artwork_many({ release })[release] ~= nil,
+                    playlist_sources = #covers.artwork_playlist_sources(playlist),
+                    scoped = pcall(covers.get, release),
+                    scoped_playlist = pcall(covers.get_playlist_sources, playlist),
+                })
+            end, "public")
+        "#[..],
+    )?;
+
+    let handler_id = futures::executor::block_on(crate::plugins::api::tests::registered_handler(
+        "GET",
+        "/artwork/{release}/{playlist}",
+    ))
+    .context("registered API handler")?;
+    let result = runtime.dispatch_api_handler(ApiHandlerRequest {
+        handler_id,
+        plugin_id: "demo".to_string(),
+        method: "GET".to_string(),
+        path: format!("/artwork/{}/{}", release.0, playlist.0),
+        headers: Vec::new(),
+        query: HashMap::new(),
+        params: HashMap::from([
+            ("release".to_string(), release.0.to_string()),
+            ("playlist".to_string(), playlist.0.to_string()),
+        ]),
+        body: Vec::new(),
+        auth: None,
+        client_key: None,
+    })?;
+
+    assert_eq!(result.status, 200);
+    let Some(ApiResponseBody::Json(body)) = result.body else {
+        anyhow::bail!("expected JSON response body");
+    };
+    assert_eq!(body["cover"], true);
+    assert_eq!(body["many"], true);
+    assert_eq!(body["playlist_sources"], 1);
+    assert_eq!(body["scoped"], false);
+    assert_eq!(body["scoped_playlist"], false);
+    Ok(())
+}
+
+#[test]
+fn label_bindings_hide_inaccessible_releases() -> Result<()> {
+    use crate::plugins::db;
+    let mut fixture = library_access_fixture()?;
+    let mut releases = Vec::new();
+    for library in [fixture.shown, fixture.hidden] {
+        let release = db::test_db::insert_release(&mut fixture.db, "Release")?;
+        db::test_db::connect(&mut fixture.db, library, release)?;
+        db::labels::sync_release_labels(
+            &mut fixture.db,
+            release,
+            &[db::labels::LabelInput {
+                name: "Label".into(),
+                catalog_number: None,
+                external_id: None,
+            }],
+        )?;
+        releases.push(release.0);
+    }
+    let label = db::labels::find_by_name(&fixture.db, "Label")?.context("label exists")?;
+    let [shown, hidden] = releases[..] else {
+        unreachable!()
+    };
+    let values = fixture.eval(
+        &["lyra.labels"],
+        format!(
+            r#"
+                local labels = require("@lyra/labels")
+                local releases = labels.get_releases({label})
+                local many = labels.get_releases_many({{ {label} }})[{label}]
+                return #releases, releases[1], #many, many[1],
+                    #labels.get_for_release({hidden}), #labels.get_for_release({shown})
+            "#,
+            label = label.0,
+        ),
+    )?;
+    let shown = luau::Value::Number(shown as f64);
+    assert_eq!(
+        values,
+        vec![
+            luau::Value::Number(1.0),
+            shown.clone(),
+            luau::Value::Number(1.0),
+            shown,
+            luau::Value::Number(0.0),
+            luau::Value::Number(1.0),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn track_source_bindings_hide_inaccessible_tracks() -> Result<()> {
+    use crate::plugins::db;
+    let mut fixture = library_access_fixture()?;
+    let mut ids = Vec::new();
+    for (library, name) in [(fixture.shown, "shown"), (fixture.hidden, "hidden")] {
+        let track = db::test_db::insert_track(&mut fixture.db, name)?;
+        let entry = db::Entry {
+            db_id: None,
+            id: nanoid::nanoid!(),
+            full_path: std::path::PathBuf::from(format!("/music/{name}.flac")),
+            kind: db::entries::EntryKind::File,
+            file_kind: Some("audio".into()),
+            name: format!("{name}.flac"),
+            hash: None,
+            size: 1,
+            mtime: 1,
+            ctime: 1,
+        };
+        let entry_id = fixture
+            .db
+            .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
+            .ids()[0];
+        db::test_db::connect(&mut fixture.db, library, track)?;
+        db::test_db::connect(&mut fixture.db, library, entry_id)?;
+        fixture.db.transaction_mut(|t| -> Result<()> {
+            db::track_sources::upsert(
+                t,
+                track,
+                entry_id,
+                db::track_sources::TrackSourceUpsert {
+                    source_kind: "embedded_tags".into(),
+                    source_key: name.into(),
+                    is_primary: true,
+                    start_ms: None,
+                    end_ms: None,
+                },
+                None,
+            )?;
+            Ok(())
+        })?;
+        ids.push((track.0, entry_id.0));
+    }
+    let [(shown, _), (hidden, hidden_entry)] = ids[..] else {
+        unreachable!()
+    };
+    let values = fixture.eval(
+        &["lyra.track_sources", "lyra.chromaprint"],
+        format!(
+            r#"
+                local track_sources = require("@lyra/track_sources")
+                local chromaprint = require("@lyra/chromaprint")
+                local containers = track_sources.get_primary_containers({{ {shown}, {hidden} }})
+                local _, fingerprint_error = pcall(chromaprint.compute, {hidden_entry})
+                return track_sources.get_primary_source_key({shown}),
+                    track_sources.get_primary_source_key({hidden}) == nil,
+                    track_sources.get_primary_container({shown}),
+                    track_sources.get_primary_container({hidden}) == nil,
+                    containers[{shown}], containers[{hidden}] == nil,
+                    string.find(tostring(fingerprint_error), "entry not found", 1, true) ~= nil
+            "#
+        ),
+    )?;
+    let text = |value: &str| luau::Value::String(value.as_bytes().to_vec());
+    let yes = luau::Value::Boolean(true);
+    assert_eq!(
+        values,
+        vec![
+            text("shown"),
+            yes.clone(),
+            text("flac"),
+            yes.clone(),
+            text("flac"),
+            yes.clone(),
+            yes,
+        ]
+    );
+    Ok(())
+}

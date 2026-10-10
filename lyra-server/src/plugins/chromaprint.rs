@@ -56,13 +56,16 @@ fn compute_callback(
     if entry_id <= 0 {
         return Err(crate::plugins::runtime_error("entry not found"));
     }
+    let principal = crate::plugins::auth::dispatch_principal(&frame.context)?;
     let db = db::get(frame.vm)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let path = {
             let db = db.read().await;
+            let viewer = crate::plugins::catalog::viewer(&*db, principal)?;
             let entry = db::entries::get_by_id(&db, DbId(entry_id))
                 .map_err(crate::plugins::runtime_error)?
+                .filter(|_| viewer.sees_entity(&*db, DbId(entry_id)).unwrap_or(false))
                 .ok_or_else(|| crate::plugins::runtime_error("entry not found"))?;
             entry.full_path
         };

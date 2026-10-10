@@ -29,6 +29,7 @@ use crate::db::{
     external_ids::ExternalId,
 };
 use crate::services::EntityType;
+use crate::services::catalog::Viewer;
 use crate::services::providers::IdSchemes;
 
 use super::{
@@ -529,9 +530,106 @@ pub(crate) fn project_entity(
     }
 }
 
-/// Projects entities in order, as `project_entity` does, prefetching includes in bulk.
+/// [`project_entities`] limited to what `viewer` sees: an entity it can't see projects to `None`,
+/// and includes list only the releases, tracks and entries it can see.
+pub(crate) fn project_visible_entities(
+    db: &DbAny,
+    viewer: &Viewer,
+    query_ids: Vec<QueryId>,
+    includes: &[EntityInclude],
+    library_id: Option<DbId>,
+    ids: &mut IdIncludes<'_>,
+) -> anyhow::Result<Vec<Option<EntityProjectionInfo>>> {
+    let mut visible = Vec::with_capacity(query_ids.len());
+    for query_id in query_ids {
+        let entity_id = resolve_entity_id(db, query_id)?;
+        visible.push(viewer.sees(db, entity_id)?.then_some(entity_id));
+    }
+
+    let query_ids = visible
+        .iter()
+        .flatten()
+        .map(|id| QueryId::Id(*id))
+        .collect();
+    let mut projections =
+        project_entities(db, viewer, query_ids, includes, library_id, ids)?.into_iter();
+    let mut scoped = Vec::with_capacity(visible.len());
+    for entity_id in visible {
+        let projection = match entity_id {
+            Some(_) => {
+                let mut projection = projections
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("projection missing"))?;
+                retain_visible_includes(db, viewer, &mut projection)?;
+                Some(projection)
+            }
+            None => None,
+        };
+        scoped.push(projection);
+    }
+    Ok(scoped)
+}
+
+/// Drops included tracks and entries that `viewer` can't see; a track's releases are scoped
+/// before projection, since its artists and credits fall back to theirs. A visible release's own
+/// tracks and artists share its libraries, so only the lists that can cross libraries are checked.
+fn retain_visible_includes(
+    db: &DbAny,
+    viewer: &Viewer,
+    projection: &mut EntityProjectionInfo,
+) -> anyhow::Result<()> {
+    if viewer.sees_everything() {
+        return Ok(());
+    }
+    match projection {
+        EntityProjectionInfo::Release(_) => {}
+        EntityProjectionInfo::Track(track) => {
+            if let Some(entries) = &mut track.includes.entries {
+                retain_visible(db, viewer, entries, |entry| {
+                    entry.db_id.clone().map(DbId::from)
+                })?;
+            }
+        }
+        EntityProjectionInfo::Artist(artist) => {
+            if let Some(releases) = &mut artist.includes.releases {
+                retain_visible(db, viewer, releases, |release| {
+                    release.db_id.clone().map(DbId::from)
+                })?;
+            }
+            if let Some(tracks) = &mut artist.includes.tracks {
+                retain_visible(db, viewer, tracks, |track| {
+                    track.db_id.clone().map(DbId::from)
+                })?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn retain_visible<T>(
+    db: &DbAny,
+    viewer: &Viewer,
+    list: &mut Vec<T>,
+    db_id: impl Fn(&T) -> Option<DbId>,
+) -> anyhow::Result<()> {
+    let mut kept = Vec::with_capacity(list.len());
+    for item in list.drain(..) {
+        if let Some(id) = db_id(&item)
+            && viewer.sees_entity(db, id)?
+        {
+            kept.push(item);
+        }
+    }
+    *list = kept;
+    Ok(())
+}
+
+/// Projects entities in order, as `project_entity` does, prefetching includes in bulk. Each
+/// track's releases are limited to those `viewer` sees, since its artists and credits fall back
+/// to theirs.
 pub(crate) fn project_entities(
     db: &DbAny,
+    viewer: &Viewer,
     query_ids: Vec<QueryId>,
     includes: &[EntityInclude],
     library_id: Option<DbId>,
@@ -634,7 +732,15 @@ pub(crate) fn project_entities(
         || has_include(EntityInclude::Credits))
         && !track_ids.is_empty();
     let releases_by_track = if needs_releases_by_track {
-        Some(relations::track_releases_by_track(db, &track_ids)?)
+        let mut releases_by_track = relations::track_releases_by_track(db, &track_ids)?;
+        if !viewer.sees_everything() {
+            for releases in releases_by_track.values_mut() {
+                retain_visible(db, viewer, releases, |release| {
+                    release.db_id.clone().map(DbId::from)
+                })?;
+            }
+        }
+        Some(releases_by_track)
     } else {
         None
     };
@@ -753,13 +859,142 @@ pub(crate) fn project_entities(
 mod tests {
     use super::*;
     use crate::db::test_db::{
+        connect,
         connect_artist,
         insert_artist,
+        insert_library,
         insert_release,
         insert_track,
         new_test_db,
+        test_user,
     };
+    use crate::services::auth::Principal;
     use crate::services::providers::IdSchemes;
+
+    #[test]
+    fn visible_projections_hide_other_libraries() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = db::users::create(&mut db, &test_user("listener")?)?;
+        let shown_library = insert_library(&mut db, "Shown", "/music/shown")?;
+        let hidden_library = insert_library(&mut db, "Hidden", "/music/hidden")?;
+        let shown = insert_release(&mut db, "Shown")?;
+        let hidden = insert_release(&mut db, "Hidden")?;
+        let hidden_only = insert_artist(&mut db, "Hidden Only")?;
+        let shared = insert_artist(&mut db, "Shared")?;
+        connect(&mut db, shown_library, shown)?;
+        connect(&mut db, hidden_library, hidden)?;
+        connect_artist(&mut db, shown, shared)?;
+        connect_artist(&mut db, hidden, shared)?;
+        connect_artist(&mut db, hidden, hidden_only)?;
+
+        let shown_public_id = db::libraries::get_by_id(&db, shown_library)?.unwrap().id;
+        let listener = Viewer::user(
+            &db,
+            Principal::for_user(&db, user_db_id, vec![], HashSet::from([shown_public_id])),
+        )?;
+        let project = |viewer: &Viewer, ids: &[DbId], includes: &[EntityInclude]| {
+            project_visible_entities(
+                &db,
+                viewer,
+                ids.iter().map(|id| QueryId::Id(*id)).collect(),
+                includes,
+                None,
+                &mut IdIncludes::new(&IdSchemes::default(), &[]),
+            )
+        };
+        let release_titles = |projection: &Option<EntityProjectionInfo>| -> Vec<String> {
+            let Some(EntityProjectionInfo::Artist(artist)) = projection else {
+                panic!("expected a visible artist");
+            };
+            let releases = artist
+                .includes
+                .releases
+                .as_ref()
+                .expect("releases included");
+            releases
+                .iter()
+                .map(|release| release.release_title.clone())
+                .collect()
+        };
+
+        let releases = project(&listener, &[hidden, shown], &[])?;
+        assert!(releases[0].is_none() && releases[1].is_some());
+        let artists = project(
+            &listener,
+            &[hidden_only, shared],
+            &[EntityInclude::Releases],
+        )?;
+        assert!(artists[0].is_none());
+        assert_eq!(release_titles(&artists[1]), vec!["Shown".to_string()]);
+
+        assert!(project(&Viewer::System, &[hidden], &[])?[0].is_some());
+        let artists = project(&Viewer::System, &[shared], &[EntityInclude::Releases])?;
+        assert_eq!(release_titles(&artists[0]).len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn visible_track_projections_inherit_only_visible_release_artists() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = db::users::create(&mut db, &test_user("listener")?)?;
+        let shown_library = insert_library(&mut db, "Shown", "/music/shown")?;
+        let hidden_library = insert_library(&mut db, "Hidden", "/music/hidden")?;
+        let shown = insert_release(&mut db, "Shown")?;
+        let hidden = insert_release(&mut db, "Hidden")?;
+        let track = insert_track(&mut db, "Shared")?;
+        connect(&mut db, shown_library, shown)?;
+        connect(&mut db, hidden_library, hidden)?;
+        connect(&mut db, shown, track)?;
+        connect(&mut db, hidden, track)?;
+        let shown_artist = insert_artist(&mut db, "Shown Artist")?;
+        let hidden_artist = insert_artist(&mut db, "Hidden Artist")?;
+        connect_artist(&mut db, shown, shown_artist)?;
+        connect_artist(&mut db, hidden, hidden_artist)?;
+
+        let shown_public_id = db::libraries::get_by_id(&db, shown_library)?.unwrap().id;
+        let listener = Viewer::user(
+            &db,
+            Principal::for_user(&db, user_db_id, vec![], HashSet::from([shown_public_id])),
+        )?;
+        let projected = project_visible_entities(
+            &db,
+            &listener,
+            vec![QueryId::Id(track)],
+            &[
+                EntityInclude::Releases,
+                EntityInclude::Artists,
+                EntityInclude::Credits,
+            ],
+            None,
+            &mut IdIncludes::new(&IdSchemes::default(), &[]),
+        )?;
+        let Some(EntityProjectionInfo::Track(track)) = &projected[0] else {
+            panic!("expected a visible track");
+        };
+        let includes = &track.includes;
+        let releases: Vec<_> = includes
+            .releases
+            .iter()
+            .flatten()
+            .map(|r| r.release_title.as_str())
+            .collect();
+        let artists: Vec<_> = includes
+            .artists
+            .iter()
+            .flatten()
+            .map(|a| a.artist_name.as_str())
+            .collect();
+        let credits: Vec<_> = includes
+            .credits
+            .iter()
+            .flatten()
+            .map(|credit| credit.artist.artist_name.as_str())
+            .collect();
+        assert_eq!(releases, ["Shown"]);
+        assert_eq!(artists, ["Shown Artist"]);
+        assert_eq!(credits, ["Shown Artist"]);
+        Ok(())
+    }
 
     #[test]
     fn resolve_entity_id_accepts_numeric_aliases() -> anyhow::Result<()> {
@@ -800,6 +1035,7 @@ mod tests {
 
         let projections = project_entities(
             &db,
+            &Viewer::System,
             vec![QueryId::Id(artist_id)],
             &[EntityInclude::Tracks],
             None,

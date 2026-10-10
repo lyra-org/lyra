@@ -26,6 +26,7 @@ use harmony_luau::{
 };
 
 use crate::plugins::args;
+use crate::plugins::catalog;
 use crate::{
     plugins::db::{
         self,
@@ -160,7 +161,11 @@ fn get_for_release_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let labels = {
             let db = db.read().await;
-            if can_read_entity(&db, principal.as_ref(), release_id)? {
+            let viewer = catalog::viewer(&*db, principal)?;
+            if viewer
+                .sees_entity(&*db, release_id)
+                .map_err(crate::plugins::runtime_error)?
+            {
                 db::labels::get_for_release(&db, release_id)
                     .map_err(crate::plugins::runtime_error)?
             } else {
@@ -181,10 +186,10 @@ fn get_for_releases_many_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let labels = {
             let db = db.read().await;
-            let readable = ids
-                .into_iter()
-                .filter(|id| can_read_entity(&db, principal.as_ref(), *id).unwrap_or(false))
-                .collect::<Vec<_>>();
+            let viewer = catalog::viewer(&*db, principal)?;
+            let readable = viewer
+                .visible(&db, ids)
+                .map_err(crate::plugins::runtime_error)?;
             db::labels::get_for_releases_many(&db, &readable).map_err(crate::plugins::runtime_error)
         }?;
         let mut table = luau::OwnedTable::with_capacity(0, labels.len());
@@ -203,10 +208,16 @@ fn get_releases_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let label_id = args::positive_id(frame.args.read_named("label_id")?, "label_id")?;
     let db = db::get(frame.vm)?;
+    let principal = caller_principal(&frame.context)?;
     Ok(luau::ScheduledFuture::new(async move {
         let release_ids = {
             let db = db.read().await;
-            db::labels::get_releases(&db, label_id).map_err(crate::plugins::runtime_error)
+            let viewer = catalog::viewer(&*db, principal)?;
+            let release_ids =
+                db::labels::get_releases(&db, label_id).map_err(crate::plugins::runtime_error)?;
+            viewer
+                .visible(&db, release_ids)
+                .map_err(crate::plugins::runtime_error)
         }?;
         Ok(luau::Value::TableData(id_array(release_ids)))
     }))
@@ -218,10 +229,21 @@ fn get_releases_many_callback(
     let ids_table: luau::Table = frame.args.read_named("label_ids")?;
     let ids = args::unique_ids(frame.vm, &ids_table)?;
     let db = db::get(frame.vm)?;
+    let principal = caller_principal(&frame.context)?;
     Ok(luau::ScheduledFuture::new(async move {
         let release_ids = {
             let db = db.read().await;
-            db::labels::get_releases_many(&db, &ids).map_err(crate::plugins::runtime_error)
+            let viewer = catalog::viewer(&*db, principal)?;
+            let mut visible = Vec::new();
+            for (label_id, release_ids) in
+                db::labels::get_releases_many(&db, &ids).map_err(crate::plugins::runtime_error)?
+            {
+                let release_ids = viewer
+                    .visible(&db, release_ids)
+                    .map_err(crate::plugins::runtime_error)?;
+                visible.push((label_id, release_ids));
+            }
+            Ok::<_, luau::runtime::Error>(visible)
         }?;
         let mut table = luau::OwnedTable::with_capacity(0, release_ids.len());
         for (label_id, ids) in release_ids {
@@ -298,20 +320,6 @@ fn required_string(vm: &luau::Vm, table: &luau::Table, key: &str) -> luau::runti
 
 fn caller_principal(context: &luau::CallContext) -> luau::runtime::Result<Option<Principal>> {
     crate::plugins::auth::dispatch_principal(context)
-}
-
-fn can_read_entity(
-    db: &impl db::DbAccess,
-    principal: Option<&Principal>,
-    entity_db_id: DbId,
-) -> luau::runtime::Result<bool> {
-    match principal {
-        Some(principal) => {
-            crate::services::auth::access::entity_accessible(db, principal, entity_db_id)
-                .map_err(crate::plugins::runtime_error)
-        }
-        None => Ok(true),
-    }
 }
 
 fn can_mutate_global(principal: Option<&Principal>) -> bool {

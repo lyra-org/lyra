@@ -743,8 +743,8 @@ local function respond_with_primary_image(ctx: ApiContext?, cover_info: artwork.
 	})
 end
 
--- Artwork is served without credentials, matching Jellyfin, which exposes an
--- item's image anonymously while keeping its contents access-checked.
+-- Artwork routes are public, as upstream: an anonymous caller gets any item's image, and a caller
+-- with valid credentials only the images of items it can see. Invalid credentials read as none.
 function module.handle_primary_image_request(ctx: ApiContext?): ApiResponse
 	local params = if ctx then ctx.params else nil
 	local image_id = if params then params.imageId else nil
@@ -756,9 +756,11 @@ function module.handle_primary_image_request(ctx: ApiContext?): ApiResponse
 	if not item_db_id then
 		return responses.not_found("image not found")
 	end
-	local cover_info = artwork.get_cover_info(item_db_id)
+	local signed_in = module.require_jellyfin_principal(ctx) ~= nil
+	local item_cover = if signed_in then artwork.get_cover_info(item_db_id) else artwork.get_artwork_info(item_db_id)
+	local cover_info = item_cover
 		or catalog.resolve_genre_cover(item_db_id)
-		or catalog.resolve_playlist_cover(item_db_id)
+		or catalog.resolve_playlist_cover(item_db_id, signed_in)
 	if not cover_info then
 		return responses.not_found("image not found")
 	end
@@ -798,13 +800,13 @@ end
 
 function module.handle_artist_image_request(ctx: ApiContext?): ApiResponse
 	return serve_public_image_by_name(ctx, function(name)
-		return artwork.get_cover_info(catalog.find_artist_db_id_by_name(name))
+		return artwork.get_artwork_info(catalog.find_artist_db_id_by_name(name))
 	end)
 end
 
 function module.handle_person_image_request(ctx: ApiContext?): ApiResponse
 	return serve_public_image_by_name(ctx, function(name)
-		return artwork.get_cover_info(catalog.find_artist_db_id_by_name(name))
+		return artwork.get_artwork_info(catalog.find_artist_db_id_by_name(name))
 	end)
 end
 

@@ -272,7 +272,7 @@ function helpers.compose_cover_from_ids(item_ids: { number }, seed: string): art
 
 	table.sort(item_ids)
 	local picked = helpers.deterministic_pick(item_ids, seed, 4)
-	local cover_map = covers.get_many(picked)
+	local cover_map = covers.artwork_many(picked)
 
 	local cover_infos: { covers.CoverInfo } = {}
 	for _, id in picked do
@@ -1974,23 +1974,21 @@ function helpers.prefetch_release_covers(context: ItemContext, seed: Realization
 	for _, release_id: number in seed.release_ids do
 		table.insert(cover_release_ids, release_id)
 	end
-	local ok, raw_covers = pcall(covers.get_many, cover_release_ids)
-	if ok and type(raw_covers) == "table" then
-		local cover_lookup: { [number]: artwork.ResolvedCoverInfo } = {}
-		local prefetch_set: { [number]: boolean } = {}
-		for _, release_id: number in cover_release_ids do
-			prefetch_set[release_id] = true
-			local raw = raw_covers[release_id]
-			if type(raw) == "table" then
-				local info = artwork.normalize_cover_info(raw)
-				if info then
-					cover_lookup[release_id] = info
-				end
+	local raw_covers = covers.get_many(cover_release_ids)
+	local cover_lookup: { [number]: artwork.ResolvedCoverInfo } = {}
+	local prefetch_set: { [number]: boolean } = {}
+	for _, release_id: number in cover_release_ids do
+		prefetch_set[release_id] = true
+		local raw = raw_covers[release_id]
+		if type(raw) == "table" then
+			local info = artwork.normalize_cover_info(raw)
+			if info then
+				cover_lookup[release_id] = info
 			end
 		end
-		context.cover_info_by_release_id = cover_lookup
-		context.cover_prefetch_release_ids = prefetch_set
 	end
+	context.cover_info_by_release_id = cover_lookup
+	context.cover_prefetch_release_ids = prefetch_set
 end
 
 function helpers.prefetch_artist_covers(context: ItemContext, seed: RealizationSeedInfo): ()
@@ -1998,23 +1996,21 @@ function helpers.prefetch_artist_covers(context: ItemContext, seed: RealizationS
 		return
 	end
 
-	local ok, raw_covers = pcall(covers.get_many, seed.artist_ids)
-	if ok and type(raw_covers) == "table" then
-		local cover_lookup: { [number]: artwork.ResolvedCoverInfo } = {}
-		local prefetch_set: { [number]: boolean } = {}
-		for _, artist_id: number in seed.artist_ids do
-			prefetch_set[artist_id] = true
-			local raw = raw_covers[artist_id]
-			if type(raw) == "table" then
-				local resolved = artwork.normalize_cover_info(raw)
-				if resolved then
-					cover_lookup[artist_id] = resolved
-				end
+	local raw_covers = covers.get_many(seed.artist_ids)
+	local cover_lookup: { [number]: artwork.ResolvedCoverInfo } = {}
+	local prefetch_set: { [number]: boolean } = {}
+	for _, artist_id: number in seed.artist_ids do
+		prefetch_set[artist_id] = true
+		local raw = raw_covers[artist_id]
+		if type(raw) == "table" then
+			local resolved = artwork.normalize_cover_info(raw)
+			if resolved then
+				cover_lookup[artist_id] = resolved
 			end
 		end
-		context.cover_info_by_artist_id = cover_lookup
-		context.cover_prefetch_artist_ids = prefetch_set
 	end
+	context.cover_info_by_artist_id = cover_lookup
+	context.cover_prefetch_artist_ids = prefetch_set
 end
 
 function helpers.prefetch_release_artists_and_genres(
@@ -2327,9 +2323,13 @@ function module.resolve_genre_cover_by_name(name: string): artwork.ResolvedCover
 	return module.resolve_genre_cover(genre_info.db_id)
 end
 
--- Composed from the playlist's ranked cover sources.
-function module.resolve_playlist_cover(playlist_db_id: number): artwork.ResolvedCoverInfo?
-	return helpers.compose_covers(covers.get_playlist_sources(playlist_db_id))
+-- Composed from the playlist's ranked cover sources, as the caller sees them when `as_caller`,
+-- and otherwise without one, for anonymous requests to public artwork routes.
+function module.resolve_playlist_cover(playlist_db_id: number, as_caller: boolean): artwork.ResolvedCoverInfo?
+	local sources = if as_caller
+		then covers.get_playlist_sources(playlist_db_id)
+		else covers.artwork_playlist_sources(playlist_db_id)
+	return helpers.compose_covers(sources)
 end
 
 -- Artwork routes are public, so this resolves names without a caller; it only ever leads to

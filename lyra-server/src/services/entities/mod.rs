@@ -59,8 +59,7 @@ pub(crate) use links::{
 };
 pub(crate) use projection::{
     IdIncludes,
-    project_entities,
-    project_entity,
+    project_visible_entities,
 };
 
 pub(crate) type ExternalIdsByProvider = BTreeMap<String, BTreeMap<String, String>>;
@@ -1162,6 +1161,10 @@ pub(crate) fn resolve_track_credited_artists_with_context(
 
 #[cfg(test)]
 mod tests {
+    use super::projection::{
+        project_entities,
+        project_entity,
+    };
     use super::*;
     use crate::db::test_db::{
         connect_artist,
@@ -1268,6 +1271,7 @@ mod tests {
 
         let many = project_entities(
             &db,
+            &crate::services::catalog::Viewer::System,
             vec![QueryId::Id(track_id)],
             &[EntityInclude::Identifiers],
             None,

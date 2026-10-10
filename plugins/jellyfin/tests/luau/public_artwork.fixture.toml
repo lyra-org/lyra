@@ -1,0 +1,35 @@
+run_as = "viewer"
+
+# The admin owner's private playlist holds a track of a release with a cover. The viewer can see
+# neither: fixture releases are in no library, and the playlist isn't theirs.
+
+[[users]]
+key = "owner"
+admin = true
+
+[[users]]
+key = "viewer"
+
+[[api_keys]]
+key = "phone"
+user = "viewer"
+
+[[api_keys]]
+key = "desk"
+user = "owner"
+
+[[releases]]
+key = "album"
+title = "Album"
+cover = "cover.png"
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+
+[[playlists]]
+key = "private"
+owner = "owner"
+name = "Private"
+tracks = ["song"]

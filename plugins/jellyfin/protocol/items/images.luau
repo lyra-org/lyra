@@ -45,11 +45,15 @@ function module.get_cover_info(item_id: number?): ResolvedCoverInfo?
 	if item_id == nil or item_id <= 0 then
 		return nil
 	end
-	local ok, raw_cover = pcall(covers.get, item_id)
-	if not ok then
+	return module.normalize_cover_info(covers.get(item_id))
+end
+
+-- For anonymous requests to public artwork routes, which resolve covers without a caller.
+function module.get_artwork_info(item_id: number?): ResolvedCoverInfo?
+	if item_id == nil or item_id <= 0 then
 		return nil
 	end
-	return module.normalize_cover_info(raw_cover)
+	return module.normalize_cover_info(covers.artwork(item_id))
 end
 
 return module

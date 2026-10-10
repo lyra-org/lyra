@@ -116,8 +116,10 @@ mod tests {
             ArtistCreditSource,
             EntityInclude,
             EntityProjectionInfo,
-            project_entities,
-            project_entity,
+            projection::{
+                project_entities,
+                project_entity,
+            },
         },
     };
 
@@ -208,6 +210,7 @@ mod tests {
 
         let projections = project_entities(
             &db,
+            &crate::services::catalog::Viewer::System,
             vec![QueryId::Id(track_id)],
             &[EntityInclude::Credits],
             None,

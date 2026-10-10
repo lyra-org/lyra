@@ -129,6 +129,66 @@ impl Viewer {
         }
     }
 
+    /// Whether the viewer can see `node_db_id`, by the rule for its type. A missing node is
+    /// unseen; a graph search from it would fail.
+    pub(crate) fn sees(&self, db: &DbAny, node_db_id: DbId) -> anyhow::Result<bool> {
+        match db::entities::get_element_type(db, node_db_id)?.as_deref() {
+            None => Ok(false),
+            Some("Artist") => self.sees_artist(db, node_db_id),
+            Some("Playlist") => self.sees_playlist(db, node_db_id),
+            Some(_) => self.sees_entity(db, node_db_id),
+        }
+    }
+
+    /// The nodes of `node_db_ids` the viewer can see, in order.
+    pub(crate) fn visible(
+        &self,
+        db: &DbAny,
+        node_db_ids: impl IntoIterator<Item = DbId>,
+    ) -> anyhow::Result<Vec<DbId>> {
+        let mut visible = Vec::new();
+        for node_db_id in node_db_ids {
+            if self.sees(db, node_db_id)? {
+                visible.push(node_db_id);
+            }
+        }
+        Ok(visible)
+    }
+
+    /// Whether the viewer can see `playlist_db_id`: a public playlist, or one it owns.
+    pub(crate) fn sees_playlist(
+        &self,
+        db: &impl db::DbAccess,
+        playlist_db_id: DbId,
+    ) -> anyhow::Result<bool> {
+        match self {
+            Self::System => Ok(true),
+            Self::User {
+                principal,
+                user_db_id,
+            } => crate::services::auth::access::playlist_accessible_as(
+                db,
+                principal,
+                *user_db_id,
+                playlist_db_id,
+            ),
+        }
+    }
+
+    /// Whether the viewer can see `artist_db_id`, which is visible through its releases.
+    pub(crate) fn sees_artist(
+        &self,
+        db: &impl db::DbAccess,
+        artist_db_id: DbId,
+    ) -> anyhow::Result<bool> {
+        match self.restricted() {
+            None => Ok(true),
+            Some(principal) => {
+                crate::services::auth::access::artist_accessible(db, principal, artist_db_id)
+            }
+        }
+    }
+
     /// The releases in the viewer's libraries, or `None` when the viewer sees every release.
     pub(crate) fn visible_releases(&self, db: &DbAny) -> anyhow::Result<Option<HashSet<DbId>>> {
         let Some(principal) = self.restricted() else {
