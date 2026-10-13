@@ -9,6 +9,10 @@ use std::collections::{
     BTreeMap,
     BTreeSet,
 };
+use std::path::{
+    Path,
+    PathBuf,
+};
 
 use agdb::{
     DbAny,
@@ -50,6 +54,9 @@ pub struct Fixture {
     listens: Vec<Listen>,
     #[serde(default)]
     favorites: Vec<Favorite>,
+    /// The directory fixture paths resolve against.
+    #[serde(skip)]
+    directory: PathBuf,
 }
 
 #[derive(Debug, Deserialize)]
@@ -95,6 +102,8 @@ struct Release {
     credits: Vec<Credit>,
     #[serde(default)]
     genres: Vec<String>,
+    /// An image file, relative to the fixture, stored as the release's cover.
+    cover: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -194,6 +203,12 @@ impl Keys {
 }
 
 impl Fixture {
+    /// Resolves the fixture's paths against `directory`, the one its file is in.
+    pub fn in_directory(mut self, directory: &Path) -> Self {
+        self.directory = directory.to_path_buf();
+        self
+    }
+
     /// Writes the fixture into `db`, returning what the test receives and the user it runs as.
     pub(crate) fn seed(&self, db: &mut DbAny) -> anyhow::Result<(Seeded, DbId)> {
         let mut keys = Keys {
@@ -278,6 +293,28 @@ impl Fixture {
                 .collect::<anyhow::Result<Vec<_>>>()?;
             if !genre_names.is_empty() {
                 db::genres::sync_release_genres(db, release_db_id, &genre_names)?;
+            }
+            if let Some(cover) = &release.cover {
+                let path = self.directory.join(cover);
+                anyhow::ensure!(
+                    path.is_file(),
+                    "fixture cover {} is not a file",
+                    path.display()
+                );
+                db.transaction_mut(|t| {
+                    db::covers::upsert(
+                        t,
+                        release_db_id,
+                        db::Cover {
+                            db_id: None,
+                            id: nanoid::nanoid!(),
+                            mime_type: services::covers::cover_mime_from_path(&path).into(),
+                            path: path.to_string_lossy().into_owned(),
+                            hash: release.key.clone(),
+                            blurhash: None,
+                        },
+                    )
+                })?;
             }
             keys.entities.insert(
                 release.key.clone(),

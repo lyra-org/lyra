@@ -54,9 +54,11 @@ fn load_fixture(test_path: &Path) -> anyhow::Result<Option<lyra_server::testing:
     }
     let content = std::fs::read_to_string(&path)
         .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
-    let fixture = toml::from_str(&content)
+    let fixture: lyra_server::testing::Fixture = toml::from_str(&content)
         .map_err(|error| anyhow::anyhow!("parse {}: {error}", path.display()))?;
-    Ok(Some(fixture))
+    Ok(Some(
+        fixture.in_directory(path.parent().unwrap_or(Path::new("."))),
+    ))
 }
 
 /// Whether `dir` lies within a test directory's `luau/` tree.
