@@ -2420,11 +2420,9 @@ api.post(P .. "/DisplayPreferences/{displayPreferencesId}", function(ctx: ApiCon
 	end
 	return preferences.display_prefs_set(ctx, principal.user_id, prefs_id)
 end, "public", true)
-local function handle_missing_image_route(ctx: ApiContext): ApiResponse
-	if not session.require_jellyfin_principal(ctx) then
-		return session.unauthorized()
-	end
-
+-- Lyra has no artwork of these types, so upstream would answer 404 to anyone: for an unknown
+-- item, one the caller can't see, or one without the image.
+local function handle_missing_image_route(_ctx: ApiContext): ApiResponse
 	return statics.image_not_found_response()
 end
 
