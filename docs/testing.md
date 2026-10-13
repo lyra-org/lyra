@@ -74,6 +74,7 @@ title = "Solo"
 added = 400          # ctime
 artists = ["amy"]
 genres = ["rock"]
+cover = "cover.png"  # an image file, relative to the fixture
 
 [[tracks]]
 key = "s1"
