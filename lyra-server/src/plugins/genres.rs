@@ -86,12 +86,10 @@ fn query_callback(
         releases: catalog::optional_ids(frame.vm, &opts, "release_ids")?,
     };
     let request = catalog::read_query::<Genres>(frame.vm, &opts, filter)?;
-    let principal = crate::plugins::auth::dispatch_principal(&frame.context)?;
-    let db = db::get(frame.vm)?;
+    let db = db::scoped(&frame)?;
 
     Ok(luau::ScheduledFuture::new(async move {
-        let db = db.read().await;
-        let viewer = catalog::viewer(&*db, principal)?;
+        let (db, viewer) = db.read().await?;
         let page =
             services::catalog::page(&db, &viewer, &request.query, request.offset, request.limit)
                 .map_err(catalog::error)?;
@@ -133,8 +131,7 @@ fn by_release_spec() -> FunctionSpec {
 fn get_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let db = db::get(frame.vm)?;
-    catalog::keyed_lookup(&mut frame, db, "ids", |db, viewer, ids| {
+    catalog::keyed_lookup(&mut frame, "ids", |db, viewer, ids| {
         Ok(lookups::get::<Genres>(db, viewer, ids)?
             .into_iter()
             .map(|(id, genre)| (id, GenreRecord::from(genre)))
@@ -145,8 +142,7 @@ fn get_callback(
 fn by_release_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let db = db::get(frame.vm)?;
-    catalog::keyed_lookup(&mut frame, db, "release_ids", |db, viewer, ids| {
+    catalog::keyed_lookup(&mut frame, "release_ids", |db, viewer, ids| {
         Ok(lookups::genres_by_release(db, viewer, ids)?
             .into_iter()
             .map(|(id, genres)| {

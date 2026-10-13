@@ -36,7 +36,6 @@ use harmony_luau::{
 };
 
 use crate::plugins::args;
-use crate::plugins::catalog;
 use crate::plugins::db::{
     self,
     Cover,
@@ -75,9 +74,7 @@ fn get_spec() -> FunctionSpec {
         .arg_name("id")
         .args::<ResolveId>()
         .returns::<Option<luau::Table>>()
-        .call_async(Arc::new(|frame| {
-            cover_callback(frame, crate::plugins::auth::dispatch_principal)
-        }))
+        .call_async(Arc::new(|frame| cover_callback(frame, db::scoped)))
 }
 
 fn get_many_spec() -> FunctionSpec {
@@ -86,9 +83,7 @@ fn get_many_spec() -> FunctionSpec {
         .arg_name("ids")
         .args::<luau::Table>()
         .returns::<luau::Table>()
-        .call_async(Arc::new(|frame| {
-            covers_callback(frame, crate::plugins::auth::dispatch_principal)
-        }))
+        .call_async(Arc::new(|frame| covers_callback(frame, db::scoped)))
 }
 
 fn get_playlist_sources_spec() -> FunctionSpec {
@@ -98,7 +93,7 @@ fn get_playlist_sources_spec() -> FunctionSpec {
         .args::<ResolveId>()
         .returns::<luau::Table>()
         .call_async(Arc::new(|frame| {
-            playlist_sources_callback(frame, crate::plugins::auth::dispatch_principal)
+            playlist_sources_callback(frame, db::scoped)
         }))
 }
 
@@ -116,7 +111,7 @@ fn artwork_spec() -> FunctionSpec {
         .arg_name("id")
         .args::<ResolveId>()
         .returns::<Option<luau::Table>>()
-        .call_async(Arc::new(|frame| cover_callback(frame, no_caller)))
+        .call_async(Arc::new(|frame| cover_callback(frame, db::system)))
 }
 
 fn artwork_many_spec() -> FunctionSpec {
@@ -124,7 +119,7 @@ fn artwork_many_spec() -> FunctionSpec {
         .arg_name("ids")
         .args::<luau::Table>()
         .returns::<luau::Table>()
-        .call_async(Arc::new(|frame| covers_callback(frame, no_caller)))
+        .call_async(Arc::new(|frame| covers_callback(frame, db::system)))
 }
 
 fn artwork_playlist_sources_spec() -> FunctionSpec {
@@ -133,31 +128,22 @@ fn artwork_playlist_sources_spec() -> FunctionSpec {
         .args::<ResolveId>()
         .returns::<luau::Table>()
         .call_async(Arc::new(|frame| {
-            playlist_sources_callback(frame, no_caller)
+            playlist_sources_callback(frame, db::system)
         }))
 }
 
-type Caller =
-    fn(&luau::CallContext) -> luau::runtime::Result<Option<crate::services::auth::Principal>>;
-
-fn no_caller(
-    _: &luau::CallContext,
-) -> luau::runtime::Result<Option<crate::services::auth::Principal>> {
-    Ok(None)
-}
+type Scope = fn(&luau::AsyncCallFrame<'_>) -> luau::runtime::Result<db::ViewerDb>;
 
 fn cover_callback(
     mut frame: luau::AsyncCallFrame<'_>,
-    caller: Caller,
+    scope: Scope,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let id = args::resolve_id(frame.args.read_named::<luau::Value>("id")?)?;
-    let principal = caller(&frame.context)?;
-    let db = db::get(frame.vm)?;
+    let db = scope(&frame)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let (resolved_cover, stale_owners) = {
-            let db_read = db.read().await;
-            let viewer = catalog::viewer(&*db_read, principal)?;
+            let (db_read, viewer) = db.read().await?;
             let Some(QueryId::Id(item_id)) = id
                 .to_query_id(&db_read)
                 .map_err(crate::plugins::runtime_error)?
@@ -177,7 +163,7 @@ fn cover_callback(
         };
 
         if !stale_owners.is_empty() {
-            remove_still_stale_covers(db.clone(), stale_owners).await?;
+            remove_still_stale_covers(db.handle(), stale_owners).await?;
         }
 
         let Some((owner_id, cover)) = resolved_cover else {
@@ -189,17 +175,15 @@ fn cover_callback(
 
 fn covers_callback(
     mut frame: luau::AsyncCallFrame<'_>,
-    caller: Caller,
+    scope: Scope,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids: luau::Table = frame.args.read_named("ids")?;
     let item_ids = args::unique_ids(frame.vm, &ids)?;
-    let principal = caller(&frame.context)?;
-    let db = db::get(frame.vm)?;
+    let db = scope(&frame)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let (resolved, stale_owners) = {
-            let db_read = db.read().await;
-            let viewer = catalog::viewer(&*db_read, principal)?;
+            let (db_read, viewer) = db.read().await?;
             let mut visible_ids = Vec::with_capacity(item_ids.len());
             for item_id in &item_ids {
                 if viewer
@@ -216,7 +200,7 @@ fn covers_callback(
         };
 
         if !stale_owners.is_empty() {
-            remove_still_stale_covers(db.clone(), stale_owners).await?;
+            remove_still_stale_covers(db.handle(), stale_owners).await?;
         }
 
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, item_ids.len());
@@ -235,16 +219,14 @@ fn covers_callback(
 
 fn playlist_sources_callback(
     mut frame: luau::AsyncCallFrame<'_>,
-    caller: Caller,
+    scope: Scope,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let id = args::resolve_id(frame.args.read_named::<luau::Value>("id")?)?;
-    let principal = caller(&frame.context)?;
-    let db = db::get(frame.vm)?;
+    let db = scope(&frame)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let (sources, stale_owners) = {
-            let db_read = db.read().await;
-            let viewer = catalog::viewer(&*db_read, principal)?;
+            let (db_read, viewer) = db.read().await?;
             let Some(QueryId::Id(playlist_id)) = id
                 .to_query_id(&db_read)
                 .map_err(crate::plugins::runtime_error)?
@@ -261,7 +243,7 @@ fn playlist_sources_callback(
         };
 
         if !stale_owners.is_empty() {
-            remove_still_stale_covers(db.clone(), stale_owners).await?;
+            remove_still_stale_covers(db.handle(), stale_owners).await?;
         }
 
         Ok(luau::Value::TableData(sources_to_table(sources)))
@@ -273,13 +255,11 @@ fn get_playlist_sources_many_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids: luau::Table = frame.args.read_named("ids")?;
     let playlist_ids = args::unique_ids(frame.vm, &ids)?;
-    let principal = crate::plugins::auth::dispatch_principal(&frame.context)?;
-    let db = db::get(frame.vm)?;
+    let db = db::scoped(&frame)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let (resolved, stale_owners) = {
-            let db_read = db.read().await;
-            let viewer = catalog::viewer(&*db_read, principal)?;
+            let (db_read, viewer) = db.read().await?;
             let mut stale_owners = Vec::new();
             let mut resolved = Vec::with_capacity(playlist_ids.len());
             for playlist_id in &playlist_ids {
@@ -292,7 +272,7 @@ fn get_playlist_sources_many_callback(
         };
 
         if !stale_owners.is_empty() {
-            remove_still_stale_covers(db.clone(), stale_owners).await?;
+            remove_still_stale_covers(db.handle(), stale_owners).await?;
         }
 
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, resolved.len());

@@ -26,7 +26,6 @@ use harmony_luau::{
 };
 
 use crate::plugins::args;
-use crate::plugins::catalog;
 use crate::{
     plugins::db::{
         self,
@@ -156,12 +155,10 @@ fn get_for_release_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let release_id = args::positive_id(frame.args.read_named("release_id")?, "release_id")?;
-    let principal = caller_principal(&frame.context)?;
-    let db = db::get(frame.vm)?;
+    let db = db::scoped(&frame)?;
     Ok(luau::ScheduledFuture::new(async move {
         let labels = {
-            let db = db.read().await;
-            let viewer = catalog::viewer(&*db, principal)?;
+            let (db, viewer) = db.read().await?;
             if viewer
                 .sees_entity(&*db, release_id)
                 .map_err(crate::plugins::runtime_error)?
@@ -181,12 +178,10 @@ fn get_for_releases_many_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids_table: luau::Table = frame.args.read_named("release_ids")?;
     let ids = args::unique_ids(frame.vm, &ids_table)?;
-    let principal = caller_principal(&frame.context)?;
-    let db = db::get(frame.vm)?;
+    let db = db::scoped(&frame)?;
     Ok(luau::ScheduledFuture::new(async move {
         let labels = {
-            let db = db.read().await;
-            let viewer = catalog::viewer(&*db, principal)?;
+            let (db, viewer) = db.read().await?;
             let readable = viewer
                 .visible(&db, ids)
                 .map_err(crate::plugins::runtime_error)?;
@@ -207,12 +202,10 @@ fn get_releases_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let label_id = args::positive_id(frame.args.read_named("label_id")?, "label_id")?;
-    let db = db::get(frame.vm)?;
-    let principal = caller_principal(&frame.context)?;
+    let db = db::scoped(&frame)?;
     Ok(luau::ScheduledFuture::new(async move {
         let release_ids = {
-            let db = db.read().await;
-            let viewer = catalog::viewer(&*db, principal)?;
+            let (db, viewer) = db.read().await?;
             let release_ids =
                 db::labels::get_releases(&db, label_id).map_err(crate::plugins::runtime_error)?;
             viewer
@@ -228,12 +221,10 @@ fn get_releases_many_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids_table: luau::Table = frame.args.read_named("label_ids")?;
     let ids = args::unique_ids(frame.vm, &ids_table)?;
-    let db = db::get(frame.vm)?;
-    let principal = caller_principal(&frame.context)?;
+    let db = db::scoped(&frame)?;
     Ok(luau::ScheduledFuture::new(async move {
         let release_ids = {
-            let db = db.read().await;
-            let viewer = catalog::viewer(&*db, principal)?;
+            let (db, viewer) = db.read().await?;
             let mut visible = Vec::new();
             for (label_id, release_ids) in
                 db::labels::get_releases_many(&db, &ids).map_err(crate::plugins::runtime_error)?
