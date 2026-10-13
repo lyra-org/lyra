@@ -67,12 +67,14 @@ fn get_primary_source_key_callback(
         return Ok(luau::ScheduledFuture::new(async { Ok(luau::Value::Nil) }));
     }
 
-    let principal = crate::plugins::auth::dispatch_principal(&frame.context)?;
-    let db = db::get(frame.vm)?;
+    let db = db::scoped(&frame)?;
 
     Ok(luau::ScheduledFuture::new(async move {
-        let db = db.read().await;
-        if !sees_track(&db, principal, DbId(track_id))? {
+        let (db, viewer) = db.read().await?;
+        if !viewer
+            .sees_entity(&*db, DbId(track_id))
+            .map_err(crate::plugins::runtime_error)?
+        {
             return None::<String>.into_luau_return();
         }
         let source = db::track_sources::get_primary_by_track(&db, DbId(track_id))
@@ -92,12 +94,14 @@ fn get_primary_container_callback(
         return Ok(luau::ScheduledFuture::new(async { Ok(luau::Value::Nil) }));
     }
 
-    let principal = crate::plugins::auth::dispatch_principal(&frame.context)?;
-    let db = db::get(frame.vm)?;
+    let db = db::scoped(&frame)?;
 
     Ok(luau::ScheduledFuture::new(async move {
-        let db = db.read().await;
-        if !sees_track(&db, principal, DbId(track_id))? {
+        let (db, viewer) = db.read().await?;
+        if !viewer
+            .sees_entity(&*db, DbId(track_id))
+            .map_err(crate::plugins::runtime_error)?
+        {
             return None::<String>.into_luau_return();
         }
         let container = resolve_primary_container(&db, DbId(track_id))
@@ -111,12 +115,10 @@ fn get_primary_containers_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids_table: luau::Table = frame.args.read_named("track_ids")?;
     let ids = args::unique_ids(frame.vm, &ids_table)?;
-    let principal = crate::plugins::auth::dispatch_principal(&frame.context)?;
-    let db = db::get(frame.vm)?;
+    let db = db::scoped(&frame)?;
 
     Ok(luau::ScheduledFuture::new(async move {
-        let db = db.read().await;
-        let viewer = crate::plugins::catalog::viewer(&*db, principal)?;
+        let (db, viewer) = db.read().await?;
         let visible = viewer
             .visible(&db, ids.iter().copied())
             .map_err(crate::plugins::runtime_error)?;
@@ -131,16 +133,6 @@ fn get_primary_containers_callback(
         }
         Ok(luau::Value::TableData(table))
     }))
-}
-
-fn sees_track(
-    db: &agdb::DbAny,
-    principal: Option<crate::services::auth::Principal>,
-    track_db_id: DbId,
-) -> luau::runtime::Result<bool> {
-    crate::plugins::catalog::viewer(db, principal)?
-        .sees_entity(db, track_db_id)
-        .map_err(crate::plugins::runtime_error)
 }
 
 fn resolve_primary_container(

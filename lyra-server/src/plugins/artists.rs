@@ -155,17 +155,14 @@ fn relations_spec() -> FunctionSpec {
 fn get_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let db = db::get(frame.vm)?;
-    catalog::keyed_lookup(&mut frame, db, "ids", lookups::get::<Artists>)
+    catalog::keyed_lookup(&mut frame, "ids", lookups::get::<Artists>)
 }
 
 fn by_release_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let db = db::get(frame.vm)?;
     catalog::keyed_lookup(
         &mut frame,
-        db,
         "release_ids",
         lookups::artists_by_owner::<Releases>,
     )
@@ -174,20 +171,13 @@ fn by_release_callback(
 fn by_track_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let db = db::get(frame.vm)?;
-    catalog::keyed_lookup(
-        &mut frame,
-        db,
-        "track_ids",
-        lookups::artists_by_owner::<Tracks>,
-    )
+    catalog::keyed_lookup(&mut frame, "track_ids", lookups::artists_by_owner::<Tracks>)
 }
 
 fn relations_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let db = db::get(frame.vm)?;
-    catalog::keyed_lookup(&mut frame, db, "ids", relation_infos)
+    catalog::keyed_lookup(&mut frame, "ids", relation_infos)
 }
 
 fn relation_infos(
@@ -212,12 +202,10 @@ fn query_callback(
     let opts: luau::Table = frame.args.read_named("query")?;
     let filter = read_filter(frame.vm, &opts)?;
     let request = catalog::read_query::<Artists>(frame.vm, &opts, filter)?;
-    let principal = crate::plugins::auth::dispatch_principal(&frame.context)?;
-    let db = db::get(frame.vm)?;
+    let db = db::scoped(&frame)?;
 
     Ok(luau::ScheduledFuture::new(async move {
-        let db = db.read().await;
-        let viewer = catalog::viewer(&*db, principal)?;
+        let (db, viewer) = db.read().await?;
         let page =
             services::catalog::page(&db, &viewer, &request.query, request.offset, request.limit)
                 .and_then(|page| {

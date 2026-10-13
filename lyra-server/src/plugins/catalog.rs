@@ -24,15 +24,10 @@ use harmony_luau::{
 };
 use serde::Serialize;
 
-use crate::plugins::db::{
-    DbAccess,
-    DbAsync,
-};
 use crate::{
     plugins::args,
     services::{
         self,
-        auth::Principal,
         catalog::{
             ArtistCredit,
             CatalogError,
@@ -49,14 +44,6 @@ use crate::{
         },
     },
 };
-
-/// The viewer a query runs for, verified under the caller's guard.
-pub(crate) fn viewer(
-    db: &impl DbAccess,
-    principal: Option<Principal>,
-) -> luau::runtime::Result<Viewer> {
-    Viewer::of(db, principal).map_err(crate::plugins::runtime_error)
-}
 
 pub(crate) fn error(error: CatalogError) -> luau::Error {
     crate::plugins::runtime_error(error)
@@ -174,16 +161,14 @@ pub(crate) type KeyedLookup<T> =
 /// viewer, keyed by id.
 pub(crate) fn keyed_lookup<T: Serialize + 'static>(
     frame: &mut luau::AsyncCallFrame<'_>,
-    db: DbAsync,
     name: &'static str,
     lookup: KeyedLookup<T>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids: luau::Table = frame.args.read_named(name)?;
     let ids = args::unique_ids(frame.vm, &ids)?;
-    let principal = crate::plugins::auth::dispatch_principal(&frame.context)?;
+    let db = crate::plugins::db::scoped(frame)?;
     Ok(luau::ScheduledFuture::new(async move {
-        let db = db.read().await;
-        let viewer = viewer(&*db, principal)?;
+        let (db, viewer) = db.read().await?;
         let found = lookup(&db, &viewer, &ids).map_err(error)?;
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, found.len());
         for (id, value) in found {

@@ -57,12 +57,10 @@ fn get_callback(
         .read_optional_named::<luau::Value>("id")?
         .map(args::resolve_id)
         .transpose()?;
-    let principal = crate::plugins::auth::dispatch_principal(&frame.context)?;
-    let db = db::get(frame.vm)?;
+    let db = db::scoped(&frame)?;
 
     Ok(luau::ScheduledFuture::new(async move {
-        let db = db.read().await;
-        let viewer = crate::plugins::catalog::viewer(&*db, principal)?;
+        let (db, viewer) = db.read().await?;
         let from = id
             .map(|id| {
                 id.to_db_id(&db)
