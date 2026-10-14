@@ -59,6 +59,12 @@ admin = true
 key = "phone"
 user = "owner"
 
+[[sessions]]
+key = "laptop"
+user = "owner"
+client_name = "Lyra Web"  # optional
+seen = 300                # optional last_seen_at, in unix seconds
+
 [[artists]]
 key = "amy"
 name = "Amy"
@@ -107,6 +113,7 @@ target = "mix"       # any artist, release, track or playlist key
 local fixture = ...
 fixture.users.owner     -- the user's public id
 fixture.api_keys.phone  -- an API key's secret
+fixture.sessions.laptop -- a session's token
 fixture.ids.s1          -- an entity's database id, by fixture key
 fixture.entries.mix[1]  -- a playlist's entry ids, in order
 ```
