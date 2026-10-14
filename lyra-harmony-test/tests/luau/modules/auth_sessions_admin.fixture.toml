@@ -1,0 +1,17 @@
+run_as = "admin"
+
+[[users]]
+key = "admin"
+admin = true
+
+[[users]]
+key = "other"
+
+[[sessions]]
+key = "admin_web"
+user = "admin"
+
+[[sessions]]
+key = "other_phone"
+user = "other"
+client_name = "Phone"
