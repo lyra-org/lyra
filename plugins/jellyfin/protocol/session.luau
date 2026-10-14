@@ -6,7 +6,6 @@
 
 local api = require("@lyra/api")
 local auth = require("@lyra/auth")
-local playback_sessions = require("@lyra/playback_sessions")
 local playlists = require("@lyra/playlists")
 local server = require("@lyra/server")
 
@@ -814,16 +813,6 @@ function module.handle_genre_image_request(ctx: ApiContext?): ApiResponse
 	return serve_public_image_by_name(ctx, catalog.resolve_genre_cover_by_name)
 end
 
-local MAX_SESSION_KEY_DISPLAY_LENGTH = 64
-
--- Client-supplied; strip control/NUL to keep the value safe in displayable fields.
-local function sanitize_session_key(raw: string): string
-	local trimmed = if #raw <= MAX_SESSION_KEY_DISPLAY_LENGTH
-		then raw
-		else string.sub(raw, 1, MAX_SESSION_KEY_DISPLAY_LENGTH)
-	return (string.gsub(trimmed, "[%c%z]", ""))
-end
-
 -- Whitelist of capability fields the plugin forwards to callers of
 -- GET /Sessions. Anything outside this set (DeviceProfile, IconUrl, etc.) is
 -- dropped to keep the stored object bounded.
@@ -981,51 +970,108 @@ function module.build_session_info(
 	}
 end
 
-function module.current_iso_timestamp(): string
-	return os.date("!%Y-%m-%dT%H:%M:%SZ", os.time()) :: string
+local function iso_timestamp(unix_seconds: number): string
+	return os.date("!%Y-%m-%dT%H:%M:%SZ", unix_seconds) :: string
 end
 
-function module.devices_info_response(ctx: ApiContext?, user_id: string): ApiResponse
-	local query = if ctx and ctx.request then ctx.request.query else nil
-	local requested_device_id = requests.parse_query_string(query, { "id", "Id" }, nil)
+function module.current_iso_timestamp(): string
+	return iso_timestamp(os.time())
+end
 
-	local ok, connections = pcall(playback_sessions.list_connections)
-	if not ok or type(connections) ~= "table" then
-		return api.response.empty(500)
+local function saved_text(fields: { [string]: auth.JsonValue }, key: string): string?
+	local value = fields[key]
+	return if type(value) == "string" then value else nil
+end
+
+-- A login's device, from the identity remember_login_identity saved on its session.
+local function to_device_info(entry: auth.SessionInfo): JsonObject?
+	if type(entry.data) ~= "table" then
+		return nil
 	end
-
-	local user_encoded_id = item_ids.encode_jellyfin_item_id(user_id)
-	local activity_iso = os.date("!%Y-%m-%dT%H:%M:%SZ", os.time())
-
-	local function build_entry(conn): JsonObject
-		local short_id = sanitize_session_key(conn.session_key)
-		return {
-			Id = short_id,
-			Name = "Lyra Client",
-			LastUserId = user_encoded_id,
-			AppName = "Lyra",
-			DateLastActivity = activity_iso,
-		}
+	local fields = entry.data :: { [string]: auth.JsonValue }
+	local device_id = saved_text(fields, "device_id")
+	if not device_id then
+		return nil
 	end
+	return {
+		Id = device_id,
+		Name = saved_text(fields, "device"),
+		CustomName = preferences.device_custom_name(device_id),
+		AppName = saved_text(fields, "client"),
+		AppVersion = saved_text(fields, "version"),
+		LastUserId = item_ids.encode_jellyfin_item_id(entry.user_id),
+		LastUserName = entry.username,
+		DateLastActivity = iso_timestamp(entry.last_seen_at),
+	}
+end
 
-	if requested_device_id then
-		for _, conn in connections do
-			if conn.session_key == requested_device_id then
-				return api.response.json(200, build_entry(conn))
-			end
+type DeviceRow = { device: JsonObject, last_seen_at: number }
+
+-- One device per login across all users, most recently active first.
+local function list_devices(): { JsonObject }
+	local rows: { DeviceRow } = {}
+	for _, entry in auth.list_sessions({ all_users = true }) do
+		local device = to_device_info(entry)
+		if device then
+			table.insert(rows, { device = device, last_seen_at = entry.last_seen_at })
 		end
-		return responses.not_found("device not found")
+	end
+	table.sort(rows, function(a: DeviceRow, b: DeviceRow): boolean
+		if a.last_seen_at ~= b.last_seen_at then
+			return a.last_seen_at > b.last_seen_at
+		end
+		return (a.device.Id :: string) < (b.device.Id :: string)
+	end)
+	local devices: { JsonObject } = {}
+	for _, row in rows do
+		table.insert(devices, row.device)
+	end
+	return devices
+end
+
+-- A 401 or 403 response unless the caller is an administrator, as upstream's elevation policy.
+function module.require_admin(ctx: ApiContext?): ApiResponse?
+	local principal = module.require_jellyfin_principal(ctx)
+	if not principal then
+		return module.unauthorized()
+	end
+	if not module.is_admin(principal) then
+		return responses.forbidden()
+	end
+	return nil
+end
+
+function module.devices_response(ctx: ApiContext?): ApiResponse
+	local denied = module.require_admin(ctx)
+	if denied then
+		return denied
 	end
 
-	local items: { JsonValue } = {}
-	for _, conn in connections do
-		table.insert(items, build_entry(conn))
-	end
+	local devices = list_devices()
 	return api.response.json(200, {
-		Items = items,
-		TotalRecordCount = #items,
+		Items = devices,
+		TotalRecordCount = #devices,
 		StartIndex = 0,
 	})
+end
+
+function module.device_info_response(ctx: ApiContext?): ApiResponse
+	local denied = module.require_admin(ctx)
+	if denied then
+		return denied
+	end
+
+	local query = if ctx and ctx.request then ctx.request.query else nil
+	local device_id = requests.parse_query_string(query, { "id", "Id" }, nil)
+	if not device_id then
+		return responses.bad_request("missing id")
+	end
+	for _, device in list_devices() do
+		if device.Id == device_id then
+			return api.response.json(200, device)
+		end
+	end
+	return responses.not_found("device not found")
 end
 
 local function resolve_item_file_track_id(ctx: ApiContext?): (number?, ApiResponse?)

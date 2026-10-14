@@ -743,17 +743,7 @@ api.get(P .. "/Channels", function(ctx: ApiContext)
 
 	return api.response.json(200, empty_query_result())
 end, "public", true)
-api.get(P .. "/Devices", function(ctx: ApiContext)
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-
-	return api.response.json(200, {
-		Items = {},
-		TotalRecordCount = 0,
-	})
-end, "public", true)
+api.get(P .. "/Devices", session.devices_response, "public", true)
 api.get(P .. "/Users/Me", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -2373,26 +2363,12 @@ end, "public", true)
 api.get(P .. "/Branding/Css.css", function(): ApiResponse
 	return statics.branding_css_response()
 end, "public", true)
-api.get(P .. "/Devices/Info", function(ctx: ApiContext)
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-	return session.devices_info_response(ctx, principal.user_id)
-end, "public", true)
+api.get(P .. "/Devices/Info", session.device_info_response, "public", true)
 api.get(P .. "/Devices/Options", function(ctx: ApiContext)
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-	return preferences.device_options_get(ctx, principal.user_id)
+	return session.require_admin(ctx) or preferences.device_options_get(ctx)
 end, "public", true)
 api.post(P .. "/Devices/Options", function(ctx: ApiContext)
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-	return preferences.device_options_set(ctx, principal.user_id)
+	return session.require_admin(ctx) or preferences.device_options_set(ctx)
 end, "public", true)
 api.get(P .. "/DisplayPreferences/{displayPreferencesId}", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
