@@ -105,20 +105,17 @@ local function require_client(ctx: ApiContext): string?
 	return valid_segment(raw, MAX_CLIENT_SEGMENT_LENGTH)
 end
 
+-- The whole store key, so any client-chosen id is safe; only its length is bounded.
 local function require_device_id(ctx: ApiContext): string?
 	local query = if ctx and ctx.request then ctx.request.query else nil
 	local raw = requests.parse_query_string(query, { "id", "Id" }, nil)
-	return valid_segment(raw, MAX_DEVICE_ID_LENGTH)
+	return if raw and #raw <= MAX_DEVICE_ID_LENGTH then raw else nil
 end
 
 -- Keys are scoped by the user's public id, which is never reused.
 local function display_prefs_key(user_id: string, client: string, prefs_id: string): string
 	-- Length-prefix each variable segment so no separator injection is possible.
 	return string.format("%d:%s:%d:%s:%d:%s", #user_id, user_id, #client, client, #prefs_id, prefs_id)
-end
-
-local function device_options_key(user_id: string, device_id: string): string
-	return string.format("%d:%s:%d:%s", #user_id, user_id, #device_id, device_id)
 end
 
 local function default_display_prefs(prefs_id: string, client: string): JsonObject
@@ -137,11 +134,17 @@ local function default_display_prefs(prefs_id: string, client: string): JsonObje
 	}
 end
 
-local function default_device_options(device_id: string): JsonObject
-	return {
-		Id = device_id,
-		DeviceId = device_id,
-	}
+-- Upstream keeps one options record per device id, holding only its custom name.
+local function stored_device_options(device_id: string): (StoredObject?, boolean)
+	local store = get_device_options_store()
+	if not store then
+		return nil, false
+	end
+	local get_ok, existing = pcall(store.get, store, device_id)
+	if not get_ok then
+		return nil, false
+	end
+	return if type(existing) == "table" then existing :: StoredObject else nil, true
 end
 
 -- Upstream's defaults for a user who never saved a configuration.
@@ -282,35 +285,32 @@ function module.display_prefs_set(ctx: ApiContext, user_id: string, prefs_id_raw
 	return api.response.empty(204)
 end
 
-function module.device_options_get(ctx: ApiContext, user_id: string): ApiResponse
+function module.device_options_get(ctx: ApiContext): ApiResponse
 	local device_id = require_device_id(ctx)
 	if not device_id then
 		return responses.bad_request("invalid or missing id")
 	end
 
-	local store = get_device_options_store()
-	if not store then
+	local options, readable = stored_device_options(device_id)
+	if not readable then
 		return api.response.empty(500)
 	end
-
-	local key = device_options_key(user_id, device_id)
-	local get_ok, existing = pcall(store.get, store, key)
-	if not get_ok then
-		return api.response.empty(500)
+	if not options then
+		return responses.not_found("device options not found")
 	end
-
-	local merged = default_device_options(device_id)
-	if type(existing) == "table" then
-		for field, value in existing :: StoredObject do
-			merged[field] = value :: JsonValue
-		end
-	end
-	merged.Id = device_id
-	merged.DeviceId = device_id
-	return api.response.json(200, merged)
+	return api.response.json(200, {
+		DeviceId = device_id,
+		CustomName = options.CustomName :: JsonValue,
+	})
 end
 
-function module.device_options_set(ctx: ApiContext, user_id: string): ApiResponse
+function module.device_custom_name(device_id: string): string?
+	local options = stored_device_options(device_id)
+	local custom_name = if options then options.CustomName else nil
+	return if type(custom_name) == "string" then custom_name else nil
+end
+
+function module.device_options_set(ctx: ApiContext): ApiResponse
 	local device_id = require_device_id(ctx)
 	if not device_id then
 		return responses.bad_request("invalid or missing id")
@@ -324,18 +324,16 @@ function module.device_options_set(ctx: ApiContext, user_id: string): ApiRespons
 	if not body_within_size_cap(ctx) then
 		return responses.bad_request("device options body exceeds size cap")
 	end
-
-	local payload = request_json :: JsonObject
-	payload.Id = device_id
-	payload.DeviceId = device_id
+	local custom_name = (request_json :: JsonObject).CustomName
+	if custom_name ~= nil and type(custom_name) ~= "string" then
+		return responses.bad_request("invalid CustomName")
+	end
 
 	local store = get_device_options_store()
 	if not store then
 		return api.response.empty(500)
 	end
-
-	local key = device_options_key(user_id, device_id)
-	local set_ok = pcall(store.set, store, key, payload :: StoredValue)
+	local set_ok = pcall(store.set, store, device_id, { CustomName = custom_name } :: StoredValue)
 	if not set_ok then
 		return api.response.empty(500)
 	end

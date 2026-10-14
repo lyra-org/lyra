@@ -1,0 +1,16 @@
+run_as = "admin"
+
+[[users]]
+key = "admin"
+admin = true
+
+[[users]]
+key = "listener"
+
+[[api_keys]]
+key = "admin_key"
+user = "admin"
+
+[[api_keys]]
+key = "listener_key"
+user = "listener"
