@@ -67,6 +67,9 @@ struct User {
     key: String,
     #[serde(default)]
     admin: bool,
+    /// Permissions of a role of the user's own, for a user who is not an admin.
+    #[serde(default)]
+    permissions: Vec<db::Permission>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -243,10 +246,26 @@ impl Fixture {
             let record = fixtures::test_user(&user.key)?;
             let public_id = record.id.clone();
             let user_db_id = db::users::create(db, &record)?;
+            anyhow::ensure!(
+                !user.admin || user.permissions.is_empty(),
+                "fixture user `{}` is an admin and takes no permissions",
+                user.key
+            );
             if user.admin {
                 let role = db::roles::get_by_name(db, db::roles::BUILTIN_ADMIN_ROLE)?
                     .and_then(|role| role.db_id)
                     .context("built-in admin role exists")?;
+                db::roles::assign_role_to_user(db, user_db_id, role)?;
+            } else if !user.permissions.is_empty() {
+                let role = db::roles::create(
+                    db,
+                    &db::roles::Role {
+                        db_id: None,
+                        id: nanoid::nanoid!(),
+                        name: user.key.clone(),
+                        permissions: user.permissions.clone(),
+                    },
+                )?;
                 db::roles::assign_role_to_user(db, user_db_id, role)?;
             }
             seeded.users.insert(user.key.clone(), public_id.clone());
