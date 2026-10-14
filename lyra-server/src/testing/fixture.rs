@@ -41,6 +41,8 @@ pub struct Fixture {
     #[serde(default)]
     api_keys: Vec<ApiKey>,
     #[serde(default)]
+    sessions: Vec<Session>,
+    #[serde(default)]
     artists: Vec<Artist>,
     #[serde(default)]
     genres: Vec<Genre>,
@@ -72,6 +74,16 @@ struct User {
 struct ApiKey {
     key: String,
     user: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Session {
+    key: String,
+    user: String,
+    client_name: Option<String>,
+    /// Unix seconds of the session's last authenticated request.
+    seen: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -158,12 +170,13 @@ struct Favorite {
     target: String,
 }
 
-/// What the test receives as its chunk's `...`: user ids, API key secrets and entity ids by
-/// fixture key, and each playlist's entry ids in order.
+/// What the test receives as its chunk's `...`: user ids, API key secrets, session tokens and
+/// entity ids by fixture key, and each playlist's entry ids in order.
 #[derive(Debug, Default, Serialize)]
 pub(crate) struct Seeded {
     users: BTreeMap<String, String>,
     api_keys: BTreeMap<String, String>,
+    sessions: BTreeMap<String, String>,
     ids: BTreeMap<String, i64>,
     entries: BTreeMap<String, Vec<String>>,
 }
@@ -171,6 +184,7 @@ pub(crate) struct Seeded {
 struct Keys {
     users: BTreeMap<String, (DbId, String)>,
     api_keys: BTreeSet<String>,
+    sessions: BTreeSet<String>,
     entities: BTreeMap<String, (DbId, db::favorites::FavoriteKind)>,
     genres: BTreeMap<String, String>,
 }
@@ -194,6 +208,7 @@ impl Keys {
         anyhow::ensure!(
             !self.users.contains_key(key)
                 && !self.api_keys.contains(key)
+                && !self.sessions.contains(key)
                 && !self.entities.contains_key(key)
                 && !self.genres.contains_key(key),
             "fixture key `{key}` is used twice"
@@ -214,6 +229,7 @@ impl Fixture {
         let mut keys = Keys {
             users: BTreeMap::new(),
             api_keys: BTreeSet::new(),
+            sessions: BTreeSet::new(),
             entities: BTreeMap::new(),
             genres: BTreeMap::new(),
         };
@@ -249,6 +265,28 @@ impl Fixture {
             )?;
             seeded.api_keys.insert(api_key.key.clone(), secret);
             keys.api_keys.insert(api_key.key.clone());
+        }
+
+        for session in &self.sessions {
+            keys.claim(&session.key)?;
+            let token = services::auth::random_hex_secret::<16>();
+            let now = db::users::now_secs();
+            db::users::login(
+                db,
+                keys.user(&session.user)?,
+                &db::users::Session {
+                    db_id: None,
+                    id: nanoid::nanoid!(),
+                    token_hash: services::auth::hash_secret(&token),
+                    expires_at: 0,
+                    created_at: now,
+                    last_seen_at: session.seen.unwrap_or(now),
+                    user_agent: None,
+                    client_name: session.client_name.clone(),
+                },
+            )?;
+            seeded.sessions.insert(session.key.clone(), token);
+            keys.sessions.insert(session.key.clone());
         }
 
         for genre in &self.genres {
