@@ -901,7 +901,7 @@ end
 api.get(P .. "/Artists/{itemId}/Similar", handle_similar_items_route, "public", true)
 api.get(P .. "/Items/{itemId}/Similar", handle_similar_items_route, "public", true)
 api.get(P .. "/Albums/{itemId}/Similar", handle_similar_items_route, "public", true)
-local function handle_instant_mix_route(ctx: ApiContext): ApiResponse
+local function respond_with_instant_mix(ctx: ApiContext, raw_item_id: string?): ApiResponse
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
 		return session.unauthorized()
@@ -911,8 +911,6 @@ local function handle_instant_mix_route(ctx: ApiContext): ApiResponse
 		return session.unauthorized()
 	end
 
-	local params = if ctx then ctx.params else nil
-	local raw_item_id = if params then params.itemId else nil
 	if not raw_item_id then
 		return responses.bad_request("missing item id")
 	end
@@ -930,6 +928,17 @@ local function handle_instant_mix_route(ctx: ApiContext): ApiResponse
 	end
 
 	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
+end
+
+local function handle_instant_mix_route(ctx: ApiContext): ApiResponse
+	local params = if ctx then ctx.params else nil
+	return respond_with_instant_mix(ctx, if params then params.itemId else nil)
+end
+
+-- Upstream's obsolete routes that take the item id from the query.
+local function handle_instant_mix_query_route(ctx: ApiContext): ApiResponse
+	local query = if ctx and ctx.request then ctx.request.query else nil
+	return respond_with_instant_mix(ctx, requests.parse_query_string(query, { "id", "Id" }, nil))
 end
 
 local function handle_instant_mix_genre_name_route(ctx: ApiContext): ApiResponse
@@ -964,6 +973,8 @@ api.get(P .. "/Albums/{itemId}/InstantMix", handle_instant_mix_route, "public", 
 api.get(P .. "/Artists/{itemId}/InstantMix", handle_instant_mix_route, "public", true)
 api.get(P .. "/Playlists/{itemId}/InstantMix", handle_instant_mix_route, "public", true)
 api.get(P .. "/MusicGenres/{name}/InstantMix", handle_instant_mix_genre_name_route, "public", true)
+api.get(P .. "/Artists/InstantMix", handle_instant_mix_query_route, "public", true)
+api.get(P .. "/MusicGenres/InstantMix", handle_instant_mix_query_route, "public", true)
 local function respond_with_latest_items(ctx: ApiContext, principal: session.Principal): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
 	local options = items_options.for_user(items_options.parse(query), principal.user_id)
