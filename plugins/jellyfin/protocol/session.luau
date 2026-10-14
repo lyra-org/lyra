@@ -487,6 +487,19 @@ function module.handle_playback_report_route(ctx: ApiContext?, event_name: strin
 	return api.response.empty(204)
 end
 
+-- Upstream only keeps the play session's transcode job alive, and Lyra runs none.
+function module.handle_playback_ping_route(ctx: ApiContext?): ApiResponse
+	if not module.require_jellyfin_principal(ctx) then
+		return module.unauthorized()
+	end
+
+	local query = if ctx and ctx.request then ctx.request.query else nil
+	if not requests.parse_query_string(query, { "playSessionId", "PlaySessionId" }, nil) then
+		return responses.bad_request("missing playSessionId")
+	end
+	return api.response.empty(204)
+end
+
 function module.require_matching_user_scope(ctx: ApiContext?, principal: Principal): boolean
 	local params = if ctx then ctx.params else nil
 	local path_user_id = if params then requests.trim(params.userId) else nil

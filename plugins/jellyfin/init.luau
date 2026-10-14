@@ -2018,6 +2018,7 @@ end, "public", true)
 api.post(P .. "/Sessions/Playing/Stopped", function(ctx: ApiContext)
 	return session.handle_playback_report_route(ctx, "stopped")
 end, "public", true)
+api.post(P .. "/Sessions/Playing/Ping", session.handle_playback_ping_route, "public", true)
 api.get(P .. "/Items/{id}/PlaybackInfo", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
