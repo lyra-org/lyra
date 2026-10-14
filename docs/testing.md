@@ -55,6 +55,10 @@ run_as = "owner"
 key = "owner"
 admin = true
 
+[[users]]
+key = "manager"
+permissions = ["manage_users"]  # a role of its own, for a non-admin
+
 [[api_keys]]
 key = "phone"
 user = "owner"
