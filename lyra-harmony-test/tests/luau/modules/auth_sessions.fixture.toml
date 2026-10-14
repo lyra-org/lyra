@@ -1,0 +1,21 @@
+run_as = "amy"
+
+[[users]]
+key = "amy"
+
+[[users]]
+key = "bob"
+
+[[sessions]]
+key = "amy_phone"
+user = "amy"
+client_name = "Phone"
+seen = 100
+
+[[sessions]]
+key = "amy_web"
+user = "amy"
+
+[[sessions]]
+key = "bob_tv"
+user = "bob"

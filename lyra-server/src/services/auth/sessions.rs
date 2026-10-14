@@ -20,6 +20,7 @@ use crate::{
     STATE,
     db::{
         self,
+        Permission,
         Session,
     },
     services::auth::{
@@ -27,6 +28,7 @@ use crate::{
         Principal,
         hash_secret,
         random_hex_secret,
+        require_permission,
     },
 };
 
@@ -272,7 +274,163 @@ pub(crate) async fn revoke_session_by_token(token: &str) -> SessionServiceResult
     Ok(removed)
 }
 
+/// Whose sessions [`list_sessions`] returns. Sessions of anyone but the principal require
+/// [`Permission::ManageUsers`], and an admin's also [`Permission::Admin`].
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum SessionOwners<'a> {
+    Principal,
+    User(&'a str),
+    All,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SessionInfo {
+    pub(crate) id: String,
+    pub(crate) user_id: String,
+    pub(crate) username: String,
+    pub(crate) created_at: i64,
+    pub(crate) last_seen_at: i64,
+    pub(crate) client_name: Option<String>,
+    pub(crate) user_agent: Option<String>,
+    /// The listing plugin's own data on the session.
+    pub(crate) plugin_data: serde_json::Value,
+}
+
+/// The live sessions of `owners`, oldest first, each with `plugin_id`'s data on it.
+pub(crate) async fn list_sessions(
+    principal: &Principal,
+    owners: SessionOwners<'_>,
+    plugin_id: &str,
+) -> Result<Vec<SessionInfo>, AuthError> {
+    let db = STATE.db.read().await;
+    let principal_db_id = principal.require(&*db)?;
+    let owners = match owners {
+        SessionOwners::User(user_id) if user_id == principal.user_public_id => {
+            SessionOwners::Principal
+        }
+        owners => owners,
+    };
+    let users = match owners {
+        SessionOwners::Principal => db::users::get_by_id(&*db, principal_db_id)?
+            .into_iter()
+            .collect(),
+        SessionOwners::User(user_id) => {
+            require_permission(principal, Permission::ManageUsers)?;
+            let user = db::users::get_by_public_id(&*db, user_id)?;
+            if let Some(user_db_id) = user.as_ref().and_then(|user| user.db_id)
+                && !manages_sessions_of(&*db, principal, principal_db_id, user_db_id)?
+            {
+                return Err(AuthError::Forbidden(
+                    "Admin permission required for an admin's sessions".to_string(),
+                ));
+            }
+            user.into_iter().collect()
+        }
+        SessionOwners::All => {
+            require_permission(principal, Permission::ManageUsers)?;
+            let mut users = Vec::new();
+            for user in db::users::get(&*db)? {
+                if let Some(user_db_id) = user.db_id
+                    && manages_sessions_of(&*db, principal, principal_db_id, user_db_id)?
+                {
+                    users.push(user);
+                }
+            }
+            users
+        }
+    };
+
+    let mut sessions = Vec::new();
+    for user in users {
+        let Some(user_db_id) = user.db_id else {
+            continue;
+        };
+        for session in db::users::sessions_for_user(&*db, user_db_id)? {
+            let Some(session_id) = session.db_id.clone().map(DbId::from) else {
+                continue;
+            };
+            if is_expired(&session) {
+                continue;
+            }
+            let plugin_data =
+                parse_plugin_data(db::users::session_plugin_data(&*db, session_id, plugin_id)?)?;
+            sessions.push(SessionInfo {
+                id: session.id,
+                user_id: user.id.clone(),
+                username: user.username.clone(),
+                created_at: session.created_at,
+                last_seen_at: session.last_seen_at,
+                client_name: session.client_name,
+                user_agent: session.user_agent,
+                plugin_data,
+            });
+        }
+    }
+    sessions.sort_by(|a, b| {
+        a.created_at
+            .cmp(&b.created_at)
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    Ok(sessions)
+}
+
+/// Revokes the session with public id `session_public_id`. A session the principal does not
+/// manage, per [`manages_sessions_of`], is reported as absent.
+pub(crate) async fn revoke_session(
+    principal: &Principal,
+    session_public_id: &str,
+) -> Result<bool, AuthError> {
+    let mut db = STATE.db.write().await;
+    let principal_db_id = principal.require(&*db)?;
+    let Some((session_id, _)) = db::users::find_session_by_public_id(&*db, session_public_id)?
+    else {
+        return Ok(false);
+    };
+    let owner_db_id = db::users::session_owner(&*db, session_id)?.and_then(|user| user.db_id);
+    let manages = match owner_db_id {
+        Some(owner_db_id) => manages_sessions_of(&*db, principal, principal_db_id, owner_db_id)?,
+        None => db::roles::has_permission(&principal.permissions, Permission::ManageUsers),
+    };
+    if !manages {
+        return Ok(false);
+    }
+    let removed = db::users::revoke_session_by_id(&mut db, session_id)?;
+    drop(db);
+    if removed {
+        forget_last_seen(session_public_id);
+    }
+    Ok(removed)
+}
+
+/// Whether the principal may see and revoke `owner_db_id`'s sessions: its own, anyone's with
+/// [`Permission::ManageUsers`], and an admin's only with [`Permission::Admin`] as well, like the
+/// user routes that delete an admin or reset their password.
+fn manages_sessions_of(
+    db: &impl db::DbAccess,
+    principal: &Principal,
+    principal_db_id: DbId,
+    owner_db_id: DbId,
+) -> anyhow::Result<bool> {
+    if owner_db_id == principal_db_id {
+        return Ok(true);
+    }
+    if !db::roles::has_permission(&principal.permissions, Permission::ManageUsers) {
+        return Ok(false);
+    }
+    Ok(
+        db::roles::has_permission(&principal.permissions, Permission::Admin)
+            || !db::roles::has_admin_role(db, owner_db_id)?,
+    )
+}
+
 const MAX_PLUGIN_SESSION_DATA_BYTES: usize = 16 * 1024;
+
+fn parse_plugin_data(value: Option<String>) -> anyhow::Result<serde_json::Value> {
+    value
+        .map(|value| serde_json::from_str(&value).map_err(Into::into))
+        .transpose()
+        .map(|value| value.unwrap_or(serde_json::Value::Null))
+}
 
 fn live_session_id(db: &impl db::DbAccess, token: &str) -> anyhow::Result<DbId> {
     let (_, session, session_id) =
@@ -290,10 +448,7 @@ pub(crate) async fn get_plugin_data(
 ) -> anyhow::Result<serde_json::Value> {
     let db = STATE.db.read().await;
     let session_id = live_session_id(&*db, token)?;
-    db::users::session_plugin_data(&*db, session_id, plugin_id)?
-        .map(|value| serde_json::from_str(&value).map_err(Into::into))
-        .transpose()
-        .map(|value| value.unwrap_or(serde_json::Value::Null))
+    parse_plugin_data(db::users::session_plugin_data(&*db, session_id, plugin_id)?)
 }
 
 pub(crate) async fn set_plugin_data(
@@ -384,6 +539,51 @@ mod tests {
         assert!(revoke_session_by_token(&token).await?);
         assert!(get_plugin_data(&token, "other").await.is_err());
         assert!(set_plugin_data(&token, "other", data).await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn listed_sessions_carry_only_the_listing_plugins_data_and_skip_expired()
+    -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::init_default_test_state()?;
+        let user_id = {
+            let mut db = STATE.db.write().await;
+            db::users::create(&mut db, &db::test_db::test_user("session-list")?)?
+        };
+        let principal = crate::testing::user_principal(user_id).await?;
+        let token = crate::testing::create_session(user_id, SessionMetadata::default())
+            .await?
+            .token;
+        let expired_token = crate::testing::create_session(user_id, SessionMetadata::default())
+            .await?
+            .token;
+        set_plugin_data(
+            &token,
+            "external",
+            serde_json::json!({"device_id": "phone"}),
+        )
+        .await?;
+        {
+            let mut db = STATE.db.write().await;
+            let session_id = live_session_id(&*db, &expired_token)?;
+            db.exec_mut(
+                agdb::QueryBuilder::insert()
+                    .values_uniform([("expires_at", db::users::now_secs() - 1).into()])
+                    .ids(session_id)
+                    .query(),
+            )?;
+        }
+
+        let external = list_sessions(&principal, SessionOwners::Principal, "external").await?;
+        assert_eq!(external.len(), 1);
+        assert_eq!(
+            external[0].plugin_data,
+            serde_json::json!({"device_id": "phone"})
+        );
+        let other = list_sessions(&principal, SessionOwners::Principal, "other").await?;
+        assert_eq!(other.len(), 1);
+        assert!(other[0].plugin_data.is_null());
         Ok(())
     }
 

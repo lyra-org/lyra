@@ -136,24 +136,31 @@ pub(crate) fn find_by_session_token_hash(
         let Some(session_db_id) = session.db_id.clone().map(DbId::from) else {
             continue;
         };
-        let mut users: Vec<User> = db
-            .exec(
-                QueryBuilder::select()
-                    .elements::<User>()
-                    .search()
-                    .from(session_db_id)
-                    .where_()
-                    .neighbor()
-                    .end_where()
-                    .query(),
-            )?
-            .try_into()?;
-        if let Some(user) = users.pop() {
+        if let Some(user) = session_owner(db, session_db_id)? {
             return Ok(Some((user, session, session_db_id)));
         }
     }
 
     Ok(None)
+}
+
+pub(crate) fn session_owner(
+    db: &impl super::DbAccess,
+    session_id: DbId,
+) -> anyhow::Result<Option<User>> {
+    let mut users: Vec<User> = db
+        .exec(
+            QueryBuilder::select()
+                .elements::<User>()
+                .search()
+                .from(session_id)
+                .where_()
+                .neighbor()
+                .end_where()
+                .query(),
+        )?
+        .try_into()?;
+    Ok(users.pop())
 }
 
 fn hash_random_secret() -> anyhow::Result<String> {
@@ -325,6 +332,29 @@ pub(crate) fn find_sessions_for_user(
         .filter(|el| el.id.0 > 0)
         .map(|el| el.id)
         .collect())
+}
+
+pub(crate) fn sessions_for_user(
+    db: &impl super::DbAccess,
+    user_db_id: DbId,
+) -> anyhow::Result<Vec<Session>> {
+    Ok(db
+        .exec(
+            QueryBuilder::select()
+                .elements::<Session>()
+                .search()
+                .to(user_db_id)
+                .where_()
+                .distance(CountComparison::Equal(2))
+                .and()
+                .node()
+                .and()
+                .key("db_element_id")
+                .value("Session")
+                .end_where()
+                .query(),
+        )?
+        .try_into()?)
 }
 
 pub(crate) fn revoke_sessions_for_user_except(

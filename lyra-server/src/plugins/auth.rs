@@ -27,7 +27,10 @@ use harmony_luau::{
     ModuleFunctionDescriptor,
     ParameterDescriptor,
 };
-use serde::Serialize;
+use serde::{
+    Deserialize,
+    Serialize,
+};
 use std::sync::Arc;
 
 use crate::services::auth::{
@@ -38,7 +41,11 @@ use crate::services::auth::{
     login_with_password,
     logout_with_token,
     resolve_auth_from_bearer,
-    sessions::SessionMetadata,
+    sessions::{
+        self,
+        SessionMetadata,
+        SessionOwners,
+    },
 };
 
 #[derive(Serialize)]
@@ -111,6 +118,41 @@ impl LoginOutcome {
     }
 }
 
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionListQuery {
+    user_id: Option<String>,
+    #[serde(default)]
+    all_users: bool,
+}
+
+#[derive(Serialize)]
+struct SessionInfo {
+    session_id: String,
+    user_id: String,
+    username: String,
+    created_at: i64,
+    last_seen_at: i64,
+    client_name: Option<String>,
+    user_agent: Option<String>,
+    data: serde_json::Value,
+}
+
+impl From<sessions::SessionInfo> for SessionInfo {
+    fn from(session: sessions::SessionInfo) -> Self {
+        Self {
+            session_id: session.id,
+            user_id: session.user_id,
+            username: session.username,
+            created_at: session.created_at,
+            last_seen_at: session.last_seen_at,
+            client_name: session.client_name,
+            user_agent: session.user_agent,
+            data: session.plugin_data,
+        }
+    }
+}
+
 #[derive(Clone, Serialize)]
 pub(crate) struct AuthCapabilities {
     pub(crate) enabled: bool,
@@ -179,6 +221,8 @@ pub(crate) fn module_spec() -> ModuleSpec {
         .function(resolve_auth_spec())
         .function(login_spec())
         .function(logout_session_spec())
+        .function(list_sessions_spec())
+        .function(revoke_session_spec())
         .function(get_session_data_spec())
         .function(set_session_data_spec())
         .install(|_| Ok(ModuleExport::new(AuthModule)))
@@ -375,6 +419,75 @@ fn logout_session_callback(
     let token: Option<String> = frame.args.read_named("token")?;
     Ok(luau::ScheduledFuture::new(async move {
         let revoked = logout_with_token(token.as_deref())
+            .await
+            .map_err(crate::plugins::runtime_error)?;
+        Ok(luau::Value::Boolean(revoked))
+    }))
+}
+
+fn list_sessions_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("list_sessions")
+        .context::<DispatchAuth>()
+        .named_arg::<Option<SessionListQuery>>("query")
+        .returns::<Vec<SessionInfo>>()
+        .call_async(Arc::new(list_sessions_callback))
+}
+
+fn list_sessions_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let query: Option<luau::Value> = frame.args.read_named("query")?;
+    let query: SessionListQuery = match query {
+        None => SessionListQuery::default(),
+        Some(query) => match harmony_serde::luau_to_json(frame.vm, &query, 0)? {
+            // An empty table converts to an empty array.
+            serde_json::Value::Array(values) if values.is_empty() => SessionListQuery::default(),
+            query => serde_json::from_value(query).map_err(crate::plugins::runtime_error)?,
+        },
+    };
+    let principal = require_dispatch_principal(&frame.context)?;
+    let plugin_id =
+        frame.context.origin.plugin.clone().ok_or_else(|| {
+            crate::plugins::runtime_error("session listing requires plugin origin")
+        })?;
+    Ok(luau::ScheduledFuture::new(async move {
+        let owners = match (query.user_id.as_deref(), query.all_users) {
+            (Some(_), true) => {
+                return Err(crate::plugins::runtime_error(
+                    "list_sessions takes user_id or all_users, not both",
+                ));
+            }
+            (Some(user_id), false) => SessionOwners::User(user_id),
+            (None, true) => SessionOwners::All,
+            (None, false) => SessionOwners::Principal,
+        };
+        let sessions = sessions::list_sessions(&principal, owners, &plugin_id)
+            .await
+            .map_err(crate::plugins::runtime_error)?;
+        harmony_luau::serializable_to_luau_owned(
+            sessions
+                .into_iter()
+                .map(SessionInfo::from)
+                .collect::<Vec<_>>(),
+        )
+    }))
+}
+
+fn revoke_session_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("revoke_session")
+        .context::<DispatchAuth>()
+        .named_arg::<String>("session_id")
+        .returns::<bool>()
+        .call_async(Arc::new(revoke_session_callback))
+}
+
+fn revoke_session_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let session_id: String = frame.args.read_named("session_id")?;
+    let principal = require_dispatch_principal(&frame.context)?;
+    Ok(luau::ScheduledFuture::new(async move {
+        let revoked = sessions::revoke_session(&principal, &session_id)
             .await
             .map_err(crate::plugins::runtime_error)?;
         Ok(luau::Value::Boolean(revoked))
@@ -614,6 +727,86 @@ impl DescribeInterface for LoginOutcome {
     }
 }
 
+impl LuauTypeInfo for SessionListQuery {
+    fn luau_type() -> LuauType {
+        LuauType::literal("SessionListQuery")
+    }
+}
+
+impl DescribeInterface for SessionListQuery {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("SessionListQuery", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "user_id",
+                ty: Option::<String>::luau_type(),
+                description: Some("Lists this user's sessions instead of the caller's."),
+            },
+            FieldDescriptor {
+                name: "all_users",
+                ty: Option::<bool>::luau_type(),
+                description: Some("Lists every user's sessions."),
+            },
+        ]);
+        descriptor
+    }
+}
+
+impl LuauTypeInfo for SessionInfo {
+    fn luau_type() -> LuauType {
+        LuauType::literal("SessionInfo")
+    }
+}
+
+impl DescribeInterface for SessionInfo {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("SessionInfo", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "session_id",
+                ty: String::luau_type(),
+                description: Some("The session's public id."),
+            },
+            FieldDescriptor {
+                name: "user_id",
+                ty: String::luau_type(),
+                description: Some("The owner's public id."),
+            },
+            FieldDescriptor {
+                name: "username",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "created_at",
+                ty: i64::luau_type(),
+                description: Some("Unix seconds."),
+            },
+            FieldDescriptor {
+                name: "last_seen_at",
+                ty: i64::luau_type(),
+                description: Some("Unix seconds of the last authenticated request."),
+            },
+            FieldDescriptor {
+                name: "client_name",
+                ty: Option::<String>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "user_agent",
+                ty: Option::<String>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "data",
+                ty: JsonValue::luau_type(),
+                description: Some("This plugin's data on the session."),
+            },
+        ]);
+        descriptor
+    }
+}
+
 impl LuauTypeInfo for AuthCapabilities {
     fn luau_type() -> LuauType {
         LuauType::literal("AuthCapabilities")
@@ -697,6 +890,29 @@ fn module_descriptor() -> ModuleDescriptor {
                 yields: true,
             },
             ModuleFunctionDescriptor {
+                path: vec!["list_sessions"],
+                description: Some(
+                    "Lists live sessions, oldest first, never their tokens. Without a query, lists \
+                     the calling principal's own; another user's or all users' require the \
+                     manage_users permission, and an admin's also the admin permission. All \
+                     users' leaves out the admins' without it.",
+                ),
+                params: vec![param("query", Option::<SessionListQuery>::luau_type())],
+                returns: vec![Vec::<SessionInfo>::luau_type()],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["revoke_session"],
+                description: Some(
+                    "Revokes a session by its public id and reports whether it was revoked. \
+                     Another user's session counts only with the manage_users permission, and an \
+                     admin's also with the admin permission.",
+                ),
+                params: vec![param("session_id", String::luau_type())],
+                returns: vec![bool::luau_type()],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
                 path: vec!["login"],
                 description: Some(
                     "Attempts to log in and returns the outcome, including a principal plus \
@@ -734,6 +950,8 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
             ResolvedAuth::interface_descriptor(),
             LoginResult::interface_descriptor(),
             LoginOutcome::interface_descriptor(),
+            SessionListQuery::interface_descriptor(),
+            SessionInfo::interface_descriptor(),
         ],
         &[],
     )

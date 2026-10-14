@@ -1,0 +1,24 @@
+run_as = "manager"
+
+[[users]]
+key = "manager"
+permissions = ["manage_users"]
+
+[[users]]
+key = "admin"
+admin = true
+
+[[users]]
+key = "listener"
+
+[[sessions]]
+key = "manager_web"
+user = "manager"
+
+[[sessions]]
+key = "admin_web"
+user = "admin"
+
+[[sessions]]
+key = "listener_phone"
+user = "listener"
