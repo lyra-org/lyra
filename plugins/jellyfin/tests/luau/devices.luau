@@ -85,3 +85,31 @@ assert(device.Id == "phone" and device.LastUserName == "listener" and device.App
 assert(session.device_info_response(context(admin_key, { Id = { "tablet" } }) :: any).status == 200)
 assert(session.device_info_response(context(admin_key, { id = { "missing" } }) :: any).status == 404)
 assert(session.device_info_response(context(admin_key) :: any).status == 400)
+
+-- Deleting a device logs out each of its logins, for every user; an unknown id deletes nothing.
+local function delete(token: string?, query)
+	local ctx = context(token, query) :: any
+	ctx.request.method = "DELETE"
+	return session.delete_devices_response(ctx)
+end
+local phone_logins = { fixture.sessions.listener_phone, fixture.sessions.admin_phone }
+assert(delete(listener_key, { id = { "phone" } }).status == 403)
+assert(delete(admin_key, { id = { "phone", "missing" } }).status == 400)
+assert(delete(admin_key, { id = { "lyra" } }).status == 400)
+for _, token in phone_logins do
+	assert(auth.resolve_auth(token) ~= nil)
+end
+assert(delete(admin_key).status == 204)
+
+assert(delete(admin_key, { Id = { "phone" } }).status == 204)
+for _, token in phone_logins do
+	assert(auth.resolve_auth(token) == nil)
+end
+assert(auth.resolve_auth(fixture.sessions.listener_tablet) ~= nil)
+assert(auth.resolve_auth(fixture.sessions.listener_lyra) ~= nil)
+local remaining = (session.devices_response(context(admin_key) :: any).body :: any).Items
+local remaining_ids = {}
+for _, entry in remaining do
+	remaining_ids[entry.Id] = true
+end
+assert(#remaining == 2 and remaining_ids.web and remaining_ids.tablet)

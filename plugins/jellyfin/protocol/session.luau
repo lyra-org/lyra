@@ -996,14 +996,22 @@ local function saved_text(fields: { [string]: auth.JsonValue }, key: string): st
 	return if type(value) == "string" then value else nil
 end
 
--- A login's device, from the identity remember_login_identity saved on its session.
-local function to_device_info(entry: auth.SessionInfo): JsonObject?
+-- The identity remember_login_identity saved on a login's session, if it has a device.
+local function login_identity(entry: auth.SessionInfo): ({ [string]: auth.JsonValue }?, string?)
 	if type(entry.data) ~= "table" then
-		return nil
+		return nil, nil
 	end
 	local fields = entry.data :: { [string]: auth.JsonValue }
 	local device_id = saved_text(fields, "device_id")
 	if not device_id then
+		return nil, nil
+	end
+	return fields, device_id
+end
+
+local function to_device_info(entry: auth.SessionInfo): JsonObject?
+	local fields, device_id = login_identity(entry)
+	if not fields or not device_id then
 		return nil
 	end
 	return {
@@ -1085,6 +1093,45 @@ function module.device_info_response(ctx: ApiContext?): ApiResponse
 		end
 	end
 	return responses.not_found("device not found")
+end
+
+-- Logs out every login of each device; any unknown device fails the whole request.
+function module.delete_devices_response(ctx: ApiContext?): ApiResponse
+	local denied = module.require_admin(ctx)
+	if denied then
+		return denied
+	end
+
+	local logins_by_device: { [string]: { string } } = {}
+	for _, entry in auth.list_sessions({ all_users = true }) do
+		local _, device_id = login_identity(entry)
+		if device_id then
+			local logins = logins_by_device[device_id] or {}
+			table.insert(logins, entry.session_id)
+			logins_by_device[device_id] = logins
+		end
+	end
+
+	local query = if ctx and ctx.request then ctx.request.query else nil
+	local device_ids: { string } = {}
+	for key, values in query or {} do
+		if string.lower(tostring(key)) == "id" then
+			for _, value in values do
+				local device_id = tostring(value)
+				if not logins_by_device[device_id] then
+					return responses.bad_request("device not found")
+				end
+				table.insert(device_ids, device_id)
+			end
+		end
+	end
+
+	for _, device_id in device_ids do
+		for _, session_id in logins_by_device[device_id] do
+			auth.revoke_session(session_id)
+		end
+	end
+	return api.response.empty(204)
 end
 
 local function resolve_item_file_track_id(ctx: ApiContext?): (number?, ApiResponse?)
