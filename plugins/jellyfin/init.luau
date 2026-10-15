@@ -2375,6 +2375,7 @@ end, "public", true)
 api.get(P .. "/Branding/Css.css", function(): ApiResponse
 	return statics.branding_css_response()
 end, "public", true)
+api.delete(P .. "/Devices", session.delete_devices_response, "public", true)
 api.get(P .. "/Devices/Info", session.device_info_response, "public", true)
 api.get(P .. "/Devices/Options", function(ctx: ApiContext)
 	return session.require_admin(ctx) or preferences.device_options_get(ctx)
