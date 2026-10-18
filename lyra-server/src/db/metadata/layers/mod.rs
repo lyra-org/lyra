@@ -3,11 +3,20 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the resolver and layer writers adopt these in later phases"
+    )
+)]
+pub(crate) mod edges;
 mod elements;
 
 use std::collections::BTreeMap;
 
 use agdb::{
+    CountComparison,
     DbAny,
     DbAnyTransactionMut,
     DbId,
@@ -196,6 +205,8 @@ pub(crate) fn get_for_entity(
     }
 }
 
+// An entity's own layers hang off untyped edges. Its typed relationship edges
+// lead into other entities' layers, so lookups never cross them.
 fn load<T: LayerElement>(db: &impl DbAccess, node_id: DbId) -> anyhow::Result<Vec<MetadataLayer>> {
     let result = db.exec(
         QueryBuilder::select()
@@ -205,6 +216,13 @@ fn load<T: LayerElement>(db: &impl DbAccess, node_id: DbId) -> anyhow::Result<Ve
             .neighbor()
             .and()
             .element::<T>()
+            .and()
+            .not_beyond()
+            .where_()
+            .edge()
+            .and()
+            .keys("db_element_id")
+            .end_where()
             .end_where()
             .query(),
     )?;
@@ -248,6 +266,13 @@ pub(crate) fn ids_for_entity(db: &impl DbAccess, node_id: DbId) -> anyhow::Resul
                 .or()
                 .element::<ArtistLayer>()
                 .end_where()
+                .and()
+                .not_beyond()
+                .where_()
+                .edge()
+                .and()
+                .keys("db_element_id")
+                .end_where()
                 .end_where()
                 .query(),
         )?
@@ -270,6 +295,13 @@ fn find_id<T: LayerElement>(
                 .and()
                 .key("source_id")
                 .value(source_id)
+                .and()
+                .not_beyond()
+                .where_()
+                .edge()
+                .and()
+                .keys("db_element_id")
+                .end_where()
                 .end_where()
                 .query(),
         )?
@@ -285,20 +317,7 @@ pub(crate) fn entity_ids_for_source(
     let layer_ids = super::super::indexes::node_ids(db, "source_id", source_id)?;
     let mut entity_ids = Vec::with_capacity(layer_ids.len());
     for layer_id in layer_ids {
-        let result = db.exec(
-            QueryBuilder::search()
-                .to(layer_id)
-                .where_()
-                .edge()
-                .end_where()
-                .query(),
-        )?;
-        entity_ids.extend(
-            result
-                .elements
-                .into_iter()
-                .filter_map(|edge| (edge.to == layer_id && edge.from.0 > 0).then_some(edge.from)),
-        );
+        entity_ids.extend(owner_id(db, layer_id)?);
     }
     entity_ids.sort_unstable();
     entity_ids.dedup();
@@ -357,6 +376,58 @@ fn save<T: LayerElement>(
     Ok(true)
 }
 
+/// The id of the layer `source_id` contributed to an entity, if any.
+pub(crate) fn layer_id(
+    db: &impl DbAccess,
+    node_id: DbId,
+    source_id: &str,
+) -> anyhow::Result<Option<DbId>> {
+    match super::super::entities::metadata_entity_type(db, node_id)? {
+        Some(MetadataEntityType::Release) => find_id::<ReleaseLayer>(db, node_id, source_id),
+        Some(MetadataEntityType::Track) => find_id::<TrackLayer>(db, node_id, source_id),
+        Some(MetadataEntityType::Artist) => find_id::<ArtistLayer>(db, node_id, source_id),
+        None => Ok(None),
+    }
+}
+
+/// The entity a layer belongs to: the only untyped edge into the layer, since
+/// its relationship edges are typed.
+pub(crate) fn owner_id(db: &impl DbAccess, layer_id: DbId) -> anyhow::Result<Option<DbId>> {
+    Ok(db
+        .exec(
+            QueryBuilder::search()
+                .to(layer_id)
+                .where_()
+                .edge()
+                .and()
+                .distance(CountComparison::Equal(1))
+                .and()
+                .not()
+                .keys("db_element_id")
+                .query(),
+        )?
+        .elements
+        .first()
+        .map(|edge| edge.from))
+}
+
+/// Copies `layer`, read from `from_node`, onto `to_node` along with its
+/// relationship edges, replacing that source's layer there.
+pub(crate) fn copy_inside_tx(
+    db: &mut DbAnyTransactionMut<'_>,
+    from_node: DbId,
+    to_node: DbId,
+    layer: &MetadataLayer,
+) -> anyhow::Result<()> {
+    upsert_inside_tx(db, to_node, layer)?;
+    let from_layer = layer_id(db, from_node, &layer.source_id)?;
+    let to_layer = layer_id(db, to_node, &layer.source_id)?;
+    if let (Some(from_layer), Some(to_layer)) = (from_layer, to_layer) {
+        edges::copy_all(db, from_layer, to_layer)?;
+    }
+    Ok(())
+}
+
 /// Removes the layer `source_id` contributed to an entity. Returns false when
 /// there was none.
 pub(crate) fn remove_inside_tx(
@@ -364,18 +435,21 @@ pub(crate) fn remove_inside_tx(
     node_id: DbId,
     source_id: &str,
 ) -> anyhow::Result<bool> {
-    let layer_id = match super::super::entities::metadata_entity_type(db, node_id)? {
-        Some(MetadataEntityType::Release) => find_id::<ReleaseLayer>(db, node_id, source_id)?,
-        Some(MetadataEntityType::Track) => find_id::<TrackLayer>(db, node_id, source_id)?,
-        Some(MetadataEntityType::Artist) => find_id::<ArtistLayer>(db, node_id, source_id)?,
-        None => None,
-    };
-    let Some(layer_id) = layer_id else {
+    let Some(layer_id) = layer_id(db, node_id, source_id)? else {
         return Ok(false);
     };
-
-    db.exec_mut(QueryBuilder::remove().ids(layer_id).query())?;
+    remove_by_ids(db, &[layer_id])?;
     Ok(true)
+}
+
+/// Removes layers with their relationship edges, collecting labels only they referenced.
+pub(crate) fn remove_by_ids(db: &mut impl DbAccess, layer_ids: &[DbId]) -> anyhow::Result<()> {
+    if layer_ids.is_empty() {
+        return Ok(());
+    }
+    let label_ids = edges::label_ids_of(db, layer_ids)?;
+    db.exec_mut(QueryBuilder::remove().ids(layer_ids).query())?;
+    super::super::labels::collect_unreferenced(db, &label_ids)
 }
 
 #[cfg(test)]

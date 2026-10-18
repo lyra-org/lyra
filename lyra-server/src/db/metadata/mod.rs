@@ -129,9 +129,7 @@ fn cascade_remove_entities_pre_favorites(
     node_ids: &[DbId],
 ) -> anyhow::Result<()> {
     for &id in node_ids {
-        for layer_id in collect_layer_ids(db, id)? {
-            db.exec_mut(QueryBuilder::remove().ids(layer_id).query())?;
-        }
+        layers::remove_by_ids(db, &collect_layer_ids(db, id)?)?;
         for override_id in collect_manual_override_ids(db, id)? {
             db.exec_mut(QueryBuilder::remove().ids(override_id).query())?;
         }

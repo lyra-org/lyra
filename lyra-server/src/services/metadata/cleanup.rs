@@ -114,7 +114,7 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
                 .query(),
         )?
         .try_into()?;
-    let orphan_artist_ids: Vec<DbId> = all_artists
+    let mut orphan_artist_ids: Vec<DbId> = all_artists
         .into_iter()
         .filter_map(|artist| {
             let artist_db_id: DbId = artist.db_id?.into();
@@ -125,6 +125,13 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
             }
         })
         .collect();
+    // Layer edges point from an artist into the layer, so the walk from the
+    // roots misses artists that only layers reference.
+    let spared = db::metadata::layers::edges::spared_artists(
+        db,
+        &orphan_artist_ids.iter().copied().collect(),
+    )?;
+    orphan_artist_ids.retain(|artist_id| !spared.contains(artist_id));
 
     cascade_remove_entities(db, &orphan_artist_ids)?;
 
@@ -359,7 +366,11 @@ fn select_merge_winner(
     artist_lookup: &HashMap<DbId, Artist>,
     artist_ids: &[DbId],
 ) -> anyhow::Result<DbId> {
-    let edge_counts = edge_count_map(db, artist_ids)?;
+    // Layer edges are not effective references, so they never pick the winner.
+    let mut edge_counts = edge_count_map(db, artist_ids)?;
+    for (&artist_id, count) in &mut edge_counts {
+        *count = count.saturating_sub(db::metadata::layers::edges::reference_count(db, artist_id)?);
+    }
     let mut ordered_ids = artist_ids.to_vec();
 
     ordered_ids.sort_by(|a, b| {
@@ -450,6 +461,8 @@ fn merge_artist_into(
         }
     }
 
+    db::metadata::layers::edges::retarget_artist(db, winner, loser)?;
+
     let winner_credits = db::credits::CreditSet::new(&db::credits::links_to_artist(db, winner)?);
     let credit_links = db::credits::links_to_artist(db, loser)?;
     for link in &credit_links {
@@ -500,7 +513,7 @@ fn migrate_metadata(
         if winner_source_ids.contains(layer.source_id.as_str()) {
             continue;
         }
-        db::metadata::layers::upsert_inside_tx(db, winner, layer)?;
+        db::metadata::layers::copy_inside_tx(db, loser, winner, layer)?;
     }
 
     let loser_ext_ids = db::external_ids::get_for_entity_inside_tx(db, loser)?;
@@ -599,6 +612,76 @@ mod tests {
             "winner should have inherited loser's local-scanner layer"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn artist_merge_retargets_layer_edges_before_removing_the_loser() -> anyhow::Result<()> {
+        use crate::db::metadata::layers::{
+            self,
+            edges,
+        };
+
+        let mut db = test_db::new_test_db()?;
+        let credited = test_db::insert_artist(&mut db, "Radiohead")?;
+        let layer_only = test_db::insert_artist(&mut db, "Radiohead")?;
+        let member = test_db::insert_artist(&mut db, "Thom Yorke")?;
+        let track = test_db::insert_track(&mut db, "Creep")?;
+        test_db::connect(&mut db, track, credited)?;
+        for artist in [credited, layer_only] {
+            db::external_ids::upsert(
+                &mut db,
+                artist,
+                "musicbrainz",
+                "artist_id",
+                "mbid-123",
+                IdSource::Resolved,
+            )?;
+        }
+        for node_id in [track, member] {
+            layers::upsert(
+                &mut db,
+                node_id,
+                &db::MetadataLayer::new("musicbrainz", Default::default(), 1),
+            )?;
+        }
+        let track_layer = layers::layer_id(&db, track, "musicbrainz")?.expect("track layer");
+        let member_layer = layers::layer_id(&db, member, "musicbrainz")?.expect("member layer");
+        db.transaction_mut(|t| {
+            edges::replace_credits(
+                t,
+                track_layer,
+                db::CreditType::Vocalist,
+                &[edges::LayerCreditInput {
+                    artist_id: layer_only,
+                    detail: Some("lead".to_string()),
+                    join_phrase: None,
+                }],
+            )?;
+            edges::replace_relations(
+                t,
+                member_layer,
+                db::ArtistRelationType::MemberOf,
+                &[edges::LayerRelationInput {
+                    artist_id: layer_only,
+                    attributes: Some("vocals".to_string()),
+                }],
+            )
+        })?;
+
+        assert_eq!(deduplicate_artists_by_external_id(&mut db)?, 1);
+
+        let (winner, loser) = (credited, layer_only);
+        assert!(db::artists::get_by_id(&db, loser)?.is_none());
+        let credits = edges::credits(&db, track_layer)?;
+        assert_eq!(credits.len(), 1);
+        assert_eq!(credits[0].target_id, winner);
+        assert_eq!(credits[0].edge.credit_type, db::CreditType::Vocalist);
+        assert_eq!(credits[0].edge.detail.as_deref(), Some("lead"));
+        let relations = edges::relations(&db, member_layer)?;
+        assert_eq!(relations.len(), 1);
+        assert_eq!(relations[0].target_id, winner);
+        assert_eq!(relations[0].edge.attributes.as_deref(), Some("vocals"));
         Ok(())
     }
 

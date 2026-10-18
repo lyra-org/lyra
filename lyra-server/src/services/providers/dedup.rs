@@ -142,7 +142,7 @@ fn merge_release_into_inside_tx(
             continue;
         }
 
-        db::metadata::layers::upsert_inside_tx(db, winner, &layer)?;
+        db::metadata::layers::copy_inside_tx(db, loser, winner, &layer)?;
         winner_layers_by_source.insert(layer.source_id.clone(), layer);
         wrote_layer = true;
     }
@@ -360,6 +360,69 @@ mod tests {
         let labels = db::labels::get_for_release(&db, winner)?;
         assert_eq!(labels.len(), 1);
         assert_eq!(labels[0].label.name, "Manual");
+        Ok(())
+    }
+
+    #[test]
+    fn release_merge_carries_the_newer_layers_relationship_edges() -> anyhow::Result<()> {
+        use crate::db::metadata::layers::{
+            self,
+            edges,
+        };
+
+        let mut db = new_test_db()?;
+        let winner = insert_release(&mut db, "Winner")?;
+        let loser = insert_release(&mut db, "Loser")?;
+        let stale = insert_artist(&mut db, "Stale")?;
+        let artist = insert_artist(&mut db, "Artist")?;
+        let label_id = db::labels::resolve(
+            &mut db,
+            &db::labels::ResolveLabel {
+                name: "Blue Note",
+                external_id: None,
+            },
+        )?;
+        let credit = |artist_id| edges::LayerCreditInput {
+            artist_id,
+            detail: None,
+            join_phrase: None,
+        };
+        for (release, updated_at) in [(winner, 1), (loser, 2)] {
+            layers::upsert(
+                &mut db,
+                release,
+                &db::MetadataLayer::new("provider", Default::default(), updated_at),
+            )?;
+        }
+        let winner_layer = layers::layer_id(&db, winner, "provider")?.expect("winner layer");
+        let loser_layer = layers::layer_id(&db, loser, "provider")?.expect("loser layer");
+        db.transaction_mut(|t| {
+            edges::replace_credits(t, winner_layer, db::CreditType::Artist, &[credit(stale)])?;
+            edges::replace_credits(t, loser_layer, db::CreditType::Artist, &[credit(artist)])?;
+            edges::replace_labels(
+                t,
+                loser_layer,
+                &[db::labels::LabelLinkInput {
+                    label_id,
+                    catalog_number: Some("BN-1".to_string()),
+                }],
+            )
+        })?;
+
+        merge_release_into(&mut db, winner, loser)?;
+
+        let winner_layer = layers::layer_id(&db, winner, "provider")?.expect("winner layer");
+        let credited: Vec<DbId> = edges::credits(&db, winner_layer)?
+            .into_iter()
+            .map(|link| link.target_id)
+            .collect();
+        assert_eq!(credited, vec![artist]);
+        let labels = edges::labels(&db, winner_layer)?;
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].target_id, label_id);
+        assert_eq!(labels[0].edge.catalog_number.as_deref(), Some("BN-1"));
+        assert!(db::labels::get_by_id(&db, label_id)?.is_some());
+        assert!(!edges::is_referenced(&db, stale)?);
         Ok(())
     }
 

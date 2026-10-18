@@ -550,6 +550,32 @@ pub(crate) fn delete(
             );
         }
     }
+    // Artists that layers of surviving entities reference stay, along with
+    // everything a walk from them reaches.
+    let removing: HashSet<DbId> = descendants
+        .elements
+        .iter()
+        .filter(|element| {
+            !retained.contains(&element.id)
+                && ["Track", "Release", "Artist"]
+                    .iter()
+                    .any(|kind| super::graph::is_element_type(element, kind))
+        })
+        .map(|element| element.id)
+        .collect();
+    for artist_id in super::metadata::layers::edges::spared_artists(db, &removing)? {
+        retained.insert(artist_id);
+        retained.extend(
+            db.exec(
+                QueryBuilder::search()
+                    .from(artist_id)
+                    .where_()
+                    .node()
+                    .query(),
+            )?
+            .ids(),
+        );
+    }
     let mut entities = Vec::new();
     let mut children: Vec<_> = removed_entries.iter().copied().collect();
     let mut track_ids = HashSet::new();
@@ -1023,6 +1049,147 @@ mod tests {
         for id in layer_ids {
             assert!(db.exec(QueryBuilder::select().ids(id).query()).is_err());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn layer_edges_stay_out_of_library_views() -> anyhow::Result<()> {
+        use crate::db::{
+            self,
+            CreditType,
+            metadata::layers::edges,
+            test_db,
+        };
+        let mut db = new_test_db()?;
+        let deleted = db.transaction_mut(|t| -> anyhow::Result<_> {
+            Ok(create_system(t, insert_request("Deleted", "deleted"))?)
+        })?;
+        let kept = db.transaction_mut(|t| -> anyhow::Result<_> {
+            Ok(create_system(t, insert_request("Kept", "kept"))?)
+        })?;
+        let (deleted_id, kept_id) = (deleted.db_id.unwrap(), kept.db_id.unwrap());
+        let deleted_release = test_db::insert_release(&mut db, "Deleted album")?;
+        let deleted_track = test_db::insert_track(&mut db, "Deleted track")?;
+        let kept_release = test_db::insert_release(&mut db, "Kept album")?;
+        let kept_track = test_db::insert_track(&mut db, "Kept track")?;
+        let layer_only_artist = test_db::insert_artist(&mut db, "Hidden")?;
+        test_db::connect(&mut db, deleted_id, deleted_release)?;
+        test_db::connect(&mut db, deleted_release, deleted_track)?;
+        test_db::connect(&mut db, kept_id, kept_release)?;
+        test_db::connect(&mut db, kept_release, kept_track)?;
+        let jazz = db::genres::resolve_by_name(&mut db, "Jazz")?;
+        db::genres::link_to_release(&mut db, jazz, deleted_release)?;
+        for release in [deleted_release, kept_release] {
+            db::metadata::layers::upsert(
+                &mut db,
+                release,
+                &db::MetadataLayer::new("provider", Default::default(), 0),
+            )?;
+            let layer = db::metadata::layers::layer_id(&db, release, "provider")?.unwrap();
+            db.transaction_mut(|t| {
+                edges::replace_genres(t, layer, &[jazz])?;
+                edges::replace_credits(
+                    t,
+                    layer,
+                    CreditType::Artist,
+                    &[edges::LayerCreditInput {
+                        artist_id: layer_only_artist,
+                        detail: None,
+                        join_phrase: None,
+                    }],
+                )
+            })?;
+        }
+
+        let release_ids = |releases: Vec<db::Release>| -> Vec<DbId> {
+            releases
+                .into_iter()
+                .filter_map(|release| release.db_id.map(DbId::from))
+                .collect()
+        };
+        assert_eq!(
+            release_ids(db::releases::get(&db, kept_id)?),
+            vec![kept_release]
+        );
+        assert_eq!(db::tracks::get(&db, kept_release)?.len(), 1);
+        assert!(get_for_entity(&db, layer_only_artist)?.is_empty());
+        assert!(get_for_entity(&db, jazz)?.is_empty());
+
+        let deleted_track_id = db::tracks::get_by_id(&db, deleted_track)?.unwrap().id;
+        let removed = db.transaction_mut(|t| delete(t, &deleted))?;
+        assert_eq!(removed, HashSet::from([deleted_track_id]));
+        assert!(db::tracks::get_by_id(&db, deleted_track)?.is_none());
+        assert!(db::tracks::get_by_id(&db, kept_track)?.is_some());
+        assert!(db::genres::get_by_id(&db, jazz)?.is_some());
+        assert!(db::artists::get_by_id(&db, layer_only_artist)?.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn delete_keeps_artists_that_another_librarys_layers_reference() -> anyhow::Result<()> {
+        use crate::db::{
+            self,
+            ArtistRelationType,
+            CreditType,
+            metadata::layers::edges,
+            test_db,
+        };
+        let mut db = new_test_db()?;
+        let deleted = db.transaction_mut(|t| -> anyhow::Result<_> {
+            Ok(create_system(t, insert_request("Deleted", "deleted"))?)
+        })?;
+        let kept = db.transaction_mut(|t| -> anyhow::Result<_> {
+            Ok(create_system(t, insert_request("Kept", "kept"))?)
+        })?;
+        let (deleted_id, kept_id) = (deleted.db_id.unwrap(), kept.db_id.unwrap());
+        let deleted_release = test_db::insert_release(&mut db, "Deleted album")?;
+        let kept_release = test_db::insert_release(&mut db, "Kept album")?;
+        let credited = test_db::insert_artist(&mut db, "Credited")?;
+        let related = test_db::insert_artist(&mut db, "Related")?;
+        let band = test_db::insert_artist(&mut db, "Band")?;
+        test_db::connect(&mut db, deleted_id, deleted_release)?;
+        test_db::connect(&mut db, kept_id, kept_release)?;
+        test_db::connect_artist(&mut db, deleted_release, credited)?;
+        test_db::connect_artist(&mut db, deleted_release, related)?;
+        test_db::connect_artist(&mut db, kept_release, band)?;
+        for node_id in [kept_release, band] {
+            db::metadata::layers::upsert(
+                &mut db,
+                node_id,
+                &db::MetadataLayer::new("provider", Default::default(), 0),
+            )?;
+        }
+        let release_layer = db::metadata::layers::layer_id(&db, kept_release, "provider")?.unwrap();
+        let band_layer = db::metadata::layers::layer_id(&db, band, "provider")?.unwrap();
+        db.transaction_mut(|t| {
+            edges::replace_credits(
+                t,
+                release_layer,
+                CreditType::Producer,
+                &[edges::LayerCreditInput {
+                    artist_id: credited,
+                    detail: None,
+                    join_phrase: None,
+                }],
+            )?;
+            edges::replace_relations(
+                t,
+                band_layer,
+                ArtistRelationType::MemberOf,
+                &[edges::LayerRelationInput {
+                    artist_id: related,
+                    attributes: None,
+                }],
+            )
+        })?;
+
+        db.transaction_mut(|t| delete(t, &deleted))?;
+
+        assert!(db::releases::get_by_id(&db, deleted_release)?.is_none());
+        assert!(db::artists::get_by_id(&db, credited)?.is_some());
+        assert!(db::artists::get_by_id(&db, related)?.is_some());
+        assert_eq!(edges::credits(&db, release_layer)?[0].target_id, credited);
+        assert_eq!(edges::relations(&db, band_layer)?[0].target_id, related);
         Ok(())
     }
 

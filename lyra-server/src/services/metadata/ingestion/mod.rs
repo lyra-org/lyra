@@ -762,6 +762,96 @@ mod tests {
         Ok(())
     }
 
+    fn provider_layer(db: &mut DbAny, node_id: DbId) -> anyhow::Result<DbId> {
+        db::metadata::layers::upsert(
+            db,
+            node_id,
+            &MetadataLayer::new("provider", Default::default(), 0),
+        )?;
+        db::metadata::layers::layer_id(db, node_id, "provider")?
+            .ok_or_else(|| anyhow!("provider layer missing"))
+    }
+
+    #[test]
+    fn cleanup_keeps_layer_referenced_artists_until_their_layers_go() -> anyhow::Result<()> {
+        use crate::db::metadata::layers::edges;
+
+        let mut db = new_test_db()?;
+        let entry_db_id = insert_entry(&mut db, "/music/album/track.flac")?;
+        let track_db_id = insert_track(&mut db, "Track")?;
+        let release_db_id = insert_release(&mut db, "Album")?;
+        let empty_release_id = insert_release(&mut db, "Empty")?;
+        let hidden_id = insert_artist(&mut db, "Hidden")?;
+        let member_id = insert_artist(&mut db, "Member")?;
+        connect(&mut db, "tracks", track_db_id)?;
+        connect(&mut db, "releases", release_db_id)?;
+        connect(&mut db, "releases", empty_release_id)?;
+        connect(&mut db, "artists", hidden_id)?;
+        connect(&mut db, "artists", member_id)?;
+        connect(&mut db, release_db_id, track_db_id)?;
+        connect_track_to_entry_source(&mut db, track_db_id, entry_db_id)?;
+
+        let track_layer = provider_layer(&mut db, track_db_id)?;
+        let hidden_layer = provider_layer(&mut db, hidden_id)?;
+        let empty_layer = provider_layer(&mut db, empty_release_id)?;
+        let jazz = db::genres::resolve_by_name(&mut db, "Jazz")?;
+        db::genres::link_to_release(&mut db, jazz, release_db_id)?;
+        db.transaction_mut(|t| {
+            edges::replace_credits(
+                t,
+                track_layer,
+                db::CreditType::Artist,
+                &[edges::LayerCreditInput {
+                    artist_id: hidden_id,
+                    detail: None,
+                    join_phrase: None,
+                }],
+            )?;
+            edges::replace_relations(
+                t,
+                hidden_layer,
+                db::ArtistRelationType::MemberOf,
+                &[edges::LayerRelationInput {
+                    artist_id: member_id,
+                    attributes: None,
+                }],
+            )?;
+            edges::replace_genres(t, empty_layer, &[jazz])
+        })?;
+
+        let alias_id = insert_artist(&mut db, "Alias")?;
+        connect(&mut db, "artists", alias_id)?;
+        db::artists::relations::link(
+            &mut db,
+            hidden_id,
+            alias_id,
+            db::ArtistRelationType::VoiceActor,
+            None,
+        )?;
+
+        cleanup_orphaned_metadata(&mut db)?;
+
+        assert!(db::artists::get_by_id(&db, hidden_id)?.is_some());
+        assert!(db::artists::get_by_id(&db, member_id)?.is_some());
+        assert!(
+            db::artists::get_by_id(&db, alias_id)?.is_some(),
+            "a kept artist keeps its effective relation targets"
+        );
+        assert!(
+            db::releases::get_by_id(&db, empty_release_id)?.is_none(),
+            "a layer genre does not give a release tracks"
+        );
+
+        db.transaction_mut(|t| db::metadata::layers::remove_inside_tx(t, track_db_id, "provider"))?;
+        cleanup_orphaned_metadata(&mut db)?;
+
+        assert!(db::artists::get_by_id(&db, hidden_id)?.is_none());
+        assert!(db::artists::get_by_id(&db, member_id)?.is_none());
+        assert!(db::artists::get_by_id(&db, alias_id)?.is_none());
+        assert!(db::tracks::get_by_id(&db, track_db_id)?.is_some());
+        Ok(())
+    }
+
     #[test]
     fn cleanup_only_removes_orphaned_releases_and_artists() -> anyhow::Result<()> {
         let mut db = new_test_db()?;

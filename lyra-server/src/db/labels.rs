@@ -343,12 +343,26 @@ fn release_ids_for_label(
         .collect())
 }
 
-/// Remove a release's label link and GC the `Label` once no release links it.
+/// Remove a release's label link and GC the `Label` once nothing references it.
 fn remove_release_label(db: &mut impl DbAccess, link: &ReleaseLabelLink) -> anyhow::Result<()> {
     db.exec_mut(QueryBuilder::remove().ids(link.edge_id).query())?;
-    if !label_has_releases(db, link.label_id)? {
-        external_ids::remove_all_for_owner(db, link.label_id)?;
-        db.exec_mut(QueryBuilder::remove().ids(link.label_id).query())?;
+    collect_unreferenced(db, &[link.label_id])
+}
+
+/// Removes each of `label_ids` that no release and no metadata layer references.
+pub(crate) fn collect_unreferenced(
+    db: &mut impl DbAccess,
+    label_ids: &[DbId],
+) -> anyhow::Result<()> {
+    for &label_id in label_ids {
+        if get_by_id(db, label_id)?.is_none()
+            || label_has_releases(db, label_id)?
+            || super::metadata::layers::edges::is_referenced(db, label_id)?
+        {
+            continue;
+        }
+        external_ids::remove_all_for_owner(db, label_id)?;
+        db.exec_mut(QueryBuilder::remove().ids(label_id).query())?;
     }
     Ok(())
 }
