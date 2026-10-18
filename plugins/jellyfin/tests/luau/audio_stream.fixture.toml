@@ -1,0 +1,28 @@
+run_as = "viewer"
+
+# Fixture releases are in no library, so the viewer can see neither the song nor its release.
+
+[[users]]
+key = "owner"
+admin = true
+
+[[users]]
+key = "viewer"
+
+[[api_keys]]
+key = "phone"
+user = "viewer"
+
+[[api_keys]]
+key = "desk"
+user = "owner"
+
+[[releases]]
+key = "album"
+title = "Album"
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+file = "song.opus"

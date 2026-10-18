@@ -714,8 +714,10 @@ local function build_media_info(
 	return { media_source }, media_streams, container
 end
 
-function module.build_audio_media_source(item_id: string?, track: Track?): MediaSource?
-	local source = module.resolve_playback_source_for_track(track, true)
+function module.build_audio_media_source(item_id: string?, track: Track?, public: boolean?): MediaSource?
+	local source = if public
+		then media.resolve_public_playback_source(track, true)
+		else module.resolve_playback_source_for_track(track, true)
 	local has_lyrics = false
 	local track_db_id = if track then track.db_id else nil
 	if track_db_id then
@@ -1000,17 +1002,26 @@ function module.build_playback_info(
 	}
 end
 
-function module.resolve_track_for_playback(item_id: number?): Track?
+local function lookup_track(lookup: ({ number }) -> { [number]: Track }, item_id: number?): Track?
 	if not item_id or item_id <= 0 then
 		return nil
 	end
 
 	-- Typed-to-Track-node: release/artist db_ids resolve to nil, not the first related track.
-	local ok, result = pcall(tracks.get, { item_id })
+	local ok, result = pcall(lookup, { item_id })
 	if not ok or type(result) ~= "table" then
 		return nil
 	end
 	return (result :: { [number]: Track })[item_id]
+end
+
+function module.resolve_track_for_playback(item_id: number?): Track?
+	return lookup_track(tracks.get, item_id)
+end
+
+-- Reads as the system for public streaming routes, which must serve nothing from it but the audio.
+function module.resolve_track_for_public_stream(item_id: number?): Track?
+	return lookup_track(tracks.streamable, item_id)
 end
 
 return module

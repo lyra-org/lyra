@@ -112,7 +112,8 @@ local function jellyfin_boolean(raw: string?): boolean?
 	return nil
 end
 
-local function handle_audio_stream_route(ctx: ApiContext): ApiResponse
+-- `/stream` is public, as upstream: it streams any track to any caller. `/universal` requires auth.
+local function handle_audio_stream_route(ctx: ApiContext, public: boolean): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
 	local request = if ctx then ctx.request else nil
 	local request_method = if request then request.method else nil
@@ -177,12 +178,14 @@ local function handle_audio_stream_route(ctx: ApiContext): ApiResponse
 	local direct_play_enabled = jellyfin_boolean(raw_enable_direct_play) ~= false
 	local transcoding_enabled = jellyfin_boolean(raw_enable_transcoding) ~= false
 
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-	if not session.require_matching_user_scope(ctx, principal) then
-		return session.unauthorized()
+	if not public then
+		local principal = session.require_jellyfin_principal(ctx)
+		if not principal then
+			return session.unauthorized()
+		end
+		if not session.require_matching_user_scope(ctx, principal) then
+			return session.unauthorized()
+		end
 	end
 
 	local params = if ctx then ctx.params else nil
@@ -194,7 +197,10 @@ local function handle_audio_stream_route(ctx: ApiContext): ApiResponse
 		return responses.not_found("media source not found")
 	end
 
-	local track = playback.resolve_track_for_playback(item_ids.decode_jellyfin_item_id(item_id))
+	local item_db_id = item_ids.decode_jellyfin_item_id(item_id)
+	local track = if public
+		then playback.resolve_track_for_public_stream(item_db_id)
+		else playback.resolve_track_for_playback(item_db_id)
 	if not track then
 		return responses.not_found("item not found")
 	end
@@ -203,15 +209,16 @@ local function handle_audio_stream_route(ctx: ApiContext): ApiResponse
 		return responses.not_found("item not found")
 	end
 
+	local direct_options: api.TrackStreamOptions? = if public then { public = true } else nil
 	local explicit_stream_path = string.lower(`{P}/Audio/{item_id}/stream`)
 	if static_direct_copy and normalized_request_path == explicit_stream_path then
 		if is_head_request then
 			return api.response.empty(200)
 		end
-		return session.handle_item_file_stream_request(ctx)
+		return api.response.stream_track(track_id, direct_options)
 	end
 
-	local media_source = playback.build_audio_media_source(item_id, track)
+	local media_source = playback.build_audio_media_source(item_id, track, public)
 	if
 		playback.audio_supports_direct_play_from_container_csv(
 			media_source,
@@ -227,7 +234,7 @@ local function handle_audio_stream_route(ctx: ApiContext): ApiResponse
 		if is_head_request then
 			return api.response.empty(200)
 		end
-		return session.handle_item_file_stream_request(ctx)
+		return api.response.stream_track(track_id, direct_options)
 	end
 
 	if not transcoding_enabled then
@@ -235,7 +242,7 @@ local function handle_audio_stream_route(ctx: ApiContext): ApiResponse
 			if is_head_request then
 				return api.response.empty(200)
 			end
-			return session.handle_item_file_stream_request(ctx)
+			return api.response.stream_track(track_id, direct_options)
 		end
 		return api.response.json(415, {
 			Message = "transcoding is not supported; request with static=true or supply transcode parameters",
@@ -272,6 +279,7 @@ local function handle_audio_stream_route(ctx: ApiContext): ApiResponse
 	end
 
 	local options: api.TrackStreamOptions = {
+		public = public or nil,
 		format = effective_transcoding_container,
 		preferred_codecs = effective_preferred_codecs,
 		bitrate_bps = bitrate_bps,
@@ -510,6 +518,14 @@ local function handle_audio_hls_main_playlist_route(ctx: ApiContext): ApiRespons
 	return api.response.hls_playlist(request.track_id, request.options)
 end
 
+function module.handle_stream_route(ctx: ApiContext): ApiResponse
+	return handle_audio_stream_route(ctx, true)
+end
+
+function module.handle_universal_route(ctx: ApiContext): ApiResponse
+	return handle_audio_stream_route(ctx, false)
+end
+
 function module.register()
 	api.get(P .. "/Audio/{itemId}/Lyrics", function(ctx: ApiContext): ApiResponse
 		local track_id, item, resolve_err = lyrics_protocol.resolve_audio_item(ctx)
@@ -610,18 +626,10 @@ function module.register()
 		end
 		return responses.not_found("lyrics not found")
 	end, "public", true)
-	api.get(P .. "/Audio/{itemId}/universal", function(ctx: ApiContext)
-		return handle_audio_stream_route(ctx)
-	end, "public", true)
-	api.head(P .. "/Audio/{itemId}/universal", function(ctx: ApiContext)
-		return handle_audio_stream_route(ctx)
-	end, "public", true)
-	api.get(P .. "/Audio/{itemId}/stream", function(ctx: ApiContext)
-		return handle_audio_stream_route(ctx)
-	end, "public", true)
-	api.head(P .. "/Audio/{itemId}/stream", function(ctx: ApiContext)
-		return handle_audio_stream_route(ctx)
-	end, "public", true)
+	api.get(P .. "/Audio/{itemId}/universal", module.handle_universal_route, "public", true)
+	api.head(P .. "/Audio/{itemId}/universal", module.handle_universal_route, "public", true)
+	api.get(P .. "/Audio/{itemId}/stream", module.handle_stream_route, "public", true)
+	api.head(P .. "/Audio/{itemId}/stream", module.handle_stream_route, "public", true)
 	api.get(P .. "/Audio/{itemId}/master.m3u8", handle_audio_hls_master_playlist_route, "public", true)
 	api.head(P .. "/Audio/{itemId}/master.m3u8", handle_audio_hls_master_playlist_route, "public", true)
 	api.get(P .. "/Audio/{itemId}/main.m3u8", handle_audio_hls_main_playlist_route, "public", true)

@@ -81,4 +81,17 @@ function module.resolve_playback_source_for_track(
 	return nil
 end
 
+-- Reads as the system for public streaming routes, which must serve nothing from it but the audio.
+function module.resolve_public_playback_source(track: { db_id: number? }?, include_entry: boolean?): PlaybackSourceInfo?
+	if not track or not track.db_id then
+		return nil
+	end
+
+	local ok, source = pcall(playback_sources.streamable, track.db_id, include_entry == true)
+	if not ok or type(source) ~= "table" then
+		return nil
+	end
+	return source
+end
+
 return module
