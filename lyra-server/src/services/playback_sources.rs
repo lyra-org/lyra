@@ -7,12 +7,20 @@ use agdb::{
     DbAny,
     DbId,
 };
-use lyra_ffmpeg::AudioFormat;
+use lyra_ffmpeg::{
+    AudioCodec,
+    AudioFormat,
+};
 use std::path::PathBuf;
 
 use crate::db::{
     self,
     Entry,
+    track_sources::{
+        SourceCodec,
+        SourceContainer,
+        SourceFormat,
+    },
 };
 
 pub(crate) struct PlaybackSource {
@@ -23,7 +31,7 @@ pub(crate) struct PlaybackSource {
     pub(crate) is_primary: bool,
     pub(crate) input_path: String,
     pub(crate) full_path: PathBuf,
-    pub(crate) entry_format: Option<AudioFormat>,
+    pub(crate) format: SourceFormat,
     pub(crate) start_ms: Option<u64>,
     pub(crate) end_ms: Option<u64>,
     pub(crate) entry: Option<Entry>,
@@ -65,11 +73,6 @@ pub(crate) fn resolve(
             continue;
         }
 
-        let entry_format = entry
-            .full_path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .and_then(AudioFormat::parse);
         let input_path = entry.full_path.to_string_lossy().into_owned();
         let full_path = entry.full_path.clone();
         let entry = include_entry.then_some(entry);
@@ -82,7 +85,10 @@ pub(crate) fn resolve(
             is_primary: source.is_primary,
             input_path,
             full_path,
-            entry_format,
+            format: SourceFormat {
+                container: source.container,
+                codec: source.codec,
+            },
             start_ms: source.start_ms,
             end_ms: source.end_ms,
             entry,
@@ -90,4 +96,36 @@ pub(crate) fn resolve(
     }
 
     Ok(None)
+}
+
+/// The transcoder's format for a source's container, when it can copy from it.
+pub(crate) fn transcoder_format(format: SourceFormat) -> Option<AudioFormat> {
+    match (format.container?, format.codec) {
+        (SourceContainer::Aac, _) => Some(AudioFormat::Aac),
+        (SourceContainer::Aiff, _) => Some(AudioFormat::Aiff),
+        (SourceContainer::Flac, _) => Some(AudioFormat::Flac),
+        (SourceContainer::M4a, _) => Some(AudioFormat::M4a),
+        (SourceContainer::Mp3, None | Some(SourceCodec::Mp3)) => Some(AudioFormat::Mp3),
+        (SourceContainer::Ogg, Some(SourceCodec::Opus)) => Some(AudioFormat::Opus),
+        (SourceContainer::Ogg, _) => Some(AudioFormat::Ogg),
+        (SourceContainer::Wav, _) => Some(AudioFormat::Wav),
+        _ => None,
+    }
+}
+
+/// The transcoder's codec for a source's codec, when it knows it.
+pub(crate) fn transcoder_codec(codec: SourceCodec) -> Option<AudioCodec> {
+    match codec {
+        SourceCodec::Aac => Some(AudioCodec::Aac),
+        SourceCodec::Alac => Some(AudioCodec::Alac),
+        SourceCodec::Flac => Some(AudioCodec::Flac),
+        SourceCodec::Mp3 => Some(AudioCodec::Mp3),
+        SourceCodec::Opus => Some(AudioCodec::Opus),
+        SourceCodec::Vorbis => Some(AudioCodec::Vorbis),
+        SourceCodec::PcmS16Le => Some(AudioCodec::PcmS16Le),
+        SourceCodec::PcmS16Be => Some(AudioCodec::PcmS16Be),
+        SourceCodec::PcmS24Le => Some(AudioCodec::PcmS24Le),
+        SourceCodec::PcmS24Be => Some(AudioCodec::PcmS24Be),
+        _ => None,
+    }
 }

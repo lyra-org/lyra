@@ -6,6 +6,7 @@
 pub(crate) mod cleanup;
 mod cue;
 pub(crate) mod editing;
+mod format;
 pub(crate) mod ingestion;
 pub(crate) mod layers;
 pub(crate) mod lyrics;
@@ -35,6 +36,13 @@ use lofty::{
         TaggedFileExt,
     },
     flac::FlacFile,
+    iff::{
+        aiff::AiffFile,
+        wav::WavFile,
+    },
+    mp4::Mp4File,
+    mpeg::MpegFile,
+    musepack::MpcFile,
     ogg::{
         OpusFile,
         VorbisFile,
@@ -50,6 +58,7 @@ use lofty::{
 use lyra_metadata::normalize_unicode_nfc;
 
 use crate::db::Entry;
+use crate::db::track_sources::SourceFormat;
 pub(crate) use cue::sort_track_metadata;
 use cue::{
     build_audio_lookup,
@@ -73,8 +82,10 @@ fn classify_entry_file_kind(entry: &Entry) -> Option<String> {
         .or_else(|| crate::db::entries::classify_file_kind(&entry.full_path).map(str::to_string))
 }
 
-pub(crate) fn read_audio_tags(path: std::path::PathBuf) -> anyhow::Result<(Tag, FileProperties)> {
-    let (mut tagged_file, fallbacks) = read_tagged_file(&path)
+pub(crate) fn read_audio_tags(
+    path: std::path::PathBuf,
+) -> anyhow::Result<(Tag, FileProperties, SourceFormat)> {
+    let (mut tagged_file, fallbacks, format) = read_tagged_file(&path, true)
         .with_context(|| format!("failed to read file: {}", path.display()))?;
 
     let tag_type = tagged_file
@@ -96,7 +107,14 @@ pub(crate) fn read_audio_tags(path: std::path::PathBuf) -> anyhow::Result<(Tag, 
         }
     }
 
-    Ok((tag, tagged_file.properties().clone()))
+    Ok((tag, tagged_file.properties().clone(), format))
+}
+
+/// A file's container and codec, read the way a scan reads them.
+pub(crate) fn read_source_format(path: &std::path::Path) -> anyhow::Result<SourceFormat> {
+    let (_, _, format) = read_tagged_file(path, false)
+        .with_context(|| format!("failed to read file: {}", path.display()))?;
+    Ok(format)
 }
 
 /// Vorbis comments lofty has no `ItemKey` for, so its generic `Tag` discards them.
@@ -127,31 +145,75 @@ impl VorbisFallbacks {
     }
 }
 
-/// Reads Vorbis comment files through their concrete types to keep [`VorbisFallbacks`].
-fn read_tagged_file(path: &std::path::Path) -> anyhow::Result<(TaggedFile, VorbisFallbacks)> {
-    let mut probe = Probe::open(path).with_context(|| format!("bad path: {}", path.display()))?;
-    if probe.file_type().is_none() {
-        probe = probe.guess_file_type()?;
-    }
+/// Reads Vorbis comment files through their concrete types to keep [`VorbisFallbacks`], and files
+/// whose type holds several codecs through theirs to learn the codec. Without `read_tags`, malformed
+/// tags can't fail the read.
+fn read_tagged_file(
+    path: &std::path::Path,
+    read_tags: bool,
+) -> anyhow::Result<(TaggedFile, VorbisFallbacks, SourceFormat)> {
+    // The contents decide the type; the extension counts only when they don't.
+    let probe = Probe::open(path)
+        .with_context(|| format!("bad path: {}", path.display()))?
+        .guess_file_type()?;
 
-    let options = ParseOptions::new().read_cover_art(false);
-    match probe.file_type() {
-        Some(FileType::Flac) => {
+    let options = ParseOptions::new()
+        .read_tags(read_tags)
+        .read_cover_art(false);
+    let Some(file_type) = probe.file_type() else {
+        return Ok((
+            probe.options(options).read()?,
+            VorbisFallbacks::default(),
+            SourceFormat::default(),
+        ));
+    };
+    let by_type = format::of_file_type(file_type);
+    match file_type {
+        FileType::Flac => {
             let file = FlacFile::read_from(&mut probe.into_inner(), options)?;
             let fallbacks = VorbisFallbacks::read(file.vorbis_comments());
-            Ok((file.into(), fallbacks))
+            Ok((file.into(), fallbacks, by_type))
         }
-        Some(FileType::Opus) => {
+        FileType::Opus => {
             let file = OpusFile::read_from(&mut probe.into_inner(), options)?;
             let fallbacks = VorbisFallbacks::read(Some(file.vorbis_comments()));
-            Ok((file.into(), fallbacks))
+            Ok((file.into(), fallbacks, by_type))
         }
-        Some(FileType::Vorbis) => {
+        FileType::Vorbis => {
             let file = VorbisFile::read_from(&mut probe.into_inner(), options)?;
             let fallbacks = VorbisFallbacks::read(Some(file.vorbis_comments()));
-            Ok((file.into(), fallbacks))
+            Ok((file.into(), fallbacks, by_type))
         }
-        _ => Ok((probe.options(options).read()?, VorbisFallbacks::default())),
+        FileType::Mp4 => {
+            let file = Mp4File::read_from(&mut probe.into_inner(), options)?;
+            let format = format::of_mp4(file.properties());
+            Ok((file.into(), VorbisFallbacks::default(), format))
+        }
+        FileType::Mpeg => {
+            let file = MpegFile::read_from(&mut probe.into_inner(), options)?;
+            let format = format::of_mpeg(file.properties());
+            Ok((file.into(), VorbisFallbacks::default(), format))
+        }
+        FileType::Mpc => {
+            let file = MpcFile::read_from(&mut probe.into_inner(), options)?;
+            let format = format::of_mpc(file.properties());
+            Ok((file.into(), VorbisFallbacks::default(), format))
+        }
+        FileType::Wav => {
+            let file = WavFile::read_from(&mut probe.into_inner(), options)?;
+            let format = format::of_wav(file.properties());
+            Ok((file.into(), VorbisFallbacks::default(), format))
+        }
+        FileType::Aiff => {
+            let file = AiffFile::read_from(&mut probe.into_inner(), options)?;
+            let format = format::of_aiff(file.properties());
+            Ok((file.into(), VorbisFallbacks::default(), format))
+        }
+        _ => Ok((
+            probe.options(options).read()?,
+            VorbisFallbacks::default(),
+            by_type,
+        )),
     }
 }
 
@@ -291,7 +353,8 @@ pub(crate) async fn parse_metadata(
         }
     }
 
-    let mut entry_ids_by_path: HashMap<String, VecDeque<(DbId, String)>> = HashMap::new();
+    let mut entry_ids_by_path: HashMap<String, VecDeque<(DbId, String, SourceFormat)>> =
+        HashMap::new();
     let mut raw_tags = Vec::new();
 
     for entry in audio_entries {
@@ -302,7 +365,7 @@ pub(crate) async fn parse_metadata(
         let path = entry.full_path.clone();
         let path_for_task = path.clone();
         let task_result = tokio::task::spawn_blocking(move || read_audio_tags(path_for_task)).await;
-        let (tag, properties) = match task_result {
+        let (tag, properties, format) = match task_result {
             Ok(Ok(result)) => result,
             Ok(Err(err)) => {
                 tracing::warn!(
@@ -346,7 +409,7 @@ pub(crate) async fn parse_metadata(
         entry_ids_by_path
             .entry(raw.file_path.clone())
             .or_default()
-            .push_back((entry_db_id, entry.id.clone()));
+            .push_back((entry_db_id, entry.id.clone(), format));
         raw_tags.push(raw);
     }
 
@@ -359,12 +422,12 @@ pub(crate) async fn parse_metadata(
             .file_path
             .clone()
             .ok_or_else(|| anyhow!("processed metadata missing file_path"))?;
-        let (entry_db_id, entry_public_id) = entry_ids_by_path
+        let (entry_db_id, entry_public_id, format) = entry_ids_by_path
             .get_mut(&path)
             .and_then(|ids| ids.pop_front())
             .ok_or_else(|| anyhow!("missing entry id mapping for processed track: {path}"))?;
 
-        let embedded = embedded_track_metadata(entry_db_id, &entry_public_id, track);
+        let embedded = embedded_track_metadata(entry_db_id, &entry_public_id, format, track);
 
         if cue_claimed_audio_entries.contains(&entry_db_id) {
             embedded_by_entry_id.entry(entry_db_id).or_insert(embedded);
@@ -402,10 +465,12 @@ pub(crate) async fn parse_metadata(
 pub(crate) fn embedded_track_metadata(
     entry_db_id: DbId,
     entry_public_id: &str,
+    format: SourceFormat,
     track: lyra_metadata::TrackMetadata,
 ) -> TrackMetadata {
     TrackMetadata {
         entry_db_id,
+        format,
         album: track.album.map(|value| normalize_unicode_nfc(&value)),
         album_artists: track.album_artists.map(|artists| {
             artists
@@ -520,7 +585,7 @@ mod tests {
                 ("UPC", "0199957588430"),
             ],
         )?;
-        let (tag, _) = read_audio_tags(path.clone())?;
+        let (tag, _, _) = read_audio_tags(path.clone())?;
         std::fs::remove_file(&path)?;
 
         assert_eq!(tag.get_string(ItemKey::OriginalMediaType), Some("File"));
@@ -540,7 +605,7 @@ mod tests {
                 ("UPC", "0199957588430"),
             ],
         )?;
-        let (tag, _) = read_audio_tags(path.clone())?;
+        let (tag, _, _) = read_audio_tags(path.clone())?;
         std::fs::remove_file(&path)?;
 
         assert_eq!(tag.get_string(ItemKey::OriginalMediaType), Some("CD"));
@@ -554,7 +619,7 @@ mod tests {
             "integration_track.flac",
             comments,
         )?;
-        let (tag, properties) = read_audio_tags(path.clone())?;
+        let (tag, properties, _) = read_audio_tags(path.clone())?;
         std::fs::remove_file(&path)?;
 
         let raw = mapping::apply_mapping(
@@ -599,7 +664,7 @@ mod tests {
                 ("R128_ALBUM_GAIN", "-512"),
             ],
         )?;
-        let (tag, properties) = read_audio_tags(path.clone())?;
+        let (tag, properties, _) = read_audio_tags(path.clone())?;
         std::fs::remove_file(&path)?;
 
         let raw = mapping::apply_mapping(
@@ -621,7 +686,7 @@ mod tests {
             "integration_track.opus",
             &[("UPC", "0199957588430"), ("R128_TRACK_GAIN", "-512")],
         )?;
-        let (tag, properties) = read_audio_tags(path.clone())?;
+        let (tag, properties, _) = read_audio_tags(path.clone())?;
         std::fs::remove_file(&path)?;
 
         assert_eq!(tag.get_string(ItemKey::Barcode), Some("0199957588430"));

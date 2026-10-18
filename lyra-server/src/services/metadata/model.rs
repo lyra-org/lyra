@@ -10,6 +10,8 @@ use serde::Serialize;
 pub(crate) struct TrackMetadata {
     #[serde(skip)]
     pub(crate) entry_db_id: DbId,
+    #[serde(skip)]
+    pub(crate) format: crate::db::track_sources::SourceFormat,
     pub(crate) album: Option<String>,
     pub(crate) album_artists: Option<Vec<String>>,
     pub(crate) date: Option<String>,

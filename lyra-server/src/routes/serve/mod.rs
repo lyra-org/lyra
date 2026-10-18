@@ -256,10 +256,11 @@ pub(crate) async fn validate_and_get_track_source(
         source_public_id,
         track_public_id: track.id.clone(),
         input_path: source.input_path,
-        entry_format: source.entry_format,
+        entry_format: playback_source_service::transcoder_format(source.format),
         source_codec: source
-            .entry_format
-            .and_then(|entry_format| entry_format.inferred_codec(track.bit_depth)),
+            .format
+            .codec
+            .and_then(playback_source_service::transcoder_codec),
         full_path: source.full_path,
         duration_ms: track.duration_ms,
         start_ms: source.start_ms,
@@ -742,7 +743,7 @@ mod tests {
         let fixture_dst = test_dir.join("integration_track.flac");
         tokio::fs::copy(&fixture_src, &fixture_dst).await?;
 
-        let (tag, properties) = crate::services::metadata::read_audio_tags(fixture_dst.clone())?;
+        let (tag, properties, _) = crate::services::metadata::read_audio_tags(fixture_dst.clone())?;
         let fixture_str = fixture_dst.to_string_lossy().to_string();
         let mapping_config = crate::services::metadata::mapping::default_config();
         let raw_tags = crate::services::metadata::mapping::apply_mapping(

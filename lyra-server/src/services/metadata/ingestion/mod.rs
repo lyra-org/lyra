@@ -384,6 +384,7 @@ mod tests {
                     is_primary: true,
                     start_ms: None,
                     end_ms: None,
+                    format: Default::default(),
                 },
                 None,
             )
@@ -477,6 +478,7 @@ mod tests {
         let entry_db_id = DbId(entry_db_id);
         TrackMetadata {
             entry_db_id,
+            format: Default::default(),
             album: Some(album.to_string()),
             album_artists: Some(vec![artist.to_string()]),
             date: None,
@@ -1107,6 +1109,7 @@ mod tests {
             library_db_id,
             vec![TrackMetadata {
                 entry_db_id,
+                format: Default::default(),
                 album: Some("Ordered Album".to_string()),
                 album_artists: None,
                 date: None,
@@ -1172,6 +1175,7 @@ mod tests {
             library_db_id,
             vec![TrackMetadata {
                 entry_db_id,
+                format: Default::default(),
                 album: Some("瞬く日々へ".to_string()),
                 album_artists: Some(vec!["井ノ華六花".to_string()]),
                 date: None,
@@ -1777,6 +1781,7 @@ mod tests {
     ) -> TrackMetadata {
         TrackMetadata {
             entry_db_id,
+            format: Default::default(),
             album: Some("Audio Props Album".to_string()),
             album_artists: Some(vec!["Audio Props Artist".to_string()]),
             date: None,
@@ -2012,6 +2017,7 @@ mod tests {
         let make_track =
             |entry_id: DbId, track_no: u32, label: Option<&str>, cat: Option<&str>| TrackMetadata {
                 entry_db_id: entry_id,
+                format: Default::default(),
                 album: Some("Split".to_string()),
                 album_artists: Some(vec!["Split Band".to_string()]),
                 date: None,
@@ -2094,6 +2100,7 @@ mod tests {
 
         let make_track = |entry_id: DbId, track_no: u32, cat: Option<&str>| TrackMetadata {
             entry_db_id: entry_id,
+            format: Default::default(),
             album: Some("BN".to_string()),
             album_artists: Some(vec!["Artist".to_string()]),
             date: None,
@@ -2175,6 +2182,7 @@ mod tests {
         let make_track =
             |entry_id: DbId, track_no: u32, label: &str, cat: Option<&str>| TrackMetadata {
                 entry_db_id: entry_id,
+                format: Default::default(),
                 album: Some("EM".to_string()),
                 album_artists: Some(vec!["Artist".to_string()]),
                 date: None,
@@ -2470,6 +2478,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         let metadata = vec![
             TrackMetadata {
                 entry_db_id: entry_one,
+                format: Default::default(),
                 album: Some("Cafe\u{301} Album".to_string()),
                 album_artists: Some(vec!["Artist".to_string()]),
                 date: None,
@@ -2506,6 +2515,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             },
             TrackMetadata {
                 entry_db_id: entry_two,
+                format: Default::default(),
                 album: Some("Caf\u{e9} Album".to_string()),
                 album_artists: Some(vec!["Artist".to_string()]),
                 date: None,
@@ -2579,6 +2589,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         let metadata = vec![
             TrackMetadata {
                 entry_db_id: entry_one,
+                format: Default::default(),
                 album: Some("Disc Test".to_string()),
                 album_artists: Some(vec!["Artist".to_string()]),
                 date: None,
@@ -2615,6 +2626,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             },
             TrackMetadata {
                 entry_db_id: entry_two,
+                format: Default::default(),
                 album: Some("Disc Test".to_string()),
                 album_artists: Some(vec!["Artist".to_string()]),
                 date: None,
@@ -2689,6 +2701,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         let first_scan = vec![
             TrackMetadata {
                 entry_db_id: entry_one,
+                format: Default::default(),
                 album: Some("Disc Preserve".to_string()),
                 album_artists: Some(vec!["Artist".to_string()]),
                 date: None,
@@ -2725,6 +2738,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             },
             TrackMetadata {
                 entry_db_id: entry_two,
+                format: Default::default(),
                 album: Some("Disc Preserve".to_string()),
                 album_artists: Some(vec!["Artist".to_string()]),
                 date: None,
@@ -2765,6 +2779,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         let second_scan = vec![
             TrackMetadata {
                 entry_db_id: entry_one,
+                format: Default::default(),
                 album: Some("Disc Preserve".to_string()),
                 album_artists: Some(vec!["Artist".to_string()]),
                 date: None,
@@ -2801,6 +2816,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             },
             TrackMetadata {
                 entry_db_id: entry_two,
+                format: Default::default(),
                 album: Some("Disc Preserve".to_string()),
                 album_artists: Some(vec!["Artist".to_string()]),
                 date: None,
@@ -3057,6 +3073,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
 
         let first_scan = TrackMetadata {
             entry_db_id,
+            format: Default::default(),
             album: Some("Album".to_string()),
             album_artists: Some(vec!["Artist".to_string()]),
             date: None,
@@ -3172,6 +3189,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
 
         let second_scan = TrackMetadata {
             entry_db_id,
+            format: Default::default(),
             album: Some("Album".to_string()),
             album_artists: Some(vec!["Artist".to_string()]),
             date: None,
@@ -3243,6 +3261,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
 
         let tagged = TrackMetadata {
             entry_db_id,
+            format: Default::default(),
             album: Some("Album".to_string()),
             album_artists: Some(vec!["Artist".to_string()]),
             date: Some("1999-05-04".to_string()),
@@ -3306,6 +3325,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
 
         let stripped = TrackMetadata {
             entry_db_id,
+            format: Default::default(),
             album: Some("Album".to_string()),
             album_artists: Some(vec!["Artist".to_string()]),
             date: None,
@@ -3383,6 +3403,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
 
         let first_scan = TrackMetadata {
             entry_db_id,
+            format: Default::default(),
             album: Some("Album".to_string()),
             album_artists: Some(vec!["Artist".to_string()]),
             date: None,
@@ -3466,6 +3487,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
 
         let second_scan = TrackMetadata {
             entry_db_id,
+            format: Default::default(),
             album: Some("Album".to_string()),
             album_artists: Some(vec!["Artist".to_string()]),
             date: None,
@@ -3824,6 +3846,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
 
         let scan = TrackMetadata {
             entry_db_id,
+            format: Default::default(),
             album: Some("Album".to_string()),
             album_artists: Some(vec!["Artist".to_string()]),
             date: None,

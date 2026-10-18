@@ -19,11 +19,7 @@ use anyhow::{
     Context,
     anyhow,
 };
-use lofty::{
-    config::ParseOptions,
-    file::AudioFile,
-    probe::Probe,
-};
+use lofty::file::AudioFile;
 use lyra_metadata::{
     normalize_unicode_nfc,
     normalize_unicode_nfkc,
@@ -31,6 +27,7 @@ use lyra_metadata::{
 
 use super::model::TrackMetadata;
 use crate::db::Entry;
+use crate::db::track_sources::SourceFormat;
 
 const SOURCE_KIND_CUE: &str = "cue";
 
@@ -499,7 +496,10 @@ pub(super) async fn parse_cue_metadata_for_entry(
     let mut claimed_audio_entries = HashSet::new();
     let mut metadata = Vec::with_capacity(resolved_tracks.len());
 
+    // Read from each audio file itself, so segments keep their duration and format even when the
+    // file's embedded tags are missing or rejected.
     let mut audio_duration_ms: HashMap<DbId, u64> = HashMap::new();
+    let mut audio_format: HashMap<DbId, SourceFormat> = HashMap::new();
     {
         let mut probed = HashSet::new();
         for track in &resolved_tracks {
@@ -507,10 +507,11 @@ pub(super) async fn parse_cue_metadata_for_entry(
                 continue;
             }
             let path = track.audio_entry.file_path.clone();
-            if let Ok(Some(duration)) =
-                tokio::task::spawn_blocking(move || probe_audio_duration_ms(&path)).await
+            if let Ok(Some((duration, format))) =
+                tokio::task::spawn_blocking(move || probe_audio_file(&path)).await
             {
                 audio_duration_ms.insert(track.audio_entry.entry_id, duration);
+                audio_format.insert(track.audio_entry.entry_id, format);
             }
         }
     }
@@ -540,6 +541,10 @@ pub(super) async fn parse_cue_metadata_for_entry(
 
         metadata.push(TrackMetadata {
             entry_db_id: track.audio_entry.entry_id,
+            format: audio_format
+                .get(&track.audio_entry.entry_id)
+                .copied()
+                .unwrap_or_default(),
             album: album_title.clone(),
             album_artists: album_artists.clone(),
             date: None,
@@ -579,10 +584,12 @@ pub(super) async fn parse_cue_metadata_for_entry(
     Ok((metadata, claimed_audio_entries))
 }
 
-fn probe_audio_duration_ms(path: &Path) -> Option<u64> {
-    let options = ParseOptions::new().read_tags(false).read_cover_art(false);
-    let tagged_file = Probe::open(path).ok()?.options(options).read().ok()?;
-    Some(tagged_file.properties().duration().as_millis() as u64)
+fn probe_audio_file(path: &Path) -> Option<(u64, SourceFormat)> {
+    let (tagged_file, _, format) = super::read_tagged_file(path, false).ok()?;
+    Some((
+        tagged_file.properties().duration().as_millis() as u64,
+        format,
+    ))
 }
 
 pub(super) fn resolve_audio_entry_for_cue_track(
@@ -737,6 +744,7 @@ mod tests {
     fn test_track(entry_id: i64) -> super::TrackMetadata {
         super::TrackMetadata {
             entry_db_id: DbId(entry_id),
+            format: Default::default(),
             album: None,
             album_artists: None,
             date: None,
@@ -1007,5 +1015,110 @@ FILE "02 second.wav" WAVE
             &by_stem,
         );
         assert!(resolved.is_none());
+    }
+
+    fn file_entry(db_id: i64, path: &Path) -> Entry {
+        Entry {
+            db_id: Some(DbId(db_id)),
+            id: format!("entry-{db_id}"),
+            full_path: path.to_path_buf(),
+            kind: crate::db::entries::EntryKind::File,
+            file_kind: None,
+            name: path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            hash: None,
+            size: 0,
+            mtime: 0,
+            ctime: 0,
+        }
+    }
+
+    fn untagged_wav(seconds: u32) -> Vec<u8> {
+        wav_with_chunk(seconds, &[])
+    }
+
+    /// A WAV holding `chunk`, a whole RIFF chunk with its header, after its audio.
+    fn wav_with_chunk(seconds: u32, chunk: &[u8]) -> Vec<u8> {
+        let (channels, rate, bits) = (2u16, 44_100u32, 16u16);
+        let block_align = channels * bits / 8;
+        let data = vec![0u8; (rate * seconds) as usize * usize::from(block_align)];
+        let mut body = b"WAVEfmt ".to_vec();
+        body.extend(16u32.to_le_bytes());
+        body.extend(1u16.to_le_bytes());
+        body.extend(channels.to_le_bytes());
+        body.extend(rate.to_le_bytes());
+        body.extend((rate * u32::from(block_align)).to_le_bytes());
+        body.extend(block_align.to_le_bytes());
+        body.extend(bits.to_le_bytes());
+        body.extend(b"data");
+        body.extend((data.len() as u32).to_le_bytes());
+        body.extend(data);
+        body.extend(chunk);
+        let mut file = b"RIFF".to_vec();
+        file.extend((body.len() as u32).to_le_bytes());
+        file.extend(body);
+        file
+    }
+
+    #[tokio::test]
+    async fn cue_segments_take_their_format_from_untagged_audio() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let audio_path = dir.path().join("album.wav");
+        std::fs::write(&audio_path, untagged_wav(2))?;
+        let cue_path = dir.path().join("album.cue");
+        std::fs::write(
+            &cue_path,
+            "FILE \"album.wav\" WAVE\n  TRACK 01 AUDIO\n    TITLE \"One\"\n    INDEX 01 00:00:00\n  TRACK 02 AUDIO\n    TITLE \"Two\"\n    INDEX 01 00:01:00\n",
+        )?;
+
+        let lookup = build_audio_lookup(&[file_entry(1, &audio_path)]);
+        let (metadata, _) = parse_cue_metadata_for_entry(
+            &file_entry(2, &cue_path),
+            &lookup.by_path,
+            &lookup.by_name,
+            &lookup.by_stem,
+        )
+        .await?;
+
+        let wav = SourceFormat {
+            container: Some(crate::db::track_sources::SourceContainer::Wav),
+            codec: Some(crate::db::track_sources::SourceCodec::PcmS16Le),
+        };
+        assert_eq!(metadata.len(), 2);
+        assert!(metadata.iter().all(|track| track.format == wav));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cue_segments_read_audio_whose_tags_are_malformed() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let audio_path = dir.path().join("album.wav");
+        let mut id3 = b"ID3 ".to_vec();
+        id3.extend(10u32.to_le_bytes());
+        id3.extend(b"ID3\xff\xff\xff\xff\xff\xff\xff");
+        std::fs::write(&audio_path, wav_with_chunk(2, &id3))?;
+        let cue_path = dir.path().join("album.cue");
+        std::fs::write(
+            &cue_path,
+            "FILE \"album.wav\" WAVE\n  TRACK 01 AUDIO\n    TITLE \"One\"\n    INDEX 01 00:00:00\n  TRACK 02 AUDIO\n    TITLE \"Two\"\n    INDEX 01 00:01:00\n",
+        )?;
+        assert!(super::super::read_audio_tags(audio_path.clone()).is_err());
+
+        let lookup = build_audio_lookup(&[file_entry(1, &audio_path)]);
+        let (metadata, _) = parse_cue_metadata_for_entry(
+            &file_entry(2, &cue_path),
+            &lookup.by_path,
+            &lookup.by_name,
+            &lookup.by_stem,
+        )
+        .await?;
+
+        assert_eq!(metadata.len(), 2);
+        assert_eq!(metadata[1].segment_end_ms, Some(2_000));
+        assert_eq!(metadata[1].duration_ms, Some(1_000));
+        assert_eq!(metadata[1].format.sample_rate_hz, Some(44_100));
+        Ok(())
     }
 }

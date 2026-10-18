@@ -175,6 +175,7 @@ fn plugin_executor_exposes_db_backed_lyra_entries_module() -> Result<()> {
                 is_primary: true,
                 start_ms: None,
                 end_ms: None,
+                format: Default::default(),
             },
             None,
         )
@@ -733,6 +734,7 @@ fn plugin_executor_exposes_db_backed_lyra_track_sources_module() -> Result<()> {
                 is_primary: true,
                 start_ms: None,
                 end_ms: None,
+                format: Default::default(),
             },
             None,
         )
@@ -815,6 +817,7 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
                 is_primary: true,
                 start_ms: Some(100),
                 end_ms: Some(200),
+                format: Default::default(),
             },
             None,
         )

@@ -982,6 +982,7 @@ mod tests {
                     is_primary: true,
                     start_ms: None,
                     end_ms: None,
+                    format: Default::default(),
                 },
                 None,
             )

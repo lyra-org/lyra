@@ -158,37 +158,6 @@ impl AudioFormat {
     pub fn supports_codec(&self, codec: AudioCodec) -> bool {
         self.compatible_codecs().contains(&codec)
     }
-
-    pub fn inferred_codec(&self, bit_depth: Option<u32>) -> Option<AudioCodec> {
-        match self {
-            Self::Mp3 => Some(AudioCodec::Mp3),
-            Self::Flac => Some(AudioCodec::Flac),
-            Self::Wav => Some(if bit_depth.unwrap_or(16) > 16 {
-                AudioCodec::PcmS24Le
-            } else {
-                AudioCodec::PcmS16Le
-            }),
-            Self::Ogg => bit_depth
-                .filter(|bit_depth| *bit_depth > 0)
-                .map(|_| AudioCodec::Flac),
-            Self::Webm => None,
-            Self::Aac => Some(AudioCodec::Aac),
-            Self::M4a => Some(if bit_depth.unwrap_or(0) > 0 {
-                AudioCodec::Alac
-            } else {
-                AudioCodec::Aac
-            }),
-            Self::Opus => Some(AudioCodec::Opus),
-            Self::Aiff => Some(if bit_depth.unwrap_or(16) > 16 {
-                AudioCodec::PcmS24Be
-            } else {
-                AudioCodec::PcmS16Be
-            }),
-            Self::Alac => Some(AudioCodec::Alac),
-            Self::Caf => None,
-            Self::Wma => Some(AudioCodec::Wma),
-        }
-    }
 }
 
 impl AudioCodec {
@@ -409,20 +378,6 @@ mod tests {
     #[test]
     fn ogg_supports_flac() {
         assert!(AudioFormat::Ogg.supports_codec(AudioCodec::Flac));
-    }
-
-    #[test]
-    fn inferred_codec_uses_bit_depth_for_ambiguous_formats() {
-        assert_eq!(AudioFormat::M4a.inferred_codec(None), Some(AudioCodec::Aac));
-        assert_eq!(
-            AudioFormat::M4a.inferred_codec(Some(24)),
-            Some(AudioCodec::Alac)
-        );
-        assert_eq!(AudioFormat::Ogg.inferred_codec(None), None);
-        assert_eq!(
-            AudioFormat::Ogg.inferred_codec(Some(24)),
-            Some(AudioCodec::Flac)
-        );
     }
 
     #[test]

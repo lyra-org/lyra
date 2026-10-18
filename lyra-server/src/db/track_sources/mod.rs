@@ -16,6 +16,14 @@ use nanoid::nanoid;
 
 use super::DbAccess;
 
+mod format;
+
+pub(crate) use format::{
+    SourceCodec,
+    SourceContainer,
+    SourceFormat,
+};
+
 #[derive(DbElement, Clone, Debug)]
 pub(crate) struct TrackSource {
     pub(crate) db_id: Option<DbId>,
@@ -26,6 +34,8 @@ pub(crate) struct TrackSource {
     pub(crate) is_primary: bool,
     pub(crate) start_ms: Option<u64>,
     pub(crate) end_ms: Option<u64>,
+    pub(crate) container: Option<SourceContainer>,
+    pub(crate) codec: Option<SourceCodec>,
 }
 
 #[derive(Clone, Debug)]
@@ -35,6 +45,7 @@ pub(crate) struct TrackSourceUpsert {
     pub(crate) is_primary: bool,
     pub(crate) start_ms: Option<u64>,
     pub(crate) end_ms: Option<u64>,
+    pub(crate) format: SourceFormat,
 }
 
 fn find_source_id_by_identity(db: &impl DbAccess, identity: &str) -> anyhow::Result<Option<DbId>> {
@@ -138,6 +149,8 @@ pub(crate) fn upsert(
         is_primary: source.is_primary,
         start_ms: source.start_ms,
         end_ms: source.end_ms,
+        container: source.format.container,
+        codec: source.format.codec,
     };
 
     let source_id = match existing_id {
@@ -148,6 +161,8 @@ pub(crate) fn upsert(
                 [
                     ("start_ms", source_node.start_ms.is_none()),
                     ("end_ms", source_node.end_ms.is_none()),
+                    ("container", source_node.container.is_none()),
+                    ("codec", source_node.codec.is_none()),
                 ],
                 &source_node,
             )?;
@@ -385,6 +400,7 @@ mod tests {
                     is_primary: true,
                     start_ms: None,
                     end_ms: None,
+                    format: Default::default(),
                 },
                 None,
             )
@@ -424,6 +440,7 @@ mod tests {
                     is_primary: true,
                     start_ms: None,
                     end_ms: None,
+                    format: Default::default(),
                 },
                 None,
             )
@@ -453,6 +470,7 @@ mod tests {
                     is_primary: true,
                     start_ms: Some(1_000),
                     end_ms: Some(2_000),
+                    format: Default::default(),
                 },
                 None,
             )
@@ -469,6 +487,7 @@ mod tests {
                     is_primary: true,
                     start_ms: None,
                     end_ms: None,
+                    format: Default::default(),
                 },
                 None,
             )
@@ -504,6 +523,7 @@ mod tests {
                     is_primary: true,
                     start_ms: None,
                     end_ms: None,
+                    format: Default::default(),
                 },
                 None,
             )

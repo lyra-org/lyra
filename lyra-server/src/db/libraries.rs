@@ -1245,6 +1245,7 @@ mod tests {
                         is_primary: true,
                         start_ms: Some(0),
                         end_ms: Some(1000),
+                        format: Default::default(),
                     },
                     Some(selected),
                 )?;

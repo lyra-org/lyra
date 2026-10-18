@@ -2335,6 +2335,7 @@ fn streamable_bindings_serve_anonymous_public_routes() -> Result<()> {
                 is_primary: true,
                 start_ms: None,
                 end_ms: None,
+                format: Default::default(),
             },
             None,
         )?;
@@ -2500,6 +2501,7 @@ fn track_source_bindings_hide_inaccessible_tracks() -> Result<()> {
                     is_primary: true,
                     start_ms: None,
                     end_ms: None,
+                    format: Default::default(),
                 },
                 None,
             )?;

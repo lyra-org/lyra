@@ -326,8 +326,19 @@ pub async fn prepare_fixture(
             .parent()
             .map(Path::to_path_buf)
             .unwrap_or_else(|| library.directory.clone());
+        // Most fixtures name files that don't exist; only real ones have a format to read.
+        let format = if file_path.is_file() {
+            services::metadata::read_source_format(&file_path)?
+        } else {
+            crate::db::track_sources::SourceFormat::default()
+        };
         tracks_by_source_dir.entry(source_dir).or_default().push(
-            services::metadata::embedded_track_metadata(entry_db_id, &entry_public_id, track),
+            services::metadata::embedded_track_metadata(
+                entry_db_id,
+                &entry_public_id,
+                format,
+                track,
+            ),
         );
     }
     let parsed_groups = tracks_by_source_dir

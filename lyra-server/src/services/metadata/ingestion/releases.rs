@@ -495,6 +495,7 @@ fn persist_release_inner(
     for track in release_tracks {
         let TrackMetadata {
             entry_db_id,
+            format,
             album: _,
             album_artists: _,
             date: _,
@@ -673,6 +674,7 @@ fn persist_release_inner(
                 is_primary: true,
                 start_ms: segment_start_ms,
                 end_ms: segment_end_ms,
+                format,
             },
             cue_track_id,
         )?;

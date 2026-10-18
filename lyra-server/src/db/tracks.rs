@@ -480,6 +480,8 @@ mod tests {
             is_primary: true,
             start_ms: None,
             end_ms: None,
+            container: None,
+            codec: None,
         };
         let source_id = db
             .exec_mut(QueryBuilder::insert().element(&source).query())?

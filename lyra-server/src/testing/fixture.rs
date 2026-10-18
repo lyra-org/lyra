@@ -421,6 +421,7 @@ impl Fixture {
                     "fixture track file {} is not a file",
                     path.display()
                 );
+                let format = services::metadata::read_source_format(&path)?;
                 let entry = db::Entry {
                     db_id: None,
                     id: nanoid::nanoid!(),
@@ -451,6 +452,7 @@ impl Fixture {
                             is_primary: true,
                             start_ms: None,
                             end_ms: None,
+                            format,
                         },
                         None,
                     )

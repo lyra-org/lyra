@@ -96,7 +96,7 @@ pub(crate) async fn dry_run_config(
         let path_for_task = path.clone();
         let task_result = tokio::task::spawn_blocking(move || read_audio_tags(path_for_task)).await;
         match task_result {
-            Ok(Ok((tag, properties))) => {
+            Ok(Ok((tag, properties, _))) => {
                 let file_path = path.to_string_lossy().to_string();
                 let raw = apply_mapping(&tag, &properties, &file_path, candidate);
                 if let Err(missing) = check_required_fields(&raw) {
