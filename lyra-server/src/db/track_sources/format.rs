@@ -20,6 +20,10 @@ macro_rules! source_format_enum {
         }
 
         impl $name {
+            /// Every value, as stored and as plugins see it.
+            #[cfg(feature = "docgen")]
+            pub(crate) const VALUES: &[&str] = &[$($value,)+];
+
             pub(crate) fn as_str(self) -> &'static str {
                 match self {
                     $(Self::$variant => $value,)+

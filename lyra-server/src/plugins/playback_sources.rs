@@ -22,6 +22,7 @@ use harmony_luau::{
     ModuleDescriptor,
     ModuleFunctionDescriptor,
     ParameterDescriptor,
+    TypeAliasDescriptor,
     render_definition_file_with_support,
 };
 
@@ -209,18 +210,32 @@ fn source_to_table(
         source_kind,
         source_key,
         is_primary,
+        format,
         start_ms,
         end_ms,
         entry,
         ..
     } = source;
 
-    let mut table = luau::OwnedTable::with_capacity(0, 9);
+    let mut table = luau::OwnedTable::with_capacity(0, 11);
     table.set_field("track_id", luau::Value::from(track_db_id.0));
     table.set_field("source_id", luau::Value::from(source_id.0));
     table.set_field("source_kind", luau::Value::String(source_kind.into_bytes()));
     table.set_field("source_key", luau::Value::String(source_key.into_bytes()));
     table.set_field("is_primary", luau::Value::Boolean(is_primary));
+    let optional_str = |value: Option<&'static str>| {
+        value
+            .map(|value| luau::Value::String(value.as_bytes().to_vec()))
+            .unwrap_or(luau::Value::Nil)
+    };
+    table.set_field(
+        "container",
+        optional_str(format.container.map(|container| container.as_str())),
+    );
+    table.set_field(
+        "codec",
+        optional_str(format.codec.map(|codec| codec.as_str())),
+    );
     table.set_field("start_ms", optional_u64(start_ms));
     table.set_field("end_ms", optional_u64(end_ms));
     table.set_field(
@@ -372,6 +387,20 @@ impl DescribeInterface for PlaybackSourceInfo {
                 description: None,
             },
             FieldDescriptor {
+                name: "container",
+                ty: LuauType::optional(LuauType::named("SourceContainer")),
+                description: Some(
+                    "The file format holding the audio, read from the file's contents when it was scanned.",
+                ),
+            },
+            FieldDescriptor {
+                name: "codec",
+                ty: LuauType::optional(LuauType::named("SourceCodec")),
+                description: Some(
+                    "The audio's encoding inside its container, named as FFmpeg names codecs.",
+                ),
+            },
+            FieldDescriptor {
                 name: "start_ms",
                 ty: Option::<u64>::luau_type(),
                 description: None,
@@ -455,9 +484,29 @@ fn module_descriptor() -> ModuleDescriptor {
 
 #[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
+    let string_enum = |values: &[&'static str]| {
+        LuauType::union(
+            values
+                .iter()
+                .copied()
+                .map(LuauType::string_literal)
+                .collect(),
+        )
+    };
     render_definition_file_with_support(
         &module_descriptor(),
-        &[],
+        &[
+            TypeAliasDescriptor::new(
+                "SourceContainer",
+                string_enum(db::track_sources::SourceContainer::VALUES),
+                None,
+            ),
+            TypeAliasDescriptor::new(
+                "SourceCodec",
+                string_enum(db::track_sources::SourceCodec::VALUES),
+                None,
+            ),
+        ],
         &[
             EntryInfo::interface_descriptor(),
             PlaybackSourceInfo::interface_descriptor(),

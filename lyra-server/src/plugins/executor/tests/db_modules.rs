@@ -817,7 +817,10 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
                 is_primary: true,
                 start_ms: Some(100),
                 end_ms: Some(200),
-                format: Default::default(),
+                format: crate::plugins::db::track_sources::SourceFormat {
+                    container: Some(crate::plugins::db::track_sources::SourceContainer::M4a),
+                    codec: Some(crate::plugins::db::track_sources::SourceCodec::Alac),
+                },
             },
             None,
         )
@@ -882,6 +885,8 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
                     first.entry.name,
                     first.entry.hash,
                     first.entry.full_path,
+                    first.container,
+                    first.codec,
                     many.entry.name,
                     executor_playback_source_many[999999] == nil
             "#,
@@ -905,6 +910,8 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
             luau::Value::String(b"raw-playback-source.flac".to_vec()),
             luau::Value::String(b"raw-playback-hash".to_vec()),
             luau::Value::String(entry_path.to_string_lossy().into_owned().into_bytes()),
+            luau::Value::String(b"m4a".to_vec()),
+            luau::Value::String(b"alac".to_vec()),
             luau::Value::String(b"raw-playback-source.flac".to_vec()),
             luau::Value::Boolean(true),
         ]
