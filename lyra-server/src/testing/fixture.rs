@@ -138,6 +138,8 @@ struct Track {
     artists: Vec<String>,
     #[serde(default)]
     credits: Vec<Credit>,
+    /// An audio file, relative to the fixture, linked as the track's primary source.
+    file: Option<PathBuf>,
 }
 
 /// A credit of any type, listed after the owner's `artists`.
@@ -412,6 +414,48 @@ impl Fixture {
             layer.supply(MetadataField::Year, track.year)?;
             supply_credits(&mut layer, &keys, &track.artists, &track.credits)?;
             save_local(db, track_db_id, layer)?;
+            if let Some(file) = &track.file {
+                let path = self.directory.join(file);
+                anyhow::ensure!(
+                    path.is_file(),
+                    "fixture track file {} is not a file",
+                    path.display()
+                );
+                let entry = db::Entry {
+                    db_id: None,
+                    id: nanoid::nanoid!(),
+                    name: path
+                        .file_name()
+                        .context("fixture track file has a name")?
+                        .to_string_lossy()
+                        .into_owned(),
+                    size: std::fs::metadata(&path)?.len(),
+                    full_path: path,
+                    kind: db::entries::EntryKind::File,
+                    file_kind: Some("audio".into()),
+                    hash: None,
+                    mtime: 0,
+                    ctime: 0,
+                };
+                let entry_db_id = db
+                    .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
+                    .ids()[0];
+                db.transaction_mut(|t| {
+                    db::track_sources::upsert(
+                        t,
+                        track_db_id,
+                        entry_db_id,
+                        db::track_sources::TrackSourceUpsert {
+                            source_kind: "embedded_tags".into(),
+                            source_key: track.key.clone(),
+                            is_primary: true,
+                            start_ms: None,
+                            end_ms: None,
+                        },
+                        None,
+                    )
+                })?;
+            }
             keys.entities.insert(
                 track.key.clone(),
                 (track_db_id, db::favorites::FavoriteKind::Track),

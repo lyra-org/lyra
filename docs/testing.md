@@ -96,6 +96,7 @@ year = 2001
 added = 50
 artists = ["amy"]    # artist credits, in order
 credits = [{ artist = "amy", type = "instrumentalist", detail = "piano" }]  # any credit type, after `artists`
+file = "s1.opus"     # an audio file, relative to the fixture, as the primary source
 
 [[playlists]]
 key = "mix"
