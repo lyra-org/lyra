@@ -545,7 +545,8 @@ local function build_hls_transcoding_url(
 	max_streaming_bitrate: number?,
 	max_audio_channels: number?,
 	enable_audio_vbr_encoding: boolean?,
-	start_time_ticks: number?
+	start_time_ticks: number?,
+	access_token: string?
 ): string
 	local parts = {
 		`audioCodec={codec}`,
@@ -566,13 +567,17 @@ local function build_hls_transcoding_url(
 	if start_time_ticks ~= nil and start_time_ticks > 0 then
 		table.insert(parts, `StartTimeTicks={start_time_ticks}`)
 	end
+	if access_token ~= nil then
+		table.insert(parts, `ApiKey={access_token}`)
+	end
 	return `{ROUTE_PREFIX}/Audio/{item_id}/master.m3u8?{table.concat(parts, "&")}`
 end
 
 local function apply_preferred_hls_transcoding(
 	media_source: MediaSource,
 	play_session_id: string,
-	request_object: JsonObject?
+	request_object: JsonObject?,
+	access_token: string?
 ): boolean
 	if request_object == nil or json_boolean_field(request_object, "EnableTranscoding") == false then
 		return false
@@ -618,7 +623,8 @@ local function apply_preferred_hls_transcoding(
 		json_number_field(request_object, "MaxStreamingBitrate"),
 		json_number_field(request_object, "MaxAudioChannels"),
 		json_boolean_field(preferred_profile, "EnableAudioVbrEncoding"),
-		json_number_field(request_object, "StartTimeTicks")
+		json_number_field(request_object, "StartTimeTicks"),
+		access_token
 	)
 	return true
 end
@@ -951,7 +957,8 @@ function module.build_playback_info(
 	track: Track?,
 	existing_play_session_id: string?,
 	request_object: JsonObject?,
-	requested_media_source_id: string?
+	requested_media_source_id: string?,
+	access_token: string?
 ): ApiJsonValue
 	local source = module.resolve_playback_source_for_track(track, true)
 	if source == nil then
@@ -990,7 +997,7 @@ function module.build_playback_info(
 			primary_media_source.SupportsDirectStream = false
 		end
 		local transcoding_applied =
-			apply_preferred_hls_transcoding(primary_media_source, play_session_id, request_object)
+			apply_preferred_hls_transcoding(primary_media_source, play_session_id, request_object, access_token)
 		if request_object ~= nil and not direct_play_supported and not transcoding_applied then
 			return no_compatible_stream()
 		end

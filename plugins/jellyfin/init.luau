@@ -2031,10 +2031,11 @@ api.post(P .. "/Sessions/Playing/Stopped", function(ctx: ApiContext)
 end, "public", true)
 api.post(P .. "/Sessions/Playing/Ping", session.handle_playback_ping_route, "public", true)
 api.get(P .. "/Items/{id}/PlaybackInfo", function(ctx: ApiContext)
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
+	local resolved_auth, access_token = session.require_jellyfin_auth(ctx)
+	if not resolved_auth then
 		return session.unauthorized()
 	end
+	local principal = resolved_auth.principal
 
 	if not session.require_matching_user_scope(ctx, principal) then
 		return session.unauthorized()
@@ -2047,7 +2048,7 @@ api.get(P .. "/Items/{id}/PlaybackInfo", function(ctx: ApiContext)
 
 	local request = if ctx then ctx.request else nil
 	local play_session_id = playback.resolve_requested_play_session_id(request, nil)
-	local response = playback.build_playback_info(item_id, track, play_session_id, nil, nil)
+	local response = playback.build_playback_info(item_id, track, play_session_id, nil, nil, access_token)
 	return api.response.json(200, response)
 end, "public", true)
 api.get(P .. "/Items/{itemId}/File", function(ctx: ApiContext)
@@ -2062,10 +2063,11 @@ end, "public", true)
 -- as-is so the server-side policy sees the value and can reject it.
 audio_routes.register()
 api.post(P .. "/Items/{id}/PlaybackInfo", function(ctx: ApiContext)
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
+	local resolved_auth, access_token = session.require_jellyfin_auth(ctx)
+	if not resolved_auth then
 		return session.unauthorized()
 	end
+	local principal = resolved_auth.principal
 
 	local request = if ctx then ctx.request else nil
 	local request_json = if request then request.json else nil
@@ -2090,8 +2092,14 @@ api.post(P .. "/Items/{id}/PlaybackInfo", function(ctx: ApiContext)
 	local playback_request = if request_object then request_object :: PlaybackPayload else nil
 	local play_session_id = playback.resolve_requested_play_session_id(request, playback_request)
 	local requested_media_source_id = playback.resolve_requested_media_source_id(request, request_object)
-	local response =
-		playback.build_playback_info(item_id, track, play_session_id, request_object, requested_media_source_id)
+	local response = playback.build_playback_info(
+		item_id,
+		track,
+		play_session_id,
+		request_object,
+		requested_media_source_id,
+		access_token
+	)
 	return api.response.json(200, response)
 end, "public", true)
 
