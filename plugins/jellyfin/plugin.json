@@ -32,7 +32,6 @@
     "lyra.server",
     "lyra.tags",
     "lyra.tracks",
-    "lyra.track_sources",
     "lyra.users"
   ]
 }

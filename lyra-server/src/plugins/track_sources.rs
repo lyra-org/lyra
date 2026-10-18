@@ -21,7 +21,6 @@ use harmony_luau::{
     render_definition_file_with_support,
 };
 
-use crate::plugins::args;
 use crate::plugins::db;
 
 struct TrackSourcesModule;
@@ -30,8 +29,6 @@ pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/track_sources")
         .capability("lyra.track_sources")
         .function(get_primary_source_key_spec())
-        .function(get_primary_container_spec())
-        .function(get_primary_containers_spec())
         .install(|_| Ok(ModuleExport::new(TrackSourcesModule)))
 }
 
@@ -41,22 +38,6 @@ fn get_primary_source_key_spec() -> FunctionSpec {
         .args::<i64>()
         .returns::<Option<String>>()
         .call_async(std::sync::Arc::new(get_primary_source_key_callback))
-}
-
-fn get_primary_container_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_primary_container")
-        .arg_name("track_id")
-        .args::<i64>()
-        .returns::<Option<String>>()
-        .call_async(std::sync::Arc::new(get_primary_container_callback))
-}
-
-fn get_primary_containers_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_primary_containers")
-        .arg_name("track_ids")
-        .args::<Vec<u64>>()
-        .returns::<luau::Table>()
-        .call_async(std::sync::Arc::new(get_primary_containers_callback))
 }
 
 fn get_primary_source_key_callback(
@@ -86,79 +67,6 @@ fn get_primary_source_key_callback(
     }))
 }
 
-fn get_primary_container_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let track_id: i64 = frame.args.read_named("track_id")?;
-    if track_id <= 0 {
-        return Ok(luau::ScheduledFuture::new(async { Ok(luau::Value::Nil) }));
-    }
-
-    let db = db::scoped(&frame)?;
-
-    Ok(luau::ScheduledFuture::new(async move {
-        let (db, viewer) = db.read().await?;
-        if !viewer
-            .sees_entity(&*db, DbId(track_id))
-            .map_err(crate::plugins::runtime_error)?
-        {
-            return None::<String>.into_luau_return();
-        }
-        let container = resolve_primary_container(&db, DbId(track_id))
-            .map_err(crate::plugins::runtime_error)?;
-        container.into_luau_return()
-    }))
-}
-
-fn get_primary_containers_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let ids_table: luau::Table = frame.args.read_named("track_ids")?;
-    let ids = args::unique_ids(frame.vm, &ids_table)?;
-    let db = db::scoped(&frame)?;
-
-    Ok(luau::ScheduledFuture::new(async move {
-        let (db, viewer) = db.read().await?;
-        let visible = viewer
-            .visible(&db, ids.iter().copied())
-            .map_err(crate::plugins::runtime_error)?;
-        let mut table = luau::OwnedTable::with_entry_capacity(0, 0, ids.len());
-        for id in &visible {
-            let container =
-                resolve_primary_container(&db, *id).map_err(crate::plugins::runtime_error)?;
-            let value = container
-                .map(|value| luau::Value::String(value.into_bytes()))
-                .unwrap_or(luau::Value::Nil);
-            table.set_key(luau::Value::from(id.0), value);
-        }
-        Ok(luau::Value::TableData(table))
-    }))
-}
-
-fn resolve_primary_container(
-    db: &agdb::DbAny,
-    track_db_id: DbId,
-) -> anyhow::Result<Option<String>> {
-    let Some(source) = db::track_sources::get_primary_by_track(db, track_db_id)? else {
-        return Ok(None);
-    };
-    let Some(source_id) = source.db_id else {
-        return Ok(None);
-    };
-    let Some(entry_db_id) = db::track_sources::get_entry_id(db, source_id)? else {
-        return Ok(None);
-    };
-    let Some(entry) = db::entries::get_by_id(db, entry_db_id)? else {
-        return Ok(None);
-    };
-    Ok(entry
-        .full_path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.trim().to_ascii_lowercase())
-        .filter(|ext| !ext.is_empty()))
-}
-
 #[cfg(feature = "docgen")]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
@@ -176,32 +84,13 @@ fn module_descriptor() -> ModuleDescriptor {
         local_name: "track_sources",
         description: None,
         fields: Vec::new(),
-        functions: vec![
-            ModuleFunctionDescriptor {
-                path: vec!["get_primary_source_key"],
-                description: None,
-                params: vec![param("track_id", i64::luau_type())],
-                returns: vec![Option::<String>::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["get_primary_container"],
-                description: None,
-                params: vec![param("track_id", i64::luau_type())],
-                returns: vec![Option::<String>::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["get_primary_containers"],
-                description: None,
-                params: vec![param("track_ids", Vec::<u64>::luau_type())],
-                returns: vec![LuauType::map(
-                    u64::luau_type(),
-                    Option::<String>::luau_type(),
-                )],
-                yields: true,
-            },
-        ],
+        functions: vec![ModuleFunctionDescriptor {
+            path: vec!["get_primary_source_key"],
+            description: None,
+            params: vec![param("track_id", i64::luau_type())],
+            returns: vec![Option::<String>::luau_type()],
+            yields: true,
+        }],
     }
 }
 

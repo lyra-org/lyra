@@ -754,10 +754,7 @@ fn plugin_executor_exposes_db_backed_lyra_track_sources_module() -> Result<()> {
                 local track_sources = require("@lyra/track_sources")
                 local track_db_id = {track_db_id}
 
-                local many = track_sources.get_primary_containers({{ track_db_id, track_db_id }})
                 return track_sources.get_primary_source_key(track_db_id),
-                    track_sources.get_primary_container(track_db_id),
-                    many[track_db_id],
                     track_sources.get_primary_source_key(-1) == nil
             "#,
             track_db_id = track_db_id.0,
@@ -769,8 +766,6 @@ fn plugin_executor_exposes_db_backed_lyra_track_sources_module() -> Result<()> {
         values,
         vec![
             luau::Value::String(source_key.into_bytes()),
-            luau::Value::String(b"flac".to_vec()),
-            luau::Value::String(b"flac".to_vec()),
             luau::Value::Boolean(true),
         ]
     );

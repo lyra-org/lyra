@@ -2518,30 +2518,15 @@ fn track_source_bindings_hide_inaccessible_tracks() -> Result<()> {
             r#"
                 local track_sources = require("@lyra/track_sources")
                 local chromaprint = require("@lyra/chromaprint")
-                local containers = track_sources.get_primary_containers({{ {shown}, {hidden} }})
                 local _, fingerprint_error = pcall(chromaprint.compute, {hidden_entry})
                 return track_sources.get_primary_source_key({shown}),
                     track_sources.get_primary_source_key({hidden}) == nil,
-                    track_sources.get_primary_container({shown}),
-                    track_sources.get_primary_container({hidden}) == nil,
-                    containers[{shown}], containers[{hidden}] == nil,
                     string.find(tostring(fingerprint_error), "entry not found", 1, true) ~= nil
             "#
         ),
     )?;
     let text = |value: &str| luau::Value::String(value.as_bytes().to_vec());
     let yes = luau::Value::Boolean(true);
-    assert_eq!(
-        values,
-        vec![
-            text("shown"),
-            yes.clone(),
-            text("flac"),
-            yes.clone(),
-            text("flac"),
-            yes.clone(),
-            yes,
-        ]
-    );
+    assert_eq!(values, vec![text("shown"), yes.clone(), yes]);
     Ok(())
 }
