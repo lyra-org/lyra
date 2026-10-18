@@ -47,6 +47,7 @@ pub(crate) fn module_spec() -> ModuleSpec {
         .capability("lyra.playback_sources")
         .function(get_spec())
         .function(get_many_spec())
+        .function(streamable_spec())
         .install(|_| Ok(ModuleExport::new(PlaybackSourcesModule)))
 }
 
@@ -70,6 +71,16 @@ fn get_many_spec() -> FunctionSpec {
         .args::<Option<bool>>()
         .returns::<luau::Table>()
         .call_async(Arc::new(get_many_callback))
+}
+
+fn streamable_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("streamable")
+        .arg_name("track_id")
+        .args::<i64>()
+        .arg_name("include_entry")
+        .args::<Option<bool>>()
+        .returns::<Option<luau::Table>>()
+        .call_async(Arc::new(streamable_callback))
 }
 
 fn get_callback(
@@ -163,6 +174,27 @@ fn get_many_callback(
         }
 
         Ok(luau::Value::TableData(rows))
+    }))
+}
+
+fn streamable_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let track_id = args::positive_id(frame.args.read_named::<i64>("track_id")?, "track_id")?;
+    let include_entry = frame
+        .args
+        .read_optional_named::<bool>("include_entry")?
+        .unwrap_or(false);
+    let db = db::get(frame.vm)?;
+
+    Ok(luau::ScheduledFuture::new(async move {
+        let db = db.read().await;
+        Ok(
+            playback_source_service::resolve(&db, track_id, include_entry)
+                .map_err(crate::plugins::runtime_error)?
+                .map(|source| luau::Value::TableData(source_to_table(source, include_entry, false)))
+                .unwrap_or(luau::Value::Nil),
+        )
     }))
 }
 
@@ -390,6 +422,18 @@ fn module_descriptor() -> ModuleDescriptor {
                     param("include_entry", Option::<bool>::luau_type()),
                 ],
                 returns: vec![Vec::<PlaybackSourceInfo>::luau_type()],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["streamable"],
+                description: Some(
+                    "A track's playback source read as the system, without the entry's full path. Ignores library visibility, so it is only for public streaming routes, which must serve nothing from it but the audio.",
+                ),
+                params: vec![
+                    param("track_id", i64::luau_type()),
+                    param("include_entry", Option::<bool>::luau_type()),
+                ],
+                returns: vec![Option::<PlaybackSourceInfo>::luau_type()],
                 yields: true,
             },
             ModuleFunctionDescriptor {

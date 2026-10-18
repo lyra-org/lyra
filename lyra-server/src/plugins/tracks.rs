@@ -45,6 +45,7 @@ pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/tracks")
         .capability("lyra.tracks")
         .function(get_spec())
+        .function(streamable_spec())
         .function(query_spec())
         .function(by_release_spec())
         .install(|_| Ok(ModuleExport::new(TracksModule)))
@@ -57,6 +58,14 @@ fn get_spec() -> FunctionSpec {
         .args::<Vec<u64>>()
         .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(get_callback))
+}
+
+fn streamable_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("streamable")
+        .arg_name("ids")
+        .args::<Vec<u64>>()
+        .returns::<luau::Table>()
+        .call_async(std::sync::Arc::new(streamable_callback))
 }
 
 fn by_release_spec() -> FunctionSpec {
@@ -81,6 +90,12 @@ fn get_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     catalog::keyed_lookup(&mut frame, "ids", lookups::get::<Tracks>)
+}
+
+fn streamable_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    catalog::keyed_lookup_as(&mut frame, "ids", lookups::get::<Tracks>, db::system)
 }
 
 fn by_release_callback(
@@ -213,6 +228,15 @@ fn module_descriptor() -> ModuleDescriptor {
                 path: vec!["get"],
                 description: Some(
                     "The tracks with these ids that the caller can see, keyed by id.",
+                ),
+                params: vec![param("ids", Vec::<u64>::luau_type())],
+                returns: vec![LuauType::map(u64::luau_type(), LuauType::named("Track"))],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["streamable"],
+                description: Some(
+                    "`get` read as the system. Ignores library visibility, so it is only for public streaming routes, which must serve nothing from it but the audio.",
                 ),
                 params: vec![param("ids", Vec::<u64>::luau_type())],
                 returns: vec![LuauType::map(u64::luau_type(), LuauType::named("Track"))],

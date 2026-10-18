@@ -34,6 +34,8 @@ pub(super) struct ImageTransformOptions;
 #[cfg(feature = "docgen")]
 pub(super) struct TrackServeOptions;
 #[cfg(feature = "docgen")]
+pub(super) struct TrackStreamOptions;
+#[cfg(feature = "docgen")]
 pub(super) struct HlsServeOptions;
 
 impl LuauTypeInfo for ApiMethod {
@@ -133,6 +135,13 @@ impl LuauTypeInfo for ImageTransformOptions {
 impl LuauTypeInfo for TrackServeOptions {
     fn luau_type() -> LuauType {
         LuauType::literal("TrackServeOptions")
+    }
+}
+
+#[cfg(feature = "docgen")]
+impl LuauTypeInfo for TrackStreamOptions {
+    fn luau_type() -> LuauType {
+        LuauType::literal("TrackStreamOptions")
     }
 }
 

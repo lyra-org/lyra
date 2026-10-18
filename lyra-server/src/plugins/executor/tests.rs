@@ -2296,6 +2296,124 @@ fn cover_artwork_bindings_serve_anonymous_public_routes() -> Result<()> {
 }
 
 #[test]
+fn streamable_bindings_serve_anonymous_public_routes() -> Result<()> {
+    use crate::plugins::db;
+    // api::install resets the shared API route registry; serialize with the
+    // other global-registry mutators.
+    let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+    let mut database = db::test_db::TestDb::initialized()?.into_inner();
+    let library = db::test_db::insert_library(&mut database, "Library", "/music")?;
+    let release = db::test_db::insert_release(&mut database, "Release")?;
+    let track = db::test_db::insert_track(&mut database, "Track")?;
+    db::test_db::connect(&mut database, library, release)?;
+    db::test_db::connect(&mut database, release, track)?;
+    let audio = tempfile::Builder::new().suffix(".flac").tempfile()?;
+    let entry = db::Entry {
+        db_id: None,
+        id: nanoid::nanoid!(),
+        full_path: audio.path().to_path_buf(),
+        kind: db::entries::EntryKind::File,
+        file_kind: Some("audio".into()),
+        name: "track.flac".into(),
+        hash: None,
+        size: 1,
+        mtime: 1,
+        ctime: 1,
+    };
+    let entry_id = database
+        .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
+        .ids()[0];
+    db::test_db::connect(&mut database, library, entry_id)?;
+    database.transaction_mut(|t| -> Result<()> {
+        db::track_sources::upsert(
+            t,
+            track,
+            entry_id,
+            db::track_sources::TrackSourceUpsert {
+                source_kind: "embedded_tags".into(),
+                source_key: "track".into(),
+                is_primary: true,
+                start_ms: None,
+                end_ms: None,
+            },
+            None,
+        )?;
+        Ok(())
+    })?;
+
+    let _ = futures::executor::block_on(crate::plugins::api::install(
+        axum::Router::new(),
+        std::collections::HashSet::new(),
+    ))?;
+    let runtime = PluginExecutor::with_database(
+        Arc::from(vec![manifest(
+            "demo",
+            &["lyra.api", "lyra.tracks", "lyra.playback_sources"],
+        )]),
+        default_server_info(),
+        Arc::new(tokio::sync::RwLock::new(database)),
+    )?;
+    runtime.run_plugin_source(
+        "demo",
+        "init.luau",
+        &br#"
+            local api = require("@lyra/api")
+            local playback_sources = require("@lyra/playback_sources")
+            local tracks = require("@lyra/tracks")
+
+            api.get("/stream/{track}/{release}", function(ctx)
+                local track = tonumber(ctx.params.track)
+                local release = tonumber(ctx.params.release)
+                local source = playback_sources.streamable(track, true)
+                return api.response.json(200, {
+                    track = tracks.streamable({ track, release })[track] ~= nil,
+                    release = tracks.streamable({ release })[release] ~= nil,
+                    entry_name = source and source.entry and source.entry.name,
+                    full_path = source and source.entry and source.entry.full_path,
+                    release_source = playback_sources.streamable(release) ~= nil,
+                    scoped = pcall(tracks.get, { track }),
+                    scoped_source = pcall(playback_sources.get, track),
+                })
+            end, "public")
+        "#[..],
+    )?;
+
+    let handler_id = futures::executor::block_on(crate::plugins::api::tests::registered_handler(
+        "GET",
+        "/stream/{track}/{release}",
+    ))
+    .context("registered API handler")?;
+    let result = runtime.dispatch_api_handler(ApiHandlerRequest {
+        handler_id,
+        plugin_id: "demo".to_string(),
+        method: "GET".to_string(),
+        path: format!("/stream/{}/{}", track.0, release.0),
+        headers: Vec::new(),
+        query: HashMap::new(),
+        params: HashMap::from([
+            ("track".to_string(), track.0.to_string()),
+            ("release".to_string(), release.0.to_string()),
+        ]),
+        body: Vec::new(),
+        auth: None,
+        client_key: None,
+    })?;
+
+    assert_eq!(result.status, 200);
+    let Some(ApiResponseBody::Json(body)) = result.body else {
+        anyhow::bail!("expected JSON response body");
+    };
+    assert_eq!(body["track"], true);
+    assert_eq!(body["release"], false);
+    assert_eq!(body["entry_name"], "track.flac");
+    assert_eq!(body["full_path"], serde_json::Value::Null);
+    assert_eq!(body["release_source"], false);
+    assert_eq!(body["scoped"], false);
+    assert_eq!(body["scoped_source"], false);
+    Ok(())
+}
+
+#[test]
 fn label_bindings_hide_inaccessible_releases() -> Result<()> {
     use crate::plugins::db;
     let mut fixture = library_access_fixture()?;

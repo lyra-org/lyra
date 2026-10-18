@@ -164,9 +164,19 @@ pub(crate) fn keyed_lookup<T: Serialize + 'static>(
     name: &'static str,
     lookup: KeyedLookup<T>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
+    keyed_lookup_as(frame, name, lookup, crate::plugins::db::scoped)
+}
+
+/// [`keyed_lookup`] for the viewer `scope` reads as.
+pub(crate) fn keyed_lookup_as<T: Serialize + 'static>(
+    frame: &mut luau::AsyncCallFrame<'_>,
+    name: &'static str,
+    lookup: KeyedLookup<T>,
+    scope: crate::plugins::db::Scope,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids: luau::Table = frame.args.read_named(name)?;
     let ids = args::unique_ids(frame.vm, &ids)?;
-    let db = crate::plugins::db::scoped(frame)?;
+    let db = scope(frame)?;
     Ok(luau::ScheduledFuture::new(async move {
         let (db, viewer) = db.read().await?;
         let found = lookup(&db, &viewer, &ids).map_err(error)?;

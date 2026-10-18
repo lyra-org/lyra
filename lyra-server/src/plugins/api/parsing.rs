@@ -63,6 +63,16 @@ pub(super) fn parse_track_serve_options(
     })
 }
 
+/// Whether a stream response asked to skip the caller's track access check.
+pub(super) fn parse_public_stream(value: Option<&serde_json::Value>) -> Result<bool> {
+    let Some(public) = value.and_then(|value| value.get("public")) else {
+        return Ok(false);
+    };
+    public
+        .as_bool()
+        .ok_or_else(|| anyhow::anyhow!("stream option public must be a boolean"))
+}
+
 pub(super) fn parse_hls_serve_options(
     value: Option<&serde_json::Value>,
 ) -> Result<ParsedHlsServeOptions> {

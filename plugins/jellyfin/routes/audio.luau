@@ -376,7 +376,7 @@ function module.register()
 			effective_transcoding_container = "mp3"
 		end
 
-		local options: api.TrackServeOptions = {
+		local options: api.TrackStreamOptions = {
 			format = effective_transcoding_container,
 			preferred_codecs = effective_preferred_codecs,
 			bitrate_bps = bitrate_bps,

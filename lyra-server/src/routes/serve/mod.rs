@@ -157,11 +157,13 @@ pub(crate) fn authorize_track_purpose(
 }
 
 /// How a request reached a track. A principal's library access is checked under the guard that
-/// resolves the track's source; a media token was already bound to the track's public id.
+/// resolves the track's source; a media token was already bound to the track's public id; a
+/// public plugin route serves any track, as its protocol does.
 #[derive(Debug)]
 pub(crate) enum TrackAccess {
     Principal(Principal),
     MediaToken,
+    PublicPluginRoute,
 }
 
 fn media_token_error_to_app_error(err: MediaTokenError) -> AppError {

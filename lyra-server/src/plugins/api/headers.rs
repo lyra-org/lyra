@@ -43,6 +43,16 @@ async fn require_plugin_track_access(
     Ok((track_id, TrackAccess::Principal(principal.clone())))
 }
 
+/// A plugin route its protocol makes public streams any track, without the caller's access check.
+async fn public_plugin_track_access(
+    track_db_id: agdb::DbId,
+) -> Result<(String, TrackAccess), AppError> {
+    let db = crate::STATE.db.read().await;
+    let track_id = crate::plugins::db::lookup::find_id_by_db_id(&*db, track_db_id)?
+        .ok_or_else(|| AppError::not_found(format!("Track not found: {}", track_db_id.0)))?;
+    Ok((track_id, TrackAccess::PublicPluginRoute))
+}
+
 /// Plugins may name any filesystem path in a file response, so resolve the
 /// target (following symlinks) and refuse anything outside the roots of the
 /// libraries the principal can see and the configured cover storage root.
@@ -75,13 +85,13 @@ pub(super) async fn plugin_api_response_to_axum(
             let track_id = response
                 .track_id
                 .ok_or_else(|| anyhow::anyhow!("stream_track response requires track_id"))?;
-            let (track_id, access) = match require_plugin_track_access(
-                principal,
-                agdb::DbId(track_id),
-                MediaTokenPurpose::Stream,
-            )
-            .await
-            {
+            let track_db_id = agdb::DbId(track_id);
+            let access = if parse_public_stream(response.options.as_ref())? {
+                public_plugin_track_access(track_db_id).await
+            } else {
+                require_plugin_track_access(principal, track_db_id, MediaTokenPurpose::Stream).await
+            };
+            let (track_id, access) = match access {
                 Ok(resolved) => resolved,
                 Err(error) => return Ok(error.into_response()),
             };
@@ -292,6 +302,7 @@ mod tests {
 
     use super::{
         plugin_api_response_to_axum,
+        public_plugin_track_access,
         require_plugin_track_access,
     };
     use crate::plugins::executor::{
@@ -408,6 +419,93 @@ mod tests {
             status_of(Some(&downloader), track_db_id, MediaTokenPurpose::Download).await,
             Ok(()),
             "download permission plus library access must allow downloads"
+        );
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    fn stream_response(
+        track_db_id: agdb::DbId,
+        options: Option<serde_json::Value>,
+    ) -> ApiHandlerResponse {
+        ApiHandlerResponse {
+            kind: ApiResponseKind::StreamTrack,
+            status: 200,
+            headers: Vec::new(),
+            body: None,
+            path: None,
+            transform: None,
+            track_id: Some(track_db_id.0),
+            options,
+            principal: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn public_plugin_streams_skip_the_caller_access_check() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = unique_test_dir("lyra-plugin-bridge-public-test")?;
+        std::fs::create_dir_all(&test_dir)?;
+        initialize_runtime(&LibraryFixtureConfig {
+            directory: test_dir.clone(),
+            language: None,
+            country: None,
+        })
+        .await?;
+
+        let (track_db_id, track_public_id, release_db_id) = {
+            let mut db = STATE.db.write().await;
+            let track_db_id = db::test_db::insert_track(&mut db, "Public Stream Track")?;
+            let track_public_id = db::lookup::find_id_by_db_id(&*db, track_db_id)?
+                .context("inserted track has public id")?;
+            let release_db_id = db::test_db::insert_release(&mut db, "Public Stream Release")?;
+            (track_db_id, track_public_id, release_db_id)
+        };
+
+        let (track_id, access) = public_plugin_track_access(track_db_id)
+            .await
+            .map_err(|error| anyhow::anyhow!("public access failed: {error:?}"))?;
+        assert_eq!(track_id, track_public_id);
+        assert!(matches!(
+            access,
+            crate::routes::TrackAccess::PublicPluginRoute
+        ));
+
+        let unknown = public_plugin_track_access(agdb::DbId(i64::MAX))
+            .await
+            .map(|_| ())
+            .map_err(|error| error.into_response().status());
+        assert_eq!(unknown, Err(StatusCode::NOT_FOUND));
+
+        let headers = axum::http::HeaderMap::new();
+        let private =
+            plugin_api_response_to_axum(stream_response(track_db_id, None), &headers).await?;
+        assert_eq!(
+            private.status(),
+            StatusCode::UNAUTHORIZED,
+            "streams without the public option still need a principal"
+        );
+
+        let public = plugin_api_response_to_axum(
+            stream_response(release_db_id, Some(serde_json::json!({ "public": true }))),
+            &headers,
+        )
+        .await?;
+        assert_eq!(
+            public.status(),
+            StatusCode::NOT_FOUND,
+            "public streams serve tracks only"
+        );
+
+        let malformed = plugin_api_response_to_axum(
+            stream_response(track_db_id, Some(serde_json::json!({ "public": "yes" }))),
+            &headers,
+        )
+        .await;
+        assert!(
+            malformed.is_err(),
+            "a non-boolean public option is rejected"
         );
 
         let _ = std::fs::remove_dir_all(test_dir);

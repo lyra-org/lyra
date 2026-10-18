@@ -23,6 +23,7 @@ use self::parsing::{
     infer_content_type,
     join_preferred_codecs,
     parse_hls_serve_options,
+    parse_public_stream,
     parse_track_serve_options,
     parse_u32_json,
 };
@@ -57,6 +58,7 @@ use self::types::{
     HlsServeOptions,
     ImageTransformOptions,
     TrackServeOptions,
+    TrackStreamOptions,
 };
 use self::types::{
     ApiHandler,
@@ -914,7 +916,7 @@ impl DescribeModule for ApiModule {
                     param("track_id", i64::luau_type()),
                     param(
                         "options",
-                        LuauType::optional(TrackServeOptions::luau_type()),
+                        LuauType::optional(TrackStreamOptions::luau_type()),
                     ),
                 ],
                 returns: response_returns(),
@@ -1106,7 +1108,7 @@ fn api_response_aliases() -> Vec<TypeAliasDescriptor> {
                 field("track_id", i64::luau_type()),
                 field(
                     "options",
-                    LuauType::optional(TrackServeOptions::luau_type()),
+                    LuauType::optional(TrackStreamOptions::luau_type()),
                 ),
             ],
         ),
@@ -1263,6 +1265,18 @@ fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
             ],
         ),
         interface("TrackServeOptions", track_serve_option_fields(true)),
+        interface(
+            "TrackStreamOptions",
+            track_serve_option_fields(true)
+                .into_iter()
+                .chain([FieldDescriptor {
+                    name: "public",
+                    ty: LuauType::optional(bool::luau_type()),
+                    description: Some(
+                        "Streams any track without checking the caller's access, for routes whose protocol streams publicly.",
+                    ),
+                }]),
+        ),
         interface("HlsServeOptions", track_serve_option_fields(false)),
     ]
 }

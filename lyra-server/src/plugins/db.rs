@@ -58,6 +58,10 @@ pub(crate) struct ViewerDb {
     principal: Option<crate::services::auth::Principal>,
 }
 
+/// How a host call reads the database: [`scoped`] or [`system`].
+pub(crate) type Scope =
+    fn(&harmony_luau::AsyncCallFrame<'_>) -> harmony_luau::runtime::Result<ViewerDb>;
+
 pub(crate) fn scoped(
     frame: &harmony_luau::AsyncCallFrame<'_>,
 ) -> harmony_luau::runtime::Result<ViewerDb> {

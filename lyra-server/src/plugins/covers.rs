@@ -132,11 +132,9 @@ fn artwork_playlist_sources_spec() -> FunctionSpec {
         }))
 }
 
-type Scope = fn(&luau::AsyncCallFrame<'_>) -> luau::runtime::Result<db::ViewerDb>;
-
 fn cover_callback(
     mut frame: luau::AsyncCallFrame<'_>,
-    scope: Scope,
+    scope: db::Scope,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let id = args::resolve_id(frame.args.read_named::<luau::Value>("id")?)?;
     let db = scope(&frame)?;
@@ -175,7 +173,7 @@ fn cover_callback(
 
 fn covers_callback(
     mut frame: luau::AsyncCallFrame<'_>,
-    scope: Scope,
+    scope: db::Scope,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids: luau::Table = frame.args.read_named("ids")?;
     let item_ids = args::unique_ids(frame.vm, &ids)?;
@@ -219,7 +217,7 @@ fn covers_callback(
 
 fn playlist_sources_callback(
     mut frame: luau::AsyncCallFrame<'_>,
-    scope: Scope,
+    scope: db::Scope,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let id = args::resolve_id(frame.args.read_named::<luau::Value>("id")?)?;
     let db = scope(&frame)?;
