@@ -382,9 +382,10 @@ fn manual_clear_overrides_later_provider_values() -> anyhow::Result<()> {
         &mut db,
         track_id,
         &db::MetadataLayer {
-            db_id: None,
             source_id: "test-provider".to_string(),
-            fields: json!({"sort_title": "Provider sort", "year": 2024}).to_string(),
+            fields: crate::db::metadata::layers::fields_from_json(
+                json!({"sort_title": "Provider sort", "year": 2024}),
+            ),
             updated_at: 10,
         },
     )?;
@@ -484,9 +485,10 @@ fn inherit_relinquishes_ownership_and_restores_resolved_value() -> anyhow::Resul
         &mut db,
         track_id,
         &db::MetadataLayer {
-            db_id: None,
             source_id: "provider".to_string(),
-            fields: json!({"track_title": "Resolved"}).to_string(),
+            fields: crate::db::metadata::layers::fields_from_json(
+                json!({"track_title": "Resolved"}),
+            ),
             updated_at: 10,
         },
     )?;
@@ -539,9 +541,8 @@ fn inherit_graph_field_restores_provider_resolved_value() -> anyhow::Result<()> 
         &mut db,
         release_id,
         &db::MetadataLayer {
-            db_id: None,
             source_id: "provider".to_string(),
-            fields: json!({"genres": ["Provider"]}).to_string(),
+            fields: crate::db::metadata::layers::fields_from_json(json!({"genres": ["Provider"]})),
             updated_at: 10,
         },
     )?;
@@ -588,9 +589,8 @@ fn inherit_conflicts_when_provider_resolution_changes_after_preview() -> anyhow:
         },
     )?;
     let provider_layer = |genres: &[&str], updated_at| db::MetadataLayer {
-        db_id: None,
         source_id: "provider".to_string(),
-        fields: json!({"genres": genres}).to_string(),
+        fields: crate::db::metadata::layers::fields_from_json(json!({"genres": genres})),
         updated_at,
     };
     db::metadata::layers::upsert(&mut db, release_id, &provider_layer(&["First"], 10))?;
@@ -776,9 +776,8 @@ fn inherit_labels_restores_resolvable_provider_labels() -> anyhow::Result<()> {
         &mut db,
         release_id,
         &db::MetadataLayer {
-            db_id: None,
             source_id: "provider".to_string(),
-            fields: json!({
+            fields: crate::db::metadata::layers::fields_from_json(json!({
                 "labels": [{
                     "name": "Provider Label",
                     "catalog_number": "PROV-1",
@@ -788,8 +787,7 @@ fn inherit_labels_restores_resolvable_provider_labels() -> anyhow::Result<()> {
                         "id_value": "provider-label"
                     }
                 }]
-            })
-            .to_string(),
+            })),
             updated_at: 10,
         },
     )?;
@@ -865,9 +863,8 @@ fn inherit_labels_does_not_fall_back_by_name_for_an_external_identity() -> anyho
         &mut db,
         release_id,
         &db::MetadataLayer {
-            db_id: None,
             source_id: "provider".to_string(),
-            fields: json!({
+            fields: crate::db::metadata::layers::fields_from_json(json!({
                 "labels": [{
                     "name": "Shared Name",
                     "catalog_number": null,
@@ -877,8 +874,7 @@ fn inherit_labels_does_not_fall_back_by_name_for_an_external_identity() -> anyho
                         "id_value": "different-identity"
                     }
                 }]
-            })
-            .to_string(),
+            })),
             updated_at: 10,
         },
     )?;
@@ -1124,9 +1120,8 @@ fn inherited_label_disappearance_after_preview_is_rejected() -> anyhow::Result<(
         &mut db,
         release_id,
         &db::MetadataLayer {
-            db_id: None,
             source_id: "provider".to_string(),
-            fields: json!({
+            fields: crate::db::metadata::layers::fields_from_json(json!({
                 "labels": [{
                     "name": "Provider Label",
                     "catalog_number": null,
@@ -1136,8 +1131,7 @@ fn inherited_label_disappearance_after_preview_is_rejected() -> anyhow::Result<(
                         "id_value": "provider-label"
                     }
                 }]
-            })
-            .to_string(),
+            })),
             updated_at: 10,
         },
     )?;

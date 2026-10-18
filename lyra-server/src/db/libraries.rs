@@ -1007,12 +1007,7 @@ mod tests {
         db::metadata::layers::upsert(
             &mut db,
             track,
-            &db::MetadataLayer {
-                db_id: None,
-                source_id: "local-scanner".into(),
-                fields: "{}".into(),
-                updated_at: 0,
-            },
+            &db::MetadataLayer::new("local-scanner", Default::default(), 0),
         )?;
         let layer_ids = db::metadata::collect_layer_ids(&db, track)?;
         let track_public_id = db::tracks::get_by_id(&db, track)?.unwrap().id;

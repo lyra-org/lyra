@@ -142,9 +142,7 @@ fn merge_release_into_inside_tx(
             continue;
         }
 
-        let mut layer_to_upsert = layer.clone();
-        layer_to_upsert.db_id = None;
-        db::metadata::layers::upsert_inside_tx(db, winner, &layer_to_upsert)?;
+        db::metadata::layers::upsert_inside_tx(db, winner, &layer)?;
         winner_layers_by_source.insert(layer.source_id.clone(), layer);
         wrote_layer = true;
     }

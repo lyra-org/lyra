@@ -692,15 +692,12 @@ mod tests {
         crate::db::test_db::connect_artist(&mut db, track_db_id, artist_db_id)?;
 
         // Add a metadata layer attached to the track
-        let layer = MetadataLayer {
-            db_id: None,
-            source_id: "test-provider".to_string(),
-            fields: "{}".to_string(),
-            updated_at: 0,
-        };
-        let layer_qr = db.exec_mut(QueryBuilder::insert().element(&layer).query())?;
-        let layer_id = layer_qr.elements[0].id;
-        connect(&mut db, track_db_id, layer_id)?;
+        db::metadata::layers::upsert(
+            &mut db,
+            track_db_id,
+            &MetadataLayer::new("test-provider", Default::default(), 0),
+        )?;
+        let layer_id = db::metadata::collect_layer_ids(&db, track_db_id)?[0];
 
         // Add an external ID attached to the track
         let ext = ExternalId {
@@ -2590,15 +2587,13 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             &mut db,
             track_db_id,
             &MetadataLayer {
-                db_id: None,
                 source_id: "test".to_string(),
-                fields: serde_json::json!({
+                fields: crate::db::metadata::layers::fields_from_json(serde_json::json!({
                     "track_title": "Provider Track",
                     "year": 1999,
                     "disc": 9,
                     "track": 12
-                })
-                .to_string(),
+                })),
                 updated_at: 1,
             },
         )?;
@@ -2606,13 +2601,11 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             &mut db,
             release_db_id,
             &MetadataLayer {
-                db_id: None,
                 source_id: "test".to_string(),
-                fields: serde_json::json!({
+                fields: crate::db::metadata::layers::fields_from_json(serde_json::json!({
                     "release_title": "Provider Release",
                     "release_date": "1988-08-08"
-                })
-                .to_string(),
+                })),
                 updated_at: 1,
             },
         )?;
@@ -2912,14 +2905,12 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             &mut db,
             release_db_id,
             &MetadataLayer {
-                db_id: None,
                 source_id: "test".to_string(),
-                fields: serde_json::json!({
+                fields: crate::db::metadata::layers::fields_from_json(serde_json::json!({
                     "labels": [
                         {"name": "Provider Label", "catalog_number": "PRV-001"}
                     ]
-                })
-                .to_string(),
+                })),
                 updated_at: 1,
             },
         )?;
@@ -3071,11 +3062,10 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         assert_eq!(artists.len(), 1);
         assert_eq!(artists[0].artist_name, "Artist");
 
-        let layer_fields: serde_json::Value =
-            serde_json::from_str(&local_layer(&db, track_db_id)?.fields)?;
-        assert_eq!(layer_fields["year"], serde_json::json!(1999));
+        let layer_fields = local_layer(&db, track_db_id)?.fields;
+        assert_eq!(layer_fields[&MetadataField::Year], serde_json::json!(1999));
         assert!(
-            layer_fields.get("sort_title").is_none(),
+            !layer_fields.contains_key(&MetadataField::SortTitle),
             "an untagged field must stay absent instead of null"
         );
         Ok(())
@@ -3094,10 +3084,10 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             &mut db,
             track_db_id,
             &MetadataLayer {
-                db_id: None,
                 source_id: "test".to_string(),
-                fields: serde_json::json!({"track_title": "Provider Track", "year": 2020})
-                    .to_string(),
+                fields: crate::db::metadata::layers::fields_from_json(
+                    serde_json::json!({"track_title": "Provider Track", "year": 2020}),
+                ),
                 updated_at: 1,
             },
         )?;
@@ -3342,14 +3332,12 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             &mut db,
             release_db_id,
             &MetadataLayer {
-                db_id: None,
                 source_id: "test".to_string(),
-                fields: serde_json::json!({
+                fields: crate::db::metadata::layers::fields_from_json(serde_json::json!({
                     "labels": [
                         {"name": "Provider Override", "catalog_number": "PRV-999"}
                     ]
-                })
-                .to_string(),
+                })),
                 updated_at: 1,
             },
         )?;

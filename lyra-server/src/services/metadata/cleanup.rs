@@ -500,9 +500,7 @@ fn migrate_metadata(
         if winner_source_ids.contains(layer.source_id.as_str()) {
             continue;
         }
-        let mut migrated = layer.clone();
-        migrated.db_id = None;
-        db::metadata::layers::upsert_inside_tx(db, winner, &migrated)?;
+        db::metadata::layers::upsert_inside_tx(db, winner, layer)?;
     }
 
     let loser_ext_ids = db::external_ids::get_for_entity_inside_tx(db, loser)?;
@@ -577,13 +575,14 @@ mod tests {
         db::metadata::layers::upsert(
             &mut db,
             artist_b,
-            &db::MetadataLayer {
-                db_id: None,
-                source_id: "local-scanner".to_string(),
-                fields: r#"{"artist_name": "Radiohead", "description": "English rock band"}"#
-                    .to_string(),
-                updated_at: 1000,
-            },
+            &db::MetadataLayer::new(
+                "local-scanner",
+                db::metadata::layers::fields_from_json(serde_json::json!({
+                    "artist_name": "Radiohead",
+                    "description": "English rock band",
+                })),
+                1000,
+            ),
         )?;
 
         let merged_count = deduplicate_artists_by_external_id(&mut db)?;

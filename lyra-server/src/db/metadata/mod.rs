@@ -16,7 +16,6 @@ use agdb::{
 };
 
 use self::custom_fields::ProviderCustomFields;
-use self::layers::MetadataLayer;
 use self::manual_overrides::ManualMetadataOverride;
 use super::DbAccess;
 use super::providers::external_ids::ExternalId;
@@ -48,23 +47,7 @@ pub(crate) fn collect_layer_ids(
     db: &impl DbAccess,
     track_db_id: DbId,
 ) -> anyhow::Result<Vec<DbId>> {
-    let layers: Vec<MetadataLayer> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<MetadataLayer>()
-                .search()
-                .from(track_db_id)
-                .where_()
-                .neighbor()
-                .end_where()
-                .query(),
-        )?
-        .try_into()?;
-
-    Ok(layers
-        .into_iter()
-        .filter_map(|layer| layer.db_id.map(Into::into))
-        .collect())
+    layers::ids_for_entity(db, track_db_id)
 }
 
 pub(crate) fn collect_manual_override_ids(

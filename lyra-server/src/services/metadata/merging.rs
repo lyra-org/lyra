@@ -26,7 +26,6 @@ use crate::db::{
     Release,
     Track,
     metadata::layers::{
-        LayerFields,
         decode,
         label_inputs,
         normalize_value,
@@ -133,19 +132,7 @@ pub(crate) fn merge_layers(
     let mut provenance = HashMap::new();
 
     for layer in sorted_layers {
-        let fields: LayerFields = match layer.parsed_fields() {
-            Ok(fields) => fields,
-            Err(err) => {
-                tracing::warn!(
-                    source_id = %layer.source_id,
-                    error = %format!("{err:#}"),
-                    "skipping metadata layer that no longer validates"
-                );
-                continue;
-            }
-        };
-
-        for (field, value) in fields {
+        for (field, value) in layer.fields {
             // The highest-priority layer mentioning a field wins, including explicit null.
             if let Entry::Vacant(entry) = merged_fields.entry(field) {
                 entry.insert(value);
@@ -312,12 +299,11 @@ mod tests {
     use super::*;
 
     fn make_layer(source_id: &str, fields_json: &str, updated_at: u64) -> MetadataLayer {
-        MetadataLayer {
-            db_id: None,
-            source_id: source_id.to_string(),
-            fields: fields_json.to_string(),
+        MetadataLayer::new(
+            source_id,
+            serde_json::from_str(fields_json).expect("test layer fields parse"),
             updated_at,
-        }
+        )
     }
 
     fn make_provider(provider_id: &str, priority: u32, enabled: bool) -> ProviderConfig {
@@ -387,28 +373,6 @@ mod tests {
 
         merged.manual_fields.insert(MetadataField::Genres);
         assert_eq!(genres(&merged), None, "manual ownership keeps stored edges");
-    }
-
-    #[test]
-    fn merge_layers_skips_a_layer_that_no_longer_validates() {
-        let layers = vec![
-            make_layer("high", r#"{"track_title": "High", "work_id": "w"}"#, 1000),
-            make_layer("low", r#"{"track_title": "Low"}"#, 1000),
-        ];
-        let providers = vec![
-            make_provider("high", 100, true),
-            make_provider("low", 10, true),
-        ];
-
-        let merged = merge_layers(layers, &providers);
-
-        assert_eq!(
-            merged
-                .provenance
-                .get(&MetadataField::TrackTitle)
-                .map(String::as_str),
-            Some("low")
-        );
     }
 
     #[test]

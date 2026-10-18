@@ -58,7 +58,7 @@ impl LocalLayer {
         db: &mut DbAnyTransactionMut<'_>,
         node_id: DbId,
     ) -> anyhow::Result<()> {
-        let layer = MetadataLayer::new(LOCAL_SOURCE_ID, &self.fields, now_secs())?;
+        let layer = MetadataLayer::new(LOCAL_SOURCE_ID, self.fields, now_secs());
         db::metadata::layers::upsert_inside_tx(db, node_id, &layer)?;
         super::merging::apply_merged_metadata_to_entity_inside_tx(db, node_id)
     }
@@ -176,19 +176,15 @@ pub(crate) fn save_provider_layer(
         artist_type_conflicts_with_layer(artist.as_ref(), &fields, node_id, provider_id)?;
 
     // Save layers while locked; only application is suppressed.
-    if !artist_type_conflict && !fields.is_empty() {
-        let layer = MetadataLayer::new(provider_id, &fields, now_secs())?;
-        let existing_layer = db::metadata::layers::get_for_entity(db, node_id)?
-            .into_iter()
-            .find(|existing| existing.source_id == provider_id);
-        let layer_changed = existing_layer
-            .as_ref()
-            .is_none_or(|existing| existing.fields != layer.fields);
-
-        if layer_changed {
-            db::metadata::layers::upsert(db, node_id, &layer)?;
-            super::merging::apply_merged_metadata_to_entity(db, node_id)?;
-        }
+    if !artist_type_conflict
+        && !fields.is_empty()
+        && db::metadata::layers::upsert(
+            db,
+            node_id,
+            &MetadataLayer::new(provider_id, fields, now_secs()),
+        )?
+    {
+        super::merging::apply_merged_metadata_to_entity(db, node_id)?;
     }
 
     super::merging::materialize_provider_labels_if_manually_owned(db, node_id)?;
