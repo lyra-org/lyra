@@ -11,44 +11,19 @@ type EntryInfo = playback_sources.EntryInfo
 
 local module = {}
 
-function module.extension_from_path(path: string?): string?
-	if type(path) ~= "string" then
-		return nil
+-- Jellyfin names containers after FFmpeg's demuxers, and codecs as Lyra already does.
+function module.jellyfin_container(source: PlaybackSourceInfo?): string?
+	local container = if source then source.container else nil
+	if container == "wavpack" then
+		return "wv"
+	elseif container == "mpc" and source and source.codec == "musepack8" then
+		return "mpc8"
 	end
-
-	local filename = string.match(path, "[^/\\]+$") or path
-	local ext = string.match(filename, "%.([^.]+)$")
-	if not ext then
-		return nil
-	end
-
-	return string.lower(ext)
+	return container
 end
 
-function module.mime_type_for_extension(extension: string?): string
-	if extension == "flac" then
-		return "audio/flac"
-	end
-	if extension == "mp3" then
-		return "audio/mpeg"
-	end
-	if extension == "aac" then
-		return "audio/aac"
-	end
-	if extension == "m4a" or extension == "mp4" then
-		return "audio/mp4"
-	end
-	if extension == "opus" or extension == "ogg" then
-		return "audio/ogg"
-	end
-	if extension == "wav" then
-		return "audio/wav"
-	end
-	if extension == "aif" or extension == "aiff" then
-		return "audio/aiff"
-	end
-
-	return "application/octet-stream"
+function module.jellyfin_codec(source: PlaybackSourceInfo?): string?
+	return if source then source.codec else nil
 end
 
 function module.resolve_entry_for_track(track: { db_id: number? }?): EntryInfo?

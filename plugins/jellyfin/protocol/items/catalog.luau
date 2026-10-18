@@ -18,7 +18,6 @@ local playback_sources = require("@lyra/playback_sources")
 local playlists = require("@lyra/playlists")
 local releases = require("@lyra/releases")
 local tags_module = require("@lyra/tags")
-local track_sources = require("@lyra/track_sources")
 local tracks = require("@lyra/tracks")
 
 local constants = require("../../constants")
@@ -131,7 +130,6 @@ type ReleaseRelationMap = { [number]: { Release }? }
 type TrackRelationMap = { [number]: { Track }? }
 type CreditRelationMap = { [number]: { CreditedArtistProjectionInfo }? }
 type PlaybackSourceMap = { [number]: PlaybackSourceInfo? }
-type ContainerMap = { [number]: string? }
 type LyricsLookup = { [number]: boolean }
 type PlayCountLookup = { [number]: number }
 type LastPlayedLookup = { [number]: number }
@@ -153,11 +151,9 @@ type ItemContext = {
 	release_tracks_by_release_id: TrackRelationMap,
 	track_releases_by_track_id: ReleaseRelationMap,
 	playback_source_by_track_id: PlaybackSourceMap,
-	container_by_track_id: ContainerMap,
 	lyrics_by_track_id: LyricsLookup,
 	track_release_lookup_complete: boolean?,
 	has_source_prefetch: boolean?,
-	has_container_prefetch: boolean?,
 	has_lyrics_prefetch: boolean?,
 	has_track_artists_prefetch: boolean?,
 	has_track_releases_prefetch: boolean?,
@@ -844,32 +840,6 @@ function helpers.relation_map_has_entries<T>(relation_map: { [number]: { T } }):
 	return false
 end
 
-function helpers.codec_for_extension(extension: string?): string?
-	if extension == "flac" then
-		return "flac"
-	end
-	if extension == "mp3" then
-		return "mp3"
-	end
-	if extension == "aac" or extension == "m4a" or extension == "mp4" then
-		return "aac"
-	end
-	if extension == "opus" then
-		return "opus"
-	end
-	if extension == "ogg" then
-		return "vorbis"
-	end
-	if extension == "wav" then
-		return "pcm_s16le"
-	end
-	if extension == "alac" then
-		return "alac"
-	end
-
-	return nil
-end
-
 function helpers.album_gain_db(track_items: { Track }): number?
 	for _, track: Track in track_items do
 		if track.album_gain_db ~= nil then
@@ -888,12 +858,11 @@ function helpers.build_media_info(
 ): ({ MediaSourceInfo }, { MediaStreamInfo }, string?)
 	local entry = if source then source.entry else nil
 	local media_item_id = item_ids.encode_jellyfin_item_id(item_id)
-	local container = media.extension_from_path(if entry then entry.full_path else nil)
-	local codec = helpers.codec_for_extension(container)
+	local container = media.jellyfin_container(source)
+	local codec = media.jellyfin_codec(source)
 	local size = if entry and entry.size then tonumber(entry.size) else nil
 	local bitrate = if track then track.bitrate_bps else nil
-	local full_path = if entry then requests.trim(entry.full_path) else nil
-	local direct_stream_url = if full_path and media_item_id then `{ROUTE_PREFIX}/Items/{media_item_id}/File` else nil
+	local direct_stream_url = if source and media_item_id then `{ROUTE_PREFIX}/Items/{media_item_id}/File` else nil
 
 	local media_stream: MediaStreamInfo = {
 		Codec = codec,
@@ -970,16 +939,6 @@ function helpers.build_media_info(
 	end
 
 	return { media_source }, media_streams, container
-end
-
-function helpers.resolve_track_container(track: TrackLike?): string?
-	local track_id = if track then track.db_id else nil
-	if track_id == nil then
-		return nil
-	end
-
-	local container = track_sources.get_primary_container(track_id)
-	return requests.trim(container)
 end
 
 function helpers.person_type_for_credit(credit_type: CreditType, source: ArtistCreditSource): PersonType
@@ -1587,21 +1546,17 @@ function helpers.to_track_item(
 	local media_sources: { MediaSourceInfo }? = nil
 	local media_streams: { MediaStreamInfo }? = nil
 	local container = nil
+	local source = nil
+	if context and context.has_source_prefetch then
+		source = helpers.lookup_by_id(context.playback_source_by_track_id, track.db_id)
+	else
+		source = media.resolve_playback_source_for_track(track, include_media_info == true)
+	end
 	if include_media_info == true then
-		local source = nil
-		if context and context.has_source_prefetch then
-			source = helpers.lookup_by_id(context.playback_source_by_track_id, track.db_id)
-		else
-			source = media.resolve_playback_source_for_track(track, true)
-		end
 		media_sources, media_streams, container =
 			helpers.build_media_info(track, source, track.id, track.track_title, has_lyrics)
 	else
-		if context and context.has_container_prefetch then
-			container = requests.trim(helpers.lookup_by_id(context.container_by_track_id, track.db_id))
-		else
-			container = helpers.resolve_track_container(track)
-		end
+		container = media.jellyfin_container(source)
 	end
 	local release_id = if release and release.id then item_ids.encode_jellyfin_item_id(release.id) else nil
 	local track_item_id = item_ids.encode_jellyfin_item_id(track.id)
@@ -1854,10 +1809,8 @@ function helpers.new_realization_context(options: ItemsQueryOptions): ItemContex
 		release_tracks_by_release_id = {},
 		track_releases_by_track_id = {},
 		playback_source_by_track_id = {},
-		container_by_track_id = {},
 		lyrics_by_track_id = {},
 		has_source_prefetch = false,
-		has_container_prefetch = false,
 		has_lyrics_prefetch = false,
 		tag_infos_by_item_id = options._tag_infos_by_item_id,
 		library_hex_id = helpers.resolve_library_hex_id_from_parent(options.parent_id),
@@ -2145,18 +2098,10 @@ function helpers.prefetch_track_stats_and_media(
 		end
 	end
 
-	if options.include_media_info == true then
-		local sources = playback_sources.get_many(seed.track_ids, true)
-		if type(sources) == "table" then
-			context.playback_source_by_track_id = sources
-			context.has_source_prefetch = true
-		end
-	else
-		local containers = track_sources.get_primary_containers(seed.track_ids)
-		if type(containers) == "table" then
-			context.container_by_track_id = containers
-			context.has_container_prefetch = true
-		end
+	local sources = playback_sources.get_many(seed.track_ids, options.include_media_info == true)
+	if type(sources) == "table" then
+		context.playback_source_by_track_id = sources
+		context.has_source_prefetch = true
 	end
 end
 

@@ -158,7 +158,6 @@ module.not_found = responses.not_found
 module.parse_query_string = requests.parse_query_string
 module.resolve_playback_source_for_track = media.resolve_playback_source_for_track
 module.encode_jellyfin_item_id = item_ids.encode_jellyfin_item_id
-module.extension_from_path = media.extension_from_path
 
 local function ticks_to_ms(value: number | string?): number?
 	local ticks = tonumber(value)
@@ -343,32 +342,6 @@ local function csv_contains_token(csv: string?, token: string?): boolean
 	end
 
 	return false
-end
-
-local function codec_for_extension(extension: string?): string?
-	if extension == "flac" then
-		return "flac"
-	end
-	if extension == "mp3" then
-		return "mp3"
-	end
-	if extension == "aac" or extension == "m4a" or extension == "mp4" then
-		return "aac"
-	end
-	if extension == "opus" then
-		return "opus"
-	end
-	if extension == "ogg" then
-		return "vorbis"
-	end
-	if extension == "wav" then
-		return "pcm_s16le"
-	end
-	if extension == "alac" then
-		return "alac"
-	end
-
-	return nil
 end
 
 local function media_source_audio_codec(media_source: MediaSource): string?
@@ -638,12 +611,11 @@ local function build_media_info(
 ): ({ MediaSource }, { MediaStream }, string?)
 	local entry: EntryInfo? = if source and type(source.entry) == "table" then source.entry else nil
 	local media_item_id = module.encode_jellyfin_item_id(item_id)
-	local container = module.extension_from_path(if entry then entry.full_path else nil)
-	local codec = codec_for_extension(container)
+	local container = media.jellyfin_container(source)
+	local codec = media.jellyfin_codec(source)
 	local size = if entry and entry.size then tonumber(entry.size) else nil
 	local bitrate = if track then track.bitrate_bps else nil
-	local full_path = if entry then module.trim(entry.full_path) else nil
-	local direct_stream_url = if full_path and media_item_id then `{ROUTE_PREFIX}/Items/{media_item_id}/File` else nil
+	local direct_stream_url = if source and media_item_id then `{ROUTE_PREFIX}/Items/{media_item_id}/File` else nil
 
 	local media_stream: MediaStream = {
 		Codec = codec,
