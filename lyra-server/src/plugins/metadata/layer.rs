@@ -4,10 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 use std::{
-    collections::{
-        HashMap,
-        HashSet,
-    },
+    collections::HashMap,
     sync::{
         Arc,
         Mutex,
@@ -19,12 +16,24 @@ use harmony_luau as luau;
 use serde_json::Value as JsonValue;
 
 use super::parsing::parse_custom_field_version;
+use crate::plugins::args;
 use crate::plugins::db::{
+    ArtistRelationType,
     DbAsync,
     LayerFields,
+    LayerRelationInput,
+    LayerRelations,
     MetadataField,
     normalize_value,
 };
+use crate::services::metadata::layers::CustomFieldChanges;
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RelationEntry {
+    artist_id: i64,
+    attributes: Option<String>,
+}
 
 #[harmony_macros::userdata(name = "Layer", description = "Metadata layer builder.")]
 #[derive(Clone)]
@@ -38,9 +47,9 @@ struct LayerBuilderState {
     node_id: DbId,
     provider_id: String,
     fields: LayerFields,
+    relations: LayerRelations,
     external_ids: HashMap<String, String>,
-    custom_fields: HashMap<u64, HashMap<String, JsonValue>>,
-    remove_custom_field_versions: HashSet<u64>,
+    custom_fields: CustomFieldChanges,
 }
 
 #[harmony_macros::userdata_methods]
@@ -79,6 +88,42 @@ impl MetadataLayer {
         Ok(())
     }
 
+    /// Replaces the artists related to this layer's artist by `relation_type`,
+    /// such as a character's voice actors or a group's members. An empty list
+    /// clears the type; types never set keep what this source stored before.
+    #[harmony(args(relation_type: ArtistRelationType, relations: luau::JsonValue))]
+    fn set_relations(
+        &self,
+        vm: &luau::Vm,
+        relation_type: ArtistRelationType,
+        relations: luau::Value,
+    ) -> luau::runtime::Result<()> {
+        let entries: Vec<RelationEntry> = serde_json::from_value(harmony_serde::luau_to_json(
+            vm, &relations, 0,
+        )?)
+        .map_err(|error| {
+            crate::plugins::runtime_error(format!(
+                "relations must be a list of {{ artist_id, attributes? }}: {error}"
+            ))
+        })?;
+        let mut inputs = Vec::with_capacity(entries.len());
+        for entry in entries {
+            inputs.push(LayerRelationInput {
+                artist_id: args::positive_id(entry.artist_id, "artist_id")?,
+                attributes: entry
+                    .attributes
+                    .map(|attributes| attributes.trim().to_string())
+                    .filter(|attributes| !attributes.is_empty()),
+            });
+        }
+        self.state
+            .lock()
+            .expect("metadata layer mutex poisoned")
+            .relations
+            .insert(relation_type, inputs);
+        Ok(())
+    }
+
     fn save(&self) -> luau::runtime::Result<luau::ScheduledFuture> {
         let Some(db) = self.db.clone() else {
             return Err(crate::plugins::runtime_error(
@@ -97,9 +142,9 @@ impl MetadataLayer {
                 layer.node_id,
                 &layer.provider_id,
                 &layer.fields,
+                &layer.relations,
                 &layer.external_ids,
                 &layer.custom_fields,
-                &layer.remove_custom_field_versions,
             )
             .map_err(crate::plugins::runtime_error)
         }))
@@ -122,9 +167,10 @@ impl MetadataLayer {
         }
         let value = harmony_serde::luau_to_json(vm, &value, 0)?;
         let mut layer = self.state.lock().expect("metadata layer mutex poisoned");
-        layer.remove_custom_field_versions.remove(&version);
+        layer.custom_fields.remove.remove(&version);
         layer
             .custom_fields
+            .set
             .entry(version)
             .or_default()
             .insert(name, value);
@@ -145,9 +191,10 @@ impl MetadataLayer {
             ));
         };
         let mut layer = self.state.lock().expect("metadata layer mutex poisoned");
-        layer.remove_custom_field_versions.remove(&version);
+        layer.custom_fields.remove.remove(&version);
         layer
             .custom_fields
+            .set
             .insert(version, fields.into_iter().collect());
         Ok(())
     }
@@ -155,8 +202,8 @@ impl MetadataLayer {
     fn clear_custom_fields(&self, version: String) -> luau::runtime::Result<()> {
         let version = parse_custom_field_version(&version)?;
         let mut layer = self.state.lock().expect("metadata layer mutex poisoned");
-        layer.custom_fields.remove(&version);
-        layer.remove_custom_field_versions.insert(version);
+        layer.custom_fields.set.remove(&version);
+        layer.custom_fields.remove.insert(version);
         Ok(())
     }
 }
@@ -175,9 +222,9 @@ impl MetadataLayer {
                 node_id,
                 provider_id,
                 fields: LayerFields::new(),
+                relations: LayerRelations::new(),
                 external_ids: HashMap::new(),
-                custom_fields: HashMap::new(),
-                remove_custom_field_versions: HashSet::new(),
+                custom_fields: CustomFieldChanges::default(),
             })),
         };
         Self::_harmony_userdata_class().create_value(vm, origin, layer)

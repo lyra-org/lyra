@@ -6,6 +6,8 @@
 pub(crate) use crate::db::MetadataField;
 pub(crate) use crate::db::metadata::layers::{
     LayerFields,
+    LayerRelations,
+    edges::LayerRelationInput,
     normalize_value,
 };
 pub(crate) use crate::db::plugin::*;

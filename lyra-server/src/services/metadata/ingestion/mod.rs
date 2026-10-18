@@ -219,7 +219,10 @@ mod tests {
     };
     use anyhow::anyhow;
     use nanoid::nanoid;
-    use std::collections::HashSet;
+    use std::collections::{
+        HashMap,
+        HashSet,
+    };
     use std::fs;
     use std::path::{
         Path,
@@ -1261,6 +1264,116 @@ mod tests {
         assert_eq!(relations.len(), 1);
         assert_eq!(relations[0].1, character_id);
 
+        Ok(())
+    }
+
+    fn voiced_track(entry_db_id: DbId, album: &str, actor: &str) -> TrackMetadata {
+        let mut metadata = track_metadata(entry_db_id.0, album, "Character", None, Some(1), 1);
+        metadata.artist_relations = vec![lyra_metadata::ArtistRelationMetadata {
+            source_artist: actor.to_string(),
+            target_artist: "Character".to_string(),
+            relation_type: lyra_metadata::ArtistRelationKind::VoiceActor,
+            source_artist_type: Some(lyra_metadata::ParsedArtistType::Person),
+            target_artist_type: Some(lyra_metadata::ParsedArtistType::Character),
+        }];
+        metadata
+    }
+
+    fn artist_named(db: &DbAny, name: &str) -> anyhow::Result<Option<DbId>> {
+        db::lookup::find_id_by_indexed_string_field(db, "artists", "scan_name", "scan_name", name)
+    }
+
+    fn voice_actors_of(db: &DbAny, character_id: DbId) -> anyhow::Result<Vec<String>> {
+        let mut names = Vec::new();
+        for (_, actor_id) in db::artists::relations::get_relations_to(
+            db,
+            character_id,
+            Some(db::ArtistRelationType::VoiceActor),
+        )? {
+            names.push(
+                db::artists::get_by_id(db, actor_id)?
+                    .ok_or_else(|| anyhow!("actor missing"))?
+                    .artist_name,
+            );
+        }
+        names.sort();
+        Ok(names)
+    }
+
+    #[test]
+    fn scanned_relations_from_every_release_reach_the_characters_layer() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let library =
+            test_db::insert_test_library_node(&mut db, "CV Library", PathBuf::from("/music/cv"))?;
+        let library_db_id = library.db_id.expect("test library has db_id");
+        let first_entry = insert_entry(&mut db, "/music/cv/a/01.flac")?;
+        let second_entry = insert_entry(&mut db, "/music/cv/b/01.flac")?;
+        connect(&mut db, library_db_id, first_entry)?;
+        connect(&mut db, library_db_id, second_entry)?;
+
+        apply_metadata(
+            &mut db,
+            library_db_id,
+            vec![voiced_track(first_entry, "First Album", "First Actor")],
+        )?;
+        apply_metadata(
+            &mut db,
+            library_db_id,
+            vec![voiced_track(second_entry, "Second Album", "Second Actor")],
+        )?;
+
+        let character_id = artist_named(&db, "Character")?.ok_or_else(|| anyhow!("character"))?;
+        assert_eq!(
+            voice_actors_of(&db, character_id)?,
+            vec!["First Actor", "Second Actor"]
+        );
+        let local = local_layer(&db, character_id)?;
+        assert_eq!(
+            local.relations[&db::ArtistRelationType::VoiceActor].len(),
+            2,
+            "the character's local layer owns both relations"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_layer_only_voice_actor_lives_as_long_as_the_relation() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let entry_db_id = insert_entry(&mut db, "/music/album/track.flac")?;
+        let track_db_id = insert_track(&mut db, "Track")?;
+        let character_id = insert_artist(&mut db, "Character")?;
+        let actor_id = insert_artist(&mut db, "Actor")?;
+        connect(&mut db, "tracks", track_db_id)?;
+        connect(&mut db, "artists", character_id)?;
+        connect(&mut db, "artists", actor_id)?;
+        connect_track_to_entry_source(&mut db, track_db_id, entry_db_id)?;
+        crate::db::test_db::connect_artist(&mut db, track_db_id, character_id)?;
+        upsert_provider(&mut db, "provider", true)?;
+        crate::services::metadata::layers::save_provider_layer(
+            &mut db,
+            character_id,
+            "provider",
+            &BTreeMap::new(),
+            &BTreeMap::from([(
+                db::ArtistRelationType::VoiceActor,
+                vec![db::metadata::layers::edges::LayerRelationInput {
+                    artist_id: actor_id,
+                    attributes: None,
+                }],
+            )]),
+            &HashMap::new(),
+            &Default::default(),
+        )?;
+
+        cleanup_orphaned_metadata(&mut db)?;
+        assert!(db::artists::get_by_id(&db, actor_id)?.is_some());
+        assert_eq!(voice_actors_of(&db, character_id)?, vec!["Actor"]);
+
+        crate::services::metadata::layers::clear_provider_layer(&mut db, character_id, "provider")?;
+        assert!(voice_actors_of(&db, character_id)?.is_empty());
+        cleanup_orphaned_metadata(&mut db)?;
+        assert!(db::artists::get_by_id(&db, actor_id)?.is_none());
+        assert!(db::artists::get_by_id(&db, character_id)?.is_some());
         Ok(())
     }
 
@@ -2678,6 +2791,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             track_db_id,
             &MetadataLayer {
                 source_id: "test".to_string(),
+                relations: Default::default(),
                 fields: crate::db::metadata::layers::fields_from_json(serde_json::json!({
                     "track_title": "Provider Track",
                     "year": 1999,
@@ -2692,6 +2806,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             release_db_id,
             &MetadataLayer {
                 source_id: "test".to_string(),
+                relations: Default::default(),
                 fields: crate::db::metadata::layers::fields_from_json(serde_json::json!({
                     "release_title": "Provider Release",
                     "release_date": "1988-08-08"
@@ -2996,6 +3111,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             release_db_id,
             &MetadataLayer {
                 source_id: "test".to_string(),
+                relations: Default::default(),
                 fields: crate::db::metadata::layers::fields_from_json(serde_json::json!({
                     "labels": [
                         {"name": "Provider Label", "catalog_number": "PRV-001"}
@@ -3175,6 +3291,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             track_db_id,
             &MetadataLayer {
                 source_id: "test".to_string(),
+                relations: Default::default(),
                 fields: crate::db::metadata::layers::fields_from_json(
                     serde_json::json!({"track_title": "Provider Track", "year": 2020}),
                 ),
@@ -3423,6 +3540,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             release_db_id,
             &MetadataLayer {
                 source_id: "test".to_string(),
+                relations: Default::default(),
                 fields: crate::db::metadata::layers::fields_from_json(serde_json::json!({
                     "labels": [
                         {"name": "Provider Override", "catalog_number": "PRV-999"}

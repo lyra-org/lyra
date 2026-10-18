@@ -383,6 +383,7 @@ fn manual_clear_overrides_later_provider_values() -> anyhow::Result<()> {
         track_id,
         &db::MetadataLayer {
             source_id: "test-provider".to_string(),
+            relations: Default::default(),
             fields: crate::db::metadata::layers::fields_from_json(
                 json!({"sort_title": "Provider sort", "year": 2024}),
             ),
@@ -486,6 +487,7 @@ fn inherit_relinquishes_ownership_and_restores_resolved_value() -> anyhow::Resul
         track_id,
         &db::MetadataLayer {
             source_id: "provider".to_string(),
+            relations: Default::default(),
             fields: crate::db::metadata::layers::fields_from_json(
                 json!({"track_title": "Resolved"}),
             ),
@@ -542,6 +544,7 @@ fn inherit_graph_field_restores_provider_resolved_value() -> anyhow::Result<()> 
         release_id,
         &db::MetadataLayer {
             source_id: "provider".to_string(),
+            relations: Default::default(),
             fields: crate::db::metadata::layers::fields_from_json(json!({"genres": ["Provider"]})),
             updated_at: 10,
         },
@@ -590,6 +593,7 @@ fn inherit_conflicts_when_provider_resolution_changes_after_preview() -> anyhow:
     )?;
     let provider_layer = |genres: &[&str], updated_at| db::MetadataLayer {
         source_id: "provider".to_string(),
+        relations: Default::default(),
         fields: crate::db::metadata::layers::fields_from_json(json!({"genres": genres})),
         updated_at,
     };
@@ -777,6 +781,7 @@ fn inherit_labels_restores_resolvable_provider_labels() -> anyhow::Result<()> {
         release_id,
         &db::MetadataLayer {
             source_id: "provider".to_string(),
+            relations: Default::default(),
             fields: crate::db::metadata::layers::fields_from_json(json!({
                 "labels": [{
                     "name": "Provider Label",
@@ -868,6 +873,7 @@ fn inherit_labels_takes_the_layers_own_label_not_one_with_the_same_name() -> any
         release_id,
         &db::MetadataLayer {
             source_id: "provider".to_string(),
+            relations: Default::default(),
             fields: crate::db::metadata::layers::fields_from_json(json!({
                 "labels": [{
                     "name": "Shared Name",
@@ -944,9 +950,9 @@ fn a_manually_masked_provider_label_survives_while_its_layer_names_it() -> anyho
         release_id,
         "provider",
         &fields,
+        &Default::default(),
         &HashMap::new(),
-        &HashMap::new(),
-        &HashSet::new(),
+        &Default::default(),
     )?;
     let provider_label_id =
         db::labels::find_by_external_id(&db, "provider", "label", "provider-label")?
@@ -986,9 +992,9 @@ fn a_manually_masked_provider_label_survives_while_its_layer_names_it() -> anyho
         release_id,
         "provider",
         &fields,
+        &Default::default(),
         &HashMap::new(),
-        &HashMap::new(),
-        &HashSet::new(),
+        &Default::default(),
     )?;
     assert_eq!(
         db::labels::find_by_external_id(&db, "provider", "label", "provider-label")?,
@@ -1124,6 +1130,7 @@ fn inherited_label_disappearance_after_preview_is_rejected() -> anyhow::Result<(
         release_id,
         &db::MetadataLayer {
             source_id: "provider".to_string(),
+            relations: Default::default(),
             fields: crate::db::metadata::layers::fields_from_json(json!({
                 "labels": [{
                     "name": "Provider Label",
@@ -1318,6 +1325,76 @@ fn referenced_artists_must_be_accessible_to_the_principal() -> anyhow::Result<()
     scoped.accessible_library_ids.remove(&hidden_library.id);
     apply(&mut db, &scoped, release_id, &edit)
         .expect_err("artist access must be revalidated when the preview is applied");
+    Ok(())
+}
+
+#[test]
+fn inheriting_relations_restores_what_the_targets_layers_supply() -> anyhow::Result<()> {
+    let mut db = new_test_db()?;
+    let principal = principal("user-1");
+    let actor_id = insert_artist(&mut db, "Actor")?;
+    let character_id = insert_artist(&mut db, "Character")?;
+    let other_id = insert_artist(&mut db, "Other")?;
+    db::providers::upsert(
+        &mut db,
+        &db::ProviderConfig {
+            db_id: None,
+            provider_id: "provider".to_string(),
+            priority: 100,
+            enabled: true,
+        },
+    )?;
+    crate::services::metadata::layers::save_provider_layer(
+        &mut db,
+        character_id,
+        "provider",
+        &BTreeMap::new(),
+        &BTreeMap::from([(
+            db::ArtistRelationType::VoiceActor,
+            vec![db::metadata::layers::edges::LayerRelationInput {
+                artist_id: actor_id,
+                attributes: Some("lead".to_string()),
+            }],
+        )]),
+        &HashMap::new(),
+        &Default::default(),
+    )?;
+    let other = db::artists::get_by_id(&db, other_id)?.expect("artist exists");
+    let manual = preview_edit(
+        &db,
+        &principal,
+        actor_id,
+        vec![set(
+            MetadataField::Relations,
+            json!([{"target_artist_id": other.id, "type": "member_of"}]),
+        )],
+    )?;
+    apply(&mut db, &principal, actor_id, &manual)?;
+    assert!(
+        db::artists::relations::get_relations_from(
+            &db,
+            actor_id,
+            Some(db::ArtistRelationType::VoiceActor)
+        )?
+        .is_empty()
+    );
+
+    let inherited = preview_edit(
+        &db,
+        &principal,
+        actor_id,
+        vec![inherit(MetadataField::Relations)],
+    )?;
+    apply(&mut db, &principal, actor_id, &inherited)?;
+
+    let relations = db::artists::relations::get_relations_from(&db, actor_id, None)?;
+    assert_eq!(relations.len(), 1);
+    assert_eq!(relations[0].1, character_id);
+    assert_eq!(
+        relations[0].0.relation_type,
+        db::ArtistRelationType::VoiceActor
+    );
+    assert_eq!(relations[0].0.attributes.as_deref(), Some("lead"));
     Ok(())
 }
 

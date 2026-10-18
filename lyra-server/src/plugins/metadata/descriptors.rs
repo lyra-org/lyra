@@ -252,6 +252,17 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
             ],
         ),
         interface(
+            "LayerRelationInput",
+            vec![
+                described_field("artist_id", number(), "The related artist's database id."),
+                described_field(
+                    "attributes",
+                    opt(string()),
+                    "Free-form detail about the relation, such as a role.",
+                ),
+            ],
+        ),
+        interface(
             "MetadataIdRow",
             vec![
                 field("provider_id", string()),
@@ -654,6 +665,17 @@ fn layer_class() -> ClassDescriptor {
             vec![param("id_type", string()), param("id_value", string())],
             vec![],
         ),
+        MethodDescriptor {
+            description: Some("Replaces the artists related to this layer's artist by `relation_type`, such as a character's voice actors or a group's members. An empty list clears the type. A save replaces only the types set on it; the provider's other relation types stay as stored."),
+            ..method(
+                "set_relations",
+                vec![
+                    param("relation_type", ty("ArtistRelationType")),
+                    param("relations", array(ty("LayerRelationInput"))),
+                ],
+                vec![],
+            )
+        },
         method(
             "set_custom_field",
             vec![
@@ -782,16 +804,6 @@ fn provider_class() -> ClassDescriptor {
                 vec![],
             )
         },
-        method(
-            "link_artist_relation",
-            vec![
-                param("from_artist_id", number()),
-                param("to_artist_id", number()),
-                param("relation_type", ty("ArtistRelationType")),
-                param("attributes", opt(string())),
-            ],
-            vec![],
-        ),
         method("layer", vec![param("node_id", number())], vec![ty("Layer")]),
     ]);
     class
@@ -852,7 +864,6 @@ fn method(
                 | "mark_unmatched"
                 | "link_credit"
                 | "reconcile_artist_credits"
-                | "link_artist_relation"
                 | "save"
         ),
         kind: MethodKind::Instance,

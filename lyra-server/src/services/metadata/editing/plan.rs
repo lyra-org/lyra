@@ -26,6 +26,7 @@ use super::{
         MetadataChangeRequest,
         MetadataEditOperation,
         MetadataFieldDiff,
+        MetadataRelationValue,
         MetadataValueSource,
     },
     normalize::{
@@ -53,6 +54,29 @@ fn inherited_value(
     state: &EntityState,
     field: MetadataField,
 ) -> Result<Value, MetadataEditingError> {
+    if field == MetadataField::Relations {
+        // Each target's layers own the relations into it.
+        let mut relations = Vec::new();
+        for (target_id, relation_type, attributes) in
+            crate::services::metadata::merging::resolved_relations_from(db, state.db_id)?
+        {
+            let target = db::artists::get_by_id(db, target_id)?.ok_or_else(|| {
+                MetadataEditingError::Internal(anyhow::anyhow!("a related artist disappeared"))
+            })?;
+            relations.push(MetadataRelationValue {
+                target_artist_id: target.id,
+                relation_type,
+                attributes,
+            });
+        }
+        return normalized_set_value(
+            db,
+            principal,
+            state,
+            field,
+            &serde_json::to_value(relations)?,
+        );
+    }
     let layers = db::metadata::layers::get_for_entity(db, state.db_id)?;
     let providers = db::providers::get(db)?;
     let merged = crate::services::metadata::merging::merge_layers(layers, &providers);

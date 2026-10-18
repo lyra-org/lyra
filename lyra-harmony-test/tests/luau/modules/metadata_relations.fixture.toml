@@ -1,0 +1,20 @@
+run_as = "owner"
+
+[[users]]
+key = "owner"
+admin = true
+
+[[artists]]
+key = "character"
+name = "Character"
+type = "character"
+
+[[artists]]
+key = "first"
+name = "First Actor"
+type = "person"
+
+[[artists]]
+key = "second"
+name = "Second Actor"
+type = "person"

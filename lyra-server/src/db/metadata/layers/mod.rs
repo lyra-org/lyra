@@ -35,7 +35,10 @@ use self::elements::{
 use super::super::{
     DbAccess,
     MetadataField,
-    artists::ArtistType,
+    artists::{
+        ArtistType,
+        relations::ArtistRelationType,
+    },
     entities::MetadataEntityType,
     labels::{
         LabelExternalIdInput,
@@ -50,13 +53,38 @@ use super::super::{
 /// Layer values keyed by field; `null` explicitly clears a field.
 pub(crate) type LayerFields = BTreeMap<MetadataField, Value>;
 
+/// An artist layer's incoming relations by type: the artists that relate to
+/// the layer's artist. A listed type is supplied; an empty list clears it.
+pub(crate) type LayerRelations = BTreeMap<ArtistRelationType, Vec<edges::LayerRelationInput>>;
+
 /// One source's opinion on an entity's fields; stored as the entity's
 /// [`ReleaseLayer`], [`TrackLayer`], or [`ArtistLayer`].
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct MetadataLayer {
     pub(crate) source_id: String,
     pub(crate) fields: LayerFields,
+    pub(crate) relations: LayerRelations,
     pub(crate) updated_at: u64,
+}
+
+/// For each type `incoming` lists, `stored`'s artists followed by the incoming
+/// ones it lacks.
+pub(crate) fn union_relations(stored: &LayerRelations, incoming: LayerRelations) -> LayerRelations {
+    incoming
+        .into_iter()
+        .map(|(relation_type, found)| {
+            let mut combined = stored.get(&relation_type).cloned().unwrap_or_default();
+            for input in found {
+                if !combined
+                    .iter()
+                    .any(|existing| existing.artist_id == input.artist_id)
+                {
+                    combined.push(input);
+                }
+            }
+            (relation_type, combined)
+        })
+        .collect()
 }
 
 impl MetadataLayer {
@@ -64,8 +92,14 @@ impl MetadataLayer {
         Self {
             source_id: source_id.into(),
             fields,
+            relations: LayerRelations::new(),
             updated_at,
         }
+    }
+
+    pub(crate) fn with_relations(mut self, relations: LayerRelations) -> Self {
+        self.relations = relations;
+        self
     }
 }
 
@@ -338,7 +372,20 @@ pub(crate) fn upsert_inside_tx(
     match entity_type(db, node_id)? {
         MetadataEntityType::Release => save::<ReleaseLayer>(db, node_id, layer),
         MetadataEntityType::Track => save::<TrackLayer>(db, node_id, layer),
-        MetadataEntityType::Artist => save::<ArtistLayer>(db, node_id, layer),
+        MetadataEntityType::Artist => {
+            // A save replaces only the relation types it supplies; the source's
+            // other relation types stay as stored.
+            let mut layer = layer.clone();
+            if let Some(stored) = get_for_entity(db, node_id)?
+                .into_iter()
+                .find(|stored| stored.source_id == layer.source_id)
+            {
+                for (relation_type, inputs) in stored.relations {
+                    layer.relations.entry(relation_type).or_insert(inputs);
+                }
+            }
+            save::<ArtistLayer>(db, node_id, &layer)
+        }
     }
     .with_context(|| format!("invalid '{}' metadata layer", layer.source_id))
 }
@@ -349,7 +396,7 @@ fn save<T: LayerElement>(
     layer: &MetadataLayer,
 ) -> anyhow::Result<bool> {
     let (layer_id, values_changed) = store(db, node_id, T::from_layer(layer)?)?;
-    let edges_changed = T::save_edges(db, layer_id, &layer.fields)?;
+    let edges_changed = T::save_edges(db, layer_id, layer)?;
     if edges_changed && !values_changed {
         set_updated_at(db, layer_id, layer.updated_at)?;
     }
@@ -881,6 +928,29 @@ mod tests {
         assert!(!db.transaction_mut(|t| remove_inside_tx(t, release_id, "first"))?);
 
         assert_eq!(only_layer(&db, release_id)?.source_id, "second");
+        Ok(())
+    }
+
+    #[test]
+    fn a_relation_only_change_moves_updated_at() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let character_id = insert_artist(&mut db, "Character")?;
+        let first = insert_artist(&mut db, "First")?;
+        let second = insert_artist(&mut db, "Second")?;
+        let voiced_by = |actor_id: DbId, updated_at: u64| {
+            layer("provider", json!({}), updated_at).with_relations(LayerRelations::from([(
+                ArtistRelationType::VoiceActor,
+                vec![edges::LayerRelationInput {
+                    artist_id: actor_id,
+                    attributes: None,
+                }],
+            )]))
+        };
+        upsert(&mut db, character_id, &voiced_by(first, 1))?;
+
+        assert!(upsert(&mut db, character_id, &voiced_by(second, 2))?);
+
+        assert_eq!(only_layer(&db, character_id)?.updated_at, 2);
         Ok(())
     }
 

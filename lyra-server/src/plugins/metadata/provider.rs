@@ -253,26 +253,6 @@ impl MetadataProvider {
         reconcile_artist_credits_callback(self, vm, context, owner_id, credits)
     }
 
-    fn link_artist_relation(
-        &self,
-        vm: &luau::Vm,
-        context: &luau::CallContext,
-        from_artist_id: i64,
-        to_artist_id: i64,
-        relation_type: server_db::ArtistRelationType,
-        attributes: Option<String>,
-    ) -> luau::runtime::Result<luau::ScheduledFuture> {
-        link_artist_relation_callback(
-            self,
-            vm,
-            context,
-            from_artist_id,
-            to_artist_id,
-            relation_type,
-            attributes,
-        )
-    }
-
     #[harmony(returns(MetadataLayer))]
     fn layer(
         &self,
@@ -782,9 +762,9 @@ fn ensure_artist_callback(
             artist_db_id,
             &provider_id,
             &fields,
+            &Default::default(),
             &external_ids,
-            &HashMap::new(),
-            &HashSet::new(),
+            &Default::default(),
         )
         .map_err(crate::plugins::runtime_error)?;
 
@@ -1039,70 +1019,6 @@ fn reconcile_artist_credits_callback(
                 db::credits::reconcile_artists(transaction, owner_id, &provider_id, &desired)
             })
             .map_err(crate::plugins::runtime_error)
-    }))
-}
-
-fn link_artist_relation_callback(
-    provider: &MetadataProvider,
-    vm: &luau::Vm,
-    context: &luau::CallContext,
-    from_artist_id: i64,
-    to_artist_id: i64,
-    relation_type: server_db::ArtistRelationType,
-    attributes: Option<String>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
-    let from_artist_id = args::positive_id(from_artist_id, "from_artist_id")?;
-    let to_artist_id = args::positive_id(to_artist_id, "to_artist_id")?;
-    let attributes = attributes.and_then(|value| {
-        let trimmed = value.trim().to_string();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed)
-        }
-    });
-
-    let db = db::get_optional(vm)?;
-    Ok(luau::ScheduledFuture::new(async move {
-        let Some(db) = db else {
-            return Err(crate::plugins::runtime_error(
-                "provider:link_artist_relation requires a database-backed plugin executor",
-            ));
-        };
-        let mut db_write = db.write().await;
-
-        if server_db::artists::get_by_id(&db_write, from_artist_id)
-            .map_err(crate::plugins::runtime_error)?
-            .is_none()
-        {
-            return Err(crate::plugins::runtime_error(
-                "provider:link_artist_relation: from_artist_id does not reference an artist",
-            ));
-        }
-        if server_db::artists::get_by_id(&db_write, to_artist_id)
-            .map_err(crate::plugins::runtime_error)?
-            .is_none()
-        {
-            return Err(crate::plugins::runtime_error(
-                "provider:link_artist_relation: to_artist_id does not reference an artist",
-            ));
-        }
-        if db::manual_metadata_owns_field(&db_write, from_artist_id, db::MetadataField::Relations)
-            .map_err(crate::plugins::runtime_error)?
-        {
-            return Ok(());
-        }
-
-        server_db::artists::relations::link(
-            &mut db_write,
-            from_artist_id,
-            to_artist_id,
-            relation_type,
-            attributes,
-        )
-        .map(|_| ())
-        .map_err(crate::plugins::runtime_error)
     }))
 }
 

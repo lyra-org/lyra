@@ -18,6 +18,7 @@ use serde_json::{
 
 use super::{
     LayerFields,
+    LayerRelations,
     MetadataLayer,
     decode,
     edges,
@@ -27,7 +28,10 @@ use super::{
 use crate::db::{
     DbAccess,
     MetadataField,
-    artists::ArtistType,
+    artists::{
+        ArtistType,
+        relations::ArtistRelationType,
+    },
     entities::MetadataEntityType,
     genres,
     labels,
@@ -45,7 +49,7 @@ pub(super) trait LayerElement: DbType<ValueType = Self> + PartialEq + Sized {
     fn save_edges(
         _db: &mut DbAnyTransactionMut<'_>,
         _layer_id: DbId,
-        _fields: &LayerFields,
+        _layer: &MetadataLayer,
     ) -> anyhow::Result<bool> {
         Ok(false)
     }
@@ -72,6 +76,7 @@ pub(super) struct ReleaseLayer {
 impl LayerElement for ReleaseLayer {
     fn from_layer(layer: &MetadataLayer) -> anyhow::Result<Self> {
         let fields = validated_fields(MetadataEntityType::Release, &layer.fields)?;
+        anyhow::ensure!(layer.relations.is_empty(), "only an artist has relations");
         let mut element = Self {
             source_id: layer.source_id.clone(),
             updated_at: layer.updated_at,
@@ -151,9 +156,9 @@ impl LayerElement for ReleaseLayer {
     fn save_edges(
         db: &mut DbAnyTransactionMut<'_>,
         layer_id: DbId,
-        fields: &LayerFields,
+        layer: &MetadataLayer,
     ) -> anyhow::Result<bool> {
-        let supplied = |field| fields.get(&field).filter(|value| !value.is_null());
+        let supplied = |field| layer.fields.get(&field).filter(|value| !value.is_null());
         let genre_ids = match supplied(MetadataField::Genres) {
             Some(value) => {
                 genres::resolve_names(db, &decode::<Vec<String>>(MetadataField::Genres, value)?)?
@@ -188,6 +193,7 @@ pub(super) struct TrackLayer {
 impl LayerElement for TrackLayer {
     fn from_layer(layer: &MetadataLayer) -> anyhow::Result<Self> {
         let fields = validated_fields(MetadataEntityType::Track, &layer.fields)?;
+        anyhow::ensure!(layer.relations.is_empty(), "only an artist has relations");
         let mut element = Self {
             source_id: layer.source_id.clone(),
             updated_at: layer.updated_at,
@@ -287,6 +293,12 @@ impl LayerElement for ArtistLayer {
             supplied: fields
                 .keys()
                 .map(|field| field.as_str().to_string())
+                .chain(
+                    layer
+                        .relations
+                        .keys()
+                        .map(|&relation_type| relation_key(relation_type)),
+                )
                 .collect(),
             ..Self::default()
         };
@@ -302,7 +314,31 @@ impl LayerElement for ArtistLayer {
         Ok(element)
     }
 
-    fn to_layer(&self, _db: &impl DbAccess) -> anyhow::Result<MetadataLayer> {
+    fn to_layer(&self, db: &impl DbAccess) -> anyhow::Result<MetadataLayer> {
+        let layer_id = self.db_id.context("a stored artist layer has an id")?;
+        let mut relations = LayerRelations::new();
+        for name in &self.supplied {
+            if let Some(relation_type) = parse_relation_key(name)? {
+                anyhow::ensure!(
+                    relations.insert(relation_type, Vec::new()).is_none(),
+                    "'{name}' is supplied twice"
+                );
+            }
+        }
+        for link in edges::relations(db, layer_id)? {
+            relations
+                .get_mut(&link.edge.relation_type)
+                .with_context(|| {
+                    format!(
+                        "'{}' is stored but not supplied",
+                        relation_key(link.edge.relation_type)
+                    )
+                })?
+                .push(edges::LayerRelationInput {
+                    artist_id: link.target_id,
+                    attributes: link.edge.attributes,
+                });
+        }
         let fields = stored_fields(
             MetadataEntityType::Artist,
             &self.supplied,
@@ -313,11 +349,10 @@ impl LayerElement for ArtistLayer {
                 (MetadataField::Description, json_value(&self.description)?),
             ],
         )?;
-        Ok(MetadataLayer::new(
-            self.source_id.clone(),
-            fields,
-            self.updated_at,
-        ))
+        Ok(
+            MetadataLayer::new(self.source_id.clone(), fields, self.updated_at)
+                .with_relations(relations),
+        )
     }
 
     fn source_id(&self) -> &str {
@@ -348,6 +383,39 @@ impl LayerElement for ArtistLayer {
             ("description", self.description.is_none()),
         ]
     }
+
+    fn save_edges(
+        db: &mut DbAnyTransactionMut<'_>,
+        layer_id: DbId,
+        layer: &MetadataLayer,
+    ) -> anyhow::Result<bool> {
+        let mut changed = false;
+        for relation_type in ArtistRelationType::ALL {
+            let desired = layer
+                .relations
+                .get(&relation_type)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            changed |= edges::replace_relations(db, layer_id, relation_type, desired)?;
+        }
+        Ok(changed)
+    }
+}
+
+/// The supplied key of one relation type, such as `relations.voice_actor`.
+pub(super) fn relation_key(relation_type: ArtistRelationType) -> String {
+    format!("relations.{relation_type}")
+}
+
+/// The relation type a supplied key names, or `None` for a field name.
+fn parse_relation_key(name: &str) -> anyhow::Result<Option<ArtistRelationType>> {
+    let Some(relation_type) = name.strip_prefix("relations.") else {
+        return Ok(None);
+    };
+    Ok(Some(
+        ArtistRelationType::from_db_str(relation_type)
+            .with_context(|| format!("unknown supplied relation type '{relation_type}'"))?,
+    ))
 }
 
 /// Validates and normalizes a layer's fields for `entity`.
@@ -377,6 +445,14 @@ fn stored_fields(
 ) -> anyhow::Result<LayerFields> {
     let mut fields = LayerFields::new();
     for name in supplied {
+        if parse_relation_key(name)?.is_some() {
+            anyhow::ensure!(
+                entity == MetadataEntityType::Artist,
+                "a {} has no relations",
+                entity.as_str()
+            );
+            continue;
+        }
         let field = MetadataField::from_name(name)
             .with_context(|| format!("unknown supplied field '{name}'"))?;
         anyhow::ensure!(

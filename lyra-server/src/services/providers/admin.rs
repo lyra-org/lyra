@@ -197,7 +197,6 @@ mod tests {
     use std::collections::{
         BTreeMap,
         HashMap,
-        HashSet,
     };
 
     use super::*;
@@ -232,9 +231,9 @@ mod tests {
                     db::MetadataField::TrackTitle,
                     serde_json::json!("Provider Title"),
                 )]),
+                &Default::default(),
                 &HashMap::new(),
-                &HashMap::new(),
-                &HashSet::new(),
+                &Default::default(),
             )?;
             assert_eq!(
                 db::tracks::get_by_id(&db, track_db_id)?
@@ -284,9 +283,9 @@ mod tests {
                     track_db_id,
                     provider_id,
                     &BTreeMap::from([(db::MetadataField::TrackTitle, serde_json::json!(title))]),
+                    &Default::default(),
                     &HashMap::new(),
-                    &HashMap::new(),
-                    &HashSet::new(),
+                    &Default::default(),
                 )?;
             }
             assert_eq!(

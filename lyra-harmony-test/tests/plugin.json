@@ -10,6 +10,7 @@
     "harmony.task",
     "lyra.api",
     "lyra.auth",
+    "lyra.artists",
     "lyra.editions",
     "lyra.ids",
     "lyra.locale",

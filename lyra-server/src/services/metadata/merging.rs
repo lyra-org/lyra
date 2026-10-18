@@ -19,6 +19,7 @@ use serde::de::DeserializeOwned;
 use crate::db::{
     self,
     Artist,
+    ArtistRelationType,
     DbAccess,
     MetadataField,
     MetadataLayer,
@@ -28,7 +29,10 @@ use crate::db::{
     labels::LabelLinkInput,
     metadata::layers::{
         decode,
-        edges as layer_edges,
+        edges::{
+            self as layer_edges,
+            LayerRelationInput,
+        },
         normalize_value,
     },
 };
@@ -38,6 +42,8 @@ use crate::services::metadata::layers::LOCAL_SOURCE_ID;
 pub(crate) struct MergedMetadata {
     pub(crate) fields: HashMap<MetadataField, serde_json::Value>,
     pub(crate) provenance: HashMap<MetadataField, String>,
+    /// Each relation type's whole set, from the highest-priority layer supplying it.
+    pub(crate) relations: HashMap<ArtistRelationType, Vec<LayerRelationInput>>,
     manual_fields: HashSet<MetadataField>,
 }
 
@@ -127,6 +133,7 @@ pub(crate) fn merge_layers(
 
     let mut merged_fields = HashMap::new();
     let mut provenance = HashMap::new();
+    let mut relations = HashMap::new();
 
     for layer in sorted_layers {
         for (field, value) in layer.fields {
@@ -136,11 +143,15 @@ pub(crate) fn merge_layers(
                 provenance.insert(field, layer.source_id.clone());
             }
         }
+        for (relation_type, inputs) in layer.relations {
+            relations.entry(relation_type).or_insert(inputs);
+        }
     }
 
     MergedMetadata {
         fields: merged_fields,
         provenance,
+        relations,
         manual_fields: HashSet::new(),
     }
 }
@@ -200,13 +211,97 @@ pub(crate) fn apply_merged_metadata_to_entity_inside_tx(
         if apply_to_track(&mut track, &merged)? {
             db::tracks::update_in_transaction(db, &track)?;
         }
-    } else if let Some(mut artist) = db::artists::get_by_id(db, node_id)?
-        && !artist.locked.unwrap_or(false)
-        && apply_to_artist(&mut artist, &merged)?
-    {
-        db::artists::update_in_transaction(db, &artist)?;
+    } else if let Some(mut artist) = db::artists::get_by_id(db, node_id)? {
+        if artist.locked.unwrap_or(false) {
+            return Ok(());
+        }
+        if apply_to_artist(&mut artist, &merged)? {
+            db::artists::update_in_transaction(db, &artist)?;
+        }
+        sync_incoming_relations(db, node_id, &merged)?;
     }
 
+    Ok(())
+}
+
+/// The relations from `artist_id` that its targets' resolved layers supply:
+/// each target's winning set for a type that lists this artist.
+pub(crate) fn resolved_relations_from(
+    db: &impl DbAccess,
+    artist_id: DbId,
+) -> anyhow::Result<Vec<(DbId, ArtistRelationType, Option<String>)>> {
+    let providers = db::providers::get(db)?;
+    let mut targets = HashSet::new();
+    for link in layer_edges::relations_naming(db, artist_id)? {
+        targets.extend(db::metadata::layers::owner_id(db, link.layer_id)?);
+    }
+    let mut relations = Vec::new();
+    for target_id in targets {
+        let merged = merge_layers(
+            db::metadata::layers::get_for_entity(db, target_id)?,
+            &providers,
+        );
+        for (relation_type, inputs) in merged.relations {
+            relations.extend(
+                inputs
+                    .into_iter()
+                    .filter(|input| input.artist_id == artist_id)
+                    .map(|input| (target_id, relation_type, input.attributes)),
+            );
+        }
+    }
+    Ok(relations)
+}
+
+/// Rewrites the relations into an artist from its resolved layers, one whole set
+/// per type. Relations from an artist whose relations are manually owned keep
+/// what is stored: manual edits own an artist's outgoing relations.
+fn sync_incoming_relations(
+    db: &mut DbAnyTransactionMut<'_>,
+    artist_id: DbId,
+    merged: &MergedMetadata,
+) -> anyhow::Result<()> {
+    let mut manually_owned = HashMap::new();
+    let mut owned = |db: &DbAnyTransactionMut<'_>, source_id: DbId| -> anyhow::Result<bool> {
+        if let Some(&owned) = manually_owned.get(&source_id) {
+            return Ok(owned);
+        }
+        let owned =
+            db::metadata::manual_overrides::owns_field(db, source_id, MetadataField::Relations)?;
+        manually_owned.insert(source_id, owned);
+        Ok(owned)
+    };
+    for relation_type in ArtistRelationType::ALL {
+        let desired: HashMap<DbId, Option<String>> = merged
+            .relations
+            .get(&relation_type)
+            .into_iter()
+            .flatten()
+            .map(|input| (input.artist_id, input.attributes.clone()))
+            .collect();
+        for (relation, source_id) in
+            db::artists::relations::get_relations_to(db, artist_id, Some(relation_type))?
+        {
+            let wanted = desired.get(&source_id);
+            if wanted == Some(&relation.attributes) || owned(db, source_id)? {
+                continue;
+            }
+            if wanted.is_none() {
+                db::artists::relations::unlink(db, source_id, artist_id, relation_type)?;
+            }
+        }
+        for (source_id, attributes) in desired {
+            if !owned(db, source_id)?
+                && !db::artists::relations::get_relations_from(db, source_id, Some(relation_type))?
+                    .iter()
+                    .any(|(relation, target)| {
+                        *target == artist_id && relation.attributes == attributes
+                    })
+            {
+                db::artists::relations::link(db, source_id, artist_id, relation_type, attributes)?;
+            }
+        }
+    }
     Ok(())
 }
 
@@ -557,9 +652,9 @@ mod tests {
                 node_id,
                 provider_id,
                 &db::metadata::layers::fields_from_json(fields),
+                &Default::default(),
                 &HashMap::new(),
-                &HashMap::new(),
-                &HashSet::new(),
+                &Default::default(),
             )
         }
 
@@ -595,6 +690,208 @@ mod tests {
                 .collect::<anyhow::Result<_>>()?;
             names.sort();
             Ok(names)
+        }
+
+        fn save_relations(
+            db: &mut DbAny,
+            artist_id: DbId,
+            provider_id: &str,
+            relations: &[(ArtistRelationType, &[DbId])],
+        ) -> anyhow::Result<()> {
+            crate::services::metadata::layers::save_provider_layer(
+                db,
+                artist_id,
+                provider_id,
+                &db::metadata::layers::fields_from_json(serde_json::json!({})),
+                &relations
+                    .iter()
+                    .map(|(relation_type, artist_ids)| {
+                        (
+                            *relation_type,
+                            artist_ids
+                                .iter()
+                                .map(|&artist_id| LayerRelationInput {
+                                    artist_id,
+                                    attributes: None,
+                                })
+                                .collect(),
+                        )
+                    })
+                    .collect(),
+                &HashMap::new(),
+                &Default::default(),
+            )
+        }
+
+        fn related_into(
+            db: &DbAny,
+            artist_id: DbId,
+            relation_type: ArtistRelationType,
+        ) -> anyhow::Result<Vec<DbId>> {
+            let mut sources: Vec<DbId> =
+                db::artists::relations::get_relations_to(db, artist_id, Some(relation_type))?
+                    .into_iter()
+                    .map(|(_, source_id)| source_id)
+                    .collect();
+            sources.sort();
+            Ok(sources)
+        }
+
+        #[test]
+        fn each_relation_type_follows_the_layer_that_supplies_it() -> anyhow::Result<()> {
+            let mut db = new_test_db()?;
+            let character = insert_artist(&mut db, "Character")?;
+            let low_actor = insert_artist(&mut db, "Low Actor")?;
+            let high_actor = insert_artist(&mut db, "High Actor")?;
+            let member = insert_artist(&mut db, "Member")?;
+            enable_provider(&mut db, "low", 10)?;
+            enable_provider(&mut db, "high", 100)?;
+            save_relations(
+                &mut db,
+                character,
+                "low",
+                &[
+                    (ArtistRelationType::VoiceActor, &[low_actor]),
+                    (ArtistRelationType::MemberOf, &[member]),
+                ],
+            )?;
+            save_relations(
+                &mut db,
+                character,
+                "high",
+                &[(ArtistRelationType::VoiceActor, &[high_actor])],
+            )?;
+            assert_eq!(
+                related_into(&db, character, ArtistRelationType::VoiceActor)?,
+                vec![high_actor]
+            );
+            assert_eq!(
+                related_into(&db, character, ArtistRelationType::MemberOf)?,
+                vec![member]
+            );
+
+            provider_save(
+                &mut db,
+                character,
+                "high",
+                serde_json::json!({"artist_name": "Character"}),
+            )?;
+            assert_eq!(
+                related_into(&db, character, ArtistRelationType::VoiceActor)?,
+                vec![high_actor],
+                "a save that does not set a type keeps it"
+            );
+
+            crate::services::metadata::layers::clear_provider_layer(&mut db, character, "high")?;
+            assert_eq!(
+                related_into(&db, character, ArtistRelationType::VoiceActor)?,
+                vec![low_actor],
+                "removing a layer falls back to the next one"
+            );
+
+            save_relations(
+                &mut db,
+                character,
+                "low",
+                &[(ArtistRelationType::VoiceActor, &[])],
+            )?;
+            assert!(related_into(&db, character, ArtistRelationType::VoiceActor)?.is_empty());
+            assert_eq!(
+                related_into(&db, character, ArtistRelationType::MemberOf)?,
+                vec![member]
+            );
+
+            crate::services::metadata::layers::clear_provider_layer(&mut db, character, "low")?;
+            assert!(
+                related_into(&db, character, ArtistRelationType::MemberOf)?.is_empty(),
+                "with no layer left, the relations go"
+            );
+            Ok(())
+        }
+
+        #[test]
+        fn a_locked_artist_keeps_its_relations_until_unlocked() -> anyhow::Result<()> {
+            let mut db = new_test_db()?;
+            let character = insert_artist(&mut db, "Character")?;
+            let actor = insert_artist(&mut db, "Actor")?;
+            let mut locked = db::artists::get_by_id(&db, character)?.expect("artist exists");
+            locked.locked = Some(true);
+            db::artists::update(&mut db, &locked)?;
+            enable_provider(&mut db, "provider", 10)?;
+
+            save_relations(
+                &mut db,
+                character,
+                "provider",
+                &[(ArtistRelationType::VoiceActor, &[actor])],
+            )?;
+            assert!(related_into(&db, character, ArtistRelationType::VoiceActor)?.is_empty());
+            assert_eq!(
+                db::metadata::layers::get_for_entity(&db, character)?.len(),
+                1
+            );
+
+            let mut unlocked = db::artists::get_by_id(&db, character)?.expect("artist exists");
+            unlocked.locked = None;
+            db::artists::update(&mut db, &unlocked)?;
+            apply_merged_metadata_to_entity(&mut db, character)?;
+            assert_eq!(
+                related_into(&db, character, ArtistRelationType::VoiceActor)?,
+                vec![actor]
+            );
+            Ok(())
+        }
+
+        #[test]
+        fn relations_from_a_manually_owned_artist_stay_as_stored() -> anyhow::Result<()> {
+            let mut db = new_test_db()?;
+            let character = insert_artist(&mut db, "Character")?;
+            let manual_actor = insert_artist(&mut db, "Manual Actor")?;
+            let unwanted_actor = insert_artist(&mut db, "Unwanted Actor")?;
+            let provider_actor = insert_artist(&mut db, "Provider Actor")?;
+            db::artists::relations::link(
+                &mut db,
+                manual_actor,
+                character,
+                ArtistRelationType::VoiceActor,
+                Some("manual".to_string()),
+            )?;
+            for actor in [manual_actor, unwanted_actor] {
+                db::metadata::manual_overrides::replace(
+                    &mut db,
+                    actor,
+                    &BTreeMap::from([(MetadataField::Relations, serde_json::Value::Bool(true))]),
+                )?;
+            }
+            enable_provider(&mut db, "provider", 10)?;
+
+            save_relations(
+                &mut db,
+                character,
+                "provider",
+                &[(
+                    ArtistRelationType::VoiceActor,
+                    &[unwanted_actor, provider_actor],
+                )],
+            )?;
+
+            assert_eq!(
+                related_into(&db, character, ArtistRelationType::VoiceActor)?,
+                {
+                    let mut expected = vec![manual_actor, provider_actor];
+                    expected.sort();
+                    expected
+                },
+                "a manually owned artist's relations are neither removed nor added"
+            );
+            let kept = db::artists::relations::get_relations_to(
+                &db,
+                character,
+                Some(ArtistRelationType::VoiceActor),
+            )?;
+            assert!(kept.iter().any(|(relation, source)| *source == manual_actor
+                && relation.attributes.as_deref() == Some("manual")));
+            Ok(())
         }
 
         #[test]
@@ -912,9 +1209,9 @@ mod tests {
                     MetadataField::TrackTitle,
                     serde_json::json!("Provider Title"),
                 )]),
+                &Default::default(),
                 &HashMap::new(),
-                &HashMap::new(),
-                &HashSet::new(),
+                &Default::default(),
             )?;
 
             let layers = db::metadata::layers::get_for_entity(&db, track_id)?;

@@ -29,7 +29,13 @@ type EnsureArtistRequest = metadata.EnsureArtistRequest
 type ArtistType = metadata.ArtistType
 type Provider = metadata.Provider
 
+type ArtistRelationType = metadata.ArtistRelationType
+type LayerRelationInput = metadata.LayerRelationInput
+-- One relation type's whole set of artists relating to a layer's artist.
+type RelationSet = { relation_type: ArtistRelationType, relations: { LayerRelationInput } }
+
 local ArtistType = metadata.ArtistType
+local ArtistRelationType = metadata.ArtistRelationType
 
 local mb_get = musicbrainz_api.mb_get
 local json_string_field = musicbrainz_api.json_string_field
@@ -91,7 +97,7 @@ local function artist_type_for_musicbrainz(mb_artist_type: string?): ArtistType?
 	return nil
 end
 
-local function set_artist_metadata(db_id: number?, mb_artist: ReleaseArtist?): boolean
+local function set_artist_metadata(db_id: number?, mb_artist: ReleaseArtist?, relation_sets: { RelationSet }?): boolean
 	local current_provider = provider
 	if not db_id or mb_artist == nil or not mb_artist.id or current_provider == nil then
 		return false
@@ -106,6 +112,9 @@ local function set_artist_metadata(db_id: number?, mb_artist: ReleaseArtist?): b
 		artist_layer:set_field("artist_type", string.lower(mb_artist_type))
 	end
 	artist_layer:set_id("artist_id", mb_artist.id)
+	for _, relation_set in relation_sets or {} do
+		artist_layer:set_relations(relation_set.relation_type, relation_set.relations)
+	end
 	artist_layer:save()
 	return true
 end
@@ -171,18 +180,14 @@ local function reconcile_artist_credits(
 	current_provider:reconcile_artist_credits(owner_id, resolved)
 end
 
-type ArtistRelationType = metadata.ArtistRelationType
-local ArtistRelationType = metadata.ArtistRelationType
-
 local MB_ARTIST_RELATION_MAP: { [string]: ArtistRelationType? } = {
 	["voice actor"] = ArtistRelationType.VoiceActor,
 	["member of band"] = ArtistRelationType.MemberOf,
 }
+local IMPORTED_RELATION_TYPES: { string } = { "voice actor", "member of band" }
 
 type PendingArtistRelation = {
-	from_artist_db_id: number,
-	to_artist_db_id: number,
-	relation_type: ArtistRelationType,
+	artist_db_id: number,
 	attributes: { [string]: string },
 }
 
@@ -215,31 +220,21 @@ local function artist_relation_attributes_string(attributes: { [string]: string 
 	return table.concat(parts, ", ")
 end
 
-local function import_artist_relations_from_response(current_artist_db_id: number, response: JsonObject): boolean
-	local current_provider = provider
-	if current_provider == nil then
-		return false
-	end
-
-	local relations = normalize_relations(json_array_field(response, "relations"))
-	local pending_relations: { [string]: PendingArtistRelation } = {}
-	for _, relation in relations do
-		local target_type = relation["target-type"]
-		if target_type ~= "artist" then
+-- The relations into the artist a response describes, one whole set per
+-- imported type. A forward relation belongs to the related artist's own set,
+-- which this response does not describe in full, so only backward ones count.
+local function artist_relation_sets(response: JsonObject): { RelationSet }
+	local pending_by_type: { [string]: { [number]: PendingArtistRelation } } = {}
+	for _, relation in normalize_relations(json_array_field(response, "relations")) do
+		if relation["target-type"] ~= "artist" or relation.direction ~= "backward" then
 			continue
 		end
-
 		local relation_type_str = relation["type"]
 		if type(relation_type_str) ~= "string" then
 			continue
 		end
-		local relation_type = MB_ARTIST_RELATION_MAP[string.lower(relation_type_str)]
-		if relation_type == nil then
-			continue
-		end
-
-		local direction = relation.direction
-		if direction ~= "forward" and direction ~= "backward" then
+		local mb_type = string.lower(relation_type_str)
+		if MB_ARTIST_RELATION_MAP[mb_type] == nil then
 			continue
 		end
 
@@ -258,49 +253,47 @@ local function import_artist_relations_from_response(current_artist_db_id: numbe
 			continue
 		end
 
-		local from_artist_db_id = if direction == "forward" then current_artist_db_id else related_artist_db_id
-		local to_artist_db_id = if direction == "forward" then related_artist_db_id else current_artist_db_id
-		local relation_key = `{from_artist_db_id}:{to_artist_db_id}:{string.lower(relation_type_str)}`
-		local pending = pending_relations[relation_key]
+		local pending_by_artist = pending_by_type[mb_type]
+		if pending_by_artist == nil then
+			pending_by_artist = {}
+			pending_by_type[mb_type] = pending_by_artist
+		end
+		local pending = pending_by_artist[related_artist_db_id]
 		if pending == nil then
-			pending = {
-				from_artist_db_id = from_artist_db_id,
-				to_artist_db_id = to_artist_db_id,
-				relation_type = relation_type,
-				attributes = {},
-			}
-			pending_relations[relation_key] = pending
+			pending = { artist_db_id = related_artist_db_id, attributes = {} }
+			pending_by_artist[related_artist_db_id] = pending
 		end
 		collect_artist_relation_attributes(pending.attributes, relation.attributes)
 	end
 
-	local relation_keys: { string } = {}
-	for relation_key in pending_relations do
-		table.insert(relation_keys, relation_key)
-	end
-	table.sort(relation_keys)
-
-	local linked_count = 0
-	for _, relation_key in relation_keys do
-		local pending = pending_relations[relation_key]
-		local attributes_str = artist_relation_attributes_string(pending.attributes)
-		local link_ok = pcall(
-			current_provider.link_artist_relation,
-			current_provider,
-			pending.from_artist_db_id,
-			pending.to_artist_db_id,
-			pending.relation_type,
-			attributes_str
-		)
-		if link_ok then
-			linked_count += 1
+	local relation_sets: { RelationSet } = {}
+	for _, mb_type in IMPORTED_RELATION_TYPES do
+		local relation_type = MB_ARTIST_RELATION_MAP[mb_type]
+		if relation_type == nil then
+			continue
 		end
+		local relations: { LayerRelationInput } = {}
+		local pending_by_artist: { [number]: PendingArtistRelation } = pending_by_type[mb_type] or {}
+		for _, pending in pending_by_artist do
+			local relation: LayerRelationInput = {
+				artist_id = pending.artist_db_id,
+				attributes = artist_relation_attributes_string(pending.attributes),
+			}
+			table.insert(relations, relation)
+		end
+		table.sort(relations, function(a: LayerRelationInput, b: LayerRelationInput): boolean
+			return a.artist_id < b.artist_id
+		end)
+		table.insert(relation_sets, { relation_type = relation_type, relations = relations })
 	end
-
-	return linked_count > 0
+	return relation_sets
 end
 
-local function fetch_and_link_artist_relations(
+local function import_artist_relations_from_response(artist_db_id: number, response: JsonObject): boolean
+	return set_artist_metadata(artist_db_id, normalize_release_artist(response), artist_relation_sets(response))
+end
+
+local function fetch_and_set_artist_relations(
 	from_artist_db_id: number,
 	mb_artist_id: string,
 	mb_artist_type: string?
@@ -323,7 +316,6 @@ local function refresh_artist_by_id(artist_db_id: number, mb_artist_id: string):
 		return false
 	end
 
-	set_artist_metadata(artist_db_id, normalize_release_artist(response))
 	return import_artist_relations_from_response(artist_db_id, response)
 end
 
@@ -655,7 +647,7 @@ local function process_release(
 			return
 		end
 		fetched_relations_for[mb_artist.id] = true
-		fetch_and_link_artist_relations(db_id, mb_artist.id, mb_artist["type"])
+		fetch_and_set_artist_relations(db_id, mb_artist.id, mb_artist["type"])
 	end
 
 	local function tag_local_artist(db_id: number?, mb_artist: ReleaseArtist?): boolean

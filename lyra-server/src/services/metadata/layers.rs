@@ -20,12 +20,15 @@ use agdb::{
 
 use crate::db::{
     self,
+    ArtistRelationType,
     IdSource,
     MetadataField,
     MetadataLayer,
     ProviderCustomFields,
     metadata::layers::{
         LayerFields,
+        LayerRelations,
+        edges::LayerRelationInput,
         normalize_value,
     },
 };
@@ -38,6 +41,7 @@ pub(crate) const LOCAL_SOURCE_ID: &str = "local";
 #[derive(Default)]
 pub(crate) struct LocalLayer {
     fields: LayerFields,
+    relations: LayerRelations,
 }
 
 impl LocalLayer {
@@ -53,12 +57,21 @@ impl LocalLayer {
         Ok(())
     }
 
+    pub(crate) fn supply_relations(
+        &mut self,
+        relation_type: ArtistRelationType,
+        inputs: Vec<LayerRelationInput>,
+    ) {
+        self.relations.insert(relation_type, inputs);
+    }
+
     pub(crate) fn save(
         self,
         db: &mut DbAnyTransactionMut<'_>,
         node_id: DbId,
     ) -> anyhow::Result<()> {
-        let layer = MetadataLayer::new(LOCAL_SOURCE_ID, self.fields, now_secs());
+        let layer = MetadataLayer::new(LOCAL_SOURCE_ID, self.fields, now_secs())
+            .with_relations(self.relations);
         db::metadata::layers::upsert_inside_tx(db, node_id, &layer)?;
         super::merging::apply_merged_metadata_to_entity_inside_tx(db, node_id)
     }
@@ -123,14 +136,21 @@ fn artist_type_conflicts_with_layer(
     Ok(true)
 }
 
+/// Custom field versions a provider sets or removes on one entity.
+#[derive(Clone, Default)]
+pub(crate) struct CustomFieldChanges {
+    pub(crate) set: HashMap<u64, HashMap<String, serde_json::Value>>,
+    pub(crate) remove: HashSet<u64>,
+}
+
 fn save_provider_custom_fields(
     db: &mut DbAny,
     node_id: DbId,
     provider_id: &str,
-    custom_fields: &HashMap<u64, HashMap<String, serde_json::Value>>,
-    remove_versions: &HashSet<u64>,
+    changes: &CustomFieldChanges,
 ) -> anyhow::Result<()> {
-    let mut sorted_remove_versions: Vec<u64> = remove_versions.iter().copied().collect();
+    let custom_fields = &changes.set;
+    let mut sorted_remove_versions: Vec<u64> = changes.remove.iter().copied().collect();
     sorted_remove_versions.sort_unstable();
     for version in sorted_remove_versions {
         db::metadata::custom_fields::remove(db, node_id, provider_id, version)?;
@@ -166,34 +186,39 @@ pub(crate) fn save_provider_layer(
     node_id: DbId,
     provider_id: &str,
     fields: &LayerFields,
+    relations: &LayerRelations,
     external_ids: &HashMap<String, String>,
-    custom_fields: &HashMap<u64, HashMap<String, serde_json::Value>>,
-    remove_custom_field_versions: &HashSet<u64>,
+    custom_fields: &CustomFieldChanges,
 ) -> anyhow::Result<()> {
     let fields = validated_fields(db, node_id, fields)?;
     let artist = db::artists::get_by_id(db, node_id)?;
     let artist_type_conflict =
         artist_type_conflicts_with_layer(artist.as_ref(), &fields, node_id, provider_id)?;
 
-    // Save layers while locked; only application is suppressed.
-    if !artist_type_conflict
-        && !fields.is_empty()
+    // A conflicting artist type keeps the source's stored fields, but its
+    // relations still save. Layers save while locked; only application is
+    // suppressed.
+    let fields = if artist_type_conflict {
+        db::metadata::layers::get_for_entity(db, node_id)?
+            .into_iter()
+            .find(|stored| stored.source_id == provider_id)
+            .map(|stored| stored.fields)
+            .unwrap_or_default()
+    } else {
+        fields
+    };
+    let has_content = !relations.is_empty() || (!artist_type_conflict && !fields.is_empty());
+    if has_content
         && db::metadata::layers::upsert(
             db,
             node_id,
-            &MetadataLayer::new(provider_id, fields, now_secs()),
+            &MetadataLayer::new(provider_id, fields, now_secs()).with_relations(relations.clone()),
         )?
     {
         super::merging::apply_merged_metadata_to_entity(db, node_id)?;
     }
 
-    save_provider_custom_fields(
-        db,
-        node_id,
-        provider_id,
-        custom_fields,
-        remove_custom_field_versions,
-    )?;
+    save_provider_custom_fields(db, node_id, provider_id, custom_fields)?;
 
     if artist_type_conflict {
         return Ok(());
@@ -286,9 +311,9 @@ pub(crate) fn mark_unmatched(
         node_id,
         provider_id,
         &LayerFields::new(),
+        &Default::default(),
         &external_ids,
-        &HashMap::new(),
-        &HashSet::new(),
+        &Default::default(),
     )?;
     if !is_artist {
         clear_provider_layer(db, node_id, provider_id)?;
@@ -322,10 +347,7 @@ pub(crate) fn clear_provider_layer(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{
-        HashMap,
-        HashSet,
-    };
+    use std::collections::HashMap;
 
     use serde_json::json;
 
@@ -360,9 +382,12 @@ mod tests {
                 (MetadataField::ReleaseTitle, json!("Wrong Title")),
                 (MetadataField::ReleaseDate, json!("1999")),
             ]),
+            &Default::default(),
             &HashMap::new(),
-            &HashMap::from([(1, HashMap::from([("barcode".to_string(), json!("123"))]))]),
-            &HashSet::new(),
+            &CustomFieldChanges {
+                set: HashMap::from([(1, HashMap::from([("barcode".to_string(), json!("123"))]))]),
+                ..Default::default()
+            },
         )?;
         let matched = db::releases::get_by_id(&db, release_id)?.expect("release exists");
         assert_eq!(matched.release_title, "Wrong Title");
@@ -382,6 +407,60 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn a_conflicting_artist_type_still_saves_relations() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let character = insert_artist(&mut db, "Character")?;
+        let actor = insert_artist(&mut db, "Actor")?;
+        let mut local = LocalLayer::default();
+        local.supply(MetadataField::ArtistName, Some("Character"))?;
+        local.supply(MetadataField::ArtistType, Some("character"))?;
+        db.transaction_mut(|t| local.save(t, character))?;
+        db::providers::upsert(
+            &mut db,
+            &db::ProviderConfig {
+                db_id: None,
+                provider_id: "provider".to_string(),
+                priority: 100,
+                enabled: true,
+            },
+        )?;
+
+        save_provider_layer(
+            &mut db,
+            character,
+            "provider",
+            &LayerFields::from([
+                (MetadataField::ArtistName, json!("Renamed")),
+                (MetadataField::ArtistType, json!("person")),
+            ]),
+            &LayerRelations::from([(
+                db::ArtistRelationType::VoiceActor,
+                vec![LayerRelationInput {
+                    artist_id: actor,
+                    attributes: None,
+                }],
+            )]),
+            &HashMap::new(),
+            &Default::default(),
+        )?;
+
+        let artist = db::artists::get_by_id(&db, character)?.expect("artist exists");
+        assert_eq!(artist.artist_type, Some(db::ArtistType::Character));
+        assert_eq!(
+            artist.artist_name, "Character",
+            "conflicting fields are skipped"
+        );
+        let relations = db::artists::relations::get_relations_to(
+            &db,
+            character,
+            Some(db::ArtistRelationType::VoiceActor),
+        )?;
+        assert_eq!(relations.len(), 1);
+        assert_eq!(relations[0].1, actor);
+        Ok(())
+    }
+
     fn musicbrainz_id(db: &DbAny, node_id: DbId, id_type: &str) -> anyhow::Result<Option<String>> {
         Ok(db::external_ids::get(db, node_id, "musicbrainz", id_type)?.map(|id| id.id_value))
     }
@@ -396,9 +475,9 @@ mod tests {
             matched,
             "musicbrainz",
             &LayerFields::from([(MetadataField::ArtistName, json!("Matched"))]),
+            &Default::default(),
             &HashMap::from([("artist_id".to_string(), "artist-1".to_string())]),
-            &HashMap::new(),
-            &HashSet::new(),
+            &Default::default(),
         )?;
 
         for artist in [matched, unknown] {
@@ -436,9 +515,9 @@ mod tests {
             release_id,
             "musicbrainz",
             &LayerFields::new(),
+            &Default::default(),
             &HashMap::from([("release_id".to_string(), "release-1".to_string())]),
-            &HashMap::new(),
-            &HashSet::new(),
+            &Default::default(),
         )?;
 
         mark_unmatched(

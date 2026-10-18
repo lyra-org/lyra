@@ -23,7 +23,10 @@ use nanoid::nanoid;
 
 use super::super::{
     TrackMetadata,
-    layers::LocalLayer,
+    layers::{
+        LOCAL_SOURCE_ID,
+        LocalLayer,
+    },
 };
 use super::artists::resolve_artist_ids;
 use crate::db::{
@@ -36,6 +39,7 @@ use crate::db::{
     Track,
     graph::ensure_owned_edge,
     indexes::ensure_index,
+    metadata::layers::edges::LayerRelationInput,
 };
 
 pub(crate) struct TrackIngest {
@@ -125,25 +129,14 @@ fn parsed_relation_type_to_db(
     }
 }
 
-fn manual_relations_owned(
-    db: &impl DbAccess,
-    owned_by_artist: &mut HashMap<DbId, bool>,
-    artist_id: DbId,
-) -> anyhow::Result<bool> {
-    if let Some(owned) = owned_by_artist.get(&artist_id) {
-        return Ok(*owned);
-    }
-    let owned =
-        db::metadata::manual_overrides::owns_field(db, artist_id, MetadataField::Relations)?;
-    owned_by_artist.insert(artist_id, owned);
-    Ok(owned)
-}
+/// Relations a scan found, keyed by the related-to artist whose layer owns them.
+type ScannedRelations = HashMap<DbId, BTreeMap<ArtistRelationType, Vec<LayerRelationInput>>>;
 
-fn sync_scanned_artist_relations(
+fn collect_scanned_artist_relations(
     db: &mut DbAnyTransactionMut<'_>,
     relations: &[lyra_metadata::ArtistRelationMetadata],
     cache: &mut BTreeMap<String, DbId>,
-    relations_owned_by_artist: &mut HashMap<DbId, bool>,
+    scanned_relations: &mut ScannedRelations,
     scanned_artist_types: &mut HashMap<DbId, ArtistType>,
 ) -> anyhow::Result<()> {
     for relation in relations {
@@ -167,19 +160,39 @@ fn sync_scanned_artist_relations(
             }
         }
 
-        if manual_relations_owned(db, relations_owned_by_artist, source_artist_id)? {
-            continue;
+        let inputs = scanned_relations
+            .entry(target_artist_id)
+            .or_default()
+            .entry(parsed_relation_type_to_db(relation.relation_type))
+            .or_default();
+        if source_artist_id != target_artist_id
+            && !inputs
+                .iter()
+                .any(|input| input.artist_id == source_artist_id)
+        {
+            inputs.push(LayerRelationInput {
+                artist_id: source_artist_id,
+                attributes: None,
+            });
         }
-        db::artists::relations::link(
-            db,
-            source_artist_id,
-            target_artist_id,
-            parsed_relation_type_to_db(relation.relation_type),
-            None,
-        )?;
     }
 
     Ok(())
+}
+
+/// The relations an artist's local layer supplies after this scan: what earlier
+/// scans recorded for each scanned type, together with what this scan found.
+fn combine_scanned_relations(
+    db: &impl DbAccess,
+    artist_id: DbId,
+    scanned: BTreeMap<ArtistRelationType, Vec<LayerRelationInput>>,
+) -> anyhow::Result<BTreeMap<ArtistRelationType, Vec<LayerRelationInput>>> {
+    let stored = db::metadata::layers::get_for_entity(db, artist_id)?
+        .into_iter()
+        .find(|layer| layer.source_id == LOCAL_SOURCE_ID)
+        .map(|layer| layer.relations)
+        .unwrap_or_default();
+    Ok(db::metadata::layers::union_relations(&stored, scanned))
 }
 
 /// Selects a catalog number only from a track whose normalized label matches
@@ -244,7 +257,7 @@ fn persist_release_inner(
     ensure_index(db, "scan_name")?;
 
     let mut artist_cache: BTreeMap<String, DbId> = BTreeMap::new();
-    let mut relations_owned_by_artist = HashMap::new();
+    let mut scanned_relations = ScannedRelations::new();
     let mut scanned_artist_types: HashMap<DbId, ArtistType> = HashMap::new();
     let release_date = release_tracks
         .iter()
@@ -574,11 +587,11 @@ fn persist_release_inner(
         if !db::metadata::manual_overrides::owns_field(db, track_db_id, MetadataField::Credits)? {
             db::credits::replace_primary_for_owner(db, track_db_id, &track_artist_ids)?;
         }
-        sync_scanned_artist_relations(
+        collect_scanned_artist_relations(
             db,
             &artist_relations,
             &mut artist_cache,
-            &mut relations_owned_by_artist,
+            &mut scanned_relations,
             &mut scanned_artist_types,
         )?;
 
@@ -601,6 +614,11 @@ fn persist_release_inner(
                 .get(&artist_db_id)
                 .map(ArtistType::to_string),
         )?;
+        if let Some(scanned) = scanned_relations.remove(&artist_db_id) {
+            for (relation_type, inputs) in combine_scanned_relations(db, artist_db_id, scanned)? {
+                artist_layer.supply_relations(relation_type, inputs);
+            }
+        }
         artist_layer.save(db, artist_db_id)?;
     }
 

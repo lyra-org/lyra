@@ -419,7 +419,7 @@ fn select_merge_winner(
 }
 
 fn merge_artist_into(
-    db: &mut impl crate::db::DbAccess,
+    db: &mut DbAnyTransactionMut<'_>,
     winner: DbId,
     loser: DbId,
     winner_relations_are_manual: bool,
@@ -429,8 +429,15 @@ fn merge_artist_into(
     let outgoing_relations = db::artists::relations::get_relations_from(db, loser, None)?;
     let relation_edge_ids = db::artists::relations::incoming_edge_ids(db, loser)?;
 
+    // Layers own the other incoming relations; re-applying the winner below
+    // rebuilds them. Manual relations live only on the effective graph.
     for (relation, source_id) in incoming_relations {
         if source_id != winner
+            && db::metadata::manual_overrides::owns_field(
+                db,
+                source_id,
+                db::MetadataField::Relations,
+            )?
             && !db::artists::relations::exists(db, source_id, winner, relation.relation_type)?
         {
             db::artists::relations::link(
@@ -495,8 +502,7 @@ fn merge_artist_into(
     // `merge_artist_into` runs inside `deduplicate_artists_by_external_id`'s outer
     // `transaction_mut`; use the in-txn variant — agdb does not support reentrant transactions.
     crate::db::metadata::cascade_remove_entities_in_txn(db, &[loser])?;
-
-    Ok(())
+    crate::services::metadata::merging::apply_merged_metadata_to_entity_inside_tx(db, winner)
 }
 
 fn migrate_metadata(
@@ -510,10 +516,30 @@ fn migrate_metadata(
         winner_layers.iter().map(|l| l.source_id.as_str()).collect();
 
     for layer in &loser_layers {
-        if winner_source_ids.contains(layer.source_id.as_str()) {
+        if !winner_source_ids.contains(layer.source_id.as_str()) {
+            db::metadata::layers::copy_inside_tx(db, loser, winner, &layer.source_id)?;
             continue;
         }
-        db::metadata::layers::copy_inside_tx(db, loser, winner, &layer.source_id)?;
+        // Both duplicates heard from this source; neither one's relations
+        // are wrong, so the winner's layer keeps both.
+        let Some(winner_layer) = winner_layers
+            .iter()
+            .find(|winner_layer| winner_layer.source_id == layer.source_id)
+        else {
+            continue;
+        };
+        let mut loser_relations = layer.relations.clone();
+        for inputs in loser_relations.values_mut() {
+            inputs.retain(|input| input.artist_id != winner);
+        }
+        if loser_relations.is_empty() {
+            continue;
+        }
+        let relations =
+            db::metadata::layers::union_relations(&winner_layer.relations, loser_relations);
+        let mut merged = winner_layer.clone().with_relations(relations);
+        merged.updated_at = merged.updated_at.max(layer.updated_at);
+        db::metadata::layers::upsert_inside_tx(db, winner, &merged)?;
     }
 
     let loser_ext_ids = db::external_ids::get_for_entity_inside_tx(db, loser)?;
@@ -686,6 +712,84 @@ mod tests {
     }
 
     #[test]
+    fn merging_duplicate_characters_keeps_both_voice_actors() -> anyhow::Result<()> {
+        use crate::db::metadata::layers::{
+            self,
+            edges::LayerRelationInput,
+        };
+        use crate::services::metadata::layers::LOCAL_SOURCE_ID;
+
+        let mut db = test_db::new_test_db()?;
+        let first = test_db::insert_artist(&mut db, "Character")?;
+        let second = test_db::insert_artist(&mut db, "Character")?;
+        let first_actor = test_db::insert_artist(&mut db, "First Actor")?;
+        let second_actor = test_db::insert_artist(&mut db, "Second Actor")?;
+        for (character, actor, updated_at) in [(first, first_actor, 1), (second, second_actor, 2)] {
+            db::external_ids::upsert(
+                &mut db,
+                character,
+                "musicbrainz",
+                "artist_id",
+                "character-mbid",
+                IdSource::Resolved,
+            )?;
+            layers::upsert(
+                &mut db,
+                character,
+                &db::MetadataLayer::new(
+                    LOCAL_SOURCE_ID,
+                    layers::fields_from_json(serde_json::json!({"artist_name": "Character"})),
+                    updated_at,
+                )
+                .with_relations(std::collections::BTreeMap::from([(
+                    db::ArtistRelationType::VoiceActor,
+                    vec![LayerRelationInput {
+                        artist_id: actor,
+                        attributes: None,
+                    }],
+                )])),
+            )?;
+            crate::services::metadata::merging::apply_merged_metadata_to_entity(
+                &mut db, character,
+            )?;
+        }
+
+        assert_eq!(deduplicate_artists_by_external_id(&mut db)?, 1);
+        let winner = if db::artists::get_by_id(&db, first)?.is_some() {
+            first
+        } else {
+            second
+        };
+        let voice_actors = |db: &DbAny| -> anyhow::Result<Vec<DbId>> {
+            let mut actors: Vec<DbId> = db::artists::relations::get_relations_to(
+                db,
+                winner,
+                Some(db::ArtistRelationType::VoiceActor),
+            )?
+            .into_iter()
+            .map(|(_, actor)| actor)
+            .collect();
+            actors.sort();
+            Ok(actors)
+        };
+        let mut expected = vec![first_actor, second_actor];
+        expected.sort();
+        assert_eq!(voice_actors(&db)?, expected);
+        let local = layers::get_for_entity(&db, winner)?
+            .into_iter()
+            .find(|layer| layer.source_id == LOCAL_SOURCE_ID)
+            .expect("winner keeps its layer");
+        assert_eq!(
+            local.updated_at, 2,
+            "the combined layer is as recent as its newer half"
+        );
+
+        crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, winner)?;
+        assert_eq!(voice_actors(&db)?, expected, "a later apply keeps both");
+        Ok(())
+    }
+
+    #[test]
     fn dedup_drops_loser_external_ids_from_other_providers() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
 
@@ -798,6 +902,15 @@ mod tests {
             target,
             db::ArtistRelationType::VoiceActor,
             Some("outgoing".to_string()),
+        )?;
+        // Incoming relations survive a merge only as manual edits; layers own the rest.
+        db::metadata::manual_overrides::replace(
+            &mut db,
+            source,
+            &std::collections::BTreeMap::from([(
+                db::MetadataField::Relations,
+                serde_json::Value::Bool(true),
+            )]),
         )?;
 
         db.transaction_mut(|transaction| {

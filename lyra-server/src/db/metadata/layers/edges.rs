@@ -72,7 +72,7 @@ pub(crate) struct LayerCreditInput {
     pub(crate) join_phrase: Option<String>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct LayerRelationInput {
     pub(crate) artist_id: DbId,
     pub(crate) attributes: Option<String>,
@@ -257,39 +257,55 @@ pub(crate) fn relations(
     Ok(links)
 }
 
-/// Replaces the layer's relations of `relation_type`; other relation types are kept.
+/// Replaces the layer's relations of `relation_type`; other relation types are
+/// kept. A repeated artist keeps its first entry. Returns false when the layer
+/// already held exactly these.
 pub(crate) fn replace_relations(
     db: &mut DbAnyTransactionMut<'_>,
     layer_id: DbId,
     relation_type: ArtistRelationType,
     desired: &[LayerRelationInput],
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     ensure_layer(db, layer_id, &[ARTIST_LAYER])?;
     let artist_ids: Vec<DbId> = desired.iter().map(|input| input.artist_id).collect();
     ensure_targets(db, &artist_ids, "Artist")?;
-    remove(
-        db,
-        of_layer::<LayerRelation>(db, layer_id)?
-            .into_iter()
-            .filter(|link| link.edge.relation_type == relation_type)
-            .map(|link| link.edge_id)
-            .collect(),
-    )?;
-    let mut seen = HashSet::new();
+    let owner = super::owner_id(db, layer_id)?;
+    anyhow::ensure!(
+        owner.is_none_or(|owner| !artist_ids.contains(&owner)),
+        "an artist cannot relate to itself"
+    );
+    let mut desired_by_artist = std::collections::BTreeMap::new();
     for input in desired {
-        if seen.insert(input.artist_id) {
-            insert(
-                db,
-                layer_id,
-                input.artist_id,
-                &LayerRelation {
-                    relation_type,
-                    attributes: input.attributes.clone(),
-                },
-            )?;
-        }
+        desired_by_artist
+            .entry(input.artist_id)
+            .or_insert_with(|| input.attributes.clone());
     }
-    Ok(())
+    let previous: Vec<LayerLink<LayerRelation>> = relations(db, layer_id)?
+        .into_iter()
+        .filter(|link| link.edge.relation_type == relation_type)
+        .collect();
+    if previous
+        .iter()
+        .map(|link| (link.target_id, link.edge.attributes.clone()))
+        .eq(desired_by_artist
+            .iter()
+            .map(|(id, attributes)| (*id, attributes.clone())))
+    {
+        return Ok(false);
+    }
+    remove(db, previous.into_iter().map(|link| link.edge_id).collect())?;
+    for (artist_id, attributes) in desired_by_artist {
+        insert(
+            db,
+            layer_id,
+            artist_id,
+            &LayerRelation {
+                relation_type,
+                attributes,
+            },
+        )?;
+    }
+    Ok(true)
 }
 
 /// The layer's genres, in order.
@@ -397,6 +413,15 @@ pub(crate) fn replace_labels(
     }
     super::super::super::labels::collect_unreferenced(db, &previous_label_ids)?;
     Ok(true)
+}
+
+/// The relation edges that name `artist_id` as the relating artist, from every
+/// artist layer that lists it.
+pub(crate) fn relations_naming(
+    db: &impl DbAccess,
+    artist_id: DbId,
+) -> anyhow::Result<Vec<LayerLink<LayerRelation>>> {
+    of_target(db, artist_id)
 }
 
 /// Whether any layer references `target_id` through a relationship edge.

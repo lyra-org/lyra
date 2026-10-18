@@ -30,7 +30,18 @@ use super::super::DbAccess;
 #[harmony_macros::userdata(name = "ArtistRelationType")]
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, DbTypeMarker,
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    DbTypeMarker,
 )]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ArtistRelationType {
@@ -40,6 +51,8 @@ pub(crate) enum ArtistRelationType {
 }
 
 impl ArtistRelationType {
+    pub(crate) const ALL: [Self; 2] = [Self::VoiceActor, Self::MemberOf];
+
     fn as_db_str(self) -> &'static str {
         match self {
             Self::VoiceActor => "voice_actor",
@@ -167,6 +180,33 @@ pub(crate) fn link(
     )?;
     let edge_id = result.elements.first().map(|e| e.id).unwrap_or(DbId(0));
     Ok(edge_id)
+}
+
+/// Removes the `relation_type` relation from one artist to another, if any.
+pub(crate) fn unlink(
+    db: &mut impl DbAccess,
+    from_artist_id: DbId,
+    to_artist_id: DbId,
+    relation_type: ArtistRelationType,
+) -> anyhow::Result<()> {
+    let edge_ids = super::super::graph::direct_edge_ids(db, from_artist_id, to_artist_id)?;
+    if edge_ids.is_empty() {
+        return Ok(());
+    }
+    let result = db.exec(QueryBuilder::select().ids(&edge_ids).query())?;
+    let matching: Vec<DbId> = result
+        .elements
+        .iter()
+        .filter(|element| {
+            ArtistRelation::from_db_element(element)
+                .is_ok_and(|relation| relation.relation_type == relation_type)
+        })
+        .map(|element| element.id)
+        .collect();
+    if !matching.is_empty() {
+        db.exec_mut(QueryBuilder::remove().ids(matching).query())?;
+    }
+    Ok(())
 }
 
 pub(crate) fn exists(
