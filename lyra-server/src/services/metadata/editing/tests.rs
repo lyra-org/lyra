@@ -828,7 +828,7 @@ fn inherit_labels_restores_resolvable_provider_labels() -> anyhow::Result<()> {
 }
 
 #[test]
-fn inherit_labels_does_not_fall_back_by_name_for_an_external_identity() -> anyhow::Result<()> {
+fn inherit_labels_takes_the_layers_own_label_not_one_with_the_same_name() -> anyhow::Result<()> {
     let mut db = new_test_db()?;
     let principal = principal("user-1");
     let release_id = insert_release(&mut db, "Release")?;
@@ -836,7 +836,11 @@ fn inherit_labels_does_not_fall_back_by_name_for_an_external_identity() -> anyho
         &mut db,
         &db::labels::ResolveLabel {
             name: "Shared Name",
-            external_id: None,
+            external_id: Some(db::labels::ResolveExternalId {
+                provider_id: "other",
+                id_type: "label",
+                id_value: "local-identity",
+            }),
         },
     )?;
     let local_label = db::labels::get_by_id(&db, local_label_id)?.expect("label exists");
@@ -889,28 +893,27 @@ fn inherit_labels_does_not_fall_back_by_name_for_an_external_identity() -> anyho
     )?;
     apply(&mut db, &principal, release_id, &manual)?;
 
-    let error = preview_edit(
+    let provider_label_id =
+        db::labels::find_by_external_id(&db, "provider", "label", "different-identity")?
+            .expect("the layer's label was resolved when the layer saved");
+    assert_ne!(provider_label_id, local_label_id);
+    let provider_label = db::labels::get_by_id(&db, provider_label_id)?.expect("label exists");
+
+    let inherited = preview_edit(
         &db,
         &principal,
         release_id,
         vec![inherit(MetadataField::Labels)],
-    )
-    .expect_err("an external identity must not resolve by name");
-    let MetadataEditingError::BadRequest(message) = error else {
-        panic!("expected a bad request");
-    };
-    assert!(message.contains("is not present locally"));
-    assert_eq!(db::labels::get_for_release(&db, release_id)?.len(), 1);
-    assert!(db::metadata::manual_overrides::owns_field(
-        &db,
-        release_id,
-        MetadataField::Labels,
-    )?);
+    )?;
+    assert_eq!(
+        inherited.expected[0].after.value[0]["id"],
+        json!(provider_label.id)
+    );
     Ok(())
 }
 
 #[test]
-fn unchanged_provider_refresh_rematerializes_a_manually_masked_label() -> anyhow::Result<()> {
+fn a_manually_masked_provider_label_survives_while_its_layer_names_it() -> anyhow::Result<()> {
     let mut db = new_test_db()?;
     let principal = principal("user-1");
     let release_id = insert_release(&mut db, "Release")?;
@@ -976,7 +979,7 @@ fn unchanged_provider_refresh_rematerializes_a_manually_masked_label() -> anyhow
         )],
     )?;
     apply(&mut db, &principal, release_id, &manual)?;
-    assert!(db::labels::get_by_id(&db, provider_label_id)?.is_none());
+    assert!(db::labels::get_by_id(&db, provider_label_id)?.is_some());
 
     crate::services::metadata::layers::save_provider_layer(
         &mut db,
@@ -987,10 +990,10 @@ fn unchanged_provider_refresh_rematerializes_a_manually_masked_label() -> anyhow
         &HashMap::new(),
         &HashSet::new(),
     )?;
-    let rematerialized_id =
-        db::labels::find_by_external_id(&db, "provider", "label", "provider-label")?
-            .expect("unchanged refresh rematerializes the provider label");
-    assert_ne!(rematerialized_id, provider_label_id);
+    assert_eq!(
+        db::labels::find_by_external_id(&db, "provider", "label", "provider-label")?,
+        Some(provider_label_id)
+    );
     assert_eq!(db::labels::get_for_release(&db, release_id)?.len(), 1);
     assert_eq!(
         db::labels::get_for_release(&db, release_id)?[0].label.id,
@@ -1008,7 +1011,7 @@ fn unchanged_provider_refresh_rematerializes_a_manually_masked_label() -> anyhow
     assert_eq!(labels.len(), 1);
     assert_eq!(
         labels[0].label.db_id.clone().map(DbId::from),
-        Some(rematerialized_id),
+        Some(provider_label_id),
     );
     Ok(())
 }
@@ -1156,7 +1159,7 @@ fn inherited_label_disappearance_after_preview_is_rejected() -> anyhow::Result<(
 
     let error = apply(&mut db, &principal, release_id, &inherited)
         .expect_err("an inherited label disappearing after preview must be rejected");
-    assert!(matches!(error, MetadataEditingError::BadRequest(_)));
+    assert!(matches!(error, MetadataEditingError::Conflict(_)));
     assert!(db::metadata::manual_overrides::owns_field(
         &db,
         release_id,

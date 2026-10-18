@@ -188,58 +188,20 @@ fn normalize_label_edits(
     finish_normalized_labels(labels)
 }
 
-pub(super) fn normalize_provider_labels(
+/// The labels a provider layer links, as the editing value of an inherited field.
+pub(super) fn layer_labels(
     db: &impl DbAccess,
-    value: &Value,
+    layer_id: DbId,
 ) -> Result<Value, MetadataEditingError> {
-    let inputs = db::metadata::layers::label_inputs(value).map_err(|error| {
-        MetadataEditingError::BadRequest(format!(
-            "resolved provider labels have an invalid schema: {error:#}"
-        ))
-    })?;
-    let mut labels = Vec::with_capacity(inputs.len());
-    let mut external_keys = HashSet::new();
-    let mut name_keys = HashSet::new();
-    for input in inputs {
-        let label_id = if let Some(external_id) = &input.external_id {
-            let key = (
-                external_id.provider_id.clone(),
-                external_id.id_type.clone(),
-                external_id.id_value.clone(),
-            );
-            if !external_keys.insert(key) {
-                return Err(MetadataEditingError::BadRequest(
-                    "resolved provider labels contain a duplicate identity".to_string(),
-                ));
-            }
-            db::labels::find_by_external_id(
-                db,
-                &external_id.provider_id,
-                &external_id.id_type,
-                &external_id.id_value,
-            )?
-        } else {
-            let key = db::labels::normalize_label_name(&input.name);
-            if !name_keys.insert(key) {
-                return Err(MetadataEditingError::BadRequest(
-                    "resolved provider labels contain a duplicate identity".to_string(),
-                ));
-            }
-            db::labels::find_by_name(db, &input.name)?
-        };
-        let label_id = label_id.ok_or_else(|| {
-            MetadataEditingError::BadRequest(format!(
-                "resolved provider label '{}' is not present locally; resolve it before inheriting labels",
-                input.name,
-            ))
-        })?;
-        let stored = db::labels::get_by_id(db, label_id)?.ok_or_else(|| {
-            MetadataEditingError::Internal(anyhow::anyhow!("resolved provider label disappeared"))
+    let mut labels = Vec::new();
+    for link in db::metadata::layers::edges::labels(db, layer_id)? {
+        let stored = db::labels::get_by_id(db, link.target_id)?.ok_or_else(|| {
+            MetadataEditingError::Internal(anyhow::anyhow!("a layer's label disappeared"))
         })?;
         labels.push(MetadataLabelValue {
             id: stored.id,
             name: stored.name,
-            catalog_number: normalized_catalog_number(input.catalog_number),
+            catalog_number: normalized_catalog_number(link.edge.catalog_number),
         });
     }
     finish_normalized_labels(labels)

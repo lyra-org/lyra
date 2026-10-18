@@ -16,7 +16,7 @@ duration_ms = 213750
 
 [expect.release]
 ids = { release_group_id = "7d9acadb-9e02-4bce-9390-422d283d0cbb", release_id = "072f64a9-89ae-406b-a5ef-c93c83c2cf97" }
-fields = { release_title = "Natsuzora - ナツゾラ", genres = ["future bass", "j-pop", "pop"], release_date = "2017-07-09" }
+fields = { release_title = "Natsuzora - ナツゾラ", genres = ["future bass", "J-pop", "pop"], release_date = "2017-07-09" }
 
 [expect.artists."85b9d988-53ca-466d-b2d4-a57eb97bc514"]
 fields = { artist_name = "HoneyComeBear", sort_name = "HoneyComeBear" }

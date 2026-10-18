@@ -29,23 +29,12 @@ use super::{
         MetadataValueSource,
     },
     normalize::{
-        normalize_provider_labels,
+        layer_labels,
         normalized_set_value,
         validate_target,
     },
     state::EntityState,
 };
-
-fn provider_value(
-    db: &impl DbAccess,
-    state: &EntityState,
-    field: MetadataField,
-) -> Result<Option<Value>, MetadataEditingError> {
-    let layers = db::metadata::layers::get_for_entity(db, state.db_id)?;
-    let providers = db::providers::get(db)?;
-    let merged = crate::services::metadata::merging::merge_layers(layers, &providers);
-    Ok(merged.fields.get(&field).cloned())
-}
 
 fn cleared_value(state: &EntityState, field: MetadataField) -> Result<Value, MetadataEditingError> {
     if field.is_graph() {
@@ -63,13 +52,22 @@ fn inherited_value(
     principal: &Principal,
     state: &EntityState,
     field: MetadataField,
-    provider_value: Option<&Value>,
 ) -> Result<Value, MetadataEditingError> {
-    let Some(value) = provider_value.filter(|value| !value.is_null()) else {
+    let layers = db::metadata::layers::get_for_entity(db, state.db_id)?;
+    let providers = db::providers::get(db)?;
+    let merged = crate::services::metadata::merging::merge_layers(layers, &providers);
+    let Some(value) = merged.fields.get(&field).filter(|value| !value.is_null()) else {
         return cleared_value(state, field);
     };
     if field == MetadataField::Labels {
-        normalize_provider_labels(db, value)
+        let source_id = merged.provenance.get(&field).ok_or_else(|| {
+            MetadataEditingError::Internal(anyhow::anyhow!("resolved labels have no source"))
+        })?;
+        let layer_id =
+            db::metadata::layers::layer_id(db, state.db_id, source_id)?.ok_or_else(|| {
+                MetadataEditingError::Internal(anyhow::anyhow!("the labels' layer disappeared"))
+            })?;
+        layer_labels(db, layer_id)
     } else {
         normalized_set_value(db, principal, state, field, value)
     }
@@ -108,9 +106,7 @@ pub(super) fn build_diff(
                         change.field.as_str(),
                     )));
                 }
-                let provider_value = provider_value(db, state, change.field)?;
-                let target =
-                    inherited_value(db, principal, state, change.field, provider_value.as_ref())?;
+                let target = inherited_value(db, principal, state, change.field)?;
                 (target, MetadataValueSource::Resolved)
             }
         };

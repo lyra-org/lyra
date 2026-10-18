@@ -244,14 +244,33 @@ pub(crate) fn sync_release_genres(
     release_id: DbId,
     genre_names: &[String],
 ) -> anyhow::Result<()> {
+    let genre_ids = resolve_names(db, genre_names)?;
+    sync_release_genre_ids(db, release_id, &genre_ids)
+}
+
+/// Finds or creates the genre each name means, in order and without repeats.
+pub(crate) fn resolve_names(db: &mut impl DbAccess, names: &[String]) -> anyhow::Result<Vec<DbId>> {
+    let mut seen = HashSet::new();
+    let mut genre_ids = Vec::with_capacity(names.len());
+    for name in names {
+        let genre_id = resolve_by_name(db, name)?;
+        if seen.insert(genre_id) {
+            genre_ids.push(genre_id);
+        }
+    }
+    Ok(genre_ids)
+}
+
+pub(crate) fn sync_release_genre_ids(
+    db: &mut impl DbAccess,
+    release_id: DbId,
+    genre_ids: &[DbId],
+) -> anyhow::Result<()> {
     let existing = get_for_release(db, release_id)?;
 
-    let mut desired_genre_ids = HashSet::new();
-    for name in genre_names {
-        let genre_id = resolve_by_name(db, name)?;
-        if desired_genre_ids.insert(genre_id) {
-            link_to_release(db, genre_id, release_id)?;
-        }
+    let desired_genre_ids: HashSet<DbId> = genre_ids.iter().copied().collect();
+    for &genre_id in genre_ids {
+        link_to_release(db, genre_id, release_id)?;
     }
 
     for genre in existing {

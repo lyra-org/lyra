@@ -513,7 +513,7 @@ fn migrate_metadata(
         if winner_source_ids.contains(layer.source_id.as_str()) {
             continue;
         }
-        db::metadata::layers::copy_inside_tx(db, loser, winner, layer)?;
+        db::metadata::layers::copy_inside_tx(db, loser, winner, &layer.source_id)?;
     }
 
     let loser_ext_ids = db::external_ids::get_for_entity_inside_tx(db, loser)?;

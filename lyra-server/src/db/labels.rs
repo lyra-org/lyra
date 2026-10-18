@@ -438,14 +438,8 @@ pub(crate) fn sync_release_labels(
     })
 }
 
-pub(crate) fn materialize_labels(db: &mut DbAny, inputs: &[LabelInput]) -> anyhow::Result<()> {
-    db.transaction_mut(|transaction| {
-        resolve_label_inputs(transaction, inputs)?;
-        Ok(())
-    })
-}
-
-fn resolve_label_inputs(
+/// Finds or creates the label each input means, keeping its catalog number.
+pub(crate) fn resolve_label_inputs(
     db: &mut impl DbAccess,
     inputs: &[LabelInput],
 ) -> anyhow::Result<Vec<LabelLinkInput>> {

@@ -25,9 +25,10 @@ use crate::db::{
     ProviderConfig,
     Release,
     Track,
+    labels::LabelLinkInput,
     metadata::layers::{
         decode,
-        label_inputs,
+        edges as layer_edges,
         normalize_value,
     },
 };
@@ -49,21 +50,17 @@ impl MergedMetadata {
         }
     }
 
-    /// The resolved graph value; manually owned graph fields keep their stored edges.
-    fn graph_value<T>(
+    /// The layer whose whole list wins a graph field, or `None` when no layer
+    /// supplies it. A layer that clears the field links nothing.
+    fn winning_layer(
         &self,
+        db: &impl DbAccess,
+        node_id: DbId,
         field: MetadataField,
-        decode: impl FnOnce(&serde_json::Value) -> anyhow::Result<T>,
-    ) -> anyhow::Result<Option<T>>
-    where
-        T: Default,
-    {
-        if self.manual_fields.contains(&field) {
-            return Ok(None);
-        }
-        match self.fields.get(&field) {
-            None | Some(serde_json::Value::Null) => Ok(Some(T::default())),
-            Some(value) => decode(value).map(Some),
+    ) -> anyhow::Result<Option<DbId>> {
+        match self.provenance.get(&field) {
+            Some(source_id) => db::metadata::layers::layer_id(db, node_id, source_id),
+            None => Ok(None),
         }
     }
 }
@@ -170,13 +167,31 @@ pub(crate) fn apply_merged_metadata_to_entity_inside_tx(
         if apply_to_release(&mut release, &merged)? {
             db::releases::update_in_transaction(db, &release)?;
         }
-        if let Some(genre_names) = merged.graph_value(MetadataField::Genres, |value| {
-            decode::<Vec<String>>(MetadataField::Genres, value)
-        })? {
-            db::genres::sync_release_genres(db, node_id, &genre_names)?;
+        // Manually owned graph fields keep their stored edges.
+        if !merged.manual_fields.contains(&MetadataField::Genres) {
+            let genre_ids: Vec<DbId> =
+                match merged.winning_layer(db, node_id, MetadataField::Genres)? {
+                    Some(layer_id) => layer_edges::genres(db, layer_id)?
+                        .into_iter()
+                        .map(|link| link.target_id)
+                        .collect(),
+                    None => Vec::new(),
+                };
+            db::genres::sync_release_genre_ids(db, node_id, &genre_ids)?;
         }
-        if let Some(label_inputs) = merged.graph_value(MetadataField::Labels, label_inputs)? {
-            db::labels::sync_release_labels_inside_tx(db, node_id, &label_inputs)?;
+        if !merged.manual_fields.contains(&MetadataField::Labels) {
+            let label_links: Vec<LabelLinkInput> =
+                match merged.winning_layer(db, node_id, MetadataField::Labels)? {
+                    Some(layer_id) => layer_edges::labels(db, layer_id)?
+                        .into_iter()
+                        .map(|link| LabelLinkInput {
+                            label_id: link.target_id,
+                            catalog_number: link.edge.catalog_number,
+                        })
+                        .collect(),
+                    None => Vec::new(),
+                };
+            db::labels::sync_release_label_links_inside_tx(db, node_id, &label_links)?;
         }
     } else if let Some(mut track) = db::tracks::get_by_id(db, node_id)? {
         if track.locked.unwrap_or(false) {
@@ -192,28 +207,6 @@ pub(crate) fn apply_merged_metadata_to_entity_inside_tx(
         db::artists::update_in_transaction(db, &artist)?;
     }
 
-    Ok(())
-}
-
-pub(crate) fn materialize_provider_labels_if_manually_owned(
-    db: &mut DbAny,
-    node_id: DbId,
-) -> anyhow::Result<()> {
-    if db::releases::get_by_id(db, node_id)?.is_none()
-        || !db::metadata::manual_overrides::owns_field(db, node_id, MetadataField::Labels)?
-    {
-        return Ok(());
-    }
-    let layers = db::metadata::layers::get_for_entity(db, node_id)?;
-    let providers = db::providers::get(db)?;
-    let merged = merge_layers(layers, &providers);
-    if let Some(value) = merged
-        .fields
-        .get(&MetadataField::Labels)
-        .filter(|value| !value.is_null())
-    {
-        db::labels::materialize_labels(db, &label_inputs(value)?)?;
-    }
     Ok(())
 }
 
@@ -342,37 +335,6 @@ mod tests {
                 .map(String::as_str),
             Some("high")
         );
-    }
-
-    fn merged_with(field: MetadataField, value: serde_json::Value) -> MergedMetadata {
-        MergedMetadata {
-            fields: HashMap::from([(field, value)]),
-            provenance: HashMap::new(),
-            manual_fields: HashSet::new(),
-        }
-    }
-
-    fn genres(merged: &MergedMetadata) -> Option<Vec<String>> {
-        merged
-            .graph_value(MetadataField::Genres, |value| {
-                decode(MetadataField::Genres, value)
-            })
-            .expect("validated genres decode")
-    }
-
-    #[test]
-    fn graph_value_covers_every_resolution_state() {
-        let mut merged = merge_layers(Vec::new(), &[]);
-        assert_eq!(genres(&merged), Some(Vec::new()), "absent clears");
-
-        merged = merged_with(MetadataField::Genres, serde_json::Value::Null);
-        assert_eq!(genres(&merged), Some(Vec::new()), "null clears");
-
-        merged = merged_with(MetadataField::Genres, serde_json::json!(["Jazz"]));
-        assert_eq!(genres(&merged), Some(vec!["Jazz".to_string()]));
-
-        merged.manual_fields.insert(MetadataField::Genres);
-        assert_eq!(genres(&merged), None, "manual ownership keeps stored edges");
     }
 
     #[test]
@@ -581,6 +543,155 @@ mod tests {
                 node_id,
                 &make_layer(source_id, &fields.to_string(), updated_at),
             )?;
+            Ok(())
+        }
+
+        fn provider_save(
+            db: &mut DbAny,
+            node_id: DbId,
+            provider_id: &str,
+            fields: serde_json::Value,
+        ) -> anyhow::Result<()> {
+            crate::services::metadata::layers::save_provider_layer(
+                db,
+                node_id,
+                provider_id,
+                &db::metadata::layers::fields_from_json(fields),
+                &HashMap::new(),
+                &HashMap::new(),
+                &HashSet::new(),
+            )
+        }
+
+        fn genre_names(db: &DbAny, release_id: DbId) -> anyhow::Result<Vec<String>> {
+            Ok(db::genres::get_for_release(db, release_id)?
+                .into_iter()
+                .map(|genre| genre.name)
+                .collect())
+        }
+
+        fn label_names(db: &DbAny, release_id: DbId) -> anyhow::Result<Vec<String>> {
+            Ok(db::labels::get_for_release(db, release_id)?
+                .into_iter()
+                .map(|label| label.label.name)
+                .collect())
+        }
+
+        fn listed_genres(db: &DbAny) -> anyhow::Result<Vec<String>> {
+            use crate::services::catalog::{
+                Viewer,
+                genres::{
+                    GenreFilter,
+                    Genres,
+                },
+                pipeline::Catalog,
+            };
+            let ids = Genres::candidates(db, &Viewer::System, &GenreFilter::default())
+                .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+            let mut names: Vec<String> = ids
+                .into_iter()
+                .filter_map(|id| db::genres::get_by_id(db, id).transpose())
+                .map(|genre| genre.map(|genre| genre.name))
+                .collect::<anyhow::Result<_>>()?;
+            names.sort();
+            Ok(names)
+        }
+
+        #[test]
+        fn genres_that_no_applied_layer_wins_stay_out_of_genre_listings() -> anyhow::Result<()> {
+            let mut db = new_test_db()?;
+            let release_id = insert_release(&mut db, "Release")?;
+            let locked_id = insert_release(&mut db, "Locked")?;
+            let mut locked = db::releases::get_by_id(&db, locked_id)?.expect("release exists");
+            locked.locked = Some(true);
+            db::releases::update(&mut db, &locked)?;
+            enable_provider(&mut db, "low", 10)?;
+            enable_provider(&mut db, "high", 100)?;
+
+            provider_save(
+                &mut db,
+                release_id,
+                "low",
+                serde_json::json!({"genres": ["Losing"]}),
+            )?;
+            provider_save(
+                &mut db,
+                release_id,
+                "high",
+                serde_json::json!({"genres": ["Winning"]}),
+            )?;
+            provider_save(
+                &mut db,
+                locked_id,
+                "high",
+                serde_json::json!({"genres": ["Locked"]}),
+            )?;
+
+            assert!(db::genres::find_by_name(&db, "Losing")?.is_some());
+            assert!(db::genres::find_by_name(&db, "Locked")?.is_some());
+            assert_eq!(genre_names(&db, release_id)?, vec!["Winning"]);
+            assert!(
+                genre_names(&db, locked_id)?.is_empty(),
+                "a locked release is not re-applied"
+            );
+            assert_eq!(
+                db::metadata::layers::get_for_entity(&db, locked_id)?.len(),
+                1,
+                "a locked release still records its layer"
+            );
+            assert_eq!(listed_genres(&db)?, vec!["Winning"]);
+            Ok(())
+        }
+
+        #[test]
+        fn genres_and_labels_follow_the_layer_that_supplies_them() -> anyhow::Result<()> {
+            let mut db = new_test_db()?;
+            let release_id = insert_release(&mut db, "Release")?;
+            enable_provider(&mut db, "low", 10)?;
+            enable_provider(&mut db, "high", 100)?;
+            provider_save(
+                &mut db,
+                release_id,
+                "low",
+                serde_json::json!({"genres": ["Low Genre"], "labels": [{"name": "Low Label"}]}),
+            )?;
+            provider_save(
+                &mut db,
+                release_id,
+                "high",
+                serde_json::json!({"genres": ["High Genre"], "labels": [{"name": "High Label"}]}),
+            )?;
+            assert_eq!(genre_names(&db, release_id)?, vec!["High Genre"]);
+            assert_eq!(label_names(&db, release_id)?, vec!["High Label"]);
+
+            provider_save(
+                &mut db,
+                release_id,
+                "high",
+                serde_json::json!({"labels": [{"name": "High Label"}]}),
+            )?;
+            assert_eq!(
+                genre_names(&db, release_id)?,
+                vec!["Low Genre"],
+                "no opinion falls through"
+            );
+            assert_eq!(label_names(&db, release_id)?, vec!["High Label"]);
+
+            provider_save(
+                &mut db,
+                release_id,
+                "high",
+                serde_json::json!({"genres": null, "labels": [{"name": "High Label"}]}),
+            )?;
+            assert!(genre_names(&db, release_id)?.is_empty(), "a clear wins");
+
+            crate::services::metadata::layers::clear_provider_layer(&mut db, release_id, "high")?;
+            assert_eq!(genre_names(&db, release_id)?, vec!["Low Genre"]);
+            assert_eq!(label_names(&db, release_id)?, vec!["Low Label"]);
+            assert!(
+                db::labels::find_by_name(&db, "High Label")?.is_none(),
+                "a label nothing names any more is collected"
+            );
             Ok(())
         }
 

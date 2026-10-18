@@ -4,6 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 use agdb::{
+    DbAnyTransactionMut,
     DbElement,
     DbId,
     DbType,
@@ -19,14 +20,17 @@ use super::{
     LayerFields,
     MetadataLayer,
     decode,
+    edges,
     label_inputs,
     normalize_value,
 };
 use crate::db::{
+    DbAccess,
     MetadataField,
     artists::ArtistType,
     entities::MetadataEntityType,
-    labels::LabelInput,
+    genres,
+    labels,
     releases::ReleaseType,
 };
 
@@ -35,9 +39,19 @@ use crate::db::{
 /// clears it, and an unsupplied field falls through to the next layer.
 pub(super) trait LayerElement: DbType<ValueType = Self> + PartialEq + Sized {
     fn from_layer(layer: &MetadataLayer) -> anyhow::Result<Self>;
-    fn to_layer(&self) -> anyhow::Result<MetadataLayer>;
+    /// Reads the stored layer, with relationship fields from its edges.
+    fn to_layer(&self, db: &impl DbAccess) -> anyhow::Result<MetadataLayer>;
+    /// Writes the relationship fields as edges. Returns false when unchanged.
+    fn save_edges(
+        _db: &mut DbAnyTransactionMut<'_>,
+        _layer_id: DbId,
+        _fields: &LayerFields,
+    ) -> anyhow::Result<bool> {
+        Ok(false)
+    }
     fn source_id(&self) -> &str;
-    fn set_db_id(&mut self, db_id: DbId);
+    fn updated_at(&self) -> u64;
+    fn set_db_id(&mut self, db_id: Option<DbId>);
     /// Whether both supply the same values, whenever and wherever stored.
     fn same_values(&self, other: &Self) -> bool;
     fn optional_keys(&self) -> Vec<(&'static str, bool)>;
@@ -53,95 +67,6 @@ pub(super) struct ReleaseLayer {
     sort_title: Option<String>,
     release_type: Option<ReleaseType>,
     release_date: Option<String>,
-    genres: Option<Vec<String>>,
-    /// Labels as parallel lists; an empty string marks a missing part.
-    label_names: Option<Vec<String>>,
-    label_catalog_numbers: Option<Vec<String>>,
-    label_id_providers: Option<Vec<String>>,
-    label_id_types: Option<Vec<String>>,
-    label_id_values: Option<Vec<String>>,
-}
-
-impl ReleaseLayer {
-    fn set_labels(&mut self, labels: Vec<LabelInput>) {
-        let mut names = Vec::with_capacity(labels.len());
-        let mut catalog_numbers = Vec::with_capacity(labels.len());
-        let mut providers = Vec::with_capacity(labels.len());
-        let mut types = Vec::with_capacity(labels.len());
-        let mut values = Vec::with_capacity(labels.len());
-        for label in labels {
-            names.push(label.name);
-            catalog_numbers.push(label.catalog_number.unwrap_or_default());
-            let external_id = label.external_id;
-            providers.push(
-                external_id
-                    .as_ref()
-                    .map(|id| id.provider_id.clone())
-                    .unwrap_or_default(),
-            );
-            types.push(
-                external_id
-                    .as_ref()
-                    .map(|id| id.id_type.clone())
-                    .unwrap_or_default(),
-            );
-            values.push(external_id.map(|id| id.id_value).unwrap_or_default());
-        }
-        self.label_names = Some(names);
-        self.label_catalog_numbers = Some(catalog_numbers);
-        self.label_id_providers = Some(providers);
-        self.label_id_types = Some(types);
-        self.label_id_values = Some(values);
-    }
-
-    fn labels(&self) -> anyhow::Result<Option<Value>> {
-        let columns = [
-            &self.label_names,
-            &self.label_catalog_numbers,
-            &self.label_id_providers,
-            &self.label_id_types,
-            &self.label_id_values,
-        ];
-        if columns.iter().all(|column| column.is_none()) {
-            return Ok(None);
-        }
-        let [
-            Some(names),
-            Some(catalog_numbers),
-            Some(providers),
-            Some(types),
-            Some(values),
-        ] = columns
-        else {
-            anyhow::bail!("'labels' is stored incompletely");
-        };
-        anyhow::ensure!(
-            [catalog_numbers, providers, types, values]
-                .iter()
-                .all(|column| column.len() == names.len()),
-            "'labels' lists differ in length"
-        );
-        let labels = (0..names.len())
-            .map(|index| {
-                let mut label = json!({ "name": names[index] });
-                if !catalog_numbers[index].is_empty() {
-                    label["catalog_number"] = json!(catalog_numbers[index]);
-                }
-                if [providers, types, values]
-                    .iter()
-                    .any(|column| !column[index].is_empty())
-                {
-                    label["external_id"] = json!({
-                        "provider_id": providers[index],
-                        "id_type": types[index],
-                        "id_value": values[index],
-                    });
-                }
-                label
-            })
-            .collect();
-        Ok(Some(Value::Array(labels)))
-    }
 }
 
 impl LayerElement for ReleaseLayer {
@@ -162,15 +87,16 @@ impl LayerElement for ReleaseLayer {
                 MetadataField::SortTitle => element.sort_title = Some(decode(field, &value)?),
                 MetadataField::ReleaseType => element.release_type = Some(decode(field, &value)?),
                 MetadataField::ReleaseDate => element.release_date = Some(decode(field, &value)?),
-                MetadataField::Genres => element.genres = Some(decode(field, &value)?),
-                MetadataField::Labels => element.set_labels(label_inputs(&value)?),
+                // Stored as edges by `save_edges`.
+                MetadataField::Genres | MetadataField::Labels => {}
                 _ => unreachable!("validated_fields rejects fields a release cannot hold"),
             }
         }
         Ok(element)
     }
 
-    fn to_layer(&self) -> anyhow::Result<MetadataLayer> {
+    fn to_layer(&self, db: &impl DbAccess) -> anyhow::Result<MetadataLayer> {
+        let layer_id = self.db_id.context("a stored release layer has an id")?;
         let fields = stored_fields(
             MetadataEntityType::Release,
             &self.supplied,
@@ -182,8 +108,8 @@ impl LayerElement for ReleaseLayer {
                 (MetadataField::SortTitle, json_value(&self.sort_title)?),
                 (MetadataField::ReleaseType, json_value(&self.release_type)?),
                 (MetadataField::ReleaseDate, json_value(&self.release_date)?),
-                (MetadataField::Genres, json_value(&self.genres)?),
-                (MetadataField::Labels, self.labels()?),
+                (MetadataField::Genres, genre_names(db, layer_id)?),
+                (MetadataField::Labels, label_values(db, layer_id)?),
             ],
         )?;
         Ok(MetadataLayer::new(
@@ -197,8 +123,12 @@ impl LayerElement for ReleaseLayer {
         &self.source_id
     }
 
-    fn set_db_id(&mut self, db_id: DbId) {
-        self.db_id = Some(db_id);
+    fn updated_at(&self) -> u64 {
+        self.updated_at
+    }
+
+    fn set_db_id(&mut self, db_id: Option<DbId>) {
+        self.db_id = db_id;
     }
 
     fn same_values(&self, other: &Self) -> bool {
@@ -215,16 +145,28 @@ impl LayerElement for ReleaseLayer {
             ("sort_title", self.sort_title.is_none()),
             ("release_type", self.release_type.is_none()),
             ("release_date", self.release_date.is_none()),
-            ("genres", self.genres.is_none()),
-            ("label_names", self.label_names.is_none()),
-            (
-                "label_catalog_numbers",
-                self.label_catalog_numbers.is_none(),
-            ),
-            ("label_id_providers", self.label_id_providers.is_none()),
-            ("label_id_types", self.label_id_types.is_none()),
-            ("label_id_values", self.label_id_values.is_none()),
         ]
+    }
+
+    fn save_edges(
+        db: &mut DbAnyTransactionMut<'_>,
+        layer_id: DbId,
+        fields: &LayerFields,
+    ) -> anyhow::Result<bool> {
+        let supplied = |field| fields.get(&field).filter(|value| !value.is_null());
+        let genre_ids = match supplied(MetadataField::Genres) {
+            Some(value) => {
+                genres::resolve_names(db, &decode::<Vec<String>>(MetadataField::Genres, value)?)?
+            }
+            None => Vec::new(),
+        };
+        let label_links = match supplied(MetadataField::Labels) {
+            Some(value) => labels::resolve_label_inputs(db, &label_inputs(value)?)?,
+            None => Vec::new(),
+        };
+        let genres_changed = edges::replace_genres(db, layer_id, &genre_ids)?;
+        let labels_changed = edges::replace_labels(db, layer_id, &label_links)?;
+        Ok(genres_changed || labels_changed)
     }
 }
 
@@ -270,7 +212,7 @@ impl LayerElement for TrackLayer {
         Ok(element)
     }
 
-    fn to_layer(&self) -> anyhow::Result<MetadataLayer> {
+    fn to_layer(&self, _db: &impl DbAccess) -> anyhow::Result<MetadataLayer> {
         let fields = stored_fields(
             MetadataEntityType::Track,
             &self.supplied,
@@ -295,8 +237,12 @@ impl LayerElement for TrackLayer {
         &self.source_id
     }
 
-    fn set_db_id(&mut self, db_id: DbId) {
-        self.db_id = Some(db_id);
+    fn updated_at(&self) -> u64 {
+        self.updated_at
+    }
+
+    fn set_db_id(&mut self, db_id: Option<DbId>) {
+        self.db_id = db_id;
     }
 
     fn same_values(&self, other: &Self) -> bool {
@@ -356,7 +302,7 @@ impl LayerElement for ArtistLayer {
         Ok(element)
     }
 
-    fn to_layer(&self) -> anyhow::Result<MetadataLayer> {
+    fn to_layer(&self, _db: &impl DbAccess) -> anyhow::Result<MetadataLayer> {
         let fields = stored_fields(
             MetadataEntityType::Artist,
             &self.supplied,
@@ -378,8 +324,12 @@ impl LayerElement for ArtistLayer {
         &self.source_id
     }
 
-    fn set_db_id(&mut self, db_id: DbId) {
-        self.db_id = Some(db_id);
+    fn updated_at(&self) -> u64 {
+        self.updated_at
+    }
+
+    fn set_db_id(&mut self, db_id: Option<DbId>) {
+        self.db_id = db_id;
     }
 
     fn same_values(&self, other: &Self) -> bool {
@@ -451,6 +401,32 @@ fn stored_fields(
         .into_iter()
         .map(|(field, value)| Ok((field, normalize_value(field, value)?)))
         .collect()
+}
+
+/// A release layer's genres, by name, or `None` when it links none.
+fn genre_names(db: &impl DbAccess, layer_id: DbId) -> anyhow::Result<Option<Value>> {
+    let mut names = Vec::new();
+    for link in edges::genres(db, layer_id)? {
+        let genre = genres::get_by_id(db, link.target_id)?
+            .with_context(|| format!("genre {} is gone", link.target_id.0))?;
+        names.push(Value::String(genre.name));
+    }
+    Ok((!names.is_empty()).then_some(Value::Array(names)))
+}
+
+/// A release layer's labels with their catalog numbers, or `None` when it links none.
+fn label_values(db: &impl DbAccess, layer_id: DbId) -> anyhow::Result<Option<Value>> {
+    let mut values = Vec::new();
+    for link in edges::labels(db, layer_id)? {
+        let label = labels::get_by_id(db, link.target_id)?
+            .with_context(|| format!("label {} is gone", link.target_id.0))?;
+        let mut value = json!({ "name": label.name });
+        if let Some(catalog_number) = link.edge.catalog_number {
+            value["catalog_number"] = json!(catalog_number);
+        }
+        values.push(value);
+    }
+    Ok((!values.is_empty()).then_some(Value::Array(values)))
 }
 
 fn json_value<T: Serialize>(value: &Option<T>) -> anyhow::Result<Option<Value>> {

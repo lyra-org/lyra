@@ -115,7 +115,7 @@ duration_ms = 250799
 
 [expect.release]
 ids = { release_group_id = "d1ce094a-1492-4a47-b1e8-1c6c1466d442", release_id = "0f9b7e7b-7e05-4b0b-b860-c9f289cebaac" }
-fields = { release_title = "HappyEND", genres = ["future bass", "j-pop", "pop"], release_date = "2021-08-11" }
+fields = { release_title = "HappyEND", genres = ["Future Bass", "J-Pop", "pop"], release_date = "2021-08-11" }
 
 [expect.artists."85b9d988-53ca-466d-b2d4-a57eb97bc514"]
 fields = { artist_name = "HoneyComeBear", sort_name = "HoneyComeBear" }

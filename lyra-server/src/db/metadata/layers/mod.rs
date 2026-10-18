@@ -232,7 +232,7 @@ fn load<T: LayerElement>(db: &impl DbAccess, node_id: DbId) -> anyhow::Result<Ve
         .filter_map(|element| {
             T::from_db_element(element)
                 .map_err(anyhow::Error::from)
-                .and_then(|layer| layer.to_layer())
+                .and_then(|layer| layer.to_layer(db))
                 .inspect_err(|err| {
                     tracing::warn!(
                         layer_id = element.id.0,
@@ -336,9 +336,9 @@ pub(crate) fn upsert_inside_tx(
     layer: &MetadataLayer,
 ) -> anyhow::Result<bool> {
     match entity_type(db, node_id)? {
-        MetadataEntityType::Release => save(db, node_id, ReleaseLayer::from_layer(layer)?),
-        MetadataEntityType::Track => save(db, node_id, TrackLayer::from_layer(layer)?),
-        MetadataEntityType::Artist => save(db, node_id, ArtistLayer::from_layer(layer)?),
+        MetadataEntityType::Release => save::<ReleaseLayer>(db, node_id, layer),
+        MetadataEntityType::Track => save::<TrackLayer>(db, node_id, layer),
+        MetadataEntityType::Artist => save::<ArtistLayer>(db, node_id, layer),
     }
     .with_context(|| format!("invalid '{}' metadata layer", layer.source_id))
 }
@@ -346,9 +346,35 @@ pub(crate) fn upsert_inside_tx(
 fn save<T: LayerElement>(
     db: &mut DbAnyTransactionMut<'_>,
     node_id: DbId,
-    mut element: T,
+    layer: &MetadataLayer,
 ) -> anyhow::Result<bool> {
+    let (layer_id, values_changed) = store(db, node_id, T::from_layer(layer)?)?;
+    let edges_changed = T::save_edges(db, layer_id, &layer.fields)?;
+    if edges_changed && !values_changed {
+        set_updated_at(db, layer_id, layer.updated_at)?;
+    }
+    Ok(values_changed || edges_changed)
+}
+
+fn set_updated_at(db: &mut impl DbAccess, layer_id: DbId, updated_at: u64) -> anyhow::Result<()> {
+    db.exec_mut(
+        QueryBuilder::insert()
+            .values_uniform([("updated_at", updated_at).into()])
+            .ids(layer_id)
+            .query(),
+    )?;
+    Ok(())
+}
+
+/// Stores `element` as its source's layer on the entity. Returns the layer's id
+/// and whether its values changed.
+fn store<T: LayerElement>(
+    db: &mut DbAnyTransactionMut<'_>,
+    node_id: DbId,
+    mut element: T,
+) -> anyhow::Result<(DbId, bool)> {
     let Some(layer_id) = find_id::<T>(db, node_id, element.source_id())? else {
+        element.set_db_id(None);
         let result = db.exec_mut(QueryBuilder::insert().element(&element).query())?;
         let layer_id = result
             .elements
@@ -362,18 +388,18 @@ fn save<T: LayerElement>(
                 .to(layer_id)
                 .query(),
         )?;
-        return Ok(true);
+        return Ok((layer_id, true));
     };
 
     let stored = db.exec(QueryBuilder::select().ids(layer_id).query())?;
     if let Some(existing) = stored.elements.first()
         && T::from_db_element(existing).is_ok_and(|existing| existing.same_values(&element))
     {
-        return Ok(false);
+        return Ok((layer_id, false));
     }
-    element.set_db_id(layer_id);
+    element.set_db_id(Some(layer_id));
     super::super::replace_element_in_transaction(db, layer_id, element.optional_keys(), &element)?;
-    Ok(true)
+    Ok((layer_id, true))
 }
 
 /// The id of the layer `source_id` contributed to an entity, if any.
@@ -411,21 +437,43 @@ pub(crate) fn owner_id(db: &impl DbAccess, layer_id: DbId) -> anyhow::Result<Opt
         .map(|edge| edge.from))
 }
 
-/// Copies `layer`, read from `from_node`, onto `to_node` along with its
-/// relationship edges, replacing that source's layer there.
+/// Copies the layer `source_id` contributed to `from_node` onto `to_node`, as
+/// stored and with its relationship edges and update time, replacing that
+/// source's layer there.
 pub(crate) fn copy_inside_tx(
     db: &mut DbAnyTransactionMut<'_>,
     from_node: DbId,
     to_node: DbId,
-    layer: &MetadataLayer,
+    source_id: &str,
 ) -> anyhow::Result<()> {
-    upsert_inside_tx(db, to_node, layer)?;
-    let from_layer = layer_id(db, from_node, &layer.source_id)?;
-    let to_layer = layer_id(db, to_node, &layer.source_id)?;
-    if let (Some(from_layer), Some(to_layer)) = (from_layer, to_layer) {
-        edges::copy_all(db, from_layer, to_layer)?;
-    }
-    Ok(())
+    let Some(from_layer) = layer_id(db, from_node, source_id)? else {
+        return Ok(());
+    };
+    let (to_layer, updated_at) = match entity_type(db, to_node)? {
+        MetadataEntityType::Release => copy_element::<ReleaseLayer>(db, from_layer, to_node)?,
+        MetadataEntityType::Track => copy_element::<TrackLayer>(db, from_layer, to_node)?,
+        MetadataEntityType::Artist => copy_element::<ArtistLayer>(db, from_layer, to_node)?,
+    };
+    edges::copy_all(db, from_layer, to_layer)?;
+    set_updated_at(db, to_layer, updated_at)
+}
+
+/// Stores `from_layer`'s element on `to_node`. Returns the stored layer's id
+/// and the copied update time.
+fn copy_element<T: LayerElement>(
+    db: &mut DbAnyTransactionMut<'_>,
+    from_layer: DbId,
+    to_node: DbId,
+) -> anyhow::Result<(DbId, u64)> {
+    let stored = db.exec(QueryBuilder::select().ids(from_layer).query())?;
+    let element = T::from_db_element(
+        stored
+            .elements
+            .first()
+            .context("copied metadata layer is gone")?,
+    )?;
+    let updated_at = element.updated_at();
+    Ok((store(db, to_node, element)?.0, updated_at))
 }
 
 /// Removes the layer `source_id` contributed to an entity. Returns false when
@@ -542,6 +590,54 @@ mod tests {
     }
 
     #[test]
+    fn a_genre_or_label_only_change_moves_updated_at() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release_id = insert_release(&mut db, "Release")?;
+        let release = |genre: &str, label: &str, updated_at: u64| {
+            layer(
+                "provider",
+                json!({"genres": [genre], "labels": [{"name": label}]}),
+                updated_at,
+            )
+        };
+        upsert(&mut db, release_id, &release("Jazz", "A", 1))?;
+
+        for change in [release("Rock", "A", 2), release("Rock", "B", 3)] {
+            assert!(upsert(&mut db, release_id, &change)?);
+            assert_eq!(only_layer(&db, release_id)?.updated_at, change.updated_at);
+        }
+        assert!(!upsert(&mut db, release_id, &release("Rock", "B", 4))?);
+        assert_eq!(
+            only_layer(&db, release_id)?.updated_at,
+            3,
+            "a no-op save keeps the stored time"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_copied_layer_carries_its_sources_updated_at() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let from = insert_release(&mut db, "From")?;
+        let to = insert_release(&mut db, "To")?;
+        upsert(
+            &mut db,
+            from,
+            &layer("provider", json!({"genres": ["Rock"]}), 9),
+        )?;
+        upsert(
+            &mut db,
+            to,
+            &layer("provider", json!({"genres": ["Jazz"]}), 1),
+        )?;
+
+        db.transaction_mut(|t| copy_inside_tx(t, from, to, "provider"))?;
+
+        assert_eq!(only_layer(&db, to)?, only_layer(&db, from)?);
+        Ok(())
+    }
+
+    #[test]
     fn supplied_distinguishes_a_clear_from_no_opinion() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let artist_id = insert_artist(&mut db, "Artist")?;
@@ -598,34 +694,96 @@ mod tests {
     }
 
     #[test]
-    fn genres_and_labels_round_trip() -> anyhow::Result<()> {
+    fn genres_and_labels_are_stored_as_edges() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let release_id = insert_release(&mut db, "Release")?;
-        let saved = layer(
-            "provider",
-            json!({
+        let fields = json!({
+            "genres": ["Jazz", "Bebop", "jazz"],
+            "labels": [
+                {
+                    "name": "Blue Note",
+                    "catalog_number": "BN-1577",
+                    "external_id": {
+                        "provider_id": "mb",
+                        "id_type": "label_id",
+                        "id_value": "bn",
+                    },
+                },
+                {"name": "Impulse!"},
+            ],
+        });
+        assert!(upsert(
+            &mut db,
+            release_id,
+            &layer("provider", fields.clone(), 1)
+        )?);
+        assert!(
+            !upsert(&mut db, release_id, &layer("provider", fields, 2))?,
+            "the same lists change nothing"
+        );
+
+        let layer_id = layer_id(&db, release_id, "provider")?.expect("layer saved");
+        let keys = only_layer_keys(&db, release_id)?;
+        assert!(!keys.contains("genres") && !keys.contains("label_names"));
+        let genre_ids: Vec<DbId> = edges::genres(&db, layer_id)?
+            .into_iter()
+            .map(|link| link.target_id)
+            .collect();
+        assert_eq!(
+            genre_ids,
+            vec![
+                crate::db::genres::find_by_name(&db, "Jazz")?.expect("jazz"),
+                crate::db::genres::find_by_name(&db, "Bebop")?.expect("bebop"),
+            ]
+        );
+        let blue_note = crate::db::labels::find_by_external_id(&db, "mb", "label_id", "bn")?
+            .expect("label resolved with its external id");
+        let impulse = crate::db::labels::find_by_name(&db, "Impulse!")?.expect("impulse");
+        let labels: Vec<(DbId, Option<String>)> = edges::labels(&db, layer_id)?
+            .into_iter()
+            .map(|link| (link.target_id, link.edge.catalog_number))
+            .collect();
+        assert_eq!(
+            labels,
+            vec![(blue_note, Some("BN-1577".to_string())), (impulse, None)]
+        );
+        assert_eq!(
+            only_layer(&db, release_id)?.fields,
+            fields_from_json(json!({
                 "genres": ["Jazz", "Bebop"],
                 "labels": [
-                    {
-                        "name": "Blue Note",
-                        "catalog_number": "BN-1577",
-                        "external_id": {
-                            "provider_id": "mb",
-                            "id_type": "label_id",
-                            "id_value": "bn",
-                        },
-                    },
+                    {"name": "Blue Note", "catalog_number": "BN-1577"},
                     {"name": "Impulse!"},
                 ],
-            }),
-            1,
+            }))
         );
-        upsert(&mut db, release_id, &saved)?;
-        assert_eq!(only_layer(&db, release_id)?, saved);
 
-        let empty = layer("provider", json!({"genres": [], "labels": []}), 2);
-        upsert(&mut db, release_id, &empty)?;
-        assert_eq!(only_layer(&db, release_id)?, empty);
+        assert!(upsert(
+            &mut db,
+            release_id,
+            &layer("provider", json!({"genres": [], "labels": null}), 3),
+        )?);
+        assert!(edges::genres(&db, layer_id)?.is_empty());
+        assert!(edges::labels(&db, layer_id)?.is_empty());
+        assert!(crate::db::labels::get_by_id(&db, impulse)?.is_none());
+        assert_eq!(
+            only_layer(&db, release_id)?.fields,
+            fields_from_json(json!({"genres": null, "labels": null})),
+            "an empty list clears like null"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn edges_without_supplied_fields_do_not_validate() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release_id = insert_release(&mut db, "Release")?;
+        upsert(&mut db, release_id, &layer("provider", json!({}), 1))?;
+        let layer_id = layer_id(&db, release_id, "provider")?.expect("layer saved");
+        let jazz = crate::db::genres::resolve_by_name(&mut db, "Jazz")?;
+        db.transaction_mut(|t| edges::replace_genres(t, layer_id, &[jazz]))?;
+
+        assert!(get_for_entity(&db, release_id)?.is_empty());
         Ok(())
     }
 

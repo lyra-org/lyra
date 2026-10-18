@@ -187,8 +187,6 @@ pub(crate) fn save_provider_layer(
         super::merging::apply_merged_metadata_to_entity(db, node_id)?;
     }
 
-    super::merging::materialize_provider_labels_if_manually_owned(db, node_id)?;
-
     save_provider_custom_fields(
         db,
         node_id,

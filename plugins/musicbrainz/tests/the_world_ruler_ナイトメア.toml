@@ -174,7 +174,7 @@ duration_ms = 243573
 
 [expect.release]
 ids = { release_group_id = "975cf2d7-254a-3fdd-9bbd-729e95de3ef2", release_id = "5724d57c-aba4-4950-8a09-725dd267d2d1" }
-fields = { release_title = "the WORLD Ruler", genres = ["alternative rock", "gothic rock", "rock", "visual kei"], release_date = "2007-02-28" }
+fields = { release_title = "the WORLD Ruler", genres = ["alternative rock", "gothic rock", "Rock", "visual kei"], release_date = "2007-02-28" }
 
 [expect.artists."61ac244d-3201-4c43-a234-f99d7166400e"]
 fields = { artist_name = "NIGHTMARE", sort_name = "NIGHTMARE" }

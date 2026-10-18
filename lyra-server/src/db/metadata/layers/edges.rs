@@ -302,29 +302,41 @@ pub(crate) fn genres(
     Ok(links)
 }
 
-/// Replaces the layer's genres, ordered as given; a repeated genre keeps its first place.
+/// Replaces the layer's genres, ordered as given; a repeated genre keeps its
+/// first place. Returns false when the layer already held exactly these.
 pub(crate) fn replace_genres(
     db: &mut DbAnyTransactionMut<'_>,
     layer_id: DbId,
     genre_ids: &[DbId],
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     ensure_layer(db, layer_id, &[RELEASE_LAYER])?;
     ensure_targets(db, genre_ids, "Genre")?;
-    remove(
-        db,
-        of_layer::<LayerGenre>(db, layer_id)?
-            .into_iter()
-            .map(|link| link.edge_id)
-            .collect(),
-    )?;
     let mut seen = HashSet::new();
-    for &genre_id in genre_ids {
-        if seen.insert(genre_id) {
-            let genre_order = seen.len() as u64 - 1;
-            insert(db, layer_id, genre_id, &LayerGenre { genre_order })?;
-        }
+    let desired: Vec<DbId> = genre_ids
+        .iter()
+        .copied()
+        .filter(|genre_id| seen.insert(*genre_id))
+        .collect();
+    let previous = genres(db, layer_id)?;
+    if previous
+        .iter()
+        .map(|link| link.target_id)
+        .eq(desired.iter().copied())
+    {
+        return Ok(false);
     }
-    Ok(())
+    remove(db, previous.into_iter().map(|link| link.edge_id).collect())?;
+    for (genre_order, genre_id) in desired.into_iter().enumerate() {
+        insert(
+            db,
+            layer_id,
+            genre_id,
+            &LayerGenre {
+                genre_order: genre_order as u64,
+            },
+        )?;
+    }
+    Ok(true)
 }
 
 /// The layer's labels, in order.
@@ -337,40 +349,54 @@ pub(crate) fn labels(
     Ok(links)
 }
 
-/// Replaces the layer's labels, ordered as given; a repeated label keeps its first entry.
-/// Labels no longer referenced by any release or layer are collected.
+/// Replaces the layer's labels, ordered as given; a repeated label keeps its
+/// first entry. Labels no longer referenced by any release or layer are
+/// collected. Returns false when the layer already held exactly these.
 pub(crate) fn replace_labels(
     db: &mut DbAnyTransactionMut<'_>,
     layer_id: DbId,
     desired: &[LabelLinkInput],
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     ensure_layer(db, layer_id, &[RELEASE_LAYER])?;
     let label_ids: Vec<DbId> = desired.iter().map(|input| input.label_id).collect();
     ensure_targets(db, &label_ids, "Label")?;
-    let previous = of_layer::<LayerLabel>(db, layer_id)?;
-    let previous_label_ids: Vec<DbId> = previous.iter().map(|link| link.target_id).collect();
-    remove(db, previous.into_iter().map(|link| link.edge_id).collect())?;
     let mut seen = HashSet::new();
-    for input in desired {
-        if seen.insert(input.label_id) {
+    let desired: Vec<(DbId, Option<String>)> = desired
+        .iter()
+        .filter(|input| seen.insert(input.label_id))
+        .map(|input| {
             let catalog_number = input
                 .catalog_number
                 .as_deref()
                 .map(str::trim)
                 .filter(|catalog_number| !catalog_number.is_empty())
                 .map(str::to_string);
-            insert(
-                db,
-                layer_id,
-                input.label_id,
-                &LayerLabel {
-                    label_order: seen.len() as u64 - 1,
-                    catalog_number,
-                },
-            )?;
-        }
+            (input.label_id, catalog_number)
+        })
+        .collect();
+    let previous = labels(db, layer_id)?;
+    if previous
+        .iter()
+        .map(|link| (link.target_id, link.edge.catalog_number.clone()))
+        .eq(desired.iter().cloned())
+    {
+        return Ok(false);
     }
-    super::super::super::labels::collect_unreferenced(db, &previous_label_ids)
+    let previous_label_ids: Vec<DbId> = previous.iter().map(|link| link.target_id).collect();
+    remove(db, previous.into_iter().map(|link| link.edge_id).collect())?;
+    for (label_order, (label_id, catalog_number)) in desired.into_iter().enumerate() {
+        insert(
+            db,
+            layer_id,
+            label_id,
+            &LayerLabel {
+                label_order: label_order as u64,
+                catalog_number,
+            },
+        )?;
+    }
+    super::super::super::labels::collect_unreferenced(db, &previous_label_ids)?;
+    Ok(true)
 }
 
 /// Whether any layer references `target_id` through a relationship edge.
