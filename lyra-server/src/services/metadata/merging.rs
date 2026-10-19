@@ -20,6 +20,7 @@ use crate::db::{
     self,
     Artist,
     ArtistRelationType,
+    CreditType,
     DbAccess,
     MetadataField,
     MetadataLayer,
@@ -31,6 +32,7 @@ use crate::db::{
         decode,
         edges::{
             self as layer_edges,
+            LayerCreditInput,
             LayerRelationInput,
         },
         normalize_value,
@@ -44,6 +46,8 @@ pub(crate) struct MergedMetadata {
     pub(crate) provenance: HashMap<MetadataField, String>,
     /// Each relation type's whole set, from the highest-priority layer supplying it.
     pub(crate) relations: HashMap<ArtistRelationType, Vec<LayerRelationInput>>,
+    /// Each credit role's whole ordered list, from the highest-priority layer supplying it.
+    pub(crate) credits: HashMap<CreditType, Vec<LayerCreditInput>>,
     manual_fields: HashSet<MetadataField>,
 }
 
@@ -134,6 +138,7 @@ pub(crate) fn merge_layers(
     let mut merged_fields = HashMap::new();
     let mut provenance = HashMap::new();
     let mut relations = HashMap::new();
+    let mut credits = HashMap::new();
 
     for layer in sorted_layers {
         for (field, value) in layer.fields {
@@ -146,12 +151,16 @@ pub(crate) fn merge_layers(
         for (relation_type, inputs) in layer.relations {
             relations.entry(relation_type).or_insert(inputs);
         }
+        for (credit_type, inputs) in layer.credits {
+            credits.entry(credit_type).or_insert(inputs);
+        }
     }
 
     MergedMetadata {
         fields: merged_fields,
         provenance,
         relations,
+        credits,
         manual_fields: HashSet::new(),
     }
 }
@@ -204,6 +213,7 @@ pub(crate) fn apply_merged_metadata_to_entity_inside_tx(
                 };
             db::labels::sync_release_label_links_inside_tx(db, node_id, &label_links)?;
         }
+        sync_credits(db, node_id, &merged)?;
     } else if let Some(mut track) = db::tracks::get_by_id(db, node_id)? {
         if track.locked.unwrap_or(false) {
             return Ok(());
@@ -211,6 +221,7 @@ pub(crate) fn apply_merged_metadata_to_entity_inside_tx(
         if apply_to_track(&mut track, &merged)? {
             db::tracks::update_in_transaction(db, &track)?;
         }
+        sync_credits(db, node_id, &merged)?;
     } else if let Some(mut artist) = db::artists::get_by_id(db, node_id)? {
         if artist.locked.unwrap_or(false) {
             return Ok(());
@@ -222,6 +233,59 @@ pub(crate) fn apply_merged_metadata_to_entity_inside_tx(
     }
 
     Ok(())
+}
+
+/// Rewrites a release's or track's credits from its resolved layers, each role
+/// in its winning layer's order. Manually owned credits stay as stored.
+fn sync_credits(
+    db: &mut DbAnyTransactionMut<'_>,
+    owner_id: DbId,
+    merged: &MergedMetadata,
+) -> anyhow::Result<()> {
+    if db::metadata::manual_overrides::owns_field(db, owner_id, MetadataField::Credits)? {
+        return Ok(());
+    }
+    let desired: Vec<db::credits::CreditLinkInput> = resolved_credits(merged)
+        .into_iter()
+        .map(|(credit_type, input)| db::credits::CreditLinkInput {
+            artist_id: input.artist_id,
+            credit_type,
+            detail: input.detail,
+        })
+        .collect();
+    let mut stored = db::credits::links_for_owner(db, owner_id)?;
+    stored.sort_by_key(|link| link.credit.artist_order);
+    let unchanged = stored
+        .iter()
+        .map(|link| {
+            (
+                link.artist_id,
+                link.credit.credit_type,
+                link.credit.detail.as_deref(),
+            )
+        })
+        .eq(desired
+            .iter()
+            .map(|input| (input.artist_id, input.credit_type, input.detail.as_deref())));
+    if !unchanged {
+        db::credits::replace_for_owner(db, owner_id, &desired)?;
+    }
+    Ok(())
+}
+
+/// The resolved credits, roles in their canonical order.
+pub(crate) fn resolved_credits(merged: &MergedMetadata) -> Vec<(CreditType, LayerCreditInput)> {
+    CreditType::ALL
+        .into_iter()
+        .flat_map(|credit_type| {
+            merged
+                .credits
+                .get(&credit_type)
+                .into_iter()
+                .flatten()
+                .map(move |input| (credit_type, input.clone()))
+        })
+        .collect()
 }
 
 /// The relations from `artist_id` that its targets' resolved layers supply:
@@ -651,8 +715,10 @@ mod tests {
                 db,
                 node_id,
                 provider_id,
-                &db::metadata::layers::fields_from_json(fields),
-                &Default::default(),
+                &crate::services::metadata::layers::ProviderValues {
+                    fields: db::metadata::layers::fields_from_json(fields),
+                    ..Default::default()
+                },
                 &HashMap::new(),
                 &Default::default(),
             )
@@ -702,22 +768,25 @@ mod tests {
                 db,
                 artist_id,
                 provider_id,
-                &db::metadata::layers::fields_from_json(serde_json::json!({})),
-                &relations
-                    .iter()
-                    .map(|(relation_type, artist_ids)| {
-                        (
-                            *relation_type,
-                            artist_ids
-                                .iter()
-                                .map(|&artist_id| LayerRelationInput {
-                                    artist_id,
-                                    attributes: None,
-                                })
-                                .collect(),
-                        )
-                    })
-                    .collect(),
+                &crate::services::metadata::layers::ProviderValues {
+                    fields: db::metadata::layers::fields_from_json(serde_json::json!({})),
+                    relations: relations
+                        .iter()
+                        .map(|(relation_type, artist_ids)| {
+                            (
+                                *relation_type,
+                                artist_ids
+                                    .iter()
+                                    .map(|&artist_id| LayerRelationInput {
+                                        artist_id,
+                                        attributes: None,
+                                    })
+                                    .collect(),
+                            )
+                        })
+                        .collect(),
+                    ..Default::default()
+                },
                 &HashMap::new(),
                 &Default::default(),
             )
@@ -891,6 +960,183 @@ mod tests {
             )?;
             assert!(kept.iter().any(|(relation, source)| *source == manual_actor
                 && relation.attributes.as_deref() == Some("manual")));
+            Ok(())
+        }
+
+        fn credits_of(db: &DbAny, owner: DbId) -> anyhow::Result<Vec<(db::CreditType, DbId)>> {
+            let mut links = db::credits::links_for_owner(db, owner)?;
+            links.sort_by_key(|link| link.credit.artist_order);
+            Ok(links
+                .into_iter()
+                .map(|link| (link.credit.credit_type, link.artist_id))
+                .collect())
+        }
+
+        fn credit_list(artist_ids: &[DbId]) -> Vec<LayerCreditInput> {
+            artist_ids
+                .iter()
+                .map(|&artist_id| LayerCreditInput {
+                    artist_id,
+                    detail: None,
+                })
+                .collect()
+        }
+
+        fn save_credits(
+            db: &mut DbAny,
+            owner: DbId,
+            provider_id: &str,
+            credits: &[(db::CreditType, &[DbId])],
+        ) -> anyhow::Result<()> {
+            crate::services::metadata::layers::save_provider_layer(
+                db,
+                owner,
+                provider_id,
+                &crate::services::metadata::layers::ProviderValues {
+                    credits: credits
+                        .iter()
+                        .map(|(role, artist_ids)| (*role, credit_list(artist_ids)))
+                        .collect(),
+                    ..Default::default()
+                },
+                &HashMap::new(),
+                &Default::default(),
+            )
+        }
+
+        #[test]
+        fn each_credit_role_follows_the_layer_that_supplies_it() -> anyhow::Result<()> {
+            let mut db = new_test_db()?;
+            let track = insert_track(&mut db, "Track")?;
+            let local_artist = insert_artist(&mut db, "Local Artist")?;
+            let composer = insert_artist(&mut db, "Composer")?;
+            let [first, second] = [
+                insert_artist(&mut db, "First")?,
+                insert_artist(&mut db, "Second")?,
+            ];
+            db::metadata::layers::upsert(
+                &mut db,
+                track,
+                &MetadataLayer::new(LOCAL_SOURCE_ID, Default::default(), 1).with_credits(
+                    BTreeMap::from([
+                        (db::CreditType::Artist, credit_list(&[local_artist])),
+                        (db::CreditType::Composer, credit_list(&[composer])),
+                    ]),
+                ),
+            )?;
+            enable_provider(&mut db, "provider", 10)?;
+            save_credits(
+                &mut db,
+                track,
+                "provider",
+                &[(db::CreditType::Artist, &[second, first])],
+            )?;
+            assert_eq!(
+                credits_of(&db, track)?,
+                vec![
+                    (db::CreditType::Artist, second),
+                    (db::CreditType::Artist, first),
+                    (db::CreditType::Composer, composer),
+                ],
+                "the provider wins the artist role; the local composer stays"
+            );
+
+            save_credits(
+                &mut db,
+                track,
+                "provider",
+                &[(db::CreditType::Composer, &[])],
+            )?;
+            assert_eq!(
+                credits_of(&db, track)?,
+                vec![
+                    (db::CreditType::Artist, second),
+                    (db::CreditType::Artist, first)
+                ],
+                "an empty set clears its role and leaves the others"
+            );
+
+            crate::services::metadata::layers::clear_provider_layer(&mut db, track, "provider")?;
+            assert_eq!(
+                credits_of(&db, track)?,
+                vec![
+                    (db::CreditType::Artist, local_artist),
+                    (db::CreditType::Composer, composer),
+                ]
+            );
+            Ok(())
+        }
+
+        #[test]
+        fn manual_and_locked_owners_keep_their_credits() -> anyhow::Result<()> {
+            let mut db = new_test_db()?;
+            let manual_track = insert_track(&mut db, "Manual")?;
+            let locked_track = insert_track(&mut db, "Locked")?;
+            let stored = insert_artist(&mut db, "Stored")?;
+            let provider_artist = insert_artist(&mut db, "Provider")?;
+            for track in [manual_track, locked_track] {
+                db::credits::replace_for_owner(
+                    &mut db,
+                    track,
+                    &[db::credits::CreditLinkInput {
+                        artist_id: stored,
+                        credit_type: db::CreditType::Artist,
+                        detail: None,
+                    }],
+                )?;
+            }
+            db::metadata::manual_overrides::replace(
+                &mut db,
+                manual_track,
+                &BTreeMap::from([(MetadataField::Credits, serde_json::Value::Bool(true))]),
+            )?;
+            let mut locked = db::tracks::get_by_id(&db, locked_track)?.expect("track exists");
+            locked.locked = Some(true);
+            db::tracks::update(&mut db, &locked)?;
+            enable_provider(&mut db, "provider", 10)?;
+
+            for track in [manual_track, locked_track] {
+                save_credits(
+                    &mut db,
+                    track,
+                    "provider",
+                    &[(db::CreditType::Artist, &[provider_artist])],
+                )?;
+                assert_eq!(
+                    credits_of(&db, track)?,
+                    vec![(db::CreditType::Artist, stored)]
+                );
+            }
+
+            let mut unlocked = db::tracks::get_by_id(&db, locked_track)?.expect("track exists");
+            unlocked.locked = None;
+            db::tracks::update(&mut db, &unlocked)?;
+            apply_merged_metadata_to_entity(&mut db, locked_track)?;
+            assert_eq!(
+                credits_of(&db, locked_track)?,
+                vec![(db::CreditType::Artist, provider_artist)]
+            );
+            Ok(())
+        }
+
+        #[test]
+        fn credits_no_layer_supplies_go_on_the_next_apply() -> anyhow::Result<()> {
+            let mut db = new_test_db()?;
+            let track = insert_track(&mut db, "Track")?;
+            let artist = insert_artist(&mut db, "Artist")?;
+            db::credits::replace_for_owner(
+                &mut db,
+                track,
+                &[db::credits::CreditLinkInput {
+                    artist_id: artist,
+                    credit_type: db::CreditType::Artist,
+                    detail: None,
+                }],
+            )?;
+
+            apply_merged_metadata_to_entity(&mut db, track)?;
+
+            assert!(credits_of(&db, track)?.is_empty());
             Ok(())
         }
 
@@ -1205,11 +1451,13 @@ mod tests {
                 &mut db,
                 track_id,
                 "provider",
-                &std::collections::BTreeMap::from([(
-                    MetadataField::TrackTitle,
-                    serde_json::json!("Provider Title"),
-                )]),
-                &Default::default(),
+                &crate::services::metadata::layers::ProviderValues {
+                    fields: std::collections::BTreeMap::from([(
+                        MetadataField::TrackTitle,
+                        serde_json::json!("Provider Title"),
+                    )]),
+                    ..Default::default()
+                },
                 &HashMap::new(),
                 &Default::default(),
             )?;

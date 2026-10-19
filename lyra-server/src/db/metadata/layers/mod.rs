@@ -3,13 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the resolver and layer writers adopt these in later phases"
-    )
-)]
 pub(crate) mod edges;
 mod elements;
 
@@ -39,6 +32,7 @@ use super::super::{
         ArtistType,
         relations::ArtistRelationType,
     },
+    credits::CreditType,
     entities::MetadataEntityType,
     labels::{
         LabelExternalIdInput,
@@ -57,6 +51,10 @@ pub(crate) type LayerFields = BTreeMap<MetadataField, Value>;
 /// the layer's artist. A listed type is supplied; an empty list clears it.
 pub(crate) type LayerRelations = BTreeMap<ArtistRelationType, Vec<edges::LayerRelationInput>>;
 
+/// A release or track layer's credits by role, each in credit order. A listed
+/// role is supplied; an empty list clears it.
+pub(crate) type LayerCredits = BTreeMap<CreditType, Vec<edges::LayerCreditInput>>;
+
 /// One source's opinion on an entity's fields; stored as the entity's
 /// [`ReleaseLayer`], [`TrackLayer`], or [`ArtistLayer`].
 #[derive(Clone, Debug, PartialEq)]
@@ -64,6 +62,7 @@ pub(crate) struct MetadataLayer {
     pub(crate) source_id: String,
     pub(crate) fields: LayerFields,
     pub(crate) relations: LayerRelations,
+    pub(crate) credits: LayerCredits,
     pub(crate) updated_at: u64,
 }
 
@@ -93,12 +92,18 @@ impl MetadataLayer {
             source_id: source_id.into(),
             fields,
             relations: LayerRelations::new(),
+            credits: LayerCredits::new(),
             updated_at,
         }
     }
 
     pub(crate) fn with_relations(mut self, relations: LayerRelations) -> Self {
         self.relations = relations;
+        self
+    }
+
+    pub(crate) fn with_credits(mut self, credits: LayerCredits) -> Self {
+        self.credits = credits;
         self
     }
 }
@@ -369,23 +374,24 @@ pub(crate) fn upsert_inside_tx(
     node_id: DbId,
     layer: &MetadataLayer,
 ) -> anyhow::Result<bool> {
-    match entity_type(db, node_id)? {
-        MetadataEntityType::Release => save::<ReleaseLayer>(db, node_id, layer),
-        MetadataEntityType::Track => save::<TrackLayer>(db, node_id, layer),
-        MetadataEntityType::Artist => {
-            // A save replaces only the relation types it supplies; the source's
-            // other relation types stay as stored.
-            let mut layer = layer.clone();
-            if let Some(stored) = get_for_entity(db, node_id)?
-                .into_iter()
-                .find(|stored| stored.source_id == layer.source_id)
-            {
-                for (relation_type, inputs) in stored.relations {
-                    layer.relations.entry(relation_type).or_insert(inputs);
-                }
-            }
-            save::<ArtistLayer>(db, node_id, &layer)
+    // A save replaces only the relation types and credit roles it supplies;
+    // the source's others stay as stored.
+    let mut layer = layer.clone();
+    if let Some(stored) = get_for_entity(db, node_id)?
+        .into_iter()
+        .find(|stored| stored.source_id == layer.source_id)
+    {
+        for (relation_type, inputs) in stored.relations {
+            layer.relations.entry(relation_type).or_insert(inputs);
         }
+        for (credit_type, inputs) in stored.credits {
+            layer.credits.entry(credit_type).or_insert(inputs);
+        }
+    }
+    match entity_type(db, node_id)? {
+        MetadataEntityType::Release => save::<ReleaseLayer>(db, node_id, &layer),
+        MetadataEntityType::Track => save::<TrackLayer>(db, node_id, &layer),
+        MetadataEntityType::Artist => save::<ArtistLayer>(db, node_id, &layer),
     }
     .with_context(|| format!("invalid '{}' metadata layer", layer.source_id))
 }
@@ -1071,6 +1077,29 @@ mod tests {
             vec![first, second]
         );
         assert!(entity_ids_for_source(&db, "missing")?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn a_credit_only_change_moves_updated_at() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release_id = insert_release(&mut db, "Release")?;
+        let first = insert_artist(&mut db, "First")?;
+        let second = insert_artist(&mut db, "Second")?;
+        let credited = |artist_id: DbId, updated_at: u64| {
+            layer("provider", json!({}), updated_at).with_credits(LayerCredits::from([(
+                CreditType::Artist,
+                vec![edges::LayerCreditInput {
+                    artist_id,
+                    detail: None,
+                }],
+            )]))
+        };
+        upsert(&mut db, release_id, &credited(first, 1))?;
+
+        assert!(upsert(&mut db, release_id, &credited(second, 2))?);
+
+        assert_eq!(only_layer(&db, release_id)?.updated_at, 2);
         Ok(())
     }
 }

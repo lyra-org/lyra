@@ -470,9 +470,18 @@ fn merge_artist_into(
 
     db::metadata::layers::edges::retarget_artist(db, winner, loser)?;
 
+    // Layers own the other credits; re-applying their owners below rebuilds
+    // them. Manual and locked owners keep what is stored.
     let winner_credits = db::credits::CreditSet::new(&db::credits::links_to_artist(db, winner)?);
     let credit_links = db::credits::links_to_artist(db, loser)?;
+    let mut reapplied_owners = Vec::new();
     for link in &credit_links {
+        if !credits_stay_as_stored(db, link.owner_id)? {
+            if !reapplied_owners.contains(&link.owner_id) {
+                reapplied_owners.push(link.owner_id);
+            }
+            continue;
+        }
         if !winner_credits.contains(link.owner_id, winner, link.credit.role()) {
             db::credits::link(db, link.owner_id, winner, &link.credit)?;
         }
@@ -502,7 +511,25 @@ fn merge_artist_into(
     // `merge_artist_into` runs inside `deduplicate_artists_by_external_id`'s outer
     // `transaction_mut`; use the in-txn variant — agdb does not support reentrant transactions.
     crate::db::metadata::cascade_remove_entities_in_txn(db, &[loser])?;
+    for owner_id in reapplied_owners {
+        crate::services::metadata::merging::apply_merged_metadata_to_entity_inside_tx(
+            db, owner_id,
+        )?;
+    }
     crate::services::metadata::merging::apply_merged_metadata_to_entity_inside_tx(db, winner)
+}
+
+/// Whether a release's or track's effective credits are kept rather than
+/// rebuilt from its layers: manual edits own them, or a lock freezes them.
+fn credits_stay_as_stored(db: &impl crate::db::DbAccess, owner_id: DbId) -> anyhow::Result<bool> {
+    let locked = match db::releases::get_by_id(db, owner_id)? {
+        Some(release) => release.locked.unwrap_or(false),
+        None => {
+            db::tracks::get_by_id(db, owner_id)?.is_some_and(|track| track.locked.unwrap_or(false))
+        }
+    };
+    Ok(locked
+        || db::metadata::manual_overrides::owns_field(db, owner_id, db::MetadataField::Credits)?)
 }
 
 fn migrate_metadata(
@@ -681,7 +708,6 @@ mod tests {
                 &[edges::LayerCreditInput {
                     artist_id: layer_only,
                     detail: Some("lead".to_string()),
-                    join_phrase: None,
                 }],
             )?;
             edges::replace_relations(
@@ -961,16 +987,29 @@ mod tests {
         let track = test_db::insert_track(&mut db, "Track")?;
         let winner = test_db::insert_artist(&mut db, "Winner")?;
         let loser = test_db::insert_artist(&mut db, "Loser")?;
-        test_db::connect_credit(&mut db, track, winner, db::CreditType::Artist, None, 0)?;
-        test_db::connect_credit(&mut db, track, loser, db::CreditType::Artist, None, 1)?;
-        test_db::connect_credit(
+        let credit =
+            |artist_id, detail: Option<&str>| db::metadata::layers::edges::LayerCreditInput {
+                artist_id,
+                detail: detail.map(str::to_string),
+            };
+        db::metadata::layers::upsert(
             &mut db,
             track,
-            loser,
-            db::CreditType::Producer,
-            Some("co-producer"),
-            2,
+            &db::MetadataLayer::new("local", Default::default(), 1).with_credits(
+                std::collections::BTreeMap::from([
+                    (
+                        db::CreditType::Artist,
+                        vec![credit(winner, None), credit(loser, None)],
+                    ),
+                    (
+                        db::CreditType::Producer,
+                        vec![credit(loser, Some("co-producer"))],
+                    ),
+                ]),
+            ),
         )?;
+        crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track)?;
+        assert_eq!(db::credits::links_for_owner(&db, track)?.len(), 3);
 
         db.transaction_mut(|transaction| {
             merge_artist_into(transaction, winner, loser, false, false)
@@ -993,9 +1032,16 @@ mod tests {
                 db::Credit {
                     credit_type: db::CreditType::Producer,
                     detail: Some("co-producer".to_string()),
-                    artist_order: 2,
+                    artist_order: 1,
                 },
             ]
+        );
+        let before = db::credits::links_for_owner(&db, track)?;
+        crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track)?;
+        assert_eq!(
+            db::credits::links_for_owner(&db, track)?,
+            before,
+            "a later apply keeps the merged credits"
         );
         Ok(())
     }

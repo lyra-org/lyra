@@ -19,14 +19,27 @@ use super::parsing::parse_custom_field_version;
 use crate::plugins::args;
 use crate::plugins::db::{
     ArtistRelationType,
+    CreditType,
     DbAsync,
+    LayerCreditInput,
+    LayerCredits,
     LayerFields,
     LayerRelationInput,
     LayerRelations,
     MetadataField,
     normalize_value,
 };
-use crate::services::metadata::layers::CustomFieldChanges;
+use crate::services::metadata::layers::{
+    CustomFieldChanges,
+    ProviderValues,
+};
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreditEntry {
+    artist_id: i64,
+    detail: Option<String>,
+}
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -48,6 +61,7 @@ struct LayerBuilderState {
     provider_id: String,
     fields: LayerFields,
     relations: LayerRelations,
+    credits: LayerCredits,
     external_ids: HashMap<String, String>,
     custom_fields: CustomFieldChanges,
 }
@@ -85,6 +99,42 @@ impl MetadataLayer {
             .expect("metadata layer mutex poisoned")
             .fields
             .insert(field, value);
+        Ok(())
+    }
+
+    /// Replaces this release or track layer's credits in `role`, in credit
+    /// order. An empty list clears the role; roles never set keep what this
+    /// source stored before.
+    #[harmony(args(role: CreditType, credits: luau::JsonValue))]
+    fn set_credits(
+        &self,
+        vm: &luau::Vm,
+        role: CreditType,
+        credits: luau::Value,
+    ) -> luau::runtime::Result<()> {
+        let entries: Vec<CreditEntry> = serde_json::from_value(harmony_serde::luau_to_json(
+            vm, &credits, 0,
+        )?)
+        .map_err(|error| {
+            crate::plugins::runtime_error(format!(
+                "credits must be a list of {{ artist_id, detail? }}: {error}"
+            ))
+        })?;
+        let mut inputs = Vec::with_capacity(entries.len());
+        for entry in entries {
+            inputs.push(LayerCreditInput {
+                artist_id: args::positive_id(entry.artist_id, "artist_id")?,
+                detail: entry
+                    .detail
+                    .map(|detail| detail.trim().to_string())
+                    .filter(|detail| !detail.is_empty()),
+            });
+        }
+        self.state
+            .lock()
+            .expect("metadata layer mutex poisoned")
+            .credits
+            .insert(role, inputs);
         Ok(())
     }
 
@@ -141,8 +191,11 @@ impl MetadataLayer {
                 &mut db,
                 layer.node_id,
                 &layer.provider_id,
-                &layer.fields,
-                &layer.relations,
+                &ProviderValues {
+                    fields: layer.fields,
+                    relations: layer.relations,
+                    credits: layer.credits,
+                },
                 &layer.external_ids,
                 &layer.custom_fields,
             )
@@ -223,6 +276,7 @@ impl MetadataLayer {
                 provider_id,
                 fields: LayerFields::new(),
                 relations: LayerRelations::new(),
+                credits: LayerCredits::new(),
                 external_ids: HashMap::new(),
                 custom_fields: CustomFieldChanges::default(),
             })),

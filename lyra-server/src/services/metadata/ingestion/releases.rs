@@ -84,34 +84,68 @@ fn scanned_media_formats(release_tracks: &[TrackIngest]) -> Option<Vec<String>> 
     })
 }
 
-fn infer_release_artists(release_tracks: &[TrackIngest]) -> Vec<String> {
+/// The release's artists: the batch's explicit album-artist tag, or else the
+/// artists on more than half of the release's tracks, counting this batch's
+/// tags and the local layers of its other tracks, so a partial scan of a
+/// compilation keeps what the whole release says.
+fn release_artist_ids(
+    db: &mut DbAnyTransactionMut<'_>,
+    release_db_id: DbId,
+    release_tracks: &[TrackIngest],
+    cache: &mut BTreeMap<String, DbId>,
+) -> anyhow::Result<Vec<DbId>> {
     if let Some(explicit) = release_tracks
         .iter()
         .find_map(|track| track.meta.album_artists.clone())
     {
-        return explicit;
+        return resolve_artist_ids(db, &explicit, cache);
     }
 
-    let total = release_tracks.len();
-    let mut counts: HashMap<&str, usize> = HashMap::new();
-    let mut ordered = Vec::new();
-    let mut seen = HashSet::new();
-
+    let mut track_artists = Vec::with_capacity(release_tracks.len());
     for track in release_tracks {
-        if let Some(artists) = track.meta.artists.as_deref() {
-            for name in artists {
-                *counts.entry(name.as_str()).or_default() += 1;
-                if seen.insert(name.as_str()) {
-                    ordered.push(name.clone());
-                }
+        let names = track.meta.artists.clone().unwrap_or_default();
+        track_artists.push(resolve_artist_ids(db, &names, cache)?);
+    }
+    let batch_track_ids: HashSet<DbId> = release_tracks
+        .iter()
+        .filter_map(|track| track.track_db_id)
+        .collect();
+    for track in db::tracks::get_direct(db, release_db_id)? {
+        let Some(track_id) = track.db_id.map(DbId::from) else {
+            continue;
+        };
+        if batch_track_ids.contains(&track_id) {
+            continue;
+        }
+        let local_artists = db::metadata::layers::get_for_entity(db, track_id)?
+            .into_iter()
+            .find(|layer| layer.source_id == LOCAL_SOURCE_ID)
+            .and_then(|mut layer| layer.credits.remove(&db::CreditType::Artist))
+            .unwrap_or_default();
+        track_artists.push(
+            local_artists
+                .into_iter()
+                .map(|credit| credit.artist_id)
+                .collect(),
+        );
+    }
+
+    let total = track_artists.len();
+    let mut counts: HashMap<DbId, usize> = HashMap::new();
+    let mut ordered = Vec::new();
+    for artist_ids in &track_artists {
+        for &artist_id in artist_ids {
+            let count = counts.entry(artist_id).or_default();
+            if *count == 0 {
+                ordered.push(artist_id);
             }
+            *count += 1;
         }
     }
-
-    ordered
+    Ok(ordered
         .into_iter()
-        .filter(|name| counts.get(name.as_str()).copied().unwrap_or(0) > total / 2)
-        .collect()
+        .filter(|artist_id| counts[artist_id] > total / 2)
+        .collect())
 }
 
 fn parsed_artist_type_to_db(artist_type: lyra_metadata::ParsedArtistType) -> ArtistType {
@@ -352,25 +386,13 @@ fn persist_release_inner(
         MetadataField::Labels,
         scanned_release_labels(&release_tracks),
     )?;
+    release_layer.supply_artists(&release_artist_ids(
+        db,
+        release_db_id,
+        &release_tracks,
+        &mut artist_cache,
+    )?);
     release_layer.save(db, release_db_id)?;
-
-    // Derive release artists: explicit tag > majority track artists > empty (compilation)
-    let release_artists = infer_release_artists(&release_tracks);
-    // Reuse existing artist edges on rescan to prevent duplicates when plugins
-    // have renamed the artist, causing the artist_name index to diverge from file tags.
-    let release_artist_ids = if existing_release_id.is_some() {
-        let existing = db::credits::primary_artist_ids(db, release_db_id)?;
-        if !existing.is_empty() {
-            existing
-        } else {
-            resolve_artist_ids(db, &release_artists, &mut artist_cache)?
-        }
-    } else {
-        resolve_artist_ids(db, &release_artists, &mut artist_cache)?
-    };
-    if !db::metadata::manual_overrides::owns_field(db, release_db_id, MetadataField::Credits)? {
-        db::credits::replace_primary_for_owner(db, release_db_id, &release_artist_ids)?;
-    }
 
     // Infer across the whole release, not just this batch: an incremental scan
     // of one disc directory would otherwise shrink `disc_total` to that disc.
@@ -390,8 +412,6 @@ fn persist_release_inner(
     let mut target_gained_track = false;
 
     for track in release_tracks {
-        let is_existing_track = track.track_db_id.is_some();
-
         let TrackMetadata {
             entry_db_id,
             album: _,
@@ -506,7 +526,10 @@ fn persist_release_inner(
             track_db_id
         };
 
+        let track_artist_names = artists.unwrap_or_default();
+        let track_artist_ids = resolve_artist_ids(db, &track_artist_names, &mut artist_cache)?;
         let mut track_layer = LocalLayer::default();
+        track_layer.supply_artists(&track_artist_ids);
         track_layer.supply(MetadataField::TrackTitle, title)?;
         track_layer.supply(MetadataField::Year, year)?;
         track_layer.supply(MetadataField::Disc, disc)?;
@@ -573,20 +596,6 @@ fn persist_release_inner(
             cue_track_id,
         )?;
 
-        let track_artist_names = artists.unwrap_or_default();
-        let track_artist_ids = if is_existing_track {
-            let existing = db::credits::primary_artist_ids(db, track_db_id)?;
-            if !existing.is_empty() {
-                existing
-            } else {
-                resolve_artist_ids(db, &track_artist_names, &mut artist_cache)?
-            }
-        } else {
-            resolve_artist_ids(db, &track_artist_names, &mut artist_cache)?
-        };
-        if !db::metadata::manual_overrides::owns_field(db, track_db_id, MetadataField::Credits)? {
-            db::credits::replace_primary_for_owner(db, track_db_id, &track_artist_ids)?;
-        }
         collect_scanned_artist_relations(
             db,
             &artist_relations,

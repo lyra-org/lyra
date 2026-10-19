@@ -1095,7 +1095,6 @@ mod tests {
                     &[edges::LayerCreditInput {
                         artist_id: layer_only_artist,
                         detail: None,
-                        join_phrase: None,
                     }],
                 )
             })?;
@@ -1169,7 +1168,6 @@ mod tests {
                 &[edges::LayerCreditInput {
                     artist_id: credited,
                     detail: None,
-                    join_phrase: None,
                 }],
             )?;
             edges::replace_relations(

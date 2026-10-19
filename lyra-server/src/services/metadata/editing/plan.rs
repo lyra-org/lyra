@@ -24,6 +24,7 @@ use super::{
     model::{
         FieldState,
         MetadataChangeRequest,
+        MetadataCreditValue,
         MetadataEditOperation,
         MetadataFieldDiff,
         MetadataRelationValue,
@@ -80,6 +81,20 @@ fn inherited_value(
     let layers = db::metadata::layers::get_for_entity(db, state.db_id)?;
     let providers = db::providers::get(db)?;
     let merged = crate::services::metadata::merging::merge_layers(layers, &providers);
+    if field == MetadataField::Credits {
+        let mut credits = Vec::new();
+        for (credit_type, input) in crate::services::metadata::merging::resolved_credits(&merged) {
+            let artist = db::artists::get_by_id(db, input.artist_id)?.ok_or_else(|| {
+                MetadataEditingError::Internal(anyhow::anyhow!("a credited artist disappeared"))
+            })?;
+            credits.push(MetadataCreditValue {
+                artist_id: artist.id,
+                credit_type,
+                detail: input.detail,
+            });
+        }
+        return normalized_set_value(db, principal, state, field, &serde_json::to_value(credits)?);
+    }
     let Some(value) = merged.fields.get(&field).filter(|value| !value.is_null()) else {
         return cleared_value(state, field);
     };

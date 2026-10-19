@@ -17,6 +17,7 @@ use serde_json::{
 };
 
 use super::{
+    LayerCredits,
     LayerFields,
     LayerRelations,
     MetadataLayer,
@@ -32,6 +33,7 @@ use crate::db::{
         ArtistType,
         relations::ArtistRelationType,
     },
+    credits::CreditType,
     entities::MetadataEntityType,
     genres,
     labels,
@@ -83,6 +85,12 @@ impl LayerElement for ReleaseLayer {
             supplied: fields
                 .keys()
                 .map(|field| field.as_str().to_string())
+                .chain(
+                    layer
+                        .credits
+                        .keys()
+                        .map(|&credit_type| credit_key(credit_type)),
+                )
                 .collect(),
             ..Self::default()
         };
@@ -117,11 +125,10 @@ impl LayerElement for ReleaseLayer {
                 (MetadataField::Labels, label_values(db, layer_id)?),
             ],
         )?;
-        Ok(MetadataLayer::new(
-            self.source_id.clone(),
-            fields,
-            self.updated_at,
-        ))
+        Ok(
+            MetadataLayer::new(self.source_id.clone(), fields, self.updated_at)
+                .with_credits(stored_credits(db, layer_id, &self.supplied)?),
+        )
     }
 
     fn source_id(&self) -> &str {
@@ -171,7 +178,8 @@ impl LayerElement for ReleaseLayer {
         };
         let genres_changed = edges::replace_genres(db, layer_id, &genre_ids)?;
         let labels_changed = edges::replace_labels(db, layer_id, &label_links)?;
-        Ok(genres_changed || labels_changed)
+        let credits_changed = save_credits(db, layer_id, layer)?;
+        Ok(genres_changed || labels_changed || credits_changed)
     }
 }
 
@@ -200,6 +208,12 @@ impl LayerElement for TrackLayer {
             supplied: fields
                 .keys()
                 .map(|field| field.as_str().to_string())
+                .chain(
+                    layer
+                        .credits
+                        .keys()
+                        .map(|&credit_type| credit_key(credit_type)),
+                )
                 .collect(),
             ..Self::default()
         };
@@ -218,7 +232,8 @@ impl LayerElement for TrackLayer {
         Ok(element)
     }
 
-    fn to_layer(&self, _db: &impl DbAccess) -> anyhow::Result<MetadataLayer> {
+    fn to_layer(&self, db: &impl DbAccess) -> anyhow::Result<MetadataLayer> {
+        let layer_id = self.db_id.context("a stored track layer has an id")?;
         let fields = stored_fields(
             MetadataEntityType::Track,
             &self.supplied,
@@ -232,11 +247,10 @@ impl LayerElement for TrackLayer {
                 (MetadataField::TrackTotal, json_value(&self.track_total)?),
             ],
         )?;
-        Ok(MetadataLayer::new(
-            self.source_id.clone(),
-            fields,
-            self.updated_at,
-        ))
+        Ok(
+            MetadataLayer::new(self.source_id.clone(), fields, self.updated_at)
+                .with_credits(stored_credits(db, layer_id, &self.supplied)?),
+        )
     }
 
     fn source_id(&self) -> &str {
@@ -270,6 +284,14 @@ impl LayerElement for TrackLayer {
             ("track_total", self.track_total.is_none()),
         ]
     }
+
+    fn save_edges(
+        db: &mut DbAnyTransactionMut<'_>,
+        layer_id: DbId,
+        layer: &MetadataLayer,
+    ) -> anyhow::Result<bool> {
+        save_credits(db, layer_id, layer)
+    }
 }
 
 #[derive(DbElement, Clone, Debug, Default, PartialEq)]
@@ -287,6 +309,7 @@ pub(super) struct ArtistLayer {
 impl LayerElement for ArtistLayer {
     fn from_layer(layer: &MetadataLayer) -> anyhow::Result<Self> {
         let fields = validated_fields(MetadataEntityType::Artist, &layer.fields)?;
+        anyhow::ensure!(layer.credits.is_empty(), "an artist has no credits");
         let mut element = Self {
             source_id: layer.source_id.clone(),
             updated_at: layer.updated_at,
@@ -402,6 +425,70 @@ impl LayerElement for ArtistLayer {
     }
 }
 
+/// The supplied key of one credit role, such as `credits.composer`.
+fn credit_key(credit_type: CreditType) -> String {
+    format!("credits.{credit_type}")
+}
+
+/// The credit role a supplied key names, or `None` for any other key.
+fn parse_credit_key(name: &str) -> anyhow::Result<Option<CreditType>> {
+    let Some(credit_type) = name.strip_prefix("credits.") else {
+        return Ok(None);
+    };
+    Ok(Some(CreditType::from_db_str(credit_type).with_context(
+        || format!("unknown supplied credit role '{credit_type}'"),
+    )?))
+}
+
+/// A release or track layer's supplied credit roles, each in credit order.
+fn stored_credits(
+    db: &impl DbAccess,
+    layer_id: DbId,
+    supplied: &[String],
+) -> anyhow::Result<LayerCredits> {
+    let mut credits = LayerCredits::new();
+    for name in supplied {
+        if let Some(credit_type) = parse_credit_key(name)? {
+            anyhow::ensure!(
+                credits.insert(credit_type, Vec::new()).is_none(),
+                "'{name}' is supplied twice"
+            );
+        }
+    }
+    for link in edges::credits(db, layer_id)? {
+        credits
+            .get_mut(&link.edge.credit_type)
+            .with_context(|| {
+                format!(
+                    "'{}' is stored but not supplied",
+                    credit_key(link.edge.credit_type)
+                )
+            })?
+            .push(edges::LayerCreditInput {
+                artist_id: link.target_id,
+                detail: link.edge.detail,
+            });
+    }
+    Ok(credits)
+}
+
+fn save_credits(
+    db: &mut DbAnyTransactionMut<'_>,
+    layer_id: DbId,
+    layer: &MetadataLayer,
+) -> anyhow::Result<bool> {
+    let mut changed = false;
+    for credit_type in CreditType::ALL {
+        let desired = layer
+            .credits
+            .get(&credit_type)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        changed |= edges::replace_credits(db, layer_id, credit_type, desired)?;
+    }
+    Ok(changed)
+}
+
 /// The supplied key of one relation type, such as `relations.voice_actor`.
 pub(super) fn relation_key(relation_type: ArtistRelationType) -> String {
     format!("relations.{relation_type}")
@@ -450,6 +537,13 @@ fn stored_fields(
                 entity == MetadataEntityType::Artist,
                 "a {} has no relations",
                 entity.as_str()
+            );
+            continue;
+        }
+        if parse_credit_key(name)?.is_some() {
+            anyhow::ensure!(
+                entity != MetadataEntityType::Artist,
+                "an artist has no credits"
             );
             continue;
         }

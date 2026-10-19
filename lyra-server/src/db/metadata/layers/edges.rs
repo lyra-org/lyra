@@ -28,7 +28,6 @@ use super::super::super::{
 pub(crate) struct LayerCredit {
     pub(crate) credit_type: CreditType,
     pub(crate) detail: Option<String>,
-    pub(crate) join_phrase: Option<String>,
     pub(crate) artist_order: u64,
 }
 
@@ -65,11 +64,10 @@ pub(crate) struct LayerLink<T> {
     pub(crate) edge: T,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct LayerCreditInput {
     pub(crate) artist_id: DbId,
     pub(crate) detail: Option<String>,
-    pub(crate) join_phrase: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -213,35 +211,42 @@ pub(crate) fn replace_credits(
     layer_id: DbId,
     credit_type: CreditType,
     desired: &[LayerCreditInput],
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     ensure_layer(db, layer_id, &[RELEASE_LAYER, TRACK_LAYER])?;
     let artist_ids: Vec<DbId> = desired.iter().map(|input| input.artist_id).collect();
     ensure_targets(db, &artist_ids, "Artist")?;
-    remove(
-        db,
-        of_layer::<LayerCredit>(db, layer_id)?
-            .into_iter()
-            .filter(|link| link.edge.credit_type == credit_type)
-            .map(|link| link.edge_id)
-            .collect(),
-    )?;
     let mut seen = HashSet::new();
-    for input in desired {
-        if seen.insert((input.artist_id, input.detail.as_deref())) {
-            insert(
-                db,
-                layer_id,
-                input.artist_id,
-                &LayerCredit {
-                    credit_type,
-                    detail: input.detail.clone(),
-                    join_phrase: input.join_phrase.clone(),
-                    artist_order: seen.len() as u64 - 1,
-                },
-            )?;
-        }
+    let desired: Vec<&LayerCreditInput> = desired
+        .iter()
+        .filter(|input| seen.insert((input.artist_id, input.detail.as_deref())))
+        .collect();
+    let previous: Vec<LayerLink<LayerCredit>> = credits(db, layer_id)?
+        .into_iter()
+        .filter(|link| link.edge.credit_type == credit_type)
+        .collect();
+    if previous
+        .iter()
+        .map(|link| (link.target_id, link.edge.detail.as_deref()))
+        .eq(desired
+            .iter()
+            .map(|input| (input.artist_id, input.detail.as_deref())))
+    {
+        return Ok(false);
     }
-    Ok(())
+    remove(db, previous.into_iter().map(|link| link.edge_id).collect())?;
+    for (artist_order, input) in desired.into_iter().enumerate() {
+        insert(
+            db,
+            layer_id,
+            input.artist_id,
+            &LayerCredit {
+                credit_type,
+                detail: input.detail.clone(),
+                artist_order: artist_order as u64,
+            },
+        )?;
+    }
+    Ok(true)
 }
 
 /// The layer's relations, by relation type and then target.
@@ -638,7 +643,6 @@ mod tests {
         LayerCreditInput {
             artist_id,
             detail: None,
-            join_phrase: None,
         }
     }
 
@@ -685,7 +689,6 @@ mod tests {
                 &[LayerCreditInput {
                     artist_id: c,
                     detail: Some("piano".to_string()),
-                    join_phrase: Some(" & ".to_string()),
                 }],
             )
         })?;
@@ -700,7 +703,6 @@ mod tests {
         );
         let instrumentalist = &credits(&db, layer)?[1].edge;
         assert_eq!(instrumentalist.detail.as_deref(), Some("piano"));
-        assert_eq!(instrumentalist.join_phrase.as_deref(), Some(" & "));
         assert!(crate::db::graph::direct_edges_from(&db, layer)?.is_empty());
         Ok(())
     }
@@ -796,7 +798,6 @@ mod tests {
         let played = |artist_id, detail: &str| LayerCreditInput {
             artist_id,
             detail: Some(detail.to_string()),
-            join_phrase: None,
         };
 
         db.transaction_mut(|t| {

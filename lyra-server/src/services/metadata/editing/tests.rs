@@ -384,6 +384,7 @@ fn manual_clear_overrides_later_provider_values() -> anyhow::Result<()> {
         &db::MetadataLayer {
             source_id: "test-provider".to_string(),
             relations: Default::default(),
+            credits: Default::default(),
             fields: crate::db::metadata::layers::fields_from_json(
                 json!({"sort_title": "Provider sort", "year": 2024}),
             ),
@@ -488,6 +489,7 @@ fn inherit_relinquishes_ownership_and_restores_resolved_value() -> anyhow::Resul
         &db::MetadataLayer {
             source_id: "provider".to_string(),
             relations: Default::default(),
+            credits: Default::default(),
             fields: crate::db::metadata::layers::fields_from_json(
                 json!({"track_title": "Resolved"}),
             ),
@@ -545,6 +547,7 @@ fn inherit_graph_field_restores_provider_resolved_value() -> anyhow::Result<()> 
         &db::MetadataLayer {
             source_id: "provider".to_string(),
             relations: Default::default(),
+            credits: Default::default(),
             fields: crate::db::metadata::layers::fields_from_json(json!({"genres": ["Provider"]})),
             updated_at: 10,
         },
@@ -594,6 +597,7 @@ fn inherit_conflicts_when_provider_resolution_changes_after_preview() -> anyhow:
     let provider_layer = |genres: &[&str], updated_at| db::MetadataLayer {
         source_id: "provider".to_string(),
         relations: Default::default(),
+        credits: Default::default(),
         fields: crate::db::metadata::layers::fields_from_json(json!({"genres": genres})),
         updated_at,
     };
@@ -782,6 +786,7 @@ fn inherit_labels_restores_resolvable_provider_labels() -> anyhow::Result<()> {
         &db::MetadataLayer {
             source_id: "provider".to_string(),
             relations: Default::default(),
+            credits: Default::default(),
             fields: crate::db::metadata::layers::fields_from_json(json!({
                 "labels": [{
                     "name": "Provider Label",
@@ -874,6 +879,7 @@ fn inherit_labels_takes_the_layers_own_label_not_one_with_the_same_name() -> any
         &db::MetadataLayer {
             source_id: "provider".to_string(),
             relations: Default::default(),
+            credits: Default::default(),
             fields: crate::db::metadata::layers::fields_from_json(json!({
                 "labels": [{
                     "name": "Shared Name",
@@ -949,8 +955,10 @@ fn a_manually_masked_provider_label_survives_while_its_layer_names_it() -> anyho
         &mut db,
         release_id,
         "provider",
-        &fields,
-        &Default::default(),
+        &crate::services::metadata::layers::ProviderValues {
+            fields: fields.clone(),
+            ..Default::default()
+        },
         &HashMap::new(),
         &Default::default(),
     )?;
@@ -991,8 +999,10 @@ fn a_manually_masked_provider_label_survives_while_its_layer_names_it() -> anyho
         &mut db,
         release_id,
         "provider",
-        &fields,
-        &Default::default(),
+        &crate::services::metadata::layers::ProviderValues {
+            fields: fields.clone(),
+            ..Default::default()
+        },
         &HashMap::new(),
         &Default::default(),
     )?;
@@ -1131,6 +1141,7 @@ fn inherited_label_disappearance_after_preview_is_rejected() -> anyhow::Result<(
         &db::MetadataLayer {
             source_id: "provider".to_string(),
             relations: Default::default(),
+            credits: Default::default(),
             fields: crate::db::metadata::layers::fields_from_json(json!({
                 "labels": [{
                     "name": "Provider Label",
@@ -1329,6 +1340,55 @@ fn referenced_artists_must_be_accessible_to_the_principal() -> anyhow::Result<()
 }
 
 #[test]
+fn inheriting_credits_restores_what_the_layers_supply() -> anyhow::Result<()> {
+    let mut db = new_test_db()?;
+    let principal = principal("user-1");
+    let track_id = insert_track(&mut db, "Track")?;
+    let layer_artist = insert_artist(&mut db, "Layer Artist")?;
+    let manual_artist = insert_artist(&mut db, "Manual Artist")?;
+    db::metadata::layers::upsert(
+        &mut db,
+        track_id,
+        &db::MetadataLayer::new("local", Default::default(), 1).with_credits(BTreeMap::from([(
+            db::CreditType::Artist,
+            vec![db::metadata::layers::edges::LayerCreditInput {
+                artist_id: layer_artist,
+                detail: None,
+            }],
+        )])),
+    )?;
+    crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track_id)?;
+    let manual = db::artists::get_by_id(&db, manual_artist)?.expect("artist exists");
+    let edit = preview_edit(
+        &db,
+        &principal,
+        track_id,
+        vec![set(
+            MetadataField::Credits,
+            json!([{"artist_id": manual.id, "type": "artist"}]),
+        )],
+    )?;
+    apply(&mut db, &principal, track_id, &edit)?;
+    assert_eq!(
+        db::credits::links_for_owner(&db, track_id)?[0].artist_id,
+        manual_artist
+    );
+
+    let inherited = preview_edit(
+        &db,
+        &principal,
+        track_id,
+        vec![inherit(MetadataField::Credits)],
+    )?;
+    apply(&mut db, &principal, track_id, &inherited)?;
+
+    let links = db::credits::links_for_owner(&db, track_id)?;
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].artist_id, layer_artist);
+    Ok(())
+}
+
+#[test]
 fn inheriting_relations_restores_what_the_targets_layers_supply() -> anyhow::Result<()> {
     let mut db = new_test_db()?;
     let principal = principal("user-1");
@@ -1348,14 +1408,16 @@ fn inheriting_relations_restores_what_the_targets_layers_supply() -> anyhow::Res
         &mut db,
         character_id,
         "provider",
-        &BTreeMap::new(),
-        &BTreeMap::from([(
-            db::ArtistRelationType::VoiceActor,
-            vec![db::metadata::layers::edges::LayerRelationInput {
-                artist_id: actor_id,
-                attributes: Some("lead".to_string()),
-            }],
-        )]),
+        &crate::services::metadata::layers::ProviderValues {
+            relations: BTreeMap::from([(
+                db::ArtistRelationType::VoiceActor,
+                vec![db::metadata::layers::edges::LayerRelationInput {
+                    artist_id: actor_id,
+                    attributes: Some("lead".to_string()),
+                }],
+            )]),
+            ..Default::default()
+        },
         &HashMap::new(),
         &Default::default(),
     )?;

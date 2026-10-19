@@ -240,14 +240,13 @@ fn metadata_type_aliases() -> Vec<TypeAliasDescriptor> {
 fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
     vec![
         interface(
-            "ArtistCreditInput",
+            "LayerCreditInput",
             vec![
-                field("artist_id", number()),
-                described_field("name", string(), "The provider's credited artist name."),
+                described_field("artist_id", number(), "The credited artist's database id."),
                 described_field(
-                    "join_phrase",
+                    "detail",
                     opt(string()),
-                    "Text following this name, including spaces or closing punctuation.",
+                    "What the role covers, such as an instrument.",
                 ),
             ],
         ),
@@ -666,6 +665,17 @@ fn layer_class() -> ClassDescriptor {
             vec![],
         ),
         MethodDescriptor {
+            description: Some("Replaces this release or track layer's credits in `role`, in credit order. An artist holds a role once per detail. An empty list clears the role. A save replaces only the roles set on it; the provider's other roles stay as stored."),
+            ..method(
+                "set_credits",
+                vec![
+                    param("role", ty("CreditType")),
+                    param("credits", array(ty("LayerCreditInput"))),
+                ],
+                vec![],
+            )
+        },
+        MethodDescriptor {
             description: Some("Replaces the artists related to this layer's artist by `relation_type`, such as a character's voice actors or a group's members. An empty list clears the type. A save replaces only the types set on it; the provider's other relation types stay as stored."),
             ..method(
                 "set_relations",
@@ -786,24 +796,6 @@ fn provider_class() -> ClassDescriptor {
             ],
             vec![],
         ),
-        method(
-            "link_credit",
-            vec![
-                param("owner_id", number()),
-                param("artist_id", number()),
-                param("credit_type", opt(ty("CreditType"))),
-                param("detail", opt(string())),
-            ],
-            vec![],
-        ),
-        MethodDescriptor {
-            description: Some("Adds the supplied primary artist credits on this owner. Artists must have identities from this provider. Removes a combined local credit only when the complete ordered names and join phrases match (and and & are equivalent at boundaries). Preserves manual credits, manually named, identified or locked artists, unrelated credits, and other roles; never renames or deletes artists."),
-            ..method(
-                "reconcile_artist_credits",
-                vec![param("owner_id", number()), param("credits", array(ty("ArtistCreditInput")))],
-                vec![],
-            )
-        },
         method("layer", vec![param("node_id", number())], vec![ty("Layer")]),
     ]);
     class
@@ -862,8 +854,6 @@ fn method(
                 | "declare_option"
                 | "ensure_artist"
                 | "mark_unmatched"
-                | "link_credit"
-                | "reconcile_artist_credits"
                 | "save"
         ),
         kind: MethodKind::Instance,

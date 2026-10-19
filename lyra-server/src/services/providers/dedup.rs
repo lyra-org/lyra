@@ -108,18 +108,20 @@ fn merge_release_into_inside_tx(
 
     let winner_credits_are_manual = winner_manual_fields.contains(&db::MetadataField::Credits);
     let loser_credits_are_manual = loser_manual_fields.contains(&db::MetadataField::Credits);
+    // Manual credits move with their override; layers own the rest, and
+    // re-applying the winner below rebuilds them.
     if !winner_credits_are_manual && loser_credits_are_manual {
-        db::credits::replace_for_owner(db, winner, &[])?;
-    }
-    // The loser's own credit edges are removed with the loser.
-    if !winner_credits_are_manual {
-        let winner_credits =
-            db::credits::CreditSet::new(&db::credits::links_for_owner(db, winner)?);
-        for link in db::credits::links_for_owner(db, loser)? {
-            if !winner_credits.contains(winner, link.artist_id, link.credit.role()) {
-                db::credits::link(db, winner, link.artist_id, &link.credit)?;
-            }
-        }
+        let mut links = db::credits::links_for_owner(db, loser)?;
+        links.sort_by_key(|link| link.credit.artist_order);
+        let manual: Vec<db::credits::CreditLinkInput> = links
+            .into_iter()
+            .map(|link| db::credits::CreditLinkInput {
+                artist_id: link.artist_id,
+                credit_type: link.credit.credit_type,
+                detail: link.credit.detail,
+            })
+            .collect();
+        db::credits::replace_for_owner(db, winner, &manual)?;
     }
 
     for external_id in db::external_ids::get_for_entity_inside_tx(db, loser)? {
@@ -133,7 +135,6 @@ fn merge_release_into_inside_tx(
     for layer in db::metadata::layers::get_for_entity(db, winner)? {
         winner_layers_by_source.insert(layer.source_id.clone(), layer);
     }
-    let mut wrote_layer = false;
     for layer in db::metadata::layers::get_for_entity(db, loser)? {
         let should_upsert = winner_layers_by_source
             .get(&layer.source_id)
@@ -144,7 +145,6 @@ fn merge_release_into_inside_tx(
 
         db::metadata::layers::copy_inside_tx(db, loser, winner, &layer.source_id)?;
         winner_layers_by_source.insert(layer.source_id.clone(), layer);
-        wrote_layer = true;
     }
     let winner_labels_are_manual = winner_manual_fields.contains(&db::MetadataField::Labels);
     let loser_labels_are_manual = loser_manual_fields.contains(&db::MetadataField::Labels);
@@ -156,9 +156,7 @@ fn merge_release_into_inside_tx(
     }
 
     db::metadata::manual_overrides::merge_into(db, winner, loser)?;
-    if wrote_layer || db::metadata::manual_overrides::get(db, winner)?.is_some() {
-        crate::services::metadata::merging::apply_merged_metadata_to_entity_inside_tx(db, winner)?;
-    }
+    crate::services::metadata::merging::apply_merged_metadata_to_entity_inside_tx(db, winner)?;
 
     db::metadata::custom_fields::copy_between_entities(db, loser, winner)?;
 
@@ -327,7 +325,6 @@ mod tests {
         MetadataField,
         labels::LabelInput,
         test_db::{
-            connect_credit,
             insert_artist,
             insert_release,
             new_test_db,
@@ -385,7 +382,6 @@ mod tests {
         let credit = |artist_id| edges::LayerCreditInput {
             artist_id,
             detail: None,
-            join_phrase: None,
         };
         db::providers::upsert(
             &mut db,
@@ -399,7 +395,9 @@ mod tests {
         layers::upsert(
             &mut db,
             winner,
-            &db::MetadataLayer::new("provider", Default::default(), 1),
+            &db::MetadataLayer::new("provider", Default::default(), 1).with_credits(
+                std::collections::BTreeMap::from([(db::CreditType::Artist, vec![credit(stale)])]),
+            ),
         )?;
         layers::upsert(
             &mut db,
@@ -411,14 +409,12 @@ mod tests {
                     "labels": [{"name": "Blue Note", "catalog_number": "BN-1"}],
                 })),
                 2,
-            ),
+            )
+            .with_credits(std::collections::BTreeMap::from([(
+                db::CreditType::Artist,
+                vec![credit(artist)],
+            )])),
         )?;
-        let winner_layer = layers::layer_id(&db, winner, "provider")?.expect("winner layer");
-        let loser_layer = layers::layer_id(&db, loser, "provider")?.expect("loser layer");
-        db.transaction_mut(|t| {
-            edges::replace_credits(t, winner_layer, db::CreditType::Artist, &[credit(stale)])?;
-            edges::replace_credits(t, loser_layer, db::CreditType::Artist, &[credit(artist)])
-        })?;
 
         merge_release_into(&mut db, winner, loser)?;
 
@@ -440,6 +436,12 @@ mod tests {
         let genres = db::genres::get_for_release(&db, winner)?;
         assert_eq!(genres.len(), 1);
         assert_eq!(genres[0].name, "Jazz");
+        assert_eq!(db::credits::links_for_owner(&db, winner)?.len(), 1);
+        assert_eq!(
+            db::credits::links_for_owner(&db, winner)?[0].artist_id,
+            artist,
+            "the effective credits follow the carried layer"
+        );
         Ok(())
     }
 
@@ -449,9 +451,35 @@ mod tests {
         let winner = insert_release(&mut db, "Winner")?;
         let loser = insert_release(&mut db, "Loser")?;
         let artist = insert_artist(&mut db, "Artist")?;
-        connect_credit(&mut db, winner, artist, db::CreditType::Artist, None, 0)?;
-        connect_credit(&mut db, loser, artist, db::CreditType::Artist, None, 0)?;
-        connect_credit(&mut db, loser, artist, db::CreditType::Producer, None, 1)?;
+        let credits = |roles: &[db::CreditType]| -> db::metadata::layers::LayerCredits {
+            roles
+                .iter()
+                .map(|&role| {
+                    (
+                        role,
+                        vec![db::metadata::layers::edges::LayerCreditInput {
+                            artist_id: artist,
+                            detail: None,
+                        }],
+                    )
+                })
+                .collect()
+        };
+        for (release, roles, updated_at) in [
+            (winner, &[db::CreditType::Artist][..], 1),
+            (
+                loser,
+                &[db::CreditType::Artist, db::CreditType::Producer][..],
+                2,
+            ),
+        ] {
+            db::metadata::layers::upsert(
+                &mut db,
+                release,
+                &db::MetadataLayer::new("local", Default::default(), updated_at)
+                    .with_credits(credits(roles)),
+            )?;
+        }
 
         merge_release_into(&mut db, winner, loser)?;
 

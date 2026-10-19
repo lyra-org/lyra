@@ -807,7 +807,6 @@ mod tests {
                 &[edges::LayerCreditInput {
                     artist_id: hidden_id,
                     detail: None,
-                    join_phrase: None,
                 }],
             )?;
             edges::replace_relations(
@@ -1353,14 +1352,16 @@ mod tests {
             &mut db,
             character_id,
             "provider",
-            &BTreeMap::new(),
-            &BTreeMap::from([(
-                db::ArtistRelationType::VoiceActor,
-                vec![db::metadata::layers::edges::LayerRelationInput {
-                    artist_id: actor_id,
-                    attributes: None,
-                }],
-            )]),
+            &crate::services::metadata::layers::ProviderValues {
+                relations: BTreeMap::from([(
+                    db::ArtistRelationType::VoiceActor,
+                    vec![db::metadata::layers::edges::LayerRelationInput {
+                        artist_id: actor_id,
+                        attributes: None,
+                    }],
+                )]),
+                ..Default::default()
+            },
             &HashMap::new(),
             &Default::default(),
         )?;
@@ -1378,7 +1379,46 @@ mod tests {
     }
 
     #[test]
-    fn rescan_preserves_reconciled_artist_credits() -> anyhow::Result<()> {
+    fn a_partial_rescan_keeps_a_compilations_release_artist() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let library = test_db::insert_test_library_node(
+            &mut db,
+            "Compilation",
+            PathBuf::from("/music/compilation"),
+        )?;
+        let library_id = library.db_id.unwrap();
+        let mut tracks = Vec::new();
+        for (number, artist) in [(1, "Main"), (2, "Main"), (3, "Guest")] {
+            let entry = insert_entry(&mut db, &format!("/music/compilation/{number:02}.flac"))?;
+            connect(&mut db, library_id, entry)?;
+            let mut metadata =
+                track_metadata(entry.0, "Compilation", artist, None, Some(1), number);
+            metadata.album_artists = None;
+            tracks.push(metadata);
+        }
+        apply_metadata(&mut db, library_id, tracks.clone())?;
+        let release_id: DbId = select_releases(&db)?[0].db_id.clone().unwrap().into();
+        let release_artists = |db: &DbAny| -> anyhow::Result<Vec<String>> {
+            Ok(db::artists::get(db, release_id)?
+                .into_iter()
+                .map(|artist| artist.artist_name)
+                .collect())
+        };
+        assert_eq!(release_artists(&db)?, vec!["Main"]);
+
+        apply_metadata(&mut db, library_id, vec![tracks[2].clone()])?;
+
+        assert_eq!(select_releases(&db)?.len(), 1);
+        assert_eq!(
+            release_artists(&db)?,
+            vec!["Main"],
+            "one rescanned track cannot outvote the rest of the release"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_provider_split_wins_the_artist_role_until_unmatched() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let library = test_db::insert_test_library_node(
             &mut db,
@@ -1396,39 +1436,58 @@ mod tests {
             .clone()
             .unwrap()
             .into();
-        let mut desired = Vec::new();
-        for (name, join_phrase) in [("imase", " & "), ("なとり", "")] {
-            let artist_id = test_db::insert_artist(&mut db, name)?;
-            db::external_ids::upsert(
-                &mut db,
-                artist_id,
-                "test",
-                "artist_id",
-                name,
-                db::IdSource::Resolved,
-            )?;
-            desired.push(db::credits::ArtistCreditInput {
-                artist_id,
-                name: name.into(),
-                join_phrase: join_phrase.into(),
-            });
-        }
-        for owner in [release_id, track_id] {
-            db.transaction_mut(|tx| db::credits::reconcile_artists(tx, owner, "test", &desired))?;
-        }
-        apply_metadata(&mut db, library_id, vec![metadata])?;
-        for owner in [release_id, track_id] {
-            let mut ids = db::artists::get(&db, owner)?
-                .into_iter()
-                .map(|artist| DbId::from(artist.db_id.unwrap()).0)
-                .collect::<Vec<_>>();
-            ids.sort();
-            let mut expected = desired
+        let combined = artist_named(&db, "imase and なとり")?.ok_or_else(|| anyhow!("combined"))?;
+        upsert_provider(&mut db, "test", true)?;
+        let split = vec![
+            test_db::insert_artist(&mut db, "imase")?,
+            test_db::insert_artist(&mut db, "なとり")?,
+        ];
+        let credits = db::metadata::layers::LayerCredits::from([(
+            db::CreditType::Artist,
+            split
                 .iter()
-                .map(|credit| credit.artist_id.0)
-                .collect::<Vec<_>>();
-            expected.sort();
-            assert_eq!(ids, expected);
+                .map(|&artist_id| db::metadata::layers::edges::LayerCreditInput {
+                    artist_id,
+                    detail: None,
+                })
+                .collect(),
+        )]);
+        for owner in [release_id, track_id] {
+            crate::services::metadata::layers::save_provider_layer(
+                &mut db,
+                owner,
+                "test",
+                &crate::services::metadata::layers::ProviderValues {
+                    credits: credits.clone(),
+                    ..Default::default()
+                },
+                &HashMap::new(),
+                &Default::default(),
+            )?;
+        }
+        let artists_of = |db: &DbAny, owner: DbId| -> anyhow::Result<Vec<DbId>> {
+            Ok(db::artists::get(db, owner)?
+                .into_iter()
+                .map(|artist| DbId::from(artist.db_id.unwrap()))
+                .collect())
+        };
+        for owner in [release_id, track_id] {
+            assert_eq!(artists_of(&db, owner)?, split);
+        }
+
+        apply_metadata(&mut db, library_id, vec![metadata])?;
+        cleanup_orphaned_metadata(&mut db)?;
+        for owner in [release_id, track_id] {
+            assert_eq!(artists_of(&db, owner)?, split, "a rescan keeps the split");
+        }
+        assert!(
+            db::artists::get_by_id(&db, combined)?.is_some(),
+            "the local layer still names the combined artist"
+        );
+
+        for owner in [release_id, track_id] {
+            crate::services::metadata::layers::clear_provider_layer(&mut db, owner, "test")?;
+            assert_eq!(artists_of(&db, owner)?, vec![combined]);
         }
         Ok(())
     }
@@ -2792,6 +2851,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             &MetadataLayer {
                 source_id: "test".to_string(),
                 relations: Default::default(),
+                credits: Default::default(),
                 fields: crate::db::metadata::layers::fields_from_json(serde_json::json!({
                     "track_title": "Provider Track",
                     "year": 1999,
@@ -2807,6 +2867,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             &MetadataLayer {
                 source_id: "test".to_string(),
                 relations: Default::default(),
+                credits: Default::default(),
                 fields: crate::db::metadata::layers::fields_from_json(serde_json::json!({
                     "release_title": "Provider Release",
                     "release_date": "1988-08-08"
@@ -3112,6 +3173,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             &MetadataLayer {
                 source_id: "test".to_string(),
                 relations: Default::default(),
+                credits: Default::default(),
                 fields: crate::db::metadata::layers::fields_from_json(serde_json::json!({
                     "labels": [
                         {"name": "Provider Label", "catalog_number": "PRV-001"}
@@ -3292,6 +3354,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             &MetadataLayer {
                 source_id: "test".to_string(),
                 relations: Default::default(),
+                credits: Default::default(),
                 fields: crate::db::metadata::layers::fields_from_json(
                     serde_json::json!({"track_title": "Provider Track", "year": 2020}),
                 ),
@@ -3541,6 +3604,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             &MetadataLayer {
                 source_id: "test".to_string(),
                 relations: Default::default(),
+                credits: Default::default(),
                 fields: crate::db::metadata::layers::fields_from_json(serde_json::json!({
                     "labels": [
                         {"name": "Provider Override", "catalog_number": "PRV-999"}

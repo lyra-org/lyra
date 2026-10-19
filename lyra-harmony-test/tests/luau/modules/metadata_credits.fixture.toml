@@ -1,0 +1,24 @@
+run_as = "owner"
+
+[[users]]
+key = "owner"
+admin = true
+
+[[artists]]
+key = "first"
+name = "First"
+
+[[artists]]
+key = "second"
+name = "Second"
+
+[[releases]]
+key = "album"
+title = "Album"
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+disc = 1
+track = 1

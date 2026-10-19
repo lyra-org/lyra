@@ -21,14 +21,19 @@ use agdb::{
 use crate::db::{
     self,
     ArtistRelationType,
+    CreditType,
     IdSource,
     MetadataField,
     MetadataLayer,
     ProviderCustomFields,
     metadata::layers::{
+        LayerCredits,
         LayerFields,
         LayerRelations,
-        edges::LayerRelationInput,
+        edges::{
+            LayerCreditInput,
+            LayerRelationInput,
+        },
         normalize_value,
     },
 };
@@ -42,6 +47,7 @@ pub(crate) const LOCAL_SOURCE_ID: &str = "local";
 pub(crate) struct LocalLayer {
     fields: LayerFields,
     relations: LayerRelations,
+    credits: LayerCredits,
 }
 
 impl LocalLayer {
@@ -55,6 +61,21 @@ impl LocalLayer {
                 .insert(field, normalize_value(field, value.into())?);
         }
         Ok(())
+    }
+
+    /// Supplies the primary artist credits the tags name, in order. Tags only
+    /// yield primary credits; the other roles belong to providers and manual edits.
+    pub(crate) fn supply_artists(&mut self, artist_ids: &[DbId]) {
+        self.credits.insert(
+            CreditType::Artist,
+            artist_ids
+                .iter()
+                .map(|&artist_id| LayerCreditInput {
+                    artist_id,
+                    detail: None,
+                })
+                .collect(),
+        );
     }
 
     pub(crate) fn supply_relations(
@@ -71,7 +92,8 @@ impl LocalLayer {
         node_id: DbId,
     ) -> anyhow::Result<()> {
         let layer = MetadataLayer::new(LOCAL_SOURCE_ID, self.fields, now_secs())
-            .with_relations(self.relations);
+            .with_relations(self.relations)
+            .with_credits(self.credits);
         db::metadata::layers::upsert_inside_tx(db, node_id, &layer)?;
         super::merging::apply_merged_metadata_to_entity_inside_tx(db, node_id)
     }
@@ -136,6 +158,14 @@ fn artist_type_conflicts_with_layer(
     Ok(true)
 }
 
+/// What a provider supplies for one entity in a layer save.
+#[derive(Clone, Default)]
+pub(crate) struct ProviderValues {
+    pub(crate) fields: LayerFields,
+    pub(crate) relations: LayerRelations,
+    pub(crate) credits: LayerCredits,
+}
+
 /// Custom field versions a provider sets or removes on one entity.
 #[derive(Clone, Default)]
 pub(crate) struct CustomFieldChanges {
@@ -185,12 +215,12 @@ pub(crate) fn save_provider_layer(
     db: &mut DbAny,
     node_id: DbId,
     provider_id: &str,
-    fields: &LayerFields,
-    relations: &LayerRelations,
+    values: &ProviderValues,
     external_ids: &HashMap<String, String>,
     custom_fields: &CustomFieldChanges,
 ) -> anyhow::Result<()> {
-    let fields = validated_fields(db, node_id, fields)?;
+    let fields = validated_fields(db, node_id, &values.fields)?;
+    let relations = &values.relations;
     let artist = db::artists::get_by_id(db, node_id)?;
     let artist_type_conflict =
         artist_type_conflicts_with_layer(artist.as_ref(), &fields, node_id, provider_id)?;
@@ -207,12 +237,16 @@ pub(crate) fn save_provider_layer(
     } else {
         fields
     };
-    let has_content = !relations.is_empty() || (!artist_type_conflict && !fields.is_empty());
+    let has_content = !relations.is_empty()
+        || !values.credits.is_empty()
+        || (!artist_type_conflict && !fields.is_empty());
     if has_content
         && db::metadata::layers::upsert(
             db,
             node_id,
-            &MetadataLayer::new(provider_id, fields, now_secs()).with_relations(relations.clone()),
+            &MetadataLayer::new(provider_id, fields, now_secs())
+                .with_relations(relations.clone())
+                .with_credits(values.credits.clone()),
         )?
     {
         super::merging::apply_merged_metadata_to_entity(db, node_id)?;
@@ -310,8 +344,7 @@ pub(crate) fn mark_unmatched(
         db,
         node_id,
         provider_id,
-        &LayerFields::new(),
-        &Default::default(),
+        &ProviderValues::default(),
         &external_ids,
         &Default::default(),
     )?;
@@ -378,11 +411,13 @@ mod tests {
             &mut db,
             release_id,
             "provider",
-            &LayerFields::from([
-                (MetadataField::ReleaseTitle, json!("Wrong Title")),
-                (MetadataField::ReleaseDate, json!("1999")),
-            ]),
-            &Default::default(),
+            &ProviderValues {
+                fields: LayerFields::from([
+                    (MetadataField::ReleaseTitle, json!("Wrong Title")),
+                    (MetadataField::ReleaseDate, json!("1999")),
+                ]),
+                ..Default::default()
+            },
             &HashMap::new(),
             &CustomFieldChanges {
                 set: HashMap::from([(1, HashMap::from([("barcode".to_string(), json!("123"))]))]),
@@ -430,17 +465,20 @@ mod tests {
             &mut db,
             character,
             "provider",
-            &LayerFields::from([
-                (MetadataField::ArtistName, json!("Renamed")),
-                (MetadataField::ArtistType, json!("person")),
-            ]),
-            &LayerRelations::from([(
-                db::ArtistRelationType::VoiceActor,
-                vec![LayerRelationInput {
-                    artist_id: actor,
-                    attributes: None,
-                }],
-            )]),
+            &ProviderValues {
+                fields: LayerFields::from([
+                    (MetadataField::ArtistName, json!("Renamed")),
+                    (MetadataField::ArtistType, json!("person")),
+                ]),
+                relations: LayerRelations::from([(
+                    db::ArtistRelationType::VoiceActor,
+                    vec![LayerRelationInput {
+                        artist_id: actor,
+                        attributes: None,
+                    }],
+                )]),
+                ..Default::default()
+            },
             &HashMap::new(),
             &Default::default(),
         )?;
@@ -474,8 +512,10 @@ mod tests {
             &mut db,
             matched,
             "musicbrainz",
-            &LayerFields::from([(MetadataField::ArtistName, json!("Matched"))]),
-            &Default::default(),
+            &ProviderValues {
+                fields: LayerFields::from([(MetadataField::ArtistName, json!("Matched"))]),
+                ..Default::default()
+            },
             &HashMap::from([("artist_id".to_string(), "artist-1".to_string())]),
             &Default::default(),
         )?;
@@ -514,8 +554,7 @@ mod tests {
             &mut db,
             release_id,
             "musicbrainz",
-            &LayerFields::new(),
-            &Default::default(),
+            &ProviderValues::default(),
             &HashMap::from([("release_id".to_string(), "release-1".to_string())]),
             &Default::default(),
         )?;

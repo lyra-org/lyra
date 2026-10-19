@@ -147,39 +147,6 @@ local function ensure_artist_entity(mb_artist: ReleaseArtist?): number?
 	return artist_id
 end
 
-local function reconcile_artist_credits(
-	owner_id: number,
-	credits: { ReleaseArtistCredit },
-	tagged_artist_mb_ids: { [number]: string }
-)
-	local current_provider = provider
-	if current_provider == nil or #credits < 2 then
-		return
-	end
-	local artist_ids: { [string]: number } = {}
-	for artist_id, mb_id in tagged_artist_mb_ids do
-		artist_ids[mb_id] = artist_id
-	end
-	local resolved: { metadata.ArtistCreditInput } = {}
-	for _, credit in credits do
-		local mb_id = credit.artist and credit.artist.id
-		local artist_id = if mb_id then artist_ids[mb_id] else nil
-		if artist_id == nil then
-			artist_id = ensure_artist_entity(credit.artist)
-		end
-		local name = trim_text(credit.name or (credit.artist and credit.artist.name))
-		if artist_id == nil or name == "" then
-			return
-		end
-		table.insert(resolved, {
-			artist_id = artist_id,
-			name = name,
-			join_phrase = credit.joinphrase,
-		})
-	end
-	current_provider:reconcile_artist_credits(owner_id, resolved)
-end
-
 local MB_ARTIST_RELATION_MAP: { [string]: ArtistRelationType? } = {
 	["voice actor"] = ArtistRelationType.VoiceActor,
 	["member of band"] = ArtistRelationType.MemberOf,
@@ -370,39 +337,107 @@ end
 type CreditType = metadata.CreditType
 local CreditType = metadata.CreditType
 
-local MB_RELATION_TO_CREDIT: { [string]: { type: CreditType, detail: string? }? } = {
+local MB_RELATION_TO_CREDIT: { [string]: { role: string, detail: string? }? } = {
 	-- performance
-	vocal = { type = CreditType.Vocalist },
-	instrument = { type = CreditType.Instrumentalist },
-	programming = { type = CreditType.Instrumentalist, detail = "programming" },
-	conductor = { type = CreditType.Conductor },
+	vocal = { role = "vocalist" },
+	instrument = { role = "instrumentalist" },
+	programming = { role = "instrumentalist", detail = "programming" },
+	conductor = { role = "conductor" },
 	-- composition
-	arranger = { type = CreditType.Arranger },
-	composer = { type = CreditType.Composer },
-	lyricist = { type = CreditType.Lyricist },
-	writer = { type = CreditType.Writer },
+	arranger = { role = "arranger" },
+	composer = { role = "composer" },
+	lyricist = { role = "lyricist" },
+	writer = { role = "writer" },
 	-- production
-	producer = { type = CreditType.Producer },
-	engineer = { type = CreditType.Engineer },
-	["audio engineer"] = { type = CreditType.Engineer, detail = "audio" },
-	["sound engineer"] = { type = CreditType.Engineer, detail = "sound" },
-	mix = { type = CreditType.Mixer },
-	recording = { type = CreditType.Engineer, detail = "recording" },
-	["recording engineer"] = { type = CreditType.Engineer, detail = "recording" },
-	["balance engineer"] = { type = CreditType.Engineer, detail = "balance" },
-	["instrument technician"] = { type = CreditType.Engineer, detail = "instrument technician" },
-	editor = { type = CreditType.Engineer, detail = "editor" },
-	["instrument arranger"] = { type = CreditType.Arranger, detail = "instrument" },
+	producer = { role = "producer" },
+	engineer = { role = "engineer" },
+	["audio engineer"] = { role = "engineer", detail = "audio" },
+	["sound engineer"] = { role = "engineer", detail = "sound" },
+	mix = { role = "mixer" },
+	recording = { role = "engineer", detail = "recording" },
+	["recording engineer"] = { role = "engineer", detail = "recording" },
+	["balance engineer"] = { role = "engineer", detail = "balance" },
+	["instrument technician"] = { role = "engineer", detail = "instrument technician" },
+	editor = { role = "engineer", detail = "editor" },
+	["instrument arranger"] = { role = "arranger", detail = "instrument" },
 	-- remix
-	remixer = { type = CreditType.Remixer },
-	["dj-mixer"] = { type = CreditType.Mixer, detail = "DJ mix" },
+	remixer = { role = "remixer" },
+	["dj-mixer"] = { role = "mixer", detail = "DJ mix" },
 }
 
-local function link_artist_credits_from_relations(track_db_id: number, relations: { Relation })
-	local current_provider = provider
-	if current_provider == nil then
-		return
+-- Every credit role, by the name credit lists are gathered under.
+local CREDIT_ROLES: { { name: string, role: CreditType } } = {
+	{ name = "artist", role = CreditType.Artist },
+	{ name = "vocalist", role = CreditType.Vocalist },
+	{ name = "instrumentalist", role = CreditType.Instrumentalist },
+	{ name = "composer", role = CreditType.Composer },
+	{ name = "lyricist", role = CreditType.Lyricist },
+	{ name = "arranger", role = CreditType.Arranger },
+	{ name = "writer", role = CreditType.Writer },
+	{ name = "producer", role = CreditType.Producer },
+	{ name = "conductor", role = CreditType.Conductor },
+	{ name = "engineer", role = CreditType.Engineer },
+	{ name = "mixer", role = CreditType.Mixer },
+	{ name = "remixer", role = CreditType.Remixer },
+}
+
+type LayerCreditInput = metadata.LayerCreditInput
+-- Credits gathered for one release or track, by role name.
+type CreditSets = { [string]: { LayerCreditInput } }
+
+local function add_credit(sets: CreditSets, role_name: string, artist_id: number, detail: string?)
+	local credits = sets[role_name]
+	if credits == nil then
+		credits = {}
+		sets[role_name] = credits
 	end
+	for _, existing in credits do
+		if existing.artist_id == artist_id and existing.detail == detail then
+			return
+		end
+	end
+	local credit: LayerCreditInput = { artist_id = artist_id, detail = detail }
+	table.insert(credits, credit)
+end
+
+-- Sets each role named in `roles` on the layer; one without credits clears.
+local function set_credit_roles(layer: metadata.Layer, sets: CreditSets, roles: { [string]: boolean })
+	for _, entry in CREDIT_ROLES do
+		if roles[entry.name] then
+			layer:set_credits(entry.role, sets[entry.name] or {})
+		end
+	end
+end
+
+-- The artist credits in the provider's order, each artist resolved to its
+-- local entity: the one tagged with that MusicBrainz artist, or one ensured.
+local function artist_role_credits(
+	mb_credits: { ReleaseArtistCredit },
+	tagged_artist_mb_ids: { [number]: string },
+	skipped_mb_ids: { [string]: boolean }
+): { number }
+	local local_ids: { [string]: number } = {}
+	for db_id, mb_id in tagged_artist_mb_ids do
+		if local_ids[mb_id] == nil or db_id < local_ids[mb_id] then
+			local_ids[mb_id] = db_id
+		end
+	end
+	local artist_ids: { number } = {}
+	for _, credit in mb_credits do
+		local mb_artist = credit.artist
+		local mb_id = mb_artist and mb_artist.id
+		if mb_id == nil or skipped_mb_ids[mb_id] then
+			continue
+		end
+		local artist_id = local_ids[mb_id] or ensure_artist_entity(mb_artist)
+		if artist_id ~= nil and not table.find(artist_ids, artist_id) then
+			table.insert(artist_ids, artist_id)
+		end
+	end
+	return artist_ids
+end
+
+local function collect_relation_credits(sets: CreditSets, relations: { Relation })
 	for _, relation: Relation in relations do
 		if relation["target-type"] ~= "artist" then
 			continue
@@ -432,7 +467,7 @@ local function link_artist_credits_from_relations(track_db_id: number, relations
 			detail = table.concat(attributes, ", ")
 		end
 
-		pcall(current_provider.link_credit, current_provider, track_db_id, artist_id, mapping.type, detail)
+		add_credit(sets, mapping.role, artist_id, detail)
 	end
 end
 
@@ -451,15 +486,11 @@ local function joinphrase_closes_credit_group(joinphrase: string?): boolean
 	return string.find(joinphrase, ")", 1, true) ~= nil or string.find(joinphrase, "）", 1, true) ~= nil
 end
 
-local function link_character_voice_credits_from_track_artist_credits(
-	track_db_id: number,
+local function collect_character_voice_credits(
+	sets: CreditSets,
 	credits: { ReleaseArtistCredit }
 ): { [string]: boolean }
-	local current_provider = provider
 	local linked_mb_artist_ids: { [string]: boolean } = {}
-	if current_provider == nil then
-		return linked_mb_artist_ids
-	end
 
 	local in_character_voice_credit = false
 	for _, credit: ReleaseArtistCredit in credits do
@@ -467,14 +498,7 @@ local function link_character_voice_credits_from_track_artist_credits(
 		if in_character_voice_credit and artist and artist.id and artist.name then
 			local artist_id = ensure_artist_entity(artist)
 			if artist_id then
-				pcall(
-					current_provider.link_credit,
-					current_provider,
-					track_db_id,
-					artist_id,
-					CreditType.Vocalist,
-					"character voice"
-				)
+				add_credit(sets, "vocalist", artist_id, "character voice")
 				linked_mb_artist_ids[artist.id] = true
 			end
 		end
@@ -635,8 +659,6 @@ local function process_release(
 			end
 		end
 	end
-	release_layer:save()
-
 	local artist_credits = release["artist-credit"]
 	local tagged_artist_ids: { [number]: boolean } = {}
 	local tagged_artist_mb_ids: { [number]: string } = {}
@@ -711,7 +733,6 @@ local function process_release(
 			if mb_artist and mb_artist.id and not matched_release_mb_artist_ids[mb_artist.id] then
 				local ensured_artist_id = ensure_artist_entity(mb_artist)
 				if ensured_artist_id then
-					current_provider:link_credit(release_db_id, ensured_artist_id, nil, nil)
 					tagged_artist_ids[ensured_artist_id] = true
 					tagged_artist_mb_ids[ensured_artist_id] = mb_artist.id
 					matched_release_mb_artist_ids[mb_artist.id] = true
@@ -722,8 +743,14 @@ local function process_release(
 	end
 
 	if artist_credits then
-		reconcile_artist_credits(release_db_id, artist_credits, tagged_artist_mb_ids)
+		local release_credits: CreditSets = {}
+		for _, artist_id in artist_role_credits(artist_credits, tagged_artist_mb_ids, {}) do
+			add_credit(release_credits, "artist", artist_id, nil)
+		end
+		-- An unresolved list keeps what the release stored rather than clearing it.
+		set_credit_roles(release_layer, release_credits, { artist = release_credits.artist ~= nil })
 	end
+	release_layer:save()
 
 	if #release_context.tracks > 0 then
 		local local_tracks, assignments = assign_release_tracks(release_context.tracks, release)
@@ -780,6 +807,8 @@ local function process_release(
 				if mb_track.release_track_id then
 					track_layer:set_id("release_track_id", mb_track.release_track_id)
 				end
+				local track_credits: CreditSets = {}
+				local credit_roles: { [string]: boolean } = {}
 				local recording_relations: { Relation }? = nil
 				if mb_track.recording_id then
 					track_layer:set_id("recording_id", mb_track.recording_id)
@@ -797,25 +826,31 @@ local function process_release(
 					end
 					if work and work.id then
 						track_layer:set_id("work_id", work.id)
-						if work.relations and local_track.db_id then
-							link_artist_credits_from_relations(local_track.db_id, work.relations)
+						if work.relations then
+							collect_relation_credits(track_credits, work.relations)
 						end
 					elseif recording_relations ~= nil then
 						track_layer:set_id("work_id", "")
 					end
 				end
-				track_layer:save()
-
-				if recording_relations and local_track.db_id then
-					link_artist_credits_from_relations(local_track.db_id, recording_relations)
+				if recording_relations then
+					collect_relation_credits(track_credits, recording_relations)
+					-- Fetched relations are the whole picture for the roles they map to.
+					for _, mapping in MB_RELATION_TO_CREDIT do
+						if mapping then
+							credit_roles[mapping.role] = true
+						end
+					end
 				end
 
 				if mb_track.artist_credits and local_track.artists then
 					local mb_credit_list = mb_track.artist_credits
 					local mb_artist_by_name = build_credit_lookup(mb_credit_list)
 					local matched_mb_artist_ids: { [string]: boolean } = {}
-					local character_voice_artist_ids =
-						link_character_voice_credits_from_track_artist_credits(local_track.db_id, mb_credit_list)
+					local character_voice_artist_ids = collect_character_voice_credits(track_credits, mb_credit_list)
+					if next(character_voice_artist_ids) ~= nil then
+						credit_roles.vocalist = true
+					end
 					for mb_artist_id in character_voice_artist_ids do
 						matched_mb_artist_ids[mb_artist_id] = true
 					end
@@ -851,7 +886,6 @@ local function process_release(
 						if local_track.db_id and mb_artist.id and not matched_mb_artist_ids[mb_artist.id] then
 							local ensured_artist_id = ensure_artist_entity(mb_artist)
 							if ensured_artist_id then
-								current_provider:link_credit(local_track.db_id, ensured_artist_id, nil, nil)
 								tagged_artist_ids[ensured_artist_id] = true
 								tagged_artist_mb_ids[ensured_artist_id] = mb_artist.id
 								matched_mb_artist_ids[mb_artist.id] = true
@@ -860,10 +894,15 @@ local function process_release(
 							end
 						end
 					end
-					if local_track.db_id and next(character_voice_artist_ids) == nil then
-						reconcile_artist_credits(local_track.db_id, mb_credit_list, tagged_artist_mb_ids)
+					for _, artist_id in
+						artist_role_credits(mb_credit_list, tagged_artist_mb_ids, character_voice_artist_ids)
+					do
+						add_credit(track_credits, "artist", artist_id, nil)
 					end
+					credit_roles.artist = track_credits.artist ~= nil
 				end
+				set_credit_roles(track_layer, track_credits, credit_roles)
+				track_layer:save()
 			end
 		end
 

@@ -231,28 +231,6 @@ impl MetadataProvider {
         mark_unmatched_callback(self, vm, context, node_id, id_types)
     }
 
-    fn link_credit(
-        &self,
-        vm: &luau::Vm,
-        context: &luau::CallContext,
-        owner_id: i64,
-        artist_id: i64,
-        credit_type: Option<server_db::CreditType>,
-        detail: Option<String>,
-    ) -> luau::runtime::Result<luau::ScheduledFuture> {
-        link_credit_callback(self, vm, context, owner_id, artist_id, credit_type, detail)
-    }
-
-    fn reconcile_artist_credits(
-        &self,
-        vm: &luau::Vm,
-        context: &luau::CallContext,
-        owner_id: i64,
-        credits: luau::Table,
-    ) -> luau::runtime::Result<luau::ScheduledFuture> {
-        reconcile_artist_credits_callback(self, vm, context, owner_id, credits)
-    }
-
     #[harmony(returns(MetadataLayer))]
     fn layer(
         &self,
@@ -753,7 +731,7 @@ fn ensure_artist_callback(
         ]
         .into_iter()
         .filter_map(|(field, value)| Some((field, JsonValue::String(value?))))
-        .collect();
+        .collect::<db::LayerFields>();
 
         let mut external_ids = HashMap::new();
         external_ids.insert(id_type, id_value);
@@ -761,8 +739,10 @@ fn ensure_artist_callback(
             &mut db_write,
             artist_db_id,
             &provider_id,
-            &fields,
-            &Default::default(),
+            &crate::services::metadata::layers::ProviderValues {
+                fields,
+                ..Default::default()
+            },
             &external_ids,
             &Default::default(),
         )
@@ -845,180 +825,6 @@ fn mark_unmatched_callback(
             normalized_id_types,
         )
         .map_err(crate::plugins::runtime_error)
-    }))
-}
-
-fn link_credit_callback(
-    provider: &MetadataProvider,
-    vm: &luau::Vm,
-    context: &luau::CallContext,
-    owner_id: i64,
-    artist_id: i64,
-    credit_type: Option<server_db::CreditType>,
-    detail: Option<String>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
-    let owner_id = args::positive_id(owner_id, "owner_id")?;
-    let artist_id = args::positive_id(artist_id, "artist_id")?;
-    let credit_type = credit_type.unwrap_or(server_db::CreditType::Artist);
-    let detail = detail.and_then(|value| {
-        let trimmed = value.trim().to_string();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed)
-        }
-    });
-
-    let db = db::get_optional(vm)?;
-    Ok(luau::ScheduledFuture::new(async move {
-        let Some(db) = db else {
-            return Err(crate::plugins::runtime_error(
-                "provider:link_credit requires a database-backed plugin executor",
-            ));
-        };
-        let mut db_write = db.write().await;
-
-        let owner_is_release = server_db::releases::get_by_id(&db_write, owner_id)
-            .map_err(crate::plugins::runtime_error)?
-            .is_some();
-        let owner_is_track = server_db::tracks::get_by_id(&db_write, owner_id)
-            .map_err(crate::plugins::runtime_error)?
-            .is_some();
-        if !owner_is_release && !owner_is_track {
-            return Err(crate::plugins::runtime_error(
-                "provider:link_credit: owner_id must reference a release or track",
-            ));
-        }
-        if server_db::artists::get_by_id(&db_write, artist_id)
-            .map_err(crate::plugins::runtime_error)?
-            .is_none()
-        {
-            return Err(crate::plugins::runtime_error(
-                "provider:link_credit: artist_id does not reference an artist",
-            ));
-        }
-        if db::manual_metadata_owns_field(&db_write, owner_id, db::MetadataField::Credits)
-            .map_err(crate::plugins::runtime_error)?
-        {
-            return Ok(());
-        }
-
-        db_write
-            .transaction_mut(|transaction| -> anyhow::Result<()> {
-                let existing = server_db::credits::links_for_owner(transaction, owner_id)?;
-                if server_db::credits::CreditSet::new(&existing).contains(
-                    owner_id,
-                    artist_id,
-                    (credit_type, detail.as_deref()),
-                ) {
-                    return Ok(());
-                }
-                server_db::credits::link(
-                    transaction,
-                    owner_id,
-                    artist_id,
-                    &server_db::Credit {
-                        credit_type,
-                        detail,
-                        artist_order: server_db::credits::next_order(&existing),
-                    },
-                )?;
-                Ok(())
-            })
-            .map_err(crate::plugins::runtime_error)
-    }))
-}
-
-fn reconcile_artist_credits_callback(
-    provider: &MetadataProvider,
-    vm: &luau::Vm,
-    context: &luau::CallContext,
-    owner_id: i64,
-    credits: luau::Table,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
-    let owner_id = args::positive_id(owner_id, "owner_id")?;
-    let mut entries = Vec::new();
-    for (key, value) in credits.pairs_raw(vm)? {
-        let index = match key {
-            luau::Value::Integer(index) if index > 0 => index,
-            luau::Value::Number(index)
-                if index > 0.0 && index.is_finite() && index.fract() == 0.0 =>
-            {
-                index as i64
-            }
-            _ => {
-                return Err(crate::plugins::runtime_error(
-                    "credits must be an ordered array",
-                ));
-            }
-        };
-        let luau::Value::Table(credit) = value else {
-            return Err(crate::plugins::runtime_error(
-                "credits entries must be tables",
-            ));
-        };
-        let artist_id = match credit.get_raw(vm, "artist_id")? {
-            luau::Value::Integer(id) => args::positive_id(id, "artist_id")?,
-            luau::Value::Number(id) if id.is_finite() && id.fract() == 0.0 => {
-                args::positive_id(id as i64, "artist_id")?
-            }
-            _ => {
-                return Err(crate::plugins::runtime_error(
-                    "artist_id must be a positive integer",
-                ));
-            }
-        };
-        let name = required_table_string(vm, &credit, "name", "provider:reconcile_artist_credits")?;
-        let join_phrase = match credit.get_raw(vm, "join_phrase")? {
-            luau::Value::Nil => String::new(),
-            luau::Value::String(bytes) => {
-                String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?
-            }
-            _ => {
-                return Err(crate::plugins::runtime_error(
-                    "join_phrase must be a string",
-                ));
-            }
-        };
-        entries.push((
-            index,
-            db::credits::ArtistCreditInput {
-                artist_id,
-                name,
-                join_phrase,
-            },
-        ));
-    }
-    entries.sort_by_key(|(index, _)| *index);
-    if entries
-        .iter()
-        .enumerate()
-        .any(|(position, (index, _))| *index != position as i64 + 1)
-    {
-        return Err(crate::plugins::runtime_error(
-            "credits must be a contiguous ordered array",
-        ));
-    }
-    let desired = entries
-        .into_iter()
-        .map(|(_, credit)| credit)
-        .collect::<Vec<_>>();
-    let provider_id = provider.provider_id.clone();
-    let db = db::get_optional(vm)?;
-    Ok(luau::ScheduledFuture::new(async move {
-        let db = db.ok_or_else(|| {
-            crate::plugins::runtime_error(
-                "provider:reconcile_artist_credits requires a database-backed plugin executor",
-            )
-        })?;
-        db.write()
-            .await
-            .transaction_mut(|transaction| {
-                db::credits::reconcile_artists(transaction, owner_id, &provider_id, &desired)
-            })
-            .map_err(crate::plugins::runtime_error)
     }))
 }
 

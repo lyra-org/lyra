@@ -227,11 +227,13 @@ mod tests {
                 &mut db,
                 track_db_id,
                 "test",
-                &BTreeMap::from([(
-                    db::MetadataField::TrackTitle,
-                    serde_json::json!("Provider Title"),
-                )]),
-                &Default::default(),
+                &crate::services::metadata::layers::ProviderValues {
+                    fields: BTreeMap::from([(
+                        db::MetadataField::TrackTitle,
+                        serde_json::json!("Provider Title"),
+                    )]),
+                    ..Default::default()
+                },
                 &HashMap::new(),
                 &Default::default(),
             )?;
@@ -282,8 +284,13 @@ mod tests {
                     &mut db,
                     track_db_id,
                     provider_id,
-                    &BTreeMap::from([(db::MetadataField::TrackTitle, serde_json::json!(title))]),
-                    &Default::default(),
+                    &crate::services::metadata::layers::ProviderValues {
+                        fields: BTreeMap::from([(
+                            db::MetadataField::TrackTitle,
+                            serde_json::json!(title),
+                        )]),
+                        ..Default::default()
+                    },
                     &HashMap::new(),
                     &Default::default(),
                 )?;

@@ -5,20 +5,16 @@
 
 pub(crate) use crate::db::MetadataField;
 pub(crate) use crate::db::metadata::layers::{
+    LayerCredits,
     LayerFields,
     LayerRelations,
-    edges::LayerRelationInput,
+    edges::{
+        LayerCreditInput,
+        LayerRelationInput,
+    },
     normalize_value,
 };
 pub(crate) use crate::db::plugin::*;
-
-pub(crate) fn manual_metadata_owns_field(
-    db: &impl crate::db::DbAccess,
-    entity_id: agdb::DbId,
-    field: MetadataField,
-) -> anyhow::Result<bool> {
-    crate::db::metadata::manual_overrides::owns_field(db, entity_id, field)
-}
 
 #[cfg(test)]
 pub(crate) use crate::db::{
