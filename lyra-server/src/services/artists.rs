@@ -182,6 +182,7 @@ mod tests {
         connect,
         connect_artist,
         insert_artist,
+        insert_credited_artist,
         insert_library,
         insert_release,
         insert_track,
@@ -205,6 +206,24 @@ mod tests {
         let query = catalog::Query::<Artists>::new(filter);
         let ids = catalog::order(db, &catalog::Viewer::System, &query)?;
         Artists::hydrate(db, &ids)
+    }
+
+    /// One page of a system browse with `filter`: its names and the total.
+    fn browse(
+        db: &DbAny,
+        filter: ArtistFilter,
+        offset: u64,
+        limit: u64,
+    ) -> anyhow::Result<(Vec<String>, u64)> {
+        let query = catalog::Query::<Artists>::new(filter);
+        let page = catalog::page(db, &catalog::Viewer::System, &query, offset, Some(limit))?;
+        Ok((
+            page.items
+                .into_iter()
+                .map(|artist| artist.artist_name)
+                .collect(),
+            page.total,
+        ))
     }
 
     fn set_artist_type(
@@ -257,7 +276,7 @@ mod tests {
     #[test]
     fn list_details_omits_includes_when_disabled() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        insert_artist(&mut db, "Solo Artist")?;
+        insert_credited_artist(&mut db, "Solo Artist")?;
 
         let includes = ArtistIncludes {
             releases: false,
@@ -365,6 +384,115 @@ mod tests {
         assert_eq!(related.get(&person_id).map(Vec::len), Some(1));
         assert_eq!(related.get(&character_id).map(Vec::len), Some(1));
 
+        Ok(())
+    }
+
+    #[test]
+    fn browsing_pages_and_counts_only_credited_artists() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        for name in ["Alpha", "Delta", "Foxtrot"] {
+            insert_credited_artist(&mut db, name)?;
+        }
+        for name in ["Bravo", "Charlie", "Echo"] {
+            insert_artist(&mut db, name)?;
+        }
+
+        assert_eq!(
+            browse(&db, ArtistFilter::default(), 0, 2)?,
+            (vec!["Alpha".to_string(), "Delta".to_string()], 3)
+        );
+        assert_eq!(
+            browse(&db, ArtistFilter::default(), 2, 2)?,
+            (vec!["Foxtrot".to_string()], 3)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn uncredited_artists_stay_reachable_outside_browsing() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let credited = insert_credited_artist(&mut db, "Credited")?;
+        let uncredited = insert_artist(&mut db, "Uncredited")?;
+        for artist in [credited, uncredited] {
+            set_artist_type(&mut db, artist, db::ArtistType::Person)?;
+        }
+        let by_type = ArtistFilter {
+            artist_type: Some(db::ArtistType::Person),
+            ..ArtistFilter::default()
+        };
+        assert_eq!(browse(&db, by_type, 0, 10)?.0, ["Credited"]);
+
+        let by_id = ArtistFilter {
+            ids: Some(vec![uncredited]),
+            ..ArtistFilter::default()
+        };
+        assert_eq!(browse(&db, by_id, 0, 10)?.0, ["Uncredited"]);
+        let by_id_and_type = ArtistFilter {
+            ids: Some(vec![credited, uncredited]),
+            artist_type: Some(db::ArtistType::Person),
+            ..ArtistFilter::default()
+        };
+        assert_eq!(
+            browse(&db, by_id_and_type, 0, 10)?.0,
+            ["Credited", "Uncredited"],
+            "a type filter on a lookup by id ignores credits"
+        );
+        assert!(get_details(&db, uncredited, ArtistIncludes::default())?.is_some());
+
+        let user = crate::db::test_db::insert_user(&mut db, "admin")?;
+        db::favorites::add(
+            &mut db,
+            user,
+            uncredited,
+            db::favorites::FavoriteKind::Artist,
+            1,
+        )?;
+        let viewer = catalog::Viewer::user(
+            &db,
+            crate::services::auth::Principal::for_user(
+                &db,
+                user,
+                vec![db::Permission::Admin],
+                HashSet::new(),
+            ),
+        )?;
+        let names = |favorite| -> anyhow::Result<Vec<String>> {
+            let query = catalog::Query::<Artists>::new(ArtistFilter {
+                favorite: Some(favorite),
+                ..ArtistFilter::default()
+            });
+            let ids = catalog::order(&db, &viewer, &query)?;
+            Ok(Artists::hydrate(&db, &ids)?
+                .into_iter()
+                .map(|artist| artist.artist_name)
+                .collect())
+        };
+        assert_eq!(names(true)?, ["Uncredited"], "favorites are not browsing");
+        assert_eq!(names(false)?, ["Credited"]);
+        Ok(())
+    }
+
+    #[test]
+    fn a_voice_actor_without_credits_is_reached_only_through_relations() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let character_id = insert_credited_artist(&mut db, "Character")?;
+        let actor_id = insert_artist(&mut db, "Voice Actor")?;
+        link_artist_relation(
+            &mut db,
+            actor_id,
+            character_id,
+            db::ArtistRelationType::VoiceActor,
+            None,
+        )?;
+
+        // Intended: relations do not credit, so browsing leaves the actor out.
+        assert_eq!(
+            browse(&db, ArtistFilter::default(), 0, 10)?.0,
+            ["Character"]
+        );
+        let relations = get_relations(&db, character_id)?;
+        assert_eq!(relations.len(), 1);
+        assert_eq!(relations[0].artist.artist_name, "Voice Actor");
         Ok(())
     }
 

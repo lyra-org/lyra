@@ -213,6 +213,9 @@ fn links_from(result: agdb::QueryResult) -> anyhow::Result<Vec<CreditLink>> {
         .collect()
 }
 
+/// The artist key holding whether any release or track credits the artist.
+pub(crate) const CREDITED: &str = "credited";
+
 /// Inserts a credit edge. Every credit insert goes through here.
 pub(crate) fn link(
     db: &mut impl super::DbAccess,
@@ -220,18 +223,77 @@ pub(crate) fn link(
     artist_id: DbId,
     credit: &Credit,
 ) -> anyhow::Result<DbId> {
+    let edge_id = db
+        .exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from(owner_id)
+                .to(artist_id)
+                .values_uniform(credit.to_db_values())
+                .query(),
+        )?
+        .ids()
+        .first()
+        .copied()
+        .ok_or_else(|| anyhow::anyhow!("credit insert returned no id"))?;
+    set_credited(db, artist_id, true)?;
+    Ok(edge_id)
+}
+
+fn set_credited(
+    db: &mut impl super::DbAccess,
+    artist_id: DbId,
+    credited: bool,
+) -> anyhow::Result<()> {
     db.exec_mut(
         QueryBuilder::insert()
-            .edges()
-            .from(owner_id)
-            .to(artist_id)
-            .values_uniform(credit.to_db_values())
+            .values_uniform([(CREDITED, credited).into()])
+            .ids(artist_id)
             .query(),
-    )?
-    .ids()
-    .first()
-    .copied()
-    .ok_or_else(|| anyhow::anyhow!("credit insert returned no id"))
+    )?;
+    Ok(())
+}
+
+/// Recomputes the credited flag of each artist in `artist_ids` that still exists.
+pub(crate) fn recompute_credited(
+    db: &mut impl super::DbAccess,
+    artist_ids: &[DbId],
+) -> anyhow::Result<()> {
+    for artist_id in
+        super::graph::existing_ids(db, &super::dedup_positive_ids(artist_ids), "Artist")?
+    {
+        let credited = db
+            .exec(
+                QueryBuilder::search()
+                    .to(artist_id)
+                    .limit(1)
+                    .where_()
+                    .distance(CountComparison::Equal(1))
+                    .and()
+                    .element::<Credit>()
+                    .query(),
+            )?
+            .result
+            > 0;
+        set_credited(db, artist_id, credited)?;
+    }
+    Ok(())
+}
+
+/// The artists the owners in `owner_ids` credit, each once.
+pub(crate) fn credited_artist_ids(
+    db: &impl super::DbAccess,
+    owner_ids: &[DbId],
+) -> anyhow::Result<Vec<DbId>> {
+    let mut artist_ids = Vec::new();
+    for &owner_id in owner_ids {
+        artist_ids.extend(
+            links_for_owner(db, owner_id)?
+                .into_iter()
+                .map(|link| link.artist_id),
+        );
+    }
+    Ok(super::dedup_positive_ids(&artist_ids))
 }
 
 pub(crate) fn links_for_owner(
@@ -334,12 +396,13 @@ pub(crate) fn replace_for_owner(
     owner_id: DbId,
     desired: &[CreditLinkInput],
 ) -> anyhow::Result<()> {
-    let existing: Vec<DbId> = links_for_owner(db, owner_id)?
-        .into_iter()
-        .map(|link| link.edge_id)
-        .collect();
+    let existing = links_for_owner(db, owner_id)?;
     if !existing.is_empty() {
-        db.exec_mut(QueryBuilder::remove().ids(existing).query())?;
+        db.exec_mut(
+            QueryBuilder::remove()
+                .ids(existing.iter().map(|link| link.edge_id).collect::<Vec<_>>())
+                .query(),
+        )?;
     }
 
     for (order, input) in desired.iter().enumerate() {
@@ -355,7 +418,12 @@ pub(crate) fn replace_for_owner(
         )?;
     }
 
-    Ok(())
+    let uncredited: Vec<DbId> = existing
+        .into_iter()
+        .map(|link| link.artist_id)
+        .filter(|artist_id| !desired.iter().any(|input| input.artist_id == *artist_id))
+        .collect();
+    recompute_credited(db, &uncredited)
 }
 
 #[cfg(test)]
@@ -450,6 +518,59 @@ mod tests {
         let remaining = links_for_owner(&db, release)?;
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].artist_id, kept);
+        Ok(())
+    }
+
+    fn credited(db: &DbAny, artist: DbId) -> anyhow::Result<bool> {
+        Ok(db::artists::get_by_id(db, artist)?.is_some_and(|artist| artist.credited))
+    }
+
+    fn artist_credit(artist_id: DbId) -> CreditLinkInput {
+        CreditLinkInput {
+            artist_id,
+            credit_type: CreditType::Artist,
+            detail: None,
+        }
+    }
+
+    #[test]
+    fn replacing_credits_moves_the_credited_flag() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let track = insert_track(&mut db, "track")?;
+        let first = insert_artist(&mut db, "First")?;
+        let second = insert_artist(&mut db, "Second")?;
+        assert!(!credited(&db, first)?, "a new artist starts uncredited");
+
+        replace_for_owner(&mut db, track, &[artist_credit(first)])?;
+        assert!(credited(&db, first)?);
+
+        replace_for_owner(&mut db, track, &[artist_credit(second)])?;
+        assert!(!credited(&db, first)?);
+        assert!(credited(&db, second)?);
+
+        replace_for_owner(&mut db, track, &[])?;
+        assert!(!credited(&db, second)?);
+        Ok(())
+    }
+
+    #[test]
+    fn deleting_the_only_crediting_track_uncredits_the_artist() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release = insert_release(&mut db, "release")?;
+        let track = insert_track(&mut db, "track")?;
+        connect(&mut db, release, track)?;
+        let track_only = insert_artist(&mut db, "Track Only")?;
+        let both = insert_artist(&mut db, "Both")?;
+        connect_artist(&mut db, track, track_only)?;
+        connect_artist(&mut db, track, both)?;
+        connect_artist(&mut db, release, both)?;
+
+        db::metadata::cascade_remove_entities(&mut db, &[track])?;
+
+        assert!(!credited(&db, track_only)?);
+        assert!(credited(&db, both)?, "the release still credits it");
+        db::metadata::cascade_remove_entities(&mut db, &[release])?;
+        assert!(!credited(&db, both)?);
         Ok(())
     }
 }

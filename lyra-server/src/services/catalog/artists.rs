@@ -168,7 +168,10 @@ impl Catalog for Artists {
             artists.restrict(credited_artists(db, viewer, filter)?);
         }
         if let Some(artist_type) = filter.artist_type {
-            artists.restrict(db::artists::ids_with_type(db, artist_type)?);
+            artists.restrict(match filter.ids {
+                Some(_) => db::artists::ids_with_type(db, artist_type)?,
+                None => db::artists::credited_ids(db, Some(artist_type))?,
+            });
         }
         if let Some(favorite) = filter.favorite {
             let user = viewer.user_db_id("the favorite filter")?;
@@ -394,6 +397,7 @@ fn artist_fields(keys: &[ArtistKey]) -> Vec<&'static str> {
     fields
 }
 
+/// The artists browsing reaches: those a release or track credits.
 fn all_artists(db: &DbAny) -> anyhow::Result<Vec<DbId>> {
-    db::graph::neighbor_ids(db, "artists", "Artist")
+    db::artists::credited_ids(db, None)
 }

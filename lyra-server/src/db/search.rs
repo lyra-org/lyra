@@ -143,21 +143,19 @@ fn fetch(db: &DbAny, ids: HashSet<DbId>, text_key: &str) -> anyhow::Result<Vec<C
 }
 
 fn from_root(db: &DbAny, root: &str, kind: &str, text_key: &str) -> anyhow::Result<Vec<Candidate>> {
-    let elements = db
-        .exec(
-            QueryBuilder::select()
-                .values(["id", text_key])
-                .search()
-                .from(root)
-                .where_()
-                .neighbor()
-                .and()
-                .key("db_element_id")
-                .value(kind)
-                .query(),
-        )?
-        .elements;
-    candidates(elements, text_key)
+    let mut query = QueryBuilder::select()
+        .values(["id", text_key])
+        .search()
+        .from(root)
+        .where_()
+        .neighbor()
+        .and()
+        .key("db_element_id")
+        .value(kind);
+    if kind == "Artist" {
+        query = query.and().key(super::credits::CREDITED).value(true);
+    }
+    candidates(db.exec(query.query())?.elements, text_key)
 }
 
 pub(crate) fn collect_candidates(

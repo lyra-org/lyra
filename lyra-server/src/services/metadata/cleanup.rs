@@ -1048,6 +1048,58 @@ mod tests {
     }
 
     #[test]
+    fn an_artist_merge_credits_the_winner() -> anyhow::Result<()> {
+        let mut db = test_db::new_test_db()?;
+        let layer_track = test_db::insert_track(&mut db, "Layer Track")?;
+        let manual_track = test_db::insert_track(&mut db, "Manual Track")?;
+        let winner = test_db::insert_artist(&mut db, "Winner")?;
+        let loser = test_db::insert_artist(&mut db, "Loser")?;
+        db::metadata::layers::upsert(
+            &mut db,
+            layer_track,
+            &db::MetadataLayer::new("local", Default::default(), 1).with_credits(
+                std::collections::BTreeMap::from([(
+                    db::CreditType::Artist,
+                    vec![db::metadata::layers::edges::LayerCreditInput {
+                        artist_id: loser,
+                        detail: None,
+                    }],
+                )]),
+            ),
+        )?;
+        crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, layer_track)?;
+        let credited = |db: &DbAny, artist_id| -> anyhow::Result<bool> {
+            Ok(db::artists::get_by_id(db, artist_id)?.is_some_and(|artist| artist.credited))
+        };
+        assert!(!credited(&db, winner)?);
+
+        db.transaction_mut(|transaction| {
+            merge_artist_into(transaction, winner, loser, false, false)
+        })?;
+        assert!(
+            credited(&db, winner)?,
+            "the reapplied layer credits the winner"
+        );
+
+        let other = test_db::insert_artist(&mut db, "Other")?;
+        let manual_loser = test_db::insert_artist(&mut db, "Manual Loser")?;
+        test_db::connect_artist(&mut db, manual_track, manual_loser)?;
+        db::metadata::manual_overrides::replace(
+            &mut db,
+            manual_track,
+            &std::collections::BTreeMap::from([(
+                db::MetadataField::Credits,
+                serde_json::Value::Bool(true),
+            )]),
+        )?;
+        db.transaction_mut(|transaction| {
+            merge_artist_into(transaction, other, manual_loser, false, false)
+        })?;
+        assert!(credited(&db, other)?, "a manual credit moves to the winner");
+        Ok(())
+    }
+
+    #[test]
     fn chained_merges_carry_scan_aliases() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
         let tag_artist = |db: &mut DbAny, name: &str, verified: bool| -> anyhow::Result<DbId> {

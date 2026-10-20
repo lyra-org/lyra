@@ -319,6 +319,7 @@ mod tests {
             artist_type: None,
             description: None,
             verified: false,
+            credited: false,
             locked: None,
             created_at: None,
         };

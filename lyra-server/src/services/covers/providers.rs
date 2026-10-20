@@ -1057,6 +1057,7 @@ mod tests {
             artist_type: None,
             description: None,
             verified: false,
+            credited: false,
             locked: None,
             created_at: None,
         };
@@ -1098,6 +1099,7 @@ mod tests {
             artist_type: None,
             description: Some("desc".to_string()),
             verified: true,
+            credited: false,
             locked: None,
             created_at: None,
         };

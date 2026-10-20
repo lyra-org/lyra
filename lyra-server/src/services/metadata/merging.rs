@@ -1068,6 +1068,80 @@ mod tests {
         }
 
         #[test]
+        fn a_provider_split_hides_the_combined_artist_from_browsing() -> anyhow::Result<()> {
+            use crate::services::catalog::{
+                self,
+                artists::{
+                    ArtistFilter,
+                    Artists,
+                },
+            };
+
+            let mut db = new_test_db()?;
+            let track = insert_track(&mut db, "Track")?;
+            let combined = insert_artist(&mut db, "Alpha & Beta")?;
+            let [alpha, beta] = [
+                insert_artist(&mut db, "Alpha")?,
+                insert_artist(&mut db, "Beta")?,
+            ];
+            db::metadata::layers::upsert(
+                &mut db,
+                track,
+                &MetadataLayer::new(LOCAL_SOURCE_ID, Default::default(), 1).with_credits(
+                    BTreeMap::from([(db::CreditType::Artist, credit_list(&[combined]))]),
+                ),
+            )?;
+            apply_merged_metadata_to_entity(&mut db, track)?;
+            let browsed = |db: &DbAny, filter: ArtistFilter| -> anyhow::Result<Vec<DbId>> {
+                let query = catalog::Query::<Artists>::new(filter);
+                let mut ids = catalog::order(db, &catalog::Viewer::System, &query)?;
+                ids.sort();
+                Ok(ids)
+            };
+            let searched = |db: &DbAny| -> anyhow::Result<Vec<DbId>> {
+                let mut ids: Vec<DbId> = db::search::collect_candidates(db, None)?
+                    .artists
+                    .into_iter()
+                    .map(|candidate| candidate.db_id)
+                    .collect();
+                ids.sort();
+                Ok(ids)
+            };
+            assert_eq!(browsed(&db, ArtistFilter::default())?, vec![combined]);
+            assert_eq!(searched(&db)?, vec![combined]);
+
+            enable_provider(&mut db, "provider", 10)?;
+            save_credits(
+                &mut db,
+                track,
+                "provider",
+                &[(db::CreditType::Artist, &[alpha, beta])],
+            )?;
+            assert_eq!(browsed(&db, ArtistFilter::default())?, vec![alpha, beta]);
+            assert_eq!(searched(&db)?, vec![alpha, beta]);
+            assert!(
+                db::artists::get_by_id(&db, combined)?.is_some_and(|artist| !artist.credited),
+                "the combined artist survives, uncredited"
+            );
+            let by_id = ArtistFilter {
+                ids: Some(vec![combined]),
+                ..ArtistFilter::default()
+            };
+            assert_eq!(browsed(&db, by_id)?, vec![combined]);
+
+            crate::services::metadata::layers::mark_unmatched(
+                &mut db,
+                track,
+                "provider",
+                crate::services::EntityType::Track,
+                Vec::new(),
+            )?;
+            assert_eq!(browsed(&db, ArtistFilter::default())?, vec![combined]);
+            assert_eq!(searched(&db)?, vec![combined]);
+            Ok(())
+        }
+
+        #[test]
         fn manual_and_locked_owners_keep_their_credits() -> anyhow::Result<()> {
             let mut db = new_test_db()?;
             let manual_track = insert_track(&mut db, "Manual")?;

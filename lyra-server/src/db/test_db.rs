@@ -156,6 +156,14 @@ fn build_test_library(
     })
 }
 
+/// Inserts an artist credited on a track of its own, so browsing reaches it.
+pub(crate) fn insert_credited_artist(db: &mut DbAny, name: &str) -> anyhow::Result<DbId> {
+    let artist_id = insert_artist(db, name)?;
+    let track_id = insert_track(db, "Credits")?;
+    connect_credit(db, track_id, artist_id, super::CreditType::Artist, None, 0)?;
+    Ok(artist_id)
+}
+
 pub(crate) fn connect_artist(db: &mut DbAny, owner: DbId, artist: DbId) -> anyhow::Result<()> {
     connect_credit(db, owner, artist, super::CreditType::Artist, None, 0)
 }

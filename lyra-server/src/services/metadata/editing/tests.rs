@@ -1389,6 +1389,50 @@ fn inheriting_credits_restores_what_the_layers_supply() -> anyhow::Result<()> {
 }
 
 #[test]
+fn a_manual_credit_edit_moves_the_credited_flag() -> anyhow::Result<()> {
+    let mut db = new_test_db()?;
+    let principal = principal("user-1");
+    let track_id = insert_track(&mut db, "Track")?;
+    let layer_artist = insert_artist(&mut db, "Layer Artist")?;
+    let manual_artist = insert_artist(&mut db, "Manual Artist")?;
+    db::metadata::layers::upsert(
+        &mut db,
+        track_id,
+        &db::MetadataLayer::new("local", Default::default(), 1).with_credits(BTreeMap::from([(
+            db::CreditType::Artist,
+            vec![db::metadata::layers::edges::LayerCreditInput {
+                artist_id: layer_artist,
+                detail: None,
+            }],
+        )])),
+    )?;
+    crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track_id)?;
+    let credited = |db: &DbAny, artist_id| -> anyhow::Result<bool> {
+        Ok(db::artists::get_by_id(db, artist_id)?.is_some_and(|artist| artist.credited))
+    };
+    assert!(credited(&db, layer_artist)? && !credited(&db, manual_artist)?);
+
+    let manual = db::artists::get_by_id(&db, manual_artist)?.expect("artist exists");
+    let edit = preview_edit(
+        &db,
+        &principal,
+        track_id,
+        vec![set(
+            MetadataField::Credits,
+            json!([{"artist_id": manual.id, "type": "artist"}]),
+        )],
+    )?;
+    apply(&mut db, &principal, track_id, &edit)?;
+
+    assert!(
+        !credited(&db, layer_artist)?,
+        "the layer still names it, uncredited"
+    );
+    assert!(credited(&db, manual_artist)?);
+    Ok(())
+}
+
+#[test]
 fn inheriting_relations_restores_what_the_targets_layers_supply() -> anyhow::Result<()> {
     let mut db = new_test_db()?;
     let principal = principal("user-1");

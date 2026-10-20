@@ -689,6 +689,7 @@ fn ensure_artist_callback(
                 artist_type,
                 description: None,
                 verified: false,
+                credited: false,
                 locked: None,
                 created_at: Some(
                     std::time::SystemTime::now()

@@ -1,0 +1,25 @@
+run_as = "owner"
+
+[[users]]
+key = "owner"
+admin = true
+
+[[artists]]
+key = "credited"
+name = "Credited"
+
+[[artists]]
+key = "uncredited"
+name = "Uncredited"
+
+[[releases]]
+key = "album"
+title = "Album"
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+disc = 1
+track = 1
+artists = ["credited"]

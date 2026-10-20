@@ -109,6 +109,7 @@ mod tests {
     use super::*;
     use crate::db::test_db::{
         insert_artist,
+        insert_credited_artist,
         insert_release,
         insert_track,
         new_test_db,
@@ -131,7 +132,7 @@ mod tests {
         let principal = admin_principal(&mut db)?;
         for title in ["Blue", "A b l u e", "Blue horizon", "B l u e"] {
             insert_track(&mut db, title)?;
-            insert_artist(&mut db, title)?;
+            insert_credited_artist(&mut db, title)?;
             insert_release(&mut db, title)?;
         }
         let options = SearchOptions::new("blue".to_string(), Some(1), RatingFilter::default());
@@ -208,8 +209,8 @@ mod tests {
         let mut db = new_test_db()?;
         insert_track(&mut db, "Blue in Green")?;
         insert_track(&mut db, "Red Clay")?;
-        insert_artist(&mut db, "Bluegrass Trio")?;
-        insert_artist(&mut db, "Mingus")?;
+        insert_credited_artist(&mut db, "Bluegrass Trio")?;
+        insert_credited_artist(&mut db, "Mingus")?;
         insert_release(&mut db, "Kind of Blue")?;
         insert_release(&mut db, "Bitches Brew")?;
 
@@ -256,7 +257,7 @@ mod tests {
         let mut db = new_test_db()?;
         for i in 0..10 {
             insert_track(&mut db, &format!("Blue Track {i}"))?;
-            insert_artist(&mut db, &format!("Blue Artist {i}"))?;
+            insert_credited_artist(&mut db, &format!("Blue Artist {i}"))?;
             insert_release(&mut db, &format!("Blue Release {i}"))?;
         }
 
@@ -276,7 +277,7 @@ mod tests {
         let principal = admin_principal(&mut db)?;
         insert_track(&mut db, "Blue")?;
         let rated_track = insert_track(&mut db, "A Distant Blue Track")?;
-        let rated_artist = insert_artist(&mut db, "Blue Artist")?;
+        let rated_artist = insert_credited_artist(&mut db, "Blue Artist")?;
         let low_release = insert_release(&mut db, "Blue Low Release")?;
         let high_release = insert_release(&mut db, "Blue High Release")?;
 

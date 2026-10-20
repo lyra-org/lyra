@@ -113,6 +113,9 @@ pub(crate) struct Artist {
     pub(crate) artist_type: Option<ArtistType>,
     pub(crate) description: Option<String>,
     pub(crate) verified: bool,
+    /// Whether a release or track credits the artist; only credited artists are browsed.
+    #[serde(skip)]
+    pub(crate) credited: bool,
     pub(crate) locked: Option<bool>,
     pub(crate) created_at: Option<u64>,
 }
@@ -295,6 +298,7 @@ pub(crate) fn get_credited_many_by_owner(
         .collect()
 }
 
+/// Every artist of `artist_type`, credited or not.
 pub(crate) fn ids_with_type(
     db: &impl super::DbAccess,
     artist_type: ArtistType,
@@ -311,6 +315,27 @@ pub(crate) fn ids_with_type(
                 .query(),
         )?
         .ids())
+}
+
+/// The credited artists, of `artist_type` when given.
+pub(crate) fn credited_ids(
+    db: &impl super::DbAccess,
+    artist_type: Option<ArtistType>,
+) -> anyhow::Result<Vec<DbId>> {
+    let mut query = QueryBuilder::search()
+        .from("artists")
+        .where_()
+        .neighbor()
+        .and()
+        .key(super::credits::CREDITED)
+        .value(true);
+    if let Some(artist_type) = artist_type {
+        query = query
+            .and()
+            .key("artist_type")
+            .value(DbValue::from(artist_type));
+    }
+    Ok(db.exec(query.query())?.ids())
 }
 
 /// The name of each owner's first credited artist, in credit order.
@@ -521,24 +546,6 @@ pub(crate) fn absorb_scan_names(
     Ok(())
 }
 
-fn stored_scan_aliases(
-    db: &impl super::DbAccess,
-    artist_db_id: DbId,
-) -> anyhow::Result<Vec<String>> {
-    let rows = db.exec(
-        QueryBuilder::select()
-            .values(["scan_aliases"])
-            .ids(artist_db_id)
-            .query(),
-    )?;
-    let aliases = rows
-        .elements
-        .first()
-        .and_then(|row| row.values.first())
-        .ok_or_else(|| anyhow!("artist {} has no scan aliases", artist_db_id.0))?;
-    Ok(aliases.value.vec_string()?.clone())
-}
-
 /// Atomically aligns the stored row to `artist`.
 pub(crate) fn update(db: &mut DbAny, artist: &Artist) -> anyhow::Result<()> {
     db.transaction_mut(|t| update_in_transaction(t, artist))
@@ -553,9 +560,12 @@ pub(crate) fn update_in_transaction(
         .clone()
         .map(DbId::from)
         .ok_or_else(|| anyhow!("artist update missing db_id"))?;
-    // Scan aliases change only through merges.
+    // Scan aliases change only through merges, and the credited flag only with credits.
+    let stored =
+        get_by_id(db, artist_db_id)?.ok_or_else(|| anyhow!("artist {} missing", artist_db_id.0))?;
     let artist = &Artist {
-        scan_aliases: stored_scan_aliases(db, artist_db_id)?,
+        scan_aliases: stored.scan_aliases,
+        credited: stored.credited,
         ..artist.clone()
     };
     super::replace_element_in_transaction(
@@ -755,6 +765,7 @@ mod tests {
                 artist_type: Some(ArtistType::Group),
                 description: Some("A band".to_string()),
                 verified: true,
+                credited: false,
                 locked: Some(true),
                 created_at: Some(1),
             },
@@ -772,6 +783,7 @@ mod tests {
                 artist_type: None,
                 description: None,
                 verified: true,
+                credited: false,
                 locked: None,
                 created_at: None,
             },
@@ -786,7 +798,8 @@ mod tests {
                 "artist_name",
                 "scan_name",
                 "scan_aliases",
-                "verified"
+                "verified",
+                "credited"
             ]
             .into_iter()
             .map(str::to_string)
@@ -1063,20 +1076,51 @@ mod tests {
     }
 
     #[test]
-    fn ids_with_type_finds_artists_of_that_type() -> anyhow::Result<()> {
+    fn credited_ids_finds_credited_artists_of_that_type() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
+        let release_id = insert_release(&mut db, "Release")?;
         let person_id = insert_artist(&mut db, "Person Artist")?;
         let group_id = insert_artist(&mut db, "Group Artist")?;
+        let uncredited_id = insert_artist(&mut db, "Uncredited Person")?;
+        link(&mut db, release_id, person_id)?;
+        link(&mut db, release_id, group_id)?;
 
-        let mut person = get_by_id(&db, person_id)?.expect("person artist should exist");
-        person.set_artist_type(ArtistType::Person);
-        update(&mut db, &person)?;
+        for (artist_id, artist_type) in [
+            (person_id, ArtistType::Person),
+            (group_id, ArtistType::Group),
+            (uncredited_id, ArtistType::Person),
+        ] {
+            let mut artist = get_by_id(&db, artist_id)?.expect("artist should exist");
+            artist.set_artist_type(artist_type);
+            update(&mut db, &artist)?;
+        }
 
-        let mut group = get_by_id(&db, group_id)?.expect("group artist should exist");
-        group.set_artist_type(ArtistType::Group);
-        update(&mut db, &group)?;
+        assert_eq!(
+            credited_ids(&db, Some(ArtistType::Person))?,
+            vec![person_id]
+        );
+        let mut people = ids_with_type(&db, ArtistType::Person)?;
+        people.sort();
+        assert_eq!(people, vec![person_id, uncredited_id]);
+        let mut credited = credited_ids(&db, None)?;
+        credited.sort();
+        assert_eq!(credited, vec![person_id, group_id]);
+        Ok(())
+    }
 
-        assert_eq!(ids_with_type(&db, ArtistType::Person)?, vec![person_id]);
+    #[test]
+    fn updates_keep_the_credited_flag() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release_id = insert_release(&mut db, "Release")?;
+        let artist_id = insert_artist(&mut db, "Artist")?;
+        let stale = get_by_id(&db, artist_id)?.ok_or_else(|| anyhow!("artist exists"))?;
+        link(&mut db, release_id, artist_id)?;
+
+        let mut renamed = stale;
+        renamed.set_artist_name("Renamed".to_string());
+        update(&mut db, &renamed)?;
+
+        assert!(get_by_id(&db, artist_id)?.is_some_and(|artist| artist.credited));
         Ok(())
     }
 

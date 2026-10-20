@@ -96,6 +96,7 @@ pub(crate) fn insert_artist(db: &mut DbAny, name: &str) -> anyhow::Result<DbId> 
         artist_type: None,
         description: None,
         verified: false,
+        credited: false,
         locked: None,
         created_at: None,
     };

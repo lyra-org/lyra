@@ -578,6 +578,7 @@ mod tests {
             connect,
             connect_artist,
             insert_artist,
+            insert_credited_artist,
             insert_library,
             insert_release,
             insert_track,
@@ -949,7 +950,7 @@ mod tests {
         {
             let mut db = STATE.db.write().await;
             for name in ["A b l u e", "Blue"] {
-                insert_artist(&mut db, name)?;
+                insert_credited_artist(&mut db, name)?;
             }
         }
         let principal = admin_principal(HashSet::new()).await;
@@ -1128,16 +1129,16 @@ mod tests {
 
         {
             let mut db = STATE.db.write().await;
-            insert_artist(&mut db, "Charlie")?;
-            let zulu = insert_artist(&mut db, "Zulu")?;
+            insert_credited_artist(&mut db, "Charlie")?;
+            let zulu = insert_credited_artist(&mut db, "Zulu")?;
             let mut artist = db::artists::get_by_id(&db, zulu)?
                 .ok_or_else(|| anyhow::anyhow!("artist missing"))?;
             artist.set_sort_name("Alpha".to_string());
             db::artists::update(&mut db, &artist)?;
-            insert_artist(&mut db, "Beta")?;
-            insert_artist(&mut db, "beta")?;
+            insert_credited_artist(&mut db, "Beta")?;
+            insert_credited_artist(&mut db, "beta")?;
             for name in ["Mike", "Lima"] {
-                let artist_db_id = insert_artist(&mut db, name)?;
+                let artist_db_id = insert_credited_artist(&mut db, name)?;
                 let mut artist = db::artists::get_by_id(&db, artist_db_id)?
                     .ok_or_else(|| anyhow::anyhow!("artist missing"))?;
                 artist.set_sort_name("Delta".to_string());
@@ -1277,9 +1278,9 @@ mod tests {
 
         {
             let mut db = STATE.db.write().await;
-            insert_artist(&mut db, "Alpha")?;
-            insert_artist(&mut db, "Charlie")?;
-            insert_artist(&mut db, "Bravo")?;
+            insert_credited_artist(&mut db, "Alpha")?;
+            insert_credited_artist(&mut db, "Charlie")?;
+            insert_credited_artist(&mut db, "Bravo")?;
         }
         let principal = admin_principal(HashSet::new()).await;
 
