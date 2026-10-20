@@ -39,13 +39,7 @@ pub(crate) fn resolve_artist_ids(
             continue;
         }
 
-        let id = if let Some(existing_id) = crate::db::lookup::find_id_by_indexed_string_field(
-            db,
-            "artists",
-            "scan_name",
-            "scan_name",
-            name,
-        )? {
+        let id = if let Some(existing_id) = crate::db::artists::find_id_by_scan_name(db, name)? {
             existing_id
         } else {
             let artist = Artist {
@@ -53,6 +47,7 @@ pub(crate) fn resolve_artist_ids(
                 id: nanoid!(),
                 artist_name: name.clone(),
                 scan_name: name.clone(),
+                scan_aliases: Vec::new(),
                 sort_name: None,
                 artist_type: None,
                 description: None,

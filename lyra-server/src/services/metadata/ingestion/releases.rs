@@ -289,6 +289,7 @@ fn persist_release_inner(
     release_tracks: Vec<TrackIngest>,
 ) -> anyhow::Result<ReleaseIngestResult> {
     ensure_index(db, "scan_name")?;
+    ensure_index(db, crate::db::artists::SCAN_ALIAS_HOLDER)?;
 
     let mut artist_cache: BTreeMap<String, DbId> = BTreeMap::new();
     let mut scanned_relations = ScannedRelations::new();

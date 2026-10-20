@@ -72,6 +72,7 @@ pub(crate) const ROOT_COLLECTION_ALIASES: &[&str] = &[
 const CORE_INDEXES: &[&str] = &[
     "id",
     "scan_name",
+    super::artists::SCAN_ALIAS_HOLDER,
     "label_scan_name",
     "tag",
     "tag_owner_name", // composite "{owner_public_id}:{normalized_name}" for O(log N) tag lookup

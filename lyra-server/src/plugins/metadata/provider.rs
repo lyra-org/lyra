@@ -684,6 +684,7 @@ fn ensure_artist_callback(
                 id: nanoid!(),
                 artist_name: fallback_name.clone(),
                 scan_name: fallback_name,
+                scan_aliases: Vec::new(),
                 sort_name: None,
                 artist_type,
                 description: None,

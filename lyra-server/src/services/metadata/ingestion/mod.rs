@@ -342,6 +342,7 @@ mod tests {
             id: nanoid!(),
             artist_name: name.to_string(),
             scan_name: name.to_string(),
+            scan_aliases: Vec::new(),
             sort_name: None,
             artist_type: None,
             description: None,
@@ -1414,6 +1415,54 @@ mod tests {
             vec!["Main"],
             "one rescanned track cannot outvote the rest of the release"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_rescan_credits_the_artist_a_spelling_was_merged_into() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let library =
+            test_db::insert_test_library_node(&mut db, "Merged", PathBuf::from("/music/merged"))?;
+        let library_id = library.db_id.unwrap();
+        let mut tracks = Vec::new();
+        for (number, album, artist) in [(1, "Atomic Heart", "Mr.Children"), (2, "Q", "Mr Children")]
+        {
+            let entry = insert_entry(&mut db, &format!("/music/merged/{number:02}.flac"))?;
+            connect(&mut db, library_id, entry)?;
+            let metadata = track_metadata(entry.0, album, artist, None, Some(1), 1);
+            apply_metadata(&mut db, library_id, vec![metadata.clone()])?;
+            tracks.push(metadata);
+        }
+        let winner = artist_named(&db, "Mr.Children")?.ok_or_else(|| anyhow!("winner"))?;
+        let loser = artist_named(&db, "Mr Children")?.ok_or_else(|| anyhow!("loser"))?;
+        let mut verified = db::artists::get_by_id(&db, winner)?.ok_or_else(|| anyhow!("winner"))?;
+        verified.set_verified(true);
+        db::artists::update(&mut db, &verified)?;
+        for artist in [winner, loser] {
+            db::external_ids::upsert(
+                &mut db,
+                artist,
+                "musicbrainz",
+                "artist_id",
+                "mbid-123",
+                IdSource::Resolved,
+            )?;
+        }
+        assert_eq!(
+            crate::services::metadata::cleanup::deduplicate_artists_by_external_id(&mut db)?,
+            1
+        );
+
+        apply_metadata(&mut db, library_id, vec![tracks[1].clone()])?;
+        cleanup_orphaned_metadata(&mut db)?;
+
+        assert_eq!(artist_named(&db, "Mr Children")?, None);
+        assert_eq!(select_artists(&db)?.len(), 1);
+        for release in select_releases(&db)? {
+            let artists = db::artists::get(&db, DbId::from(release.db_id.unwrap()))?;
+            assert_eq!(artists.len(), 1, "{}", release.release_title);
+            assert_eq!(artists[0].db_id.clone().map(DbId::from), Some(winner));
+        }
         Ok(())
     }
 

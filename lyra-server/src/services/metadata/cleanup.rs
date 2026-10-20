@@ -508,6 +508,7 @@ fn merge_artist_into(
         }
     }
 
+    db::artists::absorb_scan_names(db, winner, loser)?;
     // `merge_artist_into` runs inside `deduplicate_artists_by_external_id`'s outer
     // `transaction_mut`; use the in-txn variant — agdb does not support reentrant transactions.
     crate::db::metadata::cascade_remove_entities_in_txn(db, &[loser])?;
@@ -1043,6 +1044,39 @@ mod tests {
             before,
             "a later apply keeps the merged credits"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn chained_merges_carry_scan_aliases() -> anyhow::Result<()> {
+        let mut db = test_db::new_test_db()?;
+        let tag_artist = |db: &mut DbAny, name: &str, verified: bool| -> anyhow::Result<DbId> {
+            let artist_id = test_db::insert_artist(db, name)?;
+            let mut artist = db::artists::get_by_id(db, artist_id)?.expect("artist");
+            artist.set_verified(verified);
+            db::artists::update(db, &artist)?;
+            db::external_ids::upsert(
+                db,
+                artist_id,
+                "musicbrainz",
+                "artist_id",
+                "mbid-123",
+                IdSource::Resolved,
+            )?;
+            Ok(artist_id)
+        };
+        let first = tag_artist(&mut db, "Mr.Children", false)?;
+        tag_artist(&mut db, "Mr Children", false)?;
+        assert_eq!(deduplicate_artists_by_external_id(&mut db)?, 1);
+        let last = tag_artist(&mut db, "Mr.Children (JP)", true)?;
+        assert_eq!(deduplicate_artists_by_external_id(&mut db)?, 1);
+
+        assert!(db::artists::get_by_id(&db, first)?.is_none());
+        let winner = db::artists::get_by_id(&db, last)?.expect("winner");
+        assert_eq!(winner.scan_aliases, ["mr.children", "mr children"]);
+        for name in ["mr children", "mr.children"] {
+            assert_eq!(db::artists::find_id_by_scan_name(&db, name)?, Some(last));
+        }
         Ok(())
     }
 }

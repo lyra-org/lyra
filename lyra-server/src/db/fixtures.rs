@@ -91,6 +91,7 @@ pub(crate) fn insert_artist(db: &mut DbAny, name: &str) -> anyhow::Result<DbId> 
         id: nanoid!(),
         artist_name: name.to_string(),
         scan_name: name.to_lowercase(),
+        scan_aliases: Vec::new(),
         sort_name: None,
         artist_type: None,
         description: None,

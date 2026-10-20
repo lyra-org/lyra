@@ -314,6 +314,7 @@ mod tests {
             id: nanoid!(),
             artist_name: "Miles Davis".to_string(),
             scan_name: "miles davis".to_string(),
+            scan_aliases: Vec::new(),
             sort_name: None,
             artist_type: None,
             description: None,

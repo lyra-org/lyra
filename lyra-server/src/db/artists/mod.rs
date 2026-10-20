@@ -106,6 +106,9 @@ pub(crate) struct Artist {
     pub(crate) id: String,
     pub(crate) artist_name: String,
     pub(crate) scan_name: String,
+    /// Scan names of duplicates merged into this artist, which keep resolving to it.
+    #[serde(skip)]
+    pub(crate) scan_aliases: Vec<String>,
     pub(crate) sort_name: Option<String>,
     pub(crate) artist_type: Option<ArtistType>,
     pub(crate) description: Option<String>,
@@ -358,41 +361,182 @@ pub(crate) fn get_by_id(
     super::graph::fetch_typed_by_id(db, artist_db_id, "Artist")
 }
 
-/// Every artist whose scan name is exactly `scan_name`.
+/// Indexed marker on artists that hold scan aliases, so alias lookups visit only them.
+pub(crate) const SCAN_ALIAS_HOLDER: &str = "scan_alias_holder";
+
+/// Every artist whose scan name is exactly `scan_name`; when none is, the one artist holding it as
+/// a scan alias.
 pub(crate) fn with_scan_name(
     db: &impl super::DbAccess,
     scan_name: &str,
 ) -> anyhow::Result<Vec<Artist>> {
-    super::graph::fetch_all_typed_by_index(db, "scan_name", scan_name, "Artist")
+    let ids = scan_name_ids(db, scan_name)?;
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(db
+        .exec(QueryBuilder::select().ids(ids).query())?
+        .try_into()?)
 }
 
-/// The artist whose scan name is `name`, ignoring case: an exact hit on the scan name index,
-/// else a pass over every artist's scan name.
+/// The lowest-id artist [`with_scan_name`] resolves `scan_name` to.
+pub(crate) fn find_id_by_scan_name(
+    db: &impl super::DbAccess,
+    scan_name: &str,
+) -> anyhow::Result<Option<DbId>> {
+    Ok(scan_name_ids(db, scan_name)?
+        .into_iter()
+        .min_by_key(|id| id.0))
+}
+
+fn scan_name_ids(db: &impl super::DbAccess, scan_name: &str) -> anyhow::Result<Vec<DbId>> {
+    let holders = scan_name_holders(db, scan_name)?;
+    if !holders.is_empty() {
+        return Ok(holders);
+    }
+    Ok(sole(scan_alias_holders(db, scan_name)?)
+        .into_iter()
+        .collect())
+}
+
+/// The only id in `ids`; an alias held by several artists names none of them.
+fn sole(ids: Vec<DbId>) -> Option<DbId> {
+    match ids.as_slice() {
+        [id] => Some(*id),
+        _ => None,
+    }
+}
+
+fn scan_alias_holders(db: &impl super::DbAccess, scan_name: &str) -> anyhow::Result<Vec<DbId>> {
+    Ok(db
+        .exec(
+            QueryBuilder::search()
+                .index(SCAN_ALIAS_HOLDER)
+                .value(true)
+                .where_()
+                .node()
+                .and()
+                .key("scan_aliases")
+                .contains(scan_name)
+                .query(),
+        )?
+        .ids())
+}
+
+fn scan_name_holders(db: &impl super::DbAccess, scan_name: &str) -> anyhow::Result<Vec<DbId>> {
+    Ok(db
+        .exec(
+            QueryBuilder::search()
+                .index("scan_name")
+                .value(scan_name)
+                .where_()
+                .node()
+                .and()
+                .key("db_element_id")
+                .value("Artist")
+                .query(),
+        )?
+        .ids())
+}
+
+/// The artist whose scan name is `name`, ignoring case, else the one artist holding it as a scan
+/// alias: an exact hit on the scan name index, else a pass over every artist's scan names.
 pub(crate) fn find_by_scan_name(
     db: &impl super::DbAccess,
     name: &str,
 ) -> anyhow::Result<Option<DbId>> {
-    if let Ok(ids) = super::indexes::node_ids(db, "scan_name", name) {
-        for id in ids {
-            if super::lookup::collection_contains_id(db, "artists", id)? {
-                return Ok(Some(id));
-            }
-        }
+    if let Some(id) = scan_name_holders(db, name)?
+        .into_iter()
+        .min_by_key(|id| id.0)
+    {
+        return Ok(Some(id));
     }
     let lowered = name.to_lowercase();
-    let scan_names = db.exec(
+    let rows = db.exec(
         QueryBuilder::select()
-            .values(["scan_name"])
+            .values(["scan_name", "scan_aliases"])
             .search()
             .from("artists")
             .where_()
             .neighbor()
             .query(),
     )?;
-    Ok(scan_names.elements.into_iter().find_map(|element| {
-        let scan_name = element.values.first()?.value.string().ok()?;
-        (scan_name.to_lowercase() == lowered).then_some(element.id)
-    }))
+    let mut alias_holders = Vec::new();
+    for row in rows.elements {
+        let value = |key: &str| {
+            row.values
+                .iter()
+                .find(|kv| kv.key == DbValue::from(key))
+                .map(|kv| kv.value.clone())
+        };
+        if let Some(DbValue::String(scan_name)) = value("scan_name")
+            && scan_name.to_lowercase() == lowered
+        {
+            return Ok(Some(row.id));
+        }
+        if let Some(DbValue::VecString(aliases)) = value("scan_aliases")
+            && aliases.iter().any(|alias| alias.to_lowercase() == lowered)
+        {
+            alias_holders.push(row.id);
+        }
+    }
+    Ok(sole(alias_holders))
+}
+
+/// Adds `loser`'s scan name and scan aliases to `winner`'s scan aliases, skipping the winner's
+/// own scan name and names another artist goes by or holds as an alias.
+pub(crate) fn absorb_scan_names(
+    db: &mut DbAnyTransactionMut<'_>,
+    winner: DbId,
+    loser: DbId,
+) -> anyhow::Result<()> {
+    let winner_artist =
+        get_by_id(db, winner)?.ok_or_else(|| anyhow!("merge winner {} missing", winner.0))?;
+    let loser_artist =
+        get_by_id(db, loser)?.ok_or_else(|| anyhow!("merge loser {} missing", loser.0))?;
+    let mut aliases = winner_artist.scan_aliases.clone();
+    for name in std::iter::once(loser_artist.scan_name).chain(loser_artist.scan_aliases) {
+        if name == winner_artist.scan_name || aliases.contains(&name) {
+            continue;
+        }
+        let mut holders = scan_name_holders(db, &name)?;
+        holders.extend(scan_alias_holders(db, &name)?);
+        if holders.into_iter().any(|id| id != loser && id != winner) {
+            continue;
+        }
+        aliases.push(name);
+    }
+    if aliases == winner_artist.scan_aliases {
+        return Ok(());
+    }
+    db.exec_mut(
+        QueryBuilder::insert()
+            .values_uniform([
+                ("scan_aliases", aliases).into(),
+                (SCAN_ALIAS_HOLDER, true).into(),
+            ])
+            .ids(winner)
+            .query(),
+    )?;
+    Ok(())
+}
+
+fn stored_scan_aliases(
+    db: &impl super::DbAccess,
+    artist_db_id: DbId,
+) -> anyhow::Result<Vec<String>> {
+    let rows = db.exec(
+        QueryBuilder::select()
+            .values(["scan_aliases"])
+            .ids(artist_db_id)
+            .query(),
+    )?;
+    let aliases = rows
+        .elements
+        .first()
+        .and_then(|row| row.values.first())
+        .ok_or_else(|| anyhow!("artist {} has no scan aliases", artist_db_id.0))?;
+    Ok(aliases.value.vec_string()?.clone())
 }
 
 /// Atomically aligns the stored row to `artist`.
@@ -409,6 +553,11 @@ pub(crate) fn update_in_transaction(
         .clone()
         .map(DbId::from)
         .ok_or_else(|| anyhow!("artist update missing db_id"))?;
+    // Scan aliases change only through merges.
+    let artist = &Artist {
+        scan_aliases: stored_scan_aliases(db, artist_db_id)?,
+        ..artist.clone()
+    };
     super::replace_element_in_transaction(
         db,
         artist_db_id,
@@ -601,6 +750,7 @@ mod tests {
                 id: "drift-guard".to_string(),
                 artist_name: "Drift Guard".to_string(),
                 scan_name: "drift guard".to_string(),
+                scan_aliases: Vec::new(),
                 sort_name: Some("Guard, Drift".to_string()),
                 artist_type: Some(ArtistType::Group),
                 description: Some("A band".to_string()),
@@ -617,6 +767,7 @@ mod tests {
                 id: "drift-guard".to_string(),
                 artist_name: "Drift Guard".to_string(),
                 scan_name: "drift guard".to_string(),
+                scan_aliases: Vec::new(),
                 sort_name: None,
                 artist_type: None,
                 description: None,
@@ -634,6 +785,7 @@ mod tests {
                 "id",
                 "artist_name",
                 "scan_name",
+                "scan_aliases",
                 "verified"
             ]
             .into_iter()
@@ -662,6 +814,155 @@ mod tests {
         assert_eq!(find_by_scan_name(&db, "sade adu")?, Some(cased));
         assert_eq!(find_by_scan_name(&db, "jazz")?, None);
         assert_eq!(find_by_scan_name(&db, "Nobody")?, None);
+        Ok(())
+    }
+
+    fn merge_scan_names(db: &mut DbAny, winner: DbId, loser: DbId) -> anyhow::Result<()> {
+        db.transaction_mut(|t| absorb_scan_names(t, winner, loser))?;
+        db.exec_mut(QueryBuilder::remove().ids(loser).query())?;
+        Ok(())
+    }
+
+    fn aliases_of(db: &DbAny, artist_db_id: DbId) -> anyhow::Result<Vec<String>> {
+        Ok(get_by_id(db, artist_db_id)?
+            .ok_or_else(|| anyhow!("artist exists"))?
+            .scan_aliases)
+    }
+
+    #[test]
+    fn a_merged_away_scan_name_resolves_to_the_winner() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let winner = insert_artist(&mut db, "Mr.Children")?;
+        let loser = insert_artist(&mut db, "Mr Children")?;
+
+        merge_scan_names(&mut db, winner, loser)?;
+
+        assert_eq!(aliases_of(&db, winner)?, ["mr children"]);
+        assert_eq!(find_id_by_scan_name(&db, "mr children")?, Some(winner));
+        let artists = with_scan_name(&db, "mr children")?;
+        assert_eq!(artists.len(), 1);
+        assert_eq!(artists[0].db_id.clone().map(DbId::from), Some(winner));
+        assert_eq!(find_by_scan_name(&db, "MR CHILDREN")?, Some(winner));
+        assert_eq!(find_id_by_scan_name(&db, "mr.children")?, Some(winner));
+        Ok(())
+    }
+
+    #[test]
+    fn scan_aliases_match_whole_names_only() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let winner = insert_artist(&mut db, "Mr.Children")?;
+        let loser = insert_artist(&mut db, "Mr Children")?;
+        merge_scan_names(&mut db, winner, loser)?;
+
+        for partial in ["mr", "children", "mr children band", "r c", ""] {
+            assert_eq!(find_id_by_scan_name(&db, partial)?, None, "{partial:?}");
+            assert!(with_scan_name(&db, partial)?.is_empty(), "{partial:?}");
+            assert_eq!(find_by_scan_name(&db, partial)?, None, "{partial:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_scan_name_beats_a_scan_alias() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let winner = insert_artist(&mut db, "Mr.Children")?;
+        let loser = insert_artist(&mut db, "Mr Children")?;
+        merge_scan_names(&mut db, winner, loser)?;
+        let real = insert_artist(&mut db, "Mr Children")?;
+
+        assert_eq!(find_id_by_scan_name(&db, "mr children")?, Some(real));
+        let artists = with_scan_name(&db, "mr children")?;
+        assert_eq!(artists.len(), 1);
+        assert_eq!(artists[0].db_id.clone().map(DbId::from), Some(real));
+        assert_eq!(find_by_scan_name(&db, "MR CHILDREN")?, Some(real));
+        Ok(())
+    }
+
+    #[test]
+    fn absorbing_skips_names_other_artists_go_by() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let winner = insert_artist(&mut db, "Mr.Children")?;
+        let loser = insert_artist(&mut db, "Mr Children")?;
+        let namesake = insert_artist(&mut db, "Mr Children")?;
+        let twin = insert_artist(&mut db, "Mr.Children")?;
+
+        merge_scan_names(&mut db, winner, loser)?;
+        merge_scan_names(&mut db, winner, twin)?;
+
+        assert!(aliases_of(&db, winner)?.is_empty());
+        assert_eq!(find_id_by_scan_name(&db, "mr children")?, Some(namesake));
+        Ok(())
+    }
+
+    #[test]
+    fn homonyms_never_share_a_scan_alias() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let first = insert_artist(&mut db, "X (first)")?;
+        let first_loser = insert_artist(&mut db, "X")?;
+        merge_scan_names(&mut db, first, first_loser)?;
+        let second = insert_artist(&mut db, "X (second)")?;
+        let second_loser = insert_artist(&mut db, "X")?;
+
+        merge_scan_names(&mut db, second, second_loser)?;
+
+        assert_eq!(aliases_of(&db, first)?, ["x"]);
+        assert!(aliases_of(&db, second)?.is_empty());
+        assert_eq!(find_id_by_scan_name(&db, "x")?, Some(first));
+        Ok(())
+    }
+
+    #[test]
+    fn an_alias_held_by_several_artists_resolves_to_none() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let first = insert_artist(&mut db, "X (first)")?;
+        let second = insert_artist(&mut db, "X (second)")?;
+        for artist in [first, second] {
+            db.exec_mut(
+                QueryBuilder::insert()
+                    .values_uniform([
+                        ("scan_aliases", vec!["x".to_string()]).into(),
+                        (SCAN_ALIAS_HOLDER, true).into(),
+                    ])
+                    .ids(artist)
+                    .query(),
+            )?;
+        }
+
+        assert_eq!(find_id_by_scan_name(&db, "x")?, None);
+        assert!(with_scan_name(&db, "x")?.is_empty());
+        assert_eq!(find_by_scan_name(&db, "X")?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn alias_lookups_visit_only_alias_holders() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let artist = insert_artist(&mut db, "Mr.Children")?;
+        db.exec_mut(
+            QueryBuilder::insert()
+                .values_uniform([("scan_aliases", vec!["mr children".to_string()]).into()])
+                .ids(artist)
+                .query(),
+        )?;
+
+        assert_eq!(find_id_by_scan_name(&db, "mr children")?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn updates_keep_scan_aliases() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let winner = insert_artist(&mut db, "Mr.Children")?;
+        let stale = get_by_id(&db, winner)?.ok_or_else(|| anyhow!("artist exists"))?;
+        let loser = insert_artist(&mut db, "Mr Children")?;
+        merge_scan_names(&mut db, winner, loser)?;
+
+        let mut renamed = stale;
+        renamed.set_artist_name("Mister Children".to_string());
+        update(&mut db, &renamed)?;
+
+        assert_eq!(aliases_of(&db, winner)?, ["mr children"]);
+        assert_eq!(find_id_by_scan_name(&db, "mr children")?, Some(winner));
         Ok(())
     }
 

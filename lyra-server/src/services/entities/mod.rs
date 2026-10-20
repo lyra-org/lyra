@@ -1560,6 +1560,7 @@ mod tests {
             id: nanoid!(),
             artist_name: "Test Artist".to_string(),
             scan_name: "test artist".to_string(),
+            scan_aliases: Vec::new(),
             sort_name: None,
             artist_type: None,
             description: None,
