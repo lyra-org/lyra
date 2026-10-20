@@ -92,7 +92,8 @@ impl MetadataField {
         )
     }
 
-    /// Fields that metadata layers can supply; the rest are written directly.
+    /// Fields a layer supplies as one value; it supplies credits and relations
+    /// per role and per relation type instead.
     pub(crate) const fn is_layered(self) -> bool {
         !matches!(self, Self::Credits | Self::Relations)
     }

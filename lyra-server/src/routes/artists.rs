@@ -1133,7 +1133,7 @@ mod tests {
             let zulu = insert_credited_artist(&mut db, "Zulu")?;
             let mut artist = db::artists::get_by_id(&db, zulu)?
                 .ok_or_else(|| anyhow::anyhow!("artist missing"))?;
-            artist.set_sort_name("Alpha".to_string());
+            artist.sort_name = Some("Alpha".to_string());
             db::artists::update(&mut db, &artist)?;
             insert_credited_artist(&mut db, "Beta")?;
             insert_credited_artist(&mut db, "beta")?;
@@ -1141,7 +1141,7 @@ mod tests {
                 let artist_db_id = insert_credited_artist(&mut db, name)?;
                 let mut artist = db::artists::get_by_id(&db, artist_db_id)?
                     .ok_or_else(|| anyhow::anyhow!("artist missing"))?;
-                artist.set_sort_name("Delta".to_string());
+                artist.sort_name = Some("Delta".to_string());
                 db::artists::update(&mut db, &artist)?;
             }
         }

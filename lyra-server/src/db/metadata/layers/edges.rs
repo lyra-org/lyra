@@ -420,15 +420,6 @@ pub(crate) fn replace_labels(
     Ok(true)
 }
 
-/// The relation edges that name `artist_id` as the relating artist, from every
-/// artist layer that lists it.
-pub(crate) fn relations_naming(
-    db: &impl DbAccess,
-    artist_id: DbId,
-) -> anyhow::Result<Vec<LayerLink<LayerRelation>>> {
-    of_target(db, artist_id)
-}
-
 /// Whether any layer references `target_id` through a relationship edge.
 pub(crate) fn is_referenced(db: &impl DbAccess, target_id: DbId) -> anyhow::Result<bool> {
     Ok(!of_target::<LayerCredit>(db, target_id)?.is_empty()

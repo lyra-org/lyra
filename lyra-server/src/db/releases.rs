@@ -149,10 +149,6 @@ impl Release {
     pub(crate) fn set_release_title(&mut self, release_title: String) {
         self.release_title = release_title;
     }
-
-    pub(crate) fn set_sort_title(&mut self, sort_title: String) {
-        self.sort_title = Some(sort_title);
-    }
 }
 
 impl_luau_record_userdata!(
@@ -173,7 +169,6 @@ impl_luau_record_userdata!(
     },
     methods {
         set_release_title(release_title: String),
-        set_sort_title(sort_title: String),
     }
 );
 

@@ -22,6 +22,7 @@ use crate::db::{
     self,
     ArtistRelationType,
     CreditType,
+    DbAccess,
     IdSource,
     MetadataField,
     MetadataLayer,
@@ -41,6 +42,28 @@ use crate::services::EntityType;
 
 /// Reserved source for file-derived metadata; plugin registration rejects it.
 pub(crate) const LOCAL_SOURCE_ID: &str = "local";
+
+/// Reserved source for manual edits, ranked above every provider; plugin
+/// registration rejects it.
+pub(crate) const MANUAL_SOURCE_ID: &str = "manual";
+
+/// Whether a merge of `loser` into `winner` can carry their manual layers; one
+/// that no longer validates keeps both entities apart until it is repaired.
+pub(crate) fn manual_layers_mergeable(db: &impl DbAccess, winner: DbId, loser: DbId) -> bool {
+    for node_id in [winner, loser] {
+        if let Err(error) = db::metadata::layers::find_valid(db, node_id, MANUAL_SOURCE_ID) {
+            tracing::warn!(
+                winner = winner.0,
+                loser = loser.0,
+                invalid = node_id.0,
+                error = %format!("{error:#}"),
+                "skipping merge over an invalid manual metadata layer"
+            );
+            return false;
+        }
+    }
+    true
+}
 
 /// File-derived metadata; omitted fields express no opinion, while null clears.
 #[derive(Default)]
@@ -120,7 +143,7 @@ fn validated_fields(
         .collect()
 }
 
-fn now_secs() -> u64 {
+pub(super) fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())

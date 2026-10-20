@@ -17,6 +17,7 @@ use agdb::{
     QueryBuilder,
 };
 
+use super::layers::MANUAL_SOURCE_ID;
 use super::verification::recompute_artist_verified;
 use crate::db::{
     self,
@@ -320,31 +321,18 @@ pub(crate) fn deduplicate_artists_by_external_id(db: &mut DbAny) -> anyhow::Resu
 
         let winner = select_merge_winner(db, &artist_lookup, &unique_artist_ids)?;
         for loser in unique_artist_ids.into_iter().filter(|id| *id != winner) {
+            if !super::layers::manual_layers_mergeable(db, winner, loser) {
+                continue;
+            }
             tracing::info!(
                 winner = winner.0,
                 loser = loser.0,
                 external_id = %key,
                 "merging duplicate artist"
             );
-            let winner_relations_are_manual = db::metadata::manual_overrides::owns_field(
-                db,
-                winner,
-                db::MetadataField::Relations,
-            )?;
-            let loser_relations_are_manual = db::metadata::manual_overrides::owns_field(
-                db,
-                loser,
-                db::MetadataField::Relations,
-            )?;
             db.transaction_mut(|t| {
                 migrate_metadata(t, winner, loser)?;
-                merge_artist_into(
-                    t,
-                    winner,
-                    loser,
-                    winner_relations_are_manual,
-                    loser_relations_are_manual,
-                )
+                merge_artist_into(t, winner, loser)
             })?;
             merged_count += 1;
         }
@@ -422,61 +410,35 @@ fn merge_artist_into(
     db: &mut DbAnyTransactionMut<'_>,
     winner: DbId,
     loser: DbId,
-    winner_relations_are_manual: bool,
-    loser_relations_are_manual: bool,
 ) -> anyhow::Result<()> {
-    let incoming_relations = db::artists::relations::get_relations_to(db, loser, None)?;
     let outgoing_relations = db::artists::relations::get_relations_from(db, loser, None)?;
     let relation_edge_ids = db::artists::relations::incoming_edge_ids(db, loser)?;
 
-    // Layers own the other incoming relations; re-applying the winner below
-    // rebuilds them. Manual relations live only on the effective graph.
-    for (relation, source_id) in incoming_relations {
-        if source_id != winner
-            && db::metadata::manual_overrides::owns_field(
-                db,
-                source_id,
-                db::MetadataField::Relations,
-            )?
-            && !db::artists::relations::exists(db, source_id, winner, relation.relation_type)?
+    // Layers own the incoming relations; re-applying the winner below rebuilds
+    // them. The outgoing ones follow the related artists' retargeted layers.
+    for (relation, target_id) in outgoing_relations {
+        if target_id != winner
+            && !db::artists::relations::exists(db, winner, target_id, relation.relation_type)?
         {
             db::artists::relations::link(
                 db,
-                source_id,
                 winner,
+                target_id,
                 relation.relation_type,
                 relation.attributes,
             )?;
         }
     }
-    if !winner_relations_are_manual {
-        if loser_relations_are_manual {
-            db::artists::relations::replace_from(db, winner, &[])?;
-        }
-        for (relation, target_id) in outgoing_relations {
-            if target_id != winner
-                && !db::artists::relations::exists(db, winner, target_id, relation.relation_type)?
-            {
-                db::artists::relations::link(
-                    db,
-                    winner,
-                    target_id,
-                    relation.relation_type,
-                    relation.attributes,
-                )?;
-            }
-        }
-    }
 
     db::metadata::layers::edges::retarget_artist(db, winner, loser)?;
 
-    // Layers own the other credits; re-applying their owners below rebuilds
-    // them. Manual and locked owners keep what is stored.
+    // Layers own the credits; re-applying their owners below rebuilds them.
+    // A locked owner keeps what is stored, so its credits move.
     let winner_credits = db::credits::CreditSet::new(&db::credits::links_to_artist(db, winner)?);
     let credit_links = db::credits::links_to_artist(db, loser)?;
     let mut reapplied_owners = Vec::new();
     for link in &credit_links {
-        if !credits_stay_as_stored(db, link.owner_id)? {
+        if !credits_locked(db, link.owner_id)? {
             if !reapplied_owners.contains(&link.owner_id) {
                 reapplied_owners.push(link.owner_id);
             }
@@ -520,17 +482,14 @@ fn merge_artist_into(
     crate::services::metadata::merging::apply_merged_metadata_to_entity_inside_tx(db, winner)
 }
 
-/// Whether a release's or track's effective credits are kept rather than
-/// rebuilt from its layers: manual edits own them, or a lock freezes them.
-fn credits_stay_as_stored(db: &impl crate::db::DbAccess, owner_id: DbId) -> anyhow::Result<bool> {
-    let locked = match db::releases::get_by_id(db, owner_id)? {
+/// Whether a lock keeps a release's or track's stored credits.
+fn credits_locked(db: &impl crate::db::DbAccess, owner_id: DbId) -> anyhow::Result<bool> {
+    Ok(match db::releases::get_by_id(db, owner_id)? {
         Some(release) => release.locked.unwrap_or(false),
         None => {
             db::tracks::get_by_id(db, owner_id)?.is_some_and(|track| track.locked.unwrap_or(false))
         }
-    };
-    Ok(locked
-        || db::metadata::manual_overrides::owns_field(db, owner_id, db::MetadataField::Credits)?)
+    })
 }
 
 fn migrate_metadata(
@@ -544,6 +503,11 @@ fn migrate_metadata(
         winner_layers.iter().map(|l| l.source_id.as_str()).collect();
 
     for layer in &loser_layers {
+        if layer.source_id == MANUAL_SOURCE_ID {
+            // The winner's manual edits win; the loser's fill what they leave out.
+            db::metadata::layers::fill_inside_tx(db, loser, winner, MANUAL_SOURCE_ID)?;
+            continue;
+        }
         if !winner_source_ids.contains(layer.source_id.as_str()) {
             db::metadata::layers::copy_inside_tx(db, loser, winner, &layer.source_id)?;
             continue;
@@ -581,10 +545,6 @@ fn migrate_metadata(
     }
 
     db::metadata::custom_fields::copy_between_entities(db, loser, winner)?;
-    db::metadata::manual_overrides::merge_into(db, winner, loser)?;
-    if db::metadata::manual_overrides::get(db, winner)?.is_some() {
-        crate::services::metadata::merging::apply_merged_metadata_to_entity_inside_tx(db, winner)?;
-    }
 
     Ok(())
 }
@@ -896,18 +856,56 @@ mod tests {
     }
 
     #[test]
-    fn artist_merge_retargets_relations_without_losing_metadata() -> anyhow::Result<()> {
+    fn artist_merge_combines_manual_layers_and_keeps_outgoing_relations() -> anyhow::Result<()> {
+        use crate::db::metadata::layers::{
+            self,
+            edges::LayerRelationInput,
+        };
+
         let mut db = test_db::new_test_db()?;
         let source = test_db::insert_artist(&mut db, "Source")?;
+        let actor = test_db::insert_artist(&mut db, "Actor")?;
         let winner = test_db::insert_artist(&mut db, "Winner")?;
         let loser = test_db::insert_artist(&mut db, "Loser")?;
         let target = test_db::insert_artist(&mut db, "Target")?;
-        db::artists::relations::link(
+        let relation = |artist_id, attributes: &str| LayerRelationInput {
+            artist_id,
+            attributes: Some(attributes.to_string()),
+        };
+        layers::upsert(
             &mut db,
-            source,
             winner,
-            db::ArtistRelationType::MemberOf,
-            Some("existing incoming".to_string()),
+            &db::MetadataLayer::new(
+                MANUAL_SOURCE_ID,
+                layers::fields_from_json(serde_json::json!({"artist_name": "Winner"})),
+                1,
+            )
+            .with_relations(std::collections::BTreeMap::from([(
+                db::ArtistRelationType::MemberOf,
+                vec![relation(source, "winner's")],
+            )])),
+        )?;
+        layers::upsert(
+            &mut db,
+            loser,
+            &db::MetadataLayer::new(
+                MANUAL_SOURCE_ID,
+                layers::fields_from_json(serde_json::json!({
+                    "artist_name": "Loser",
+                    "description": "Loser's description",
+                })),
+                1,
+            )
+            .with_relations(std::collections::BTreeMap::from([
+                (
+                    db::ArtistRelationType::MemberOf,
+                    vec![relation(source, "loser's")],
+                ),
+                (
+                    db::ArtistRelationType::VoiceActor,
+                    vec![relation(actor, "loser's"), relation(winner, "self")],
+                ),
+            ])),
         )?;
         db::artists::relations::link(
             &mut db,
@@ -918,38 +916,37 @@ mod tests {
         )?;
         db::artists::relations::link(
             &mut db,
-            source,
-            loser,
-            db::ArtistRelationType::MemberOf,
-            Some("incoming".to_string()),
-        )?;
-        db::artists::relations::link(
-            &mut db,
             loser,
             target,
             db::ArtistRelationType::VoiceActor,
             Some("outgoing".to_string()),
         )?;
-        // Incoming relations survive a merge only as manual edits; layers own the rest.
-        db::metadata::manual_overrides::replace(
-            &mut db,
-            source,
-            &std::collections::BTreeMap::from([(
-                db::MetadataField::Relations,
-                serde_json::Value::Bool(true),
-            )]),
-        )?;
 
         db.transaction_mut(|transaction| {
-            merge_artist_into(transaction, winner, loser, false, false)
+            migrate_metadata(transaction, winner, loser)?;
+            merge_artist_into(transaction, winner, loser)
         })?;
 
-        let incoming = db::artists::relations::get_relations_from(&db, source, None)?;
-        assert_eq!(incoming.len(), 1);
-        assert_eq!(incoming[0].1, winner);
+        let artist = db::artists::get_by_id(&db, winner)?.expect("winner exists");
+        assert_eq!(artist.artist_name, "Winner");
+        assert_eq!(artist.description.as_deref(), Some("Loser's description"));
+        let incoming = |relation_type| -> anyhow::Result<Vec<(DbId, Option<String>)>> {
+            Ok(
+                db::artists::relations::get_relations_to(&db, winner, Some(relation_type))?
+                    .into_iter()
+                    .map(|(relation, source)| (source, relation.attributes))
+                    .collect(),
+            )
+        };
         assert_eq!(
-            incoming[0].0.attributes.as_deref(),
-            Some("existing incoming")
+            incoming(db::ArtistRelationType::MemberOf)?,
+            vec![(source, Some("winner's".to_string()))],
+            "the winner's manual relations win"
+        );
+        assert_eq!(
+            incoming(db::ArtistRelationType::VoiceActor)?,
+            vec![(actor, Some("loser's".to_string()))],
+            "the loser's fill what the winner leaves out"
         );
         let outgoing = db::artists::relations::get_relations_from(&db, winner, None)?;
         assert_eq!(outgoing.len(), 1);
@@ -974,9 +971,7 @@ mod tests {
             None,
         )?;
 
-        db.transaction_mut(|transaction| {
-            merge_artist_into(transaction, winner, loser, false, false)
-        })?;
+        db.transaction_mut(|transaction| merge_artist_into(transaction, winner, loser))?;
 
         assert!(db::graph::direct_edge_ids(&db, winner, winner)?.is_empty());
         Ok(())
@@ -1012,9 +1007,7 @@ mod tests {
         crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track)?;
         assert_eq!(db::credits::links_for_owner(&db, track)?.len(), 3);
 
-        db.transaction_mut(|transaction| {
-            merge_artist_into(transaction, winner, loser, false, false)
-        })?;
+        db.transaction_mut(|transaction| merge_artist_into(transaction, winner, loser))?;
 
         let mut credits: Vec<db::Credit> = db::credits::links_for_owner(&db, track)?
             .into_iter()
@@ -1073,9 +1066,7 @@ mod tests {
         };
         assert!(!credited(&db, winner)?);
 
-        db.transaction_mut(|transaction| {
-            merge_artist_into(transaction, winner, loser, false, false)
-        })?;
+        db.transaction_mut(|transaction| merge_artist_into(transaction, winner, loser))?;
         assert!(
             credited(&db, winner)?,
             "the reapplied layer credits the winner"
@@ -1083,18 +1074,22 @@ mod tests {
 
         let other = test_db::insert_artist(&mut db, "Other")?;
         let manual_loser = test_db::insert_artist(&mut db, "Manual Loser")?;
-        test_db::connect_artist(&mut db, manual_track, manual_loser)?;
-        db::metadata::manual_overrides::replace(
+        db::metadata::layers::upsert(
             &mut db,
             manual_track,
-            &std::collections::BTreeMap::from([(
-                db::MetadataField::Credits,
-                serde_json::Value::Bool(true),
-            )]),
+            &db::MetadataLayer::new(MANUAL_SOURCE_ID, Default::default(), 1).with_credits(
+                std::collections::BTreeMap::from([(
+                    db::CreditType::Artist,
+                    vec![db::metadata::layers::edges::LayerCreditInput {
+                        artist_id: manual_loser,
+                        detail: None,
+                    }],
+                )]),
+            ),
         )?;
-        db.transaction_mut(|transaction| {
-            merge_artist_into(transaction, other, manual_loser, false, false)
-        })?;
+        crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, manual_track)?;
+        assert!(credited(&db, manual_loser)?);
+        db.transaction_mut(|transaction| merge_artist_into(transaction, other, manual_loser))?;
         assert!(credited(&db, other)?, "a manual credit moves to the winner");
         Ok(())
     }
@@ -1129,6 +1124,154 @@ mod tests {
         for name in ["mr children", "mr.children"] {
             assert_eq!(db::artists::find_id_by_scan_name(&db, name)?, Some(last));
         }
+        Ok(())
+    }
+
+    fn corrupt_manual_layer(db: &mut DbAny, node_id: DbId) -> anyhow::Result<()> {
+        db::metadata::layers::upsert(
+            db,
+            node_id,
+            &db::MetadataLayer::new(
+                MANUAL_SOURCE_ID,
+                db::metadata::layers::fields_from_json(serde_json::json!({"artist_name": "X"})),
+                1,
+            ),
+        )?;
+        let layer_id = db::metadata::layers::layer_id(db, node_id, MANUAL_SOURCE_ID)?
+            .expect("manual layer exists");
+        db.exec_mut(
+            QueryBuilder::insert()
+                .values_uniform([("supplied", vec!["work_id".to_string()]).into()])
+                .ids(layer_id)
+                .query(),
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn dedup_skips_only_a_pair_with_an_invalid_manual_layer() -> anyhow::Result<()> {
+        let mut db = test_db::new_test_db()?;
+        let winner = test_db::insert_artist(&mut db, "Artist")?;
+        let corrupt = test_db::insert_artist(&mut db, "Artist")?;
+        let duplicate = test_db::insert_artist(&mut db, "Artist")?;
+        let release = test_db::insert_release(&mut db, "Release")?;
+        test_db::connect(&mut db, release, winner)?;
+        for artist in [winner, corrupt, duplicate] {
+            db::external_ids::upsert(
+                &mut db,
+                artist,
+                "musicbrainz",
+                "artist_id",
+                "mbid-123",
+                IdSource::Resolved,
+            )?;
+        }
+        corrupt_manual_layer(&mut db, corrupt)?;
+
+        assert_eq!(deduplicate_artists_by_external_id(&mut db)?, 1);
+
+        assert!(db::artists::get_by_id(&db, winner)?.is_some());
+        assert!(db::artists::get_by_id(&db, duplicate)?.is_none());
+        assert!(db::artists::get_by_id(&db, corrupt)?.is_some());
+        assert_eq!(
+            db::metadata::layers::ids_for_entity(&db, corrupt)?.len(),
+            1,
+            "the invalid layer is left for repair"
+        );
+        assert!(db::metadata::layers::ids_for_entity(&db, winner)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn a_manual_relation_only_to_the_winner_does_not_clear_its_type() -> anyhow::Result<()> {
+        use crate::db::metadata::layers::edges::LayerRelationInput;
+
+        let mut db = test_db::new_test_db()?;
+        let winner = test_db::insert_artist(&mut db, "Winner")?;
+        let loser = test_db::insert_artist(&mut db, "Loser")?;
+        let actor = test_db::insert_artist(&mut db, "Actor")?;
+        let member = test_db::insert_artist(&mut db, "Member")?;
+        db::providers::upsert(
+            &mut db,
+            &db::ProviderConfig {
+                db_id: None,
+                provider_id: "provider".to_string(),
+                priority: 10,
+                enabled: true,
+            },
+        )?;
+        let relations =
+            |pairs: &[(db::ArtistRelationType, &[DbId])]| -> db::metadata::layers::LayerRelations {
+                pairs
+                    .iter()
+                    .map(|(relation_type, artist_ids)| {
+                        (
+                            *relation_type,
+                            artist_ids
+                                .iter()
+                                .map(|&artist_id| LayerRelationInput {
+                                    artist_id,
+                                    attributes: None,
+                                })
+                                .collect(),
+                        )
+                    })
+                    .collect()
+            };
+        db::metadata::layers::upsert(
+            &mut db,
+            winner,
+            &db::MetadataLayer::new("provider", Default::default(), 1).with_relations(relations(
+                &[
+                    (db::ArtistRelationType::VoiceActor, &[actor]),
+                    (db::ArtistRelationType::MemberOf, &[member]),
+                ],
+            )),
+        )?;
+        db::metadata::layers::upsert(
+            &mut db,
+            winner,
+            &db::MetadataLayer::new(
+                MANUAL_SOURCE_ID,
+                db::metadata::layers::fields_from_json(
+                    serde_json::json!({"artist_name": "Winner"}),
+                ),
+                1,
+            ),
+        )?;
+        db::metadata::layers::upsert(
+            &mut db,
+            loser,
+            &db::MetadataLayer::new(MANUAL_SOURCE_ID, Default::default(), 1).with_relations(
+                relations(&[
+                    (db::ArtistRelationType::VoiceActor, &[winner]),
+                    (db::ArtistRelationType::MemberOf, &[]),
+                ]),
+            ),
+        )?;
+
+        db.transaction_mut(|transaction| {
+            migrate_metadata(transaction, winner, loser)?;
+            merge_artist_into(transaction, winner, loser)
+        })?;
+
+        let incoming = |relation_type| -> anyhow::Result<Vec<DbId>> {
+            Ok(
+                db::artists::relations::get_relations_to(&db, winner, Some(relation_type))?
+                    .into_iter()
+                    .map(|(_, source)| source)
+                    .collect(),
+            )
+        };
+        assert_eq!(
+            incoming(db::ArtistRelationType::VoiceActor)?,
+            vec![actor],
+            "a type that only named the winner falls through"
+        );
+        assert!(
+            incoming(db::ArtistRelationType::MemberOf)?.is_empty(),
+            "a type the loser cleared stays cleared"
+        );
         Ok(())
     }
 }

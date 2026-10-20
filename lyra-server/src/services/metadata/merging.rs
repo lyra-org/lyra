@@ -35,10 +35,12 @@ use crate::db::{
             LayerCreditInput,
             LayerRelationInput,
         },
-        normalize_value,
     },
 };
-use crate::services::metadata::layers::LOCAL_SOURCE_ID;
+use crate::services::metadata::layers::{
+    LOCAL_SOURCE_ID,
+    MANUAL_SOURCE_ID,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct MergedMetadata {
@@ -48,7 +50,6 @@ pub(crate) struct MergedMetadata {
     pub(crate) relations: HashMap<ArtistRelationType, Vec<LayerRelationInput>>,
     /// Each credit role's whole ordered list, from the highest-priority layer supplying it.
     pub(crate) credits: HashMap<CreditType, Vec<LayerCreditInput>>,
-    manual_fields: HashSet<MetadataField>,
 }
 
 impl MergedMetadata {
@@ -75,32 +76,83 @@ impl MergedMetadata {
     }
 }
 
-fn assign<T: PartialEq>(target: &mut Option<T>, next: Option<T>) -> bool {
-    if *target == next {
-        return false;
-    }
-    *target = next;
-    true
+/// The keys a layer supplies.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct LayerKeys {
+    pub(crate) fields: HashSet<MetadataField>,
+    pub(crate) credits: HashSet<CreditType>,
+    pub(crate) relations: HashSet<ArtistRelationType>,
 }
 
-fn overlay_manual_metadata(
-    db: &impl DbAccess,
-    node_id: DbId,
-    mut merged: MergedMetadata,
-) -> anyhow::Result<MergedMetadata> {
-    let Some(manual) = db::metadata::manual_overrides::get(db, node_id)? else {
-        return Ok(merged);
-    };
-    for (field, value) in manual.parsed_fields()? {
-        if field.is_graph() {
-            merged.fields.remove(&field);
-        } else {
-            merged.fields.insert(field, normalize_value(field, value)?);
+impl LayerKeys {
+    pub(crate) fn supplied_by(layer: &MetadataLayer) -> Self {
+        Self {
+            fields: layer.fields.keys().copied().collect(),
+            credits: layer.credits.keys().copied().collect(),
+            relations: layer.relations.keys().copied().collect(),
         }
-        merged.provenance.remove(&field);
-        merged.manual_fields.insert(field);
     }
-    Ok(merged)
+
+    fn extend(&mut self, other: &Self) {
+        self.fields.extend(&other.fields);
+        self.credits.extend(&other.credits);
+        self.relations.extend(&other.relations);
+    }
+}
+
+/// The resolved keys an apply writes: all of them, or on a locked entity only
+/// the ones the manual layer supplies, so everything else keeps its stored value.
+enum Scope {
+    All,
+    Only(LayerKeys),
+}
+
+impl Scope {
+    fn new(locked: Option<bool>, unlocked: LayerKeys) -> Self {
+        if locked.unwrap_or(false) {
+            Self::Only(unlocked)
+        } else {
+            Self::All
+        }
+    }
+
+    fn field(&self, field: MetadataField) -> bool {
+        match self {
+            Self::All => true,
+            Self::Only(keys) => keys.fields.contains(&field),
+        }
+    }
+
+    fn credit(&self, credit_type: CreditType) -> bool {
+        match self {
+            Self::All => true,
+            Self::Only(keys) => keys.credits.contains(&credit_type),
+        }
+    }
+
+    fn relation(&self, relation_type: ArtistRelationType) -> bool {
+        match self {
+            Self::All => true,
+            Self::Only(keys) => keys.relations.contains(&relation_type),
+        }
+    }
+}
+
+fn assign<T: PartialEq + DeserializeOwned>(
+    target: &mut Option<T>,
+    merged: &MergedMetadata,
+    scope: &Scope,
+    field: MetadataField,
+) -> anyhow::Result<bool> {
+    if !scope.field(field) {
+        return Ok(false);
+    }
+    let next = merged.value(field)?;
+    if *target == next {
+        return Ok(false);
+    }
+    *target = next;
+    Ok(true)
 }
 
 pub(crate) fn merge_layers(
@@ -112,25 +164,25 @@ pub(crate) fn merge_layers(
         priority_map.insert(&provider.provider_id, provider.priority);
     }
 
-    // None sorts local below even a priority-0 provider.
-    let layer_priority = |layer: &MetadataLayer| -> Option<u32> {
-        if layer.source_id == LOCAL_SOURCE_ID {
-            None
-        } else {
-            priority_map.get(layer.source_id.as_str()).copied()
+    // Local ranks below even a priority-0 provider, and manual above them all.
+    let layer_rank = |layer: &MetadataLayer| -> (u8, u32) {
+        match layer.source_id.as_str() {
+            LOCAL_SOURCE_ID => (0, 0),
+            MANUAL_SOURCE_ID => (2, 0),
+            source_id => (1, priority_map.get(source_id).copied().unwrap_or_default()),
         }
     };
 
     let mut sorted_layers: Vec<MetadataLayer> = layers
         .into_iter()
         .filter(|layer| {
-            layer.source_id == LOCAL_SOURCE_ID
+            matches!(layer.source_id.as_str(), LOCAL_SOURCE_ID | MANUAL_SOURCE_ID)
                 || priority_map.contains_key(layer.source_id.as_str())
         })
         .collect();
     sorted_layers.sort_by(|a, b| {
-        layer_priority(b)
-            .cmp(&layer_priority(a))
+        layer_rank(b)
+            .cmp(&layer_rank(a))
             .then_with(|| b.updated_at.cmp(&a.updated_at))
             .then_with(|| a.source_id.cmp(&b.source_id))
     });
@@ -161,8 +213,20 @@ pub(crate) fn merge_layers(
         provenance,
         relations,
         credits,
-        manual_fields: HashSet::new(),
     }
+}
+
+/// Resolves an entity's layers, leaving out `excluded_source`'s.
+pub(crate) fn resolve_without(
+    db: &impl DbAccess,
+    node_id: DbId,
+    excluded_source: &str,
+) -> anyhow::Result<MergedMetadata> {
+    let layers = db::metadata::layers::get_for_entity(db, node_id)?
+        .into_iter()
+        .filter(|layer| layer.source_id != excluded_source)
+        .collect();
+    Ok(merge_layers(layers, &db::providers::get(db)?))
 }
 
 pub(crate) fn apply_merged_metadata_to_entity(db: &mut DbAny, node_id: DbId) -> anyhow::Result<()> {
@@ -171,24 +235,38 @@ pub(crate) fn apply_merged_metadata_to_entity(db: &mut DbAny, node_id: DbId) -> 
     })
 }
 
-/// Applies the complete resolved snapshot; locks preserve stored values.
+/// Applies the complete resolved snapshot. A lock keeps every stored value
+/// the manual layer does not supply.
 pub(crate) fn apply_merged_metadata_to_entity_inside_tx(
     db: &mut DbAnyTransactionMut<'_>,
     node_id: DbId,
 ) -> anyhow::Result<()> {
+    apply_through_lock(db, node_id, &LayerKeys::default())
+}
+
+/// Like [`apply_merged_metadata_to_entity_inside_tx`], but a lock also lets
+/// `released` through.
+pub(crate) fn apply_through_lock(
+    db: &mut DbAnyTransactionMut<'_>,
+    node_id: DbId,
+    released: &LayerKeys,
+) -> anyhow::Result<()> {
     let layers = db::metadata::layers::get_for_entity(db, node_id)?;
+    let mut unlocked = layers
+        .iter()
+        .find(|layer| layer.source_id == MANUAL_SOURCE_ID)
+        .map(LayerKeys::supplied_by)
+        .unwrap_or_default();
+    unlocked.extend(released);
     let providers = db::providers::get(db)?;
-    let merged = overlay_manual_metadata(db, node_id, merge_layers(layers, &providers))?;
+    let merged = merge_layers(layers, &providers);
 
     if let Some(mut release) = db::releases::get_by_id(db, node_id)? {
-        if release.locked.unwrap_or(false) {
-            return Ok(());
-        }
-        if apply_to_release(&mut release, &merged)? {
+        let scope = Scope::new(release.locked, unlocked);
+        if apply_to_release(&mut release, &merged, &scope)? {
             db::releases::update_in_transaction(db, &release)?;
         }
-        // Manually owned graph fields keep their stored edges.
-        if !merged.manual_fields.contains(&MetadataField::Genres) {
+        if scope.field(MetadataField::Genres) {
             let genre_ids: Vec<DbId> =
                 match merged.winning_layer(db, node_id, MetadataField::Genres)? {
                     Some(layer_id) => layer_edges::genres(db, layer_id)?
@@ -199,7 +277,7 @@ pub(crate) fn apply_merged_metadata_to_entity_inside_tx(
                 };
             db::genres::sync_release_genre_ids(db, node_id, &genre_ids)?;
         }
-        if !merged.manual_fields.contains(&MetadataField::Labels) {
+        if scope.field(MetadataField::Labels) {
             let label_links: Vec<LabelLinkInput> =
                 match merged.winning_layer(db, node_id, MetadataField::Labels)? {
                     Some(layer_id) => layer_edges::labels(db, layer_id)?
@@ -213,48 +291,68 @@ pub(crate) fn apply_merged_metadata_to_entity_inside_tx(
                 };
             db::labels::sync_release_label_links_inside_tx(db, node_id, &label_links)?;
         }
-        sync_credits(db, node_id, &merged)?;
+        sync_credits(db, node_id, &merged, &scope)?;
     } else if let Some(mut track) = db::tracks::get_by_id(db, node_id)? {
-        if track.locked.unwrap_or(false) {
-            return Ok(());
-        }
-        if apply_to_track(&mut track, &merged)? {
+        let scope = Scope::new(track.locked, unlocked);
+        if apply_to_track(&mut track, &merged, &scope)? {
             db::tracks::update_in_transaction(db, &track)?;
         }
-        sync_credits(db, node_id, &merged)?;
+        sync_credits(db, node_id, &merged, &scope)?;
     } else if let Some(mut artist) = db::artists::get_by_id(db, node_id)? {
-        if artist.locked.unwrap_or(false) {
-            return Ok(());
-        }
-        if apply_to_artist(&mut artist, &merged)? {
+        let scope = Scope::new(artist.locked, unlocked);
+        if apply_to_artist(&mut artist, &merged, &scope)? {
             db::artists::update_in_transaction(db, &artist)?;
         }
-        sync_incoming_relations(db, node_id, &merged)?;
+        sync_incoming_relations(db, node_id, &merged, &scope)?;
     }
 
     Ok(())
 }
 
 /// Rewrites a release's or track's credits from its resolved layers, each role
-/// in its winning layer's order. Manually owned credits stay as stored.
+/// in its winning layer's order. Roles out of scope keep their stored credits.
 fn sync_credits(
     db: &mut DbAnyTransactionMut<'_>,
     owner_id: DbId,
     merged: &MergedMetadata,
+    scope: &Scope,
 ) -> anyhow::Result<()> {
-    if db::metadata::manual_overrides::owns_field(db, owner_id, MetadataField::Credits)? {
+    if !CreditType::ALL
+        .into_iter()
+        .any(|credit_type| scope.credit(credit_type))
+    {
         return Ok(());
     }
-    let desired: Vec<db::credits::CreditLinkInput> = resolved_credits(merged)
-        .into_iter()
-        .map(|(credit_type, input)| db::credits::CreditLinkInput {
-            artist_id: input.artist_id,
-            credit_type,
-            detail: input.detail,
-        })
-        .collect();
     let mut stored = db::credits::links_for_owner(db, owner_id)?;
     stored.sort_by_key(|link| link.credit.artist_order);
+    let desired: Vec<db::credits::CreditLinkInput> = CreditType::ALL
+        .into_iter()
+        .flat_map(|credit_type| -> Vec<db::credits::CreditLinkInput> {
+            if scope.credit(credit_type) {
+                merged
+                    .credits
+                    .get(&credit_type)
+                    .into_iter()
+                    .flatten()
+                    .map(|input| db::credits::CreditLinkInput {
+                        artist_id: input.artist_id,
+                        credit_type,
+                        detail: input.detail.clone(),
+                    })
+                    .collect()
+            } else {
+                stored
+                    .iter()
+                    .filter(|link| link.credit.credit_type == credit_type)
+                    .map(|link| db::credits::CreditLinkInput {
+                        artist_id: link.artist_id,
+                        credit_type,
+                        detail: link.credit.detail.clone(),
+                    })
+                    .collect()
+            }
+        })
+        .collect();
     let unchanged = stored
         .iter()
         .map(|link| {
@@ -273,69 +371,18 @@ fn sync_credits(
     Ok(())
 }
 
-/// The resolved credits, roles in their canonical order.
-pub(crate) fn resolved_credits(merged: &MergedMetadata) -> Vec<(CreditType, LayerCreditInput)> {
-    CreditType::ALL
-        .into_iter()
-        .flat_map(|credit_type| {
-            merged
-                .credits
-                .get(&credit_type)
-                .into_iter()
-                .flatten()
-                .map(move |input| (credit_type, input.clone()))
-        })
-        .collect()
-}
-
-/// The relations from `artist_id` that its targets' resolved layers supply:
-/// each target's winning set for a type that lists this artist.
-pub(crate) fn resolved_relations_from(
-    db: &impl DbAccess,
-    artist_id: DbId,
-) -> anyhow::Result<Vec<(DbId, ArtistRelationType, Option<String>)>> {
-    let providers = db::providers::get(db)?;
-    let mut targets = HashSet::new();
-    for link in layer_edges::relations_naming(db, artist_id)? {
-        targets.extend(db::metadata::layers::owner_id(db, link.layer_id)?);
-    }
-    let mut relations = Vec::new();
-    for target_id in targets {
-        let merged = merge_layers(
-            db::metadata::layers::get_for_entity(db, target_id)?,
-            &providers,
-        );
-        for (relation_type, inputs) in merged.relations {
-            relations.extend(
-                inputs
-                    .into_iter()
-                    .filter(|input| input.artist_id == artist_id)
-                    .map(|input| (target_id, relation_type, input.attributes)),
-            );
-        }
-    }
-    Ok(relations)
-}
-
-/// Rewrites the relations into an artist from its resolved layers, one whole set
-/// per type. Relations from an artist whose relations are manually owned keep
-/// what is stored: manual edits own an artist's outgoing relations.
+/// Rewrites the relations into an artist from its resolved layers, one whole
+/// set per type. Types out of scope keep their stored relations.
 fn sync_incoming_relations(
     db: &mut DbAnyTransactionMut<'_>,
     artist_id: DbId,
     merged: &MergedMetadata,
+    scope: &Scope,
 ) -> anyhow::Result<()> {
-    let mut manually_owned = HashMap::new();
-    let mut owned = |db: &DbAnyTransactionMut<'_>, source_id: DbId| -> anyhow::Result<bool> {
-        if let Some(&owned) = manually_owned.get(&source_id) {
-            return Ok(owned);
-        }
-        let owned =
-            db::metadata::manual_overrides::owns_field(db, source_id, MetadataField::Relations)?;
-        manually_owned.insert(source_id, owned);
-        Ok(owned)
-    };
     for relation_type in ArtistRelationType::ALL {
+        if !scope.relation(relation_type) {
+            continue;
+        }
         let desired: HashMap<DbId, Option<String>> = merged
             .relations
             .get(&relation_type)
@@ -343,25 +390,16 @@ fn sync_incoming_relations(
             .flatten()
             .map(|input| (input.artist_id, input.attributes.clone()))
             .collect();
-        for (relation, source_id) in
-            db::artists::relations::get_relations_to(db, artist_id, Some(relation_type))?
-        {
-            let wanted = desired.get(&source_id);
-            if wanted == Some(&relation.attributes) || owned(db, source_id)? {
-                continue;
-            }
-            if wanted.is_none() {
-                db::artists::relations::unlink(db, source_id, artist_id, relation_type)?;
+        let stored = db::artists::relations::get_relations_to(db, artist_id, Some(relation_type))?;
+        for (_, source_id) in &stored {
+            if !desired.contains_key(source_id) {
+                db::artists::relations::unlink(db, *source_id, artist_id, relation_type)?;
             }
         }
         for (source_id, attributes) in desired {
-            if !owned(db, source_id)?
-                && !db::artists::relations::get_relations_from(db, source_id, Some(relation_type))?
-                    .iter()
-                    .any(|(relation, target)| {
-                        *target == artist_id && relation.attributes == attributes
-                    })
-            {
+            if !stored.iter().any(|(relation, stored_source)| {
+                *stored_source == source_id && relation.attributes == attributes
+            }) {
                 db::artists::relations::link(db, source_id, artist_id, relation_type, attributes)?;
             }
         }
@@ -369,11 +407,16 @@ fn sync_incoming_relations(
     Ok(())
 }
 
-fn apply_to_release(release: &mut Release, merged: &MergedMetadata) -> anyhow::Result<bool> {
+fn apply_to_release(
+    release: &mut Release,
+    merged: &MergedMetadata,
+    scope: &Scope,
+) -> anyhow::Result<bool> {
     let mut changed = false;
 
     // Required titles keep their stored value when unresolved.
-    if let Some(title) = merged.value::<String>(MetadataField::ReleaseTitle)?
+    if scope.field(MetadataField::ReleaseTitle)
+        && let Some(title) = merged.value::<String>(MetadataField::ReleaseTitle)?
         && release.release_title != title
     {
         release.set_release_title(title);
@@ -381,24 +424,35 @@ fn apply_to_release(release: &mut Release, merged: &MergedMetadata) -> anyhow::R
     }
     changed |= assign(
         &mut release.sort_title,
-        merged.value(MetadataField::SortTitle)?,
-    );
+        merged,
+        scope,
+        MetadataField::SortTitle,
+    )?;
     changed |= assign(
         &mut release.release_type,
-        merged.value(MetadataField::ReleaseType)?,
-    );
+        merged,
+        scope,
+        MetadataField::ReleaseType,
+    )?;
     changed |= assign(
         &mut release.release_date,
-        merged.value(MetadataField::ReleaseDate)?,
-    );
+        merged,
+        scope,
+        MetadataField::ReleaseDate,
+    )?;
 
     Ok(changed)
 }
 
-fn apply_to_track(track: &mut Track, merged: &MergedMetadata) -> anyhow::Result<bool> {
+fn apply_to_track(
+    track: &mut Track,
+    merged: &MergedMetadata,
+    scope: &Scope,
+) -> anyhow::Result<bool> {
     let mut changed = false;
 
-    if let Some(title) = merged.value::<String>(MetadataField::TrackTitle)?
+    if scope.field(MetadataField::TrackTitle)
+        && let Some(title) = merged.value::<String>(MetadataField::TrackTitle)?
         && track.track_title != title
     {
         track.set_track_title(title);
@@ -406,8 +460,10 @@ fn apply_to_track(track: &mut Track, merged: &MergedMetadata) -> anyhow::Result<
     }
     changed |= assign(
         &mut track.sort_title,
-        merged.value(MetadataField::SortTitle)?,
-    );
+        merged,
+        scope,
+        MetadataField::SortTitle,
+    )?;
     for (field, target) in [
         (MetadataField::Year, &mut track.year),
         (MetadataField::Disc, &mut track.disc),
@@ -415,16 +471,21 @@ fn apply_to_track(track: &mut Track, merged: &MergedMetadata) -> anyhow::Result<
         (MetadataField::Track, &mut track.track),
         (MetadataField::TrackTotal, &mut track.track_total),
     ] {
-        changed |= assign(target, merged.value(field)?);
+        changed |= assign(target, merged, scope, field)?;
     }
 
     Ok(changed)
 }
 
-fn apply_to_artist(artist: &mut Artist, merged: &MergedMetadata) -> anyhow::Result<bool> {
+fn apply_to_artist(
+    artist: &mut Artist,
+    merged: &MergedMetadata,
+    scope: &Scope,
+) -> anyhow::Result<bool> {
     let mut changed = false;
 
-    if let Some(name) = merged.value::<String>(MetadataField::ArtistName)?
+    if scope.field(MetadataField::ArtistName)
+        && let Some(name) = merged.value::<String>(MetadataField::ArtistName)?
         && artist.artist_name != name
     {
         artist.set_artist_name(name);
@@ -432,16 +493,22 @@ fn apply_to_artist(artist: &mut Artist, merged: &MergedMetadata) -> anyhow::Resu
     }
     changed |= assign(
         &mut artist.artist_type,
-        merged.value(MetadataField::ArtistType)?,
-    );
+        merged,
+        scope,
+        MetadataField::ArtistType,
+    )?;
     changed |= assign(
         &mut artist.sort_name,
-        merged.value(MetadataField::SortName)?,
-    );
+        merged,
+        scope,
+        MetadataField::SortName,
+    )?;
     changed |= assign(
         &mut artist.description,
-        merged.value(MetadataField::Description)?,
-    );
+        merged,
+        scope,
+        MetadataField::Description,
+    )?;
 
     Ok(changed)
 }
@@ -560,7 +627,7 @@ mod tests {
             &[make_provider("provider", 10, true)],
         );
 
-        assert!(apply_to_release(&mut release, &merged)?);
+        assert!(apply_to_release(&mut release, &merged, &Scope::All)?);
 
         assert_eq!(release.release_title, "Layer");
         assert!(release.sort_title.is_none());
@@ -586,7 +653,7 @@ mod tests {
         };
         let merged = merge_layers(Vec::new(), &[]);
 
-        assert!(!apply_to_release(&mut release, &merged)?);
+        assert!(!apply_to_release(&mut release, &merged, &Scope::All)?);
         assert_eq!(release.release_title, "Stored Title");
         Ok(())
     }
@@ -912,54 +979,46 @@ mod tests {
         }
 
         #[test]
-        fn relations_from_a_manually_owned_artist_stay_as_stored() -> anyhow::Result<()> {
+        fn a_manual_relation_set_outranks_every_provider() -> anyhow::Result<()> {
             let mut db = new_test_db()?;
             let character = insert_artist(&mut db, "Character")?;
             let manual_actor = insert_artist(&mut db, "Manual Actor")?;
-            let unwanted_actor = insert_artist(&mut db, "Unwanted Actor")?;
             let provider_actor = insert_artist(&mut db, "Provider Actor")?;
-            db::artists::relations::link(
+            let member = insert_artist(&mut db, "Member")?;
+            enable_provider(&mut db, "provider", 1000)?;
+            db::metadata::layers::upsert(
                 &mut db,
-                manual_actor,
                 character,
-                ArtistRelationType::VoiceActor,
-                Some("manual".to_string()),
+                &MetadataLayer::new(MANUAL_SOURCE_ID, Default::default(), 1).with_relations(
+                    BTreeMap::from([(
+                        ArtistRelationType::VoiceActor,
+                        vec![LayerRelationInput {
+                            artist_id: manual_actor,
+                            attributes: None,
+                        }],
+                    )]),
+                ),
             )?;
-            for actor in [manual_actor, unwanted_actor] {
-                db::metadata::manual_overrides::replace(
-                    &mut db,
-                    actor,
-                    &BTreeMap::from([(MetadataField::Relations, serde_json::Value::Bool(true))]),
-                )?;
-            }
-            enable_provider(&mut db, "provider", 10)?;
 
             save_relations(
                 &mut db,
                 character,
                 "provider",
-                &[(
-                    ArtistRelationType::VoiceActor,
-                    &[unwanted_actor, provider_actor],
-                )],
+                &[
+                    (ArtistRelationType::VoiceActor, &[provider_actor]),
+                    (ArtistRelationType::MemberOf, &[member]),
+                ],
             )?;
 
             assert_eq!(
                 related_into(&db, character, ArtistRelationType::VoiceActor)?,
-                {
-                    let mut expected = vec![manual_actor, provider_actor];
-                    expected.sort();
-                    expected
-                },
-                "a manually owned artist's relations are neither removed nor added"
+                vec![manual_actor]
             );
-            let kept = db::artists::relations::get_relations_to(
-                &db,
-                character,
-                Some(ArtistRelationType::VoiceActor),
-            )?;
-            assert!(kept.iter().any(|(relation, source)| *source == manual_actor
-                && relation.attributes.as_deref() == Some("manual")));
+            assert_eq!(
+                related_into(&db, character, ArtistRelationType::MemberOf)?,
+                vec![member],
+                "a type the manual layer leaves out falls through"
+            );
             Ok(())
         }
 
@@ -1142,53 +1201,84 @@ mod tests {
         }
 
         #[test]
-        fn manual_and_locked_owners_keep_their_credits() -> anyhow::Result<()> {
+        fn a_locked_owner_applies_only_what_its_manual_layer_supplies() -> anyhow::Result<()> {
             let mut db = new_test_db()?;
-            let manual_track = insert_track(&mut db, "Manual")?;
-            let locked_track = insert_track(&mut db, "Locked")?;
+            let track = insert_track(&mut db, "Stored Title")?;
             let stored = insert_artist(&mut db, "Stored")?;
             let provider_artist = insert_artist(&mut db, "Provider")?;
-            for track in [manual_track, locked_track] {
-                db::credits::replace_for_owner(
-                    &mut db,
-                    track,
-                    &[db::credits::CreditLinkInput {
-                        artist_id: stored,
-                        credit_type: db::CreditType::Artist,
-                        detail: None,
-                    }],
-                )?;
-            }
-            db::metadata::manual_overrides::replace(
+            let manual_composer = insert_artist(&mut db, "Manual Composer")?;
+            db::credits::replace_for_owner(
                 &mut db,
-                manual_track,
-                &BTreeMap::from([(MetadataField::Credits, serde_json::Value::Bool(true))]),
+                track,
+                &[db::credits::CreditLinkInput {
+                    artist_id: stored,
+                    credit_type: db::CreditType::Artist,
+                    detail: None,
+                }],
             )?;
-            let mut locked = db::tracks::get_by_id(&db, locked_track)?.expect("track exists");
+            let mut locked = db::tracks::get_by_id(&db, track)?.expect("track exists");
             locked.locked = Some(true);
             db::tracks::update(&mut db, &locked)?;
             enable_provider(&mut db, "provider", 10)?;
 
-            for track in [manual_track, locked_track] {
-                save_credits(
-                    &mut db,
-                    track,
-                    "provider",
-                    &[(db::CreditType::Artist, &[provider_artist])],
-                )?;
-                assert_eq!(
-                    credits_of(&db, track)?,
-                    vec![(db::CreditType::Artist, stored)]
-                );
-            }
+            save_credits(
+                &mut db,
+                track,
+                "provider",
+                &[(db::CreditType::Artist, &[provider_artist])],
+            )?;
+            provider_save(
+                &mut db,
+                track,
+                "provider",
+                serde_json::json!({"track_title": "Provider Title"}),
+            )?;
+            assert_eq!(
+                credits_of(&db, track)?,
+                vec![(db::CreditType::Artist, stored)]
+            );
 
-            let mut unlocked = db::tracks::get_by_id(&db, locked_track)?.expect("track exists");
+            db::metadata::layers::upsert(
+                &mut db,
+                track,
+                &MetadataLayer::new(
+                    MANUAL_SOURCE_ID,
+                    db::metadata::layers::fields_from_json(serde_json::json!({"year": 2001})),
+                    1,
+                )
+                .with_credits(BTreeMap::from([(
+                    db::CreditType::Composer,
+                    credit_list(&[manual_composer]),
+                )])),
+            )?;
+            apply_merged_metadata_to_entity(&mut db, track)?;
+            let applied = db::tracks::get_by_id(&db, track)?.expect("track exists");
+            assert_eq!(applied.track_title, "Stored Title");
+            assert_eq!(applied.year, Some(2001));
+            assert_eq!(
+                credits_of(&db, track)?,
+                vec![
+                    (db::CreditType::Artist, stored),
+                    (db::CreditType::Composer, manual_composer),
+                ]
+            );
+
+            let mut unlocked = db::tracks::get_by_id(&db, track)?.expect("track exists");
             unlocked.locked = None;
             db::tracks::update(&mut db, &unlocked)?;
-            apply_merged_metadata_to_entity(&mut db, locked_track)?;
+            apply_merged_metadata_to_entity(&mut db, track)?;
             assert_eq!(
-                credits_of(&db, locked_track)?,
-                vec![(db::CreditType::Artist, provider_artist)]
+                db::tracks::get_by_id(&db, track)?
+                    .expect("track exists")
+                    .track_title,
+                "Provider Title"
+            );
+            assert_eq!(
+                credits_of(&db, track)?,
+                vec![
+                    (db::CreditType::Artist, provider_artist),
+                    (db::CreditType::Composer, manual_composer),
+                ]
             );
             Ok(())
         }
@@ -1458,11 +1548,11 @@ mod tests {
         }
 
         #[test]
-        fn dropping_a_manual_override_falls_back_to_the_next_layer() -> anyhow::Result<()> {
+        fn dropping_the_manual_layer_falls_back_to_the_next_layer() -> anyhow::Result<()> {
             let mut db = new_test_db()?;
             let release_id = insert_release(&mut db, "Release")?;
 
-            enable_provider(&mut db, "provider", 10)?;
+            enable_provider(&mut db, "provider", 1000)?;
             save_layer(
                 &mut db,
                 release_id,
@@ -1471,17 +1561,18 @@ mod tests {
                     "sort_title": "Provider Sort",
                     "genres": ["Provider Genre"],
                 }),
-                1,
+                2,
             )?;
-            db::metadata::manual_overrides::replace(
+            save_layer(
                 &mut db,
                 release_id,
-                &BTreeMap::from([
-                    (MetadataField::SortTitle, serde_json::json!("Manual Sort")),
-                    (MetadataField::Genres, serde_json::Value::Bool(true)),
-                ]),
+                MANUAL_SOURCE_ID,
+                serde_json::json!({
+                    "sort_title": "Manual Sort",
+                    "genres": ["Manual Genre"],
+                }),
+                1,
             )?;
-            db::genres::sync_release_genres(&mut db, release_id, &["Manual Genre".to_string()])?;
             apply_merged_metadata_to_entity(&mut db, release_id)?;
 
             assert_eq!(
@@ -1491,11 +1582,11 @@ mod tests {
                     .as_deref(),
                 Some("Manual Sort")
             );
-            let genres = db::genres::get_for_release(&db, release_id)?;
-            assert_eq!(genres.len(), 1);
-            assert_eq!(genres[0].name, "Manual Genre");
+            assert_eq!(genre_names(&db, release_id)?, vec!["Manual Genre"]);
 
-            db::metadata::manual_overrides::replace(&mut db, release_id, &BTreeMap::new())?;
+            db.transaction_mut(|t| {
+                db::metadata::layers::remove_inside_tx(t, release_id, MANUAL_SOURCE_ID)
+            })?;
             apply_merged_metadata_to_entity(&mut db, release_id)?;
 
             assert_eq!(
@@ -1505,9 +1596,7 @@ mod tests {
                     .as_deref(),
                 Some("Provider Sort")
             );
-            let genres = db::genres::get_for_release(&db, release_id)?;
-            assert_eq!(genres.len(), 1);
-            assert_eq!(genres[0].name, "Provider Genre");
+            assert_eq!(genre_names(&db, release_id)?, vec!["Provider Genre"]);
             Ok(())
         }
 

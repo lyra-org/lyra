@@ -51,7 +51,6 @@ pub(crate) const ROOT_COLLECTION_ALIASES: &[&str] = &[
     "tags",
     "datastore",
     "providers",
-    "metadata_layers",
     "provider_custom_fields",
     "mixers",
     "external_ids",

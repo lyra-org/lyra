@@ -434,7 +434,8 @@ pub(crate) fn sync_release_labels(
     inputs: &[LabelInput],
 ) -> anyhow::Result<()> {
     db.transaction_mut(|t| -> anyhow::Result<()> {
-        sync_release_labels_inside_tx(t, release_id, inputs)
+        let resolved = resolve_label_inputs(t, inputs)?;
+        sync_release_label_links_inside_tx(t, release_id, &resolved)
     })
 }
 
@@ -465,16 +466,6 @@ pub(crate) fn resolve_label_inputs(
         });
     }
     Ok(resolved)
-}
-
-/// Transaction-capable variant of [`sync_release_labels`].
-pub(crate) fn sync_release_labels_inside_tx(
-    db: &mut DbAnyTransactionMut<'_>,
-    release_id: DbId,
-    inputs: &[LabelInput],
-) -> anyhow::Result<()> {
-    let resolved = resolve_label_inputs(db, inputs)?;
-    sync_release_label_links_inside_tx(db, release_id, &resolved)
 }
 
 pub(crate) fn sync_release_label_links_inside_tx(

@@ -262,31 +262,37 @@ fn normalize_credits(
             detail,
         });
     }
+    // Credits resolve role by role, so they apply in role order.
+    normalized.sort_by_key(|credit| {
+        db::CreditType::ALL
+            .iter()
+            .position(|credit_type| *credit_type == credit.credit_type)
+    });
     Ok(serde_json::to_value(normalized)?)
 }
 
 fn normalize_relations(
     db: &impl DbAccess,
     principal: &Principal,
-    source_artist_id: DbId,
+    artist_id: DbId,
     value: &Value,
 ) -> Result<Value, MetadataEditingError> {
     let raw: Vec<MetadataRelationValue> = decode_value(value, MetadataField::Relations)?;
     let mut seen = HashSet::new();
     let mut normalized = Vec::with_capacity(raw.len());
     for relation in raw {
-        let target_artist_id = relation.target_artist_id.trim().to_string();
-        let target_db_id =
-            require_artist_id(db, principal, &target_artist_id, MetadataField::Relations)?;
-        if target_db_id == source_artist_id {
+        let related_id = relation.artist_id.trim().to_string();
+        let related_db_id =
+            require_artist_id(db, principal, &related_id, MetadataField::Relations)?;
+        if related_db_id == artist_id {
             return Err(MetadataEditingError::BadRequest(
                 "an artist cannot relate to itself".to_string(),
             ));
         }
-        let key = (target_artist_id.clone(), relation.relation_type.to_string());
+        let key = (related_id.clone(), relation.relation_type.to_string());
         if !seen.insert(key) {
             return Err(MetadataEditingError::BadRequest(format!(
-                "duplicate relation to artist '{target_artist_id}'",
+                "duplicate relation from artist '{related_id}'",
             )));
         }
         let attributes = relation.attributes.and_then(|value| {
@@ -296,14 +302,19 @@ fn normalize_relations(
             (!value.is_empty()).then_some(value)
         });
         normalized.push(MetadataRelationValue {
-            target_artist_id,
+            artist_id: related_id,
             relation_type: relation.relation_type,
             attributes,
         });
     }
-    normalized.sort_by(|a, b| {
-        a.target_artist_id
-            .cmp(&b.target_artist_id)
+    sort_relations(&mut normalized);
+    Ok(serde_json::to_value(normalized)?)
+}
+
+pub(super) fn sort_relations(relations: &mut [MetadataRelationValue]) {
+    relations.sort_by(|a, b| {
+        a.artist_id
+            .cmp(&b.artist_id)
             .then_with(|| {
                 a.relation_type
                     .to_string()
@@ -311,7 +322,6 @@ fn normalize_relations(
             })
             .then_with(|| a.attributes.cmp(&b.attributes))
     });
-    Ok(serde_json::to_value(normalized)?)
 }
 
 pub(super) fn normalized_set_value(

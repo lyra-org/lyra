@@ -236,7 +236,10 @@ mod tests {
     use crate::db::MetadataField;
     use crate::db::external_ids::ExternalId;
     use crate::db::metadata::layers::MetadataLayer;
-    use crate::services::metadata::layers::LOCAL_SOURCE_ID;
+    use crate::services::metadata::layers::{
+        LOCAL_SOURCE_ID,
+        MANUAL_SOURCE_ID,
+    };
     use std::collections::BTreeMap;
 
     fn new_test_db() -> anyhow::Result<DbAny> {
@@ -2818,7 +2821,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
     }
 
     #[test]
-    fn rescan_preserves_provider_owned_release_and_track_fields() -> anyhow::Result<()> {
+    fn a_rescan_keeps_provider_release_and_track_values() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
 
         let library =
@@ -3141,11 +3144,10 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         Ok(())
     }
 
-    /// Rescans must skip the tag-path label sync when a provider owns
-    /// the field. Regressing the gate would wipe enriched labels on
-    /// every library scan.
+    /// A rescan's tag labels rank below a provider's, so enriched labels
+    /// survive every library scan.
     #[test]
-    fn rescan_preserves_provider_owned_labels() -> anyhow::Result<()> {
+    fn a_rescan_keeps_provider_labels() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
 
         let library =
@@ -3454,18 +3456,31 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         Ok(())
     }
 
+    fn save_manual(db: &mut DbAny, node_id: DbId, fields: serde_json::Value) -> anyhow::Result<()> {
+        db::metadata::layers::upsert(
+            db,
+            node_id,
+            &db::MetadataLayer::new(
+                MANUAL_SOURCE_ID,
+                db::metadata::layers::fields_from_json(fields),
+                1,
+            ),
+        )?;
+        Ok(())
+    }
+
     #[test]
-    fn a_manual_override_survives_a_rescan() -> anyhow::Result<()> {
+    fn a_manual_edit_survives_a_rescan() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let (library_db_id, entry_db_id) = single_file_library(&mut db, "/music/Album/01.flac")?;
         apply_metadata(&mut db, library_db_id, vec![tagged_track(entry_db_id)])?;
 
         let release_db_id = only_release(&db)?;
         let track_db_id = only_track(&db, release_db_id)?;
-        db::metadata::manual_overrides::replace(
+        save_manual(
             &mut db,
             track_db_id,
-            &BTreeMap::from([(MetadataField::TrackTitle, serde_json::json!("Manual Title"))]),
+            serde_json::json!({"track_title": "Manual Title"}),
         )?;
         crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track_db_id)?;
 
@@ -3477,24 +3492,19 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
     }
 
     #[test]
-    fn dropping_a_manual_override_falls_back_to_the_local_layer() -> anyhow::Result<()> {
+    fn dropping_a_manual_edit_falls_back_to_the_local_layer() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let (library_db_id, entry_db_id) = single_file_library(&mut db, "/music/Album/01.flac")?;
         apply_metadata(&mut db, library_db_id, vec![tagged_track(entry_db_id)])?;
 
         let release_db_id = only_release(&db)?;
         let track_db_id = only_track(&db, release_db_id)?;
-        db::metadata::manual_overrides::replace(
-            &mut db,
-            track_db_id,
-            &BTreeMap::from([(MetadataField::Year, serde_json::json!(2020))]),
-        )?;
-        db::metadata::manual_overrides::replace(
+        save_manual(&mut db, track_db_id, serde_json::json!({"year": 2020}))?;
+        save_manual(
             &mut db,
             release_db_id,
-            &BTreeMap::from([(MetadataField::Genres, serde_json::Value::Bool(true))]),
+            serde_json::json!({"genres": ["Manual Genre"]}),
         )?;
-        db::genres::sync_release_genres(&mut db, release_db_id, &["Manual Genre".to_string()])?;
         crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track_db_id)?;
         crate::services::metadata::merging::apply_merged_metadata_to_entity(
             &mut db,
@@ -3507,8 +3517,11 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             Some(2020)
         );
 
-        db::metadata::manual_overrides::replace(&mut db, track_db_id, &BTreeMap::new())?;
-        db::metadata::manual_overrides::replace(&mut db, release_db_id, &BTreeMap::new())?;
+        for node_id in [track_db_id, release_db_id] {
+            db.transaction_mut(|t| {
+                db::metadata::layers::remove_inside_tx(t, node_id, MANUAL_SOURCE_ID)
+            })?;
+        }
         crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track_db_id)?;
         crate::services::metadata::merging::apply_merged_metadata_to_entity(
             &mut db,

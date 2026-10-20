@@ -42,7 +42,10 @@ use crate::{
             new_test_db,
         },
     },
-    services::auth::Principal,
+    services::{
+        auth::Principal,
+        metadata::layers::MANUAL_SOURCE_ID,
+    },
 };
 
 fn principal(user_id: &str) -> Principal {
@@ -54,6 +57,10 @@ fn principal(user_id: &str) -> Principal {
         None,
         HashSet::new(),
     )
+}
+
+fn manual_layer(db: &DbAny, entity_id: DbId) -> anyhow::Result<Option<db::MetadataLayer>> {
+    db::metadata::layers::find_valid(db, entity_id, MANUAL_SOURCE_ID)
 }
 
 fn set(field: MetadataField, value: Value) -> MetadataChangeRequest {
@@ -167,9 +174,9 @@ fn preview_is_read_only_and_apply_persists_normalized_edit() -> anyhow::Result<(
         MetadataValueSource::Manual
     );
     assert_eq!(
-        db::metadata::manual_overrides::get(&db, track_id)?
-            .expect("manual override exists")
-            .parsed_fields()?[&MetadataField::TrackTitle],
+        manual_layer(&db, track_id)?
+            .expect("manual layer exists")
+            .fields[&MetadataField::TrackTitle],
         json!("New title")
     );
     Ok(())
@@ -200,7 +207,7 @@ fn apply_rejects_a_field_changed_after_preview() -> anyhow::Result<()> {
     assert_eq!(current[0].field, MetadataField::TrackTitle);
     assert_eq!(current[0].before.value, json!("Concurrent"));
     assert_eq!(current[0].after.value, json!("Second"));
-    assert!(db::metadata::manual_overrides::get(&db, track_id)?.is_none());
+    assert!(manual_layer(&db, track_id)?.is_none());
     Ok(())
 }
 
@@ -344,17 +351,17 @@ fn apply_revalidates_track_number_invariants_against_current_state() -> anyhow::
     let stored = db::tracks::get_by_id(&db, track_id)?.expect("track exists");
     assert_eq!(stored.track, Some(1));
     assert_eq!(stored.track_total, Some(1));
-    assert!(db::metadata::manual_overrides::get(&db, track_id)?.is_none());
+    assert!(manual_layer(&db, track_id)?.is_none());
     Ok(())
 }
 
 #[test]
-fn manual_clear_overrides_later_provider_values() -> anyhow::Result<()> {
+fn a_manual_clear_outranks_later_provider_values() -> anyhow::Result<()> {
     let mut db = new_test_db()?;
     let principal = principal("user-1");
     let track_id = insert_track(&mut db, "Track")?;
     let mut track = db::tracks::get_by_id(&db, track_id)?.expect("track exists");
-    track.set_sort_title("Track, The".to_string());
+    track.sort_title = Some("Track, The".to_string());
     track.set_year(1999);
     db::tracks::update(&mut db, &track)?;
 
@@ -461,7 +468,7 @@ fn set_accepts_null_and_empty_lists_only_for_clearable_fields() -> anyhow::Resul
 }
 
 #[test]
-fn inherit_relinquishes_ownership_and_restores_resolved_value() -> anyhow::Result<()> {
+fn inherit_drops_the_manual_value_and_restores_the_resolved_one() -> anyhow::Result<()> {
     let mut db = new_test_db()?;
     let principal = principal("user-1");
     let track_id = insert_track(&mut db, "Original")?;
@@ -523,7 +530,7 @@ fn inherit_relinquishes_ownership_and_restores_resolved_value() -> anyhow::Resul
             .values()
             .all(|field| field.source == MetadataValueSource::Resolved)
     );
-    assert!(db::metadata::manual_overrides::get(&db, track_id)?.is_none());
+    assert!(manual_layer(&db, track_id)?.is_none());
     Ok(())
 }
 
@@ -632,11 +639,10 @@ fn inherit_conflicts_when_provider_resolution_changes_after_preview() -> anyhow:
         db::genres::get_for_release(&db, release_id)?[0].name,
         "Manual"
     );
-    assert!(db::metadata::manual_overrides::owns_field(
-        &db,
-        release_id,
-        MetadataField::Genres,
-    )?);
+    assert!(
+        manual_layer(&db, release_id)?
+            .is_some_and(|layer| layer.fields.contains_key(&MetadataField::Genres))
+    );
     Ok(())
 }
 
@@ -1070,7 +1076,7 @@ fn label_disappearance_after_preview_is_rejected() -> anyhow::Result<()> {
     let error = apply(&mut db, &principal, release_id, &edit)
         .expect_err("a disappeared label must be rejected");
     assert!(matches!(error, MetadataEditingError::BadRequest(_)));
-    assert!(db::metadata::manual_overrides::get(&db, release_id)?.is_none());
+    assert!(manual_layer(&db, release_id)?.is_none());
     Ok(())
 }
 
@@ -1178,11 +1184,10 @@ fn inherited_label_disappearance_after_preview_is_rejected() -> anyhow::Result<(
     let error = apply(&mut db, &principal, release_id, &inherited)
         .expect_err("an inherited label disappearing after preview must be rejected");
     assert!(matches!(error, MetadataEditingError::Conflict(_)));
-    assert!(db::metadata::manual_overrides::owns_field(
-        &db,
-        release_id,
-        MetadataField::Labels,
-    )?);
+    assert!(
+        manual_layer(&db, release_id)?
+            .is_some_and(|layer| layer.fields.contains_key(&MetadataField::Labels))
+    );
     Ok(())
 }
 
@@ -1207,12 +1212,12 @@ fn credit_reference_disappearance_after_preview_is_rejected() -> anyhow::Result<
     let error = apply(&mut db, &principal, release_id, &edit)
         .expect_err("an artist disappearing after preview must be rejected");
     assert!(matches!(error, MetadataEditingError::BadRequest(_)));
-    assert!(db::metadata::manual_overrides::get(&db, release_id)?.is_none());
+    assert!(manual_layer(&db, release_id)?.is_none());
     Ok(())
 }
 
 #[test]
-fn graph_edits_store_only_ownership_markers() -> anyhow::Result<()> {
+fn a_credit_edit_supplies_every_role() -> anyhow::Result<()> {
     let mut db = new_test_db()?;
     let principal = principal("user-1");
     let release_id = insert_release(&mut db, "Release")?;
@@ -1231,10 +1236,22 @@ fn graph_edits_store_only_ownership_markers() -> anyhow::Result<()> {
     apply(&mut db, &principal, release_id, &edit)?;
 
     assert_eq!(credit_values(&db, release_id)?.len(), 1);
-    let fields = db::metadata::manual_overrides::get(&db, release_id)?
-        .expect("manual override exists")
-        .parsed_fields()?;
-    assert_eq!(fields[&MetadataField::Credits], Value::Bool(true));
+    let layer = manual_layer(&db, release_id)?.expect("manual layer exists");
+    assert_eq!(layer.credits.len(), db::CreditType::ALL.len());
+    for (credit_type, inputs) in layer.credits {
+        let expected: &[DbId] = if credit_type == db::CreditType::Artist {
+            &[artist_id]
+        } else {
+            &[]
+        };
+        assert!(
+            inputs
+                .iter()
+                .map(|input| input.artist_id)
+                .eq(expected.iter().copied()),
+            "{credit_type} holds {inputs:?}"
+        );
+    }
     Ok(())
 }
 
@@ -1433,12 +1450,12 @@ fn a_manual_credit_edit_moves_the_credited_flag() -> anyhow::Result<()> {
 }
 
 #[test]
-fn inheriting_relations_restores_what_the_targets_layers_supply() -> anyhow::Result<()> {
+fn relation_edits_replace_the_incoming_relations_and_inherit_restores_them() -> anyhow::Result<()> {
     let mut db = new_test_db()?;
     let principal = principal("user-1");
     let actor_id = insert_artist(&mut db, "Actor")?;
     let character_id = insert_artist(&mut db, "Character")?;
-    let other_id = insert_artist(&mut db, "Other")?;
+    let member_id = insert_artist(&mut db, "Member")?;
     db::providers::upsert(
         &mut db,
         &db::ProviderConfig {
@@ -1465,54 +1482,111 @@ fn inheriting_relations_restores_what_the_targets_layers_supply() -> anyhow::Res
         &HashMap::new(),
         &Default::default(),
     )?;
-    let other = db::artists::get_by_id(&db, other_id)?.expect("artist exists");
+    let actor = db::artists::get_by_id(&db, actor_id)?.expect("artist exists");
+    let member = db::artists::get_by_id(&db, member_id)?.expect("artist exists");
+    let snapshot = get_snapshot(&db, &principal, character_id)?;
+    assert_eq!(
+        snapshot.fields["relations"].value,
+        json!([{"artist_id": actor.id, "type": "voice_actor", "attributes": "lead"}])
+    );
+    assert_eq!(
+        get_snapshot(&db, &principal, actor_id)?.fields["relations"].value,
+        json!([]),
+        "an artist edits the relations into it, not the ones it holds"
+    );
+
     let manual = preview_edit(
         &db,
         &principal,
-        actor_id,
+        character_id,
         vec![set(
             MetadataField::Relations,
-            json!([{"target_artist_id": other.id, "type": "member_of"}]),
+            json!([{"artist_id": member.id, "type": "member_of"}]),
         )],
     )?;
-    apply(&mut db, &principal, actor_id, &manual)?;
-    assert!(
-        db::artists::relations::get_relations_from(
-            &db,
-            actor_id,
-            Some(db::ArtistRelationType::VoiceActor)
-        )?
-        .is_empty()
+    apply(&mut db, &principal, character_id, &manual)?;
+    let incoming = |db: &DbAny| -> anyhow::Result<Vec<(DbId, db::ArtistRelationType)>> {
+        Ok(
+            db::artists::relations::get_relations_to(db, character_id, None)?
+                .into_iter()
+                .map(|(relation, source)| (source, relation.relation_type))
+                .collect(),
+        )
+    };
+    assert_eq!(
+        incoming(&db)?,
+        vec![(member_id, db::ArtistRelationType::MemberOf)],
+        "a type the edit leaves out clears"
     );
+    let layer = manual_layer(&db, character_id)?.expect("manual layer exists");
+    assert_eq!(layer.relations.len(), db::ArtistRelationType::ALL.len());
 
     let inherited = preview_edit(
         &db,
         &principal,
-        actor_id,
+        character_id,
         vec![inherit(MetadataField::Relations)],
     )?;
-    apply(&mut db, &principal, actor_id, &inherited)?;
+    apply(&mut db, &principal, character_id, &inherited)?;
 
-    let relations = db::artists::relations::get_relations_from(&db, actor_id, None)?;
+    let relations = db::artists::relations::get_relations_to(&db, character_id, None)?;
     assert_eq!(relations.len(), 1);
-    assert_eq!(relations[0].1, character_id);
+    assert_eq!(relations[0].1, actor_id);
     assert_eq!(
         relations[0].0.relation_type,
         db::ArtistRelationType::VoiceActor
     );
     assert_eq!(relations[0].0.attributes.as_deref(), Some("lead"));
+    assert!(manual_layer(&db, character_id)?.is_none());
     Ok(())
 }
 
 #[test]
-fn hidden_relation_targets_are_neither_exposed_nor_replaceable() -> anyhow::Result<()> {
+fn a_relation_edit_applies_through_a_lock() -> anyhow::Result<()> {
+    let mut db = new_test_db()?;
+    let principal = principal("user-1");
+    let band_id = insert_artist(&mut db, "Band")?;
+    let member_id = insert_artist(&mut db, "Member")?;
+    let mut band = db::artists::get_by_id(&db, band_id)?.expect("artist exists");
+    band.locked = Some(true);
+    db::artists::update(&mut db, &band)?;
+    let member = db::artists::get_by_id(&db, member_id)?.expect("artist exists");
+
+    let edit = preview_edit(
+        &db,
+        &principal,
+        band_id,
+        vec![set(
+            MetadataField::Relations,
+            json!([{"artist_id": member.id, "type": "member_of"}]),
+        )],
+    )?;
+    apply(&mut db, &principal, band_id, &edit)?;
+    assert_eq!(
+        db::artists::relations::get_relations_to(&db, band_id, None)?.len(),
+        1
+    );
+
+    let inherited = preview_edit(
+        &db,
+        &principal,
+        band_id,
+        vec![inherit(MetadataField::Relations)],
+    )?;
+    apply(&mut db, &principal, band_id, &inherited)?;
+    assert!(db::artists::relations::get_relations_to(&db, band_id, None)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn hidden_relating_artists_are_neither_exposed_nor_replaceable() -> anyhow::Result<()> {
     let mut db = new_test_db()?;
     let visible_library_id = insert_library(&mut db, "Visible", "/tmp/relation-visible")?;
     let hidden_library_id = insert_library(&mut db, "Hidden", "/tmp/relation-hidden")?;
-    let source_id = insert_artist(&mut db, "Visible Source")?;
-    let target_id = insert_artist(&mut db, "Hidden Target")?;
-    db::graph::ensure_owned_edge(&mut db, visible_library_id, source_id)?;
-    db::graph::ensure_owned_edge(&mut db, hidden_library_id, target_id)?;
+    let target_id = insert_artist(&mut db, "Visible Target")?;
+    let source_id = insert_artist(&mut db, "Hidden Source")?;
+    db::graph::ensure_owned_edge(&mut db, visible_library_id, target_id)?;
+    db::graph::ensure_owned_edge(&mut db, hidden_library_id, source_id)?;
     db::artists::relations::link(
         &mut db,
         source_id,
@@ -1526,18 +1600,18 @@ fn hidden_relation_targets_are_neither_exposed_nor_replaceable() -> anyhow::Resu
     scoped.permissions = vec![Permission::ManageMetadata];
     scoped.accessible_library_ids = HashSet::from([visible_library.id]);
 
-    let snapshot = get_snapshot(&db, &scoped, source_id)?;
+    let snapshot = get_snapshot(&db, &scoped, target_id)?;
     assert!(!snapshot.fields.contains_key("relations"));
     let error = preview_edit(
         &db,
         &scoped,
-        source_id,
+        target_id,
         vec![set(MetadataField::Relations, json!([]))],
     )
-    .expect_err("relations with hidden targets must not be replaceable");
+    .expect_err("relations from hidden artists must not be replaceable");
     assert!(matches!(error, MetadataEditingError::BadRequest(_)));
     assert_eq!(
-        db::artists::relations::get_relations_from(&db, source_id, None)?.len(),
+        db::artists::relations::get_relations_to(&db, target_id, None)?.len(),
         1,
     );
     Ok(())
@@ -1550,29 +1624,29 @@ fn hidden_relation_added_after_preview_is_rejected_without_replacement() -> anyh
     let hidden_library_id = insert_library(&mut db, "Hidden", "/tmp/relation-race-hidden")?;
     let visible_release_id = insert_release(&mut db, "Visible Release")?;
     let hidden_release_id = insert_release(&mut db, "Hidden Release")?;
-    let source_id = insert_artist(&mut db, "Visible Source")?;
-    let visible_target_id = insert_artist(&mut db, "Visible Target")?;
-    let hidden_target_id = insert_artist(&mut db, "Hidden Target")?;
+    let target_id = insert_artist(&mut db, "Visible Target")?;
+    let visible_source_id = insert_artist(&mut db, "Visible Source")?;
+    let hidden_source_id = insert_artist(&mut db, "Hidden Source")?;
     db::graph::ensure_owned_edge(&mut db, visible_library_id, visible_release_id)?;
     db::graph::ensure_owned_edge(&mut db, hidden_library_id, hidden_release_id)?;
-    connect_artist(&mut db, visible_release_id, source_id)?;
-    connect_artist(&mut db, visible_release_id, visible_target_id)?;
-    connect_artist(&mut db, hidden_release_id, hidden_target_id)?;
+    connect_artist(&mut db, visible_release_id, target_id)?;
+    connect_artist(&mut db, visible_release_id, visible_source_id)?;
+    connect_artist(&mut db, hidden_release_id, hidden_source_id)?;
     let visible_library =
         db::libraries::get_by_id(&db, visible_library_id)?.expect("visible library exists");
-    let visible_target =
-        db::artists::get_by_id(&db, visible_target_id)?.expect("visible target exists");
+    let visible_source =
+        db::artists::get_by_id(&db, visible_source_id)?.expect("visible source exists");
     let mut scoped = principal("scoped");
     scoped.permissions = vec![Permission::ManageMetadata];
     scoped.accessible_library_ids = HashSet::from([visible_library.id]);
     let edit = preview_edit(
         &db,
         &scoped,
-        source_id,
+        target_id,
         vec![set(
             MetadataField::Relations,
             json!([{
-                "target_artist_id": visible_target.id,
+                "artist_id": visible_source.id,
                 "type": "member_of",
                 "attributes": null
             }]),
@@ -1580,18 +1654,18 @@ fn hidden_relation_added_after_preview_is_rejected_without_replacement() -> anyh
     )?;
     db::artists::relations::link(
         &mut db,
-        source_id,
-        hidden_target_id,
+        hidden_source_id,
+        target_id,
         db::ArtistRelationType::MemberOf,
         Some("hidden detail".to_string()),
     )?;
 
-    let error = apply(&mut db, &scoped, source_id, &edit)
+    let error = apply(&mut db, &scoped, target_id, &edit)
         .expect_err("a newly hidden relation must be rejected");
     assert!(matches!(error, MetadataEditingError::BadRequest(_)));
-    let relations = db::artists::relations::get_relations_from(&db, source_id, None)?;
+    let relations = db::artists::relations::get_relations_to(&db, target_id, None)?;
     assert_eq!(relations.len(), 1);
-    assert_eq!(relations[0].1, hidden_target_id);
+    assert_eq!(relations[0].1, hidden_source_id);
     Ok(())
 }
 
@@ -1728,6 +1802,177 @@ fn inherit_clears_a_scalar_that_no_layer_supplies() -> anyhow::Result<()> {
             .sort_title,
         None
     );
-    assert!(db::metadata::manual_overrides::get(&db, track_id)?.is_none());
+    assert!(manual_layer(&db, track_id)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn credits_apply_in_role_order() -> anyhow::Result<()> {
+    let mut db = new_test_db()?;
+    let principal = principal("user-1");
+    let track_id = insert_track(&mut db, "Track")?;
+    let [first, composer, second] = [
+        insert_artist(&mut db, "First")?,
+        insert_artist(&mut db, "Composer")?,
+        insert_artist(&mut db, "Second")?,
+    ];
+    let public_id = |artist_id| -> anyhow::Result<String> {
+        Ok(db::artists::get_by_id(&db, artist_id)?
+            .expect("artist exists")
+            .id)
+    };
+    let [first, composer, second] = [public_id(first)?, public_id(composer)?, public_id(second)?];
+    let credit = |artist_id: &str, credit_type: &str| json!({"artist_id": artist_id, "type": credit_type, "detail": null});
+
+    let edit = preview_edit(
+        &db,
+        &principal,
+        track_id,
+        vec![set(
+            MetadataField::Credits,
+            json!([
+                credit(&first, "artist"),
+                credit(&composer, "composer"),
+                credit(&second, "artist"),
+            ]),
+        )],
+    )?;
+    let expected = json!([
+        credit(&first, "artist"),
+        credit(&second, "artist"),
+        credit(&composer, "composer"),
+    ]);
+    assert_eq!(edit.expected[0].after.value, expected);
+
+    let snapshot = apply(&mut db, &principal, track_id, &edit)?;
+    assert_eq!(snapshot.fields["credits"].value, expected);
+    Ok(())
+}
+
+#[test]
+fn edits_apply_through_a_lock_that_keeps_provider_changes_out() -> anyhow::Result<()> {
+    let mut db = new_test_db()?;
+    let principal = principal("user-1");
+    let track_id = insert_track(&mut db, "Stored")?;
+    db::providers::upsert(
+        &mut db,
+        &db::ProviderConfig {
+            db_id: None,
+            provider_id: "provider".to_string(),
+            priority: 100,
+            enabled: true,
+        },
+    )?;
+    let provider_title = |db: &mut DbAny, title: &str| -> anyhow::Result<()> {
+        crate::services::metadata::layers::save_provider_layer(
+            db,
+            track_id,
+            "provider",
+            &crate::services::metadata::layers::ProviderValues {
+                fields: BTreeMap::from([(MetadataField::TrackTitle, json!(title))]),
+                ..Default::default()
+            },
+            &HashMap::new(),
+            &Default::default(),
+        )
+    };
+    provider_title(&mut db, "Provider")?;
+    let mut track = db::tracks::get_by_id(&db, track_id)?.expect("track exists");
+    track.locked = Some(true);
+    db::tracks::update(&mut db, &track)?;
+    let title = |db: &DbAny| -> anyhow::Result<String> {
+        Ok(db::tracks::get_by_id(db, track_id)?
+            .expect("track exists")
+            .track_title)
+    };
+
+    let manual = preview_edit(
+        &db,
+        &principal,
+        track_id,
+        vec![set(MetadataField::TrackTitle, json!("Manual"))],
+    )?;
+    apply(&mut db, &principal, track_id, &manual)?;
+    assert_eq!(title(&db)?, "Manual");
+
+    provider_title(&mut db, "Renamed")?;
+    let inherited = preview_edit(
+        &db,
+        &principal,
+        track_id,
+        vec![inherit(MetadataField::TrackTitle)],
+    )?;
+    assert_eq!(inherited.expected[0].after.value, json!("Renamed"));
+    apply(&mut db, &principal, track_id, &inherited)?;
+    assert_eq!(
+        title(&db)?,
+        "Renamed",
+        "an inherit applies through the lock"
+    );
+    assert!(manual_layer(&db, track_id)?.is_none());
+
+    provider_title(&mut db, "Later")?;
+    assert_eq!(
+        title(&db)?,
+        "Renamed",
+        "the lock keeps provider changes out"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_invalid_manual_layer_fails_the_edit_instead_of_being_replaced() -> anyhow::Result<()> {
+    let mut db = new_test_db()?;
+    let principal = principal("user-1");
+    let track_id = insert_track(&mut db, "Track")?;
+    let edit = preview_edit(
+        &db,
+        &principal,
+        track_id,
+        vec![set(MetadataField::Year, json!(1999))],
+    )?;
+    apply(&mut db, &principal, track_id, &edit)?;
+    let layer_id = db::metadata::layers::layer_id(&db, track_id, MANUAL_SOURCE_ID)?
+        .expect("manual layer exists");
+    db.exec_mut(
+        QueryBuilder::insert()
+            .values_uniform([("supplied", vec!["year".to_string(), "work_id".to_string()]).into()])
+            .ids(layer_id)
+            .query(),
+    )?;
+
+    let changes = vec![set(MetadataField::TrackTitle, json!("Renamed"))];
+    for error in [
+        preview_edit(&db, &principal, track_id, changes.clone()).expect_err("preview fails"),
+        apply(
+            &mut db,
+            &principal,
+            track_id,
+            &MetadataApplyRequest {
+                changes,
+                expected: edit.expected.clone(),
+            },
+        )
+        .expect_err("apply fails"),
+    ] {
+        let MetadataEditingError::Internal(error) = error else {
+            panic!("expected an internal error, got {error:?}");
+        };
+        assert!(
+            format!("{error:#}").contains("'manual' metadata layer is invalid"),
+            "{error:#}"
+        );
+    }
+    assert_eq!(
+        db::tracks::get_by_id(&db, track_id)?
+            .expect("track exists")
+            .year,
+        Some(1999)
+    );
+    assert_eq!(
+        db::metadata::layers::ids_for_entity(&db, track_id)?,
+        vec![layer_id],
+        "the stored layer is left for recovery"
+    );
     Ok(())
 }

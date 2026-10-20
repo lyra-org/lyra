@@ -115,7 +115,7 @@ async fn apply_entity_metadata(
 #[cfg(feature = "docgen")]
 fn get_entity_metadata_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get editable entity metadata").description(
-        "Returns the canonical editable metadata projection for a release, track, or artist. The keys in `fields` are the authoritative editable inventory; each entry carries the current `value` and its `source`, `manual` when the field is manually owned and `resolved` otherwise. Omitted fields are unavailable. Requires ManageMetadata.",
+        "Returns the canonical editable metadata projection for a release, track, or artist. The keys in `fields` are the authoritative editable inventory; each entry carries the current `value` and its `source`, `manual` when a manual edit supplies the field and `resolved` otherwise. An artist's `relations` are the relations into it, such as a band's members or a character's voice actors, each naming the relating `artist_id`. Omitted fields are unavailable. Requires ManageMetadata.",
     )
 }
 
@@ -205,7 +205,7 @@ mod tests {
         })
         .await?;
 
-        let (user_id, source_public_id, hidden_public_id, source_id) = {
+        let (user_id, target_public_id, hidden_public_id, target_id) = {
             let mut db = STATE.db.write().await;
             db::roles::ensure_builtin_roles(&mut db)?;
             let user_id = db::users::create(
@@ -238,24 +238,24 @@ mod tests {
             let hidden_release_id = insert_release(&mut db, "Hidden Release")?;
             db::graph::ensure_owned_edge(&mut db, visible_library_id, visible_release_id)?;
             db::graph::ensure_owned_edge(&mut db, hidden_library_id, hidden_release_id)?;
-            let source_id = insert_artist(&mut db, "Visible Source")?;
-            let hidden_id = insert_artist(&mut db, "Hidden Target")?;
-            connect_artist(&mut db, visible_release_id, source_id)?;
+            let target_id = insert_artist(&mut db, "Visible Target")?;
+            let hidden_id = insert_artist(&mut db, "Hidden Source")?;
+            connect_artist(&mut db, visible_release_id, target_id)?;
             connect_artist(&mut db, hidden_release_id, hidden_id)?;
             db::artists::relations::link(
                 &mut db,
-                source_id,
                 hidden_id,
+                target_id,
                 db::ArtistRelationType::MemberOf,
                 Some("hidden detail".to_string()),
             )?;
-            let source_public_id = db::artists::get_by_id(&db, source_id)?
-                .expect("source exists")
-                .id;
-            let hidden_public_id = db::artists::get_by_id(&db, hidden_id)?
+            let target_public_id = db::artists::get_by_id(&db, target_id)?
                 .expect("target exists")
                 .id;
-            (user_id, source_public_id, hidden_public_id, source_id)
+            let hidden_public_id = db::artists::get_by_id(&db, hidden_id)?
+                .expect("source exists")
+                .id;
+            (user_id, target_public_id, hidden_public_id, target_id)
         };
         let session = crate::testing::create_session(user_id, Default::default()).await?;
         let authorization = format!("Bearer {}", session.token);
@@ -265,7 +265,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
-                    .uri(format!("/{source_public_id}/metadata"))
+                    .uri(format!("/{target_public_id}/metadata"))
                     .header(AUTHORIZATION, &authorization)
                     .body(Body::empty())?,
             )
@@ -281,7 +281,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri(format!("/{source_public_id}/metadata/preview"))
+                    .uri(format!("/{target_public_id}/metadata/preview"))
                     .header(AUTHORIZATION, &authorization)
                     .header(CONTENT_TYPE, "application/json")
                     .body(Body::from(serde_json::to_vec(&serde_json::json!({
@@ -313,7 +313,7 @@ mod tests {
         assert_eq!(hidden_response.status(), StatusCode::NOT_FOUND);
         let db = STATE.db.read().await;
         assert_eq!(
-            db::artists::relations::get_relations_from(&db, source_id, None)?.len(),
+            db::artists::relations::get_relations_to(&db, target_id, None)?.len(),
             1,
         );
         Ok(())

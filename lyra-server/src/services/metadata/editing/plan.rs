@@ -8,6 +8,7 @@ use std::collections::{
     BTreeSet,
 };
 
+use agdb::DbId;
 use serde_json::Value;
 
 use crate::{
@@ -16,7 +17,13 @@ use crate::{
         DbAccess,
         MetadataField,
     },
-    services::auth::Principal,
+    services::{
+        auth::Principal,
+        metadata::{
+            layers::MANUAL_SOURCE_ID,
+            merging,
+        },
+    },
 };
 
 use super::{
@@ -49,67 +56,71 @@ fn cleared_value(state: &EntityState, field: MetadataField) -> Result<Value, Met
     }
 }
 
+/// The value a field resolves to from every layer but the manual one.
 fn inherited_value(
     db: &impl DbAccess,
     principal: &Principal,
     state: &EntityState,
     field: MetadataField,
 ) -> Result<Value, MetadataEditingError> {
-    if field == MetadataField::Relations {
-        // Each target's layers own the relations into it.
-        let mut relations = Vec::new();
-        for (target_id, relation_type, attributes) in
-            crate::services::metadata::merging::resolved_relations_from(db, state.db_id)?
-        {
-            let target = db::artists::get_by_id(db, target_id)?.ok_or_else(|| {
-                MetadataEditingError::Internal(anyhow::anyhow!("a related artist disappeared"))
-            })?;
-            relations.push(MetadataRelationValue {
-                target_artist_id: target.id,
-                relation_type,
-                attributes,
-            });
-        }
-        return normalized_set_value(
-            db,
-            principal,
-            state,
-            field,
-            &serde_json::to_value(relations)?,
-        );
-    }
-    let layers = db::metadata::layers::get_for_entity(db, state.db_id)?;
-    let providers = db::providers::get(db)?;
-    let merged = crate::services::metadata::merging::merge_layers(layers, &providers);
-    if field == MetadataField::Credits {
-        let mut credits = Vec::new();
-        for (credit_type, input) in crate::services::metadata::merging::resolved_credits(&merged) {
-            let artist = db::artists::get_by_id(db, input.artist_id)?.ok_or_else(|| {
-                MetadataEditingError::Internal(anyhow::anyhow!("a credited artist disappeared"))
-            })?;
-            credits.push(MetadataCreditValue {
-                artist_id: artist.id,
-                credit_type,
-                detail: input.detail,
-            });
-        }
-        return normalized_set_value(db, principal, state, field, &serde_json::to_value(credits)?);
-    }
-    let Some(value) = merged.fields.get(&field).filter(|value| !value.is_null()) else {
-        return cleared_value(state, field);
+    let merged = merging::resolve_without(db, state.db_id, MANUAL_SOURCE_ID)?;
+    let artist_public_id = |artist_id: DbId| -> Result<String, MetadataEditingError> {
+        Ok(db::artists::get_by_id(db, artist_id)?
+            .ok_or_else(|| {
+                MetadataEditingError::Internal(anyhow::anyhow!("a referenced artist disappeared"))
+            })?
+            .id)
     };
-    if field == MetadataField::Labels {
-        let source_id = merged.provenance.get(&field).ok_or_else(|| {
-            MetadataEditingError::Internal(anyhow::anyhow!("resolved labels have no source"))
-        })?;
-        let layer_id =
-            db::metadata::layers::layer_id(db, state.db_id, source_id)?.ok_or_else(|| {
-                MetadataEditingError::Internal(anyhow::anyhow!("the labels' layer disappeared"))
-            })?;
-        layer_labels(db, layer_id)
-    } else {
-        normalized_set_value(db, principal, state, field, value)
-    }
+    let value = match field {
+        MetadataField::Credits => {
+            let mut credits = Vec::new();
+            for credit_type in db::CreditType::ALL {
+                for input in merged.credits.get(&credit_type).into_iter().flatten() {
+                    credits.push(MetadataCreditValue {
+                        artist_id: artist_public_id(input.artist_id)?,
+                        credit_type,
+                        detail: input.detail.clone(),
+                    });
+                }
+            }
+            serde_json::to_value(credits)?
+        }
+        MetadataField::Relations => {
+            let mut relations = Vec::new();
+            for relation_type in db::ArtistRelationType::ALL {
+                for input in merged.relations.get(&relation_type).into_iter().flatten() {
+                    relations.push(MetadataRelationValue {
+                        artist_id: artist_public_id(input.artist_id)?,
+                        relation_type,
+                        attributes: input.attributes.clone(),
+                    });
+                }
+            }
+            serde_json::to_value(relations)?
+        }
+        field => {
+            let Some(value) = merged.fields.get(&field).filter(|value| !value.is_null()) else {
+                return cleared_value(state, field);
+            };
+            if field == MetadataField::Labels {
+                // The winning layer's own labels, not ones that share their names.
+                let source_id = merged.provenance.get(&field).ok_or_else(|| {
+                    MetadataEditingError::Internal(anyhow::anyhow!(
+                        "resolved labels have no source"
+                    ))
+                })?;
+                let layer_id = db::metadata::layers::layer_id(db, state.db_id, source_id)?
+                    .ok_or_else(|| {
+                        MetadataEditingError::Internal(anyhow::anyhow!(
+                            "the labels' layer disappeared"
+                        ))
+                    })?;
+                return layer_labels(db, layer_id);
+            }
+            value.clone()
+        }
+    };
+    normalized_set_value(db, principal, state, field, &value)
 }
 
 pub(super) fn build_diff(

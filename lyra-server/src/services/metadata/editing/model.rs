@@ -105,10 +105,12 @@ pub(crate) struct MetadataLabelEditValue {
     pub(crate) catalog_number: Option<String>,
 }
 
+/// A relation into the edited artist from `artist_id`, such as a band's member
+/// or a character's voice actor.
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct MetadataRelationValue {
-    pub(crate) target_artist_id: String,
+    pub(crate) artist_id: String,
     #[serde(rename = "type")]
     pub(crate) relation_type: db::ArtistRelationType,
     pub(crate) attributes: Option<String>,

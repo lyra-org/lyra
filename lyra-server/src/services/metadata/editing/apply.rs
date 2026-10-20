@@ -9,13 +9,31 @@ use agdb::{
     DbId,
 };
 use serde::de::DeserializeOwned;
-use serde_json::Value;
+use serde_json::{
+    Value,
+    json,
+};
 
 use crate::db::{
     self,
     DbAccess,
     MetadataField,
-    entities::MetadataEntityType,
+    MetadataLayer,
+    labels::LabelLinkInput,
+    metadata::layers::edges::{
+        LayerCreditInput,
+        LayerRelationInput,
+    },
+};
+use crate::services::metadata::{
+    layers::{
+        MANUAL_SOURCE_ID,
+        now_secs,
+    },
+    merging::{
+        self,
+        LayerKeys,
+    },
 };
 
 use super::{
@@ -39,173 +57,118 @@ fn require_node_id(db: &impl DbAccess, public_id: &str) -> anyhow::Result<DbId> 
     })
 }
 
-fn credit_inputs(
+/// Writes one edited field into the manual layer: a set supplies it, a clear
+/// supplies it empty, and an inherit stops supplying it. Credits and relations
+/// supply every role or type, so ones the value leaves out clear.
+fn edit_layer(
     db: &impl DbAccess,
-    value: &Value,
-) -> anyhow::Result<Vec<db::credits::CreditLinkInput>> {
-    let credits: Vec<MetadataCreditValue> = normalized(value)?;
-    credits
-        .into_iter()
-        .map(|credit| {
-            Ok(db::credits::CreditLinkInput {
-                artist_id: require_node_id(db, &credit.artist_id)?,
-                credit_type: credit.credit_type,
-                detail: credit.detail,
-            })
-        })
-        .collect()
-}
-
-fn apply_release_fields(
-    db: &mut DbAnyTransactionMut<'_>,
-    state: &EntityState,
-    diff: &[MetadataFieldDiff],
+    layer: &mut MetadataLayer,
+    labels: &mut Vec<LabelLinkInput>,
+    entry: &MetadataFieldDiff,
 ) -> anyhow::Result<()> {
-    let mut release = db::releases::get_by_id(db, state.db_id)?
-        .ok_or_else(|| anyhow::anyhow!("release disappeared during metadata apply"))?;
-    let mut scalar_changed = false;
-    for entry in diff {
-        let value = &entry.after.value;
-        match entry.field {
-            MetadataField::ReleaseTitle => {
-                release.release_title = normalized(value)?;
-                scalar_changed = true;
-            }
-            MetadataField::SortTitle => {
-                if let Some(sort_title) = normalized(value)? {
-                    release.set_sort_title(sort_title);
-                } else {
-                    release.sort_title = None;
-                }
-                scalar_changed = true;
-            }
-            MetadataField::ReleaseType => {
-                release.release_type = normalized(value)?;
-                scalar_changed = true;
-            }
-            MetadataField::ReleaseDate => {
-                release.release_date = normalized(value)?;
-                scalar_changed = true;
-            }
-            MetadataField::Genres => {
-                let genres: Vec<String> = normalized(value)?;
-                db::genres::sync_release_genres(db, state.db_id, &genres)?;
-            }
-            MetadataField::Labels => {
-                let labels: Vec<MetadataLabelValue> = normalized(value)?;
-                let inputs = labels
+    let manual = entry.after.source == MetadataValueSource::Manual;
+    let value = &entry.after.value;
+    match entry.field {
+        MetadataField::Credits => {
+            layer.credits.clear();
+            if manual {
+                layer.credits = db::CreditType::ALL
                     .into_iter()
-                    .map(|label| {
-                        Ok(db::labels::LabelLinkInput {
-                            label_id: require_node_id(db, &label.id)?,
-                            catalog_number: label.catalog_number,
-                        })
-                    })
-                    .collect::<anyhow::Result<Vec<_>>>()?;
-                db::labels::sync_release_label_links_inside_tx(db, state.db_id, &inputs)?;
+                    .map(|credit_type| (credit_type, Vec::new()))
+                    .collect();
+                for credit in normalized::<Vec<MetadataCreditValue>>(value)? {
+                    layer
+                        .credits
+                        .entry(credit.credit_type)
+                        .or_default()
+                        .push(LayerCreditInput {
+                            artist_id: require_node_id(db, &credit.artist_id)?,
+                            detail: credit.detail,
+                        });
+                }
             }
-            MetadataField::Credits => {
-                let inputs = credit_inputs(db, value)?;
-                db::credits::replace_for_owner(db, state.db_id, &inputs)?;
-            }
-            field => anyhow::bail!("invalid release metadata field '{}'", field.as_str()),
         }
-    }
-    if scalar_changed {
-        db::releases::update_in_transaction(db, &release)?;
-    }
-    Ok(())
-}
-
-fn apply_track_fields(
-    db: &mut DbAnyTransactionMut<'_>,
-    state: &EntityState,
-    diff: &[MetadataFieldDiff],
-) -> anyhow::Result<()> {
-    let mut track = db::tracks::get_by_id(db, state.db_id)?
-        .ok_or_else(|| anyhow::anyhow!("track disappeared during metadata apply"))?;
-    let mut scalar_changed = false;
-    for entry in diff {
-        let value = &entry.after.value;
-        match entry.field {
-            MetadataField::TrackTitle => track.track_title = normalized(value)?,
-            MetadataField::SortTitle => {
-                if let Some(sort_title) = normalized(value)? {
-                    track.set_sort_title(sort_title);
-                } else {
-                    track.sort_title = None;
-                }
-            }
-            MetadataField::Year => track.year = normalized(value)?,
-            MetadataField::Disc => track.disc = normalized(value)?,
-            MetadataField::DiscTotal => track.disc_total = normalized(value)?,
-            MetadataField::Track => track.track = normalized(value)?,
-            MetadataField::TrackTotal => track.track_total = normalized(value)?,
-            MetadataField::Credits => {
-                let inputs = credit_inputs(db, value)?;
-                db::credits::replace_for_owner(db, state.db_id, &inputs)?;
-                continue;
-            }
-            field => anyhow::bail!("invalid track metadata field '{}'", field.as_str()),
-        }
-        scalar_changed = true;
-    }
-    if scalar_changed {
-        db::tracks::update_in_transaction(db, &track)?;
-    }
-    Ok(())
-}
-
-fn apply_artist_fields(
-    db: &mut DbAnyTransactionMut<'_>,
-    state: &EntityState,
-    diff: &[MetadataFieldDiff],
-) -> anyhow::Result<()> {
-    let mut artist = db::artists::get_by_id(db, state.db_id)?
-        .ok_or_else(|| anyhow::anyhow!("artist disappeared during metadata apply"))?;
-    let mut scalar_changed = false;
-    for entry in diff {
-        let value = &entry.after.value;
-        match entry.field {
-            MetadataField::ArtistName => artist.artist_name = normalized(value)?,
-            MetadataField::SortName => {
-                if let Some(sort_name) = normalized(value)? {
-                    artist.set_sort_name(sort_name);
-                } else {
-                    artist.sort_name = None;
-                }
-            }
-            MetadataField::ArtistType => artist.artist_type = normalized(value)?,
-            MetadataField::Description => {
-                if let Some(description) = normalized(value)? {
-                    artist.set_description(description);
-                } else {
-                    artist.description = None;
-                }
-            }
-            MetadataField::Relations => {
-                let relations: Vec<MetadataRelationValue> = normalized(value)?;
-                let inputs = relations
+        MetadataField::Relations => {
+            layer.relations.clear();
+            if manual {
+                layer.relations = db::ArtistRelationType::ALL
                     .into_iter()
-                    .map(|relation| {
-                        Ok(db::artists::relations::ArtistRelationLinkInput {
-                            target_artist_id: require_node_id(db, &relation.target_artist_id)?,
-                            relation_type: relation.relation_type,
+                    .map(|relation_type| (relation_type, Vec::new()))
+                    .collect();
+                for relation in normalized::<Vec<MetadataRelationValue>>(value)? {
+                    layer
+                        .relations
+                        .entry(relation.relation_type)
+                        .or_default()
+                        .push(LayerRelationInput {
+                            artist_id: require_node_id(db, &relation.artist_id)?,
                             attributes: relation.attributes,
-                        })
-                    })
-                    .collect::<anyhow::Result<Vec<_>>>()?;
-                db::artists::relations::replace_from(db, state.db_id, &inputs)?;
-                continue;
+                        });
+                }
             }
-            field => anyhow::bail!("invalid artist metadata field '{}'", field.as_str()),
         }
-        scalar_changed = true;
-    }
-    if scalar_changed {
-        db::artists::update_in_transaction(db, &artist)?;
+        MetadataField::Labels if manual => {
+            let edited: Vec<MetadataLabelValue> = normalized(value)?;
+            *labels = edited
+                .iter()
+                .map(|label| {
+                    Ok(LabelLinkInput {
+                        label_id: require_node_id(db, &label.id)?,
+                        catalog_number: label.catalog_number.clone(),
+                    })
+                })
+                .collect::<anyhow::Result<_>>()?;
+            let names = edited
+                .into_iter()
+                .map(|label| json!({"name": label.name}))
+                .collect();
+            layer.fields.insert(entry.field, Value::Array(names));
+        }
+        field if manual => {
+            layer.fields.insert(field, value.clone());
+        }
+        field => {
+            layer.fields.remove(&field);
+        }
     }
     Ok(())
+}
+
+fn released_keys(diff: &[MetadataFieldDiff]) -> LayerKeys {
+    let mut keys = LayerKeys::default();
+    for entry in diff {
+        match entry.field {
+            MetadataField::Credits => keys.credits.extend(db::CreditType::ALL),
+            MetadataField::Relations => keys.relations.extend(db::ArtistRelationType::ALL),
+            field => {
+                keys.fields.insert(field);
+            }
+        }
+    }
+    keys
+}
+
+fn apply_inside_tx(
+    db: &mut DbAnyTransactionMut<'_>,
+    state: &EntityState,
+    diff: &[MetadataFieldDiff],
+) -> anyhow::Result<()> {
+    let stored_id = db::metadata::layers::layer_id(db, state.db_id, MANUAL_SOURCE_ID)?;
+    let mut layer = db::metadata::layers::find_valid(db, state.db_id, MANUAL_SOURCE_ID)?
+        .unwrap_or_else(|| MetadataLayer::new(MANUAL_SOURCE_ID, Default::default(), 0));
+    layer.updated_at = now_secs();
+    let mut labels = match stored_id {
+        Some(layer_id) if layer.fields.contains_key(&MetadataField::Labels) => {
+            db::metadata::layers::label_links(db, layer_id)?
+        }
+        _ => Vec::new(),
+    };
+    for entry in diff {
+        edit_layer(db, &mut layer, &mut labels, entry)?;
+    }
+    db::metadata::layers::replace_inside_tx(db, state.db_id, &layer, Some(&labels))?;
+    // An edit applies even to a locked entity.
+    merging::apply_through_lock(db, state.db_id, &released_keys(diff))
 }
 
 pub(super) fn apply_diff(
@@ -213,27 +176,5 @@ pub(super) fn apply_diff(
     state: &EntityState,
     diff: &[MetadataFieldDiff],
 ) -> anyhow::Result<()> {
-    db.transaction_mut(|transaction| -> anyhow::Result<()> {
-        match state.entity_type {
-            MetadataEntityType::Release => apply_release_fields(transaction, state, diff)?,
-            MetadataEntityType::Track => apply_track_fields(transaction, state, diff)?,
-            MetadataEntityType::Artist => apply_artist_fields(transaction, state, diff)?,
-        }
-
-        let mut overrides = db::metadata::manual_overrides::get(transaction, state.db_id)?
-            .map(|row| row.parsed_fields())
-            .transpose()?
-            .unwrap_or_default();
-        for entry in diff {
-            if entry.after.source == MetadataValueSource::Resolved {
-                overrides.remove(&entry.field);
-            } else if entry.field.is_graph() {
-                overrides.insert(entry.field, Value::Bool(true));
-            } else {
-                overrides.insert(entry.field, entry.after.value.clone());
-            }
-        }
-        db::metadata::manual_overrides::replace(transaction, state.db_id, &overrides)?;
-        Ok(())
-    })
+    db.transaction_mut(|transaction| apply_inside_tx(transaction, state, diff))
 }

@@ -36,7 +36,10 @@ use crate::db::{
     credits::CreditType,
     entities::MetadataEntityType,
     genres,
-    labels,
+    labels::{
+        self,
+        LabelLinkInput,
+    },
     releases::ReleaseType,
 };
 
@@ -47,11 +50,13 @@ pub(super) trait LayerElement: DbType<ValueType = Self> + PartialEq + Sized {
     fn from_layer(layer: &MetadataLayer) -> anyhow::Result<Self>;
     /// Reads the stored layer, with relationship fields from its edges.
     fn to_layer(&self, db: &impl DbAccess) -> anyhow::Result<MetadataLayer>;
-    /// Writes the relationship fields as edges. Returns false when unchanged.
+    /// Writes the relationship fields as edges, linking `labels` by id when
+    /// given. Returns false when unchanged.
     fn save_edges(
         _db: &mut DbAnyTransactionMut<'_>,
         _layer_id: DbId,
         _layer: &MetadataLayer,
+        _labels: Option<&[LabelLinkInput]>,
     ) -> anyhow::Result<bool> {
         Ok(false)
     }
@@ -164,6 +169,7 @@ impl LayerElement for ReleaseLayer {
         db: &mut DbAnyTransactionMut<'_>,
         layer_id: DbId,
         layer: &MetadataLayer,
+        labels: Option<&[LabelLinkInput]>,
     ) -> anyhow::Result<bool> {
         let supplied = |field| layer.fields.get(&field).filter(|value| !value.is_null());
         let genre_ids = match supplied(MetadataField::Genres) {
@@ -172,9 +178,10 @@ impl LayerElement for ReleaseLayer {
             }
             None => Vec::new(),
         };
-        let label_links = match supplied(MetadataField::Labels) {
-            Some(value) => labels::resolve_label_inputs(db, &label_inputs(value)?)?,
-            None => Vec::new(),
+        let label_links = match (supplied(MetadataField::Labels), labels) {
+            (Some(_), Some(labels)) => labels.to_vec(),
+            (Some(value), None) => labels::resolve_label_inputs(db, &label_inputs(value)?)?,
+            (None, _) => Vec::new(),
         };
         let genres_changed = edges::replace_genres(db, layer_id, &genre_ids)?;
         let labels_changed = edges::replace_labels(db, layer_id, &label_links)?;
@@ -289,6 +296,7 @@ impl LayerElement for TrackLayer {
         db: &mut DbAnyTransactionMut<'_>,
         layer_id: DbId,
         layer: &MetadataLayer,
+        _labels: Option<&[LabelLinkInput]>,
     ) -> anyhow::Result<bool> {
         save_credits(db, layer_id, layer)
     }
@@ -411,6 +419,7 @@ impl LayerElement for ArtistLayer {
         db: &mut DbAnyTransactionMut<'_>,
         layer_id: DbId,
         layer: &MetadataLayer,
+        _labels: Option<&[LabelLinkInput]>,
     ) -> anyhow::Result<bool> {
         let mut changed = false;
         for relation_type in ArtistRelationType::ALL {

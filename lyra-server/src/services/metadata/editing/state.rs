@@ -3,10 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::{
-    BTreeMap,
-    BTreeSet,
-};
+use std::collections::BTreeMap;
 
 use agdb::DbId;
 use serde_json::Value;
@@ -15,11 +12,15 @@ use crate::db::{
     self,
     DbAccess,
     MetadataField,
+    MetadataLayer,
     entities::MetadataEntityType,
 };
-use crate::services::auth::{
-    Principal,
-    access,
+use crate::services::{
+    auth::{
+        Principal,
+        access,
+    },
+    metadata::layers::MANUAL_SOURCE_ID,
 };
 
 use super::{
@@ -32,6 +33,7 @@ use super::{
         MetadataSnapshot,
         MetadataValueSource,
     },
+    normalize::sort_relations,
 };
 
 pub(super) struct EntityState {
@@ -65,6 +67,15 @@ impl EntityState {
                 .map(|(field, state)| (field.as_str().to_string(), state.clone()))
                 .collect(),
         }
+    }
+}
+
+/// Whether `layer` supplies `field`; credits and relations by any role or type.
+pub(super) fn supplies(layer: &MetadataLayer, field: MetadataField) -> bool {
+    match field {
+        MetadataField::Credits => !layer.credits.is_empty(),
+        MetadataField::Relations => !layer.relations.is_empty(),
+        field => layer.fields.contains_key(&field),
     }
 }
 
@@ -180,29 +191,20 @@ fn artist_fields(
         ),
     ]);
     let mut relations = Vec::new();
-    for (relation, target_id) in db::artists::relations::get_relations_from(db, artist_id, None)? {
-        if !access::artist_accessible(db, principal, target_id)? {
+    for (relation, source_id) in db::artists::relations::get_relations_to(db, artist_id, None)? {
+        if !access::artist_accessible(db, principal, source_id)? {
             return Ok(fields);
         }
-        let Some(target) = db::artists::get_by_id(db, target_id)? else {
+        let Some(source) = db::artists::get_by_id(db, source_id)? else {
             return Ok(fields);
         };
         relations.push(MetadataRelationValue {
-            target_artist_id: target.id,
+            artist_id: source.id,
             relation_type: relation.relation_type,
             attributes: relation.attributes,
         });
     }
-    relations.sort_by(|a, b| {
-        a.target_artist_id
-            .cmp(&b.target_artist_id)
-            .then_with(|| {
-                a.relation_type
-                    .to_string()
-                    .cmp(&b.relation_type.to_string())
-            })
-            .then_with(|| a.attributes.cmp(&b.attributes))
-    });
+    sort_relations(&mut relations);
 
     fields.insert(MetadataField::Relations, serde_json::to_value(relations)?);
     Ok(fields)
@@ -239,22 +241,11 @@ pub(super) fn load_entity_state(
             return Err(MetadataEditingError::EntityNotFound(db_id.0.to_string()));
         };
 
-    let mut manual = BTreeSet::new();
-    for field in db::metadata::manual_overrides::field_names(db, db_id)? {
-        if !entity_type.supports(field) {
-            return Err(MetadataEditingError::Internal(anyhow::anyhow!(
-                "stored manual metadata field '{}' is invalid for {} {}",
-                field.as_str(),
-                entity_type.as_str(),
-                public_id,
-            )));
-        }
-        manual.insert(field);
-    }
+    let manual = db::metadata::layers::find_valid(db, db_id, MANUAL_SOURCE_ID)?;
     let fields = fields
         .into_iter()
         .map(|(field, value)| {
-            let source = if manual.contains(&field) {
+            let source = if manual.as_ref().is_some_and(|layer| supplies(layer, field)) {
                 MetadataValueSource::Manual
             } else {
                 MetadataValueSource::Resolved

@@ -131,16 +131,8 @@ impl Artist {
         self.artist_name = artist_name;
     }
 
-    pub(crate) fn set_sort_name(&mut self, sort_name: String) {
-        self.sort_name = Some(sort_name);
-    }
-
     pub(crate) fn set_artist_type(&mut self, artist_type: ArtistType) {
         self.artist_type = Some(artist_type);
-    }
-
-    pub(crate) fn set_description(&mut self, description: String) {
-        self.description = Some(description);
     }
 
     pub(crate) fn set_verified(&mut self, verified: bool) {
@@ -165,9 +157,7 @@ impl_luau_record_userdata!(
     },
     methods {
         set_artist_name(artist_name: String),
-        set_sort_name(sort_name: String),
         set_artist_type(artist_type: ArtistType),
-        set_description(description: String),
         set_verified(verified: bool),
     }
 );

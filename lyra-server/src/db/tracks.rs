@@ -53,10 +53,6 @@ impl Track {
         self.track_title = track_title;
     }
 
-    pub(crate) fn set_sort_title(&mut self, sort_title: String) {
-        self.sort_title = Some(sort_title);
-    }
-
     #[cfg(test)]
     pub(crate) fn set_year(&mut self, year: u32) {
         self.year = Some(year);
@@ -103,7 +99,6 @@ impl_luau_record_userdata!(
     },
     methods {
         set_track_title(track_title: String),
-        set_sort_title(sort_title: String),
         set_year(year: u32),
         set_track(track: u32),
         set_track_total(track_total: u32),

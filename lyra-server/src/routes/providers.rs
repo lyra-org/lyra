@@ -688,13 +688,13 @@ fn inherit_external_id_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn lock_entity_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Lock entity")
-        .description("Locks an entity to prevent automatic metadata updates from providers. Requires ManageMetadata permission.")
+        .description("Locks an entity so scans and providers no longer change its editable metadata; manual edits still apply. Requires ManageMetadata permission.")
 }
 
 #[cfg(feature = "docgen")]
 fn unlock_entity_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Unlock entity")
-        .description("Unlocks an entity to allow automatic metadata updates from providers. Requires ManageMetadata permission.")
+        .description("Unlocks an entity so scans and providers update its editable metadata again. Requires ManageMetadata permission.")
 }
 
 #[cfg(feature = "docgen")]

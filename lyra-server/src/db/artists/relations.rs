@@ -105,13 +105,6 @@ pub(crate) struct ArtistRelation {
     pub(crate) attributes: Option<String>,
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct ArtistRelationLinkInput {
-    pub(crate) target_artist_id: DbId,
-    pub(crate) relation_type: ArtistRelationType,
-    pub(crate) attributes: Option<String>,
-}
-
 pub(crate) fn link(
     db: &mut impl DbAccess,
     from_artist_id: DbId,
@@ -224,42 +217,6 @@ pub(crate) fn exists(
         ArtistRelation::from_db_element(element)
             .is_ok_and(|relation| relation.relation_type == relation_type)
     }))
-}
-
-pub(crate) fn replace_from(
-    db: &mut impl DbAccess,
-    from_artist_id: DbId,
-    desired: &[ArtistRelationLinkInput],
-) -> anyhow::Result<()> {
-    let existing = db.exec(
-        QueryBuilder::select()
-            .elements::<ArtistRelation>()
-            .search()
-            .from(from_artist_id)
-            .where_()
-            .distance(CountComparison::Equal(1))
-            .end_where()
-            .query(),
-    )?;
-    let edge_ids: Vec<DbId> = existing
-        .elements
-        .into_iter()
-        .filter_map(|element| (element.id.0 < 0).then_some(element.id))
-        .collect();
-    if !edge_ids.is_empty() {
-        db.exec_mut(QueryBuilder::remove().ids(edge_ids).query())?;
-    }
-
-    for input in desired {
-        link(
-            db,
-            from_artist_id,
-            input.target_artist_id,
-            input.relation_type,
-            input.attributes.clone(),
-        )?;
-    }
-    Ok(())
 }
 
 fn collect_relations<F>(

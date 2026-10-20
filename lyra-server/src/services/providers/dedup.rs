@@ -18,6 +18,7 @@ use agdb::{
 };
 
 use crate::db;
+use crate::services::metadata::layers::MANUAL_SOURCE_ID;
 
 pub(super) fn select_release_merge_winner(
     db: &DbAny,
@@ -90,40 +91,6 @@ fn merge_release_into_inside_tx(
         db::releases::unlink_track(db, loser, track_db_id)?;
     }
 
-    let winner_manual_fields: HashSet<_> = db::metadata::manual_overrides::field_names(db, winner)?
-        .into_iter()
-        .collect();
-    let loser_manual_fields: HashSet<_> = db::metadata::manual_overrides::field_names(db, loser)?
-        .into_iter()
-        .collect();
-    let winner_genres_are_manual = winner_manual_fields.contains(&db::MetadataField::Genres);
-    let loser_genres_are_manual = loser_manual_fields.contains(&db::MetadataField::Genres);
-    if !winner_genres_are_manual && loser_genres_are_manual {
-        let genres = db::genres::get_for_release(db, loser)?
-            .into_iter()
-            .map(|genre| genre.name)
-            .collect::<Vec<_>>();
-        db::genres::sync_release_genres(db, winner, &genres)?;
-    }
-
-    let winner_credits_are_manual = winner_manual_fields.contains(&db::MetadataField::Credits);
-    let loser_credits_are_manual = loser_manual_fields.contains(&db::MetadataField::Credits);
-    // Manual credits move with their override; layers own the rest, and
-    // re-applying the winner below rebuilds them.
-    if !winner_credits_are_manual && loser_credits_are_manual {
-        let mut links = db::credits::links_for_owner(db, loser)?;
-        links.sort_by_key(|link| link.credit.artist_order);
-        let manual: Vec<db::credits::CreditLinkInput> = links
-            .into_iter()
-            .map(|link| db::credits::CreditLinkInput {
-                artist_id: link.artist_id,
-                credit_type: link.credit.credit_type,
-                detail: link.credit.detail,
-            })
-            .collect();
-        db::credits::replace_for_owner(db, winner, &manual)?;
-    }
-
     for external_id in db::external_ids::get_for_entity_inside_tx(db, loser)? {
         if external_id.id_value.trim().is_empty() {
             continue;
@@ -136,6 +103,11 @@ fn merge_release_into_inside_tx(
         winner_layers_by_source.insert(layer.source_id.clone(), layer);
     }
     for layer in db::metadata::layers::get_for_entity(db, loser)? {
+        if layer.source_id == MANUAL_SOURCE_ID {
+            // The winner's manual edits win; the loser's fill what they leave out.
+            db::metadata::layers::fill_inside_tx(db, loser, winner, MANUAL_SOURCE_ID)?;
+            continue;
+        }
         let should_upsert = winner_layers_by_source
             .get(&layer.source_id)
             .is_none_or(|existing| layer.updated_at > existing.updated_at);
@@ -146,16 +118,7 @@ fn merge_release_into_inside_tx(
         db::metadata::layers::copy_inside_tx(db, loser, winner, &layer.source_id)?;
         winner_layers_by_source.insert(layer.source_id.clone(), layer);
     }
-    let winner_labels_are_manual = winner_manual_fields.contains(&db::MetadataField::Labels);
-    let loser_labels_are_manual = loser_manual_fields.contains(&db::MetadataField::Labels);
-    if !winner_labels_are_manual {
-        if loser_labels_are_manual {
-            db::labels::sync_release_labels_inside_tx(db, winner, &[])?;
-        }
-        db::labels::migrate_release_labels_inside_tx(db, winner, loser)?;
-    }
-
-    db::metadata::manual_overrides::merge_into(db, winner, loser)?;
+    db::labels::migrate_release_labels_inside_tx(db, winner, loser)?;
     crate::services::metadata::merging::apply_merged_metadata_to_entity_inside_tx(db, winner)?;
 
     db::metadata::custom_fields::copy_between_entities(db, loser, winner)?;
@@ -298,6 +261,9 @@ pub(super) fn deduplicate_releases_by_external_id(
                 continue;
             }
 
+            if !crate::services::metadata::layers::manual_layers_mergeable(db, winner, loser) {
+                continue;
+            }
             tracing::info!(
                 library_db_id = library_db_id.0,
                 winner = winner.0,
@@ -316,47 +282,58 @@ pub(super) fn deduplicate_releases_by_external_id(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
-    use serde_json::Value;
+    use serde_json::json;
 
     use super::*;
-    use crate::db::{
-        MetadataField,
-        labels::LabelInput,
-        test_db::{
-            insert_artist,
-            insert_release,
-            new_test_db,
-        },
+    use crate::db::test_db::{
+        insert_artist,
+        insert_release,
+        new_test_db,
     };
 
-    fn label(name: &str) -> LabelInput {
-        LabelInput {
-            name: name.to_string(),
-            catalog_number: None,
-            external_id: None,
-        }
-    }
-
     #[test]
-    fn release_merge_does_not_pollute_manual_winner_labels() -> anyhow::Result<()> {
+    fn release_merge_combines_manual_layers() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let winner = insert_release(&mut db, "Winner")?;
         let loser = insert_release(&mut db, "Loser")?;
-        db::labels::sync_release_labels(&mut db, winner, &[label("Manual")])?;
-        db::labels::sync_release_labels(&mut db, loser, &[label("Provider")])?;
-        db::metadata::manual_overrides::upsert(
+        for (release, fields) in [
+            (winner, json!({"labels": [{"name": "Manual"}]})),
+            (
+                loser,
+                json!({"labels": [{"name": "Loser Manual"}], "genres": ["Loser Genre"]}),
+            ),
+        ] {
+            db::metadata::layers::upsert(
+                &mut db,
+                release,
+                &db::MetadataLayer::new(
+                    MANUAL_SOURCE_ID,
+                    db::metadata::layers::fields_from_json(fields),
+                    1,
+                ),
+            )?;
+        }
+        db::metadata::layers::upsert(
             &mut db,
-            winner,
-            &BTreeMap::from([(MetadataField::Labels, Value::Bool(true))]),
+            loser,
+            &db::MetadataLayer::new(
+                "local",
+                db::metadata::layers::fields_from_json(json!({"labels": [{"name": "Provider"}]})),
+                1,
+            ),
         )?;
+        for release in [winner, loser] {
+            crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, release)?;
+        }
 
         merge_release_into(&mut db, winner, loser)?;
 
         let labels = db::labels::get_for_release(&db, winner)?;
         assert_eq!(labels.len(), 1);
         assert_eq!(labels[0].label.name, "Manual");
+        let genres = db::genres::get_for_release(&db, winner)?;
+        assert_eq!(genres.len(), 1);
+        assert_eq!(genres[0].name, "Loser Genre");
         Ok(())
     }
 
@@ -489,6 +466,55 @@ mod tests {
             .collect();
         roles.sort_by_key(ToString::to_string);
         assert_eq!(roles, [db::CreditType::Artist, db::CreditType::Producer]);
+        Ok(())
+    }
+
+    #[test]
+    fn release_dedup_skips_a_pair_with_an_invalid_manual_layer() -> anyhow::Result<()> {
+        use crate::db::test_db::insert_library;
+
+        let mut db = new_test_db()?;
+        let library = insert_library(&mut db, "Library", "/tmp/dedup-invalid-manual")?;
+        let winner = insert_release(&mut db, "Release")?;
+        let loser = insert_release(&mut db, "Release")?;
+        for release in [winner, loser] {
+            db::graph::ensure_owned_edge(&mut db, library, release)?;
+            db::external_ids::upsert(
+                &mut db,
+                release,
+                "musicbrainz",
+                "release_id",
+                "release-1",
+                db::IdSource::Resolved,
+            )?;
+            db::metadata::layers::upsert(
+                &mut db,
+                release,
+                &db::MetadataLayer::new(
+                    MANUAL_SOURCE_ID,
+                    db::metadata::layers::fields_from_json(json!({"release_date": "1999"})),
+                    1,
+                ),
+            )?;
+        }
+        let layer_id = db::metadata::layers::layer_id(&db, loser, MANUAL_SOURCE_ID)?
+            .expect("manual layer exists");
+        db.exec_mut(
+            agdb::QueryBuilder::insert()
+                .values_uniform([("supplied", vec!["work_id".to_string()]).into()])
+                .ids(layer_id)
+                .query(),
+        )?;
+
+        let pairs = HashSet::from([("musicbrainz".to_string(), "release_id".to_string())]);
+        assert_eq!(
+            deduplicate_releases_by_external_id(&mut db, library, &pairs, &HashSet::new(), None)?,
+            0
+        );
+        for release in [winner, loser] {
+            assert!(db::releases::get_by_id(&db, release)?.is_some());
+            assert_eq!(db::metadata::layers::ids_for_entity(&db, release)?.len(), 1);
+        }
         Ok(())
     }
 }

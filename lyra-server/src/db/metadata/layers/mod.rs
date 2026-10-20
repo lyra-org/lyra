@@ -37,6 +37,7 @@ use super::super::{
     labels::{
         LabelExternalIdInput,
         LabelInput,
+        LabelLinkInput,
     },
     releases::{
         ReleaseType,
@@ -112,7 +113,7 @@ impl MetadataLayer {
 pub(crate) fn normalize_value(field: MetadataField, value: Value) -> anyhow::Result<Value> {
     anyhow::ensure!(
         field.is_layered(),
-        "metadata layers cannot supply '{field}'"
+        "metadata layers supply '{field}' per role or relation type, not as one value"
     );
     if value.is_null() {
         anyhow::ensure!(!field.is_required(), "'{field}' cannot be cleared");
@@ -388,10 +389,37 @@ pub(crate) fn upsert_inside_tx(
             layer.credits.entry(credit_type).or_insert(inputs);
         }
     }
+    save_any(db, node_id, &layer, None)
+}
+
+/// Saves `layer` as its source's whole layer: unlike [`upsert_inside_tx`], the
+/// relation types and credit roles it does not supply go, and a layer that
+/// supplies nothing is removed. A supplied `labels` field links `labels` by id
+/// when given, rather than resolving the field's names.
+pub(crate) fn replace_inside_tx(
+    db: &mut DbAnyTransactionMut<'_>,
+    node_id: DbId,
+    layer: &MetadataLayer,
+    labels: Option<&[LabelLinkInput]>,
+) -> anyhow::Result<()> {
+    if layer.fields.is_empty() && layer.relations.is_empty() && layer.credits.is_empty() {
+        remove_inside_tx(db, node_id, &layer.source_id)?;
+        return Ok(());
+    }
+    save_any(db, node_id, layer, labels)?;
+    Ok(())
+}
+
+fn save_any(
+    db: &mut DbAnyTransactionMut<'_>,
+    node_id: DbId,
+    layer: &MetadataLayer,
+    labels: Option<&[LabelLinkInput]>,
+) -> anyhow::Result<bool> {
     match entity_type(db, node_id)? {
-        MetadataEntityType::Release => save::<ReleaseLayer>(db, node_id, &layer),
-        MetadataEntityType::Track => save::<TrackLayer>(db, node_id, &layer),
-        MetadataEntityType::Artist => save::<ArtistLayer>(db, node_id, &layer),
+        MetadataEntityType::Release => save::<ReleaseLayer>(db, node_id, layer, labels),
+        MetadataEntityType::Track => save::<TrackLayer>(db, node_id, layer, labels),
+        MetadataEntityType::Artist => save::<ArtistLayer>(db, node_id, layer, labels),
     }
     .with_context(|| format!("invalid '{}' metadata layer", layer.source_id))
 }
@@ -400,9 +428,10 @@ fn save<T: LayerElement>(
     db: &mut DbAnyTransactionMut<'_>,
     node_id: DbId,
     layer: &MetadataLayer,
+    labels: Option<&[LabelLinkInput]>,
 ) -> anyhow::Result<bool> {
     let (layer_id, values_changed) = store(db, node_id, T::from_layer(layer)?)?;
-    let edges_changed = T::save_edges(db, layer_id, layer)?;
+    let edges_changed = T::save_edges(db, layer_id, layer, labels)?;
     if edges_changed && !values_changed {
         set_updated_at(db, layer_id, layer.updated_at)?;
     }
@@ -417,6 +446,94 @@ fn set_updated_at(db: &mut impl DbAccess, layer_id: DbId, updated_at: u64) -> an
             .query(),
     )?;
     Ok(())
+}
+
+/// The layer `source_id` contributed to an entity; unlike [`get_for_entity`],
+/// a stored layer that no longer validates is an error.
+pub(crate) fn find_valid(
+    db: &impl DbAccess,
+    node_id: DbId,
+    source_id: &str,
+) -> anyhow::Result<Option<MetadataLayer>> {
+    match super::super::entities::metadata_entity_type(db, node_id)? {
+        Some(MetadataEntityType::Release) => load_one::<ReleaseLayer>(db, node_id, source_id),
+        Some(MetadataEntityType::Track) => load_one::<TrackLayer>(db, node_id, source_id),
+        Some(MetadataEntityType::Artist) => load_one::<ArtistLayer>(db, node_id, source_id),
+        None => Ok(None),
+    }
+}
+
+fn load_one<T: LayerElement>(
+    db: &impl DbAccess,
+    node_id: DbId,
+    source_id: &str,
+) -> anyhow::Result<Option<MetadataLayer>> {
+    let Some(layer_id) = find_id::<T>(db, node_id, source_id)? else {
+        return Ok(None);
+    };
+    let stored = db.exec(QueryBuilder::select().ids(layer_id).query())?;
+    let element = stored.elements.first().context("metadata layer is gone")?;
+    T::from_db_element(element)
+        .map_err(anyhow::Error::from)
+        .and_then(|layer| layer.to_layer(db))
+        .map(Some)
+        .with_context(|| format!("the stored '{source_id}' metadata layer is invalid"))
+}
+
+/// The labels a layer links, by id, in order.
+pub(crate) fn label_links(
+    db: &impl DbAccess,
+    layer_id: DbId,
+) -> anyhow::Result<Vec<LabelLinkInput>> {
+    Ok(edges::labels(db, layer_id)?
+        .into_iter()
+        .map(|link| LabelLinkInput {
+            label_id: link.target_id,
+            catalog_number: link.edge.catalog_number,
+        })
+        .collect())
+}
+
+/// Fills the keys `to_node`'s layer from `source_id` does not supply with
+/// `from_node`'s, or copies `from_node`'s layer when `to_node` has none. A
+/// filled layer is as recent as the newer of the two. Either layer failing to
+/// validate is an error.
+pub(crate) fn fill_inside_tx(
+    db: &mut DbAnyTransactionMut<'_>,
+    from_node: DbId,
+    to_node: DbId,
+    source_id: &str,
+) -> anyhow::Result<()> {
+    let Some(from) = find_valid(db, from_node, source_id)? else {
+        return Ok(());
+    };
+    let from_id = layer_id(db, from_node, source_id)?.context("filled layer is gone")?;
+    let Some(mut to) = find_valid(db, to_node, source_id)? else {
+        return copy_inside_tx(db, from_node, to_node, source_id);
+    };
+    let to_id = layer_id(db, to_node, source_id)?.context("filling layer is gone")?;
+    to.updated_at = to.updated_at.max(from.updated_at);
+    let labels_from = if to.fields.contains_key(&MetadataField::Labels) {
+        to_id
+    } else {
+        from_id
+    };
+    for (field, value) in from.fields {
+        to.fields.entry(field).or_insert(value);
+    }
+    for (relation_type, mut inputs) in from.relations {
+        // A type that only related to `to_node` has nothing left to say.
+        let supplied_empty = inputs.is_empty();
+        inputs.retain(|input| input.artist_id != to_node);
+        if supplied_empty || !inputs.is_empty() {
+            to.relations.entry(relation_type).or_insert(inputs);
+        }
+    }
+    for (credit_type, inputs) in from.credits {
+        to.credits.entry(credit_type).or_insert(inputs);
+    }
+    let labels = label_links(db, labels_from)?;
+    replace_inside_tx(db, to_node, &to, Some(&labels))
 }
 
 /// Stores `element` as its source's layer on the entity. Returns the layer's id
@@ -687,6 +804,47 @@ mod tests {
         db.transaction_mut(|t| copy_inside_tx(t, from, to, "provider"))?;
 
         assert_eq!(only_layer(&db, to)?, only_layer(&db, from)?);
+        Ok(())
+    }
+
+    #[test]
+    fn filling_a_layer_takes_the_newer_updated_at() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let from = insert_release(&mut db, "From")?;
+        let to = insert_release(&mut db, "To")?;
+        upsert(
+            &mut db,
+            from,
+            &layer("manual", json!({"genres": ["Rock"]}), 9),
+        )?;
+        upsert(
+            &mut db,
+            to,
+            &layer("manual", json!({"release_title": "To"}), 1),
+        )?;
+
+        db.transaction_mut(|t| fill_inside_tx(t, from, to, "manual"))?;
+
+        let filled = only_layer(&db, to)?;
+        assert_eq!(filled.fields[&MetadataField::Genres], json!(["Rock"]));
+        assert_eq!(filled.updated_at, 9);
+        Ok(())
+    }
+
+    #[test]
+    fn replacing_only_a_layers_edges_moves_updated_at() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release_id = insert_release(&mut db, "Release")?;
+        upsert(
+            &mut db,
+            release_id,
+            &layer("manual", json!({"genres": ["Jazz"]}), 1),
+        )?;
+
+        let replaced = layer("manual", json!({"genres": ["Rock"]}), 2);
+        db.transaction_mut(|t| replace_inside_tx(t, release_id, &replaced, None))?;
+
+        assert_eq!(only_layer(&db, release_id)?, replaced);
         Ok(())
     }
 
