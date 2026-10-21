@@ -10,7 +10,6 @@ use std::collections::BTreeMap;
 
 use agdb::{
     CountComparison,
-    DbAny,
     DbAnyTransactionMut,
     DbId,
     QueryBuilder,
@@ -366,7 +365,12 @@ pub(crate) fn entity_ids_for_source(
 
 /// Saves `layer` as its source's layer on the entity, replacing any previous
 /// one. Returns false when the stored layer already supplied the same values.
-pub(crate) fn upsert(db: &mut DbAny, node_id: DbId, layer: &MetadataLayer) -> anyhow::Result<bool> {
+#[cfg(test)]
+pub(crate) fn upsert(
+    db: &mut agdb::DbAny,
+    node_id: DbId,
+    layer: &MetadataLayer,
+) -> anyhow::Result<bool> {
     db.transaction_mut(|t| upsert_inside_tx(t, node_id, layer))
 }
 
@@ -674,6 +678,7 @@ pub(crate) fn remove_by_ids(db: &mut impl DbAccess, layer_ids: &[DbId]) -> anyho
 mod tests {
     use std::collections::HashSet;
 
+    use agdb::DbAny;
     use serde_json::json;
 
     use super::*;

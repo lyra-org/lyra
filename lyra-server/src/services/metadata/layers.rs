@@ -271,16 +271,18 @@ pub(crate) fn save_provider_layer(
     let has_content = !relations.is_empty()
         || !values.credits.is_empty()
         || (!artist_type_conflict && !fields.is_empty());
-    if has_content
-        && db::metadata::layers::upsert(
-            db,
-            node_id,
-            &MetadataLayer::new(provider_id, fields, now_secs())
-                .with_relations(relations.clone())
-                .with_credits(values.credits.clone()),
-        )?
-    {
-        super::merging::apply_merged_metadata_to_entity(db, node_id)?;
+    if has_content {
+        let layer = MetadataLayer::new(provider_id, fields, now_secs())
+            .with_relations(relations.clone())
+            .with_credits(values.credits.clone());
+        // One transaction, so a failed apply also undoes the save that an
+        // identical later save would skip as unchanged.
+        db.transaction_mut(|t| -> anyhow::Result<()> {
+            if db::metadata::layers::upsert_inside_tx(t, node_id, &layer)? {
+                super::merging::apply_merged_metadata_to_entity_inside_tx(t, node_id)?;
+            }
+            Ok(())
+        })?;
     }
 
     save_provider_custom_fields(db, node_id, provider_id, custom_fields)?;
@@ -470,6 +472,37 @@ mod tests {
                 .all(|layer| layer.source_id != "provider")
         );
         assert!(db::metadata::custom_fields::get_for_entity(&db, release_id)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn a_failed_apply_does_not_keep_the_saved_layer() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release_id = insert_release(&mut db, "Release")?;
+        // A stored value of the wrong type makes the release unreadable, so applying fails.
+        db.exec_mut(
+            agdb::QueryBuilder::insert()
+                .values_uniform([("release_type", 7_i64).into()])
+                .ids(release_id)
+                .query(),
+        )?;
+        let save = |db: &mut DbAny| {
+            save_provider_layer(
+                db,
+                release_id,
+                "provider",
+                &ProviderValues {
+                    fields: LayerFields::from([(MetadataField::ReleaseTitle, json!("Title"))]),
+                    ..Default::default()
+                },
+                &HashMap::new(),
+                &CustomFieldChanges::default(),
+            )
+        };
+
+        assert!(save(&mut db).is_err());
+        assert!(db::metadata::layers::layer_id(&db, release_id, "provider")?.is_none());
+        assert!(save(&mut db).is_err(), "a repeated save applies again");
         Ok(())
     }
 
