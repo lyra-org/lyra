@@ -239,6 +239,7 @@ pub(crate) fn resolve_by_name(db: &mut impl DbAccess, name: &str) -> anyhow::Res
     insert_genre(db, name)
 }
 
+#[cfg(test)]
 pub(crate) fn sync_release_genres(
     db: &mut impl DbAccess,
     release_id: DbId,

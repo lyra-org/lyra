@@ -89,7 +89,7 @@ impl LocalLayer {
     /// Supplies the primary artist credits the tags name, in order. Tags only
     /// yield primary credits; the other roles belong to providers and manual edits.
     pub(crate) fn supply_artists(&mut self, artist_ids: &[DbId]) {
-        self.credits.insert(
+        self.supply_credits(
             CreditType::Artist,
             artist_ids
                 .iter()
@@ -99,6 +99,14 @@ impl LocalLayer {
                 })
                 .collect(),
         );
+    }
+
+    pub(crate) fn supply_credits(
+        &mut self,
+        credit_type: CreditType,
+        inputs: Vec<LayerCreditInput>,
+    ) {
+        self.credits.insert(credit_type, inputs);
     }
 
     pub(crate) fn supply_relations(

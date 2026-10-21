@@ -1,0 +1,9 @@
+run_as = "owner"
+
+[[users]]
+key = "owner"
+admin = true
+
+[[artists]]
+key = "amy"
+name = "Amy"

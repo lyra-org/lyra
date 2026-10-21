@@ -25,11 +25,14 @@ use serde::{
     Serialize,
 };
 
+use crate::db::metadata::layers::edges::LayerCreditInput;
 use crate::db::{
     self,
+    MetadataField,
     fixtures,
 };
 use crate::services;
+use crate::services::metadata::layers::LocalLayer;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -316,12 +319,19 @@ impl Fixture {
         for artist in &self.artists {
             keys.claim(&artist.key)?;
             let artist_db_id = fixtures::insert_artist(db, &artist.name)?;
-            if let Some(artist_type) = artist.artist_type {
-                let mut stored =
-                    db::artists::get_by_id(db, artist_db_id)?.context("artist exists")?;
-                stored.set_artist_type(artist_type);
-                db::artists::update(db, &stored)?;
-            }
+            let mut stored = db::artists::get_by_id(db, artist_db_id)?.context("artist exists")?;
+            // A scan names an artist by its exact spelling.
+            stored.scan_name = artist.name.clone();
+            db::artists::update(db, &stored)?;
+            let mut layer = LocalLayer::default();
+            layer.supply(MetadataField::ArtistName, Some(artist.name.as_str()))?;
+            layer.supply(
+                MetadataField::ArtistType,
+                artist
+                    .artist_type
+                    .map(|artist_type| artist_type.to_string()),
+            )?;
+            save_local(db, artist_db_id, layer)?;
             keys.entities.insert(
                 artist.key.clone(),
                 (artist_db_id, db::favorites::FavoriteKind::Artist),
@@ -337,7 +347,6 @@ impl Fixture {
                 stored.ctime = release.added;
                 db.transaction_mut(|t| db::releases::update_in_transaction(t, &stored))?;
             }
-            credit(db, &keys, release_db_id, &release.artists, &release.credits)?;
             let genre_names = release
                 .genres
                 .iter()
@@ -348,9 +357,14 @@ impl Fixture {
                         .with_context(|| format!("fixture has no genre `{key}`"))
                 })
                 .collect::<anyhow::Result<Vec<_>>>()?;
-            if !genre_names.is_empty() {
-                db::genres::sync_release_genres(db, release_db_id, &genre_names)?;
-            }
+            let mut layer = LocalLayer::default();
+            layer.supply(MetadataField::ReleaseTitle, Some(release.title.as_str()))?;
+            layer.supply(
+                MetadataField::Genres,
+                (!genre_names.is_empty()).then_some(genre_names),
+            )?;
+            supply_credits(&mut layer, &keys, &release.artists, &release.credits)?;
+            save_local(db, release_db_id, layer)?;
             if let Some(cover) = &release.cover {
                 let path = self.directory.join(cover);
                 anyhow::ensure!(
@@ -382,17 +396,22 @@ impl Fixture {
         for track in &self.tracks {
             keys.claim(&track.key)?;
             let track_db_id = fixtures::insert_track(db, &track.title)?;
-            let mut stored = db::tracks::get_by_id(db, track_db_id)?.context("track exists")?;
-            stored.disc = track.disc;
-            stored.track = track.track;
-            stored.year = track.year;
-            stored.ctime = track.added;
-            db.transaction_mut(|t| db::tracks::update_in_transaction(t, &stored))?;
+            if track.added.is_some() {
+                let mut stored = db::tracks::get_by_id(db, track_db_id)?.context("track exists")?;
+                stored.ctime = track.added;
+                db.transaction_mut(|t| db::tracks::update_in_transaction(t, &stored))?;
+            }
             if let Some(release) = &track.release {
                 let (release_db_id, _) = keys.entity(release)?;
                 fixtures::connect(db, release_db_id, track_db_id)?;
             }
-            credit(db, &keys, track_db_id, &track.artists, &track.credits)?;
+            let mut layer = LocalLayer::default();
+            layer.supply(MetadataField::TrackTitle, Some(track.title.as_str()))?;
+            layer.supply(MetadataField::Disc, track.disc)?;
+            layer.supply(MetadataField::Track, track.track)?;
+            layer.supply(MetadataField::Year, track.year)?;
+            supply_credits(&mut layer, &keys, &track.artists, &track.credits)?;
+            save_local(db, track_db_id, layer)?;
             keys.entities.insert(
                 track.key.clone(),
                 (track_db_id, db::favorites::FavoriteKind::Track),
@@ -452,10 +471,16 @@ impl Fixture {
     }
 }
 
-fn credit(
-    db: &mut DbAny,
+/// Saves `layer` as the entity's local layer and resolves the entity from it,
+/// as a scan does.
+fn save_local(db: &mut DbAny, node_id: DbId, layer: LocalLayer) -> anyhow::Result<()> {
+    db.transaction_mut(|t| layer.save(t, node_id))
+}
+
+/// Supplies an owner's `artists`, then its other `credits`, each role in order.
+fn supply_credits(
+    layer: &mut LocalLayer,
     keys: &Keys,
-    owner: DbId,
     artists: &[String],
     credits: &[Credit],
 ) -> anyhow::Result<()> {
@@ -464,10 +489,17 @@ fn credit(
         .map(|key| (key, db::CreditType::Artist, None));
     let other_credits = credits
         .iter()
-        .map(|credit| (&credit.artist, credit.credit_type, credit.detail.as_deref()));
-    for (order, (key, credit_type, detail)) in artist_credits.chain(other_credits).enumerate() {
-        let (artist_db_id, _) = keys.entity(key)?;
-        fixtures::connect_credit(db, owner, artist_db_id, credit_type, detail, order as u64)?;
+        .map(|credit| (&credit.artist, credit.credit_type, credit.detail.clone()));
+    let mut by_role: BTreeMap<db::CreditType, Vec<LayerCreditInput>> = BTreeMap::new();
+    for (key, credit_type, detail) in artist_credits.chain(other_credits) {
+        let (artist_id, _) = keys.entity(key)?;
+        by_role
+            .entry(credit_type)
+            .or_default()
+            .push(LayerCreditInput { artist_id, detail });
+    }
+    for (credit_type, inputs) in by_role {
+        layer.supply_credits(credit_type, inputs);
     }
     Ok(())
 }

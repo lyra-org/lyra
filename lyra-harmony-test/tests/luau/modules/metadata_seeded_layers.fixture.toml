@@ -1,0 +1,33 @@
+run_as = "owner"
+
+[[users]]
+key = "owner"
+admin = true
+
+[[artists]]
+key = "singer"
+name = "Singer"
+
+[[artists]]
+key = "writer"
+name = "Writer"
+
+[[genres]]
+key = "rock"
+name = "Rock"
+
+[[releases]]
+key = "album"
+title = "Album"
+artists = ["singer"]
+genres = ["rock"]
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+disc = 1
+track = 2
+year = 2001
+artists = ["singer"]
+credits = [{ artist = "writer", type = "composer" }]

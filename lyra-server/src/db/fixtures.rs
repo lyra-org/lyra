@@ -127,6 +127,7 @@ pub(crate) fn connect(db: &mut DbAny, from: DbId, to: DbId) -> anyhow::Result<()
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn connect_credit(
     db: &mut DbAny,
     owner: DbId,

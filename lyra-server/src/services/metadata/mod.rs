@@ -50,12 +50,12 @@ use lofty::{
 use lyra_metadata::normalize_unicode_nfc;
 
 use crate::db::Entry;
+pub(crate) use cue::sort_track_metadata;
 use cue::{
     build_audio_lookup,
     build_embedded_source_key,
     merge_embedded_into_cue_metadata,
     parse_cue_metadata_for_entry,
-    sort_track_metadata,
 };
 use mapping::MetadataMappingConfig;
 pub(crate) use model::TrackMetadata;
@@ -364,69 +364,7 @@ pub(crate) async fn parse_metadata(
             .and_then(|ids| ids.pop_front())
             .ok_or_else(|| anyhow!("missing entry id mapping for processed track: {path}"))?;
 
-        let embedded = TrackMetadata {
-            entry_db_id,
-            album: track.album.map(|value| normalize_unicode_nfc(&value)),
-            album_artists: track.album_artists.map(|artists| {
-                artists
-                    .into_iter()
-                    .map(|value| normalize_unicode_nfc(&value))
-                    .collect()
-            }),
-            date: track.date,
-            year: track.year,
-            title: track.title.map(|value| normalize_unicode_nfc(&value)),
-            artists: track.artists.map(|artists| {
-                artists
-                    .into_iter()
-                    .map(|value| normalize_unicode_nfc(&value))
-                    .collect()
-            }),
-            artist_relations: track
-                .artist_relations
-                .into_iter()
-                .map(|relation| lyra_metadata::ArtistRelationMetadata {
-                    source_artist: normalize_unicode_nfc(&relation.source_artist),
-                    target_artist: normalize_unicode_nfc(&relation.target_artist),
-                    relation_type: relation.relation_type,
-                    source_artist_type: relation.source_artist_type,
-                    target_artist_type: relation.target_artist_type,
-                })
-                .collect(),
-            disc: track.disc,
-            disc_total: track.disc_total,
-            track: track.track,
-            track_total: track.track_total,
-            duration_ms: track.duration_ms,
-            genres: track.genres.map(|genres| {
-                genres
-                    .into_iter()
-                    .map(|value| normalize_unicode_nfc(&value))
-                    .collect()
-            }),
-            label: track.label.map(|value| normalize_unicode_nfc(&value)),
-            catalog_number: track
-                .catalog_number
-                .map(|value| normalize_unicode_nfc(&value)),
-            media_formats: track.media_formats,
-            barcode: track.barcode,
-            source_kind: Some(SOURCE_KIND_EMBEDDED_TAGS.to_string()),
-            source_key: build_embedded_source_key(&entry_public_id),
-            segment_start_ms: None,
-            segment_end_ms: None,
-            cue_sheet_entry_id: None,
-            cue_sheet_hash: None,
-            cue_track_no: None,
-            cue_audio_entry_id: None,
-            cue_index00_frames: None,
-            cue_index01_frames: None,
-            sample_rate_hz: track.sample_rate_hz,
-            channel_count: track.channel_count,
-            bit_depth: track.bit_depth,
-            bitrate_bps: track.bitrate_bps,
-            track_gain_db: track.track_gain_db,
-            album_gain_db: track.album_gain_db,
-        };
+        let embedded = embedded_track_metadata(entry_db_id, &entry_public_id, track);
 
         if cue_claimed_audio_entries.contains(&entry_db_id) {
             embedded_by_entry_id.entry(entry_db_id).or_insert(embedded);
@@ -458,6 +396,77 @@ pub(crate) async fn parse_metadata(
     metadata.extend(cue_metadata);
     sort_track_metadata(&mut metadata);
     Ok(ParseMetadataOutput { metadata, skipped })
+}
+
+/// A track's embedded tags as the scanner ingests them, its text NFC-normalized.
+pub(crate) fn embedded_track_metadata(
+    entry_db_id: DbId,
+    entry_public_id: &str,
+    track: lyra_metadata::TrackMetadata,
+) -> TrackMetadata {
+    TrackMetadata {
+        entry_db_id,
+        album: track.album.map(|value| normalize_unicode_nfc(&value)),
+        album_artists: track.album_artists.map(|artists| {
+            artists
+                .into_iter()
+                .map(|value| normalize_unicode_nfc(&value))
+                .collect()
+        }),
+        date: track.date,
+        year: track.year,
+        title: track.title.map(|value| normalize_unicode_nfc(&value)),
+        artists: track.artists.map(|artists| {
+            artists
+                .into_iter()
+                .map(|value| normalize_unicode_nfc(&value))
+                .collect()
+        }),
+        artist_relations: track
+            .artist_relations
+            .into_iter()
+            .map(|relation| lyra_metadata::ArtistRelationMetadata {
+                source_artist: normalize_unicode_nfc(&relation.source_artist),
+                target_artist: normalize_unicode_nfc(&relation.target_artist),
+                relation_type: relation.relation_type,
+                source_artist_type: relation.source_artist_type,
+                target_artist_type: relation.target_artist_type,
+            })
+            .collect(),
+        disc: track.disc,
+        disc_total: track.disc_total,
+        track: track.track,
+        track_total: track.track_total,
+        duration_ms: track.duration_ms,
+        genres: track.genres.map(|genres| {
+            genres
+                .into_iter()
+                .map(|value| normalize_unicode_nfc(&value))
+                .collect()
+        }),
+        label: track.label.map(|value| normalize_unicode_nfc(&value)),
+        catalog_number: track
+            .catalog_number
+            .map(|value| normalize_unicode_nfc(&value)),
+        media_formats: track.media_formats,
+        barcode: track.barcode,
+        source_kind: Some(SOURCE_KIND_EMBEDDED_TAGS.to_string()),
+        source_key: build_embedded_source_key(entry_public_id),
+        segment_start_ms: None,
+        segment_end_ms: None,
+        cue_sheet_entry_id: None,
+        cue_sheet_hash: None,
+        cue_track_no: None,
+        cue_audio_entry_id: None,
+        cue_index00_frames: None,
+        cue_index01_frames: None,
+        sample_rate_hz: track.sample_rate_hz,
+        channel_count: track.channel_count,
+        bit_depth: track.bit_depth,
+        bitrate_bps: track.bitrate_bps,
+        track_gain_db: track.track_gain_db,
+        album_gain_db: track.album_gain_db,
+    }
 }
 
 #[cfg(test)]

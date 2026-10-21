@@ -12,11 +12,13 @@
     "lyra.auth",
     "lyra.artists",
     "lyra.editions",
+    "lyra.genres",
     "lyra.ids",
     "lyra.locale",
     "lyra.lyrics",
     "lyra.metadata",
     "lyra.playlists",
-    "lyra.plugins"
+    "lyra.plugins",
+    "lyra.tracks"
   ]
 }

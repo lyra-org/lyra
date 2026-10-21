@@ -281,44 +281,6 @@ pub async fn prepare_fixture(
     library: &LibraryFixtureConfig,
     raw_tags: Vec<lyra_metadata::RawTrackTags>,
 ) -> anyhow::Result<PreparedFixture> {
-    let processed = lyra_metadata::process_raw_tags(raw_tags);
-    let fallback_source_dir = library.directory.to_string_lossy().to_string();
-    let mut tracks_by_source_dir: BTreeMap<String, Vec<lyra_metadata::TrackMetadata>> =
-        BTreeMap::new();
-    for track in processed {
-        let source_dir = track
-            .file_path
-            .as_deref()
-            .and_then(|path| Path::new(path).parent())
-            .map(|path| path.to_string_lossy().to_string())
-            .unwrap_or_else(|| fallback_source_dir.clone());
-        tracks_by_source_dir
-            .entry(source_dir)
-            .or_default()
-            .push(track);
-    }
-
-    let parsed_groups: Vec<lyra_metadata::ParsedReleaseGroup<lyra_metadata::TrackMetadata>> =
-        tracks_by_source_dir
-            .into_iter()
-            .map(|(source_dir, tracks)| lyra_metadata::ParsedReleaseGroup {
-                coalesce_group_key: 0,
-                source_dir,
-                tracks,
-            })
-            .collect();
-    let mut coalesced = lyra_metadata::coalesce_release_groups(parsed_groups);
-    if coalesced.is_empty() {
-        anyhow::bail!("raw_tags produced no coalesced release groups");
-    }
-    if coalesced.len() != 1 {
-        anyhow::bail!(
-            "raw_tags produced {} release groups; lyra-harmony-test expects exactly one release context",
-            coalesced.len()
-        );
-    }
-    let coalesced_tracks = coalesced.pop().expect("coalesced release group");
-
     let mut db = STATE.db.write().await;
     let directory = library.directory.clone();
     let path_key = db::libraries::path_key_for(&directory);
@@ -341,37 +303,60 @@ pub async fn prepare_fixture(
         .db_id
         .ok_or_else(|| anyhow::anyhow!("library insert missing db_id"))?;
 
-    let mut path_to_entry = HashMap::new();
-    for track in &coalesced_tracks {
-        let Some(file_path) = track.file_path.as_deref() else {
-            anyhow::bail!("coalesced track is missing file_path");
+    // Grouped, normalized and ordered as a library scan parses them.
+    let mut path_to_entry: HashMap<PathBuf, (DbId, String)> = HashMap::new();
+    let mut tracks_by_source_dir: BTreeMap<PathBuf, Vec<services::metadata::TrackMetadata>> =
+        BTreeMap::new();
+    for track in lyra_metadata::process_raw_tags(raw_tags) {
+        let file_path = PathBuf::from(
+            track
+                .file_path
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("processed track is missing file_path"))?,
+        );
+        let (entry_db_id, entry_public_id) = match path_to_entry.get(&file_path) {
+            Some(entry) => entry.clone(),
+            None => {
+                let entry = insert_file_entry(&mut db, library_db_id, &file_path)?;
+                path_to_entry.insert(file_path.clone(), entry.clone());
+                entry
+            }
         };
-        let full_path = PathBuf::from(file_path);
-        path_to_entry
-            .entry(full_path.clone())
-            .or_insert(insert_file_entry(&mut db, library_db_id, &full_path)?);
+        let source_dir = file_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| library.directory.clone());
+        tracks_by_source_dir.entry(source_dir).or_default().push(
+            services::metadata::embedded_track_metadata(entry_db_id, &entry_public_id, track),
+        );
     }
-
-    let metadata: Vec<services::metadata::TrackMetadata> = coalesced_tracks
+    let parsed_groups = tracks_by_source_dir
         .into_iter()
-        .map(|track| {
-            let file_path = PathBuf::from(
-                track
-                    .file_path
-                    .clone()
-                    .ok_or_else(|| anyhow::anyhow!("coalesced track missing file_path"))?,
-            );
-            let entry_db_id = path_to_entry.get(&file_path).copied().ok_or_else(|| {
-                anyhow::anyhow!("missing prepared entry for {}", file_path.display())
-            })?;
-            Ok(raw_track_to_service_metadata(entry_db_id, track))
+        .map(|(source_dir, mut metadata)| {
+            services::metadata::sort_track_metadata(&mut metadata);
+            services::metadata::ingestion::ParsedMetadataGroup {
+                coalesce_group_key: 0,
+                source_dir,
+                metadata,
+            }
         })
-        .collect::<anyhow::Result<_>>()?;
+        .collect();
+    let mut coalesced = services::metadata::ingestion::coalesce_disc_groups(parsed_groups);
+    if coalesced.is_empty() {
+        anyhow::bail!("raw_tags produced no coalesced release groups");
+    }
+    if coalesced.len() != 1 {
+        anyhow::bail!(
+            "raw_tags produced {} release groups; lyra-harmony-test expects exactly one release context",
+            coalesced.len()
+        );
+    }
+    let metadata = coalesced.pop().expect("coalesced release group");
 
     services::metadata::ingestion::apply_metadata(&mut db, library_db_id, metadata)?;
 
     let mut track_db_ids = BTreeSet::new();
-    for entry_db_id in path_to_entry.values().copied() {
+    for &(entry_db_id, _) in path_to_entry.values() {
         for track in db::tracks::get_by_entry(&db, entry_db_id)? {
             if let Some(track_db_id) = track.db_id {
                 track_db_ids.insert(DbId::from(track_db_id));
@@ -661,53 +646,11 @@ pub async fn snapshot_fixture(prepared: &PreparedFixture) -> anyhow::Result<Fixt
     })
 }
 
-fn raw_track_to_service_metadata(
-    entry_db_id: DbId,
-    track: lyra_metadata::TrackMetadata,
-) -> services::metadata::TrackMetadata {
-    services::metadata::TrackMetadata {
-        entry_db_id,
-        album: track.album,
-        album_artists: track.album_artists,
-        date: track.date,
-        year: track.year,
-        title: track.title,
-        artists: track.artists,
-        artist_relations: track.artist_relations,
-        disc: track.disc,
-        disc_total: track.disc_total,
-        track: track.track,
-        track_total: track.track_total,
-        duration_ms: track.duration_ms,
-        genres: track.genres,
-        label: track.label,
-        catalog_number: track.catalog_number,
-        media_formats: track.media_formats,
-        barcode: track.barcode,
-        source_kind: Some("embedded_tags".to_string()),
-        source_key: format!("entry:{}:embedded", entry_db_id.0),
-        segment_start_ms: None,
-        segment_end_ms: None,
-        cue_sheet_entry_id: None,
-        cue_sheet_hash: None,
-        cue_track_no: None,
-        cue_audio_entry_id: None,
-        cue_index00_frames: None,
-        cue_index01_frames: None,
-        sample_rate_hz: track.sample_rate_hz,
-        channel_count: track.channel_count,
-        bit_depth: track.bit_depth,
-        bitrate_bps: track.bitrate_bps,
-        track_gain_db: track.track_gain_db,
-        album_gain_db: track.album_gain_db,
-    }
-}
-
 fn insert_file_entry(
     db: &mut DbAny,
     library_db_id: DbId,
     full_path: &Path,
-) -> anyhow::Result<DbId> {
+) -> anyhow::Result<(DbId, String)> {
     let entry = Entry {
         db_id: None,
         id: nanoid!(),
@@ -745,7 +688,7 @@ fn insert_file_entry(
             .query(),
     )?;
 
-    Ok(entry_db_id)
+    Ok((entry_db_id, entry.id))
 }
 
 fn snapshot_release(db: &DbAny, release_db_id: DbId) -> anyhow::Result<EntitySnapshot> {
@@ -964,6 +907,67 @@ mod tests {
             .await?;
 
         assert_eq!(result.values, vec![serde_json::json!(42)]);
+        Ok(())
+    }
+
+    fn raw_track(directory: &Path, track: u32, artists: &[&str]) -> lyra_metadata::RawTrackTags {
+        lyra_metadata::RawTrackTags {
+            file_path: directory
+                .join(format!("{track:02}.flac"))
+                .to_string_lossy()
+                .into_owned(),
+            album: Some("Album".to_string()),
+            album_artists: Vec::new(),
+            artists: artists.iter().map(ToString::to_string).collect(),
+            title: Some(format!("Track {track}")),
+            date: None,
+            copyright: None,
+            genre: None,
+            label: None,
+            catalog_number: None,
+            media: None,
+            barcode: None,
+            disc: Some(1),
+            disc_total: None,
+            track: Some(track),
+            track_total: None,
+            duration_ms: 180_000,
+            sample_rate_hz: None,
+            channel_count: None,
+            bit_depth: None,
+            bitrate_bps: None,
+            gain: Default::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn fixtures_ingest_tags_the_way_a_scan_does() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let library = tempfile::tempdir()?;
+        let config = LibraryFixtureConfig {
+            directory: library.path().to_path_buf(),
+            language: None,
+            country: None,
+        };
+        initialize_runtime(&config).await?;
+
+        // Track 2 comes first and spells Beta decomposed; a scan normalizes the
+        // spelling and orders tracks before inferring the release's artists.
+        let prepared = prepare_fixture(
+            &config,
+            vec![
+                raw_track(library.path(), 2, &["Be\u{301}ta", "Alpha"]),
+                raw_track(library.path(), 1, &["Alpha", "B\u{e9}ta"]),
+            ],
+        )
+        .await?;
+
+        let db = STATE.db.read().await;
+        let names: Vec<String> = db::artists::get(&db, DbId(prepared.release_id))?
+            .into_iter()
+            .map(|artist| artist.artist_name)
+            .collect();
+        assert_eq!(names, vec!["Alpha".to_string(), "B\u{e9}ta".to_string()]);
         Ok(())
     }
 }

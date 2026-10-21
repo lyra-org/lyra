@@ -131,6 +131,7 @@ impl Artist {
         self.artist_name = artist_name;
     }
 
+    #[cfg(test)]
     pub(crate) fn set_artist_type(&mut self, artist_type: ArtistType) {
         self.artist_type = Some(artist_type);
     }

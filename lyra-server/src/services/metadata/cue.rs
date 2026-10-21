@@ -701,7 +701,7 @@ pub(super) fn merge_embedded_into_cue_metadata(
     }
 }
 
-pub(super) fn sort_track_metadata(metadata: &mut [TrackMetadata]) {
+pub(crate) fn sort_track_metadata(metadata: &mut [TrackMetadata]) {
     metadata.sort_by(|a, b| {
         let artist_key = |t: &TrackMetadata| {
             normalize_lookup_key(
