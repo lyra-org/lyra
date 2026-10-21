@@ -190,7 +190,9 @@ end
 -- The relations into the artist a response describes, one whole set per
 -- imported type. A forward relation belongs to the related artist's own set,
 -- which this response does not describe in full, so only backward ones count.
-local function artist_relation_sets(response: JsonObject): { RelationSet }
+-- One that resolves to the artist itself is left out, since an artist cannot
+-- relate to itself.
+local function artist_relation_sets(artist_db_id: number, response: JsonObject): { RelationSet }
 	local pending_by_type: { [string]: { [number]: PendingArtistRelation } } = {}
 	for _, relation in normalize_relations(json_array_field(response, "relations")) do
 		if relation["target-type"] ~= "artist" or relation.direction ~= "backward" then
@@ -216,7 +218,7 @@ local function artist_relation_sets(response: JsonObject): { RelationSet }
 			["sort-name"] = related_artist["sort-name"],
 			["type"] = related_artist["type"],
 		})
-		if related_artist_db_id == nil then
+		if related_artist_db_id == nil or related_artist_db_id == artist_db_id then
 			continue
 		end
 
@@ -257,7 +259,11 @@ local function artist_relation_sets(response: JsonObject): { RelationSet }
 end
 
 local function import_artist_relations_from_response(artist_db_id: number, response: JsonObject): boolean
-	return set_artist_metadata(artist_db_id, normalize_release_artist(response), artist_relation_sets(response))
+	return set_artist_metadata(
+		artist_db_id,
+		normalize_release_artist(response),
+		artist_relation_sets(artist_db_id, response)
+	)
 end
 
 local function fetch_and_set_artist_relations(

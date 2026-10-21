@@ -7,7 +7,8 @@ musicbrainz_api.mb_get = function(_endpoint: string): (any, number)
 end
 local apply = require("../../resolution/apply")
 
-local artist_ids: { [string]: number } = { ["actor-a"] = 11, ["actor-b"] = 12, ["member"] = 13, ["band"] = 14 }
+local artist_ids: { [string]: number } =
+	{ ["actor-a"] = 11, ["actor-b"] = 12, ["member"] = 13, ["band"] = 14, ["character"] = 10 }
 local saved: { [number]: { [any]: { any } } } = {}
 local function noop() end
 apply.set_provider(setmetatable({
@@ -68,6 +69,21 @@ assert(
 	#sets[metadata.ArtistRelationType.MemberOf] == 0,
 	"a forward relation belongs to the other artist's set, so this one clears"
 )
+
+-- A relation that resolves to the artist itself is left out rather than
+-- failing the save.
+response = {
+	id = "character",
+	name = "Character",
+	type = "Character",
+	relations = {
+		relation("voice actor", "backward", "character"),
+		relation("voice actor", "backward", "actor-b"),
+	},
+}
+apply.refresh_artist_by_id(10, "character")
+voice_actors = saved[10][metadata.ArtistRelationType.VoiceActor]
+assert(#voice_actors == 1 and voice_actors[1].artist_id == 12, "the self-relation is left out")
 
 response = { id = "character", name = "Character", type = "Character", relations = {} }
 apply.refresh_artist_by_id(10, "character")
