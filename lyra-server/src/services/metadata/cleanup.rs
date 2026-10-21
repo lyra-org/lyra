@@ -430,6 +430,24 @@ fn merge_artist_into(
         }
     }
 
+    // A locked winner keeps its stored relations through the apply below, so
+    // the loser's move onto it until it is unlocked.
+    if db::artists::get_by_id(db, winner)?.is_some_and(|artist| artist.locked.unwrap_or(false)) {
+        for (relation, source_id) in db::artists::relations::get_relations_to(db, loser, None)? {
+            if source_id != winner
+                && !db::artists::relations::exists(db, source_id, winner, relation.relation_type)?
+            {
+                db::artists::relations::link(
+                    db,
+                    source_id,
+                    winner,
+                    relation.relation_type,
+                    relation.attributes,
+                )?;
+            }
+        }
+    }
+
     db::metadata::layers::edges::retarget_artist(db, winner, loser)?;
 
     // Layers own the credits; re-applying their owners below rebuilds them.
@@ -773,6 +791,67 @@ mod tests {
 
         crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, winner)?;
         assert_eq!(voice_actors(&db)?, expected, "a later apply keeps both");
+        Ok(())
+    }
+
+    #[test]
+    fn a_locked_winner_keeps_the_losers_voice_actors_until_unlocked() -> anyhow::Result<()> {
+        use crate::db::metadata::layers::{
+            self,
+            edges::LayerRelationInput,
+        };
+        use crate::services::metadata::layers::LOCAL_SOURCE_ID;
+
+        let mut db = test_db::new_test_db()?;
+        let winner = test_db::insert_artist(&mut db, "Character")?;
+        let loser = test_db::insert_artist(&mut db, "Character")?;
+        let actor = test_db::insert_artist(&mut db, "Actor")?;
+        layers::upsert(
+            &mut db,
+            loser,
+            &db::MetadataLayer::new(
+                LOCAL_SOURCE_ID,
+                layers::fields_from_json(serde_json::json!({"artist_name": "Character"})),
+                1,
+            )
+            .with_relations(std::collections::BTreeMap::from([(
+                db::ArtistRelationType::VoiceActor,
+                vec![LayerRelationInput {
+                    artist_id: actor,
+                    attributes: None,
+                }],
+            )])),
+        )?;
+        crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, loser)?;
+        let mut locked = db::artists::get_by_id(&db, winner)?.expect("winner exists");
+        locked.locked = Some(true);
+        db::artists::update(&mut db, &locked)?;
+
+        db.transaction_mut(|t| {
+            migrate_metadata(t, winner, loser)?;
+            merge_artist_into(t, winner, loser)
+        })?;
+        let voice_actors = |db: &DbAny| -> anyhow::Result<Vec<DbId>> {
+            Ok(db::artists::relations::get_relations_to(
+                db,
+                winner,
+                Some(db::ArtistRelationType::VoiceActor),
+            )?
+            .into_iter()
+            .map(|(_, actor)| actor)
+            .collect())
+        };
+        assert_eq!(voice_actors(&db)?, vec![actor]);
+
+        let mut unlocked = db::artists::get_by_id(&db, winner)?.expect("winner exists");
+        unlocked.locked = None;
+        db::artists::update(&mut db, &unlocked)?;
+        crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, winner)?;
+        assert_eq!(
+            voice_actors(&db)?,
+            vec![actor],
+            "the layers resolve the same once unlocked"
+        );
         Ok(())
     }
 
