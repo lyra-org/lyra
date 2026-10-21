@@ -5,7 +5,6 @@
 
 mod artists;
 mod coalesce;
-mod context;
 mod edition;
 mod filename;
 mod loudness;
@@ -25,10 +24,6 @@ pub use artists::{
     split_on_word,
 };
 pub use coalesce::coalesce_release_groups;
-pub use context::{
-    build_release_context_from_tags,
-    build_release_context_from_tags_with_library_root,
-};
 pub use edition::{
     MediaFormat,
     barcodes_match,
@@ -1243,69 +1238,5 @@ mod tests {
             bonus_only.iter().filter_map(|track| track.track).collect();
         bonus_tracks.sort_unstable();
         assert_eq!(bonus_tracks, vec![1, 2]);
-    }
-
-    #[test]
-    fn build_release_context_normalizes_album_title_to_nfc() {
-        let processed = process_raw_tags(vec![
-            RawTrackTags {
-                file_path: "/music/unicode/01.flac".to_string(),
-                album: Some("Cafe\u{301} Album".to_string()),
-                album_artists: vec!["Artist".to_string()],
-                artists: vec!["Artist".to_string()],
-                title: Some("Track 1".to_string()),
-                date: Some("2024".to_string()),
-                copyright: None,
-                genre: None,
-                label: None,
-                catalog_number: None,
-                media: None,
-                barcode: None,
-                disc: Some(1),
-                disc_total: Some(1),
-                track: Some(1),
-                track_total: Some(2),
-                duration_ms: 60_000,
-                sample_rate_hz: None,
-                channel_count: None,
-                bit_depth: None,
-                bitrate_bps: None,
-                gain: Default::default(),
-            },
-            RawTrackTags {
-                file_path: "/music/unicode/02.flac".to_string(),
-                album: Some("Caf\u{e9} Album".to_string()),
-                album_artists: vec!["Artist".to_string()],
-                artists: vec!["Artist".to_string()],
-                title: Some("Track 2".to_string()),
-                date: Some("2024".to_string()),
-                copyright: None,
-                genre: None,
-                label: None,
-                catalog_number: None,
-                media: None,
-                barcode: None,
-                disc: Some(1),
-                disc_total: Some(1),
-                track: Some(2),
-                track_total: Some(2),
-                duration_ms: 60_000,
-                sample_rate_hz: None,
-                channel_count: None,
-                bit_depth: None,
-                bitrate_bps: None,
-                gain: Default::default(),
-            },
-        ]);
-
-        let context = super::build_release_context_from_tags(&processed);
-        assert_eq!(
-            context.get("album_title").and_then(|value| value.as_str()),
-            Some("Caf\u{e9} Album")
-        );
-        assert_eq!(
-            context.get("release_date").and_then(|value| value.as_str()),
-            Some("2024")
-        );
     }
 }
