@@ -229,6 +229,25 @@ fn combine_scanned_relations(
     Ok(db::metadata::layers::union_relations(&stored, scanned))
 }
 
+/// The name an artist's local layer supplies when a tag spelled it `scan_name`:
+/// that spelling when it is the artist's own scan name, or else, when it
+/// reached the artist through a scan alias, the name the layer already holds.
+fn scanned_artist_name(
+    db: &impl DbAccess,
+    artist_db_id: DbId,
+    scan_name: String,
+) -> anyhow::Result<Option<String>> {
+    if db::artists::get_by_id(db, artist_db_id)?.is_some_and(|artist| artist.scan_name == scan_name)
+    {
+        return Ok(Some(scan_name));
+    }
+    Ok(db::metadata::layers::get_for_entity(db, artist_db_id)?
+        .into_iter()
+        .find(|layer| layer.source_id == LOCAL_SOURCE_ID)
+        .and_then(|layer| layer.fields.get(&MetadataField::ArtistName).cloned())
+        .and_then(|name| name.as_str().map(str::to_string)))
+}
+
 /// Selects a catalog number only from a track whose normalized label matches
 /// the chosen release label.
 fn scanned_release_labels(release_tracks: &[TrackIngest]) -> Option<Vec<serde_json::Value>> {
@@ -617,7 +636,10 @@ fn persist_release_inner(
 
     for (scan_name, artist_db_id) in artist_cache {
         let mut artist_layer = LocalLayer::default();
-        artist_layer.supply(MetadataField::ArtistName, Some(scan_name))?;
+        artist_layer.supply(
+            MetadataField::ArtistName,
+            scanned_artist_name(db, artist_db_id, scan_name)?,
+        )?;
         artist_layer.supply(
             MetadataField::ArtistType,
             scanned_artist_types

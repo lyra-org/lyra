@@ -1471,6 +1471,74 @@ mod tests {
     }
 
     #[test]
+    fn a_scan_alias_spelling_never_renames_the_artist() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let library =
+            test_db::insert_test_library_node(&mut db, "Aliases", PathBuf::from("/music/aliases"))?;
+        let library_id = library.db_id.unwrap();
+        let mut entries = Vec::new();
+        for (number, album, artist) in [(1, "Atomic Heart", "Mr Children"), (2, "Q", "Mr.Children")]
+        {
+            let entry = insert_entry(&mut db, &format!("/music/aliases/{number:02}.flac"))?;
+            connect(&mut db, library_id, entry)?;
+            apply_metadata(
+                &mut db,
+                library_id,
+                vec![track_metadata(
+                    entry.0,
+                    album,
+                    artist,
+                    None,
+                    Some(1),
+                    number,
+                )],
+            )?;
+            entries.push(entry);
+        }
+        let winner = artist_named(&db, "Mr Children")?.ok_or_else(|| anyhow!("winner"))?;
+        let loser = artist_named(&db, "Mr.Children")?.ok_or_else(|| anyhow!("loser"))?;
+        let mut verified = db::artists::get_by_id(&db, winner)?.ok_or_else(|| anyhow!("winner"))?;
+        verified.set_verified(true);
+        db::artists::update(&mut db, &verified)?;
+        for artist in [winner, loser] {
+            db::external_ids::upsert(
+                &mut db,
+                artist,
+                "musicbrainz",
+                "artist_id",
+                "mbid-123",
+                IdSource::Resolved,
+            )?;
+        }
+        crate::services::metadata::cleanup::deduplicate_artists_by_external_id(&mut db)?;
+
+        let local_name = |db: &DbAny| -> anyhow::Result<Option<serde_json::Value>> {
+            Ok(db::metadata::layers::get_for_entity(db, winner)?
+                .into_iter()
+                .find(|layer| layer.source_id == LOCAL_SOURCE_ID)
+                .and_then(|layer| layer.fields.get(&MetadataField::ArtistName).cloned()))
+        };
+        let both = [
+            (entries[0], "Mr Children", 1),
+            (entries[1], "Mr.Children", 2),
+        ]
+        .map(|(entry, artist, number)| {
+            track_metadata(entry.0, "Atomic Heart", artist, None, Some(1), number)
+        });
+        apply_metadata(&mut db, library_id, both.to_vec())?;
+        assert_eq!(local_name(&db)?, Some(serde_json::json!("Mr Children")));
+        apply_metadata(&mut db, library_id, vec![both[1].clone()])?;
+        assert_eq!(local_name(&db)?, Some(serde_json::json!("Mr Children")));
+        assert_eq!(
+            db::artists::get_by_id(&db, winner)?
+                .ok_or_else(|| anyhow!("winner"))?
+                .artist_name,
+            "Mr Children"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn a_provider_split_wins_the_artist_role_until_unmatched() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let library = test_db::insert_test_library_node(
