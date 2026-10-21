@@ -15,13 +15,7 @@ use crate::db::{
     MetadataLayer,
     entities::MetadataEntityType,
 };
-use crate::services::{
-    auth::{
-        Principal,
-        access,
-    },
-    metadata::layers::MANUAL_SOURCE_ID,
-};
+use crate::services::metadata::layers::MANUAL_SOURCE_ID;
 
 use super::{
     MetadataEditingError,
@@ -174,7 +168,6 @@ fn track_fields(
 
 fn artist_fields(
     db: &agdb::DbAny,
-    principal: &Principal,
     artist: db::Artist,
     artist_id: DbId,
 ) -> anyhow::Result<BTreeMap<MetadataField, Value>> {
@@ -192,9 +185,6 @@ fn artist_fields(
     ]);
     let mut relations = Vec::new();
     for (relation, source_id) in db::artists::relations::get_relations_to(db, artist_id, None)? {
-        if !access::artist_accessible(db, principal, source_id)? {
-            return Ok(fields);
-        }
         let Some(source) = db::artists::get_by_id(db, source_id)? else {
             return Ok(fields);
         };
@@ -212,7 +202,6 @@ fn artist_fields(
 
 pub(super) fn load_entity_state(
     db: &agdb::DbAny,
-    principal: &Principal,
     db_id: DbId,
 ) -> Result<EntityState, MetadataEditingError> {
     let (public_id, entity_type, fields) =
@@ -235,7 +224,7 @@ pub(super) fn load_entity_state(
             (
                 public_id,
                 MetadataEntityType::Artist,
-                artist_fields(db, principal, artist, db_id)?,
+                artist_fields(db, artist, db_id)?,
             )
         } else {
             return Err(MetadataEditingError::EntityNotFound(db_id.0.to_string()));

@@ -14,8 +14,6 @@ use agdb::{
     DbId,
 };
 
-use crate::services::auth::Principal;
-
 use apply::apply_diff;
 use model::{
     MetadataApplyRequest,
@@ -49,20 +47,18 @@ impl From<serde_json::Error> for MetadataEditingError {
 
 pub(crate) fn get_snapshot(
     db: &DbAny,
-    principal: &Principal,
     db_id: DbId,
 ) -> Result<MetadataSnapshot, MetadataEditingError> {
-    Ok(load_entity_state(db, principal, db_id)?.response())
+    Ok(load_entity_state(db, db_id)?.response())
 }
 
 pub(crate) fn preview(
     db: &DbAny,
-    principal: &Principal,
     db_id: DbId,
     request: &MetadataPreviewRequest,
 ) -> Result<Vec<MetadataFieldDiff>, MetadataEditingError> {
-    let state = load_entity_state(db, principal, db_id)?;
-    let diff = build_diff(db, principal, &state, &request.changes)?;
+    let state = load_entity_state(db, db_id)?;
+    let diff = build_diff(db, &state, &request.changes)?;
     if diff.is_empty() {
         return Err(MetadataEditingError::BadRequest(
             "metadata edit has no effect".to_string(),
@@ -73,15 +69,14 @@ pub(crate) fn preview(
 
 pub(crate) fn apply(
     db: &mut DbAny,
-    principal: &Principal,
     db_id: DbId,
     request: &MetadataApplyRequest,
 ) -> Result<MetadataSnapshot, MetadataEditingError> {
-    let state = load_entity_state(db, principal, db_id)?;
-    let diff = build_diff(db, principal, &state, &request.changes)?;
+    let state = load_entity_state(db, db_id)?;
+    let diff = build_diff(db, &state, &request.changes)?;
     check_expected(&request.changes, &request.expected, &diff)?;
     apply_diff(db, &state, &diff)?;
-    Ok(load_entity_state(db, principal, db_id)?.response())
+    Ok(load_entity_state(db, db_id)?.response())
 }
 
 #[cfg(test)]

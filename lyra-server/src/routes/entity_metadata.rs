@@ -81,7 +81,7 @@ async fn get_entity_metadata(
     let principal = require_manage_metadata(&headers).await?;
     let db = STATE.db.read().await;
     let entity_id = require_entity_access(&*db, &principal, &id)?;
-    editing::get_snapshot(&db, &principal, entity_id)
+    editing::get_snapshot(&db, entity_id)
         .map(Json)
         .map_err(editing_error)
 }
@@ -94,7 +94,7 @@ async fn preview_entity_metadata(
     let principal = require_manage_metadata(&headers).await?;
     let db = STATE.db.read().await;
     let entity_id = require_entity_access(&*db, &principal, &id)?;
-    editing::preview(&db, &principal, entity_id, &request)
+    editing::preview(&db, entity_id, &request)
         .map(Json)
         .map_err(editing_error)
 }
@@ -107,7 +107,7 @@ async fn apply_entity_metadata(
     let principal = require_manage_metadata(&headers).await?;
     let mut db = STATE.db.write().await;
     let entity_id = require_entity_access(&*db, &principal, &id)?;
-    editing::apply(&mut db, &principal, entity_id, &request)
+    editing::apply(&mut db, entity_id, &request)
         .map(Json)
         .map_err(editing_error)
 }
@@ -115,7 +115,7 @@ async fn apply_entity_metadata(
 #[cfg(feature = "docgen")]
 fn get_entity_metadata_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get editable entity metadata").description(
-        "Returns the canonical editable metadata projection for a release, track, or artist. The keys in `fields` are the authoritative editable inventory; each entry carries the current `value` and its `source`, `manual` when a manual edit supplies the field and `resolved` otherwise. An artist's `relations` are the relations into it, such as a band's members or a character's voice actors, each naming the relating `artist_id`. Omitted fields are unavailable. Requires ManageMetadata.",
+        "Returns the canonical editable metadata projection for a release, track, or artist. The keys in `fields` are the authoritative editable inventory; each entry carries the current `value` and its `source`, `manual` when a manual edit supplies the field and `resolved` otherwise. An artist's `relations` are the relations into it, such as a band's members or a character's voice actors, each naming the relating `artist_id`. Requires ManageMetadata.",
     )
 }
 
@@ -195,8 +195,36 @@ mod tests {
         },
     };
 
+    async fn send(
+        routes: &Router,
+        authorization: &str,
+        method: &str,
+        uri: String,
+        body: Option<serde_json::Value>,
+    ) -> anyhow::Result<(StatusCode, serde_json::Value)> {
+        let request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(AUTHORIZATION, authorization);
+        let request = match body {
+            Some(body) => request
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&body)?))?,
+            None => request.body(Body::empty())?,
+        };
+        let response = routes.clone().oneshot(request).await?;
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        Ok((status, serde_json::from_slice(&body).unwrap_or_default()))
+    }
+
+    fn set(field: &str, value: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({"changes": [{"field": field, "operation": "set", "value": value}]})
+    }
+
     #[tokio::test]
-    async fn metadata_routes_hide_and_preserve_inaccessible_relations() -> anyhow::Result<()> {
+    async fn library_scoped_managers_reference_artists_and_labels_from_any_library()
+    -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         initialize_runtime(&LibraryFixtureConfig {
             directory: std::path::PathBuf::from("."),
@@ -205,12 +233,19 @@ mod tests {
         })
         .await?;
 
-        let (user_id, target_public_id, hidden_public_id, target_id) = {
+        let public_id = |db: &agdb::DbAny, id: agdb::DbId| -> anyhow::Result<String> {
+            let element = db
+                .exec(agdb::QueryBuilder::select().values(["id"]).ids(id).query())?
+                .elements
+                .remove(0);
+            Ok(element.values[0].value.string()?.clone())
+        };
+        let (user_id, ids, release_id, outsider_id) = {
             let mut db = STATE.db.write().await;
             db::roles::ensure_builtin_roles(&mut db)?;
             let user_id = db::users::create(
                 &mut db,
-                &db::test_db::test_user("entity-metadata-relation-manager")?,
+                &db::test_db::test_user("entity-metadata-reference-manager")?,
             )?;
             let role_name = format!("metadata-manager-{}", nanoid!());
             db::roles::create(
@@ -226,96 +261,174 @@ mod tests {
 
             let visible_library_id =
                 insert_library(&mut db, "Visible Metadata", "/tmp/metadata-route-visible")?;
-            let hidden_library_id =
-                insert_library(&mut db, "Hidden Metadata", "/tmp/metadata-route-hidden")?;
+            let other_library_id =
+                insert_library(&mut db, "Other Metadata", "/tmp/metadata-route-other")?;
             db::libraries::grant_access(
                 &mut db,
                 user_id,
                 visible_library_id,
                 db::libraries::AccessKind::ReadWrite,
             )?;
-            let visible_release_id = insert_release(&mut db, "Visible Release")?;
-            let hidden_release_id = insert_release(&mut db, "Hidden Release")?;
-            db::graph::ensure_owned_edge(&mut db, visible_library_id, visible_release_id)?;
-            db::graph::ensure_owned_edge(&mut db, hidden_library_id, hidden_release_id)?;
-            let target_id = insert_artist(&mut db, "Visible Target")?;
-            let hidden_id = insert_artist(&mut db, "Hidden Source")?;
-            connect_artist(&mut db, visible_release_id, target_id)?;
-            connect_artist(&mut db, hidden_release_id, hidden_id)?;
+            let release_id = insert_release(&mut db, "Visible Release")?;
+            let other_release_id = insert_release(&mut db, "Other Release")?;
+            db::graph::ensure_owned_edge(&mut db, visible_library_id, release_id)?;
+            db::graph::ensure_owned_edge(&mut db, other_library_id, other_release_id)?;
+            let character_id = insert_artist(&mut db, "Character")?;
+            let actor_id = insert_artist(&mut db, "Uncredited Actor")?;
+            let outsider_id = insert_artist(&mut db, "Outsider")?;
+            connect_artist(&mut db, release_id, character_id)?;
+            connect_artist(&mut db, other_release_id, outsider_id)?;
             db::artists::relations::link(
                 &mut db,
-                hidden_id,
-                target_id,
-                db::ArtistRelationType::MemberOf,
-                Some("hidden detail".to_string()),
+                actor_id,
+                character_id,
+                db::ArtistRelationType::VoiceActor,
+                None,
             )?;
-            let target_public_id = db::artists::get_by_id(&db, target_id)?
-                .expect("target exists")
-                .id;
-            let hidden_public_id = db::artists::get_by_id(&db, hidden_id)?
-                .expect("source exists")
-                .id;
-            (user_id, target_public_id, hidden_public_id, target_id)
+            let label_id = db::labels::resolve(
+                &mut db,
+                &db::labels::ResolveLabel {
+                    name: "Outside Label",
+                    external_id: None,
+                },
+            )?;
+            db.transaction_mut(|t| {
+                db::labels::sync_release_label_links_inside_tx(
+                    t,
+                    other_release_id,
+                    &[db::labels::LabelLinkInput {
+                        label_id,
+                        catalog_number: None,
+                    }],
+                )
+            })?;
+            let ids = [
+                character_id,
+                actor_id,
+                outsider_id,
+                label_id,
+                release_id,
+                other_release_id,
+            ]
+            .map(|id| public_id(&db, id))
+            .into_iter()
+            .collect::<anyhow::Result<Vec<_>>>()?;
+            (user_id, ids, release_id, outsider_id)
         };
+        let [character, actor, outsider, label, release, other_release] =
+            <[String; 6]>::try_from(ids).expect("six ids");
         let session = crate::testing::create_session(user_id, Default::default()).await?;
         let authorization = format!("Bearer {}", session.token);
         let routes = entity_metadata_routes();
 
-        let response = routes
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(format!("/{target_public_id}/metadata"))
-                    .header(AUTHORIZATION, &authorization)
-                    .body(Body::empty())?,
-            )
-            .await?;
-        assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body(), usize::MAX).await?;
-        let snapshot: serde_json::Value = serde_json::from_slice(&body)?;
-        assert!(snapshot["fields"].get("relations").is_none());
-        assert!(!String::from_utf8_lossy(&body).contains(&hidden_public_id));
-
-        let preview_response = routes
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri(format!("/{target_public_id}/metadata/preview"))
-                    .header(AUTHORIZATION, &authorization)
-                    .header(CONTENT_TYPE, "application/json")
-                    .body(Body::from(serde_json::to_vec(&serde_json::json!({
-                        "changes": [{
-                            "field": "relations",
-                            "operation": "set",
-                            "value": []
-                        }]
-                    }))?))?,
-            )
-            .await?;
-        let preview_status = preview_response.status();
-        let preview_body = to_bytes(preview_response.into_body(), usize::MAX).await?;
+        // A character's full cast, including a voice actor no release credits.
+        let (status, snapshot) = send(
+            &routes,
+            &authorization,
+            "GET",
+            format!("/{character}/metadata"),
+            None,
+        )
+        .await?;
+        assert_eq!(status, StatusCode::OK);
         assert_eq!(
-            preview_status,
-            StatusCode::BAD_REQUEST,
-            "{}",
-            String::from_utf8_lossy(&preview_body),
+            snapshot["fields"]["relations"]["value"][0]["artist_id"],
+            serde_json::json!(actor)
         );
 
-        let hidden_response = routes
-            .oneshot(
-                Request::builder()
-                    .uri(format!("/{hidden_public_id}/metadata"))
-                    .header(AUTHORIZATION, authorization)
-                    .body(Body::empty())?,
+        // An artist credited only in another library can be credited here.
+        let credit = set(
+            "credits",
+            serde_json::json!([{"artist_id": outsider, "type": "artist", "detail": null}]),
+        );
+        let (status, expected) = send(
+            &routes,
+            &authorization,
+            "POST",
+            format!("/{release}/metadata/preview"),
+            Some(credit.clone()),
+        )
+        .await?;
+        assert_eq!(status, StatusCode::OK, "{expected}");
+        let mut apply_body = credit;
+        apply_body["expected"] = expected;
+        let (status, body) = send(
+            &routes,
+            &authorization,
+            "PATCH",
+            format!("/{release}/metadata"),
+            Some(apply_body),
+        )
+        .await?;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        {
+            let db = STATE.db.read().await;
+            let credited: Vec<agdb::DbId> = db::artists::get(&*db, release_id)?
+                .into_iter()
+                .filter_map(|artist| artist.db_id.map(agdb::DbId::from))
+                .collect();
+            assert_eq!(credited, vec![outsider_id]);
+        }
+
+        // So can a label only another library's releases carry.
+        let (status, body) = send(
+            &routes,
+            &authorization,
+            "POST",
+            format!("/{release}/metadata/preview"),
+            Some(set(
+                "labels",
+                serde_json::json!([{"id": label, "catalog_number": null}]),
+            )),
+        )
+        .await?;
+        assert_eq!(status, StatusCode::OK, "{body}");
+
+        // References that name no artist or label are still rejected.
+        for change in [
+            set(
+                "credits",
+                serde_json::json!([{"artist_id": "missing", "type": "artist", "detail": null}]),
+            ),
+            set(
+                "credits",
+                serde_json::json!([{"artist_id": other_release, "type": "artist", "detail": null}]),
+            ),
+            set(
+                "labels",
+                serde_json::json!([{"id": "missing", "catalog_number": null}]),
+            ),
+        ] {
+            let (status, body) = send(
+                &routes,
+                &authorization,
+                "POST",
+                format!("/{release}/metadata/preview"),
+                Some(change),
             )
             .await?;
-        assert_eq!(hidden_response.status(), StatusCode::NOT_FOUND);
-        let db = STATE.db.read().await;
-        assert_eq!(
-            db::artists::relations::get_relations_to(&db, target_id, None)?.len(),
-            1,
-        );
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        }
+
+        // The edited entity itself must still be accessible.
+        let (status, _) = send(
+            &routes,
+            &authorization,
+            "GET",
+            format!("/{other_release}/metadata"),
+            None,
+        )
+        .await?;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) = send(
+            &routes,
+            &authorization,
+            "POST",
+            format!("/{other_release}/metadata/preview"),
+            Some(set("release_title", serde_json::json!("Renamed"))),
+        )
+        .await?;
+        assert_eq!(status, StatusCode::NOT_FOUND);
         Ok(())
     }
 }

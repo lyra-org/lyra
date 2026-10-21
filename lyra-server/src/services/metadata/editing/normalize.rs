@@ -12,17 +12,11 @@ use agdb::DbId;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::{
-    db::{
-        self,
-        DbAccess,
-        MetadataField,
-        entities::MetadataEntityType,
-    },
-    services::auth::{
-        Principal,
-        access,
-    },
+use crate::db::{
+    self,
+    DbAccess,
+    MetadataField,
+    entities::MetadataEntityType,
 };
 
 use super::{
@@ -123,18 +117,6 @@ fn normalized_catalog_number(value: Option<String>) -> Option<String> {
     })
 }
 
-fn label_accessible(
-    db: &impl DbAccess,
-    principal: &Principal,
-    label_id: DbId,
-) -> Result<bool, MetadataEditingError> {
-    let release_ids = db::labels::get_releases_with_catalog(db, label_id)?
-        .into_iter()
-        .map(|(release_id, _)| release_id)
-        .collect::<Vec<_>>();
-    Ok(!access::accessible_entities(db, principal, &release_ids)?.is_empty())
-}
-
 fn finish_normalized_labels(
     mut labels: Vec<MetadataLabelValue>,
 ) -> Result<Value, MetadataEditingError> {
@@ -156,11 +138,7 @@ fn finish_normalized_labels(
     Ok(serde_json::to_value(labels)?)
 }
 
-fn normalize_label_edits(
-    db: &impl DbAccess,
-    principal: &Principal,
-    value: &Value,
-) -> Result<Value, MetadataEditingError> {
+fn normalize_label_edits(db: &impl DbAccess, value: &Value) -> Result<Value, MetadataEditingError> {
     let raw: Vec<MetadataLabelEditValue> = decode_value(value, MetadataField::Labels)?;
     let mut labels = Vec::with_capacity(raw.len());
     for label in raw {
@@ -174,11 +152,6 @@ fn normalize_label_edits(
             .ok_or_else(|| MetadataEditingError::BadRequest(format!("unknown label '{id}'")))?;
         let stored = db::labels::get_by_id(db, label_id)?
             .ok_or_else(|| MetadataEditingError::BadRequest(format!("unknown label '{id}'")))?;
-        if !label_accessible(db, principal, label_id)? {
-            return Err(MetadataEditingError::BadRequest(format!(
-                "unknown label '{id}'"
-            )));
-        }
         labels.push(MetadataLabelValue {
             id,
             name: stored.name,
@@ -209,7 +182,6 @@ pub(super) fn layer_labels(
 
 fn require_artist_id(
     db: &impl DbAccess,
-    principal: &Principal,
     public_id: &str,
     field: MetadataField,
 ) -> Result<DbId, MetadataEditingError> {
@@ -221,25 +193,19 @@ fn require_artist_id(
         ))
     };
     let db_id = db::lookup::find_node_id_by_id(db, public_id)?.ok_or_else(unknown)?;
-    if db::artists::get_by_id(db, db_id)?.is_none()
-        || !access::artist_accessible(db, principal, db_id)?
-    {
+    if db::artists::get_by_id(db, db_id)?.is_none() {
         return Err(unknown());
     }
     Ok(db_id)
 }
 
-fn normalize_credits(
-    db: &impl DbAccess,
-    principal: &Principal,
-    value: &Value,
-) -> Result<Value, MetadataEditingError> {
+fn normalize_credits(db: &impl DbAccess, value: &Value) -> Result<Value, MetadataEditingError> {
     let raw: Vec<MetadataCreditValue> = decode_value(value, MetadataField::Credits)?;
     let mut seen = HashSet::new();
     let mut normalized = Vec::with_capacity(raw.len());
     for credit in raw {
         let artist_id = credit.artist_id.trim().to_string();
-        require_artist_id(db, principal, &artist_id, MetadataField::Credits)?;
+        require_artist_id(db, &artist_id, MetadataField::Credits)?;
         let detail = credit.detail.and_then(|value| {
             let value = lyra_metadata::normalize_unicode_nfc(&value)
                 .trim()
@@ -273,7 +239,6 @@ fn normalize_credits(
 
 fn normalize_relations(
     db: &impl DbAccess,
-    principal: &Principal,
     artist_id: DbId,
     value: &Value,
 ) -> Result<Value, MetadataEditingError> {
@@ -282,8 +247,7 @@ fn normalize_relations(
     let mut normalized = Vec::with_capacity(raw.len());
     for relation in raw {
         let related_id = relation.artist_id.trim().to_string();
-        let related_db_id =
-            require_artist_id(db, principal, &related_id, MetadataField::Relations)?;
+        let related_db_id = require_artist_id(db, &related_id, MetadataField::Relations)?;
         if related_db_id == artist_id {
             return Err(MetadataEditingError::BadRequest(
                 "an artist cannot relate to itself".to_string(),
@@ -326,7 +290,6 @@ pub(super) fn sort_relations(relations: &mut [MetadataRelationValue]) {
 
 pub(super) fn normalized_set_value(
     db: &impl DbAccess,
-    principal: &Principal,
     state: &EntityState,
     field: MetadataField,
     value: &Value,
@@ -367,8 +330,8 @@ pub(super) fn normalized_set_value(
             Ok(Value::String(normalized))
         }
         MetadataField::Genres => normalize_genres(value),
-        MetadataField::Labels => normalize_label_edits(db, principal, value),
-        MetadataField::Credits => normalize_credits(db, principal, value),
+        MetadataField::Labels => normalize_label_edits(db, value),
+        MetadataField::Credits => normalize_credits(db, value),
         MetadataField::Year => normalize_positive_u32(value, field, 9999),
         MetadataField::Disc
         | MetadataField::DiscTotal
@@ -378,7 +341,7 @@ pub(super) fn normalized_set_value(
             let value: db::ArtistType = decode_value(value, field)?;
             Ok(serde_json::to_value(value)?)
         }
-        MetadataField::Relations => normalize_relations(db, principal, state.db_id, value),
+        MetadataField::Relations => normalize_relations(db, state.db_id, value),
     }
 }
 

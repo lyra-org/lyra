@@ -17,12 +17,9 @@ use crate::{
         DbAccess,
         MetadataField,
     },
-    services::{
-        auth::Principal,
-        metadata::{
-            layers::MANUAL_SOURCE_ID,
-            merging,
-        },
+    services::metadata::{
+        layers::MANUAL_SOURCE_ID,
+        merging,
     },
 };
 
@@ -59,7 +56,6 @@ fn cleared_value(state: &EntityState, field: MetadataField) -> Result<Value, Met
 /// The value a field resolves to from every layer but the manual one.
 fn inherited_value(
     db: &impl DbAccess,
-    principal: &Principal,
     state: &EntityState,
     field: MetadataField,
 ) -> Result<Value, MetadataEditingError> {
@@ -120,12 +116,11 @@ fn inherited_value(
             value.clone()
         }
     };
-    normalized_set_value(db, principal, state, field, &value)
+    normalized_set_value(db, state, field, &value)
 }
 
 pub(super) fn build_diff(
     db: &impl DbAccess,
-    principal: &Principal,
     state: &EntityState,
     changes: &[MetadataChangeRequest],
 ) -> Result<Vec<MetadataFieldDiff>, MetadataEditingError> {
@@ -146,7 +141,7 @@ pub(super) fn build_diff(
         let before = state.field_state(change.field)?.clone();
         let (value, source) = match &change.edit {
             MetadataEditOperation::Set { value } => (
-                normalized_set_value(db, principal, state, change.field, value)?,
+                normalized_set_value(db, state, change.field, value)?,
                 MetadataValueSource::Manual,
             ),
             MetadataEditOperation::Inherit => {
@@ -156,7 +151,7 @@ pub(super) fn build_diff(
                         change.field.as_str(),
                     )));
                 }
-                let target = inherited_value(db, principal, state, change.field)?;
+                let target = inherited_value(db, state, change.field)?;
                 (target, MetadataValueSource::Resolved)
             }
         };
