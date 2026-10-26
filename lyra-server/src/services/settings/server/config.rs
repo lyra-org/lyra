@@ -29,6 +29,7 @@ pub(crate) struct Config {
     pub(crate) auth: AuthConfig,
     pub(crate) sync: SyncConfig,
     pub(crate) hls: HlsConfig,
+    pub(crate) transcoding: TranscodingConfig,
 }
 
 impl Config {
@@ -66,6 +67,10 @@ impl Config {
                 temp_disk_budget_bytes: settings.value("hls.temp_disk_budget_bytes"),
                 cleanup_startup_purge: settings.value("hls.cleanup_startup_purge"),
                 max_concurrent_transcodes: settings.value("hls.max_concurrent_transcodes"),
+            },
+            transcoding: TranscodingConfig {
+                cache_max_bytes: settings.value("transcoding.cache_max_bytes"),
+                cache_ttl_seconds: settings.value("transcoding.cache_ttl_seconds"),
             },
         }
     }
@@ -117,4 +122,10 @@ pub(crate) struct HlsConfig {
     pub(crate) cleanup_startup_purge: bool,
     /// `0` means unlimited.
     pub(crate) max_concurrent_transcodes: u32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct TranscodingConfig {
+    pub(crate) cache_max_bytes: u64,
+    pub(crate) cache_ttl_seconds: u64,
 }

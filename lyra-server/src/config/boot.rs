@@ -33,6 +33,7 @@ const LYRA_PORT_ENV: &str = "LYRA_PORT";
 const DEFAULT_DATA_DIR: &str = "data";
 const DEFAULT_DB_FILE_NAME: &str = "lyra.db";
 const DEFAULT_COVERS_DIR_NAME: &str = "covers";
+const TRANSCODE_CACHE_DIR_NAME: &str = "transcodes";
 
 /// Boot-class environment overrides. Read once from the process environment;
 /// tests construct it directly so they never touch real variables.
@@ -150,6 +151,12 @@ impl BootConfig {
 
     pub(crate) fn default_covers_path(&self) -> PathBuf {
         self.data_dir.join(DEFAULT_COVERS_DIR_NAME)
+    }
+
+    /// Where finished and in-progress transcodes are kept. Server-owned scratch space: emptied at
+    /// startup and created on first use.
+    pub(crate) fn transcode_cache_dir(&self) -> PathBuf {
+        self.data_dir.join(TRANSCODE_CACHE_DIR_NAME)
     }
 }
 

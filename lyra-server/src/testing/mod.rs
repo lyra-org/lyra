@@ -231,11 +231,11 @@ fn memory_boot_config() -> anyhow::Result<config::BootConfig> {
     );
     Ok(config::BootConfig {
         port: 0,
+        data_dir: std::env::temp_dir().join(&unique_db_name),
         db: config::DbConfig {
             kind: config::DbKind::Memory,
             path: PathBuf::from(unique_db_name),
         },
-        ..config::BootConfig::default()
     })
 }
 
@@ -273,6 +273,7 @@ pub async fn initialize_runtime(library: &LibraryFixtureConfig) -> anyhow::Resul
     }
     harmony_http::set_default_user_agent(outbound_user_agent());
     hls_init::initialize().await;
+    services::transcoding::initialize().await;
 
     Ok(())
 }

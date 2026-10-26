@@ -6,7 +6,6 @@
 use crate::services::auth::media_tokens::MediaTokenPurpose;
 #[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
-use anyhow::anyhow;
 use axum::{
     Router,
     routing::get,
@@ -21,32 +20,9 @@ use axum::{
         HeaderMap,
         Method,
         Response,
-        header,
     },
-};
-use bytes::Bytes;
-use lyra_ffmpeg::{
-    FfmpegContext,
-    Output,
-    SeekRequest,
-    SeekResult,
-    WriteResult,
 };
 use serde::Deserialize;
-use std::sync::mpsc as std_mpsc;
-use std::sync::mpsc::RecvTimeoutError;
-use std::sync::{
-    Arc,
-    atomic::{
-        AtomicBool,
-        Ordering,
-    },
-};
-use std::time::Duration;
-use tokio::sync::{
-    mpsc as tokio_mpsc,
-    oneshot,
-};
 
 use crate::routes::AppError;
 
@@ -55,20 +31,12 @@ use super::{
     ServeTrackOptions,
     TranscodeKnobs,
     apply_request_start_offset,
-    file_response,
-    head_body,
     resolve_delivery,
+    source_file_response,
+    transcoded::transcoded_response,
     validate_and_get_track_source,
     validate_request,
 };
-
-const STREAM_SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(100);
-
-#[derive(Debug, thiserror::Error)]
-#[error("{message}")]
-struct StreamChannelError {
-    message: String,
-}
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
@@ -157,7 +125,7 @@ async fn get_stream(
 }
 
 /// Serves a track as `GET` would. A `HEAD` request gets the same decision and headers without
-/// starting FFmpeg.
+/// starting FFmpeg, with the length when the transcode is already cached.
 pub(crate) async fn stream_track_response(
     method: &Method,
     headers: &HeaderMap,
@@ -193,168 +161,16 @@ pub(crate) async fn stream_track_response(
     )?;
 
     if delivery.direct_passthrough {
-        return file_response(&source.full_path, delivery.content_type, headers).await;
+        return source_file_response(&source, delivery.content_type, headers).await;
     }
-
-    let (sync_tx, sync_rx) = std_mpsc::sync_channel::<Vec<u8>>(1024);
-    let (tokio_tx, tokio_rx) = tokio_mpsc::channel::<Result<Bytes, std::io::Error>>(64);
-    let (started_tx, started_rx) = oneshot::channel::<()>();
-    let (done_tx, done_rx) = oneshot::channel::<Result<(), StreamChannelError>>();
-    let client_disconnected = Arc::new(AtomicBool::new(false));
-    let shutdown = crate::services::shutdown::token();
-
-    let write_callback = {
-        let sync_tx = sync_tx.clone();
-        let shutdown = shutdown.clone();
-        move |buf: &[u8]| -> WriteResult {
-            if shutdown.is_cancelled() {
-                return WriteResult::Finished;
-            }
-            let bytes = buf.to_vec();
-            let len = bytes.len();
-            match sync_tx.send(bytes) {
-                Ok(()) => WriteResult::Wrote(len),
-                Err(_) => WriteResult::Finished,
-            }
-        }
-    };
-
-    let seek_callback = move |request: SeekRequest| -> SeekResult {
-        if matches!(request, SeekRequest::Size) {
-            return SeekResult::Unsupported;
-        }
-        SeekResult::Unseekable
-    };
-
-    let output = Output::with_callback(write_callback)
-        .streaming()
-        .set_seek_callback(seek_callback);
-    let output = delivery.configure_output(output);
-
-    let context = FfmpegContext::builder()
-        .input(source.input_path)
-        .start_ms(source.start_ms)
-        .end_ms(source.end_ms)
-        .output(output)
-        .build()?;
-    if method == Method::HEAD {
-        return transcoded_stream_response(delivery.content_type, head_body());
-    }
-
-    let client_disconnected_for_forwarder = Arc::clone(&client_disconnected);
-    let shutdown_for_forwarder = shutdown.clone();
-    tokio::task::spawn_blocking(move || {
-        let mut started_tx = Some(started_tx);
-        loop {
-            if shutdown_for_forwarder.is_cancelled() {
-                client_disconnected_for_forwarder.store(true, Ordering::Relaxed);
-                break;
-            }
-            let chunk = match sync_rx.recv_timeout(STREAM_SHUTDOWN_POLL_INTERVAL) {
-                Ok(chunk) => chunk,
-                Err(RecvTimeoutError::Timeout) => continue,
-                Err(RecvTimeoutError::Disconnected) => break,
-            };
-            if let Some(tx) = started_tx.take() {
-                let _ = tx.send(());
-            }
-            let bytes = Bytes::from(chunk);
-            if tokio_tx.blocking_send(Ok(bytes)).is_err() {
-                client_disconnected_for_forwarder.store(true, Ordering::Relaxed);
-                break;
-            }
-        }
-    });
-
-    let client_disconnected_for_worker = Arc::clone(&client_disconnected);
-    let shutdown_for_transcode = shutdown.clone();
-    tokio::task::spawn_blocking(move || {
-        let result = match context.start() {
-            Ok(mut handle) => loop {
-                if shutdown_for_transcode.is_cancelled()
-                    || client_disconnected_for_worker.load(Ordering::Relaxed)
-                {
-                    client_disconnected_for_worker.store(true, Ordering::Relaxed);
-                    break handle
-                        .abort_with_timeout(crate::services::shutdown::TRANSCODE_ABORT_TIMEOUT);
-                }
-                if let Some(result) = handle.wait_completion_timeout(STREAM_SHUTDOWN_POLL_INTERVAL)
-                {
-                    break result;
-                }
-            },
-            Err(err) => Err(err),
-        };
-        drop(sync_tx);
-        let _ = done_tx.send(
-            result
-                .as_ref()
-                .map(|_| ())
-                .map_err(|err| StreamChannelError {
-                    message: err.to_string(),
-                }),
-        );
-        match result {
-            Err(e) => {
-                if client_disconnected_for_worker.load(Ordering::Relaxed)
-                    || matches!(e, lyra_ffmpeg::Error::OutputStopped)
-                {
-                    tracing::debug!("stream ended (client disconnected)");
-                } else {
-                    tracing::warn!("ffmpeg error: {}", e);
-                }
-            }
-            Ok(()) => tracing::debug!("stream completed successfully"),
-        }
-    });
-
-    let mut started_rx = started_rx;
-    tokio::select! {
-        started = &mut started_rx => {
-            started.map_err(|_| anyhow!("stream startup failed"))?;
-        }
-        done = done_rx => {
-            let result = done.map_err(|_| anyhow!("stream startup failed"))?;
-            if let Err(err) = result {
-                return Err(anyhow!("ffmpeg error before streaming: {}", err.message).into());
-            }
-            // A short transcode can finish before the forwarder hands on its first chunk.
-            started_rx
-                .await
-                .map_err(|_| anyhow!("stream ended before sending data"))?;
-        }
-    }
-
-    let shutdown_for_body = shutdown.clone();
-    let stream = futures::stream::unfold(
-        (tokio_rx, shutdown_for_body),
-        |(mut rx, shutdown)| async move {
-            let shutdown_for_select = shutdown.clone();
-            tokio::select! {
-                _ = shutdown_for_select.cancelled_owned() => None,
-                item = rx.recv() => item.map(|item| (item, (rx, shutdown))),
-            }
-        },
-    );
-    transcoded_stream_response(delivery.content_type, Body::from_stream(stream))
-}
-
-fn transcoded_stream_response(content_type: &str, body: Body) -> Result<Response<Body>, AppError> {
-    Ok(Response::builder()
-        .header(header::CONTENT_TYPE, content_type)
-        .header(header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
-        .header(header::TRANSFER_ENCODING, "chunked")
-        .header(header::ACCEPT_RANGES, "none")
-        .header(header::PRAGMA, "no-cache")
-        .header(header::EXPIRES, "0")
-        .body(body)?)
+    transcoded_response(method, headers, source, delivery, DeliveryTarget::Stream).await
 }
 
 #[cfg(feature = "docgen")]
 fn stream_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Stream audio")
         .description(
-            "Streams audio data for the track ID, including cue-derived virtual segments, optionally transcoded to the requested format or codec. Requires either bearer authentication with access to the track or a scoped `media_token` from `POST /api/tracks/{track_id}/playback-url`. The original file streams in any container; transcoded output can be mp3, flac, wav, ogg, webm, aac, m4a, opus, or aiff. Direct-copy stream responses support byte ranges; transcoded stream responses are chunked. HLS playback is available via `/api/stream/{track_id}/hls.m3u8`.",
+            "Streams audio data for the track ID, including cue-derived virtual segments, optionally transcoded to the requested format or codec. Requires either bearer authentication with access to the track or a scoped `media_token` from `POST /api/tracks/{track_id}/playback-url`. The original file streams in any container; transcoded output can be mp3, flac, wav, ogg, webm, aac, m4a, opus, or aiff. Direct-copy stream responses and finished transcodes support byte ranges and report their length; a transcode still being encoded streams chunked, without ranges, as it is written. Transcodes are cached briefly, so repeat and ranged requests for the same output are served from the finished file. HLS playback is available via `/api/stream/{track_id}/hls.m3u8`.",
         )
 }
 

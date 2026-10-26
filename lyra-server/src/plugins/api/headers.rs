@@ -230,13 +230,9 @@ pub(super) async fn plugin_api_response_to_axum(
             content_type = Some(HeaderValue::from_static(image_format_mime(format)));
             Body::from(bytes)
         } else {
-            let ranged = build_ranged_file_body(
-                confined.as_path(),
-                request_headers.get(RANGE),
-                status,
-                None,
-            )
-            .await?;
+            let ranged =
+                build_ranged_file_body(confined.as_path(), request_headers.get(RANGE), status)
+                    .await?;
             status = ranged.status;
             content_type = Some(HeaderValue::from_static(infer_content_type(trimmed)));
             content_length = Some(ranged.content_length);

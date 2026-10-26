@@ -66,6 +66,7 @@ pub(crate) async fn run_server(capture: Option<CaptureArgs>, listener: TcpListen
     log_setting_overrides();
     harmony_http::set_default_user_agent(crate::outbound_user_agent());
     hls_init::initialize().await;
+    services::transcoding::initialize().await;
 
     let db = STATE.db.get();
     let maintenance_shutdown = if capture_mode {

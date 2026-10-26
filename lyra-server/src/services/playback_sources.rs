@@ -116,7 +116,14 @@ pub(crate) struct SourceVersion {
 impl SourceVersion {
     /// Reads the version of the file at `path`, failing when it is not a regular file.
     pub(crate) fn read(source_public_id: String, path: &Path) -> std::io::Result<Self> {
-        let metadata = std::fs::metadata(path)?;
+        Self::of(source_public_id, &std::fs::metadata(path)?)
+    }
+
+    /// The version of the file `metadata` describes, failing when it is not a regular file.
+    pub(crate) fn of(
+        source_public_id: String,
+        metadata: &std::fs::Metadata,
+    ) -> std::io::Result<Self> {
         if !metadata.is_file() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,

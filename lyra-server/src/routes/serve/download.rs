@@ -20,12 +20,7 @@ use axum::{
         HeaderMap,
         Method,
         Response,
-        header,
     },
-};
-use lyra_ffmpeg::{
-    FfmpegContext,
-    Output,
 };
 use serde::Deserialize;
 
@@ -36,11 +31,9 @@ use super::{
     ServeTrackOptions,
     TranscodeKnobs,
     apply_request_start_offset,
-    file_response,
-    head_body,
     resolve_delivery,
-    temp_file_response,
-    temp_output_path,
+    source_file_response,
+    transcoded::transcoded_response,
     validate_and_get_track_source,
     validate_request,
 };
@@ -132,7 +125,7 @@ async fn get_download(
 }
 
 /// Serves a track as `GET` would. A `HEAD` request gets the same decision and headers without
-/// running FFmpeg, so it cannot know the transcoded length.
+/// running FFmpeg, with the length when the transcode is already cached.
 pub(crate) async fn download_track_response(
     method: &Method,
     headers: &HeaderMap,
@@ -168,49 +161,9 @@ pub(crate) async fn download_track_response(
     )?;
 
     if delivery.direct_passthrough {
-        return file_response(&source.full_path, delivery.content_type, headers).await;
+        return source_file_response(&source, delivery.content_type, headers).await;
     }
-
-    let temp_path = temp_output_path(track_id, delivery.output_format);
-    let temp_path_string = temp_path.to_string_lossy().into_owned();
-    let output = delivery.configure_output(Output::new(temp_path_string));
-
-    let context = FfmpegContext::builder()
-        .input(source.input_path)
-        .start_ms(source.start_ms)
-        .end_ms(source.end_ms)
-        .output(output)
-        .build()?;
-    if method == Method::HEAD {
-        return Ok(Response::builder()
-            .header(header::CONTENT_TYPE, delivery.content_type)
-            .header(header::ACCEPT_RANGES, "bytes")
-            .header(header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
-            .header(header::PRAGMA, "no-cache")
-            .header(header::EXPIRES, "0")
-            .body(head_body())?);
-    }
-
-    let result =
-        tokio::task::spawn_blocking(move || context.start().map(|handle| handle.wait())).await?;
-    match result {
-        Err(e) => {
-            let _ = tokio::fs::remove_file(&temp_path).await;
-            return Err(e.into());
-        }
-        Ok(Err(e)) => {
-            let _ = tokio::fs::remove_file(&temp_path).await;
-            return Err(e.into());
-        }
-        Ok(Ok(())) => {}
-    }
-
-    let response = temp_file_response(&temp_path, delivery.content_type, headers).await;
-    if response.is_err() {
-        let _ = tokio::fs::remove_file(&temp_path).await;
-    }
-
-    response
+    transcoded_response(method, headers, source, delivery, DeliveryTarget::Download).await
 }
 
 #[cfg(feature = "docgen")]

@@ -165,6 +165,7 @@ pub(crate) struct GenerationState {
     pub(crate) playback_scopes: PlaybackScopes,
     pub(crate) library_sync: LibrarySyncRegistries,
     pub(crate) hls_cleanup: HlsCleanupState,
+    pub(crate) transcode_cache: Arc<services::transcoding::cache::TranscodeCache>,
 }
 
 pub(crate) struct AppState {

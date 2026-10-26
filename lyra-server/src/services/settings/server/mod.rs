@@ -298,6 +298,7 @@ mod tests {
             CorsConfig,
             HlsConfig,
             SyncConfig,
+            TranscodingConfig,
         },
         *,
     };
@@ -368,6 +369,10 @@ mod tests {
                 temp_disk_budget_bytes: None,
                 cleanup_startup_purge: true,
                 max_concurrent_transcodes: 0,
+            },
+            transcoding: TranscodingConfig {
+                cache_max_bytes: 1_073_741_824,
+                cache_ttl_seconds: 3_600,
             },
         };
         assert_eq!(*resolved.config, expected);

@@ -3,10 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::path::{
-    Path as FsPath,
-    PathBuf,
-};
+use std::path::Path as FsPath;
 
 use anyhow::{
     Context,
@@ -86,27 +83,12 @@ fn parse_range_header(value: &HeaderValue, size: u64) -> RangeParse {
     RangeParse::Valid { start, end }
 }
 
-async fn cleanup_temp_file(path: Option<PathBuf>) {
-    let Some(path) = path else {
-        return;
-    };
-
-    if let Err(err) = tokio::fs::remove_file(&path).await {
-        tracing::debug!(
-            path = %path.display(),
-            error = %err,
-            "failed to remove temp file"
-        );
-    }
-}
-
 pub(crate) async fn build_ranged_file_body(
     path: &FsPath,
     range_header: Option<&HeaderValue>,
     base_status: StatusCode,
-    cleanup_path: Option<PathBuf>,
 ) -> Result<RangedFileBody> {
-    let mut file = tokio::fs::File::open(path)
+    let file = tokio::fs::File::open(path)
         .await
         .with_context(|| format!("failed to open file '{}'", path.display()))?;
     let metadata = file
@@ -116,8 +98,16 @@ pub(crate) async fn build_ranged_file_body(
     if !metadata.is_file() {
         bail!("path '{}' is not a file", path.display());
     }
+    build_ranged_body(file, metadata.len(), range_header, base_status)
+}
 
-    let size = metadata.len();
+/// Serves `size` bytes of an already open `file`, honoring a single byte range.
+pub(crate) fn build_ranged_body(
+    mut file: tokio::fs::File,
+    size: u64,
+    range_header: Option<&HeaderValue>,
+    base_status: StatusCode,
+) -> Result<RangedFileBody> {
     let mut start = 0_u64;
     let mut end = size.saturating_sub(1);
     let mut status = base_status;
@@ -137,7 +127,6 @@ pub(crate) async fn build_ranged_file_body(
                 content_range = Some(encoded);
             }
             RangeParse::Invalid => {
-                cleanup_temp_file(cleanup_path).await;
                 let encoded = HeaderValue::from_str(&format!("bytes */{size}"))
                     .context("failed to encode content-range header")?;
                 return Ok(RangedFileBody {
@@ -160,15 +149,11 @@ pub(crate) async fn build_ranged_file_body(
         let mut buffer = vec![0_u8; FILE_STREAM_CHUNK_SIZE];
         if start > 0
             && let Err(err) = tokio::select! {
-                _ = shutdown.cancelled() => {
-                    cleanup_temp_file(cleanup_path).await;
-                    return;
-                }
+                _ = shutdown.cancelled() => return,
                 result = file.seek(SeekFrom::Start(start)) => result,
             }
         {
             let _ = tx.send(Err(err)).await;
-            cleanup_temp_file(cleanup_path).await;
             return;
         }
         let mut remaining = content_length_u64;
@@ -204,7 +189,6 @@ pub(crate) async fn build_ranged_file_body(
                 }
             }
         }
-        cleanup_temp_file(cleanup_path).await;
     });
 
     Ok(RangedFileBody {
@@ -243,8 +227,7 @@ mod tests {
         let file_size = FILE_STREAM_CHUNK_SIZE * 96;
         tokio::fs::write(&path, vec![7_u8; file_size]).await?;
 
-        let ranged =
-            build_ranged_file_body(&path, None, StatusCode::OK, Some(path.clone())).await?;
+        let ranged = build_ranged_file_body(&path, None, StatusCode::OK).await?;
         shutdown.cancel();
         let bytes = tokio::time::timeout(Duration::from_secs(1), to_bytes(ranged.body, usize::MAX))
             .await??;

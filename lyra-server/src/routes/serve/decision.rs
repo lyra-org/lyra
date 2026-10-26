@@ -393,7 +393,7 @@ pub(crate) enum DeliveryTarget {
 }
 
 impl DeliveryTarget {
-    fn is_streaming(self) -> bool {
+    pub(crate) fn is_streaming(self) -> bool {
         matches!(self, Self::Stream)
     }
 

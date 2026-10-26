@@ -68,3 +68,4 @@ Copy [`config.example.json`](../config.example.json) to `config.json`, keeping o
 - `db.kind` accepts `mmap`, `file`, or `memory`. `memory` never writes the database to disk.
 - Durations are in seconds. `sync.interval_secs` sets how often provider metadata is refreshed; `0` disables periodic refreshes, but one still runs at startup.
 - The HLS disk budget is in bytes; `null` or `0` means no budget. `max_concurrent_transcodes: 0` means no limit.
+- Transcoded audio is cached briefly in `transcodes` under the data directory, which is emptied at startup. `transcoding.cache_max_bytes` bounds its size (a larger transcode is still served, just not kept) and `transcoding.cache_ttl_seconds` removes transcodes not requested for that long. No new transcode starts while that disk has less than 1 GiB free; such requests get `503 Service Unavailable` with `Retry-After`.

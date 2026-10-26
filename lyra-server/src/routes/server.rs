@@ -677,7 +677,15 @@ mod tests {
             .collect();
         assert_eq!(
             group_ids,
-            vec!["server", "cors", "rate_limit", "auth", "sync", "hls"]
+            vec![
+                "server",
+                "cors",
+                "rate_limit",
+                "auth",
+                "sync",
+                "hls",
+                "transcoding"
+            ]
         );
         assert_eq!(body["groups"][3]["label"], json!("Authentication"));
 

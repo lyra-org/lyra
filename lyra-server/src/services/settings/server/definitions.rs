@@ -39,6 +39,10 @@ const HLS: SettingGroup = SettingGroup {
     id: "hls",
     label: "HLS",
 };
+const TRANSCODING: SettingGroup = SettingGroup {
+    id: "transcoding",
+    label: "Transcoding",
+};
 
 const fn setting(
     key: &'static str,
@@ -206,5 +210,23 @@ pub(super) static ALL: &[SettingDefinition] = &[
         "Concurrent HLS transcodes allowed; 0 means unlimited.",
         Live,
         Kind::U32 { default: 0 },
+    ),
+    setting(
+        "transcoding.cache_max_bytes",
+        TRANSCODING,
+        "Cache size (bytes)",
+        "Finished transcodes kept on disk for repeat and ranged requests; the least recently used are removed beyond this size, and a transcode larger than it is served but not kept.",
+        Live,
+        Kind::U64 {
+            default: 1_073_741_824,
+        },
+    ),
+    setting(
+        "transcoding.cache_ttl_seconds",
+        TRANSCODING,
+        "Cache lifetime (seconds)",
+        "Finished transcodes not requested for this long are removed.",
+        Live,
+        Kind::U64 { default: 3_600 },
     ),
 ];

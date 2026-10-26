@@ -67,6 +67,7 @@ pub(crate) mod startup;
 mod system;
 pub(crate) mod tags;
 pub(crate) mod tracks;
+pub(crate) mod transcoding;
 
 pub(crate) use system::SystemContext;
 

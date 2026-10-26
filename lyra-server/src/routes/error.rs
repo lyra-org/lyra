@@ -120,6 +120,13 @@ impl AppError {
         Self::with_status(StatusCode::UNSUPPORTED_MEDIA_TYPE, message.into())
     }
 
+    pub fn service_unavailable_for(message: impl Into<String>, retry_after: Duration) -> Self {
+        Self {
+            retry_after: Some(retry_after),
+            ..Self::service_unavailable(message)
+        }
+    }
+
     pub fn too_many_requests(retry_after: Duration) -> Self {
         Self {
             retry_after: Some(retry_after),

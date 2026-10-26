@@ -8,6 +8,7 @@ mod download;
 mod hls;
 mod ranged_file;
 mod stream;
+mod transcoded;
 
 pub(crate) use decision::{
     DeliveryTarget,
@@ -25,6 +26,10 @@ pub(crate) use hls::{
     serve_hls_playlist_for_track,
 };
 pub(crate) use ranged_file::build_ranged_file_body;
+use ranged_file::{
+    RangedFileBody,
+    build_ranged_body,
+};
 pub(crate) use stream::stream_track_response;
 
 use axum::Router;
@@ -46,10 +51,6 @@ use lyra_ffmpeg::{
 use std::path::{
     Path as FsPath,
     PathBuf,
-};
-use std::time::{
-    SystemTime,
-    UNIX_EPOCH,
 };
 
 use crate::{
@@ -355,34 +356,14 @@ fn head_body() -> Body {
     Body::from_stream(futures::stream::empty::<Result<bytes::Bytes, std::io::Error>>())
 }
 
-pub fn temp_output_path(track_id: &str, format: AudioFormat) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    std::env::temp_dir().join(format!(
-        "lyra-download-{}-{}.{}",
-        track_id,
-        nanos,
-        format.extension()
-    ))
-}
+pub(super) const NO_STORE: &str = "no-cache, no-store, must-revalidate";
 
-async fn file_response_internal(
-    path: &FsPath,
+/// A response carrying `ranged`, the body of a file served with byte ranges.
+fn ranged_response(
+    ranged: RangedFileBody,
     content_type: &str,
-    headers: &HeaderMap,
-    cleanup_path: Option<PathBuf>,
     cache_control: &str,
 ) -> Result<Response<Body>, AppError> {
-    let ranged = build_ranged_file_body(
-        path,
-        headers.get(header::RANGE),
-        StatusCode::OK,
-        cleanup_path,
-    )
-    .await?;
-
     if ranged.status == StatusCode::RANGE_NOT_SATISFIABLE {
         let mut response = Response::builder().status(ranged.status);
         if let Some(content_range) = ranged.content_range {
@@ -398,7 +379,7 @@ async fn file_response_internal(
         .header(header::ACCEPT_RANGES, "bytes")
         .header(header::CACHE_CONTROL, cache_control);
 
-    if cache_control == "no-cache, no-store, must-revalidate" {
+    if cache_control == NO_STORE {
         response = response
             .header(header::PRAGMA, "no-cache")
             .header(header::EXPIRES, "0");
@@ -416,14 +397,7 @@ pub async fn file_response(
     content_type: &str,
     headers: &HeaderMap,
 ) -> Result<Response<Body>, AppError> {
-    file_response_internal(
-        path,
-        content_type,
-        headers,
-        None,
-        "no-cache, no-store, must-revalidate",
-    )
-    .await
+    file_response_with_cache_control(path, content_type, headers, NO_STORE).await
 }
 
 pub(crate) async fn file_response_with_cache_control(
@@ -432,22 +406,37 @@ pub(crate) async fn file_response_with_cache_control(
     headers: &HeaderMap,
     cache_control: &str,
 ) -> Result<Response<Body>, AppError> {
-    file_response_internal(path, content_type, headers, None, cache_control).await
+    let ranged = build_ranged_file_body(path, headers.get(header::RANGE), StatusCode::OK).await?;
+    ranged_response(ranged, content_type, cache_control)
 }
 
-pub async fn temp_file_response(
-    path: &FsPath,
+/// Serves the source file itself. It is served from the handle its version is read from, so what
+/// is sent is the file the request was authorized for, never one that replaced it since.
+async fn source_file_response(
+    source: &ValidatedTrackSource,
     content_type: &str,
     headers: &HeaderMap,
 ) -> Result<Response<Body>, AppError> {
-    file_response_internal(
-        path,
-        content_type,
-        headers,
-        Some(path.to_path_buf()),
-        "no-cache, no-store, must-revalidate",
-    )
-    .await
+    let file = tokio::fs::File::open(&source.full_path).await?;
+    let metadata = file.metadata().await?;
+    let version = SourceVersion::of(source.version.source_public_id.clone(), &metadata)?;
+    if version != source.version {
+        return Err(AppError::conflict(
+            "the track's source changed while it was being served; retry",
+        ));
+    }
+    open_file_response(file, metadata.len(), content_type, headers)
+}
+
+/// Serves an already open file of `size` bytes, as [`file_response`] serves a path.
+fn open_file_response(
+    file: tokio::fs::File,
+    size: u64,
+    content_type: &str,
+    headers: &HeaderMap,
+) -> Result<Response<Body>, AppError> {
+    let ranged = build_ranged_body(file, size, headers.get(header::RANGE), StatusCode::OK)?;
+    ranged_response(ranged, content_type, NO_STORE)
 }
 
 pub fn stream_routes() -> Router {
@@ -971,15 +960,22 @@ mod tests {
         method: Method,
         uri: String,
     ) -> anyhow::Result<(StatusCode, HeaderMap, axum::body::Bytes)> {
+        send_with_range(method, uri, None).await
+    }
+
+    async fn send_with_range(
+        method: Method,
+        uri: String,
+        range: Option<&str>,
+    ) -> anyhow::Result<(StatusCode, HeaderMap, axum::body::Bytes)> {
         use tower::ServiceExt;
 
+        let mut request = axum::http::Request::builder().method(method).uri(uri);
+        if let Some(range) = range {
+            request = request.header(axum::http::header::RANGE, range);
+        }
         let response = super::stream_routes()
-            .oneshot(
-                axum::http::Request::builder()
-                    .method(method)
-                    .uri(uri)
-                    .body(axum::body::Body::empty())?,
-            )
+            .oneshot(request.body(axum::body::Body::empty())?)
             .await?;
         let status = response.status();
         let headers = response.headers().clone();
@@ -1256,6 +1252,85 @@ mod tests {
 
         let (status, _, _) = send(Method::GET, format!("/{track_id}?{query}")).await?;
         assert_eq!(status, StatusCode::GONE);
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn stream_serves_a_finished_transcode_from_the_cache() -> anyhow::Result<()> {
+        use axum::http::header::{
+            ACCEPT_RANGES,
+            CONTENT_LENGTH,
+            CONTENT_RANGE,
+            TRANSFER_ENCODING,
+        };
+
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let headers = create_user_with_permissions("cache-listener", vec![]).await?;
+        let token_query = playback_url_query(&track_id, &headers, "stream_url").await?;
+        let uri = format!("/{track_id}?{token_query}&format=mp3&bitrate_bps=96000");
+
+        let (status, first_headers, encoded) = send(Method::GET, uri.clone()).await?;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(first_headers[ACCEPT_RANGES], "none");
+        assert_eq!(first_headers[TRANSFER_ENCODING], "chunked");
+        assert!(!encoded.is_empty());
+
+        let (status, cached_headers, cached) = send(Method::GET, uri.clone()).await?;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(cached_headers[ACCEPT_RANGES], "bytes");
+        assert_eq!(cached_headers[CONTENT_LENGTH], encoded.len().to_string());
+        assert_eq!(cached, encoded);
+
+        let (status, head_headers, _) = send(Method::HEAD, uri.clone()).await?;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(head_headers[CONTENT_LENGTH], encoded.len().to_string());
+
+        let (status, range_headers, range) =
+            send_with_range(Method::GET, uri, Some("bytes=10-19")).await?;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            range_headers[CONTENT_RANGE],
+            format!("bytes 10-19/{}", encoded.len())
+        );
+        assert_eq!(&range[..], &encoded[10..20]);
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_cached_flac_transcode_has_a_complete_streaminfo() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let headers = create_user_with_permissions("flac-listener", vec![]).await?;
+        let token_query = playback_url_query(&track_id, &headers, "stream_url").await?;
+        let uri = format!("/{track_id}?{token_query}&format=flac&sample_rate_hz=22050");
+
+        let (status, _, _) = send(Method::GET, uri.clone()).await?;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _, flac) = send(Method::GET, uri).await?;
+        assert_eq!(status, StatusCode::OK);
+
+        assert_eq!(&flac[..4], b"fLaC");
+        assert_eq!(flac[4] & 0x7f, 0, "the first metadata block is STREAMINFO");
+        let streaminfo = &flac[8..42];
+        let total_samples = (u64::from(streaminfo[13] & 0x0f) << 32)
+            | u64::from(u32::from_be_bytes([
+                streaminfo[14],
+                streaminfo[15],
+                streaminfo[16],
+                streaminfo[17],
+            ]));
+        assert!(total_samples > 0, "STREAMINFO carries the sample count");
+        assert!(
+            streaminfo[18..34].iter().any(|byte| *byte != 0),
+            "STREAMINFO carries the audio's MD5"
+        );
 
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())
