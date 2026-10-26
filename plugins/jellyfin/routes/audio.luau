@@ -9,6 +9,7 @@ local lyrics = require("@lyra/lyrics")
 local tracks = require("@lyra/tracks")
 
 local constants = require("../constants")
+local encoder = require("../protocol/items/encoder")
 local item_ids = require("../protocol/items/identifiers")
 local lyrics_protocol = require("../protocol/lyrics")
 local media = require("../protocol/items/media")
@@ -113,6 +114,48 @@ local function jellyfin_boolean(raw: string?): boolean?
 	return nil
 end
 
+-- Upstream names the codec a container carries when a request leaves the codec out.
+local function infer_audio_codec(container: string?): string
+	if
+		container == "ogg"
+		or container == "oga"
+		or container == "ogv"
+		or container == "webm"
+		or container == "webma"
+	then
+		return "opus"
+	end
+	if
+		container == "m4a"
+		or container == "m4b"
+		or container == "mp4"
+		or container == "mov"
+		or container == "mkv"
+		or container == "mka"
+	then
+		return "aac"
+	end
+	if container == "ts" or container == "avi" or container == "flv" or container == "f4v" or container == "swf" then
+		return "mp3"
+	end
+	if
+		container == "aac"
+		or container == "ac3"
+		or container == "alac"
+		or container == "dts"
+		or container == "eac3"
+		or container == "flac"
+		or container == "mp2"
+		or container == "mp3"
+		or container == "opus"
+		or container == "truehd"
+		or container == "vorbis"
+	then
+		return container
+	end
+	return "aac"
+end
+
 -- `/universal` takes the client's direct-play containers and falls back to its transcoding settings.
 function module.handle_universal_route(ctx: ApiContext): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
@@ -198,6 +241,8 @@ function module.handle_universal_route(ctx: ApiContext): ApiResponse
 		return responses.not_found("item not found")
 	end
 
+	local source = media.resolve_playback_source_for_track(track)
+	local source_channels = if source then source.channel_count else nil
 	local media_source = playback.build_audio_media_source(item_id, track, false)
 	if
 		playback.audio_supports_direct_play_from_container_csv(
@@ -227,11 +272,19 @@ function module.handle_universal_route(ctx: ApiContext): ApiResponse
 		if preferred_codecs ~= nil and hls_codec == nil then
 			return responses.bad_request("unsupported hls codec; supported values: aac, alac, flac")
 		end
+		local settings = encoder.settings(
+			query,
+			{ max_audio_channels = channels },
+			preferred_codecs or { "aac" },
+			bitrate_bps,
+			source_channels,
+			true
+		)
 		local options: api.HlsServeOptions = {
 			preferred_codecs = preferred_codecs,
-			bitrate_bps = bitrate_bps,
+			bitrate_bps = settings.bitrate_bps,
 			sample_rate_hz = sample_rate_hz,
-			channels = channels,
+			channels = settings.channels,
 			start_offset_ms = start_offset_ms,
 		}
 		return api.response.hls_playlist(track_id, options)
@@ -246,57 +299,23 @@ function module.handle_universal_route(ctx: ApiContext): ApiResponse
 		effective_transcoding_container = "mp3"
 	end
 
+	local settings = encoder.settings(
+		query,
+		{ max_audio_channels = channels, audio_channels = channels },
+		effective_preferred_codecs or { infer_audio_codec(effective_transcoding_container) },
+		bitrate_bps,
+		source_channels,
+		false
+	)
 	local options: api.TrackStreamOptions = {
 		format = effective_transcoding_container,
 		preferred_codecs = effective_preferred_codecs,
-		bitrate_bps = bitrate_bps,
+		bitrate_bps = settings.bitrate_bps,
 		sample_rate_hz = sample_rate_hz,
-		channels = channels,
+		channels = settings.channels,
 		start_offset_ms = start_offset_ms,
 	}
 	return api.response.stream_track(track_id, options)
-end
-
--- Upstream names the codec a container carries when a request leaves the codec out.
-local function infer_audio_codec(container: string?): string
-	if
-		container == "ogg"
-		or container == "oga"
-		or container == "ogv"
-		or container == "webm"
-		or container == "webma"
-	then
-		return "opus"
-	end
-	if
-		container == "m4a"
-		or container == "m4b"
-		or container == "mp4"
-		or container == "mov"
-		or container == "mkv"
-		or container == "mka"
-	then
-		return "aac"
-	end
-	if container == "ts" or container == "avi" or container == "flv" or container == "f4v" or container == "swf" then
-		return "mp3"
-	end
-	if
-		container == "aac"
-		or container == "ac3"
-		or container == "alac"
-		or container == "dts"
-		or container == "eac3"
-		or container == "flac"
-		or container == "mp2"
-		or container == "mp3"
-		or container == "opus"
-		or container == "truehd"
-		or container == "vorbis"
-	then
-		return container
-	end
-	return "aac"
 end
 
 -- Upstream's output container for a codec when a request names none; otherwise the server picks.
@@ -307,19 +326,21 @@ local CONTAINER_BY_AUDIO_CODEC: { [string]: string } = {
 	wma = "wma",
 }
 
--- The fewest channels any of upstream's channel parameters allows.
-local function parse_requested_channels(query: ApiQueryParams?): (number?, ApiResponse?)
-	local channels: number? = nil
-	for _, name in { "audioChannels", "maxAudioChannels", "transcodingMaxAudioChannels" } do
+local function parse_requested_channels(query: ApiQueryParams?): (encoder.ChannelRequest?, ApiResponse?)
+	local values: { [string]: number? } = {}
+	for _, name in { "maxAudioChannels", "audioChannels", "transcodingMaxAudioChannels" } do
 		local value, err = extract_integer_param(requests.parse_query_string(query, { name }, nil))
 		if err then
 			return nil, responses.bad_request(`{name} {err}`)
 		end
-		if value ~= nil and (channels == nil or value < channels) then
-			channels = value
-		end
+		values[name] = value
 	end
-	return channels, nil
+	return {
+		max_audio_channels = values.maxAudioChannels,
+		audio_channels = values.audioChannels,
+		transcoding_max_audio_channels = values.transcodingMaxAudioChannels,
+	},
+		nil
 end
 
 -- Upstream's `/stream` and `/stream.{container}`: `static=true` sends the original file, and
@@ -346,9 +367,9 @@ function module.handle_stream_route(ctx: ApiContext): ApiResponse
 	if bit_depth_err then
 		return responses.bad_request(`maxAudioBitDepth {bit_depth_err}`)
 	end
-	local channels, channels_err = parse_requested_channels(query)
-	if channels_err then
-		return channels_err
+	local channel_request, channels_err = parse_requested_channels(query)
+	if channel_request == nil then
+		return channels_err or responses.bad_request("invalid channels")
 	end
 	local start_ticks, start_ticks_err =
 		extract_integer_param(requests.parse_query_string(query, { "startTimeTicks" }, nil))
@@ -379,14 +400,17 @@ function module.handle_stream_route(ctx: ApiContext): ApiResponse
 	local codecs = parse_preferred_csv_values(requests.parse_query_string(query, { "audioCodec" }, nil))
 		or { infer_audio_codec(container) }
 	container = container or CONTAINER_BY_AUDIO_CODEC[codecs[1]]
+	local source = media.resolve_public_playback_source(track)
+	local source_channels = if source then source.channel_count else nil
+	local settings = encoder.settings(query, channel_request, codecs, bitrate_bps, source_channels, false)
 
 	return api.response.stream_track(track_id, {
 		public = true,
 		format = container,
 		preferred_codecs = codecs,
-		bitrate_bps = bitrate_bps,
+		bitrate_bps = settings.bitrate_bps,
 		sample_rate_hz = sample_rate_hz,
-		channels = channels,
+		channels = settings.channels,
 		start_offset_ms = jellyfin_ticks_to_ms(start_ticks),
 	})
 end
@@ -449,7 +473,10 @@ local function codec_string_for_audio_hls(codec: string): string?
 	return nil
 end
 
-local function resolve_audio_hls_query_options(query: ApiQueryParams?): (api.HlsServeOptions?, string?, ApiResponse?)
+local function resolve_audio_hls_query_options(
+	query: ApiQueryParams?,
+	track: Track
+): (api.HlsServeOptions?, string?, ApiResponse?)
 	local raw_codec = requests.parse_query_string(query, { "audioCodec", "AudioCodec", "codec" }, nil)
 	local preferred_codecs = parse_preferred_csv_values(raw_codec)
 	local selected_codec = find_supported_audio_hls_codec(preferred_codecs)
@@ -475,20 +502,30 @@ local function resolve_audio_hls_query_options(query: ApiQueryParams?): (api.Hls
 	if sample_rate_err then
 		return nil, nil, responses.bad_request(`audioSampleRate {sample_rate_err}`)
 	end
-	local channels, channels_err = parse_requested_channels(query)
-	if channels_err then
+	local channel_request, channels_err = parse_requested_channels(query)
+	if channel_request == nil then
 		return nil, nil, channels_err
 	end
 	local start_ticks, start_ticks_err = extract_integer_param(raw_start_ticks)
 	if start_ticks_err then
 		return nil, nil, responses.bad_request(`StartTimeTicks {start_ticks_err}`)
 	end
+	local source = media.resolve_playback_source_for_track(track)
+	local source_channels = if source then source.channel_count else nil
+	local settings = encoder.settings(
+		query,
+		channel_request,
+		{ selected_codec or "aac" },
+		requested_audio_bitrate or requested_max_bitrate,
+		source_channels,
+		true
+	)
 
 	return {
 		preferred_codecs = preferred_codecs,
-		bitrate_bps = requested_audio_bitrate or requested_max_bitrate,
+		bitrate_bps = settings.bitrate_bps,
 		sample_rate_hz = sample_rate_hz,
-		channels = channels,
+		channels = settings.channels,
 		start_offset_ms = jellyfin_ticks_to_ms(start_ticks),
 	},
 		selected_codec or "aac",
@@ -572,7 +609,7 @@ local function resolve_audio_hls_playlist_request(ctx: ApiContext): (ResolvedAud
 	end
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options, selected_codec, options_err = resolve_audio_hls_query_options(query)
+	local options, selected_codec, options_err = resolve_audio_hls_query_options(query, track)
 	if options == nil then
 		return nil, options_err or responses.bad_request("invalid hls options")
 	end

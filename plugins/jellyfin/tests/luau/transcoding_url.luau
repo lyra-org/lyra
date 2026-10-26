@@ -184,8 +184,9 @@ end
 local opus_options = stream_options(opus_url)
 assert(opus_options.format == "opus", `format {opus_options.format}`)
 assert(codecs(opus_options) == "opus", `codecs {codecs(opus_options)}`)
-assert(opus_options.bitrate_bps == 192000, `bitrate {opus_options.bitrate_bps}`)
-assert(opus_options.channels == 6, `channels {opus_options.channels}`)
+-- The fixture is mono: upstream encodes it at one channel, capped at 128 kbps.
+assert(opus_options.bitrate_bps == 128000, `bitrate {opus_options.bitrate_bps}`)
+assert(opus_options.channels == 1, `channels {opus_options.channels}`)
 assert(opus_options.prefer_vbr == nil, "upstream's default encoding options use a constant bitrate")
 
 local aac_options = stream_options(aac_url)
