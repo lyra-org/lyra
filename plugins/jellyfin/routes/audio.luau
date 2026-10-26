@@ -11,6 +11,7 @@ local tracks = require("@lyra/tracks")
 local constants = require("../constants")
 local item_ids = require("../protocol/items/identifiers")
 local lyrics_protocol = require("../protocol/lyrics")
+local media = require("../protocol/items/media")
 local playback = require("../protocol/items/playback")
 local requests = require("../protocol/items/requests")
 local responses = require("../protocol/items/responses")
@@ -501,7 +502,8 @@ local function resolve_audio_hls_variant_bandwidth(
 ): number
 	local codec = selected_codec
 	local requested_bitrate = options.bitrate_bps
-	local track_bitrate = if track.bitrate_bps and track.bitrate_bps > 0 then track.bitrate_bps else nil
+	local source = media.resolve_playback_source_for_track(track)
+	local track_bitrate = if source and source.bitrate_bps and source.bitrate_bps > 0 then source.bitrate_bps else nil
 
 	if codec == "aac" then
 		if requested_bitrate ~= nil then

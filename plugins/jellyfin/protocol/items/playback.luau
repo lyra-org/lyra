@@ -643,16 +643,16 @@ local function build_media_info(
 	local container = media.jellyfin_container(source)
 	local codec = media.jellyfin_codec(source)
 	local size = if entry and entry.size then tonumber(entry.size) else nil
-	local bitrate = if track then track.bitrate_bps else nil
+	local bitrate = if source then source.bitrate_bps else nil
 	local direct_playable = source ~= nil and media_item_id ~= nil
 
 	local media_stream: MediaStream = {
 		Codec = codec,
 		Type = "Audio",
 		Index = 0,
-		Channels = if track then track.channel_count else nil,
-		SampleRate = if track then track.sample_rate_hz else nil,
-		BitDepth = if track then track.bit_depth else nil,
+		Channels = if source then source.channel_count else nil,
+		SampleRate = if source then source.sample_rate_hz else nil,
+		BitDepth = if source then source.bit_depth else nil,
 		IsDefault = true,
 		IsForced = false,
 		IsHearingImpaired = false,

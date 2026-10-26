@@ -91,10 +91,6 @@ type TrackRecord = {
 	disc: index<Track, "disc">,
 	track: index<Track, "track">,
 	duration_ms: index<Track, "duration_ms">,
-	sample_rate_hz: index<Track, "sample_rate_hz">,
-	channel_count: index<Track, "channel_count">,
-	bit_depth: index<Track, "bit_depth">,
-	bitrate_bps: index<Track, "bitrate_bps">,
 	track_gain_db: index<Track, "track_gain_db">,
 	album_gain_db: index<Track, "album_gain_db">,
 	created_at: index<Track, "created_at">,
@@ -860,16 +856,16 @@ function helpers.build_media_info(
 	local container = media.jellyfin_container(source)
 	local codec = media.jellyfin_codec(source)
 	local size = if entry and entry.size then tonumber(entry.size) else nil
-	local bitrate = if track then track.bitrate_bps else nil
+	local bitrate = if source then source.bitrate_bps else nil
 	local direct_playable = source ~= nil and media_item_id ~= nil
 
 	local media_stream: MediaStreamInfo = {
 		Codec = codec,
 		Type = "Audio",
 		Index = 0,
-		Channels = if track then track.channel_count else nil,
-		SampleRate = if track then track.sample_rate_hz else nil,
-		BitDepth = if track then track.bit_depth else nil,
+		Channels = if source then source.channel_count else nil,
+		SampleRate = if source then source.sample_rate_hz else nil,
+		BitDepth = if source then source.bit_depth else nil,
 		IsDefault = true,
 		IsForced = false,
 		IsHearingImpaired = false,
