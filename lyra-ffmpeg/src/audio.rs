@@ -5,6 +5,8 @@
 
 /// Writes MP4 as a header with no samples followed by one-second fragments, so a client can
 /// play it while it is still being encoded.
+/// A placeholder Xing header reads as a zero-frame file until the encode finishes and rewrites it.
+const STREAMED_MP3_MUXER_OPTS: &[(&str, &str)] = &[("write_xing", "0")];
 const FRAGMENTED_MP4_MUXER_OPTS: &[(&str, &str)] = &[
     ("movflags", "empty_moov+delay_moov+default_base_moof"),
     ("frag_duration", "1000000"),
@@ -130,9 +132,11 @@ impl AudioFormat {
         !matches!(self, Self::Caf)
     }
 
-    /// Muxer options a streamed output needs because it cannot seek back to finish its header.
+    /// Muxer options a streamed output needs because it is read before the muxer can seek back to
+    /// finish its header.
     pub(crate) fn streaming_muxer_opts(&self) -> &'static [(&'static str, &'static str)] {
         match self {
+            Self::Mp3 => STREAMED_MP3_MUXER_OPTS,
             Self::M4a | Self::Alac => FRAGMENTED_MP4_MUXER_OPTS,
             _ => &[],
         }
