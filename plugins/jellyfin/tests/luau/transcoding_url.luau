@@ -134,6 +134,8 @@ assert(not stuck.SupportsDirectPlay and not stuck.SupportsTranscoding, "nothing 
 assert(stuck.TranscodingUrl == nil, `url {stuck.TranscodingUrl}`)
 
 local direct = media_source({
+	-- Over the 40 Mbps upstream counts a source of unknown bitrate as.
+	MaxStreamingBitrate = 50000000,
 	DeviceProfile = {
 		DirectPlayProfiles = { { Type = "Audio", Container = "ogg" } },
 		TranscodingProfiles = { audio_profile("opus", "opus", "http") },

@@ -28,9 +28,12 @@ local function described(properties: any): any
 	return copy
 end
 local surround = described({ channel_count = 6, sample_rate_hz = 48000, bitrate_bps = 320000 })
+-- Upstream's profiles cap direct play at 8 Mbps unless they say otherwise, and count a source of
+-- unknown bitrate as 40 Mbps, so most tests play the song at a known bitrate.
+local known = described({ bitrate_bps = 96000 })
 
 local function media_source(request: any, song: any?): any
-	local played = song or track
+	local played = song or known
 	local info = playback.build_playback_info(played.id, played, "session", request, nil, "secret")
 	assert(info.ErrorCode == nil, `error {info.ErrorCode}`)
 	local source = info.MediaSources[1]
@@ -72,6 +75,22 @@ assert(not unknown.SupportsDirectPlay and unknown.TranscodingUrl ~= nil, "an unk
 assert(
 	media_source({ MaxStreamingBitrate = 40000000, DeviceProfile = { DirectPlayProfiles = ogg } }, unmeasured).SupportsDirectPlay
 )
+
+-- A profile without a maximum streaming bitrate takes upstream's default of 8 Mbps, and one
+-- without a music transcoding bitrate transcodes at 128 kbps.
+assert(not media_source({ DeviceProfile = { DirectPlayProfiles = ogg } }, unmeasured).SupportsDirectPlay, "40 Mbps")
+assert(
+	not media_source({ DeviceProfile = { DirectPlayProfiles = ogg } }, described({ bitrate_bps = 8000001 })).SupportsDirectPlay
+)
+assert(
+	media_source({ DeviceProfile = { DirectPlayProfiles = ogg } }, described({ bitrate_bps = 8000000 })).SupportsDirectPlay
+)
+local original = media_source({ MaxStreamingBitrate = 100000000, DeviceProfile = { TranscodingProfiles = opus } })
+contains(original.TranscodingUrl, "AudioBitrate=128000&")
+local nulls = media_source({
+	DeviceProfile = { MaxStreamingBitrate = nil, MusicStreamingTranscodingBitrate = 320000, TranscodingProfiles = opus },
+})
+contains(nulls.TranscodingUrl, "AudioBitrate=320000&")
 assert(
 	media_source({ DeviceProfile = { MaxStreamingBitrate = 320000, DirectPlayProfiles = ogg } }, surround).SupportsDirectPlay,
 	"the profile's maximum applies without the request's"
@@ -111,3 +130,93 @@ contains(unencodable_url, `/audio/{unencodable.Id}/stream?MediaSourceId=`)
 assert(not string.find(unencodable_url, "AudioCodec", 1, true), unencodable_url)
 assert(not string.find(unencodable_url, "AudioBitrate", 1, true), unencodable_url)
 contains(unencodable_url, "EnableAudioVbrEncoding=false")
+
+-- Codec profiles limit what direct plays, and the transcode carries their limits.
+local function limited(codec_profiles: any, song: any?): any
+	return media_source({
+		DeviceProfile = {
+			MusicStreamingTranscodingBitrate = 192000,
+			DirectPlayProfiles = ogg,
+			TranscodingProfiles = {
+				{
+					Type = "Audio",
+					Context = "Streaming",
+					Container = "opus",
+					AudioCodec = "opus",
+					MaxAudioChannels = "6",
+				},
+			},
+			CodecProfiles = codec_profiles,
+		},
+	}, song or surround)
+end
+local function audio_profile(conditions: any, extra: any?): any
+	local profile = { Type = "Audio", Conditions = conditions }
+	for key, value in extra or {} do
+		profile[key] = value
+	end
+	return profile
+end
+local stereo = { Condition = "LessThanEqual", Property = "AudioChannels", Value = "2", IsRequired = false }
+
+local downmixed = limited({ audio_profile({ stereo }) })
+assert(not downmixed.SupportsDirectPlay, "six channels exceed the codec profile")
+contains(downmixed.TranscodingUrl, "TranscodingMaxAudioChannels=6")
+assert(string.sub(downmixed.TranscodingUrl, -#"&audiochannels=2") == "&audiochannels=2", downmixed.TranscodingUrl)
+assert(
+	limited({ audio_profile({ stereo }) }, described({ channel_count = 2, bitrate_bps = 96000 })).SupportsDirectPlay,
+	"stereo plays"
+)
+assert(limited({ audio_profile({ stereo }, { Codec = "flac" }) }).SupportsDirectPlay, "a profile for another codec")
+assert(
+	limited({ audio_profile({ stereo }, { Container = "-ogg" }) }).SupportsDirectPlay,
+	"a profile for other containers"
+)
+assert(not limited({ audio_profile({ stereo }, { Container = "ogg", Codec = "opus,flac" }) }).SupportsDirectPlay)
+assert(limited({ { Type = "VideoAudio", Conditions = { stereo } } }).SupportsDirectPlay, "a video's audio profile")
+
+-- Apply conditions decide whether a profile applies at all, judged on the source.
+local hires = { Condition = "GreaterThanEqual", Property = "AudioSampleRate", Value = "48000" }
+local at_most_cd = { Condition = "LessThanEqual", Property = "AudioSampleRate", Value = "44100" }
+local resampled = limited({ audio_profile({ at_most_cd }, { ApplyConditions = { hires } }) })
+assert(not resampled.SupportsDirectPlay, "48 kHz exceeds 44.1 kHz")
+contains(resampled.TranscodingUrl, "&AudioBitrate=192000&AudioSampleRate=44100&")
+local cd = described({ channel_count = 6, sample_rate_hz = 44100, bitrate_bps = 320000 })
+assert(limited({ audio_profile({ stereo }, { ApplyConditions = { hires } }) }, cd).SupportsDirectPlay, "not hi-res")
+
+-- An unknown value fails only a required condition, which conditions are unless they say not.
+assert(limited({ audio_profile({ stereo }) }, known).SupportsDirectPlay, "unknown channels")
+local required = { Condition = "LessThanEqual", Property = "AudioChannels", Value = "2" }
+assert(not limited({ audio_profile({ required }) }, known).SupportsDirectPlay, "unknown channels, required")
+local any_rate = { Condition = "EqualsAny", Property = "AudioSampleRate", Value = "44100|48000" }
+assert(limited({ audio_profile({ any_rate }) }).SupportsDirectPlay, "48 kHz is one of them")
+assert(
+	not limited({ audio_profile({ { Condition = "NotEquals", Property = 22, Value = "48000" } }) }).SupportsDirectPlay
+)
+
+-- A transcode takes the lowest bitrate, and an exact channel count over any earlier limit.
+local capped_bitrate = limited({
+	audio_profile({ { Condition = "LessThanEqual", Property = "AudioBitrate", Value = "128000" } }),
+	audio_profile({ { Condition = "Equals", Property = "AudioChannels", Value = "1" } }),
+})
+contains(capped_bitrate.TranscodingUrl, "AudioBitrate=128000&")
+assert(
+	string.sub(capped_bitrate.TranscodingUrl, -#"&audiochannels=1") == "&audiochannels=1",
+	capped_bitrate.TranscodingUrl
+)
+
+-- Upstream refuses a condition it can't read, and one on anything but audio once it applies.
+local function refused_with(codec_profiles: any): string?
+	local request = { DeviceProfile = { DirectPlayProfiles = ogg, CodecProfiles = codec_profiles } }
+	local info, err = playback.build_playback_info(surround.id, surround, "session", request, nil, "secret")
+	assert(err == nil or info == nil, "an error comes alone")
+	return err
+end
+assert(refused_with({ audio_profile({ { Condition = "Below", Property = "AudioChannels", Value = "2" } }) }))
+assert(refused_with({ audio_profile({ { Property = "Loudness", Value = "2" } }) }))
+assert(refused_with({ { Type = "Sound" } }))
+assert(refused_with({ audio_profile({ { Condition = "LessThanEqual", Property = "Width", Value = "2" } }) }))
+assert(
+	refused_with({ audio_profile({ { Property = "Width", Value = "2" } }, { Codec = "flac" }) }) == nil,
+	"never applies"
+)
