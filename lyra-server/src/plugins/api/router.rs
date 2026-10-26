@@ -560,12 +560,12 @@ fn rewrite_path_for_ci(pattern: &str, incoming: &str) -> String {
             }
             break;
         }
-        if is_placeholder_segment(pattern_seg) {
-            if let Some(seg) = incoming_iter.next() {
-                out.push(seg.to_string());
-            }
-        } else if let Some(seg) = incoming_iter.next() {
-            out.push(seg.to_ascii_lowercase());
+        let Some(seg) = incoming_iter.next() else {
+            continue;
+        };
+        match placeholder_offset(pattern_seg).and_then(|offset| seg.split_at_checked(offset)) {
+            Some((literal, value)) => out.push(format!("{}{value}", literal.to_ascii_lowercase())),
+            None => out.push(seg.to_ascii_lowercase()),
         }
     }
     out.join("/")
@@ -952,5 +952,20 @@ mod tests {
         assert!(matches_route_path(&matcher, "/Demo/Users/abc"));
         assert!(!matches_route_path(&matcher, "/assets/app.js"));
         assert!(!matches_route_path(&matcher, "/"));
+    }
+
+    #[test]
+    fn case_insensitive_rewrite_keeps_placeholder_values() {
+        assert_eq!(
+            rewrite_path_for_ci(
+                "/audio/{itemId}/stream.{container}",
+                "/Audio/AbC/Stream.MP3"
+            ),
+            "/audio/AbC/stream.MP3"
+        );
+        assert_eq!(
+            rewrite_path_for_ci("/files/{*rest}", "/Files/A/B"),
+            "/files/A/B"
+        );
     }
 }

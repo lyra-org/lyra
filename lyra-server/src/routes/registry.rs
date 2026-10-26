@@ -45,13 +45,18 @@ impl RouteKey {
     }
 }
 
-pub(crate) fn is_placeholder_segment(segment: &str) -> bool {
-    segment.starts_with('{') && !segment.starts_with("{{")
+/// Where a segment's placeholder starts after its literal prefix, or `None` for a literal
+/// segment. A placeholder runs to the end of its segment.
+pub(crate) fn placeholder_offset(segment: &str) -> Option<usize> {
+    if segment.starts_with("{{") {
+        return None;
+    }
+    segment.find('{')
 }
 
 // Matchit is the final gatekeeper at insert time — this pre-check only
-// rejects segments that mix literal and placeholder, which would break
-// case-insensitive lowering.
+// rejects segments whose literal text cannot be lowered apart from a
+// placeholder, such as a literal after one.
 fn validate_case_insensitive_segment(segment: &str) -> Result<()> {
     if segment.starts_with("{{") {
         return Ok(());
@@ -59,25 +64,31 @@ fn validate_case_insensitive_segment(segment: &str) -> Result<()> {
     if !segment.contains('{') && !segment.contains('}') {
         return Ok(());
     }
-    if segment.starts_with('{') && segment.ends_with('}') {
-        let inner = &segment[1..segment.len() - 1];
-        if !inner.contains('{') && !inner.contains('}') {
-            return Ok(());
-        }
+    if let Some(offset) = placeholder_offset(segment)
+        && let Some(inner) = segment[offset..]
+            .strip_prefix('{')
+            .and_then(|rest| rest.strip_suffix('}'))
+        && !segment[..offset].contains('}')
+        && !inner.contains('{')
+        && !inner.contains('}')
+        && (offset == 0 || !inner.starts_with('*'))
+    {
+        return Ok(());
     }
     bail!(
-        "case-insensitive route segment must be a pure literal, '{{name}}', or '{{*name}}': '{segment}'"
+        "case-insensitive route segment must be a literal, optionally followed by '{{name}}', or '{{*name}}': '{segment}'"
     )
 }
 
 pub(crate) fn lowercase_literal_segments(path: &str) -> String {
     path.split('/')
-        .map(|segment| {
-            if is_placeholder_segment(segment) {
-                segment.to_string()
-            } else {
-                segment.to_ascii_lowercase()
-            }
+        .map(|segment| match placeholder_offset(segment) {
+            Some(offset) => format!(
+                "{}{}",
+                segment[..offset].to_ascii_lowercase(),
+                &segment[offset..]
+            ),
+            None => segment.to_ascii_lowercase(),
         })
         .collect::<Vec<_>>()
         .join("/")
@@ -146,19 +157,25 @@ mod tests {
     }
 
     #[test]
-    fn new_case_insensitive_rejects_mixed_literal_and_placeholder() {
+    fn new_case_insensitive_rejects_a_literal_after_a_placeholder() {
         let err = RouteKey::new_case_insensitive("GET", "/files/{id}.json").unwrap_err();
         assert!(
-            err.to_string().contains("must be a pure literal"),
+            err.to_string().contains("must be a literal"),
             "unexpected error: {err}"
         );
     }
 
     #[test]
-    fn new_case_insensitive_rejects_prefix_then_placeholder() {
-        let err = RouteKey::new_case_insensitive("GET", "/files/prefix{id}").unwrap_err();
+    fn new_case_insensitive_lowercases_the_literal_before_a_placeholder() {
+        let key = RouteKey::new_case_insensitive("GET", "/Files/Stream.{Container}").unwrap();
+        assert_eq!(key.path.as_ref(), "/files/stream.{Container}");
+    }
+
+    #[test]
+    fn new_case_insensitive_rejects_a_literal_before_a_catchall() {
+        let err = RouteKey::new_case_insensitive("GET", "/files/prefix{*rest}").unwrap_err();
         assert!(
-            err.to_string().contains("must be a pure literal"),
+            err.to_string().contains("must be a literal"),
             "unexpected error: {err}"
         );
     }
@@ -167,7 +184,7 @@ mod tests {
     fn new_case_insensitive_rejects_unclosed_placeholder() {
         let err = RouteKey::new_case_insensitive("GET", "/files/{id").unwrap_err();
         assert!(
-            err.to_string().contains("must be a pure literal"),
+            err.to_string().contains("must be a literal"),
             "unexpected error: {err}"
         );
     }

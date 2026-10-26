@@ -177,8 +177,8 @@ use crate::routes::{
     download_track_response,
     registry::{
         RouteKey,
-        is_placeholder_segment,
         lowercase_literal_segments,
+        placeholder_offset,
     },
     serve_hls_playlist_for_track,
     stream_track_response,
