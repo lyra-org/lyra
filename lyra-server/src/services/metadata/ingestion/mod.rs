@@ -1422,6 +1422,85 @@ mod tests {
         Ok(())
     }
 
+    fn two_disc_release(db: &mut DbAny) -> anyhow::Result<(DbId, Vec<TrackMetadata>)> {
+        let library =
+            test_db::insert_test_library_node(db, "Two Discs", PathBuf::from("/music/two-discs"))?;
+        let library_id = library.db_id.unwrap();
+        let mut tracks = Vec::new();
+        for disc in [1, 2] {
+            let entry = insert_entry(db, &format!("/music/two-discs/{disc}-01.flac"))?;
+            connect(db, library_id, entry)?;
+            let mut metadata = track_metadata(entry.0, "Two Discs", "Artist", None, Some(disc), 1);
+            if disc == 1 {
+                metadata.date = Some("2001-05-03".to_string());
+                metadata.genres = Some(vec!["Rock".to_string()]);
+                metadata.label = Some("Label".to_string());
+                metadata.catalog_number = Some("CAT-1".to_string());
+                metadata.barcode = Some("0123456789012".to_string());
+            }
+            tracks.push(metadata);
+        }
+        apply_metadata(db, library_id, tracks.clone())?;
+        Ok((library_id, tracks))
+    }
+
+    type ReleaseScanFields = (Option<String>, Vec<String>, Vec<String>, Option<String>);
+
+    fn release_scan_fields(db: &DbAny) -> anyhow::Result<ReleaseScanFields> {
+        let release = select_releases(db)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow!("release missing"))?;
+        let release_id: DbId = release.db_id.clone().unwrap().into();
+        let genres = db::genres::get_for_release(db, release_id)?
+            .into_iter()
+            .map(|genre| genre.name)
+            .collect();
+        let labels = db::labels::get_for_release(db, release_id)?
+            .into_iter()
+            .map(|label| format!("{} {:?}", label.label.name, label.catalog_number))
+            .collect();
+        Ok((release.release_date, genres, labels, release.barcode))
+    }
+
+    #[test]
+    fn a_partial_rescan_keeps_release_fields_its_tracks_do_not_tag() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (library_id, tracks) = two_disc_release(&mut db)?;
+        let full = release_scan_fields(&db)?;
+        assert_eq!(full.0.as_deref(), Some("2001-05-03"));
+        assert_eq!(full.1, vec!["Rock"]);
+        assert_eq!(full.2.len(), 1);
+        assert!(full.3.is_some());
+
+        apply_metadata(&mut db, library_id, vec![tracks[1].clone()])?;
+
+        assert_eq!(select_releases(&db)?.len(), 1);
+        assert_eq!(release_scan_fields(&db)?, full);
+        Ok(())
+    }
+
+    #[test]
+    fn a_full_rescan_clears_release_fields_removed_from_every_track() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (library_id, mut tracks) = two_disc_release(&mut db)?;
+        for track in &mut tracks {
+            track.date = None;
+            track.genres = None;
+            track.label = None;
+            track.catalog_number = None;
+            track.barcode = None;
+        }
+
+        apply_metadata(&mut db, library_id, tracks)?;
+
+        assert_eq!(
+            release_scan_fields(&db)?,
+            (None, Vec::new(), Vec::new(), None)
+        );
+        Ok(())
+    }
+
     #[test]
     fn a_rescan_credits_the_artist_a_spelling_was_merged_into() -> anyhow::Result<()> {
         let mut db = new_test_db()?;

@@ -35,6 +35,7 @@ use crate::db::{
     ArtistType,
     DbAccess,
     MetadataField,
+    MetadataLayer,
     Release,
     Track,
     graph::ensure_owned_edge,
@@ -84,13 +85,40 @@ fn scanned_media_formats(release_tracks: &[TrackIngest]) -> Option<Vec<String>> 
     })
 }
 
+/// The local layer a scan stored on an entity, if any.
+fn stored_local_layer(db: &impl DbAccess, node_id: DbId) -> anyhow::Result<Option<MetadataLayer>> {
+    Ok(db::metadata::layers::get_for_entity(db, node_id)?
+        .into_iter()
+        .find(|layer| layer.source_id == LOCAL_SOURCE_ID))
+}
+
+/// The release's tracks this batch does not hold.
+fn other_track_ids(
+    db: &impl DbAccess,
+    release_db_id: Option<DbId>,
+    release_tracks: &[TrackIngest],
+) -> anyhow::Result<Vec<DbId>> {
+    let Some(release_db_id) = release_db_id else {
+        return Ok(Vec::new());
+    };
+    let batch_track_ids: HashSet<DbId> = release_tracks
+        .iter()
+        .filter_map(|track| track.track_db_id)
+        .collect();
+    Ok(db::tracks::get_direct(db, release_db_id)?
+        .into_iter()
+        .filter_map(|track| track.db_id.map(DbId::from))
+        .filter(|track_id| !batch_track_ids.contains(track_id))
+        .collect())
+}
+
 /// The release's artists: the batch's explicit album-artist tag, or else the
 /// artists on more than half of the release's tracks, counting this batch's
 /// tags and the local layers of its other tracks, so a partial scan of a
 /// compilation keeps what the whole release says.
 fn release_artist_ids(
     db: &mut DbAnyTransactionMut<'_>,
-    release_db_id: DbId,
+    other_track_ids: &[DbId],
     release_tracks: &[TrackIngest],
     cache: &mut BTreeMap<String, DbId>,
 ) -> anyhow::Result<Vec<DbId>> {
@@ -106,20 +134,8 @@ fn release_artist_ids(
         let names = track.meta.artists.clone().unwrap_or_default();
         track_artists.push(resolve_artist_ids(db, &names, cache)?);
     }
-    let batch_track_ids: HashSet<DbId> = release_tracks
-        .iter()
-        .filter_map(|track| track.track_db_id)
-        .collect();
-    for track in db::tracks::get_direct(db, release_db_id)? {
-        let Some(track_id) = track.db_id.map(DbId::from) else {
-            continue;
-        };
-        if batch_track_ids.contains(&track_id) {
-            continue;
-        }
-        let local_artists = db::metadata::layers::get_for_entity(db, track_id)?
-            .into_iter()
-            .find(|layer| layer.source_id == LOCAL_SOURCE_ID)
+    for &track_id in other_track_ids {
+        let local_artists = stored_local_layer(db, track_id)?
             .and_then(|mut layer| layer.credits.remove(&db::CreditType::Artist))
             .unwrap_or_default();
         track_artists.push(
@@ -325,6 +341,11 @@ fn persist_release_inner(
         .filter_map(|track| track.track_db_id)
         .collect();
     let existing_release_id = select_release_id(db, &track_ids_for_release)?;
+    let other_track_ids = other_track_ids(db, existing_release_id, &release_tracks)?;
+    // A batch holding every track of the release speaks for the whole release.
+    // A partial one keeps what the release's other tracks contributed to a
+    // release field the batch does not tag, as no per-track record of it exists.
+    let partial = !other_track_ids.is_empty();
 
     let now_secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -354,8 +375,12 @@ fn persist_release_inner(
             created_at: now_secs,
             ctime: earliest_ctime,
         });
-        release.media_formats = media_formats;
-        release.barcode = barcode;
+        if media_formats.is_some() || !partial {
+            release.media_formats = media_formats;
+        }
+        if barcode.is_some() || !partial {
+            release.barcode = barcode;
+        }
         // Only overwrite when the scan actually resolved one; `None` here means
         // "not determined", never "cleared".
         if earliest_ctime.is_some() {
@@ -391,24 +416,44 @@ fn persist_release_inner(
 
     ensure_owned_edge(db, library_db_id, release_db_id)?;
 
+    let stored_release_fields = if partial {
+        stored_local_layer(db, release_db_id)?
+            .map(|layer| layer.fields)
+            .unwrap_or_default()
+    } else {
+        Default::default()
+    };
+    let or_stored = |field: MetadataField, scanned: Option<serde_json::Value>| {
+        scanned.or_else(|| stored_release_fields.get(&field).cloned())
+    };
     let mut release_layer = LocalLayer::default();
     release_layer.supply(MetadataField::ReleaseTitle, Some(release_title.to_string()))?;
-    release_layer.supply(MetadataField::ReleaseDate, release_date)?;
+    release_layer.supply(
+        MetadataField::ReleaseDate,
+        or_stored(MetadataField::ReleaseDate, release_date.map(Into::into)),
+    )?;
     release_layer.supply(
         MetadataField::Genres,
-        release_tracks[0]
-            .meta
-            .genres
-            .clone()
-            .filter(|genres| !genres.is_empty()),
+        or_stored(
+            MetadataField::Genres,
+            release_tracks[0]
+                .meta
+                .genres
+                .clone()
+                .filter(|genres| !genres.is_empty())
+                .map(Into::into),
+        ),
     )?;
     release_layer.supply(
         MetadataField::Labels,
-        scanned_release_labels(&release_tracks),
+        or_stored(
+            MetadataField::Labels,
+            scanned_release_labels(&release_tracks).map(Into::into),
+        ),
     )?;
     release_layer.supply_artists(&release_artist_ids(
         db,
-        release_db_id,
+        &other_track_ids,
         &release_tracks,
         &mut artist_cache,
     )?);
