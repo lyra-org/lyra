@@ -3,6 +3,13 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+/// Writes MP4 as a header with no samples followed by one-second fragments, so a client can
+/// play it while it is still being encoded.
+const FRAGMENTED_MP4_MUXER_OPTS: &[(&str, &str)] = &[
+    ("movflags", "empty_moov+delay_moov+default_base_moof"),
+    ("frag_duration", "1000000"),
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AudioFormat {
     Mp3,
@@ -120,7 +127,15 @@ impl AudioFormat {
     }
 
     pub fn supports_streaming(&self) -> bool {
-        !matches!(self, Self::M4a | Self::Alac | Self::Caf)
+        !matches!(self, Self::Caf)
+    }
+
+    /// Muxer options a streamed output needs because it cannot seek back to finish its header.
+    pub(crate) fn streaming_muxer_opts(&self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            Self::M4a | Self::Alac => FRAGMENTED_MP4_MUXER_OPTS,
+            _ => &[],
+        }
     }
 
     pub fn extension(&self) -> &'static str {

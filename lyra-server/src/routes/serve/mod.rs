@@ -867,6 +867,43 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn stream_transcodes_m4a_as_fragmented_mp4() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+
+        let response = super::stream::stream_track_response(
+            &HeaderMap::new(),
+            &track_id,
+            &super::TrackAccess::MediaToken,
+            ServeTrackOptions {
+                format: Some("m4a".to_string()),
+                codec: Some("aac".to_string()),
+                ..ServeTrackOptions::default()
+            },
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(axum::http::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok()),
+            Some("audio/mp4"),
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        assert!(
+            body.windows(4).any(|atom| atom == b"moof"),
+            "a streamed m4a must be fragmented"
+        );
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn stream_forces_transcode_when_a_knob_asks_for_a_downward_change() -> anyhow::Result<()>
     {
         let _guard = runtime_test_lock().await;

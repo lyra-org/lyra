@@ -661,7 +661,7 @@ fn create_track_playback_url_docs(op: TransformOperation) -> TransformOperation 
          a fixed maximum lifetime, and also expire after an idle period.\n\n\
          The request is resolved once against the track's source, and a transport is omitted when \
          it cannot carry the result. `stream_url` is omitted when the request encodes into a container \
-         that does not support streaming (m4a, alac, caf); use `hls_url` or `download_url` instead. \
+         that does not support streaming (caf); use `hls_url` or `download_url` instead. \
          `download_url` is omitted when the caller lacks download permission. `hls_url` is always \
          present: HLS transcodes any source, and a track whose duration is not yet known returns a \
          retryable 503 from the playlist endpoint rather than being omitted here. A token is minted \
@@ -1688,10 +1688,10 @@ mod tests {
         // Previously a whole-request 400. A non-streamable container is a transport
         // capability answer, not a bad request: hls and download still work.
         let transports = resolve_playback_transports(
-            &playback_url_query(Some("m4a"), None, None),
+            &playback_url_query(Some("caf"), None, None),
             flac_playback_source(),
         )
-        .expect("m4a is downloadable even though it cannot be streamed");
+        .expect("caf is downloadable even though it cannot be streamed");
         assert!(!transports.stream);
     }
 
@@ -1725,16 +1725,6 @@ mod tests {
         assert!(
             transports.stream,
             "the final mp3 container is streamable, so a stream_url should be minted"
-        );
-
-        let mut mp3 = flac_playback_source();
-        mp3.entry_format = Some(lyra_ffmpeg::AudioFormat::Mp3);
-        mp3.source_codec = Some(lyra_ffmpeg::AudioCodec::Mp3);
-        let transports = resolve_playback_transports(&downmix("copy,aac"), mp3)
-            .expect("the request is fine for download");
-        assert!(
-            !transports.stream,
-            "the final m4a container is not streamable, so no stream_url should be minted"
         );
     }
 

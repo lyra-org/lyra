@@ -118,6 +118,47 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
+    fn streams_m4a_as_fragmented_mp4_to_an_unseekable_sink() {
+        let written = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+        let sink = std::sync::Arc::clone(&written);
+        for codec in [AudioCodec::Aac, AudioCodec::Alac] {
+            sink.lock().expect("sink lock").clear();
+            let sink = std::sync::Arc::clone(&sink);
+            let output = Output::with_callback(move |buf: &[u8]| {
+                sink.lock().expect("sink lock").extend_from_slice(buf);
+                buf.len()
+            })
+            .streaming()
+            .set_seek_callback(|request| match request {
+                SeekRequest::Size => SeekResult::Unsupported,
+                _ => SeekResult::Unseekable,
+            })
+            .audio_format(AudioFormat::M4a)
+            .codec(codec);
+
+            FfmpegContext::builder()
+                .input(TEST_INPUT)
+                .output(output)
+                .build()
+                .expect("streamed m4a output should build")
+                .start()
+                .expect("transcode should start")
+                .wait()
+                .expect("streamed m4a should finish without seeking");
+
+            let bytes = written.lock().expect("sink lock").clone();
+            let position = |atom: &[u8]| bytes.windows(atom.len()).position(|w| w == atom);
+            let moov = position(b"moov").expect("an mp4 header");
+            let moof = position(b"moof").expect("a fragment");
+            assert!(
+                moov < moof,
+                "{codec:?}: the header must precede the samples"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
     fn reports_callback_error() {
         let output = Output::with_callback(|_| WriteResult::error("sink failed"))
             .audio_format(AudioFormat::Mp3)

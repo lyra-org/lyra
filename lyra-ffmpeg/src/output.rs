@@ -246,6 +246,11 @@ impl Output {
         let muxer = format.muxer(self.is_streaming);
         self.format = Some(muxer.to_string());
         self.format_kind = Some(format);
+        if self.is_streaming {
+            for (key, value) in format.streaming_muxer_opts() {
+                self.format_opts.insert(key.to_string(), value.to_string());
+            }
+        }
 
         if self.audio_codec.is_none() {
             let default_codec = format.default_codec();

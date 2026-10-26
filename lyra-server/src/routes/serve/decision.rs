@@ -575,7 +575,7 @@ pub(crate) fn resolve_delivery(
     };
     if target.is_streaming() && !decision.is_streamable() {
         return Err(AppError::bad_request(format!(
-            "Format '{}' does not support streaming. Use /api/download or choose a streamable format (mp3, flac, wav, ogg, webm, aac, opus, aiff).",
+            "Format '{}' does not support streaming. Use /api/download or choose a streamable format (mp3, flac, wav, ogg, webm, aac, m4a, opus, aiff).",
             output_format.extension()
         )));
     }
@@ -1363,10 +1363,8 @@ mod tests {
     #[test]
     fn resolve_delivery_rejects_a_non_streamable_final_format() {
         let source = flac_source(None, None);
-        // This is otherwise a valid transcode decision; only the stream target cannot carry it.
-        let validated = validate_request(Some("m4a".to_string()), Some("aac".to_string()))
-            .expect("m4a + aac parses");
-        assert!(AudioFormat::M4a.supports_codec(AudioCodec::Aac));
+        // This is otherwise a valid remux decision; only the stream target cannot carry it.
+        let validated = validate_request(Some("caf".to_string()), None).expect("caf parses");
 
         let err = resolve_delivery(
             &validated,
@@ -1374,12 +1372,12 @@ mod tests {
             TranscodeKnobs::default(),
             DeliveryTarget::Stream,
         )
-        .expect_err("m4a cannot be streamed");
+        .expect_err("caf cannot be streamed");
         assert_eq!(
             format!("{err:?}"),
-            "AppError(400 Bad Request: Format 'm4a' does not support streaming. \
+            "AppError(400 Bad Request: Format 'caf' does not support streaming. \
              Use /api/download or choose a streamable format \
-             (mp3, flac, wav, ogg, webm, aac, opus, aiff).)"
+             (mp3, flac, wav, ogg, webm, aac, m4a, opus, aiff).)"
         );
 
         resolve_delivery(
@@ -1410,35 +1408,21 @@ mod tests {
     }
 
     #[test]
-    fn resolve_delivery_enforces_streamability_of_the_final_container() {
-        // `codec=copy,<x>` is where the provisional copy container and final container can
-        // diverge after a surviving knob rules copy out. The final answer controls whether
-        // the stream endpoint can serve the request.
-        let mut m4a = flac_source(None, None);
-        m4a.entry_format = Some(AudioFormat::M4a);
-        m4a.source_codec = Some(AudioCodec::Alac);
-        let validated = validate_request(None, Some("copy,mp3".to_string())).expect("parses");
+    fn resolve_delivery_streams_an_encoded_m4a() {
+        let mut mp3 = flac_source(None, None);
+        mp3.entry_format = Some(AudioFormat::Mp3);
+        mp3.source_codec = Some(AudioCodec::Mp3);
+        let validated = validate_request(None, Some("copy,aac".to_string())).expect("parses");
         let downmix = TranscodeKnobs {
             channels: Some(1),
             ..TranscodeKnobs::default()
         };
 
-        let decision = resolve_delivery(&validated, &m4a, downmix, DeliveryTarget::Download)
-            .expect("m4a downloads fine");
-        assert_eq!(decision.output_format, AudioFormat::Mp3);
-        resolve_delivery(&validated, &m4a, downmix, DeliveryTarget::Stream)
-            .expect("the final mp3 container is streamable");
-
-        let mut mp3 = flac_source(None, None);
-        mp3.entry_format = Some(AudioFormat::Mp3);
-        mp3.source_codec = Some(AudioCodec::Mp3);
-        let validated = validate_request(None, Some("copy,aac".to_string())).expect("parses");
-
-        let decision = resolve_delivery(&validated, &mp3, downmix, DeliveryTarget::Download)
-            .expect("mp3 downloads fine");
+        let decision = resolve_delivery(&validated, &mp3, downmix, DeliveryTarget::Stream)
+            .expect("m4a streams as fragmented mp4");
+        assert!(!decision.direct_passthrough);
         assert_eq!(decision.output_format, AudioFormat::M4a);
-        resolve_delivery(&validated, &mp3, downmix, DeliveryTarget::Stream)
-            .expect_err("the final m4a container is not streamable");
+        assert_eq!(decision.codec, AudioCodec::Aac);
     }
 
     #[test]
