@@ -44,7 +44,7 @@ struct DownloadQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Scoped download token returned by `POST /api/tracks/{id}/playback-url`."
+            description = "Scoped download token returned by `POST /api/tracks/{id}/playback-url`. It fixes the format, codec and transcode settings, so a request with one passes none of them; only `start_offset_ms` may vary."
         )
     )]
     media_token: Option<String>,
@@ -119,7 +119,8 @@ async fn get_download(
             channels: query.channels,
             prefer_vbr: query.prefer_vbr,
             start_offset_ms: query.start_offset_ms,
-        },
+        }
+        .bound_to(&access)?,
     )
     .await
 }

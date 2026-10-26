@@ -63,8 +63,29 @@ pub(super) fn parse_track_serve_options(
     })
 }
 
+/// A `stream_track` response's options: whether it skips the caller's track access check, and
+/// what it serves.
+pub(crate) fn stream_track_options(
+    value: Option<&serde_json::Value>,
+) -> Result<(bool, ServeTrackOptions)> {
+    let public = parse_public_stream(value)?;
+    let options = parse_track_serve_options(value)?;
+    Ok((
+        public,
+        ServeTrackOptions {
+            format: options.format,
+            codec: join_preferred_codecs(options.preferred_codecs),
+            bitrate_bps: options.bitrate_bps,
+            sample_rate_hz: options.sample_rate_hz,
+            channels: options.channels,
+            prefer_vbr: options.prefer_vbr,
+            start_offset_ms: options.start_offset_ms,
+        },
+    ))
+}
+
 /// Whether a stream response asked to skip the caller's track access check.
-pub(super) fn parse_public_stream(value: Option<&serde_json::Value>) -> Result<bool> {
+fn parse_public_stream(value: Option<&serde_json::Value>) -> Result<bool> {
     let Some(public) = value.and_then(|value| value.get("public")) else {
         return Ok(false);
     };

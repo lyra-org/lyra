@@ -11,6 +11,7 @@ mod stream;
 mod transcoded;
 
 pub(crate) use decision::{
+    DeliveryDescription,
     DeliveryTarget,
     TranscodeKnobs,
     ValidatedRequest,
@@ -30,7 +31,10 @@ use ranged_file::{
     RangedFileBody,
     build_ranged_body,
 };
-pub(crate) use stream::stream_track_response;
+pub(crate) use stream::{
+    describe_stream,
+    stream_track_response,
+};
 
 use axum::Router;
 
@@ -61,6 +65,7 @@ use crate::{
         auth::{
             Principal,
             media_tokens::{
+                DeliveryOptions,
                 MediaTokenAccess,
                 MediaTokenError,
                 MediaTokenPurpose,
@@ -91,9 +96,8 @@ pub struct ValidatedTrackSource {
     pub duration_ms: Option<u64>,
     pub start_ms: Option<u64>,
     pub end_ms: Option<u64>,
-    pub source_bitrate_bps: Option<u32>,
-    pub source_sample_rate_hz: Option<u32>,
-    pub source_channels: Option<u32>,
+    /// The source file's format and audio properties, as scanned.
+    pub format: crate::db::track_sources::SourceFormat,
 }
 
 #[derive(Clone, Default)]
@@ -105,6 +109,54 @@ pub(crate) struct ServeTrackOptions {
     pub(crate) channels: Option<u32>,
     pub(crate) prefer_vbr: Option<bool>,
     pub(crate) start_offset_ms: Option<u64>,
+}
+
+impl ServeTrackOptions {
+    pub(crate) fn delivery(&self) -> DeliveryOptions {
+        DeliveryOptions {
+            format: self.format.clone(),
+            codec: self.codec.clone(),
+            bitrate_bps: self.bitrate_bps,
+            sample_rate_hz: self.sample_rate_hz,
+            channels: self.channels,
+            prefer_vbr: self.prefer_vbr,
+        }
+    }
+
+    /// The options a request through `access` is served with. A media token carries the delivery
+    /// it was issued for, so a request with one may only choose its start offset.
+    fn bound_to(self, access: &TrackAccess) -> Result<Self, AppError> {
+        let TrackAccess::MediaToken(token) = access else {
+            return Ok(self);
+        };
+        reject_unbound_options(&self.delivery())?;
+        let DeliveryOptions {
+            format,
+            codec,
+            bitrate_bps,
+            sample_rate_hz,
+            channels,
+            prefer_vbr,
+        } = token.options.clone();
+        Ok(Self {
+            format,
+            codec,
+            bitrate_bps,
+            sample_rate_hz,
+            channels,
+            prefer_vbr,
+            start_offset_ms: self.start_offset_ms,
+        })
+    }
+}
+
+fn reject_unbound_options(requested: &DeliveryOptions) -> Result<(), AppError> {
+    if *requested == DeliveryOptions::default() {
+        return Ok(());
+    }
+    Err(AppError::bad_request(
+        "this media token already fixes the delivery; request a new playback URL to change it",
+    ))
 }
 
 pub(crate) fn source_range_duration_ms(start_ms: Option<u64>, end_ms: Option<u64>) -> Option<u64> {
@@ -356,9 +408,7 @@ pub(crate) async fn validate_and_get_track_source(
         duration_ms: track.duration_ms,
         start_ms: source.start_ms,
         end_ms: source.end_ms,
-        source_bitrate_bps: source.format.bitrate_bps,
-        source_sample_rate_hz: source.format.sample_rate_hz,
-        source_channels: source.format.channel_count,
+        format: source.format,
     })
 }
 
@@ -625,12 +675,12 @@ mod tests {
         Ok(())
     }
 
-    /// The query of the URL `POST /api/tracks/{id}/playback-url` mints for `transport`.
-    async fn playback_url_query(
+    /// The body of `POST /api/tracks/{id}/playback-url?{options}`.
+    async fn playback_urls(
         track_id: &str,
         headers: &HeaderMap,
-        transport: &str,
-    ) -> anyhow::Result<String> {
+        options: &str,
+    ) -> anyhow::Result<serde_json::Value> {
         use axum::body::{
             Body,
             to_bytes,
@@ -641,14 +691,25 @@ mod tests {
             .oneshot(
                 axum::http::Request::builder()
                     .method("POST")
-                    .uri(format!("/{track_id}/playback-url"))
+                    .uri(format!("/{track_id}/playback-url?{options}"))
                     .header(AUTHORIZATION, headers[AUTHORIZATION].clone())
                     .body(Body::empty())?,
             )
             .await?;
         assert_eq!(response.status(), StatusCode::OK);
-        let body: serde_json::Value =
-            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await?)?;
+        Ok(serde_json::from_slice(
+            &to_bytes(response.into_body(), usize::MAX).await?,
+        )?)
+    }
+
+    /// The query of the URL `POST /api/tracks/{id}/playback-url?{options}` mints for `transport`.
+    async fn playback_url_query(
+        track_id: &str,
+        headers: &HeaderMap,
+        transport: &str,
+        options: &str,
+    ) -> anyhow::Result<String> {
+        let body = playback_urls(track_id, headers, options).await?;
         let url = body[transport]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("{transport} missing"))?;
@@ -666,7 +727,7 @@ mod tests {
         let test_dir = initialize_test_runtime().await?;
         let track_id = prepare_streamable_track(&test_dir).await?;
         let headers = create_user_with_permissions("token-holder", vec![]).await?;
-        let query = playback_url_query(&track_id, &headers, "hls_url").await?;
+        let query = playback_url_query(&track_id, &headers, "hls_url", "").await?;
 
         let recycled_track_id = {
             let mut db = STATE.db.write().await;
@@ -777,9 +838,12 @@ mod tests {
             duration_ms: Some(20_000),
             start_ms: None,
             end_ms: None,
-            source_bitrate_bps: Some(900_000),
-            source_sample_rate_hz: Some(96_000),
-            source_channels: Some(2),
+            format: crate::db::track_sources::SourceFormat {
+                sample_rate_hz: Some(96_000),
+                channel_count: Some(2),
+                bitrate_bps: Some(900_000),
+                ..Default::default()
+            },
         };
 
         let offset_source =
@@ -802,9 +866,12 @@ mod tests {
             duration_ms: Some(20_000),
             start_ms: Some(10_000),
             end_ms: Some(30_000),
-            source_bitrate_bps: Some(900_000),
-            source_sample_rate_hz: Some(96_000),
-            source_channels: Some(2),
+            format: crate::db::track_sources::SourceFormat {
+                sample_rate_hz: Some(96_000),
+                channel_count: Some(2),
+                bitrate_bps: Some(900_000),
+                ..Default::default()
+            },
         };
 
         let offset_source =
@@ -827,9 +894,12 @@ mod tests {
             duration_ms: Some(20_000),
             start_ms: Some(10_000),
             end_ms: Some(30_000),
-            source_bitrate_bps: Some(900_000),
-            source_sample_rate_hz: Some(96_000),
-            source_channels: Some(2),
+            format: crate::db::track_sources::SourceFormat {
+                sample_rate_hz: Some(96_000),
+                channel_count: Some(2),
+                bitrate_bps: Some(900_000),
+                ..Default::default()
+            },
         };
 
         let err = apply_request_start_offset(source, Some(20_000))
@@ -1010,7 +1080,7 @@ mod tests {
         let test_dir = initialize_test_runtime().await?;
         let track_id = prepare_streamable_track(&test_dir).await?;
         let headers = create_user_with_permissions("revoked-listener", vec![]).await?;
-        let query = playback_url_query(&track_id, &headers, "stream_url").await?;
+        let query = playback_url_query(&track_id, &headers, "stream_url", "").await?;
 
         let (status, _, _) = send(Method::GET, format!("/{track_id}?{query}")).await?;
         assert_eq!(status, StatusCode::OK);
@@ -1029,7 +1099,7 @@ mod tests {
         let test_dir = initialize_test_runtime().await?;
         let track_id = prepare_streamable_track(&test_dir).await?;
         let headers = create_user_with_permissions("departing-listener", vec![]).await?;
-        let query = playback_url_query(&track_id, &headers, "stream_url").await?;
+        let query = playback_url_query(&track_id, &headers, "stream_url", "").await?;
         let principal = crate::services::auth::require_authenticated(&headers).await?;
         {
             let mut db = STATE.db.write().await;
@@ -1083,7 +1153,7 @@ mod tests {
         let key = crate::services::auth::api_keys::create_api_key(&principal, "phone")
             .await
             .map_err(|err| anyhow::anyhow!("{err:?}"))?;
-        let query = playback_url_query(&track_id, &bearer(&key.key), "stream_url").await?;
+        let query = playback_url_query(&track_id, &bearer(&key.key), "stream_url", "").await?;
 
         let (status, _, _) = send(Method::GET, format!("/{track_id}?{query}")).await?;
         assert_eq!(status, StatusCode::OK);
@@ -1106,7 +1176,7 @@ mod tests {
         let track_id = prepare_streamable_track(&test_dir).await?;
         let headers =
             create_user_with_permissions("demoted-downloader", vec![Permission::Download]).await?;
-        let query = playback_url_query(&track_id, &headers, "download_url").await?;
+        let query = playback_url_query(&track_id, &headers, "download_url", "").await?;
         assert_eq!(
             send_download(format!("/{track_id}?{query}")).await?,
             StatusCode::OK
@@ -1133,7 +1203,7 @@ mod tests {
         let test_dir = initialize_test_runtime().await?;
         let track_id = prepare_streamable_track(&test_dir).await?;
         let headers = create_user_with_permissions("excluded-listener", vec![]).await?;
-        let query = playback_url_query(&track_id, &headers, "stream_url").await?;
+        let query = playback_url_query(&track_id, &headers, "stream_url", "").await?;
 
         let user = user_db_id(&headers).await?;
         {
@@ -1160,7 +1230,7 @@ mod tests {
         let test_dir = initialize_test_runtime().await?;
         let track_id = prepare_streamable_track(&test_dir).await?;
         let headers = create_user_with_permissions("stale-hls-listener", vec![]).await?;
-        let query = playback_url_query(&track_id, &headers, "hls_url").await?;
+        let query = playback_url_query(&track_id, &headers, "hls_url", "").await?;
         append_to_source(&test_dir)?;
 
         let (status, _, _) = send(Method::GET, format!("/{track_id}/hls.m3u8?{query}")).await?;
@@ -1176,7 +1246,7 @@ mod tests {
         let test_dir = initialize_test_runtime().await?;
         let track_id = prepare_streamable_track(&test_dir).await?;
         let headers = create_user_with_permissions("hls-leaver", vec![]).await?;
-        let query = playback_url_query(&track_id, &headers, "hls_url").await?;
+        let query = playback_url_query(&track_id, &headers, "hls_url", "").await?;
 
         let (status, _, playlist) =
             send(Method::GET, format!("/{track_id}/hls.m3u8?{query}")).await?;
@@ -1256,7 +1326,7 @@ mod tests {
         let test_dir = initialize_test_runtime().await?;
         let track_id = prepare_streamable_track(&test_dir).await?;
         let headers = create_user_with_permissions("stale-listener", vec![]).await?;
-        let query = playback_url_query(&track_id, &headers, "stream_url").await?;
+        let query = playback_url_query(&track_id, &headers, "stream_url", "").await?;
 
         let path = test_dir.join("integration_track.flac");
         let mut bytes = std::fs::read(&path)?;
@@ -1283,8 +1353,14 @@ mod tests {
         let test_dir = initialize_test_runtime().await?;
         let track_id = prepare_streamable_track(&test_dir).await?;
         let headers = create_user_with_permissions("cache-listener", vec![]).await?;
-        let token_query = playback_url_query(&track_id, &headers, "stream_url").await?;
-        let uri = format!("/{track_id}?{token_query}&format=mp3&bitrate_bps=96000");
+        let token_query = playback_url_query(
+            &track_id,
+            &headers,
+            "stream_url",
+            "format=mp3&bitrate_bps=96000",
+        )
+        .await?;
+        let uri = format!("/{track_id}?{token_query}");
 
         let (status, first_headers, encoded) = send(Method::GET, uri.clone()).await?;
         assert_eq!(status, StatusCode::OK);
@@ -1326,8 +1402,26 @@ mod tests {
         let user = crate::services::auth::require_authenticated(&headers)
             .await?
             .user_public_id;
-        let token_query = playback_url_query(&track_id, &headers, "stream_url").await?;
-        let cached = format!("/{track_id}?{token_query}&format=mp3&bitrate_bps=96000");
+        let cached = playback_url_query(
+            &track_id,
+            &headers,
+            "stream_url",
+            "format=mp3&bitrate_bps=96000",
+        )
+        .await?;
+        let cached = format!("/{track_id}?{cached}");
+        let uncached = playback_url_query(
+            &track_id,
+            &headers,
+            "stream_url",
+            "format=mp3&bitrate_bps=64000",
+        )
+        .await?;
+        let uncached = format!("/{track_id}?{uncached}");
+        let original = format!(
+            "/{track_id}?{}",
+            playback_url_query(&track_id, &headers, "stream_url", "").await?
+        );
         let (status, _, _) = send(Method::GET, cached.clone()).await?;
         assert_eq!(status, StatusCode::OK);
 
@@ -1336,17 +1430,13 @@ mod tests {
             .map(|_| try_acquire_for(&Account::User(user.clone())))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let (status, headers, _) = send(
-            Method::GET,
-            format!("/{track_id}?{token_query}&format=mp3&bitrate_bps=64000"),
-        )
-        .await?;
+        let (status, headers, _) = send(Method::GET, uncached).await?;
         assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
         assert!(headers.contains_key(axum::http::header::RETRY_AFTER));
 
         let (status, _, _) = send(Method::GET, cached).await?;
         assert_eq!(status, StatusCode::OK, "a cached transcode needs no permit");
-        let (status, _, _) = send(Method::GET, format!("/{track_id}?{token_query}")).await?;
+        let (status, _, _) = send(Method::GET, original).await?;
         assert_eq!(status, StatusCode::OK, "the original file needs no permit");
 
         drop(held);
@@ -1406,8 +1496,14 @@ mod tests {
         let test_dir = initialize_test_runtime().await?;
         let track_id = prepare_streamable_track(&test_dir).await?;
         let headers = create_user_with_permissions("flac-listener", vec![]).await?;
-        let token_query = playback_url_query(&track_id, &headers, "stream_url").await?;
-        let uri = format!("/{track_id}?{token_query}&format=flac&sample_rate_hz=22050");
+        let token_query = playback_url_query(
+            &track_id,
+            &headers,
+            "stream_url",
+            "format=flac&sample_rate_hz=22050",
+        )
+        .await?;
+        let uri = format!("/{track_id}?{token_query}");
 
         let (status, _, _) = send(Method::GET, uri.clone()).await?;
         assert_eq!(status, StatusCode::OK);
@@ -1435,6 +1531,80 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn playback_url_describes_what_each_url_delivers() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let headers =
+            create_user_with_permissions("describing-listener", vec![Permission::Download]).await?;
+
+        let original = playback_urls(&track_id, &headers, "").await?;
+        let delivery = &original["stream_delivery"];
+        assert_eq!(delivery["transcode"], false);
+        assert_eq!(delivery["reasons"], serde_json::json!([]));
+        assert_eq!(delivery["container"], "flac");
+        assert_eq!(delivery["codec"], "flac");
+        assert_eq!(delivery["content_type"], "audio/flac");
+        assert_eq!(delivery["sample_rate_hz"], 44_100);
+        assert_eq!(delivery["source"]["container"], "flac");
+        assert_eq!(original["download_delivery"]["transcode"], false);
+
+        let mp3 = playback_urls(&track_id, &headers, "format=mp3&bitrate_bps=96000").await?;
+        let delivery = &mp3["stream_delivery"];
+        assert_eq!(delivery["transcode"], true);
+        assert_eq!(
+            delivery["reasons"],
+            serde_json::json!(["container", "bitrate"])
+        );
+        assert_eq!(delivery["container"], "mp3");
+        assert_eq!(delivery["codec"], "mp3");
+        assert_eq!(delivery["content_type"], "audio/mpeg");
+        assert_eq!(delivery["bitrate_bps"], 96_000);
+        assert_eq!(delivery["source"]["codec"], "flac");
+
+        let caf = playback_urls(&track_id, &headers, "format=caf").await?;
+        assert!(caf.get("stream_url").is_none());
+        assert!(caf.get("stream_delivery").is_none());
+        assert_eq!(caf["download_delivery"]["container"], "caf");
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_media_token_serves_only_the_delivery_it_was_issued_for() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let headers = create_user_with_permissions("bound-listener", vec![]).await?;
+        let mp3_query = playback_url_query(
+            &track_id,
+            &headers,
+            "stream_url",
+            "format=mp3&bitrate_bps=96000",
+        )
+        .await?;
+
+        let (status, headers_out, _) =
+            send(Method::GET, format!("/{track_id}?{mp3_query}")).await?;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers_out[axum::http::header::CONTENT_TYPE], "audio/mpeg");
+
+        let (status, _, _) =
+            send(Method::GET, format!("/{track_id}?{mp3_query}&format=flac")).await?;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, _, _) = send(
+            Method::GET,
+            format!("/{track_id}?{mp3_query}&start_offset_ms=100"),
+        )
+        .await?;
+        assert_eq!(status, StatusCode::OK, "the start offset stays per request");
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn stream_head_answers_like_get_without_a_body() -> anyhow::Result<()> {
         use axum::http::header::{
             ACCEPT_RANGES,
@@ -1446,7 +1616,7 @@ mod tests {
         let test_dir = initialize_test_runtime().await?;
         let track_id = prepare_streamable_track(&test_dir).await?;
         let headers = create_user_with_permissions("head-listener", vec![]).await?;
-        let token_query = playback_url_query(&track_id, &headers, "stream_url").await?;
+        let token_query = playback_url_query(&track_id, &headers, "stream_url", "").await?;
         let uri = |query: &str| format!("/{track_id}?{token_query}{query}");
 
         let (get_status, get_headers, get_body) = send(Method::GET, uri("")).await?;
@@ -1462,8 +1632,15 @@ mod tests {
         );
         assert!(head_body.is_empty());
 
+        let mp3_query = playback_url_query(
+            &track_id,
+            &headers,
+            "stream_url",
+            "format=mp3&bitrate_bps=96000",
+        )
+        .await?;
         let (status, headers, body) =
-            send(Method::HEAD, uri("&format=mp3&bitrate_bps=96000")).await?;
+            send(Method::HEAD, format!("/{track_id}?{mp3_query}")).await?;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(headers[CONTENT_TYPE], "audio/mpeg");
         assert_eq!(headers[ACCEPT_RANGES], "none");
@@ -1601,6 +1778,51 @@ mod tests {
         drop(held);
 
         crate::services::hls::state::test_helpers::reset_hls_state_for_test().await;
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_hls_token_serves_only_the_delivery_it_was_issued_for() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let headers = create_user_with_permissions("bound-hls-listener", vec![]).await?;
+        let query = playback_url_query(&track_id, &headers, "hls_url", "").await?;
+
+        let (status, _, _) = send(
+            Method::GET,
+            format!("/{track_id}/hls.m3u8?{query}&codec=flac"),
+        )
+        .await?;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        crate::services::hls::state::test_helpers::reset_hls_state_for_test().await;
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_missing_source_file_is_reported_without_its_path() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        std::fs::remove_file(test_dir.join("integration_track.flac"))?;
+
+        let err = super::describe_stream(
+            &track_id,
+            &super::TrackAccess::PublicPluginRoute(Account::Unknown),
+            ServeTrackOptions::default(),
+        )
+        .await
+        .expect_err("the source file is gone");
+        let message = err.to_string();
+        assert!(message.starts_with("404"), "{message}");
+        assert!(
+            !message.contains(&*test_dir.to_string_lossy()),
+            "the message must not reveal where the library lives: {message}"
+        );
+
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())
     }

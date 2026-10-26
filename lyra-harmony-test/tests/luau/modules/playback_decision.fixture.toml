@@ -1,0 +1,10 @@
+run_as = "owner"
+
+[[users]]
+key = "owner"
+admin = true
+
+[[tracks]]
+key = "song"
+title = "Song"
+file = "song.opus"

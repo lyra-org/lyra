@@ -3,7 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use crate::services::auth::media_tokens::MediaTokenPurpose;
+use crate::services::auth::media_tokens::{
+    DeliveryOptions,
+    MediaTokenPurpose,
+};
 #[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
@@ -83,7 +86,7 @@ struct HlsQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Scoped media token returned by `POST /api/tracks/{id}/playback-url`."
+            description = "Scoped media token returned by `POST /api/tracks/{id}/playback-url`. It fixes the codec and transcode settings, so a request with one passes none of them; only `start_offset_ms` may vary."
         )
     )]
     media_token: Option<String>,
@@ -257,7 +260,7 @@ fn hls_copy_is_eligible_for_request(
     }
 
     if let Some(requested_bitrate_bps) = bitrate_bps {
-        let Some(source_bitrate_bps) = source.source_bitrate_bps else {
+        let Some(source_bitrate_bps) = source.format.bitrate_bps else {
             return false;
         };
         if requested_bitrate_bps < source_bitrate_bps {
@@ -266,7 +269,7 @@ fn hls_copy_is_eligible_for_request(
     }
 
     if let Some(requested_sample_rate_hz) = sample_rate_hz {
-        let Some(source_sample_rate_hz) = source.source_sample_rate_hz else {
+        let Some(source_sample_rate_hz) = source.format.sample_rate_hz else {
             return false;
         };
         if requested_sample_rate_hz < source_sample_rate_hz {
@@ -275,7 +278,7 @@ fn hls_copy_is_eligible_for_request(
     }
 
     if let Some(requested_channels) = channels {
-        let Some(source_channels) = source.source_channels else {
+        let Some(source_channels) = source.format.channel_count else {
             return false;
         };
         if requested_channels < source_channels {
@@ -395,20 +398,16 @@ async fn get_hls_playlist(
         &track_id,
     )
     .await?;
-    serve_hls_playlist_for_track(
-        &method,
-        &track_id,
-        &access,
-        HlsPlaylistOptions {
-            codec: query.codec,
-            bitrate_bps: query.bitrate_bps,
-            sample_rate_hz: query.sample_rate_hz,
-            channels: query.channels,
-            prefer_vbr: query.prefer_vbr,
-            start_offset_ms: query.start_offset_ms,
-        },
-    )
-    .await
+    let options = HlsPlaylistOptions {
+        codec: query.codec,
+        bitrate_bps: query.bitrate_bps,
+        sample_rate_hz: query.sample_rate_hz,
+        channels: query.channels,
+        prefer_vbr: query.prefer_vbr,
+        start_offset_ms: query.start_offset_ms,
+    }
+    .bound_to(&access)?;
+    serve_hls_playlist_for_track(&method, &track_id, &access, options).await
 }
 
 pub(crate) struct HlsPlaylistOptions {
@@ -418,6 +417,33 @@ pub(crate) struct HlsPlaylistOptions {
     pub(crate) channels: Option<u32>,
     pub(crate) prefer_vbr: Option<bool>,
     pub(crate) start_offset_ms: Option<u64>,
+}
+
+impl HlsPlaylistOptions {
+    /// The options a request through `access` is served with; see
+    /// [`super::ServeTrackOptions::bound_to`].
+    fn bound_to(self, access: &super::TrackAccess) -> Result<Self, AppError> {
+        let super::TrackAccess::MediaToken(token) = access else {
+            return Ok(self);
+        };
+        super::reject_unbound_options(&DeliveryOptions {
+            format: None,
+            codec: self.codec,
+            bitrate_bps: self.bitrate_bps,
+            sample_rate_hz: self.sample_rate_hz,
+            channels: self.channels,
+            prefer_vbr: self.prefer_vbr,
+        })?;
+        let options = token.options.clone();
+        Ok(Self {
+            codec: options.codec,
+            bitrate_bps: options.bitrate_bps,
+            sample_rate_hz: options.sample_rate_hz,
+            channels: options.channels,
+            prefer_vbr: options.prefer_vbr,
+            start_offset_ms: self.start_offset_ms,
+        })
+    }
 }
 
 /// Serves a track's media playlist as `GET` would. A `HEAD` request gets the same decision and

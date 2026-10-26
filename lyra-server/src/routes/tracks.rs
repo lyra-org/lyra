@@ -29,6 +29,8 @@ use serde::{
 };
 use url::form_urlencoded;
 
+use super::serve::DeliveryDescription;
+
 use crate::{
     STATE,
     db,
@@ -47,6 +49,7 @@ use crate::{
         auth::{
             Principal,
             media_tokens::{
+                DeliveryOptions,
                 MEDIA_TOKEN_IDLE_TTL_SECONDS,
                 MediaTokenHolder,
                 MediaTokenPurpose,
@@ -339,70 +342,53 @@ pub(crate) async fn get_track_response(
     Ok(track_detail_to_response(db, detail, includes)?)
 }
 
-fn add_optional_query_pair<T: ToString>(
-    pairs: &mut Vec<(&'static str, String)>,
-    key: &'static str,
-    value: Option<T>,
-) {
-    if let Some(value) = value {
-        pairs.push((key, value.to_string()));
-    }
-}
-
-fn add_optional_string_query_pair(
-    pairs: &mut Vec<(&'static str, String)>,
-    key: &'static str,
-    value: Option<&String>,
-) {
-    let Some(value) = value
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-    else {
-        return;
-    };
-    pairs.push((key, value.to_string()));
-}
-
-fn build_media_url(path: String, pairs: Vec<(&'static str, String)>) -> String {
+fn build_media_url(path: String, token: &str, query: &PlaybackUrlQuery) -> String {
     let mut serializer = form_urlencoded::Serializer::new(String::new());
-    for (key, value) in pairs {
-        serializer.append_pair(key, &value);
+    serializer.append_pair("media_token", token);
+    if let Some(start_offset_ms) = query.start_offset_ms {
+        serializer.append_pair("start_offset_ms", &start_offset_ms.to_string());
     }
-    let query = serializer.finish();
-    format!("{path}?{query}")
-}
-
-fn media_url_common_pairs(
-    media_token: &str,
-    query: &PlaybackUrlQuery,
-) -> Vec<(&'static str, String)> {
-    let mut pairs = vec![("media_token", media_token.to_string())];
-    add_optional_query_pair(&mut pairs, "bitrate_bps", query.bitrate_bps);
-    add_optional_query_pair(&mut pairs, "sample_rate_hz", query.sample_rate_hz);
-    add_optional_query_pair(&mut pairs, "channels", query.channels);
-    add_optional_query_pair(&mut pairs, "prefer_vbr", query.prefer_vbr);
-    add_optional_query_pair(&mut pairs, "start_offset_ms", query.start_offset_ms);
-    pairs
+    format!("{path}?{}", serializer.finish())
 }
 
 fn build_stream_url(id: &str, token: &str, query: &PlaybackUrlQuery) -> String {
-    let mut pairs = media_url_common_pairs(token, query);
-    add_optional_string_query_pair(&mut pairs, "format", query.format.as_ref());
-    add_optional_string_query_pair(&mut pairs, "codec", query.codec.as_ref());
-    build_media_url(format!("/api/stream/{id}"), pairs)
+    build_media_url(format!("/api/stream/{id}"), token, query)
 }
 
 fn build_hls_url(id: &str, token: &str, query: &PlaybackUrlQuery) -> String {
-    let mut pairs = media_url_common_pairs(token, query);
-    add_optional_string_query_pair(&mut pairs, "codec", query.hls_codec.as_ref());
-    build_media_url(format!("/api/stream/{id}/hls.m3u8"), pairs)
+    build_media_url(format!("/api/stream/{id}/hls.m3u8"), token, query)
 }
 
 fn build_download_url(id: &str, token: &str, query: &PlaybackUrlQuery) -> String {
-    let mut pairs = media_url_common_pairs(token, query);
-    add_optional_string_query_pair(&mut pairs, "format", query.format.as_ref());
-    add_optional_string_query_pair(&mut pairs, "codec", query.codec.as_ref());
-    build_media_url(format!("/api/download/{id}"), pairs)
+    build_media_url(format!("/api/download/{id}"), token, query)
+}
+
+fn non_empty(value: Option<&String>) -> Option<String> {
+    value
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+/// The delivery the stream and download tokens are issued for.
+fn file_delivery_options(query: &PlaybackUrlQuery) -> DeliveryOptions {
+    DeliveryOptions {
+        format: non_empty(query.format.as_ref()),
+        codec: non_empty(query.codec.as_ref()),
+        bitrate_bps: query.bitrate_bps,
+        sample_rate_hz: query.sample_rate_hz,
+        channels: query.channels,
+        prefer_vbr: query.prefer_vbr,
+    }
+}
+
+/// The delivery the HLS token is issued for.
+fn hls_delivery_options(query: &PlaybackUrlQuery) -> DeliveryOptions {
+    DeliveryOptions {
+        format: None,
+        codec: non_empty(query.hls_codec.as_ref()),
+        ..file_delivery_options(query)
+    }
 }
 
 fn playback_transcode_knobs(query: &PlaybackUrlQuery) -> super::serve::TranscodeKnobs {
@@ -420,18 +406,20 @@ fn validate_playback_url_query(query: &PlaybackUrlQuery) -> Result<(), AppError>
     playback_transcode_knobs(query).validate().map(|_| ())
 }
 
-/// Which transports can serve this request.
+/// What the stream and download transports would deliver for this request.
 ///
 /// HLS is not represented because it always survives: the playlist handler
 /// transcodes whatever the source is, and a codec it cannot honor is rejected
 /// here as a request error rather than as an absent transport.
 #[derive(Debug)]
 struct PlaybackTransports {
-    stream: bool,
+    /// Absent when the resolved container cannot be streamed.
+    stream: Option<DeliveryDescription>,
+    download: DeliveryDescription,
 }
 
-/// Resolves the request once against the source and reports which transports can
-/// carry it.
+/// Resolves the request once against the source and reports what each transport
+/// would deliver.
 ///
 /// Request-level failures — unparseable or incompatible `format`/`codec`/
 /// `hls_codec`, a start offset past the source, a codec that cannot produce the
@@ -445,16 +433,26 @@ fn resolve_playback_transports(
     let source = super::serve::apply_request_start_offset(source, query.start_offset_ms)?;
     let knobs = playback_transcode_knobs(query);
 
-    // `Download` here means "no transport constraint": it resolves the request without
-    // rejecting containers that only /api/download can carry, so streamability becomes an
-    // availability answer instead of a whole-request failure. Every other way the request
-    // can fail still fails it, for every transport.
-    let decision = super::serve::resolve_delivery(
+    // The download resolution puts no streaming constraint on the container, so
+    // streamability becomes an availability answer instead of a whole-request failure.
+    // Every other way the request can fail still fails it, for every transport.
+    let download = super::serve::resolve_delivery(
         &stream_request,
         &source,
         knobs,
         super::serve::DeliveryTarget::Download,
     )?;
+    let stream = download
+        .is_streamable()
+        .then(|| {
+            super::serve::resolve_delivery(
+                &stream_request,
+                &source,
+                knobs,
+                super::serve::DeliveryTarget::Stream,
+            )
+        })
+        .transpose()?;
 
     // Parsed last so an unusable hls_codec never outranks a stream-request error, then
     // checked against the real profile so an hls_url is only minted when the playlist
@@ -463,7 +461,8 @@ fn resolve_playback_transports(
     super::serve::resolve_hls_profile(&source, &hls_request, knobs)?;
 
     Ok(PlaybackTransports {
-        stream: decision.is_streamable(),
+        stream: stream.map(|decision| decision.describe(&source)),
+        download: download.describe(&source),
     })
 }
 
@@ -484,35 +483,46 @@ async fn create_track_playback_url(
     .await?;
     let version = source.version.clone();
     let transports = resolve_playback_transports(&query, source)?;
-    let issue = |purpose| issue_media_token(&id, purpose, holder.clone(), version.clone());
+    let issue = |purpose, options| {
+        issue_media_token(&id, purpose, holder.clone(), version.clone(), options)
+    };
 
     // HLS always survives, which is what keeps `expires_at` total and the response
     // non-empty; tokens for the other transports are only minted when they are usable.
-    let hls_token = issue(MediaTokenPurpose::HlsPlaylist);
+    let hls_token = issue(MediaTokenPurpose::HlsPlaylist, hls_delivery_options(&query));
     let mut expires_at = hls_token.expires_at;
     let hls_url = build_hls_url(&id, &hls_token.token, &query);
 
-    let stream_url = if transports.stream {
-        let stream_token = issue(MediaTokenPurpose::Stream);
-        expires_at = expires_at.min(stream_token.expires_at);
-        Some(build_stream_url(&id, &stream_token.token, &query))
-    } else {
-        None
+    let (stream_url, stream_delivery) = match transports.stream {
+        Some(delivery) => {
+            let stream_token = issue(MediaTokenPurpose::Stream, file_delivery_options(&query));
+            expires_at = expires_at.min(stream_token.expires_at);
+            (
+                Some(build_stream_url(&id, &stream_token.token, &query)),
+                Some(delivery),
+            )
+        }
+        None => (None, None),
     };
 
-    let download_url =
+    let (download_url, download_delivery) =
         if super::serve::authorize_track_purpose(&principal, MediaTokenPurpose::Download).is_ok() {
-            let download_token = issue(MediaTokenPurpose::Download);
+            let download_token = issue(MediaTokenPurpose::Download, file_delivery_options(&query));
             expires_at = expires_at.min(download_token.expires_at);
-            Some(build_download_url(&id, &download_token.token, &query))
+            (
+                Some(build_download_url(&id, &download_token.token, &query)),
+                Some(transports.download),
+            )
         } else {
-            None
+            (None, None)
         };
 
     Ok(Json(PlaybackUrlResponse {
         stream_url,
+        stream_delivery,
         hls_url,
         download_url,
+        download_delivery,
         expires_at: super::unix_secs_to_rfc3339_i64(expires_at),
         idle_expires_after_seconds: MEDIA_TOKEN_IDLE_TTL_SECONDS,
     }))
@@ -639,6 +649,14 @@ struct PlaybackUrlResponse {
         )
     )]
     stream_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "What `stream_url` delivers as minted; present exactly when it is. A `start_offset_ms` added per request can still turn a passthrough into a transcode."
+        )
+    )]
+    stream_delivery: Option<DeliveryDescription>,
     hls_url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(
@@ -646,6 +664,14 @@ struct PlaybackUrlResponse {
         schemars(description = "Absent when the caller lacks download permission.")
     )]
     download_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "What `download_url` delivers as minted; present exactly when it is. A `start_offset_ms` added per request can still turn a passthrough into a transcode."
+        )
+    )]
+    download_delivery: Option<DeliveryDescription>,
     #[cfg_attr(
         feature = "docgen",
         schemars(description = "Absolute media-token expiration as an RFC3339 timestamp.")
@@ -667,7 +693,14 @@ fn create_track_playback_url_docs(op: TransformOperation) -> TransformOperation 
          a fixed maximum lifetime, and also expire after an idle period. A token acts for the user \
          and credential that requested it: it stops working once that session or API key is \
          revoked, the user is removed, or the user loses access to the track, and it answers \
-         410 Gone once the track's source file has changed since it was issued.\n\n\
+         410 Gone once the track's source file has changed since it was issued. A token also fixes \
+         the delivery it was issued for: the URLs carry no format, codec or transcode settings, a \
+         request that adds any is rejected, and only `start_offset_ms` may change per request.\n\n\
+         `stream_delivery` and `download_delivery` describe what their URLs deliver without starting \
+         anything: whether the source file is served as it is or transcoded and why, and the \
+         delivered container, codec, content type, bitrate, sample rate and channels. They describe \
+         the URLs as minted: the start offset stays free per request for seeking, and an offset \
+         turns a source served as it is into a transcode of the rest of it.\n\n\
          The request is resolved once against the track's source, and a transport is omitted when \
          it cannot carry the result. `stream_url` is omitted when the request encodes into a container \
          that does not support streaming (caf); use `hls_url` or `download_url` instead. \
@@ -1605,7 +1638,7 @@ mod tests {
     }
 
     #[test]
-    fn build_stream_url_encodes_media_token_and_options() {
+    fn build_stream_url_carries_only_the_token_and_start_offset() {
         let query = PlaybackUrlQuery {
             format: Some("mp3".to_string()),
             codec: Some("copy,mp3".to_string()),
@@ -1619,16 +1652,23 @@ mod tests {
 
         let url = build_stream_url("track/id", "token value", &query);
 
-        assert!(url.starts_with("/api/stream/track/id?"));
-        assert!(url.contains("media_token=token+value"));
-        assert!(url.contains("format=mp3"));
-        assert!(url.contains("codec=copy%2Cmp3"));
-        assert!(url.contains("bitrate_bps=128000"));
-        assert!(url.contains("sample_rate_hz=44100"));
-        assert!(url.contains("channels=2"));
-        assert!(url.contains("prefer_vbr=true"));
-        assert!(url.contains("start_offset_ms=12345"));
-        assert!(!url.contains("hls_codec"));
+        assert_eq!(
+            url,
+            "/api/stream/track/id?media_token=token+value&start_offset_ms=12345"
+        );
+        assert_eq!(
+            file_delivery_options(&query),
+            DeliveryOptions {
+                format: Some("mp3".to_string()),
+                codec: Some("copy,mp3".to_string()),
+                bitrate_bps: Some(128_000),
+                sample_rate_hz: Some(44_100),
+                channels: Some(2),
+                prefer_vbr: Some(true),
+            }
+        );
+        assert_eq!(hls_delivery_options(&query).codec.as_deref(), Some("aac"));
+        assert_eq!(hls_delivery_options(&query).format, None);
     }
 
     fn playback_url_query(
@@ -1661,9 +1701,12 @@ mod tests {
             duration_ms: Some(20_000),
             start_ms: None,
             end_ms: None,
-            source_bitrate_bps: Some(900_000),
-            source_sample_rate_hz: Some(96_000),
-            source_channels: Some(2),
+            format: crate::db::track_sources::SourceFormat {
+                sample_rate_hz: Some(96_000),
+                channel_count: Some(2),
+                bitrate_bps: Some(900_000),
+                ..Default::default()
+            },
         }
     }
 
@@ -1674,7 +1717,7 @@ mod tests {
             flac_playback_source(),
         )
         .expect("a plain mp3 transcode request stays valid");
-        assert!(transports.stream);
+        assert!(transports.stream.is_some());
     }
 
     #[test]
@@ -1702,7 +1745,7 @@ mod tests {
             flac_playback_source(),
         )
         .expect("caf is downloadable even though it cannot be streamed");
-        assert!(!transports.stream);
+        assert!(transports.stream.is_none());
     }
 
     #[test]
@@ -1715,7 +1758,10 @@ mod tests {
 
         let transports = resolve_playback_transports(&playback_url_query(None, None, None), source)
             .expect("an m4a source resolves");
-        assert!(transports.stream, "the original m4a file streams as it is");
+        assert!(
+            transports.stream.is_some(),
+            "the original m4a file streams as it is"
+        );
     }
 
     #[test]
@@ -1733,7 +1779,7 @@ mod tests {
         let transports = resolve_playback_transports(&downmix("copy,mp3"), m4a)
             .expect("the request is fine for download");
         assert!(
-            transports.stream,
+            transports.stream.is_some(),
             "the final mp3 container is streamable, so a stream_url should be minted"
         );
     }
@@ -1760,7 +1806,7 @@ mod tests {
             flac_playback_source(),
         )
         .expect("a flac source can be segmented by stream copy");
-        assert!(transports.stream);
+        assert!(transports.stream.is_some());
     }
 
     #[test]

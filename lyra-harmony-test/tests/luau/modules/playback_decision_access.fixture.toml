@@ -1,0 +1,9 @@
+run_as = "viewer"
+
+[[users]]
+key = "viewer"
+
+[[tracks]]
+key = "song"
+title = "Song"
+file = "song.opus"

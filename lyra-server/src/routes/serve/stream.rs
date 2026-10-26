@@ -27,10 +27,13 @@ use serde::Deserialize;
 use crate::routes::AppError;
 
 use super::{
+    DeliveryDescription,
     DeliveryTarget,
     ServeTrackOptions,
     TranscodeKnobs,
+    ValidatedTrackSource,
     apply_request_start_offset,
+    decision::DeliveryDecision,
     resolve_delivery,
     source_file_response,
     transcoded::transcoded_response,
@@ -44,7 +47,7 @@ struct StreamQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Scoped media token returned by `POST /api/tracks/{id}/playback-url`."
+            description = "Scoped media token returned by `POST /api/tracks/{id}/playback-url`. It fixes the format, codec and transcode settings, so a request with one passes none of them; only `start_offset_ms` may vary."
         )
     )]
     media_token: Option<String>,
@@ -119,7 +122,8 @@ async fn get_stream(
             channels: query.channels,
             prefer_vbr: query.prefer_vbr,
             start_offset_ms: query.start_offset_ms,
-        },
+        }
+        .bound_to(&access)?,
     )
     .await
 }
@@ -133,6 +137,36 @@ pub(crate) async fn stream_track_response(
     access: &super::TrackAccess,
     options: ServeTrackOptions,
 ) -> Result<Response<Body>, AppError> {
+    let (source, delivery) = resolve_stream(track_id, access, options).await?;
+    if delivery.direct_passthrough {
+        return source_file_response(&source, delivery.content_type, headers).await;
+    }
+    transcoded_response(
+        method,
+        headers,
+        access.capacity_account(),
+        source,
+        delivery,
+        DeliveryTarget::Stream,
+    )
+    .await
+}
+
+/// What [`stream_track_response`] would deliver for the same request, without serving it.
+pub(crate) async fn describe_stream(
+    track_id: &str,
+    access: &super::TrackAccess,
+    options: ServeTrackOptions,
+) -> Result<DeliveryDescription, AppError> {
+    let (source, delivery) = resolve_stream(track_id, access, options).await?;
+    Ok(delivery.describe(&source))
+}
+
+async fn resolve_stream(
+    track_id: &str,
+    access: &super::TrackAccess,
+    options: ServeTrackOptions,
+) -> Result<(ValidatedTrackSource, DeliveryDecision), AppError> {
     let ServeTrackOptions {
         format,
         codec,
@@ -159,19 +193,7 @@ pub(crate) async fn stream_track_response(
         },
         DeliveryTarget::Stream,
     )?;
-
-    if delivery.direct_passthrough {
-        return source_file_response(&source, delivery.content_type, headers).await;
-    }
-    transcoded_response(
-        method,
-        headers,
-        access.capacity_account(),
-        source,
-        delivery,
-        DeliveryTarget::Stream,
-    )
-    .await
+    Ok((source, delivery))
 }
 
 #[cfg(feature = "docgen")]

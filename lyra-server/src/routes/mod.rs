@@ -98,6 +98,7 @@ pub(crate) use serve::{
     TrackAccess,
     authorize_track_purpose,
     build_ranged_file_body,
+    describe_stream,
     download_track_response,
     serve_hls_playlist_for_track,
     stream_track_response,

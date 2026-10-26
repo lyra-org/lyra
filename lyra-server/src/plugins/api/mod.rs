@@ -23,7 +23,6 @@ use self::parsing::{
     infer_content_type,
     join_preferred_codecs,
     parse_hls_serve_options,
-    parse_public_stream,
     parse_track_serve_options,
     parse_u32_json,
 };
@@ -68,6 +67,10 @@ use self::types::{
     ApiWebSocketHandler,
 };
 use self::websocket::dispatch_websocket_route;
+pub(crate) use self::{
+    headers::stream_track_access,
+    parsing::stream_track_options,
+};
 
 use std::{
     cell::{

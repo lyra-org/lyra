@@ -61,6 +61,12 @@ impl std::fmt::Debug for AppError {
     }
 }
 
+impl std::fmt::Display for AppError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.status_code, self.error)
+    }
+}
+
 impl AppError {
     fn with_status(status_code: StatusCode, message: String) -> Self {
         Self {

@@ -43,12 +43,22 @@ struct EntryInfo;
 #[cfg(feature = "docgen")]
 struct PlaybackSourceInfo;
 
+#[cfg(feature = "docgen")]
+struct DeliveryRequest;
+
+#[cfg(feature = "docgen")]
+struct DeliveryDescription;
+
+#[cfg(feature = "docgen")]
+struct SourceDescription;
+
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/playback_sources")
         .capability("lyra.playback_sources")
         .function(get_spec())
         .function(get_many_spec())
         .function(streamable_spec())
+        .function(decide_spec())
         .install(|_| Ok(ModuleExport::new(PlaybackSourcesModule)))
 }
 
@@ -82,6 +92,45 @@ fn streamable_spec() -> FunctionSpec {
         .args::<Option<bool>>()
         .returns::<Option<luau::Table>>()
         .call_async(Arc::new(streamable_callback))
+}
+
+fn decide_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("decide")
+        .context::<crate::plugins::auth::DispatchAuth>()
+        .arg_name("track_id")
+        .args::<i64>()
+        .arg_name("options")
+        .args::<Option<luau::Value>>()
+        .returns::<luau::Table>()
+        .call_async(Arc::new(decide_callback))
+}
+
+fn decide_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let track_id = args::positive_id(frame.args.read_named::<i64>("track_id")?, "track_id")?;
+    let options = frame
+        .args
+        .read_optional_named::<luau::Value>("options")?
+        .map(|options| harmony_serde::luau_to_json(frame.vm, &options, 0))
+        .transpose()?;
+    let principal = crate::plugins::auth::dispatch_principal(&frame.context)?;
+
+    Ok(luau::ScheduledFuture::new(async move {
+        let (public, options) = crate::plugins::api::stream_track_options(options.as_ref())
+            .map_err(crate::plugins::runtime_error)?;
+        let (track_id, access) =
+            crate::plugins::api::stream_track_access(principal.as_ref(), None, track_id, public)
+                .await
+                .map_err(crate::plugins::runtime_error)?;
+        let description = crate::routes::describe_stream(&track_id, &access, options)
+            .await
+            .map_err(crate::plugins::runtime_error)?;
+        harmony_serde::json_to_luau_owned(
+            serde_json::to_value(description).map_err(crate::plugins::runtime_error)?,
+            0,
+        )
+    }))
 }
 
 fn get_callback(
@@ -458,6 +507,119 @@ impl DescribeInterface for PlaybackSourceInfo {
 }
 
 #[cfg(feature = "docgen")]
+fn field(name: &'static str, ty: LuauType, description: Option<&'static str>) -> FieldDescriptor {
+    FieldDescriptor {
+        name,
+        ty,
+        description,
+    }
+}
+
+#[cfg(feature = "docgen")]
+impl LuauTypeInfo for DeliveryRequest {
+    fn luau_type() -> LuauType {
+        LuauType::named("DeliveryRequest")
+    }
+}
+
+#[cfg(feature = "docgen")]
+impl DescribeInterface for DeliveryRequest {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new(
+            "DeliveryRequest",
+            Some("The options of an `api.response.stream_track` response."),
+        );
+        descriptor.fields.extend([
+            field("format", Option::<String>::luau_type(), None),
+            field("preferred_codecs", Option::<Vec<String>>::luau_type(), None),
+            field("bitrate_bps", Option::<u32>::luau_type(), None),
+            field("sample_rate_hz", Option::<u32>::luau_type(), None),
+            field("channels", Option::<u32>::luau_type(), None),
+            field("prefer_vbr", Option::<bool>::luau_type(), None),
+            field("start_offset_ms", Option::<u64>::luau_type(), None),
+            field(
+                "public",
+                Option::<bool>::luau_type(),
+                Some("Decide without the caller's track access check, as a public stream route serves."),
+            ),
+        ]);
+        descriptor
+    }
+}
+
+#[cfg(feature = "docgen")]
+impl LuauTypeInfo for DeliveryDescription {
+    fn luau_type() -> LuauType {
+        LuauType::named("DeliveryDescription")
+    }
+}
+
+#[cfg(feature = "docgen")]
+impl DescribeInterface for DeliveryDescription {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("DeliveryDescription", None);
+        descriptor.fields.extend([
+            field(
+                "transcode",
+                bool::luau_type(),
+                Some("`false` when the source file is served as it is."),
+            ),
+            field(
+                "reasons",
+                Vec::<String>::luau_type(),
+                Some(
+                    "Why the source is re-encoded: `container`, `codec`, `bitrate`, `sample_rate`, `channels`, or `range`. Empty for the source file.",
+                ),
+            ),
+            field(
+                "container",
+                String::luau_type(),
+                Some("The delivered format, as the `format` option names it."),
+            ),
+            field("codec", Option::<String>::luau_type(), None),
+            field("content_type", String::luau_type(), None),
+            field("bitrate_bps", Option::<u32>::luau_type(), None),
+            field("vbr_quality", Option::<i32>::luau_type(), None),
+            field("sample_rate_hz", Option::<u32>::luau_type(), None),
+            field("channels", Option::<u32>::luau_type(), None),
+            field("source", SourceDescription::luau_type(), None),
+        ]);
+        descriptor
+    }
+}
+
+#[cfg(feature = "docgen")]
+impl LuauTypeInfo for SourceDescription {
+    fn luau_type() -> LuauType {
+        LuauType::named("SourceDescription")
+    }
+}
+
+#[cfg(feature = "docgen")]
+impl DescribeInterface for SourceDescription {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("SourceDescription", None);
+        descriptor.fields.extend([
+            field(
+                "container",
+                LuauType::optional(LuauType::named("SourceContainer")),
+                None,
+            ),
+            field(
+                "codec",
+                LuauType::optional(LuauType::named("SourceCodec")),
+                None,
+            ),
+            field("bitrate_bps", Option::<u32>::luau_type(), None),
+            field("sample_rate_hz", Option::<u32>::luau_type(), None),
+            field("channels", Option::<u32>::luau_type(), None),
+            field("bit_depth", Option::<u32>::luau_type(), None),
+        ]);
+        descriptor
+    }
+}
+
+#[cfg(feature = "docgen")]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -495,6 +657,18 @@ fn module_descriptor() -> ModuleDescriptor {
                     param("include_entry", Option::<bool>::luau_type()),
                 ],
                 returns: vec![Option::<PlaybackSourceInfo>::luau_type()],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["decide"],
+                description: Some(
+                    "What `api.response.stream_track(track_id, options)` would deliver, without serving anything: whether the source file is served as it is or transcoded, why, and the delivered format. Raises the error the stream would answer with when the request cannot be served.",
+                ),
+                params: vec![
+                    param("track_id", i64::luau_type()),
+                    param("options", Option::<DeliveryRequest>::luau_type()),
+                ],
+                returns: vec![DeliveryDescription::luau_type()],
                 yields: true,
             },
             ModuleFunctionDescriptor {
@@ -542,6 +716,9 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &[
             EntryInfo::interface_descriptor(),
             PlaybackSourceInfo::interface_descriptor(),
+            DeliveryRequest::interface_descriptor(),
+            DeliveryDescription::interface_descriptor(),
+            SourceDescription::interface_descriptor(),
         ],
         &[],
     )

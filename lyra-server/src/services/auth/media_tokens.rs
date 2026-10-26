@@ -75,13 +75,26 @@ impl MediaTokenHolder {
     }
 }
 
-/// What a validated media token grants: its purpose, its holder, and the exact source file it was
-/// issued against.
+/// The delivery a media token was issued for. A request with the token gets these, so it
+/// fetches exactly what was decided when the token was issued.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct DeliveryOptions {
+    pub(crate) format: Option<String>,
+    pub(crate) codec: Option<String>,
+    pub(crate) bitrate_bps: Option<u32>,
+    pub(crate) sample_rate_hz: Option<u32>,
+    pub(crate) channels: Option<u32>,
+    pub(crate) prefer_vbr: Option<bool>,
+}
+
+/// What a validated media token grants: its purpose, its holder, the exact source file it was
+/// issued against, and the delivery it was issued for.
 #[derive(Clone, Debug)]
 pub(crate) struct MediaTokenAccess {
     pub(crate) purpose: MediaTokenPurpose,
     pub(crate) holder: MediaTokenHolder,
     pub(crate) source: SourceVersion,
+    pub(crate) options: DeliveryOptions,
 }
 
 #[derive(Clone, Debug)]
@@ -158,6 +171,7 @@ pub(crate) fn issue_media_token(
     purpose: MediaTokenPurpose,
     holder: MediaTokenHolder,
     source: SourceVersion,
+    options: DeliveryOptions,
 ) -> IssuedMediaToken {
     let now = Instant::now();
     let expires_at = now_secs().saturating_add(MEDIA_TOKEN_MAX_TTL_SECONDS as i64);
@@ -168,6 +182,7 @@ pub(crate) fn issue_media_token(
             purpose,
             holder,
             source,
+            options,
         },
         issued_at: now,
         last_used_at: now,
@@ -233,6 +248,7 @@ pub(crate) fn issue_unbound_media_token(
             credential: AuthCredential::Default,
         },
         SourceVersion::fixed("placeholder-source"),
+        DeliveryOptions::default(),
     )
 }
 

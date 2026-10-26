@@ -216,9 +216,9 @@ pub(crate) struct SourceAudio {
 impl From<&ValidatedTrackSource> for SourceAudio {
     fn from(source: &ValidatedTrackSource) -> Self {
         Self {
-            bitrate_bps: source.source_bitrate_bps,
-            sample_rate_hz: source.source_sample_rate_hz,
-            channels: source.source_channels,
+            bitrate_bps: source.format.bitrate_bps,
+            sample_rate_hz: source.format.sample_rate_hz,
+            channels: source.format.channel_count,
             lossy: source
                 .source_codec
                 .is_some_and(|codec| !codec.is_lossless()),
@@ -460,6 +460,39 @@ impl EncoderSettings {
     }
 }
 
+/// Why a delivery re-encodes instead of serving the source file. Every reason that applies is set.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct TranscodeReasons {
+    /// The output container differs from the source's, or the source's is unknown.
+    pub(crate) container: bool,
+    /// The requested codecs rule out the source's audio in its own container.
+    pub(crate) codec: bool,
+    /// A bitrate cap below the source.
+    pub(crate) bitrate: bool,
+    /// A sample rate below the source.
+    pub(crate) sample_rate: bool,
+    /// A channel count below the source.
+    pub(crate) channels: bool,
+    /// Only part of the file is delivered: a CUE segment or a start offset.
+    pub(crate) range: bool,
+}
+
+impl TranscodeReasons {
+    pub(crate) fn names(self) -> Vec<&'static str> {
+        [
+            (self.container, "container"),
+            (self.codec, "codec"),
+            (self.bitrate, "bitrate"),
+            (self.sample_rate, "sample_rate"),
+            (self.channels, "channels"),
+            (self.range, "range"),
+        ]
+        .into_iter()
+        .filter_map(|(set, name)| set.then_some(name))
+        .collect()
+    }
+}
+
 /// The single resolved answer to "what are we delivering, and how".
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct DeliveryDecision {
@@ -469,6 +502,8 @@ pub(crate) struct DeliveryDecision {
     /// The source file can be served verbatim; no ffmpeg run is needed.
     pub(crate) direct_passthrough: bool,
     pub(crate) encoder: EncoderSettings,
+    /// Empty exactly when `direct_passthrough` is set.
+    pub(crate) reasons: TranscodeReasons,
 }
 
 impl DeliveryDecision {
@@ -494,6 +529,93 @@ impl DeliveryDecision {
             output = output.channels(ch);
         }
         output
+    }
+}
+
+/// What a delivery decision serves, in the shape the API and plugins report it.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct DeliveryDescription {
+    /// `false` when the source file is served as it is.
+    pub(crate) transcode: bool,
+    /// Why the source is re-encoded: `container`, `codec`, `bitrate`, `sample_rate`,
+    /// `channels`, or `range` (a CUE segment or a start offset). Empty for the source file.
+    pub(crate) reasons: Vec<&'static str>,
+    /// The delivered file format, as the `format` request option names it.
+    pub(crate) container: &'static str,
+    /// The delivered audio codec, as FFmpeg names it; the source's codec when it is served as it
+    /// is, and absent when that is unknown.
+    pub(crate) codec: Option<&'static str>,
+    pub(crate) content_type: &'static str,
+    /// The target bitrate. Absent for lossless audio and for quality-based VBR.
+    pub(crate) bitrate_bps: Option<u32>,
+    /// The encoder's VBR quality, when it encodes by quality rather than bitrate.
+    pub(crate) vbr_quality: Option<i32>,
+    pub(crate) sample_rate_hz: Option<u32>,
+    pub(crate) channels: Option<u32>,
+    pub(crate) source: SourceDescription,
+}
+
+/// The source file a delivery reads, as it was scanned.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct SourceDescription {
+    pub(crate) container: Option<&'static str>,
+    pub(crate) codec: Option<&'static str>,
+    pub(crate) bitrate_bps: Option<u32>,
+    pub(crate) sample_rate_hz: Option<u32>,
+    pub(crate) channels: Option<u32>,
+    pub(crate) bit_depth: Option<u32>,
+}
+
+impl DeliveryDecision {
+    pub(crate) fn describe(&self, source: &ValidatedTrackSource) -> DeliveryDescription {
+        let format = &source.format;
+        let source_description = SourceDescription {
+            container: format.container.map(|container| container.as_str()),
+            codec: format.codec.map(|codec| codec.as_str()),
+            bitrate_bps: format.bitrate_bps,
+            sample_rate_hz: format.sample_rate_hz,
+            channels: format.channel_count,
+            bit_depth: format.bit_depth,
+        };
+        if self.direct_passthrough {
+            return DeliveryDescription {
+                transcode: false,
+                reasons: Vec::new(),
+                container: self.output_format.as_str(),
+                codec: source_description.codec,
+                content_type: self.content_type,
+                bitrate_bps: format.bitrate_bps,
+                vbr_quality: None,
+                sample_rate_hz: format.sample_rate_hz,
+                channels: format.channel_count,
+                source: source_description,
+            };
+        }
+        let (bitrate_bps, vbr_quality) = match self.encoder.rate_control {
+            Some(
+                RateControl::TargetBitrate { bitrate_kbps } | RateControl::Abr { bitrate_kbps },
+            ) => (Some(bitrate_kbps.saturating_mul(1000)), None),
+            Some(RateControl::Quality(quality)) => (None, Some(quality)),
+            None => (None, None),
+        };
+        DeliveryDescription {
+            transcode: true,
+            reasons: self.reasons.names(),
+            container: self.output_format.as_str(),
+            codec: Some(self.codec.as_str()),
+            content_type: self.content_type,
+            bitrate_bps,
+            vbr_quality,
+            sample_rate_hz: self
+                .encoder
+                .sample_rate_hz
+                .or_else(|| self.codec.native_sample_rate_hz())
+                .or(format.sample_rate_hz),
+            channels: self.encoder.channels.or(format.channel_count),
+            source: source_description,
+        }
     }
 }
 
@@ -566,12 +688,29 @@ pub(crate) fn resolve_delivery(
         && source.entry_format == Some(output_format)
         && !copy_ruled_out;
 
+    let reasons = if direct_passthrough {
+        TranscodeReasons::default()
+    } else {
+        let container = source.entry_format != Some(output_format);
+        let bitrate = policy.bitrate_bps.is_some();
+        let sample_rate = policy.sample_rate_hz.is_some();
+        let channels = policy.channels.is_some();
+        TranscodeReasons {
+            container,
+            codec: !(container || bitrate || sample_rate || channels || trimmed),
+            bitrate,
+            sample_rate,
+            channels,
+            range: trimmed,
+        }
+    };
     let decision = DeliveryDecision {
         output_format,
         codec,
         content_type: target.content_type(output_format),
         direct_passthrough,
         encoder: EncoderSettings::resolve(codec, &policy),
+        reasons,
     };
     if target.is_streaming() && !decision.is_streamable() {
         return Err(AppError::bad_request(format!(
@@ -634,6 +773,7 @@ mod tests {
             content_type: DeliveryTarget::Stream.content_type(format),
             direct_passthrough: false,
             encoder: EncoderSettings::resolve(codec, policy),
+            reasons: Default::default(),
         }
         .configure_output(Output::with_callback(|_| 0))
     }
@@ -651,9 +791,12 @@ mod tests {
             duration_ms: Some(20_000),
             start_ms,
             end_ms,
-            source_bitrate_bps: Some(900_000),
-            source_sample_rate_hz: Some(96_000),
-            source_channels: Some(2),
+            format: crate::db::track_sources::SourceFormat {
+                sample_rate_hz: Some(96_000),
+                channel_count: Some(2),
+                bitrate_bps: Some(900_000),
+                ..Default::default()
+            },
         }
     }
 
@@ -1431,8 +1574,8 @@ mod tests {
         let mut source = flac_source(None, None);
         source.entry_format = Some(AudioFormat::Wma);
         source.source_codec = Some(AudioCodec::Wma);
-        source.source_bitrate_bps = Some(768_000);
-        source.source_channels = Some(2);
+        source.format.bitrate_bps = Some(768_000);
+        source.format.channel_count = Some(2);
         let validated = validate_request(None, Some("opus".to_string())).expect("opus parses");
 
         let decision = resolve_delivery(

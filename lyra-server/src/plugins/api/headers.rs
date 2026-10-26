@@ -63,6 +63,22 @@ async fn public_plugin_track_access(
     Ok((track_id, TrackAccess::PublicPluginRoute(account)))
 }
 
+/// The track a `stream_track` response for `track_db_id` serves and the access it is served
+/// under: the caller's, or none when the response is `public`, which still counts its
+/// transcodes against the caller or the client's address.
+pub(crate) async fn stream_track_access(
+    principal: Option<&Principal>,
+    client_key: Option<&str>,
+    track_db_id: agdb::DbId,
+    public: bool,
+) -> Result<(String, TrackAccess), AppError> {
+    if public {
+        public_plugin_track_access(principal, client_key, track_db_id).await
+    } else {
+        require_plugin_track_access(principal, track_db_id, MediaTokenPurpose::Stream).await
+    }
+}
+
 /// Plugins may name any filesystem path in a file response, so resolve the
 /// target (following symlinks) and refuse anything outside the roots of the
 /// libraries the principal can see and the configured cover storage root.
@@ -96,33 +112,25 @@ pub(super) async fn plugin_api_response_to_axum(
             let track_id = response
                 .track_id
                 .ok_or_else(|| anyhow::anyhow!("stream_track response requires track_id"))?;
-            let track_db_id = agdb::DbId(track_id);
-            let access = if parse_public_stream(response.options.as_ref())? {
-                public_plugin_track_access(principal, response.client_key.as_deref(), track_db_id)
-                    .await
-            } else {
-                require_plugin_track_access(principal, track_db_id, MediaTokenPurpose::Stream).await
-            };
-            let (track_id, access) = match access {
+            let (public, options) = stream_track_options(response.options.as_ref())?;
+            let (track_id, access) = match stream_track_access(
+                principal,
+                response.client_key.as_deref(),
+                agdb::DbId(track_id),
+                public,
+            )
+            .await
+            {
                 Ok(resolved) => resolved,
                 Err(error) => return Ok(error.into_response()),
             };
-            let options = parse_track_serve_options(response.options.as_ref())?;
             return Ok(
                 match stream_track_response(
                     request_method,
                     request_headers,
                     &track_id,
                     &access,
-                    ServeTrackOptions {
-                        format: options.format,
-                        codec: join_preferred_codecs(options.preferred_codecs),
-                        bitrate_bps: options.bitrate_bps,
-                        sample_rate_hz: options.sample_rate_hz,
-                        channels: options.channels,
-                        prefer_vbr: options.prefer_vbr,
-                        start_offset_ms: options.start_offset_ms,
-                    },
+                    options,
                 )
                 .await
                 {
