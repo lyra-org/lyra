@@ -23,6 +23,8 @@ end
 
 -- As upstream, the URL carries the request's token so players can fetch it without headers.
 local url = transcoding_url("secret")
+-- Relative to the Jellyfin API root, as upstream; clients prepend their own base path.
+assert(string.sub(url, 1, #"/audio/") == "/audio/", url)
 assert(string.find(url, "/master.m3u8?", 1, true), url)
 assert(string.find(url, "&ApiKey=secret", 1, true), url)
 assert(not string.find(transcoding_url(nil), "ApiKey", 1, true), "no token, no ApiKey")

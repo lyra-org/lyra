@@ -14,7 +14,6 @@ local tracks = require("@lyra/tracks")
 local constants = require("../../constants")
 
 local PLAYBACK_COMPLETION_TOLERANCE_MS = constants.PLAYBACK_COMPLETION_TOLERANCE_MS
-local ROUTE_PREFIX = constants.ROUTE_PREFIX
 
 local item_ids = require("./identifiers")
 local media = require("./media")
@@ -106,7 +105,6 @@ type MediaSource = {
 	DefaultAudioStreamIndex: number,
 	HasSegments: boolean,
 	ETag: string?,
-	DirectStreamUrl: string?,
 }
 
 type AudioPlaybackLimits = {
@@ -543,7 +541,7 @@ local function build_hls_transcoding_url(
 	if access_token ~= nil then
 		table.insert(parts, `ApiKey={access_token}`)
 	end
-	return `{ROUTE_PREFIX}/Audio/{item_id}/master.m3u8?{table.concat(parts, "&")}`
+	return `/audio/{item_id}/master.m3u8?{table.concat(parts, "&")}`
 end
 
 local function apply_preferred_hls_transcoding(
@@ -615,7 +613,7 @@ local function build_media_info(
 	local codec = media.jellyfin_codec(source)
 	local size = if entry and entry.size then tonumber(entry.size) else nil
 	local bitrate = if track then track.bitrate_bps else nil
-	local direct_stream_url = if source and media_item_id then `{ROUTE_PREFIX}/Items/{media_item_id}/File` else nil
+	local direct_playable = source ~= nil and media_item_id ~= nil
 
 	local media_stream: MediaStream = {
 		Codec = codec,
@@ -670,8 +668,8 @@ local function build_media_info(
 		IgnoreIndex = false,
 		GenPtsInput = false,
 		SupportsTranscoding = false,
-		SupportsDirectStream = direct_stream_url ~= nil,
-		SupportsDirectPlay = direct_stream_url ~= nil,
+		SupportsDirectStream = direct_playable,
+		SupportsDirectPlay = direct_playable,
 		IsInfiniteStream = false,
 		RequiresOpening = false,
 		RequiresClosing = false,
@@ -684,9 +682,6 @@ local function build_media_info(
 	}
 	if entry and entry.hash then
 		media_source.ETag = tostring(entry.hash)
-	end
-	if direct_stream_url then
-		media_source.DirectStreamUrl = direct_stream_url
 	end
 
 	return { media_source }, media_streams, container

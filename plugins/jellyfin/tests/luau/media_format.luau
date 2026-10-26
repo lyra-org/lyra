@@ -13,7 +13,9 @@ assert(source.Path == nil, `path {source.Path}`)
 -- Format comes from the scanned contents, not the path.
 assert(source.Container == "ogg", `container {source.Container}`)
 assert(source.MediaStreams[1].Codec == "opus", `codec {source.MediaStreams[1].Codec}`)
-assert(source.DirectStreamUrl ~= nil, "direct stream url without a path")
+assert(source.SupportsDirectPlay, "direct play without a path")
+-- Upstream sets no DirectStreamUrl for library audio.
+assert(source.DirectStreamUrl == nil, `direct stream url {source.DirectStreamUrl}`)
 
 -- Jellyfin names containers after FFmpeg's demuxers.
 assert(media.jellyfin_container({ container = "wavpack" } :: any) == "wv")

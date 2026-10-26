@@ -23,7 +23,6 @@ local tracks = require("@lyra/tracks")
 local constants = require("../../constants")
 local libraries = require("@lyra/libraries")
 local playlist_access = require("../playlist_access")
-local ROUTE_PREFIX = constants.ROUTE_PREFIX
 
 local FAVORITE_ENTITY_KINDS = { "track", "release", "artist", "playlist" }
 
@@ -862,7 +861,7 @@ function helpers.build_media_info(
 	local codec = media.jellyfin_codec(source)
 	local size = if entry and entry.size then tonumber(entry.size) else nil
 	local bitrate = if track then track.bitrate_bps else nil
-	local direct_stream_url = if source and media_item_id then `{ROUTE_PREFIX}/Items/{media_item_id}/File` else nil
+	local direct_playable = source ~= nil and media_item_id ~= nil
 
 	local media_stream: MediaStreamInfo = {
 		Codec = codec,
@@ -919,8 +918,8 @@ function helpers.build_media_info(
 		IgnoreIndex = false,
 		GenPtsInput = false,
 		SupportsTranscoding = false,
-		SupportsDirectStream = direct_stream_url ~= nil,
-		SupportsDirectPlay = direct_stream_url ~= nil,
+		SupportsDirectStream = direct_playable,
+		SupportsDirectPlay = direct_playable,
 		IsInfiniteStream = false,
 		RequiresOpening = false,
 		RequiresClosing = false,
@@ -933,9 +932,6 @@ function helpers.build_media_info(
 	}
 	if entry and entry.hash then
 		media_source.ETag = tostring(entry.hash)
-	end
-	if direct_stream_url then
-		media_source.DirectStreamUrl = direct_stream_url
 	end
 
 	return { media_source }, media_streams, container
