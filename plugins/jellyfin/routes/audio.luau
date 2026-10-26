@@ -129,8 +129,6 @@ function module.handle_universal_route(ctx: ApiContext): ApiResponse
 	local raw_sample_rate = requests.parse_query_string(query, { "audioSampleRate", "AudioSampleRate" }, nil)
 	local raw_bit_depth = requests.parse_query_string(query, { "maxAudioBitDepth", "MaxAudioBitDepth" }, nil)
 	local raw_channels = requests.parse_query_string(query, { "maxAudioChannels", "MaxAudioChannels" }, nil)
-	local raw_enable_audio_vbr =
-		requests.parse_query_string(query, { "enableAudioVbrEncoding", "EnableAudioVbrEncoding" }, nil)
 	local raw_auto_copy = requests.parse_query_string(query, { "enableAutoStreamCopy", "EnableAutoStreamCopy" }, nil)
 	local raw_enable_direct_play = requests.parse_query_string(query, { "enableDirectPlay", "EnableDirectPlay" }, nil)
 	local raw_enable_transcoding = requests.parse_query_string(query, { "enableTranscoding", "EnableTranscoding" }, nil)
@@ -169,7 +167,6 @@ function module.handle_universal_route(ctx: ApiContext): ApiResponse
 		return responses.bad_request(`StartTimeTicks {start_ticks_err}`)
 	end
 	local start_offset_ms = jellyfin_ticks_to_ms(start_ticks)
-	local prefer_vbr = jellyfin_boolean(raw_enable_audio_vbr)
 	local forbid_stream_copy = jellyfin_boolean(raw_auto_copy) == false
 	local direct_play_enabled = jellyfin_boolean(raw_enable_direct_play) ~= false
 	local transcoding_enabled = jellyfin_boolean(raw_enable_transcoding) ~= false
@@ -234,7 +231,6 @@ function module.handle_universal_route(ctx: ApiContext): ApiResponse
 			bitrate_bps = bitrate_bps,
 			sample_rate_hz = sample_rate_hz,
 			channels = channels,
-			prefer_vbr = prefer_vbr,
 			start_offset_ms = start_offset_ms,
 		}
 		return api.response.hls_playlist(track_id, options)
@@ -255,7 +251,6 @@ function module.handle_universal_route(ctx: ApiContext): ApiResponse
 		bitrate_bps = bitrate_bps,
 		sample_rate_hz = sample_rate_hz,
 		channels = channels,
-		prefer_vbr = prefer_vbr,
 		start_offset_ms = start_offset_ms,
 	}
 	return api.response.stream_track(track_id, options)
@@ -328,7 +323,8 @@ end
 
 -- Upstream's `/stream` and `/stream.{container}`: `static=true` sends the original file, and
 -- anything else encodes into `container` as the audio parameters ask, even audio the client could
--- take as it is. Public, as upstream: any
+-- take as it is. Encodes use a constant bitrate: upstream's `enableAudioVbrEncoding` only applies
+-- once a server encoding option it leaves off by default is on. Public, as upstream: any
 -- caller streams any track.
 function module.handle_stream_route(ctx: ApiContext): ApiResponse
 	local request = if ctx then ctx.request else nil
@@ -390,7 +386,6 @@ function module.handle_stream_route(ctx: ApiContext): ApiResponse
 		bitrate_bps = bitrate_bps,
 		sample_rate_hz = sample_rate_hz,
 		channels = channels,
-		prefer_vbr = jellyfin_boolean(requests.parse_query_string(query, { "enableAudioVbrEncoding" }, nil)) ~= false,
 		start_offset_ms = jellyfin_ticks_to_ms(start_ticks),
 	})
 end
@@ -465,8 +460,6 @@ local function resolve_audio_hls_query_options(query: ApiQueryParams?): (api.Hls
 		requests.parse_query_string(query, { "audioBitRate", "AudioBitRate", "AudioBitrate" }, nil)
 	local raw_max_bitrate = requests.parse_query_string(query, { "maxStreamingBitrate", "MaxStreamingBitrate" }, nil)
 	local raw_sample_rate = requests.parse_query_string(query, { "audioSampleRate", "AudioSampleRate" }, nil)
-	local raw_enable_audio_vbr =
-		requests.parse_query_string(query, { "enableAudioVbrEncoding", "EnableAudioVbrEncoding" }, nil)
 	local raw_start_ticks = requests.parse_query_string(query, { "startTimeTicks", "StartTimeTicks" }, nil)
 
 	local requested_audio_bitrate, requested_audio_bitrate_err = extract_integer_param(raw_audio_bitrate)
@@ -495,7 +488,6 @@ local function resolve_audio_hls_query_options(query: ApiQueryParams?): (api.Hls
 		bitrate_bps = requested_audio_bitrate or requested_max_bitrate,
 		sample_rate_hz = sample_rate_hz,
 		channels = channels,
-		prefer_vbr = jellyfin_boolean(raw_enable_audio_vbr),
 		start_offset_ms = jellyfin_ticks_to_ms(start_ticks),
 	},
 		selected_codec or "aac",

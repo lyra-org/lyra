@@ -162,7 +162,7 @@ assert(opus_options.format == "opus", `format {opus_options.format}`)
 assert(codecs(opus_options) == "opus", `codecs {codecs(opus_options)}`)
 assert(opus_options.bitrate_bps == 192000, `bitrate {opus_options.bitrate_bps}`)
 assert(opus_options.channels == 6, `channels {opus_options.channels}`)
-assert(opus_options.prefer_vbr == true, "VBR is upstream's default")
+assert(opus_options.prefer_vbr == nil, "upstream's default encoding options use a constant bitrate")
 
 local aac_options = stream_options(aac_url)
 assert(aac_options.format == "aac", `format {aac_options.format}`)
