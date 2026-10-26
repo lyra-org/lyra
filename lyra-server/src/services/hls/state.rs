@@ -32,9 +32,11 @@ use std::{
     sync::{
         Arc,
         LazyLock,
-        Mutex as StdMutex,
     },
-    time::Instant,
+    time::{
+        Duration,
+        Instant,
+    },
 };
 use tokio::sync::{
     Mutex,
@@ -61,53 +63,6 @@ pub(crate) static HLS_JOBS: LazyLock<HlsJobs> =
     LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
 pub(crate) static HLS_JOB_CREATING: LazyLock<HlsJobWaiters> =
     LazyLock::new(|| Arc::new(Mutex::new(HashMap::new())));
-#[derive(Default)]
-struct TranscodeCapacity {
-    active: StdMutex<usize>,
-    changed: Notify,
-}
-
-static TRANSCODE_CAPACITY: LazyLock<Arc<TranscodeCapacity>> =
-    LazyLock::new(|| Arc::new(TranscodeCapacity::default()));
-
-struct TranscodePermit(Arc<TranscodeCapacity>);
-
-impl Drop for TranscodePermit {
-    fn drop(&mut self) {
-        *self.0.active.lock().expect("transcode capacity poisoned") -= 1;
-        self.0.changed.notify_waiters();
-    }
-}
-
-impl TranscodeCapacity {
-    async fn acquire(self: &Arc<Self>, limit: impl Fn() -> u32) -> TranscodePermit {
-        loop {
-            let changed = self.changed.notified();
-            tokio::pin!(changed);
-            changed.as_mut().enable();
-            {
-                let mut active = self.active.lock().expect("transcode capacity poisoned");
-                let limit = limit();
-                if limit == 0 || *active < limit as usize {
-                    *active += 1;
-                    return TranscodePermit(Arc::clone(self));
-                }
-            }
-            changed.await;
-        }
-    }
-}
-
-pub(crate) fn notify_transcode_capacity_changed() {
-    TRANSCODE_CAPACITY.changed.notify_waiters();
-}
-
-async fn acquire_hls_transcode_permit() -> TranscodePermit {
-    TRANSCODE_CAPACITY
-        .acquire(|| crate::STATE.config().hls.max_concurrent_transcodes)
-        .await
-}
-
 #[derive(Clone)]
 pub(crate) struct HlsSession {
     pub(crate) playlist_segment_count: u64,
@@ -140,7 +95,32 @@ pub(crate) struct HlsJob {
     pub(crate) transcode_handle: Arc<Mutex<Option<FfmpegHandle>>>,
     pub(crate) session_ids: HashSet<String>,
     pub(crate) idle_since: Option<Instant>,
-    _transcode_permit: Option<TranscodePermit>,
+}
+
+/// How often a running HLS transcode is checked for having stopped, to release its permit.
+const TRANSCODE_PERMIT_POLL_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Holds `permit` until the transcode in `handle` stops or is taken away, so an HLS job that is
+/// only serving finished segments no longer counts against the transcoding limit.
+async fn release_permit_when_stopped(
+    permit: crate::services::transcoding::capacity::TranscodePermit,
+    handle: std::sync::Weak<Mutex<Option<FfmpegHandle>>>,
+) {
+    loop {
+        tokio::time::sleep(TRANSCODE_PERMIT_POLL_INTERVAL).await;
+        let Some(handle) = handle.upgrade() else {
+            break;
+        };
+        if handle
+            .lock()
+            .await
+            .as_ref()
+            .is_none_or(FfmpegHandle::is_finished)
+        {
+            break;
+        }
+    }
+    drop(permit);
 }
 
 pub(crate) fn generate_hls_session_id() -> String {
@@ -270,7 +250,9 @@ pub(crate) async fn hls_registry_counts() -> (usize, usize) {
 }
 
 async fn create_hls_job(input_path: &str, job_key: &HlsJobKey) -> Result<HlsJob, HlsError> {
-    let transcode_permit = acquire_hls_transcode_permit().await;
+    let transcode_permit = crate::services::transcoding::capacity::acquire_shared()
+        .await
+        .map_err(|_| HlsError::Saturated)?;
 
     let job_id = generate_hls_session_id();
     let job_dir = std::env::temp_dir().join(format!(
@@ -304,14 +286,43 @@ async fn create_hls_job(input_path: &str, job_key: &HlsJobKey) -> Result<HlsJob,
         }
     };
 
+    let transcode_handle = Arc::new(Mutex::new(Some(transcode_handle)));
+    tokio::spawn(release_permit_when_stopped(
+        transcode_permit,
+        Arc::downgrade(&transcode_handle),
+    ));
     Ok(HlsJob {
         dir_path: job_dir,
         playlist_path,
-        transcode_handle: Arc::new(Mutex::new(Some(transcode_handle))),
+        transcode_handle,
         session_ids: HashSet::new(),
         idle_since: Some(Instant::now()),
-        _transcode_permit: Some(transcode_permit),
     })
+}
+
+/// Marks a key's job as being created. Dropping it clears the marker and wakes the requests
+/// waiting on it, however creation ends, so a creator cancelled mid-way, such as by its client
+/// disconnecting while waiting for a permit, never leaves them waiting forever.
+struct CreationGuard {
+    job_key: HlsJobKey,
+}
+
+impl Drop for CreationGuard {
+    fn drop(&mut self) {
+        let notify = match HLS_JOB_CREATING.try_lock() {
+            Ok(mut creating) => creating.remove(&self.job_key),
+            Err(_) => {
+                let job_key = self.job_key.clone();
+                if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+                    runtime.spawn(async move { finish_hls_job_creation(&job_key).await });
+                }
+                return;
+            }
+        };
+        if let Some(notify) = notify {
+            notify.notify_waiters();
+        }
+    }
 }
 
 async fn finish_hls_job_creation(job_key: &HlsJobKey) {
@@ -349,36 +360,39 @@ pub(crate) async fn get_or_create_hls_job(
             continue;
         }
 
-        let create_result = create_hls_job(input_path, job_key).await;
-        let replaced_job = match create_result {
-            Ok(job) => {
-                let db = crate::STATE.db.read().await;
-                let exists = crate::db::lookup::find_node_id_by_id(&*db, job_key.track_public_id());
-                let source_exists =
-                    crate::db::lookup::find_node_id_by_id(&*db, &job_key.source.source_public_id);
-                if !matches!(exists, Ok(Some(_))) || !matches!(source_exists, Ok(Some(_))) {
-                    drop(db);
-                    teardown_hls_job(job).await;
-                    finish_hls_job_creation(job_key).await;
-                    return Err(HlsError::JobNotFound);
-                }
-                let mut jobs = HLS_JOBS.write().await;
-                jobs.insert(job_key.clone(), job)
-            }
-            Err(err) => {
-                finish_hls_job_creation(job_key).await;
-                return Err(err);
-            }
+        let creation = CreationGuard {
+            job_key: job_key.clone(),
         };
-
-        finish_hls_job_creation(job_key).await;
-
-        if let Some(replaced_job) = replaced_job {
-            teardown_hls_job(replaced_job).await;
-        }
-
-        return Ok(false);
+        let job = create_hls_job(input_path, job_key).await?;
+        // Registering runs to the end even if this request is cancelled, so a started job is
+        // either registered or torn down, never dropped with its transcode still running.
+        return tokio::spawn(register_hls_job(job_key.clone(), job, creation))
+            .await
+            .map_err(anyhow::Error::from)?;
     }
+}
+
+async fn register_hls_job(
+    job_key: HlsJobKey,
+    job: HlsJob,
+    _creation: CreationGuard,
+) -> Result<bool, HlsError> {
+    let replaced_job = {
+        let db = crate::STATE.db.read().await;
+        let exists = crate::db::lookup::find_node_id_by_id(&*db, job_key.track_public_id());
+        let source_exists =
+            crate::db::lookup::find_node_id_by_id(&*db, &job_key.source.source_public_id);
+        if !matches!(exists, Ok(Some(_))) || !matches!(source_exists, Ok(Some(_))) {
+            drop(db);
+            teardown_hls_job(job).await;
+            return Err(HlsError::JobNotFound);
+        }
+        HLS_JOBS.write().await.insert(job_key, job)
+    };
+    if let Some(replaced_job) = replaced_job {
+        teardown_hls_job(replaced_job).await;
+    }
+    Ok(false)
 }
 
 pub(crate) async fn attach_session_to_job(
@@ -468,7 +482,6 @@ pub(crate) mod test_helpers {
             transcode_handle: Arc::new(Mutex::new(None)),
             session_ids: HashSet::new(),
             idle_since: None,
-            _transcode_permit: None,
         }
     }
 }
@@ -483,49 +496,6 @@ mod tests {
     use super::test_helpers::*;
     use super::*;
     use lyra_ffmpeg::AudioCodec;
-
-    #[tokio::test]
-    async fn transcode_capacity_tracks_jobs_across_limit_changes() {
-        use std::sync::atomic::{
-            AtomicU32,
-            Ordering,
-        };
-
-        let capacity = Arc::new(TranscodeCapacity::default());
-        let limit = AtomicU32::new(0);
-        let first = capacity.acquire(|| limit.load(Ordering::Relaxed)).await;
-        let second = capacity.acquire(|| limit.load(Ordering::Relaxed)).await;
-        limit.store(1, Ordering::Relaxed);
-        let queued = capacity.acquire(|| limit.load(Ordering::Relaxed));
-        tokio::pin!(queued);
-        assert!(futures::poll!(queued.as_mut()).is_pending());
-        drop(first);
-        assert!(futures::poll!(queued.as_mut()).is_pending());
-        drop(second);
-        let third = queued.await;
-
-        {
-            let cancelled = capacity.acquire(|| limit.load(Ordering::Relaxed));
-            tokio::pin!(cancelled);
-            assert!(futures::poll!(cancelled.as_mut()).is_pending());
-        }
-        assert_eq!(*capacity.active.lock().unwrap(), 1);
-        let queued = capacity.acquire(|| limit.load(Ordering::Relaxed));
-        tokio::pin!(queued);
-        assert!(futures::poll!(queued.as_mut()).is_pending());
-        limit.store(2, Ordering::Relaxed);
-        capacity.changed.notify_waiters();
-        let fourth = queued.await;
-        let queued = capacity.acquire(|| limit.load(Ordering::Relaxed));
-        tokio::pin!(queued);
-        assert!(futures::poll!(queued.as_mut()).is_pending());
-        limit.store(0, Ordering::Relaxed);
-        capacity.changed.notify_waiters();
-        let fifth = queued.await;
-        assert_eq!(*capacity.active.lock().unwrap(), 3);
-        drop((third, fourth, fifth));
-        assert_eq!(*capacity.active.lock().unwrap(), 0);
-    }
 
     #[tokio::test]
     async fn attach_session_to_job_keeps_single_shared_job_for_concurrent_sessions() {

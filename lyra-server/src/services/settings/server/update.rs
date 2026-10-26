@@ -154,7 +154,7 @@ pub(crate) fn republish(db: &mut agdb::DbAny) -> Result<()> {
 
 /// Wakes live consumers, which read the current published settings themselves.
 pub(crate) async fn apply_live() {
-    crate::services::hls::state::notify_transcode_capacity_changed();
+    crate::services::transcoding::capacity::notify_changed();
 }
 
 #[cfg(test)]

@@ -66,9 +66,10 @@ impl Config {
             hls: HlsConfig {
                 temp_disk_budget_bytes: settings.value("hls.temp_disk_budget_bytes"),
                 cleanup_startup_purge: settings.value("hls.cleanup_startup_purge"),
-                max_concurrent_transcodes: settings.value("hls.max_concurrent_transcodes"),
             },
             transcoding: TranscodingConfig {
+                max_concurrent: settings.value("transcoding.max_concurrent"),
+                max_concurrent_per_user: settings.value("transcoding.max_concurrent_per_user"),
                 cache_max_bytes: settings.value("transcoding.cache_max_bytes"),
                 cache_ttl_seconds: settings.value("transcoding.cache_ttl_seconds"),
             },
@@ -120,12 +121,14 @@ pub(crate) struct HlsConfig {
     /// `None` or `0` means no budget.
     pub(crate) temp_disk_budget_bytes: Option<u64>,
     pub(crate) cleanup_startup_purge: bool,
-    /// `0` means unlimited.
-    pub(crate) max_concurrent_transcodes: u32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct TranscodingConfig {
+    /// `0` means unlimited.
+    pub(crate) max_concurrent: u32,
+    /// `0` means unlimited.
+    pub(crate) max_concurrent_per_user: u32,
     pub(crate) cache_max_bytes: u64,
     pub(crate) cache_ttl_seconds: u64,
 }

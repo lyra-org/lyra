@@ -76,6 +76,7 @@ impl CallbackReply {
                 let result = result.and_then(|values| {
                     let mut response = super::api::parse_api_response(vm, &request, values)?;
                     response.principal = auth.principal();
+                    response.client_key = request.client_key.clone();
                     Ok(response)
                 });
                 let _ = reply.send(result);

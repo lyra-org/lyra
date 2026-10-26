@@ -163,7 +163,15 @@ pub(crate) async fn download_track_response(
     if delivery.direct_passthrough {
         return source_file_response(&source, delivery.content_type, headers).await;
     }
-    transcoded_response(method, headers, source, delivery, DeliveryTarget::Download).await
+    transcoded_response(
+        method,
+        headers,
+        access.capacity_account(),
+        source,
+        delivery,
+        DeliveryTarget::Download,
+    )
+    .await
 }
 
 #[cfg(feature = "docgen")]

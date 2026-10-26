@@ -7,6 +7,7 @@
 //! on-disk cache they write into.
 
 pub(crate) mod cache;
+pub(crate) mod capacity;
 
 /// Empties the transcode cache directory left by a previous run and starts the sweeper for the
 /// current generation's cache.

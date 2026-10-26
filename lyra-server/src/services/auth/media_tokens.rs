@@ -58,6 +58,10 @@ impl MediaTokenHolder {
         }
     }
 
+    pub(crate) fn user_public_id(&self) -> &str {
+        &self.user_public_id
+    }
+
     /// The holder's principal as it stands now, read under the caller's guard, or `None` when
     /// the user is gone or the credential that obtained the token no longer authenticates them.
     pub(crate) fn principal(&self, db: &impl db::DbAccess) -> anyhow::Result<Option<Principal>> {

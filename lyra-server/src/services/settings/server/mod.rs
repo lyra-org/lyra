@@ -368,9 +368,10 @@ mod tests {
             hls: HlsConfig {
                 temp_disk_budget_bytes: None,
                 cleanup_startup_purge: true,
-                max_concurrent_transcodes: 0,
             },
             transcoding: TranscodingConfig {
+                max_concurrent: 8,
+                max_concurrent_per_user: 3,
                 cache_max_bytes: 1_073_741_824,
                 cache_ttl_seconds: 3_600,
             },

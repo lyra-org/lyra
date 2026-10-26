@@ -17,13 +17,21 @@ use crate::{
     STATE,
     routes::AppError,
     services::playback_sources::SourceVersion,
-    services::transcoding::cache::{
-        CacheKey,
-        EncodeSpec,
-        Lookup,
-        TranscodeFailed,
-        TranscodeUnavailable,
-        UNAVAILABLE_RETRY_AFTER,
+    services::transcoding::{
+        cache::{
+            CacheKey,
+            EncodeSpec,
+            Lookup,
+            TranscodeFailed,
+            TranscodeUnavailable,
+            UNAVAILABLE_RETRY_AFTER,
+        },
+        capacity::{
+            Account,
+            SATURATED_RETRY_AFTER,
+            Saturated,
+            try_acquire_for,
+        },
     },
 };
 
@@ -64,10 +72,12 @@ fn cache_key(
 /// Serves the transcode `delivery` describes. A finished transcode is served from the cache with
 /// byte ranges and its length. Otherwise a stream follows the encode as it writes, while a
 /// download waits for it to finish. Requests for the same transcode share one encode, and `HEAD`
-/// never starts one.
+/// never starts one. Starting an encode takes a transcoding permit for `account`; when none is free
+/// the request is refused with 429 rather than queued.
 pub(super) async fn transcoded_response(
     method: &Method,
     headers: &HeaderMap,
+    account: Account,
     source: ValidatedTrackSource,
     delivery: DeliveryDecision,
     target: DeliveryTarget,
@@ -107,9 +117,11 @@ pub(super) async fn transcoded_response(
         }),
     };
     let dir = STATE.boot.get().transcode_cache_dir();
-    let lookup = tokio::task::spawn_blocking(move || cache.get_or_start(key, &dir, spec))
-        .await?
-        .map_err(refusal_to_app_error)?;
+    let lookup = tokio::task::spawn_blocking(move || {
+        cache.get_or_start(key, &dir, spec, || try_acquire_for(&account))
+    })
+    .await?
+    .map_err(refusal_to_app_error)?;
     match lookup {
         Lookup::Ready(ready) => {
             open_file_response(ready.file, ready.size, delivery.content_type, headers)
@@ -133,6 +145,9 @@ pub(super) async fn transcoded_response(
 }
 
 fn refusal_to_app_error(err: anyhow::Error) -> AppError {
+    if err.is::<Saturated>() {
+        return AppError::too_many_requests(SATURATED_RETRY_AFTER);
+    }
     match err.downcast::<TranscodeUnavailable>() {
         Ok(unavailable) => {
             AppError::service_unavailable_for(unavailable.to_string(), UNAVAILABLE_RETRY_AFTER)

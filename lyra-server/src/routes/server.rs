@@ -921,7 +921,7 @@ mod tests {
                 headers.clone(),
                 request(&[
                     ("sync.interval_secs", json!(5)),
-                    ("hls.max_concurrent_transcodes", json!(2)),
+                    ("transcoding.max_concurrent", json!(2)),
                 ]),
             )
             .await,
@@ -933,9 +933,9 @@ mod tests {
         assert!(stored_keys().await?.is_empty());
         let config = STATE.config();
         assert_eq!(config.sync.interval_secs, 0);
-        assert_eq!(config.hls.max_concurrent_transcodes, 0);
+        assert_eq!(config.transcoding.max_concurrent, 8);
         assert_eq!(
-            field(&body, "hls.max_concurrent_transcodes")["source"],
+            field(&body, "transcoding.max_concurrent")["source"],
             json!("default")
         );
         Ok(())

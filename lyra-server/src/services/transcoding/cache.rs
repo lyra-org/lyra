@@ -68,6 +68,11 @@ use tokio::{
     sync::watch,
 };
 
+use super::capacity::{
+    Saturated,
+    TranscodePermit,
+};
+
 const ENCODE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// How long an encode nobody is reading keeps running, so a client that drops and reconnects
 /// picks it up again.
@@ -195,12 +200,25 @@ struct Job {
     /// Set once the encode is finished or failed. Writes after that, from an FFmpeg thread that
     /// outlived its abort, are refused.
     settled: AtomicBool,
+    /// Held while the encode runs, and given up as soon as it is asked to stop.
+    permit: Mutex<Option<TranscodePermit>>,
 }
 
 impl Job {
-    /// Asks the encode to stop; a new request for its key starts afresh from here on.
+    /// Asks the encode to stop; a new request for its key starts afresh from here on. Its permit
+    /// goes at once, so that new request is not refused while this one winds down.
     fn stop(&self) {
         self.abort.store(true, Ordering::Release);
+        self.release_permit();
+    }
+
+    fn release_permit(&self) {
+        drop(
+            self.permit
+                .lock()
+                .expect("transcode permit poisoned")
+                .take(),
+        );
     }
 }
 
@@ -318,18 +336,21 @@ impl TranscodeCache {
     }
 
     /// The finished or running transcode for `key`, starting `spec`'s encode into `dir` when
-    /// there is neither.
+    /// there is neither. Starting needs a permit from `admit`; when it refuses, the refusal is
+    /// the error and nothing starts.
     pub(crate) fn get_or_start(
         self: &Arc<Self>,
         key: CacheKey,
         dir: &Path,
         spec: EncodeSpec,
+        admit: impl FnOnce() -> Result<TranscodePermit, Saturated>,
     ) -> anyhow::Result<Lookup> {
         let (job, write_file, reader) = {
             let mut entries = self.entries();
             if let Some(found) = self.open(&mut entries, &key)? {
                 return Ok(found);
             }
+            let permit = admit()?;
             std::fs::create_dir_all(dir)?;
             self.refuse_unless_startable(dir, &spec.input_path)?;
             let part_id = self.next_part_id.fetch_add(1, Ordering::Relaxed);
@@ -346,6 +367,7 @@ impl TranscodeCache {
                 keep_running: AtomicBool::new(false),
                 accounted: AtomicU64::new(0),
                 settled: AtomicBool::new(false),
+                permit: Mutex::new(Some(permit)),
             });
             let reader = EncodingTranscode::attach(self, &job)?;
             // An entry still here is an encode being stopped; it cleans up after itself.
@@ -459,9 +481,11 @@ impl TranscodeCache {
         }
     }
 
-    /// Settles `job` and moves its bytes out of the running encodes' count.
-    fn release_encoding_bytes(&self, job: &Job) {
+    /// Settles `job` and releases what it held while it ran: its transcoding permit, and its
+    /// bytes in the running encodes' count.
+    fn release(&self, job: &Job) {
         job.settled.store(true, Ordering::Release);
+        job.release_permit();
         let accounted = job.accounted.swap(0, Ordering::AcqRel);
         self.encoding_bytes.fetch_sub(accounted, Ordering::AcqRel);
     }
@@ -476,7 +500,7 @@ impl TranscodeCache {
         let keep = keep && size <= self.budget().max_bytes;
         {
             let mut entries = self.entries();
-            self.release_encoding_bytes(job);
+            self.release(job);
             let current =
                 matches!(entries.get(key), Some(Entry::Encoding(entry)) if Arc::ptr_eq(entry, job));
             if current && !keep {
@@ -517,7 +541,7 @@ impl TranscodeCache {
     fn fail(&self, key: &CacheKey, job: &Arc<Job>, message: String) {
         {
             let mut entries = self.entries();
-            self.release_encoding_bytes(job);
+            self.release(job);
             if matches!(entries.get(key), Some(Entry::Encoding(entry)) if Arc::ptr_eq(entry, job)) {
                 entries.remove(key);
             }
@@ -776,6 +800,7 @@ impl EncodeOutcome {
 
     fn orphan(&self) {
         self.job.settled.store(true, Ordering::Release);
+        self.job.release_permit();
         remove_file(&self.job.part_path);
         self.job
             .progress
@@ -997,6 +1022,11 @@ impl EncodingTranscode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::transcoding::capacity::{
+        Account,
+        Limits,
+        TranscodeCapacity,
+    };
     use lyra_ffmpeg::{
         AudioCodec,
         AudioFormat,
@@ -1089,7 +1119,7 @@ mod tests {
         spec: EncodeSpec,
     ) -> EncodingTranscode {
         match cache
-            .get_or_start(CacheKey::of(&key), dir, spec)
+            .get_or_start(CacheKey::of(&key), dir, spec, admit)
             .expect("lookup")
         {
             Lookup::Encoding(encoding) => encoding,
@@ -1138,7 +1168,18 @@ mod tests {
             keep_running: AtomicBool::new(false),
             accounted: AtomicU64::new(0),
             settled: AtomicBool::new(false),
+            permit: Mutex::new(None),
         }))
+    }
+
+    fn admit() -> Result<TranscodePermit, Saturated> {
+        Arc::new(TranscodeCapacity::default()).try_acquire(
+            Limits {
+                global: 0,
+                per_user: 0,
+            },
+            &Account::Unknown,
+        )
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1198,7 +1239,7 @@ mod tests {
         let key = CacheKey::of(&"shared");
 
         let first = start(&cache, dir.path(), "shared", flac_spec(input.clone()));
-        let joined = cache.get_or_start(key.clone(), dir.path(), flac_spec(input))?;
+        let joined = cache.get_or_start(key.clone(), dir.path(), flac_spec(input), admit)?;
         assert!(
             matches!(joined, Lookup::Encoding(_)),
             "a minute of audio is still encoding, so the second request joins it"
@@ -1283,7 +1324,7 @@ mod tests {
         let cache = TranscodeCache::with_budget(LARGE, ABANDONED_ENCODE_GRACE);
         let job = test_job(dir.path(), "settled.part")?;
         cache.grow(&job, 10)?;
-        cache.release_encoding_bytes(&job);
+        cache.release(&job);
 
         assert!(cache.grow(&job, 10).is_err());
         assert_eq!(cache.encoding_bytes.load(Ordering::Acquire), 0);
@@ -1325,6 +1366,7 @@ mod tests {
             CacheKey::of(&"stalled-again"),
             dir.path(),
             mp3_spec(fifo.to_string_lossy().into_owned(), 128),
+            admit,
         );
         assert!(
             retried.is_err_and(|err| err.is::<TranscodeUnavailable>()),
@@ -1345,7 +1387,12 @@ mod tests {
             ..TranscodeCache::with_min_free_bytes(u64::MAX)
         });
 
-        let refused = full.get_or_start(CacheKey::of(&"new"), dir.path(), mp3_spec(fixture(), 96));
+        let refused = full.get_or_start(
+            CacheKey::of(&"new"),
+            dir.path(),
+            mp3_spec(fixture(), 96),
+            admit,
+        );
         assert!(refused.is_err_and(|err| err.is::<TranscodeUnavailable>()));
         assert!(
             full.find_ready(&CacheKey::of(&"cached"))?.is_some(),
@@ -1536,6 +1583,73 @@ mod tests {
         );
         assert!(cache.entries().is_empty());
         assert_eq!(dir_entries(dir.path()), Vec::<PathBuf>::new());
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_encode_holds_its_permit_only_while_it_runs() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let cache = Arc::new(TranscodeCache::with_budget(LARGE, ABANDONED_ENCODE_GRACE));
+        let capacity = Arc::new(TranscodeCapacity::default());
+        let one = Limits {
+            global: 1,
+            per_user: 0,
+        };
+        let input = long_wav(dir.path(), 60)?;
+
+        let running = cache.get_or_start(
+            CacheKey::of(&"running"),
+            dir.path(),
+            flac_spec(input),
+            || capacity.try_acquire(one, &Account::Unknown),
+        )?;
+        let refused = cache.get_or_start(
+            CacheKey::of(&"refused"),
+            dir.path(),
+            mp3_spec(fixture(), 128),
+            || capacity.try_acquire(one, &Account::Unknown),
+        );
+        assert!(refused.is_err_and(|err| err.is::<Saturated>()));
+        assert!(cache.find_ready(&CacheKey::of(&"refused"))?.is_none());
+
+        let Lookup::Encoding(running) = running else {
+            panic!("a new key starts an encode");
+        };
+        running.finished().await?;
+        drop(capacity.try_acquire(one, &Account::Unknown)?);
+
+        let failed = cache.get_or_start(
+            CacheKey::of(&"failed"),
+            dir.path(),
+            mp3_spec(
+                dir.path().join("missing").to_string_lossy().into_owned(),
+                128,
+            ),
+            || capacity.try_acquire(one, &Account::Unknown),
+        )?;
+        let Lookup::Encoding(failed) = failed else {
+            panic!("a new key starts an encode");
+        };
+        assert!(failed.finished().await.is_err());
+        drop(capacity.try_acquire(one, &Account::Unknown)?);
+        Ok(())
+    }
+
+    #[test]
+    fn a_stopped_encode_gives_up_its_permit_at_once() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let capacity = Arc::new(TranscodeCapacity::default());
+        let one = Limits {
+            global: 1,
+            per_user: 0,
+        };
+        let job = test_job(dir.path(), "stopping.part")?;
+        *job.permit.lock().expect("permit") = Some(capacity.try_acquire(one, &Account::Unknown)?);
+        assert!(capacity.try_acquire(one, &Account::Unknown).is_err());
+
+        job.stop();
+
+        drop(capacity.try_acquire(one, &Account::Unknown)?);
         Ok(())
     }
 }

@@ -258,6 +258,8 @@ pub(crate) struct ApiHandlerResponse {
     /// Principal acting for the dispatch: seeded from boundary bearer auth
     /// and overwritten by `auth.resolve_auth`.
     pub(crate) principal: Option<crate::services::auth::Principal>,
+    /// The requesting client's address key, from the dispatch's request.
+    pub(crate) client_key: Option<String>,
 }
 
 pub(crate) struct WebSocketStartRequest {

@@ -32,10 +32,11 @@
   },
   "hls": {
     "temp_disk_budget_bytes": null,
-    "cleanup_startup_purge": true,
-    "max_concurrent_transcodes": 0
+    "cleanup_startup_purge": true
   },
   "transcoding": {
+    "max_concurrent": 8,
+    "max_concurrent_per_user": 3,
     "cache_max_bytes": 1073741824,
     "cache_ttl_seconds": 3600
   }

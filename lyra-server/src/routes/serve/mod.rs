@@ -74,6 +74,7 @@ use crate::{
             self as playback_source_service,
             SourceVersion,
         },
+        transcoding::capacity::Account,
     },
 };
 
@@ -166,12 +167,13 @@ pub(crate) fn authorize_track_purpose(
 /// How a request reached a track. A principal's library access is checked under the guard that
 /// resolves the track's source. A media token was bound to the track's public id when it was
 /// issued; its holder is checked like a principal under that guard, and it only serves the source
-/// file it was issued against. A public plugin route serves any track, as its protocol does.
+/// file it was issued against. A public plugin route serves any track, as its protocol does; it
+/// carries whom its transcodes are accounted to, and nothing else.
 #[derive(Debug)]
 pub(crate) enum TrackAccess {
     Principal(Principal),
     MediaToken(MediaTokenAccess),
-    PublicPluginRoute,
+    PublicPluginRoute(Account),
 }
 
 impl TrackAccess {
@@ -180,7 +182,17 @@ impl TrackAccess {
         match self {
             Self::Principal(principal) => HlsSessionHolder::Principal(principal.clone()),
             Self::MediaToken(token) => HlsSessionHolder::MediaToken(token.holder.clone()),
-            Self::PublicPluginRoute => HlsSessionHolder::Public,
+            Self::PublicPluginRoute(_) => HlsSessionHolder::Public,
+        }
+    }
+
+    /// Whom a transcode for this request is charged to: the principal, the media token's holder,
+    /// or for a public plugin route the caller its handler resolved or else the client.
+    pub(crate) fn capacity_account(&self) -> Account {
+        match self {
+            Self::Principal(principal) => Account::User(principal.user_public_id.clone()),
+            Self::MediaToken(token) => Account::User(token.holder.user_public_id().to_string()),
+            Self::PublicPluginRoute(account) => account.clone(),
         }
     }
 }
@@ -297,7 +309,7 @@ pub(crate) async fn validate_and_get_track_source(
                 not_found,
             )?;
         }
-        TrackAccess::PublicPluginRoute => {}
+        TrackAccess::PublicPluginRoute(_) => {}
     }
     let track = db::tracks::get_by_id(db, track_db_id)?.ok_or_else(not_found)?;
 
@@ -456,6 +468,7 @@ pub(crate) fn download_openapi_routes() -> aide::axum::ApiRouter {
 #[cfg(test)]
 mod tests {
     use super::{
+        Account,
         ServeTrackOptions,
         ValidatedTrackSource,
         apply_request_start_offset,
@@ -894,7 +907,7 @@ mod tests {
             &Method::GET,
             &headers,
             &track_id,
-            &super::TrackAccess::PublicPluginRoute,
+            &super::TrackAccess::PublicPluginRoute(Account::Unknown),
             ServeTrackOptions::default(),
         )
         .await
@@ -925,7 +938,7 @@ mod tests {
             &Method::GET,
             &headers,
             &track_id,
-            &super::TrackAccess::PublicPluginRoute,
+            &super::TrackAccess::PublicPluginRoute(Account::Unknown),
             ServeTrackOptions {
                 format: Some("mp3".to_string()),
                 bitrate_bps: Some(96_000),
@@ -1195,7 +1208,7 @@ mod tests {
             super::serve_hls_playlist_for_track(
                 &Method::GET,
                 &track_id,
-                &super::TrackAccess::PublicPluginRoute,
+                &super::TrackAccess::PublicPluginRoute(Account::Unknown),
                 super::HlsPlaylistOptions {
                     codec: None,
                     bitrate_bps: None,
@@ -1303,6 +1316,91 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn a_user_at_the_transcode_limit_is_refused_new_encodes() -> anyhow::Result<()> {
+        use crate::services::transcoding::capacity::try_acquire_for;
+
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let headers = create_user_with_permissions("busy-listener", vec![]).await?;
+        let user = crate::services::auth::require_authenticated(&headers)
+            .await?
+            .user_public_id;
+        let token_query = playback_url_query(&track_id, &headers, "stream_url").await?;
+        let cached = format!("/{track_id}?{token_query}&format=mp3&bitrate_bps=96000");
+        let (status, _, _) = send(Method::GET, cached.clone()).await?;
+        assert_eq!(status, StatusCode::OK);
+
+        let limit = STATE.config().transcoding.max_concurrent_per_user;
+        let held = (0..limit)
+            .map(|_| try_acquire_for(&Account::User(user.clone())))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let (status, headers, _) = send(
+            Method::GET,
+            format!("/{track_id}?{token_query}&format=mp3&bitrate_bps=64000"),
+        )
+        .await?;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        assert!(headers.contains_key(axum::http::header::RETRY_AFTER));
+
+        let (status, _, _) = send(Method::GET, cached).await?;
+        assert_eq!(status, StatusCode::OK, "a cached transcode needs no permit");
+        let (status, _, _) = send(Method::GET, format!("/{track_id}?{token_query}")).await?;
+        assert_eq!(status, StatusCode::OK, "the original file needs no permit");
+
+        drop(held);
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn public_route_transcodes_count_against_whoever_they_are_accounted_to()
+    -> anyhow::Result<()> {
+        use crate::services::transcoding::capacity::try_acquire_for;
+
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let limit = STATE.config().transcoding.max_concurrent_per_user;
+        let held = (0..limit)
+            .map(|_| try_acquire_for(&Account::User("busy-user".to_string())))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mp3 = || ServeTrackOptions {
+            format: Some("mp3".to_string()),
+            ..ServeTrackOptions::default()
+        };
+
+        let refused = super::stream::stream_track_response(
+            &Method::GET,
+            &HeaderMap::new(),
+            &track_id,
+            &super::TrackAccess::PublicPluginRoute(Account::User("busy-user".to_string())),
+            mp3(),
+        )
+        .await
+        .expect_err("the caller's allowance is used up")
+        .into_response();
+        assert_eq!(refused.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        let other_client = super::stream::stream_track_response(
+            &Method::GET,
+            &HeaderMap::new(),
+            &track_id,
+            &super::TrackAccess::PublicPluginRoute(Account::client("10.0.0.9")),
+            mp3(),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
+        assert_eq!(other_client.status(), StatusCode::OK);
+        let _ = axum::body::to_bytes(other_client.into_body(), usize::MAX).await?;
+
+        drop(held);
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_cached_flac_transcode_has_a_complete_streaminfo() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         let test_dir = initialize_test_runtime().await?;
@@ -1384,6 +1482,129 @@ mod tests {
         Ok(())
     }
 
+    fn hls_options() -> super::HlsPlaylistOptions {
+        super::HlsPlaylistOptions {
+            codec: None,
+            bitrate_bps: None,
+            sample_rate_hz: None,
+            channels: None,
+            prefer_vbr: None,
+            start_offset_ms: None,
+        }
+    }
+
+    /// Takes every transcoding permit, one user at a time.
+    fn take_all_permits() -> Vec<crate::services::transcoding::capacity::TranscodePermit> {
+        let global = STATE.config().transcoding.max_concurrent;
+        (0..global)
+            .map(|user| {
+                crate::services::transcoding::capacity::try_acquire_for(&Account::User(format!(
+                    "holder-{user}"
+                )))
+                .expect("a permit is free")
+            })
+            .collect()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_cancelled_hls_permit_wait_does_not_block_later_requests() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        crate::services::hls::state::test_helpers::reset_hls_state_for_test().await;
+
+        let held = take_all_permits();
+        let waiting = tokio::spawn({
+            let track_id = track_id.clone();
+            async move {
+                super::serve_hls_playlist_for_track(
+                    &Method::GET,
+                    &track_id,
+                    &super::TrackAccess::PublicPluginRoute(Account::Unknown),
+                    hls_options(),
+                )
+                .await
+                .map(|_| ())
+            }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert!(!waiting.is_finished(), "the job waits for a permit");
+        waiting.abort();
+        let _ = waiting.await;
+        drop(held);
+
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            super::serve_hls_playlist_for_track(
+                &Method::GET,
+                &track_id,
+                &super::TrackAccess::PublicPluginRoute(Account::Unknown),
+                hls_options(),
+            ),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("a later request must not wait on the cancelled one"))?
+        .map_err(|err| anyhow::anyhow!("playlist failed: {err:?}"))?;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        crate::services::hls::state::test_helpers::reset_hls_state_for_test().await;
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_hls_job_releases_its_permit_once_its_transcode_stops() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        crate::services::hls::state::test_helpers::reset_hls_state_for_test().await;
+
+        super::serve_hls_playlist_for_track(
+            &Method::GET,
+            &track_id,
+            &super::TrackAccess::PublicPluginRoute(Account::Unknown),
+            hls_options(),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("playlist failed: {err:?}"))?;
+        assert_eq!(
+            crate::services::hls::state::hls_registry_counts().await.0,
+            1
+        );
+
+        let started = std::time::Instant::now();
+        let held = loop {
+            let global = STATE.config().transcoding.max_concurrent;
+            let held = (0..global)
+                .map_while(|user| {
+                    crate::services::transcoding::capacity::try_acquire_for(&Account::User(
+                        format!("holder-{user}"),
+                    ))
+                    .ok()
+                })
+                .collect::<Vec<_>>();
+            if held.len() == global as usize {
+                break held;
+            }
+            drop(held);
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(5),
+                "the finished HLS transcode still holds its permit"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        };
+        assert_eq!(
+            crate::services::hls::state::hls_registry_counts().await.0,
+            1,
+            "the job itself lives on to serve its segments"
+        );
+        drop(held);
+
+        crate::services::hls::state::test_helpers::reset_hls_state_for_test().await;
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn hls_playlist_head_starts_no_transcode() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
@@ -1394,7 +1615,7 @@ mod tests {
         let response = super::serve_hls_playlist_for_track(
             &Method::HEAD,
             &track_id,
-            &super::TrackAccess::PublicPluginRoute,
+            &super::TrackAccess::PublicPluginRoute(Account::Unknown),
             super::HlsPlaylistOptions {
                 codec: None,
                 bitrate_bps: None,
@@ -1432,7 +1653,7 @@ mod tests {
             &Method::GET,
             &HeaderMap::new(),
             &track_id,
-            &super::TrackAccess::PublicPluginRoute,
+            &super::TrackAccess::PublicPluginRoute(Account::Unknown),
             ServeTrackOptions {
                 format: Some("m4a".to_string()),
                 codec: Some("aac".to_string()),
@@ -1473,7 +1694,7 @@ mod tests {
             &Method::GET,
             &headers,
             &track_id,
-            &super::TrackAccess::PublicPluginRoute,
+            &super::TrackAccess::PublicPluginRoute(Account::Unknown),
             ServeTrackOptions {
                 format: Some("flac".to_string()),
                 sample_rate_hz: Some(22_050),
@@ -1519,7 +1740,7 @@ mod tests {
                 &Method::GET,
                 &headers,
                 &track_id,
-                &super::TrackAccess::PublicPluginRoute,
+                &super::TrackAccess::PublicPluginRoute(Account::Unknown),
                 ServeTrackOptions {
                     format: Some("flac".to_string()),
                     sample_rate_hz: Some(sample_rate_hz),
@@ -1556,7 +1777,7 @@ mod tests {
             &Method::GET,
             &headers,
             &track_id,
-            &super::TrackAccess::PublicPluginRoute,
+            &super::TrackAccess::PublicPluginRoute(Account::Unknown),
             ServeTrackOptions {
                 format: Some("flac".to_string()),
                 bitrate_bps: Some(96_000),
@@ -1591,7 +1812,7 @@ mod tests {
             &Method::GET,
             &headers,
             &track_id,
-            &super::TrackAccess::PublicPluginRoute,
+            &super::TrackAccess::PublicPluginRoute(Account::Unknown),
             ServeTrackOptions {
                 format: Some("mp3".to_string()),
                 bitrate_bps: Some(0),

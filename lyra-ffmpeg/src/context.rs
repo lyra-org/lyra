@@ -177,6 +177,11 @@ impl FfmpegHandle {
         self.join_and_take_result()
     }
 
+    /// Whether the transcode has stopped, by finishing, failing or being aborted.
+    pub fn is_finished(&self) -> bool {
+        *self.done.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     fn wait_for_completion(&self, timeout: Duration) -> bool {
         {
             let (lock, cvar) = &*self.done;

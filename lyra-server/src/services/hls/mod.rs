@@ -14,6 +14,8 @@ pub(crate) enum HlsError {
     UnsupportedCodec,
     #[error("HLS transcode job not found")]
     JobNotFound,
+    #[error("too many transcodes are running; retry shortly")]
+    Saturated,
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }

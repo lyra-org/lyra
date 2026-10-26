@@ -247,5 +247,6 @@ pub(super) fn parse_api_response(
         track_id,
         options,
         principal: None,
+        client_key: None,
     })
 }
