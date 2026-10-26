@@ -5,7 +5,7 @@ local item_ids = require("../../protocol/items/identifiers")
 
 local ids = fixture.ids
 
-local function request(handler, id: number, api_key: string?, query: { [string]: string }?)
+local function request(handler, id: number, api_key: string?, query: { [string]: string }?, method: string?)
 	local params = { api_key = if api_key then { api_key } else nil }
 	for key, value in query or {} do
 		params[key] = { value }
@@ -13,7 +13,7 @@ local function request(handler, id: number, api_key: string?, query: { [string]:
 	return handler({
 		plugin_id = "jellyfin",
 		request = {
-			method = "GET",
+			method = method or "GET",
 			path = `/Audio/{item_ids.encode_jellyfin_item_id(id)}/stream`,
 			headers = {},
 			query = params,
@@ -35,6 +35,11 @@ assert_public_stream(request(audio.handle_stream_route, ids.song), "anonymous tr
 assert_public_stream(request(audio.handle_stream_route, ids.song, fixture.api_keys.phone), "viewer")
 assert_public_stream(request(audio.handle_stream_route, ids.song, "invalid"), "invalid key")
 assert(request(audio.handle_stream_route, ids.album).status == 404, "a release is not a stream")
+
+-- HEAD answers as GET does; the server leaves out the body.
+assert_public_stream(request(audio.handle_stream_route, ids.song, nil, { static = "true" }, "HEAD"), "HEAD static")
+assert_public_stream(request(audio.handle_stream_route, ids.song, nil, nil, "HEAD"), "HEAD transcode")
+assert(request(audio.handle_stream_route, ids.album, nil, nil, "HEAD").status == 404, "HEAD of a release")
 
 -- `/universal` requires auth and the caller's access to the track.
 local universal = request(audio.handle_universal_route, ids.song)

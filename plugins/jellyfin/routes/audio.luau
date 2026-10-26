@@ -116,8 +116,6 @@ end
 local function handle_audio_stream_route(ctx: ApiContext, public: boolean): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
 	local request = if ctx then ctx.request else nil
-	local request_method = if request then request.method else nil
-	local is_head_request = request_method == "HEAD"
 	local request_path = if ctx and ctx.request then ctx.request.path else nil
 	local normalized_request_path = if type(request_path) == "string" then string.lower(request_path) else nil
 	local raw_static = requests.parse_query_string(query, { "static", "Static" }, nil)
@@ -212,9 +210,6 @@ local function handle_audio_stream_route(ctx: ApiContext, public: boolean): ApiR
 	local direct_options: api.TrackStreamOptions? = if public then { public = true } else nil
 	local explicit_stream_path = string.lower(`{P}/Audio/{item_id}/stream`)
 	if static_direct_copy and normalized_request_path == explicit_stream_path then
-		if is_head_request then
-			return api.response.empty(200)
-		end
 		return api.response.stream_track(track_id, direct_options)
 	end
 
@@ -231,17 +226,11 @@ local function handle_audio_stream_route(ctx: ApiContext, public: boolean): ApiR
 			forbid_stream_copy
 		)
 	then
-		if is_head_request then
-			return api.response.empty(200)
-		end
 		return api.response.stream_track(track_id, direct_options)
 	end
 
 	if not transcoding_enabled then
 		if static_direct_copy then
-			if is_head_request then
-				return api.response.empty(200)
-			end
 			return api.response.stream_track(track_id, direct_options)
 		end
 		return api.response.json(415, {
@@ -261,11 +250,6 @@ local function handle_audio_stream_route(ctx: ApiContext, public: boolean): ApiR
 			prefer_vbr = prefer_vbr,
 			start_offset_ms = start_offset_ms,
 		}
-		if is_head_request then
-			return api.response.empty(200, {
-				["content-type"] = "application/x-mpegurl",
-			})
-		end
 		return api.response.hls_playlist(track_id, options)
 	end
 
@@ -288,10 +272,6 @@ local function handle_audio_stream_route(ctx: ApiContext, public: boolean): ApiR
 		prefer_vbr = prefer_vbr,
 		start_offset_ms = start_offset_ms,
 	}
-	if is_head_request then
-		return api.response.empty(200)
-	end
-
 	return api.response.stream_track(track_id, options)
 end
 
