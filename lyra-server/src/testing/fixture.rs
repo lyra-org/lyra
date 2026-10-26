@@ -140,6 +140,10 @@ struct Track {
     credits: Vec<Credit>,
     /// An audio file, relative to the fixture, linked as the track's primary source.
     file: Option<PathBuf>,
+    /// Where the track starts within `file`, as a cue sheet would place it.
+    start_ms: Option<u64>,
+    /// Where the track ends within `file`.
+    end_ms: Option<u64>,
 }
 
 /// A credit of any type, listed after the owner's `artists`.
@@ -414,6 +418,11 @@ impl Fixture {
             layer.supply(MetadataField::Year, track.year)?;
             supply_credits(&mut layer, &keys, &track.artists, &track.credits)?;
             save_local(db, track_db_id, layer)?;
+            anyhow::ensure!(
+                track.file.is_some() || (track.start_ms.is_none() && track.end_ms.is_none()),
+                "fixture track {} trims no file",
+                track.key
+            );
             if let Some(file) = &track.file {
                 let path = self.directory.join(file);
                 anyhow::ensure!(
@@ -450,8 +459,8 @@ impl Fixture {
                             source_kind: "embedded_tags".into(),
                             source_key: track.key.clone(),
                             is_primary: true,
-                            start_ms: None,
-                            end_ms: None,
+                            start_ms: track.start_ms,
+                            end_ms: track.end_ms,
                             format,
                         },
                         None,
