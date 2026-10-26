@@ -97,6 +97,10 @@ contains(hls_url, "SegmentContainer=ts")
 contains(hls_url, "ApiKey=secret")
 assert(not string.find(media_source(hls, nil).TranscodingUrl, "ApiKey", 1, true), "no token, no ApiKey")
 
+-- Upstream plays an audio item's default stream whatever stream index the client asks for.
+local indexed = playback_info({ AudioStreamIndex = 3 }, "secret")
+assert(indexed.ErrorCode == nil and indexed.MediaSources[1] ~= nil, `error {indexed.ErrorCode}`)
+
 -- As upstream, profiles naming no codec, or one upstream finds no encoder for, are passed over.
 local passed_over = media_source({
 	DeviceProfile = {

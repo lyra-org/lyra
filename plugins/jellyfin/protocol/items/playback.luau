@@ -506,11 +506,6 @@ local function request_supports_audio_direct_play(media_source: MediaSource, req
 		and media_source_respects_audio_limits(media_source, limits)
 end
 
-local function requested_audio_stream_is_supported(request_object: JsonObject?): boolean
-	local requested_audio_stream_index = json_number_field(request_object, "AudioStreamIndex")
-	return requested_audio_stream_index == nil or requested_audio_stream_index == 0
-end
-
 local function no_compatible_stream(): ApiJsonValue
 	return {
 		MediaSources = {},
@@ -973,9 +968,6 @@ function module.build_playback_info(
 		then
 			return no_compatible_stream()
 		end
-	end
-	if not requested_audio_stream_is_supported(request_object) then
-		return no_compatible_stream()
 	end
 
 	-- As upstream, a playable item always lists its source; a client that can neither play nor
