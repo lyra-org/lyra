@@ -22,6 +22,15 @@ function module.jellyfin_container(source: PlaybackSourceInfo?): string?
 	return container
 end
 
+-- Upstream's playback sources keep every name FFmpeg's demuxer goes by, where its item DTOs
+-- collapse them to the file's extension.
+function module.probed_container(source: PlaybackSourceInfo?): string?
+	if source and source.container == "m4a" then
+		return "mov,mp4,m4a,3gp,3g2,mj2"
+	end
+	return module.jellyfin_container(source)
+end
+
 function module.jellyfin_codec(source: PlaybackSourceInfo?): string?
 	return if source then source.codec else nil
 end

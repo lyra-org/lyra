@@ -12,6 +12,7 @@ local playbacks = require("@lyra/playback_sessions")
 local tracks = require("@lyra/tracks")
 
 local constants = require("../../constants")
+local device_profiles = require("./device_profile")
 
 local PLAYBACK_COMPLETION_TOLERANCE_MS = constants.PLAYBACK_COMPLETION_TOLERANCE_MS
 
@@ -326,22 +327,6 @@ local function json_array_field(object: JsonObject?, key: string): JsonArray?
 	return as_json_array(if object then object[key] else nil)
 end
 
-local function csv_contains_token(csv: string?, token: string?): boolean
-	local normalized_token = if token then string.lower(token) else nil
-	if normalized_token == nil then
-		return false
-	end
-
-	for raw_part in string.gmatch(csv or "", "[^,]+") do
-		local part = module.trim(raw_part)
-		if part and string.lower(part) == normalized_token then
-			return true
-		end
-	end
-
-	return false
-end
-
 local function media_source_audio_codec(media_source: MediaSource): string?
 	local media_streams = media_source.MediaStreams
 	for _, stream in ipairs(media_streams) do
@@ -365,12 +350,11 @@ local function supports_audio_direct_play(media_source: MediaSource, device_prof
 		if profile then
 			local profile_type = json_string_field(profile, "Type")
 			if profile_type and string.lower(profile_type) == "audio" then
-				local profile_container = json_string_field(profile, "Container")
-				if csv_contains_token(profile_container, source_container) then
-					local profile_audio_codec = json_string_field(profile, "AudioCodec")
-					if profile_audio_codec == nil or csv_contains_token(profile_audio_codec, source_codec) then
-						return true
-					end
+				if
+					device_profiles.contains_container(json_string_field(profile, "Container"), source_container)
+					and device_profiles.contains_container(json_string_field(profile, "AudioCodec"), source_codec)
+				then
+					return true
 				end
 			end
 		end
@@ -444,8 +428,8 @@ local function supports_audio_direct_play_from_container_csv(
 			local codec_tail = if delimiter_index then string.sub(token, delimiter_index + 1) else nil
 			local codec_csv = if codec_tail then (string.gsub(codec_tail, "|", ",")) else nil
 			if
-				csv_contains_token(container, source_container)
-				and (codec_csv == nil or csv_contains_token(codec_csv, source_codec))
+				device_profiles.contains_container(container, source_container)
+				and device_profiles.contains_container(codec_csv, source_codec)
 			then
 				return true
 			end
@@ -640,7 +624,7 @@ local function build_media_info(
 ): ({ MediaSource }, { MediaStream }, string?)
 	local entry: EntryInfo? = if source and type(source.entry) == "table" then source.entry else nil
 	local media_item_id = module.encode_jellyfin_item_id(item_id)
-	local container = media.jellyfin_container(source)
+	local container = media.probed_container(source)
 	local codec = media.jellyfin_codec(source)
 	local size = if entry and entry.size then tonumber(entry.size) else nil
 	local bitrate = if source then source.bitrate_bps else nil
