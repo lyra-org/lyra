@@ -271,6 +271,12 @@ pub(crate) async fn validate_and_get_track_source(
     })
 }
 
+/// The body of a `HEAD` response whose `GET` body has no known length. Its size is unknown
+/// rather than zero, so no `Content-Length: 0` is derived from it.
+fn head_body() -> Body {
+    Body::from_stream(futures::stream::empty::<Result<bytes::Bytes, std::io::Error>>())
+}
+
 pub fn temp_output_path(track_id: &str, format: AudioFormat) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -398,6 +404,7 @@ mod tests {
 
     use axum::http::{
         HeaderMap,
+        Method,
         StatusCode,
         header::AUTHORIZATION,
     };
@@ -780,6 +787,7 @@ mod tests {
         let principal = crate::services::auth::require_authenticated(&headers).await?;
 
         let response = super::download::download_track_response(
+            &Method::GET,
             &HeaderMap::new(),
             &track_id,
             &super::TrackAccess::Principal(principal),
@@ -803,6 +811,7 @@ mod tests {
         let headers = HeaderMap::new();
 
         let response = super::stream::stream_track_response(
+            &Method::GET,
             &headers,
             &track_id,
             &super::TrackAccess::MediaToken,
@@ -833,6 +842,7 @@ mod tests {
         let headers = HeaderMap::new();
 
         let response = super::stream::stream_track_response(
+            &Method::GET,
             &headers,
             &track_id,
             &super::TrackAccess::MediaToken,
@@ -866,6 +876,111 @@ mod tests {
         Ok(())
     }
 
+    async fn send(
+        method: Method,
+        uri: String,
+    ) -> anyhow::Result<(StatusCode, HeaderMap, axum::body::Bytes)> {
+        use tower::ServiceExt;
+
+        let response = super::stream_routes()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .body(axum::body::Body::empty())?,
+            )
+            .await?;
+        let status = response.status();
+        let headers = response.headers().clone();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        Ok((status, headers, body))
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn stream_head_answers_like_get_without_a_body() -> anyhow::Result<()> {
+        use axum::http::header::{
+            ACCEPT_RANGES,
+            CONTENT_LENGTH,
+            CONTENT_TYPE,
+        };
+
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let token = issue_media_token(&track_id, MediaTokenPurpose::Stream).token;
+        let uri = |query: &str| format!("/{track_id}?media_token={token}{query}");
+
+        let (get_status, get_headers, get_body) = send(Method::GET, uri("")).await?;
+        let (head_status, head_headers, head_body) = send(Method::HEAD, uri("")).await?;
+        assert_eq!(get_status, StatusCode::OK);
+        assert_eq!(head_status, get_status);
+        for name in [CONTENT_TYPE, CONTENT_LENGTH, ACCEPT_RANGES] {
+            assert_eq!(head_headers.get(&name), get_headers.get(&name), "{name}");
+        }
+        assert_eq!(
+            head_headers[CONTENT_LENGTH].to_str()?,
+            get_body.len().to_string()
+        );
+        assert!(head_body.is_empty());
+
+        let (status, headers, body) =
+            send(Method::HEAD, uri("&format=mp3&bitrate_bps=96000")).await?;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers[CONTENT_TYPE], "audio/mpeg");
+        assert_eq!(headers[ACCEPT_RANGES], "none");
+        assert!(
+            headers.get(CONTENT_LENGTH).is_none(),
+            "a transcode's length is unknown, not zero"
+        );
+        assert!(body.is_empty());
+
+        let (get_status, _, _) = send(Method::GET, uri("&format=mp3&bitrate_bps=0")).await?;
+        let (head_status, _, _) = send(Method::HEAD, uri("&format=mp3&bitrate_bps=0")).await?;
+        assert_eq!(get_status, StatusCode::BAD_REQUEST);
+        assert_eq!(head_status, get_status);
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn hls_playlist_head_starts_no_transcode() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let registry_before = crate::services::hls::state::hls_registry_counts().await;
+
+        let response = super::serve_hls_playlist_for_track(
+            &Method::HEAD,
+            &track_id,
+            &super::TrackAccess::MediaToken,
+            super::HlsPlaylistOptions {
+                codec: None,
+                bitrate_bps: None,
+                sample_rate_hz: None,
+                channels: None,
+                prefer_vbr: None,
+                start_offset_ms: None,
+            },
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("playlist failed: {err:?}"))?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[axum::http::header::CONTENT_TYPE],
+            "application/x-mpegurl"
+        );
+        assert_eq!(
+            crate::services::hls::state::hls_registry_counts().await,
+            registry_before,
+            "HEAD must not create an HLS job or session"
+        );
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn stream_transcodes_m4a_as_fragmented_mp4() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
@@ -873,6 +988,7 @@ mod tests {
         let track_id = prepare_streamable_track(&test_dir).await?;
 
         let response = super::stream::stream_track_response(
+            &Method::GET,
             &HeaderMap::new(),
             &track_id,
             &super::TrackAccess::MediaToken,
@@ -913,6 +1029,7 @@ mod tests {
 
         // The fixture is 44.1 kHz, so 22.05 kHz is a real downsample.
         let response = super::stream::stream_track_response(
+            &Method::GET,
             &headers,
             &track_id,
             &super::TrackAccess::MediaToken,
@@ -958,6 +1075,7 @@ mod tests {
         // change we are willing to make, so the knobs must not destroy the passthrough.
         for (sample_rate_hz, channels) in [(44_100, 1), (48_000, 2)] {
             let response = super::stream::stream_track_response(
+                &Method::GET,
                 &headers,
                 &track_id,
                 &super::TrackAccess::MediaToken,
@@ -994,6 +1112,7 @@ mod tests {
         let headers = HeaderMap::new();
 
         let response = super::stream::stream_track_response(
+            &Method::GET,
             &headers,
             &track_id,
             &super::TrackAccess::MediaToken,
@@ -1028,6 +1147,7 @@ mod tests {
         let headers = HeaderMap::new();
 
         let result = super::stream::stream_track_response(
+            &Method::GET,
             &headers,
             &track_id,
             &super::TrackAccess::MediaToken,

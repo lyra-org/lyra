@@ -75,6 +75,7 @@ async fn confine_file_response_path(path: &str, principal: Option<&Principal>) -
 
 pub(super) async fn plugin_api_response_to_axum(
     response: crate::plugins::executor::ApiHandlerResponse,
+    request_method: &Method,
     request_headers: &HeaderMap,
 ) -> Result<Response> {
     let principal = response.principal.as_ref();
@@ -98,6 +99,7 @@ pub(super) async fn plugin_api_response_to_axum(
             let options = parse_track_serve_options(response.options.as_ref())?;
             return Ok(
                 match stream_track_response(
+                    request_method,
                     request_headers,
                     &track_id,
                     &access,
@@ -135,6 +137,7 @@ pub(super) async fn plugin_api_response_to_axum(
             let options = parse_track_serve_options(response.options.as_ref())?;
             return Ok(
                 match download_track_response(
+                    request_method,
                     request_headers,
                     &track_id,
                     &access,
@@ -172,6 +175,7 @@ pub(super) async fn plugin_api_response_to_axum(
             let options = parse_hls_serve_options(response.options.as_ref())?;
             return Ok(
                 match serve_hls_playlist_for_track(
+                    request_method,
                     &track_id,
                     &access,
                     HlsPlaylistOptions {
@@ -297,7 +301,10 @@ mod tests {
     };
 
     use anyhow::Context as _;
-    use axum::http::StatusCode;
+    use axum::http::{
+        Method,
+        StatusCode,
+    };
     use axum::response::IntoResponse;
 
     use super::{
@@ -480,15 +487,28 @@ mod tests {
 
         let headers = axum::http::HeaderMap::new();
         let private =
-            plugin_api_response_to_axum(stream_response(track_db_id, None), &headers).await?;
+            plugin_api_response_to_axum(stream_response(track_db_id, None), &Method::GET, &headers)
+                .await?;
         assert_eq!(
             private.status(),
             StatusCode::UNAUTHORIZED,
             "streams without the public option still need a principal"
         );
+        let private_head = plugin_api_response_to_axum(
+            stream_response(track_db_id, None),
+            &Method::HEAD,
+            &headers,
+        )
+        .await?;
+        assert_eq!(
+            private_head.status(),
+            StatusCode::UNAUTHORIZED,
+            "HEAD fails as GET does"
+        );
 
         let public = plugin_api_response_to_axum(
             stream_response(release_db_id, Some(serde_json::json!({ "public": true }))),
+            &Method::GET,
             &headers,
         )
         .await?;
@@ -500,6 +520,7 @@ mod tests {
 
         let malformed = plugin_api_response_to_axum(
             stream_response(track_db_id, Some(serde_json::json!({ "public": "yes" }))),
+            &Method::GET,
             &headers,
         )
         .await;
@@ -579,20 +600,23 @@ mod tests {
 
         let headers = axum::http::HeaderMap::new();
 
-        let served = plugin_api_response_to_axum(file_response(&inside), &headers).await?;
+        let served =
+            plugin_api_response_to_axum(file_response(&inside), &Method::GET, &headers).await?;
         assert_eq!(
             served.status(),
             StatusCode::OK,
             "files inside a library root must serve"
         );
 
-        let rejected = plugin_api_response_to_axum(file_response(&outside), &headers).await;
+        let rejected =
+            plugin_api_response_to_axum(file_response(&outside), &Method::GET, &headers).await;
         assert!(
             rejected.is_err_and(|err| err.to_string().contains("outside library")),
             "files outside all roots must be rejected"
         );
 
-        let symlinked = plugin_api_response_to_axum(file_response(&escape_link), &headers).await;
+        let symlinked =
+            plugin_api_response_to_axum(file_response(&escape_link), &Method::GET, &headers).await;
         assert!(
             symlinked.is_err_and(|err| err.to_string().contains("outside library")),
             "symlinks escaping a library root must be rejected"
@@ -604,14 +628,17 @@ mod tests {
             principal: Some(principal.clone()),
             ..file_response(path)
         };
-        let served = plugin_api_response_to_axum(as_principal(&inside), &headers).await?;
+        let served =
+            plugin_api_response_to_axum(as_principal(&inside), &Method::GET, &headers).await?;
         assert_eq!(served.status(), StatusCode::OK);
-        let rejected = plugin_api_response_to_axum(as_principal(&hidden), &headers).await;
+        let rejected =
+            plugin_api_response_to_axum(as_principal(&hidden), &Method::GET, &headers).await;
         assert!(
             rejected.is_err_and(|err| err.to_string().contains("outside library")),
             "files in libraries the principal can't see must be rejected"
         );
-        let served = plugin_api_response_to_axum(file_response(&hidden), &headers).await?;
+        let served =
+            plugin_api_response_to_axum(file_response(&hidden), &Method::GET, &headers).await?;
         assert_eq!(
             served.status(),
             StatusCode::OK,

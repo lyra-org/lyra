@@ -18,6 +18,7 @@ use axum::{
     },
     http::{
         HeaderMap,
+        Method,
         Response,
         header,
     },
@@ -382,6 +383,7 @@ fn build_hls_media_playlist(
 }
 
 async fn get_hls_playlist(
+    method: Method,
     headers: HeaderMap,
     Path(track_id): Path<String>,
     Query(query): Query<HlsQuery>,
@@ -394,6 +396,7 @@ async fn get_hls_playlist(
     )
     .await?;
     serve_hls_playlist_for_track(
+        &method,
         &track_id,
         &access,
         HlsPlaylistOptions {
@@ -417,7 +420,10 @@ pub(crate) struct HlsPlaylistOptions {
     pub(crate) start_offset_ms: Option<u64>,
 }
 
+/// Serves a track's media playlist as `GET` would. A `HEAD` request gets the same decision and
+/// headers without starting a transcode or a session.
 pub(crate) async fn serve_hls_playlist_for_track(
+    method: &Method,
     track_id: &str,
     access: &super::TrackAccess,
     options: HlsPlaylistOptions,
@@ -482,6 +488,9 @@ pub(crate) async fn serve_hls_playlist_for_track(
     };
 
     let session_id = generate_hls_session_id();
+    if method == Method::HEAD {
+        return hls_playlist_response(build_hls_media_playlist(&session_id, duration_ms, profile));
+    }
     let output = HlsOutputConfig::new(
         profile,
         audio_bitrate_kbps,
@@ -508,14 +517,8 @@ pub(crate) async fn serve_hls_playlist_for_track(
         }
         attach_session_to_job(&session_id, playlist_segment_count, job_key).await?;
     }
-    let playlist = build_hls_media_playlist(&session_id, duration_ms, profile);
-
-    let response = Response::builder()
-        .header(header::CONTENT_TYPE, "application/x-mpegurl")
-        .header(header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
-        .header(header::PRAGMA, "no-cache")
-        .header(header::EXPIRES, "0")
-        .body(Body::from(playlist))?;
+    let response =
+        hls_playlist_response(build_hls_media_playlist(&session_id, duration_ms, profile))?;
 
     let startup_latency_ms = request_started.elapsed().as_millis() as u64;
     let (active_jobs, active_sessions) = hls_registry_counts().await;
@@ -538,6 +541,15 @@ pub(crate) async fn serve_hls_playlist_for_track(
     );
 
     Ok(response)
+}
+
+fn hls_playlist_response(playlist: String) -> Result<Response<Body>, AppError> {
+    Ok(Response::builder()
+        .header(header::CONTENT_TYPE, "application/x-mpegurl")
+        .header(header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
+        .header(header::PRAGMA, "no-cache")
+        .header(header::EXPIRES, "0")
+        .body(Body::from(playlist))?)
 }
 
 async fn get_hls_segment(

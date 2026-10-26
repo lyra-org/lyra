@@ -19,6 +19,7 @@ use axum::{
     },
     http::{
         HeaderMap,
+        Method,
         Response,
         header,
     },
@@ -55,6 +56,7 @@ use super::{
     TranscodeKnobs,
     apply_request_start_offset,
     file_response,
+    head_body,
     resolve_delivery,
     validate_and_get_track_source,
     validate_request,
@@ -124,6 +126,7 @@ struct StreamQuery {
 }
 
 async fn get_stream(
+    method: Method,
     headers: HeaderMap,
     Path(track_id): Path<String>,
     Query(query): Query<StreamQuery>,
@@ -136,6 +139,7 @@ async fn get_stream(
     )
     .await?;
     stream_track_response(
+        &method,
         &headers,
         &track_id,
         &access,
@@ -152,7 +156,10 @@ async fn get_stream(
     .await
 }
 
+/// Serves a track as `GET` would. A `HEAD` request gets the same decision and headers without
+/// starting FFmpeg.
 pub(crate) async fn stream_track_response(
+    method: &Method,
     headers: &HeaderMap,
     track_id: &str,
     access: &super::TrackAccess,
@@ -230,6 +237,9 @@ pub(crate) async fn stream_track_response(
         .end_ms(source.end_ms)
         .output(output)
         .build()?;
+    if method == Method::HEAD {
+        return transcoded_stream_response(delivery.content_type, head_body());
+    }
 
     let client_disconnected_for_forwarder = Arc::clone(&client_disconnected);
     let shutdown_for_forwarder = shutdown.clone();
@@ -326,18 +336,18 @@ pub(crate) async fn stream_track_response(
             }
         },
     );
-    let body = Body::from_stream(stream);
+    transcoded_stream_response(delivery.content_type, Body::from_stream(stream))
+}
 
-    let response = Response::builder()
-        .header(header::CONTENT_TYPE, delivery.content_type)
+fn transcoded_stream_response(content_type: &str, body: Body) -> Result<Response<Body>, AppError> {
+    Ok(Response::builder()
+        .header(header::CONTENT_TYPE, content_type)
         .header(header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
         .header(header::TRANSFER_ENCODING, "chunked")
         .header(header::ACCEPT_RANGES, "none")
         .header(header::PRAGMA, "no-cache")
         .header(header::EXPIRES, "0")
-        .body(body)?;
-
-    Ok(response)
+        .body(body)?)
 }
 
 #[cfg(feature = "docgen")]

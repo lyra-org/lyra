@@ -18,7 +18,9 @@ use axum::{
     },
     http::{
         HeaderMap,
+        Method,
         Response,
+        header,
     },
 };
 use lyra_ffmpeg::{
@@ -35,6 +37,7 @@ use super::{
     TranscodeKnobs,
     apply_request_start_offset,
     file_response,
+    head_body,
     resolve_delivery,
     temp_file_response,
     temp_output_path,
@@ -98,6 +101,7 @@ struct DownloadQuery {
 }
 
 async fn get_download(
+    method: Method,
     Path(track_id): Path<String>,
     Query(query): Query<DownloadQuery>,
     headers: HeaderMap,
@@ -110,6 +114,7 @@ async fn get_download(
     )
     .await?;
     download_track_response(
+        &method,
         &headers,
         &track_id,
         &access,
@@ -126,7 +131,10 @@ async fn get_download(
     .await
 }
 
+/// Serves a track as `GET` would. A `HEAD` request gets the same decision and headers without
+/// running FFmpeg, so it cannot know the transcoded length.
 pub(crate) async fn download_track_response(
+    method: &Method,
     headers: &HeaderMap,
     track_id: &str,
     access: &super::TrackAccess,
@@ -173,6 +181,15 @@ pub(crate) async fn download_track_response(
         .end_ms(source.end_ms)
         .output(output)
         .build()?;
+    if method == Method::HEAD {
+        return Ok(Response::builder()
+            .header(header::CONTENT_TYPE, delivery.content_type)
+            .header(header::ACCEPT_RANGES, "bytes")
+            .header(header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
+            .header(header::PRAGMA, "no-cache")
+            .header(header::EXPIRES, "0")
+            .body(head_body())?);
+    }
 
     let result =
         tokio::task::spawn_blocking(move || context.start().map(|handle| handle.wait())).await?;
