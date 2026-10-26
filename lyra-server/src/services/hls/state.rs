@@ -47,6 +47,7 @@ use super::codec::{
     HlsOutputConfig,
     build_hls_output,
 };
+use crate::services::playback_sources::SourceVersion;
 
 pub(crate) const HLS_JOB_TEMP_DIR_PREFIX: &str = "lyra-hls-job-";
 
@@ -112,12 +113,22 @@ pub(crate) struct HlsSession {
     pub(crate) playlist_segment_count: u64,
     pub(crate) job_key: HlsJobKey,
     pub(crate) last_access: Instant,
+    pub(crate) holder: HlsSessionHolder,
+}
+
+/// Who an HLS session was created for. Segments are only served while they still may be.
+#[derive(Clone, Debug)]
+pub(crate) enum HlsSessionHolder {
+    Principal(crate::services::auth::Principal),
+    MediaToken(crate::services::auth::media_tokens::MediaTokenHolder),
+    /// A public plugin route, which serves anyone.
+    Public,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct HlsJobKey {
     track_public_id: String,
-    source_public_id: String,
+    source: SourceVersion,
     start_ms: Option<u64>,
     end_ms: Option<u64>,
     output: HlsOutputConfig,
@@ -143,14 +154,14 @@ pub(crate) fn generate_hls_session_id() -> String {
 impl HlsJobKey {
     pub(crate) fn new(
         track_public_id: String,
-        source_public_id: String,
+        source: SourceVersion,
         start_ms: Option<u64>,
         end_ms: Option<u64>,
         output: HlsOutputConfig,
     ) -> Self {
         Self {
             track_public_id,
-            source_public_id,
+            source,
             start_ms,
             end_ms,
             output,
@@ -264,7 +275,7 @@ async fn create_hls_job(input_path: &str, job_key: &HlsJobKey) -> Result<HlsJob,
     let job_id = generate_hls_session_id();
     let job_dir = std::env::temp_dir().join(format!(
         "{HLS_JOB_TEMP_DIR_PREFIX}{}-{}-{job_id}",
-        job_key.track_public_id, job_key.source_public_id
+        job_key.track_public_id, job_key.source.source_public_id
     ));
     let playlist_path = job_dir.join("index.m3u8");
     let segment_pattern = job_dir.join(format!(
@@ -344,7 +355,7 @@ pub(crate) async fn get_or_create_hls_job(
                 let db = crate::STATE.db.read().await;
                 let exists = crate::db::lookup::find_node_id_by_id(&*db, job_key.track_public_id());
                 let source_exists =
-                    crate::db::lookup::find_node_id_by_id(&*db, &job_key.source_public_id);
+                    crate::db::lookup::find_node_id_by_id(&*db, &job_key.source.source_public_id);
                 if !matches!(exists, Ok(Some(_))) || !matches!(source_exists, Ok(Some(_))) {
                     drop(db);
                     teardown_hls_job(job).await;
@@ -374,6 +385,7 @@ pub(crate) async fn attach_session_to_job(
     session_id: &str,
     playlist_segment_count: u64,
     job_key: HlsJobKey,
+    holder: HlsSessionHolder,
 ) -> Result<PathBuf, HlsError> {
     let playlist_path = {
         let mut jobs = HLS_JOBS.write().await;
@@ -390,6 +402,7 @@ pub(crate) async fn attach_session_to_job(
             playlist_segment_count,
             job_key,
             last_access: Instant::now(),
+            holder,
         },
     );
 
@@ -527,7 +540,7 @@ mod tests {
         let profile = HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
         let job_key = HlsJobKey::new(
             "track-pub-601".to_string(),
-            "source-pub-6011".to_string(),
+            crate::services::playback_sources::SourceVersion::fixed("source-pub-6011"),
             None,
             None,
             HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None, false),
@@ -542,10 +555,12 @@ mod tests {
 
         let key_a = job_key.clone();
         let key_b = job_key.clone();
-        let attach_a =
-            tokio::spawn(async move { attach_session_to_job("session-a", 1, key_a).await });
-        let attach_b =
-            tokio::spawn(async move { attach_session_to_job("session-b", 1, key_b).await });
+        let attach_a = tokio::spawn(async move {
+            attach_session_to_job("session-a", 1, key_a, HlsSessionHolder::Public).await
+        });
+        let attach_b = tokio::spawn(async move {
+            attach_session_to_job("session-b", 1, key_b, HlsSessionHolder::Public).await
+        });
 
         let attach_a_result = attach_a.await.expect("session-a task should finish");
         let attach_b_result = attach_b.await.expect("session-b task should finish");

@@ -642,6 +642,7 @@ mod tests {
         ValidatedTrackSource {
             source_id: agdb::DbId(2),
             source_public_id: "source-pub-2".to_string(),
+            version: crate::services::playback_sources::SourceVersion::fixed("source-pub-2"),
             track_public_id: "track-pub-test".to_string(),
             input_path: "track.flac".to_string(),
             entry_format: Some(AudioFormat::Flac),

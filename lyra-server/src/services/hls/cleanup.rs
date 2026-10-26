@@ -462,21 +462,21 @@ mod tests {
 
         let oldest_key = HlsJobKey::new(
             "track-pub-1".to_string(),
-            "source-pub-1001".to_string(),
+            crate::services::playback_sources::SourceVersion::fixed("source-pub-1001"),
             None,
             None,
             HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None, false),
         );
         let middle_key = HlsJobKey::new(
             "track-pub-2".to_string(),
-            "source-pub-1002".to_string(),
+            crate::services::playback_sources::SourceVersion::fixed("source-pub-1002"),
             None,
             None,
             HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None, false),
         );
         let newest_key = HlsJobKey::new(
             "track-pub-3".to_string(),
-            "source-pub-1003".to_string(),
+            crate::services::playback_sources::SourceVersion::fixed("source-pub-1003"),
             None,
             None,
             HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None, false),
@@ -528,7 +528,7 @@ mod tests {
         let profile = HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
         let job_key = HlsJobKey::new(
             track_public_id.clone(),
-            "source-pub-3331".to_string(),
+            crate::services::playback_sources::SourceVersion::fixed("source-pub-3331"),
             None,
             None,
             HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None, false),
@@ -547,6 +547,7 @@ mod tests {
                     playlist_segment_count: 1,
                     job_key: job_key.clone(),
                     last_access: Instant::now() - HLS_SESSION_TTL - Duration::from_secs(1),
+                    holder: crate::services::hls::state::HlsSessionHolder::Public,
                 },
             );
         }
@@ -597,14 +598,14 @@ mod tests {
         let profile = HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
         let older_key = HlsJobKey::new(
             "track-pub-901".to_string(),
-            "source-pub-9011".to_string(),
+            crate::services::playback_sources::SourceVersion::fixed("source-pub-9011"),
             None,
             None,
             HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None, false),
         );
         let newer_key = HlsJobKey::new(
             "track-pub-902".to_string(),
-            "source-pub-9021".to_string(),
+            crate::services::playback_sources::SourceVersion::fixed("source-pub-9021"),
             None,
             None,
             HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None, false),

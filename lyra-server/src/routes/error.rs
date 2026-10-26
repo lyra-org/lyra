@@ -100,6 +100,10 @@ impl AppError {
         }
     }
 
+    pub fn gone(message: impl Into<String>) -> Self {
+        Self::with_status(StatusCode::GONE, message.into())
+    }
+
     pub fn bad_gateway(message: impl Into<String>) -> Self {
         Self::with_status(StatusCode::BAD_GATEWAY, message.into())
     }

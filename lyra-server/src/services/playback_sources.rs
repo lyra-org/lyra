@@ -11,7 +11,13 @@ use lyra_ffmpeg::{
     AudioCodec,
     AudioFormat,
 };
-use std::path::PathBuf;
+use std::{
+    path::{
+        Path,
+        PathBuf,
+    },
+    time::UNIX_EPOCH,
+};
 
 use crate::db::{
     self,
@@ -96,6 +102,46 @@ pub(crate) fn resolve(
     }
 
     Ok(None)
+}
+
+/// The exact file content a playback source resolved to. Anything derived from a source, such as
+/// a media token or a cached transcode, compares it to tell when the file was replaced.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct SourceVersion {
+    pub(crate) source_public_id: String,
+    pub(crate) size: u64,
+    pub(crate) modified_ns: u128,
+}
+
+impl SourceVersion {
+    /// Reads the version of the file at `path`, failing when it is not a regular file.
+    pub(crate) fn read(source_public_id: String, path: &Path) -> std::io::Result<Self> {
+        let metadata = std::fs::metadata(path)?;
+        if !metadata.is_file() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "track source is not a regular file",
+            ));
+        }
+        let modified_ns = metadata
+            .modified()?
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        Ok(Self {
+            source_public_id,
+            size: metadata.len(),
+            modified_ns,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixed(source_public_id: &str) -> Self {
+        Self {
+            source_public_id: source_public_id.to_string(),
+            size: 1,
+            modified_ns: 1,
+        }
+    }
 }
 
 /// The transcoder's format for a source's container, when it can copy from it.

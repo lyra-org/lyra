@@ -15,9 +15,15 @@ use std::{
 use crate::{
     STATE,
     db,
+    services::playback_sources::SourceVersion,
 };
 
-use super::random_hex_secret;
+use super::{
+    AuthCredential,
+    Principal,
+    ResolvedAuth,
+    random_hex_secret,
+};
 
 pub(crate) const MEDIA_TOKEN_IDLE_TTL_SECONDS: u64 = 15 * 60;
 pub(crate) const MEDIA_TOKEN_MAX_TTL_SECONDS: u64 = 8 * 60 * 60;
@@ -36,10 +42,48 @@ pub(crate) enum MediaTokenPurpose {
     Download,
 }
 
+/// Who a media token was issued to: the user and the credential they presented. The token only
+/// works while that credential still authenticates that user.
+#[derive(Clone, Debug)]
+pub(crate) struct MediaTokenHolder {
+    user_public_id: String,
+    credential: AuthCredential,
+}
+
+impl MediaTokenHolder {
+    pub(crate) fn new(auth: &ResolvedAuth) -> Self {
+        Self {
+            user_public_id: auth.principal.user_public_id.clone(),
+            credential: auth.credential.clone(),
+        }
+    }
+
+    /// The holder's principal as it stands now, read under the caller's guard, or `None` when
+    /// the user is gone or the credential that obtained the token no longer authenticates them.
+    pub(crate) fn principal(&self, db: &impl db::DbAccess) -> anyhow::Result<Option<Principal>> {
+        let Some(user_db_id) = db::users::find_db_id_by_public_id(db, &self.user_public_id)? else {
+            return Ok(None);
+        };
+        if !self.credential.is_live(db, user_db_id)? {
+            return Ok(None);
+        }
+        Principal::load(db, user_db_id)
+    }
+}
+
+/// What a validated media token grants: its purpose, its holder, and the exact source file it was
+/// issued against.
+#[derive(Clone, Debug)]
+pub(crate) struct MediaTokenAccess {
+    pub(crate) purpose: MediaTokenPurpose,
+    pub(crate) holder: MediaTokenHolder,
+    pub(crate) source: SourceVersion,
+}
+
 #[derive(Clone, Debug)]
 struct MediaTokenGrant {
     track_id: String,
-    purpose: MediaTokenPurpose,
+    access: MediaTokenAccess,
     issued_at: Instant,
     last_used_at: Instant,
     expires_at: i64,
@@ -105,13 +149,22 @@ fn enforce_media_token_cap(cache: &mut HashMap<String, MediaTokenGrant>) {
     }
 }
 
-pub(crate) fn issue_media_token(track_id: &str, purpose: MediaTokenPurpose) -> IssuedMediaToken {
+pub(crate) fn issue_media_token(
+    track_id: &str,
+    purpose: MediaTokenPurpose,
+    holder: MediaTokenHolder,
+    source: SourceVersion,
+) -> IssuedMediaToken {
     let now = Instant::now();
     let expires_at = now_secs().saturating_add(MEDIA_TOKEN_MAX_TTL_SECONDS as i64);
     let token = random_hex_secret::<MEDIA_TOKEN_BYTES>();
     let grant = MediaTokenGrant {
         track_id: track_id.to_string(),
-        purpose,
+        access: MediaTokenAccess {
+            purpose,
+            holder,
+            source,
+        },
         issued_at: now,
         last_used_at: now,
         expires_at,
@@ -126,11 +179,13 @@ pub(crate) fn issue_media_token(track_id: &str, purpose: MediaTokenPurpose) -> I
     IssuedMediaToken { token, expires_at }
 }
 
+/// Checks the token against its purpose and track. The holder and source it is bound to are
+/// checked where the track's source is resolved, under the database guard.
 pub(crate) fn validate_media_token(
     token: &str,
     purpose: MediaTokenPurpose,
     track_id: &str,
-) -> Result<(), MediaTokenError> {
+) -> Result<MediaTokenAccess, MediaTokenError> {
     let token = token.trim();
     if token.is_empty() {
         return Err(MediaTokenError::Invalid);
@@ -151,23 +206,45 @@ pub(crate) fn validate_media_token(
         return Err(MediaTokenError::Expired);
     }
 
-    if grant.purpose != purpose || grant.track_id != track_id {
+    if grant.access.purpose != purpose || grant.track_id != track_id {
         return Err(MediaTokenError::Invalid);
     }
 
     grant.last_used_at = now;
-    Ok(())
+    Ok(grant.access.clone())
+}
+
+/// A token for `track_id` held by a placeholder user over a placeholder source, for tests that
+/// only exercise purpose and track matching.
+#[cfg(test)]
+pub(crate) fn issue_unbound_media_token(
+    track_id: &str,
+    purpose: MediaTokenPurpose,
+) -> IssuedMediaToken {
+    issue_media_token(
+        track_id,
+        purpose,
+        MediaTokenHolder {
+            user_public_id: "placeholder-user".to_string(),
+            credential: AuthCredential::Default,
+        },
+        SourceVersion::fixed("placeholder-source"),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn issue(track_id: &str, purpose: MediaTokenPurpose) -> IssuedMediaToken {
+        issue_unbound_media_token(track_id, purpose)
+    }
+
     #[test]
     fn media_token_validates_for_matching_track_and_purpose() {
         let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
         crate::testing::init_default_test_state().expect("init test state");
-        let issued = issue_media_token("track-42", MediaTokenPurpose::Stream);
+        let issued = issue("track-42", MediaTokenPurpose::Stream);
 
         validate_media_token(&issued.token, MediaTokenPurpose::Stream, "track-42")
             .expect("matching media token should validate");
@@ -177,7 +254,7 @@ mod tests {
     fn media_token_rejects_wrong_track_or_purpose() {
         let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
         crate::testing::init_default_test_state().expect("init test state");
-        let issued = issue_media_token("track-42", MediaTokenPurpose::Stream);
+        let issued = issue("track-42", MediaTokenPurpose::Stream);
 
         assert!(matches!(
             validate_media_token(&issued.token, MediaTokenPurpose::Stream, "track-43"),

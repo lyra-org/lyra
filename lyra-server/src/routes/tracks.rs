@@ -48,9 +48,11 @@ use crate::{
             Principal,
             media_tokens::{
                 MEDIA_TOKEN_IDLE_TTL_SECONDS,
+                MediaTokenHolder,
                 MediaTokenPurpose,
                 issue_media_token,
             },
+            require_auth,
             require_authenticated,
         },
         catalog::{
@@ -471,23 +473,27 @@ async fn create_track_playback_url(
     Query(query): Query<PlaybackUrlQuery>,
 ) -> Result<Json<PlaybackUrlResponse>, AppError> {
     validate_playback_url_query(&query)?;
-    let principal = require_authenticated(&headers).await?;
+    let auth = require_auth(&headers).await?;
+    let holder = MediaTokenHolder::new(&auth);
+    let principal = auth.into_principal();
 
     let source = super::serve::validate_and_get_track_source(
         &id,
         &super::serve::TrackAccess::Principal(principal.clone()),
     )
     .await?;
+    let version = source.version.clone();
     let transports = resolve_playback_transports(&query, source)?;
+    let issue = |purpose| issue_media_token(&id, purpose, holder.clone(), version.clone());
 
     // HLS always survives, which is what keeps `expires_at` total and the response
     // non-empty; tokens for the other transports are only minted when they are usable.
-    let hls_token = issue_media_token(&id, MediaTokenPurpose::HlsPlaylist);
+    let hls_token = issue(MediaTokenPurpose::HlsPlaylist);
     let mut expires_at = hls_token.expires_at;
     let hls_url = build_hls_url(&id, &hls_token.token, &query);
 
     let stream_url = if transports.stream {
-        let stream_token = issue_media_token(&id, MediaTokenPurpose::Stream);
+        let stream_token = issue(MediaTokenPurpose::Stream);
         expires_at = expires_at.min(stream_token.expires_at);
         Some(build_stream_url(&id, &stream_token.token, &query))
     } else {
@@ -496,7 +502,7 @@ async fn create_track_playback_url(
 
     let download_url =
         if super::serve::authorize_track_purpose(&principal, MediaTokenPurpose::Download).is_ok() {
-            let download_token = issue_media_token(&id, MediaTokenPurpose::Download);
+            let download_token = issue(MediaTokenPurpose::Download);
             expires_at = expires_at.min(download_token.expires_at);
             Some(build_download_url(&id, &download_token.token, &query))
         } else {
@@ -658,7 +664,10 @@ fn create_track_playback_url_docs(op: TransformOperation) -> TransformOperation 
         "Returns browser-friendly stream and HLS URLs containing scoped media tokens for the track. \
          The caller must authenticate with a bearer session token or API key and have access to the \
          track. Returned media tokens are limited to this track and endpoint purpose, expire after \
-         a fixed maximum lifetime, and also expire after an idle period.\n\n\
+         a fixed maximum lifetime, and also expire after an idle period. A token acts for the user \
+         and credential that requested it: it stops working once that session or API key is \
+         revoked, the user is removed, or the user loses access to the track, and it answers \
+         410 Gone once the track's source file has changed since it was issued.\n\n\
          The request is resolved once against the track's source, and a transport is omitted when \
          it cannot carry the result. `stream_url` is omitted when the request encodes into a container \
          that does not support streaming (caf); use `hls_url` or `download_url` instead. \
@@ -1643,6 +1652,7 @@ mod tests {
         crate::routes::serve::ValidatedTrackSource {
             source_id: DbId(2),
             source_public_id: "source-pub".to_string(),
+            version: crate::services::playback_sources::SourceVersion::fixed("source-pub"),
             track_public_id: "track-pub".to_string(),
             input_path: "track.flac".to_string(),
             entry_format: Some(lyra_ffmpeg::AudioFormat::Flac),

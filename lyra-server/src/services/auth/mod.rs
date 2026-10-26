@@ -199,6 +199,35 @@ pub(crate) enum AuthCredential {
     Default,
 }
 
+impl AuthCredential {
+    /// Whether this credential still authenticates `user_db_id`, read under the caller's guard:
+    /// the session is unexpired and unrevoked, the API key unrevoked, or authentication still
+    /// disabled for the default credential.
+    pub(crate) fn is_live(&self, db: &impl db::DbAccess, user_db_id: DbId) -> anyhow::Result<bool> {
+        match self {
+            Self::Session { public_id } => {
+                let Some((session_id, session)) =
+                    db::users::find_session_by_public_id(db, public_id)?
+                else {
+                    return Ok(false);
+                };
+                Ok(!sessions::is_expired(&session)
+                    && db::users::session_owner(db, session_id)?.and_then(|user| user.db_id)
+                        == Some(user_db_id))
+            }
+            Self::ApiKey { public_id, .. } => {
+                let Some(key_id) =
+                    db::api_keys::get_by_public_id(db, public_id)?.and_then(|key| key.db_id)
+                else {
+                    return Ok(false);
+                };
+                Ok(db::api_keys::get_owner_id(db, key_id.into())? == Some(user_db_id))
+            }
+            Self::Default => Ok(!STATE.config().auth.enabled),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedAuth {
     pub(crate) principal: Principal,

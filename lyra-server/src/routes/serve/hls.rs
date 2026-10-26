@@ -500,7 +500,7 @@ pub(crate) async fn serve_hls_playlist_for_track(
     );
     let job_key = HlsJobKey::new(
         source.track_public_id.clone(),
-        source.source_public_id.clone(),
+        source.version.clone(),
         source.start_ms,
         source.end_ms,
         output,
@@ -515,7 +515,13 @@ pub(crate) async fn serve_hls_playlist_for_track(
         {
             return Err(AppError::not_found("track source no longer exists"));
         }
-        attach_session_to_job(&session_id, playlist_segment_count, job_key).await?;
+        attach_session_to_job(
+            &session_id,
+            playlist_segment_count,
+            job_key,
+            access.session_holder(),
+        )
+        .await?;
     }
     let response =
         hls_playlist_response(build_hls_media_playlist(&session_id, duration_ms, profile))?;
@@ -557,15 +563,20 @@ async fn get_hls_segment(
     Path((session_id, segment)): Path<(String, String)>,
 ) -> Result<Response<Body>, AppError> {
     let segment = sanitize_segment_name(&segment)?;
-    let (job_key, playlist_segment_count) = {
+    let (job_key, playlist_segment_count, holder) = {
         let mut sessions = HLS_SESSIONS.write().await;
         let session = sessions
             .get_mut(&session_id)
             .ok_or_else(|| AppError::not_found("HLS session not found"))?;
 
         session.last_access = Instant::now();
-        (session.job_key.clone(), session.playlist_segment_count)
+        (
+            session.job_key.clone(),
+            session.playlist_segment_count,
+            session.holder.clone(),
+        )
     };
+    super::require_session_access(&holder, job_key.track_public_id()).await?;
 
     let segment_dir = {
         let jobs = HLS_JOBS.read().await;
@@ -834,7 +845,7 @@ mod tests {
         let profile = HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
         let job_key = HlsJobKey::new(
             track_public_id.clone(),
-            "source-pub-9991".to_string(),
+            crate::services::playback_sources::SourceVersion::fixed("source-pub-9991"),
             None,
             None,
             HlsOutputConfig::new(
@@ -859,6 +870,7 @@ mod tests {
                     playlist_segment_count: 1,
                     job_key,
                     last_access: Instant::now(),
+                    holder: crate::services::hls::state::HlsSessionHolder::Public,
                 },
             );
         }
