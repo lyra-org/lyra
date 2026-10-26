@@ -51,6 +51,24 @@ pub enum AudioVbrMode {
 }
 
 impl AudioFormat {
+    /// The name [`AudioFormat::parse`] accepts for this format.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Mp3 => "mp3",
+            Self::Flac => "flac",
+            Self::Wav => "wav",
+            Self::Ogg => "ogg",
+            Self::Webm => "webm",
+            Self::Aac => "aac",
+            Self::M4a => "m4a",
+            Self::Opus => "opus",
+            Self::Aiff => "aiff",
+            Self::Alac => "alac",
+            Self::Caf => "caf",
+            Self::Wma => "wma",
+        }
+    }
+
     pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "mp3" => Some(Self::Mp3),
@@ -363,6 +381,14 @@ mod tests {
         AudioFormat,
         AudioVbrMode,
     };
+
+    #[test]
+    fn format_names_parse_back() {
+        for name in super::SUPPORTED_FORMATS {
+            let format = AudioFormat::parse(name).expect("supported formats parse");
+            assert_eq!(format.as_str(), *name);
+        }
+    }
 
     #[test]
     fn webm_supports_opus_and_vorbis() {
