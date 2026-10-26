@@ -2030,6 +2030,7 @@ api.post(P .. "/Sessions/Playing/Stopped", function(ctx: ApiContext)
 	return session.handle_playback_report_route(ctx, "stopped")
 end, "public", true)
 api.post(P .. "/Sessions/Playing/Ping", session.handle_playback_ping_route, "public", true)
+api.delete(P .. "/Videos/ActiveEncodings", session.handle_stop_encoding_route, "public", true)
 api.get(P .. "/Items/{id}/PlaybackInfo", function(ctx: ApiContext)
 	local resolved_auth, access_token = session.require_jellyfin_auth(ctx)
 	if not resolved_auth then
