@@ -31,7 +31,6 @@ type ApiResponse = api.ApiResponse
 type ApiJsonValue = api.JsonValue
 type AuthContext = api.ApiAuth
 type JsonObject = { [string]: ApiJsonValue }
-type JsonArray = { ApiJsonValue }
 
 export type PlaybackPayload = { [string]: string | number | boolean? }
 
@@ -185,13 +184,6 @@ local function as_json_object(value: ApiJsonValue?): JsonObject?
 	return value :: JsonObject
 end
 
-local function as_json_array(value: ApiJsonValue?): JsonArray?
-	if type(value) ~= "table" then
-		return nil
-	end
-	return value :: JsonArray
-end
-
 local function scalar_field(payload: PlaybackPayload?, key: string): string | number?
 	local value = if payload then payload[key] else nil
 	if type(value) == "string" or type(value) == "number" then
@@ -323,10 +315,6 @@ local function json_object_field(object: JsonObject?, key: string): JsonObject?
 	return as_json_object(if object then object[key] else nil)
 end
 
-local function json_array_field(object: JsonObject?, key: string): JsonArray?
-	return as_json_array(if object then object[key] else nil)
-end
-
 local function media_source_audio_codec(media_source: MediaSource): string?
 	local media_streams = media_source.MediaStreams
 	for _, stream in ipairs(media_streams) do
@@ -335,32 +323,6 @@ local function media_source_audio_codec(media_source: MediaSource): string?
 		end
 	end
 	return nil
-end
-
-local function supports_audio_direct_play(media_source: MediaSource, device_profile: JsonObject?): boolean
-	local direct_play_profiles = json_array_field(device_profile, "DirectPlayProfiles")
-	if direct_play_profiles == nil then
-		return media_source.SupportsDirectPlay
-	end
-
-	local source_container = media_source.Container
-	local source_codec = media_source_audio_codec(media_source)
-	for _, raw_profile in ipairs(direct_play_profiles) do
-		local profile = as_json_object(raw_profile)
-		if profile then
-			local profile_type = json_string_field(profile, "Type")
-			if profile_type and string.lower(profile_type) == "audio" then
-				if
-					device_profiles.contains_container(json_string_field(profile, "Container"), source_container)
-					and device_profiles.contains_container(json_string_field(profile, "AudioCodec"), source_codec)
-				then
-					return true
-				end
-			end
-		end
-	end
-
-	return false
 end
 
 local function first_audio_stream(media_source: MediaSource): MediaStream?
@@ -373,22 +335,20 @@ local function first_audio_stream(media_source: MediaSource): MediaStream?
 	return nil
 end
 
-local function request_audio_playback_limits(request_object: JsonObject?): AudioPlaybackLimits
-	return {
-		max_bitrate_bps = json_number_field(request_object, "MaxStreamingBitrate"),
-		max_sample_rate_hz = nil,
-		max_bit_depth = nil,
-		max_channels = json_number_field(request_object, "MaxAudioChannels"),
-	}
+-- Upstream's `IsBitrateLimitExceeded`: a source of unknown bitrate counts as 40 Mbps, and a limit
+-- of zero or less is no limit.
+local function bitrate_limit_exceeded(media_source: MediaSource, max_bitrate_bps: number?): boolean
+	if media_source.IsRemote or max_bitrate_bps == nil or max_bitrate_bps <= 0 then
+		return false
+	end
+	return (media_source.Bitrate or 40000000) > max_bitrate_bps
 end
 
 local function media_source_respects_audio_limits(media_source: MediaSource, limits: AudioPlaybackLimits): boolean
-	local max_bitrate_bps = limits.max_bitrate_bps
 	local max_sample_rate_hz = limits.max_sample_rate_hz
 	local max_bit_depth = limits.max_bit_depth
 	local max_channels = limits.max_channels
-	local bitrate = media_source.Bitrate
-	if max_bitrate_bps ~= nil and bitrate ~= nil and bitrate > max_bitrate_bps then
+	if bitrate_limit_exceeded(media_source, limits.max_bitrate_bps) then
 		return false
 	end
 
@@ -449,25 +409,18 @@ local ENCODABLE_AUDIO_CODECS: { [string]: boolean } = {
 	opus = true,
 }
 
--- As upstream, the first streaming audio profile whose codec the server can encode to. A profile
--- without a type, or context, is an audio, or streaming, one; one without a codec is skipped.
-local function preferred_audio_streaming_profile(device_profile: JsonObject?): JsonObject?
-	local transcoding_profiles = json_array_field(device_profile, "TranscodingProfiles")
-	if transcoding_profiles == nil then
-		return nil
-	end
+local function is_audio_streaming_profile(profile: JsonObject): boolean
+	return device_profiles.is_audio_profile(profile) and device_profiles.is_streaming_profile(profile)
+end
 
-	for _, raw_profile in ipairs(transcoding_profiles) do
-		local profile = as_json_object(raw_profile)
-		local profile_type = json_string_field(profile, "Type") or "audio"
-		local profile_context = json_string_field(profile, "Context") or "streaming"
-		local codec = json_string_field(profile, "AudioCodec")
-		if
-			string.lower(profile_type) == "audio"
-			and string.lower(profile_context) == "streaming"
-			and codec
-			and ENCODABLE_AUDIO_CODECS[string.lower(codec)]
-		then
+-- As upstream, the first streaming audio profile whose codec the server can encode to; a profile
+-- whose codec is null names it by its container. Upstream reads a missing codec as an empty one and
+-- skips the profile, but JSON reaches the plugin with null and missing alike, so both name it.
+local function audio_transcoding_profile(device_profile: JsonObject): JsonObject?
+	for _, profile in device_profiles.object_list(device_profile, "TranscodingProfiles") do
+		local codec = device_profiles.string_field(profile, "AudioCodec")
+			or device_profiles.string_field(profile, "Container")
+		if is_audio_streaming_profile(profile) and codec and ENCODABLE_AUDIO_CODECS[string.lower(codec)] then
 			return profile
 		end
 	end
@@ -477,30 +430,93 @@ end
 
 -- Upstream says a client transcodes when it has any streaming audio profile, usable or not.
 local function has_audio_streaming_profile(device_profile: JsonObject): boolean
-	for _, raw_profile in ipairs(json_array_field(device_profile, "TranscodingProfiles") or {}) do
-		local profile = as_json_object(raw_profile)
-		local profile_type = json_string_field(profile, "Type") or "audio"
-		local profile_context = json_string_field(profile, "Context") or "streaming"
-		if string.lower(profile_type) == "audio" and string.lower(profile_context) == "streaming" then
+	for _, profile in device_profiles.object_list(device_profile, "TranscodingProfiles") do
+		if is_audio_streaming_profile(profile) then
 			return true
 		end
 	end
 	return false
 end
 
-local function request_supports_audio_direct_play(media_source: MediaSource, request_object: JsonObject?): boolean
-	if json_boolean_field(request_object, "EnableDirectPlay") == false then
-		return false
+local function audio_direct_play_profile(media_source: MediaSource, device_profile: JsonObject): JsonObject?
+	local codec = media_source_audio_codec(media_source)
+	for _, profile in device_profiles.object_list(device_profile, "DirectPlayProfiles") do
+		if
+			device_profiles.is_audio_profile(profile)
+			and device_profiles.contains_container(
+				device_profiles.string_field(profile, "Container"),
+				media_source.Container
+			)
+			and device_profiles.contains_container(device_profiles.string_field(profile, "AudioCodec"), codec)
+		then
+			return profile
+		end
+	end
+	return nil
+end
+
+-- How upstream's `StreamBuilder` plays a source: directly, or by the transcode it describes.
+type StreamInfo = {
+	direct_play: boolean,
+	container: string?,
+	hls: boolean,
+	audio_codec: string?,
+	audio_bitrate: number?,
+	transcoding_max_audio_channels: number?,
+	enable_audio_vbr_encoding: boolean,
+}
+
+-- Upstream's `StreamBuilder.GetOptimalAudioStream` for a single source. The request's
+-- `MaxAudioChannels` plays no part. Upstream also direct-streams a source whose codec a profile
+-- names as its container or codec, into a `ts` remux; that is left out, and such sources transcode.
+local function optimal_audio_stream(
+	media_source: MediaSource,
+	request_object: JsonObject?,
+	device_profile: JsonObject
+): StreamInfo?
+	local max_bitrate = json_number_field(request_object, "MaxStreamingBitrate")
+		or json_number_field(device_profile, "MaxStreamingBitrate")
+	local stream: StreamInfo = { direct_play = false, hls = false, enable_audio_vbr_encoding = false }
+
+	if
+		audio_direct_play_profile(media_source, device_profile) ~= nil
+		and media_source.SupportsDirectPlay
+		and not bitrate_limit_exceeded(media_source, max_bitrate)
+	then
+		stream.direct_play = true
+		return stream
 	end
 
-	local limits = request_audio_playback_limits(request_object)
-	local device_profile = json_object_field(request_object, "DeviceProfile")
-	if device_profile == nil then
-		return media_source.SupportsDirectPlay and media_source_respects_audio_limits(media_source, limits)
+	local profile = audio_transcoding_profile(device_profile)
+	if profile == nil then
+		return stream
+	end
+	if not media_source.SupportsTranscoding then
+		return nil
 	end
 
-	return supports_audio_direct_play(media_source, device_profile)
-		and media_source_respects_audio_limits(media_source, limits)
+	local protocol = device_profiles.string_field(profile, "Protocol")
+	local raw_container = device_profiles.string_field(profile, "Container")
+	stream.hls = protocol ~= nil and string.lower(protocol) == "hls"
+	stream.container = if raw_container then string.lower(raw_container) elseif stream.hls then "ts" else nil
+	stream.transcoding_max_audio_channels =
+		device_profiles.parse_int(device_profiles.string_field(profile, "MaxAudioChannels"))
+	stream.enable_audio_vbr_encoding = json_boolean_field(profile, "EnableAudioVbrEncoding") ~= false
+	media_source.TranscodingContainer = stream.container
+	media_source.TranscodingSubProtocol = if stream.hls then "hls" else "http"
+
+	-- The profile's music transcoding bitrate, capped by the maximum streaming bitrate.
+	local bitrate = json_number_field(device_profile, "MusicStreamingTranscodingBitrate") or max_bitrate or 128000
+	if max_bitrate ~= nil then
+		bitrate = math.min(bitrate, max_bitrate)
+	end
+	stream.audio_bitrate = math.floor(bitrate)
+
+	local codec = device_profiles.string_field(profile, "AudioCodec")
+	if codec ~= nil and string.find(codec, "%S") then
+		stream.audio_codec = codec
+	end
+	return stream
 end
 
 local function no_compatible_stream(): ApiJsonValue
@@ -511,39 +527,25 @@ local function no_compatible_stream(): ApiJsonValue
 	}
 end
 
--- Upstream's audio bitrate for a transcode: the profile's music transcoding bitrate, capped by
--- the request's or profile's maximum streaming bitrate.
-local function transcoding_audio_bitrate(request_object: JsonObject?, device_profile: JsonObject?): number
-	local max_bitrate = json_number_field(request_object, "MaxStreamingBitrate")
-		or json_number_field(device_profile, "MaxStreamingBitrate")
-	local bitrate = json_number_field(device_profile, "MusicStreamingTranscodingBitrate") or max_bitrate or 128000
-	if max_bitrate ~= nil then
-		bitrate = math.min(bitrate, max_bitrate)
-	end
-	return math.floor(bitrate)
-end
-
 -- Builds the URL as upstream's `StreamInfo.ToUrl` does: relative to the API root, which clients
 -- prepend, and carrying the request's token so players can fetch it without headers.
 local function build_transcoding_url(
 	item_id: string,
 	play_session_id: string,
-	profile: JsonObject,
-	hls: boolean,
-	container: string?,
-	audio_bitrate: number,
+	stream: StreamInfo,
 	start_time_ticks: number?,
 	access_token: string?
 ): string
 	local parts = { `MediaSourceId={item_id}` }
-	local codec = json_string_field(profile, "AudioCodec")
-	if codec ~= nil then
-		table.insert(parts, `AudioCodec={codec}`)
+	if stream.audio_codec ~= nil then
+		table.insert(parts, `AudioCodec={stream.audio_codec}`)
 	end
-	table.insert(parts, `AudioBitrate={audio_bitrate}`)
-	if hls then
-		if container ~= nil then
-			table.insert(parts, `SegmentContainer={container}`)
+	if stream.audio_bitrate ~= nil then
+		table.insert(parts, `AudioBitrate={stream.audio_bitrate}`)
+	end
+	if stream.hls then
+		if stream.container ~= nil then
+			table.insert(parts, `SegmentContainer={stream.container}`)
 		end
 	elseif start_time_ticks ~= nil and start_time_ticks > 0 then
 		table.insert(parts, `StartTimeTicks={start_time_ticks}`)
@@ -552,55 +554,60 @@ local function build_transcoding_url(
 	if access_token ~= nil then
 		table.insert(parts, `ApiKey={access_token}`)
 	end
-	local raw_max_audio_channels = profile.MaxAudioChannels
-	local max_audio_channels = if type(raw_max_audio_channels) == "string"
-			or type(raw_max_audio_channels) == "number"
-		then tonumber(raw_max_audio_channels)
-		else nil
-	if max_audio_channels ~= nil then
-		table.insert(parts, `TranscodingMaxAudioChannels={math.floor(max_audio_channels)}`)
+	if stream.transcoding_max_audio_channels ~= nil then
+		table.insert(parts, `TranscodingMaxAudioChannels={stream.transcoding_max_audio_channels}`)
 	end
-	local enable_audio_vbr = json_boolean_field(profile, "EnableAudioVbrEncoding")
-	table.insert(parts, `EnableAudioVbrEncoding={tostring(enable_audio_vbr ~= false)}`)
+	table.insert(parts, `EnableAudioVbrEncoding={tostring(stream.enable_audio_vbr_encoding)}`)
 
-	local path = if hls
+	local path = if stream.hls
 		then `/audio/{item_id}/master.m3u8`
-		elseif container ~= nil then `/audio/{item_id}/stream.{container}`
+		elseif stream.container ~= nil and stream.container ~= "" then `/audio/{item_id}/stream.{stream.container}`
 		else `/audio/{item_id}/stream`
 	return `{path}?{table.concat(parts, "&")}`
 end
 
-local function apply_preferred_transcoding(
+-- Upstream's `MediaInfoHelper.SetDeviceSpecificData` for an audio source.
+local function apply_device_profile(
 	media_source: MediaSource,
 	play_session_id: string,
 	request_object: JsonObject?,
+	device_profile: JsonObject,
 	access_token: string?
-): boolean
-	if request_object == nil or json_boolean_field(request_object, "EnableTranscoding") == false then
-		return false
+)
+	if json_boolean_field(request_object, "EnableDirectPlay") == false then
+		media_source.SupportsDirectPlay = false
+	end
+	if
+		json_boolean_field(request_object, "EnableDirectStream") == false
+		or json_boolean_field(request_object, "AllowVideoStreamCopy") == false
+	then
+		media_source.SupportsDirectStream = false
+	end
+	if json_boolean_field(request_object, "EnableTranscoding") == false then
+		media_source.SupportsTranscoding = false
 	end
 
-	local device_profile = json_object_field(request_object, "DeviceProfile")
-	local profile = preferred_audio_streaming_profile(device_profile)
+	-- Without a stream, as when transcoding is off and the client can't play the source,
+	-- upstream leaves the source's flags as they are.
+	local stream = optimal_audio_stream(media_source, request_object, device_profile)
 	local media_source_id = module.trim(media_source.Id)
-	if profile == nil or media_source_id == nil then
-		return false
+	if stream == nil or media_source_id == nil then
+		return
 	end
 
-	local protocol = json_string_field(profile, "Protocol")
-	local hls = protocol ~= nil and string.lower(protocol) == "hls"
-	local raw_container = json_string_field(profile, "Container")
-	local container = if raw_container then string.lower(raw_container) elseif hls then "ts" else nil
+	-- Upstream turns direct streaming off for every request, so it follows direct play.
+	media_source.SupportsDirectPlay = stream.direct_play
+	media_source.SupportsDirectStream = stream.direct_play
+	media_source.SupportsTranscoding = has_audio_streaming_profile(device_profile)
+	if stream.direct_play or not media_source.SupportsTranscoding then
+		return
+	end
 
-	media_source.TranscodingContainer = container
-	media_source.TranscodingSubProtocol = if hls then "hls" else "http"
+	media_source.TranscodingSubProtocol = if stream.hls then "hls" else "http"
 	local url = build_transcoding_url(
 		media_source_id,
 		play_session_id,
-		profile,
-		hls,
-		container,
-		transcoding_audio_bitrate(request_object, device_profile),
+		stream,
 		json_number_field(request_object, "StartTimeTicks"),
 		access_token
 	)
@@ -612,7 +619,6 @@ local function apply_preferred_transcoding(
 		url ..= "&allowAudioStreamCopy=false"
 	end
 	media_source.TranscodingUrl = url
-	return true
 end
 
 local function build_media_info(
@@ -966,18 +972,11 @@ function module.build_playback_info(
 		end
 	end
 
-	-- As upstream, a playable item always lists its source; a client that can neither play nor
-	-- transcode it finds every flag off and no TranscodingUrl.
+	-- As upstream, a playable item always lists its source, and only a device profile tailors it.
 	local play_session_id = ensure_playback_session_id(existing_play_session_id)
 	local device_profile = json_object_field(request_object, "DeviceProfile")
 	if primary_media_source and device_profile then
-		primary_media_source.SupportsTranscoding = json_boolean_field(request_object, "EnableTranscoding") ~= false
-			and has_audio_streaming_profile(device_profile)
-	end
-	if primary_media_source and not request_supports_audio_direct_play(primary_media_source, request_object) then
-		primary_media_source.SupportsDirectPlay = false
-		primary_media_source.SupportsDirectStream = false
-		apply_preferred_transcoding(primary_media_source, play_session_id, request_object, access_token)
+		apply_device_profile(primary_media_source, play_session_id, request_object, device_profile, access_token)
 	end
 	return {
 		MediaSources = media_sources,

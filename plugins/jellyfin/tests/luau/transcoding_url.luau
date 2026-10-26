@@ -101,12 +101,13 @@ assert(not string.find(media_source(hls, nil).TranscodingUrl, "ApiKey", 1, true)
 local indexed = playback_info({ AudioStreamIndex = 3 }, "secret")
 assert(indexed.ErrorCode == nil and indexed.MediaSources[1] ~= nil, `error {indexed.ErrorCode}`)
 
--- As upstream, profiles naming no codec, or one upstream finds no encoder for, are passed over.
+-- As upstream, profiles naming a codec upstream finds no encoder for are passed over, and one
+-- naming no codec is judged by its container.
 local passed_over = media_source({
 	DeviceProfile = {
 		DirectPlayProfiles = {},
 		TranscodingProfiles = {
-			{ Type = "Audio", Context = "Streaming", Protocol = "http", Container = "mp3" },
+			{ Type = "Audio", Context = "Streaming", Protocol = "http", Container = "ogg" },
 			audio_profile("ogg", "vorbis", "http"),
 			audio_profile("wav", "pcm_s16le", "http"),
 			audio_profile("mp3", "mp3", "http"),
@@ -115,6 +116,17 @@ local passed_over = media_source({
 }, "secret")
 contains(passed_over.TranscodingUrl, "/stream.mp3?")
 contains(passed_over.TranscodingUrl, "AudioCodec=mp3")
+local by_container = media_source({
+	DeviceProfile = {
+		DirectPlayProfiles = {},
+		TranscodingProfiles = {
+			{ Type = "Audio", Context = "Streaming", Protocol = "http", Container = "mp3" },
+			audio_profile("opus", "opus", "http"),
+		},
+	},
+}, "secret")
+contains(by_container.TranscodingUrl, "/stream.mp3?")
+assert(not string.find(by_container.TranscodingUrl, "AudioCodec", 1, true), by_container.TranscodingUrl)
 
 -- A client that can neither play nor transcode the source still gets it, with every flag off.
 local stuck = media_source({ DeviceProfile = { DirectPlayProfiles = {}, TranscodingProfiles = {} } }, "secret")
@@ -194,5 +206,7 @@ local copy = stream_options(`/audio/{opus.Id}/stream.ogg?audioCodec=copy`)
 assert(copy.format == "ogg" and codecs(copy) == "copy", `copy {codecs(copy)}`)
 local start = stream_options(`/audio/{opus.Id}/stream.mp3?startTimeTicks=50000000`)
 assert(start.start_offset_ms == 5000, `start {start.start_offset_ms}`)
+local by_container_options = stream_options(by_container.TranscodingUrl)
+assert(by_container_options.format == "mp3" and codecs(by_container_options) == "mp3", "the container names the codec")
 
 assert(stream(`/audio/{opus.Id}/stream.mp3?audioBitRate=fast`).status == 400, "a malformed bitrate")
