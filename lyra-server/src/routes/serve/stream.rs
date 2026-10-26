@@ -298,20 +298,20 @@ pub(crate) async fn stream_track_response(
         }
     });
 
+    let mut started_rx = started_rx;
     tokio::select! {
-        started = started_rx => {
+        started = &mut started_rx => {
             started.map_err(|_| anyhow!("stream startup failed"))?;
         }
         done = done_rx => {
             let result = done.map_err(|_| anyhow!("stream startup failed"))?;
-            match result {
-                Ok(()) => {
-                    return Err(anyhow!("stream ended before sending data").into());
-                }
-                Err(err) => {
-                    return Err(anyhow!("ffmpeg error before streaming: {}", err.message).into());
-                }
+            if let Err(err) = result {
+                return Err(anyhow!("ffmpeg error before streaming: {}", err.message).into());
             }
+            // A short transcode can finish before the forwarder hands on its first chunk.
+            started_rx
+                .await
+                .map_err(|_| anyhow!("stream ended before sending data"))?;
         }
     }
 
