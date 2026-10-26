@@ -125,6 +125,7 @@ local CONDITION_PROPERTIES: { [number]: string } = {
 	[23] = "AudioBitDepth",
 	[24] = "VideoRangeType",
 	[25] = "NumStreams",
+	[26] = "VideoRotation",
 }
 
 export type Condition = {

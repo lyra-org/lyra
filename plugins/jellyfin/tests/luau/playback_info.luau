@@ -215,6 +215,7 @@ end
 assert(refused_with({ audio_profile({ { Condition = "Below", Property = "AudioChannels", Value = "2" } }) }))
 assert(refused_with({ audio_profile({ { Property = "Loudness", Value = "2" } }) }))
 assert(refused_with({ { Type = "Sound" } }))
+assert(refused_with({ { Type = "Video", Conditions = { { Property = "VideoRotation", Value = "90" } } } }) == nil)
 assert(refused_with({ audio_profile({ { Condition = "LessThanEqual", Property = "Width", Value = "2" } }) }))
 assert(
 	refused_with({ audio_profile({ { Property = "Width", Value = "2" } }, { Codec = "flac" }) }) == nil,
