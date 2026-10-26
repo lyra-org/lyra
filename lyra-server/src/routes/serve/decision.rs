@@ -472,6 +472,11 @@ pub(crate) struct DeliveryDecision {
 }
 
 impl DeliveryDecision {
+    /// The source file streams in any container; only an encoded output depends on the muxer.
+    pub(crate) fn is_streamable(&self) -> bool {
+        self.direct_passthrough || self.output_format.supports_streaming()
+    }
+
     pub(crate) fn configure_output(&self, output: Output) -> Output {
         let mut output = output.audio_format(self.output_format).codec(self.codec);
         output = match self.encoder.rate_control {
@@ -557,24 +562,25 @@ pub(crate) fn resolve_delivery(
         (copy_output_format, copy_codec)
     };
 
-    if target.is_streaming() && !output_format.supports_streaming() {
+    let direct_passthrough = matches!(codec, AudioCodec::Copy)
+        && source.entry_format == Some(output_format)
+        && !copy_ruled_out;
+
+    let decision = DeliveryDecision {
+        output_format,
+        codec,
+        content_type: target.content_type(output_format),
+        direct_passthrough,
+        encoder: EncoderSettings::resolve(codec, &policy),
+    };
+    if target.is_streaming() && !decision.is_streamable() {
         return Err(AppError::bad_request(format!(
             "Format '{}' does not support streaming. Use /api/download or choose a streamable format (mp3, flac, wav, ogg, webm, aac, opus, aiff).",
             output_format.extension()
         )));
     }
 
-    let direct_passthrough = matches!(codec, AudioCodec::Copy)
-        && source.entry_format == Some(output_format)
-        && !copy_ruled_out;
-
-    Ok(DeliveryDecision {
-        output_format,
-        codec,
-        content_type: target.content_type(output_format),
-        direct_passthrough,
-        encoder: EncoderSettings::resolve(codec, &policy),
-    })
+    Ok(decision)
 }
 
 #[cfg(test)]
@@ -1383,6 +1389,24 @@ mod tests {
             DeliveryTarget::Download,
         )
         .expect("the same request is fine for download");
+    }
+
+    #[test]
+    fn resolve_delivery_streams_an_unchanged_source_in_any_container() {
+        let mut m4a = flac_source(None, None);
+        m4a.entry_format = Some(AudioFormat::M4a);
+        m4a.source_codec = Some(AudioCodec::Alac);
+        let validated = validate_request(None, None).expect("empty request parses");
+
+        let decision = resolve_delivery(
+            &validated,
+            &m4a,
+            TranscodeKnobs::default(),
+            DeliveryTarget::Stream,
+        )
+        .expect("the original m4a file streams");
+        assert!(decision.direct_passthrough);
+        assert_eq!(decision.content_type, "audio/mp4");
     }
 
     #[test]

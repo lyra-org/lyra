@@ -461,7 +461,7 @@ fn resolve_playback_transports(
     super::serve::resolve_hls_profile(&source, &hls_request, knobs)?;
 
     Ok(PlaybackTransports {
-        stream: decision.output_format.supports_streaming(),
+        stream: decision.is_streamable(),
     })
 }
 
@@ -660,8 +660,8 @@ fn create_track_playback_url_docs(op: TransformOperation) -> TransformOperation 
          track. Returned media tokens are limited to this track and endpoint purpose, expire after \
          a fixed maximum lifetime, and also expire after an idle period.\n\n\
          The request is resolved once against the track's source, and a transport is omitted when \
-         it cannot carry the result. `stream_url` is omitted when the final resolved container does \
-         not support streaming (m4a, alac, caf); use `hls_url` or `download_url` instead. \
+         it cannot carry the result. `stream_url` is omitted when the request encodes into a container \
+         that does not support streaming (m4a, alac, caf); use `hls_url` or `download_url` instead. \
          `download_url` is omitted when the caller lacks download permission. `hls_url` is always \
          present: HLS transcodes any source, and a track whose duration is not yet known returns a \
          retryable 503 from the playlist endpoint rather than being omitted here. A token is minted \
@@ -1696,8 +1696,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_playback_transports_omits_stream_for_non_streamable_sources() {
-        // The live bug: with no query parameters at all, an m4a track used to 400 outright.
+    fn resolve_playback_transports_streams_an_unchanged_source_in_any_container() {
         let mut source = flac_playback_source();
         source.entry_format = Some(lyra_ffmpeg::AudioFormat::M4a);
         source.source_codec = Some(lyra_ffmpeg::AudioCodec::Alac);
@@ -1705,8 +1704,8 @@ mod tests {
         source.full_path = std::path::PathBuf::from("track.m4a");
 
         let transports = resolve_playback_transports(&playback_url_query(None, None, None), source)
-            .expect("an m4a source must still yield hls and download urls");
-        assert!(!transports.stream);
+            .expect("an m4a source resolves");
+        assert!(transports.stream, "the original m4a file streams as it is");
     }
 
     #[test]
