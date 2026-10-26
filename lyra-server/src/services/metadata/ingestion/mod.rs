@@ -1501,6 +1501,81 @@ mod tests {
         Ok(())
     }
 
+    fn voice_actor(actor: &str, character: &str) -> lyra_metadata::ArtistRelationMetadata {
+        lyra_metadata::ArtistRelationMetadata {
+            source_artist: actor.to_string(),
+            target_artist: character.to_string(),
+            relation_type: lyra_metadata::ArtistRelationKind::VoiceActor,
+            source_artist_type: Some(lyra_metadata::ParsedArtistType::Person),
+            target_artist_type: Some(lyra_metadata::ParsedArtistType::Character),
+        }
+    }
+
+    fn artist_type_of(db: &DbAny, name: &str) -> anyhow::Result<Option<db::ArtistType>> {
+        let artist_id = artist_named(db, name)?.ok_or_else(|| anyhow!("{name} missing"))?;
+        Ok(db::artists::get_by_id(db, artist_id)?
+            .ok_or_else(|| anyhow!("{name} missing"))?
+            .artist_type)
+    }
+
+    /// Scans each `(album, credited artist, relations)` as its own release, in order.
+    fn scan_releases(
+        db: &mut DbAny,
+        releases: Vec<(&str, &str, Vec<lyra_metadata::ArtistRelationMetadata>)>,
+    ) -> anyhow::Result<()> {
+        let library =
+            test_db::insert_test_library_node(db, "Types", PathBuf::from("/music/types"))?;
+        let library_id = library.db_id.unwrap();
+        for (album, artist, relations) in releases {
+            let entry = insert_entry(db, &format!("/music/types/{album}.flac"))?;
+            connect(db, library_id, entry)?;
+            let mut track = track_metadata(entry.0, album, artist, None, Some(1), 1);
+            track.artist_relations = relations;
+            apply_metadata(db, library_id, vec![track])?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn scanning_another_release_keeps_a_characters_type() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        scan_releases(
+            &mut db,
+            vec![
+                (
+                    "Drama",
+                    "Character",
+                    vec![voice_actor("Actor", "Character")],
+                ),
+                ("Single", "Character", Vec::new()),
+            ],
+        )?;
+
+        assert_eq!(
+            artist_type_of(&db, "Character")?,
+            Some(db::ArtistType::Character)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn conflicting_scanned_artist_types_resolve_the_same_in_any_order() -> anyhow::Result<()> {
+        let as_character = ("As Character", "Both", vec![voice_actor("Actor", "Both")]);
+        let as_actor = ("As Actor", "Other", vec![voice_actor("Both", "Other")]);
+        for releases in [
+            vec![as_character.clone(), as_actor.clone()],
+            vec![as_actor.clone(), as_character.clone()],
+        ] {
+            let mut db = new_test_db()?;
+            scan_releases(&mut db, releases)?;
+            assert_eq!(
+                artist_type_of(&db, "Both")?,
+                Some(db::ArtistType::Character)
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn a_rescan_credits_the_artist_a_spelling_was_merged_into() -> anyhow::Result<()> {
         let mut db = new_test_db()?;

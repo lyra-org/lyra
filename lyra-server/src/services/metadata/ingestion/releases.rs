@@ -171,6 +171,16 @@ fn parsed_artist_type_to_db(artist_type: lyra_metadata::ParsedArtistType) -> Art
     }
 }
 
+/// Character evidence outranks person evidence, so an artist scanned as both
+/// gets the same type whichever release is scanned first.
+fn combine_scanned_artist_types(left: ArtistType, right: ArtistType) -> ArtistType {
+    if right == ArtistType::Character {
+        right
+    } else {
+        left
+    }
+}
+
 fn parsed_relation_type_to_db(
     relation_type: lyra_metadata::ArtistRelationKind,
 ) -> ArtistRelationType {
@@ -205,8 +215,13 @@ fn collect_scanned_artist_relations(
             (source_artist_id, relation.source_artist_type),
             (target_artist_id, relation.target_artist_type),
         ] {
-            if let Some(artist_type) = artist_type {
-                scanned_artist_types.insert(artist_id, parsed_artist_type_to_db(artist_type));
+            if let Some(artist_type) = artist_type.map(parsed_artist_type_to_db) {
+                scanned_artist_types
+                    .entry(artist_id)
+                    .and_modify(|scanned| {
+                        *scanned = combine_scanned_artist_types(*scanned, artist_type);
+                    })
+                    .or_insert(artist_type);
             }
         }
 
@@ -230,38 +245,39 @@ fn collect_scanned_artist_relations(
     Ok(())
 }
 
-/// The relations an artist's local layer supplies after this scan: what earlier
-/// scans recorded for each scanned type, together with what this scan found.
-fn combine_scanned_relations(
-    db: &impl DbAccess,
-    artist_id: DbId,
-    scanned: BTreeMap<ArtistRelationType, Vec<LayerRelationInput>>,
-) -> anyhow::Result<BTreeMap<ArtistRelationType, Vec<LayerRelationInput>>> {
-    let stored = db::metadata::layers::get_for_entity(db, artist_id)?
-        .into_iter()
-        .find(|layer| layer.source_id == LOCAL_SOURCE_ID)
-        .map(|layer| layer.relations)
-        .unwrap_or_default();
-    Ok(db::metadata::layers::union_relations(&stored, scanned))
-}
-
 /// The name an artist's local layer supplies when a tag spelled it `scan_name`:
 /// that spelling when it is the artist's own scan name, or else, when it
 /// reached the artist through a scan alias, the name the layer already holds.
 fn scanned_artist_name(
     db: &impl DbAccess,
     artist_db_id: DbId,
+    stored: Option<&MetadataLayer>,
     scan_name: String,
 ) -> anyhow::Result<Option<String>> {
     if db::artists::get_by_id(db, artist_db_id)?.is_some_and(|artist| artist.scan_name == scan_name)
     {
         return Ok(Some(scan_name));
     }
-    Ok(db::metadata::layers::get_for_entity(db, artist_db_id)?
-        .into_iter()
-        .find(|layer| layer.source_id == LOCAL_SOURCE_ID)
-        .and_then(|layer| layer.fields.get(&MetadataField::ArtistName).cloned())
+    Ok(stored
+        .and_then(|layer| layer.fields.get(&MetadataField::ArtistName))
         .and_then(|name| name.as_str().map(str::to_string)))
+}
+
+/// The type an artist's local layer supplies after this scan: what earlier
+/// scans recorded, combined with what this scan found.
+fn scanned_artist_type(
+    stored: Option<&MetadataLayer>,
+    scanned: Option<ArtistType>,
+) -> anyhow::Result<Option<ArtistType>> {
+    let stored = stored
+        .and_then(|layer| layer.fields.get(&MetadataField::ArtistType))
+        .filter(|value| !value.is_null())
+        .map(|value| db::metadata::layers::decode(MetadataField::ArtistType, value))
+        .transpose()?;
+    Ok(match (stored, scanned) {
+        (Some(stored), Some(scanned)) => Some(combine_scanned_artist_types(stored, scanned)),
+        (stored, scanned) => scanned.or(stored),
+    })
 }
 
 /// Selects a catalog number only from a track whose normalized label matches
@@ -680,19 +696,23 @@ fn persist_release_inner(
     }
 
     for (scan_name, artist_db_id) in artist_cache {
+        let stored = stored_local_layer(db, artist_db_id)?;
         let mut artist_layer = LocalLayer::default();
         artist_layer.supply(
             MetadataField::ArtistName,
-            scanned_artist_name(db, artist_db_id, scan_name)?,
+            scanned_artist_name(db, artist_db_id, stored.as_ref(), scan_name)?,
         )?;
         artist_layer.supply(
             MetadataField::ArtistType,
-            scanned_artist_types
-                .get(&artist_db_id)
-                .map(ArtistType::to_string),
+            scanned_artist_type(
+                stored.as_ref(),
+                scanned_artist_types.get(&artist_db_id).copied(),
+            )?
+            .map(|artist_type| artist_type.to_string()),
         )?;
         if let Some(scanned) = scanned_relations.remove(&artist_db_id) {
-            for (relation_type, inputs) in combine_scanned_relations(db, artist_db_id, scanned)? {
+            let stored = stored.map(|layer| layer.relations).unwrap_or_default();
+            for (relation_type, inputs) in db::metadata::layers::union_relations(&stored, scanned) {
                 artist_layer.supply_relations(relation_type, inputs);
             }
         }
