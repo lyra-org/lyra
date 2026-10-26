@@ -220,3 +220,25 @@ assert(
 	refused_with({ audio_profile({ { Property = "Width", Value = "2" } }, { Codec = "flac" }) }) == nil,
 	"never applies"
 )
+
+-- A track cut from a longer file can't be handed over as the file, so clients transcode it.
+local cued = playback.resolve_track_for_playback(fixture.ids.cued)
+assert(cued ~= nil, "owner sees the cued track")
+local cued_source = media_source(nil, cued)
+assert(not cued_source.SupportsDirectPlay and not cued_source.SupportsDirectStream, "not the file")
+assert(cued_source.SupportsTranscoding, "transcodes")
+assert(cued_source.Size == nil, `size {cued_source.Size}`)
+-- Without a profile to transcode by, the stream route's default encode.
+contains(cued_source.TranscodingUrl, `/audio/{cued_source.Id}/stream?`)
+assert(cued_source.TranscodingSubProtocol == "http", `protocol {cued_source.TranscodingSubProtocol}`)
+local unstreamable = media_source({ DeviceProfile = { DirectPlayProfiles = ogg, TranscodingProfiles = {} } }, cued)
+assert(unstreamable.SupportsTranscoding and unstreamable.TranscodingUrl ~= nil, "a profile with no streaming one")
+contains(unstreamable.TranscodingUrl, `/audio/{unstreamable.Id}/stream?`)
+local refusing = media_source({ EnableTranscoding = false, DeviceProfile = { DirectPlayProfiles = ogg } }, cued)
+assert(not refusing.SupportsTranscoding and refusing.TranscodingUrl == nil, "transcoding turned off")
+local cued_transcode = media_source({ DeviceProfile = { DirectPlayProfiles = ogg, TranscodingProfiles = opus } }, cued)
+assert(not cued_transcode.SupportsDirectPlay, "the client could play the file, not the track")
+contains(cued_transcode.TranscodingUrl, `/audio/{cued_transcode.Id}/stream.opus?`)
+local universal_source = playback.build_audio_media_source(cued.id, cued, false)
+assert(not playback.audio_supports_direct_play_from_container_csv(universal_source, "ogg"), "universal transcodes too")
+assert(media_source(nil).Size ~= nil, "an uncut track has its file's size")

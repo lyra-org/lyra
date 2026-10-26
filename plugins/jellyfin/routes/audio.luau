@@ -243,7 +243,7 @@ function module.handle_universal_route(ctx: ApiContext): ApiResponse
 
 	local source = media.resolve_playback_source_for_track(track)
 	local source_channels = if source then source.channel_count else nil
-	local media_source = playback.build_audio_media_source(item_id, track, false)
+	local media_source = playback.build_audio_media_source(track.id, track, false)
 	if
 		playback.audio_supports_direct_play_from_container_csv(
 			media_source,

@@ -49,3 +49,12 @@ assert(viewer_universal.status == 404, `viewer universal status {viewer_universa
 local owner_universal = request(audio.handle_universal_route, ids.song, fixture.api_keys.desk, { static = "true" })
 assert(owner_universal.kind == "stream_track", `owner universal kind {owner_universal.kind}`)
 assert(owner_universal.options == nil or owner_universal.options.public == nil, "owner universal is not public")
+
+-- A client that plays the source gets the file; the fixture's unknown bitrate counts as 40 Mbps.
+local function universal_direct(query: { [string]: string }): boolean
+	local response = request(audio.handle_universal_route, ids.song, fixture.api_keys.desk, query)
+	assert(response.kind == "stream_track", `universal kind {response.kind} status {response.status}`)
+	return response.options == nil
+end
+assert(universal_direct({ container = "ogg", maxStreamingBitrate = "50000000" }), "the client plays ogg")
+assert(not universal_direct({ container = "mp3", maxStreamingBitrate = "50000000" }), "the client plays mp3")

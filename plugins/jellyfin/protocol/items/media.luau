@@ -31,6 +31,13 @@ function module.probed_container(source: PlaybackSourceInfo?): string?
 	return module.jellyfin_container(source)
 end
 
+-- A source cut from a longer file, as a cue sheet's tracks are. Upstream has no such source; the
+-- file can't be handed over as the track, and its size isn't the track's, so clients are told to
+-- transcode, as upstream tells them for a source it can't direct play.
+function module.is_trimmed(source: PlaybackSourceInfo?): boolean
+	return source ~= nil and source.is_virtual
+end
+
 function module.jellyfin_codec(source: PlaybackSourceInfo?): string?
 	return if source then source.codec else nil
 end

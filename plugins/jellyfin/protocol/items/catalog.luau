@@ -855,9 +855,10 @@ function helpers.build_media_info(
 	local media_item_id = item_ids.encode_jellyfin_item_id(item_id)
 	local container = media.jellyfin_container(source)
 	local codec = media.jellyfin_codec(source)
-	local size = if entry and entry.size then tonumber(entry.size) else nil
+	local trimmed = media.is_trimmed(source)
+	local size = if entry and entry.size and not trimmed then tonumber(entry.size) else nil
 	local bitrate = if source then source.bitrate_bps else nil
-	local direct_playable = source ~= nil and media_item_id ~= nil
+	local direct_playable = source ~= nil and media_item_id ~= nil and not trimmed
 
 	local media_stream: MediaStreamInfo = {
 		Codec = codec,

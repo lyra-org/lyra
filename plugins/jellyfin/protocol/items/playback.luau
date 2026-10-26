@@ -637,6 +637,31 @@ local function build_transcoding_url(
 	return `{path}?{table.concat(parts, "&")}`
 end
 
+-- The TranscodingUrl upstream hands out, with the copy switches it appends after building it,
+-- and only when the client turned copying off.
+local function transcoding_url(
+	media_source_id: string,
+	play_session_id: string,
+	stream: StreamInfo,
+	request_object: JsonObject?,
+	access_token: string?
+): string
+	local url = build_transcoding_url(
+		media_source_id,
+		play_session_id,
+		stream,
+		json_number_field(request_object, "StartTimeTicks"),
+		access_token
+	)
+	if json_boolean_field(request_object, "AllowVideoStreamCopy") == false then
+		url ..= "&allowVideoStreamCopy=false"
+	end
+	if json_boolean_field(request_object, "AllowAudioStreamCopy") == false then
+		url ..= "&allowAudioStreamCopy=false"
+	end
+	return url
+end
+
 -- Upstream's `MediaInfoHelper.SetDeviceSpecificData` for an audio source, or the error upstream
 -- answers with a 400.
 local function apply_device_profile(
@@ -680,21 +705,8 @@ local function apply_device_profile(
 	end
 
 	media_source.TranscodingSubProtocol = if stream.hls then "hls" else "http"
-	local url = build_transcoding_url(
-		media_source_id,
-		play_session_id,
-		stream,
-		json_number_field(request_object, "StartTimeTicks"),
-		access_token
-	)
-	-- Upstream appends these after building the URL, and only when the client turned copying off.
-	if json_boolean_field(request_object, "AllowVideoStreamCopy") == false then
-		url ..= "&allowVideoStreamCopy=false"
-	end
-	if json_boolean_field(request_object, "AllowAudioStreamCopy") == false then
-		url ..= "&allowAudioStreamCopy=false"
-	end
-	media_source.TranscodingUrl = url
+	media_source.TranscodingUrl =
+		transcoding_url(media_source_id, play_session_id, stream, request_object, access_token)
 	return nil
 end
 
@@ -709,9 +721,10 @@ local function build_media_info(
 	local media_item_id = module.encode_jellyfin_item_id(item_id)
 	local container = media.probed_container(source)
 	local codec = media.jellyfin_codec(source)
-	local size = if entry and entry.size then tonumber(entry.size) else nil
+	local trimmed = media.is_trimmed(source)
+	local size = if entry and entry.size and not trimmed then tonumber(entry.size) else nil
 	local bitrate = if source then source.bitrate_bps else nil
-	local direct_playable = source ~= nil and media_item_id ~= nil
+	local direct_playable = source ~= nil and media_item_id ~= nil and not trimmed
 
 	local media_stream: MediaStream = {
 		Codec = codec,
@@ -810,7 +823,12 @@ function module.audio_supports_direct_play_from_container_csv(
 	enable_direct_play: boolean?,
 	forbid_stream_copy: boolean?
 ): boolean
-	if media_source == nil or enable_direct_play == false or forbid_stream_copy == true then
+	if
+		media_source == nil
+		or not media_source.SupportsDirectPlay
+		or enable_direct_play == false
+		or forbid_stream_copy == true
+	then
 		return false
 	end
 
@@ -1058,6 +1076,29 @@ function module.build_playback_info(
 		if err then
 			return nil, err
 		end
+	end
+
+	-- A trimmed source plays only by transcoding. Where upstream's answer would offer no way to,
+	-- without a device profile or a streaming one, it gets the URL upstream hands a client whose
+	-- streaming profiles name no codec it encodes: the stream route's default encode. A client
+	-- that turned transcoding off is left without one.
+	local primary_media_source_id = module.trim(if primary_media_source then primary_media_source.Id else nil)
+	if
+		primary_media_source
+		and primary_media_source_id
+		and media.is_trimmed(source)
+		and primary_media_source.TranscodingUrl == nil
+		and json_boolean_field(request_object, "EnableTranscoding") ~= false
+	then
+		primary_media_source.SupportsTranscoding = true
+		primary_media_source.TranscodingSubProtocol = "http"
+		primary_media_source.TranscodingUrl = transcoding_url(
+			primary_media_source_id,
+			play_session_id,
+			{ direct_play = false, hls = false, enable_audio_vbr_encoding = false },
+			request_object,
+			access_token
+		)
 	end
 	return {
 		MediaSources = media_sources,
