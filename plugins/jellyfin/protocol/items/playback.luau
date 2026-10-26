@@ -13,6 +13,7 @@ local tracks = require("@lyra/tracks")
 
 local constants = require("../../constants")
 local device_profiles = require("./device_profile")
+local encoder = require("./encoder")
 
 local PLAYBACK_COMPLETION_TOLERANCE_MS = constants.PLAYBACK_COMPLETION_TOLERANCE_MS
 
@@ -399,16 +400,6 @@ local function supports_audio_direct_play_from_container_csv(
 	return false
 end
 
--- The audio codecs upstream finds an encoder for that the server can also encode to. Upstream
--- looks `vorbis` and `pcm_*` up by names its encoder list does not carry, so it never picks them.
-local ENCODABLE_AUDIO_CODECS: { [string]: boolean } = {
-	aac = true,
-	alac = true,
-	flac = true,
-	mp3 = true,
-	opus = true,
-}
-
 local function is_audio_streaming_profile(profile: JsonObject): boolean
 	return device_profiles.is_audio_profile(profile) and device_profiles.is_streaming_profile(profile)
 end
@@ -420,7 +411,7 @@ local function audio_transcoding_profile(device_profile: JsonObject): JsonObject
 	for _, profile in device_profiles.object_list(device_profile, "TranscodingProfiles") do
 		local codec = device_profiles.string_field(profile, "AudioCodec")
 			or device_profiles.string_field(profile, "Container")
-		if is_audio_streaming_profile(profile) and codec and ENCODABLE_AUDIO_CODECS[string.lower(codec)] then
+		if is_audio_streaming_profile(profile) and codec and encoder.can_encode(codec) then
 			return profile
 		end
 	end

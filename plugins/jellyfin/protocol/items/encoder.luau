@@ -14,7 +14,8 @@ type ApiQueryParams = api.ApiQueryParams
 
 local module = {}
 
--- The codecs upstream finds an encoder for that the server can also encode to.
+-- The codecs upstream finds an encoder for that the server can also encode to. Upstream looks
+-- `vorbis` and `pcm_*` up by names its encoder list does not carry, so it never picks them.
 local ENCODABLE_CODECS: { [string]: boolean } = {
 	aac = true,
 	alac = true,
@@ -54,10 +55,15 @@ export type ChannelRequest = {
 	transcoding_max_audio_channels: number?,
 }
 
+-- Upstream's `MediaEncoder.CanEncodeToAudioCodec`, for the codecs the server also encodes to.
+function module.can_encode(codec: string): boolean
+	return ENCODABLE_CODECS[string.lower(codec)] == true
+end
+
 -- Upstream's output codec among those a request lists: the first it can encode to, else the first.
 function module.output_codec(codecs: { string }): string?
 	for _, codec in codecs do
-		if ENCODABLE_CODECS[codec] then
+		if module.can_encode(codec) then
 			return codec
 		end
 	end
