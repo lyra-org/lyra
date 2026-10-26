@@ -112,12 +112,10 @@ local function jellyfin_boolean(raw: string?): boolean?
 	return nil
 end
 
--- `/stream` is public, as upstream: it streams any track to any caller. `/universal` requires auth.
-local function handle_audio_stream_route(ctx: ApiContext, public: boolean): ApiResponse
+-- `/universal` takes the client's direct-play containers and falls back to its transcoding settings.
+function module.handle_universal_route(ctx: ApiContext): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
 	local request = if ctx then ctx.request else nil
-	local request_path = if ctx and ctx.request then ctx.request.path else nil
-	local normalized_request_path = if type(request_path) == "string" then string.lower(request_path) else nil
 	local raw_static = requests.parse_query_string(query, { "static", "Static" }, nil)
 	local raw_container = requests.parse_query_string(query, { "container", "Container" }, nil)
 	local static_direct_copy = jellyfin_boolean(raw_static) == true
@@ -176,14 +174,12 @@ local function handle_audio_stream_route(ctx: ApiContext, public: boolean): ApiR
 	local direct_play_enabled = jellyfin_boolean(raw_enable_direct_play) ~= false
 	local transcoding_enabled = jellyfin_boolean(raw_enable_transcoding) ~= false
 
-	if not public then
-		local principal = session.require_jellyfin_principal(ctx)
-		if not principal then
-			return session.unauthorized()
-		end
-		if not session.require_matching_user_scope(ctx, principal) then
-			return session.unauthorized()
-		end
+	local principal = session.require_jellyfin_principal(ctx)
+	if not principal then
+		return session.unauthorized()
+	end
+	if not session.require_matching_user_scope(ctx, principal) then
+		return session.unauthorized()
 	end
 
 	local params = if ctx then ctx.params else nil
@@ -195,10 +191,7 @@ local function handle_audio_stream_route(ctx: ApiContext, public: boolean): ApiR
 		return responses.not_found("media source not found")
 	end
 
-	local item_db_id = item_ids.decode_jellyfin_item_id(item_id)
-	local track = if public
-		then playback.resolve_track_for_public_stream(item_db_id)
-		else playback.resolve_track_for_playback(item_db_id)
+	local track = playback.resolve_track_for_playback(item_ids.decode_jellyfin_item_id(item_id))
 	if not track then
 		return responses.not_found("item not found")
 	end
@@ -207,13 +200,7 @@ local function handle_audio_stream_route(ctx: ApiContext, public: boolean): ApiR
 		return responses.not_found("item not found")
 	end
 
-	local direct_options: api.TrackStreamOptions? = if public then { public = true } else nil
-	local explicit_stream_path = string.lower(`{P}/Audio/{item_id}/stream`)
-	if static_direct_copy and normalized_request_path == explicit_stream_path then
-		return api.response.stream_track(track_id, direct_options)
-	end
-
-	local media_source = playback.build_audio_media_source(item_id, track, public)
+	local media_source = playback.build_audio_media_source(item_id, track, false)
 	if
 		playback.audio_supports_direct_play_from_container_csv(
 			media_source,
@@ -226,12 +213,12 @@ local function handle_audio_stream_route(ctx: ApiContext, public: boolean): ApiR
 			forbid_stream_copy
 		)
 	then
-		return api.response.stream_track(track_id, direct_options)
+		return api.response.stream_track(track_id)
 	end
 
 	if not transcoding_enabled then
 		if static_direct_copy then
-			return api.response.stream_track(track_id, direct_options)
+			return api.response.stream_track(track_id)
 		end
 		return api.response.json(415, {
 			Message = "transcoding is not supported; request with static=true or supply transcode parameters",
@@ -263,7 +250,6 @@ local function handle_audio_stream_route(ctx: ApiContext, public: boolean): ApiR
 	end
 
 	local options: api.TrackStreamOptions = {
-		public = public or nil,
 		format = effective_transcoding_container,
 		preferred_codecs = effective_preferred_codecs,
 		bitrate_bps = bitrate_bps,
@@ -273,6 +259,140 @@ local function handle_audio_stream_route(ctx: ApiContext, public: boolean): ApiR
 		start_offset_ms = start_offset_ms,
 	}
 	return api.response.stream_track(track_id, options)
+end
+
+-- Upstream names the codec a container carries when a request leaves the codec out.
+local function infer_audio_codec(container: string?): string
+	if
+		container == "ogg"
+		or container == "oga"
+		or container == "ogv"
+		or container == "webm"
+		or container == "webma"
+	then
+		return "opus"
+	end
+	if
+		container == "m4a"
+		or container == "m4b"
+		or container == "mp4"
+		or container == "mov"
+		or container == "mkv"
+		or container == "mka"
+	then
+		return "aac"
+	end
+	if container == "ts" or container == "avi" or container == "flv" or container == "f4v" or container == "swf" then
+		return "mp3"
+	end
+	if
+		container == "aac"
+		or container == "ac3"
+		or container == "alac"
+		or container == "dts"
+		or container == "eac3"
+		or container == "flac"
+		or container == "mp2"
+		or container == "mp3"
+		or container == "opus"
+		or container == "truehd"
+		or container == "vorbis"
+	then
+		return container
+	end
+	return "aac"
+end
+
+-- Upstream's output container for a codec when a request names none; otherwise the server picks.
+local CONTAINER_BY_AUDIO_CODEC: { [string]: string } = {
+	aac = "aac",
+	mp3 = "mp3",
+	vorbis = "ogg",
+	wma = "wma",
+}
+
+-- The fewest channels any of upstream's channel parameters allows.
+local function parse_requested_channels(query: ApiQueryParams?): (number?, ApiResponse?)
+	local channels: number? = nil
+	for _, name in { "audioChannels", "maxAudioChannels", "transcodingMaxAudioChannels" } do
+		local value, err = extract_integer_param(requests.parse_query_string(query, { name }, nil))
+		if err then
+			return nil, responses.bad_request(`{name} {err}`)
+		end
+		if value ~= nil and (channels == nil or value < channels) then
+			channels = value
+		end
+	end
+	return channels, nil
+end
+
+-- Upstream's `/stream` and `/stream.{container}`: `static=true` sends the original file, and
+-- anything else encodes into `container` as the audio parameters ask, even audio the client could
+-- take as it is. Public, as upstream: any
+-- caller streams any track.
+function module.handle_stream_route(ctx: ApiContext): ApiResponse
+	local request = if ctx then ctx.request else nil
+	local query = if request then request.query else nil
+	local params = if ctx then ctx.params else nil
+
+	local raw_audio_bitrate = requests.parse_query_string(query, { "audioBitRate" }, nil)
+	local bitrate_bps, bitrate_err = extract_integer_param(raw_audio_bitrate)
+	if bitrate_err then
+		return responses.bad_request(`audioBitRate {bitrate_err}`)
+	end
+	local sample_rate_hz, sample_rate_err =
+		extract_integer_param(requests.parse_query_string(query, { "audioSampleRate" }, nil))
+	if sample_rate_err then
+		return responses.bad_request(`audioSampleRate {sample_rate_err}`)
+	end
+	local _, bit_depth_err = extract_integer_param(requests.parse_query_string(query, { "maxAudioBitDepth" }, nil))
+	if bit_depth_err then
+		return responses.bad_request(`maxAudioBitDepth {bit_depth_err}`)
+	end
+	local channels, channels_err = parse_requested_channels(query)
+	if channels_err then
+		return channels_err
+	end
+	local start_ticks, start_ticks_err =
+		extract_integer_param(requests.parse_query_string(query, { "startTimeTicks" }, nil))
+	if start_ticks_err then
+		return responses.bad_request(`startTimeTicks {start_ticks_err}`)
+	end
+
+	local item_id = if params then params.itemId else nil
+	if not item_id then
+		return responses.bad_request("missing item id")
+	end
+	if not requested_media_source_matches_item(request, item_id) then
+		return responses.not_found("media source not found")
+	end
+	local track = playback.resolve_track_for_public_stream(item_ids.decode_jellyfin_item_id(item_id))
+	local track_id = if track then track.db_id else nil
+	if track == nil or track_id == nil or track_id <= 0 then
+		return responses.not_found("item not found")
+	end
+
+	if jellyfin_boolean(requests.parse_query_string(query, { "static" }, nil)) == true then
+		return api.response.stream_track(track_id, { public = true })
+	end
+
+	local path_container: string? = if params then params.container else nil
+	local raw_container = path_container or requests.parse_query_string(query, { "container" }, nil)
+	local container = if raw_container then string.lower(raw_container) else nil
+	local codecs = parse_preferred_csv_values(requests.parse_query_string(query, { "audioCodec" }, nil))
+		or { infer_audio_codec(container) }
+	container = container or CONTAINER_BY_AUDIO_CODEC[codecs[1]]
+
+	return api.response.stream_track(track_id, {
+		public = true,
+		format = container,
+		preferred_codecs = codecs,
+		bitrate_bps = bitrate_bps,
+		sample_rate_hz = sample_rate_hz,
+		channels = channels,
+		prefer_vbr = jellyfin_boolean(requests.parse_query_string(query, { "enableAudioVbrEncoding" }, nil)) ~= false,
+		start_offset_ms = jellyfin_ticks_to_ms(start_ticks),
+	})
 end
 
 type ResolvedAudioHlsPlaylistRequest = {
@@ -345,7 +465,6 @@ local function resolve_audio_hls_query_options(query: ApiQueryParams?): (api.Hls
 		requests.parse_query_string(query, { "audioBitRate", "AudioBitRate", "AudioBitrate" }, nil)
 	local raw_max_bitrate = requests.parse_query_string(query, { "maxStreamingBitrate", "MaxStreamingBitrate" }, nil)
 	local raw_sample_rate = requests.parse_query_string(query, { "audioSampleRate", "AudioSampleRate" }, nil)
-	local raw_channels = requests.parse_query_string(query, { "maxAudioChannels", "MaxAudioChannels" }, nil)
 	local raw_enable_audio_vbr =
 		requests.parse_query_string(query, { "enableAudioVbrEncoding", "EnableAudioVbrEncoding" }, nil)
 	local raw_start_ticks = requests.parse_query_string(query, { "startTimeTicks", "StartTimeTicks" }, nil)
@@ -362,9 +481,9 @@ local function resolve_audio_hls_query_options(query: ApiQueryParams?): (api.Hls
 	if sample_rate_err then
 		return nil, nil, responses.bad_request(`audioSampleRate {sample_rate_err}`)
 	end
-	local channels, channels_err = extract_integer_param(raw_channels)
+	local channels, channels_err = parse_requested_channels(query)
 	if channels_err then
-		return nil, nil, responses.bad_request(`maxAudioChannels {channels_err}`)
+		return nil, nil, channels_err
 	end
 	local start_ticks, start_ticks_err = extract_integer_param(raw_start_ticks)
 	if start_ticks_err then
@@ -498,14 +617,6 @@ local function handle_audio_hls_main_playlist_route(ctx: ApiContext): ApiRespons
 	return api.response.hls_playlist(request.track_id, request.options)
 end
 
-function module.handle_stream_route(ctx: ApiContext): ApiResponse
-	return handle_audio_stream_route(ctx, true)
-end
-
-function module.handle_universal_route(ctx: ApiContext): ApiResponse
-	return handle_audio_stream_route(ctx, false)
-end
-
 function module.register()
 	api.get(P .. "/Audio/{itemId}/Lyrics", function(ctx: ApiContext): ApiResponse
 		local track_id, item, resolve_err = lyrics_protocol.resolve_audio_item(ctx)
@@ -610,6 +721,8 @@ function module.register()
 	api.head(P .. "/Audio/{itemId}/universal", module.handle_universal_route, "public", true)
 	api.get(P .. "/Audio/{itemId}/stream", module.handle_stream_route, "public", true)
 	api.head(P .. "/Audio/{itemId}/stream", module.handle_stream_route, "public", true)
+	api.get(P .. "/Audio/{itemId}/stream.{container}", module.handle_stream_route, "public", true)
+	api.head(P .. "/Audio/{itemId}/stream.{container}", module.handle_stream_route, "public", true)
 	api.get(P .. "/Audio/{itemId}/master.m3u8", handle_audio_hls_master_playlist_route, "public", true)
 	api.head(P .. "/Audio/{itemId}/master.m3u8", handle_audio_hls_master_playlist_route, "public", true)
 	api.get(P .. "/Audio/{itemId}/main.m3u8", handle_audio_hls_main_playlist_route, "public", true)
