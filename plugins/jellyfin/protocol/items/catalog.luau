@@ -917,7 +917,7 @@ function helpers.build_media_info(
 		IgnoreDts = false,
 		IgnoreIndex = false,
 		GenPtsInput = false,
-		SupportsTranscoding = false,
+		SupportsTranscoding = true,
 		SupportsDirectStream = direct_playable,
 		SupportsDirectPlay = direct_playable,
 		IsInfiniteStream = false,

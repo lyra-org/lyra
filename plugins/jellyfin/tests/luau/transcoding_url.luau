@@ -129,6 +129,12 @@ local direct = media_source({
 }, "secret")
 assert(direct.SupportsDirectPlay, "the client plays ogg")
 assert(direct.TranscodingUrl == nil, `url {direct.TranscodingUrl}`)
+assert(direct.SupportsTranscoding, "a client with a streaming profile transcodes even when it plays")
+assert(media_source(nil, "secret").SupportsTranscoding, "a source transcodes when no profile says otherwise")
+assert(
+	not media_source({ EnableTranscoding = false, DeviceProfile = android.DeviceProfile }, "secret").SupportsTranscoding,
+	"transcoding off"
+)
 
 -- The stream route answers the URL it was handed.
 local function stream(url: string, method: string?): any

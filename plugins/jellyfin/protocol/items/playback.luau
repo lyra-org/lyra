@@ -491,6 +491,19 @@ local function preferred_audio_streaming_profile(device_profile: JsonObject?): J
 	return nil
 end
 
+-- Upstream says a client transcodes when it has any streaming audio profile, usable or not.
+local function has_audio_streaming_profile(device_profile: JsonObject): boolean
+	for _, raw_profile in ipairs(json_array_field(device_profile, "TranscodingProfiles") or {}) do
+		local profile = as_json_object(raw_profile)
+		local profile_type = json_string_field(profile, "Type") or "audio"
+		local profile_context = json_string_field(profile, "Context") or "streaming"
+		if string.lower(profile_type) == "audio" and string.lower(profile_context) == "streaming" then
+			return true
+		end
+	end
+	return false
+end
+
 local function request_supports_audio_direct_play(media_source: MediaSource, request_object: JsonObject?): boolean
 	if json_boolean_field(request_object, "EnableDirectPlay") == false then
 		return false
@@ -595,7 +608,6 @@ local function apply_preferred_transcoding(
 	local raw_container = json_string_field(profile, "Container")
 	local container = if raw_container then string.lower(raw_container) elseif hls then "ts" else nil
 
-	media_source.SupportsTranscoding = true
 	media_source.TranscodingContainer = container
 	media_source.TranscodingSubProtocol = if hls then "hls" else "http"
 	local url = build_transcoding_url(
@@ -686,7 +698,7 @@ local function build_media_info(
 		IgnoreDts = false,
 		IgnoreIndex = false,
 		GenPtsInput = false,
-		SupportsTranscoding = false,
+		SupportsTranscoding = true,
 		SupportsDirectStream = direct_playable,
 		SupportsDirectPlay = direct_playable,
 		IsInfiniteStream = false,
@@ -973,6 +985,11 @@ function module.build_playback_info(
 	-- As upstream, a playable item always lists its source; a client that can neither play nor
 	-- transcode it finds every flag off and no TranscodingUrl.
 	local play_session_id = ensure_playback_session_id(existing_play_session_id)
+	local device_profile = json_object_field(request_object, "DeviceProfile")
+	if primary_media_source and device_profile then
+		primary_media_source.SupportsTranscoding = json_boolean_field(request_object, "EnableTranscoding") ~= false
+			and has_audio_streaming_profile(device_profile)
+	end
 	if primary_media_source and not request_supports_audio_direct_play(primary_media_source, request_object) then
 		primary_media_source.SupportsDirectPlay = false
 		primary_media_source.SupportsDirectStream = false
