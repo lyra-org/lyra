@@ -944,10 +944,6 @@ mod tests {
             track: Some(track),
             track_total: None,
             duration_ms: 180_000,
-            sample_rate_hz: None,
-            channel_count: None,
-            bit_depth: None,
-            bitrate_bps: None,
             gain: Default::default(),
         }
     }

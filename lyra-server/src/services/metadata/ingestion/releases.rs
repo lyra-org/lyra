@@ -523,10 +523,6 @@ fn persist_release_inner(
             cue_audio_entry_id,
             cue_index00_frames,
             cue_index01_frames,
-            sample_rate_hz,
-            channel_count,
-            bit_depth,
-            bitrate_bps,
             track_gain_db,
             album_gain_db,
         } = track.meta;
@@ -547,10 +543,6 @@ fn persist_release_inner(
                 track: None,
                 track_total: None,
                 duration_ms: None,
-                sample_rate_hz: None,
-                channel_count: None,
-                bit_depth: None,
-                bitrate_bps: None,
                 track_gain_db: None,
                 album_gain_db: None,
                 locked: None,
@@ -563,10 +555,6 @@ fn persist_release_inner(
             if let Some(duration_ms) = duration_ms {
                 existing.set_duration_ms(duration_ms);
             }
-            existing.sample_rate_hz = sample_rate_hz.or(existing.sample_rate_hz);
-            existing.channel_count = channel_count.or(existing.channel_count);
-            existing.bit_depth = bit_depth.or(existing.bit_depth);
-            existing.bitrate_bps = bitrate_bps.or(existing.bitrate_bps);
             existing.track_gain_db = track_gain_db;
             existing.album_gain_db = album_gain_db;
             if entry_ctime.is_some() {
@@ -586,10 +574,6 @@ fn persist_release_inner(
                 track: None,
                 track_total: None,
                 duration_ms,
-                sample_rate_hz,
-                channel_count,
-                bit_depth,
-                bitrate_bps,
                 track_gain_db,
                 album_gain_db,
                 locked: None,

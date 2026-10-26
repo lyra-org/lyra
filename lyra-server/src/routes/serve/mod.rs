@@ -344,9 +344,9 @@ pub(crate) async fn validate_and_get_track_source(
         duration_ms: track.duration_ms,
         start_ms: source.start_ms,
         end_ms: source.end_ms,
-        source_bitrate_bps: track.bitrate_bps,
-        source_sample_rate_hz: track.sample_rate_hz,
-        source_channels: track.channel_count,
+        source_bitrate_bps: source.format.bitrate_bps,
+        source_sample_rate_hz: source.format.sample_rate_hz,
+        source_channels: source.format.channel_count,
     })
 }
 

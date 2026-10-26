@@ -815,6 +815,7 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
                 format: crate::plugins::db::track_sources::SourceFormat {
                     container: Some(crate::plugins::db::track_sources::SourceContainer::M4a),
                     codec: Some(crate::plugins::db::track_sources::SourceCodec::Alac),
+                    ..Default::default()
                 },
             },
             None,

@@ -39,10 +39,6 @@ pub(crate) struct TrackMetadata {
     pub(crate) cue_audio_entry_id: Option<DbId>,
     pub(crate) cue_index00_frames: Option<u32>,
     pub(crate) cue_index01_frames: Option<u32>,
-    pub(crate) sample_rate_hz: Option<u32>,
-    pub(crate) channel_count: Option<u32>,
-    pub(crate) bit_depth: Option<u32>,
-    pub(crate) bitrate_bps: Option<u32>,
     pub(crate) track_gain_db: Option<f64>,
     pub(crate) album_gain_db: Option<f64>,
 }

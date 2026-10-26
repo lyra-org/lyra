@@ -572,10 +572,6 @@ pub(super) async fn parse_cue_metadata_for_entry(
             cue_audio_entry_id: Some(track.audio_entry.entry_id),
             cue_index00_frames: track.index00_frames,
             cue_index01_frames: Some(track.index01_frames),
-            sample_rate_hz: None,
-            channel_count: None,
-            bit_depth: None,
-            bitrate_bps: None,
             track_gain_db: None,
             album_gain_db: None,
         });
@@ -682,10 +678,6 @@ pub(super) fn merge_embedded_into_cue_metadata(
     merge_opt(&mut cue.date, &embedded.date);
     merge_opt(&mut cue.year, &embedded.year);
     merge_opt_vec(&mut cue.genres, &embedded.genres);
-    merge_opt(&mut cue.sample_rate_hz, &embedded.sample_rate_hz);
-    merge_opt(&mut cue.channel_count, &embedded.channel_count);
-    merge_opt(&mut cue.bit_depth, &embedded.bit_depth);
-    merge_opt(&mut cue.bitrate_bps, &embedded.bitrate_bps);
     merge_opt(&mut cue.album_gain_db, &embedded.album_gain_db);
     merge_opt(&mut cue.barcode, &embedded.barcode);
     if !embedded.media_formats.is_empty() {
@@ -772,10 +764,6 @@ mod tests {
             cue_audio_entry_id: None,
             cue_index00_frames: None,
             cue_index01_frames: None,
-            sample_rate_hz: None,
-            channel_count: None,
-            bit_depth: None,
-            bitrate_bps: None,
             track_gain_db: None,
             album_gain_db: None,
         }
@@ -1085,6 +1073,10 @@ FILE "02 second.wav" WAVE
         let wav = SourceFormat {
             container: Some(crate::db::track_sources::SourceContainer::Wav),
             codec: Some(crate::db::track_sources::SourceCodec::PcmS16Le),
+            sample_rate_hz: Some(44_100),
+            channel_count: Some(2),
+            bit_depth: Some(16),
+            bitrate_bps: Some(1_411_000),
         };
         assert_eq!(metadata.len(), 2);
         assert!(metadata.iter().all(|track| track.format == wav));

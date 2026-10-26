@@ -199,6 +199,7 @@ mod tests {
         self,
         TestDb,
     };
+    use crate::db::track_sources::SourceFormat;
     use crate::db::{
         self,
         Artist,
@@ -307,10 +308,6 @@ mod tests {
             track: None,
             track_total: None,
             duration_ms: None,
-            sample_rate_hz: None,
-            channel_count: None,
-            bit_depth: None,
-            bitrate_bps: None,
             track_gain_db: None,
             album_gain_db: None,
             locked: Some(false),
@@ -506,10 +503,6 @@ mod tests {
             cue_audio_entry_id: None,
             cue_index00_frames: None,
             cue_index01_frames: None,
-            sample_rate_hz: None,
-            channel_count: None,
-            bit_depth: None,
-            bitrate_bps: None,
             track_gain_db: None,
             album_gain_db: None,
         }
@@ -929,15 +922,14 @@ mod tests {
         assert_eq!(release_tracks.len(), 1);
         assert_eq!(release_tracks[0].track_title, "Integration Track");
         assert!(release_tracks[0].duration_ms.unwrap_or(0) > 0);
-        assert_eq!(release_tracks[0].sample_rate_hz, Some(44_100));
-        assert_eq!(release_tracks[0].channel_count, Some(1));
-        assert_eq!(release_tracks[0].bit_depth, Some(16));
+        let format = source_format_of(&db, &release_tracks[0])?;
+        assert_eq!(format.sample_rate_hz, Some(44_100));
+        assert_eq!(format.channel_count, Some(1));
+        assert_eq!(format.bit_depth, Some(16));
         assert!(
-            release_tracks[0]
-                .bitrate_bps
-                .is_some_and(|bps| bps > 10_000),
+            format.bitrate_bps.is_some_and(|bps| bps > 10_000),
             "scan should capture the source bitrate from the fixture (got {:?})",
-            release_tracks[0].bitrate_bps
+            format.bitrate_bps
         );
 
         let album_artists = db::artists::get(&db, release_db_id)?;
@@ -1137,10 +1129,6 @@ mod tests {
                 cue_audio_entry_id: None,
                 cue_index00_frames: None,
                 cue_index01_frames: None,
-                sample_rate_hz: None,
-                channel_count: None,
-                bit_depth: None,
-                bitrate_bps: None,
                 track_gain_db: None,
                 album_gain_db: None,
             }],
@@ -1218,10 +1206,6 @@ mod tests {
                 cue_audio_entry_id: None,
                 cue_index00_frames: None,
                 cue_index01_frames: None,
-                sample_rate_hz: None,
-                channel_count: None,
-                bit_depth: None,
-                bitrate_bps: None,
                 track_gain_db: None,
                 album_gain_db: None,
             }],
@@ -1771,17 +1755,36 @@ mod tests {
         Ok(())
     }
 
-    fn track_metadata_with_audio_properties(
-        entry_db_id: DbId,
-        title: &str,
+    fn audio_properties(
         sample_rate_hz: Option<u32>,
         channel_count: Option<u32>,
         bit_depth: Option<u32>,
         bitrate_bps: Option<u32>,
+    ) -> SourceFormat {
+        SourceFormat {
+            sample_rate_hz,
+            channel_count,
+            bit_depth,
+            bitrate_bps,
+            ..SourceFormat::default()
+        }
+    }
+
+    fn source_format_of(db: &DbAny, track: &Track) -> anyhow::Result<SourceFormat> {
+        let track_db_id: DbId = track.db_id.clone().expect("track has db_id").into();
+        let sources = db::track_sources::get_by_track(db, track_db_id)?;
+        assert_eq!(sources.len(), 1);
+        Ok(sources[0].format())
+    }
+
+    fn track_metadata_with_audio_properties(
+        entry_db_id: DbId,
+        title: &str,
+        format: SourceFormat,
     ) -> TrackMetadata {
         TrackMetadata {
             entry_db_id,
-            format: Default::default(),
+            format,
             album: Some("Audio Props Album".to_string()),
             album_artists: Some(vec!["Audio Props Artist".to_string()]),
             date: None,
@@ -1809,10 +1812,6 @@ mod tests {
             cue_audio_entry_id: None,
             cue_index00_frames: None,
             cue_index01_frames: None,
-            sample_rate_hz,
-            channel_count,
-            bit_depth,
-            bitrate_bps,
             track_gain_db: None,
             album_gain_db: None,
         }
@@ -1838,10 +1837,7 @@ mod tests {
             vec![track_metadata_with_audio_properties(
                 entry_db_id,
                 "Surround Track",
-                Some(96_000),
-                Some(6),
-                Some(24),
-                Some(4_500_000),
+                audio_properties(Some(96_000), Some(6), Some(24), Some(4_500_000)),
             )],
         )?;
 
@@ -1849,10 +1845,10 @@ mod tests {
         let release_db_id: DbId = releases[0].db_id.clone().unwrap().into();
         let tracks = db::tracks::get(&db, release_db_id)?;
         assert_eq!(tracks.len(), 1);
-        assert_eq!(tracks[0].sample_rate_hz, Some(96_000));
-        assert_eq!(tracks[0].channel_count, Some(6));
-        assert_eq!(tracks[0].bit_depth, Some(24));
-        assert_eq!(tracks[0].bitrate_bps, Some(4_500_000));
+        assert_eq!(
+            source_format_of(&db, &tracks[0])?,
+            audio_properties(Some(96_000), Some(6), Some(24), Some(4_500_000))
+        );
 
         Ok(())
     }
@@ -1877,20 +1873,17 @@ mod tests {
             vec![track_metadata_with_audio_properties(
                 entry_db_id,
                 "Lossy Track",
-                Some(44_100),
-                Some(2),
-                None,
-                Some(128_000),
+                audio_properties(Some(44_100), Some(2), None, Some(128_000)),
             )],
         )?;
 
         let releases = select_releases(&db)?;
         let release_db_id: DbId = releases[0].db_id.clone().unwrap().into();
         let tracks = db::tracks::get(&db, release_db_id)?;
-        assert_eq!(tracks[0].sample_rate_hz, Some(44_100));
-        assert_eq!(tracks[0].channel_count, Some(2));
-        assert_eq!(tracks[0].bit_depth, None);
-        assert_eq!(tracks[0].bitrate_bps, Some(128_000));
+        assert_eq!(
+            source_format_of(&db, &tracks[0])?,
+            audio_properties(Some(44_100), Some(2), None, Some(128_000))
+        );
 
         Ok(())
     }
@@ -1915,20 +1908,17 @@ mod tests {
             vec![track_metadata_with_audio_properties(
                 entry_db_id,
                 "Refresh Track",
-                Some(44_100),
-                Some(2),
-                Some(16),
-                Some(900_000),
+                audio_properties(Some(44_100), Some(2), Some(16), Some(900_000)),
             )],
         )?;
 
         let releases = select_releases(&db)?;
         let release_db_id: DbId = releases[0].db_id.clone().unwrap().into();
         let tracks = db::tracks::get(&db, release_db_id)?;
-        assert_eq!(tracks[0].sample_rate_hz, Some(44_100));
-        assert_eq!(tracks[0].channel_count, Some(2));
-        assert_eq!(tracks[0].bit_depth, Some(16));
-        assert_eq!(tracks[0].bitrate_bps, Some(900_000));
+        assert_eq!(
+            source_format_of(&db, &tracks[0])?,
+            audio_properties(Some(44_100), Some(2), Some(16), Some(900_000))
+        );
 
         apply_metadata(
             &mut db,
@@ -1936,19 +1926,16 @@ mod tests {
             vec![track_metadata_with_audio_properties(
                 entry_db_id,
                 "Refresh Track",
-                Some(192_000),
-                Some(8),
-                Some(24),
-                Some(6_000_000),
+                audio_properties(Some(192_000), Some(8), Some(24), Some(6_000_000)),
             )],
         )?;
 
         let tracks_after = db::tracks::get(&db, release_db_id)?;
         assert_eq!(tracks_after.len(), 1);
-        assert_eq!(tracks_after[0].sample_rate_hz, Some(192_000));
-        assert_eq!(tracks_after[0].channel_count, Some(8));
-        assert_eq!(tracks_after[0].bit_depth, Some(24));
-        assert_eq!(tracks_after[0].bitrate_bps, Some(6_000_000));
+        assert_eq!(
+            source_format_of(&db, &tracks_after[0])?,
+            audio_properties(Some(192_000), Some(8), Some(24), Some(6_000_000))
+        );
 
         Ok(())
     }
@@ -1971,10 +1958,7 @@ mod tests {
             ..track_metadata_with_audio_properties(
                 entry_db_id,
                 "Gain Track",
-                None,
-                None,
-                None,
-                None,
+                audio_properties(None, None, None, None),
             )
         };
 
@@ -2045,10 +2029,6 @@ mod tests {
                 cue_audio_entry_id: None,
                 cue_index00_frames: None,
                 cue_index01_frames: None,
-                sample_rate_hz: None,
-                channel_count: None,
-                bit_depth: None,
-                bitrate_bps: None,
                 track_gain_db: None,
                 album_gain_db: None,
             };
@@ -2128,10 +2108,6 @@ mod tests {
             cue_audio_entry_id: None,
             cue_index00_frames: None,
             cue_index01_frames: None,
-            sample_rate_hz: None,
-            channel_count: None,
-            bit_depth: None,
-            bitrate_bps: None,
             track_gain_db: None,
             album_gain_db: None,
         };
@@ -2210,10 +2186,6 @@ mod tests {
                 cue_audio_entry_id: None,
                 cue_index00_frames: None,
                 cue_index01_frames: None,
-                sample_rate_hz: None,
-                channel_count: None,
-                bit_depth: None,
-                bitrate_bps: None,
                 track_gain_db: None,
                 album_gain_db: None,
             };
@@ -2506,10 +2478,6 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 cue_audio_entry_id: None,
                 cue_index00_frames: None,
                 cue_index01_frames: None,
-                sample_rate_hz: None,
-                channel_count: None,
-                bit_depth: None,
-                bitrate_bps: None,
                 track_gain_db: None,
                 album_gain_db: None,
             },
@@ -2543,10 +2511,6 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 cue_audio_entry_id: None,
                 cue_index00_frames: None,
                 cue_index01_frames: None,
-                sample_rate_hz: None,
-                channel_count: None,
-                bit_depth: None,
-                bitrate_bps: None,
                 track_gain_db: None,
                 album_gain_db: None,
             },
@@ -2617,10 +2581,6 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 cue_audio_entry_id: None,
                 cue_index00_frames: None,
                 cue_index01_frames: None,
-                sample_rate_hz: None,
-                channel_count: None,
-                bit_depth: None,
-                bitrate_bps: None,
                 track_gain_db: None,
                 album_gain_db: None,
             },
@@ -2654,10 +2614,6 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 cue_audio_entry_id: None,
                 cue_index00_frames: None,
                 cue_index01_frames: None,
-                sample_rate_hz: None,
-                channel_count: None,
-                bit_depth: None,
-                bitrate_bps: None,
                 track_gain_db: None,
                 album_gain_db: None,
             },
@@ -2729,10 +2685,6 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 cue_audio_entry_id: None,
                 cue_index00_frames: None,
                 cue_index01_frames: None,
-                sample_rate_hz: None,
-                channel_count: None,
-                bit_depth: None,
-                bitrate_bps: None,
                 track_gain_db: None,
                 album_gain_db: None,
             },
@@ -2766,10 +2718,6 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 cue_audio_entry_id: None,
                 cue_index00_frames: None,
                 cue_index01_frames: None,
-                sample_rate_hz: None,
-                channel_count: None,
-                bit_depth: None,
-                bitrate_bps: None,
                 track_gain_db: None,
                 album_gain_db: None,
             },
@@ -2807,10 +2755,6 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 cue_audio_entry_id: None,
                 cue_index00_frames: None,
                 cue_index01_frames: None,
-                sample_rate_hz: None,
-                channel_count: None,
-                bit_depth: None,
-                bitrate_bps: None,
                 track_gain_db: None,
                 album_gain_db: None,
             },
@@ -2844,10 +2788,6 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 cue_audio_entry_id: None,
                 cue_index00_frames: None,
                 cue_index01_frames: None,
-                sample_rate_hz: None,
-                channel_count: None,
-                bit_depth: None,
-                bitrate_bps: None,
                 track_gain_db: None,
                 album_gain_db: None,
             },
@@ -3101,10 +3041,6 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             cue_audio_entry_id: None,
             cue_index00_frames: None,
             cue_index01_frames: None,
-            sample_rate_hz: None,
-            channel_count: None,
-            bit_depth: None,
-            bitrate_bps: None,
             track_gain_db: None,
             album_gain_db: None,
         };
@@ -3217,10 +3153,6 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             cue_audio_entry_id: None,
             cue_index00_frames: None,
             cue_index01_frames: None,
-            sample_rate_hz: None,
-            channel_count: None,
-            bit_depth: None,
-            bitrate_bps: None,
             track_gain_db: None,
             album_gain_db: None,
         };
@@ -3289,10 +3221,6 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             cue_audio_entry_id: None,
             cue_index00_frames: None,
             cue_index01_frames: None,
-            sample_rate_hz: Some(44_100),
-            channel_count: Some(2),
-            bit_depth: Some(16),
-            bitrate_bps: Some(900_000),
             track_gain_db: None,
             album_gain_db: None,
         };
@@ -3353,10 +3281,6 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             cue_audio_entry_id: None,
             cue_index00_frames: None,
             cue_index01_frames: None,
-            sample_rate_hz: None,
-            channel_count: None,
-            bit_depth: None,
-            bitrate_bps: None,
             track_gain_db: None,
             album_gain_db: None,
         };
@@ -3369,13 +3293,9 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         assert_eq!(track_after.track_total, None);
         assert_eq!(track_after.track_title, "Track");
 
-        // Intrinsic audio properties are not tags: an unresolved probe must not
-        // wipe values a previous scan established.
+        // Duration is not a tag: an unresolved probe must not wipe the value a previous scan
+        // established.
         assert_eq!(track_after.duration_ms, Some(180_000));
-        assert_eq!(track_after.sample_rate_hz, Some(44_100));
-        assert_eq!(track_after.channel_count, Some(2));
-        assert_eq!(track_after.bit_depth, Some(16));
-        assert_eq!(track_after.bitrate_bps, Some(900_000));
         assert!(track_after.ctime.is_some(), "ctime must survive a rescan");
 
         let release_after = db::releases::get_by_id(&db, release_db_id)?
@@ -3431,10 +3351,6 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             cue_audio_entry_id: None,
             cue_index00_frames: None,
             cue_index01_frames: None,
-            sample_rate_hz: None,
-            channel_count: None,
-            bit_depth: None,
-            bitrate_bps: None,
             track_gain_db: None,
             album_gain_db: None,
         };
@@ -3515,10 +3431,6 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             cue_audio_entry_id: None,
             cue_index00_frames: None,
             cue_index01_frames: None,
-            sample_rate_hz: None,
-            channel_count: None,
-            bit_depth: None,
-            bitrate_bps: None,
             track_gain_db: None,
             album_gain_db: None,
         };
@@ -3874,10 +3786,6 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             cue_audio_entry_id: None,
             cue_index00_frames: None,
             cue_index01_frames: None,
-            sample_rate_hz: None,
-            channel_count: None,
-            bit_depth: None,
-            bitrate_bps: None,
             track_gain_db: None,
             album_gain_db: None,
         };

@@ -110,7 +110,7 @@ pub(crate) fn read_audio_tags(
     Ok((tag, tagged_file.properties().clone(), format))
 }
 
-/// A file's container and codec, read the way a scan reads them.
+/// A file's container, codec and audio properties, read the way a scan reads them.
 pub(crate) fn read_source_format(path: &std::path::Path) -> anyhow::Result<SourceFormat> {
     let (_, _, format) = read_tagged_file(path, false)
         .with_context(|| format!("failed to read file: {}", path.display()))?;
@@ -161,60 +161,60 @@ fn read_tagged_file(
         .read_tags(read_tags)
         .read_cover_art(false);
     let Some(file_type) = probe.file_type() else {
-        return Ok((
-            probe.options(options).read()?,
-            VorbisFallbacks::default(),
-            SourceFormat::default(),
-        ));
+        let file = probe.options(options).read()?;
+        let format = format::with_properties(SourceFormat::default(), file.properties());
+        return Ok((file, VorbisFallbacks::default(), format));
     };
     let by_type = format::of_file_type(file_type);
-    match file_type {
+    let (file, fallbacks, format): (TaggedFile, _, _) = match file_type {
         FileType::Flac => {
             let file = FlacFile::read_from(&mut probe.into_inner(), options)?;
             let fallbacks = VorbisFallbacks::read(file.vorbis_comments());
-            Ok((file.into(), fallbacks, by_type))
+            (file.into(), fallbacks, by_type)
         }
         FileType::Opus => {
             let file = OpusFile::read_from(&mut probe.into_inner(), options)?;
             let fallbacks = VorbisFallbacks::read(Some(file.vorbis_comments()));
-            Ok((file.into(), fallbacks, by_type))
+            (file.into(), fallbacks, by_type)
         }
         FileType::Vorbis => {
             let file = VorbisFile::read_from(&mut probe.into_inner(), options)?;
             let fallbacks = VorbisFallbacks::read(Some(file.vorbis_comments()));
-            Ok((file.into(), fallbacks, by_type))
+            (file.into(), fallbacks, by_type)
         }
         FileType::Mp4 => {
             let file = Mp4File::read_from(&mut probe.into_inner(), options)?;
             let format = format::of_mp4(file.properties());
-            Ok((file.into(), VorbisFallbacks::default(), format))
+            (file.into(), VorbisFallbacks::default(), format)
         }
         FileType::Mpeg => {
             let file = MpegFile::read_from(&mut probe.into_inner(), options)?;
             let format = format::of_mpeg(file.properties());
-            Ok((file.into(), VorbisFallbacks::default(), format))
+            (file.into(), VorbisFallbacks::default(), format)
         }
         FileType::Mpc => {
             let file = MpcFile::read_from(&mut probe.into_inner(), options)?;
             let format = format::of_mpc(file.properties());
-            Ok((file.into(), VorbisFallbacks::default(), format))
+            (file.into(), VorbisFallbacks::default(), format)
         }
         FileType::Wav => {
             let file = WavFile::read_from(&mut probe.into_inner(), options)?;
             let format = format::of_wav(file.properties());
-            Ok((file.into(), VorbisFallbacks::default(), format))
+            (file.into(), VorbisFallbacks::default(), format)
         }
         FileType::Aiff => {
             let file = AiffFile::read_from(&mut probe.into_inner(), options)?;
             let format = format::of_aiff(file.properties());
-            Ok((file.into(), VorbisFallbacks::default(), format))
+            (file.into(), VorbisFallbacks::default(), format)
         }
-        _ => Ok((
+        _ => (
             probe.options(options).read()?,
             VorbisFallbacks::default(),
             by_type,
-        )),
-    }
+        ),
+    };
+    let format = format::with_properties(format, file.properties());
+    Ok((file, fallbacks, format))
 }
 
 #[derive(Debug, Clone)]
@@ -525,10 +525,6 @@ pub(crate) fn embedded_track_metadata(
         cue_audio_entry_id: None,
         cue_index00_frames: None,
         cue_index01_frames: None,
-        sample_rate_hz: track.sample_rate_hz,
-        channel_count: track.channel_count,
-        bit_depth: track.bit_depth,
-        bitrate_bps: track.bitrate_bps,
         track_gain_db: track.track_gain_db,
         album_gain_db: track.album_gain_db,
     }

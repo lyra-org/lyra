@@ -956,15 +956,6 @@ fn write_raw_tags_sections(
             out.push_str(&format!("track_total = {track_total}\n"));
         }
         out.push_str(&format!("duration_ms = {}\n", raw.duration_ms));
-        if let Some(sample_rate_hz) = raw.sample_rate_hz {
-            out.push_str(&format!("sample_rate_hz = {sample_rate_hz}\n"));
-        }
-        if let Some(channel_count) = raw.channel_count {
-            out.push_str(&format!("channel_count = {channel_count}\n"));
-        }
-        if let Some(bit_depth) = raw.bit_depth {
-            out.push_str(&format!("bit_depth = {bit_depth}\n"));
-        }
         for (key, value) in [
             ("replaygain_track_gain", &raw.gain.replaygain_track_gain),
             ("replaygain_album_gain", &raw.gain.replaygain_album_gain),

@@ -145,13 +145,6 @@ pub(crate) fn apply_mapping(
         track: tag.track(),
         track_total: tag.track_total(),
         duration_ms: properties.duration().as_millis() as u64,
-        sample_rate_hz: properties.sample_rate().filter(|&v| v > 0),
-        channel_count: properties.channels().filter(|&v| v > 0).map(u32::from),
-        bit_depth: properties.bit_depth().filter(|&v| v > 0).map(u32::from),
-        bitrate_bps: properties
-            .overall_bitrate()
-            .filter(|&v| v > 0)
-            .and_then(|kbps| kbps.checked_mul(1_000)),
         gain: RawGainTags {
             replaygain_track_gain: non_empty_string(tag, ItemKey::ReplayGainTrackGain),
             replaygain_album_gain: non_empty_string(tag, ItemKey::ReplayGainAlbumGain),

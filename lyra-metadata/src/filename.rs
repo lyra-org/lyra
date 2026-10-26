@@ -216,10 +216,6 @@ mod tests {
             catalog_number: None,
             media_formats: Vec::new(),
             barcode: None,
-            sample_rate_hz: None,
-            channel_count: None,
-            bit_depth: None,
-            bitrate_bps: None,
             track_gain_db: None,
             album_gain_db: None,
         }

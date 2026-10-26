@@ -217,7 +217,7 @@ fn source_to_table(
         ..
     } = source;
 
-    let mut table = luau::OwnedTable::with_capacity(0, 11);
+    let mut table = luau::OwnedTable::with_capacity(0, 15);
     table.set_field("track_id", luau::Value::from(track_db_id.0));
     table.set_field("source_id", luau::Value::from(source_id.0));
     table.set_field("source_kind", luau::Value::String(source_kind.into_bytes()));
@@ -236,6 +236,14 @@ fn source_to_table(
         "codec",
         optional_str(format.codec.map(|codec| codec.as_str())),
     );
+    for (name, value) in [
+        ("sample_rate_hz", format.sample_rate_hz),
+        ("channel_count", format.channel_count),
+        ("bit_depth", format.bit_depth),
+        ("bitrate_bps", format.bitrate_bps),
+    ] {
+        table.set_field(name, optional_u64(value.map(u64::from)));
+    }
     table.set_field("start_ms", optional_u64(start_ms));
     table.set_field("end_ms", optional_u64(end_ms));
     table.set_field(
@@ -398,6 +406,30 @@ impl DescribeInterface for PlaybackSourceInfo {
                 ty: LuauType::optional(LuauType::named("SourceCodec")),
                 description: Some(
                     "The audio's encoding inside its container, named as FFmpeg names codecs.",
+                ),
+            },
+            FieldDescriptor {
+                name: "sample_rate_hz",
+                ty: Option::<u32>::luau_type(),
+                description: Some("The audio's sample rate, read from the file when it was scanned."),
+            },
+            FieldDescriptor {
+                name: "channel_count",
+                ty: Option::<u32>::luau_type(),
+                description: Some("The audio's channel count, read from the file when it was scanned."),
+            },
+            FieldDescriptor {
+                name: "bit_depth",
+                ty: Option::<u32>::luau_type(),
+                description: Some(
+                    "The audio's bits per sample, read from the file when it was scanned; absent for lossy codecs.",
+                ),
+            },
+            FieldDescriptor {
+                name: "bitrate_bps",
+                ty: Option::<u32>::luau_type(),
+                description: Some(
+                    "The file's overall bitrate in bits per second, read when it was scanned.",
                 ),
             },
             FieldDescriptor {

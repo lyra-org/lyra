@@ -17,6 +17,7 @@
     "lyra.locale",
     "lyra.lyrics",
     "lyra.metadata",
+    "lyra.playback_sources",
     "lyra.playlists",
     "lyra.plugins",
     "lyra.tracks"

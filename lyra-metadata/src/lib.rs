@@ -81,14 +81,6 @@ pub struct RawTrackTags {
     pub track: Option<u32>,
     pub track_total: Option<u32>,
     pub duration_ms: u64,
-    #[serde(default)]
-    pub sample_rate_hz: Option<u32>,
-    #[serde(default)]
-    pub channel_count: Option<u32>,
-    #[serde(default)]
-    pub bit_depth: Option<u32>,
-    #[serde(default)]
-    pub bitrate_bps: Option<u32>,
     #[serde(flatten)]
     pub gain: RawGainTags,
 }
@@ -119,10 +111,6 @@ pub struct TrackMetadata {
     pub media_formats: Vec<MediaFormat>,
     #[serde(default)]
     pub barcode: Option<String>,
-    pub sample_rate_hz: Option<u32>,
-    pub channel_count: Option<u32>,
-    pub bit_depth: Option<u32>,
-    pub bitrate_bps: Option<u32>,
     /// Gain in dB relative to the ReplayGain 2.0 reference (-18 LUFS).
     #[serde(default)]
     pub track_gain_db: Option<f64>,
@@ -259,10 +247,6 @@ pub fn process_raw_tags(raw_tags: Vec<RawTrackTags>) -> Vec<TrackMetadata> {
                 .map(parse_media_formats)
                 .unwrap_or_default(),
             barcode: raw.barcode.as_deref().and_then(normalize_barcode),
-            sample_rate_hz: raw.sample_rate_hz,
-            channel_count: raw.channel_count,
-            bit_depth: raw.bit_depth,
-            bitrate_bps: raw.bitrate_bps,
             track_gain_db: raw.gain.track_gain_db(),
             album_gain_db: raw.gain.album_gain_db(),
         };
@@ -427,10 +411,6 @@ mod tests {
             track: Some(1),
             track_total: Some(1),
             duration_ms: 213_672,
-            sample_rate_hz: None,
-            channel_count: None,
-            bit_depth: None,
-            bitrate_bps: None,
             gain: Default::default(),
         };
 
@@ -468,10 +448,6 @@ mod tests {
             track: Some(1),
             track_total: Some(1),
             duration_ms: 213_672,
-            sample_rate_hz: None,
-            channel_count: None,
-            bit_depth: None,
-            bitrate_bps: None,
             gain: Default::default(),
         };
 
@@ -505,10 +481,6 @@ mod tests {
             track: Some(1),
             track_total: Some(1),
             duration_ms: 180_000,
-            sample_rate_hz: None,
-            channel_count: None,
-            bit_depth: None,
-            bitrate_bps: None,
             gain: Default::default(),
         };
 
@@ -556,10 +528,6 @@ mod tests {
             track: Some(1),
             track_total: Some(1),
             duration_ms: 240_000,
-            sample_rate_hz: None,
-            channel_count: None,
-            bit_depth: None,
-            bitrate_bps: None,
             gain: Default::default(),
         };
 
@@ -621,10 +589,6 @@ mod tests {
             track: Some(1),
             track_total: Some(1),
             duration_ms: 180_000,
-            sample_rate_hz: None,
-            channel_count: None,
-            bit_depth: None,
-            bitrate_bps: None,
             gain: Default::default(),
         };
 
@@ -679,10 +643,6 @@ mod tests {
             track: Some(2),
             track_total: Some(4),
             duration_ms: 220_000,
-            sample_rate_hz: None,
-            channel_count: None,
-            bit_depth: None,
-            bitrate_bps: None,
             gain: Default::default(),
         };
 
@@ -722,10 +682,6 @@ mod tests {
             track: Some(1),
             track_total: Some(10),
             duration_ms: 240_000,
-            sample_rate_hz: None,
-            channel_count: None,
-            bit_depth: None,
-            bitrate_bps: None,
             gain: Default::default(),
         };
 
@@ -754,10 +710,6 @@ mod tests {
             track: Some(1),
             track_total: Some(10),
             duration_ms: 240_000,
-            sample_rate_hz: None,
-            channel_count: None,
-            bit_depth: None,
-            bitrate_bps: None,
             gain: Default::default(),
         };
 
@@ -787,10 +739,6 @@ mod tests {
             track: Some(1),
             track_total: Some(10),
             duration_ms: 240_000,
-            sample_rate_hz: None,
-            channel_count: None,
-            bit_depth: None,
-            bitrate_bps: None,
             gain: Default::default(),
         };
 
@@ -964,10 +912,6 @@ mod tests {
             catalog_number: None,
             media_formats: Vec::new(),
             barcode: None,
-            sample_rate_hz: None,
-            channel_count: None,
-            bit_depth: None,
-            bitrate_bps: None,
             track_gain_db: None,
             album_gain_db: None,
         }

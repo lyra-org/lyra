@@ -3,7 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-//! A source file's container and codec, from what lofty read in its contents.
+//! A source file's container, codec and audio properties, from what lofty read in its contents.
 
 use lofty::{
     file::FileType,
@@ -26,6 +26,7 @@ use lofty::{
         MpegProperties,
     },
     musepack::MpcProperties,
+    properties::FileProperties,
 };
 
 use crate::db::track_sources::{
@@ -38,6 +39,21 @@ fn format(container: SourceContainer, codec: Option<SourceCodec>) -> SourceForma
     SourceFormat {
         container: Some(container),
         codec,
+        ..SourceFormat::default()
+    }
+}
+
+/// Adds the audio properties every file type reports to a format read from its type.
+pub(super) fn with_properties(format: SourceFormat, properties: &FileProperties) -> SourceFormat {
+    SourceFormat {
+        sample_rate_hz: properties.sample_rate().filter(|&v| v > 0),
+        channel_count: properties.channels().filter(|&v| v > 0).map(u32::from),
+        bit_depth: properties.bit_depth().filter(|&v| v > 0).map(u32::from),
+        bitrate_bps: properties
+            .overall_bitrate()
+            .filter(|&v| v > 0)
+            .and_then(|kbps| kbps.checked_mul(1_000)),
+        ..format
     }
 }
 
@@ -198,21 +214,25 @@ mod tests {
         read_source_format(&path)
     }
 
-    fn expect(container: SourceContainer, codec: SourceCodec) -> SourceFormat {
-        SourceFormat {
-            container: Some(container),
-            codec: Some(codec),
-        }
+    fn container_and_codec(format: SourceFormat) -> (Option<SourceContainer>, Option<SourceCodec>) {
+        (format.container, format.codec)
+    }
+
+    fn expect(
+        container: SourceContainer,
+        codec: SourceCodec,
+    ) -> (Option<SourceContainer>, Option<SourceCodec>) {
+        (Some(container), Some(codec))
     }
 
     #[test]
     fn reads_format_from_contents() -> anyhow::Result<()> {
         assert_eq!(
-            read_source_format(&asset("integration_track.flac"))?,
+            container_and_codec(read_source_format(&asset("integration_track.flac"))?),
             expect(SourceContainer::Flac, SourceCodec::Flac)
         );
         assert_eq!(
-            read_source_format(&asset("integration_track.opus"))?,
+            container_and_codec(read_source_format(&asset("integration_track.opus"))?),
             expect(SourceContainer::Ogg, SourceCodec::Opus)
         );
         Ok(())
@@ -222,32 +242,48 @@ mod tests {
     fn ignores_the_extension() -> anyhow::Result<()> {
         let bytes = std::fs::read(asset("integration_track.opus"))?;
         assert_eq!(
-            read_written("mislabeled.mp3", &bytes)?,
+            container_and_codec(read_written("mislabeled.mp3", &bytes)?),
             expect(SourceContainer::Ogg, SourceCodec::Opus)
         );
         Ok(())
     }
 
     #[test]
+    fn reads_audio_properties() -> anyhow::Result<()> {
+        let flac = read_source_format(&asset("integration_track.flac"))?;
+        assert_eq!(flac.sample_rate_hz, Some(44_100));
+        assert_eq!(flac.channel_count, Some(1));
+        assert_eq!(flac.bit_depth, Some(16));
+        assert!(flac.bitrate_bps.is_some_and(|bps| bps > 0));
+
+        let wav = read_written("a.wav", &wav(1, 24))?;
+        assert_eq!(wav.sample_rate_hz, Some(44_100));
+        assert_eq!(wav.channel_count, Some(2));
+        assert_eq!(wav.bit_depth, Some(24));
+        assert!(wav.bitrate_bps.is_some_and(|bps| bps > 0));
+        Ok(())
+    }
+
+    #[test]
     fn reads_pcm_layout_from_wav_and_aiff() -> anyhow::Result<()> {
         assert_eq!(
-            read_written("a.wav", &wav(1, 16))?,
+            container_and_codec(read_written("a.wav", &wav(1, 16))?),
             expect(SourceContainer::Wav, SourceCodec::PcmS16Le)
         );
         assert_eq!(
-            read_written("b.wav", &wav(1, 24))?,
+            container_and_codec(read_written("b.wav", &wav(1, 24))?),
             expect(SourceContainer::Wav, SourceCodec::PcmS24Le)
         );
         assert_eq!(
-            read_written("c.wav", &wav(3, 32))?,
+            container_and_codec(read_written("c.wav", &wav(3, 32))?),
             expect(SourceContainer::Wav, SourceCodec::PcmF32Le)
         );
         assert_eq!(
-            read_written("d.aiff", &aiff(16))?,
+            container_and_codec(read_written("d.aiff", &aiff(16))?),
             expect(SourceContainer::Aiff, SourceCodec::PcmS16Be)
         );
         assert_eq!(
-            read_written("e.aiff", &aiff(24))?,
+            container_and_codec(read_written("e.aiff", &aiff(24))?),
             expect(SourceContainer::Aiff, SourceCodec::PcmS24Be)
         );
         Ok(())

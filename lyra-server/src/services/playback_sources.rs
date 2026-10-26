@@ -83,6 +83,7 @@ pub(crate) fn resolve(
         let full_path = entry.full_path.clone();
         let entry = include_entry.then_some(entry);
 
+        let format = source.format();
         return Ok(Some(PlaybackSource {
             track_db_id,
             source_id,
@@ -91,10 +92,7 @@ pub(crate) fn resolve(
             is_primary: source.is_primary,
             input_path,
             full_path,
-            format: SourceFormat {
-                container: source.container,
-                codec: source.codec,
-            },
+            format,
             start_ms: source.start_ms,
             end_ms: source.end_ms,
             entry,

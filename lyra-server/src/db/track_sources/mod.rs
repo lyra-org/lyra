@@ -36,6 +36,23 @@ pub(crate) struct TrackSource {
     pub(crate) end_ms: Option<u64>,
     pub(crate) container: Option<SourceContainer>,
     pub(crate) codec: Option<SourceCodec>,
+    pub(crate) sample_rate_hz: Option<u32>,
+    pub(crate) channel_count: Option<u32>,
+    pub(crate) bit_depth: Option<u32>,
+    pub(crate) bitrate_bps: Option<u32>,
+}
+
+impl TrackSource {
+    pub(crate) fn format(&self) -> SourceFormat {
+        SourceFormat {
+            container: self.container,
+            codec: self.codec,
+            sample_rate_hz: self.sample_rate_hz,
+            channel_count: self.channel_count,
+            bit_depth: self.bit_depth,
+            bitrate_bps: self.bitrate_bps,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -151,6 +168,10 @@ pub(crate) fn upsert(
         end_ms: source.end_ms,
         container: source.format.container,
         codec: source.format.codec,
+        sample_rate_hz: source.format.sample_rate_hz,
+        channel_count: source.format.channel_count,
+        bit_depth: source.format.bit_depth,
+        bitrate_bps: source.format.bitrate_bps,
     };
 
     let source_id = match existing_id {
@@ -163,6 +184,10 @@ pub(crate) fn upsert(
                     ("end_ms", source_node.end_ms.is_none()),
                     ("container", source_node.container.is_none()),
                     ("codec", source_node.codec.is_none()),
+                    ("sample_rate_hz", source_node.sample_rate_hz.is_none()),
+                    ("channel_count", source_node.channel_count.is_none()),
+                    ("bit_depth", source_node.bit_depth.is_none()),
+                    ("bitrate_bps", source_node.bitrate_bps.is_none()),
                 ],
                 &source_node,
             )?;

@@ -812,26 +812,6 @@ fn track_type() -> LuauType {
             description: None,
         },
         FieldDescriptor {
-            name: "sample_rate_hz",
-            ty: Option::<u32>::luau_type(),
-            description: None,
-        },
-        FieldDescriptor {
-            name: "channel_count",
-            ty: Option::<u32>::luau_type(),
-            description: None,
-        },
-        FieldDescriptor {
-            name: "bit_depth",
-            ty: Option::<u32>::luau_type(),
-            description: None,
-        },
-        FieldDescriptor {
-            name: "bitrate_bps",
-            ty: Option::<u32>::luau_type(),
-            description: None,
-        },
-        FieldDescriptor {
             name: "track_gain_db",
             ty: Option::<f64>::luau_type(),
             description: None,

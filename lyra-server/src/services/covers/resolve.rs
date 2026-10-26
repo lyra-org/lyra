@@ -241,10 +241,6 @@ mod tests {
             track: None,
             track_total: None,
             duration_ms: None,
-            sample_rate_hz: None,
-            channel_count: None,
-            bit_depth: None,
-            bitrate_bps: None,
             track_gain_db: None,
             album_gain_db: None,
             locked: None,
@@ -287,6 +283,10 @@ mod tests {
             end_ms: None,
             container: None,
             codec: None,
+            sample_rate_hz: None,
+            channel_count: None,
+            bit_depth: None,
+            bitrate_bps: None,
         };
         let source_id = db
             .exec_mut(QueryBuilder::insert().element(&source).query())?
@@ -320,10 +320,6 @@ mod tests {
             track: None,
             track_total: None,
             duration_ms: None,
-            sample_rate_hz: None,
-            channel_count: None,
-            bit_depth: None,
-            bitrate_bps: None,
             track_gain_db: None,
             album_gain_db: None,
             locked: None,

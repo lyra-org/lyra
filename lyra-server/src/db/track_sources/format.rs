@@ -108,9 +108,14 @@ source_format_enum! {
     }
 }
 
-/// A track source's container and codec, each absent when the scan couldn't tell.
+/// A track source's container, codec and audio properties, each absent when the scan couldn't
+/// tell. A CUE segment shares its file's.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SourceFormat {
     pub(crate) container: Option<SourceContainer>,
     pub(crate) codec: Option<SourceCodec>,
+    pub(crate) sample_rate_hz: Option<u32>,
+    pub(crate) channel_count: Option<u32>,
+    pub(crate) bit_depth: Option<u32>,
+    pub(crate) bitrate_bps: Option<u32>,
 }
