@@ -243,12 +243,14 @@ function module.handle_universal_route(ctx: ApiContext): ApiResponse
 
 	local source = media.resolve_playback_source_for_track(track)
 	local source_channels = if source then source.channel_count else nil
+	-- As upstream, only the maximum streaming bitrate, or its profile's 8 Mbps default, limits direct
+	-- play; the audio bitrate only sets the encode's.
 	local media_source = playback.build_audio_media_source(track.id, track, false)
 	if
 		playback.audio_supports_direct_play_from_container_csv(
 			media_source,
 			raw_container,
-			bitrate_bps,
+			max_bitrate_value or playback.DEFAULT_MAX_STREAMING_BITRATE,
 			sample_rate_hz,
 			bit_depth,
 			channels,

@@ -58,3 +58,22 @@ local function universal_direct(query: { [string]: string }): boolean
 end
 assert(universal_direct({ container = "ogg", maxStreamingBitrate = "50000000" }), "the client plays ogg")
 assert(not universal_direct({ container = "mp3", maxStreamingBitrate = "50000000" }), "the client plays mp3")
+
+-- Only the maximum streaming bitrate, or upstream's 8 Mbps default, limits direct play. The
+-- fixture's file runs at 3 kbps.
+assert(universal_direct({ container = "ogg", audioBitRate = "1000", maxStreamingBitrate = "3000" }), "audio bitrate")
+assert(not universal_direct({ container = "ogg", maxStreamingBitrate = "2999" }), "over the maximum")
+assert(universal_direct({ container = "ogg" }), "under the default maximum")
+local playback = require("../../protocol/items/playback")
+local resolve_source = playback.resolve_playback_source_for_track
+playback.resolve_playback_source_for_track = function(song: any, include_entry: boolean?): any
+	local source = resolve_source(song, include_entry)
+	if source then
+		source = table.clone(source)
+		source.bitrate_bps = nil
+	end
+	return source
+end
+assert(not universal_direct({ container = "ogg" }), "an unknown bitrate counts as 40 Mbps, over the default")
+assert(universal_direct({ container = "ogg", maxStreamingBitrate = "40000000" }), "40 Mbps allowed")
+playback.resolve_playback_source_for_track = resolve_source

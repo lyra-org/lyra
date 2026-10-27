@@ -491,6 +491,7 @@ end
 -- Upstream's `DeviceProfile` defaults, which a profile that leaves the field out, or sends null, keeps.
 local DEFAULT_MAX_STREAMING_BITRATE = 8000000
 local DEFAULT_MUSIC_TRANSCODING_BITRATE = 128000
+module.DEFAULT_MAX_STREAMING_BITRATE = DEFAULT_MAX_STREAMING_BITRATE
 
 local function optimal_audio_stream(
 	media_source: MediaSource,
