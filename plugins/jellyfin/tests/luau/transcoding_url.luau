@@ -126,7 +126,7 @@ local by_container = media_source({
 	},
 }, "secret")
 contains(by_container.TranscodingUrl, "/stream.mp3?")
-assert(not string.find(by_container.TranscodingUrl, "AudioCodec", 1, true), by_container.TranscodingUrl)
+assert(not string.find(by_container.TranscodingUrl, "AudioCodec=", 1, true), by_container.TranscodingUrl)
 
 -- A client that can neither play nor transcode the source still gets it, with every flag off.
 local stuck = media_source({ DeviceProfile = { DirectPlayProfiles = {}, TranscodingProfiles = {} } }, "secret")

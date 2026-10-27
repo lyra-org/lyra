@@ -2049,7 +2049,16 @@ api.get(P .. "/Items/{id}/PlaybackInfo", function(ctx: ApiContext)
 
 	local request = if ctx then ctx.request else nil
 	local play_session_id = playback.resolve_requested_play_session_id(request, nil)
-	local response = playback.build_playback_info(item_id, track, play_session_id, nil, nil, access_token)
+	local identity = session.resolve_client_identity(ctx, resolved_auth, access_token)
+	local response = playback.build_playback_info(
+		item_id,
+		track,
+		play_session_id,
+		nil,
+		nil,
+		access_token,
+		if identity then identity.device_id else nil
+	)
 	return api.response.json(200, response)
 end, "public", true)
 api.get(P .. "/Items/{itemId}/File", function(ctx: ApiContext)
@@ -2093,13 +2102,15 @@ api.post(P .. "/Items/{id}/PlaybackInfo", function(ctx: ApiContext)
 	local playback_request = if request_object then request_object :: PlaybackPayload else nil
 	local play_session_id = playback.resolve_requested_play_session_id(request, playback_request)
 	local requested_media_source_id = playback.resolve_requested_media_source_id(request, request_object)
+	local identity = session.resolve_client_identity(ctx, resolved_auth, access_token)
 	local response, err = playback.build_playback_info(
 		item_id,
 		track,
 		play_session_id,
 		request_object,
 		requested_media_source_id,
-		access_token
+		access_token,
+		if identity then identity.device_id else nil
 	)
 	if err then
 		return responses.bad_request(err)

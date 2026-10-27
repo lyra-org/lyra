@@ -137,8 +137,8 @@ local unencodable = media_source({
 assert(unencodable.SupportsTranscoding, "a streaming profile")
 local unencodable_url: string = unencodable.TranscodingUrl
 contains(unencodable_url, `/audio/{unencodable.Id}/stream?MediaSourceId=`)
-assert(not string.find(unencodable_url, "AudioCodec", 1, true), unencodable_url)
-assert(not string.find(unencodable_url, "AudioBitrate", 1, true), unencodable_url)
+assert(not string.find(unencodable_url, "AudioCodec=", 1, true), unencodable_url)
+assert(not string.find(unencodable_url, "AudioBitrate=", 1, true), unencodable_url)
 contains(unencodable_url, "EnableAudioVbrEncoding=false")
 
 -- Codec profiles limit what direct plays, and the transcode carries their limits.
@@ -172,7 +172,8 @@ local stereo = { Condition = "LessThanEqual", Property = "AudioChannels", Value 
 local downmixed = limited({ audio_profile({ stereo }) })
 assert(not downmixed.SupportsDirectPlay, "six channels exceed the codec profile")
 contains(downmixed.TranscodingUrl, "TranscodingMaxAudioChannels=6")
-assert(string.sub(downmixed.TranscodingUrl, -#"&audiochannels=2") == "&audiochannels=2", downmixed.TranscodingUrl)
+local downmixed_tail = "&audiochannels=2&TranscodeReasons=AudioChannelsNotSupported"
+assert(string.sub(downmixed.TranscodingUrl, -#downmixed_tail) == downmixed_tail, downmixed.TranscodingUrl)
 assert(
 	limited({ audio_profile({ stereo }) }, described({ channel_count = 2, bitrate_bps = 96000 })).SupportsDirectPlay,
 	"stereo plays"
@@ -210,10 +211,8 @@ local capped_bitrate = limited({
 	audio_profile({ { Condition = "Equals", Property = "AudioChannels", Value = "1" } }),
 })
 contains(capped_bitrate.TranscodingUrl, "AudioBitrate=128000&")
-assert(
-	string.sub(capped_bitrate.TranscodingUrl, -#"&audiochannels=1") == "&audiochannels=1",
-	capped_bitrate.TranscodingUrl
-)
+local capped_tail = "&audiochannels=1&TranscodeReasons=AudioChannelsNotSupported,AudioBitrateNotSupported"
+assert(string.sub(capped_bitrate.TranscodingUrl, -#capped_tail) == capped_tail, capped_bitrate.TranscodingUrl)
 
 -- Upstream refuses a condition it can't read, and one on anything but audio once it applies.
 local function refused_with(codec_profiles: any): string?
@@ -253,3 +252,81 @@ contains(cued_transcode.TranscodingUrl, `/audio/{cued_transcode.Id}/stream.opus?
 local universal_source = playback.build_audio_media_source(cued.id, cued, false)
 assert(not playback.audio_supports_direct_play_from_container_csv(universal_source, "ogg"), "universal transcodes too")
 assert(media_source(nil).Size ~= nil, "an uncut track has its file's size")
+
+-- The TranscodingUrl carries what upstream's `StreamInfo.ToUrl` does, in its order.
+local function url_for(request: any, song: any?, device_id: string?): string
+	local played = song or known
+	local info = playback.build_playback_info(played.id, played, "session", request, nil, "secret", device_id)
+	return info.MediaSources[1].TranscodingUrl
+end
+local full = url_for({
+	StartTimeTicks = 50000000,
+	DeviceProfile = {
+		Id = "6F9619FF-8B86-D011-B42D-00C04FC964FF",
+		DirectPlayProfiles = { { Type = "Audio", Container = "mp3" } },
+		TranscodingProfiles = {
+			{
+				Type = "Audio",
+				Container = "opus",
+				AudioCodec = "opus",
+				MaxAudioChannels = "2",
+				EstimateContentLength = true,
+				CopyTimestamps = true,
+				TranscodeSeekInfo = "Bytes",
+				EnableAudioVbrEncoding = false,
+			},
+		},
+	},
+}, nil, "phone")
+local expected = "/audio/{id}/stream.opus?DeviceProfileId=6f9619ff8b86d011b42d00c04fc964ff&DeviceId=phone"
+	.. "&MediaSourceId={id}&AudioCodec=opus&AudioBitrate=128000&StartTimeTicks=50000000&PlaySessionId=session"
+	.. "&ApiKey=secret&TranscodingMaxAudioChannels=2&EstimateContentLength=True&TranscodeSeekInfo=Bytes"
+	.. "&CopyTimestamps=True&RequireAvc=false&EnableAudioVbrEncoding=false"
+local id = string.match(full, "^/audio/(%x+)/")
+assert(id, full)
+expected = string.gsub(expected, "{id}", id)
+local tag = string.match(full, "&Tag=([^&]*)")
+local without_tag = string.gsub(full, "&Tag=[^&]*", "")
+assert(
+	without_tag == expected .. "&TranscodeReasons=ContainerNotSupported,VideoCodecNotSupported,AudioCodecNotSupported",
+	full
+)
+assert(tag == nil or tag == media_source(nil).ETag, `tag {tag}`)
+
+local segmented = url_for({
+	DeviceProfile = {
+		TranscodingProfiles = {
+			{
+				Type = "Audio",
+				Protocol = "hls",
+				Container = "ts",
+				AudioCodec = "aac",
+				SegmentLength = 6,
+				MinSegments = 2,
+			},
+		},
+	},
+})
+contains(segmented, "&SegmentContainer=ts&SegmentLength=6&MinSegments=2&PlaySessionId=")
+
+-- Upstream's transcode reasons for audio: an unsupported codec in a supported container, a bitrate
+-- over the limit, and a codec the client takes in another container.
+local codec_only = url_for({
+	DeviceProfile = {
+		DirectPlayProfiles = { { Type = "Audio", Container = "ogg", AudioCodec = "vorbis" } },
+		TranscodingProfiles = opus,
+	},
+})
+assert(
+	string.sub(codec_only, -#"&TranscodeReasons=AudioCodecNotSupported") == "&TranscodeReasons=AudioCodecNotSupported"
+)
+local over =
+	url_for({ MaxStreamingBitrate = 64000, DeviceProfile = { DirectPlayProfiles = ogg, TranscodingProfiles = opus } })
+contains(over, "&TranscodeReasons=ContainerBitrateExceedsLimit")
+local remux = url_for({
+	DeviceProfile = { DirectPlayProfiles = { { Type = "Audio", Container = "opus" } }, TranscodingProfiles = opus },
+})
+assert(
+	string.sub(remux, -#"&TranscodeReasons=ContainerNotSupported") == "&TranscodeReasons=ContainerNotSupported",
+	remux
+)

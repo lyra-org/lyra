@@ -446,9 +446,82 @@ local function audio_direct_play_profile(media_source: MediaSource, device_profi
 	return nil
 end
 
+-- Upstream's `IsAudioDirectStreamSupported`: a profile the source's container isn't in, naming the
+-- source's codec as its codec or its container.
+local function has_audio_direct_stream_profile(media_source: MediaSource, device_profile: JsonObject): boolean
+	local codec = media_source_audio_codec(media_source)
+	if codec == nil then
+		return false
+	end
+	local lowered = string.lower(codec)
+	for _, profile in device_profiles.object_list(device_profile, "DirectPlayProfiles") do
+		local container = device_profiles.string_field(profile, "Container")
+		local profile_codec = device_profiles.string_field(profile, "AudioCodec")
+		if
+			device_profiles.is_audio_profile(profile)
+			and not device_profiles.contains_container(container, media_source.Container)
+			and (
+				(profile_codec ~= nil and string.lower(profile_codec) == lowered)
+				or (container ~= nil and string.lower(container) == lowered)
+			)
+		then
+			return true
+		end
+	end
+	return false
+end
+
+type TranscodeReasons = { [string]: boolean }
+
+-- Upstream's `TranscodeReason` flags an audio source can raise, in flag order.
+local TRANSCODE_REASON_ORDER = {
+	"ContainerNotSupported",
+	"VideoCodecNotSupported",
+	"AudioCodecNotSupported",
+	"AudioChannelsNotSupported",
+	"AudioProfileNotSupported",
+	"AudioSampleRateNotSupported",
+	"AudioBitDepthNotSupported",
+	"ContainerBitrateExceedsLimit",
+	"AudioBitrateNotSupported",
+}
+
+local CONDITION_TRANSCODE_REASONS: { [string]: string } = {
+	AudioBitrate = "AudioBitrateNotSupported",
+	AudioChannels = "AudioChannelsNotSupported",
+	AudioProfile = "AudioProfileNotSupported",
+	AudioSampleRate = "AudioSampleRateNotSupported",
+	AudioBitDepth = "AudioBitDepthNotSupported",
+}
+
+-- Upstream's `GetTranscodeReasonsFromDirectPlayProfile` when no profile plays the source. With no
+-- video stream to judge, upstream leaves the video codec unsupported along with the container.
+local function add_direct_play_profile_reasons(
+	reasons: TranscodeReasons,
+	media_source: MediaSource,
+	device_profile: JsonObject
+)
+	for _, profile in device_profiles.object_list(device_profile, "DirectPlayProfiles") do
+		if
+			device_profiles.is_audio_profile(profile)
+			and device_profiles.contains_container(
+				device_profiles.string_field(profile, "Container"),
+				media_source.Container
+			)
+		then
+			reasons.AudioCodecNotSupported = true
+			return
+		end
+	end
+	reasons.ContainerNotSupported = true
+	reasons.VideoCodecNotSupported = true
+	reasons.AudioCodecNotSupported = true
+end
+
 -- How upstream's `StreamBuilder` plays a source: directly, or by the transcode it describes.
 type StreamInfo = {
 	direct_play: boolean,
+	reasons: TranscodeReasons,
 	container: string?,
 	hls: boolean,
 	audio_codec: string?,
@@ -458,7 +531,27 @@ type StreamInfo = {
 	audio_channels: number?,
 	transcoding_max_audio_channels: number?,
 	enable_audio_vbr_encoding: boolean,
+	min_segments: number?,
+	segment_length: number?,
+	estimate_content_length: boolean,
+	enable_mpegts_m2ts_mode: boolean,
+	copy_timestamps: boolean,
+	enable_subtitles_in_manifest: boolean,
+	transcode_seek_info: string?,
 }
+
+local function new_stream_info(): StreamInfo
+	return {
+		direct_play = false,
+		reasons = {},
+		hls = false,
+		enable_audio_vbr_encoding = false,
+		estimate_content_length = false,
+		enable_mpegts_m2ts_mode = false,
+		copy_timestamps = false,
+		enable_subtitles_in_manifest = false,
+	}
+end
 
 -- Upstream's `StreamBuilder.ApplyTranscodingConditions` for the audio properties a URL carries.
 -- It can't express a minimum, and ignores conditions on other properties.
@@ -484,15 +577,29 @@ local function apply_transcoding_conditions(stream: StreamInfo, conditions: { de
 	end
 end
 
--- Upstream's `StreamBuilder.GetOptimalAudioStream` for a single source, or the error upstream
--- answers with a 400. Only codec profiles limit the audio itself; the request's
--- `MaxAudioChannels` plays no part. Upstream also direct-streams a source whose codec a profile
--- names as its container or codec, into a `ts` remux; that is left out, and such sources transcode.
 -- Upstream's `DeviceProfile` defaults, which a profile that leaves the field out, or sends null, keeps.
 local DEFAULT_MAX_STREAMING_BITRATE = 8000000
 local DEFAULT_MUSIC_TRANSCODING_BITRATE = 128000
 module.DEFAULT_MAX_STREAMING_BITRATE = DEFAULT_MAX_STREAMING_BITRATE
 
+-- A transcoding profile's `TranscodeSeekInfo`, when it isn't upstream's default of `Auto`.
+local function transcode_seek_info(profile: JsonObject): string?
+	local raw = profile.TranscodeSeekInfo
+	if raw == 1 or (type(raw) == "string" and (string.lower(raw) == "bytes" or raw == "1")) then
+		return "Bytes"
+	end
+	return nil
+end
+
+local function positive_int(profile: JsonObject, key: string): number?
+	local value = device_profiles.parse_int(device_profiles.string_field(profile, key))
+	return if value and value > 0 then value else nil
+end
+
+-- Upstream's `StreamBuilder.GetOptimalAudioStream` for a single source, or the error upstream
+-- answers with a 400. Only codec profiles limit the audio itself; the request's
+-- `MaxAudioChannels` plays no part. Upstream also direct-streams a source whose codec a profile
+-- names as its container or codec, into a `ts` remux; that is left out, and such sources transcode.
 local function optimal_audio_stream(
 	media_source: MediaSource,
 	request_object: JsonObject?,
@@ -502,7 +609,8 @@ local function optimal_audio_stream(
 	local max_bitrate = json_number_field(request_object, "MaxStreamingBitrate")
 		or json_number_field(device_profile, "MaxStreamingBitrate")
 		or DEFAULT_MAX_STREAMING_BITRATE
-	local stream: StreamInfo = { direct_play = false, hls = false, enable_audio_vbr_encoding = false }
+	local stream = new_stream_info()
+	local reasons = stream.reasons
 	local audio_stream = first_audio_stream(media_source)
 	local audio: device_profiles.AudioProperties = {
 		channels = if audio_stream then audio_stream.Channels else nil,
@@ -511,11 +619,27 @@ local function optimal_audio_stream(
 		bit_depth = if audio_stream then audio_stream.BitDepth else nil,
 	}
 
-	if
-		audio_direct_play_profile(media_source, device_profile) ~= nil
-		and media_source.SupportsDirectPlay
-		and not bitrate_limit_exceeded(media_source, max_bitrate)
-	then
+	-- Upstream's `GetAudioDirectPlayProfile`.
+	local exceeded = bitrate_limit_exceeded(media_source, max_bitrate)
+	local playable = false
+	if audio_direct_play_profile(media_source, device_profile) ~= nil then
+		if media_source.SupportsDirectPlay then
+			playable = not exceeded
+			reasons.ContainerBitrateExceedsLimit = exceeded or nil
+		end
+		if not playable and media_source.SupportsDirectStream and exceeded then
+			reasons.ContainerBitrateExceedsLimit = true
+		end
+	elseif has_audio_direct_stream_profile(media_source, device_profile) then
+		reasons.ContainerNotSupported = true
+		if media_source.SupportsDirectStream and exceeded then
+			reasons.ContainerBitrateExceedsLimit = true
+		end
+	else
+		add_direct_play_profile_reasons(reasons, media_source, device_profile)
+	end
+
+	if playable then
 		local failed, err = device_profiles.audio_conditions(
 			codec_profiles,
 			media_source.Container,
@@ -528,6 +652,9 @@ local function optimal_audio_stream(
 		elseif #failed == 0 then
 			stream.direct_play = true
 			return stream, nil
+		end
+		for _, condition in failed do
+			reasons[CONDITION_TRANSCODE_REASONS[condition.property]] = true
 		end
 	end
 
@@ -546,6 +673,13 @@ local function optimal_audio_stream(
 	stream.transcoding_max_audio_channels =
 		device_profiles.parse_int(device_profiles.string_field(profile, "MaxAudioChannels"))
 	stream.enable_audio_vbr_encoding = json_boolean_field(profile, "EnableAudioVbrEncoding") ~= false
+	stream.min_segments = positive_int(profile, "MinSegments")
+	stream.segment_length = positive_int(profile, "SegmentLength")
+	stream.estimate_content_length = json_boolean_field(profile, "EstimateContentLength") == true
+	stream.enable_mpegts_m2ts_mode = json_boolean_field(profile, "EnableMpegtsM2TsMode") == true
+	stream.copy_timestamps = json_boolean_field(profile, "CopyTimestamps") == true
+	stream.enable_subtitles_in_manifest = json_boolean_field(profile, "EnableSubtitlesInManifest") == true
+	stream.transcode_seek_info = transcode_seek_info(profile)
 	media_source.TranscodingContainer = stream.container
 	media_source.TranscodingSubProtocol = if stream.hls then "hls" else "http"
 
@@ -584,88 +718,129 @@ local function no_compatible_stream(): ApiJsonValue
 	}
 end
 
--- Builds the URL as upstream's `StreamInfo.ToUrl` does: relative to the API root, which clients
--- prepend, and carrying the request's token so players can fetch it without headers.
-local function build_transcoding_url(
-	item_id: string,
+-- What a TranscodingUrl carries beyond the stream: the request's and the source's identifiers.
+type UrlContext = {
 	play_session_id: string,
-	stream: StreamInfo,
-	start_time_ticks: number?,
-	access_token: string?
-): string
-	local parts = { `MediaSourceId={item_id}` }
+	request_object: JsonObject?,
+	access_token: string?,
+	device_id: string?,
+	device_profile_id: string?,
+	etag: string?,
+}
+
+-- A device profile's id as upstream formats a Guid for URLs: 32 lowercase hex digits.
+local function device_profile_id(device_profile: JsonObject?): string?
+	local raw = device_profiles.string_field(device_profile, "Id")
+	local digits = if raw then string.lower((string.gsub(raw, "[{}%-]", ""))) else nil
+	return if digits and string.match(digits, "^%x+$") and #digits == 32 then digits else nil
+end
+
+-- Builds the URL as upstream's `StreamInfo.ToUrl` does, in its order and casing: relative to the
+-- API root, which clients prepend, and carrying the request's token so players can fetch it
+-- without headers. Upstream appends the copy switches after building it, and only when the client
+-- turned copying off.
+local function transcoding_url(media_source_id: string, stream: StreamInfo, context: UrlContext): string
+	local parts: { string } = {}
+	local function add(name: string, value: string | number)
+		table.insert(parts, `{name}={value}`)
+	end
+	if context.device_profile_id then
+		add("DeviceProfileId", context.device_profile_id)
+	end
+	if context.device_id then
+		add("DeviceId", context.device_id)
+	end
+	add("MediaSourceId", media_source_id)
 	if stream.audio_codec ~= nil then
-		table.insert(parts, `AudioCodec={stream.audio_codec}`)
+		add("AudioCodec", stream.audio_codec)
 	end
 	if stream.audio_bitrate ~= nil then
-		table.insert(parts, `AudioBitrate={stream.audio_bitrate}`)
+		add("AudioBitrate", stream.audio_bitrate)
 	end
 	if stream.audio_sample_rate ~= nil then
-		table.insert(parts, `AudioSampleRate={stream.audio_sample_rate}`)
+		add("AudioSampleRate", stream.audio_sample_rate)
 	end
+	local request_object = context.request_object
+	local start_time_ticks = json_number_field(request_object, "StartTimeTicks")
 	if stream.hls then
 		if stream.container ~= nil then
-			table.insert(parts, `SegmentContainer={stream.container}`)
+			add("SegmentContainer", stream.container)
 		end
-	elseif start_time_ticks ~= nil and start_time_ticks > 0 then
-		table.insert(parts, `StartTimeTicks={start_time_ticks}`)
+		if stream.segment_length ~= nil then
+			add("SegmentLength", stream.segment_length)
+		end
+		if stream.min_segments ~= nil then
+			add("MinSegments", stream.min_segments)
+		end
+	elseif start_time_ticks ~= nil and start_time_ticks ~= 0 then
+		add("StartTimeTicks", start_time_ticks)
 	end
-	table.insert(parts, `PlaySessionId={play_session_id}`)
-	if access_token ~= nil then
-		table.insert(parts, `ApiKey={access_token}`)
+	add("PlaySessionId", context.play_session_id)
+	if context.access_token ~= nil then
+		add("ApiKey", context.access_token)
 	end
 	if stream.transcoding_max_audio_channels ~= nil then
-		table.insert(parts, `TranscodingMaxAudioChannels={stream.transcoding_max_audio_channels}`)
+		add("TranscodingMaxAudioChannels", stream.transcoding_max_audio_channels)
 	end
-	table.insert(parts, `EnableAudioVbrEncoding={tostring(stream.enable_audio_vbr_encoding)}`)
+	if stream.enable_subtitles_in_manifest then
+		add("EnableSubtitlesInManifest", "True")
+	end
+	if stream.enable_mpegts_m2ts_mode then
+		add("EnableMpegtsM2TsMode", "True")
+	end
+	if stream.estimate_content_length then
+		add("EstimateContentLength", "True")
+	end
+	if stream.transcode_seek_info ~= nil then
+		add("TranscodeSeekInfo", stream.transcode_seek_info)
+	end
+	if stream.copy_timestamps then
+		add("CopyTimestamps", "True")
+	end
+	add("RequireAvc", "false")
+	add("EnableAudioVbrEncoding", tostring(stream.enable_audio_vbr_encoding))
+	if context.etag ~= nil then
+		add("Tag", context.etag)
+	end
 	if stream.audio_channels ~= nil then
-		table.insert(parts, `audiochannels={stream.audio_channels}`)
+		add("audiochannels", stream.audio_channels)
+	end
+	local reasons: { string } = {}
+	for _, reason in TRANSCODE_REASON_ORDER do
+		if stream.reasons[reason] then
+			table.insert(reasons, reason)
+		end
+	end
+	if #reasons > 0 then
+		add("TranscodeReasons", table.concat(reasons, ","))
+	end
+	if json_boolean_field(request_object, "AllowVideoStreamCopy") == false then
+		add("allowVideoStreamCopy", "false")
+	end
+	if json_boolean_field(request_object, "AllowAudioStreamCopy") == false then
+		add("allowAudioStreamCopy", "false")
 	end
 
 	local path = if stream.hls
-		then `/audio/{item_id}/master.m3u8`
-		elseif stream.container ~= nil and stream.container ~= "" then `/audio/{item_id}/stream.{stream.container}`
-		else `/audio/{item_id}/stream`
+		then `/audio/{media_source_id}/master.m3u8`
+		elseif
+			stream.container ~= nil and stream.container ~= ""
+		then `/audio/{media_source_id}/stream.{stream.container}`
+		else `/audio/{media_source_id}/stream`
 	return `{path}?{table.concat(parts, "&")}`
 end
 
--- The TranscodingUrl upstream hands out, with the copy switches it appends after building it,
--- and only when the client turned copying off.
-local function transcoding_url(
-	media_source_id: string,
-	play_session_id: string,
-	stream: StreamInfo,
-	request_object: JsonObject?,
-	access_token: string?
-): string
-	local url = build_transcoding_url(
-		media_source_id,
-		play_session_id,
-		stream,
-		json_number_field(request_object, "StartTimeTicks"),
-		access_token
-	)
-	if json_boolean_field(request_object, "AllowVideoStreamCopy") == false then
-		url ..= "&allowVideoStreamCopy=false"
-	end
-	if json_boolean_field(request_object, "AllowAudioStreamCopy") == false then
-		url ..= "&allowAudioStreamCopy=false"
-	end
-	return url
-end
-
--- Upstream's `MediaInfoHelper.SetDeviceSpecificData` for an audio source, or the error upstream
--- answers with a 400.
+-- Upstream's `MediaInfoHelper.SetDeviceSpecificData` for an audio source: the stream it built,
+-- if any, or the error upstream answers with a 400.
 local function apply_device_profile(
 	media_source: MediaSource,
-	play_session_id: string,
-	request_object: JsonObject?,
 	device_profile: JsonObject,
-	access_token: string?
-): string?
+	context: UrlContext
+): (StreamInfo?, string?)
+	local request_object = context.request_object
 	local codec_profiles, codec_profiles_err = device_profiles.codec_profiles(device_profile)
 	if codec_profiles == nil then
-		return codec_profiles_err
+		return nil, codec_profiles_err
 	end
 	if json_boolean_field(request_object, "EnableDirectPlay") == false then
 		media_source.SupportsDirectPlay = false
@@ -685,7 +860,7 @@ local function apply_device_profile(
 	local stream, stream_err = optimal_audio_stream(media_source, request_object, device_profile, codec_profiles)
 	local media_source_id = module.trim(media_source.Id)
 	if stream == nil or media_source_id == nil then
-		return stream_err
+		return nil, stream_err
 	end
 
 	-- Upstream takes the default audio stream from the stream it built, which names none for audio.
@@ -695,13 +870,12 @@ local function apply_device_profile(
 	media_source.SupportsDirectStream = stream.direct_play
 	media_source.SupportsTranscoding = has_audio_streaming_profile(device_profile)
 	if stream.direct_play or not media_source.SupportsTranscoding then
-		return nil
+		return stream, nil
 	end
 
 	media_source.TranscodingSubProtocol = if stream.hls then "hls" else "http"
-	media_source.TranscodingUrl =
-		transcoding_url(media_source_id, play_session_id, stream, request_object, access_token)
-	return nil
+	media_source.TranscodingUrl = transcoding_url(media_source_id, stream, context)
+	return stream, nil
 end
 
 local function build_media_info(
@@ -1035,7 +1209,8 @@ function module.build_playback_info(
 	existing_play_session_id: string?,
 	request_object: JsonObject?,
 	requested_media_source_id: string?,
-	access_token: string?
+	access_token: string?,
+	device_id: string?
 ): (ApiJsonValue, string?)
 	local source = module.resolve_playback_source_for_track(track, true)
 	if source == nil then
@@ -1064,9 +1239,18 @@ function module.build_playback_info(
 	-- As upstream, a playable item always lists its source, and only a device profile tailors it.
 	local play_session_id = ensure_playback_session_id(existing_play_session_id)
 	local device_profile = json_object_field(request_object, "DeviceProfile")
+	local context: UrlContext = {
+		play_session_id = play_session_id,
+		request_object = request_object,
+		access_token = access_token,
+		device_id = device_id,
+		device_profile_id = device_profile_id(device_profile),
+		etag = if primary_media_source then primary_media_source.ETag else nil,
+	}
+	local stream: StreamInfo? = nil
 	if primary_media_source and device_profile then
-		local err =
-			apply_device_profile(primary_media_source, play_session_id, request_object, device_profile, access_token)
+		local err
+		stream, err = apply_device_profile(primary_media_source, device_profile, context)
 		if err then
 			return nil, err
 		end
@@ -1086,13 +1270,8 @@ function module.build_playback_info(
 	then
 		primary_media_source.SupportsTranscoding = true
 		primary_media_source.TranscodingSubProtocol = "http"
-		primary_media_source.TranscodingUrl = transcoding_url(
-			primary_media_source_id,
-			play_session_id,
-			{ direct_play = false, hls = false, enable_audio_vbr_encoding = false },
-			request_object,
-			access_token
-		)
+		primary_media_source.TranscodingUrl =
+			transcoding_url(primary_media_source_id, stream or new_stream_info(), context)
 	end
 	return {
 		MediaSources = media_sources,
