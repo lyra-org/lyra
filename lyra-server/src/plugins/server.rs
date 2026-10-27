@@ -58,16 +58,6 @@ fn server_info_spec() -> FunctionSpec {
         .call(server_info_callback)
 }
 
-pub(crate) fn outbound_user_agent() -> String {
-    let version = env!("CARGO_PKG_VERSION");
-    let short_hash = env!("LYRA_GIT_HASH");
-    if short_hash.is_empty() {
-        format!("Lyra/{version} (blue@spook.rip)")
-    } else {
-        format!("Lyra/{version}-{short_hash} (blue@spook.rip)")
-    }
-}
-
 pub(crate) async fn load_server_info() -> anyhow::Result<ServerInfo> {
     let db = STATE.db.read().await;
     let info = lyra_db::server::get(&db)
@@ -82,7 +72,7 @@ pub(crate) async fn load_server_info() -> anyhow::Result<ServerInfo> {
     Ok(ServerInfo {
         id: info.id,
         version: env!("CARGO_PKG_VERSION").to_string(),
-        commit_hash: env!("LYRA_GIT_HASH").to_string(),
+        commit_hash: STATE.boot.get().build.commit_hash.clone(),
         hostname: HOSTNAME.clone(),
         port: STATE.boot.get().port,
         published_url: config.published_url.clone(),

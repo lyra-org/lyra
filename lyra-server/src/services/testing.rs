@@ -36,6 +36,7 @@ pub(crate) use self::test_state::{
 use crate::{
     config::{
         BootConfig,
+        BuildInfo,
         ConfigFile,
         LibraryFile,
     },
@@ -71,6 +72,7 @@ fn memory_boot_config() -> anyhow::Result<BootConfig> {
             kind: DbKind::Memory,
             path: PathBuf::from(unique_db_name),
         },
+        build: BuildInfo::default(),
     })
 }
 

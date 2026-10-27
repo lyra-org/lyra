@@ -9,7 +9,10 @@ use anyhow::{
     Result,
     bail,
 };
-use lyra_server::CaptureArgs;
+use lyra_server::{
+    BuildInfo,
+    CaptureArgs,
+};
 
 #[derive(Debug, PartialEq, Eq)]
 enum Command {
@@ -41,12 +44,21 @@ enum PluginsCommand {
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match parse_command_args(&args)? {
-        Command::Serve { capture } => lyra_server::run_server(capture).await,
+        Command::Serve { capture } => lyra_server::run_server(build_info(), capture).await,
         Command::Db(DbCommand::Optimize) => lyra_server::run_db_optimize().await,
         Command::Settings(SettingsCommand::Reset) => lyra_server::run_settings_reset().await,
         Command::Plugins(PluginsCommand::Add { url, git_ref }) => {
-            lyra_server::run_plugins_add(&url, git_ref.as_deref()).await
+            lyra_server::run_plugins_add(build_info(), &url, git_ref.as_deref()).await
         }
+    }
+}
+
+/// This build's identity, resolved by `build.rs`.
+fn build_info() -> BuildInfo {
+    let release_tag = env!("LYRA_RELEASE_TAG");
+    BuildInfo {
+        commit_hash: env!("LYRA_GIT_HASH").to_string(),
+        release_tag: (!release_tag.is_empty()).then(|| release_tag.to_string()),
     }
 }
 

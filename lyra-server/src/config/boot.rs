@@ -21,6 +21,7 @@ use std::{
 };
 
 use super::{
+    BuildInfo,
     ConfigFile,
     non_empty_path,
 };
@@ -61,6 +62,7 @@ pub(crate) struct BootConfig {
     pub(crate) port: u16,
     pub(crate) data_dir: PathBuf,
     pub(crate) db: DbConfig,
+    pub(crate) build: BuildInfo,
 }
 
 impl Default for BootConfig {
@@ -69,6 +71,7 @@ impl Default for BootConfig {
             port: DEFAULT_PORT,
             data_dir: PathBuf::from(DEFAULT_DATA_DIR),
             db: DbConfig::default(),
+            build: BuildInfo::default(),
         }
     }
 }

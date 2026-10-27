@@ -34,19 +34,26 @@ use harmony_repository::{
 use nanoid::nanoid;
 use tokio::sync::Mutex;
 
+use crate::config::BuildInfo;
 use crate::services::STATE;
 use lyra_db::plugin_repositories as repo_db;
 
 const DEFAULT_ORIGIN: &str = "https://git.lyra.pub/lyra/lyra?forge=gitlab";
 
-static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+/// The client for one repository operation, identified as `build`.
+fn http_client(build: &BuildInfo) -> Result<reqwest::Client, PluginRepoError> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
-        .user_agent(crate::plugins::server::outbound_user_agent())
+        .user_agent(build.user_agent())
         .build()
-        .expect("failed to create plugin repository HTTP client")
-});
+        .map_err(|error| PluginRepoError::Internal(error.into()))
+}
+
+/// The running server's build, for operations reached through the API.
+fn server_build() -> BuildInfo {
+    STATE.boot.get().build.clone()
+}
 
 /// Installs and uninstalls mutate `plugins_dir`; serialize them so staged
 /// trees and runtime reloads never interleave. Every mutating path holds
@@ -56,14 +63,13 @@ static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
 /// Repository resolution (network) always happens before the guard.
 static MUTATION_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
-/// Subscribes the official repository once per database, pinned to this
-/// build's release tag when it has one.
-pub(crate) fn seed_default(db: &mut DbAny) -> anyhow::Result<()> {
+/// Subscribes the official repository once per database, pinned to
+/// `release_tag` when the build has one.
+pub(crate) fn seed_default(db: &mut DbAny, release_tag: Option<&str>) -> anyhow::Result<()> {
     let manifest = harmony_repository::RepositoryManifest::parse(
         include_str!("../../../repository.json"),
         None,
     )?;
-    let release_tag = env!("LYRA_RELEASE_TAG");
     repo_db::seed_default(
         db,
         &repo_db::PluginRepository {
@@ -72,7 +78,7 @@ pub(crate) fn seed_default(db: &mut DbAny) -> anyhow::Result<()> {
             origin: DEFAULT_ORIGIN.to_string(),
             name: manifest.name,
             description: manifest.description,
-            git_ref: (!release_tag.is_empty()).then(|| release_tag.to_string()),
+            git_ref: release_tag.map(str::to_string),
             commit: None,
             refreshed_at_ms: None,
         },
@@ -213,12 +219,20 @@ pub(crate) struct RepositoryPreview {
     pub(crate) plugins: Vec<PluginPreview>,
 }
 
-async fn resolve(url: &str, git_ref: Option<&str>) -> Result<ResolvedRepository, PluginRepoError> {
+async fn resolve(
+    url: &str,
+    git_ref: Option<&str>,
+    build: &BuildInfo,
+) -> Result<ResolvedRepository, PluginRepoError> {
     let spec =
         RepoSpec::parse(url, git_ref).map_err(|e| PluginRepoError::BadRequest(e.to_string()))?;
-    resolve_plugins(&HTTP_CLIENT, &spec, &crate::plugins::module_scope_ids())
-        .await
-        .map_err(map_resolve_error)
+    resolve_plugins(
+        &http_client(build)?,
+        &spec,
+        &crate::plugins::module_scope_ids(),
+    )
+    .await
+    .map_err(map_resolve_error)
 }
 
 fn catalog_status(installed_dir: &Path, available_commit: Option<&str>) -> CatalogStatus {
@@ -338,7 +352,7 @@ pub(crate) async fn resolve_preview(
     url: &str,
     git_ref: Option<&str>,
 ) -> Result<RepositoryPreview, PluginRepoError> {
-    let resolved = resolve(url, git_ref).await?;
+    let resolved = resolve(url, git_ref, &server_build()).await?;
     Ok(build_preview(&resolved, &crate::config::plugins_dir()))
 }
 
@@ -368,13 +382,14 @@ async fn resolve_selection(
     url: &str,
     git_ref: Option<&str>,
     plugin_ids: Option<&[String]>,
+    build: &BuildInfo,
 ) -> Result<ResolvedRepository, PluginRepoError> {
     if plugin_ids.is_some_and(<[String]>::is_empty) {
         return Err(PluginRepoError::BadRequest(
             "no plugins selected to install".to_string(),
         ));
     }
-    let resolved = resolve(url, git_ref).await?;
+    let resolved = resolve(url, git_ref, build).await?;
 
     if let Some(ids) = plugin_ids {
         for id in ids {
@@ -435,8 +450,9 @@ pub(crate) async fn install_to_disk(
     url: &str,
     git_ref: Option<&str>,
     plugin_ids: Option<&[String]>,
+    build: &BuildInfo,
 ) -> Result<InstallReport, PluginRepoError> {
-    let resolved = resolve_selection(url, git_ref, plugin_ids).await?;
+    let resolved = resolve_selection(url, git_ref, plugin_ids, build).await?;
     let _guard = MUTATION_LOCK.lock().await;
     Ok(install_selected(&resolved, plugin_ids))
 }
@@ -447,7 +463,7 @@ pub(crate) async fn install(
     git_ref: Option<&str>,
     plugin_ids: Option<&[String]>,
 ) -> Result<InstallReport, PluginRepoError> {
-    let resolved = resolve_selection(url, git_ref, plugin_ids).await?;
+    let resolved = resolve_selection(url, git_ref, plugin_ids, &server_build()).await?;
     let _guard = MUTATION_LOCK.lock().await;
     let report = install_selected(&resolved, plugin_ids);
     if !report.installed.is_empty() {
@@ -586,12 +602,13 @@ async fn update_plugins_in(
         }
     }
 
+    let build = server_build();
     let mut resolved: HashMap<(String, Option<String>), Result<ResolvedRepository, String>> =
         HashMap::new();
     for (_, record) in &records {
         let key = (record.origin.clone(), record.git_ref.clone());
         if let std::collections::hash_map::Entry::Vacant(entry) = resolved.entry(key) {
-            let result = resolve(&record.origin, record.git_ref.as_deref())
+            let result = resolve(&record.origin, record.git_ref.as_deref(), &build)
                 .await
                 .map_err(|error| error.to_string());
             entry.insert(result);
@@ -693,7 +710,7 @@ pub(crate) async fn add_repository(
     url: &str,
     git_ref: Option<&str>,
 ) -> Result<(repo_db::PluginRepository, RepositoryPreview), PluginRepoError> {
-    let resolved = resolve(url, git_ref).await?;
+    let resolved = resolve(url, git_ref, &server_build()).await?;
     let preview = build_preview(&resolved, &crate::config::plugins_dir());
 
     let origin = resolved.spec.canonical_url();
@@ -742,7 +759,7 @@ pub(crate) async fn refresh_repository(
 ) -> Result<(repo_db::PluginRepository, RepositoryPreview), PluginRepoError> {
     let mut record = load_repository(repository_id).await?;
 
-    let resolved = resolve(&record.origin, record.git_ref.as_deref()).await?;
+    let resolved = resolve(&record.origin, record.git_ref.as_deref(), &server_build()).await?;
     let preview = build_preview(&resolved, &crate::config::plugins_dir());
 
     record.name = preview.name.clone();
@@ -796,13 +813,12 @@ mod tests {
     #[test]
     fn seeds_official_repository_at_release_tag() -> anyhow::Result<()> {
         let mut db = lyra_db::test_db::new_test_db()?;
-        seed_default(&mut db)?;
+        seed_default(&mut db, Some("v1.2.3"))?;
         let repositories = repo_db::list(&db)?;
         assert_eq!(repositories.len(), 1);
         let record = &repositories[0];
         assert_eq!(record.origin, DEFAULT_ORIGIN);
-        let tag = env!("LYRA_RELEASE_TAG");
-        assert_eq!(record.git_ref.as_deref(), (!tag.is_empty()).then_some(tag));
+        assert_eq!(record.git_ref.as_deref(), Some("v1.2.3"));
         assert_eq!(record.commit, None);
         assert_eq!(record.refreshed_at_ms, None);
         Ok(())
@@ -920,7 +936,13 @@ mod tests {
     #[tokio::test]
     async fn install_to_disk_rejects_empty_selection() {
         assert!(matches!(
-            install_to_disk("https://github.com/o/r", None, Some(&[])).await,
+            install_to_disk(
+                "https://github.com/o/r",
+                None,
+                Some(&[]),
+                &BuildInfo::default(),
+            )
+            .await,
             Err(PluginRepoError::BadRequest(_))
         ));
     }

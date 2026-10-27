@@ -26,13 +26,14 @@ pub(crate) fn initialize_state(file: ConfigFile) -> anyhow::Result<()> {
         created
             .unshared_mut()
             .ok_or_else(|| anyhow::anyhow!("database was shared before it was seeded"))?,
+        boot.build.release_tag.as_deref(),
     )?;
     services::STATE.initialize(boot, created, resolved)
 }
 
 /// [`services::testing::start_runtime`] plus the outbound user agent.
 pub(crate) async fn start_runtime() -> anyhow::Result<()> {
-    harmony_http::set_default_user_agent(plugins::server::outbound_user_agent());
+    harmony_http::set_default_user_agent(services::STATE.boot.get().build.user_agent());
     services::testing::start_runtime().await
 }
 

@@ -32,6 +32,8 @@ mod routes;
 mod services;
 pub mod testing;
 
+pub use config::BuildInfo;
+
 use plugins::bootstrap as plugin_bootstrap;
 use services::hls::init as hls_init;
 use services::libraries::LibraryConfig;
@@ -40,9 +42,9 @@ use services::settings::server::{
     SettingSource,
 };
 
-pub async fn run_server(capture: Option<CaptureArgs>) -> Result<()> {
+pub async fn run_server(build: BuildInfo, capture: Option<CaptureArgs>) -> Result<()> {
     let _tracing_guard = init_tracing();
-    let loaded = config::load()?;
+    let loaded = config::load(build)?;
     // Validate the file before touching the port, directories, or database.
     let library = LibraryConfig::resolve(loaded.file.library.as_ref())?;
     let file_settings = server_settings::normalize_file(&loaded.file.settings, &loaded.boot)?;
@@ -60,6 +62,7 @@ pub async fn run_server(capture: Option<CaptureArgs>) -> Result<()> {
         created
             .unshared_mut()
             .ok_or_else(|| anyhow::anyhow!("database was shared before it was seeded"))?,
+        loaded.boot.build.release_tag.as_deref(),
     )?;
     let resolved =
         services::state::resolve_settings(&mut created, &loaded.boot, library, file_settings)?;
@@ -88,7 +91,7 @@ async fn serve(capture: Option<CaptureArgs>, listener: TcpListener) -> Result<()
     let shutdown_token = services::shutdown::reset();
     let config = services::STATE.config();
     log_setting_overrides();
-    harmony_http::set_default_user_agent(crate::plugins::server::outbound_user_agent());
+    harmony_http::set_default_user_agent(services::STATE.boot.get().build.user_agent());
     hls_init::initialize().await;
     services::transcoding::initialize().await;
     plugins::playback_sources::install_delivery_decider(routes::plugin_api::decide_delivery);
@@ -235,8 +238,8 @@ pub fn asyncapi_spec() -> impl serde::Serialize {
 /// Installs plugins from a Git repository into the plugins directory.
 /// Disk-only: the next server start (or a runtime reload through the API)
 /// loads them, so this works whether or not the server is running.
-pub async fn run_plugins_add(url: &str, git_ref: Option<&str>) -> Result<()> {
-    let report = plugins::repositories::install_to_disk(url, git_ref, None)
+pub async fn run_plugins_add(build: BuildInfo, url: &str, git_ref: Option<&str>) -> Result<()> {
+    let report = plugins::repositories::install_to_disk(url, git_ref, None, &build)
         .await
         .map_err(|err| anyhow::anyhow!("{err}"))?;
 
@@ -271,7 +274,7 @@ struct CliDb {
 /// `command` is the CLI command name (for example `db optimize`) used in
 /// diagnostics; `verb` describes the action in "nothing to <verb>" errors.
 fn open_cli_db(command: &'static str, verb: &str) -> Result<CliDb> {
-    let boot = config::load()?.boot;
+    let boot = config::load(BuildInfo::default())?.boot;
     if matches!(boot.db.kind, lyra_db::bootstrap::DbKind::Memory) {
         anyhow::bail!(
             "nothing to {verb}: db kind is memory; configure DbKind::File or DbKind::Mmap to use this command"
