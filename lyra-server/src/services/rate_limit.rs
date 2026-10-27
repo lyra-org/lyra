@@ -16,10 +16,6 @@ use std::{
         Arc,
         LazyLock,
         Mutex,
-        atomic::{
-            AtomicBool,
-            Ordering,
-        },
     },
     time::{
         Duration,
@@ -35,7 +31,6 @@ use axum::{
         State,
     },
     http::{
-        HeaderMap,
         HeaderValue,
         Method,
         StatusCode,
@@ -51,32 +46,36 @@ use axum::{
     },
 };
 
-use crate::services::settings::server::{
-    Config,
-    RateLimitConfig,
+use crate::services::{
+    auth::caller::ClientAddress,
+    settings::server::{
+        Config,
+        RateLimitConfig,
+    },
 };
 
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
 const IDLE_BUCKET_TTL: Duration = Duration::from_secs(600);
-const UNKNOWN_CLIENT: &str = "unknown";
-static MISSING_CONNECT_INFO_WARNED: AtomicBool = AtomicBool::new(false);
-static UNTRUSTED_FORWARD_HEADERS_WARNED: AtomicBool = AtomicBool::new(false);
 
+/// Resolves each request's [`ClientAddress`] into its extensions and, when rate limiting is
+/// enabled, limits the request.
 pub(crate) fn apply(router: Router, config: &Config) -> Router {
-    if !config.rate_limit.enabled {
-        return router;
-    }
-
     let limiter = Arc::new(RateLimiter::new(&config.rate_limit));
     router.layer(middleware::from_fn_with_state(limiter, enforce))
 }
 
 async fn enforce(
     State(limiter): State<Arc<RateLimiter>>,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Response {
-    match limiter.check(&request) {
+    let client = ClientAddress::resolve(
+        peer_addr(&request),
+        request.headers(),
+        &limiter.config.trusted_proxies,
+    );
+    request.extensions_mut().insert(client);
+    match limiter.check(&request, client) {
         Ok(()) => next.run(request).await,
         Err(retry_after) => too_many_requests_response(retry_after),
     }
@@ -126,6 +125,7 @@ impl Policy {
 
 #[derive(Clone)]
 struct RuntimeConfig {
+    enabled: bool,
     trusted_proxies: HashSet<IpAddr>,
     global: Option<Policy>,
     authenticated: Option<Policy>,
@@ -134,52 +134,12 @@ struct RuntimeConfig {
 impl RuntimeConfig {
     fn from_config(config: &RateLimitConfig) -> Self {
         Self {
+            enabled: config.enabled,
             trusted_proxies: config.trusted_proxies.iter().copied().collect(),
             global: Policy::new(config.global_per_minute, config.global_burst),
             authenticated: Policy::new(config.authenticated_per_minute, config.authenticated_burst),
         }
     }
-}
-
-/// Client identity resolved once at the HTTP boundary with trusted-proxy
-/// awareness, for consumers below the middleware (e.g. login throttling).
-#[derive(Clone)]
-pub(crate) struct RequestClientKey(pub(crate) Arc<str>);
-
-pub(crate) fn request_client_key(peer: Option<SocketAddr>, headers: &HeaderMap) -> String {
-    let trusted_proxies: HashSet<IpAddr> = crate::STATE
-        .startup_config
-        .get()
-        .rate_limit
-        .trusted_proxies
-        .iter()
-        .copied()
-        .collect();
-    resolve_client_key(peer, headers, &trusted_proxies)
-}
-
-fn resolve_client_key(
-    peer: Option<SocketAddr>,
-    headers: &HeaderMap,
-    trusted_proxies: &HashSet<IpAddr>,
-) -> String {
-    let Some(peer) = peer else {
-        warn_missing_connect_info();
-        return UNKNOWN_CLIENT.to_string();
-    };
-
-    let peer_ip = peer.ip();
-    if trusted_proxies.contains(&peer_ip) {
-        return forwarded_client_ip(headers, trusted_proxies)
-            .unwrap_or(peer_ip)
-            .to_string();
-    }
-
-    if has_forwarded_client_headers(headers) {
-        warn_untrusted_forward_headers(peer_ip);
-    }
-
-    peer_ip.to_string()
 }
 
 static LOGIN_LIMITER: LazyLock<Mutex<LimiterState>> =
@@ -188,7 +148,7 @@ static LOGIN_LIMITER: LazyLock<Mutex<LimiterState>> =
 /// Charges one login attempt against the client's brute-force budget. Lives in
 /// the service layer so every credential-verifying caller is covered, not just
 /// path-matched REST routes.
-pub(crate) fn check_login_rate(client: Option<&str>) -> Result<(), Duration> {
+pub(crate) fn check_login_rate(client: ClientAddress) -> Result<(), Duration> {
     let config = crate::STATE.startup_config.get();
     if !config.rate_limit.enabled {
         return Ok(());
@@ -200,18 +160,13 @@ pub(crate) fn check_login_rate(client: Option<&str>) -> Result<(), Duration> {
         return Ok(());
     };
 
-    check_login_bucket(
-        &LOGIN_LIMITER,
-        policy,
-        client.unwrap_or(UNKNOWN_CLIENT),
-        Instant::now(),
-    )
+    check_login_bucket(&LOGIN_LIMITER, policy, client, Instant::now())
 }
 
 fn check_login_bucket(
     limiter: &Mutex<LimiterState>,
     policy: Policy,
-    client: &str,
+    client: ClientAddress,
     now: Instant,
 ) -> Result<(), Duration> {
     let mut state = limiter.lock().expect("login rate limiter state poisoned");
@@ -219,7 +174,7 @@ fn check_login_bucket(
 
     let bucket = state
         .buckets
-        .entry(BucketKey::Login(client.to_string()))
+        .entry(BucketKey::Login(client))
         .or_insert_with(|| Bucket::new(policy.capacity(), now));
     bucket.refill(policy, now);
     if let Some(retry_after) = policy.retry_after(bucket.tokens) {
@@ -243,10 +198,13 @@ impl RateLimiter {
         }
     }
 
-    fn check(&self, request: &Request) -> Result<(), Duration> {
+    fn check(&self, request: &Request, client: ClientAddress) -> Result<(), Duration> {
+        if !self.config.enabled {
+            return Ok(());
+        }
         let path = request.uri().path();
         let plugin_route = !is_api_path(path) && crate::plugins::api::is_plugin_route_path(path);
-        let checks = self.checks_for_request(request, plugin_route);
+        let checks = self.checks_for_request(request, client, plugin_route);
         if checks.is_empty() {
             return Ok(());
         }
@@ -282,7 +240,12 @@ impl RateLimiter {
         Ok(())
     }
 
-    fn checks_for_request(&self, request: &Request, plugin_route: bool) -> Vec<Check> {
+    fn checks_for_request(
+        &self,
+        request: &Request,
+        client: ClientAddress,
+        plugin_route: bool,
+    ) -> Vec<Check> {
         let method = request.method();
         if *method == Method::OPTIONS {
             return Vec::new();
@@ -295,7 +258,7 @@ impl RateLimiter {
                 return Vec::new();
             };
             return vec![Check {
-                key: BucketKey::Global(self.client_key(request)),
+                key: BucketKey::Global(client),
                 policy,
             }];
         }
@@ -305,11 +268,10 @@ impl RateLimiter {
             return Vec::new();
         }
 
-        let client = self.client_key(request);
         let mut checks = Vec::with_capacity(2);
         if let Some(policy) = self.config.global {
             checks.push(Check {
-                key: BucketKey::Global(client.clone()),
+                key: BucketKey::Global(client),
                 policy,
             });
         }
@@ -328,14 +290,6 @@ impl RateLimiter {
         }
 
         checks
-    }
-
-    fn client_key(&self, request: &Request) -> String {
-        resolve_client_key(
-            peer_addr(request),
-            request.headers(),
-            &self.config.trusted_proxies,
-        )
     }
 }
 
@@ -370,9 +324,9 @@ struct Check {
 
 #[derive(Clone, Eq, Hash, PartialEq)]
 enum BucketKey {
-    Global(String),
+    Global(ClientAddress),
     Authenticated(String),
-    Login(String),
+    Login(ClientAddress),
 }
 
 struct Bucket {
@@ -422,104 +376,6 @@ fn peer_addr(request: &Request) -> Option<SocketAddr> {
         .map(|ConnectInfo(addr)| *addr)
 }
 
-fn forwarded_client_ip(headers: &HeaderMap, trusted_proxies: &HashSet<IpAddr>) -> Option<IpAddr> {
-    x_forwarded_for_client_ip(headers, trusted_proxies)
-        .or_else(|| forwarded_header_client_ip(headers, trusted_proxies))
-        .or_else(|| x_real_ip(headers))
-}
-
-fn x_forwarded_for_client_ip(
-    headers: &HeaderMap,
-    trusted_proxies: &HashSet<IpAddr>,
-) -> Option<IpAddr> {
-    let raw = headers.get("x-forwarded-for")?.to_str().ok()?;
-    let ips = raw
-        .split(',')
-        .filter_map(parse_forwarded_ip)
-        .collect::<Vec<_>>();
-    select_forwarded_client_ip(&ips, trusted_proxies)
-}
-
-fn forwarded_header_client_ip(
-    headers: &HeaderMap,
-    trusted_proxies: &HashSet<IpAddr>,
-) -> Option<IpAddr> {
-    let raw = headers.get("forwarded")?.to_str().ok()?;
-    let ips = raw
-        .split(',')
-        .filter_map(|entry| {
-            entry.split(';').find_map(|part| {
-                let (key, value) = part.split_once('=')?;
-                key.trim()
-                    .eq_ignore_ascii_case("for")
-                    .then(|| parse_forwarded_ip(value))
-                    .flatten()
-            })
-        })
-        .collect::<Vec<_>>();
-    select_forwarded_client_ip(&ips, trusted_proxies)
-}
-
-fn x_real_ip(headers: &HeaderMap) -> Option<IpAddr> {
-    headers
-        .get("x-real-ip")
-        .and_then(|value| value.to_str().ok())
-        .and_then(parse_forwarded_ip)
-}
-
-fn select_forwarded_client_ip(ips: &[IpAddr], trusted_proxies: &HashSet<IpAddr>) -> Option<IpAddr> {
-    ips.iter()
-        .rev()
-        .copied()
-        .find(|ip| !trusted_proxies.contains(ip))
-        .or_else(|| ips.first().copied())
-}
-
-fn parse_forwarded_ip(raw: &str) -> Option<IpAddr> {
-    let value = raw.trim().trim_matches('"');
-    if value.is_empty() || value.eq_ignore_ascii_case("unknown") {
-        return None;
-    }
-
-    if let Some(rest) = value.strip_prefix('[') {
-        let (host, _) = rest.split_once(']')?;
-        return host.parse().ok();
-    }
-
-    if let Ok(ip) = value.parse() {
-        return Some(ip);
-    }
-
-    if let Some((host, _port)) = value.rsplit_once(':')
-        && !host.contains(':')
-    {
-        return host.parse().ok();
-    }
-
-    None
-}
-
-fn has_forwarded_client_headers(headers: &HeaderMap) -> bool {
-    headers.contains_key("x-forwarded-for")
-        || headers.contains_key("forwarded")
-        || headers.contains_key("x-real-ip")
-}
-
-fn warn_missing_connect_info() {
-    if !MISSING_CONNECT_INFO_WARNED.swap(true, Ordering::Relaxed) {
-        tracing::warn!("rate limiter cannot identify client address; using shared fallback bucket");
-    }
-}
-
-fn warn_untrusted_forward_headers(peer_ip: IpAddr) {
-    if !UNTRUSTED_FORWARD_HEADERS_WARNED.swap(true, Ordering::Relaxed) {
-        tracing::warn!(
-            peer_ip = %peer_ip,
-            "rate limiter ignored forwarded client headers from an untrusted peer"
-        );
-    }
-}
-
 fn credential_key(request: &Request) -> Option<String> {
     let raw = request
         .headers()
@@ -558,6 +414,10 @@ mod tests {
 
     use super::*;
 
+    fn address(raw: &str) -> ClientAddress {
+        ClientAddress::new(raw.parse().expect("valid ip"))
+    }
+
     fn disabled_rate_limit_config() -> RateLimitConfig {
         RateLimitConfig {
             enabled: true,
@@ -586,11 +446,11 @@ mod tests {
             .expect("request should build")
     }
 
-    fn request_with_peer(method: Method, path: &str, peer_ip: [u8; 4]) -> Request<Body> {
+    fn request_with_peer(method: Method, path: &str, peer_ip: impl Into<IpAddr>) -> Request<Body> {
         let mut request = request(method, path);
         request
             .extensions_mut()
-            .insert(ConnectInfo(SocketAddr::from((peer_ip, 4746))));
+            .insert(ConnectInfo(SocketAddr::new(peer_ip.into(), 4746)));
         request
     }
 
@@ -609,7 +469,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn login_policy_and_proxy_trust_stay_at_startup_values() -> anyhow::Result<()> {
+    async fn login_policy_stays_at_startup_values() -> anyhow::Result<()> {
         let _guard = crate::testing::runtime_test_lock().await;
         crate::testing::init_default_test_state()?;
         let mut startup = (*crate::STATE.config()).clone();
@@ -620,64 +480,14 @@ mod tests {
         crate::STATE
             .startup_config
             .replace(Arc::new(startup.clone()));
-        let client = "startup-policy-regression";
+        let client = address("192.0.2.200");
         LOGIN_LIMITER.lock().unwrap().buckets.clear();
-        assert!(check_login_rate(Some(client)).is_ok());
+        assert!(check_login_rate(client).is_ok());
         startup.rate_limit.enabled = false;
-        startup
-            .rate_limit
-            .trusted_proxies
-            .push("127.0.0.1".parse()?);
         crate::testing::publish_config(startup);
         assert!(!crate::STATE.config().rate_limit.enabled);
-        assert!(check_login_rate(Some(client)).is_err());
-        let mut headers = HeaderMap::new();
-        headers.insert("x-forwarded-for", "203.0.113.7".parse()?);
-        assert_eq!(
-            request_client_key(Some("127.0.0.1:1234".parse()?), &headers),
-            "127.0.0.1"
-        );
+        assert!(check_login_rate(client).is_err());
         Ok(())
-    }
-
-    #[test]
-    fn forwarded_header_reads_for_value() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "forwarded",
-            HeaderValue::from_static("for=203.0.113.10;proto=https"),
-        );
-
-        assert_eq!(
-            forwarded_header_client_ip(&headers, &HashSet::new()),
-            Some(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10)))
-        );
-    }
-
-    #[test]
-    fn forwarded_chain_uses_first_untrusted_from_the_right() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-forwarded-for",
-            HeaderValue::from_static("198.51.100.99, 203.0.113.10, 127.0.0.1"),
-        );
-        let trusted = HashSet::from([IpAddr::V4(Ipv4Addr::LOCALHOST)]);
-
-        assert_eq!(
-            x_forwarded_for_client_ip(&headers, &trusted),
-            Some(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10)))
-        );
-    }
-
-    #[test]
-    fn x_real_ip_reads_single_client_ip() {
-        let mut headers = HeaderMap::new();
-        headers.insert("x-real-ip", HeaderValue::from_static("203.0.113.10"));
-
-        assert_eq!(
-            x_real_ip(&headers),
-            Some(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10)))
-        );
     }
 
     #[test]
@@ -694,14 +504,15 @@ mod tests {
             header::AUTHORIZATION,
             HeaderValue::from_static("Custom Token=abc"),
         );
-        let checks = limiter.checks_for_request(&plugin_request, true);
+        let client = address("203.0.113.20");
+        let checks = limiter.checks_for_request(&plugin_request, client, true);
         assert_eq!(checks.len(), 1);
         assert!(matches!(checks[0].key, BucketKey::Global(_)));
 
         let static_request = request_with_peer(Method::GET, "/assets/app.js", [203, 0, 113, 20]);
         assert!(
             limiter
-                .checks_for_request(&static_request, false)
+                .checks_for_request(&static_request, client, false)
                 .is_empty()
         );
     }
@@ -712,12 +523,58 @@ mod tests {
         let policy = Policy::new(60, 2).expect("policy should be enabled");
         let now = Instant::now();
 
-        assert!(check_login_bucket(&limiter, policy, "203.0.113.5", now).is_ok());
-        assert!(check_login_bucket(&limiter, policy, "203.0.113.5", now).is_ok());
-        let retry_after = check_login_bucket(&limiter, policy, "203.0.113.5", now)
+        let client = address("203.0.113.5");
+
+        assert!(check_login_bucket(&limiter, policy, client, now).is_ok());
+        assert!(check_login_bucket(&limiter, policy, client, now).is_ok());
+        let retry_after = check_login_bucket(&limiter, policy, client, now)
             .expect_err("third attempt should throttle");
         assert_eq!(retry_after, Duration::from_secs(1));
-        assert!(check_login_bucket(&limiter, policy, "203.0.113.6", now).is_ok());
+        assert!(check_login_bucket(&limiter, policy, address("203.0.113.6"), now).is_ok());
+    }
+
+    #[tokio::test]
+    async fn client_address_is_resolved_with_rate_limiting_disabled() -> anyhow::Result<()> {
+        let mut rate_limit = disabled_rate_limit_config();
+        rate_limit.enabled = false;
+        let app = apply(
+            Router::new().route(
+                "/api/auth/login",
+                axum::routing::post(
+                    |axum::Extension(client): axum::Extension<ClientAddress>| async move {
+                        client.to_string()
+                    },
+                ),
+            ),
+            &config_with_rate_limit(rate_limit),
+        );
+
+        let response = app
+            .oneshot(request_with_peer(
+                Method::POST,
+                "/api/auth/login",
+                "2001:db8:1:2::9".parse::<IpAddr>()?,
+            ))
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        assert_eq!(body, "2001:db8:1:2::/64");
+        Ok(())
+    }
+
+    #[test]
+    fn login_bucket_groups_ipv6_clients_by_their_64() {
+        let limiter = Mutex::new(LimiterState::new());
+        let policy = Policy::new(60, 1).expect("policy should be enabled");
+        let now = Instant::now();
+
+        assert!(check_login_bucket(&limiter, policy, address("2001:db8:1:2::1"), now).is_ok());
+        assert!(
+            check_login_bucket(&limiter, policy, address("2001:db8:1:2:ffff::2"), now).is_err(),
+            "rotating addresses within a /64 buys no more attempts"
+        );
+        assert!(check_login_bucket(&limiter, policy, address("2001:db8:1:3::1"), now).is_ok());
     }
 
     #[tokio::test]
@@ -822,6 +679,33 @@ mod tests {
 
         assert_eq!(first.status(), StatusCode::OK);
         assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn ipv6_clients_share_a_request_budget_across_their_64() -> anyhow::Result<()> {
+        let mut rate_limit = disabled_rate_limit_config();
+        rate_limit.global_per_minute = 60;
+        rate_limit.global_burst = 1;
+        let app = apply(
+            Router::new().route("/api/server/public", get(|| async { "ok" })),
+            &config_with_rate_limit(rate_limit),
+        );
+        let from = |raw: &str| {
+            request_with_peer(
+                Method::GET,
+                "/api/server/public",
+                raw.parse::<IpAddr>().expect("valid ip"),
+            )
+        };
+
+        let first = app.clone().oneshot(from("2001:db8:1:2::1")).await?;
+        let same_64 = app.clone().oneshot(from("2001:db8:1:2:ffff::2")).await?;
+        let other_64 = app.oneshot(from("2001:db8:1:3::1")).await?;
+
+        assert_eq!(first.status(), StatusCode::OK);
+        assert_eq!(same_64.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(other_64.status(), StatusCode::OK);
         Ok(())
     }
 

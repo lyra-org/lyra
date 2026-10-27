@@ -144,7 +144,7 @@ pub(crate) async fn stream_track_response(
     transcoded_response(
         method,
         headers,
-        access.capacity_account(),
+        access.caller(),
         source,
         delivery,
         DeliveryTarget::Stream,

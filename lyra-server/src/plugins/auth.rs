@@ -232,7 +232,7 @@ pub(crate) fn module_spec() -> ModuleSpec {
 /// made on behalf of a plugin-served request (e.g. login) can be attributed
 /// to the remote client rather than the server process.
 #[derive(Clone)]
-pub(crate) struct DispatchClient(pub(crate) Option<String>);
+pub(crate) struct DispatchClient(pub(crate) crate::services::auth::caller::ClientAddress);
 
 /// Per-dispatch slot holding the principal currently acting for the dispatch.
 /// Seeded from boundary bearer auth at dispatch start, overwritten whenever
@@ -359,8 +359,8 @@ fn login_callback(
         .context
         .caller
         .get::<DispatchClient>()
-        .ok()
-        .and_then(|client| client.0.clone());
+        .map(|client| client.0)
+        .unwrap_or_default();
     Ok(luau::ScheduledFuture::new(async move {
         let metadata = SessionMetadata {
             user_agent,
@@ -370,7 +370,7 @@ fn login_callback(
             &username,
             password.as_deref().unwrap_or(""),
             metadata,
-            client.as_deref(),
+            client,
         )
         .await
         {

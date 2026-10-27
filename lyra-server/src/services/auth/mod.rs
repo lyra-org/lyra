@@ -50,6 +50,7 @@ pub(crate) const DEFAULT_USERNAME: &str = "default";
 
 pub(crate) mod access;
 pub(crate) mod api_keys;
+pub(crate) mod caller;
 pub(crate) mod media_tokens;
 pub(crate) mod sessions;
 
@@ -564,7 +565,7 @@ pub(crate) async fn login_with_password(
     username: &str,
     password: &str,
     metadata: sessions::SessionMetadata,
-    client: Option<&str>,
+    client: caller::ClientAddress,
 ) -> AuthResult<Option<LoginResult>> {
     if let Err(retry_after) = crate::services::rate_limit::check_login_rate(client) {
         return Err(AuthError::RateLimited(retry_after));

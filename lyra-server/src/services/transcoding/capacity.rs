@@ -5,16 +5,14 @@
 
 //! How many encodes may run at once. Every running FFmpeg encode, HLS or progressive, holds a
 //! permit against `transcoding.max_concurrent` until it stops. Progressive encodes also count
-//! against `transcoding.max_concurrent_per_user` for the [`Account`] they are charged to, and are
-//! refused rather than queued when a limit is reached. Anonymous accounts, clients identified
-//! only by their address, together get at most half the global pool, rounded down, so
-//! authenticated users always keep at least the other half, and at least one encode, however
-//! many addresses a client can rotate through. HLS jobs, shared across sessions and users, wait
-//! a short while for a permit.
+//! against `transcoding.max_concurrent_per_user` for the [`Caller`] they are charged to, and are
+//! refused rather than queued when a limit is reached. Anonymous callers together get at most
+//! half the global pool, rounded down, so authenticated users always keep at least the other
+//! half, and at least one encode. HLS jobs, shared across sessions and users, wait a short while
+//! for a permit.
 
 use std::{
     collections::HashMap,
-    net::IpAddr,
     sync::{
         Arc,
         LazyLock,
@@ -25,49 +23,15 @@ use std::{
 
 use tokio::sync::Notify;
 
+use crate::services::auth::caller::{
+    Account,
+    Caller,
+};
+
 /// How long a refused request is told to wait before retrying.
 pub(crate) const SATURATED_RETRY_AFTER: Duration = Duration::from_secs(5);
 /// How long an HLS job waits for a permit before its request is refused.
 const SHARED_WAIT: Duration = Duration::from_secs(10);
-
-/// Whom a progressive encode is charged to.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Account {
-    User(String),
-    /// An anonymous client, by its address key.
-    Client(String),
-    /// Anonymous, without even an address.
-    Unknown,
-}
-
-impl Account {
-    /// An anonymous client's account. IPv6 clients are grouped by their /64, the block one
-    /// subscriber usually holds, so rotating addresses within it buys no extra allowance.
-    pub(crate) fn client(client_key: &str) -> Self {
-        let key = match client_key.parse::<IpAddr>() {
-            Ok(IpAddr::V6(address)) => {
-                let segments = address.segments();
-                let prefix = std::net::Ipv6Addr::new(
-                    segments[0],
-                    segments[1],
-                    segments[2],
-                    segments[3],
-                    0,
-                    0,
-                    0,
-                    0,
-                );
-                format!("{prefix}/64")
-            }
-            _ => client_key.to_string(),
-        };
-        Self::Client(key)
-    }
-
-    fn is_anonymous(&self) -> bool {
-        !matches!(self, Self::User(_))
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Limits {
@@ -86,10 +50,13 @@ impl Limits {
         }
     }
 
-    /// Whether anonymous accounts, running `active` encodes together, may start another. A pool
-    /// of one leaves them none.
-    fn anonymous_allows(self, active: usize) -> bool {
-        self.global == 0 || active < (self.global / 2) as usize
+    /// Whether `account`, running `active` encodes, may start another.
+    fn allow(self, account: &Account, active: usize) -> bool {
+        match account {
+            Account::Caller(_) => below(self.per_user, active),
+            // A pool of one leaves anonymous callers none.
+            Account::Anonymous => self.global == 0 || active < (self.global / 2) as usize,
+        }
     }
 }
 
@@ -100,25 +67,7 @@ fn below(limit: u32, active: usize) -> bool {
 #[derive(Default)]
 struct Active {
     total: usize,
-    anonymous: usize,
-    by_account: HashMap<AccountKey, usize>,
-}
-
-/// An account as counted: a user, or an anonymous client (with `None` for no address).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-enum AccountKey {
-    User(String),
-    Client(Option<String>),
-}
-
-impl From<&Account> for AccountKey {
-    fn from(account: &Account) -> Self {
-        match account {
-            Account::User(user) => Self::User(user.clone()),
-            Account::Client(client) => Self::Client(Some(client.clone())),
-            Account::Unknown => Self::Client(None),
-        }
-    }
+    by_account: HashMap<Account, usize>,
 }
 
 #[derive(Default)]
@@ -130,7 +79,7 @@ pub(crate) struct TranscodeCapacity {
 /// A running encode's claim on capacity, released when dropped.
 pub(crate) struct TranscodePermit {
     capacity: Arc<TranscodeCapacity>,
-    account: Option<AccountKey>,
+    accounts: Vec<Account>,
 }
 
 impl Drop for TranscodePermit {
@@ -138,10 +87,7 @@ impl Drop for TranscodePermit {
         {
             let mut active = self.capacity.lock();
             active.total -= 1;
-            if let Some(account) = &self.account {
-                if matches!(account, AccountKey::Client(_)) {
-                    active.anonymous -= 1;
-                }
+            for account in &self.accounts {
                 if let Some(count) = active.by_account.get_mut(account) {
                     *count -= 1;
                     if *count == 0 {
@@ -154,7 +100,7 @@ impl Drop for TranscodePermit {
     }
 }
 
-/// No permit was free: the server, the account, or anonymous callers together are at their limit.
+/// No permit was free: the server, the caller, or anonymous callers together are at their limit.
 #[derive(Debug, thiserror::Error)]
 #[error("too many transcodes are running; retry shortly")]
 pub(crate) struct Saturated;
@@ -179,7 +125,7 @@ impl TranscodeCapacity {
                     active.total += 1;
                     return TranscodePermit {
                         capacity: Arc::clone(self),
-                        account: None,
+                        accounts: Vec::new(),
                     };
                 }
             }
@@ -187,33 +133,31 @@ impl TranscodeCapacity {
         }
     }
 
-    /// A permit for an encode charged to `account`, or [`Saturated`] when the global limit, the
-    /// account's, or the anonymous accounts' together is reached.
+    /// A permit for an encode charged to `caller`, or [`Saturated`] when the global limit, the
+    /// caller's, or the anonymous callers' together is reached.
     pub(crate) fn try_acquire(
         self: &Arc<Self>,
         limits: Limits,
-        account: &Account,
+        caller: &Caller,
     ) -> Result<TranscodePermit, Saturated> {
-        let key = AccountKey::from(account);
+        let accounts = caller.accounts().collect::<Vec<_>>();
         let mut active = self.lock();
         if !below(limits.global, active.total) {
             return Err(Saturated);
         }
-        if account.is_anonymous() && !limits.anonymous_allows(active.anonymous) {
-            return Err(Saturated);
+        for account in &accounts {
+            let count = active.by_account.get(account).copied().unwrap_or(0);
+            if !limits.allow(account, count) {
+                return Err(Saturated);
+            }
         }
-        let count = active.by_account.get(&key).copied().unwrap_or(0);
-        if !below(limits.per_user, count) {
-            return Err(Saturated);
+        for account in &accounts {
+            *active.by_account.entry(account.clone()).or_default() += 1;
         }
-        *active.by_account.entry(key.clone()).or_default() += 1;
         active.total += 1;
-        if account.is_anonymous() {
-            active.anonymous += 1;
-        }
         Ok(TranscodePermit {
             capacity: Arc::clone(self),
-            account: Some(key),
+            accounts,
         })
     }
 }
@@ -230,14 +174,15 @@ pub(crate) async fn acquire_shared() -> Result<TranscodePermit, Saturated> {
         .map_err(|_| Saturated)
 }
 
-/// A permit for a progressive encode charged to `account`, without waiting.
-pub(crate) fn try_acquire_for(account: &Account) -> Result<TranscodePermit, Saturated> {
-    CAPACITY.try_acquire(Limits::current(), account)
+/// A permit for a progressive encode charged to `caller`, without waiting.
+pub(crate) fn try_acquire_for(caller: &Caller) -> Result<TranscodePermit, Saturated> {
+    CAPACITY.try_acquire(Limits::current(), caller)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::auth::caller::ClientAddress;
     use std::sync::atomic::{
         AtomicU32,
         Ordering,
@@ -245,6 +190,18 @@ mod tests {
 
     fn limits(global: u32, per_user: u32) -> Limits {
         Limits { global, per_user }
+    }
+
+    fn user(name: &str) -> Caller {
+        Caller::User(name.to_string())
+    }
+
+    fn client(raw: &str) -> Caller {
+        Caller::Client(ClientAddress::new(raw.parse().expect("valid ip")))
+    }
+
+    fn unknown() -> Caller {
+        Caller::Client(ClientAddress::default())
     }
 
     #[tokio::test]
@@ -291,65 +248,21 @@ mod tests {
         let capacity = Arc::new(TranscodeCapacity::default());
         let limits = limits(3, 2);
 
-        let first = capacity
-            .try_acquire(limits, &Account::User("amy".into()))
-            .expect("free");
-        let second = capacity
-            .try_acquire(limits, &Account::User("amy".into()))
-            .expect("free");
+        let first = capacity.try_acquire(limits, &user("amy")).expect("free");
+        let second = capacity.try_acquire(limits, &user("amy")).expect("free");
+        assert!(capacity.try_acquire(limits, &user("amy")).is_err());
+        let other = capacity.try_acquire(limits, &user("bob")).expect("free");
         assert!(
-            capacity
-                .try_acquire(limits, &Account::User("amy".into()))
-                .is_err()
-        );
-        let other = capacity
-            .try_acquire(limits, &Account::User("bob".into()))
-            .expect("free");
-        assert!(
-            capacity.try_acquire(limits, &Account::Unknown).is_err(),
+            capacity.try_acquire(limits, &unknown()).is_err(),
             "the global limit binds anonymous encodes"
         );
 
         drop(first);
-        let third = capacity
-            .try_acquire(limits, &Account::User("amy".into()))
-            .expect("freed");
+        let third = capacity.try_acquire(limits, &user("amy")).expect("freed");
         drop((second, third, other));
         let active = capacity.lock();
         assert_eq!(active.total, 0);
         assert!(active.by_account.is_empty());
-    }
-
-    #[test]
-    fn users_keep_an_encode_however_small_the_pool() {
-        let capacity = Arc::new(TranscodeCapacity::default());
-
-        assert!(
-            capacity
-                .try_acquire(limits(1, 0), &Account::Unknown)
-                .is_err(),
-            "a pool of one is the users'"
-        );
-        let anonymous = capacity
-            .try_acquire(limits(3, 0), &Account::Unknown)
-            .expect("a pool of three spares one");
-        assert!(
-            capacity
-                .try_acquire(limits(3, 0), &Account::Unknown)
-                .is_err()
-        );
-        let users = [
-            capacity
-                .try_acquire(limits(3, 0), &Account::User("amy".into()))
-                .expect("free"),
-            capacity
-                .try_acquire(limits(3, 0), &Account::User("bob".into()))
-                .expect("free"),
-        ];
-        let unlimited = capacity
-            .try_acquire(limits(0, 0), &Account::Unknown)
-            .expect("an unlimited pool limits no one");
-        drop((anonymous, users, unlimited));
     }
 
     #[test]
@@ -358,19 +271,15 @@ mod tests {
         let limits = limits(10, 2);
 
         let held = [
-            capacity
-                .try_acquire(limits, &Account::Unknown)
-                .expect("free"),
-            capacity
-                .try_acquire(limits, &Account::Unknown)
-                .expect("free"),
+            capacity.try_acquire(limits, &unknown()).expect("free"),
+            capacity.try_acquire(limits, &unknown()).expect("free"),
         ];
         assert!(
-            capacity.try_acquire(limits, &Account::Unknown).is_err(),
+            capacity.try_acquire(limits, &unknown()).is_err(),
             "anonymous encodes are limited like one user's"
         );
         let user = capacity
-            .try_acquire(limits, &Account::User("amy".into()))
+            .try_acquire(limits, &user("amy"))
             .expect("users are unaffected");
         drop((held, user));
         assert!(capacity.lock().by_account.is_empty());
@@ -382,15 +291,9 @@ mod tests {
         let limits = limits(1, 0);
 
         let hls = capacity.acquire(|| limits).await;
-        assert!(
-            capacity
-                .try_acquire(limits, &Account::User("amy".into()))
-                .is_err()
-        );
+        assert!(capacity.try_acquire(limits, &user("amy")).is_err());
         drop(hls);
-        let progressive = capacity
-            .try_acquire(limits, &Account::User("amy".into()))
-            .expect("freed");
+        let progressive = capacity.try_acquire(limits, &user("amy")).expect("freed");
         let queued = capacity.acquire(|| limits);
         tokio::pin!(queued);
         assert!(futures::poll!(queued.as_mut()).is_pending());
@@ -405,39 +308,70 @@ mod tests {
 
         let rotating = [
             capacity
-                .try_acquire(limits, &Account::client("2001:db8::1"))
+                .try_acquire(limits, &client("2001:db8::1"))
                 .expect("free"),
             capacity
-                .try_acquire(limits, &Account::client("203.0.113.1"))
+                .try_acquire(limits, &client("203.0.113.1"))
                 .expect("free"),
         ];
         assert!(
             capacity
-                .try_acquire(limits, &Account::client("203.0.113.2"))
+                .try_acquire(limits, &client("203.0.113.2"))
                 .is_err(),
             "anonymous clients never take more than half of the pool"
         );
         let user = capacity
-            .try_acquire(limits, &Account::User("amy".into()))
+            .try_acquire(limits, &user("amy"))
             .expect("users keep the rest");
         drop((rotating, user));
         let active = capacity.lock();
-        assert_eq!((active.total, active.anonymous), (0, 0));
+        assert_eq!(active.total, 0);
+        assert!(active.by_account.is_empty());
     }
 
     #[test]
-    fn ipv6_clients_are_grouped_by_their_64() {
-        assert_eq!(
-            Account::client("2001:db8:1:2:aaaa::1"),
-            Account::client("2001:db8:1:2:bbbb::2")
+    fn users_keep_an_encode_however_small_the_pool() {
+        let capacity = Arc::new(TranscodeCapacity::default());
+
+        assert!(
+            capacity.try_acquire(limits(1, 0), &unknown()).is_err(),
+            "a pool of one is the users'"
         );
-        assert_ne!(
-            Account::client("2001:db8:1:2::1"),
-            Account::client("2001:db8:1:3::1")
+        let anonymous = capacity
+            .try_acquire(limits(3, 0), &unknown())
+            .expect("a pool of three spares one");
+        assert!(capacity.try_acquire(limits(3, 0), &unknown()).is_err());
+        let users = [
+            capacity
+                .try_acquire(limits(3, 0), &user("amy"))
+                .expect("free"),
+            capacity
+                .try_acquire(limits(3, 0), &user("bob"))
+                .expect("free"),
+        ];
+        let unlimited = capacity
+            .try_acquire(limits(0, 0), &unknown())
+            .expect("an unlimited pool limits no one");
+        drop((anonymous, users, unlimited));
+    }
+
+    #[test]
+    fn ipv6_clients_share_an_allowance_across_their_64() {
+        let capacity = Arc::new(TranscodeCapacity::default());
+        let limits = limits(10, 1);
+
+        let held = capacity
+            .try_acquire(limits, &client("2001:db8:1:2::1"))
+            .expect("free");
+        assert!(
+            capacity
+                .try_acquire(limits, &client("2001:db8:1:2:ffff::2"))
+                .is_err(),
+            "another address in the same /64 is the same client"
         );
-        assert_eq!(
-            Account::client("203.0.113.7"),
-            Account::Client("203.0.113.7".to_string())
-        );
+        let elsewhere = capacity
+            .try_acquire(limits, &client("2001:db8:1:3::1"))
+            .expect("another /64 is another client");
+        drop((held, elsewhere));
     }
 }

@@ -39,9 +39,9 @@ impl PluginExecutor {
             let thread = self.vm.create_thread(&handler.handler)?;
             let mut context = handler.context.clone();
             context.caller.insert(dispatch_auth.clone());
-            context.caller.insert(crate::plugins::auth::DispatchClient(
-                request.client_key.clone(),
-            ));
+            context
+                .caller
+                .insert(crate::plugins::auth::DispatchClient(request.client));
             Ok::<_, anyhow::Error>((thread, context, ctx))
         };
         let prepared = prepare();
@@ -247,6 +247,6 @@ pub(super) fn parse_api_response(
         track_id,
         options,
         principal: None,
-        client_key: None,
+        client: Default::default(),
     })
 }

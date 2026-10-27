@@ -20,11 +20,10 @@ use argon2::{
         rand_core::OsRng,
     },
 };
-use std::net::SocketAddr;
 
 use axum::Json;
 use axum::extract::{
-    ConnectInfo,
+    Extension,
     Path,
     Query,
 };
@@ -63,6 +62,7 @@ use crate::{
         deserialize_inc,
         forbid_api_key_credential,
     },
+    services::auth::caller::ClientAddress,
     services::{
         auth::{
             AuthCredential,
@@ -597,7 +597,7 @@ async fn get_me(
 }
 
 async fn login_user(
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Extension(client): Extension<ClientAddress>,
     headers: HeaderMap,
     Json(body): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, AppError> {
@@ -623,9 +623,8 @@ async fn login_user(
         client_name: body.client_name,
     };
 
-    let client = crate::services::rate_limit::request_client_key(Some(peer), &headers);
     let Some(login_result) =
-        login_with_password(&body.username, &body.password, metadata, Some(&client)).await?
+        login_with_password(&body.username, &body.password, metadata, client).await?
     else {
         return Err(AppError::unauthorized("invalid username or password"));
     };
@@ -1163,7 +1162,9 @@ mod tests {
         crate::testing::publish_config(config);
 
         let err = match login_user(
-            ConnectInfo(SocketAddr::from(([203, 0, 113, 40], 4746))),
+            Extension(ClientAddress::new(std::net::IpAddr::from([
+                203, 0, 113, 40,
+            ]))),
             HeaderMap::new(),
             Json(LoginRequest {
                 username: "listener".to_string(),
@@ -1584,7 +1585,9 @@ mod tests {
         headers.insert(USER_AGENT, "lyra-test/1.0 (integration)".parse()?);
 
         let Json(login) = login_user(
-            ConnectInfo(SocketAddr::from(([203, 0, 113, 41], 4746))),
+            Extension(ClientAddress::new(std::net::IpAddr::from([
+                203, 0, 113, 41,
+            ]))),
             headers,
             Json(LoginRequest {
                 username: "session-meta".to_string(),
@@ -1635,9 +1638,11 @@ mod tests {
 
         for client_name in ["Lyra\nDesktop".to_string(), "x".repeat(129)] {
             let result = login_user(
-                // A peer address no other login test uses: the rate limiter
-                // buckets by client key and would otherwise answer 429 here.
-                ConnectInfo(SocketAddr::from(([203, 0, 113, 43], 4747))),
+                // An address no other login test uses: the rate limiter
+                // buckets by client and would otherwise answer 429 here.
+                Extension(ClientAddress::new(std::net::IpAddr::from([
+                    203, 0, 113, 43,
+                ]))),
                 HeaderMap::new(),
                 Json(LoginRequest {
                     username: "bad-client-name".to_string(),
@@ -1672,7 +1677,9 @@ mod tests {
 
         let attempt = || {
             login_user(
-                ConnectInfo(SocketAddr::from(([203, 0, 113, 42], 4746))),
+                Extension(ClientAddress::new(std::net::IpAddr::from([
+                    203, 0, 113, 42,
+                ]))),
                 HeaderMap::new(),
                 Json(LoginRequest {
                     username: "rate-limit-probe".to_string(),

@@ -513,17 +513,6 @@ pub(super) async fn build_router(static_dir: Option<PathBuf>) -> Result<BuiltRou
 pub(super) async fn fallback(mut request: Request) -> Response {
     let routers = { INSTALLED_ROUTERS.read().await.clone() };
 
-    let peer = request
-        .extensions()
-        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-        .map(|connect_info| connect_info.0);
-    let client_key = crate::services::rate_limit::request_client_key(peer, request.headers());
-    request
-        .extensions_mut()
-        .insert(crate::services::rate_limit::RequestClientKey(
-            client_key.into(),
-        ));
-
     let original_path = request.uri().path();
     if has_ascii_upper(original_path) {
         let lowered = original_path.to_ascii_lowercase();
@@ -661,12 +650,14 @@ fn build_http_method_router(route: &RegisteredRoute) -> Result<MethodRouter> {
               headers: HeaderMap,
               Query(pairs): Query<Vec<(String, String)>>,
               params: Option<Path<HashMap<String, String>>>,
-              client: Option<axum::Extension<crate::services::rate_limit::RequestClientKey>>,
+              client: Option<axum::Extension<crate::services::auth::caller::ClientAddress>>,
               body: Bytes| {
             let route = dispatch_route.clone();
             async move {
                 let query = collect_query_pairs(pairs);
-                let client_key = client.map(|axum::Extension(key)| key.0.as_ref().to_string());
+                let client = client
+                    .map(|axum::Extension(client)| client)
+                    .unwrap_or_default();
                 dispatch_registered_route(RegisteredRouteRequest {
                     route,
                     method,
@@ -674,7 +665,7 @@ fn build_http_method_router(route: &RegisteredRoute) -> Result<MethodRouter> {
                     headers,
                     query,
                     params,
-                    client_key,
+                    client,
                     body,
                 })
                 .await
@@ -739,7 +730,7 @@ struct RegisteredRouteRequest {
     headers: HeaderMap,
     query: HashMap<String, Vec<String>>,
     params: Option<Path<HashMap<String, String>>>,
-    client_key: Option<String>,
+    client: crate::services::auth::caller::ClientAddress,
     body: Bytes,
 }
 
@@ -751,7 +742,7 @@ async fn dispatch_registered_route(request: RegisteredRouteRequest) -> Response 
         headers,
         query,
         params,
-        client_key,
+        client,
         body,
     } = request;
 
@@ -791,7 +782,7 @@ async fn dispatch_registered_route(request: RegisteredRouteRequest) -> Response 
         params: params.map(|params| params.0).unwrap_or_default(),
         body: body.to_vec(),
         auth: auth.clone(),
-        client_key,
+        client,
     };
 
     let result = runtime.dispatch_api_handler(request).await;

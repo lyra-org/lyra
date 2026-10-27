@@ -186,7 +186,7 @@ pub(crate) struct ApiHandlerRequest {
     pub(crate) params: HashMap<String, String>,
     pub(crate) body: Vec<u8>,
     pub(crate) auth: Option<crate::services::auth::ResolvedAuth>,
-    pub(crate) client_key: Option<String>,
+    pub(crate) client: crate::services::auth::caller::ClientAddress,
 }
 
 #[derive(Clone, Debug)]
@@ -258,8 +258,8 @@ pub(crate) struct ApiHandlerResponse {
     /// Principal acting for the dispatch: seeded from boundary bearer auth
     /// and overwritten by `auth.resolve_auth`.
     pub(crate) principal: Option<crate::services::auth::Principal>,
-    /// The requesting client's address key, from the dispatch's request.
-    pub(crate) client_key: Option<String>,
+    /// The requesting client's address, from the dispatch's request.
+    pub(crate) client: crate::services::auth::caller::ClientAddress,
 }
 
 pub(crate) struct WebSocketStartRequest {

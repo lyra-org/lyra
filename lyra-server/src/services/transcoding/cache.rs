@@ -1022,10 +1022,12 @@ impl EncodingTranscode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::transcoding::capacity::{
-        Account,
-        Limits,
-        TranscodeCapacity,
+    use crate::services::{
+        auth::caller::Caller,
+        transcoding::capacity::{
+            Limits,
+            TranscodeCapacity,
+        },
     };
     use lyra_ffmpeg::{
         AudioCodec,
@@ -1178,7 +1180,7 @@ mod tests {
                 global: 0,
                 per_user: 0,
             },
-            &Account::Unknown,
+            &Caller::User("listener".to_string()),
         )
     }
 
@@ -1601,13 +1603,13 @@ mod tests {
             CacheKey::of(&"running"),
             dir.path(),
             flac_spec(input),
-            || capacity.try_acquire(one, &Account::Unknown),
+            || capacity.try_acquire(one, &Caller::User("listener".to_string())),
         )?;
         let refused = cache.get_or_start(
             CacheKey::of(&"refused"),
             dir.path(),
             mp3_spec(fixture(), 128),
-            || capacity.try_acquire(one, &Account::Unknown),
+            || capacity.try_acquire(one, &Caller::User("listener".to_string())),
         );
         assert!(refused.is_err_and(|err| err.is::<Saturated>()));
         assert!(cache.find_ready(&CacheKey::of(&"refused"))?.is_none());
@@ -1616,7 +1618,7 @@ mod tests {
             panic!("a new key starts an encode");
         };
         running.finished().await?;
-        drop(capacity.try_acquire(one, &Account::Unknown)?);
+        drop(capacity.try_acquire(one, &Caller::User("listener".to_string()))?);
 
         let failed = cache.get_or_start(
             CacheKey::of(&"failed"),
@@ -1625,13 +1627,13 @@ mod tests {
                 dir.path().join("missing").to_string_lossy().into_owned(),
                 128,
             ),
-            || capacity.try_acquire(one, &Account::Unknown),
+            || capacity.try_acquire(one, &Caller::User("listener".to_string())),
         )?;
         let Lookup::Encoding(failed) = failed else {
             panic!("a new key starts an encode");
         };
         assert!(failed.finished().await.is_err());
-        drop(capacity.try_acquire(one, &Account::Unknown)?);
+        drop(capacity.try_acquire(one, &Caller::User("listener".to_string()))?);
         Ok(())
     }
 
@@ -1644,12 +1646,17 @@ mod tests {
             per_user: 0,
         };
         let job = test_job(dir.path(), "stopping.part")?;
-        *job.permit.lock().expect("permit") = Some(capacity.try_acquire(one, &Account::Unknown)?);
-        assert!(capacity.try_acquire(one, &Account::Unknown).is_err());
+        *job.permit.lock().expect("permit") =
+            Some(capacity.try_acquire(one, &Caller::User("listener".to_string()))?);
+        assert!(
+            capacity
+                .try_acquire(one, &Caller::User("listener".to_string()))
+                .is_err()
+        );
 
         job.stop();
 
-        drop(capacity.try_acquire(one, &Account::Unknown)?);
+        drop(capacity.try_acquire(one, &Caller::User("listener".to_string()))?);
         Ok(())
     }
 }

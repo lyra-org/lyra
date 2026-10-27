@@ -7,8 +7,11 @@ use super::*;
 use crate::plugins::executor::ApiResponseKind;
 use crate::routes::AppError;
 use crate::services::auth::Principal;
+use crate::services::auth::caller::{
+    Caller,
+    ClientAddress,
+};
 use crate::services::auth::media_tokens::MediaTokenPurpose;
-use crate::services::transcoding::capacity::Account;
 
 pub(super) fn header_pairs(headers: &HeaderMap) -> Vec<(String, String)> {
     headers
@@ -49,18 +52,17 @@ async fn require_plugin_track_access(
 /// else the client's address.
 async fn public_plugin_track_access(
     principal: Option<&Principal>,
-    client_key: Option<&str>,
+    client: ClientAddress,
     track_db_id: agdb::DbId,
 ) -> Result<(String, TrackAccess), AppError> {
     let db = crate::STATE.db.read().await;
     let track_id = crate::plugins::db::lookup::find_id_by_db_id(&*db, track_db_id)?
         .ok_or_else(|| AppError::not_found(format!("Track not found: {}", track_db_id.0)))?;
-    let account = match (principal, client_key) {
-        (Some(principal), _) => Account::User(principal.user_public_id.clone()),
-        (None, Some(client_key)) => Account::client(client_key),
-        (None, None) => Account::Unknown,
+    let caller = match principal {
+        Some(principal) => Caller::User(principal.user_public_id.clone()),
+        None => Caller::Client(client),
     };
-    Ok((track_id, TrackAccess::PublicPluginRoute(account)))
+    Ok((track_id, TrackAccess::PublicPluginRoute(caller)))
 }
 
 /// The track a `stream_track` response for `track_db_id` serves and the access it is served
@@ -68,12 +70,12 @@ async fn public_plugin_track_access(
 /// transcodes against the caller or the client's address.
 pub(crate) async fn stream_track_access(
     principal: Option<&Principal>,
-    client_key: Option<&str>,
+    client: ClientAddress,
     track_db_id: agdb::DbId,
     public: bool,
 ) -> Result<(String, TrackAccess), AppError> {
     if public {
-        public_plugin_track_access(principal, client_key, track_db_id).await
+        public_plugin_track_access(principal, client, track_db_id).await
     } else {
         require_plugin_track_access(principal, track_db_id, MediaTokenPurpose::Stream).await
     }
@@ -113,17 +115,13 @@ pub(super) async fn plugin_api_response_to_axum(
                 .track_id
                 .ok_or_else(|| anyhow::anyhow!("stream_track response requires track_id"))?;
             let (public, options) = stream_track_options(response.options.as_ref())?;
-            let (track_id, access) = match stream_track_access(
-                principal,
-                response.client_key.as_deref(),
-                agdb::DbId(track_id),
-                public,
-            )
-            .await
-            {
-                Ok(resolved) => resolved,
-                Err(error) => return Ok(error.into_response()),
-            };
+            let (track_id, access) =
+                match stream_track_access(principal, response.client, agdb::DbId(track_id), public)
+                    .await
+                {
+                    Ok(resolved) => resolved,
+                    Err(error) => return Ok(error.into_response()),
+                };
             return Ok(
                 match stream_track_response(
                     request_method,
@@ -309,7 +307,10 @@ pub(super) async fn plugin_api_response_to_axum(
 
 #[cfg(test)]
 mod tests {
-    use crate::services::transcoding::capacity::Account;
+    use crate::services::auth::caller::{
+        Caller,
+        ClientAddress,
+    };
     use std::collections::HashSet;
     use std::time::{
         SystemTime,
@@ -358,6 +359,10 @@ mod tests {
             .await
             .map(|_| ())
             .map_err(|error| error.into_response().status())
+    }
+
+    fn address(raw: &str) -> ClientAddress {
+        ClientAddress::new(raw.parse().expect("valid ip"))
     }
 
     fn unique_test_dir(prefix: &str) -> anyhow::Result<std::path::PathBuf> {
@@ -462,7 +467,7 @@ mod tests {
             track_id: Some(track_db_id.0),
             options,
             principal: None,
-            client_key: None,
+            client: ClientAddress::default(),
         }
     }
 
@@ -487,15 +492,16 @@ mod tests {
             (track_db_id, track_public_id, release_db_id)
         };
 
-        let (track_id, access) = public_plugin_track_access(None, None, track_db_id)
-            .await
-            .map_err(|error| anyhow::anyhow!("public access failed: {error:?}"))?;
+        let (track_id, access) =
+            public_plugin_track_access(None, ClientAddress::default(), track_db_id)
+                .await
+                .map_err(|error| anyhow::anyhow!("public access failed: {error:?}"))?;
         assert_eq!(track_id, track_public_id);
         assert!(matches!(
             access,
-            crate::routes::TrackAccess::PublicPluginRoute(Account::Unknown)
+            crate::routes::TrackAccess::PublicPluginRoute(_)
         ));
-        assert_eq!(access.capacity_account(), Account::Unknown);
+        assert_eq!(access.caller(), Caller::Client(ClientAddress::default()));
 
         let caller = crate::services::auth::Principal::from_parts(
             agdb::DbId(1),
@@ -505,31 +511,33 @@ mod tests {
             None,
             HashSet::new(),
         );
-        let (_, access) = public_plugin_track_access(Some(&caller), Some("10.0.0.1"), track_db_id)
-            .await
-            .map_err(|error| anyhow::anyhow!("public access failed: {error:?}"))?;
+        let (_, access) =
+            public_plugin_track_access(Some(&caller), address("10.0.0.1"), track_db_id)
+                .await
+                .map_err(|error| anyhow::anyhow!("public access failed: {error:?}"))?;
         assert_eq!(
-            access.capacity_account(),
-            Account::User("caller-public-id".to_string()),
+            access.caller(),
+            Caller::User("caller-public-id".to_string()),
             "an authenticated caller's transcodes count against them on a public route"
         );
-        let (_, first) = public_plugin_track_access(None, Some("10.0.0.1"), track_db_id)
+        let (_, first) = public_plugin_track_access(None, address("10.0.0.1"), track_db_id)
             .await
             .map_err(|error| anyhow::anyhow!("public access failed: {error:?}"))?;
-        let (_, second) = public_plugin_track_access(None, Some("10.0.0.2"), track_db_id)
+        let (_, second) = public_plugin_track_access(None, address("10.0.0.2"), track_db_id)
             .await
             .map_err(|error| anyhow::anyhow!("public access failed: {error:?}"))?;
-        assert_eq!(first.capacity_account(), Account::client("10.0.0.1"));
+        assert_eq!(first.caller(), Caller::Client(address("10.0.0.1")));
         assert_eq!(
-            second.capacity_account(),
-            Account::client("10.0.0.2"),
+            second.caller(),
+            Caller::Client(address("10.0.0.2")),
             "anonymous clients each get their own allowance"
         );
 
-        let unknown = public_plugin_track_access(None, None, agdb::DbId(i64::MAX))
-            .await
-            .map(|_| ())
-            .map_err(|error| error.into_response().status());
+        let unknown =
+            public_plugin_track_access(None, ClientAddress::default(), agdb::DbId(i64::MAX))
+                .await
+                .map(|_| ())
+                .map_err(|error| error.into_response().status());
         assert_eq!(unknown, Err(StatusCode::NOT_FOUND));
 
         let headers = axum::http::HeaderMap::new();
@@ -591,7 +599,7 @@ mod tests {
             track_id: None,
             options: None,
             principal: None,
-            client_key: None,
+            client: ClientAddress::default(),
         }
     }
 
@@ -674,7 +682,7 @@ mod tests {
         std::fs::write(&hidden, b"hidden")?;
         let as_principal = |path: &std::path::Path| ApiHandlerResponse {
             principal: Some(principal.clone()),
-            client_key: None,
+            client: ClientAddress::default(),
             ..file_response(path)
         };
         let served =

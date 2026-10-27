@@ -119,10 +119,14 @@ fn decide_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let (public, options) = crate::plugins::api::stream_track_options(options.as_ref())
             .map_err(crate::plugins::runtime_error)?;
-        let (track_id, access) =
-            crate::plugins::api::stream_track_access(principal.as_ref(), None, track_id, public)
-                .await
-                .map_err(crate::plugins::runtime_error)?;
+        let (track_id, access) = crate::plugins::api::stream_track_access(
+            principal.as_ref(),
+            Default::default(),
+            track_id,
+            public,
+        )
+        .await
+        .map_err(crate::plugins::runtime_error)?;
         let description = crate::routes::describe_stream(&track_id, &access, options)
             .await
             .map_err(crate::plugins::runtime_error)?;

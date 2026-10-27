@@ -282,7 +282,7 @@ async fn waiting_api_callback_does_not_delay_metadata_deadlines() -> Result<()> 
                     params: Default::default(),
                     body: Vec::new(),
                     auth: None,
-                    client_key: None,
+                    client: Default::default(),
                 })
                 .await
         }

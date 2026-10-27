@@ -1117,7 +1117,7 @@ fn plugin_executor_dispatches_registered_api_handler() -> Result<()> {
         params: HashMap::from([("id".to_string(), "abc".to_string())]),
         body: br#"{"name":"raw"}"#.to_vec(),
         auth: None,
-        client_key: None,
+        client: Default::default(),
     })?;
 
     assert_eq!(result.kind, ApiResponseKind::Json);
@@ -1202,7 +1202,7 @@ async fn plugin_executor_binds_host_resolved_principal_to_api_responses() -> Res
         params: HashMap::new(),
         body: Vec::new(),
         auth: None,
-        client_key: None,
+        client: Default::default(),
     };
 
     let whoami_handler = crate::plugins::api::tests::registered_handler("GET", "/whoami")
@@ -1296,7 +1296,7 @@ async fn plugin_executor_treats_expired_session_as_unauthenticated() -> Result<(
         params: HashMap::new(),
         body: Vec::new(),
         auth: None,
-        client_key: None,
+        client: Default::default(),
     };
     let response = runtime.dispatch_api_handler(request())?;
     assert_eq!(response.status, 204);
@@ -1467,7 +1467,7 @@ fn foreground_dispatch_does_not_hide_finished_websocket_cleanup() -> Result<()> 
         params: HashMap::new(),
         body: Vec::new(),
         auth: None,
-        client_key: None,
+        client: Default::default(),
     })?;
     assert_eq!(response.kind, ApiResponseKind::Empty);
 
@@ -2280,7 +2280,7 @@ fn cover_artwork_bindings_serve_anonymous_public_routes() -> Result<()> {
         ]),
         body: Vec::new(),
         auth: None,
-        client_key: None,
+        client: Default::default(),
     })?;
 
     assert_eq!(result.status, 200);
@@ -2397,7 +2397,7 @@ fn streamable_bindings_serve_anonymous_public_routes() -> Result<()> {
         ]),
         body: Vec::new(),
         auth: None,
-        client_key: None,
+        client: Default::default(),
     })?;
 
     assert_eq!(result.status, 200);

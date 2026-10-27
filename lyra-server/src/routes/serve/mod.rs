@@ -64,6 +64,7 @@ use crate::{
     services::{
         auth::{
             Principal,
+            caller::Caller,
             media_tokens::{
                 DeliveryOptions,
                 MediaTokenAccess,
@@ -79,7 +80,6 @@ use crate::{
             self as playback_source_service,
             SourceVersion,
         },
-        transcoding::capacity::Account,
     },
 };
 
@@ -225,7 +225,7 @@ pub(crate) fn authorize_track_purpose(
 pub(crate) enum TrackAccess {
     Principal(Principal),
     MediaToken(MediaTokenAccess),
-    PublicPluginRoute(Account),
+    PublicPluginRoute(Caller),
 }
 
 impl TrackAccess {
@@ -240,11 +240,11 @@ impl TrackAccess {
 
     /// Whom a transcode for this request is charged to: the principal, the media token's holder,
     /// or for a public plugin route the caller its handler resolved or else the client.
-    pub(crate) fn capacity_account(&self) -> Account {
+    pub(crate) fn caller(&self) -> Caller {
         match self {
-            Self::Principal(principal) => Account::User(principal.user_public_id.clone()),
-            Self::MediaToken(token) => Account::User(token.holder.user_public_id().to_string()),
-            Self::PublicPluginRoute(account) => account.clone(),
+            Self::Principal(principal) => Caller::User(principal.user_public_id.clone()),
+            Self::MediaToken(token) => Caller::User(token.holder.user_public_id().to_string()),
+            Self::PublicPluginRoute(caller) => caller.clone(),
         }
     }
 }
@@ -518,12 +518,13 @@ pub(crate) fn download_openapi_routes() -> aide::axum::ApiRouter {
 #[cfg(test)]
 mod tests {
     use super::{
-        Account,
+        Caller,
         ServeTrackOptions,
         ValidatedTrackSource,
         apply_request_start_offset,
         require_track_access,
     };
+    use crate::services::auth::caller::ClientAddress;
     use std::{
         path::PathBuf,
         time::{
@@ -977,7 +978,7 @@ mod tests {
             &Method::GET,
             &headers,
             &track_id,
-            &super::TrackAccess::PublicPluginRoute(Account::Unknown),
+            &super::TrackAccess::PublicPluginRoute(Caller::Client(ClientAddress::default())),
             ServeTrackOptions::default(),
         )
         .await
@@ -1008,7 +1009,7 @@ mod tests {
             &Method::GET,
             &headers,
             &track_id,
-            &super::TrackAccess::PublicPluginRoute(Account::Unknown),
+            &super::TrackAccess::PublicPluginRoute(Caller::Client(ClientAddress::default())),
             ServeTrackOptions {
                 format: Some("mp3".to_string()),
                 bitrate_bps: Some(96_000),
@@ -1278,7 +1279,7 @@ mod tests {
             super::serve_hls_playlist_for_track(
                 &Method::GET,
                 &track_id,
-                &super::TrackAccess::PublicPluginRoute(Account::Unknown),
+                &super::TrackAccess::PublicPluginRoute(Caller::Client(ClientAddress::default())),
                 super::HlsPlaylistOptions {
                     codec: None,
                     bitrate_bps: None,
@@ -1427,7 +1428,7 @@ mod tests {
 
         let limit = STATE.config().transcoding.max_concurrent_per_user;
         let held = (0..limit)
-            .map(|_| try_acquire_for(&Account::User(user.clone())))
+            .map(|_| try_acquire_for(&Caller::User(user.clone())))
             .collect::<Result<Vec<_>, _>>()?;
 
         let (status, headers, _) = send(Method::GET, uncached).await?;
@@ -1454,7 +1455,7 @@ mod tests {
         let track_id = prepare_streamable_track(&test_dir).await?;
         let limit = STATE.config().transcoding.max_concurrent_per_user;
         let held = (0..limit)
-            .map(|_| try_acquire_for(&Account::User("busy-user".to_string())))
+            .map(|_| try_acquire_for(&Caller::User("busy-user".to_string())))
             .collect::<Result<Vec<_>, _>>()?;
         let mp3 = || ServeTrackOptions {
             format: Some("mp3".to_string()),
@@ -1465,7 +1466,7 @@ mod tests {
             &Method::GET,
             &HeaderMap::new(),
             &track_id,
-            &super::TrackAccess::PublicPluginRoute(Account::User("busy-user".to_string())),
+            &super::TrackAccess::PublicPluginRoute(Caller::User("busy-user".to_string())),
             mp3(),
         )
         .await
@@ -1477,7 +1478,9 @@ mod tests {
             &Method::GET,
             &HeaderMap::new(),
             &track_id,
-            &super::TrackAccess::PublicPluginRoute(Account::client("10.0.0.9")),
+            &super::TrackAccess::PublicPluginRoute(Caller::Client(ClientAddress::new(
+                "10.0.0.9".parse().expect("valid ip"),
+            ))),
             mp3(),
         )
         .await
@@ -1675,7 +1678,7 @@ mod tests {
         let global = STATE.config().transcoding.max_concurrent;
         (0..global)
             .map(|user| {
-                crate::services::transcoding::capacity::try_acquire_for(&Account::User(format!(
+                crate::services::transcoding::capacity::try_acquire_for(&Caller::User(format!(
                     "holder-{user}"
                 )))
                 .expect("a permit is free")
@@ -1697,7 +1700,9 @@ mod tests {
                 super::serve_hls_playlist_for_track(
                     &Method::GET,
                     &track_id,
-                    &super::TrackAccess::PublicPluginRoute(Account::Unknown),
+                    &super::TrackAccess::PublicPluginRoute(
+                        Caller::Client(ClientAddress::default()),
+                    ),
                     hls_options(),
                 )
                 .await
@@ -1715,7 +1720,7 @@ mod tests {
             super::serve_hls_playlist_for_track(
                 &Method::GET,
                 &track_id,
-                &super::TrackAccess::PublicPluginRoute(Account::Unknown),
+                &super::TrackAccess::PublicPluginRoute(Caller::Client(ClientAddress::default())),
                 hls_options(),
             ),
         )
@@ -1739,7 +1744,7 @@ mod tests {
         super::serve_hls_playlist_for_track(
             &Method::GET,
             &track_id,
-            &super::TrackAccess::PublicPluginRoute(Account::Unknown),
+            &super::TrackAccess::PublicPluginRoute(Caller::Client(ClientAddress::default())),
             hls_options(),
         )
         .await
@@ -1754,9 +1759,9 @@ mod tests {
             let global = STATE.config().transcoding.max_concurrent;
             let held = (0..global)
                 .map_while(|user| {
-                    crate::services::transcoding::capacity::try_acquire_for(&Account::User(
-                        format!("holder-{user}"),
-                    ))
+                    crate::services::transcoding::capacity::try_acquire_for(&Caller::User(format!(
+                        "holder-{user}"
+                    )))
                     .ok()
                 })
                 .collect::<Vec<_>>();
@@ -1811,7 +1816,7 @@ mod tests {
 
         let err = super::describe_stream(
             &track_id,
-            &super::TrackAccess::PublicPluginRoute(Account::Unknown),
+            &super::TrackAccess::PublicPluginRoute(Caller::Client(ClientAddress::default())),
             ServeTrackOptions::default(),
         )
         .await
@@ -1837,7 +1842,7 @@ mod tests {
         let response = super::serve_hls_playlist_for_track(
             &Method::HEAD,
             &track_id,
-            &super::TrackAccess::PublicPluginRoute(Account::Unknown),
+            &super::TrackAccess::PublicPluginRoute(Caller::Client(ClientAddress::default())),
             super::HlsPlaylistOptions {
                 codec: None,
                 bitrate_bps: None,
@@ -1875,7 +1880,7 @@ mod tests {
             &Method::GET,
             &HeaderMap::new(),
             &track_id,
-            &super::TrackAccess::PublicPluginRoute(Account::Unknown),
+            &super::TrackAccess::PublicPluginRoute(Caller::Client(ClientAddress::default())),
             ServeTrackOptions {
                 format: Some("m4a".to_string()),
                 codec: Some("aac".to_string()),
@@ -1916,7 +1921,7 @@ mod tests {
             &Method::GET,
             &headers,
             &track_id,
-            &super::TrackAccess::PublicPluginRoute(Account::Unknown),
+            &super::TrackAccess::PublicPluginRoute(Caller::Client(ClientAddress::default())),
             ServeTrackOptions {
                 format: Some("flac".to_string()),
                 sample_rate_hz: Some(22_050),
@@ -1962,7 +1967,7 @@ mod tests {
                 &Method::GET,
                 &headers,
                 &track_id,
-                &super::TrackAccess::PublicPluginRoute(Account::Unknown),
+                &super::TrackAccess::PublicPluginRoute(Caller::Client(ClientAddress::default())),
                 ServeTrackOptions {
                     format: Some("flac".to_string()),
                     sample_rate_hz: Some(sample_rate_hz),
@@ -1999,7 +2004,7 @@ mod tests {
             &Method::GET,
             &headers,
             &track_id,
-            &super::TrackAccess::PublicPluginRoute(Account::Unknown),
+            &super::TrackAccess::PublicPluginRoute(Caller::Client(ClientAddress::default())),
             ServeTrackOptions {
                 format: Some("flac".to_string()),
                 bitrate_bps: Some(96_000),
@@ -2034,7 +2039,7 @@ mod tests {
             &Method::GET,
             &headers,
             &track_id,
-            &super::TrackAccess::PublicPluginRoute(Account::Unknown),
+            &super::TrackAccess::PublicPluginRoute(Caller::Client(ClientAddress::default())),
             ServeTrackOptions {
                 format: Some("mp3".to_string()),
                 bitrate_bps: Some(0),

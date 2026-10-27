@@ -167,7 +167,7 @@ pub(crate) async fn download_track_response(
     transcoded_response(
         method,
         headers,
-        access.capacity_account(),
+        access.caller(),
         source,
         delivery,
         DeliveryTarget::Download,
