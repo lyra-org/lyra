@@ -10,10 +10,10 @@ use serde::{
     Serialize,
 };
 
-use crate::fetch::FetchError;
 use crate::forge::{
     Forge,
     RepoSpec,
+    RepoUrlError,
 };
 
 pub const REPOSITORY_MANIFEST_FILENAME: &str = "repository.json";
@@ -47,7 +47,7 @@ pub enum ManifestError {
     InvalidUrl {
         index: usize,
         #[source]
-        source: FetchError,
+        source: RepoUrlError,
     },
     #[error("duplicate plugin entry '{value}'")]
     DuplicateEntry { value: String },

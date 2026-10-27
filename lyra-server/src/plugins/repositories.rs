@@ -126,8 +126,7 @@ fn map_resolve_error(error: ResolveError) -> PluginRepoError {
         ResolveError::Fetch(FetchError::RefNotFound { .. }) => PluginRepoError::BadRequest(
             "The plugin repository or requested branch could not be found.".into(),
         ),
-        ResolveError::Fetch(FetchError::InvalidUrl { .. })
-        | ResolveError::Manifest(_)
+        ResolveError::Manifest(_)
         | ResolveError::AmbiguousRoot { .. }
         | ResolveError::NotAPluginRepository { .. }
         | ResolveError::PathEntryMissing { .. }

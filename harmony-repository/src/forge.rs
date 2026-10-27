@@ -4,7 +4,9 @@
 // www.meshiplaw.com/lyra.
 
 //! Where a repository lives and how its forge is reached: URL parsing, the
-//! endpoints each forge serves, and the forge API calls built on them.
+//! endpoints each forge serves, and the forge API calls built on them. API
+//! answers are parsed here; byte downloads (archives, raw files) are URLs
+//! that `fetch` downloads under its size limits.
 
 use std::collections::HashMap;
 
@@ -24,10 +26,7 @@ use serde::{
 };
 use url::Url;
 
-use crate::fetch::{
-    FetchError,
-    USER_AGENT,
-};
+pub(crate) const USER_AGENT: &str = concat!("harmony-repository/", env!("CARGO_PKG_VERSION"));
 
 /// Percent-encode set for values embedded in a single URL path segment or
 /// query value. Keeps the unreserved characters and encodes everything else,
@@ -37,6 +36,13 @@ const SEGMENT: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'_')
     .remove(b'.')
     .remove(b'~');
+
+#[derive(Debug, thiserror::Error)]
+#[error("invalid repository URL '{url}': {reason}")]
+pub struct RepoUrlError {
+    pub url: String,
+    pub reason: String,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -82,8 +88,8 @@ pub struct RepoSpec {
 }
 
 impl RepoSpec {
-    pub fn parse(input: &str, ref_override: Option<&str>) -> Result<Self, FetchError> {
-        let invalid = |reason: String| FetchError::InvalidUrl {
+    pub fn parse(input: &str, ref_override: Option<&str>) -> Result<Self, RepoUrlError> {
+        let invalid = |reason: String| RepoUrlError {
             url: input.to_string(),
             reason,
         };
@@ -272,8 +278,9 @@ impl RepoSpec {
     pub fn directory_archive_url(&self, commit: &str, dir: &str) -> Option<String> {
         match self.forge {
             Forge::GitLab => Some(format!(
-                "{}/repository/archive.tar.gz?sha={commit}&path={}",
+                "{}/repository/archive.tar.gz?sha={}&path={}",
                 self.repo_api_url(),
+                utf8_percent_encode(commit, SEGMENT),
                 utf8_percent_encode(dir, SEGMENT)
             )),
             Forge::GitHub | Forge::Gitea => None,
@@ -281,10 +288,12 @@ impl RepoSpec {
     }
 
     /// The raw contents of the file at `path` in `commit`. GitHub Enterprise
-    /// has no raw host, so its web `/raw/` route serves the file.
+    /// goes through the web `/raw/` route, which redirects to wherever the
+    /// instance serves raw files (`raw.<host>` under subdomain isolation).
     pub fn raw_file_url(&self, commit: &str, path: &str) -> String {
         let base = self.base_url();
         let (namespace, repo) = (&self.namespace, &self.repo_name);
+        let commit = utf8_percent_encode(commit, SEGMENT);
         match self.forge {
             Forge::GitHub if self.host == "github.com" => format!(
                 "https://raw.githubusercontent.com/{namespace}/{repo}/{commit}/{}",
@@ -310,6 +319,7 @@ impl RepoSpec {
     /// lists the repository root.
     fn tree_api_url(&self, commit: &str, dir: &str) -> String {
         let repo = self.repo_api_url();
+        let commit = utf8_percent_encode(commit, SEGMENT);
         match self.forge {
             Forge::GitHub | Forge::Gitea if dir.is_empty() => format!("{repo}/git/trees/{commit}"),
             Forge::GitHub | Forge::Gitea => {
@@ -404,6 +414,31 @@ pub async fn branch_exists(client: &Client, spec: &RepoSpec, git_ref: &str) -> O
         StatusCode::NOT_FOUND => Some(false),
         _ => None,
     }
+}
+
+/// The Git tree hash of the directory at `path` in `commit`, where `path` is
+/// a normalized repository path as `repository.json` entries are and empty
+/// names the root. GitLab's API does not expose the root tree, so it answers
+/// `None` there and callers identify root-level plugins by the commit.
+pub async fn tree_hash(
+    client: &Client,
+    spec: &RepoSpec,
+    commit: &str,
+    path: &str,
+) -> Option<String> {
+    if path.is_empty() {
+        return match spec.forge {
+            Forge::GitLab => None,
+            Forge::GitHub | Forge::Gitea => {
+                let value = api_get(client, &spec.tree_api_url(commit, "")).await?;
+                value.get("sha")?.as_str().map(str::to_string)
+            }
+        };
+    }
+    let (parent, name) = path.rsplit_once('/').unwrap_or(("", path));
+    child_tree_hashes(client, spec, commit, parent)
+        .await?
+        .remove(name)
 }
 
 /// The Git tree hash of each directory directly under `dir` at `commit`,
@@ -861,6 +896,73 @@ mod tests {
         assert_eq!(
             child_tree_hashes(&client(), &spec, "abc", "big").await,
             None
+        );
+    }
+
+    #[tokio::test]
+    async fn tree_hash_looks_paths_up_in_their_parent_listing() {
+        let server = TestServer::start(HashMap::from([
+            (
+                "/api/v1/repos/owner/repo/git/trees/abc".to_string(),
+                CannedResponse::json(
+                    r#"{"sha":"root","truncated":false,"tree":[
+                        {"path":"plugin.json","type":"blob","sha":"b1"}
+                    ]}"#,
+                ),
+            ),
+            (
+                "/api/v1/repos/owner/repo/git/trees/abc:a/b".to_string(),
+                CannedResponse::json(
+                    r#"{"sha":"ab","truncated":false,"tree":[
+                        {"path":"c","type":"tree","sha":"abc-hash"},
+                        {"path":"d","type":"blob","sha":"d-hash"}
+                    ]}"#,
+                ),
+            ),
+        ]))
+        .await;
+
+        let spec = RepoSpec::parse(&format!("{}/owner/repo", server.url()), None).unwrap();
+        let client = client();
+        assert_eq!(
+            tree_hash(&client, &spec, "abc", "").await.as_deref(),
+            Some("root")
+        );
+        assert_eq!(
+            tree_hash(&client, &spec, "abc", "a/b/c").await.as_deref(),
+            Some("abc-hash")
+        );
+        assert_eq!(tree_hash(&client, &spec, "abc", "a/b/d").await, None);
+        assert_eq!(tree_hash(&client, &spec, "abc", "a/b/e").await, None);
+    }
+
+    #[tokio::test]
+    async fn tree_hash_reads_gitlab_listings_but_not_the_root() {
+        let server = TestServer::start(HashMap::from([
+            (
+                "/api/v4/projects/owner%2Frepo/repository/tree?ref=abc&per_page=100".to_string(),
+                CannedResponse::json(r#"[{"id":"t1","name":"a","type":"tree","path":"a"}]"#),
+            ),
+            (
+                "/api/v4/projects/owner%2Frepo/repository/tree?path=a%2Fb&ref=abc&per_page=100"
+                    .to_string(),
+                CannedResponse::json(
+                    r#"[{"id":"abc-hash","name":"c","type":"tree","path":"a/b/c"}]"#,
+                ),
+            ),
+        ]))
+        .await;
+
+        let url = format!("{}/owner/repo?forge=gitlab", server.url());
+        let spec = RepoSpec::parse(&url, None).unwrap();
+        assert_eq!(tree_hash(&client(), &spec, "abc", "").await, None);
+        assert_eq!(
+            tree_hash(&client(), &spec, "abc", "a").await.as_deref(),
+            Some("t1")
+        );
+        assert_eq!(
+            tree_hash(&client(), &spec, "abc", "a/b/c").await.as_deref(),
+            Some("abc-hash")
         );
     }
 }

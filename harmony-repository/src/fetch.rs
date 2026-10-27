@@ -23,13 +23,13 @@ use tempfile::TempDir;
 
 use crate::forge::{
     RepoSpec,
+    USER_AGENT,
     branch_exists,
     default_branch,
     resolve_commit,
 };
 
 const FALLBACK_REFS: &[&str] = &["main", "master", "trunk"];
-pub(crate) const USER_AGENT: &str = concat!("harmony-repository/", env!("CARGO_PKG_VERSION"));
 
 pub const MAX_ARCHIVE_BYTES: u64 = 50 * 1024 * 1024;
 pub const MAX_UNPACKED_BYTES: u64 = 256 * 1024 * 1024;
@@ -37,8 +37,6 @@ pub const MAX_ARCHIVE_ENTRIES: usize = 16 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum FetchError {
-    #[error("invalid repository URL '{url}': {reason}")]
-    InvalidUrl { url: String, reason: String },
     #[error("failed to fetch {url}: {source}")]
     Network {
         url: String,

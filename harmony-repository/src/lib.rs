@@ -25,6 +25,7 @@ pub use fetch::{
 pub use forge::{
     Forge,
     RepoSpec,
+    RepoUrlError,
 };
 pub use install::{
     InstallError,
