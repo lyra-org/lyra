@@ -25,9 +25,16 @@ use lyra_db::{
     Track,
 };
 
+mod admin;
 mod registry;
 
 use super::options::coerce_option_value;
+pub(crate) use admin::{
+    MixerAdminError,
+    MixerUpdate,
+    list_mixer_configs,
+    update_mixer,
+};
 pub(crate) use registry::{
     MixRegistries,
     MixSeedType,
@@ -322,7 +329,6 @@ async fn prioritized_mixer_ids(seed_type: MixSeedType) -> anyhow::Result<Vec<Str
     let db = STATE.db.read().await;
     let mut configs = lyra_db::mixers::get(&db)?;
     configs.retain(|c| c.enabled);
-    configs.sort_by_key(|config| std::cmp::Reverse(config.priority));
 
     let registry = mix_registry().read_owned().await;
     let ids: Vec<String> = configs

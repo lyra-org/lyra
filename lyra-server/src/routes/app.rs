@@ -63,6 +63,7 @@ pub(crate) fn build_core_api() -> Result<CoreApi> {
         .nest("/api/stream", super::stream_routes())
         .nest("/api/download", super::download_routes())
         .nest("/api/providers", super::provider_routes())
+        .nest("/api/mixers", super::mixer_routes())
         .nest(
             "/api/entities",
             super::entity_routes().merge(super::entity_metadata_routes()),
@@ -121,6 +122,7 @@ pub(crate) fn build_openapi_spec() -> OpenApi {
             "/api/providers",
             super::providers::provider_openapi_routes(),
         )
+        .nest("/api/mixers", super::mixers::mixer_openapi_routes())
         .nest(
             "/api/entities",
             super::providers::entity_openapi_routes()
@@ -413,6 +415,8 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("POST", "/api/providers/{provider_id}/search"),
     ("PATCH", "/api/providers/{provider_id}"),
     ("POST", "/api/providers/{provider_id}/sync"),
+    ("GET", "/api/mixers/"),
+    ("PATCH", "/api/mixers/{mixer_id}"),
     ("GET", "/api/entities/{id}/external-ids"),
     (
         "PUT",

@@ -42,6 +42,7 @@ use crate::services::{
     delivery::DeliveryError,
     entries::EntryServiceError,
     hls::HlsError,
+    mix::MixerAdminError,
     playback_sessions::PlaybackServiceError,
     providers::{
         ProviderAdminError,
@@ -337,6 +338,15 @@ impl From<ProviderAdminError> for AppError {
             ProviderAdminError::EntityNotFound(message) => Self::not_found(message),
             ProviderAdminError::ManualIdNotFound(message) => Self::not_found(message),
             ProviderAdminError::Internal(err) => err.into(),
+        }
+    }
+}
+
+impl From<MixerAdminError> for AppError {
+    fn from(err: MixerAdminError) -> Self {
+        match err {
+            MixerAdminError::MixerNotFound(message) => Self::not_found(message),
+            MixerAdminError::Internal(err) => err.into(),
         }
     }
 }

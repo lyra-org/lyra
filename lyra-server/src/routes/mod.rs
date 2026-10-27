@@ -17,6 +17,7 @@ mod libraries;
 mod listens;
 mod metadata;
 mod mix;
+mod mixers;
 mod pagination;
 mod playbacks;
 mod playlists;
@@ -77,6 +78,7 @@ pub use libraries::library_routes;
 pub use listens::listen_routes;
 pub use metadata::metadata_routes;
 pub(crate) use metadata::reingest_request_gate;
+pub use mixers::mixer_routes;
 pub(crate) use pagination::{
     SnapshotPageRequest,
     load_snapshot_items,

@@ -54,7 +54,6 @@ use crate::{
     },
 };
 use lyra_db::Track;
-use lyra_db::mixers::MixerConfig;
 
 struct MixHandler;
 struct MixRecentListensHandler;
@@ -352,20 +351,7 @@ fn mixer_new_callback(
             .map_err(crate::plugins::runtime_error)?;
 
         let mut db = db.write().await;
-        if lyra_db::mixers::get_by_mixer_id(&db, &id)
-            .map_err(crate::plugins::runtime_error)?
-            .is_none()
-        {
-            let mixer_config = MixerConfig {
-                db_id: None,
-                mixer_id: id.clone(),
-                display_name: id.clone(),
-                priority: 50,
-                enabled: true,
-            };
-            lyra_db::mixers::upsert(&mut db, &mixer_config)
-                .map_err(crate::plugins::runtime_error)?;
-        }
+        lyra_db::mixers::register(&mut db, &id).map_err(crate::plugins::runtime_error)?;
 
         drop(db);
         Mixer::_harmony_userdata_class().create(&vm, &origin, Mixer { id })
