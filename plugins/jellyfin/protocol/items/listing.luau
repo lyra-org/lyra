@@ -515,13 +515,13 @@ function module.list_genre_items(options: ItemsQueryOptions): ({ ItemInfo }, num
 	end
 	local page = genres.query(built)
 
-	local genre_ids: { number } = {}
+	local public_ids: { [number]: string } = {}
 	for _, genre in page.items do
 		if genre.db_id then
-			table.insert(genre_ids, genre.db_id)
+			public_ids[genre.db_id] = genre.id
 		end
 	end
-	local releases_by_genre = if #genre_ids > 0 then releases.by_genre(genre_ids) else {}
+	local image_tags = catalog.genre_image_tags(public_ids)
 	local library_hex_id = catalog.library_hex_id_from_parent(options.parent_id)
 
 	local items: { ItemInfo } = {}
@@ -530,18 +530,12 @@ function module.list_genre_items(options: ItemsQueryOptions): ({ ItemInfo }, num
 		if genre_id == nil then
 			continue
 		end
-		local release_ids: { number } = {}
-		for _, release in releases_by_genre[genre_id] or {} do
-			if release.db_id then
-				table.insert(release_ids, release.db_id)
-			end
-		end
 		local item = catalog.genre_item(
 			genre.name,
 			genre.id,
 			{ release_count = genre.release_count, song_count = genre.track_count },
 			library_hex_id,
-			catalog.genre_image_tag(release_ids, genre.id)
+			image_tags[genre_id]
 		)
 		if item then
 			table.insert(items, item)

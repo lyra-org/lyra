@@ -2295,13 +2295,30 @@ function module.find_artist_db_id_by_name(name: string): number?
 	return artists_module.artwork_id_by_name(name)
 end
 
-function module.genre_image_tag(release_ids: { number }, genre_public_id: string): string?
-	if #release_ids == 0 then
-		return nil
+-- Image tags for genres, keyed by db id, for those whose cover `resolve_genre_cover` will serve:
+-- it composes the covers of the same picked releases, so a genre has one when any of them does.
+function module.genre_image_tags(public_ids: { [number]: string }): { [number]: string }
+	local picks: { [number]: { number } } = {}
+	local all_picked: { number } = {}
+	for genre_db_id, public_id in public_ids do
+		local release_ids = table.clone(genres.artwork_release_ids(genre_db_id))
+		table.sort(release_ids)
+		local picked = helpers.deterministic_pick(release_ids, public_id, 4)
+		picks[genre_db_id] = picked
+		table.move(picked, 1, #picked, #all_picked + 1, all_picked)
 	end
-	local sorted = table.clone(release_ids)
-	table.sort(sorted)
-	return helpers.deterministic_image_tag(helpers.deterministic_pick(sorted, genre_public_id, 4), genre_public_id)
+	local cover_map = if #all_picked > 0 then covers.artwork_many(all_picked) else {}
+
+	local tags: { [number]: string } = {}
+	for genre_db_id, picked in picks do
+		for _, release_id in picked do
+			if cover_map[release_id] then
+				tags[genre_db_id] = helpers.deterministic_image_tag(picked, public_ids[genre_db_id])
+				break
+			end
+		end
+	end
+	return tags
 end
 
 module.realize = helpers.realize_stubs

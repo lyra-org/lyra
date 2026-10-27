@@ -1,0 +1,26 @@
+run_as = "admin"
+
+# "Covered" (Rock) has a cover; "Bare" (Jazz) has none.
+
+[[users]]
+key = "admin"
+admin = true
+
+[[genres]]
+key = "rock"
+name = "Rock"
+
+[[genres]]
+key = "jazz"
+name = "Jazz"
+
+[[releases]]
+key = "covered"
+title = "Covered"
+genres = ["rock"]
+cover = "cover.png"
+
+[[releases]]
+key = "bare"
+title = "Bare"
+genres = ["jazz"]
