@@ -103,7 +103,7 @@ type MediaSource = {
 	TranscodingContainer: string?,
 	TranscodingUrl: string?,
 	TranscodingSubProtocol: string?,
-	DefaultAudioStreamIndex: number,
+	DefaultAudioStreamIndex: number?,
 	HasSegments: boolean,
 	ETag: string?,
 }
@@ -688,6 +688,8 @@ local function apply_device_profile(
 		return stream_err
 	end
 
+	-- Upstream takes the default audio stream from the stream it built, which names none for audio.
+	media_source.DefaultAudioStreamIndex = nil
 	-- Upstream turns direct streaming off for every request, so it follows direct play.
 	media_source.SupportsDirectPlay = stream.direct_play
 	media_source.SupportsDirectStream = stream.direct_play

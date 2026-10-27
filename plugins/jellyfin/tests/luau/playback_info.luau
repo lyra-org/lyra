@@ -105,6 +105,16 @@ local refused =
 assert(not refused.SupportsDirectPlay and not refused.SupportsDirectStream, "direct play is off")
 contains(refused.TranscodingUrl, "/stream.opus?")
 
+-- Upstream names the first audio stream the default, until a device profile's stream, which names
+-- none for audio, replaces it.
+assert(media_source(nil).DefaultAudioStreamIndex == 0, "the first audio stream")
+assert(media_source({ DeviceProfile = { DirectPlayProfiles = ogg } }).DefaultAudioStreamIndex == nil, "a profile's")
+assert(
+	media_source({ EnableTranscoding = false, DeviceProfile = { TranscodingProfiles = opus } }).DefaultAudioStreamIndex
+		== 0,
+	"no stream, no change"
+)
+
 -- Without a device profile, upstream tailors nothing to the request.
 local bare = media_source({ EnableDirectPlay = false, MaxStreamingBitrate = 1 })
 assert(bare.SupportsDirectPlay and bare.SupportsTranscoding and bare.TranscodingUrl == nil, "an untailored source")
