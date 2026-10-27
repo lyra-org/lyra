@@ -1,0 +1,13 @@
+run_as = "viewer"
+
+[[users]]
+key = "viewer"
+
+[[users]]
+key = "other"
+
+[[playlists]]
+key = "foreign"
+owner = "other"
+name = "Other playlist"
+public = true

@@ -331,6 +331,20 @@ pub(crate) fn playlist_owned(
     Ok(lyra_db::playlists::get_owner(db, playlist_db_id)? == Some(user_db_id))
 }
 
+/// Whether the principal may delete the playlist: its owner, or an admin, for any user's
+/// playlist. Changing a playlist's contents stays with its owner.
+pub(crate) fn playlist_deletable(
+    db: &impl lyra_db::DbAccess,
+    principal: &Principal,
+    playlist_db_id: DbId,
+) -> anyhow::Result<bool> {
+    if !principal.permissions.contains(&lyra_db::Permission::Admin) {
+        return playlist_owned(db, principal, playlist_db_id);
+    }
+    principal.require(db)?;
+    Ok(lyra_db::playlists::get_by_id(db, playlist_db_id)?.is_some())
+}
+
 pub(crate) fn resolve_library_db_id(
     db: &impl lyra_db::DbAccess,
     principal: &Principal,
@@ -537,6 +551,40 @@ mod tests {
         assert!(!playlist_accessible(&db, &viewer, private_id)?);
         assert!(playlist_accessible(&db, &viewer, public_id)?);
         assert!(playlist_accessible(&db, &admin, private_id)?);
+        Ok(())
+    }
+
+    #[test]
+    fn admins_may_delete_any_playlist_but_edit_only_their_own() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let owner_db_id = create_user(&mut db, "owner")?;
+        let viewer_db_id = create_user(&mut db, "viewer")?;
+        let admin_db_id = create_user(&mut db, "admin")?;
+        let private_id = lyra_db::playlists::create(
+            &mut db,
+            &Playlist {
+                db_id: None,
+                id: nanoid!(),
+                name: "Private".to_string(),
+                description: None,
+                is_public: Some(false),
+                created_at: None,
+                updated_at: None,
+            },
+            owner_db_id,
+        )?;
+
+        let owner = principal(&db, owner_db_id, vec![]);
+        let viewer = principal(&db, viewer_db_id, vec![]);
+        let admin = principal(&db, admin_db_id, vec![lyra_db::Permission::Admin]);
+        assert!(playlist_deletable(&db, &owner, private_id)?);
+        assert!(!playlist_deletable(&db, &viewer, private_id)?);
+        assert!(playlist_deletable(&db, &admin, private_id)?);
+        assert!(!playlist_owned(&db, &admin, private_id)?);
+        assert!(
+            !playlist_deletable(&db, &admin, viewer_db_id)?,
+            "a user is no playlist"
+        );
         Ok(())
     }
 

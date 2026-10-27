@@ -349,6 +349,20 @@ fn require_owned_playlist(
     Ok(playlist_db_id)
 }
 
+/// Resolves `id` to a playlist the principal may delete, under the guard that deletes it.
+fn require_deletable_playlist(
+    db: &impl lyra_db::DbAccess,
+    principal: &Principal,
+    id: &str,
+) -> Result<DbId, AppError> {
+    let playlist_db_id = lyra_db::lookup::find_node_id_by_id(db, id)?
+        .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
+    if !crate::services::auth::access::playlist_deletable(db, principal, playlist_db_id)? {
+        return Err(AppError::forbidden("you may not delete this playlist"));
+    }
+    Ok(playlist_db_id)
+}
+
 fn build_track_response_unchecked(
     db: &agdb::DbAny,
     track: lyra_db::Track,
@@ -657,7 +671,7 @@ async fn delete_playlist(
     let principal = require_principal(bearer_credential(&headers)).await?;
 
     let mut db = STATE.db.write().await;
-    let playlist_db_id = require_owned_playlist(&db, &principal, &id)?;
+    let playlist_db_id = require_deletable_playlist(&db, &principal, &id)?;
     playlists::delete(&mut db, QueryId::Id(playlist_db_id))?
         .ok_or_else(|| AppError::not_found(format!("Playlist not found: {}", id)))?;
 
@@ -849,7 +863,7 @@ fn update_playlist_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn delete_playlist_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Delete playlist")
-        .description("Deletes a playlist. Only the playlist owner can delete.")
+        .description("Deletes a playlist. Its owner and admins can delete it.")
         .response::<204, ()>()
 }
 

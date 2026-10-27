@@ -560,7 +560,7 @@ fn delete_callback(
         else {
             return Ok(luau::Value::Boolean(false));
         };
-        if !crate::services::auth::access::playlist_owned(&db, &principal, playlist_db_id)
+        if !crate::services::auth::access::playlist_deletable(&db, &principal, playlist_db_id)
             .map_err(crate::plugins::runtime_error)?
         {
             return Ok(luau::Value::Boolean(false));
@@ -1137,7 +1137,7 @@ fn module_descriptor() -> ModuleDescriptor {
             ModuleFunctionDescriptor {
                 path: vec!["delete"],
                 description: Some(
-                    "Returns true when deleted, or false if the playlist is missing or not owned by the caller.",
+                    "Returns true when deleted, or false if the playlist is missing or the caller neither owns it nor is an admin.",
                 ),
                 params: vec![param("playlist_id", args::resolve_id_type())],
                 returns: vec![bool::luau_type()],
