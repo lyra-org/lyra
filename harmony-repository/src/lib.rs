@@ -9,6 +9,7 @@
 //! `repository.json` format.
 
 pub mod fetch;
+pub mod forge;
 pub mod install;
 pub mod manifest;
 pub mod resolve;
@@ -16,12 +17,14 @@ pub mod resolve;
 pub use fetch::{
     FetchError,
     FetchedRepo,
-    Forge,
     RefPlan,
-    RepoSpec,
     fetch_planned,
     fetch_repo,
     plan_refs,
+};
+pub use forge::{
+    Forge,
+    RepoSpec,
 };
 pub use install::{
     InstallError,

@@ -22,11 +22,11 @@ use crate::fetch::{
     FetchError,
     FetchedRepo,
     RefPlan,
-    RepoSpec,
     fetch_planned,
     fetch_repo,
     plan_refs,
 };
+use crate::forge::RepoSpec;
 use crate::manifest::{
     ManifestError,
     REPOSITORY_MANIFEST_FILENAME,

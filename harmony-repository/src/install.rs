@@ -323,7 +323,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::fetch::RepoSpec;
+    use crate::forge::RepoSpec;
     use crate::manifest::SOURCE_RECORD_FILENAME;
     use crate::resolve::{
         ResolvedRepository,

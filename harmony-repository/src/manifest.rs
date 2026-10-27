@@ -10,8 +10,8 @@ use serde::{
     Serialize,
 };
 
-use crate::fetch::{
-    FetchError,
+use crate::fetch::FetchError;
+use crate::forge::{
     Forge,
     RepoSpec,
 };

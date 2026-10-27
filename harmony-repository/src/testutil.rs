@@ -29,6 +29,7 @@ pub(crate) struct CannedResponse {
     content_type: &'static str,
     body: Vec<u8>,
     content_length_override: Option<u64>,
+    headers: Vec<(&'static str, String)>,
 }
 
 impl CannedResponse {
@@ -38,6 +39,7 @@ impl CannedResponse {
             content_type: "application/json",
             body: body.as_bytes().to_vec(),
             content_length_override: None,
+            headers: Vec::new(),
         }
     }
 
@@ -47,11 +49,17 @@ impl CannedResponse {
             content_type: "application/gzip",
             body,
             content_length_override: None,
+            headers: Vec::new(),
         }
     }
 
     pub(crate) fn with_content_length(mut self, length: u64) -> Self {
         self.content_length_override = Some(length);
+        self
+    }
+
+    pub(crate) fn with_header(mut self, name: &'static str, value: &str) -> Self {
+        self.headers.push((name, value.to_string()));
         self
     }
 
@@ -64,8 +72,13 @@ impl CannedResponse {
         let length = self
             .content_length_override
             .unwrap_or(self.body.len() as u64);
+        let headers: String = self
+            .headers
+            .iter()
+            .map(|(name, value)| format!("{name}: {value}\r\n"))
+            .collect();
         let mut response = format!(
-            "HTTP/1.1 {} {reason}\r\nContent-Type: {}\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n",
+            "HTTP/1.1 {} {reason}\r\nContent-Type: {}\r\nContent-Length: {length}\r\n{headers}Connection: close\r\n\r\n",
             self.status, self.content_type
         )
         .into_bytes();
@@ -127,6 +140,7 @@ impl TestServer {
                             content_type: "text/plain",
                             body: b"not found".to_vec(),
                             content_length_override: None,
+                            headers: Vec::new(),
                         }
                         .render(),
                     };
