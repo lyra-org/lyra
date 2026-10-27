@@ -156,7 +156,6 @@ pub(crate) type HandlerFn =
 pub(crate) struct RegisteredHandler {
     pub(crate) provider_id: Arc<str>,
     pub(crate) plugin_id: PluginId,
-    pub(crate) priority: i32,
     pub(crate) timeout: Duration,
     pub(crate) require: ProviderRequireSpec,
     pub(crate) handler: HandlerFn,
@@ -190,13 +189,19 @@ impl LyricsProviderRegistry {
             .retain(|_, handler| &handler.plugin_id != plugin_id);
     }
 
-    pub(crate) fn list_sorted(&self) -> Vec<RegisteredHandler> {
+    /// Handlers in `providers` order; handlers without a stored provider go
+    /// last, by provider_id.
+    pub(crate) fn list_in_order(
+        &self,
+        providers: &[lyra_db::ProviderConfig],
+    ) -> Vec<RegisteredHandler> {
         let mut all: Vec<RegisteredHandler> = self.handlers.values().cloned().collect();
-        // Higher priority first, provider_id ascending breaks ties.
-        all.sort_by(|a, b| {
-            b.priority
-                .cmp(&a.priority)
-                .then_with(|| a.provider_id.cmp(&b.provider_id))
+        all.sort_by_cached_key(|handler| {
+            let rank = providers
+                .iter()
+                .position(|provider| provider.provider_id == handler.provider_id.as_ref())
+                .unwrap_or(usize::MAX);
+            (rank, handler.provider_id.clone())
         });
         all
     }
@@ -283,7 +288,7 @@ pub(crate) async fn unregister_handlers_for_plugin(plugin_id: &PluginId) {
     registry.remove_for_plugin(plugin_id);
 }
 
-/// Run every matching handler in priority order. Not stop-on-first-hit —
+/// Run every matching handler in provider order. Not stop-on-first-hit —
 /// each gate-passing `Hit` writes a row; `selection.rs` picks the winner.
 pub(crate) async fn dispatch_for_track(track_db_id: DbId, force_refresh: bool) -> Result<()> {
     dispatch_for_track_identity(track_db_id, None, force_refresh).await
@@ -305,9 +310,10 @@ pub(crate) async fn dispatch_for_track_identity(
         return Ok(());
     }
 
+    let providers = lyra_db::providers::get(&*STATE.db.read().await)?;
     let registry_snapshot = {
         let registry = LYRICS_PROVIDER_REGISTRY.read().await;
-        registry.list_sorted()
+        registry.list_in_order(&providers)
     };
 
     let mut failures = Vec::new();
@@ -768,7 +774,6 @@ mod tests {
         RegisteredHandler {
             provider_id: Arc::from(provider_id),
             plugin_id,
-            priority: 1,
             timeout: Duration::from_secs(5),
             require: ProviderRequireSpec::default(),
             handler: handler_fn,

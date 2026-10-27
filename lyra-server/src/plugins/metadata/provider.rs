@@ -371,7 +371,7 @@ fn cover_callback(
         ));
     }
 
-    let (priority, timeout, require) = parse_cover_spec(vm, &config)?;
+    let (timeout, require) = parse_cover_spec(vm, &config)?;
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
     let context = core_call_context(context);
     let provider = provider.clone();
@@ -396,7 +396,6 @@ fn cover_callback(
             &provider.provider_id,
             entity_type,
             ProviderCoverSpec {
-                priority,
                 timeout,
                 require,
                 handler: ProviderCallbackHandle { handler_id },
@@ -416,7 +415,7 @@ fn lyrics_callback(
     ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
     validate_lyrics_provider_id(&provider.provider_id)?;
 
-    let (priority, timeout, require) = parse_lyrics_spec(vm, &config)?;
+    let (timeout, require) = parse_lyrics_spec(vm, &config)?;
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
     let context = core_call_context(context);
     let provider = provider.clone();
@@ -473,7 +472,6 @@ fn lyrics_callback(
         lyrics_dispatcher::register_handler(RegisteredHandler {
             provider_id: Arc::from(provider_id.as_str()),
             plugin_id,
-            priority,
             timeout,
             require,
             handler: handler_fn,

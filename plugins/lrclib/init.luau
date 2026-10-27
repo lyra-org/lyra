@@ -472,7 +472,6 @@ local provider = metadata.Provider.new("lrclib", { display_name = "LRCLIB" })
 
 provider:lyrics({
 	require = { all_of = { "track_name", "artist_name" } },
-	priority = 50,
 	timeout_ms = 30000,
 }, function(ctx: ProviderLyricsContext): ProviderLyricsResult
 	return handle(ctx)

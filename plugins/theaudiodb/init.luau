@@ -737,7 +737,6 @@ provider:search(ET.Track, function(query: string): { SearchResultItem }
 end)
 
 provider:cover(ET.Artist, {
-	priority = 80,
 	require = {
 		any_of = { "ids.artist_id", "artist_name", "sort_name" },
 	},
@@ -750,7 +749,6 @@ provider:cover(ET.Artist, {
 end)
 
 provider:cover(ET.Release, {
-	priority = 60,
 	require = {
 		all_of = { "release_title" },
 		any_of = { "ids.album_id", "artist_names" },

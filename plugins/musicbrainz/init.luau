@@ -367,7 +367,6 @@ local function release_cover_handler(ctx: ProviderCoverContext): ProviderCoverRe
 end
 
 provider:cover(ET.Release, {
-	priority = 100,
 	require = {
 		any_of = { "ids.release_id", "ids.release_group_id" },
 	},

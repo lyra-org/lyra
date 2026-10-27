@@ -770,7 +770,6 @@ async fn search_provider_cover(
     tracing::trace!(
         provider_id,
         entity_type = entity_type.as_str(),
-        priority = spec.priority,
         "provider cover handler returned"
     );
 

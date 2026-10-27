@@ -174,8 +174,7 @@ pub(super) fn parse_id_spec(
 pub(super) fn parse_cover_spec(
     vm: &luau::Vm,
     config: &luau::Table,
-) -> luau::runtime::Result<(i64, Duration, ProviderRequireSpec)> {
-    let priority = optional_i64(vm, config, "priority", "provider:cover")?.unwrap_or(50);
+) -> luau::runtime::Result<(Duration, ProviderRequireSpec)> {
     let timeout = optional_timeout(
         vm,
         config,
@@ -184,7 +183,7 @@ pub(super) fn parse_cover_spec(
         DEFAULT_COVER_HANDLER_TIMEOUT,
     )?;
     let require = parse_provider_require(vm, config, "provider:cover")?;
-    Ok((priority, timeout, require))
+    Ok((timeout, require))
 }
 
 pub(super) fn parse_similar_releases_spec(
@@ -211,11 +210,7 @@ pub(super) fn parse_similar_releases_spec(
 pub(super) fn parse_lyrics_spec(
     vm: &luau::Vm,
     config: &luau::Table,
-) -> luau::runtime::Result<(i32, Duration, ProviderRequireSpec)> {
-    let priority = optional_i64(vm, config, "priority", "provider:lyrics")?.unwrap_or(50);
-    let priority = i32::try_from(priority).map_err(|_| {
-        crate::plugins::runtime_error("provider:lyrics config.priority must fit in i32")
-    })?;
+) -> luau::runtime::Result<(Duration, ProviderRequireSpec)> {
     let timeout = optional_timeout(
         vm,
         config,
@@ -224,7 +219,7 @@ pub(super) fn parse_lyrics_spec(
         DEFAULT_HANDLER_TIMEOUT,
     )?;
     let require = parse_provider_require(vm, config, "provider:lyrics")?;
-    Ok((priority, timeout, require))
+    Ok((timeout, require))
 }
 
 fn optional_i64(

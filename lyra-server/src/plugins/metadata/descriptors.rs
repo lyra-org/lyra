@@ -470,7 +470,6 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
         interface(
             "ProviderCoverConfig",
             vec![
-                field("priority", opt(number())),
                 field("timeout_ms", opt(number())),
                 field("require", opt(ty("ProviderRequire"))),
             ],
@@ -566,7 +565,6 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
         interface(
             "ProviderLyricsConfig",
             vec![
-                field("priority", opt(number())),
                 field("timeout_ms", opt(number())),
                 field("require", opt(ty("ProviderRequire"))),
             ],

@@ -183,7 +183,6 @@ pub(crate) struct ProviderRequireSpec {
 
 #[derive(Clone)]
 pub(crate) struct ProviderCoverSpec {
-    pub(crate) priority: i64,
     /// Per-call handler timeout, defaulted while parsing provider config.
     pub(crate) timeout: Duration,
     pub(crate) require: ProviderRequireSpec,
