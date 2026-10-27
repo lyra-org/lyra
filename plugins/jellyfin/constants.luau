@@ -99,8 +99,8 @@ function module.declare_settings(builder: SettingsBuilder)
 
 	builder:group("auth", "Authentication")
 	builder:bool("accept_legacy_auth_headers", {
-		label = "Accept legacy auth headers",
-		description = "Accept the X-Emby-Token and X-MediaBrowser-Token headers. The X-Emby-Authorization header and the api_key query parameter are always accepted, since clients still send them. Jellyfin rejects all four unless EnableLegacyAuthorization is on.",
+		label = "Accept legacy authorization",
+		description = "Accept the legacy credential forms Jellyfin gates behind EnableLegacyAuthorization: the X-Emby-Token and X-MediaBrowser-Token headers, the X-Emby-Authorization header, the api_key query parameter, and the Emby authorization scheme. The Authorization header with the MediaBrowser scheme and the ApiKey query parameter are always accepted.",
 		default = true,
 	})
 end

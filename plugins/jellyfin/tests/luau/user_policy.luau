@@ -22,3 +22,9 @@ assert(admin.EnableContentDownloading == true, "admin implies download")
 local listener = policy("listener")
 assert(listener.IsAdministrator == false, "listener is not an administrator")
 assert(listener.EnableContentDownloading == false, "listener lacks the download permission")
+
+-- Upstream always reports a configured password and no easy password.
+local user = session.to_jellyfin_user(listed[fixture.users.listener]) :: any
+assert(user.HasPassword == true, "HasPassword is always true")
+assert(user.HasConfiguredPassword == true, "HasConfiguredPassword is always true")
+assert(user.HasConfiguredEasyPassword == false, "HasConfiguredEasyPassword is always false")

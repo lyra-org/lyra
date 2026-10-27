@@ -11,7 +11,7 @@ local function context(token: string?, query)
 		request = {
 			method = "GET",
 			path = "/",
-			headers = if token then { authorization = `Bearer {token}` } else {},
+			headers = if token then { authorization = `MediaBrowser Token="{token}"` } else {},
 			query = query or {},
 			body_raw = "",
 			json = nil,

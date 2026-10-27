@@ -7,7 +7,7 @@ local function stop(token: string?, query): number
 		request = {
 			method = "DELETE",
 			path = "/",
-			headers = if token then { authorization = `Bearer {token}` } else {},
+			headers = if token then { authorization = `MediaBrowser Token="{token}"` } else {},
 			query = query,
 			body_raw = "",
 			json = nil,

@@ -8,7 +8,7 @@ local function context(token: string?, query, json)
 		request = {
 			method = if json then "POST" else "GET",
 			path = "/",
-			headers = if token then { authorization = `Bearer {token}` } else {},
+			headers = if token then { authorization = `MediaBrowser Token="{token}"` } else {},
 			query = query or {},
 			body_raw = if json then "{}" else "",
 			json = json,

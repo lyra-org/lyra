@@ -7,7 +7,7 @@ local function ping(token: string?, query): number
 		request = {
 			method = "POST",
 			path = "/",
-			headers = if token then { authorization = `Bearer {token}` } else {},
+			headers = if token then { authorization = `MediaBrowser Token="{token}"` } else {},
 			query = query,
 			body_raw = "",
 			json = nil,

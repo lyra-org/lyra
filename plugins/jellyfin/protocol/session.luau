@@ -22,7 +22,6 @@ local requests = require("./items/requests")
 local responses = require("./items/responses")
 
 local SERVER_ID = constants.SERVER_ID
-local ACCEPT_LEGACY_AUTH_HEADERS = constants.ACCEPT_LEGACY_AUTH_HEADERS
 local module = {}
 
 type ApiContext = api.ApiContext
@@ -132,18 +131,13 @@ local function raw_ids_contain_null(body_raw: string?): boolean
 	return raw_ids ~= nil and string.find(raw_ids, "%f[%w]null%f[%W]") ~= nil
 end
 
-local function parse_bearer_authorization(header_value: string): string?
-	local scheme, token = string.match(header_value, "^%s*([^%s]+)%s+(.+)%s*$")
-	if not scheme or token == nil or string.lower(scheme) ~= "bearer" then
-		return nil
-	end
-
-	return requests.trim(token)
-end
-
+-- Upstream's scheme is `MediaBrowser`; it accepts `Emby` only under legacy authorization.
 local function parse_mediabrowser_params(header_value: string): { [string]: string? }?
 	local scheme, remainder = string.match(header_value, "^%s*([^%s]+)%s+(.+)%s*$")
-	if not scheme or remainder == nil or string.lower(scheme) ~= "mediabrowser" then
+	local scheme_name = if scheme then string.lower(scheme) else nil
+	local valid_scheme = scheme_name == "mediabrowser"
+		or (scheme_name == "emby" and constants.ACCEPT_LEGACY_AUTH_HEADERS)
+	if not valid_scheme or remainder == nil then
 		return nil
 	end
 
@@ -163,19 +157,22 @@ local function parse_mediabrowser_params(header_value: string): { [string]: stri
 	return values
 end
 
-local function mediabrowser_header_values(headers: { [string]: string }?): { [string]: string? }
-	if headers then
-		for _, name in { "authorization", "x-emby-authorization" } do
-			local value = headers[name]
-			if value then
-				local parsed = parse_mediabrowser_params(value)
-				if parsed then
-					return parsed
-				end
-			end
-		end
+-- The authorization header, as upstream reads it: `X-Emby-Authorization` stands in for a missing
+-- `Authorization` only under legacy authorization.
+local function authorization_header(headers: { [string]: string }?): string?
+	if not headers then
+		return nil
 	end
-	return {}
+	local value: string? = headers.authorization
+	if (value == nil or value == "") and constants.ACCEPT_LEGACY_AUTH_HEADERS then
+		value = headers["x-emby-authorization"]
+	end
+	return if value == "" then nil else value
+end
+
+local function mediabrowser_header_values(headers: { [string]: string }?): { [string]: string? }
+	local value = authorization_header(headers)
+	return (if value then parse_mediabrowser_params(value) else nil) or {}
 end
 
 local function header_token(value: string?): string?
@@ -183,12 +180,22 @@ local function header_token(value: string?): string?
 		return nil
 	end
 	local params = parse_mediabrowser_params(value)
-	return if params then requests.trim(params.token) else parse_bearer_authorization(value)
+	return if params then requests.trim(params.token) else nil
+end
+
+-- The token headers and `api_key` are legacy forms; `ApiKey` is always accepted.
+local function legacy_header_token(headers: { [string]: string }?): string?
+	if not constants.ACCEPT_LEGACY_AUTH_HEADERS or type(headers) ~= "table" then
+		return nil
+	end
+	return requests.trim(headers["x-emby-token"]) or requests.trim(headers["x-mediabrowser-token"])
 end
 
 local function get_query_token(query: ApiQueryParams?): string?
 	return requests.parse_query_string(query, { "ApiKey" }, nil)
-		or requests.parse_query_string(query, { "api_key" }, nil)
+		or (
+			if constants.ACCEPT_LEGACY_AUTH_HEADERS then requests.parse_query_string(query, { "api_key" }, nil) else nil
+		)
 end
 
 local function build_jellyfin_user_policy(user: UserIdentity): JsonObject
@@ -236,26 +243,13 @@ local function build_jellyfin_user_policy(user: UserIdentity): JsonObject
 	}
 end
 
--- X-Emby-Token / X-MediaBrowser-Token legacy headers, gated by accept_legacy_auth_headers.
-local function get_legacy_header_token(headers: { [string]: string }?): string?
-	if not ACCEPT_LEGACY_AUTH_HEADERS then
-		return nil
-	end
-	if type(headers) ~= "table" then
-		return nil
-	end
-
-	return requests.trim(headers["x-emby-token"]) or requests.trim(headers["x-mediabrowser-token"])
-end
-
 function module.to_jellyfin_user(user: UserIdentity): JsonValue
-	local auth_enabled = auth.capabilities().enabled
 	return {
 		Id = item_ids.encode_jellyfin_item_id(user.user_id),
 		Name = user.username,
 		ServerId = SERVER_ID,
-		HasPassword = auth_enabled,
-		HasConfiguredPassword = auth_enabled,
+		HasPassword = true,
+		HasConfiguredPassword = true,
 		HasConfiguredEasyPassword = false,
 		Configuration = preferences.user_configuration(user.user_id),
 		Policy = build_jellyfin_user_policy(user),
@@ -308,11 +302,8 @@ local function resolve_jellyfin_auth(ctx: ApiContext?): (ResolvedAuth?, string?)
 	local headers = if request then request.headers else nil
 	local query = if request then request.query else nil
 
-	local token = if headers
-		then header_token(headers.authorization) or header_token(headers["x-emby-authorization"])
-		else nil
+	local token = header_token(authorization_header(headers)) or legacy_header_token(headers) or get_query_token(query)
 	local requested_user_id = requests.trim(mediabrowser_header_values(headers).userid)
-	token = token or get_legacy_header_token(headers) or get_query_token(query)
 
 	local resolved_auth = auth.resolve_auth(token)
 	if not resolved_auth then
@@ -392,7 +383,7 @@ function module.resolve_client_identity(
 	end
 	if not client or not device_id then
 		return nil,
-			"missing Client or DeviceId; send player identity in X-Emby-Authorization or client/deviceId query parameters"
+			"missing Client or DeviceId; send player identity in Authorization or client/deviceId query parameters"
 	end
 
 	local identity: ClientIdentity = {
