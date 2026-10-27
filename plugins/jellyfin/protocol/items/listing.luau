@@ -89,8 +89,9 @@ local function person_source(options: ItemsQueryOptions, scope: Scope, appears_i
 	end
 end
 
--- Playlists aren't catalog entities. They list at the root only, and only under the filters
--- that mean something for a playlist; they sort by name.
+-- Playlists aren't catalog entities. They list only under the filters that mean something for a
+-- playlist, and sort by name. As upstream, under a parent they list only when they are the one
+-- type named, and then only those with a track under that parent.
 local function playlist_source(options: ItemsQueryOptions, scope: Scope): Source?
 	local catalog_only = #options.album_ids > 0
 		or #options.artist_ids > 0
@@ -106,7 +107,12 @@ local function playlist_source(options: ItemsQueryOptions, scope: Scope): Source
 		or options.name_less_than ~= nil
 	local is_favorite, favorite_ok = query.favorite(options)
 	local is_played, played_ok = query.played(options)
-	if scope.db_id ~= nil or catalog_only or not favorite_ok or not played_ok or options.user_id == nil then
+	if catalog_only or not favorite_ok or not played_ok or options.user_id == nil then
+		return nil
+	end
+	local only_playlists = #options.include_item_types == 1
+		and string.lower(options.include_item_types[1]) == "playlist"
+	if scope.db_id ~= nil and not only_playlists then
 		return nil
 	end
 
@@ -164,6 +170,25 @@ local function playlist_source(options: ItemsQueryOptions, scope: Scope): Source
 	local entries: { [number]: { playlists.PlaylistTrackLink } } = if #shown_ids > 0
 		then playlists.get_tracks_many(shown_ids)
 		else {}
+	local under: { [number]: boolean }? = nil
+	if scope.db_id ~= nil then
+		local track_ids: { number } = {}
+		for _, links in entries do
+			for _, link in links do
+				table.insert(track_ids, link.track_id)
+			end
+		end
+		local scoped = query.tracks_under(track_ids, scope)
+		if not scoped or #track_ids == 0 then
+			return nil
+		end
+		under = {}
+		for _, track in tracks.query(scoped).items do
+			if track.db_id then
+				(under :: { [number]: boolean })[track.db_id] = true
+			end
+		end
+	end
 	-- As upstream, a playlist is played once none of the tracks the caller can see is unplayed.
 	local unplayed: { [number]: boolean } = {}
 	if is_played ~= nil then
@@ -184,6 +209,18 @@ local function playlist_source(options: ItemsQueryOptions, scope: Scope): Source
 	local stubs: { ItemInfo } = {}
 	for _, playlist in shown do
 		local links = entries[playlist.db_id :: number]
+		if under ~= nil then
+			local found = false
+			for _, link in links or {} do
+				if under[link.track_id] then
+					found = true
+					break
+				end
+			end
+			if not found then
+				continue
+			end
+		end
 		if is_played ~= nil then
 			local played = true
 			for _, link in links or {} do

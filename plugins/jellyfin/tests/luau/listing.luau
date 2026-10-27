@@ -124,6 +124,30 @@ do
 	)
 end
 
+-- Under a parent, playlists list when they are the only type named, and only those with a track
+-- under the parent.
+do
+	local function under(parent: number, filter: Params?): string
+		return items(with({ IncludeItemTypes = "Playlist", Recursive = "true" }, filter or {}), parent)
+	end
+	check(under(ids.compilation), "Mix:Playlist (1)")
+	check(under(ids.solo), "Mix:Playlist,Played:Playlist,Shared:Playlist (3)")
+	check(under(ids.aaron), "Mix:Playlist (1)", "a track's artist holds the playlists it is on")
+	check(under(ids.various_artists), "Mix:Playlist (1)", "so does its album's artist")
+	check(under(ids.rock), " (0)", "a genre holds no tracks")
+	check(
+		under(ids.solo, { SortOrder = "Descending", StartIndex = "1", Limit = "1", IsFavorite = "false" }),
+		"Played:Playlist (3)",
+		"the other filters, the sort and the page still apply"
+	)
+	check(under(ids.solo, { Filters = "IsUnplayed" }), "Mix:Playlist (1)")
+	check(
+		items({ IncludeItemTypes = "Playlist,Audio", Recursive = "true" }, ids.compilation),
+		"V1:Audio (1)",
+		"playlists don't list under a parent beside another type"
+	)
+end
+
 -- Listings filter by played state.
 do
 	-- A playlist is played once none of its tracks is unplayed, so an empty one is played.

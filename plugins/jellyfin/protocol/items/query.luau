@@ -387,6 +387,23 @@ function module.tracks(options: ItemsQueryOptions, scope: Scope): TrackQuery?
 	return query
 end
 
+-- The tracks among `ids` under `scope`, as upstream's ancestors: their library, their release, or
+-- an artist credited on them or their release; nil when `scope` holds no tracks that way.
+function module.tracks_under(ids: { number }, scope: Scope): TrackQuery?
+	local query: TrackQuery = { ids = ids }
+	if scope.entity_type == "Library" then
+		query.library_id = scope.db_id
+	elseif scope.entity_type == "Release" then
+		query.release_ids = { scope.db_id :: number }
+	elseif scope.entity_type == "Artist" then
+		query.artist_ids = { scope.db_id :: number }
+		query.credit_role = "any"
+	else
+		return nil
+	end
+	return query
+end
+
 function module.releases(options: ItemsQueryOptions, scope: Scope): ReleaseQuery?
 	local filters = common(options)
 	if not filters then
