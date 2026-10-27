@@ -3,285 +3,58 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-mod decision;
 mod download;
 mod hls;
 mod ranged_file;
 mod stream;
 mod transcoded;
 
-pub(crate) use decision::{
-    DeliveryDescription,
-    DeliveryTarget,
-    TranscodeKnobs,
-    ValidatedRequest,
-    apply_transcode_policy,
-    resolve_delivery,
-    validate_request,
-};
 pub use download::download_routes;
-pub(crate) use download::download_track_response;
-pub(crate) use hls::{
-    HlsPlaylistOptions,
-    resolve_hls_profile,
-    serve_hls_playlist_for_track,
-};
+pub(crate) use hls::serve_hls_playlist_for_track;
 pub(crate) use ranged_file::build_ranged_file_body;
 use ranged_file::{
     RangedFileBody,
     build_ranged_body,
 };
-pub(crate) use stream::{
-    describe_stream,
-    stream_track_response,
-};
 
 use axum::Router;
 
-use agdb::DbId;
 use axum::{
     body::Body,
     http::{
         HeaderMap,
+        Method,
         Response,
         StatusCode,
         header,
     },
 };
-use lyra_ffmpeg::{
-    AudioCodec,
-    AudioFormat,
-};
-use std::path::{
-    Path as FsPath,
-    PathBuf,
-};
+use std::path::Path as FsPath;
 
 use crate::{
     routes::AppError,
-    services::STATE,
     services::{
         auth::{
             Principal,
-            caller::Caller,
             media_tokens::{
-                DeliveryOptions,
                 MediaTokenAccess,
                 MediaTokenError,
                 MediaTokenPurpose,
                 validate_media_token,
             },
             require_authenticated,
-            require_permission,
         },
-        hls::state::HlsSessionHolder,
-        playback_sources::{
-            self as playback_source_service,
-            SourceVersion,
+        delivery::{
+            DeliveryTarget,
+            ServeTrackOptions,
+            TrackAccess,
+            ValidatedTrackSource,
+            authorize_track_purpose,
+            resolve_track_delivery,
         },
+        playback_sources::SourceVersion,
     },
 };
-
-#[derive(Debug)]
-pub struct ValidatedTrackSource {
-    pub source_id: DbId,
-    pub source_public_id: String,
-    pub version: SourceVersion,
-    pub track_public_id: String,
-    pub input_path: String,
-    pub entry_format: Option<AudioFormat>,
-    pub source_codec: Option<AudioCodec>,
-    pub full_path: PathBuf,
-    pub duration_ms: Option<u64>,
-    pub start_ms: Option<u64>,
-    pub end_ms: Option<u64>,
-    /// The source file's format and audio properties, as scanned.
-    pub format: lyra_db::track_sources::SourceFormat,
-}
-
-#[derive(Clone, Default)]
-pub(crate) struct ServeTrackOptions {
-    pub(crate) format: Option<String>,
-    pub(crate) codec: Option<String>,
-    pub(crate) bitrate_bps: Option<u32>,
-    pub(crate) sample_rate_hz: Option<u32>,
-    pub(crate) channels: Option<u32>,
-    pub(crate) prefer_vbr: Option<bool>,
-    pub(crate) start_offset_ms: Option<u64>,
-}
-
-impl ServeTrackOptions {
-    pub(crate) fn delivery(&self) -> DeliveryOptions {
-        DeliveryOptions {
-            format: self.format.clone(),
-            codec: self.codec.clone(),
-            bitrate_bps: self.bitrate_bps,
-            sample_rate_hz: self.sample_rate_hz,
-            channels: self.channels,
-            prefer_vbr: self.prefer_vbr,
-        }
-    }
-
-    /// The options a request through `access` is served with. A media token carries the delivery
-    /// it was issued for, so a request with one may only choose its start offset.
-    fn bound_to(self, access: &TrackAccess) -> Result<Self, AppError> {
-        let TrackAccess::MediaToken(token) = access else {
-            return Ok(self);
-        };
-        reject_unbound_options(&self.delivery())?;
-        let DeliveryOptions {
-            format,
-            codec,
-            bitrate_bps,
-            sample_rate_hz,
-            channels,
-            prefer_vbr,
-        } = token.options.clone();
-        Ok(Self {
-            format,
-            codec,
-            bitrate_bps,
-            sample_rate_hz,
-            channels,
-            prefer_vbr,
-            start_offset_ms: self.start_offset_ms,
-        })
-    }
-}
-
-fn reject_unbound_options(requested: &DeliveryOptions) -> Result<(), AppError> {
-    if *requested == DeliveryOptions::default() {
-        return Ok(());
-    }
-    Err(AppError::bad_request(
-        "this media token already fixes the delivery; request a new playback URL to change it",
-    ))
-}
-
-pub(crate) fn source_range_duration_ms(start_ms: Option<u64>, end_ms: Option<u64>) -> Option<u64> {
-    match (start_ms, end_ms) {
-        (Some(start_ms), Some(end_ms)) if end_ms > start_ms => Some(end_ms - start_ms),
-        _ => None,
-    }
-}
-
-pub fn apply_request_start_offset(
-    mut source: ValidatedTrackSource,
-    start_offset_ms: Option<u64>,
-) -> Result<ValidatedTrackSource, AppError> {
-    let Some(start_offset_ms) = start_offset_ms else {
-        return Ok(source);
-    };
-
-    if start_offset_ms == 0 {
-        return Ok(source);
-    }
-
-    let current_start_ms = source.start_ms.unwrap_or(0);
-    let next_start_ms = current_start_ms
-        .checked_add(start_offset_ms)
-        .ok_or_else(|| AppError::bad_request("start_offset_ms is too large"))?;
-
-    if let Some(end_ms) = source.end_ms {
-        if next_start_ms >= end_ms {
-            return Err(AppError::bad_request(
-                "start_offset_ms exceeds the available source duration",
-            ));
-        }
-    } else if let Some(duration_ms) = source.duration_ms.filter(|duration_ms| *duration_ms > 0) {
-        if start_offset_ms >= duration_ms {
-            return Err(AppError::bad_request(
-                "start_offset_ms exceeds the available source duration",
-            ));
-        }
-
-        source.duration_ms = Some(duration_ms - start_offset_ms);
-    }
-
-    source.start_ms = Some(next_start_ms);
-    Ok(source)
-}
-
-/// Checks that `principal` may be served a track for `purpose`.
-pub(crate) fn authorize_track_purpose(
-    principal: &Principal,
-    purpose: MediaTokenPurpose,
-) -> Result<(), AppError> {
-    match purpose {
-        MediaTokenPurpose::Stream | MediaTokenPurpose::HlsPlaylist => Ok(()),
-        MediaTokenPurpose::Download => {
-            require_permission(principal, lyra_db::Permission::Download).map_err(Into::into)
-        }
-    }
-}
-
-/// How a request reached a track. A principal's library access is checked under the guard that
-/// resolves the track's source. A media token was bound to the track's public id when it was
-/// issued; its holder is checked like a principal under that guard, and it only serves the source
-/// file it was issued against. A public plugin route serves any track, as its protocol does; it
-/// carries whom its transcodes are accounted to, and nothing else.
-#[derive(Debug)]
-pub(crate) enum TrackAccess {
-    Principal(Principal),
-    MediaToken(MediaTokenAccess),
-    PublicPluginRoute(Caller),
-}
-
-impl TrackAccess {
-    /// Who an HLS session created through this access serves.
-    pub(crate) fn session_holder(&self) -> HlsSessionHolder {
-        match self {
-            Self::Principal(principal) => HlsSessionHolder::Principal(principal.clone()),
-            Self::MediaToken(token) => HlsSessionHolder::MediaToken(token.holder.clone()),
-            Self::PublicPluginRoute(_) => HlsSessionHolder::Public,
-        }
-    }
-
-    /// Whom a transcode for this request is charged to: the principal, the media token's holder,
-    /// or for a public plugin route the caller its handler resolved or else the client.
-    pub(crate) fn caller(&self) -> Caller {
-        match self {
-            Self::Principal(principal) => Caller::User(principal.user_public_id.clone()),
-            Self::MediaToken(token) => token.holder.caller(),
-            Self::PublicPluginRoute(caller) => caller.clone(),
-        }
-    }
-}
-
-/// Checks, for each HLS segment, that the session's holder may still be served the track: the
-/// user still exists, a media token's credential still authenticates them, and they can still
-/// see the track.
-pub(super) async fn require_session_access(
-    holder: &HlsSessionHolder,
-    track_public_id: &str,
-) -> Result<(), AppError> {
-    if matches!(holder, HlsSessionHolder::Public) {
-        return Ok(());
-    }
-    let db = &*STATE.db.read().await;
-    let not_found = || AppError::not_found("HLS session not found");
-    let principal = match holder {
-        HlsSessionHolder::Public => return Ok(()),
-        HlsSessionHolder::Principal(principal) => {
-            principal.require(db)?;
-            std::borrow::Cow::Borrowed(principal)
-        }
-        HlsSessionHolder::MediaToken(holder) => {
-            std::borrow::Cow::Owned(holder.principal(db)?.ok_or_else(|| {
-                AppError::unauthorized("media token holder is no longer signed in")
-            })?)
-        }
-    };
-    let track_db_id =
-        lyra_db::lookup::find_node_id_by_id(db, track_public_id)?.ok_or_else(not_found)?;
-    crate::services::auth::access::require_entity_accessible(
-        db,
-        &principal,
-        track_db_id,
-        not_found,
-    )?;
-    Ok(())
-}
 
 fn media_token_error_to_app_error(err: MediaTokenError) -> AppError {
     match err {
@@ -331,85 +104,22 @@ pub(crate) async fn require_track_access(
     }
 }
 
-/// Resolves the track's playable source, checking `access` under the same guard.
-pub(crate) async fn validate_and_get_track_source(
+/// Serves a track to `target` as `GET` would. A `HEAD` request gets the same decision and
+/// headers without starting FFmpeg, with the length when the transcode is already cached.
+pub(crate) async fn track_response(
+    method: &Method,
+    headers: &HeaderMap,
     track_id: &str,
     access: &TrackAccess,
-) -> Result<ValidatedTrackSource, AppError> {
-    let db = &*STATE.db.read().await;
-    let not_found = || AppError::not_found(format!("Track not found: {track_id}"));
-    let track_db_id = lyra_db::lookup::find_node_id_by_id(db, track_id)?.ok_or_else(not_found)?;
-    match access {
-        TrackAccess::Principal(principal) => {
-            principal.require(db)?;
-            crate::services::auth::access::require_entity_accessible(
-                db,
-                principal,
-                track_db_id,
-                not_found,
-            )?;
-        }
-        TrackAccess::MediaToken(token) => {
-            let principal = token.holder.principal(db)?.ok_or_else(|| {
-                AppError::unauthorized("media token holder is no longer signed in")
-            })?;
-            authorize_track_purpose(&principal, token.purpose)?;
-            crate::services::auth::access::require_entity_accessible(
-                db,
-                &principal,
-                track_db_id,
-                not_found,
-            )?;
-        }
-        TrackAccess::PublicPluginRoute(_) => {}
+    options: ServeTrackOptions,
+    target: DeliveryTarget,
+) -> Result<Response<Body>, AppError> {
+    let (source, delivery) = resolve_track_delivery(track_id, access, options, target).await?;
+    if delivery.direct_passthrough {
+        return source_file_response(&source, delivery.content_type, headers).await;
     }
-    let track = lyra_db::tracks::get_by_id(db, track_db_id)?.ok_or_else(not_found)?;
-
-    let source = playback_source_service::resolve(db, track_db_id, false)?.ok_or_else(|| {
-        AppError::not_found(format!("Playable source not found for track: {track_id}"))
-    })?;
-    let source_public_id =
-        lyra_db::lookup::find_id_by_db_id(db, source.source_id)?.ok_or_else(|| {
-            AppError::not_found(format!(
-                "Playable source has no public id: {}",
-                source.source_id.0
-            ))
-        })?;
-    let version =
-        SourceVersion::read(source_public_id.clone(), &source.full_path).map_err(|err| {
-            tracing::warn!(
-                track_id,
-                path = %source.full_path.display(),
-                error = %err,
-                "track source file is unreadable"
-            );
-            AppError::not_found(format!("Track source file not found for track: {track_id}"))
-        })?;
-    if let TrackAccess::MediaToken(token) = access
-        && token.source != version
-    {
-        return Err(AppError::gone(
-            "the track's source changed since this media token was issued",
-        ));
-    }
-
-    Ok(ValidatedTrackSource {
-        source_id: source.source_id,
-        source_public_id,
-        version,
-        track_public_id: track.id.clone(),
-        input_path: source.input_path,
-        entry_format: playback_source_service::transcoder_format(source.format),
-        source_codec: source
-            .format
-            .codec
-            .and_then(playback_source_service::transcoder_codec),
-        full_path: source.full_path,
-        duration_ms: track.duration_ms,
-        start_ms: source.start_ms,
-        end_ms: source.end_ms,
-        format: source.format,
-    })
+    transcoded::transcoded_response(method, headers, access.caller(), source, delivery, target)
+        .await
 }
 
 /// The body of a `HEAD` response whose `GET` body has no known length. Its size is unknown
@@ -518,13 +228,18 @@ pub(crate) fn download_openapi_routes() -> aide::axum::ApiRouter {
 #[cfg(test)]
 mod tests {
     use super::{
+        AppError,
+        require_track_access,
+    };
+    use crate::services::auth::caller::{
         Caller,
+        ClientAddress,
+    };
+    use crate::services::delivery::{
         ServeTrackOptions,
         ValidatedTrackSource,
         apply_request_start_offset,
-        require_track_access,
     };
-    use crate::services::auth::caller::ClientAddress;
     use std::{
         path::PathBuf,
         time::{
@@ -660,7 +375,7 @@ mod tests {
             .await
             .expect("user with download permission should be allowed");
 
-        let super::TrackAccess::Principal(principal) = access else {
+        let crate::services::delivery::TrackAccess::Principal(principal) = access else {
             panic!("bearer access should resolve a principal");
         };
         assert_eq!(principal.username, "downloader");
@@ -760,12 +475,14 @@ mod tests {
             db.transaction_mut(|t| lyra_db::users::delete_user(t, user_db_id))?;
         }
 
-        let status = super::validate_and_get_track_source(
-            &track_id,
-            &super::TrackAccess::Principal(principal),
+        let status = AppError::from(
+            crate::services::delivery::validate_and_get_track_source(
+                &track_id,
+                &crate::services::delivery::TrackAccess::Principal(principal),
+            )
+            .await
+            .expect_err("a deleted principal must not resolve a track source"),
         )
-        .await
-        .expect_err("a deleted principal must not resolve a track source")
         .into_response()
         .status();
         assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -896,8 +613,10 @@ mod tests {
             },
         };
 
-        let err = apply_request_start_offset(source, Some(20_000))
-            .expect_err("offset equal to the available range must be rejected");
+        let err = AppError::from(
+            apply_request_start_offset(source, Some(20_000))
+                .expect_err("offset equal to the available range must be rejected"),
+        );
         assert_eq!(err.into_response().status(), StatusCode::BAD_REQUEST);
     }
 
@@ -943,12 +662,13 @@ mod tests {
             create_user_with_permissions("plugin-downloader", vec![Permission::Download]).await?;
         let principal = crate::services::auth::require_authenticated(&headers).await?;
 
-        let response = super::download::download_track_response(
+        let response = super::track_response(
             &Method::GET,
             &HeaderMap::new(),
             &track_id,
-            &super::TrackAccess::Principal(principal),
+            &crate::services::delivery::TrackAccess::Principal(principal),
             ServeTrackOptions::default(),
+            crate::services::delivery::DeliveryTarget::Download,
         )
         .await
         .map_err(|error| {
@@ -967,12 +687,15 @@ mod tests {
         let track_id = prepare_streamable_track(&test_dir).await?;
         let headers = HeaderMap::new();
 
-        let response = super::stream::stream_track_response(
+        let response = super::track_response(
             &Method::GET,
             &headers,
             &track_id,
-            &super::TrackAccess::PublicPluginRoute(Caller::Client(ClientAddress::default())),
+            &crate::services::delivery::TrackAccess::PublicPluginRoute(Caller::Client(
+                ClientAddress::default(),
+            )),
             ServeTrackOptions::default(),
+            crate::services::delivery::DeliveryTarget::Stream,
         )
         .await
         .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
@@ -998,16 +721,19 @@ mod tests {
         let track_id = prepare_streamable_track(&test_dir).await?;
         let headers = HeaderMap::new();
 
-        let response = super::stream::stream_track_response(
+        let response = super::track_response(
             &Method::GET,
             &headers,
             &track_id,
-            &super::TrackAccess::PublicPluginRoute(Caller::Client(ClientAddress::default())),
+            &crate::services::delivery::TrackAccess::PublicPluginRoute(Caller::Client(
+                ClientAddress::default(),
+            )),
             ServeTrackOptions {
                 format: Some("mp3".to_string()),
                 bitrate_bps: Some(96_000),
                 ..ServeTrackOptions::default()
             },
+            crate::services::delivery::DeliveryTarget::Stream,
         )
         .await
         .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
@@ -1272,8 +998,10 @@ mod tests {
             super::serve_hls_playlist_for_track(
                 &Method::GET,
                 &track_id,
-                &super::TrackAccess::PublicPluginRoute(Caller::Client(ClientAddress::default())),
-                super::HlsPlaylistOptions {
+                &crate::services::delivery::TrackAccess::PublicPluginRoute(Caller::Client(
+                    ClientAddress::default(),
+                )),
+                crate::services::delivery::HlsPlaylistOptions {
                     codec: None,
                     bitrate_bps: None,
                     sample_rate_hz: None,
@@ -1455,26 +1183,30 @@ mod tests {
             ..ServeTrackOptions::default()
         };
 
-        let refused = super::stream::stream_track_response(
+        let refused = super::track_response(
             &Method::GET,
             &HeaderMap::new(),
             &track_id,
-            &super::TrackAccess::PublicPluginRoute(Caller::User("busy-user".to_string())),
+            &crate::services::delivery::TrackAccess::PublicPluginRoute(Caller::User(
+                "busy-user".to_string(),
+            )),
             mp3(),
+            crate::services::delivery::DeliveryTarget::Stream,
         )
         .await
         .expect_err("the caller's allowance is used up")
         .into_response();
         assert_eq!(refused.status(), StatusCode::TOO_MANY_REQUESTS);
 
-        let other_client = super::stream::stream_track_response(
+        let other_client = super::track_response(
             &Method::GET,
             &HeaderMap::new(),
             &track_id,
-            &super::TrackAccess::PublicPluginRoute(Caller::Client(ClientAddress::new(
-                "10.0.0.9".parse().expect("valid ip"),
-            ))),
+            &crate::services::delivery::TrackAccess::PublicPluginRoute(Caller::Client(
+                ClientAddress::new("10.0.0.9".parse().expect("valid ip")),
+            )),
             mp3(),
+            crate::services::delivery::DeliveryTarget::Stream,
         )
         .await
         .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
@@ -1655,8 +1387,8 @@ mod tests {
         Ok(())
     }
 
-    fn hls_options() -> super::HlsPlaylistOptions {
-        super::HlsPlaylistOptions {
+    fn hls_options() -> crate::services::delivery::HlsPlaylistOptions {
+        crate::services::delivery::HlsPlaylistOptions {
             codec: None,
             bitrate_bps: None,
             sample_rate_hz: None,
@@ -1693,9 +1425,9 @@ mod tests {
                 super::serve_hls_playlist_for_track(
                     &Method::GET,
                     &track_id,
-                    &super::TrackAccess::PublicPluginRoute(
-                        Caller::Client(ClientAddress::default()),
-                    ),
+                    &crate::services::delivery::TrackAccess::PublicPluginRoute(Caller::Client(
+                        ClientAddress::default(),
+                    )),
                     hls_options(),
                 )
                 .await
@@ -1713,7 +1445,9 @@ mod tests {
             super::serve_hls_playlist_for_track(
                 &Method::GET,
                 &track_id,
-                &super::TrackAccess::PublicPluginRoute(Caller::Client(ClientAddress::default())),
+                &crate::services::delivery::TrackAccess::PublicPluginRoute(Caller::Client(
+                    ClientAddress::default(),
+                )),
                 hls_options(),
             ),
         )
@@ -1737,7 +1471,9 @@ mod tests {
         super::serve_hls_playlist_for_track(
             &Method::GET,
             &track_id,
-            &super::TrackAccess::PublicPluginRoute(Caller::Client(ClientAddress::default())),
+            &crate::services::delivery::TrackAccess::PublicPluginRoute(Caller::Client(
+                ClientAddress::default(),
+            )),
             hls_options(),
         )
         .await
@@ -1807,12 +1543,15 @@ mod tests {
         let track_id = prepare_streamable_track(&test_dir).await?;
         std::fs::remove_file(test_dir.join("integration_track.flac"))?;
 
-        let err = super::describe_stream(
+        let err = crate::services::delivery::describe_stream(
             &track_id,
-            &super::TrackAccess::PublicPluginRoute(Caller::Client(ClientAddress::default())),
+            &crate::services::delivery::TrackAccess::PublicPluginRoute(Caller::Client(
+                ClientAddress::default(),
+            )),
             ServeTrackOptions::default(),
         )
         .await
+        .map_err(AppError::from)
         .expect_err("the source file is gone");
         let message = err.to_string();
         assert!(message.starts_with("404"), "{message}");
@@ -1835,8 +1574,10 @@ mod tests {
         let response = super::serve_hls_playlist_for_track(
             &Method::HEAD,
             &track_id,
-            &super::TrackAccess::PublicPluginRoute(Caller::Client(ClientAddress::default())),
-            super::HlsPlaylistOptions {
+            &crate::services::delivery::TrackAccess::PublicPluginRoute(Caller::Client(
+                ClientAddress::default(),
+            )),
+            crate::services::delivery::HlsPlaylistOptions {
                 codec: None,
                 bitrate_bps: None,
                 sample_rate_hz: None,
@@ -1869,16 +1610,19 @@ mod tests {
         let test_dir = initialize_test_runtime().await?;
         let track_id = prepare_streamable_track(&test_dir).await?;
 
-        let response = super::stream::stream_track_response(
+        let response = super::track_response(
             &Method::GET,
             &HeaderMap::new(),
             &track_id,
-            &super::TrackAccess::PublicPluginRoute(Caller::Client(ClientAddress::default())),
+            &crate::services::delivery::TrackAccess::PublicPluginRoute(Caller::Client(
+                ClientAddress::default(),
+            )),
             ServeTrackOptions {
                 format: Some("m4a".to_string()),
                 codec: Some("aac".to_string()),
                 ..ServeTrackOptions::default()
             },
+            crate::services::delivery::DeliveryTarget::Stream,
         )
         .await
         .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
@@ -1910,16 +1654,19 @@ mod tests {
         let headers = HeaderMap::new();
 
         // The fixture is 44.1 kHz, so 22.05 kHz is a real downsample.
-        let response = super::stream::stream_track_response(
+        let response = super::track_response(
             &Method::GET,
             &headers,
             &track_id,
-            &super::TrackAccess::PublicPluginRoute(Caller::Client(ClientAddress::default())),
+            &crate::services::delivery::TrackAccess::PublicPluginRoute(Caller::Client(
+                ClientAddress::default(),
+            )),
             ServeTrackOptions {
                 format: Some("flac".to_string()),
                 sample_rate_hz: Some(22_050),
                 ..ServeTrackOptions::default()
             },
+            crate::services::delivery::DeliveryTarget::Stream,
         )
         .await
         .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
@@ -1956,17 +1703,20 @@ mod tests {
         // The fixture is 44.1 kHz mono. Asking for exactly that, or for more, asks for no
         // change we are willing to make, so the knobs must not destroy the passthrough.
         for (sample_rate_hz, channels) in [(44_100, 1), (48_000, 2)] {
-            let response = super::stream::stream_track_response(
+            let response = super::track_response(
                 &Method::GET,
                 &headers,
                 &track_id,
-                &super::TrackAccess::PublicPluginRoute(Caller::Client(ClientAddress::default())),
+                &crate::services::delivery::TrackAccess::PublicPluginRoute(Caller::Client(
+                    ClientAddress::default(),
+                )),
                 ServeTrackOptions {
                     format: Some("flac".to_string()),
                     sample_rate_hz: Some(sample_rate_hz),
                     channels: Some(channels),
                     ..ServeTrackOptions::default()
                 },
+                crate::services::delivery::DeliveryTarget::Stream,
             )
             .await
             .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
@@ -1993,16 +1743,19 @@ mod tests {
         let track_id = prepare_streamable_track(&test_dir).await?;
         let headers = HeaderMap::new();
 
-        let response = super::stream::stream_track_response(
+        let response = super::track_response(
             &Method::GET,
             &headers,
             &track_id,
-            &super::TrackAccess::PublicPluginRoute(Caller::Client(ClientAddress::default())),
+            &crate::services::delivery::TrackAccess::PublicPluginRoute(Caller::Client(
+                ClientAddress::default(),
+            )),
             ServeTrackOptions {
                 format: Some("flac".to_string()),
                 bitrate_bps: Some(96_000),
                 ..ServeTrackOptions::default()
             },
+            crate::services::delivery::DeliveryTarget::Stream,
         )
         .await
         .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
@@ -2028,16 +1781,19 @@ mod tests {
         let track_id = prepare_streamable_track(&test_dir).await?;
         let headers = HeaderMap::new();
 
-        let result = super::stream::stream_track_response(
+        let result = super::track_response(
             &Method::GET,
             &headers,
             &track_id,
-            &super::TrackAccess::PublicPluginRoute(Caller::Client(ClientAddress::default())),
+            &crate::services::delivery::TrackAccess::PublicPluginRoute(Caller::Client(
+                ClientAddress::default(),
+            )),
             ServeTrackOptions {
                 format: Some("mp3".to_string()),
                 bitrate_bps: Some(0),
                 ..ServeTrackOptions::default()
             },
+            crate::services::delivery::DeliveryTarget::Stream,
         )
         .await;
 

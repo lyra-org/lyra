@@ -94,7 +94,6 @@ async fn serve(capture: Option<CaptureArgs>, listener: TcpListener) -> Result<()
     harmony_http::set_default_user_agent(services::STATE.boot.get().build.user_agent());
     hls_init::initialize().await;
     services::transcoding::initialize().await;
-    plugins::playback_sources::install_delivery_decider(routes::plugin_api::decide_delivery);
 
     let db = services::STATE.db.get();
     let maintenance_shutdown = if capture_mode {

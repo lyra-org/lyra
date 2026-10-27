@@ -85,9 +85,6 @@ pub async fn initialize_runtime(library: &LibraryFixtureConfig) -> anyhow::Resul
         library.language.clone(),
         library.country.clone(),
     ))?;
-    crate::plugins::playback_sources::install_delivery_decider(
-        crate::routes::plugin_api::decide_delivery,
-    );
     crate::plugins::testing::start_runtime().await
 }
 

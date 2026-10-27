@@ -3,13 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::sync::{
-    Arc,
-    OnceLock,
-};
+use std::sync::Arc;
 
 use agdb::DbId;
-use futures::future::BoxFuture;
+use axum::http::StatusCode;
 use harmony_core::{
     FunctionSpec,
     ModuleExport,
@@ -34,28 +31,17 @@ use crate::plugins::args;
 use crate::{
     plugins::db,
     services::{
-        auth::Principal,
+        auth::AuthError,
+        delivery::{
+            self,
+            DeliveryError,
+        },
         playback_sources as playback_source_service,
     },
 };
 use lyra_db::ResolveId;
 
 struct PlaybackSourcesModule;
-
-/// Decides what an `api.response.stream_track` response for a track and its options would
-/// deliver, answering with the description `decide` returns. The HTTP layer that serves the
-/// stream provides it, and the composition root installs it.
-pub(crate) type DecideDelivery = fn(
-    Option<Principal>,
-    DbId,
-    Option<serde_json::Value>,
-) -> BoxFuture<'static, anyhow::Result<serde_json::Value>>;
-
-static DECIDE_DELIVERY: OnceLock<DecideDelivery> = OnceLock::new();
-
-pub(crate) fn install_delivery_decider(decide: DecideDelivery) {
-    DECIDE_DELIVERY.get_or_init(|| decide);
-}
 
 #[cfg(feature = "docgen")]
 struct EntryInfo;
@@ -136,16 +122,60 @@ fn decide_callback(
         .transpose()?;
     let principal = crate::plugins::auth::dispatch_principal(&frame.context)?;
 
-    let decide = *DECIDE_DELIVERY
-        .get()
-        .ok_or_else(|| crate::plugins::runtime_error("no stream delivery decider is installed"))?;
-
     Ok(luau::ScheduledFuture::new(async move {
-        let description = decide(principal, track_id, options)
+        let (public, options) =
+            crate::plugins::api::options::stream_track_options(options.as_ref())
+                .map_err(crate::plugins::runtime_error)?;
+        let (track_id, access) =
+            delivery::stream_track_access(principal.as_ref(), Default::default(), track_id, public)
+                .await
+                .map_err(delivery_runtime_error)?;
+        let description = delivery::describe_stream(&track_id, &access, options)
             .await
-            .map_err(crate::plugins::runtime_error)?;
-        harmony_serde::json_to_luau_owned(description, 0)
+            .map_err(delivery_runtime_error)?;
+        harmony_serde::json_to_luau_owned(
+            serde_json::to_value(description).map_err(crate::plugins::runtime_error)?,
+            0,
+        )
     }))
+}
+
+fn delivery_runtime_error(error: DeliveryError) -> luau::Error {
+    crate::plugins::runtime_error(delivery_error_message(error))
+}
+
+/// The error a stream route would answer `error` with, status first, as `decide` raises it.
+pub(crate) fn delivery_error_message(error: DeliveryError) -> String {
+    let (status, message) = match error {
+        DeliveryError::BadRequest(message) => (StatusCode::BAD_REQUEST, message),
+        DeliveryError::Unauthorized(message) => (StatusCode::UNAUTHORIZED, message),
+        DeliveryError::NotFound(message) => (StatusCode::NOT_FOUND, message),
+        DeliveryError::Gone(message) => (StatusCode::GONE, message),
+        DeliveryError::ServiceUnavailable(message) => (StatusCode::SERVICE_UNAVAILABLE, message),
+        DeliveryError::Auth(error) => auth_error_status(error),
+        DeliveryError::Internal(error) => internal_error_status(error),
+    };
+    format!("{status}: {message}")
+}
+
+fn auth_error_status(error: AuthError) -> (StatusCode, String) {
+    match error {
+        AuthError::MissingBearerCredential
+        | AuthError::InvalidBearerCredential
+        | AuthError::SessionExpired => (StatusCode::UNAUTHORIZED, error.to_string()),
+        AuthError::InvalidClientName(error) => (StatusCode::BAD_REQUEST, error.to_string()),
+        AuthError::Forbidden(message) => (StatusCode::FORBIDDEN, message),
+        AuthError::NotFound(message) => (StatusCode::NOT_FOUND, message),
+        AuthError::RateLimited(_) => (StatusCode::TOO_MANY_REQUESTS, error.to_string()),
+        AuthError::Internal(error) => internal_error_status(error),
+    }
+}
+
+fn internal_error_status(error: anyhow::Error) -> (StatusCode, String) {
+    match error.downcast::<AuthError>() {
+        Ok(error) => auth_error_status(error),
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
+    }
 }
 
 fn get_callback(

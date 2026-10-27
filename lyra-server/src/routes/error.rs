@@ -39,6 +39,7 @@ use crate::services::{
         SortSpec,
         pipeline::SortKey,
     },
+    delivery::DeliveryError,
     entries::EntryServiceError,
     hls::HlsError,
     playback_sessions::PlaybackServiceError,
@@ -296,6 +297,20 @@ impl From<HlsError> for AppError {
     }
 }
 
+impl From<DeliveryError> for AppError {
+    fn from(err: DeliveryError) -> Self {
+        match err {
+            DeliveryError::BadRequest(message) => Self::bad_request(message),
+            DeliveryError::Unauthorized(message) => Self::unauthorized(message),
+            DeliveryError::NotFound(message) => Self::not_found(message),
+            DeliveryError::Gone(message) => Self::gone(message),
+            DeliveryError::ServiceUnavailable(message) => Self::service_unavailable(message),
+            DeliveryError::Auth(err) => err.into(),
+            DeliveryError::Internal(err) => err.into(),
+        }
+    }
+}
+
 impl From<PlaybackServiceError> for AppError {
     fn from(err: PlaybackServiceError) -> Self {
         match err {
@@ -361,3 +376,147 @@ internal_app_error_from!(
     std::io::Error,
     tokio::task::JoinError,
 );
+
+#[cfg(test)]
+mod tests {
+    use axum::{
+        http::StatusCode,
+        response::IntoResponse,
+    };
+
+    use super::AppError;
+    use crate::{
+        plugins::playback_sources::delivery_error_message,
+        services::{
+            auth::{
+                AuthError,
+                sessions::ClientNameError,
+            },
+            delivery::DeliveryError,
+        },
+    };
+
+    #[test]
+    fn delivery_errors_map_to_their_statuses() {
+        let caf = "Format 'caf' does not support streaming. Use /api/download or choose a \
+                   streamable format (mp3, flac, wav, ogg, webm, aac, m4a, opus, aiff).";
+        let cases = [
+            (
+                DeliveryError::bad_request("bitrate_bps must be greater than zero"),
+                StatusCode::BAD_REQUEST,
+                "400 Bad Request: bitrate_bps must be greater than zero".to_string(),
+            ),
+            (
+                DeliveryError::bad_request("sample_rate_hz must be greater than zero"),
+                StatusCode::BAD_REQUEST,
+                "400 Bad Request: sample_rate_hz must be greater than zero".to_string(),
+            ),
+            (
+                DeliveryError::bad_request("channels must be greater than zero"),
+                StatusCode::BAD_REQUEST,
+                "400 Bad Request: channels must be greater than zero".to_string(),
+            ),
+            (
+                DeliveryError::bad_request(caf),
+                StatusCode::BAD_REQUEST,
+                format!("400 Bad Request: {caf}"),
+            ),
+            (
+                DeliveryError::unauthorized("authentication required"),
+                StatusCode::UNAUTHORIZED,
+                "401 Unauthorized: authentication required".to_string(),
+            ),
+            (
+                DeliveryError::not_found("Track not found: 7"),
+                StatusCode::NOT_FOUND,
+                "404 Not Found: Track not found: 7".to_string(),
+            ),
+            (
+                DeliveryError::gone("the track's source changed since this media token was issued"),
+                StatusCode::GONE,
+                "410 Gone: the track's source changed since this media token was issued"
+                    .to_string(),
+            ),
+            (
+                AuthError::InvalidBearerCredential.into(),
+                StatusCode::UNAUTHORIZED,
+                "401 Unauthorized: invalid bearer credential".to_string(),
+            ),
+            (
+                anyhow::anyhow!("broken").into(),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "500 Internal Server Error: broken".to_string(),
+            ),
+        ];
+        for (error, status, display) in cases {
+            let app_error = AppError::from(error);
+            assert_eq!(app_error.to_string(), display);
+            assert_eq!(app_error.into_response().status(), status);
+        }
+    }
+
+    #[test]
+    fn delivery_errors_answer_as_plugins_report_them() {
+        let cases: Vec<(fn() -> DeliveryError, StatusCode)> = vec![
+            (
+                || DeliveryError::bad_request("bad"),
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                || DeliveryError::unauthorized("who"),
+                StatusCode::UNAUTHORIZED,
+            ),
+            (|| DeliveryError::not_found("gone"), StatusCode::NOT_FOUND),
+            (|| DeliveryError::gone("changed"), StatusCode::GONE),
+            (
+                || DeliveryError::service_unavailable("later"),
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            (
+                || AuthError::MissingBearerCredential.into(),
+                StatusCode::UNAUTHORIZED,
+            ),
+            (
+                || AuthError::InvalidBearerCredential.into(),
+                StatusCode::UNAUTHORIZED,
+            ),
+            (
+                || AuthError::SessionExpired.into(),
+                StatusCode::UNAUTHORIZED,
+            ),
+            (
+                || AuthError::InvalidClientName(ClientNameError::TooLong).into(),
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                || AuthError::Forbidden("no".to_string()).into(),
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                || AuthError::NotFound("none".to_string()).into(),
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                || AuthError::RateLimited(std::time::Duration::from_secs(1)).into(),
+                StatusCode::TOO_MANY_REQUESTS,
+            ),
+            (
+                || AuthError::Internal(anyhow::anyhow!("broken")).into(),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            (
+                || anyhow::Error::from(AuthError::SessionExpired).into(),
+                StatusCode::UNAUTHORIZED,
+            ),
+            (
+                || anyhow::anyhow!("broken").into(),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+        ];
+        for (error, status) in cases {
+            let app_error = AppError::from(error());
+            assert_eq!(app_error.to_string(), delivery_error_message(error()));
+            assert_eq!(app_error.into_response().status(), status);
+        }
+    }
+}

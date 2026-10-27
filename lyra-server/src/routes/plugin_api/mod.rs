@@ -3,8 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+mod content_type;
 mod image;
-mod parsing;
 mod responses;
 mod websocket;
 
@@ -77,20 +77,12 @@ use futures::future::BoxFuture;
 use tower::ServiceExt;
 use tower_http::services::ServeDir;
 
+use self::content_type::infer_content_type;
 use self::image::{
     image_format_mime,
     parse_image_transform_options,
     transform_image,
 };
-use self::parsing::{
-    infer_content_type,
-    join_preferred_codecs,
-    parse_hls_serve_options,
-    parse_track_serve_options,
-    parse_u32_json,
-    stream_track_options,
-};
-pub(crate) use self::responses::decide_delivery;
 use self::responses::{
     header_pairs,
     plugin_api_response_to_axum,
@@ -98,6 +90,13 @@ use self::responses::{
 use self::websocket::{
     WebSocketRouteRequest,
     dispatch_websocket_route,
+};
+use crate::plugins::api::options::{
+    join_preferred_codecs,
+    parse_hls_serve_options,
+    parse_track_serve_options,
+    parse_u32_json,
+    stream_track_options,
 };
 use crate::plugins::api::{
     CaseInsensitiveRouter,
@@ -111,15 +110,12 @@ use crate::plugins::api::{
     registered_routes,
 };
 use crate::routes::{
-    HlsPlaylistOptions,
-    ServeTrackOptions,
-    TrackAccess,
     build_ranged_file_body,
-    download_track_response,
     serve_hls_playlist_for_track,
-    stream_track_response,
+    track_response,
 };
 use crate::services::auth::resolve_optional_auth;
+use crate::services::delivery::ServeTrackOptions;
 use crate::services::remote::constants::{
     AUTH_CHECK_INTERVAL,
     MAX_CONSECUTIVE_AUTH_ERRORS,

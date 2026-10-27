@@ -11,9 +11,10 @@ use lyra_ffmpeg::{
 };
 use std::path::Path as FsPath;
 
-use crate::routes::AppError;
-
-use super::ValidatedTrackSource;
+use super::{
+    DeliveryError,
+    ValidatedTrackSource,
+};
 
 const DEFAULT_LOSSY_BITRATE_KBPS: u32 = 192;
 const DEFAULT_VBR_CHANNELS: u32 = 2;
@@ -23,7 +24,7 @@ pub(crate) struct ValidatedRequest {
     pub(crate) preferred_codecs: Vec<AudioCodec>,
 }
 
-fn parse_preferred_codecs(codec: Option<String>) -> Result<Vec<AudioCodec>, AppError> {
+fn parse_preferred_codecs(codec: Option<String>) -> Result<Vec<AudioCodec>, DeliveryError> {
     let Some(codec) = codec else {
         return Ok(Vec::new());
     };
@@ -35,7 +36,7 @@ fn parse_preferred_codecs(codec: Option<String>) -> Result<Vec<AudioCodec>, AppE
             continue;
         }
         let parsed = AudioCodec::parse(trimmed).ok_or_else(|| {
-            AppError::bad_request(format!(
+            DeliveryError::bad_request(format!(
                 "Unsupported codec: {}. Supported codecs: {:?}",
                 trimmed,
                 lyra_ffmpeg::SUPPORTED_CODECS
@@ -58,8 +59,8 @@ fn codec_names(codecs: &[AudioCodec]) -> String {
 fn incompatible_codecs_error(
     output_format: AudioFormat,
     preferred_codecs: &[AudioCodec],
-) -> AppError {
-    AppError::bad_request(format!(
+) -> DeliveryError {
+    DeliveryError::bad_request(format!(
         "Requested codecs [{}] are not compatible with format '{}'. Supported codecs: [{}]",
         codec_names(preferred_codecs),
         output_format.extension(),
@@ -70,11 +71,11 @@ fn incompatible_codecs_error(
 pub(crate) fn validate_request(
     format: Option<String>,
     codec: Option<String>,
-) -> Result<ValidatedRequest, AppError> {
+) -> Result<ValidatedRequest, DeliveryError> {
     let format = match format {
         Some(fmt) => {
             let parsed = AudioFormat::parse(&fmt).ok_or_else(|| {
-                AppError::bad_request(format!(
+                DeliveryError::bad_request(format!(
                     "Unsupported format: {}. Supported formats: {:?}",
                     fmt,
                     lyra_ffmpeg::SUPPORTED_FORMATS
@@ -97,7 +98,7 @@ fn resolve_output_format(
     entry_format: Option<AudioFormat>,
     entry_path: &FsPath,
     allow_copy: bool,
-) -> Result<AudioFormat, AppError> {
+) -> Result<AudioFormat, DeliveryError> {
     if let Some(fmt) = requested_format {
         return Ok(fmt);
     }
@@ -119,7 +120,7 @@ fn resolve_output_format(
     }
 
     entry_format.ok_or_else(|| {
-        AppError::bad_request(format!(
+        DeliveryError::bad_request(format!(
             "Track source has unsupported format: {}",
             entry_path.to_string_lossy()
         ))
@@ -131,7 +132,7 @@ fn resolve_codec(
     output_format: AudioFormat,
     entry_format: Option<AudioFormat>,
     allow_copy: bool,
-) -> Result<AudioCodec, AppError> {
+) -> Result<AudioCodec, DeliveryError> {
     if !preferred_codecs.is_empty() {
         for codec in preferred_codecs {
             if matches!(codec, AudioCodec::Copy) {
@@ -179,19 +180,21 @@ pub(crate) struct TranscodeKnobs {
 }
 
 impl TranscodeKnobs {
-    pub(crate) fn validate(self) -> Result<Self, AppError> {
+    pub(crate) fn validate(self) -> Result<Self, DeliveryError> {
         if matches!(self.bitrate_bps, Some(0)) {
-            return Err(AppError::bad_request(
+            return Err(DeliveryError::bad_request(
                 "bitrate_bps must be greater than zero",
             ));
         }
         if matches!(self.sample_rate_hz, Some(0)) {
-            return Err(AppError::bad_request(
+            return Err(DeliveryError::bad_request(
                 "sample_rate_hz must be greater than zero",
             ));
         }
         if matches!(self.channels, Some(0)) {
-            return Err(AppError::bad_request("channels must be greater than zero"));
+            return Err(DeliveryError::bad_request(
+                "channels must be greater than zero",
+            ));
         }
 
         Ok(self)
@@ -282,7 +285,7 @@ pub(crate) fn apply_transcode_policy(
     knobs: TranscodeKnobs,
     output_codec: AudioCodec,
     source: SourceAudio,
-) -> Result<TranscodePolicy, AppError> {
+) -> Result<TranscodePolicy, DeliveryError> {
     let knobs = knobs.validate()?;
 
     let sample_rate_hz = match knobs.sample_rate_hz {
@@ -632,7 +635,7 @@ pub(crate) fn resolve_delivery(
     source: &ValidatedTrackSource,
     knobs: TranscodeKnobs,
     target: DeliveryTarget,
-) -> Result<DeliveryDecision, AppError> {
+) -> Result<DeliveryDecision, DeliveryError> {
     let copy_output_format = resolve_output_format(
         validated.format,
         &validated.preferred_codecs,
@@ -713,7 +716,7 @@ pub(crate) fn resolve_delivery(
         reasons,
     };
     if target.is_streaming() && !decision.is_streamable() {
-        return Err(AppError::bad_request(format!(
+        return Err(DeliveryError::bad_request(format!(
             "Format '{}' does not support streaming. Use /api/download or choose a streamable format (mp3, flac, wav, ogg, webm, aac, m4a, opus, aiff).",
             output_format.extension()
         )));
@@ -739,9 +742,10 @@ mod tests {
         resolve_output_format,
         validate_request,
     };
-    use crate::routes::serve::ValidatedTrackSource;
-    use axum::http::StatusCode;
-    use axum::response::IntoResponse;
+    use crate::services::delivery::{
+        DeliveryError,
+        ValidatedTrackSource,
+    };
     use lyra_ffmpeg::{
         AudioCodec,
         AudioFormat,
@@ -751,6 +755,13 @@ mod tests {
         Path,
         PathBuf,
     };
+
+    fn bad_request_message(err: DeliveryError) -> String {
+        match err {
+            DeliveryError::BadRequest(message) => message,
+            other => panic!("expected a bad request, got {other:?}"),
+        }
+    }
 
     fn policy_passthrough(
         bitrate_bps: Option<u32>,
@@ -975,7 +986,7 @@ mod tests {
             SourceAudio::default(),
         )
         .expect_err("bitrate_bps=0 must fail fast, not silently fall back to the default");
-        assert_eq!(err.into_response().status(), StatusCode::BAD_REQUEST);
+        assert!(matches!(err, DeliveryError::BadRequest(_)), "{err:?}");
 
         let err = TranscodeKnobs {
             bitrate_bps: Some(0),
@@ -984,8 +995,8 @@ mod tests {
         .validate()
         .expect_err("standalone validation must use the same error");
         assert_eq!(
-            format!("{err:?}"),
-            "AppError(400 Bad Request: bitrate_bps must be greater than zero)"
+            bad_request_message(err),
+            "bitrate_bps must be greater than zero"
         );
     }
 
@@ -998,8 +1009,8 @@ mod tests {
         )
         .expect_err("sample_rate_hz=0 must fail fast");
         assert_eq!(
-            format!("{err:?}"),
-            "AppError(400 Bad Request: sample_rate_hz must be greater than zero)"
+            bad_request_message(err),
+            "sample_rate_hz must be greater than zero"
         );
     }
 
@@ -1012,8 +1023,8 @@ mod tests {
         )
         .expect_err("channels=0 must fail fast");
         assert_eq!(
-            format!("{err:?}"),
-            "AppError(400 Bad Request: channels must be greater than zero)"
+            bad_request_message(err),
+            "channels must be greater than zero"
         );
     }
 
@@ -1418,7 +1429,7 @@ mod tests {
             false,
         )
         .expect_err("copy cannot satisfy an explicit mp3 transcode request");
-        assert_eq!(err.into_response().status(), StatusCode::BAD_REQUEST);
+        assert!(matches!(err, DeliveryError::BadRequest(_)), "{err:?}");
     }
 
     #[test]
@@ -1518,10 +1529,10 @@ mod tests {
         )
         .expect_err("caf cannot be streamed");
         assert_eq!(
-            format!("{err:?}"),
-            "AppError(400 Bad Request: Format 'caf' does not support streaming. \
+            bad_request_message(err),
+            "Format 'caf' does not support streaming. \
              Use /api/download or choose a streamable format \
-             (mp3, flac, wav, ogg, webm, aac, m4a, opus, aiff).)"
+             (mp3, flac, wav, ogg, webm, aac, m4a, opus, aiff)."
         );
 
         resolve_delivery(

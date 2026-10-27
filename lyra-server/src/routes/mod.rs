@@ -92,15 +92,9 @@ pub use releases::release_routes;
 pub use roles::role_routes;
 pub use search::search_routes;
 pub(crate) use serve::{
-    HlsPlaylistOptions,
-    ServeTrackOptions,
-    TrackAccess,
-    authorize_track_purpose,
     build_ranged_file_body,
-    describe_stream,
-    download_track_response,
     serve_hls_playlist_for_track,
-    stream_track_response,
+    track_response,
 };
 pub use sync::sync_routes;
 

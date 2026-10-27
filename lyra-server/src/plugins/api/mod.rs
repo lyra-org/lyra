@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+pub(crate) mod options;
 mod registry;
 mod route_key;
 mod types;

@@ -36,6 +36,7 @@ pub(crate) mod artists;
 pub(crate) mod auth;
 pub(crate) mod catalog;
 pub(crate) mod covers;
+pub(crate) mod delivery;
 pub(crate) mod entities;
 pub(crate) mod entries;
 pub(crate) mod favorites;

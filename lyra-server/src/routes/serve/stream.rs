@@ -24,21 +24,12 @@ use axum::{
 };
 use serde::Deserialize;
 
-use crate::routes::AppError;
-
-use super::{
-    DeliveryDescription,
-    DeliveryTarget,
-    ServeTrackOptions,
-    TranscodeKnobs,
-    ValidatedTrackSource,
-    apply_request_start_offset,
-    decision::DeliveryDecision,
-    resolve_delivery,
-    source_file_response,
-    transcoded::transcoded_response,
-    validate_and_get_track_source,
-    validate_request,
+use crate::{
+    routes::AppError,
+    services::delivery::{
+        DeliveryTarget,
+        ServeTrackOptions,
+    },
 };
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -109,7 +100,7 @@ async fn get_stream(
         &track_id,
     )
     .await?;
-    stream_track_response(
+    super::track_response(
         &method,
         &headers,
         &track_id,
@@ -124,76 +115,9 @@ async fn get_stream(
             start_offset_ms: query.start_offset_ms,
         }
         .bound_to(&access)?,
-    )
-    .await
-}
-
-/// Serves a track as `GET` would. A `HEAD` request gets the same decision and headers without
-/// starting FFmpeg, with the length when the transcode is already cached.
-pub(crate) async fn stream_track_response(
-    method: &Method,
-    headers: &HeaderMap,
-    track_id: &str,
-    access: &super::TrackAccess,
-    options: ServeTrackOptions,
-) -> Result<Response<Body>, AppError> {
-    let (source, delivery) = resolve_stream(track_id, access, options).await?;
-    if delivery.direct_passthrough {
-        return source_file_response(&source, delivery.content_type, headers).await;
-    }
-    transcoded_response(
-        method,
-        headers,
-        access.caller(),
-        source,
-        delivery,
         DeliveryTarget::Stream,
     )
     .await
-}
-
-/// What [`stream_track_response`] would deliver for the same request, without serving it.
-pub(crate) async fn describe_stream(
-    track_id: &str,
-    access: &super::TrackAccess,
-    options: ServeTrackOptions,
-) -> Result<DeliveryDescription, AppError> {
-    let (source, delivery) = resolve_stream(track_id, access, options).await?;
-    Ok(delivery.describe(&source))
-}
-
-async fn resolve_stream(
-    track_id: &str,
-    access: &super::TrackAccess,
-    options: ServeTrackOptions,
-) -> Result<(ValidatedTrackSource, DeliveryDecision), AppError> {
-    let ServeTrackOptions {
-        format,
-        codec,
-        bitrate_bps,
-        sample_rate_hz,
-        channels,
-        prefer_vbr,
-        start_offset_ms,
-    } = options;
-    let validated = validate_request(format, codec)?;
-    let source = apply_request_start_offset(
-        validate_and_get_track_source(track_id, access).await?,
-        start_offset_ms,
-    )?;
-
-    let delivery = resolve_delivery(
-        &validated,
-        &source,
-        TranscodeKnobs {
-            bitrate_bps,
-            sample_rate_hz,
-            channels,
-            prefer_vbr,
-        },
-        DeliveryTarget::Stream,
-    )?;
-    Ok((source, delivery))
 }
 
 #[cfg(feature = "docgen")]

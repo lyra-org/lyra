@@ -29,7 +29,10 @@ use serde::{
 };
 use url::form_urlencoded;
 
-use super::serve::DeliveryDescription;
+use crate::services::delivery::{
+    self,
+    DeliveryDescription,
+};
 
 use crate::{
     routes::AppError,
@@ -390,8 +393,8 @@ fn hls_delivery_options(query: &PlaybackUrlQuery) -> DeliveryOptions {
     }
 }
 
-fn playback_transcode_knobs(query: &PlaybackUrlQuery) -> super::serve::TranscodeKnobs {
-    super::serve::TranscodeKnobs {
+fn playback_transcode_knobs(query: &PlaybackUrlQuery) -> delivery::TranscodeKnobs {
+    delivery::TranscodeKnobs {
         bitrate_bps: query.bitrate_bps,
         sample_rate_hz: query.sample_rate_hz,
         channels: query.channels,
@@ -402,7 +405,8 @@ fn playback_transcode_knobs(query: &PlaybackUrlQuery) -> super::serve::Transcode
 // Runs before `require_authenticated`, so zero-value rejections stay 400 instead of
 // becoming 401. The decision domain remains the single authority for the validation.
 fn validate_playback_url_query(query: &PlaybackUrlQuery) -> Result<(), AppError> {
-    playback_transcode_knobs(query).validate().map(|_| ())
+    playback_transcode_knobs(query).validate()?;
+    Ok(())
 }
 
 /// What the stream and download transports would deliver for this request.
@@ -426,29 +430,29 @@ struct PlaybackTransports {
 /// outcomes, such as a container that cannot be streamed, remove a transport.
 fn resolve_playback_transports(
     query: &PlaybackUrlQuery,
-    source: super::serve::ValidatedTrackSource,
+    source: delivery::ValidatedTrackSource,
 ) -> Result<PlaybackTransports, AppError> {
-    let stream_request = super::serve::validate_request(query.format.clone(), query.codec.clone())?;
-    let source = super::serve::apply_request_start_offset(source, query.start_offset_ms)?;
+    let stream_request = delivery::validate_request(query.format.clone(), query.codec.clone())?;
+    let source = delivery::apply_request_start_offset(source, query.start_offset_ms)?;
     let knobs = playback_transcode_knobs(query);
 
     // The download resolution puts no streaming constraint on the container, so
     // streamability becomes an availability answer instead of a whole-request failure.
     // Every other way the request can fail still fails it, for every transport.
-    let download = super::serve::resolve_delivery(
+    let download = delivery::resolve_delivery(
         &stream_request,
         &source,
         knobs,
-        super::serve::DeliveryTarget::Download,
+        delivery::DeliveryTarget::Download,
     )?;
     let stream = download
         .is_streamable()
         .then(|| {
-            super::serve::resolve_delivery(
+            delivery::resolve_delivery(
                 &stream_request,
                 &source,
                 knobs,
-                super::serve::DeliveryTarget::Stream,
+                delivery::DeliveryTarget::Stream,
             )
         })
         .transpose()?;
@@ -456,8 +460,8 @@ fn resolve_playback_transports(
     // Parsed last so an unusable hls_codec never outranks a stream-request error, then
     // checked against the real profile so an hls_url is only minted when the playlist
     // handler would answer the same way.
-    let hls_request = super::serve::validate_request(None, query.hls_codec.clone())?;
-    super::serve::resolve_hls_profile(&source, &hls_request, knobs)?;
+    let hls_request = delivery::validate_request(None, query.hls_codec.clone())?;
+    delivery::resolve_hls_profile(&source, &hls_request, knobs)?;
 
     Ok(PlaybackTransports {
         stream: stream.map(|decision| decision.describe(&source)),
@@ -475,9 +479,9 @@ async fn create_track_playback_url(
     let holder = MediaTokenHolder::new(&auth);
     let principal = auth.into_principal();
 
-    let source = super::serve::validate_and_get_track_source(
+    let source = delivery::validate_and_get_track_source(
         &id,
-        &super::serve::TrackAccess::Principal(principal.clone()),
+        &delivery::TrackAccess::Principal(principal.clone()),
     )
     .await?;
     let version = source.version.clone();
@@ -505,7 +509,7 @@ async fn create_track_playback_url(
     };
 
     let (download_url, download_delivery) =
-        if super::serve::authorize_track_purpose(&principal, MediaTokenPurpose::Download).is_ok() {
+        if delivery::authorize_track_purpose(&principal, MediaTokenPurpose::Download).is_ok() {
             let download_token = issue(MediaTokenPurpose::Download, file_delivery_options(&query));
             expires_at = expires_at.min(download_token.expires_at);
             (
@@ -1688,8 +1692,8 @@ mod tests {
         }
     }
 
-    fn flac_playback_source() -> crate::routes::serve::ValidatedTrackSource {
-        crate::routes::serve::ValidatedTrackSource {
+    fn flac_playback_source() -> crate::services::delivery::ValidatedTrackSource {
+        crate::services::delivery::ValidatedTrackSource {
             source_id: DbId(2),
             source_public_id: "source-pub".to_string(),
             version: crate::services::playback_sources::SourceVersion::fixed("source-pub"),

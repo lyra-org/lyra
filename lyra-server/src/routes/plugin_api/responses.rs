@@ -7,11 +7,13 @@ use super::*;
 use crate::plugins::executor::ApiResponseKind;
 use crate::routes::AppError;
 use crate::services::auth::Principal;
-use crate::services::auth::caller::{
-    Caller,
-    ClientAddress,
-};
 use crate::services::auth::media_tokens::MediaTokenPurpose;
+use crate::services::delivery::{
+    DeliveryTarget,
+    HlsPlaylistOptions,
+    require_plugin_track_access,
+    stream_track_access,
+};
 
 pub(super) fn header_pairs(headers: &HeaderMap) -> Vec<(String, String)> {
     headers
@@ -20,88 +22,6 @@ pub(super) fn header_pairs(headers: &HeaderMap) -> Vec<(String, String)> {
             Some((name.as_str().to_string(), value.to_str().ok()?.to_string()))
         })
         .collect()
-}
-
-/// Plugin responses skip the native route guards, so track serving must
-/// re-apply the same permission and library-access enforcement here.
-async fn require_plugin_track_access(
-    principal: Option<&Principal>,
-    track_db_id: agdb::DbId,
-    purpose: MediaTokenPurpose,
-) -> Result<(String, TrackAccess), AppError> {
-    let Some(principal) = principal else {
-        return Err(AppError::unauthorized("authentication required"));
-    };
-    let db = crate::services::STATE.db.read().await;
-    principal.require(&*db)?;
-    crate::routes::authorize_track_purpose(principal, purpose)?;
-    let not_found = || AppError::not_found(format!("Track not found: {}", track_db_id.0));
-    crate::services::auth::access::require_entity_accessible(
-        &*db,
-        principal,
-        track_db_id,
-        not_found,
-    )?;
-    let track_id = lyra_db::lookup::find_id_by_db_id(&*db, track_db_id)?.ok_or_else(not_found)?;
-    Ok((track_id, TrackAccess::Principal(principal.clone())))
-}
-
-/// A plugin route its protocol makes public streams any track, without the caller's access check.
-/// Its transcodes still count against someone: the caller, when the handler resolved one, or
-/// else the client's address.
-async fn public_plugin_track_access(
-    principal: Option<&Principal>,
-    client: ClientAddress,
-    track_db_id: agdb::DbId,
-) -> Result<(String, TrackAccess), AppError> {
-    let db = crate::services::STATE.db.read().await;
-    let track_id = lyra_db::lookup::find_id_by_db_id(&*db, track_db_id)?
-        .ok_or_else(|| AppError::not_found(format!("Track not found: {}", track_db_id.0)))?;
-    let caller = match principal {
-        Some(principal) => Caller::User(principal.user_public_id.clone()),
-        None => Caller::Client(client),
-    };
-    Ok((track_id, TrackAccess::PublicPluginRoute(caller)))
-}
-
-/// The track a `stream_track` response for `track_db_id` serves and the access it is served
-/// under: the caller's, or none when the response is `public`, which still counts its
-/// transcodes against the caller or the client's address.
-async fn stream_track_access(
-    principal: Option<&Principal>,
-    client: ClientAddress,
-    track_db_id: agdb::DbId,
-    public: bool,
-) -> Result<(String, TrackAccess), AppError> {
-    if public {
-        public_plugin_track_access(principal, client, track_db_id).await
-    } else {
-        require_plugin_track_access(principal, track_db_id, MediaTokenPurpose::Stream).await
-    }
-}
-
-/// What a `stream_track` response for `track_db_id` with `options` would deliver, for plugins
-/// deciding without serving. Its caller is unknown beyond `principal`.
-pub(crate) fn decide_delivery(
-    principal: Option<Principal>,
-    track_db_id: agdb::DbId,
-    options: Option<serde_json::Value>,
-) -> BoxFuture<'static, Result<serde_json::Value>> {
-    Box::pin(async move {
-        let (public, options) = stream_track_options(options.as_ref())?;
-        let (track_id, access) = stream_track_access(
-            principal.as_ref(),
-            ClientAddress::default(),
-            track_db_id,
-            public,
-        )
-        .await
-        .map_err(|error| anyhow::anyhow!("{error}"))?;
-        let description = crate::routes::describe_stream(&track_id, &access, options)
-            .await
-            .map_err(|error| anyhow::anyhow!("{error}"))?;
-        Ok(serde_json::to_value(description)?)
-    })
 }
 
 /// Plugins may name any filesystem path in a file response, so resolve the
@@ -143,15 +63,16 @@ pub(super) async fn plugin_api_response_to_axum(
                     .await
                 {
                     Ok(resolved) => resolved,
-                    Err(error) => return Ok(error.into_response()),
+                    Err(error) => return Ok(AppError::from(error).into_response()),
                 };
             return Ok(
-                match stream_track_response(
+                match track_response(
                     request_method,
                     request_headers,
                     &track_id,
                     &access,
                     options,
+                    DeliveryTarget::Stream,
                 )
                 .await
                 {
@@ -172,11 +93,11 @@ pub(super) async fn plugin_api_response_to_axum(
             .await
             {
                 Ok(resolved) => resolved,
-                Err(error) => return Ok(error.into_response()),
+                Err(error) => return Ok(AppError::from(error).into_response()),
             };
             let options = parse_track_serve_options(response.options.as_ref())?;
             return Ok(
-                match download_track_response(
+                match track_response(
                     request_method,
                     request_headers,
                     &track_id,
@@ -190,6 +111,7 @@ pub(super) async fn plugin_api_response_to_axum(
                         prefer_vbr: options.prefer_vbr,
                         start_offset_ms: options.start_offset_ms,
                     },
+                    DeliveryTarget::Download,
                 )
                 .await
                 {
@@ -210,7 +132,7 @@ pub(super) async fn plugin_api_response_to_axum(
             .await
             {
                 Ok(resolved) => resolved,
-                Err(error) => return Ok(error.into_response()),
+                Err(error) => return Ok(AppError::from(error).into_response()),
             };
             let options = parse_hls_serve_options(response.options.as_ref())?;
             return Ok(
@@ -349,13 +271,14 @@ mod tests {
 
     use super::{
         plugin_api_response_to_axum,
-        public_plugin_track_access,
         require_plugin_track_access,
+        stream_track_access,
     };
     use crate::plugins::executor::{
         ApiHandlerResponse,
         ApiResponseKind,
     };
+    use crate::routes::AppError;
     use crate::{
         plugins::testing::init_library_test_state,
         services::STATE,
@@ -375,7 +298,7 @@ mod tests {
         require_plugin_track_access(principal, track_db_id, purpose)
             .await
             .map(|_| ())
-            .map_err(|error| error.into_response().status())
+            .map_err(|error| AppError::from(error).into_response().status())
     }
 
     fn address(raw: &str) -> ClientAddress {
@@ -504,13 +427,13 @@ mod tests {
         };
 
         let (track_id, access) =
-            public_plugin_track_access(None, ClientAddress::default(), track_db_id)
+            stream_track_access(None, ClientAddress::default(), track_db_id, true)
                 .await
                 .map_err(|error| anyhow::anyhow!("public access failed: {error:?}"))?;
         assert_eq!(track_id, track_public_id);
         assert!(matches!(
             access,
-            crate::routes::TrackAccess::PublicPluginRoute(_)
+            crate::services::delivery::TrackAccess::PublicPluginRoute(_)
         ));
         assert_eq!(access.caller(), Caller::Client(ClientAddress::default()));
 
@@ -523,7 +446,7 @@ mod tests {
             HashSet::new(),
         );
         let (_, access) =
-            public_plugin_track_access(Some(&caller), address("10.0.0.1"), track_db_id)
+            stream_track_access(Some(&caller), address("10.0.0.1"), track_db_id, true)
                 .await
                 .map_err(|error| anyhow::anyhow!("public access failed: {error:?}"))?;
         assert_eq!(
@@ -531,10 +454,10 @@ mod tests {
             Caller::User("caller-public-id".to_string()),
             "an authenticated caller's transcodes count against them on a public route"
         );
-        let (_, first) = public_plugin_track_access(None, address("10.0.0.1"), track_db_id)
+        let (_, first) = stream_track_access(None, address("10.0.0.1"), track_db_id, true)
             .await
             .map_err(|error| anyhow::anyhow!("public access failed: {error:?}"))?;
-        let (_, second) = public_plugin_track_access(None, address("10.0.0.2"), track_db_id)
+        let (_, second) = stream_track_access(None, address("10.0.0.2"), track_db_id, true)
             .await
             .map_err(|error| anyhow::anyhow!("public access failed: {error:?}"))?;
         assert_eq!(first.caller(), Caller::Client(address("10.0.0.1")));
@@ -545,10 +468,10 @@ mod tests {
         );
 
         let unknown =
-            public_plugin_track_access(None, ClientAddress::default(), agdb::DbId(i64::MAX))
+            stream_track_access(None, ClientAddress::default(), agdb::DbId(i64::MAX), true)
                 .await
                 .map(|_| ())
-                .map_err(|error| error.into_response().status());
+                .map_err(|error| AppError::from(error).into_response().status());
         assert_eq!(unknown, Err(StatusCode::NOT_FOUND));
 
         let headers = axum::http::HeaderMap::new();

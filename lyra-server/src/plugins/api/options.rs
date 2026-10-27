@@ -3,9 +3,17 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use super::*;
+//! The options plugins give `stream_track` and `stream_hls` responses.
 
-pub(super) fn join_preferred_codecs(preferred_codecs: Option<Vec<String>>) -> Option<String> {
+use anyhow::{
+    Context,
+    Result,
+    bail,
+};
+
+use crate::services::delivery::ServeTrackOptions;
+
+pub(crate) fn join_preferred_codecs(preferred_codecs: Option<Vec<String>>) -> Option<String> {
     preferred_codecs.and_then(|preferred_codecs| {
         if preferred_codecs.is_empty() {
             None
@@ -16,27 +24,27 @@ pub(super) fn join_preferred_codecs(preferred_codecs: Option<Vec<String>>) -> Op
 }
 
 #[derive(Default)]
-pub(super) struct ParsedTrackServeOptions {
-    pub(super) format: Option<String>,
-    pub(super) preferred_codecs: Option<Vec<String>>,
-    pub(super) bitrate_bps: Option<u32>,
-    pub(super) sample_rate_hz: Option<u32>,
-    pub(super) channels: Option<u32>,
-    pub(super) prefer_vbr: Option<bool>,
-    pub(super) start_offset_ms: Option<u64>,
+pub(crate) struct ParsedTrackServeOptions {
+    pub(crate) format: Option<String>,
+    pub(crate) preferred_codecs: Option<Vec<String>>,
+    pub(crate) bitrate_bps: Option<u32>,
+    pub(crate) sample_rate_hz: Option<u32>,
+    pub(crate) channels: Option<u32>,
+    pub(crate) prefer_vbr: Option<bool>,
+    pub(crate) start_offset_ms: Option<u64>,
 }
 
 #[derive(Default)]
-pub(super) struct ParsedHlsServeOptions {
-    pub(super) preferred_codecs: Option<Vec<String>>,
-    pub(super) bitrate_bps: Option<u32>,
-    pub(super) sample_rate_hz: Option<u32>,
-    pub(super) channels: Option<u32>,
-    pub(super) prefer_vbr: Option<bool>,
-    pub(super) start_offset_ms: Option<u64>,
+pub(crate) struct ParsedHlsServeOptions {
+    pub(crate) preferred_codecs: Option<Vec<String>>,
+    pub(crate) bitrate_bps: Option<u32>,
+    pub(crate) sample_rate_hz: Option<u32>,
+    pub(crate) channels: Option<u32>,
+    pub(crate) prefer_vbr: Option<bool>,
+    pub(crate) start_offset_ms: Option<u64>,
 }
 
-pub(super) fn parse_track_serve_options(
+pub(crate) fn parse_track_serve_options(
     value: Option<&serde_json::Value>,
 ) -> Result<ParsedTrackServeOptions> {
     let Some(value) = value else {
@@ -65,7 +73,7 @@ pub(super) fn parse_track_serve_options(
 
 /// A `stream_track` response's options: whether it skips the caller's track access check, and
 /// what it serves.
-pub(super) fn stream_track_options(
+pub(crate) fn stream_track_options(
     value: Option<&serde_json::Value>,
 ) -> Result<(bool, ServeTrackOptions)> {
     let public = parse_public_stream(value)?;
@@ -94,7 +102,7 @@ fn parse_public_stream(value: Option<&serde_json::Value>) -> Result<bool> {
         .ok_or_else(|| anyhow::anyhow!("stream option public must be a boolean"))
 }
 
-pub(super) fn parse_hls_serve_options(
+pub(crate) fn parse_hls_serve_options(
     value: Option<&serde_json::Value>,
 ) -> Result<ParsedHlsServeOptions> {
     let Some(value) = value else {
@@ -115,7 +123,7 @@ pub(super) fn parse_hls_serve_options(
     })
 }
 
-pub(super) fn parse_string_list_json(value: Option<&serde_json::Value>) -> Option<Vec<String>> {
+fn parse_string_list_json(value: Option<&serde_json::Value>) -> Option<Vec<String>> {
     let values = value?.as_array()?;
     let values = values
         .iter()
@@ -131,7 +139,7 @@ pub(super) fn parse_string_list_json(value: Option<&serde_json::Value>) -> Optio
     }
 }
 
-pub(super) fn parse_u32_json(value: Option<&serde_json::Value>) -> Result<Option<u32>> {
+pub(crate) fn parse_u32_json(value: Option<&serde_json::Value>) -> Result<Option<u32>> {
     let Some(value) = value else {
         return Ok(None);
     };
@@ -143,7 +151,7 @@ pub(super) fn parse_u32_json(value: Option<&serde_json::Value>) -> Result<Option
     ))
 }
 
-pub(super) fn parse_u64_json(value: Option<&serde_json::Value>) -> Result<Option<u64>> {
+fn parse_u64_json(value: Option<&serde_json::Value>) -> Result<Option<u64>> {
     let Some(value) = value else {
         return Ok(None);
     };
@@ -151,24 +159,4 @@ pub(super) fn parse_u64_json(value: Option<&serde_json::Value>) -> Result<Option
         .as_u64()
         .map(Some)
         .ok_or_else(|| anyhow::anyhow!("expected unsigned integer option"))
-}
-
-pub(super) fn infer_content_type(path: &str) -> &'static str {
-    let extension = FsPath::new(path)
-        .extension()
-        .and_then(|value| value.to_str())
-        .map(|value| value.to_ascii_lowercase());
-    match extension.as_deref() {
-        Some("aac") => "audio/aac",
-        Some("aiff") | Some("aif") => "audio/aiff",
-        Some("flac") => "audio/flac",
-        Some("m4a") | Some("m4b") | Some("mp4") => "audio/mp4",
-        Some("mp3") => "audio/mpeg",
-        Some("ogg") => "audio/ogg",
-        Some("opus") => "audio/ogg",
-        Some("webm") => "audio/webm",
-        Some("wav") => "audio/wav",
-        Some("m3u8") => "application/x-mpegurl",
-        _ => "application/octet-stream",
-    }
 }
