@@ -350,10 +350,7 @@ pub(crate) fn replace_track_release(
     })
 }
 
-pub(crate) fn get_by_artist(
-    db: &impl DbAccess,
-    artist_db_id: DbId,
-) -> anyhow::Result<Vec<Release>> {
+pub fn get_by_artist(db: &impl DbAccess, artist_db_id: DbId) -> anyhow::Result<Vec<Release>> {
     let owner_ids = super::credits::owner_ids_by_artist::<Release>(db, artist_db_id, 0, 0)?;
     if owner_ids.is_empty() {
         return Ok(Vec::new());
@@ -368,10 +365,7 @@ pub(crate) fn get_by_artist(
         .collect())
 }
 
-pub(crate) fn get_by_track(
-    db: &impl super::DbAccess,
-    track_db_id: DbId,
-) -> anyhow::Result<Vec<Release>> {
+pub fn get_by_track(db: &impl super::DbAccess, track_db_id: DbId) -> anyhow::Result<Vec<Release>> {
     let releases: Vec<Release> = db
         .exec(
             QueryBuilder::select()
@@ -614,12 +608,14 @@ pub(crate) fn update_in_transaction(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::test_db::{
-        connect as link,
-        connect_artist as link_artist,
+    use crate::db::fixtures::connect as link;
+    use crate::db::fixtures::{
         insert_artist,
         insert_release,
         insert_track,
+    };
+    use crate::db::test_db::{
+        connect_artist as link_artist,
         new_test_db,
     };
 

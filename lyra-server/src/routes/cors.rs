@@ -11,7 +11,7 @@ use tower_http::cors::{
     CorsLayer,
 };
 
-use crate::STATE;
+use crate::services::STATE;
 
 /// Applies CORS with the origin list read from the current config on every
 /// request, so `cors.allowed_origins` changes take effect without a restart.
@@ -56,7 +56,7 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::services::settings::server::Config;
-    use crate::testing::{
+    use crate::services::testing::{
         init_default_test_state,
         publish_config,
         runtime_test_lock,

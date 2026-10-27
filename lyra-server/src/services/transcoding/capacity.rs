@@ -43,7 +43,7 @@ pub(crate) struct Limits {
 
 impl Limits {
     fn current() -> Self {
-        let config = crate::STATE.config();
+        let config = crate::services::STATE.config();
         Self {
             global: config.transcoding.max_concurrent,
             per_user: config.transcoding.max_concurrent_per_user,

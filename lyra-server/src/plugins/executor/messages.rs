@@ -13,11 +13,20 @@ use std::{
             Ordering,
         },
     },
-    time::Duration,
 };
 
 use anyhow::Result;
 use harmony_core::plugin::PluginManifest;
+
+use crate::services::playback_sessions::PlaybackUpdatePayload;
+use crate::services::plugin_dispatch::{
+    MetadataRefreshRequest,
+    MetadataRefreshResult,
+    MixHandlerRequest,
+    MixHandlerResult,
+    SimilarReleasesDispatchRequest,
+    SimilarReleasesDispatchResult,
+};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(super) struct TaskIdKey(pub(super) u64);
@@ -93,21 +102,7 @@ pub(super) enum PluginExecutorCommand {
         request: WebSocketStartRequest,
         reply: tokio::sync::oneshot::Sender<Result<()>>,
     },
-    PlaybackUpdate(crate::services::playback_sessions::PlaybackUpdatePayload),
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct MixHandlerRequest {
-    pub(crate) handler_id: u64,
-    pub(crate) seed_id: Option<i64>,
-    pub(crate) limit: Option<usize>,
-    pub(crate) recent_track_ids: Vec<i64>,
-    pub(crate) options: serde_json::Map<String, serde_json::Value>,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct MixHandlerResult {
-    pub(crate) track_ids: Vec<i64>,
+    PlaybackUpdate(PlaybackUpdatePayload),
 }
 
 #[derive(Clone, Debug)]
@@ -116,64 +111,6 @@ pub(crate) struct MetadataDispatchContext;
 /// Marks calls made from an id link generator.
 #[derive(Clone, Debug)]
 pub(crate) struct IdLinkDispatchContext;
-
-#[derive(Clone, Debug, Default)]
-pub(crate) struct MetadataRefreshCancellation {
-    cancelled: Arc<AtomicBool>,
-}
-
-impl MetadataRefreshCancellation {
-    pub(crate) fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Release);
-    }
-
-    pub(crate) fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Acquire)
-    }
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct MetadataRefreshRequest {
-    pub(crate) handler_id: u64,
-    pub(crate) context: serde_json::Value,
-    pub(crate) deadline: std::time::Instant,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct MetadataRefreshResult {
-    pub(crate) values: Vec<serde_json::Value>,
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct SimilarReleaseExternalRef {
-    pub(crate) provider_id: String,
-    pub(crate) id_type: String,
-    pub(crate) id_value: String,
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum SimilarReleaseCandidate {
-    External(SimilarReleaseExternalRef),
-    Local {
-        release_db_id: i64,
-        release_id: String,
-    },
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct SimilarReleasesDispatchRequest {
-    pub(crate) provider_id: String,
-    pub(crate) handler_id: u64,
-    pub(crate) context: serde_json::Value,
-    pub(crate) timeout: Duration,
-    pub(crate) cancellation: MetadataRefreshCancellation,
-    pub(crate) max_candidates: usize,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct SimilarReleasesDispatchResult {
-    pub(crate) candidates: Vec<SimilarReleaseCandidate>,
-}
 
 #[derive(Clone, Debug)]
 pub(crate) struct ApiHandlerRequest {

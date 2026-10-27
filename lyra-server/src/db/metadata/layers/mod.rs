@@ -159,10 +159,7 @@ pub(crate) fn normalize_value(field: MetadataField, value: Value) -> anyhow::Res
     Ok(value)
 }
 
-pub(crate) fn decode<T: DeserializeOwned>(
-    field: MetadataField,
-    value: &Value,
-) -> anyhow::Result<T> {
+pub fn decode<T: DeserializeOwned>(field: MetadataField, value: &Value) -> anyhow::Result<T> {
     serde_json::from_value(value.clone())
         .with_context(|| format!("invalid value for '{field}': {value}"))
 }
@@ -232,10 +229,7 @@ fn entity_type(db: &impl DbAccess, node_id: DbId) -> anyhow::Result<MetadataEnti
 
 /// The entity's layers; a stored layer that no longer validates is skipped
 /// until its source replaces it.
-pub(crate) fn get_for_entity(
-    db: &impl DbAccess,
-    node_id: DbId,
-) -> anyhow::Result<Vec<MetadataLayer>> {
+pub fn get_for_entity(db: &impl DbAccess, node_id: DbId) -> anyhow::Result<Vec<MetadataLayer>> {
     match super::super::entities::metadata_entity_type(db, node_id)? {
         Some(MetadataEntityType::Release) => load::<ReleaseLayer>(db, node_id),
         Some(MetadataEntityType::Track) => load::<TrackLayer>(db, node_id),
@@ -349,10 +343,7 @@ fn find_id<T: LayerElement>(
         .copied())
 }
 
-pub(crate) fn entity_ids_for_source(
-    db: &impl DbAccess,
-    source_id: &str,
-) -> anyhow::Result<Vec<DbId>> {
+pub fn entity_ids_for_source(db: &impl DbAccess, source_id: &str) -> anyhow::Result<Vec<DbId>> {
     let layer_ids = super::super::indexes::node_ids(db, "source_id", source_id)?;
     let mut entity_ids = Vec::with_capacity(layer_ids.len());
     for layer_id in layer_ids {
@@ -366,11 +357,7 @@ pub(crate) fn entity_ids_for_source(
 /// Saves `layer` as its source's layer on the entity, replacing any previous
 /// one. Returns false when the stored layer already supplied the same values.
 #[cfg(test)]
-pub(crate) fn upsert(
-    db: &mut agdb::DbAny,
-    node_id: DbId,
-    layer: &MetadataLayer,
-) -> anyhow::Result<bool> {
+pub fn upsert(db: &mut agdb::DbAny, node_id: DbId, layer: &MetadataLayer) -> anyhow::Result<bool> {
     db.transaction_mut(|t| upsert_inside_tx(t, node_id, layer))
 }
 
@@ -485,10 +472,7 @@ fn load_one<T: LayerElement>(
 }
 
 /// The labels a layer links, by id, in order.
-pub(crate) fn label_links(
-    db: &impl DbAccess,
-    layer_id: DbId,
-) -> anyhow::Result<Vec<LabelLinkInput>> {
+pub fn label_links(db: &impl DbAccess, layer_id: DbId) -> anyhow::Result<Vec<LabelLinkInput>> {
     Ok(edges::labels(db, layer_id)?
         .into_iter()
         .map(|link| LabelLinkInput {
@@ -682,11 +666,13 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::db::test_db::{
+    use crate::db::fixtures::{
         connect,
         insert_artist,
         insert_release,
         insert_track,
+    };
+    use crate::db::test_db::{
         new_test_db,
         stored_keys,
     };

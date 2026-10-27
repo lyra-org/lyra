@@ -4,12 +4,11 @@
 // www.meshiplaw.com/lyra.
 
 use std::{
-    borrow::Borrow,
     collections::HashSet,
-    fmt,
     sync::Arc,
 };
 
+use crate::services::plugin_scope::PluginId;
 use anyhow::{
     Result,
     bail,
@@ -19,86 +18,6 @@ use tokio::sync::{
     RwLock,
     RwLockReadGuard,
 };
-
-/// Validated plugin identifier. Outer key for every plugin-scoped registry.
-#[derive(Clone, Hash, Eq, PartialEq, Ord, PartialOrd)]
-pub(crate) struct PluginId(Arc<str>);
-
-impl PluginId {
-    pub(crate) fn new(value: impl Into<Arc<str>>) -> Result<Self> {
-        let value = value.into();
-        if value.is_empty() {
-            bail!("plugin id must not be empty");
-        }
-        if value.chars().any(char::is_whitespace) {
-            bail!("plugin id must not contain whitespace");
-        }
-        Ok(Self(value))
-    }
-
-    pub(crate) fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl Borrow<str> for PluginId {
-    fn borrow(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Debug for PluginId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(&self.0, f)
-    }
-}
-
-impl fmt::Display for PluginId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.0, f)
-    }
-}
-
-impl AsRef<str> for PluginId {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-/// Infallible: all validation must happen at register time so teardown
-/// cannot leave a half-live plugin.
-pub(crate) trait PluginScopedInner: Send + Sync + 'static {
-    /// Missing ids are a no-op.
-    fn clear_bucket(&mut self, plugin_id: &PluginId);
-
-    /// Rebuild derived side-car state from the surviving buckets.
-    fn rebuild_derived(&mut self);
-}
-
-/// Pairs `clear_bucket` with `rebuild_derived` so impls cannot skip the rebuild.
-pub(crate) struct ScopedRegistry<T: PluginScopedInner> {
-    inner: Arc<RwLock<T>>,
-}
-
-impl<T: PluginScopedInner> ScopedRegistry<T> {
-    pub(crate) fn from_shared(inner: Arc<RwLock<T>>) -> Self {
-        Self { inner }
-    }
-
-    pub(crate) async fn teardown(&self, plugin_id: &PluginId) {
-        let mut guard = self.inner.write().await;
-        guard.clear_bucket(plugin_id);
-        guard.rebuild_derived();
-    }
-}
-
-impl<T: PluginScopedInner> Clone for ScopedRegistry<T> {
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-        }
-    }
-}
 
 pub(crate) struct PluginRegistrationGuard<'a> {
     _guard: RwLockReadGuard<'a, HashSet<PluginId>>,
@@ -180,19 +99,19 @@ impl PluginRegistries {
     pub(crate) async fn reload_all_plugins(&self) -> Result<()> {
         let _restart = self.restart_lock.lock().await;
 
-        let old_ids: Vec<PluginId> = crate::STATE
+        let old_ids: Vec<PluginId> = crate::plugins::STATE
             .generation()
-            .plugin_manifests
+            .manifests
             .get()
             .iter()
             .filter_map(|manifest| PluginId::new(manifest.id.clone()).ok())
             .collect();
 
-        // Fresh discovery from disk; replaces STATE.generation().plugin_manifests.
+        // Fresh discovery from disk; replaces crate::plugins::STATE.generation().manifests.
         let runtime = crate::plugins::bootstrap::initialize_harmony().await?;
-        let new_ids: Vec<PluginId> = crate::STATE
+        let new_ids: Vec<PluginId> = crate::plugins::STATE
             .generation()
-            .plugin_manifests
+            .manifests
             .get()
             .iter()
             .filter_map(|manifest| PluginId::new(manifest.id.clone()).ok())
@@ -211,8 +130,8 @@ impl PluginRegistries {
         }
 
         // Publish before exec: plugin entrypoints dispatch handlers that
-        // resolve STATE.generation().plugin_runtime at call time.
-        crate::plugins::bootstrap::publish_runtime(runtime.clone());
+        // resolve the published runtime at call time.
+        crate::plugins::STATE.publish_runtime(runtime.clone());
         let exec_result = runtime.exec_all().await;
 
         for plugin_id in old_ids.iter().chain(&new_ids) {
@@ -263,9 +182,9 @@ impl PluginRegistries {
                     plugin_id: plugin_id.clone(),
                     source: err.context("failed to read plugin manifests"),
                 })?;
-        crate::STATE
+        crate::plugins::STATE
             .generation()
-            .plugin_manifests
+            .manifests
             .replace(Arc::from(manifests));
 
         self.teardown_plugin(plugin_id, true).await;
@@ -304,61 +223,6 @@ async fn refreeze_plugin_registration_exemptions(plugin_id: &PluginId) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    impl<T: PluginScopedInner> ScopedRegistry<T> {
-        fn new(inner: T) -> Self {
-            Self {
-                inner: Arc::new(RwLock::new(inner)),
-            }
-        }
-
-        fn shared(&self) -> Arc<RwLock<T>> {
-            self.inner.clone()
-        }
-    }
-
-    #[test]
-    fn plugin_id_rejects_empty() {
-        assert!(PluginId::new("").is_err());
-    }
-
-    #[test]
-    fn plugin_id_rejects_whitespace() {
-        assert!(PluginId::new("   ").is_err());
-        assert!(PluginId::new("  demo  ").is_err());
-        assert!(PluginId::new("de mo").is_err());
-    }
-
-    struct TestInner {
-        cleared: Vec<String>,
-        rebuilt: usize,
-    }
-
-    impl PluginScopedInner for TestInner {
-        fn clear_bucket(&mut self, plugin_id: &PluginId) {
-            self.cleared.push(plugin_id.to_string());
-        }
-
-        fn rebuild_derived(&mut self) {
-            self.rebuilt += 1;
-        }
-    }
-
-    #[tokio::test]
-    async fn scoped_registry_always_rebuilds_after_clear() {
-        let registry = ScopedRegistry::new(TestInner {
-            cleared: Vec::new(),
-            rebuilt: 0,
-        });
-        let id = PluginId::new("demo").unwrap();
-
-        registry.teardown(&id).await;
-
-        let guard = registry.shared();
-        let inner = guard.read().await;
-        assert_eq!(inner.cleared, vec!["demo".to_string()]);
-        assert_eq!(inner.rebuilt, 1);
-    }
 
     #[tokio::test]
     async fn ensure_registrations_open_rejects_during_teardown() {

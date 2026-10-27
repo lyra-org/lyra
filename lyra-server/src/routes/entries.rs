@@ -19,12 +19,8 @@ use axum::{
 };
 use serde::Deserialize;
 
+use crate::db::Permission;
 use crate::{
-    STATE,
-    db::{
-        self,
-        Permission,
-    },
     routes::responses::{
         EntryResponse,
         ReleaseResponse,
@@ -33,6 +29,7 @@ use crate::{
         AppError,
         deserialize_inc,
     },
+    services::STATE,
     services::{
         auth::require_authenticated,
         catalog::Viewer,
@@ -75,7 +72,7 @@ fn parse_inc(inc: Option<Vec<String>>) -> Result<EntryIncludes, AppError> {
 }
 
 fn detail_to_entry_response(
-    _db: &impl db::DbAccess,
+    _db: &impl crate::db::DbAccess,
     detail: EntryDetails,
     include_full_path: bool,
 ) -> anyhow::Result<EntryResponse> {
@@ -98,7 +95,7 @@ async fn get_entries(
 ) -> Result<Json<Vec<EntryResponse>>, AppError> {
     let principal = require_authenticated(&headers).await?;
     let include_full_path =
-        db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
+        crate::db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
     let include = parse_inc(query.inc)?;
     let db = &*STATE.db.read().await;
     let viewer = Viewer::user(db, principal)?;
@@ -117,7 +114,7 @@ async fn get_entry(
 ) -> Result<Json<EntryResponse>, AppError> {
     let principal = require_authenticated(&headers).await?;
     let include_full_path =
-        db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
+        crate::db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
     let include = parse_inc(query.inc)?;
     let db = &*STATE.db.read().await;
     let viewer = Viewer::user(db, principal)?;

@@ -3,46 +3,29 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-mod headers;
-mod image;
-mod parsing;
-mod router;
+mod registry;
+mod route_key;
 mod types;
-mod websocket;
 
-use self::headers::{
-    header_pairs,
-    plugin_api_response_to_axum,
-};
-use self::image::{
-    image_format_mime,
-    parse_image_transform_options,
-    transform_image,
-};
-use self::parsing::{
-    infer_content_type,
-    join_preferred_codecs,
-    parse_hls_serve_options,
-    parse_track_serve_options,
-    parse_u32_json,
-};
-use self::router::{
+use self::registry::{
     API_ROUTE_REGISTRY,
     ApiRouteRegistration,
+    freeze_registry,
+};
+pub(crate) use self::registry::{
+    ApiRouteStore,
+    CaseInsensitiveRouter,
     RegisteredRoute,
     RouteAuthMode,
-    build_router,
-    fallback,
-    find_static_dir,
-    freeze_registry,
+    RouteHost,
+    RouteKind,
     initialize_registry,
-    initialize_router,
-    install_router,
-    installed_static_dir,
+    registered_routes,
 };
-pub(crate) use self::router::{
-    ApiRouteStore,
-    is_plugin_route_path,
+use self::route_key::lowercase_literal_segments;
+pub(crate) use self::route_key::{
+    RouteKey,
+    placeholder_offset,
 };
 #[cfg(feature = "docgen")]
 use self::types::{
@@ -66,11 +49,6 @@ use self::types::{
     ApiRouteAuthMode,
     ApiWebSocketHandler,
 };
-use self::websocket::dispatch_websocket_route;
-pub(crate) use self::{
-    headers::stream_track_access,
-    parsing::stream_track_options,
-};
 
 use std::{
     cell::{
@@ -80,12 +58,6 @@ use std::{
     collections::{
         HashMap,
         HashSet,
-    },
-    env,
-    ffi::OsString,
-    path::{
-        Path as FsPath,
-        PathBuf,
     },
     sync::{
         Arc,
@@ -98,49 +70,7 @@ use anyhow::{
     Result,
     bail,
 };
-use axum::{
-    Router,
-    body::{
-        Body,
-        Bytes,
-    },
-    extract::{
-        Path,
-        Query,
-        Request,
-        WebSocketUpgrade,
-        ws::{
-            Message,
-            WebSocket,
-        },
-    },
-    http::{
-        HeaderMap,
-        Method,
-        StatusCode,
-        Uri,
-        header::{
-            ACCEPT_RANGES,
-            CONTENT_LENGTH,
-            CONTENT_RANGE,
-            CONTENT_TYPE,
-            HeaderName,
-            HeaderValue,
-            RANGE,
-        },
-    },
-    response::{
-        IntoResponse,
-        Response,
-    },
-    routing::{
-        MethodFilter,
-        MethodRouter,
-        any,
-        get,
-        on,
-    },
-};
+use axum::http::StatusCode;
 use harmony_core::{
     FunctionSpec,
     ModuleSpec,
@@ -163,8 +93,6 @@ use harmony_luau::{
     ParameterDescriptor,
     TypeAliasDescriptor,
 };
-use tower::ServiceExt;
-use tower_http::services::ServeDir;
 
 use crate::plugins::args;
 #[cfg(feature = "docgen")]
@@ -172,65 +100,32 @@ use crate::plugins::auth::{
     AuthCredential,
     Principal as AuthPrincipal,
 };
-use crate::routes::{
-    HlsPlaylistOptions,
-    ServeTrackOptions,
-    TrackAccess,
-    build_ranged_file_body,
-    download_track_response,
-    registry::{
-        RouteKey,
-        lowercase_literal_segments,
-        placeholder_offset,
-    },
-    serve_hls_playlist_for_track,
-    stream_track_response,
-};
-use crate::services::auth::resolve_optional_auth;
-use crate::services::remote::constants::{
-    AUTH_CHECK_INTERVAL,
-    MAX_CONSECUTIVE_AUTH_ERRORS,
-    MAX_MESSAGE_SIZE,
-    PING_INTERVAL,
-    PONG_TIMEOUT,
-    WRITE_TIMEOUT,
-};
-
 struct ApiModule;
-
-pub(crate) async fn install(
-    app: Router,
-    reservations: std::collections::HashSet<RouteKey>,
-) -> anyhow::Result<Router> {
-    let static_dir = find_static_dir()?;
-    if let Some(ref dir) = static_dir {
-        tracing::info!(static_dir = %dir.display(), "serving static directory");
-    }
-    initialize_registry(reservations).await;
-    initialize_router(static_dir).await;
-    Ok(app.fallback(fallback))
-}
 
 pub(crate) async fn finalize() -> anyhow::Result<()> {
     freeze_registry().await;
     rebuild_registered_routes().await
 }
 
+/// Rebuilds the installed HTTP routes from the registry; a no-op until a
+/// host installs them.
 pub(crate) async fn rebuild_registered_routes() -> anyhow::Result<()> {
-    let built = build_router(installed_static_dir().await).await?;
-    install_router(built).await;
-    Ok(())
+    let host = API_ROUTE_REGISTRY.read().await.host();
+    match host {
+        Some(host) => host.rebuild().await,
+        None => Ok(()),
+    }
 }
 
-pub(crate) async fn unfreeze_plugin_routes(plugin_id: crate::plugins::lifecycle::PluginId) {
+pub(crate) async fn unfreeze_plugin_routes(plugin_id: crate::services::plugin_scope::PluginId) {
     API_ROUTE_REGISTRY.write().await.unfreeze_plugin(plugin_id);
 }
 
-pub(crate) async fn refreeze_plugin_routes(plugin_id: &crate::plugins::lifecycle::PluginId) {
+pub(crate) async fn refreeze_plugin_routes(plugin_id: &crate::services::plugin_scope::PluginId) {
     API_ROUTE_REGISTRY.write().await.refreeze_plugin(plugin_id);
 }
 
-pub(crate) async fn teardown_plugin_routes(plugin_id: &crate::plugins::lifecycle::PluginId) {
+pub(crate) async fn teardown_plugin_routes(plugin_id: &crate::services::plugin_scope::PluginId) {
     API_ROUTE_REGISTRY.write().await.clear_bucket(plugin_id);
     rebuild_registered_routes()
         .await

@@ -79,8 +79,13 @@ pub(super) async fn report_progress(
             "track_id {track_id} does not match queue current track {current_track_public_id}"
         )));
     }
-    let current_track_db_id = db::lookup::find_node_id_by_id(&*db, current_track_public_id)?
-        .filter(|db_id| db::tracks::get_by_id(&*db, *db_id).ok().flatten().is_some())
+    let current_track_db_id = crate::db::lookup::find_node_id_by_id(&*db, current_track_public_id)?
+        .filter(|db_id| {
+            crate::db::tracks::get_by_id(&*db, *db_id)
+                .ok()
+                .flatten()
+                .is_some()
+        })
         .ok_or_else(|| {
             AppError::not_found(format!("track not found: {current_track_public_id}"))
         })?;

@@ -5,6 +5,7 @@
 
 mod app;
 mod artists;
+mod cors;
 mod covers;
 mod entity_metadata;
 mod entries;
@@ -19,10 +20,11 @@ mod mix;
 mod pagination;
 mod playbacks;
 mod playlists;
+pub(crate) mod plugin_api;
 mod plugins;
 mod providers;
+mod rate_limit;
 mod ratings;
-pub(crate) mod registry;
 mod releases;
 pub(crate) mod responses;
 mod roles;
@@ -42,26 +44,22 @@ use serde::{
     de,
 };
 use std::collections::HashMap;
-use time::{
-    OffsetDateTime,
-    format_description::well_known::Rfc3339,
-};
 
-use crate::{
-    db,
-    services::{
-        auth::{
-            AuthCredential,
-            ResolvedAuth,
-            require_auth,
-        },
-        entities::ResolvedCreditedArtist,
+use crate::services::{
+    auth::{
+        AuthCredential,
+        ResolvedAuth,
+        require_auth,
     },
+    entities::ResolvedCreditedArtist,
 };
 use agdb::DbId;
 use axum::http::HeaderMap;
 
-pub(crate) use app::build_core_api;
+pub(crate) use app::{
+    build_core_api,
+    serve_app,
+};
 pub use artists::artist_routes;
 pub use covers::cover_routes;
 pub(crate) use entity_metadata::entity_metadata_routes;
@@ -76,6 +74,7 @@ pub use labels::label_routes;
 pub use libraries::library_routes;
 pub use listens::listen_routes;
 pub use metadata::metadata_routes;
+pub(crate) use metadata::reingest_request_gate;
 pub(crate) use pagination::{
     SnapshotPageRequest,
     load_snapshot_items,
@@ -136,7 +135,7 @@ pub(crate) fn db_ids_from_credited_artists<'a>(
 
 pub(crate) fn credited_artist_responses(
     artists: Vec<ResolvedCreditedArtist>,
-    artist_covers: Option<&HashMap<DbId, db::Cover>>,
+    artist_covers: Option<&HashMap<DbId, crate::db::Cover>>,
 ) -> Vec<responses::ArtistResponse> {
     artists
         .into_iter()
@@ -188,36 +187,6 @@ pub(super) async fn forbid_api_key_credential(
         )),
         AuthCredential::Session { .. } | AuthCredential::Default => Ok(auth),
     }
-}
-
-pub(crate) fn unix_secs_to_rfc3339_u64(seconds: u64) -> String {
-    let seconds = i64::try_from(seconds).expect("Unix timestamp seconds should fit in i64");
-    unix_secs_to_rfc3339_i64(seconds)
-}
-
-pub(crate) fn unix_secs_to_rfc3339_i64(seconds: i64) -> String {
-    OffsetDateTime::from_unix_timestamp(seconds)
-        .expect("Unix timestamp seconds should be RFC3339-representable")
-        .format(&Rfc3339)
-        .expect("RFC3339 formatting should succeed")
-}
-
-pub(crate) fn unix_ms_to_rfc3339_u64(milliseconds: u64) -> String {
-    unix_ms_to_rfc3339_i128(i128::from(milliseconds))
-}
-
-pub(crate) fn unix_ms_to_rfc3339_i64(milliseconds: i64) -> String {
-    unix_ms_to_rfc3339_i128(i128::from(milliseconds))
-}
-
-fn unix_ms_to_rfc3339_i128(milliseconds: i128) -> String {
-    let nanoseconds = milliseconds
-        .checked_mul(1_000_000)
-        .expect("Unix timestamp milliseconds should fit in nanoseconds");
-    OffsetDateTime::from_unix_timestamp_nanos(nanoseconds)
-        .expect("Unix timestamp milliseconds should be RFC3339-representable")
-        .format(&Rfc3339)
-        .expect("RFC3339 formatting should succeed")
 }
 
 /// Distinguishes an absent JSON field from an explicit `null` in a PATCH body.

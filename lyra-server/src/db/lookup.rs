@@ -182,7 +182,7 @@ mod tests {
     #[test]
     fn find_ids_by_db_ids_skips_missing_nodes() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
-        let track_db_id = test_db::insert_track(&mut db, "Lookup Track")?;
+        let track_db_id = crate::db::fixtures::insert_track(&mut db, "Lookup Track")?;
         let public_id = find_id_by_db_id(&db, track_db_id)?.expect("track has public id");
 
         let resolved = find_ids_by_db_ids(&db, &[track_db_id, DbId(999999)])?;

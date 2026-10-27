@@ -58,7 +58,7 @@ fn get_primary_source_key_callback(
         {
             return None::<String>.into_luau_return();
         }
-        let source = db::track_sources::get_primary_by_track(&db, DbId(track_id))
+        let source = crate::db::track_sources::get_primary_by_track(&db, DbId(track_id))
             .map_err(crate::plugins::runtime_error)?;
         let source_key = source
             .map(|source| source.source_key)

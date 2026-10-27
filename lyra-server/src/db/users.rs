@@ -25,7 +25,10 @@ use nanoid::nanoid;
 use serde::Serialize;
 
 use super::NodeId;
-use crate::services::auth::DEFAULT_USERNAME;
+
+/// Username of the built-in default user, promoted to admin on every boot.
+/// Already lowercase, so it compares directly against stored usernames.
+pub const DEFAULT_USERNAME: &str = "default";
 
 pub(crate) fn now_secs() -> i64 {
     std::time::SystemTime::now()
@@ -58,24 +61,15 @@ pub(crate) struct Session {
 }
 
 /// Case-insensitive (lowercased) username lookup.
-pub(crate) fn get_by_username(
-    db: &impl super::DbAccess,
-    username: &str,
-) -> anyhow::Result<Option<User>> {
+pub fn get_by_username(db: &impl super::DbAccess, username: &str) -> anyhow::Result<Option<User>> {
     super::graph::fetch_typed_by_index(db, "username", &username.to_lowercase(), "User")
 }
 
-pub(crate) fn get_by_id(
-    db: &impl super::DbAccess,
-    user_db_id: DbId,
-) -> anyhow::Result<Option<User>> {
+pub fn get_by_id(db: &impl super::DbAccess, user_db_id: DbId) -> anyhow::Result<Option<User>> {
     super::graph::fetch_typed_by_id(db, user_db_id, "User")
 }
 
-pub(crate) fn get_by_public_id(
-    db: &impl super::DbAccess,
-    id: &str,
-) -> anyhow::Result<Option<User>> {
+pub fn get_by_public_id(db: &impl super::DbAccess, id: &str) -> anyhow::Result<Option<User>> {
     super::graph::fetch_typed_by_index(db, "id", id, "User")
 }
 
@@ -144,10 +138,7 @@ pub(crate) fn find_by_session_token_hash(
     Ok(None)
 }
 
-pub(crate) fn session_owner(
-    db: &impl super::DbAccess,
-    session_id: DbId,
-) -> anyhow::Result<Option<User>> {
+pub fn session_owner(db: &impl super::DbAccess, session_id: DbId) -> anyhow::Result<Option<User>> {
     let mut users: Vec<User> = db
         .exec(
             QueryBuilder::select()
@@ -296,10 +287,7 @@ pub(crate) fn set_session_plugin_data(
     Ok(())
 }
 
-pub(crate) fn revoke_session_by_token_hash(
-    db: &mut DbAny,
-    token_hash: &str,
-) -> anyhow::Result<bool> {
+pub fn revoke_session_by_token_hash(db: &mut DbAny, token_hash: &str) -> anyhow::Result<bool> {
     let Some((_, _, session_id)) = find_by_session_token_hash(db, token_hash)? else {
         return Ok(false);
     };
@@ -416,12 +404,10 @@ pub(crate) fn update_user_password(
 
 #[cfg(test)]
 mod tests {
-    use super::super::test_db::{
-        test_session,
-        test_user,
-    };
     use super::*;
+    use crate::db::fixtures::test_user;
     use crate::db::test_db::new_test_db;
+    use crate::db::test_db::test_session;
     use anyhow::anyhow;
     use argon2::password_hash::PasswordHash;
 
@@ -487,7 +473,7 @@ mod tests {
     fn login_rejects_owner_that_is_not_a_user() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user_db_id = create(&mut db, &test_user("alice")?)?;
-        let track_db_id = crate::db::test_db::insert_track(&mut db, "song")?;
+        let track_db_id = crate::db::fixtures::insert_track(&mut db, "song")?;
 
         assert!(login(&mut db, track_db_id, &test_session("token-hash-track")).is_err());
         assert!(find_by_session_token_hash(&db, "token-hash-track")?.is_none());
@@ -612,7 +598,7 @@ mod tests {
         let mut db = new_test_db()?;
         let user_db_id = crate::db::test_db::insert_user(&mut db, "alice")?;
         let bob_db_id = crate::db::test_db::insert_user(&mut db, "bob")?;
-        let track_db_id = crate::db::test_db::insert_track(&mut db, "song")?;
+        let track_db_id = crate::db::fixtures::insert_track(&mut db, "song")?;
         let lyrics_db_id = crate::db::lyrics::upsert_personal(
             &mut db,
             track_db_id,

@@ -36,7 +36,6 @@ impl fmt::Display for EntityType {
 pub(crate) mod artists;
 pub(crate) mod auth;
 pub(crate) mod catalog;
-pub(crate) mod cors;
 pub(crate) mod covers;
 pub(crate) mod entities;
 pub(crate) mod entries;
@@ -53,7 +52,8 @@ pub(crate) mod playback_sessions;
 pub(crate) mod playback_sources;
 pub(crate) mod playbacks;
 pub(crate) mod playlists;
-pub(crate) mod plugin_repositories;
+pub(crate) mod plugin_dispatch;
+pub(crate) mod plugin_scope;
 pub(crate) mod providers;
 pub(crate) mod rate_limit;
 pub(crate) mod ratings;
@@ -63,12 +63,15 @@ pub(crate) mod search;
 pub(crate) mod settings;
 pub(crate) mod setup;
 pub(crate) mod shutdown;
-pub(crate) mod startup;
+pub(crate) mod state;
 mod system;
 pub(crate) mod tags;
+pub(crate) mod testing;
+pub(crate) mod timestamps;
 pub(crate) mod tracks;
 pub(crate) mod transcoding;
 
+pub(crate) use state::STATE;
 pub(crate) use system::SystemContext;
 
 pub(crate) use libraries::{

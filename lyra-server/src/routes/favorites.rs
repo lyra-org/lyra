@@ -31,13 +31,13 @@ use serde::{
 };
 use std::collections::HashMap;
 
+use crate::db::favorites::FavoriteKind;
 use crate::{
-    STATE,
-    db::favorites::FavoriteKind,
     routes::{
         AppError,
         responses::PageResponse,
     },
+    services::STATE,
     services::{
         auth::require_authenticated,
         favorites as favorite_service,
@@ -132,8 +132,12 @@ fn favorite_item_from_list_item(item: favorite_service::ListItem) -> FavoriteIte
     FavoriteItem {
         target_id: item.target_id,
         entity: item.kind.as_str().to_string(),
-        first_favorited_at: super::unix_ms_to_rfc3339_i64(item.first_favorited_at_ms),
-        last_refreshed_at: super::unix_ms_to_rfc3339_i64(item.last_refreshed_at_ms),
+        first_favorited_at: crate::services::timestamps::unix_ms_to_rfc3339_i64(
+            item.first_favorited_at_ms,
+        ),
+        last_refreshed_at: crate::services::timestamps::unix_ms_to_rfc3339_i64(
+            item.last_refreshed_at_ms,
+        ),
     }
 }
 
@@ -348,12 +352,8 @@ pub(crate) fn favorite_openapi_routes() -> aide::axum::ApiRouter {
 mod tests {
     use super::*;
     use crate::{
-        db,
-        testing::{
-            LibraryFixtureConfig,
-            initialize_runtime,
-            runtime_test_lock,
-        },
+        plugins::testing::init_library_test_state,
+        services::testing::runtime_test_lock,
     };
     use axum::{
         http::header::AUTHORIZATION,
@@ -394,18 +394,17 @@ mod tests {
     #[tokio::test]
     async fn check_favorites_enforces_http_cap_before_deduplication() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
-        initialize_runtime(&LibraryFixtureConfig {
-            directory: std::path::PathBuf::from("."),
-            language: None,
-            country: None,
-        })
-        .await?;
+        init_library_test_state(std::path::PathBuf::from(".")).await?;
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            db::users::create(&mut db, &db::test_db::test_user("favorites-check-user")?)?
+            crate::db::users::create(
+                &mut db,
+                &crate::db::fixtures::test_user("favorites-check-user")?,
+            )?
         };
-        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
+        let session =
+            crate::services::testing::create_session(user_db_id, Default::default()).await?;
         let mut headers = HeaderMap::new();
         headers.insert(
             AUTHORIZATION,

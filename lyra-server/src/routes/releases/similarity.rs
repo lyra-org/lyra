@@ -15,17 +15,14 @@ use axum::{
 };
 use serde::Deserialize;
 
+use crate::db::Permission;
 use crate::{
-    STATE,
-    db::{
-        self,
-        Permission,
-    },
     routes::{
         AppError,
         deserialize_inc,
         responses::ReleaseResponse,
     },
+    services::STATE,
     services::{
         auth::require_authenticated,
         releases,
@@ -75,12 +72,12 @@ pub(super) async fn get_similar_releases(
     let (includes, include_covers, include_genres, include_artist_covers) =
         super::parse_release_includes(query.inc)?;
     let include_entry_paths =
-        db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
+        crate::db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
 
     let seed_db_id = {
         let db = STATE.db.read().await;
         principal.require(&*db)?;
-        let seed_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
+        let seed_db_id = crate::db::lookup::find_node_id_by_id(&*db, &id)?
             .ok_or_else(|| AppError::not_found(format!("Release not found: {id}")))?;
         crate::services::auth::access::require_entity_accessible(
             &*db,
@@ -88,7 +85,7 @@ pub(super) async fn get_similar_releases(
             seed_db_id,
             || AppError::not_found(format!("Release not found: {id}")),
         )?;
-        if db::releases::get_by_id(&*db, seed_db_id)?.is_none() {
+        if crate::db::releases::get_by_id(&*db, seed_db_id)?.is_none() {
             return Err(AppError::not_found(format!("Release not found: {id}")));
         }
         seed_db_id
@@ -100,8 +97,8 @@ pub(super) async fn get_similar_releases(
 
     let db = STATE.db.read().await;
     principal.require(&*db)?;
-    if db::lookup::find_node_id_by_id(&*db, &id)? != Some(seed_db_id)
-        || db::releases::get_by_id(&*db, seed_db_id)?.is_none()
+    if crate::db::lookup::find_node_id_by_id(&*db, &id)? != Some(seed_db_id)
+        || crate::db::releases::get_by_id(&*db, seed_db_id)?.is_none()
         || !crate::services::auth::access::entity_accessible(&*db, &principal, seed_db_id)?
     {
         return Err(AppError::not_found(format!("Release not found: {id}")));
@@ -111,9 +108,9 @@ pub(super) async fn get_similar_releases(
         let Some(release_db_id) = release.db_id.clone().map(agdb::DbId::from) else {
             continue;
         };
-        if db::lookup::find_node_id_by_id(&*db, &release.id)? == Some(release_db_id)
+        if crate::db::lookup::find_node_id_by_id(&*db, &release.id)? == Some(release_db_id)
             && crate::services::auth::access::entity_accessible(&*db, &principal, release_db_id)?
-            && let Some(current) = db::releases::get_by_id(&*db, release_db_id)?
+            && let Some(current) = crate::db::releases::get_by_id(&*db, release_db_id)?
         {
             accessible.push(current);
         }

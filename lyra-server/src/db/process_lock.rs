@@ -21,10 +21,20 @@ use anyhow::{
     anyhow,
 };
 
-use crate::config::{
+use super::bootstrap::{
     DbConfig,
     DbKind,
 };
+
+/// The database's lockfile could not be opened; callers explain storage
+/// permissions to the operator.
+#[derive(Debug, thiserror::Error)]
+#[error("failed to open db lockfile at '{}'", path.display())]
+pub struct LockfileOpenError {
+    pub path: PathBuf,
+    #[source]
+    pub source: std::io::Error,
+}
 
 pub(crate) struct DbProcessLock {
     _file: File,
@@ -52,7 +62,10 @@ pub(crate) fn acquire(config: &DbConfig, mode: LockMode) -> Result<Option<DbProc
         .create(true)
         .truncate(false)
         .open(&path)
-        .map_err(|error| crate::config::storage::write_error("open db lockfile", &path, error))?;
+        .map_err(|source| LockfileOpenError {
+            path: path.clone(),
+            source,
+        })?;
 
     match mode {
         LockMode::Blocking => file
@@ -87,7 +100,7 @@ fn lockfile_path_for(db_path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::DbKind;
+    use crate::db::bootstrap::DbKind;
 
     #[test]
     fn memory_databases_do_not_lock() -> Result<()> {

@@ -24,18 +24,15 @@ use super::{
     releases::Releases,
     tracks::Tracks,
 };
-use crate::{
-    db::{
-        self,
-        Artist,
-        Release,
-        Track,
-        genres::Genre,
-    },
-    services::artists::{
-        ResolvedRelation,
-        get_relations_many,
-    },
+use crate::db::{
+    Artist,
+    Release,
+    Track,
+    genres::Genre,
+};
+use crate::services::artists::{
+    ResolvedRelation,
+    get_relations_many,
 };
 
 /// The ids among `ids` that the viewer can see.
@@ -91,7 +88,7 @@ pub(crate) fn tracks_by_release(
 ) -> Result<HashMap<DbId, Vec<Track>>, CatalogError> {
     let mut tracks = HashMap::new();
     for release in visible_in_order::<Releases>(db, viewer, releases)? {
-        let ids = db::graph::neighbor_ids(db, release, "Track")?;
+        let ids = crate::db::graph::neighbor_ids(db, release, "Track")?;
         tracks.insert(release, Tracks::hydrate(db, &ids)?);
     }
     Ok(tracks)
@@ -106,7 +103,7 @@ pub(crate) fn releases_by_track(
     let visible_releases = viewer.visible_releases(db)?;
     let mut releases = HashMap::new();
     for track in visible_in_order::<Tracks>(db, viewer, tracks)? {
-        let ids = db::graph::inbound_neighbor_ids(db, track, "Release")?
+        let ids = crate::db::graph::inbound_neighbor_ids(db, track, "Release")?
             .into_iter()
             .filter(|release| {
                 visible_releases
@@ -128,7 +125,7 @@ pub(crate) fn releases_by_genre(
     let visible_releases = viewer.visible_releases(db)?;
     let genres = visible_in_order::<Genres>(db, viewer, genres)?;
     let mut releases = HashMap::new();
-    for (genre, ids) in db::genres::get_releases_many(db, &genres)? {
+    for (genre, ids) in crate::db::genres::get_releases_many(db, &genres)? {
         let ids = ids
             .into_iter()
             .filter(|release| {
@@ -149,7 +146,7 @@ pub(crate) fn artists_by_owner<C: Catalog>(
     owners: &[DbId],
 ) -> Result<HashMap<DbId, Vec<Artist>>, CatalogError> {
     let owners = visible_in_order::<C>(db, viewer, owners)?;
-    Ok(db::artists::get_many_by_owner(db, &owners)?)
+    Ok(crate::db::artists::get_many_by_owner(db, &owners)?)
 }
 
 /// The genres of each visible release.
@@ -159,7 +156,7 @@ pub(crate) fn genres_by_release(
     releases: &[DbId],
 ) -> Result<HashMap<DbId, Vec<Genre>>, CatalogError> {
     let releases = visible_in_order::<Releases>(db, viewer, releases)?;
-    Ok(db::genres::get_for_releases_many(db, &releases)?)
+    Ok(crate::db::genres::get_for_releases_many(db, &releases)?)
 }
 
 /// The relations of each visible artist to other visible artists.

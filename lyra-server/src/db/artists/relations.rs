@@ -264,10 +264,7 @@ pub(crate) fn get_relations_to(
     collect_relations(result, relation_type, |e| (e.from.0 != 0).then_some(e.from))
 }
 
-pub(crate) fn incoming_edge_ids(
-    db: &impl DbAccess,
-    artist_id: DbId,
-) -> anyhow::Result<HashSet<DbId>> {
+pub fn incoming_edge_ids(db: &impl DbAccess, artist_id: DbId) -> anyhow::Result<HashSet<DbId>> {
     Ok(db
         .exec(
             QueryBuilder::search()
@@ -342,10 +339,8 @@ pub(crate) fn get_related_targets_from_many(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::test_db::{
-        insert_artist,
-        new_test_db,
-    };
+    use crate::db::fixtures::insert_artist;
+    use crate::db::test_db::new_test_db;
 
     #[test]
     fn link_reuses_existing_relation_edge() -> anyhow::Result<()> {

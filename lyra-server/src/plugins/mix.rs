@@ -37,14 +37,11 @@ use harmony_luau::{
     LuauTypeInfo,
 };
 
+use crate::db::Track;
+use crate::db::mixers::MixerConfig;
 use crate::{
-    STATE,
     plugins::OptionConfig,
-    plugins::db::{
-        self,
-        Track,
-        mixers::MixerConfig,
-    },
+    plugins::db,
     services::auth::Principal,
     services::mix::{
         self as mix_service,
@@ -236,9 +233,9 @@ impl Mixer {
         let option = parse_option_declaration(vm, &config)?;
         let id = self.id.clone();
         Ok(luau::ScheduledFuture::new(async move {
-            let generation = STATE.generation();
+            let generation = crate::plugins::STATE.generation();
             let _registration = generation
-                .plugin_registries
+                .registries
                 .ensure_registrations_open(&plugin_id)
                 .await
                 .map_err(crate::plugins::runtime_error)?;
@@ -263,9 +260,9 @@ impl Mixer {
         let context = core_call_context(context);
         let vm = vm.clone();
         Ok(luau::ScheduledFuture::new(async move {
-            let generation = STATE.generation();
+            let generation = crate::plugins::STATE.generation();
             let _registration = generation
-                .plugin_registries
+                .registries
                 .ensure_registrations_open(&plugin_id)
                 .await
                 .map_err(crate::plugins::runtime_error)?;
@@ -281,11 +278,11 @@ impl Mixer {
     fn current_plugin_id(
         &self,
         context: &luau::CallContext,
-    ) -> luau::runtime::Result<crate::plugins::lifecycle::PluginId> {
+    ) -> luau::runtime::Result<crate::services::plugin_scope::PluginId> {
         let plugin_id = context.origin.plugin.clone().ok_or_else(|| {
             crate::plugins::runtime_error("mix.Mixer methods must be called from plugin Luau code")
         })?;
-        crate::plugins::lifecycle::PluginId::new(plugin_id.to_string())
+        crate::services::plugin_scope::PluginId::new(plugin_id.to_string())
             .map_err(crate::plugins::runtime_error)
     }
 }
@@ -336,15 +333,15 @@ fn mixer_new_callback(
             "mix.Mixer.new must be called from plugin Luau code",
         ));
     };
-    let plugin_id = crate::plugins::lifecycle::PluginId::new(plugin_id.to_string())
+    let plugin_id = crate::services::plugin_scope::PluginId::new(plugin_id.to_string())
         .map_err(crate::plugins::runtime_error)?;
     let vm = frame.vm.clone();
     let origin = frame.context.origin.clone();
     let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
-        let generation = STATE.generation();
+        let generation = crate::plugins::STATE.generation();
         let _registration = generation
-            .plugin_registries
+            .registries
             .ensure_registrations_open(&plugin_id)
             .await
             .map_err(crate::plugins::runtime_error)?;
@@ -355,7 +352,7 @@ fn mixer_new_callback(
             .map_err(crate::plugins::runtime_error)?;
 
         let mut db = db.write().await;
-        if db::mixers::get_by_mixer_id(&db, &id)
+        if crate::db::mixers::get_by_mixer_id(&db, &id)
             .map_err(crate::plugins::runtime_error)?
             .is_none()
         {
@@ -366,7 +363,8 @@ fn mixer_new_callback(
                 priority: 50,
                 enabled: true,
             };
-            db::mixers::upsert(&mut db, &mixer_config).map_err(crate::plugins::runtime_error)?;
+            crate::db::mixers::upsert(&mut db, &mixer_config)
+                .map_err(crate::plugins::runtime_error)?;
         }
 
         drop(db);
@@ -599,9 +597,12 @@ fn core_call_context(context: &luau::CallContext) -> harmony_core::CallContext {
 }
 
 /// The mix service seeds by public id, which it re-resolves under each guard it takes.
-async fn seed_public_id(db: db::DbAsync, seed: DbId) -> luau::runtime::Result<Option<String>> {
+async fn seed_public_id(
+    db: crate::db::DbAsync,
+    seed: DbId,
+) -> luau::runtime::Result<Option<String>> {
     let db = db.read().await;
-    crate::plugins::db::lookup::find_id_by_db_id(&*db, seed).map_err(crate::plugins::runtime_error)
+    crate::db::lookup::find_id_by_db_id(&*db, seed).map_err(crate::plugins::runtime_error)
 }
 
 fn parse_seed_id(seed_id: i64, label: &'static str) -> luau::runtime::Result<DbId> {
@@ -944,7 +945,7 @@ mod tests {
 
     use super::*;
 
-    fn principal(permissions: Vec<db::Permission>) -> Principal {
+    fn principal(permissions: Vec<crate::db::Permission>) -> Principal {
         Principal::from_parts(
             DbId(7),
             "viewer".to_string(),
@@ -971,7 +972,8 @@ mod tests {
             Some(HashSet::from(["visible-library".to_string()]))
         );
 
-        let admin = parse_consumer_options(&vm, None, &principal(vec![db::Permission::Admin]))?;
+        let admin =
+            parse_consumer_options(&vm, None, &principal(vec![crate::db::Permission::Admin]))?;
         assert!(admin.viewer.is_some());
         assert_eq!(admin.viewer_accessible_library_ids, None);
         Ok(())

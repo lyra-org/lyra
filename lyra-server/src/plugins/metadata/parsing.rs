@@ -10,8 +10,7 @@ use harmony_core::CallContext;
 use harmony_luau as luau;
 use serde_json::Value as JsonValue;
 
-use crate::plugins::db as server_db;
-use crate::plugins::lifecycle::PluginId;
+use crate::services::plugin_scope::PluginId;
 use crate::services::{
     EntityType,
     covers::providers::DEFAULT_COVER_HANDLER_TIMEOUT,
@@ -59,13 +58,13 @@ pub(super) fn entity_type_for_node(
     db: &agdb::DbAny,
     node_id: DbId,
 ) -> anyhow::Result<Option<EntityType>> {
-    if server_db::releases::get_by_id(db, node_id)?.is_some() {
+    if crate::db::releases::get_by_id(db, node_id)?.is_some() {
         return Ok(Some(EntityType::Release));
     }
-    if server_db::artists::get_by_id(db, node_id)?.is_some() {
+    if crate::db::artists::get_by_id(db, node_id)?.is_some() {
         return Ok(Some(EntityType::Artist));
     }
-    if server_db::tracks::get_by_id(db, node_id)?.is_some() {
+    if crate::db::tracks::get_by_id(db, node_id)?.is_some() {
         return Ok(Some(EntityType::Track));
     }
 
@@ -408,19 +407,19 @@ fn required_entity_type(
     key: &'static str,
 ) -> luau::runtime::Result<EntityType> {
     let value = table.get_raw(vm, key)?;
-    EntityType::_harmony_userdata_class().read_value(vm, key, value)
+    crate::services::EntityType::_harmony_userdata_class().read_value(vm, key, value)
 }
 
 pub(super) fn optional_artist_type(
     vm: &luau::Vm,
     table: &luau::Table,
     key: &'static str,
-) -> luau::runtime::Result<Option<server_db::ArtistType>> {
+) -> luau::runtime::Result<Option<crate::db::ArtistType>> {
     let value = table.get_raw(vm, key)?;
     if matches!(value, luau::Value::Nil) {
         return Ok(None);
     }
-    server_db::ArtistType::_harmony_userdata_class()
+    crate::db::ArtistType::_harmony_userdata_class()
         .read_value(vm, key, value)
         .map(Some)
 }

@@ -14,7 +14,6 @@ use agdb::{
 };
 
 use crate::db::{
-    self,
     Artist,
     ArtistRelationType,
     Release,
@@ -56,9 +55,9 @@ pub(crate) fn get_relations(
 ) -> anyhow::Result<Vec<ResolvedRelation>> {
     let mut resolved = Vec::new();
 
-    let incoming = db::artists::relations::get_relations_to(db, artist_db_id, None)?;
+    let incoming = crate::db::artists::relations::get_relations_to(db, artist_db_id, None)?;
     for (relation, peer_id) in incoming {
-        if let Some(peer_artist) = db::artists::get_by_id(db, peer_id)? {
+        if let Some(peer_artist) = crate::db::artists::get_by_id(db, peer_id)? {
             resolved.push(ResolvedRelation {
                 relation_type: relation.relation_type,
                 attributes: relation.attributes,
@@ -68,9 +67,9 @@ pub(crate) fn get_relations(
         }
     }
 
-    let outgoing = db::artists::relations::get_relations_from(db, artist_db_id, None)?;
+    let outgoing = crate::db::artists::relations::get_relations_from(db, artist_db_id, None)?;
     for (relation, peer_id) in outgoing {
-        if let Some(peer_artist) = db::artists::get_by_id(db, peer_id)? {
+        if let Some(peer_artist) = crate::db::artists::get_by_id(db, peer_id)? {
             resolved.push(ResolvedRelation {
                 relation_type: relation.relation_type,
                 attributes: relation.attributes,
@@ -165,7 +164,7 @@ pub(crate) fn get_details(
     artist_db_id: DbId,
     includes: ArtistIncludes,
 ) -> anyhow::Result<Option<ArtistDetails>> {
-    let Some(artist) = db::artists::get_by_id(db, artist_db_id)? else {
+    let Some(artist) = crate::db::artists::get_by_id(db, artist_db_id)? else {
         return Ok(None);
     };
 
@@ -178,14 +177,16 @@ pub(crate) fn get_details(
 mod tests {
     use super::*;
     use crate::db::artists::relations::link as link_artist_relation;
-    use crate::db::test_db::{
+    use crate::db::fixtures::{
         connect,
-        connect_artist,
         insert_artist,
-        insert_credited_artist,
-        insert_library,
         insert_release,
         insert_track,
+    };
+    use crate::db::test_db::{
+        connect_artist,
+        insert_credited_artist,
+        insert_library,
         new_test_db,
     };
     use crate::services::catalog::{
@@ -229,12 +230,12 @@ mod tests {
     fn set_artist_type(
         db: &mut DbAny,
         artist_db_id: DbId,
-        artist_type: db::ArtistType,
+        artist_type: crate::db::ArtistType,
     ) -> anyhow::Result<()> {
-        let mut artist = db::artists::get_by_id(db, artist_db_id)?
+        let mut artist = crate::db::artists::get_by_id(db, artist_db_id)?
             .ok_or_else(|| anyhow::anyhow!("artist should exist"))?;
         artist.set_artist_type(artist_type);
-        db::artists::update(db, &artist)
+        crate::db::artists::update(db, &artist)
     }
 
     #[test]
@@ -340,7 +341,7 @@ mod tests {
             &mut db,
             person_id,
             character_id,
-            db::ArtistRelationType::VoiceActor,
+            crate::db::ArtistRelationType::VoiceActor,
             None,
         )?;
 
@@ -350,7 +351,7 @@ mod tests {
         assert_eq!(incoming[0].direction, RelationDirection::Incoming);
         assert_eq!(
             incoming[0].relation_type,
-            db::ArtistRelationType::VoiceActor
+            crate::db::ArtistRelationType::VoiceActor
         );
 
         let outgoing = get_relations(&db, person_id)?;
@@ -359,7 +360,7 @@ mod tests {
         assert_eq!(outgoing[0].direction, RelationDirection::Outgoing);
         assert_eq!(
             outgoing[0].relation_type,
-            db::ArtistRelationType::VoiceActor
+            crate::db::ArtistRelationType::VoiceActor
         );
 
         Ok(())
@@ -375,7 +376,7 @@ mod tests {
             &mut db,
             person_id,
             character_id,
-            db::ArtistRelationType::VoiceActor,
+            crate::db::ArtistRelationType::VoiceActor,
             None,
         )?;
 
@@ -414,10 +415,10 @@ mod tests {
         let credited = insert_credited_artist(&mut db, "Credited")?;
         let uncredited = insert_artist(&mut db, "Uncredited")?;
         for artist in [credited, uncredited] {
-            set_artist_type(&mut db, artist, db::ArtistType::Person)?;
+            set_artist_type(&mut db, artist, crate::db::ArtistType::Person)?;
         }
         let by_type = ArtistFilter {
-            artist_type: Some(db::ArtistType::Person),
+            artist_type: Some(crate::db::ArtistType::Person),
             ..ArtistFilter::default()
         };
         assert_eq!(browse(&db, by_type, 0, 10)?.0, ["Credited"]);
@@ -429,7 +430,7 @@ mod tests {
         assert_eq!(browse(&db, by_id, 0, 10)?.0, ["Uncredited"]);
         let by_id_and_type = ArtistFilter {
             ids: Some(vec![credited, uncredited]),
-            artist_type: Some(db::ArtistType::Person),
+            artist_type: Some(crate::db::ArtistType::Person),
             ..ArtistFilter::default()
         };
         assert_eq!(
@@ -440,11 +441,11 @@ mod tests {
         assert!(get_details(&db, uncredited, ArtistIncludes::default())?.is_some());
 
         let user = crate::db::test_db::insert_user(&mut db, "admin")?;
-        db::favorites::add(
+        crate::db::favorites::add(
             &mut db,
             user,
             uncredited,
-            db::favorites::FavoriteKind::Artist,
+            crate::db::favorites::FavoriteKind::Artist,
             1,
         )?;
         let viewer = catalog::Viewer::user(
@@ -452,7 +453,7 @@ mod tests {
             crate::services::auth::Principal::for_user(
                 &db,
                 user,
-                vec![db::Permission::Admin],
+                vec![crate::db::Permission::Admin],
                 HashSet::new(),
             ),
         )?;
@@ -481,7 +482,7 @@ mod tests {
             &mut db,
             actor_id,
             character_id,
-            db::ArtistRelationType::VoiceActor,
+            crate::db::ArtistRelationType::VoiceActor,
             None,
         )?;
 
@@ -502,27 +503,27 @@ mod tests {
         let release_id = insert_release(&mut db, "Query Release")?;
 
         let release_artist_id = insert_artist(&mut db, "Release Artist")?;
-        set_artist_type(&mut db, release_artist_id, db::ArtistType::Person)?;
+        set_artist_type(&mut db, release_artist_id, crate::db::ArtistType::Person)?;
         connect_artist(&mut db, release_id, release_artist_id)?;
 
         let composer_id = insert_artist(&mut db, "Composer Person")?;
-        set_artist_type(&mut db, composer_id, db::ArtistType::Person)?;
-        db::test_db::connect_credit(
+        set_artist_type(&mut db, composer_id, crate::db::ArtistType::Person)?;
+        crate::db::fixtures::connect_credit(
             &mut db,
             release_id,
             composer_id,
-            db::CreditType::Composer,
+            crate::db::CreditType::Composer,
             None,
             0,
         )?;
 
         let group_composer_id = insert_artist(&mut db, "Composer Group")?;
-        set_artist_type(&mut db, group_composer_id, db::ArtistType::Group)?;
-        db::test_db::connect_credit(
+        set_artist_type(&mut db, group_composer_id, crate::db::ArtistType::Group)?;
+        crate::db::fixtures::connect_credit(
             &mut db,
             release_id,
             group_composer_id,
-            db::CreditType::Composer,
+            crate::db::CreditType::Composer,
             None,
             0,
         )?;
@@ -531,9 +532,9 @@ mod tests {
             &db,
             ArtistFilter {
                 releases: Some(vec![release_id]),
-                artist_type: Some(db::ArtistType::Person),
+                artist_type: Some(crate::db::ArtistType::Person),
                 credit_types: None,
-                exclude_credit_types: vec![db::CreditType::Artist],
+                exclude_credit_types: vec![crate::db::CreditType::Artist],
                 ..ArtistFilter::default()
             },
         )?;
@@ -554,12 +555,12 @@ mod tests {
         connect(&mut db, release_id, track_id)?;
 
         let composer_id = insert_artist(&mut db, "Fallback Composer")?;
-        set_artist_type(&mut db, composer_id, db::ArtistType::Person)?;
-        db::test_db::connect_credit(
+        set_artist_type(&mut db, composer_id, crate::db::ArtistType::Person)?;
+        crate::db::fixtures::connect_credit(
             &mut db,
             release_id,
             composer_id,
-            db::CreditType::Composer,
+            crate::db::CreditType::Composer,
             None,
             0,
         )?;
@@ -568,8 +569,8 @@ mod tests {
             &db,
             ArtistFilter {
                 tracks: Some(vec![track_id]),
-                artist_type: Some(db::ArtistType::Person),
-                credit_types: Some(vec![db::CreditType::Composer]),
+                artist_type: Some(crate::db::ArtistType::Person),
+                credit_types: Some(vec![crate::db::CreditType::Composer]),
                 exclude_credit_types: Vec::new(),
                 ..ArtistFilter::default()
             },
@@ -593,20 +594,20 @@ mod tests {
         connect(&mut db, release_id, track_id)?;
 
         let composer_id = insert_artist(&mut db, "Shared Composer")?;
-        set_artist_type(&mut db, composer_id, db::ArtistType::Person)?;
-        db::test_db::connect_credit(
+        set_artist_type(&mut db, composer_id, crate::db::ArtistType::Person)?;
+        crate::db::fixtures::connect_credit(
             &mut db,
             release_id,
             composer_id,
-            db::CreditType::Composer,
+            crate::db::CreditType::Composer,
             None,
             0,
         )?;
-        db::test_db::connect_credit(
+        crate::db::fixtures::connect_credit(
             &mut db,
             track_id,
             composer_id,
-            db::CreditType::Composer,
+            crate::db::CreditType::Composer,
             Some("piano"),
             0,
         )?;
@@ -615,8 +616,8 @@ mod tests {
             &db,
             ArtistFilter {
                 library: Some(library_id),
-                artist_type: Some(db::ArtistType::Person),
-                credit_types: Some(vec![db::CreditType::Composer]),
+                artist_type: Some(crate::db::ArtistType::Person),
+                credit_types: Some(vec![crate::db::CreditType::Composer]),
                 exclude_credit_types: Vec::new(),
                 ..ArtistFilter::default()
             },

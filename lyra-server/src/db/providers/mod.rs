@@ -41,10 +41,7 @@ pub(crate) fn get(db: &impl super::DbAccess) -> anyhow::Result<Vec<ProviderConfi
     Ok(providers)
 }
 
-pub(crate) fn get_by_provider_id(
-    db: &DbAny,
-    provider_id: &str,
-) -> anyhow::Result<Option<ProviderConfig>> {
+pub fn get_by_provider_id(db: &DbAny, provider_id: &str) -> anyhow::Result<Option<ProviderConfig>> {
     let providers: Vec<ProviderConfig> = db
         .exec(
             QueryBuilder::select()

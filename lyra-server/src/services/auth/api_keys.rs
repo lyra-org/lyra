@@ -8,8 +8,7 @@ use std::collections::HashMap;
 use agdb::DbId;
 
 use crate::{
-    STATE,
-    db,
+    services::STATE,
     services::auth::{
         Principal,
         hash_secret,
@@ -20,14 +19,14 @@ use crate::{
 
 const API_KEY_BYTES: usize = 16;
 pub(crate) const MAX_API_KEYS_PER_USER: usize = 50;
-pub(crate) use db::api_keys::MAX_NAME_LEN as MAX_API_KEY_NAME_LEN;
+pub(crate) use crate::db::api_keys::MAX_NAME_LEN as MAX_API_KEY_NAME_LEN;
 const LAST_USED_DEBOUNCE_SECS: i64 = 60;
 const LAST_USED_SWEEP_THRESHOLD: usize = 1024;
 
 // Debounce last_used_at writes to avoid grabbing the DB write lock on every
 // api-key-authed request. Only the in-memory mutex is taken on steady-state auth.
 fn last_used_cache(
-    generation: &crate::GenerationState,
+    generation: &crate::services::state::GenerationState,
 ) -> std::sync::MutexGuard<'_, HashMap<DbId, i64>> {
     generation
         .auth_caches
@@ -111,7 +110,7 @@ pub(crate) struct ResolvedApiKey {
     pub(crate) principal: Principal,
 }
 
-fn to_api_key_info(api_key: db::api_keys::ApiKey) -> ApiKeyInfo {
+fn to_api_key_info(api_key: crate::db::api_keys::ApiKey) -> ApiKeyInfo {
     assert!(
         api_key.db_id.is_some(),
         "persisted api key must have db_id set"
@@ -142,18 +141,19 @@ pub(crate) async fn create_api_key(
 
     let key = random_hex_secret::<API_KEY_BYTES>();
     let key_hash = hash_secret(&key);
-    let created_at = db::users::now_secs();
+    let created_at = crate::db::users::now_secs();
 
     let mut db_write = STATE.db.write().await;
     let user_db_id = principal.require(&db_write).map_err(anyhow::Error::from)?;
-    if db::api_keys::count_for_user(&db_write, user_db_id)? >= MAX_API_KEYS_PER_USER {
+    if crate::db::api_keys::count_for_user(&db_write, user_db_id)? >= MAX_API_KEYS_PER_USER {
         return Err(ApiKeyServiceError::BadRequest(format!(
             "api key limit reached ({MAX_API_KEYS_PER_USER} per user); revoke an existing key first"
         )));
     }
 
-    let api_key_id = db::api_keys::create(&mut db_write, user_db_id, name, &key_hash, created_at)?;
-    let api_key = db::api_keys::get_by_id(&db_write, api_key_id)?
+    let api_key_id =
+        crate::db::api_keys::create(&mut db_write, user_db_id, name, &key_hash, created_at)?;
+    let api_key = crate::db::api_keys::get_by_id(&db_write, api_key_id)?
         .ok_or_else(|| anyhow::anyhow!("created api key could not be read"))?;
 
     Ok(CreatedApiKey {
@@ -170,7 +170,7 @@ pub(crate) async fn list_api_keys_for_user(
 ) -> anyhow::Result<Vec<ApiKeyInfo>> {
     let db_read = STATE.db.read().await;
     let user_db_id = principal.require(&db_read)?;
-    Ok(db::api_keys::list_for_user(&db_read, user_db_id)?
+    Ok(crate::db::api_keys::list_for_user(&db_read, user_db_id)?
         .into_iter()
         .map(to_api_key_info)
         .collect())
@@ -182,17 +182,17 @@ pub(crate) async fn revoke_api_key_for_user(
 ) -> anyhow::Result<bool> {
     let mut db_write = STATE.db.write().await;
     let user_db_id = principal.require(&db_write)?;
-    let Some(api_key) = db::api_keys::get_by_public_id(&db_write, id)? else {
+    let Some(api_key) = crate::db::api_keys::get_by_public_id(&db_write, id)? else {
         return Ok(false);
     };
     let Some(api_key_id) = api_key.db_id.map(Into::into) else {
         return Ok(false);
     };
-    if db::api_keys::get_owner_id(&db_write, api_key_id)? != Some(user_db_id) {
+    if crate::db::api_keys::get_owner_id(&db_write, api_key_id)? != Some(user_db_id) {
         return Ok(false);
     }
 
-    let deleted = db::api_keys::delete_by_id(&mut db_write, api_key_id)?;
+    let deleted = crate::db::api_keys::delete_by_id(&mut db_write, api_key_id)?;
     if deleted {
         forget_last_used(api_key_id);
     }
@@ -209,16 +209,16 @@ pub(crate) async fn resolve_api_key(key: &str) -> anyhow::Result<Option<Resolved
 
     let key_hash = hash_secret(key);
     let db_read = STATE.db.read().await;
-    let Some(api_key) = db::api_keys::find_by_key_hash(&db_read, &key_hash)? else {
+    let Some(api_key) = crate::db::api_keys::find_by_key_hash(&db_read, &key_hash)? else {
         return Ok(None);
     };
     let Some(api_key_id) = api_key.db_id.map(Into::into) else {
         return Ok(None);
     };
-    let Some(user_db_id) = db::api_keys::get_owner_id(&db_read, api_key_id)? else {
+    let Some(user_db_id) = crate::db::api_keys::get_owner_id(&db_read, api_key_id)? else {
         return Ok(None);
     };
-    let Some(user) = db::users::get_by_id(&db_read, user_db_id)? else {
+    let Some(user) = crate::db::users::get_by_id(&db_read, user_db_id)? else {
         return Ok(None);
     };
     let principal = resolve_principal(&db_read, user_db_id, user);
@@ -226,11 +226,11 @@ pub(crate) async fn resolve_api_key(key: &str) -> anyhow::Result<Option<Resolved
     let public_id = api_key.id;
     drop(db_read);
 
-    let now = db::users::now_secs();
+    let now = crate::db::users::now_secs();
     if should_persist_last_used(api_key_id, now) {
         let mut db_write = STATE.db.write().await;
         // Re-verify under write lock: key may have been revoked between read and write.
-        let fresh_id = match db::api_keys::find_by_key_hash(&db_write, &key_hash)? {
+        let fresh_id = match crate::db::api_keys::find_by_key_hash(&db_write, &key_hash)? {
             Some(fresh) => fresh.db_id.map(Into::into),
             None => None,
         };
@@ -239,7 +239,7 @@ pub(crate) async fn resolve_api_key(key: &str) -> anyhow::Result<Option<Resolved
             forget_last_used(api_key_id);
             return Ok(None);
         }
-        match db::api_keys::update_last_used_at(&mut db_write, api_key_id, now) {
+        match crate::db::api_keys::update_last_used_at(&mut db_write, api_key_id, now) {
             Ok(()) => {
                 drop(db_write);
                 record_persisted_last_used(api_key_id, now);
@@ -267,29 +267,24 @@ mod tests {
     use super::*;
 
     async fn initialize_api_key_test_runtime() -> anyhow::Result<()> {
-        crate::testing::initialize_runtime(&crate::testing::LibraryFixtureConfig {
-            directory: std::path::PathBuf::from("."),
-            language: None,
-            country: None,
-        })
-        .await
+        crate::services::testing::init_library_test_state(std::path::PathBuf::from(".")).await
     }
 
     #[tokio::test]
     async fn api_key_management_rejects_recycled_user_db_id() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         initialize_api_key_test_runtime().await?;
 
         let alice_db_id = {
             let mut db = STATE.db.write().await;
-            db::users::create(&mut db, &db::test_db::test_user("alice")?)?
+            crate::db::users::create(&mut db, &crate::db::fixtures::test_user("alice")?)?
         };
-        let stale_alice = crate::testing::user_principal(alice_db_id).await?;
+        let stale_alice = crate::services::testing::user_principal(alice_db_id).await?;
         {
             let mut db = STATE.db.write().await;
-            db::test_db::recycle_user(&mut db, alice_db_id, "bob")?;
+            crate::db::test_db::recycle_user(&mut db, alice_db_id, "bob")?;
         }
-        let bob = crate::testing::user_principal(alice_db_id).await?;
+        let bob = crate::services::testing::user_principal(alice_db_id).await?;
         let bob_key = create_api_key(&bob, "bob laptop").await?;
 
         assert!(
@@ -317,14 +312,14 @@ mod tests {
 
     #[tokio::test]
     async fn create_api_key_rejects_empty_name() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         initialize_api_key_test_runtime().await?;
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            db::users::create(&mut db, &db::test_db::test_user("alice")?)?
+            crate::db::users::create(&mut db, &crate::db::fixtures::test_user("alice")?)?
         };
-        let principal = crate::testing::user_principal(user_db_id).await?;
+        let principal = crate::services::testing::user_principal(user_db_id).await?;
 
         let err = create_api_key(&principal, "   ")
             .await
@@ -339,14 +334,14 @@ mod tests {
 
     #[tokio::test]
     async fn create_api_key_rejects_names_exceeding_max_length() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         initialize_api_key_test_runtime().await?;
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            db::users::create(&mut db, &db::test_db::test_user("alice")?)?
+            crate::db::users::create(&mut db, &crate::db::fixtures::test_user("alice")?)?
         };
-        let principal = crate::testing::user_principal(user_db_id).await?;
+        let principal = crate::services::testing::user_principal(user_db_id).await?;
 
         let long_name: String = "x".repeat(MAX_API_KEY_NAME_LEN + 1);
         let err = create_api_key(&principal, &long_name)
@@ -367,14 +362,14 @@ mod tests {
 
     #[tokio::test]
     async fn create_api_key_enforces_per_user_cap() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         initialize_api_key_test_runtime().await?;
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            db::users::create(&mut db, &db::test_db::test_user("alice")?)?
+            crate::db::users::create(&mut db, &crate::db::fixtures::test_user("alice")?)?
         };
-        let principal = crate::testing::user_principal(user_db_id).await?;
+        let principal = crate::services::testing::user_principal(user_db_id).await?;
 
         for i in 0..MAX_API_KEYS_PER_USER {
             create_api_key(&principal, &format!("key-{i}")).await?;
@@ -393,14 +388,14 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_api_key_updates_last_used_at() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         initialize_api_key_test_runtime().await?;
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            db::users::create(&mut db, &db::test_db::test_user("alice")?)?
+            crate::db::users::create(&mut db, &crate::db::fixtures::test_user("alice")?)?
         };
-        let principal = crate::testing::user_principal(user_db_id).await?;
+        let principal = crate::services::testing::user_principal(user_db_id).await?;
         let created = create_api_key(&principal, "laptop").await?;
 
         assert_eq!(
@@ -421,14 +416,14 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_api_key_returns_none_after_revoke() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         initialize_api_key_test_runtime().await?;
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            db::users::create(&mut db, &db::test_db::test_user("alice")?)?
+            crate::db::users::create(&mut db, &crate::db::fixtures::test_user("alice")?)?
         };
-        let principal = crate::testing::user_principal(user_db_id).await?;
+        let principal = crate::services::testing::user_principal(user_db_id).await?;
         let created = create_api_key(&principal, "laptop").await?;
 
         assert!(revoke_api_key_for_user(&principal, &created.id).await?);
@@ -444,14 +439,14 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_api_key_debounces_last_used_at_writes() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         initialize_api_key_test_runtime().await?;
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            db::users::create(&mut db, &db::test_db::test_user("alice")?)?
+            crate::db::users::create(&mut db, &crate::db::fixtures::test_user("alice")?)?
         };
-        let principal = crate::testing::user_principal(user_db_id).await?;
+        let principal = crate::services::testing::user_principal(user_db_id).await?;
         let created = create_api_key(&principal, "laptop").await?;
 
         resolve_api_key(&created.key)
@@ -463,13 +458,13 @@ mod tests {
 
         {
             let mut db = STATE.db.write().await;
-            let api_key = db::api_keys::get_by_public_id(&db, &created.id)?
+            let api_key = crate::db::api_keys::get_by_public_id(&db, &created.id)?
                 .ok_or_else(|| anyhow::anyhow!("api key should exist"))?;
             let api_key_db_id: DbId = api_key
                 .db_id
                 .ok_or_else(|| anyhow::anyhow!("persisted api key has db_id"))?
                 .into();
-            db::api_keys::update_last_used_at(&mut db, api_key_db_id, first_bump - 1)?;
+            crate::db::api_keys::update_last_used_at(&mut db, api_key_db_id, first_bump - 1)?;
         }
 
         resolve_api_key(&created.key)
@@ -490,16 +485,16 @@ mod tests {
 
     #[test]
     fn should_persist_last_used_returns_true_on_first_call() {
-        let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
-        crate::testing::init_default_test_state().expect("init test state");
+        let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+        crate::services::testing::init_default_test_state().expect("init test state");
         let id = DbId(9_001);
         assert!(should_persist_last_used(id, 1_000));
     }
 
     #[test]
     fn should_persist_last_used_debounces_within_window() {
-        let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
-        crate::testing::init_default_test_state().expect("init test state");
+        let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+        crate::services::testing::init_default_test_state().expect("init test state");
         let id = DbId(9_002);
         record_persisted_last_used(id, 1_000);
         assert!(!should_persist_last_used(
@@ -514,8 +509,8 @@ mod tests {
 
     #[test]
     fn record_persisted_last_used_sweeps_stale_entries() {
-        let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
-        crate::testing::init_default_test_state().expect("init test state");
+        let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+        crate::services::testing::init_default_test_state().expect("init test state");
         for i in 0..=LAST_USED_SWEEP_THRESHOLD {
             record_persisted_last_used(DbId(10_000 + i as i64), 0);
         }
@@ -528,8 +523,8 @@ mod tests {
 
     #[test]
     fn record_persisted_last_used_force_evicts_when_all_entries_are_fresh() {
-        let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
-        crate::testing::init_default_test_state().expect("init test state");
+        let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+        crate::services::testing::init_default_test_state().expect("init test state");
         for i in 0..LAST_USED_SWEEP_THRESHOLD {
             record_persisted_last_used(DbId(30_000 + i as i64), i as i64);
         }

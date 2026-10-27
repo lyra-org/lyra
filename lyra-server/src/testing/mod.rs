@@ -17,7 +17,6 @@ use std::path::{
     PathBuf,
 };
 use std::sync::Arc;
-use std::sync::LazyLock;
 use std::time::{
     SystemTime,
     UNIX_EPOCH,
@@ -36,20 +35,11 @@ use serde::{
     Serialize,
 };
 
-use crate::STATE;
-use crate::config;
-use crate::db::{
-    self,
-    Entry,
-};
-use crate::outbound_user_agent;
+use crate::db::Entry;
 use crate::services;
-use crate::services::hls::init as hls_init;
-use tokio::sync::{
-    Mutex,
-    MutexGuard,
-    oneshot,
-};
+use crate::services::STATE;
+use crate::services::testing::runtime_test_lock;
+use tokio::sync::oneshot;
 
 #[derive(Debug, Clone)]
 pub struct LibraryFixtureConfig {
@@ -89,193 +79,16 @@ pub struct FixtureSnapshot {
     pub tracks: Vec<EntitySnapshot>,
 }
 
-static RUNTIME_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
-
-pub async fn runtime_test_lock() -> MutexGuard<'static, ()> {
-    RUNTIME_TEST_LOCK.lock().await
-}
-
-/// Minimal STATE init for tests that exercise application state without a
-/// library fixture: default config, in-memory DB. Call while holding
-/// [`runtime_test_lock`].
-#[cfg(test)]
-pub(crate) fn init_default_test_state() -> anyhow::Result<()> {
-    initialize_state(config::ConfigFile::default())
-}
-
-/// STATE init over an in-memory DB with `settings` as the `config.json`
-/// layer, for tests that need file-locked server settings. Call while
-/// holding [`runtime_test_lock`].
-#[cfg(test)]
-pub(crate) fn init_test_state_with_file_settings(
-    settings: config::FileSettings,
-) -> anyhow::Result<()> {
-    initialize_state(config::ConfigFile {
-        settings,
-        ..config::ConfigFile::default()
-    })
-}
-
-/// Principal for an existing user, built the way request auth builds one.
-#[cfg(test)]
-pub(crate) async fn user_principal(user_db_id: DbId) -> anyhow::Result<services::auth::Principal> {
-    let db = STATE.db.read().await;
-    let user = crate::db::users::get_by_id(&db, user_db_id)?
-        .ok_or_else(|| anyhow::anyhow!("user {user_db_id:?} does not exist"))?;
-    Ok(services::auth::resolve_principal(&db, user_db_id, user))
-}
-
-#[cfg(test)]
-pub(crate) async fn create_session(
-    user_db_id: DbId,
-    metadata: services::auth::sessions::SessionMetadata,
-) -> anyhow::Result<services::auth::sessions::CreatedSession> {
-    let principal = user_principal(user_db_id).await?;
-    Ok(services::auth::sessions::create_session_for_user(&principal, metadata).await?)
-}
-
-/// Publishes `config` in place of the current one, keeping the current
-/// provenance and file layer. For tests that poke typed config fields;
-/// the settings API tests resolve real values instead.
-#[cfg(test)]
-pub(crate) fn publish_config(config: services::settings::server::Config) {
-    let current = STATE.settings.get();
-    STATE.publish_settings(Arc::new(services::settings::server::ResolvedSettings {
-        config: Arc::new(config),
-        effective: current.effective.clone(),
-        file: current.file.clone(),
-    }));
-}
-
-/// Runs `operation` to completion, handing the DB write lock to `between` each time `operation`
-/// releases the lock and waits on it again. `between` gets the gap's index, starting at 0, so a
-/// test can mutate the DB between any two guards `operation` takes. The lock is FIFO, so a writer
-/// queued behind `operation`'s pending acquisition runs as soon as `operation` releases it.
-#[cfg(test)]
-pub(crate) async fn run_with_db_gaps<T>(
-    operation: impl std::future::Future<Output = T>,
-    mut between: impl FnMut(usize, &mut DbAny),
-) -> T {
-    use std::task::Poll;
-
-    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
-    let mut operation = std::pin::pin!(operation);
-    let mut held = Some(STATE.db.write().await);
-    for gap in 0.. {
-        if let Poll::Ready(output) = operation.as_mut().poll(&mut cx) {
-            return output;
-        }
-        let mut next = Box::pin(STATE.db.write());
-        assert!(next.as_mut().poll(&mut cx).is_pending());
-        drop(held.take());
-        loop {
-            if let Poll::Ready(output) = operation.as_mut().poll(&mut cx) {
-                return output;
-            }
-            if let Poll::Ready(mut guard) = next.as_mut().poll(&mut cx) {
-                between(gap, &mut guard);
-                held = Some(guard);
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    }
-    unreachable!("gap counter overflowed")
-}
-
-/// Runs `operation`, applying `recycle` in gap `gap` only; `None` is a control run that recycles
-/// nothing. Returns whether the gap was reached, so the recycle actually ran, and the output.
-#[cfg(test)]
-pub(crate) async fn run_with_recycle_at<T>(
-    gap: Option<usize>,
-    operation: impl std::future::Future<Output = T>,
-    recycle: impl FnOnce(&mut DbAny),
-) -> (bool, T) {
-    let mut recycle = Some(recycle);
-    let output = run_with_db_gaps(operation, |index, db| {
-        if Some(index) == gap
-            && let Some(recycle) = recycle.take()
-        {
-            recycle(db);
-        }
-    })
-    .await;
-    (recycle.is_none(), output)
-}
-
-/// Runs `attempt` at gaps 0, 1, … until one is never reached, handing each reached run's output
-/// to `check`. Fails unless at least one gap ran.
-#[cfg(test)]
-pub(crate) async fn for_each_db_gap<T>(
-    mut attempt: impl AsyncFnMut(Option<usize>) -> anyhow::Result<(bool, T)>,
-    mut check: impl AsyncFnMut(usize, T) -> anyhow::Result<()>,
-) -> anyhow::Result<()> {
-    for gap in 0.. {
-        let (reached, output) = attempt(Some(gap)).await?;
-        if !reached {
-            anyhow::ensure!(gap > 0, "the operation released no guard to recycle in");
-            return Ok(());
-        }
-        check(gap, output).await?;
-    }
-    unreachable!("gap counter overflowed")
-}
-
-/// Boot config backed by a uniquely named in-memory DB so tests never touch
-/// the data directory or any on-disk database.
-fn memory_boot_config() -> anyhow::Result<config::BootConfig> {
-    let unique_db_name = format!(
-        "lyra-harmony-test-{}-{}",
-        std::process::id(),
-        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
-    );
-    Ok(config::BootConfig {
-        port: 0,
-        data_dir: std::env::temp_dir().join(&unique_db_name),
-        db: config::DbConfig {
-            kind: config::DbKind::Memory,
-            path: PathBuf::from(unique_db_name),
-        },
-    })
-}
-
-/// Resolves `file` the way the server does, over a memory-backed boot config.
-/// Memory kind is required: `STATE.initialize` re-runs per test, and an
-/// on-disk DB would block on the live process lock.
-fn initialize_state(file: config::ConfigFile) -> anyhow::Result<()> {
-    let boot = memory_boot_config()?;
-    assert!(
-        matches!(boot.db.kind, config::DbKind::Memory),
-        "test state must use a memory database"
-    );
-    let library = services::libraries::LibraryConfig::resolve(file.library.as_ref())?;
-    let file_settings = services::settings::server::normalize_file(&file.settings, &boot)?;
-    let mut created = db::create(&boot.db)?;
-    let resolved = crate::resolve_settings(&mut created, &boot, library, file_settings)?;
-    STATE.initialize(boot, created, resolved)
-}
-
 pub async fn initialize_runtime(library: &LibraryFixtureConfig) -> anyhow::Result<()> {
-    let file = config::ConfigFile {
-        library: Some(config::LibraryFile {
-            path: Some(library.directory.clone()),
-            name: None,
-            language: library.language.clone(),
-            country: library.country.clone(),
-        }),
-        ..config::ConfigFile::default()
-    };
-
-    initialize_state(file)?;
-    {
-        let mut db = STATE.db.write().await;
-        db::server::ensure(&mut db)?;
-    }
-    harmony_http::set_default_user_agent(outbound_user_agent());
-    hls_init::initialize().await;
-    services::transcoding::initialize().await;
-
-    Ok(())
+    crate::plugins::testing::initialize_state(services::testing::library_config(
+        library.directory.clone(),
+        library.language.clone(),
+        library.country.clone(),
+    ))?;
+    crate::plugins::playback_sources::install_delivery_decider(
+        crate::routes::plugin_api::decide_delivery,
+    );
+    crate::plugins::testing::start_runtime().await
 }
 
 pub async fn prepare_fixture(
@@ -284,12 +97,12 @@ pub async fn prepare_fixture(
 ) -> anyhow::Result<PreparedFixture> {
     let mut db = STATE.db.write().await;
     let directory = library.directory.clone();
-    let path_key = db::libraries::path_key_for(&directory);
+    let path_key = crate::db::libraries::path_key_for(&directory);
     let created_library = db.transaction_mut(
-        |t| -> Result<db::Library, db::libraries::LibraryCreateError> {
-            db::libraries::create_system(
+        |t| -> Result<crate::db::Library, crate::db::libraries::LibraryCreateError> {
+            crate::db::libraries::create_system(
                 t,
-                db::libraries::LibraryInsert {
+                crate::db::libraries::LibraryInsert {
                     id: nanoid!(),
                     name: "Harmony Test Library".to_string(),
                     path: directory,
@@ -369,7 +182,7 @@ pub async fn prepare_fixture(
 
     let mut track_db_ids = BTreeSet::new();
     for &(entry_db_id, _) in path_to_entry.values() {
-        for track in db::tracks::get_by_entry(&db, entry_db_id)? {
+        for track in crate::db::tracks::get_by_entry(&db, entry_db_id)? {
             if let Some(track_db_id) = track.db_id {
                 track_db_ids.insert(DbId::from(track_db_id));
             }
@@ -378,7 +191,7 @@ pub async fn prepare_fixture(
     let first_track_db_id = *track_db_ids
         .first()
         .ok_or_else(|| anyhow::anyhow!("fixture ingestion produced no tracks"))?;
-    let mut releases = db::releases::get_by_track(&db, first_track_db_id)?;
+    let mut releases = crate::db::releases::get_by_track(&db, first_track_db_id)?;
     let release = releases
         .pop()
         .ok_or_else(|| anyhow::anyhow!("fixture ingestion produced no release"))?;
@@ -465,17 +278,17 @@ pub async fn exec_plugins(
         anyhow::bail!("plugin discovery failed: {details}");
     }
 
-    STATE
+    crate::plugins::STATE
         .generation()
-        .plugin_manifests
+        .manifests
         .replace(Arc::from(runtime.plugin_manifests().await?));
-    crate::plugins::bootstrap::publish_runtime(runtime.clone());
+    crate::plugins::STATE.publish_runtime(runtime.clone());
     runtime.exec_all().await?;
 
     let mut db = STATE.db.write().await;
-    for mut provider in db::providers::get(&db)? {
+    for mut provider in crate::db::providers::get(&db)? {
         provider.enabled = provider.provider_id == plugin.id();
-        db::providers::upsert(&mut db, &provider)?;
+        crate::db::providers::upsert(&mut db, &provider)?;
     }
 
     Ok(isolated)
@@ -522,16 +335,16 @@ pub async fn run_luau_plugin_test_file(
                 (run_as, Some(seeded))
             }
             None => {
-                let user = db::users::User {
+                let user = crate::db::users::User {
                     db_id: None,
                     id: nanoid!(),
                     username: LUAU_TEST_USERNAME.to_string(),
                     password: String::new(),
                 };
-                (db::users::create(&mut db, &user)?, None)
+                (crate::db::users::create(&mut db, &user)?, None)
             }
         };
-        let user = db::users::get_by_id(&db, user_db_id)?.context("test user exists")?;
+        let user = crate::db::users::get_by_id(&db, user_db_id)?.context("test user exists")?;
         (
             services::auth::resolve_principal(&db, user_db_id, user),
             seeded,
@@ -610,7 +423,7 @@ pub async fn snapshot_fixture(prepared: &PreparedFixture) -> anyhow::Result<Fixt
 
     let mut release_ids = BTreeSet::new();
     for track_id in &track_ids {
-        for release in db::releases::get_by_track(&db, *track_id)? {
+        for release in crate::db::releases::get_by_track(&db, *track_id)? {
             if let Some(release_id) = release.db_id {
                 release_ids.insert(DbId::from(release_id));
             }
@@ -624,14 +437,14 @@ pub async fn snapshot_fixture(prepared: &PreparedFixture) -> anyhow::Result<Fixt
 
     let mut artist_ids = BTreeSet::new();
     if let Some(release_id) = release_ids.iter().next().copied() {
-        for artist in db::artists::get(&db, release_id)? {
+        for artist in crate::db::artists::get(&db, release_id)? {
             if let Some(artist_id) = artist.db_id {
                 artist_ids.insert(DbId::from(artist_id));
             }
         }
     }
     for track_id in &track_ids {
-        for artist in db::artists::get(&db, *track_id)? {
+        for artist in crate::db::artists::get(&db, *track_id)? {
             if let Some(artist_id) = artist.db_id {
                 artist_ids.insert(DbId::from(artist_id));
             }
@@ -646,7 +459,7 @@ pub async fn snapshot_fixture(prepared: &PreparedFixture) -> anyhow::Result<Fixt
 
     let mut tracks: Vec<EntitySnapshot> = track_ids
         .into_iter()
-        .filter(|track_id| matches!(db::tracks::get_by_id(&db, *track_id), Ok(Some(_))))
+        .filter(|track_id| matches!(crate::db::tracks::get_by_id(&db, *track_id), Ok(Some(_))))
         .map(|track_id| snapshot_track(&db, track_id))
         .collect::<anyhow::Result<_>>()?;
     tracks.sort_by_key(|a| a.node_id);
@@ -667,8 +480,8 @@ fn insert_file_entry(
         db_id: None,
         id: nanoid!(),
         full_path: full_path.to_path_buf(),
-        kind: db::entries::EntryKind::File,
-        file_kind: db::entries::classify_file_kind(full_path).map(ToString::to_string),
+        kind: crate::db::entries::EntryKind::File,
+        file_kind: crate::db::entries::classify_file_kind(full_path).map(ToString::to_string),
         name: full_path
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
@@ -704,28 +517,28 @@ fn insert_file_entry(
 }
 
 fn snapshot_release(db: &DbAny, release_db_id: DbId) -> anyhow::Result<EntitySnapshot> {
-    let release = db::releases::get_by_id(db, release_db_id)?
+    let release = crate::db::releases::get_by_id(db, release_db_id)?
         .with_context(|| format!("release {} disappeared during snapshot", release_db_id.0))?;
     snapshot_entity(db, release_db_id, &release)
 }
 
 fn snapshot_artist(db: &DbAny, artist_db_id: DbId) -> anyhow::Result<EntitySnapshot> {
-    let artist = db::artists::get_by_id(db, artist_db_id)?
+    let artist = crate::db::artists::get_by_id(db, artist_db_id)?
         .with_context(|| format!("artist {} disappeared during snapshot", artist_db_id.0))?;
     snapshot_entity(db, artist_db_id, &artist)
 }
 
 fn snapshot_track(db: &DbAny, track_db_id: DbId) -> anyhow::Result<EntitySnapshot> {
-    let track = db::tracks::get_by_id(db, track_db_id)?
+    let track = crate::db::tracks::get_by_id(db, track_db_id)?
         .with_context(|| format!("track {} disappeared during snapshot", track_db_id.0))?;
     snapshot_entity(db, track_db_id, &track)
 }
 
 fn snapshot_credits(db: &DbAny, owner_id: DbId) -> anyhow::Result<Vec<CreditSnapshot>> {
     let mut snapshots = Vec::new();
-    for link in db::credits::links_for_owner(db, owner_id)? {
+    for link in crate::db::credits::links_for_owner(db, owner_id)? {
         let credit_artist_ids = external_ids_map(db, link.artist_id)?;
-        let artist = db::artists::get_by_id(db, link.artist_id)?
+        let artist = crate::db::artists::get_by_id(db, link.artist_id)?
             .context("credit artist disappeared during snapshot")?;
         let artist_ext_id = credit_artist_ids
             .first_key_value()
@@ -776,7 +589,7 @@ fn serialize_fields<T: Serialize>(
 
 fn external_ids_map(db: &DbAny, node_id: DbId) -> anyhow::Result<BTreeMap<String, String>> {
     let mut ids = BTreeMap::new();
-    for external_id in db::external_ids::get_for_entity(db, node_id)? {
+    for external_id in crate::db::external_ids::get_for_entity(db, node_id)? {
         ids.insert(external_id.id_type, external_id.id_value);
     }
     Ok(ids)
@@ -786,12 +599,12 @@ fn merged_provider_fields(
     db: &DbAny,
     node_id: DbId,
 ) -> anyhow::Result<BTreeMap<String, serde_json::Value>> {
-    let layers = db::metadata::layers::get_for_entity(db, node_id)?;
+    let layers = crate::db::metadata::layers::get_for_entity(db, node_id)?;
     if layers.is_empty() {
         return Ok(BTreeMap::new());
     }
 
-    let providers = db::providers::get(db)?;
+    let providers = crate::db::providers::get(db)?;
     let merged = crate::services::metadata::merging::merge_layers(layers, &providers);
     Ok(merged
         .fields
@@ -864,6 +677,7 @@ fn copy_dir_recursive(source: &Path, target: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::plugin_dispatch::MetadataRefreshRequest;
 
     #[tokio::test]
     async fn plugin_sources_remain_available_to_refresh_callbacks() -> anyhow::Result<()> {
@@ -907,11 +721,11 @@ mod tests {
             .handler_id;
         let runtime = STATE
             .generation()
-            .plugin_runtime
+            .plugin_dispatch
             .get()
             .context("plugin runtime")?;
         let result = runtime
-            .dispatch_metadata_refresh(crate::plugins::executor::MetadataRefreshRequest {
+            .dispatch_metadata_refresh(MetadataRefreshRequest {
                 handler_id,
                 context: serde_json::json!({}),
                 deadline: std::time::Instant::now() + std::time::Duration::from_secs(5),
@@ -971,7 +785,7 @@ mod tests {
         .await?;
 
         let db = STATE.db.read().await;
-        let names: Vec<String> = db::artists::get(&db, DbId(prepared.release_id))?
+        let names: Vec<String> = crate::db::artists::get(&db, DbId(prepared.release_id))?
             .into_iter()
             .map(|artist| artist.artist_name)
             .collect();

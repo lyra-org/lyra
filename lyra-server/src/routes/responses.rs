@@ -5,13 +5,10 @@
 
 use serde::Serialize;
 
-use crate::{
-    db,
-    db::lyrics::LyricsKind,
-    services::entities::{
-        ArtistCreditSource,
-        ResolvedCreditedArtist,
-    },
+use crate::db::lyrics::LyricsKind;
+use crate::services::entities::{
+    ArtistCreditSource,
+    ResolvedCreditedArtist,
 };
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -119,7 +116,7 @@ pub struct LyricsCandidatesResponse {
 }
 
 impl LyricsScopeResponse {
-    pub(crate) fn from_lyrics(lyrics: &db::Lyrics) -> Self {
+    pub(crate) fn from_lyrics(lyrics: &crate::db::Lyrics) -> Self {
         match lyrics.kind {
             LyricsKind::Personal => Self::Personal,
             LyricsKind::Shared | LyricsKind::Provider => Self::Shared,
@@ -128,7 +125,7 @@ impl LyricsScopeResponse {
 }
 
 impl LyricsSourceResponse {
-    pub(crate) fn from_lyrics(lyrics: &db::Lyrics) -> Self {
+    pub(crate) fn from_lyrics(lyrics: &crate::db::Lyrics) -> Self {
         match lyrics.kind {
             LyricsKind::Personal | LyricsKind::Shared => Self::Manual,
             LyricsKind::Provider => Self::Provider,
@@ -198,8 +195,8 @@ pub struct ReleaseResponse {
     pub cover: Option<Option<CoverResponse>>,
 }
 
-impl From<db::Release> for ReleaseResponse {
-    fn from(release: db::Release) -> Self {
+impl From<crate::db::Release> for ReleaseResponse {
+    fn from(release: crate::db::Release) -> Self {
         Self {
             id: release.id,
             title: release.release_title,
@@ -277,8 +274,8 @@ pub struct TrackResponse {
     pub artists: Option<Vec<ArtistResponse>>,
 }
 
-impl From<db::Track> for TrackResponse {
-    fn from(track: db::Track) -> Self {
+impl From<crate::db::Track> for TrackResponse {
+    fn from(track: crate::db::Track) -> Self {
         Self {
             id: track.id,
             title: track.track_title,
@@ -339,7 +336,7 @@ pub struct ArtistResponse {
 #[derive(Serialize)]
 pub struct ArtistRelationResponse {
     #[serde(rename = "type")]
-    pub relation_type: db::ArtistRelationType,
+    pub relation_type: crate::db::ArtistRelationType,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attributes: Option<String>,
     pub direction: RelationDirectionResponse,
@@ -360,7 +357,7 @@ pub struct RelatedArtistResponse {
     pub id: String,
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub artist_type: Option<db::ArtistType>,
+    pub artist_type: Option<crate::db::ArtistType>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cover: Option<Option<CoverResponse>>,
 }
@@ -369,7 +366,7 @@ pub struct RelatedArtistResponse {
 #[derive(Serialize)]
 pub struct ArtistCreditResponse {
     #[serde(rename = "type")]
-    pub credit_type: db::CreditType,
+    pub credit_type: crate::db::CreditType,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
     pub source: ArtistCreditSourceResponse,
@@ -392,8 +389,8 @@ impl From<ArtistCreditSource> for ArtistCreditSourceResponse {
     }
 }
 
-impl From<db::Artist> for ArtistResponse {
-    fn from(artist: db::Artist) -> Self {
+impl From<crate::db::Artist> for ArtistResponse {
+    fn from(artist: crate::db::Artist) -> Self {
         Self {
             id: artist.id,
             name: artist.artist_name,
@@ -465,7 +462,7 @@ pub struct EntryResponse {
 }
 
 impl EntryResponse {
-    pub fn from_entry(entry: db::Entry, include_full_path: bool) -> Self {
+    pub fn from_entry(entry: crate::db::Entry, include_full_path: bool) -> Self {
         Self {
             id: entry.id,
             full_path: include_full_path.then(|| entry.full_path.to_string_lossy().into_owned()),
@@ -474,7 +471,7 @@ impl EntryResponse {
             name: entry.name,
             hash: entry.hash,
             size: entry.size,
-            modified_at: super::unix_secs_to_rfc3339_u64(entry.mtime),
+            modified_at: crate::services::timestamps::unix_secs_to_rfc3339_u64(entry.mtime),
             tracks: None,
             releases: None,
             artists: None,
@@ -482,8 +479,8 @@ impl EntryResponse {
     }
 }
 
-impl From<db::Entry> for EntryResponse {
-    fn from(entry: db::Entry) -> Self {
+impl From<crate::db::Entry> for EntryResponse {
+    fn from(entry: crate::db::Entry) -> Self {
         Self::from_entry(entry, true)
     }
 }
@@ -499,11 +496,11 @@ mod tests {
     #[test]
     fn entry_response_serializes_modified_at_as_rfc3339() -> anyhow::Result<()> {
         let value = serde_json::to_value(EntryResponse::from_entry(
-            db::Entry {
+            crate::db::Entry {
                 db_id: None,
                 id: "entry".to_string(),
                 full_path: PathBuf::from("/tmp/track.flac"),
-                kind: db::entries::EntryKind::File,
+                kind: crate::db::entries::EntryKind::File,
                 file_kind: Some("audio".to_string()),
                 name: "track.flac".to_string(),
                 hash: None,

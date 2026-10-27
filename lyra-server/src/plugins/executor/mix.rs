@@ -7,12 +7,10 @@ use anyhow::Result;
 use harmony_core::LocalScheduler;
 use harmony_luau as luau;
 
-use super::{
-    PluginExecutor,
-    messages::{
-        MixHandlerRequest,
-        MixHandlerResult,
-    },
+use super::PluginExecutor;
+use crate::services::plugin_dispatch::{
+    MixHandlerRequest,
+    MixHandlerResult,
 };
 
 impl PluginExecutor {

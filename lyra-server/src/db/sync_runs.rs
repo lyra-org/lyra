@@ -36,10 +36,7 @@ pub(crate) struct SyncRunRecord {
     pub(crate) failure_count: u64,
 }
 
-pub(crate) fn create(
-    db: &mut impl super::DbAccess,
-    record: &SyncRunRecord,
-) -> anyhow::Result<DbId> {
+pub fn create(db: &mut impl super::DbAccess, record: &SyncRunRecord) -> anyhow::Result<DbId> {
     let result = db.exec_mut(QueryBuilder::insert().element(record).query())?;
     let run_db_id = result
         .ids()
@@ -94,10 +91,7 @@ pub(crate) fn list(db: &impl super::DbAccess) -> anyhow::Result<Vec<SyncRunRecor
     Ok(runs)
 }
 
-pub(crate) fn get_by_id(
-    db: &impl super::DbAccess,
-    id: &str,
-) -> anyhow::Result<Option<SyncRunRecord>> {
+pub fn get_by_id(db: &impl super::DbAccess, id: &str) -> anyhow::Result<Option<SyncRunRecord>> {
     let runs: Vec<SyncRunRecord> = db
         .exec(
             QueryBuilder::select()

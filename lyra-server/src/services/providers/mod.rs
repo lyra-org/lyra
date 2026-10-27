@@ -151,12 +151,14 @@ pub(crate) enum EntityRefreshMode {
 mod tests {
     use super::dedup::deduplicate_releases_by_external_id;
     use super::refresh::resolve_library_id_for_entity;
-    use crate::db::test_db::{
+    use crate::db::fixtures::{
         connect,
         insert_artist,
-        insert_library,
         insert_release,
         insert_track,
+    };
+    use crate::db::test_db::{
+        insert_library,
         new_test_db,
     };
     use crate::db::{

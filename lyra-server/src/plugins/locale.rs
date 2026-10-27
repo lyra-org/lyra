@@ -25,7 +25,7 @@ use harmony_luau::{
     render_definition_file_with_support,
 };
 
-use crate::locale;
+use lyra_metadata::locale;
 
 const UNDETERMINED: &str = "und";
 

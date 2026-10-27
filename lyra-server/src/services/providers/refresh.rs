@@ -21,13 +21,10 @@ use agdb::{
 };
 use anyhow::Context;
 
+use crate::db::ProviderConfig;
 use crate::{
-    STATE,
-    db::{
-        self,
-        ProviderConfig,
-    },
-    plugins::executor::MetadataRefreshRequest,
+    services::STATE,
+    services::plugin_dispatch::MetadataRefreshRequest,
     services::{
         EntityType,
         covers::{
@@ -103,7 +100,7 @@ pub(super) fn resolve_library_id_for_entity(
     db: &DbAny,
     node_id: DbId,
 ) -> anyhow::Result<Option<DbId>> {
-    let libraries = db::libraries::get_for_entity(db, node_id)?;
+    let libraries = crate::db::libraries::get_for_entity(db, node_id)?;
     Ok(libraries
         .into_iter()
         .filter_map(|library| library.db_id)
@@ -253,9 +250,9 @@ async fn refresh_release_metadata_inner_with_progress(
 ) -> Result<usize, ProviderServiceError> {
     {
         let db = STATE.db.read().await;
-        db::libraries::get_by_id(&db, library_db_id)?
+        crate::db::libraries::get_by_id(&db, library_db_id)?
             .ok_or(ProviderServiceError::LibraryNotFound(library_db_id.0))?;
-        if db::releases::get_by_id(&db, release_id)?.is_none() {
+        if crate::db::releases::get_by_id(&db, release_id)?.is_none() {
             return Err(ProviderServiceError::EntityNotFound(release_id.0));
         }
     }
@@ -413,9 +410,9 @@ async fn refresh_library_metadata_inner_with_progress(
 ) -> Result<usize, ProviderServiceError> {
     let releases = {
         let db = STATE.db.read().await;
-        db::libraries::get_by_id(&db, library_db_id)?
+        crate::db::libraries::get_by_id(&db, library_db_id)?
             .ok_or(ProviderServiceError::LibraryNotFound(library_db_id.0))?;
-        db::releases::get(&db, library_db_id)?
+        crate::db::releases::get(&db, library_db_id)?
     };
 
     let providers = enabled_providers().await?;
@@ -457,7 +454,7 @@ async fn refresh_library_metadata_inner_with_progress(
         };
         let ctx = {
             let db = STATE.db.read().await;
-            let public_id = db::lookup::find_id_by_db_id(&db, node_id)?;
+            let public_id = crate::db::lookup::find_id_by_db_id(&db, node_id)?;
             release_infos.insert(node_id, (public_id, Some(release.release_title.clone())));
             build_release_context(&db, node_id, Some(library_db_id), &schemes)?
         };
@@ -636,7 +633,7 @@ async fn cover_path_buffers_for_library(
 ) -> Result<(Option<PathBuf>, PathBuf), ProviderServiceError> {
     let library_root = if let Some(library_db_id) = library_db_id {
         let db = STATE.db.read().await;
-        db::libraries::get_by_id(&db, library_db_id)?.map(|library| library.path)
+        crate::db::libraries::get_by_id(&db, library_db_id)?.map(|library| library.path)
     } else {
         None
     };
@@ -663,9 +660,9 @@ async fn sync_cover_for_refreshed_entity(
         EntityType::Release => {
             let Some((release, tracks, artists)) = ({
                 let db = STATE.db.read().await;
-                db::releases::get_by_id(&db, node_id)?.map(|release| {
-                    let tracks = db::tracks::get_direct(&db, node_id).unwrap_or_default();
-                    let artists = db::artists::get(&db, node_id).unwrap_or_default();
+                crate::db::releases::get_by_id(&db, node_id)?.map(|release| {
+                    let tracks = crate::db::tracks::get_direct(&db, node_id).unwrap_or_default();
+                    let artists = crate::db::artists::get(&db, node_id).unwrap_or_default();
                     (release, tracks, artists)
                 })
             }) else {
@@ -700,7 +697,7 @@ async fn sync_cover_for_refreshed_entity(
         EntityType::Artist => {
             let Some(artist) = ({
                 let db = STATE.db.read().await;
-                db::artists::get_by_id(&db, node_id)?
+                crate::db::artists::get_by_id(&db, node_id)?
             }) else {
                 return Ok(());
             };
@@ -838,7 +835,7 @@ async fn dispatch_refresh_callback(
         provider_id,
         ProviderCallStage::MetadataRefresh,
         || async move {
-            let runtime = match STATE.generation().plugin_runtime.get() {
+            let runtime = match STATE.generation().plugin_dispatch.get() {
                 Some(runtime) => runtime,
                 None => {
                     return Err(anyhow::anyhow!("plugin runtime is not initialized"));
@@ -877,7 +874,7 @@ async fn dispatch_sync_filter_callback(
         || async move {
             let runtime = STATE
                 .generation()
-                .plugin_runtime
+                .plugin_dispatch
                 .get()
                 .context("plugin runtime is not initialized")?;
             let result = tokio::time::timeout(

@@ -14,19 +14,44 @@ use anyhow::{
     anyhow,
 };
 use nanoid::nanoid;
-use serde::Serialize;
-
-use crate::{
-    db::{
-        NodeId,
-        server,
-    },
-    services::metadata::mapping::{
-        MetadataMappingConfig,
-        default_config,
-        resolve_item_key,
-    },
+use serde::{
+    Deserialize,
+    Serialize,
 };
+
+use crate::db::{
+    NodeId,
+    server,
+};
+
+/// Mapping rule destinations. Numbering and duration are read directly.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FieldName {
+    Album,
+    Title,
+    AlbumArtists,
+    Artists,
+    Date,
+    Copyright,
+    Genre,
+    Label,
+    CatalogNumber,
+}
+
+/// Rules sharing a `destination` form a fallback chain: first
+/// non-empty value wins; empty values never overwrite.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MappingRule {
+    pub source_key: String,
+    pub destination: FieldName,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetadataMappingConfig {
+    pub rules: Vec<MappingRule>,
+}
 
 /// Rules are JSON, not parallel `VecString`s, so additive schema
 /// changes don't require DB migrations.
@@ -38,7 +63,10 @@ pub(crate) struct MetadataMappingConfigNode {
     pub(crate) rules_json: String,
 }
 
-pub(crate) fn ensure(db: &mut DbAny) -> anyhow::Result<MetadataMappingConfig> {
+pub fn ensure(
+    db: &mut DbAny,
+    default_config: impl FnOnce() -> MetadataMappingConfig,
+) -> anyhow::Result<MetadataMappingConfig> {
     if let Some(config) = get(db)? {
         return Ok(config);
     }
@@ -98,18 +126,8 @@ pub(crate) fn get(db: &DbAny) -> anyhow::Result<Option<MetadataMappingConfig>> {
     decode(&node).map(Some)
 }
 
-/// Replaces the stored rules. Unknown `source_key`s are rejected here so
-/// no caller can bypass validation.
+/// Replaces the stored rules; callers validate them first.
 pub(crate) fn update(db: &mut DbAny, config: &MetadataMappingConfig) -> anyhow::Result<()> {
-    for rule in &config.rules {
-        if resolve_item_key(&rule.source_key).is_none() {
-            anyhow::bail!(
-                "unsupported source_key '{}': not a recognised ItemKey variant",
-                rule.source_key
-            );
-        }
-    }
-
     let rules_json = serde_json::to_string(&config.rules).context("serialising mapping rules")?;
 
     db.transaction_mut(|t| -> anyhow::Result<()> {
@@ -196,11 +214,20 @@ mod tests {
     use super::*;
     use crate::db::test_db::new_test_db;
 
+    fn album_rule_config() -> MetadataMappingConfig {
+        MetadataMappingConfig {
+            rules: vec![MappingRule {
+                source_key: "AlbumTitle".to_string(),
+                destination: FieldName::Album,
+            }],
+        }
+    }
+
     #[test]
     fn ensure_seeds_default_and_is_idempotent() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        let first = ensure(&mut db)?;
-        let second = ensure(&mut db)?;
+        let first = ensure(&mut db, album_rule_config)?;
+        let second = ensure(&mut db, || unreachable!("config already seeded"))?;
         assert_eq!(first.rules.len(), second.rules.len());
         assert!(!first.rules.is_empty());
         Ok(())
@@ -208,44 +235,13 @@ mod tests {
 
     #[test]
     fn update_replaces_rules() -> anyhow::Result<()> {
-        use crate::services::metadata::mapping::{
-            FieldName,
-            MappingRule,
-        };
-
         let mut db = new_test_db()?;
-        ensure(&mut db)?;
-        let new_config = MetadataMappingConfig {
-            rules: vec![MappingRule {
-                source_key: "AlbumTitle".to_string(),
-                destination: FieldName::Album,
-            }],
-        };
-        update(&mut db, &new_config)?;
+        ensure(&mut db, || MetadataMappingConfig { rules: Vec::new() })?;
+        update(&mut db, &album_rule_config())?;
 
         let loaded = get(&db)?.expect("config should exist");
         assert_eq!(loaded.rules.len(), 1);
         assert_eq!(loaded.rules[0].source_key, "AlbumTitle");
-        Ok(())
-    }
-
-    #[test]
-    fn update_rejects_unknown_source_key() -> anyhow::Result<()> {
-        use crate::services::metadata::mapping::{
-            FieldName,
-            MappingRule,
-        };
-
-        let mut db = new_test_db()?;
-        ensure(&mut db)?;
-        let bogus = MetadataMappingConfig {
-            rules: vec![MappingRule {
-                source_key: "NotARealKey".to_string(),
-                destination: FieldName::Album,
-            }],
-        };
-        let err = update(&mut db, &bogus).unwrap_err();
-        assert!(format!("{err}").contains("unsupported source_key"));
         Ok(())
     }
 }

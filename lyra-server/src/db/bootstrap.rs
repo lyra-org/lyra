@@ -3,13 +3,17 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::sync::Arc;
+use std::{
+    path::PathBuf,
+    sync::Arc,
+};
 
 use agdb::{
     CountComparison,
     DbAny,
     QueryBuilder,
 };
+use serde::Deserialize;
 use tokio::sync::RwLock;
 
 use super::{
@@ -21,15 +25,55 @@ use super::{
         LockMode,
     },
 };
-use crate::config::{
-    DbConfig,
-    DbKind,
-};
+
+const DEFAULT_DB_FILE_NAME: &str = "lyra.db";
+
+#[derive(Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DbKind {
+    Memory,
+    File,
+    #[default]
+    Mmap,
+}
+
+impl DbKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Memory => "memory",
+            Self::File => "file",
+            Self::Mmap => "mmap",
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct DbConfig {
+    pub kind: DbKind,
+    pub path: PathBuf,
+}
+
+impl Default for DbConfig {
+    fn default() -> Self {
+        Self {
+            kind: DbKind::default(),
+            path: PathBuf::from(DEFAULT_DB_FILE_NAME),
+        }
+    }
+}
 
 /// Result of `create`: opened DB ready for application use.
 pub(crate) struct Created {
     pub(crate) db: DbAsync,
     pub(crate) lock: Option<DbProcessLock>,
+}
+
+impl Created {
+    /// The database while nothing else shares it yet, for setup that must
+    /// finish before it is published.
+    pub fn unshared_mut(&mut self) -> Option<&mut DbAny> {
+        Arc::get_mut(&mut self.db).map(RwLock::get_mut)
+    }
 }
 
 pub(crate) const ROOT_COLLECTION_ALIASES: &[&str] = &[
@@ -179,7 +223,6 @@ pub(crate) fn create(config: &DbConfig) -> anyhow::Result<Created> {
     );
     let mut db = open(config.kind, db_path.as_ref())?;
     initialize(&mut db)?;
-    super::plugin_repositories::seed_default(&mut db)?;
     optimize_storage(&mut db, config);
     Ok(Created {
         db: Arc::new(RwLock::new(db)),

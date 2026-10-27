@@ -27,10 +27,7 @@ use harmony_luau::{
 };
 use serde::Serialize;
 
-use crate::{
-    STATE,
-    plugins::db,
-};
+use crate::services::STATE;
 
 static HOSTNAME: LazyLock<String> =
     LazyLock::new(|| gethostname::gethostname().to_string_lossy().into_owned());
@@ -61,9 +58,19 @@ fn server_info_spec() -> FunctionSpec {
         .call(server_info_callback)
 }
 
+pub(crate) fn outbound_user_agent() -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    let short_hash = env!("LYRA_GIT_HASH");
+    if short_hash.is_empty() {
+        format!("Lyra/{version} (blue@spook.rip)")
+    } else {
+        format!("Lyra/{version}-{short_hash} (blue@spook.rip)")
+    }
+}
+
 pub(crate) async fn load_server_info() -> anyhow::Result<ServerInfo> {
     let db = STATE.db.read().await;
-    let info = db::server::get(&db)
+    let info = crate::db::server::get(&db)
         .map_err(|error| anyhow::anyhow!(error.to_string()))?
         .ok_or_else(|| anyhow::anyhow!("server info not initialized"))?;
 
@@ -85,10 +92,13 @@ pub(crate) async fn load_server_info() -> anyhow::Result<ServerInfo> {
 #[derive(Clone)]
 pub(crate) struct ServerInfoModuleStore {
     info: ServerInfo,
-    settings: Option<crate::SettingsHandle>,
+    settings: Option<crate::services::state::SettingsHandle>,
 }
 impl ServerInfoModuleStore {
-    pub(crate) fn new(info: ServerInfo, settings: Option<crate::SettingsHandle>) -> Self {
+    pub(crate) fn new(
+        info: ServerInfo,
+        settings: Option<crate::services::state::SettingsHandle>,
+    ) -> Self {
         Self { info, settings }
     }
 }

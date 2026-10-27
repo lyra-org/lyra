@@ -219,7 +219,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn ranged_file_body_finishes_after_shutdown_cancelled() -> anyhow::Result<()> {
-        let _runtime_guard = crate::testing::runtime_test_lock().await;
+        let _runtime_guard = crate::services::testing::runtime_test_lock().await;
         let _guard = ShutdownResetGuard;
         let shutdown = crate::services::shutdown::reset();
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();

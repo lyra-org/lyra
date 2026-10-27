@@ -42,11 +42,7 @@ pub(crate) fn direct_edges_from(
         .collect())
 }
 
-pub(crate) fn direct_edge_ids(
-    db: &impl DbAccess,
-    from: DbId,
-    to: DbId,
-) -> anyhow::Result<Vec<DbId>> {
+pub fn direct_edge_ids(db: &impl DbAccess, from: DbId, to: DbId) -> anyhow::Result<Vec<DbId>> {
     Ok(direct_edges_from(db, from)?
         .into_iter()
         .filter_map(|element| (element.to == to).then_some(element.id))
@@ -57,11 +53,7 @@ pub(crate) fn edge_exists(db: &impl DbAccess, from: DbId, to: DbId) -> anyhow::R
     Ok(!direct_edge_ids(db, from, to)?.is_empty())
 }
 
-pub(crate) fn remove_edges_between(
-    db: &mut impl DbAccess,
-    from: DbId,
-    to: DbId,
-) -> anyhow::Result<bool> {
+pub fn remove_edges_between(db: &mut impl DbAccess, from: DbId, to: DbId) -> anyhow::Result<bool> {
     let edge_ids = direct_edge_ids(db, from, to)?;
     if edge_ids.is_empty() {
         return Ok(false);
@@ -71,11 +63,7 @@ pub(crate) fn remove_edges_between(
     Ok(true)
 }
 
-pub(crate) fn ensure_owned_edge(
-    db: &mut impl DbAccess,
-    from: DbId,
-    to: DbId,
-) -> anyhow::Result<bool> {
+pub fn ensure_owned_edge(db: &mut impl DbAccess, from: DbId, to: DbId) -> anyhow::Result<bool> {
     if edge_exists(db, from, to)? {
         return Ok(false);
     }
@@ -91,10 +79,7 @@ pub(crate) fn ensure_owned_edge(
     Ok(true)
 }
 
-pub(crate) fn edge_count_map(
-    db: &impl DbAccess,
-    ids: &[DbId],
-) -> anyhow::Result<HashMap<DbId, u64>> {
+pub fn edge_count_map(db: &impl DbAccess, ids: &[DbId]) -> anyhow::Result<HashMap<DbId, u64>> {
     if ids.is_empty() {
         return Ok(HashMap::new());
     }
@@ -144,11 +129,7 @@ pub(crate) fn neighbor_ids(
 }
 
 /// The `kind` nodes one incoming edge from `to`.
-pub(crate) fn inbound_neighbor_ids(
-    db: &impl DbAccess,
-    to: DbId,
-    kind: &str,
-) -> anyhow::Result<Vec<DbId>> {
+pub fn inbound_neighbor_ids(db: &impl DbAccess, to: DbId, kind: &str) -> anyhow::Result<Vec<DbId>> {
     Ok(db
         .exec(
             QueryBuilder::search()
@@ -164,11 +145,7 @@ pub(crate) fn inbound_neighbor_ids(
 }
 
 /// The ids that name an existing `kind` node, in order.
-pub(crate) fn existing_ids(
-    db: &impl DbAccess,
-    ids: &[DbId],
-    kind: &str,
-) -> anyhow::Result<Vec<DbId>> {
+pub fn existing_ids(db: &impl DbAccess, ids: &[DbId], kind: &str) -> anyhow::Result<Vec<DbId>> {
     let nodes = ids
         .iter()
         .copied()

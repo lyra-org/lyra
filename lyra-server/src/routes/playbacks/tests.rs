@@ -38,13 +38,14 @@ struct RouteFixture {
 
 #[tokio::test]
 async fn reported_reads_share_the_supplied_expiry_cutoff() -> anyhow::Result<()> {
-    let _guard = crate::testing::runtime_test_lock().await;
+    let _guard = crate::services::testing::runtime_test_lock().await;
     let fixture = setup_admin_with_tracks().await?;
     let principal = require_principal(&fixture.headers)
         .await
         .map_err(|error| anyhow::anyhow!("{error:?}"))?;
     let mut db = STATE.db.write().await;
-    let track_db_id = db::lookup::find_node_id_by_id(&*db, &fixture.first_track_id)?.unwrap();
+    let track_db_id =
+        crate::db::lookup::find_node_id_by_id(&*db, &fixture.first_track_id)?.unwrap();
     let observed_at = 1_000;
     sessions::report_playback_session_with_cleanup(
         &mut db,
@@ -62,11 +63,16 @@ async fn reported_reads_share_the_supplied_expiry_cutoff() -> anyhow::Result<()>
             active_event: sessions::ActiveEvent::Started,
         },
     )?;
-    let playback =
-        db::playbacks::get_reported(&*db, fixture.user_db_id, "external", "player", observed_at)?
-            .unwrap();
+    let playback = crate::db::playbacks::get_reported(
+        &*db,
+        fixture.user_db_id,
+        "external",
+        "player",
+        observed_at,
+    )?
+    .unwrap();
     let id = playback.db_id.unwrap();
-    let cutoff = observed_at + db::playbacks::REPORTED_PLAYBACK_TTL_MS;
+    let cutoff = observed_at + crate::db::playbacks::REPORTED_PLAYBACK_TTL_MS;
     for (current_ms, visible) in [(cutoff, true), (cutoff + 1, false)] {
         assert_eq!(
             !playbacks::list_visible_projections(&db, &principal, false, current_ms)?.is_empty(),
@@ -85,24 +91,23 @@ async fn reported_reads_share_the_supplied_expiry_cutoff() -> anyhow::Result<()>
 }
 
 async fn setup_admin_with_tracks() -> anyhow::Result<RouteFixture> {
-    crate::testing::initialize_runtime(&crate::testing::LibraryFixtureConfig {
-        directory: std::path::PathBuf::from("."),
-        language: None,
-        country: None,
-    })
-    .await?;
+    crate::plugins::testing::init_library_test_state(std::path::PathBuf::from(".")).await?;
     for connection in remote_registry::list_connections().await {
         remote_registry::unregister(connection.connection_id).await;
     }
     let (user_db_id, user_public_id, first_track_id, second_track_id) = {
         let mut db = STATE.db.write().await;
-        db::roles::ensure_builtin_roles(&mut db)?;
-        let user = db::test_db::test_user(&format!("playback-route-{}", nanoid!()))?;
+        crate::db::roles::ensure_builtin_roles(&mut db)?;
+        let user = crate::db::fixtures::test_user(&format!("playback-route-{}", nanoid!()))?;
         let user_public_id = user.id.clone();
-        let user_db_id = db::users::create(&mut db, &user)?;
-        db::roles::ensure_user_has_role(&mut db, user_db_id, db::roles::BUILTIN_ADMIN_ROLE)?;
-        let first_track_db_id = db::test_db::insert_track(&mut db, "First")?;
-        let second_track_db_id = db::test_db::insert_track(&mut db, "Second")?;
+        let user_db_id = crate::db::users::create(&mut db, &user)?;
+        crate::db::roles::ensure_user_has_role(
+            &mut db,
+            user_db_id,
+            crate::db::roles::BUILTIN_ADMIN_ROLE,
+        )?;
+        let first_track_db_id = crate::db::fixtures::insert_track(&mut db, "First")?;
+        let second_track_db_id = crate::db::fixtures::insert_track(&mut db, "Second")?;
         (
             user_db_id,
             user_public_id,
@@ -110,7 +115,7 @@ async fn setup_admin_with_tracks() -> anyhow::Result<RouteFixture> {
             resolve_id(&*db, second_track_db_id)?,
         )
     };
-    let session = crate::testing::create_session(user_db_id, Default::default()).await?;
+    let session = crate::services::testing::create_session(user_db_id, Default::default()).await?;
     let mut headers = HeaderMap::new();
     headers.insert(AUTHORIZATION, format!("Bearer {}", session.token).parse()?);
     Ok(RouteFixture {
@@ -145,10 +150,10 @@ async fn assert_queue_revision_conflict(
 #[test]
 fn active_filter_requires_recent_non_terminal_current_session() {
     let current_ms = 1_000_000;
-    let playback = db::playbacks::Playback {
+    let playback = crate::db::playbacks::Playback {
         db_id: Some(DbId(1)),
         id: "playback".to_string(),
-        queue: Some(db::playbacks::Queue {
+        queue: Some(crate::db::playbacks::Queue {
             revision: 1,
             track_ids: vec!["track".to_string()],
             current_index: 0,
@@ -163,7 +168,7 @@ fn active_filter_requires_recent_non_terminal_current_session() {
         playback_session_id: DbId(2),
         track_db_id: DbId(3),
         track_public_id: "track".to_string(),
-        playback: db::PlaybackSession {
+        playback: crate::db::PlaybackSession {
             db_id: Some(DbId(2)),
             id: "internal".to_string(),
             client_name: None,
@@ -224,9 +229,9 @@ async fn queue_revision_conflict_body_is_machine_readable() {
 
 #[tokio::test]
 async fn response_keeps_initiating_and_controlling_client_names_distinct() -> anyhow::Result<()> {
-    let _guard = crate::testing::runtime_test_lock().await;
+    let _guard = crate::services::testing::runtime_test_lock().await;
     let mut fixture = setup_admin_with_tracks().await?;
-    let session = crate::testing::create_session(
+    let session = crate::services::testing::create_session(
         fixture.user_db_id,
         crate::services::auth::sessions::SessionMetadata {
             client_name: Some("Initiating Client".to_string()),
@@ -287,7 +292,7 @@ async fn response_keeps_initiating_and_controlling_client_names_distinct() -> an
 
 #[tokio::test]
 async fn create_replace_queue_and_advance_current_track() -> anyhow::Result<()> {
-    let _guard = crate::testing::runtime_test_lock().await;
+    let _guard = crate::services::testing::runtime_test_lock().await;
     let fixture = setup_admin_with_tracks().await?;
     let headers = fixture.headers;
     let first_track_id = fixture.first_track_id;
@@ -377,7 +382,7 @@ async fn create_replace_queue_and_advance_current_track() -> anyhow::Result<()> 
 
 #[tokio::test]
 async fn same_track_handoff_completes_on_exact_tokened_progress() -> anyhow::Result<()> {
-    let _guard = crate::testing::runtime_test_lock().await;
+    let _guard = crate::services::testing::runtime_test_lock().await;
     let fixture = setup_admin_with_tracks().await?;
     let (status, Json(created)) = create_playback(
         fixture.headers.clone(),
@@ -469,7 +474,7 @@ async fn same_track_handoff_completes_on_exact_tokened_progress() -> anyhow::Res
 
 #[tokio::test]
 async fn changed_track_handoff_progress_creates_session_and_completes() -> anyhow::Result<()> {
-    let _guard = crate::testing::runtime_test_lock().await;
+    let _guard = crate::services::testing::runtime_test_lock().await;
     let fixture = setup_admin_with_tracks().await?;
     let (_, Json(created)) = create_playback(
         fixture.headers.clone(),
@@ -545,7 +550,7 @@ async fn changed_track_handoff_progress_creates_session_and_completes() -> anyho
 
 #[tokio::test]
 async fn queue_replacement_cannot_overtake_committed_handoff_finish() -> anyhow::Result<()> {
-    let _guard = crate::testing::runtime_test_lock().await;
+    let _guard = crate::services::testing::runtime_test_lock().await;
     let fixture = setup_admin_with_tracks().await?;
     let (_, Json(created)) = create_playback(
         fixture.headers.clone(),
@@ -581,10 +586,11 @@ async fn queue_replacement_cannot_overtake_committed_handoff_finish() -> anyhow:
     let committed = {
         let current_ms = now_ms().map_err(|error| anyhow::anyhow!("{error:?}"))?;
         let mut db = STATE.db.write().await;
-        let playback_db_id = db::lookup::find_node_id_by_id(&*db, &created.id)?
+        let playback_db_id = crate::db::lookup::find_node_id_by_id(&*db, &created.id)?
             .expect("created playback should remain present");
-        let current_track_db_id = db::lookup::find_node_id_by_id(&*db, &fixture.first_track_id)?
-            .expect("created track should remain present");
+        let current_track_db_id =
+            crate::db::lookup::find_node_id_by_id(&*db, &fixture.first_track_id)?
+                .expect("created track should remain present");
         let claim = handoffs::claim_progress(
             &handoff_token,
             &fixture.user_public_id,
@@ -673,7 +679,7 @@ async fn queue_replacement_cannot_overtake_committed_handoff_finish() -> anyhow:
 
 #[tokio::test]
 async fn stale_revision_is_rejected_before_handoff_is_queued() -> anyhow::Result<()> {
-    let _guard = crate::testing::runtime_test_lock().await;
+    let _guard = crate::services::testing::runtime_test_lock().await;
     let fixture = setup_admin_with_tracks().await?;
     let (_, Json(created)) = create_playback(
         fixture.headers.clone(),
@@ -729,7 +735,7 @@ async fn stale_revision_is_rejected_before_handoff_is_queued() -> anyhow::Result
 
 #[tokio::test]
 async fn reported_playback_shares_collection_and_rejects_queue_operations() -> anyhow::Result<()> {
-    let _guard = crate::testing::runtime_test_lock().await;
+    let _guard = crate::services::testing::runtime_test_lock().await;
     let fixture = setup_admin_with_tracks().await?;
     let (_, Json(native)) = create_playback(
         fixture.headers.clone(),
@@ -745,7 +751,7 @@ async fn reported_playback_shares_collection_and_rejects_queue_operations() -> a
     .map_err(|error| anyhow::anyhow!("{error:?}"))?;
     let track_db_id = {
         let db = STATE.db.read().await;
-        db::lookup::find_node_id_by_id(&*db, &fixture.second_track_id)?.unwrap()
+        crate::db::lookup::find_node_id_by_id(&*db, &fixture.second_track_id)?.unwrap()
     };
     {
         let mut db = STATE.db.write().await;
@@ -842,12 +848,17 @@ async fn reported_playback_shares_collection_and_rejects_queue_operations() -> a
 
     let other_user_id = {
         let mut db = STATE.db.write().await;
-        let user = db::test_db::test_user(&format!("other-playback-user-{}", nanoid!()))?;
-        let user_id = db::users::create(&mut db, &user)?;
-        db::roles::ensure_user_has_role(&mut db, user_id, db::roles::BUILTIN_ADMIN_ROLE)?;
+        let user = crate::db::fixtures::test_user(&format!("other-playback-user-{}", nanoid!()))?;
+        let user_id = crate::db::users::create(&mut db, &user)?;
+        crate::db::roles::ensure_user_has_role(
+            &mut db,
+            user_id,
+            crate::db::roles::BUILTIN_ADMIN_ROLE,
+        )?;
         user_id
     };
-    let other_session = crate::testing::create_session(other_user_id, Default::default()).await?;
+    let other_session =
+        crate::services::testing::create_session(other_user_id, Default::default()).await?;
     let mut other_headers = HeaderMap::new();
     other_headers.insert(
         AUTHORIZATION,

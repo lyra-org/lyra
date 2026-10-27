@@ -39,9 +39,8 @@ use std::{
 use tokio::time::sleep;
 
 use crate::{
-    STATE,
-    db,
     routes::AppError,
+    services::STATE,
     services::hls::{
         HlsError,
         codec::{
@@ -536,8 +535,8 @@ pub(crate) async fn serve_hls_playlist_for_track(
     let playlist_segment_count = hls_segment_count(duration_ms);
     {
         let db = STATE.db.read().await;
-        if db::lookup::find_node_id_by_id(&*db, &source.track_public_id)?.is_none()
-            || db::lookup::find_node_id_by_id(&*db, &source.source_public_id)?.is_none()
+        if crate::db::lookup::find_node_id_by_id(&*db, &source.track_public_id)?.is_none()
+            || crate::db::lookup::find_node_id_by_id(&*db, &source.source_public_id)?.is_none()
         {
             return Err(AppError::not_found("track source no longer exists"));
         }
@@ -852,7 +851,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_hls_segment_allows_public_session_without_auth_header() {
-        let _runtime_guard = crate::testing::runtime_test_lock().await;
+        let _runtime_guard = crate::services::testing::runtime_test_lock().await;
         let _guard = HLS_TEST_MUTEX.lock().await;
         crate::services::shutdown::reset();
         reset_hls_state_for_test().await;

@@ -24,13 +24,10 @@ use serde::{
     Serialize,
 };
 
+use crate::db::Permission;
 use crate::{
-    STATE,
     config::BootConfig,
-    db::{
-        self,
-        Permission,
-    },
+    services::STATE,
     services::{
         auth::{
             require_manage_plugins,
@@ -305,8 +302,8 @@ async fn require_manage_server_session(headers: &HeaderMap) -> Result<(), AppErr
 
 async fn get_server_info() -> Result<Json<ServerInfoResponse>, AppError> {
     let db = STATE.db.read().await;
-    let info =
-        db::server::get(&db)?.ok_or_else(|| AppError::not_found("server info not initialized"))?;
+    let info = crate::db::server::get(&db)?
+        .ok_or_else(|| AppError::not_found("server info not initialized"))?;
 
     let config = STATE.config();
     drop(db);
@@ -334,7 +331,7 @@ async fn update_setup(
 ) -> Result<StatusCode, AppError> {
     require_manage_plugins(&headers).await?;
     let mut db = STATE.db.write().await;
-    db::server::set_plugin_selection_skipped(&mut *db, request.plugin_selection_skipped)?;
+    crate::db::server::set_plugin_selection_skipped(&mut *db, request.plugin_selection_skipped)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -452,13 +449,13 @@ pub(crate) fn server_openapi_routes() -> aide::axum::ApiRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::{
+        roles::Role,
+        users::User,
+    };
     use crate::{
-        db::{
-            roles::Role,
-            users::User,
-        },
         services::auth::api_keys,
-        testing::runtime_test_lock,
+        services::testing::runtime_test_lock,
     };
     use axum::{
         body::to_bytes,
@@ -475,14 +472,14 @@ mod tests {
     };
 
     async fn initialize_test_state(file: &[(&str, Value)]) -> anyhow::Result<()> {
-        crate::testing::init_test_state_with_file_settings(
+        crate::plugins::testing::init_test_state_with_file_settings(
             file.iter()
                 .map(|(key, value)| ((*key).to_string(), value.clone()))
                 .collect(),
         )?;
         {
             let mut db = STATE.db.write().await;
-            db::server::ensure(&mut db)?;
+            crate::db::server::ensure(&mut db)?;
         }
         // A file that disables auth resolves every request to the default
         // user, which the server creates at startup.
@@ -491,8 +488,8 @@ mod tests {
 
     async fn user_with(permissions: Vec<Permission>) -> anyhow::Result<agdb::DbId> {
         let mut db = STATE.db.write().await;
-        db::roles::ensure_builtin_roles(&mut db)?;
-        let user_db_id = db::users::create(
+        crate::db::roles::ensure_builtin_roles(&mut db)?;
+        let user_db_id = crate::db::users::create(
             &mut db,
             &User {
                 db_id: None,
@@ -502,7 +499,7 @@ mod tests {
             },
         )?;
         let role_name = format!("server-route-test-{}", nanoid!());
-        db::roles::create(
+        crate::db::roles::create(
             &mut db,
             &Role {
                 db_id: None,
@@ -511,7 +508,7 @@ mod tests {
                 permissions,
             },
         )?;
-        db::roles::ensure_user_has_role(&mut db, user_db_id, &role_name)?;
+        crate::db::roles::ensure_user_has_role(&mut db, user_db_id, &role_name)?;
         Ok(user_db_id)
     }
 
@@ -528,7 +525,8 @@ mod tests {
 
     async fn headers_with(permissions: Vec<Permission>) -> anyhow::Result<HeaderMap> {
         let user_db_id = user_with(permissions).await?;
-        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
+        let session =
+            crate::services::testing::create_session(user_db_id, Default::default()).await?;
         Ok(bearer_headers(&session.token))
     }
 
@@ -576,7 +574,7 @@ mod tests {
 
     async fn stored_keys() -> anyhow::Result<Vec<String>> {
         let db = STATE.db.read().await;
-        let mut keys: Vec<String> = db::settings::server::get_all_with(&db)?
+        let mut keys: Vec<String> = crate::db::settings::server::get_all_with(&db)?
             .into_iter()
             .map(|entry| entry.key)
             .collect();
@@ -635,7 +633,7 @@ mod tests {
             error(update_setup(headers, request()).await).await.0,
             StatusCode::FORBIDDEN
         );
-        assert!(!db::server::plugin_selection_skipped(
+        assert!(!crate::db::server::plugin_selection_skipped(
             &*STATE.db.read().await
         )?);
         let headers = headers_with(vec![Permission::ManagePlugins])
@@ -644,7 +642,7 @@ mod tests {
         update_setup(headers.clone(), request())
             .await
             .expect("request succeeds");
-        assert!(db::server::plugin_selection_skipped(
+        assert!(crate::db::server::plugin_selection_skipped(
             &*STATE.db.read().await
         )?);
         update_setup(
@@ -655,7 +653,7 @@ mod tests {
         )
         .await
         .expect("request succeeds");
-        assert!(!db::server::plugin_selection_skipped(
+        assert!(!crate::db::server::plugin_selection_skipped(
             &*STATE.db.read().await
         )?);
         Ok(())
@@ -1018,7 +1016,7 @@ mod tests {
         let _guard = runtime_test_lock().await;
         initialize_test_state(&[]).await?;
         let user_db_id = user_with(vec![Permission::ManageServer]).await?;
-        let principal = crate::testing::user_principal(user_db_id).await?;
+        let principal = crate::services::testing::user_principal(user_db_id).await?;
         let api_key = api_keys::create_api_key(&principal, "automation").await?;
         let headers = bearer_headers(&api_key.key);
 

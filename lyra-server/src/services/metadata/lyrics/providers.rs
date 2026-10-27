@@ -34,11 +34,7 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    STATE,
-    db::{
-        self,
-    },
-    plugins::lifecycle::PluginId,
+    services::STATE,
     services::metadata::lyrics::{
         scorer::{
             self,
@@ -49,6 +45,7 @@ use crate::{
         selection,
         upload,
     },
+    services::plugin_scope::PluginId,
     services::providers::{
         IdentifiersByScheme,
         ProviderCallStage,
@@ -246,9 +243,9 @@ pub(crate) async fn register_handler(handler: RegisteredHandler) {
     }
 
     tokio::spawn(async move {
-        // Rescan dispatch closures resolve STATE.generation().plugin_runtime at call time;
-        // plugin init can register handlers before publish_runtime has run.
-        if !wait_for_plugin_runtime(&cancel).await {
+        // Rescan dispatch closures resolve STATE.generation().plugin_dispatch at call time;
+        // plugin init can register handlers before the runtime is published.
+        if !wait_for_plugin_dispatch(&cancel).await {
             return;
         }
         if let Err(err) = rescan(false, cancel).await {
@@ -257,9 +254,14 @@ pub(crate) async fn register_handler(handler: RegisteredHandler) {
     });
 }
 
-async fn wait_for_plugin_runtime(cancel: &CancellationToken) -> bool {
+async fn wait_for_plugin_dispatch(cancel: &CancellationToken) -> bool {
     loop {
-        if crate::STATE.generation().plugin_runtime.get().is_some() {
+        if crate::services::STATE
+            .generation()
+            .plugin_dispatch
+            .get()
+            .is_some()
+        {
             return true;
         }
         tokio::select! {
@@ -382,7 +384,7 @@ async fn dispatch_one(
         with_provider_call(provider_id, ProviderCallStage::Lyrics, || async {
             {
                 let db = STATE.db.read().await;
-                if db::tracks::get_by_id(&*db, track_db_id)?
+                if crate::db::tracks::get_by_id(&*db, track_db_id)?
                     .is_none_or(|track| track.id != track_public_id)
                 {
                     return Ok(None);
@@ -486,7 +488,7 @@ async fn record_hit(
     };
 
     let mut db = STATE.db.write().await;
-    let current_track = db::tracks::get_by_id(&*db, track_db_id)?;
+    let current_track = crate::db::tracks::get_by_id(&*db, track_db_id)?;
     if current_track
         .as_ref()
         .is_none_or(|track| track.id != track_public_id)
@@ -555,15 +557,16 @@ async fn build_track_context(
     let schemes = id_schemes().await;
     let (track, artists, release, external_ids_raw, libraries) = {
         let db = STATE.db.read().await;
-        let Some(track) = db::tracks::get_by_id(&db, track_db_id)? else {
+        let Some(track) = crate::db::tracks::get_by_id(&db, track_db_id)? else {
             return Ok(None);
         };
-        let artists = db::artists::get(&db, track_db_id)?;
-        let release = db::releases::get_by_track(&db, track_db_id)?
+        let artists = crate::db::artists::get(&db, track_db_id)?;
+        let release = crate::db::releases::get_by_track(&db, track_db_id)?
             .into_iter()
             .next();
-        let external_ids_raw = db::providers::external_ids::get_for_entity(&db, track_db_id)?;
-        let libraries = db::libraries::get_for_entity(&db, track_db_id)
+        let external_ids_raw =
+            crate::db::providers::external_ids::get_for_entity(&db, track_db_id)?;
+        let libraries = crate::db::libraries::get_for_entity(&db, track_db_id)
             .ok()
             .unwrap_or_default();
         (track, artists, release, external_ids_raw, libraries)
@@ -615,7 +618,7 @@ async fn build_track_context(
 pub(crate) async fn rescan(force_refresh: bool, cancel: CancellationToken) -> Result<()> {
     let track_ids: Vec<(DbId, String)> = {
         let db = STATE.db.read().await;
-        let tracks = db::tracks::get(&db, "tracks")?;
+        let tracks = crate::db::tracks::get(&db, "tracks")?;
         let mut filtered = Vec::with_capacity(tracks.len());
         for track in tracks {
             let Some(track_db_id) = track.db_id.clone().map(DbId::from) else {
@@ -666,11 +669,11 @@ pub(crate) async fn rescan(force_refresh: bool, cancel: CancellationToken) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::test_db;
-    use crate::plugins::lyrics::{
+    use crate::services::metadata::lyrics::payload::{
         PluginLyricLineInput,
         PluginLyricsInput,
     };
+
     use std::sync::atomic::{
         AtomicUsize,
         Ordering,
@@ -739,25 +742,20 @@ mod tests {
 
     async fn install_track_in_state_db(title: &str, artist: &str, duration_ms: u64) -> DbId {
         let mut db = STATE.db.write().await;
-        let track_id = test_db::insert_track(&mut db, title).expect("insert track");
-        let mut track = db::tracks::get_by_id(&db, track_id)
+        let track_id = crate::db::fixtures::insert_track(&mut db, title).expect("insert track");
+        let mut track = crate::db::tracks::get_by_id(&db, track_id)
             .expect("get_by_id")
             .expect("track");
         track.duration_ms = Some(duration_ms);
         db.exec_mut(agdb::QueryBuilder::insert().element(&track).query())
             .expect("update track");
-        let artist_id = test_db::insert_artist(&mut db, artist).expect("insert artist");
-        test_db::connect(&mut db, track_id, artist_id).expect("connect");
+        let artist_id = crate::db::fixtures::insert_artist(&mut db, artist).expect("insert artist");
+        crate::db::fixtures::connect(&mut db, track_id, artist_id).expect("connect");
         track_id
     }
 
     async fn initialize_test_runtime() -> anyhow::Result<()> {
-        crate::testing::initialize_runtime(&crate::testing::LibraryFixtureConfig {
-            directory: std::path::PathBuf::from("."),
-            language: None,
-            country: None,
-        })
-        .await?;
+        crate::services::testing::init_library_test_state(std::path::PathBuf::from(".")).await?;
         reset_registry().await;
         Ok(())
     }
@@ -787,7 +785,7 @@ mod tests {
 
     #[tokio::test]
     async fn failures_are_reported_without_skipping_other_providers() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         initialize_test_runtime().await?;
         let track_id = install_track_in_state_db("Failure Track", "Artist", 180_000).await;
         let calls = Arc::new(AtomicUsize::new(0));
@@ -835,12 +833,12 @@ mod tests {
 
     #[tokio::test]
     async fn snapshot_dispatch_skips_deleted_and_reused_track_ids() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         initialize_test_runtime().await?;
         let track_id = install_track_in_state_db("Original", "Artist", 180_000).await;
         let mut original = {
             let mut db = STATE.db.write().await;
-            let track = db::tracks::get_by_id(&*db, track_id)?.unwrap();
+            let track = crate::db::tracks::get_by_id(&*db, track_id)?.unwrap();
             db.exec_mut(agdb::QueryBuilder::remove().ids(track_id).query())?;
             track
         };
@@ -877,7 +875,7 @@ mod tests {
 
     #[tokio::test]
     async fn hit_path_writes_lyrics_row_with_no_lock_held_during_handler() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         initialize_test_runtime().await?;
         let track_id =
             install_track_in_state_db("A Long Song Title Here", "An Artist Group Name", 180_000)
@@ -910,7 +908,7 @@ mod tests {
         );
 
         let db = STATE.db.read().await;
-        let lyrics = db::lyrics::get_visible_for_track(&*db, track_id, None)?;
+        let lyrics = crate::db::lyrics::get_visible_for_track(&*db, track_id, None)?;
         assert!(
             lyrics
                 .iter()
@@ -922,7 +920,7 @@ mod tests {
 
     #[tokio::test]
     async fn hit_is_dropped_when_track_db_id_is_reused_during_handler() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         initialize_test_runtime().await?;
         let track_id =
             install_track_in_state_db("A Long Song Title Here", "An Artist Group Name", 180_000)
@@ -930,7 +928,7 @@ mod tests {
 
         let replacement = {
             let db = STATE.db.read().await;
-            let mut track = db::tracks::get_by_id(&*db, track_id)?
+            let mut track = crate::db::tracks::get_by_id(&*db, track_id)?
                 .ok_or_else(|| anyhow::anyhow!("original track missing"))?;
             track.db_id = None;
             track.id = "replacement-track-public-id".to_string();
@@ -967,11 +965,11 @@ mod tests {
         dispatch_for_track(track_id, false).await?;
 
         let db = STATE.db.read().await;
-        let current = db::tracks::get_by_id(&*db, track_id)?
+        let current = crate::db::tracks::get_by_id(&*db, track_id)?
             .ok_or_else(|| anyhow::anyhow!("replacement track missing"))?;
         assert_eq!(current.id, replacement_public_id);
         assert!(
-            db::lyrics::get_visible_for_track(&*db, track_id, None)?.is_empty(),
+            crate::db::lyrics::get_visible_for_track(&*db, track_id, None)?.is_empty(),
             "stale provider result must not be written to the replacement track"
         );
         Ok(())
@@ -979,7 +977,7 @@ mod tests {
 
     #[tokio::test]
     async fn force_refresh_threads_through_to_handler() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         initialize_test_runtime().await?;
         let track_id =
             install_track_in_state_db("Title For Force", "Artist For Force", 200_000).await;
@@ -1015,7 +1013,7 @@ mod tests {
 
     #[tokio::test]
     async fn in_flight_dedupe_skips_concurrent_call_for_same_key() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         initialize_test_runtime().await?;
         let track_id =
             install_track_in_state_db("Title For Dedupe", "Artist For Dedupe", 200_000).await;
@@ -1064,7 +1062,7 @@ mod tests {
 
     #[tokio::test]
     async fn cancellation_aborts_parked_dispatches() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         initialize_test_runtime().await?;
 
         let mut track_ids = Vec::with_capacity(100);

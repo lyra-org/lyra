@@ -3,6 +3,13 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use harmony_luau::{
+    DescribeInterface,
+    FieldDescriptor,
+    InterfaceDescriptor,
+    LuauType,
+    LuauTypeInfo,
+};
 use std::{
     collections::{
         BTreeMap,
@@ -21,13 +28,6 @@ use std::{
 };
 
 use agdb::DbId;
-use harmony_luau::{
-    DescribeInterface,
-    FieldDescriptor,
-    InterfaceDescriptor,
-    LuauType,
-    LuauTypeInfo,
-};
 use percent_encoding::{
     AsciiSet,
     NON_ALPHANUMERIC,
@@ -350,7 +350,10 @@ where
     F: Fn(String, Vec<IdLinkCall>) -> Fut,
     Fut: Future<Output = anyhow::Result<Vec<IdLinkCallResult>>>,
 {
-    let cache = crate::STATE.generation().providers.id_link_cache();
+    let cache = crate::services::STATE
+        .generation()
+        .providers
+        .id_link_cache();
     resolve_with_cache(&cache, targets, generators, dispatch).await
 }
 

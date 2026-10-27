@@ -151,10 +151,7 @@ pub(crate) fn find_by_name_key(
 }
 
 /// Compute `key` via [`path_key_for`] off the lock — `canonicalize` is a syscall.
-pub(crate) fn find_by_path_key(
-    db: &impl super::DbAccess,
-    key: &str,
-) -> anyhow::Result<Option<Library>> {
+pub fn find_by_path_key(db: &impl super::DbAccess, key: &str) -> anyhow::Result<Option<Library>> {
     find_indexed_library(db, "path_key", key)
 }
 
@@ -244,10 +241,7 @@ pub(crate) fn get_by_alias(db: &impl super::DbAccess, alias: &str) -> anyhow::Re
 
     Ok(libraries)
 }
-pub(crate) fn get_for_entity(
-    db: &impl super::DbAccess,
-    node_id: DbId,
-) -> anyhow::Result<Vec<Library>> {
+pub fn get_for_entity(db: &impl super::DbAccess, node_id: DbId) -> anyhow::Result<Vec<Library>> {
     let libraries: Vec<Library> = db
         .exec(
             QueryBuilder::select()
@@ -1002,10 +996,6 @@ mod tests {
 
     #[test]
     fn delete_removes_exclusive_media_and_preserves_shared_media() -> anyhow::Result<()> {
-        use crate::db::{
-            self,
-            test_db,
-        };
         let mut db = new_test_db()?;
         let user = create_test_user(&mut db, "owner")?;
         let deleted = db.transaction_mut(|t| -> anyhow::Result<_> {
@@ -1020,31 +1010,31 @@ mod tests {
         })?;
         let deleted_id = deleted.db_id.unwrap();
         let kept_id = kept.db_id.unwrap();
-        let release = test_db::insert_release(&mut db, "Deleted album")?;
-        let track = test_db::insert_track(&mut db, "Deleted track")?;
-        let shared = test_db::insert_track(&mut db, "Shared track")?;
-        let artist = test_db::insert_artist(&mut db, "Shared artist")?;
-        test_db::connect(&mut db, deleted_id, release)?;
-        test_db::connect(&mut db, release, track)?;
-        test_db::connect(&mut db, deleted_id, shared)?;
-        test_db::connect(&mut db, kept_id, shared)?;
-        test_db::connect(&mut db, track, artist)?;
-        test_db::connect(&mut db, shared, artist)?;
-        db::metadata::layers::upsert(
+        let release = crate::db::fixtures::insert_release(&mut db, "Deleted album")?;
+        let track = crate::db::fixtures::insert_track(&mut db, "Deleted track")?;
+        let shared = crate::db::fixtures::insert_track(&mut db, "Shared track")?;
+        let artist = crate::db::fixtures::insert_artist(&mut db, "Shared artist")?;
+        crate::db::fixtures::connect(&mut db, deleted_id, release)?;
+        crate::db::fixtures::connect(&mut db, release, track)?;
+        crate::db::fixtures::connect(&mut db, deleted_id, shared)?;
+        crate::db::fixtures::connect(&mut db, kept_id, shared)?;
+        crate::db::fixtures::connect(&mut db, track, artist)?;
+        crate::db::fixtures::connect(&mut db, shared, artist)?;
+        crate::db::metadata::layers::upsert(
             &mut db,
             track,
-            &db::MetadataLayer::new("local-scanner", Default::default(), 0),
+            &crate::db::MetadataLayer::new("local-scanner", Default::default(), 0),
         )?;
-        let layer_ids = db::metadata::collect_layer_ids(&db, track)?;
-        let track_public_id = db::tracks::get_by_id(&db, track)?.unwrap().id;
+        let layer_ids = crate::db::metadata::collect_layer_ids(&db, track)?;
+        let track_public_id = crate::db::tracks::get_by_id(&db, track)?.unwrap().id;
         let removed = db.transaction_mut(|t| delete(t, &deleted))?;
         assert_eq!(removed, HashSet::from([track_public_id]));
         assert!(get_by_id(&db, deleted_id)?.is_none());
         assert!(get_by_id(&db, kept_id)?.is_some());
-        assert!(db::tracks::get_by_id(&db, track)?.is_none());
-        assert!(db::releases::get_by_id(&db, release)?.is_none());
-        assert!(db::tracks::get_by_id(&db, shared)?.is_some());
-        assert!(db::artists::get_by_id(&db, artist)?.is_some());
+        assert!(crate::db::tracks::get_by_id(&db, track)?.is_none());
+        assert!(crate::db::releases::get_by_id(&db, release)?.is_none());
+        assert!(crate::db::tracks::get_by_id(&db, shared)?.is_some());
+        assert!(crate::db::artists::get_by_id(&db, artist)?.is_some());
         assert!(accessible_library_ids(&db, user)?.is_empty());
         for id in layer_ids {
             assert!(db.exec(QueryBuilder::select().ids(id).query()).is_err());
@@ -1055,10 +1045,8 @@ mod tests {
     #[test]
     fn layer_edges_stay_out_of_library_views() -> anyhow::Result<()> {
         use crate::db::{
-            self,
             CreditType,
             metadata::layers::edges,
-            test_db,
         };
         let mut db = new_test_db()?;
         let deleted = db.transaction_mut(|t| -> anyhow::Result<_> {
@@ -1068,24 +1056,24 @@ mod tests {
             Ok(create_system(t, insert_request("Kept", "kept"))?)
         })?;
         let (deleted_id, kept_id) = (deleted.db_id.unwrap(), kept.db_id.unwrap());
-        let deleted_release = test_db::insert_release(&mut db, "Deleted album")?;
-        let deleted_track = test_db::insert_track(&mut db, "Deleted track")?;
-        let kept_release = test_db::insert_release(&mut db, "Kept album")?;
-        let kept_track = test_db::insert_track(&mut db, "Kept track")?;
-        let layer_only_artist = test_db::insert_artist(&mut db, "Hidden")?;
-        test_db::connect(&mut db, deleted_id, deleted_release)?;
-        test_db::connect(&mut db, deleted_release, deleted_track)?;
-        test_db::connect(&mut db, kept_id, kept_release)?;
-        test_db::connect(&mut db, kept_release, kept_track)?;
-        let jazz = db::genres::resolve_by_name(&mut db, "Jazz")?;
-        db::genres::link_to_release(&mut db, jazz, deleted_release)?;
+        let deleted_release = crate::db::fixtures::insert_release(&mut db, "Deleted album")?;
+        let deleted_track = crate::db::fixtures::insert_track(&mut db, "Deleted track")?;
+        let kept_release = crate::db::fixtures::insert_release(&mut db, "Kept album")?;
+        let kept_track = crate::db::fixtures::insert_track(&mut db, "Kept track")?;
+        let layer_only_artist = crate::db::fixtures::insert_artist(&mut db, "Hidden")?;
+        crate::db::fixtures::connect(&mut db, deleted_id, deleted_release)?;
+        crate::db::fixtures::connect(&mut db, deleted_release, deleted_track)?;
+        crate::db::fixtures::connect(&mut db, kept_id, kept_release)?;
+        crate::db::fixtures::connect(&mut db, kept_release, kept_track)?;
+        let jazz = crate::db::genres::resolve_by_name(&mut db, "Jazz")?;
+        crate::db::genres::link_to_release(&mut db, jazz, deleted_release)?;
         for release in [deleted_release, kept_release] {
-            db::metadata::layers::upsert(
+            crate::db::metadata::layers::upsert(
                 &mut db,
                 release,
-                &db::MetadataLayer::new("provider", Default::default(), 0),
+                &crate::db::MetadataLayer::new("provider", Default::default(), 0),
             )?;
-            let layer = db::metadata::layers::layer_id(&db, release, "provider")?.unwrap();
+            let layer = crate::db::metadata::layers::layer_id(&db, release, "provider")?.unwrap();
             db.transaction_mut(|t| {
                 edges::replace_genres(t, layer, &[jazz])?;
                 edges::replace_credits(
@@ -1100,34 +1088,35 @@ mod tests {
             })?;
         }
 
-        let release_ids = |releases: Vec<db::Release>| -> Vec<DbId> {
+        let release_ids = |releases: Vec<crate::db::Release>| -> Vec<DbId> {
             releases
                 .into_iter()
                 .filter_map(|release| release.db_id.map(DbId::from))
                 .collect()
         };
         assert_eq!(
-            release_ids(db::releases::get(&db, kept_id)?),
+            release_ids(crate::db::releases::get(&db, kept_id)?),
             vec![kept_release]
         );
-        assert_eq!(db::tracks::get(&db, kept_release)?.len(), 1);
+        assert_eq!(crate::db::tracks::get(&db, kept_release)?.len(), 1);
         assert!(get_for_entity(&db, layer_only_artist)?.is_empty());
         assert!(get_for_entity(&db, jazz)?.is_empty());
 
-        let deleted_track_id = db::tracks::get_by_id(&db, deleted_track)?.unwrap().id;
+        let deleted_track_id = crate::db::tracks::get_by_id(&db, deleted_track)?
+            .unwrap()
+            .id;
         let removed = db.transaction_mut(|t| delete(t, &deleted))?;
         assert_eq!(removed, HashSet::from([deleted_track_id]));
-        assert!(db::tracks::get_by_id(&db, deleted_track)?.is_none());
-        assert!(db::tracks::get_by_id(&db, kept_track)?.is_some());
-        assert!(db::genres::get_by_id(&db, jazz)?.is_some());
-        assert!(db::artists::get_by_id(&db, layer_only_artist)?.is_some());
+        assert!(crate::db::tracks::get_by_id(&db, deleted_track)?.is_none());
+        assert!(crate::db::tracks::get_by_id(&db, kept_track)?.is_some());
+        assert!(crate::db::genres::get_by_id(&db, jazz)?.is_some());
+        assert!(crate::db::artists::get_by_id(&db, layer_only_artist)?.is_some());
         Ok(())
     }
 
     #[test]
     fn delete_keeps_artists_that_another_librarys_layers_reference() -> anyhow::Result<()> {
         use crate::db::{
-            self,
             ArtistRelationType,
             CreditType,
             metadata::layers::edges,
@@ -1141,25 +1130,26 @@ mod tests {
             Ok(create_system(t, insert_request("Kept", "kept"))?)
         })?;
         let (deleted_id, kept_id) = (deleted.db_id.unwrap(), kept.db_id.unwrap());
-        let deleted_release = test_db::insert_release(&mut db, "Deleted album")?;
-        let kept_release = test_db::insert_release(&mut db, "Kept album")?;
-        let credited = test_db::insert_artist(&mut db, "Credited")?;
-        let related = test_db::insert_artist(&mut db, "Related")?;
-        let band = test_db::insert_artist(&mut db, "Band")?;
-        test_db::connect(&mut db, deleted_id, deleted_release)?;
-        test_db::connect(&mut db, kept_id, kept_release)?;
+        let deleted_release = crate::db::fixtures::insert_release(&mut db, "Deleted album")?;
+        let kept_release = crate::db::fixtures::insert_release(&mut db, "Kept album")?;
+        let credited = crate::db::fixtures::insert_artist(&mut db, "Credited")?;
+        let related = crate::db::fixtures::insert_artist(&mut db, "Related")?;
+        let band = crate::db::fixtures::insert_artist(&mut db, "Band")?;
+        crate::db::fixtures::connect(&mut db, deleted_id, deleted_release)?;
+        crate::db::fixtures::connect(&mut db, kept_id, kept_release)?;
         test_db::connect_artist(&mut db, deleted_release, credited)?;
         test_db::connect_artist(&mut db, deleted_release, related)?;
         test_db::connect_artist(&mut db, kept_release, band)?;
         for node_id in [kept_release, band] {
-            db::metadata::layers::upsert(
+            crate::db::metadata::layers::upsert(
                 &mut db,
                 node_id,
-                &db::MetadataLayer::new("provider", Default::default(), 0),
+                &crate::db::MetadataLayer::new("provider", Default::default(), 0),
             )?;
         }
-        let release_layer = db::metadata::layers::layer_id(&db, kept_release, "provider")?.unwrap();
-        let band_layer = db::metadata::layers::layer_id(&db, band, "provider")?.unwrap();
+        let release_layer =
+            crate::db::metadata::layers::layer_id(&db, kept_release, "provider")?.unwrap();
+        let band_layer = crate::db::metadata::layers::layer_id(&db, band, "provider")?.unwrap();
         db.transaction_mut(|t| {
             edges::replace_credits(
                 t,
@@ -1183,9 +1173,9 @@ mod tests {
 
         db.transaction_mut(|t| delete(t, &deleted))?;
 
-        assert!(db::releases::get_by_id(&db, deleted_release)?.is_none());
-        assert!(db::artists::get_by_id(&db, credited)?.is_some());
-        assert!(db::artists::get_by_id(&db, related)?.is_some());
+        assert!(crate::db::releases::get_by_id(&db, deleted_release)?.is_none());
+        assert!(crate::db::artists::get_by_id(&db, credited)?.is_some());
+        assert!(crate::db::artists::get_by_id(&db, related)?.is_some());
         assert_eq!(edges::credits(&db, release_layer)?[0].target_id, credited);
         assert_eq!(edges::relations(&db, band_layer)?[0].target_id, related);
         Ok(())
@@ -1194,10 +1184,6 @@ mod tests {
     #[test]
     fn delete_removes_owned_sources_and_cue_records_but_preserves_shared_track_and_files()
     -> anyhow::Result<()> {
-        use crate::db::{
-            self,
-            test_db,
-        };
         let mut db = new_test_db()?;
         let deleted = db.transaction_mut(|t| -> anyhow::Result<_> {
             Ok(create_system(
@@ -1210,11 +1196,11 @@ mod tests {
         })?;
         let file_path = std::env::temp_dir().join(format!("lyra-delete-test-{}", nanoid!()));
         std::fs::write(&file_path, b"preserve music")?;
-        let entry = db::Entry {
+        let entry = crate::db::Entry {
             db_id: None,
             id: nanoid!(),
             full_path: file_path.clone(),
-            kind: db::entries::EntryKind::File,
+            kind: crate::db::entries::EntryKind::File,
             file_kind: None,
             name: "music.flac".into(),
             hash: None,
@@ -1225,21 +1211,22 @@ mod tests {
         let entry_id = db
             .exec_mut(QueryBuilder::insert().element(&entry).query())?
             .ids()[0];
-        test_db::connect(&mut db, deleted.db_id.unwrap(), entry_id)?;
-        let track = test_db::insert_track(&mut db, "Shared")?;
-        test_db::connect(&mut db, deleted.db_id.unwrap(), track)?;
-        test_db::connect(&mut db, kept.db_id.unwrap(), track)?;
+        crate::db::fixtures::connect(&mut db, deleted.db_id.unwrap(), entry_id)?;
+        let track = crate::db::fixtures::insert_track(&mut db, "Shared")?;
+        crate::db::fixtures::connect(&mut db, deleted.db_id.unwrap(), track)?;
+        crate::db::fixtures::connect(&mut db, kept.db_id.unwrap(), track)?;
         let (sheet, selected, unselected, source) =
             db.transaction_mut(|t| -> anyhow::Result<_> {
-                let sheet = db::cue::sheets::upsert(t, entry_id, "hash")?;
-                let selected = db::cue::tracks::upsert(t, sheet, entry_id, 1, entry_id, None, 0)?;
+                let sheet = crate::db::cue::sheets::upsert(t, entry_id, "hash")?;
+                let selected =
+                    crate::db::cue::tracks::upsert(t, sheet, entry_id, 1, entry_id, None, 0)?;
                 let unselected =
-                    db::cue::tracks::upsert(t, sheet, entry_id, 2, entry_id, None, 75)?;
-                let source = db::track_sources::upsert(
+                    crate::db::cue::tracks::upsert(t, sheet, entry_id, 2, entry_id, None, 75)?;
+                let source = crate::db::track_sources::upsert(
                     t,
                     track,
                     entry_id,
-                    db::track_sources::TrackSourceUpsert {
+                    crate::db::track_sources::TrackSourceUpsert {
                         source_kind: "cue".into(),
                         source_key: "deleted-source".into(),
                         is_primary: true,
@@ -1252,7 +1239,7 @@ mod tests {
                 Ok((sheet, selected, unselected, source))
             })?;
         let affected = db.transaction_mut(|t| delete(t, &deleted))?;
-        assert!(affected.contains(&db::tracks::get_by_id(&db, track)?.unwrap().id));
+        assert!(affected.contains(&crate::db::tracks::get_by_id(&db, track)?.unwrap().id));
         for id in [entry_id, sheet, selected, unselected, source] {
             assert!(
                 db.exec(QueryBuilder::select().ids(id).query()).is_err(),
@@ -1267,13 +1254,12 @@ mod tests {
 
     #[test]
     fn delete_rolls_back_the_whole_graph_on_transaction_failure() -> anyhow::Result<()> {
-        use crate::db::test_db;
         let mut db = new_test_db()?;
         let library = db.transaction_mut(|t| -> anyhow::Result<_> {
             Ok(create_system(t, insert_request("Rollback", "rollback"))?)
         })?;
-        let track = test_db::insert_track(&mut db, "Retained")?;
-        test_db::connect(&mut db, library.db_id.unwrap(), track)?;
+        let track = crate::db::fixtures::insert_track(&mut db, "Retained")?;
+        crate::db::fixtures::connect(&mut db, library.db_id.unwrap(), track)?;
         let result = db.transaction_mut(|t| -> anyhow::Result<()> {
             delete(t, &library)?;
             anyhow::bail!("abort")
@@ -1350,7 +1336,7 @@ mod tests {
     }
 
     fn create_test_user(db: &mut DbAny, username: &str) -> anyhow::Result<DbId> {
-        super::super::users::create(db, &super::super::test_db::test_user(username)?)
+        super::super::users::create(db, &super::super::fixtures::test_user(username)?)
     }
 
     #[test]
@@ -1511,8 +1497,8 @@ mod tests {
                 user_db_id,
             )?)
         })?;
-        let shared_track = crate::db::test_db::insert_track(&mut db, "Shared track")?;
-        let private_track = crate::db::test_db::insert_track(&mut db, "Private track")?;
+        let shared_track = crate::db::fixtures::insert_track(&mut db, "Shared track")?;
+        let private_track = crate::db::fixtures::insert_track(&mut db, "Private track")?;
         db.transaction_mut(|t| -> anyhow::Result<()> {
             crate::db::graph::ensure_owned_edge(
                 t,
@@ -1662,10 +1648,8 @@ mod tests {
         use test::Bencher;
 
         use super::*;
-        use crate::db::test_db::{
-            new_test_db,
-            test_user,
-        };
+        use crate::db::fixtures::test_user;
+        use crate::db::test_db::new_test_db;
         use crate::db::users;
         use nanoid::nanoid;
 

@@ -21,13 +21,11 @@ use harmony_luau as luau;
 use nanoid::nanoid;
 use serde_json::Value as JsonValue;
 
-use crate::STATE;
+use crate::db::ProviderConfig;
 use crate::plugins::args;
 use crate::plugins::db;
-use crate::plugins::db as server_db;
-use crate::plugins::db::ProviderConfig;
-use crate::plugins::executor::MetadataRefreshRequest;
-use crate::plugins::lifecycle::PluginId;
+use crate::services::plugin_dispatch::MetadataRefreshRequest;
+use crate::services::plugin_scope::PluginId;
 use crate::services::{
     EntityType,
     metadata::lyrics::{
@@ -89,9 +87,9 @@ fn provider_new_callback(
     let vm = frame.vm.clone();
     let origin = frame.context.origin.clone();
     Ok(luau::ScheduledFuture::new(async move {
-        let generation = STATE.generation();
+        let generation = crate::plugins::STATE.generation();
         let _registration = generation
-            .plugin_registries
+            .registries
             .ensure_registrations_open(&plugin_id)
             .await
             .map_err(crate::plugins::runtime_error)?;
@@ -103,7 +101,7 @@ fn provider_new_callback(
 
         if let Some(db) = db {
             let mut db_write = db.write().await;
-            if db::providers::get_by_provider_id(&db_write, &provider_id)
+            if crate::db::providers::get_by_provider_id(&db_write, &provider_id)
                 .map_err(crate::plugins::runtime_error)?
                 .is_none()
             {
@@ -113,7 +111,7 @@ fn provider_new_callback(
                     priority: 50,
                     enabled: true,
                 };
-                db::providers::upsert(&mut db_write, &provider_config)
+                crate::db::providers::upsert(&mut db_write, &provider_config)
                     .map_err(crate::plugins::runtime_error)?;
             }
         }
@@ -271,9 +269,9 @@ fn provider_id_callback(
     let vm_id = vm.id();
     let provider = provider.clone();
     Ok(luau::ScheduledFuture::new(async move {
-        let generation = STATE.generation();
+        let generation = crate::plugins::STATE.generation();
         let _registration = generation
-            .plugin_registries
+            .registries
             .ensure_registrations_open(&provider.plugin_id)
             .await
             .map_err(crate::plugins::runtime_error)?;
@@ -325,9 +323,9 @@ fn declare_option_callback(
 
     let provider = provider.clone();
     Ok(luau::ScheduledFuture::new(async move {
-        let generation = STATE.generation();
+        let generation = crate::plugins::STATE.generation();
         let _registration = generation
-            .plugin_registries
+            .registries
             .ensure_registrations_open(&provider.plugin_id)
             .await
             .map_err(crate::plugins::runtime_error)?;
@@ -351,9 +349,9 @@ fn search_callback(
     let context = core_call_context(context);
     let provider = provider.clone();
     Ok(luau::ScheduledFuture::new(async move {
-        let generation = STATE.generation();
+        let generation = crate::plugins::STATE.generation();
         let _registration = generation
-            .plugin_registries
+            .registries
             .ensure_registrations_open(&provider.plugin_id)
             .await
             .map_err(crate::plugins::runtime_error)?;
@@ -390,9 +388,9 @@ fn cover_callback(
     let context = core_call_context(context);
     let provider = provider.clone();
     Ok(luau::ScheduledFuture::new(async move {
-        let generation = STATE.generation();
+        let generation = crate::plugins::STATE.generation();
         let _registration = generation
-            .plugin_registries
+            .registries
             .ensure_registrations_open(&provider.plugin_id)
             .await
             .map_err(crate::plugins::runtime_error)?;
@@ -435,9 +433,9 @@ fn lyrics_callback(
     let context = core_call_context(context);
     let provider = provider.clone();
     Ok(luau::ScheduledFuture::new(async move {
-        let generation = STATE.generation();
+        let generation = crate::plugins::STATE.generation();
         let _registration = generation
-            .plugin_registries
+            .registries
             .ensure_registrations_open(&provider.plugin_id)
             .await
             .map_err(crate::plugins::runtime_error)?;
@@ -459,9 +457,9 @@ fn lyrics_callback(
         let handler_fn: lyrics_dispatcher::HandlerFn = Arc::new(move |context| {
             let provider_id = provider_id_for_handler.clone();
             Box::pin(async move {
-                let runtime = STATE
+                let runtime = crate::services::STATE
                     .generation()
-                    .plugin_runtime
+                    .plugin_dispatch
                     .get()
                     .context("plugin runtime is not initialized")?;
                 let context = lyrics_dispatcher::track_context_to_json(&context);
@@ -511,9 +509,9 @@ fn similar_releases_callback(
     let context = core_call_context(context);
     let provider = provider.clone();
     Ok(luau::ScheduledFuture::new(async move {
-        let generation = STATE.generation();
+        let generation = crate::plugins::STATE.generation();
         let _registration = generation
-            .plugin_registries
+            .registries
             .ensure_registrations_open(&provider.plugin_id)
             .await
             .map_err(crate::plugins::runtime_error)?;
@@ -538,7 +536,7 @@ fn similar_releases_callback(
 }
 
 fn validate_lyrics_provider_id(provider_id: &str) -> luau::runtime::Result<()> {
-    db::lyrics::validate_provider_id(provider_id).map_err(crate::plugins::runtime_error)
+    crate::db::lyrics::validate_provider_id(provider_id).map_err(crate::plugins::runtime_error)
 }
 
 fn refresh_callback(
@@ -554,9 +552,9 @@ fn refresh_callback(
     let context = core_call_context(context);
     let provider = provider.clone();
     Ok(luau::ScheduledFuture::new(async move {
-        let generation = STATE.generation();
+        let generation = crate::plugins::STATE.generation();
         let _registration = generation
-            .plugin_registries
+            .registries
             .ensure_registrations_open(&provider.plugin_id)
             .await
             .map_err(crate::plugins::runtime_error)?;
@@ -621,7 +619,7 @@ fn ensure_artist_callback(
         let mut db_write = db.write().await;
         let mut resolved_artist_id: Option<DbId> = None;
 
-        if let Some(owner_id) = server_db::external_ids::get_owner(
+        if let Some(owner_id) = crate::db::external_ids::get_owner(
             &db_write,
             &provider_id,
             &id_type,
@@ -629,7 +627,7 @@ fn ensure_artist_callback(
             Some("Artist"),
         )
         .map_err(crate::plugins::runtime_error)?
-            && let Some(artist) = server_db::artists::get_by_id(&db_write, owner_id)
+            && let Some(artist) = crate::db::artists::get_by_id(&db_write, owner_id)
                 .map_err(crate::plugins::runtime_error)?
         {
             if let (Some(existing_type), Some(incoming_type)) = (artist.artist_type, artist_type)
@@ -645,7 +643,7 @@ fn ensure_artist_callback(
         if resolved_artist_id.is_none()
             && let Some(scan_name) = artist_name.as_deref()
         {
-            let mut candidates = server_db::artists::with_scan_name(&db_write, scan_name)
+            let mut candidates = crate::db::artists::with_scan_name(&db_write, scan_name)
                 .map_err(crate::plugins::runtime_error)?
                 .into_iter()
                 .filter_map(|artist| Some((DbId::from(artist.db_id.clone()?), artist)))
@@ -661,7 +659,7 @@ fn ensure_artist_callback(
                 }
 
                 if let Some(existing_for_provider) =
-                    server_db::external_ids::get(&db_write, candidate_id, &provider_id, &id_type)
+                    crate::db::external_ids::get(&db_write, candidate_id, &provider_id, &id_type)
                         .map_err(crate::plugins::runtime_error)?
                 {
                     let existing_value = existing_for_provider.id_value.trim();
@@ -679,7 +677,7 @@ fn ensure_artist_callback(
             existing
         } else {
             let fallback_name = artist_name.clone().unwrap_or_else(|| id_value.clone());
-            let created_artist = server_db::Artist {
+            let created_artist = crate::db::Artist {
                 db_id: None,
                 id: nanoid!(),
                 artist_name: fallback_name.clone(),
@@ -723,17 +721,17 @@ fn ensure_artist_callback(
         };
 
         let fields = [
-            (db::MetadataField::ArtistName, artist_name),
+            (crate::db::MetadataField::ArtistName, artist_name),
             (
-                db::MetadataField::ArtistType,
+                crate::db::MetadataField::ArtistType,
                 artist_type.as_ref().map(ToString::to_string),
             ),
-            (db::MetadataField::SortName, sort_name),
-            (db::MetadataField::Description, description),
+            (crate::db::MetadataField::SortName, sort_name),
+            (crate::db::MetadataField::Description, description),
         ]
         .into_iter()
         .filter_map(|(field, value)| Some((field, JsonValue::String(value?))))
-        .collect::<db::LayerFields>();
+        .collect::<crate::db::metadata::layers::LayerFields>();
 
         let mut external_ids = HashMap::new();
         external_ids.insert(id_type, id_value);
@@ -845,7 +843,121 @@ fn layer_callback(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+    use std::time::{
+        SystemTime,
+        UNIX_EPOCH,
+    };
+
     use super::validate_lyrics_provider_id;
+    use crate::services::EntityType;
+    use crate::services::STATE;
+    use crate::services::covers::providers::{
+        NormalizedProviderSearchResult,
+        ProviderSearchRequest,
+        search_provider,
+    };
+
+    struct TempSearchPluginDir {
+        plugins_dir: PathBuf,
+    }
+
+    impl TempSearchPluginDir {
+        fn new() -> anyhow::Result<Self> {
+            let root = std::env::temp_dir().join(format!(
+                "lyra-search-plugin-test-{}-{}",
+                std::process::id(),
+                SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+            ));
+            let plugin_dir = root.join("searchtest");
+            std::fs::create_dir_all(&plugin_dir)?;
+            std::fs::write(
+                plugin_dir.join("plugin.json"),
+                r#"{
+                    "schema_version": 1,
+                    "id": "searchtest",
+                    "name": "Search Test",
+                    "version": "1.0.0",
+                    "description": "Search callback contract test",
+                    "entrypoint": "init.luau",
+                    "scopes": ["lyra.metadata"]
+                }"#,
+            )?;
+            std::fs::write(
+                plugin_dir.join("init.luau"),
+                r#"
+                    local metadata = require("@lyra/metadata")
+                    local provider = metadata.Provider.new("searchtest")
+
+                    provider:search(metadata.EntityType.Release, function(query)
+                        if type(query) ~= "string" then
+                            error("expected string query, got " .. type(query))
+                        end
+                        return {
+                            {
+                                title = "Search: " .. query,
+                                redirect_url = "https://example.test/releases/" .. query,
+                                ids = {
+                                    release_id = query,
+                                },
+                            },
+                        }
+                    end)
+                "#,
+            )?;
+            Ok(Self { plugins_dir: root })
+        }
+    }
+
+    impl Drop for TempSearchPluginDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.plugins_dir);
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_search_dispatches_query_string_to_handler() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_library_test_state(std::env::temp_dir()).await?;
+        let plugins = TempSearchPluginDir::new()?;
+        let server_info = crate::plugins::server::load_server_info().await?;
+        let auth_capabilities =
+            crate::plugins::auth::AuthCapabilities::from_config(&STATE.config().auth);
+        let (runtime, errors) =
+            crate::plugins::executor::PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
+                plugins.plugins_dir.clone(),
+                server_info,
+                auth_capabilities,
+                STATE.db.get(),
+                Vec::new(),
+                Some(STATE.settings.clone()),
+            )?;
+        assert!(errors.is_empty(), "{errors:?}");
+        runtime.exec_plugin("searchtest").await?;
+        crate::plugins::STATE.publish_runtime(runtime.clone());
+
+        let results = search_provider(ProviderSearchRequest {
+            provider_id: "searchtest",
+            entity_type: EntityType::Release,
+            query: "loveless",
+            include_cover_urls: false,
+            force_refresh: false,
+        })
+        .await?;
+
+        assert_eq!(results.len(), 1);
+        let NormalizedProviderSearchResult::Release(result) = &results[0] else {
+            panic!("expected release search result");
+        };
+        assert_eq!(result.title, "Search: loveless");
+        assert_eq!(
+            result.ids.as_ref().and_then(|ids| ids.get("release_id")),
+            Some(&"loveless".to_string())
+        );
+
+        crate::plugins::STATE.clear_runtime();
+        Ok(())
+    }
 
     #[test]
     fn lyrics_registration_uses_database_provider_id_rules() {

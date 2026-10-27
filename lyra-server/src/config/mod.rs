@@ -16,8 +16,6 @@ pub(crate) mod storage;
 pub(crate) use boot::{
     BootConfig,
     BootEnv,
-    DbConfig,
-    DbKind,
 };
 pub(crate) use file::{
     ConfigFile,
@@ -25,9 +23,17 @@ pub(crate) use file::{
     LibraryFile,
 };
 
+const LYRA_PLUGINS_DIR_ENV: &str = "LYRA_PLUGINS_DIR";
+
 fn non_empty_path(raw: Option<OsString>) -> Option<PathBuf> {
     raw.map(PathBuf::from)
         .filter(|path| !path.as_os_str().is_empty())
+}
+
+/// Where plugins are installed and discovered: `LYRA_PLUGINS_DIR`, else `plugins`.
+pub(crate) fn plugins_dir() -> PathBuf {
+    non_empty_path(std::env::var_os(LYRA_PLUGINS_DIR_ENV))
+        .unwrap_or_else(|| PathBuf::from("plugins"))
 }
 
 /// Everything read at startup: the boot values plus the file they came from.

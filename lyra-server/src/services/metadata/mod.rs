@@ -58,6 +58,7 @@ use lofty::{
 use lyra_metadata::normalize_unicode_nfc;
 
 use crate::db::Entry;
+use crate::db::metadata::mapping_config::MetadataMappingConfig;
 use crate::db::track_sources::SourceFormat;
 pub(crate) use cue::sort_track_metadata;
 use cue::{
@@ -66,7 +67,6 @@ use cue::{
     merge_embedded_into_cue_metadata,
     parse_cue_metadata_for_entry,
 };
-use mapping::MetadataMappingConfig;
 pub(crate) use model::TrackMetadata;
 
 const SOURCE_KIND_EMBEDDED_TAGS: &str = "embedded_tags";
@@ -285,7 +285,7 @@ pub(crate) async fn load_mapping_config(
         }
     }
     let mut db_write = db.write().await;
-    crate::db::metadata::mapping_config::ensure(&mut db_write)
+    mapping::ensure_config(&mut db_write)
 }
 
 pub(crate) async fn parse_metadata(

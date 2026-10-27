@@ -1448,7 +1448,16 @@ name = "lyra-docs"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "harmony-core",
+ "harmony-crypt",
+ "harmony-globals",
+ "harmony-http",
+ "harmony-net",
+ "harmony-serde",
+ "harmony-task",
  "lyra-server",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1485,8 +1494,11 @@ dependencies = [
 name = "lyra-metadata"
 version = "0.0.1"
 dependencies = [
+ "celes",
+ "isolang",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
  "unicode-normalization",
 ]
 

@@ -21,7 +21,6 @@ use agdb::{
 use lyra_metadata::LookupHints;
 
 use crate::db::{
-    self,
     Artist,
     Entry,
     Release,
@@ -201,7 +200,7 @@ fn external_id_rows(
     prefetched: &PreFetchedIncludes,
 ) -> anyhow::Result<Vec<ExternalId>> {
     lookup_or_fetch(prefetched.external_ids.as_ref(), entity_id, || {
-        db::external_ids::get_for_entity(db, entity_id)
+        crate::db::external_ids::get_for_entity(db, entity_id)
     })
 }
 
@@ -490,7 +489,7 @@ pub(crate) fn project_entity(
         DetectedEntityType::Release => {
             let release = Release::from_db_element(&element)?;
             let library_root = if let Some(lib_id) = library_id {
-                db::libraries::get_by_id(db, lib_id)?
+                crate::db::libraries::get_by_id(db, lib_id)?
                     .map(|library| library.path.to_string_lossy().to_string())
             } else {
                 None
@@ -695,7 +694,7 @@ pub(crate) fn project_entities(
     let has_include = |target| includes.contains(&target);
     let library_root = if has_include(EntityInclude::Tracks) {
         if let Some(lib_id) = library_id {
-            db::libraries::get_by_id(db, lib_id)?
+            crate::db::libraries::get_by_id(db, lib_id)?
                 .map(|library| library.path.to_string_lossy().to_string())
         } else {
             None
@@ -858,15 +857,17 @@ pub(crate) fn project_entities(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::test_db::{
+    use crate::db::fixtures::{
         connect,
-        connect_artist,
         insert_artist,
-        insert_library,
         insert_release,
         insert_track,
-        new_test_db,
         test_user,
+    };
+    use crate::db::test_db::{
+        connect_artist,
+        insert_library,
+        new_test_db,
     };
     use crate::services::auth::Principal;
     use crate::services::providers::IdSchemes;
@@ -874,7 +875,7 @@ mod tests {
     #[test]
     fn visible_projections_hide_other_libraries() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        let user_db_id = db::users::create(&mut db, &test_user("listener")?)?;
+        let user_db_id = crate::db::users::create(&mut db, &test_user("listener")?)?;
         let shown_library = insert_library(&mut db, "Shown", "/music/shown")?;
         let hidden_library = insert_library(&mut db, "Hidden", "/music/hidden")?;
         let shown = insert_release(&mut db, "Shown")?;
@@ -887,7 +888,9 @@ mod tests {
         connect_artist(&mut db, hidden, shared)?;
         connect_artist(&mut db, hidden, hidden_only)?;
 
-        let shown_public_id = db::libraries::get_by_id(&db, shown_library)?.unwrap().id;
+        let shown_public_id = crate::db::libraries::get_by_id(&db, shown_library)?
+            .unwrap()
+            .id;
         let listener = Viewer::user(
             &db,
             Principal::for_user(&db, user_db_id, vec![], HashSet::from([shown_public_id])),
@@ -936,7 +939,7 @@ mod tests {
     #[test]
     fn visible_track_projections_inherit_only_visible_release_artists() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        let user_db_id = db::users::create(&mut db, &test_user("listener")?)?;
+        let user_db_id = crate::db::users::create(&mut db, &test_user("listener")?)?;
         let shown_library = insert_library(&mut db, "Shown", "/music/shown")?;
         let hidden_library = insert_library(&mut db, "Hidden", "/music/hidden")?;
         let shown = insert_release(&mut db, "Shown")?;
@@ -951,7 +954,9 @@ mod tests {
         connect_artist(&mut db, shown, shown_artist)?;
         connect_artist(&mut db, hidden, hidden_artist)?;
 
-        let shown_public_id = db::libraries::get_by_id(&db, shown_library)?.unwrap().id;
+        let shown_public_id = crate::db::libraries::get_by_id(&db, shown_library)?
+            .unwrap()
+            .id;
         let listener = Viewer::user(
             &db,
             Principal::for_user(&db, user_db_id, vec![], HashSet::from([shown_public_id])),

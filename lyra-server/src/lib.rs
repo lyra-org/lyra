@@ -7,334 +7,237 @@
 #![cfg_attr(all(test, feature = "nightly"), feature(test))]
 
 use std::{
-    collections::HashMap,
-    sync::{
-        Arc,
-        Mutex as StdMutex,
-        OnceLock,
-        RwLock as StdRwLock,
-    },
+    net::SocketAddr,
+    path::PathBuf,
+    sync::Arc,
 };
 
-use agdb::{
-    DbAny,
-    DbId,
-};
+use agdb::DbAny;
 use anyhow::{
     Context,
     Result,
 };
-use harmony_core::plugin::PluginManifest;
-use tokio::sync::{
-    OwnedRwLockReadGuard,
-    OwnedRwLockWriteGuard,
+use tokio::{
+    net::TcpListener,
+    sync::Notify,
+};
+use tracing_subscriber::{
+    layer::SubscriberExt,
+    util::SubscriberInitExt,
 };
 
 mod config;
 mod db;
-mod locale;
 mod plugins;
 mod routes;
 mod services;
 pub mod testing;
 
-use config::BootConfig;
-pub(crate) use db::Library;
-use db::{
-    DbAsync,
-    create,
-};
-use plugins::lifecycle::PluginRegistries;
-use plugins::settings::SettingsRegistries;
-use services::auth::media_tokens::MediaTokenStore;
-use services::hls::cleanup::HlsCleanupState;
-use services::libraries::LibrarySyncRegistries;
-use services::mix::MixRegistries;
-use services::pagination::SnapshotRegistry;
-use services::playback_sessions::{
-    PlaybackScopes,
-    PlaybackUpdateRegistries,
-};
-use services::providers::ProviderRegistries;
+use plugins::bootstrap as plugin_bootstrap;
+use services::hls::init as hls_init;
+use services::libraries::LibraryConfig;
 use services::settings::server::{
     self as server_settings,
-    EffectiveSetting,
-    ResolvedSettings,
+    SettingSource,
 };
-pub use services::startup::CaptureArgs;
-use services::{
-    libraries::LibraryConfig,
-    settings::server::Config,
-};
-
-#[derive(Clone)]
-pub(crate) struct SwapHandle<T: Clone> {
-    inner: Arc<StdRwLock<T>>,
-}
-
-impl<T: Clone + Default> Default for SwapHandle<T> {
-    fn default() -> Self {
-        Self::new(T::default())
-    }
-}
-
-impl<T: Clone> SwapHandle<T> {
-    pub(crate) fn new(value: T) -> Self {
-        Self {
-            inner: Arc::new(StdRwLock::new(value)),
-        }
-    }
-
-    pub(crate) fn get(&self) -> T {
-        self.inner.read().expect("handle poisoned").clone()
-    }
-
-    pub(crate) fn replace(&self, value: T) {
-        *self.inner.write().expect("handle poisoned") = value;
-    }
-}
-
-/// DB slot. `reset_with` is **not** safe concurrently; serialize externally
-/// (today `RUNTIME_TEST_LOCK`).
-#[derive(Clone)]
-pub(crate) struct DbHandle {
-    db: SwapHandle<DbAsync>,
-    lock: Arc<StdMutex<Option<db::process_lock::DbProcessLock>>>,
-}
-
-impl DbHandle {
-    fn new(created: db::Created) -> Self {
-        Self {
-            db: SwapHandle::new(created.db),
-            lock: Arc::new(StdMutex::new(created.lock)),
-        }
-    }
-
-    pub(crate) fn get(&self) -> DbAsync {
-        self.db.get()
-    }
-
-    fn reset(&self, created: db::Created) {
-        let old_lock = self.lock.lock().expect("db lock poisoned").take();
-        drop(old_lock);
-
-        self.db.replace(created.db);
-        *self.lock.lock().expect("db lock poisoned") = created.lock;
-    }
-
-    pub(crate) async fn read(&self) -> OwnedRwLockReadGuard<DbAny> {
-        self.get().read_owned().await
-    }
-
-    pub(crate) async fn write(&self) -> OwnedRwLockWriteGuard<DbAny> {
-        self.get().write_owned().await
-    }
-}
-
-pub(crate) type BootHandle = SwapHandle<Arc<BootConfig>>;
-pub(crate) type SettingsHandle = SwapHandle<Arc<ResolvedSettings>>;
-pub(crate) type PluginManifestHandle = SwapHandle<Arc<[PluginManifest]>>;
-pub(crate) type PluginRuntimeHandle = SwapHandle<Option<crate::plugins::bootstrap::PluginRuntime>>;
-
-/// Auth bookkeeping derived from the current database. Lives on
-/// [`GenerationState`] instead of module statics so a DB swap cannot carry
-/// ids or grants into the next database (memory DBs reuse small ids).
-#[derive(Default)]
-pub(crate) struct AuthCaches {
-    pub(crate) api_key_last_used: StdMutex<HashMap<DbId, i64>>,
-    pub(crate) session_last_seen: StdMutex<HashMap<String, i64>>,
-    pub(crate) media_tokens: MediaTokenStore,
-}
-
-/// Everything derived from the current database/config generation. A reset
-/// swaps the whole struct for a fresh [`Default`], so generation-bound state
-/// dies with its generation by construction — there is no per-registry reset
-/// list to keep in sync. New DB- or config-derived registries belong here,
-/// never in module statics.
-#[derive(Default)]
-pub(crate) struct GenerationState {
-    pub(crate) plugin_manifests: PluginManifestHandle,
-    pub(crate) plugin_runtime: PluginRuntimeHandle,
-    pub(crate) plugin_registries: PluginRegistries,
-    pub(crate) auth_caches: AuthCaches,
-    pub(crate) plugin_settings: SettingsRegistries,
-    pub(crate) providers: ProviderRegistries,
-    pub(crate) mix: MixRegistries,
-    pub(crate) pagination: SnapshotRegistry,
-    pub(crate) playback_updates: PlaybackUpdateRegistries,
-    pub(crate) playback_scopes: PlaybackScopes,
-    pub(crate) library_sync: LibrarySyncRegistries,
-    pub(crate) hls_cleanup: HlsCleanupState,
-    pub(crate) transcode_cache: Arc<services::transcoding::cache::TranscodeCache>,
-}
-
-pub(crate) struct AppState {
-    pub(crate) db: DbHandle,
-    /// Canonical home for port, data dir, and db location.
-    pub(crate) boot: BootHandle,
-    /// The current resolution: config, per-setting provenance, and the file
-    /// layer it was resolved against. Read the config through
-    /// [`AppState::config`].
-    pub(crate) settings: SettingsHandle,
-    /// The policy used by restart-required consumers for this process.
-    pub(crate) startup_config: SwapHandle<Arc<Config>>,
-    /// The values this process started with; restart-required settings are
-    /// compared against them.
-    pub(crate) startup_settings: SwapHandle<Arc<[EffectiveSetting]>>,
-    /// Signalled by every [`AppState::publish_settings`] so long-lived loops
-    /// re-read the config.
-    pub(crate) settings_changed: tokio::sync::Notify,
-    generation: SwapHandle<Arc<GenerationState>>,
-}
-
-fn build_app_state(boot: BootConfig, created: db::Created, resolved: ResolvedSettings) -> AppState {
-    AppState {
-        db: DbHandle::new(created),
-        boot: BootHandle::new(Arc::new(boot)),
-        startup_config: SwapHandle::new(Arc::clone(&resolved.config)),
-        startup_settings: SwapHandle::new(Arc::from(resolved.effective.clone())),
-        settings: SettingsHandle::new(Arc::new(resolved)),
-        settings_changed: tokio::sync::Notify::new(),
-        generation: SwapHandle::default(),
-    }
-}
-
-impl AppState {
-    /// Snapshot of the current generation. Callers that must not observe a
-    /// mid-operation reset should hold one snapshot for the whole operation.
-    pub(crate) fn generation(&self) -> Arc<GenerationState> {
-        self.generation.get()
-    }
-
-    /// `created` was opened while the live DB still held its process lock,
-    /// so it must not share a lockfile with the live one (memory DBs, or a
-    /// different path).
-    fn reset(&self, boot: BootConfig, created: db::Created, resolved: ResolvedSettings) {
-        self.db.reset(created);
-        self.boot.replace(Arc::new(boot));
-        self.startup_config.replace(Arc::clone(&resolved.config));
-        self.startup_settings
-            .replace(Arc::from(resolved.effective.clone()));
-        self.publish_settings(Arc::new(resolved));
-        self.generation.replace(Arc::default());
-    }
-
-    /// The runtime config of the current resolution.
-    pub(crate) fn config(&self) -> Arc<Config> {
-        Arc::clone(&self.settings.get().config)
-    }
-
-    /// Publishes a re-resolution and wakes anything waiting on a change.
-    pub(crate) fn publish_settings(&self, resolved: Arc<ResolvedSettings>) {
-        self.settings.replace(resolved);
-        self.settings_changed.notify_one();
-    }
-}
-
-/// Application state slot with explicit initialization. Entry points that
-/// need state (`run_server`, `testing::initialize_runtime`) must call
-/// [`StateCell::initialize`] before anything dereferences `STATE`; access
-/// before that is a bug and panics.
-pub(crate) struct StateCell {
-    inner: OnceLock<AppState>,
-}
-
-impl StateCell {
-    /// Publishes an already-open database with its boot config and resolved
-    /// settings.
-    /// First call builds the state; later calls swap in a fresh
-    /// DB/config/generation via [`AppState::reset`] (test-harness reuse), so
-    /// a later `created` must not share a lockfile with the live DB or
-    /// `create` would have blocked on it. Both paths end on a clean
-    /// generation. Serialize calls externally (today `RUNTIME_TEST_LOCK`).
-    pub(crate) fn initialize(
-        &self,
-        boot: BootConfig,
-        created: db::Created,
-        resolved: ResolvedSettings,
-    ) -> Result<()> {
-        match self.inner.get() {
-            Some(state) => {
-                state.reset(boot, created, resolved);
-                Ok(())
-            }
-            None => self
-                .inner
-                .set(build_app_state(boot, created, resolved))
-                .map_err(|_| anyhow::anyhow!("application state initialized concurrently")),
-        }
-    }
-}
-
-impl std::ops::Deref for StateCell {
-    type Target = AppState;
-
-    fn deref(&self) -> &AppState {
-        self.inner
-            .get()
-            .expect("application state accessed before STATE.initialize(config)")
-    }
-}
-
-pub(crate) static STATE: StateCell = StateCell {
-    inner: OnceLock::new(),
-};
-
-pub fn outbound_user_agent() -> String {
-    let version = env!("CARGO_PKG_VERSION");
-    let short_hash = env!("LYRA_GIT_HASH");
-    if short_hash.is_empty() {
-        format!("Lyra/{version} (blue@spook.rip)")
-    } else {
-        format!("Lyra/{version}-{short_hash} (blue@spook.rip)")
-    }
-}
 
 pub async fn run_server(capture: Option<CaptureArgs>) -> Result<()> {
-    let _tracing_guard = services::startup::init_tracing();
+    let _tracing_guard = init_tracing();
     let loaded = config::load()?;
     // Validate the file before touching the port, directories, or database.
     let library = LibraryConfig::resolve(loaded.file.library.as_ref())?;
     let file_settings = server_settings::normalize_file(&loaded.file.settings, &loaded.boot)?;
     // Bind first: a port collision with a running server must fail fast
     // instead of blocking on that server's DB process lock.
-    let listener = services::startup::bind_configured_listener(loaded.boot.port).await?;
+    let listener = bind_configured_listener(loaded.boot.port).await?;
     loaded.boot.ensure_directories()?;
     config::storage::ensure_writable_directory(
-        &plugins::bootstrap::plugins_dir(),
+        &config::plugins_dir(),
         "plugins directory (LYRA_PLUGINS_DIR)",
     )?;
-    let mut created = create(&loaded.boot.db)?;
-    let resolved = resolve_settings(&mut created, &loaded.boot, library, file_settings)?;
-    STATE.initialize(loaded.boot, created, resolved)?;
-    services::startup::run_server(capture, listener).await
+    let mut created =
+        crate::db::create(&loaded.boot.db).map_err(config::storage::explain_db_open_error)?;
+    plugins::repositories::seed_default(
+        created
+            .unshared_mut()
+            .ok_or_else(|| anyhow::anyhow!("database was shared before it was seeded"))?,
+    )?;
+    let resolved =
+        services::state::resolve_settings(&mut created, &loaded.boot, library, file_settings)?;
+    services::STATE.initialize(loaded.boot, created, resolved)?;
+    serve(capture, listener).await
 }
 
-/// Reads stored server settings and resolves the runtime config against the
-/// freshly opened, not yet shared database.
-pub(crate) fn resolve_settings(
-    created: &mut db::Created,
-    boot: &BootConfig,
-    library: Option<LibraryConfig>,
-    file_settings: config::FileSettings,
-) -> Result<ResolvedSettings> {
-    let db = Arc::get_mut(&mut created.db)
-        .ok_or_else(|| anyhow::anyhow!("database was shared before settings were resolved"))?
-        .get_mut();
-    let stored = server_settings::load_stored(db)?;
-    server_settings::resolve(boot, library, file_settings, &stored)
+async fn bind_configured_listener(port: u16) -> Result<TcpListener> {
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    TcpListener::bind(addr)
+        .await
+        .with_context(|| format!("configured port {port} is already in use or unavailable"))
 }
 
+/// `serve --capture <output-path> --library <dir>`: syncs the library at
+/// `library_path` and writes the provider capture to `output_path` instead
+/// of serving.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CaptureArgs {
+    pub output_path: String,
+    pub library_path: PathBuf,
+}
+
+async fn serve(capture: Option<CaptureArgs>, listener: TcpListener) -> Result<()> {
+    let capture_mode = capture.is_some();
+    let shutdown_token = services::shutdown::reset();
+    let config = services::STATE.config();
+    log_setting_overrides();
+    harmony_http::set_default_user_agent(crate::plugins::server::outbound_user_agent());
+    hls_init::initialize().await;
+    services::transcoding::initialize().await;
+    plugins::playback_sources::install_delivery_decider(routes::plugin_api::decide_delivery);
+
+    let db = services::STATE.db.get();
+    let maintenance_shutdown = if capture_mode {
+        None
+    } else {
+        Some(services::maintenance::spawn(db.clone()))
+    };
+    services::auth::ensure_default_user(&config).await?;
+    {
+        let mut db_write = services::STATE.db.write().await;
+        crate::db::server::ensure(&mut db_write)?;
+    }
+
+    let plugin_runtime = plugin_bootstrap::initialize_harmony().await?;
+
+    if let Some(capture) = capture {
+        // sync_library dispatches handlers through the published runtime; publish first.
+        plugin_bootstrap::exec_for_capture(plugin_runtime.clone()).await?;
+        crate::plugins::STATE.publish_runtime(plugin_runtime);
+        let library = services::libraries::prepare_capture_library(capture.library_path).await?;
+        let library_db_id = library
+            .db_id
+            .ok_or_else(|| anyhow::anyhow!("capture library missing db_id"))?;
+        return services::providers::run_capture(library_db_id, &capture.output_path).await;
+    }
+
+    let core_api = routes::build_core_api()?;
+    crate::plugins::settings::initialize_registry().await;
+
+    let app = routes::plugin_api::install(core_api.router, core_api.reservations).await?;
+    let app = app.layer(axum::middleware::from_fn(routes::reingest_request_gate));
+
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_bg = shutdown.clone();
+    let config_for_bg = config.clone();
+    let bg_handle = tokio::spawn(async move {
+        if let Err(err) = plugin_runtime.exec_all().await {
+            tracing::error!(error = %err, "plugin initialization failed");
+            return;
+        }
+
+        // Must precede finalize_startup (activates plugin routes) and the library sync
+        // (dispatches handlers through the published runtime).
+        crate::plugins::STATE.publish_runtime(plugin_runtime.clone());
+
+        if let Err(err) = plugin_bootstrap::finalize_startup().await {
+            tracing::error!(error = %err, "failed to finalize plugin startup");
+            return;
+        }
+
+        if let Err(err) = services::libraries::prepare_configured_library(&config_for_bg).await {
+            tracing::error!(error = %err, "configured library preparation failed");
+        }
+
+        services::providers::run_provider_sync_loop(shutdown_bg).await;
+    });
+
+    routes::serve_app(app, config.as_ref(), listener, shutdown_token).await?;
+
+    tracing::info!("server stopped, running shutdown cleanup");
+    services::shutdown::cancel();
+    if let Some(ref maintenance_shutdown) = maintenance_shutdown {
+        maintenance_shutdown.notify_one();
+    }
+    shutdown.notify_one();
+    let _ = bg_handle.await;
+
+    services::hls::state::teardown_all_hls_jobs().await;
+    plugin_bootstrap::teardown_loaded_plugins().await;
+    services::wait_for_running_library_syncs().await;
+
+    if let Some(reason) = services::shutdown::failure() {
+        anyhow::bail!("server stopped after a fatal error: {reason}");
+    }
+    Ok(())
+}
+
+/// One line per setting that differs from its default, so an operator can
+/// see at startup which values came from the database or `config.json`.
+fn log_setting_overrides() {
+    let settings = services::STATE.settings.get();
+    for setting in settings
+        .effective
+        .iter()
+        .filter(|setting| setting.source != SettingSource::Default)
+    {
+        tracing::info!(
+            key = setting.definition.key,
+            value = %setting.value,
+            source = ?setting.source,
+            locked = setting.locked,
+            "server setting overrides default"
+        );
+    }
+}
+
+fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
+    // Non-blocking: a plugin warn-loop can't stall the scheduler on sync stderr.
+    let (non_blocking, guard) = tracing_appender::non_blocking(std::io::stderr());
+
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                format!(
+                    "{}=info,tower_http=debug,harmony_core=info",
+                    env!("CARGO_CRATE_NAME")
+                )
+                .into()
+            }),
+        )
+        .with(tracing_subscriber::fmt::layer().with_writer(non_blocking))
+        .init();
+
+    guard
+}
+
+/// Ids of the Luau definition sources the server renders, for `lyra-docs`.
 #[cfg(feature = "docgen")]
-pub fn run_docs_command(args: &[String]) -> Result<()> {
-    plugins::docs::run_command(args)
+pub fn lyra_doc_source_ids() -> impl Iterator<Item = &'static str> {
+    plugins::lyra_doc_source_ids()
+}
+
+/// Renders the Luau definitions for `id`, or `None` for an unknown id.
+#[cfg(feature = "docgen")]
+pub fn render_lyra_doc_source(id: &str) -> Result<Option<String>> {
+    plugins::render_lyra_doc_source(id)
+}
+
+/// The REST API's OpenAPI document.
+#[cfg(feature = "docgen")]
+pub fn openapi_spec() -> impl serde::Serialize {
+    routes::build_openapi_spec()
+}
+
+/// The WebSocket API's AsyncAPI document.
+#[cfg(feature = "docgen")]
+pub fn asyncapi_spec() -> impl serde::Serialize {
+    services::remote::messages::WsApiSpec::asyncapi_spec()
 }
 
 /// Installs plugins from a Git repository into the plugins directory.
 /// Disk-only: the next server start (or a runtime reload through the API)
 /// loads them, so this works whether or not the server is running.
 pub async fn run_plugins_add(url: &str, git_ref: Option<&str>) -> Result<()> {
-    let report = services::plugin_repositories::install_to_disk(url, git_ref, None)
+    let report = plugins::repositories::install_to_disk(url, git_ref, None)
         .await
         .map_err(|err| anyhow::anyhow!("{err}"))?;
 
@@ -363,14 +266,14 @@ pub async fn run_plugins_add(url: &str, git_ref: Option<&str>) -> Result<()> {
 struct CliDb {
     db: DbAny,
     path: std::path::PathBuf,
-    _lock: Option<db::process_lock::DbProcessLock>,
+    _lock: Option<crate::db::process_lock::DbProcessLock>,
 }
 
 /// `command` is the CLI command name (for example `db optimize`) used in
 /// diagnostics; `verb` describes the action in "nothing to <verb>" errors.
 fn open_cli_db(command: &'static str, verb: &str) -> Result<CliDb> {
     let boot = config::load()?.boot;
-    if matches!(boot.db.kind, config::DbKind::Memory) {
+    if matches!(boot.db.kind, crate::db::bootstrap::DbKind::Memory) {
         anyhow::bail!(
             "nothing to {verb}: db kind is memory; configure DbKind::File or DbKind::Mmap to use this command"
         );
@@ -381,11 +284,15 @@ fn open_cli_db(command: &'static str, verb: &str) -> Result<CliDb> {
         anyhow::bail!("nothing to {verb}: no database file at {}", path.display());
     }
 
-    let lock = db::process_lock::acquire(
+    let lock = crate::db::process_lock::acquire(
         &boot.db,
-        db::process_lock::LockMode::NonBlocking { command },
+        crate::db::process_lock::LockMode::NonBlocking { command },
+    )
+    .map_err(config::storage::explain_db_open_error)?;
+    let db = crate::db::bootstrap::open(
+        crate::db::bootstrap::DbKind::File,
+        path.to_string_lossy().as_ref(),
     )?;
-    let db = db::bootstrap::open(config::DbKind::File, path.to_string_lossy().as_ref())?;
     Ok(CliDb {
         db,
         path,
@@ -395,7 +302,7 @@ fn open_cli_db(command: &'static str, verb: &str) -> Result<CliDb> {
 
 /// Force-compact the DB from the CLI.
 pub async fn run_db_optimize() -> Result<()> {
-    let _tracing_guard = services::startup::init_tracing();
+    let _tracing_guard = init_tracing();
     let CliDb {
         mut db,
         path: db_path,
@@ -438,7 +345,7 @@ pub async fn run_db_optimize() -> Result<()> {
 /// Clears every stored server setting so a database whose entries no longer
 /// validate can start again.
 pub async fn run_settings_reset() -> Result<()> {
-    let _tracing_guard = services::startup::init_tracing();
+    let _tracing_guard = init_tracing();
     let mut cli = open_cli_db("settings reset", "reset")?;
     let removed = server_settings::reset_stored(&mut cli.db)?;
 

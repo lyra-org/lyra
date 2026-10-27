@@ -19,20 +19,17 @@ use std::{
     },
 };
 
-use crate::{
-    routes,
-    services::remote::messages::WsApiSpec,
-};
-
-use super::{
+use lyra_server::{
+    asyncapi_spec,
     lyra_doc_source_ids,
+    openapi_spec,
     render_lyra_doc_source,
 };
 
-pub(crate) const DEFAULT_SETUP_DOCS_OUT_DIR: &str = ".lyra/luau";
-pub(crate) const DEFAULT_SETUP_DEFS_DIR: &str = ".lyra/defs";
-pub(crate) const DEFAULT_SETUP_API_DOCS_DIR: &str = ".lyra/api";
-pub(crate) const GLOBALS_DEFINITIONS_FILENAME: &str = "globals.d.luau";
+const DEFAULT_SETUP_DOCS_OUT_DIR: &str = ".lyra/luau";
+const DEFAULT_SETUP_DEFS_DIR: &str = ".lyra/defs";
+const DEFAULT_SETUP_API_DOCS_DIR: &str = ".lyra/api";
+const GLOBALS_DEFINITIONS_FILENAME: &str = "globals.d.luau";
 
 const OPENAPI_FILENAME: &str = "openapi.json";
 const ASYNCAPI_FILENAME: &str = "asyncapi.json";
@@ -70,14 +67,14 @@ macro_rules! surface {
     };
 }
 
-pub(crate) fn doc_source_ids() -> impl Iterator<Item = &'static str> {
+fn doc_source_ids() -> impl Iterator<Item = &'static str> {
     harmony_surfaces()
         .iter()
         .map(|surface| surface.id)
         .chain(lyra_doc_source_ids())
 }
 
-pub(crate) fn render_doc_source(id: &str) -> Result<String> {
+fn render_doc_source(id: &str) -> Result<String> {
     if let Some(surface) = harmony_surfaces().iter().find(|surface| surface.id == id) {
         return (surface.render_docs)();
     }
@@ -91,12 +88,12 @@ pub(crate) fn render_doc_source(id: &str) -> Result<String> {
 
 fn render_api_doc(kind: ApiDocKind) -> Result<String> {
     match kind {
-        ApiDocKind::OpenApi => render_pretty_json(&routes::build_openapi_spec(), "OpenAPI docs"),
-        ApiDocKind::AsyncApi => render_pretty_json(&WsApiSpec::asyncapi_spec(), "AsyncAPI docs"),
+        ApiDocKind::OpenApi => render_pretty_json(&openapi_spec(), "OpenAPI docs"),
+        ApiDocKind::AsyncApi => render_pretty_json(&asyncapi_spec(), "AsyncAPI docs"),
     }
 }
 
-pub(crate) fn generate_docs(out_dir: &Path) -> Result<()> {
+fn generate_docs(out_dir: &Path) -> Result<()> {
     write_docs(out_dir, DocOutputLayout::Declaration, true)?;
     let globals_path = out_dir.join(GLOBALS_DEFINITIONS_FILENAME);
     write_globals_definition(&globals_path)?;
@@ -105,7 +102,7 @@ pub(crate) fn generate_docs(out_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn setup_docs(project_root: &Path) -> Result<()> {
+fn setup_docs(project_root: &Path) -> Result<()> {
     let config_luau_path = project_root.join(LUAUCONFIG_FILENAME);
     if config_luau_path.is_file() {
         bail!(
@@ -187,14 +184,14 @@ fn write_api_docs(out_dir: &Path, print_paths: bool) -> Result<()> {
         .with_context(|| format!("create API docs output directory {}", out_dir.display()))?;
 
     let openapi_path = out_dir.join(OPENAPI_FILENAME);
-    let openapi = routes::build_openapi_spec();
+    let openapi = openapi_spec();
     write_pretty_json(&openapi_path, &openapi)?;
     if print_paths {
         println!("{}", openapi_path.display());
     }
 
     let asyncapi_path = out_dir.join(ASYNCAPI_FILENAME);
-    let asyncapi = WsApiSpec::asyncapi_spec();
+    let asyncapi = asyncapi_spec();
     write_pretty_json(&asyncapi_path, &asyncapi)?;
     if print_paths {
         println!("{}", asyncapi_path.display());

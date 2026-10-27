@@ -23,7 +23,6 @@ use crate::{
         BootConfig,
         FileSettings,
     },
-    db,
     services::libraries::LibraryConfig,
 };
 
@@ -184,8 +183,8 @@ pub(crate) struct StoredSetting {
 }
 
 pub(crate) fn load_stored(db: &mut agdb::DbAny) -> Result<Vec<StoredSetting>> {
-    db::settings::server::ensure(db)?;
-    db::settings::server::get_all_with(db)?
+    crate::db::settings::server::ensure(db)?;
+    crate::db::settings::server::get_all_with(db)?
         .into_iter()
         .map(|entry| {
             let value = serde_json::from_str(&entry.value).with_context(|| {
@@ -205,13 +204,13 @@ pub(crate) fn load_stored(db: &mut agdb::DbAny) -> Result<Vec<StoredSetting>> {
 /// Removes every stored server setting and returns the keys removed. The
 /// parent node is kept (or created) so the next start reads an empty set.
 pub(crate) fn reset_stored(db: &mut agdb::DbAny) -> Result<Vec<String>> {
-    db::settings::server::ensure(db)?;
-    let mut keys: Vec<String> = db::settings::server::get_all_with(db)?
+    crate::db::settings::server::ensure(db)?;
+    let mut keys: Vec<String> = crate::db::settings::server::get_all_with(db)?
         .into_iter()
         .map(|entry| entry.key)
         .collect();
     keys.sort_unstable();
-    db.transaction_mut(|t| db::settings::server::clear_with(t))?;
+    db.transaction_mut(|t| crate::db::settings::server::clear_with(t))?;
     Ok(keys)
 }
 
@@ -551,7 +550,7 @@ mod tests {
 
     fn stored_parent(db: &agdb::DbAny) -> anyhow::Result<DbId> {
         Ok(DbId::from(
-            db::settings::server::find_with(db)?
+            crate::db::settings::server::find_with(db)?
                 .and_then(|node| node.db_id)
                 .expect("ensure creates the parent"),
         ))
@@ -563,8 +562,13 @@ mod tests {
         assert!(load_stored(&mut db)?.is_empty());
 
         let parent = stored_parent(&db)?;
-        db::settings::upsert_setting_with(&mut db, parent, "auth.enabled".into(), "false".into())?;
-        db::settings::upsert_setting_with(
+        crate::db::settings::upsert_setting_with(
+            &mut db,
+            parent,
+            "auth.enabled".into(),
+            "false".into(),
+        )?;
+        crate::db::settings::upsert_setting_with(
             &mut db,
             parent,
             "sync.interval_secs".into(),
@@ -591,7 +595,12 @@ mod tests {
         let mut db = crate::db::test_db::new_test_db()?;
         load_stored(&mut db)?;
         let parent = stored_parent(&db)?;
-        db::settings::upsert_setting_with(&mut db, parent, "auth.enabled".into(), "nope".into())?;
+        crate::db::settings::upsert_setting_with(
+            &mut db,
+            parent,
+            "auth.enabled".into(),
+            "nope".into(),
+        )?;
 
         let error = load_stored(&mut db).expect_err("malformed JSON should fail");
         assert!(error.to_string().contains("'auth.enabled'"));

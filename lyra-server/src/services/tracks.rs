@@ -13,7 +13,6 @@ use super::entities::{
     relations,
 };
 use crate::db::{
-    self,
     Release,
     Track,
 };
@@ -83,7 +82,7 @@ pub(crate) fn get_details(
     track_db_id: DbId,
     includes: TrackIncludes,
 ) -> anyhow::Result<Option<TrackDetails>> {
-    let Some(track) = db::tracks::get_by_id(db, track_db_id)? else {
+    let Some(track) = crate::db::tracks::get_by_id(db, track_db_id)? else {
         return Ok(None);
     };
 
@@ -95,18 +94,20 @@ pub(crate) fn get_details(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::test_db::{
+    use crate::db::fixtures::{
         connect,
-        connect_artist,
         insert_artist,
         insert_release,
         insert_track,
+    };
+    use crate::db::test_db::{
+        connect_artist,
         new_test_db,
     };
     use crate::services::entities::ArtistCreditSource;
 
     fn list_details(db: &DbAny, includes: TrackIncludes) -> anyhow::Result<Vec<TrackDetails>> {
-        let tracks = db::tracks::get(db, "tracks")?;
+        let tracks = crate::db::tracks::get(db, "tracks")?;
         list_details_for_tracks(db, includes, tracks)
     }
 
@@ -140,7 +141,7 @@ mod tests {
         let artists = details[0].artists.as_ref().expect("artists included");
         assert_eq!(artists.len(), 1);
         assert_eq!(artists[0].artist.artist_name, "Coltrane");
-        assert_eq!(artists[0].credit.credit_type, db::CreditType::Artist);
+        assert_eq!(artists[0].credit.credit_type, crate::db::CreditType::Artist);
         assert_eq!(artists[0].source, ArtistCreditSource::Track);
 
         Ok(())
@@ -196,7 +197,7 @@ mod tests {
         let artists = details.artists.expect("artists included");
         assert_eq!(artists.len(), 1);
         assert_eq!(artists[0].artist.artist_name, "Mingus");
-        assert_eq!(artists[0].credit.credit_type, db::CreditType::Artist);
+        assert_eq!(artists[0].credit.credit_type, crate::db::CreditType::Artist);
         assert_eq!(artists[0].source, ArtistCreditSource::Track);
 
         Ok(())
@@ -222,7 +223,7 @@ mod tests {
         let artists = details.artists.expect("artists included");
         assert_eq!(artists.len(), 1);
         assert_eq!(artists[0].artist.artist_name, "Release Artist");
-        assert_eq!(artists[0].credit.credit_type, db::CreditType::Artist);
+        assert_eq!(artists[0].credit.credit_type, crate::db::CreditType::Artist);
         assert_eq!(artists[0].source, ArtistCreditSource::Release);
 
         Ok(())

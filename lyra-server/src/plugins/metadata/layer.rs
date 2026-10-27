@@ -13,22 +13,21 @@ use std::{
 
 use agdb::DbId;
 use harmony_luau as luau;
+
 use serde_json::Value as JsonValue;
 
 use super::parsing::parse_custom_field_version;
+use crate::db::ArtistRelationType;
+use crate::db::CreditType;
+use crate::db::DbAsync;
+use crate::db::MetadataField;
+use crate::db::metadata::layers::LayerCredits;
+use crate::db::metadata::layers::LayerFields;
+use crate::db::metadata::layers::LayerRelations;
+use crate::db::metadata::layers::edges::LayerCreditInput;
+use crate::db::metadata::layers::edges::LayerRelationInput;
+use crate::db::metadata::layers::normalize_value;
 use crate::plugins::args;
-use crate::plugins::db::{
-    ArtistRelationType,
-    CreditType,
-    DbAsync,
-    LayerCreditInput,
-    LayerCredits,
-    LayerFields,
-    LayerRelationInput,
-    LayerRelations,
-    MetadataField,
-    normalize_value,
-};
 use crate::services::metadata::layers::{
     CustomFieldChanges,
     ProviderValues,

@@ -3,123 +3,132 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use super::websocket::WebSocketRouteRequest;
-use super::*;
+mod image;
+mod parsing;
+mod responses;
+mod websocket;
 
-#[derive(Default)]
-pub(crate) struct ApiRouteStore {
-    next_handler_id: Cell<u64>,
-    handlers: RefCell<HashMap<u64, ApiHandlerRegistration>>,
-}
+use std::{
+    collections::{
+        HashMap,
+        HashSet,
+    },
+    env,
+    ffi::OsString,
+    path::{
+        Path as FsPath,
+        PathBuf,
+    },
+    sync::{
+        Arc,
+        LazyLock,
+    },
+};
 
-pub(super) struct ApiRouteRegistration {
-    pub(super) plugin_id: Arc<str>,
-    pub(super) method: &'static str,
-    pub(super) path: String,
-    pub(super) handler: luau::Function,
-    pub(super) auth_mode: Option<String>,
-    pub(super) case_insensitive: bool,
-    pub(super) context: harmony_core::CallContext,
-}
+use anyhow::{
+    Context,
+    Result,
+    bail,
+};
+use axum::{
+    Router,
+    body::{
+        Body,
+        Bytes,
+    },
+    extract::{
+        Path,
+        Query,
+        Request,
+        WebSocketUpgrade,
+        ws::{
+            Message,
+            WebSocket,
+        },
+    },
+    http::{
+        HeaderMap,
+        Method,
+        StatusCode,
+        Uri,
+        header::{
+            ACCEPT_RANGES,
+            CONTENT_LENGTH,
+            CONTENT_RANGE,
+            CONTENT_TYPE,
+            HeaderName,
+            HeaderValue,
+            RANGE,
+        },
+    },
+    response::{
+        IntoResponse,
+        Response,
+    },
+    routing::{
+        MethodFilter,
+        MethodRouter,
+        any,
+        get,
+        on,
+    },
+};
+use futures::future::BoxFuture;
+use tower::ServiceExt;
+use tower_http::services::ServeDir;
 
-impl ApiRouteStore {
-    pub(crate) fn new() -> Self {
-        Self {
-            next_handler_id: Cell::new(1),
-            handlers: RefCell::new(HashMap::new()),
-        }
-    }
+use self::image::{
+    image_format_mime,
+    parse_image_transform_options,
+    transform_image,
+};
+use self::parsing::{
+    infer_content_type,
+    join_preferred_codecs,
+    parse_hls_serve_options,
+    parse_track_serve_options,
+    parse_u32_json,
+    stream_track_options,
+};
+pub(crate) use self::responses::decide_delivery;
+use self::responses::{
+    header_pairs,
+    plugin_api_response_to_axum,
+};
+use self::websocket::{
+    WebSocketRouteRequest,
+    dispatch_websocket_route,
+};
+use crate::plugins::api::{
+    CaseInsensitiveRouter,
+    RegisteredRoute,
+    RouteAuthMode,
+    RouteHost,
+    RouteKey,
+    RouteKind,
+    initialize_registry,
+    placeholder_offset,
+    registered_routes,
+};
+use crate::routes::{
+    HlsPlaylistOptions,
+    ServeTrackOptions,
+    TrackAccess,
+    build_ranged_file_body,
+    download_track_response,
+    serve_hls_playlist_for_track,
+    stream_track_response,
+};
+use crate::services::auth::resolve_optional_auth;
+use crate::services::remote::constants::{
+    AUTH_CHECK_INTERVAL,
+    MAX_CONSECUTIVE_AUTH_ERRORS,
+    MAX_MESSAGE_SIZE,
+    PING_INTERVAL,
+    PONG_TIMEOUT,
+    WRITE_TIMEOUT,
+};
 
-    pub(super) fn register(&self, registration: ApiRouteRegistration) -> luau::runtime::Result<()> {
-        let ApiRouteRegistration {
-            plugin_id,
-            method,
-            path,
-            handler,
-            auth_mode,
-            case_insensitive,
-            context,
-        } = registration;
-        let key = if case_insensitive {
-            RouteKey::new_case_insensitive(method, &path)
-        } else {
-            RouteKey::new(method, &path)
-        }
-        .map_err(crate::plugins::runtime_error)?;
-        let auth_mode = normalize_auth_mode(auth_mode.as_deref())?;
-        let plugin = crate::plugins::lifecycle::PluginId::new(plugin_id.to_string())
-            .map_err(crate::plugins::runtime_error)?;
-
-        let handler_id = self.next_handler_id.get();
-        self.next_handler_id.set(handler_id.saturating_add(1));
-        self.handlers
-            .borrow_mut()
-            .insert(handler_id, ApiHandlerRegistration { handler, context });
-        futures::executor::block_on(async {
-            API_ROUTE_REGISTRY
-                .write()
-                .await
-                .register(RegisteredRoute {
-                    key,
-                    plugin_id: plugin,
-                    auth_mode,
-                    case_insensitive,
-                    handler_id,
-                    kind: RouteKind::Http,
-                })
-                .map_err(crate::plugins::runtime_error)
-        })?;
-        Ok(())
-    }
-
-    pub(super) fn register_websocket(
-        &self,
-        plugin_id: Arc<str>,
-        path: String,
-        handler: luau::Function,
-        auth_mode: Option<String>,
-        context: harmony_core::CallContext,
-    ) -> luau::runtime::Result<()> {
-        let key = RouteKey::new("GET", &path).map_err(crate::plugins::runtime_error)?;
-        let auth_mode = normalize_auth_mode(auth_mode.as_deref())?;
-        let plugin = crate::plugins::lifecycle::PluginId::new(plugin_id.to_string())
-            .map_err(crate::plugins::runtime_error)?;
-
-        let handler_id = self.next_handler_id.get();
-        self.next_handler_id.set(handler_id.saturating_add(1));
-        self.handlers
-            .borrow_mut()
-            .insert(handler_id, ApiHandlerRegistration { handler, context });
-        futures::executor::block_on(async {
-            API_ROUTE_REGISTRY
-                .write()
-                .await
-                .register(RegisteredRoute {
-                    key,
-                    plugin_id: plugin,
-                    auth_mode,
-                    case_insensitive: false,
-                    handler_id,
-                    kind: RouteKind::WebSocket,
-                })
-                .map_err(crate::plugins::runtime_error)
-        })?;
-        Ok(())
-    }
-
-    pub(crate) fn get(&self, id: u64) -> Option<ApiHandlerRegistration> {
-        self.handlers.borrow().get(&id).cloned()
-    }
-}
-
-#[derive(Clone)]
-pub(crate) struct ApiHandlerRegistration {
-    pub(crate) handler: luau::Function,
-    pub(crate) context: harmony_core::CallContext,
-}
-
-pub(super) static API_ROUTE_REGISTRY: LazyLock<Arc<tokio::sync::RwLock<ApiRouteRegistry>>> =
-    LazyLock::new(|| Arc::new(tokio::sync::RwLock::new(ApiRouteRegistry::new())));
 static LIMITER_ROUTE_MATCHER: LazyLock<std::sync::RwLock<Arc<matchit::Router<()>>>> =
     LazyLock::new(|| std::sync::RwLock::new(Arc::new(matchit::Router::new())));
 pub(super) static INSTALLED_ROUTERS: LazyLock<Arc<tokio::sync::RwLock<InstalledRouters>>> =
@@ -129,226 +138,27 @@ pub(super) static INSTALLED_STATIC_DIR: LazyLock<Arc<tokio::sync::RwLock<Option<
 
 pub(super) const LYRA_STATIC_DIR_ENV: &str = "LYRA_STATIC_DIR";
 
-#[derive(Clone, Debug)]
-pub(super) enum RouteAuthMode {
-    Public,
-    Required,
+/// Serves registered plugin routes behind `app`'s own routes, with `app`'s
+/// routes reserved against plugin registration.
+pub(crate) async fn install(app: Router, reservations: HashSet<RouteKey>) -> Result<Router> {
+    let static_dir = find_static_dir()?;
+    if let Some(ref dir) = static_dir {
+        tracing::info!(static_dir = %dir.display(), "serving static directory");
+    }
+    initialize_registry(reservations, Some(Arc::new(InstalledRoutes))).await;
+    initialize_router(static_dir).await;
+    Ok(app.fallback(fallback))
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum RouteKind {
-    Http,
-    WebSocket,
-}
+struct InstalledRoutes;
 
-#[derive(Clone, Debug)]
-pub(super) struct RegisteredRoute {
-    pub(super) key: RouteKey,
-    pub(super) plugin_id: crate::plugins::lifecycle::PluginId,
-    pub(super) auth_mode: RouteAuthMode,
-    pub(super) case_insensitive: bool,
-    pub(super) handler_id: u64,
-    pub(super) kind: RouteKind,
-}
-
-#[derive(Default, Clone)]
-pub(super) struct CaseInsensitiveRouter {
-    inner: matchit::Router<Arc<str>>,
-    paths: HashSet<String>,
-}
-
-impl CaseInsensitiveRouter {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    fn insert(&mut self, path: &str) -> Result<()> {
-        if !self.paths.insert(path.to_string()) {
-            return Ok(());
-        }
-        let pattern: Arc<str> = Arc::from(path);
-        self.inner
-            .insert(path.to_string(), pattern)
-            .with_context(|| format!("register case-insensitive route '{path}'"))?;
-        Ok(())
-    }
-
-    fn find_pattern(&self, path: &str) -> Option<Arc<str>> {
-        self.inner
-            .at(path)
-            .ok()
-            .map(|matched| matched.value.clone())
-    }
-}
-
-#[derive(Default)]
-pub(super) enum FreezeState {
-    #[default]
-    Open,
-    Frozen {
-        exemptions: HashSet<crate::plugins::lifecycle::PluginId>,
-    },
-}
-
-#[derive(Default)]
-pub(super) struct ApiRouteRegistry {
-    core_routes: HashSet<RouteKey>,
-    routes: HashMap<crate::plugins::lifecycle::PluginId, HashMap<RouteKey, RegisteredRoute>>,
-    ci_router: CaseInsensitiveRouter,
-    state: FreezeState,
-}
-
-impl ApiRouteRegistry {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    fn reset(&mut self, core_routes: HashSet<RouteKey>) {
-        self.core_routes = core_routes;
-        self.routes.clear();
-        self.ci_router = CaseInsensitiveRouter::new();
-        self.state = FreezeState::Open;
-    }
-
-    fn freeze(&mut self) {
-        self.state = FreezeState::Frozen {
-            exemptions: HashSet::new(),
-        };
-    }
-
-    pub(super) fn unfreeze_plugin(&mut self, plugin_id: crate::plugins::lifecycle::PluginId) {
-        if let FreezeState::Frozen { exemptions } = &mut self.state {
-            exemptions.insert(plugin_id);
-        }
-    }
-
-    pub(super) fn refreeze_plugin(&mut self, plugin_id: &crate::plugins::lifecycle::PluginId) {
-        if let FreezeState::Frozen { exemptions } = &mut self.state {
-            exemptions.remove(plugin_id);
-        }
-    }
-
-    fn writes_allowed(&self, plugin_id: &crate::plugins::lifecycle::PluginId) -> bool {
-        match &self.state {
-            FreezeState::Open => true,
-            FreezeState::Frozen { exemptions } => exemptions.contains(plugin_id),
-        }
-    }
-
-    fn iter_all(&self) -> impl Iterator<Item = &RegisteredRoute> {
-        self.routes.values().flat_map(|bucket| bucket.values())
-    }
-
-    fn find(&self, key: &RouteKey) -> Option<&RegisteredRoute> {
-        self.iter_all().find(|route| &route.key == key)
-    }
-
-    pub(super) fn register(&mut self, route: RegisteredRoute) -> Result<()> {
-        if !self.writes_allowed(&route.plugin_id) {
-            bail!(
-                "lyra/api route registry is frozen for plugin '{}'",
-                route.plugin_id
-            );
-        }
-        if self.core_routes.contains(&route.key) {
-            bail!(
-                "plugin route conflicts with core route: {} {}",
-                route.key.method,
-                route.key.path
-            );
-        }
-        if let Some(existing) = self.find(&route.key) {
-            bail!(
-                "plugin route conflict: {} {} already registered by plugin '{}'",
-                route.key.method,
-                route.key.path,
-                existing.plugin_id
-            );
-        }
-
-        let new_lowered = if route.case_insensitive {
-            route.key.path.to_string()
-        } else {
-            lowercase_literal_segments(route.key.path.as_ref())
-        };
-        for existing in self.iter_all() {
-            if existing.key.path == route.key.path {
-                continue;
-            }
-            let existing_lowered = if existing.case_insensitive {
-                existing.key.path.to_string()
-            } else {
-                lowercase_literal_segments(existing.key.path.as_ref())
-            };
-            if existing_lowered == new_lowered
-                && (route.case_insensitive || existing.case_insensitive)
-            {
-                bail!(
-                    "plugin '{}' route '{}' shadows '{}' registered by plugin '{}' via case-insensitive lowering",
-                    route.plugin_id,
-                    route.key.path,
-                    existing.key.path,
-                    existing.plugin_id,
-                );
-            }
-        }
-
-        if route.case_insensitive {
-            self.ci_router
-                .insert(route.key.path.as_ref())
-                .map_err(|err| {
-                    anyhow::anyhow!(
-                        "plugin '{}' route '{}': {}",
-                        route.plugin_id,
-                        route.key.path,
-                        err
-                    )
-                })?;
-        }
-        self.routes
-            .entry(route.plugin_id.clone())
-            .or_default()
-            .insert(route.key.clone(), route);
-        Ok(())
-    }
-
-    pub(super) fn snapshot(&self) -> Vec<RegisteredRoute> {
-        let mut routes: Vec<RegisteredRoute> = self.iter_all().cloned().collect();
-        routes.sort_by(|left, right| {
-            left.key
-                .path
-                .cmp(&right.key.path)
-                .then_with(|| left.key.method.cmp(&right.key.method))
-        });
-        routes
-    }
-
-    fn ci_router_snapshot(&self) -> CaseInsensitiveRouter {
-        self.ci_router.clone()
-    }
-
-    pub(super) fn clear_bucket(&mut self, plugin_id: &crate::plugins::lifecycle::PluginId) {
-        self.routes.remove(plugin_id);
-        if let FreezeState::Frozen { exemptions } = &mut self.state {
-            exemptions.remove(plugin_id);
-        }
-        self.rebuild_derived();
-    }
-
-    fn rebuild_derived(&mut self) {
-        let ci_paths: Vec<(crate::plugins::lifecycle::PluginId, Arc<str>)> = self
-            .iter_all()
-            .filter(|route| route.case_insensitive)
-            .map(|route| (route.plugin_id.clone(), route.key.path.clone()))
-            .collect();
-        self.ci_router = CaseInsensitiveRouter::new();
-        for (plugin_id, path) in ci_paths {
-            self.ci_router.insert(&path).unwrap_or_else(|err| {
-                panic!(
-                    "case-insensitive router rebuild failed for plugin '{plugin_id}' path '{path}' (already validated at register time): {err}"
-                )
-            });
-        }
+impl RouteHost for InstalledRoutes {
+    fn rebuild(&self) -> BoxFuture<'_, Result<()>> {
+        Box::pin(async {
+            let built = build_router(installed_static_dir().await).await?;
+            install_router(built).await;
+            Ok(())
+        })
     }
 }
 
@@ -424,14 +234,6 @@ pub(super) fn apply_catchall_and_static(router: Router, static_dir: Option<PathB
     } else {
         router
     }
-}
-
-pub(super) async fn initialize_registry(core_routes: HashSet<RouteKey>) {
-    API_ROUTE_REGISTRY.write().await.reset(core_routes);
-}
-
-pub(super) async fn freeze_registry() {
-    API_ROUTE_REGISTRY.write().await.freeze();
 }
 
 pub(super) async fn initialize_router(static_dir: Option<PathBuf>) {
@@ -571,10 +373,7 @@ fn rebuild_uri_with_path(uri: &Uri, new_path: &str) -> Option<Uri> {
 }
 
 async fn build_registered_router() -> Result<BuiltRouters> {
-    let (routes, ci_router) = {
-        let registry = API_ROUTE_REGISTRY.read().await;
-        (registry.snapshot(), registry.ci_router_snapshot())
-    };
+    let (routes, ci_router) = registered_routes().await;
 
     let mut probe: matchit::Router<String> = matchit::Router::new();
     let mut limiter_matcher: matchit::Router<()> = matchit::Router::new();
@@ -623,7 +422,7 @@ async fn build_registered_router() -> Result<BuiltRouters> {
 }
 
 fn describe_probe_conflict(
-    plugin_id: &crate::plugins::lifecycle::PluginId,
+    plugin_id: &crate::services::plugin_scope::PluginId,
     path: &str,
     err: matchit::InsertError,
     plugin_by_path: &HashMap<String, String>,
@@ -763,7 +562,7 @@ async fn dispatch_registered_route(request: RegisteredRouteRequest) -> Response 
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
 
-    let Some(runtime) = crate::STATE.generation().plugin_runtime.get() else {
+    let Some(runtime) = crate::plugins::STATE.generation().runtime.get() else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             "plugin runtime is not ready",

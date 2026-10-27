@@ -118,7 +118,7 @@ pub(super) async fn dispatch_websocket_route(
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
 
-    let Some(runtime) = crate::STATE.generation().plugin_runtime.get() else {
+    let Some(runtime) = crate::plugins::STATE.generation().runtime.get() else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             "plugin runtime is not ready",
@@ -306,10 +306,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        STATE,
-        db,
-    };
+    use crate::services::STATE;
 
     async fn socket_reauth(bearer: &str) -> anyhow::Result<SocketReauth> {
         let mut headers = HeaderMap::new();
@@ -333,16 +330,17 @@ mod tests {
     async fn session_user(username: &str) -> anyhow::Result<(agdb::DbId, String)> {
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            db::test_db::insert_user(&mut db, username)?
+            crate::db::test_db::insert_user(&mut db, username)?
         };
-        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
+        let session =
+            crate::services::testing::create_session(user_db_id, Default::default()).await?;
         Ok((user_db_id, session.token))
     }
 
     #[tokio::test]
     async fn reauth_closes_on_revoked_session() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
-        crate::testing::init_default_test_state()?;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
         let (_, token) = session_user("socket-revoked").await?;
         let mut reauth = socket_reauth(&token).await?;
 
@@ -354,13 +352,13 @@ mod tests {
 
     #[tokio::test]
     async fn reauth_closes_on_revoked_api_key() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
-        crate::testing::init_default_test_state()?;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            db::test_db::insert_user(&mut db, "socket-key-owner")?
+            crate::db::test_db::insert_user(&mut db, "socket-key-owner")?
         };
-        let principal = crate::testing::user_principal(user_db_id).await?;
+        let principal = crate::services::testing::user_principal(user_db_id).await?;
         let key = crate::services::auth::api_keys::create_api_key(&principal, "socket")
             .await
             .map_err(|err| anyhow::anyhow!("{err}"))?;
@@ -376,8 +374,8 @@ mod tests {
 
     #[tokio::test]
     async fn reauth_refreshes_the_socket_principal() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
-        crate::testing::init_default_test_state()?;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
         let (user_db_id, token) = session_user("socket-promoted").await?;
         let mut reauth = socket_reauth(&token).await?;
         let before = reauth
@@ -386,13 +384,17 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("slot should be seeded"))?;
         assert_ne!(
             before.role_name.as_deref(),
-            Some(db::roles::BUILTIN_ADMIN_ROLE)
+            Some(crate::db::roles::BUILTIN_ADMIN_ROLE)
         );
 
         {
             let mut db = STATE.db.write().await;
-            db::roles::ensure_builtin_roles(&mut db)?;
-            db::roles::ensure_user_has_role(&mut db, user_db_id, db::roles::BUILTIN_ADMIN_ROLE)?;
+            crate::db::roles::ensure_builtin_roles(&mut db)?;
+            crate::db::roles::ensure_user_has_role(
+                &mut db,
+                user_db_id,
+                crate::db::roles::BUILTIN_ADMIN_ROLE,
+            )?;
         }
         assert!(reauth.check().await);
 
@@ -402,7 +404,7 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("slot should stay seeded"))?;
         assert_eq!(
             after.role_name.as_deref(),
-            Some(db::roles::BUILTIN_ADMIN_ROLE)
+            Some(crate::db::roles::BUILTIN_ADMIN_ROLE)
         );
         assert!(after.permissions.len() > before.permissions.len());
         Ok(())
@@ -410,14 +412,14 @@ mod tests {
 
     #[tokio::test]
     async fn reauth_closes_on_deleted_user() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
-        crate::testing::init_default_test_state()?;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
         let (user_db_id, token) = session_user("socket-deleted").await?;
         let mut reauth = socket_reauth(&token).await?;
 
         {
             let mut db = STATE.db.write().await;
-            db::users::delete_user(&mut db, user_db_id)?;
+            crate::db::users::delete_user(&mut db, user_db_id)?;
         }
         assert!(!reauth.check().await);
         Ok(())
@@ -425,18 +427,18 @@ mod tests {
 
     #[tokio::test]
     async fn reauth_closes_when_the_credential_resolves_to_another_user() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
-        crate::testing::init_default_test_state()?;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
         {
             let mut db = STATE.db.write().await;
-            db::users::ensure_default_user(&mut db)?;
+            crate::db::users::ensure_default_user(&mut db)?;
         }
         let (_, token) = session_user("socket-collapsed").await?;
         let mut reauth = socket_reauth(&token).await?;
 
         let mut config = STATE.config().as_ref().clone();
         config.auth.enabled = false;
-        crate::testing::publish_config(config);
+        crate::services::testing::publish_config(config);
 
         assert!(!reauth.check().await);
         Ok(())
@@ -444,12 +446,12 @@ mod tests {
 
     #[tokio::test]
     async fn reauth_leaves_a_plugin_resolved_principal_alone() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
-        crate::testing::init_default_test_state()?;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
         let (_, token) = session_user("socket-original").await?;
         let (other_db_id, _) = session_user("socket-plugin-resolved").await?;
         let mut reauth = socket_reauth(&token).await?;
-        let other = crate::testing::user_principal(other_db_id).await?;
+        let other = crate::services::testing::user_principal(other_db_id).await?;
         reauth.dispatch_auth.record(other.clone());
 
         assert!(reauth.check().await);
@@ -540,8 +542,8 @@ mod tests {
 
     #[tokio::test]
     async fn driver_closes_and_clears_the_slot_on_revocation() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
-        crate::testing::init_default_test_state()?;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
         let (_, token) = session_user("socket-driver-revoked").await?;
         let reauth = socket_reauth(&token).await?;
         let dispatch_auth = reauth.dispatch_auth.clone();
@@ -561,11 +563,11 @@ mod tests {
 
     #[tokio::test]
     async fn driver_clears_the_slot_on_client_disconnect() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
-        crate::testing::init_default_test_state()?;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
         let (user_db_id, _) = session_user("socket-driver-disconnect").await?;
         let dispatch_auth = crate::plugins::auth::DispatchAuth::default();
-        dispatch_auth.record(crate::testing::user_principal(user_db_id).await?);
+        dispatch_auth.record(crate::services::testing::user_principal(user_db_id).await?);
         let harness = spawn_driver(dispatch_auth.clone(), None);
 
         drop(harness.client_tx);
@@ -577,8 +579,8 @@ mod tests {
 
     #[tokio::test]
     async fn only_auth_required_sockets_act_as_the_connect_time_principal() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
-        crate::testing::init_default_test_state()?;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
         let (_, token) = session_user("socket-seeded").await?;
         let seeded = socket_reauth(&token).await?;
         let auth = resolve_optional_auth(&seeded.headers)

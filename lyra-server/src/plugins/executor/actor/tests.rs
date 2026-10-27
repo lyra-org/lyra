@@ -31,10 +31,10 @@ struct TestExecutor {
 }
 
 fn test_executor() -> Result<TestExecutor> {
-    let _ = futures::executor::block_on(crate::plugins::api::install(
-        axum::Router::new(),
+    futures::executor::block_on(crate::plugins::api::initialize_registry(
         std::collections::HashSet::new(),
-    ))?;
+        None,
+    ));
     let (tx, rx) = plugin_executor_channel(4);
     let (ready_tx, ready_rx) = mpsc::sync_channel(1);
     let (started_tx, started) = async_mpsc::unbounded_channel();
@@ -151,8 +151,8 @@ async fn signal(receiver: &mut async_mpsc::UnboundedReceiver<()>) -> Result<()> 
 #[tokio::test]
 async fn slow_metadata_does_not_block_other_callbacks_and_dropped_call_is_cancelled() -> Result<()>
 {
-    let _guard = crate::testing::runtime_test_lock().await;
-    crate::testing::init_default_test_state()?;
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
     let mut executor = test_executor()?;
     let slow = tokio::spawn({
         let handle = executor.handle.clone();
@@ -182,8 +182,8 @@ async fn slow_metadata_does_not_block_other_callbacks_and_dropped_call_is_cancel
 
 #[tokio::test]
 async fn metadata_deadline_cancels_waiting_host_future() -> Result<()> {
-    let _guard = crate::testing::runtime_test_lock().await;
-    crate::testing::init_default_test_state()?;
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
     let mut executor = test_executor()?;
     let result = tokio::time::timeout(
         Duration::from_secs(2),
@@ -200,8 +200,8 @@ async fn metadata_deadline_cancels_waiting_host_future() -> Result<()> {
 
 #[tokio::test]
 async fn expired_metadata_never_starts_and_completed_callback_returns_its_values() -> Result<()> {
-    let _guard = crate::testing::runtime_test_lock().await;
-    crate::testing::init_default_test_state()?;
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
     let mut executor = test_executor()?;
     let mut expired = request(executor.slow, Duration::ZERO);
     expired.deadline = Instant::now() - Duration::from_secs(1);
@@ -228,8 +228,8 @@ async fn expired_metadata_never_starts_and_completed_callback_returns_its_values
 
 #[tokio::test]
 async fn active_callbacks_retain_capacity_until_cancelled() -> Result<()> {
-    let _guard = crate::testing::runtime_test_lock().await;
-    crate::testing::init_default_test_state()?;
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
     let mut executor = test_executor()?;
     let mut calls = Vec::new();
     for _ in 0..4 {
@@ -264,8 +264,8 @@ async fn active_callbacks_retain_capacity_until_cancelled() -> Result<()> {
 
 #[tokio::test]
 async fn waiting_api_callback_does_not_delay_metadata_deadlines() -> Result<()> {
-    let _guard = crate::testing::runtime_test_lock().await;
-    crate::testing::init_default_test_state()?;
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
     let mut executor = test_executor()?;
     let api = tokio::spawn({
         let handle = executor.handle.clone();

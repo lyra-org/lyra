@@ -26,13 +26,13 @@ use serde::{
 };
 use std::collections::HashMap;
 
+use crate::db::ratings::{
+    MAX_VALUE,
+    MIN_VALUE,
+    RatingValue,
+};
 use crate::{
-    STATE,
-    db::ratings::{
-        MAX_VALUE,
-        MIN_VALUE,
-        RatingValue,
-    },
+    services::STATE,
     services::{
         auth::require_authenticated,
         ratings as rating_service,
@@ -301,20 +301,14 @@ pub(crate) fn rating_openapi_routes() -> aide::axum::ApiRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::fixtures::{
+        connect,
+        insert_track,
+    };
+    use crate::db::test_db::insert_library;
     use crate::{
-        db::{
-            self,
-            test_db::{
-                connect,
-                insert_library,
-                insert_track,
-            },
-        },
-        testing::{
-            LibraryFixtureConfig,
-            initialize_runtime,
-            runtime_test_lock,
-        },
+        plugins::testing::init_library_test_state,
+        services::testing::runtime_test_lock,
     };
     use axum::{
         body::{
@@ -414,36 +408,38 @@ mod tests {
     #[tokio::test]
     async fn check_ratings_route_is_authenticated_and_enforces_raw_cap() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
-        initialize_runtime(&LibraryFixtureConfig {
-            directory: std::path::PathBuf::from("."),
-            language: None,
-            country: None,
-        })
-        .await?;
+        init_library_test_state(std::path::PathBuf::from(".")).await?;
 
         let (user_db_id, track_id) = {
             let mut db = STATE.db.write().await;
-            db::roles::ensure_builtin_roles(&mut db)?;
-            let user_db_id =
-                db::users::create(&mut db, &db::test_db::test_user("ratings-check-admin")?)?;
-            db::roles::ensure_user_has_role(&mut db, user_db_id, db::roles::BUILTIN_ADMIN_ROLE)?;
+            crate::db::roles::ensure_builtin_roles(&mut db)?;
+            let user_db_id = crate::db::users::create(
+                &mut db,
+                &crate::db::fixtures::test_user("ratings-check-admin")?,
+            )?;
+            crate::db::roles::ensure_user_has_role(
+                &mut db,
+                user_db_id,
+                crate::db::roles::BUILTIN_ADMIN_ROLE,
+            )?;
             let library = insert_library(&mut db, "Ratings", "/tmp/lyra-ratings-check-route")?;
             let track = insert_track(&mut db, "Checked Track")?;
             connect(&mut db, library, track)?;
-            db::ratings::upsert(
+            crate::db::ratings::upsert(
                 &mut *db,
                 user_db_id,
                 track,
-                db::ratings::RatingKind::Track,
-                db::ratings::RatingValue::new(2).unwrap(),
+                crate::db::ratings::RatingKind::Track,
+                crate::db::ratings::RatingValue::new(2).unwrap(),
                 100,
             )?;
             (
                 user_db_id,
-                db::lookup::find_id_by_db_id(&db, track)?.unwrap(),
+                crate::db::lookup::find_id_by_db_id(&db, track)?.unwrap(),
             )
         };
-        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
+        let session =
+            crate::services::testing::create_session(user_db_id, Default::default()).await?;
         let authorization = format!("Bearer {}", session.token);
         let routes = rating_routes();
 

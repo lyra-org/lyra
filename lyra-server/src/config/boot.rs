@@ -11,7 +11,6 @@ use anyhow::{
     Result,
     anyhow,
 };
-use serde::Deserialize;
 use std::{
     env,
     ffi::OsString,
@@ -25,13 +24,16 @@ use super::{
     ConfigFile,
     non_empty_path,
 };
+use crate::db::bootstrap::{
+    DbConfig,
+    DbKind,
+};
 
 pub(crate) const DEFAULT_PORT: u16 = 4746;
 const LYRA_DATA_DIR_ENV: &str = "LYRA_DATA_DIR";
 const LYRA_DB_DIR_ENV: &str = "LYRA_DB_DIR";
 const LYRA_PORT_ENV: &str = "LYRA_PORT";
 const DEFAULT_DATA_DIR: &str = "data";
-const DEFAULT_DB_FILE_NAME: &str = "lyra.db";
 const DEFAULT_COVERS_DIR_NAME: &str = "covers";
 const TRANSCODE_CACHE_DIR_NAME: &str = "transcodes";
 
@@ -50,40 +52,6 @@ impl BootEnv {
             data_dir: env::var_os(LYRA_DATA_DIR_ENV),
             db_dir: env::var_os(LYRA_DB_DIR_ENV),
             port: env::var_os(LYRA_PORT_ENV),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Default, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum DbKind {
-    Memory,
-    File,
-    #[default]
-    Mmap,
-}
-
-impl DbKind {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Memory => "memory",
-            Self::File => "file",
-            Self::Mmap => "mmap",
-        }
-    }
-}
-
-#[derive(Clone)]
-pub(crate) struct DbConfig {
-    pub(crate) kind: DbKind,
-    pub(crate) path: PathBuf,
-}
-
-impl Default for DbConfig {
-    fn default() -> Self {
-        Self {
-            kind: DbKind::default(),
-            path: PathBuf::from(DEFAULT_DB_FILE_NAME),
         }
     }
 }
@@ -205,7 +173,6 @@ mod tests {
         BootConfig,
         BootEnv,
         DEFAULT_PORT,
-        DbKind,
         apply_port_override,
         data_dir_path,
         resolve_db_path,
@@ -214,6 +181,7 @@ mod tests {
         ConfigFile,
         temp_dir,
     };
+    use crate::db::bootstrap::DbKind;
     use std::{
         ffi::OsString,
         path::PathBuf,

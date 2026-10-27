@@ -11,7 +11,6 @@ use agdb::{
 };
 
 use crate::db::{
-    self,
     Entry,
     Release,
     Track,
@@ -29,7 +28,7 @@ pub(crate) use similarity::{
     MAX_SIMILAR_RELEASE_LIMIT,
     SimilarReleaseOptions,
     similar,
-    similar_in_vm,
+    similar_with_dispatch,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -129,7 +128,7 @@ pub(crate) fn get_details(
     release_db_id: DbId,
     includes: ReleaseIncludes,
 ) -> anyhow::Result<Option<ReleaseDetails>> {
-    let Some(release) = db::releases::get_by_id(db, release_db_id)? else {
+    let Some(release) = crate::db::releases::get_by_id(db, release_db_id)? else {
         return Ok(None);
     };
 
@@ -213,7 +212,7 @@ mod tests {
         )?;
 
         if let Some(genre_names) = &genre_strings {
-            db::genres::sync_release_genres(db, release_db_id, genre_names)?;
+            crate::db::genres::sync_release_genres(db, release_db_id, genre_names)?;
         }
 
         Ok(release_db_id)
@@ -244,7 +243,7 @@ mod tests {
             Some(vec!["Rock"]),
         )?;
 
-        let rock = db::genres::find_by_name(&db, "rock")?.context("rock genre")?;
+        let rock = crate::db::genres::find_by_name(&db, "rock")?.context("rock genre")?;
         let mut query = catalog::Query::<Releases>::new(ReleaseFilter {
             years: vec![2010],
             genres: vec![rock],
@@ -348,7 +347,7 @@ mod tests {
         let artists = details.artists.expect("artists should be included");
         assert_eq!(artists.len(), 1);
         assert_eq!(artists[0].artist.artist_name, "Miles Davis");
-        assert_eq!(artists[0].credit.credit_type, db::CreditType::Artist);
+        assert_eq!(artists[0].credit.credit_type, crate::db::CreditType::Artist);
         assert_eq!(artists[0].source, ArtistCreditSource::Release);
 
         assert!(details.entries.is_none());

@@ -29,12 +29,8 @@ use serde::{
     Serialize,
 };
 
+use crate::db::Permission;
 use crate::{
-    STATE,
-    db::{
-        self,
-        Permission,
-    },
     routes::AppError,
     routes::{
         covers as route_covers,
@@ -47,6 +43,7 @@ use crate::{
             TrackResponse,
         },
     },
+    services::STATE,
     services::{
         auth::require_authenticated,
         catalog::{
@@ -216,14 +213,14 @@ fn parse_genre_id_filter(genre_id: Option<Vec<String>>) -> Vec<String> {
 }
 
 fn resolve_genre_id_filter(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     genre_ids: &[String],
 ) -> Result<Vec<DbId>, AppError> {
     let mut resolved = Vec::new();
     for genre_id in genre_ids {
-        let genre_db_id = db::lookup::find_node_id_by_id(db, genre_id)?
+        let genre_db_id = crate::db::lookup::find_node_id_by_id(db, genre_id)?
             .ok_or_else(|| AppError::not_found(format!("Genre not found: {genre_id}")))?;
-        db::genres::get_by_id(db, genre_db_id)?
+        crate::db::genres::get_by_id(db, genre_db_id)?
             .ok_or_else(|| AppError::not_found(format!("Genre not found: {genre_id}")))?;
         resolved.push(genre_db_id);
     }
@@ -248,7 +245,7 @@ pub(crate) fn detail_to_release_response(
                 artist_db_ids.extend(super::db_ids_from_credited_artists(artists));
             }
         }
-        Some(db::covers::get_many(db, &artist_db_ids)?)
+        Some(crate::db::covers::get_many(db, &artist_db_ids)?)
     } else {
         None
     };
@@ -261,7 +258,7 @@ pub(crate) fn detail_to_release_response(
 
     let cover = route_covers::build_cover_response(db, detail.release_db_id, include_covers)?;
     let genres = if include_genres {
-        db::genres::get_names_for_release(db, detail.release_db_id)?
+        crate::db::genres::get_names_for_release(db, detail.release_db_id)?
     } else {
         None
     };
@@ -316,7 +313,7 @@ async fn get_releases(
     let principal = require_authenticated(&headers).await?;
     let rating_filter = rating.parse()?;
     let include_entry_paths =
-        db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
+        crate::db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
 
     let db = &*STATE.db.read().await;
     let (includes, include_covers, include_genres, include_artist_covers) =
@@ -347,7 +344,7 @@ async fn get_releases(
         let release_items = super::load_snapshot_items(
             db,
             &page.item_ids,
-            db::releases::get_by_id,
+            crate::db::releases::get_by_id,
             |db, release_db_id| {
                 crate::services::auth::access::entity_accessible(db, &principal, release_db_id)
             },
@@ -397,12 +394,12 @@ async fn get_release(
 ) -> Result<Json<ReleaseResponse>, AppError> {
     let principal = require_authenticated(&headers).await?;
     let include_entry_paths =
-        db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
+        crate::db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
 
     let db = &*STATE.db.read().await;
     let (includes, include_covers, include_genres, include_artist_covers) =
         parse_release_includes(query.inc)?;
-    let release_db_id = db::lookup::find_node_id_by_id(db, &id)?
+    let release_db_id = crate::db::lookup::find_node_id_by_id(db, &id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
     crate::services::auth::access::require_entity_accessible(
         db,
@@ -432,7 +429,7 @@ async fn search_release_covers(
 
     {
         let db = STATE.db.read().await;
-        let release_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
+        let release_db_id = crate::db::lookup::find_node_id_by_id(&*db, &id)?
             .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
         crate::services::auth::access::require_entity_accessible(
             &*db,
@@ -440,7 +437,7 @@ async fn search_release_covers(
             release_db_id,
             || AppError::not_found(format!("Release not found: {id}")),
         )?;
-        if db::releases::get_by_id(&db, release_db_id)?.is_none() {
+        if crate::db::releases::get_by_id(&db, release_db_id)?.is_none() {
             return Err(AppError::not_found(format!("Release not found: {}", id)));
         }
     }
@@ -531,19 +528,18 @@ mod tests {
         response::IntoResponse,
     };
 
-    use crate::db::test_db::{
-        TestDb,
+    use crate::db::fixtures::insert_release as insert_test_release;
+    use crate::db::fixtures::{
         connect,
-        insert_library,
-        insert_release as insert_test_release,
         insert_track,
     };
-
-    use crate::testing::{
-        LibraryFixtureConfig,
-        initialize_runtime,
-        runtime_test_lock,
+    use crate::db::test_db::{
+        TestDb,
+        insert_library,
     };
+
+    use crate::plugins::testing::init_library_test_state;
+    use crate::services::testing::runtime_test_lock;
 
     use super::*;
     use nanoid::nanoid;
@@ -562,7 +558,7 @@ mod tests {
     }
 
     fn insert_cover_for_release(db: &mut DbAny, release_db_id: DbId) -> anyhow::Result<()> {
-        let cover = db::Cover {
+        let cover = crate::db::Cover {
             db_id: None,
             id: nanoid!(),
             path: "/music/release/cover.jpg".to_string(),
@@ -590,24 +586,25 @@ mod tests {
     }
 
     async fn setup_route_test() -> anyhow::Result<()> {
-        initialize_runtime(&LibraryFixtureConfig {
-            directory: std::path::PathBuf::from("."),
-            language: None,
-            country: None,
-        })
-        .await
+        init_library_test_state(std::path::PathBuf::from(".")).await
     }
 
     async fn create_admin_auth(username: &str) -> anyhow::Result<(HeaderMap, DbId)> {
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            db::roles::ensure_builtin_roles(&mut db)?;
-            let user_db_id = db::users::create(&mut db, &db::test_db::test_user(username)?)?;
-            db::roles::ensure_user_has_role(&mut db, user_db_id, db::roles::BUILTIN_ADMIN_ROLE)?;
+            crate::db::roles::ensure_builtin_roles(&mut db)?;
+            let user_db_id =
+                crate::db::users::create(&mut db, &crate::db::fixtures::test_user(username)?)?;
+            crate::db::roles::ensure_user_has_role(
+                &mut db,
+                user_db_id,
+                crate::db::roles::BUILTIN_ADMIN_ROLE,
+            )?;
             user_db_id
         };
 
-        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
+        let session =
+            crate::services::testing::create_session(user_db_id, Default::default()).await?;
         let mut headers = HeaderMap::new();
         headers.insert(
             AUTHORIZATION,
@@ -668,11 +665,11 @@ mod tests {
         sort_title: Option<&str>,
         release_date: Option<&str>,
     ) -> anyhow::Result<()> {
-        let mut release = db::releases::get_by_id(db, release_db_id)?
+        let mut release = crate::db::releases::get_by_id(db, release_db_id)?
             .ok_or_else(|| anyhow::anyhow!("release missing"))?;
         release.sort_title = sort_title.map(str::to_string);
         release.release_date = release_date.map(str::to_string);
-        db::releases::update(db, &release)
+        crate::db::releases::update(db, &release)
     }
 
     async fn list_release_titles(
@@ -740,13 +737,13 @@ mod tests {
 
         let (user_db_id, library, releases) = {
             let mut db = STATE.db.write().await;
-            let user_db_id = db::test_db::insert_user(&mut db, "release-resume")?;
+            let user_db_id = crate::db::test_db::insert_user(&mut db, "release-resume")?;
             let library = insert_library(&mut db, "Release Resume", "/tmp/lyra-release-resume")?;
-            db::libraries::grant_access(
+            crate::db::libraries::grant_access(
                 &mut *db,
                 user_db_id,
                 library,
-                db::libraries::AccessKind::ReadWrite,
+                crate::db::libraries::AccessKind::ReadWrite,
             )?;
             let mut releases = Vec::new();
             for title in ["First", "Second"] {
@@ -756,7 +753,8 @@ mod tests {
             }
             (user_db_id, library, releases)
         };
-        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
+        let session =
+            crate::services::testing::create_session(user_db_id, Default::default()).await?;
         let mut headers = HeaderMap::new();
         headers.insert(
             AUTHORIZATION,
@@ -792,7 +790,7 @@ mod tests {
         {
             let mut db = STATE.db.write().await;
             for release in releases {
-                db::graph::remove_edges_between(&mut *db, library, release)?;
+                crate::db::graph::remove_edges_between(&mut *db, library, release)?;
             }
         }
 
@@ -922,7 +920,7 @@ mod tests {
             connect(&mut db, visible_library, visible_release)?;
             connect(&mut db, hidden_library, hidden_release)?;
 
-            db::libraries::get_by_id(&db, visible_library)?
+            crate::db::libraries::get_by_id(&db, visible_library)?
                 .ok_or_else(|| anyhow::anyhow!("visible library missing"))?
                 .id
         };
@@ -961,7 +959,7 @@ mod tests {
             let library = insert_library(&mut db, "Similar", "/tmp/lyra-similar")?;
             let release_db_id = insert_test_release(&mut db, "Seed Release")?;
             connect(&mut db, library, release_db_id)?;
-            db::releases::get_by_id(&*db, release_db_id)?
+            crate::db::releases::get_by_id(&*db, release_db_id)?
                 .ok_or_else(|| anyhow::anyhow!("seed release missing"))?
                 .id
         };
@@ -991,13 +989,13 @@ mod tests {
             let library = insert_library(&mut db, "Similar", "/tmp/lyra-similar")?;
             let release_db_id = insert_test_release(&mut db, "Seed Release")?;
             connect(&mut db, library, release_db_id)?;
-            db::releases::get_by_id(&*db, release_db_id)?
+            crate::db::releases::get_by_id(&*db, release_db_id)?
                 .ok_or_else(|| anyhow::anyhow!("seed release missing"))?
                 .id
         };
         let (headers, user_db_id) =
             create_admin_auth(&format!("similar-caller-{}", nanoid::nanoid!())).await?;
-        let (reached, result) = crate::testing::run_with_recycle_at(
+        let (reached, result) = crate::services::testing::run_with_recycle_at(
             gap,
             similarity::get_similar_releases(
                 headers,
@@ -1008,7 +1006,7 @@ mod tests {
                 }),
             ),
             |db| {
-                db.transaction_mut(|t| db::users::delete_user(t, user_db_id))
+                db.transaction_mut(|t| crate::db::users::delete_user(t, user_db_id))
                     .expect("delete caller");
             },
         )
@@ -1026,10 +1024,13 @@ mod tests {
         setup_route_test().await?;
         let (_, control) = similar_releases_as_deleted_caller(None).await?;
         assert_eq!(control, axum::http::StatusCode::OK);
-        crate::testing::for_each_db_gap(similar_releases_as_deleted_caller, async |gap, status| {
-            assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED, "gap {gap}");
-            Ok(())
-        })
+        crate::services::testing::for_each_db_gap(
+            similar_releases_as_deleted_caller,
+            async |gap, status| {
+                assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED, "gap {gap}");
+                Ok(())
+            },
+        )
         .await
     }
 
@@ -1048,28 +1049,28 @@ mod tests {
             let rated_track = insert_track(&mut db, "Rated Nested Track")?;
             connect(&mut db, rated_release, unrated_track)?;
             connect(&mut db, unrated_release, rated_track)?;
-            db::ratings::upsert(
+            crate::db::ratings::upsert(
                 &mut *db,
                 user_db_id,
                 rated_release,
-                db::ratings::RatingKind::Release,
-                db::ratings::RatingValue::new(4).unwrap(),
+                crate::db::ratings::RatingKind::Release,
+                crate::db::ratings::RatingValue::new(4).unwrap(),
                 1,
             )?;
-            db::ratings::upsert(
+            crate::db::ratings::upsert(
                 &mut *db,
                 user_db_id,
                 five_star_release,
-                db::ratings::RatingKind::Release,
-                db::ratings::RatingValue::new(5).unwrap(),
+                crate::db::ratings::RatingKind::Release,
+                crate::db::ratings::RatingValue::new(5).unwrap(),
                 1,
             )?;
-            db::ratings::upsert(
+            crate::db::ratings::upsert(
                 &mut *db,
                 user_db_id,
                 rated_track,
-                db::ratings::RatingKind::Track,
-                db::ratings::RatingValue::new(4).unwrap(),
+                crate::db::ratings::RatingKind::Track,
+                crate::db::ratings::RatingValue::new(4).unwrap(),
                 1,
             )?;
         }
@@ -1113,9 +1114,9 @@ mod tests {
             let mut db = STATE.db.write().await;
             let rock_release = insert_test_release(&mut db, "Rock Release")?;
             let jazz_release = insert_test_release(&mut db, "Jazz Release")?;
-            db::genres::sync_release_genres(&mut *db, rock_release, &["Rock".to_string()])?;
-            db::genres::sync_release_genres(&mut *db, jazz_release, &["Jazz".to_string()])?;
-            db::genres::get_for_release(&*db, rock_release)?
+            crate::db::genres::sync_release_genres(&mut *db, rock_release, &["Rock".to_string()])?;
+            crate::db::genres::sync_release_genres(&mut *db, jazz_release, &["Jazz".to_string()])?;
+            crate::db::genres::get_for_release(&*db, rock_release)?
                 .into_iter()
                 .next()
                 .ok_or_else(|| anyhow::anyhow!("rock genre missing"))?
@@ -1330,13 +1331,13 @@ mod benches {
     };
 
     use super::*;
-    use crate::db::test_db::{
+    use crate::db::fixtures::insert_release as insert_test_release;
+    use crate::db::fixtures::{
         connect,
-        insert_release as insert_test_release,
         insert_track,
-        new_test_db,
         test_user,
     };
+    use crate::db::test_db::new_test_db;
     use crate::services::catalog::releases::ReleaseKey;
 
     struct ReleaseSortBench {
@@ -1345,29 +1346,29 @@ mod benches {
     }
 
     fn update_track_duration(db: &mut DbAny, track_db_id: DbId, duration_ms: u64) {
-        let mut track = db::tracks::get_by_id(db, track_db_id)
+        let mut track = crate::db::tracks::get_by_id(db, track_db_id)
             .unwrap()
             .expect("track exists");
         track.duration_ms = Some(duration_ms);
-        db::tracks::update(db, &track).unwrap();
+        crate::db::tracks::update(db, &track).unwrap();
     }
 
     fn record_listen(db: &mut DbAny, user_db_id: DbId, track_db_id: DbId, listened_at_ms: u64) {
-        let track = db::tracks::get_by_id(db, track_db_id)
+        let track = crate::db::tracks::get_by_id(db, track_db_id)
             .unwrap()
             .expect("track exists");
-        let listen = db::Listen {
+        let listen = crate::db::Listen {
             db_id: None,
             id: nanoid!(),
             track_public_id: track.id,
             position_ms: 0,
             duration_ms: Some(180_000),
             activity_ms: 180_000,
-            state: db::PlaybackState::Completed,
+            state: crate::db::PlaybackState::Completed,
             listened_at_ms,
             created_at_ms: listened_at_ms,
         };
-        let session = db::PlaybackSession {
+        let session = crate::db::PlaybackSession {
             db_id: None,
             id: nanoid!(),
             client_name: None,
@@ -1375,13 +1376,19 @@ mod benches {
             duration_ms: Some(180_000),
             activity_ms: Some(180_000),
             last_position_ms: None,
-            state: db::PlaybackState::Completed,
+            state: crate::db::PlaybackState::Completed,
             listen_recorded: Some(true),
             updated_at_ms: listened_at_ms,
             created_at_ms: listened_at_ms,
         };
-        db::listens::create_and_mark_recorded(db, &listen, track_db_id, user_db_id, &session)
-            .unwrap();
+        crate::db::listens::create_and_mark_recorded(
+            db,
+            &listen,
+            track_db_id,
+            user_db_id,
+            &session,
+        )
+        .unwrap();
     }
 
     fn seed_release_sort_bench(
@@ -1391,7 +1398,7 @@ mod benches {
     ) -> ReleaseSortBench {
         let mut db = new_test_db().unwrap();
         let user_db_id =
-            db::users::create(&mut db, &test_user("release-sort-bench").unwrap()).unwrap();
+            crate::db::users::create(&mut db, &test_user("release-sort-bench").unwrap()).unwrap();
         for release_idx in 0..release_count {
             let release_db_id =
                 insert_test_release(&mut db, &format!("Release {release_idx:04}")).unwrap();
@@ -1424,7 +1431,7 @@ mod benches {
         let principal = crate::services::auth::Principal::for_user(
             &db,
             user_db_id,
-            vec![db::Permission::Admin],
+            vec![crate::db::Permission::Admin],
             Default::default(),
         );
         let viewer = catalog::Viewer::user(&db, principal).unwrap();

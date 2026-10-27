@@ -11,16 +11,13 @@ use std::collections::{
 use agdb::DbId;
 use serde_json::Value;
 
-use crate::{
-    db::{
-        self,
-        DbAccess,
-        MetadataField,
-    },
-    services::metadata::{
-        layers::MANUAL_SOURCE_ID,
-        merging,
-    },
+use crate::db::{
+    DbAccess,
+    MetadataField,
+};
+use crate::services::metadata::{
+    layers::MANUAL_SOURCE_ID,
+    merging,
 };
 
 use super::{
@@ -61,7 +58,7 @@ fn inherited_value(
 ) -> Result<Value, MetadataEditingError> {
     let merged = merging::resolve_without(db, state.db_id, MANUAL_SOURCE_ID)?;
     let artist_public_id = |artist_id: DbId| -> Result<String, MetadataEditingError> {
-        Ok(db::artists::get_by_id(db, artist_id)?
+        Ok(crate::db::artists::get_by_id(db, artist_id)?
             .ok_or_else(|| {
                 MetadataEditingError::Internal(anyhow::anyhow!("a referenced artist disappeared"))
             })?
@@ -70,7 +67,7 @@ fn inherited_value(
     let value = match field {
         MetadataField::Credits => {
             let mut credits = Vec::new();
-            for credit_type in db::CreditType::ALL {
+            for credit_type in crate::db::CreditType::ALL {
                 for input in merged.credits.get(&credit_type).into_iter().flatten() {
                     credits.push(MetadataCreditValue {
                         artist_id: artist_public_id(input.artist_id)?,
@@ -83,7 +80,7 @@ fn inherited_value(
         }
         MetadataField::Relations => {
             let mut relations = Vec::new();
-            for relation_type in db::ArtistRelationType::ALL {
+            for relation_type in crate::db::ArtistRelationType::ALL {
                 for input in merged.relations.get(&relation_type).into_iter().flatten() {
                     relations.push(MetadataRelationValue {
                         artist_id: artist_public_id(input.artist_id)?,
@@ -105,12 +102,10 @@ fn inherited_value(
                         "resolved labels have no source"
                     ))
                 })?;
-                let layer_id = db::metadata::layers::layer_id(db, state.db_id, source_id)?
+                let layer_id = crate::db::metadata::layers::layer_id(db, state.db_id, source_id)?
                     .ok_or_else(|| {
-                        MetadataEditingError::Internal(anyhow::anyhow!(
-                            "the labels' layer disappeared"
-                        ))
-                    })?;
+                    MetadataEditingError::Internal(anyhow::anyhow!("the labels' layer disappeared"))
+                })?;
                 return layer_labels(db, layer_id);
             }
             value.clone()

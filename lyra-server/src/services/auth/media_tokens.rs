@@ -13,8 +13,8 @@ use std::{
 };
 
 use crate::{
-    STATE,
     db,
+    services::STATE,
     services::playback_sources::SourceVersion,
 };
 
@@ -130,7 +130,7 @@ pub(crate) enum MediaTokenError {
 }
 
 fn tokens(
-    generation: &crate::GenerationState,
+    generation: &crate::services::state::GenerationState,
 ) -> std::sync::MutexGuard<'_, HashMap<String, MediaTokenGrant>> {
     generation
         .auth_caches
@@ -141,7 +141,7 @@ fn tokens(
 }
 
 fn now_secs() -> i64 {
-    db::users::now_secs()
+    crate::db::users::now_secs()
 }
 
 fn token_is_expired(grant: &MediaTokenGrant, now: Instant, now_secs: i64) -> bool {
@@ -310,8 +310,8 @@ mod tests {
 
     #[test]
     fn media_token_validates_for_matching_track_and_purpose() {
-        let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
-        crate::testing::init_default_test_state().expect("init test state");
+        let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+        crate::services::testing::init_default_test_state().expect("init test state");
         let issued = issue("track-42", MediaTokenPurpose::Stream);
 
         validate_media_token(&issued.token, MediaTokenPurpose::Stream, "track-42")
@@ -320,8 +320,8 @@ mod tests {
 
     #[test]
     fn media_token_rejects_wrong_track_or_purpose() {
-        let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
-        crate::testing::init_default_test_state().expect("init test state");
+        let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+        crate::services::testing::init_default_test_state().expect("init test state");
         let issued = issue("track-42", MediaTokenPurpose::Stream);
 
         assert!(matches!(
@@ -336,8 +336,8 @@ mod tests {
 
     #[test]
     fn a_credential_only_evicts_its_own_tokens_up_to_its_users_ceiling() {
-        let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
-        crate::testing::init_default_test_state().expect("init test state");
+        let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+        crate::services::testing::init_default_test_state().expect("init test state");
         let holder = |user: &str, session: &str| MediaTokenHolder {
             user_public_id: user.to_string(),
             credential: AuthCredential::Session {

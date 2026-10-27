@@ -26,10 +26,11 @@ pub(crate) struct PluginRepository {
     pub(crate) refreshed_at_ms: Option<u64>,
 }
 
-const DEFAULT_ORIGIN: &str = "https://git.lyra.pub/lyra/lyra?forge=gitlab";
 const DEFAULT_SEEDED_KEY: &str = "default_repository_seeded";
 
-pub(crate) fn seed_default(db: &mut DbAny) -> anyhow::Result<()> {
+/// Subscribes `default` once per database, unless its origin is already
+/// subscribed. Later calls are no-ops, so removing it survives restarts.
+pub fn seed_default(db: &mut DbAny, default: &PluginRepository) -> anyhow::Result<()> {
     db.transaction_mut(|t| {
         let root = t.exec(QueryBuilder::select().ids("plugin_repositories").query())?;
         if root.elements[0]
@@ -39,25 +40,8 @@ pub(crate) fn seed_default(db: &mut DbAny) -> anyhow::Result<()> {
         {
             return Ok(());
         }
-        if get_by_origin(t, DEFAULT_ORIGIN)?.is_none() {
-            let manifest = harmony_repository::RepositoryManifest::parse(
-                include_str!("../../../repository.json"),
-                None,
-            )?;
-            let release_tag = env!("LYRA_RELEASE_TAG");
-            create(
-                t,
-                &PluginRepository {
-                    db_id: None,
-                    id: nanoid::nanoid!(),
-                    origin: DEFAULT_ORIGIN.to_string(),
-                    name: manifest.name,
-                    description: manifest.description,
-                    git_ref: (!release_tag.is_empty()).then(|| release_tag.to_string()),
-                    commit: None,
-                    refreshed_at_ms: None,
-                },
-            )?;
+        if get_by_origin(t, &default.origin)?.is_none() {
+            create(t, default)?;
         }
         t.exec_mut(
             QueryBuilder::insert()
@@ -69,10 +53,7 @@ pub(crate) fn seed_default(db: &mut DbAny) -> anyhow::Result<()> {
     })
 }
 
-pub(crate) fn create(
-    db: &mut impl super::DbAccess,
-    record: &PluginRepository,
-) -> anyhow::Result<DbId> {
+pub fn create(db: &mut impl super::DbAccess, record: &PluginRepository) -> anyhow::Result<DbId> {
     if get_by_origin(db, &record.origin)?.is_some() {
         anyhow::bail!("repository already added: {}", record.origin);
     }
@@ -131,10 +112,7 @@ pub(crate) fn list(db: &impl super::DbAccess) -> anyhow::Result<Vec<PluginReposi
     Ok(repositories)
 }
 
-pub(crate) fn get_by_id(
-    db: &impl super::DbAccess,
-    id: &str,
-) -> anyhow::Result<Option<PluginRepository>> {
+pub fn get_by_id(db: &impl super::DbAccess, id: &str) -> anyhow::Result<Option<PluginRepository>> {
     let repositories: Vec<PluginRepository> = db
         .exec(
             QueryBuilder::select()
@@ -185,27 +163,24 @@ mod tests {
     fn default_repository_is_seeded_once_and_removal_survives_reopening() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
         let path = dir.path().join("db.agdb");
-        let config = crate::config::DbConfig {
+        let config = crate::db::bootstrap::DbConfig {
             path,
             ..Default::default()
         };
+        let default = repository("https://example.com/plugins");
         let created = super::super::bootstrap::create(&config)?;
         let id = {
             let mut db = created.db.try_write()?;
-            seed_default(&mut db)?;
+            seed_default(&mut db, &default)?;
             let repositories = list(&*db)?;
             assert_eq!(repositories.len(), 1);
-            let record = &repositories[0];
-            assert_eq!(record.origin, DEFAULT_ORIGIN);
-            let tag = env!("LYRA_RELEASE_TAG");
-            assert_eq!(record.git_ref.as_deref(), (!tag.is_empty()).then_some(tag));
-            assert_eq!(record.commit, None);
-            assert_eq!(record.refreshed_at_ms, None);
-            record.db_id.unwrap()
+            assert_eq!(repositories[0].origin, default.origin);
+            repositories[0].db_id.unwrap()
         };
         remove(&mut *created.db.try_write()?, id)?;
         drop(created);
         let reopened = super::super::bootstrap::create(&config)?;
+        seed_default(&mut *reopened.db.try_write()?, &default)?;
         assert!(list(&*reopened.db.try_read()?)?.is_empty());
         Ok(())
     }
@@ -213,51 +188,14 @@ mod tests {
     #[test]
     fn seed_preserves_existing_subscription() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        let mut existing = repository(DEFAULT_ORIGIN);
+        let default = repository("https://example.com/plugins");
+        let mut existing = repository(&default.origin);
         existing.git_ref = Some("custom-branch".into());
         create(&mut db, &existing)?;
-        seed_default(&mut db)?;
+        seed_default(&mut db, &default)?;
         let rows = list(&db)?;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].git_ref.as_deref(), Some("custom-branch"));
-        Ok(())
-    }
-
-    #[test]
-    fn default_catalog_lists_all_shipped_plugin_manifests() -> anyhow::Result<()> {
-        use std::collections::BTreeSet;
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap();
-        let catalog = harmony_repository::RepositoryManifest::parse(
-            include_str!("../../../repository.json"),
-            None,
-        )?;
-        let listed = catalog
-            .entries
-            .into_iter()
-            .map(|entry| {
-                let harmony_repository::RepositoryEntry::Path { path } = entry else {
-                    panic!("official plugins should live in this repository");
-                };
-                assert!(root.join(&path).join("plugin.json").is_file());
-                path
-            })
-            .collect::<BTreeSet<_>>();
-        let shipped = std::fs::read_dir(root.join("plugins"))?
-            .map(|entry| entry.map(|entry| entry.path()))
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .filter(|path| path.join("plugin.json").is_file())
-            .map(|path| {
-                path.strip_prefix(root)
-                    .unwrap()
-                    .to_str()
-                    .unwrap()
-                    .to_string()
-            })
-            .collect::<BTreeSet<_>>();
-        assert_eq!(listed, shipped);
         Ok(())
     }
 

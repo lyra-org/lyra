@@ -19,7 +19,6 @@ use agdb::{
 };
 
 use crate::db::{
-    self,
     ArtistRelationType,
     CreditType,
     DbAccess,
@@ -51,7 +50,7 @@ pub(crate) const MANUAL_SOURCE_ID: &str = "manual";
 /// that no longer validates keeps both entities apart until it is repaired.
 pub(crate) fn manual_layers_mergeable(db: &impl DbAccess, winner: DbId, loser: DbId) -> bool {
     for node_id in [winner, loser] {
-        if let Err(error) = db::metadata::layers::find_valid(db, node_id, MANUAL_SOURCE_ID) {
+        if let Err(error) = crate::db::metadata::layers::find_valid(db, node_id, MANUAL_SOURCE_ID) {
             tracing::warn!(
                 winner = winner.0,
                 loser = loser.0,
@@ -125,7 +124,7 @@ impl LocalLayer {
         let layer = MetadataLayer::new(LOCAL_SOURCE_ID, self.fields, now_secs())
             .with_relations(self.relations)
             .with_credits(self.credits);
-        db::metadata::layers::upsert_inside_tx(db, node_id, &layer)?;
+        crate::db::metadata::layers::upsert_inside_tx(db, node_id, &layer)?;
         super::merging::apply_merged_metadata_to_entity_inside_tx(db, node_id)
     }
 }
@@ -136,7 +135,7 @@ fn validated_fields(
     node_id: DbId,
     fields: &LayerFields,
 ) -> anyhow::Result<LayerFields> {
-    let entity_type = db::entities::metadata_entity_type(db, node_id)?
+    let entity_type = crate::db::entities::metadata_entity_type(db, node_id)?
         .ok_or_else(|| anyhow::anyhow!("Entity not found: {}", node_id.0))?;
     fields
         .iter()
@@ -159,7 +158,7 @@ pub(super) fn now_secs() -> u64 {
 }
 
 fn artist_type_conflicts_with_layer(
-    artist: Option<&db::Artist>,
+    artist: Option<&crate::db::Artist>,
     fields: &LayerFields,
     node_id: DbId,
     provider_id: &str,
@@ -173,8 +172,8 @@ fn artist_type_conflicts_with_layer(
     else {
         return Ok(false);
     };
-    let incoming_type: db::ArtistType =
-        db::metadata::layers::decode(MetadataField::ArtistType, incoming)?;
+    let incoming_type: crate::db::ArtistType =
+        crate::db::metadata::layers::decode(MetadataField::ArtistType, incoming)?;
     if existing_type == incoming_type {
         return Ok(false);
     }
@@ -214,7 +213,7 @@ fn save_provider_custom_fields(
     let mut sorted_remove_versions: Vec<u64> = changes.remove.iter().copied().collect();
     sorted_remove_versions.sort_unstable();
     for version in sorted_remove_versions {
-        db::metadata::custom_fields::remove(db, node_id, provider_id, version)?;
+        crate::db::metadata::custom_fields::remove(db, node_id, provider_id, version)?;
     }
 
     if custom_fields.is_empty() {
@@ -236,7 +235,7 @@ fn save_provider_custom_fields(
             fields: fields_json,
             updated_at: now,
         };
-        db::metadata::custom_fields::upsert(db, node_id, &row)?;
+        crate::db::metadata::custom_fields::upsert(db, node_id, &row)?;
     }
 
     Ok(())
@@ -252,7 +251,7 @@ pub(crate) fn save_provider_layer(
 ) -> anyhow::Result<()> {
     let fields = validated_fields(db, node_id, &values.fields)?;
     let relations = &values.relations;
-    let artist = db::artists::get_by_id(db, node_id)?;
+    let artist = crate::db::artists::get_by_id(db, node_id)?;
     let artist_type_conflict =
         artist_type_conflicts_with_layer(artist.as_ref(), &fields, node_id, provider_id)?;
 
@@ -260,7 +259,7 @@ pub(crate) fn save_provider_layer(
     // relations still save. Layers save while locked; only application is
     // suppressed.
     let fields = if artist_type_conflict {
-        db::metadata::layers::get_for_entity(db, node_id)?
+        crate::db::metadata::layers::get_for_entity(db, node_id)?
             .into_iter()
             .find(|stored| stored.source_id == provider_id)
             .map(|stored| stored.fields)
@@ -278,7 +277,7 @@ pub(crate) fn save_provider_layer(
         // One transaction, so a failed apply also undoes the save that an
         // identical later save would skip as unchanged.
         db.transaction_mut(|t| -> anyhow::Result<()> {
-            if db::metadata::layers::upsert_inside_tx(t, node_id, &layer)? {
+            if crate::db::metadata::layers::upsert_inside_tx(t, node_id, &layer)? {
                 super::merging::apply_merged_metadata_to_entity_inside_tx(t, node_id)?;
             }
             Ok(())
@@ -300,7 +299,7 @@ pub(crate) fn save_provider_layer(
     let mut should_recompute_artist_verification = false;
 
     for (id_type, id_value) in external_ids {
-        let existing_id = db::external_ids::get(db, node_id, provider_id, id_type)?;
+        let existing_id = crate::db::external_ids::get(db, node_id, provider_id, id_type)?;
 
         if is_artist_entity && id_type == "artist_id" {
             let incoming_artist_id = id_value.trim();
@@ -330,7 +329,7 @@ pub(crate) fn save_provider_layer(
             continue;
         }
 
-        db::external_ids::upsert(
+        crate::db::external_ids::upsert(
             db,
             node_id,
             provider_id,
@@ -366,7 +365,7 @@ pub(crate) fn mark_unmatched(
     let mut external_ids = HashMap::new();
     for id_type in id_types {
         if is_artist
-            && db::external_ids::get(db, node_id, provider_id, &id_type)?
+            && crate::db::external_ids::get(db, node_id, provider_id, &id_type)?
                 .is_some_and(|id| id.resolved_value().is_some_and(|value| !value.is_empty()))
         {
             continue;
@@ -396,12 +395,16 @@ pub(crate) fn clear_provider_layer(
     provider_id: &str,
 ) -> anyhow::Result<()> {
     db.transaction_mut(|t| -> anyhow::Result<()> {
-        let removed_layer = db::metadata::layers::remove_inside_tx(t, node_id, provider_id)?;
+        let removed_layer = crate::db::metadata::layers::remove_inside_tx(t, node_id, provider_id)?;
         let mut removed_custom_fields = false;
-        for row in db::metadata::custom_fields::get_for_entity(t, node_id)? {
+        for row in crate::db::metadata::custom_fields::get_for_entity(t, node_id)? {
             if row.provider_id == provider_id {
-                removed_custom_fields |=
-                    db::metadata::custom_fields::remove(t, node_id, provider_id, row.version)?;
+                removed_custom_fields |= crate::db::metadata::custom_fields::remove(
+                    t,
+                    node_id,
+                    provider_id,
+                    row.version,
+                )?;
             }
         }
         if removed_layer || removed_custom_fields {
@@ -418,19 +421,19 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::db::test_db::{
+    use crate::db::fixtures::{
         insert_artist,
         insert_release,
-        new_test_db,
     };
+    use crate::db::test_db::new_test_db;
 
     #[test]
     fn clearing_a_provider_layer_drops_its_fields_and_custom_fields() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let release_id = insert_release(&mut db, "Local Title")?;
-        db::providers::upsert(
+        crate::db::providers::upsert(
             &mut db,
-            &db::ProviderConfig {
+            &crate::db::ProviderConfig {
                 db_id: None,
                 provider_id: "provider".to_string(),
                 priority: 100,
@@ -457,21 +460,21 @@ mod tests {
                 ..Default::default()
             },
         )?;
-        let matched = db::releases::get_by_id(&db, release_id)?.expect("release exists");
+        let matched = crate::db::releases::get_by_id(&db, release_id)?.expect("release exists");
         assert_eq!(matched.release_title, "Wrong Title");
         assert_eq!(matched.release_date.as_deref(), Some("1999"));
 
         clear_provider_layer(&mut db, release_id, "provider")?;
 
-        let cleared = db::releases::get_by_id(&db, release_id)?.expect("release exists");
+        let cleared = crate::db::releases::get_by_id(&db, release_id)?.expect("release exists");
         assert_eq!(cleared.release_title, "Local Title");
         assert_eq!(cleared.release_date, None);
         assert!(
-            db::metadata::layers::get_for_entity(&db, release_id)?
+            crate::db::metadata::layers::get_for_entity(&db, release_id)?
                 .iter()
                 .all(|layer| layer.source_id != "provider")
         );
-        assert!(db::metadata::custom_fields::get_for_entity(&db, release_id)?.is_empty());
+        assert!(crate::db::metadata::custom_fields::get_for_entity(&db, release_id)?.is_empty());
         Ok(())
     }
 
@@ -501,7 +504,7 @@ mod tests {
         };
 
         assert!(save(&mut db).is_err());
-        assert!(db::metadata::layers::layer_id(&db, release_id, "provider")?.is_none());
+        assert!(crate::db::metadata::layers::layer_id(&db, release_id, "provider")?.is_none());
         assert!(save(&mut db).is_err(), "a repeated save applies again");
         Ok(())
     }
@@ -515,9 +518,9 @@ mod tests {
         local.supply(MetadataField::ArtistName, Some("Character"))?;
         local.supply(MetadataField::ArtistType, Some("character"))?;
         db.transaction_mut(|t| local.save(t, character))?;
-        db::providers::upsert(
+        crate::db::providers::upsert(
             &mut db,
-            &db::ProviderConfig {
+            &crate::db::ProviderConfig {
                 db_id: None,
                 provider_id: "provider".to_string(),
                 priority: 100,
@@ -535,7 +538,7 @@ mod tests {
                     (MetadataField::ArtistType, json!("person")),
                 ]),
                 relations: LayerRelations::from([(
-                    db::ArtistRelationType::VoiceActor,
+                    crate::db::ArtistRelationType::VoiceActor,
                     vec![LayerRelationInput {
                         artist_id: actor,
                         attributes: None,
@@ -547,16 +550,16 @@ mod tests {
             &Default::default(),
         )?;
 
-        let artist = db::artists::get_by_id(&db, character)?.expect("artist exists");
-        assert_eq!(artist.artist_type, Some(db::ArtistType::Character));
+        let artist = crate::db::artists::get_by_id(&db, character)?.expect("artist exists");
+        assert_eq!(artist.artist_type, Some(crate::db::ArtistType::Character));
         assert_eq!(
             artist.artist_name, "Character",
             "conflicting fields are skipped"
         );
-        let relations = db::artists::relations::get_relations_to(
+        let relations = crate::db::artists::relations::get_relations_to(
             &db,
             character,
-            Some(db::ArtistRelationType::VoiceActor),
+            Some(crate::db::ArtistRelationType::VoiceActor),
         )?;
         assert_eq!(relations.len(), 1);
         assert_eq!(relations[0].1, actor);
@@ -564,7 +567,10 @@ mod tests {
     }
 
     fn musicbrainz_id(db: &DbAny, node_id: DbId, id_type: &str) -> anyhow::Result<Option<String>> {
-        Ok(db::external_ids::get(db, node_id, "musicbrainz", id_type)?.map(|id| id.id_value))
+        Ok(
+            crate::db::external_ids::get(db, node_id, "musicbrainz", id_type)?
+                .map(|id| id.id_value),
+        )
     }
 
     #[test]
@@ -599,7 +605,7 @@ mod tests {
             Some("artist-1")
         );
         assert!(
-            db::metadata::layers::get_for_entity(&db, matched)?
+            crate::db::metadata::layers::get_for_entity(&db, matched)?
                 .iter()
                 .any(|layer| layer.source_id == "musicbrainz")
         );

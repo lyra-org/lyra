@@ -14,12 +14,9 @@ use agdb::{
     DbId,
 };
 
-use crate::db::{
-    self,
-    favorites::{
-        FavoriteKind,
-        HAS_MANY_CAP,
-    },
+use crate::db::favorites::{
+    FavoriteKind,
+    HAS_MANY_CAP,
 };
 use crate::services::auth::{
     Principal,
@@ -63,7 +60,7 @@ pub(crate) fn add_for_principal(
         else {
             return Ok(MutationOutcome::NotTargetable);
         };
-        db::favorites::add(t, user_db_id, target_db_id, kind, now_ms)?;
+        crate::db::favorites::add(t, user_db_id, target_db_id, kind, now_ms)?;
         Ok(MutationOutcome::Applied(kind))
     })
 }
@@ -79,7 +76,7 @@ pub(crate) fn remove(
         let Some((target_db_id, kind)) = resolve_whitelisted(t, public_target_id)? else {
             return Ok(MutationOutcome::NotTargetable);
         };
-        db::favorites::remove(t, user_db_id, target_db_id)?;
+        crate::db::favorites::remove(t, user_db_id, target_db_id)?;
         Ok(MutationOutcome::Applied(kind))
     })
 }
@@ -95,7 +92,7 @@ pub(crate) fn has_for_principal(
     else {
         return Ok(false);
     };
-    db::favorites::has(db, user_db_id, target_db_id)
+    crate::db::favorites::has(db, user_db_id, target_db_id)
 }
 
 pub(crate) fn has_many_for_principal(
@@ -127,7 +124,7 @@ pub(crate) fn has_many_for_principal(
 
     if !resolved.is_empty() {
         let db_ids: Vec<DbId> = resolved.iter().map(|(_, id)| *id).collect();
-        let states = db::favorites::has_many(db, user_db_id, &db_ids)?;
+        let states = crate::db::favorites::has_many(db, user_db_id, &db_ids)?;
         for (public_id, db_id) in resolved {
             let is_fav = states.get(&db_id).copied().unwrap_or(false);
             response.insert(public_id, is_fav);
@@ -144,9 +141,9 @@ pub(crate) fn list(
     kind: FavoriteKind,
 ) -> anyhow::Result<Vec<ListItem>> {
     let user_db_id = principal.require(db)?;
-    let edges = db::favorites::list(db, user_db_id, kind)?;
+    let edges = crate::db::favorites::list(db, user_db_id, kind)?;
     let target_db_ids: Vec<DbId> = edges.iter().map(|edge| edge.target_db_id).collect();
-    let target_ids = db::lookup::find_ids_by_db_ids(db, &target_db_ids)?;
+    let target_ids = crate::db::lookup::find_ids_by_db_ids(db, &target_db_ids)?;
 
     let mut items = Vec::with_capacity(edges.len());
     for edge in edges {
@@ -183,12 +180,12 @@ pub(crate) fn hydrate_snapshot(
         .map(|(edge_db_id, _)| *edge_db_id)
         .collect::<Vec<_>>();
     let user_db_id = principal.require(db)?;
-    let mut edges = db::favorites::get_by_ids(db, user_db_id, kind, &edge_ids)?;
+    let mut edges = crate::db::favorites::get_by_ids(db, user_db_id, kind, &edge_ids)?;
     let target_db_ids = edges
         .values()
         .map(|edge| edge.target_db_id)
         .collect::<Vec<_>>();
-    let target_ids = db::lookup::find_ids_by_db_ids(db, &target_db_ids)?;
+    let target_ids = crate::db::lookup::find_ids_by_db_ids(db, &target_db_ids)?;
 
     let mut items = Vec::with_capacity(identities.len());
     for (edge_db_id, expected_target_id) in identities {
@@ -221,7 +218,7 @@ pub(crate) fn list_ids(
     user_db_id: DbId,
     kind: FavoriteKind,
 ) -> anyhow::Result<Vec<DbId>> {
-    let ids = db::favorites::list_ids(db, user_db_id, kind)?;
+    let ids = crate::db::favorites::list_ids(db, user_db_id, kind)?;
     if kind == FavoriteKind::Playlist {
         let mut visible = Vec::with_capacity(ids.len());
         for id in ids {
@@ -237,12 +234,12 @@ pub(crate) fn list_ids(
 
 /// `user_db_id` comes from [`Principal::require`] under the same guard as `db`.
 fn resolve_targetable_for_principal(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     principal: &Principal,
     user_db_id: DbId,
     public_target_id: &str,
 ) -> anyhow::Result<Option<(DbId, FavoriteKind)>> {
-    let Some(target_db_id) = db::lookup::find_node_id_by_id(db, public_target_id)? else {
+    let Some(target_db_id) = crate::db::lookup::find_node_id_by_id(db, public_target_id)? else {
         return Ok(None);
     };
     let Some((target_db_id, kind)) = resolve_whitelisted_by_db_id(db, target_db_id)? else {
@@ -256,7 +253,7 @@ fn resolve_targetable_for_principal(
 
 /// `user_db_id` comes from [`Principal::require`] under the same guard as `db`.
 fn target_visible_to_principal(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     principal: &Principal,
     user_db_id: DbId,
     target_db_id: DbId,
@@ -273,20 +270,20 @@ fn target_visible_to_principal(
 
 /// No visibility gate.
 fn resolve_whitelisted(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     public_target_id: &str,
 ) -> anyhow::Result<Option<(DbId, FavoriteKind)>> {
-    let Some(target_db_id) = db::lookup::find_node_id_by_id(db, public_target_id)? else {
+    let Some(target_db_id) = crate::db::lookup::find_node_id_by_id(db, public_target_id)? else {
         return Ok(None);
     };
     resolve_whitelisted_by_db_id(db, target_db_id)
 }
 
 fn resolve_whitelisted_by_db_id(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     target_db_id: DbId,
 ) -> anyhow::Result<Option<(DbId, FavoriteKind)>> {
-    let Some(kind) = db::favorites::target_kind(db, target_db_id)? else {
+    let Some(kind) = crate::db::favorites::target_kind(db, target_db_id)? else {
         return Ok(None);
     };
     Ok(Some((target_db_id, kind)))
@@ -301,7 +298,7 @@ pub(crate) fn remove_by_db_id(
         let Some((target_db_id, kind)) = resolve_whitelisted_by_db_id(t, target_db_id)? else {
             return Ok(MutationOutcome::NotTargetable);
         };
-        db::favorites::remove(t, user_db_id, target_db_id)?;
+        crate::db::favorites::remove(t, user_db_id, target_db_id)?;
         Ok(MutationOutcome::Applied(kind))
     })
 }
@@ -316,11 +313,13 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
-    use crate::db::test_db::{
+    use crate::db::fixtures::{
         connect,
+        test_user,
+    };
+    use crate::db::test_db::{
         insert_library,
         new_test_db,
-        test_user,
     };
     use crate::db::{
         Playlist,
@@ -370,11 +369,11 @@ mod tests {
             created_at: None,
             updated_at: None,
         };
-        db::playlists::create(db, &playlist, owner_db_id)
+        crate::db::playlists::create(db, &playlist, owner_db_id)
     }
 
     fn setup_id_index(db: &mut DbAny) -> anyhow::Result<()> {
-        db::indexes::ensure_index(db, "id")?;
+        crate::db::indexes::ensure_index(db, "id")?;
         Ok(())
     }
 
@@ -392,7 +391,7 @@ mod tests {
         setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
         let library_db_id = insert_library(&mut db, "Favorites", "/tmp/lyra-favorites-add")?;
-        let library_public_id = db::lookup::find_id_by_db_id(&db, library_db_id)?
+        let library_public_id = crate::db::lookup::find_id_by_db_id(&db, library_db_id)?
             .expect("library should have a public id");
         let track_id = nanoid!();
         let track_db_id = create_track(&mut db, &track_id)?;
@@ -543,7 +542,7 @@ mod tests {
             "public playlist should hydrate for non-owner",
         );
 
-        db::playlists::update(
+        crate::db::playlists::update(
             &mut db,
             &Playlist {
                 db_id: Some(playlist_db_id.into()),
@@ -576,7 +575,7 @@ mod tests {
         setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
         let library_db_id = insert_library(&mut db, "Favorites", "/tmp/lyra-favorites-list")?;
-        let library_public_id = db::lookup::find_id_by_db_id(&db, library_db_id)?
+        let library_public_id = crate::db::lookup::find_id_by_db_id(&db, library_db_id)?
             .expect("library should have a public id");
         let track_public_id = nanoid!();
         let track_db_id = create_track(&mut db, &track_public_id)?;
@@ -614,7 +613,8 @@ mod tests {
         let unsupported_user = create_user(&mut db, "unsupported")?;
         let visible_library = insert_library(&mut db, "Visible", "/tmp/lyra-favorites-check")?;
         let hidden_library = insert_library(&mut db, "Hidden", "/tmp/lyra-favorites-check-hidden")?;
-        let visible_library_id = db::lookup::find_id_by_db_id(&db, visible_library)?.unwrap();
+        let visible_library_id =
+            crate::db::lookup::find_id_by_db_id(&db, visible_library)?.unwrap();
         let principal = principal_for(&db, user, HashSet::from([visible_library_id]));
         let favorited_id = nanoid!();
         let unfavorited_id = nanoid!();
@@ -626,11 +626,13 @@ mod tests {
         connect(&mut db, visible_library, unfavorited)?;
         connect(&mut db, hidden_library, hidden)?;
         add_for_principal(&mut db, &principal, &favorited_id)?;
-        db::favorites::add(&mut db, user, hidden, FavoriteKind::Track, now_ms()?)?;
+        crate::db::favorites::add(&mut db, user, hidden, FavoriteKind::Track, now_ms()?)?;
 
         let malformed_id = "bad/id".to_string();
         let missing_id = "nonexistent".to_string();
-        let unsupported_id = db::users::get_by_id(&db, unsupported_user)?.unwrap().id;
+        let unsupported_id = crate::db::users::get_by_id(&db, unsupported_user)?
+            .unwrap()
+            .id;
         let submitted = vec![
             favorited_id.clone(),
             favorited_id.clone(),
@@ -681,9 +683,9 @@ mod tests {
             MutationOutcome::Applied(FavoriteKind::Playlist)
         ));
 
-        db::playlists::update(
+        crate::db::playlists::update(
             &mut db,
-            &db::Playlist {
+            &crate::db::Playlist {
                 db_id: Some(playlist_db_id.into()),
                 id: pub_id.clone(),
                 name: "p".to_string(),
@@ -702,9 +704,9 @@ mod tests {
             "DELETE on non-visible playlist must still be Applied (idempotent)",
         );
 
-        db::playlists::update(
+        crate::db::playlists::update(
             &mut db,
-            &db::Playlist {
+            &crate::db::Playlist {
                 db_id: Some(playlist_db_id.into()),
                 id: pub_id.clone(),
                 name: "p".to_string(),
@@ -728,7 +730,7 @@ mod tests {
         setup_id_index(&mut db)?;
         let caller = create_user(&mut db, "alice")?;
         let victim_db_id = create_user(&mut db, "victim")?;
-        let victim_public_id = db::users::get_by_id(&db, victim_db_id)?
+        let victim_public_id = crate::db::users::get_by_id(&db, victim_db_id)?
             .expect("victim exists")
             .id;
 

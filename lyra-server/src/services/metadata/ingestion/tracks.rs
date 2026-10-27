@@ -15,10 +15,7 @@ use agdb::{
 };
 
 use super::super::TrackMetadata;
-use crate::db::{
-    self,
-    graph::remove_edges_between,
-};
+use crate::db::graph::remove_edges_between;
 
 fn prune_stale_track_sources(db: &mut DbAny, metadata: &[TrackMetadata]) -> anyhow::Result<()> {
     let mut expected_by_entry: HashMap<DbId, HashSet<String>> = HashMap::new();
@@ -30,12 +27,12 @@ fn prune_stale_track_sources(db: &mut DbAny, metadata: &[TrackMetadata]) -> anyh
     }
 
     for (entry_db_id, expected_source_keys) in expected_by_entry {
-        let tracks = db::tracks::get_by_entry(db, entry_db_id)?;
+        let tracks = crate::db::tracks::get_by_entry(db, entry_db_id)?;
         for track in tracks {
             let Some(track_db_id) = track.db_id.map(Into::into) else {
                 continue;
             };
-            let sources = db::track_sources::get_by_track(db, track_db_id)?;
+            let sources = crate::db::track_sources::get_by_track(db, track_db_id)?;
             for source in sources {
                 let Some(source_db_id) = source.db_id else {
                     continue;
@@ -46,7 +43,7 @@ fn prune_stale_track_sources(db: &mut DbAny, metadata: &[TrackMetadata]) -> anyh
 
                 remove_edges_between(db, track_db_id, source_db_id)?;
                 let still_attached =
-                    db::track_sources::get_track_id_by_source_key(db, &source.source_key)?
+                    crate::db::track_sources::get_track_id_by_source_key(db, &source.source_key)?
                         .is_some();
                 if !still_attached {
                     db.exec_mut(QueryBuilder::remove().ids(source_db_id).query())?;
@@ -71,7 +68,8 @@ pub(crate) fn build_existing_track_map(
             continue;
         }
 
-        if let Some(track_id) = db::track_sources::get_track_id_by_source_key(db, &meta.source_key)?
+        if let Some(track_id) =
+            crate::db::track_sources::get_track_id_by_source_key(db, &meta.source_key)?
         {
             track_ids.insert(meta.source_key.clone(), track_id);
         }

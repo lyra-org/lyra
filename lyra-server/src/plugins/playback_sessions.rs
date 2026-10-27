@@ -46,7 +46,7 @@ use crate::plugins::args;
 use crate::services::playback_sessions::PlaybackUpdatePayload;
 use crate::{
     plugins::db,
-    plugins::lifecycle::PluginId,
+    services::plugin_scope::PluginId,
     services::{
         playback_sessions::{
             self as playbacks,
@@ -99,7 +99,7 @@ struct PlaybackSessionReportRequest {
     event: Option<playbacks::PlaybackEvent>,
     position_ms: Option<u64>,
     duration_ms: Option<u64>,
-    state: Option<db::PlaybackState>,
+    state: Option<crate::db::PlaybackState>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -214,9 +214,9 @@ fn on_update_callback(
     let vm = frame.vm.clone();
     let context = call_context_to_core(&frame.context);
     Ok(luau::ScheduledFuture::new(async move {
-        let generation = crate::STATE.generation();
+        let generation = crate::plugins::STATE.generation();
         let _registration = generation
-            .plugin_registries
+            .registries
             .ensure_registrations_open(&validated_plugin_id)
             .await
             .map_err(crate::plugins::runtime_error)?;
@@ -517,7 +517,7 @@ where
 fn playback_mutation(
     position_ms: Option<u64>,
     duration_ms: Option<u64>,
-    state: Option<db::PlaybackState>,
+    state: Option<crate::db::PlaybackState>,
 ) -> playbacks::PlaybackMutation {
     playbacks::PlaybackMutation {
         position_ms,
@@ -543,7 +543,7 @@ fn remote_action_string(action: &RemoteAction) -> String {
         .unwrap_or_default()
 }
 
-fn playback_state_string(state: db::PlaybackState) -> String {
+fn playback_state_string(state: crate::db::PlaybackState) -> String {
     serde_json::to_value(state)
         .ok()
         .and_then(|value| value.as_str().map(String::from))
@@ -795,7 +795,7 @@ fn playback_request_fields<const N: usize>(leading: [FieldDescriptor; N]) -> Vec
         },
         FieldDescriptor {
             name: "state",
-            ty: Option::<db::PlaybackState>::luau_type(),
+            ty: Option::<crate::db::PlaybackState>::luau_type(),
             description: None,
         },
     ]);

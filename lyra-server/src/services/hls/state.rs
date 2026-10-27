@@ -378,7 +378,7 @@ async fn register_hls_job(
     _creation: CreationGuard,
 ) -> Result<bool, HlsError> {
     let replaced_job = {
-        let db = crate::STATE.db.read().await;
+        let db = crate::services::STATE.db.read().await;
         let exists = crate::db::lookup::find_node_id_by_id(&*db, job_key.track_public_id());
         let source_exists =
             crate::db::lookup::find_node_id_by_id(&*db, &job_key.source.source_public_id);

@@ -7,6 +7,7 @@ mod artists;
 mod coalesce;
 mod edition;
 mod filename;
+pub mod locale;
 mod loudness;
 mod path;
 mod year;

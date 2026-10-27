@@ -3,10 +3,12 @@
 ## Project Structure & Module Organization
 - `lyra-server/`: main Rust server crate.
 - `lyra-server/src/db/`: primary home for database access and query logic.
+- `lyra-docs/`: generates the Luau definitions and the OpenAPI/AsyncAPI documents (`list`, `print`, `generate`, `setup`) from the renderers `lyra-server` exposes under its `docgen` feature.
 - `lyra-server/src/services/`: shared business logic used by both `routes/` and `plugins/`.
 - `lyra-server/src/plugins/`: plugin system integration and core capabilities such as metadata providers.
 - `lyra-server/src/routes/`: REST API route definitions and handlers.
 - `lyra-server/src/config/`: startup configuration read before the database opens: `config.json`, environment variables, and storage directories. Runtime settings belong to `services/settings`.
+- Layers depend only downward: `db` ← `config` ← `services` ← `plugins` ← `routes` ← `lib.rs` composition. Services reach the plugin runtime only through the abstractions they own (`services/plugin_dispatch.rs`, `services/plugin_scope.rs`), which plugins implement and publish. Each layer owns its test helpers (`services/testing.rs`, `plugins/testing.rs`) and its generation state; the plugin generation lives inside the services one (`services/state.rs`, `plugins/state.rs`), so one reset swaps both.
 - Do not add new top-level modules to `lyra-server/src/` — each one represents a major domain layer and should only be introduced with an explicit decision about what boundary it owns.
 - Split files into subdirectory modules when they grow multiple distinct sub-responsibilities that would each benefit from independent navigation and ownership.
 - `docs/reference/agdb.md`: agdb behavior reference (read before DB changes).

@@ -3,6 +3,13 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use harmony_luau::{
+    DescribeInterface,
+    FieldDescriptor,
+    InterfaceDescriptor,
+    LuauType,
+    LuauTypeInfo,
+};
 use std::{
     collections::HashMap,
     sync::{
@@ -12,13 +19,6 @@ use std::{
     time::Instant,
 };
 
-use harmony_luau::{
-    DescribeInterface,
-    FieldDescriptor,
-    InterfaceDescriptor,
-    LuauType,
-    LuauTypeInfo,
-};
 use serde::{
     Deserialize,
     Serialize,
@@ -29,12 +29,12 @@ use tokio::sync::{
 };
 
 use crate::db::PlaybackState;
-use crate::plugins::lifecycle::{
+use crate::services::playback_sessions as playbacks;
+use crate::services::plugin_scope::{
     PluginId,
     PluginScopedInner,
     ScopedRegistry,
 };
-use crate::services::playback_sessions as playbacks;
 
 /// Broadcast channel capacity for playback state events pushed to WS clients.
 const EVENT_BROADCAST_CAPACITY: usize = 64;
@@ -60,7 +60,11 @@ impl Default for PlaybackUpdateRegistries {
 }
 
 fn playback_callbacks() -> Arc<RwLock<PlaybackCallbackRegistry>> {
-    crate::STATE.generation().playback_updates.callbacks.clone()
+    crate::services::STATE
+        .generation()
+        .playback_updates
+        .callbacks
+        .clone()
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -93,7 +97,7 @@ impl DispatchBucket {
 pub(crate) fn subscribe_playback_events(
     user_public_id: &str,
 ) -> broadcast::Receiver<PlaybackUpdatePayload> {
-    let generation = crate::STATE.generation();
+    let generation = crate::services::STATE.generation();
     let mut broadcasts = generation
         .playback_updates
         .event_broadcasts
@@ -106,7 +110,7 @@ pub(crate) fn subscribe_playback_events(
 }
 
 pub(crate) fn unsubscribe_playback_events(user_public_id: &str) {
-    let generation = crate::STATE.generation();
+    let generation = crate::services::STATE.generation();
     let mut broadcasts = generation
         .playback_updates
         .event_broadcasts
@@ -121,7 +125,7 @@ pub(crate) fn unsubscribe_playback_events(user_public_id: &str) {
 }
 
 fn broadcast_playback_event(payload: PlaybackUpdatePayload) {
-    let generation = crate::STATE.generation();
+    let generation = crate::services::STATE.generation();
     let mut broadcasts = generation
         .playback_updates
         .event_broadcasts
@@ -261,7 +265,7 @@ pub(crate) fn dispatch_update_for_caller(
     payload: PlaybackUpdatePayload,
 ) {
     let caller = caller.into();
-    let generation = crate::STATE.generation();
+    let generation = crate::services::STATE.generation();
 
     broadcast_playback_event(payload.clone());
 
@@ -275,7 +279,7 @@ pub(crate) fn dispatch_update_for_caller(
         return;
     }
 
-    if let Some(runtime) = generation.plugin_runtime.get()
+    if let Some(runtime) = generation.plugin_dispatch.get()
         && let Err(error) = runtime.dispatch_playback_update(payload)
     {
         tracing::warn!(
@@ -287,7 +291,7 @@ pub(crate) fn dispatch_update_for_caller(
 
 fn dispatch_allowed(caller: &str) -> bool {
     let now = Instant::now();
-    let generation = crate::STATE.generation();
+    let generation = crate::services::STATE.generation();
     let mut buckets = generation
         .playback_updates
         .dispatch_buckets
@@ -335,8 +339,8 @@ mod tests {
     /// single source of truth for dropped updates.
     #[test]
     fn rate_limited_updates_still_reach_event_broadcast() {
-        let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
-        crate::testing::init_default_test_state().expect("init test state");
+        let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+        crate::services::testing::init_default_test_state().expect("init test state");
 
         let mut receiver = subscribe_playback_events("user");
         let sends = DISPATCH_BURST as usize + 5;
@@ -356,8 +360,8 @@ mod tests {
 
     #[test]
     fn playback_event_lag_is_isolated_by_user() {
-        let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
-        crate::testing::init_default_test_state().expect("init test state");
+        let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+        crate::services::testing::init_default_test_state().expect("init test state");
 
         let mut flooded = subscribe_playback_events("flooded");
         let mut unrelated = subscribe_playback_events("unrelated");

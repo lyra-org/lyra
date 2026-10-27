@@ -429,10 +429,8 @@ pub(crate) fn replace_for_owner(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{
-        self,
-        test_db::*,
-    };
+    use crate::db::fixtures::*;
+    use crate::db::test_db::*;
     use agdb::DbAny;
 
     fn links(db: &DbAny, owner: DbId) -> anyhow::Result<Vec<CreditLink>> {
@@ -513,7 +511,9 @@ mod tests {
         connect_credit(&mut db, release, removed, CreditType::Artist, None, 0)?;
         connect_credit(&mut db, release, kept, CreditType::Artist, None, 1)?;
 
-        db.transaction_mut(|tx| db::metadata::cascade_remove_entities_in_txn(tx, &[removed]))?;
+        db.transaction_mut(|tx| {
+            crate::db::metadata::cascade_remove_entities_in_txn(tx, &[removed])
+        })?;
 
         let remaining = links_for_owner(&db, release)?;
         assert_eq!(remaining.len(), 1);
@@ -522,7 +522,7 @@ mod tests {
     }
 
     fn credited(db: &DbAny, artist: DbId) -> anyhow::Result<bool> {
-        Ok(db::artists::get_by_id(db, artist)?.is_some_and(|artist| artist.credited))
+        Ok(crate::db::artists::get_by_id(db, artist)?.is_some_and(|artist| artist.credited))
     }
 
     fn artist_credit(artist_id: DbId) -> CreditLinkInput {
@@ -565,11 +565,11 @@ mod tests {
         connect_artist(&mut db, track, both)?;
         connect_artist(&mut db, release, both)?;
 
-        db::metadata::cascade_remove_entities(&mut db, &[track])?;
+        crate::db::metadata::cascade_remove_entities(&mut db, &[track])?;
 
         assert!(!credited(&db, track_only)?);
         assert!(credited(&db, both)?, "the release still credits it");
-        db::metadata::cascade_remove_entities(&mut db, &[release])?;
+        crate::db::metadata::cascade_remove_entities(&mut db, &[release])?;
         assert!(!credited(&db, both)?);
         Ok(())
     }

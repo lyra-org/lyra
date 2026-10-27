@@ -32,17 +32,15 @@ use agdb::{
     DbId,
 };
 
+use crate::db::Artist;
+use crate::db::ArtistRelationType;
+use crate::db::ArtistType;
+use crate::db::CreditType;
 use crate::plugins::args;
 use crate::plugins::catalog;
 use crate::services::catalog::artists::ArtistKey;
 use crate::{
-    plugins::db::{
-        self,
-        Artist,
-        ArtistRelationType,
-        ArtistType,
-        CreditType,
-    },
+    plugins::db,
     services::{
         self,
         artists::{
@@ -75,9 +73,9 @@ pub(crate) fn module_spec() -> ModuleSpec {
         .function(by_track_spec())
         .function(relations_spec())
         .function(artwork_id_by_name_spec())
-        .userdata(ArtistType::_harmony_userdata_spec())
-        .userdata(ArtistRelationType::_harmony_userdata_spec())
-        .userdata(CreditType::_harmony_userdata_spec())
+        .userdata(crate::db::ArtistType::_harmony_userdata_spec())
+        .userdata(crate::db::ArtistRelationType::_harmony_userdata_spec())
+        .userdata(crate::db::CreditType::_harmony_userdata_spec())
         .install(|_| Ok(ModuleExport::new(ArtistsModule)))
 }
 
@@ -101,7 +99,7 @@ fn artwork_id_by_name_callback(
             return Ok(luau::Value::Nil);
         }
         let db = db.read().await;
-        let id = crate::plugins::db::artists::find_by_scan_name(&*db, name)
+        let id = crate::db::artists::find_by_scan_name(&*db, name)
             .map_err(crate::plugins::runtime_error)?;
         Ok(id.map_or(luau::Value::Nil, |id| luau::Value::from(id.0)))
     }))
@@ -288,7 +286,7 @@ fn parse_optional_artist_type(
     if matches!(value, luau::Value::Nil) {
         return Ok(None);
     }
-    ArtistType::_harmony_userdata_class()
+    crate::db::ArtistType::_harmony_userdata_class()
         .read_value(vm, key, value)
         .map(Some)
 }
@@ -302,7 +300,9 @@ fn parse_optional_credit_types(
         luau::Value::Nil => Ok(None),
         luau::Value::Table(table) => args::array_values(vm, &table)?
             .into_iter()
-            .map(|(_, value)| CreditType::_harmony_userdata_class().read_value(vm, key, value))
+            .map(|(_, value)| {
+                crate::db::CreditType::_harmony_userdata_class().read_value(vm, key, value)
+            })
             .collect::<luau::runtime::Result<Vec<_>>>()
             .map(Some),
         other => Err(crate::plugins::runtime_error(format!(
@@ -454,9 +454,9 @@ fn artist_interfaces() -> Vec<InterfaceDescriptor> {
             "exclude_credit_role",
             LuauType::optional(LuauType::named("CreditRole")),
         ),
-        field("credit_types", Option::<Vec<CreditType>>::luau_type()),
-        field("exclude_credit_types", Option::<Vec<CreditType>>::luau_type()),
-        field("artist_type", Option::<ArtistType>::luau_type()),
+        field("credit_types", Option::<Vec<crate::db::CreditType>>::luau_type()),
+        field("exclude_credit_types", Option::<Vec<crate::db::CreditType>>::luau_type()),
+        field("artist_type", Option::<crate::db::ArtistType>::luau_type()),
         field("favorite", Option::<bool>::luau_type()),
         described_field(
             "listened",
@@ -551,9 +551,9 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &artist_type_aliases(),
         &artist_interfaces(),
         &[
-            <ArtistType as harmony_luau::DescribeUserData>::class_descriptor(),
-            <ArtistRelationType as harmony_luau::DescribeUserData>::class_descriptor(),
-            <CreditType as harmony_luau::DescribeUserData>::class_descriptor(),
+            <crate::db::ArtistType as harmony_luau::DescribeUserData>::class_descriptor(),
+            <crate::db::ArtistRelationType as harmony_luau::DescribeUserData>::class_descriptor(),
+            <crate::db::CreditType as harmony_luau::DescribeUserData>::class_descriptor(),
         ],
     )
 }

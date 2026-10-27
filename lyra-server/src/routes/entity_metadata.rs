@@ -17,9 +17,8 @@ use axum::{
 };
 
 use crate::{
-    STATE,
-    db,
     routes::AppError,
+    services::STATE,
     services::{
         auth::{
             Principal,
@@ -40,13 +39,13 @@ use crate::{
 };
 
 fn require_entity_access(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     principal: &Principal,
     public_id: &str,
 ) -> Result<agdb::DbId, AppError> {
-    let entity_id = db::lookup::find_node_id_by_id(db, public_id)?
+    let entity_id = crate::db::lookup::find_node_id_by_id(db, public_id)?
         .ok_or_else(|| AppError::not_found(format!("Entity not found: {public_id}")))?;
-    let accessible = if db::artists::get_by_id(db, entity_id)?.is_some() {
+    let accessible = if crate::db::artists::get_by_id(db, entity_id)?.is_some() {
         access::artist_accessible(db, principal, entity_id)?
     } else {
         access::entity_accessible(db, principal, entity_id)?
@@ -181,18 +180,17 @@ mod tests {
     use tower::ServiceExt;
 
     use super::*;
+    use crate::db::fixtures::{
+        insert_artist,
+        insert_release,
+    };
+    use crate::db::test_db::{
+        connect_artist,
+        insert_library,
+    };
     use crate::{
-        db::test_db::{
-            connect_artist,
-            insert_artist,
-            insert_library,
-            insert_release,
-        },
-        testing::{
-            LibraryFixtureConfig,
-            initialize_runtime,
-            runtime_test_lock,
-        },
+        plugins::testing::init_library_test_state,
+        services::testing::runtime_test_lock,
     };
 
     async fn send(
@@ -226,12 +224,7 @@ mod tests {
     async fn library_scoped_managers_reference_artists_and_labels_from_any_library()
     -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
-        initialize_runtime(&LibraryFixtureConfig {
-            directory: std::path::PathBuf::from("."),
-            language: None,
-            country: None,
-        })
-        .await?;
+        init_library_test_state(std::path::PathBuf::from(".")).await?;
 
         let public_id = |db: &agdb::DbAny, id: agdb::DbId| -> anyhow::Result<String> {
             let element = db
@@ -242,61 +235,61 @@ mod tests {
         };
         let (user_id, ids, release_id, outsider_id) = {
             let mut db = STATE.db.write().await;
-            db::roles::ensure_builtin_roles(&mut db)?;
-            let user_id = db::users::create(
+            crate::db::roles::ensure_builtin_roles(&mut db)?;
+            let user_id = crate::db::users::create(
                 &mut db,
-                &db::test_db::test_user("entity-metadata-reference-manager")?,
+                &crate::db::fixtures::test_user("entity-metadata-reference-manager")?,
             )?;
             let role_name = format!("metadata-manager-{}", nanoid!());
-            db::roles::create(
+            crate::db::roles::create(
                 &mut db,
-                &db::roles::Role {
+                &crate::db::roles::Role {
                     db_id: None,
                     id: nanoid!(),
                     name: role_name.clone(),
-                    permissions: vec![db::Permission::ManageMetadata],
+                    permissions: vec![crate::db::Permission::ManageMetadata],
                 },
             )?;
-            db::roles::ensure_user_has_role(&mut db, user_id, &role_name)?;
+            crate::db::roles::ensure_user_has_role(&mut db, user_id, &role_name)?;
 
             let visible_library_id =
                 insert_library(&mut db, "Visible Metadata", "/tmp/metadata-route-visible")?;
             let other_library_id =
                 insert_library(&mut db, "Other Metadata", "/tmp/metadata-route-other")?;
-            db::libraries::grant_access(
+            crate::db::libraries::grant_access(
                 &mut db,
                 user_id,
                 visible_library_id,
-                db::libraries::AccessKind::ReadWrite,
+                crate::db::libraries::AccessKind::ReadWrite,
             )?;
             let release_id = insert_release(&mut db, "Visible Release")?;
             let other_release_id = insert_release(&mut db, "Other Release")?;
-            db::graph::ensure_owned_edge(&mut db, visible_library_id, release_id)?;
-            db::graph::ensure_owned_edge(&mut db, other_library_id, other_release_id)?;
+            crate::db::graph::ensure_owned_edge(&mut db, visible_library_id, release_id)?;
+            crate::db::graph::ensure_owned_edge(&mut db, other_library_id, other_release_id)?;
             let character_id = insert_artist(&mut db, "Character")?;
             let actor_id = insert_artist(&mut db, "Uncredited Actor")?;
             let outsider_id = insert_artist(&mut db, "Outsider")?;
             connect_artist(&mut db, release_id, character_id)?;
             connect_artist(&mut db, other_release_id, outsider_id)?;
-            db::artists::relations::link(
+            crate::db::artists::relations::link(
                 &mut db,
                 actor_id,
                 character_id,
-                db::ArtistRelationType::VoiceActor,
+                crate::db::ArtistRelationType::VoiceActor,
                 None,
             )?;
-            let label_id = db::labels::resolve(
+            let label_id = crate::db::labels::resolve(
                 &mut db,
-                &db::labels::ResolveLabel {
+                &crate::db::labels::ResolveLabel {
                     name: "Outside Label",
                     external_id: None,
                 },
             )?;
             db.transaction_mut(|t| {
-                db::labels::sync_release_label_links_inside_tx(
+                crate::db::labels::sync_release_label_links_inside_tx(
                     t,
                     other_release_id,
-                    &[db::labels::LabelLinkInput {
+                    &[crate::db::labels::LabelLinkInput {
                         label_id,
                         catalog_number: None,
                     }],
@@ -317,7 +310,7 @@ mod tests {
         };
         let [character, actor, outsider, label, release, other_release] =
             <[String; 6]>::try_from(ids).expect("six ids");
-        let session = crate::testing::create_session(user_id, Default::default()).await?;
+        let session = crate::services::testing::create_session(user_id, Default::default()).await?;
         let authorization = format!("Bearer {}", session.token);
         let routes = entity_metadata_routes();
 
@@ -363,7 +356,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{body}");
         {
             let db = STATE.db.read().await;
-            let credited: Vec<agdb::DbId> = db::artists::get(&*db, release_id)?
+            let credited: Vec<agdb::DbId> = crate::db::artists::get(&*db, release_id)?
                 .into_iter()
                 .filter_map(|artist| artist.db_id.map(agdb::DbId::from))
                 .collect();

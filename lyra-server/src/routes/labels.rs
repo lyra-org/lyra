@@ -19,17 +19,14 @@ use serde::{
     Serialize,
 };
 
+use crate::db::labels;
 use crate::{
-    STATE,
-    db::{
-        self,
-        labels,
-    },
     routes::{
         AppError,
         deserialize_inc,
         parse_inc_values,
     },
+    services::STATE,
     services::auth::require_authenticated,
 };
 
@@ -117,7 +114,7 @@ async fn get_label(
     let inc = parse_label_inc(query.inc)?;
 
     let db = &*STATE.db.read().await;
-    let label_db_id = db::lookup::find_node_id_by_id(db, &id)?
+    let label_db_id = crate::db::lookup::find_node_id_by_id(db, &id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
     let label = labels::get_by_id(db, label_db_id)?
         .ok_or_else(|| AppError::not_found(format!("Label not found: {id}")))?;
@@ -134,7 +131,7 @@ async fn get_label(
 
     let releases = if inc.releases {
         let release_db_ids: Vec<_> = accessible_pairs.iter().map(|(id, _)| *id).collect();
-        let release_ids_by_id = db::lookup::find_ids_by_db_ids(db, &release_db_ids)?;
+        let release_ids_by_id = crate::db::lookup::find_ids_by_db_ids(db, &release_db_ids)?;
         let summaries: Vec<LabelReleaseSummary> = accessible_pairs
             .into_iter()
             .filter_map(|(release_db_id, catalog_number)| {

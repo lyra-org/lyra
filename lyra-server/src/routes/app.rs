@@ -3,7 +3,12 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashSet;
+use std::{
+    collections::HashSet,
+    future::IntoFuture,
+    net::SocketAddr,
+    time::Duration,
+};
 
 #[cfg(feature = "docgen")]
 use aide::openapi::{
@@ -12,9 +17,23 @@ use aide::openapi::{
     SecurityScheme,
 };
 use anyhow::Result;
-use axum::Router;
+use axum::{
+    Router,
+    extract::DefaultBodyLimit,
+};
+use tokio::{
+    net::TcpListener,
+    time::timeout,
+};
+use tokio_util::sync::CancellationToken;
+use tower_http::trace::TraceLayer;
 
-use super::registry::RouteKey;
+use crate::{
+    plugins::api::RouteKey,
+    services::settings::server::Config,
+};
+
+const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(crate) struct CoreApi {
     pub(crate) router: Router,
@@ -115,6 +134,76 @@ pub(crate) fn build_openapi_spec() -> OpenApi {
 
     configure_rest_openapi(&mut api);
     api
+}
+
+// Sharply below axum's 2MB default to bound CPU/RAM amplification on auth'd POSTs.
+const REQUEST_BODY_LIMIT_BYTES: usize = 256 * 1024;
+
+pub(crate) async fn serve_app(
+    app: Router,
+    config: &Config,
+    listener: TcpListener,
+    shutdown_token: CancellationToken,
+) -> Result<()> {
+    tracing::info!("listening on {}", listener.local_addr()?);
+    let app = super::rate_limit::apply(app, config);
+    let app = app.layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT_BYTES));
+    let app = super::cors::apply(app);
+    let app = app.layer(TraceLayer::new_for_http());
+    let signal_token = shutdown_token.clone();
+    let signal_handle = tokio::spawn(async move {
+        shutdown_signal().await;
+        signal_token.cancel();
+    });
+
+    let server = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_token.clone().cancelled_owned())
+    .into_future();
+    tokio::pin!(server);
+
+    tokio::select! {
+        result = &mut server => {
+            signal_handle.abort();
+            result?;
+            return Ok(());
+        }
+        _ = shutdown_token.cancelled() => {}
+    }
+
+    match timeout(GRACEFUL_SHUTDOWN_TIMEOUT, &mut server).await {
+        Ok(result) => result?,
+        Err(_) => {
+            tracing::warn!(
+                timeout_ms = GRACEFUL_SHUTDOWN_TIMEOUT.as_millis() as u64,
+                "server graceful drain deadline elapsed; forcing shutdown"
+            );
+        }
+    }
+    signal_handle.abort();
+
+    Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = tokio::signal::ctrl_c();
+
+    #[cfg(unix)]
+    {
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to register SIGTERM handler");
+        tokio::select! {
+            _ = ctrl_c => {}
+            _ = sigterm.recv() => {}
+        }
+    }
+
+    #[cfg(not(unix))]
+    ctrl_c.await.ok();
+
+    tracing::info!("shutdown signal received, draining connections");
 }
 
 fn collect_core_routes() -> Result<HashSet<RouteKey>> {

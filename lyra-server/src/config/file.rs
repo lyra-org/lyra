@@ -24,7 +24,7 @@ use std::{
     },
 };
 
-use super::DbKind;
+use crate::db::bootstrap::DbKind;
 
 const LYRA_CONFIG_PATH_ENV: &str = "LYRA_CONFIG_PATH";
 
@@ -42,7 +42,7 @@ pub(crate) struct ConfigFile {
     pub(crate) settings: FileSettings,
 }
 
-/// Dev-only bootstrap; see [`crate::services::libraries::LibraryConfig`].
+/// Dev-only bootstrap; resolved into the libraries service's `LibraryConfig`.
 #[derive(Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct LibraryFile {

@@ -12,7 +12,6 @@ use agdb::{
 use nanoid::nanoid;
 
 use crate::db::{
-    self,
     PlaybackSession,
     PlaybackState,
 };
@@ -55,10 +54,10 @@ fn event_for_state(state: PlaybackState, active_event: ActiveEvent) -> String {
 }
 
 fn resolve_library_public_id_for_track(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     track_db_id: DbId,
 ) -> ServiceResult<Option<String>> {
-    let libraries = map_internal(db::libraries::get_for_entity(db, track_db_id))?;
+    let libraries = map_internal(crate::db::libraries::get_for_entity(db, track_db_id))?;
     debug_assert!(
         libraries.len() <= 1,
         "track {} maps to {} libraries; expected at most 1",
@@ -69,22 +68,22 @@ fn resolve_library_public_id_for_track(
 }
 
 fn resolve_kind_validated_public_id(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     collection_alias: &str,
     db_id: DbId,
 ) -> ServiceResult<Option<String>> {
-    if !map_internal(db::lookup::collection_contains_id(
+    if !map_internal(crate::db::lookup::collection_contains_id(
         db,
         collection_alias,
         db_id,
     ))? {
         return Ok(None);
     }
-    map_internal(db::lookup::find_id_by_db_id(db, db_id))
+    map_internal(crate::db::lookup::find_id_by_db_id(db, db_id))
 }
 
 fn build_playback_record(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     playback_session_id: DbId,
     track_db_id: DbId,
     user_db_id: DbId,
@@ -111,7 +110,7 @@ fn build_playback_record(
 }
 
 fn build_evicted_playback_record(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     playback_session_id: DbId,
     track_db_id: DbId,
     user_db_id: DbId,
@@ -138,7 +137,7 @@ fn build_evicted_playback_record(
 }
 
 fn require_playback_record(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     playback_session_id: DbId,
     track_db_id: DbId,
     user_db_id: DbId,
@@ -229,7 +228,7 @@ fn updated_playback_session_state(
 }
 
 fn update_session_bound_playback(
-    db: &mut impl db::DbAccess,
+    db: &mut impl crate::db::DbAccess,
     user_db_id: DbId,
     mut bound: sessions::BoundPlayback,
     mutation: PlaybackMutation,
@@ -238,7 +237,7 @@ fn update_session_bound_playback(
 ) -> ServiceResult<PlaybackRecord> {
     apply_playback_mutation(&mut bound.playback, &mutation, now_ms, activity_policy)?;
     bound.playback.db_id = Some(bound.playback_session_id);
-    map_internal(db::playback_sessions::update(db, &bound.playback))?;
+    map_internal(crate::db::playback_sessions::update(db, &bound.playback))?;
 
     require_playback_record(
         db,
@@ -287,20 +286,20 @@ fn effective_playback_position_ms(playback: &PlaybackSession, now_ms: u64) -> u6
 fn listen_for_playback(
     playback_record: &PlaybackRecord,
     now_ms: u64,
-) -> Option<(db::Listen, PlaybackSession)> {
+) -> Option<(crate::db::Listen, PlaybackSession)> {
     if playback_record.playback.listen_recorded.unwrap_or(false) {
         return None;
     }
 
     let activity_ms = playback_activity_ms(&playback_record.playback);
-    if !db::playback_sessions::activity_meets_listen_threshold(
+    if !crate::db::playback_sessions::activity_meets_listen_threshold(
         activity_ms,
         playback_record.playback.duration_ms,
     ) {
         return None;
     }
 
-    let listen = db::Listen {
+    let listen = crate::db::Listen {
         db_id: None,
         id: nanoid!(),
         track_public_id: playback_record.track_public_id.clone(),
@@ -324,7 +323,7 @@ pub(crate) fn maybe_record_listen(
     let Some((listen, playback_session)) = listen_for_playback(playback_record, now_ms) else {
         return Ok(());
     };
-    map_internal(db::listens::create_and_mark_recorded(
+    map_internal(crate::db::listens::create_and_mark_recorded(
         db,
         &listen,
         playback_record.track_db_id,
@@ -337,14 +336,14 @@ pub(crate) fn maybe_record_listen(
 }
 
 fn maybe_record_listen_in_transaction(
-    db: &mut impl db::DbAccess,
+    db: &mut impl crate::db::DbAccess,
     playback_record: &mut PlaybackRecord,
     now_ms: u64,
 ) -> ServiceResult<()> {
     let Some((listen, playback_session)) = listen_for_playback(playback_record, now_ms) else {
         return Ok(());
     };
-    map_internal(db::listens::insert_and_mark_recorded(
+    map_internal(crate::db::listens::insert_and_mark_recorded(
         db,
         &listen,
         playback_record.track_db_id,
@@ -357,7 +356,7 @@ fn maybe_record_listen_in_transaction(
 }
 
 pub(crate) fn collect_unique_track_external_id_keys(
-    external_ids: &[db::external_ids::ExternalId],
+    external_ids: &[crate::db::external_ids::ExternalId],
     unique_track_id_pairs: &HashSet<(String, String)>,
 ) -> HashSet<(String, String, String)> {
     let mut keys = HashSet::new();
@@ -392,18 +391,18 @@ pub(crate) fn resolve_merged_track_ids_for_play_count(
         return Ok(vec![track_db_id]);
     }
 
-    if db::tracks::get_by_id(db, track_db_id)?.is_none() {
+    if crate::db::tracks::get_by_id(db, track_db_id)?.is_none() {
         return Ok(vec![track_db_id]);
     }
 
-    let target_external_ids = db::external_ids::get_for_entity(db, track_db_id)?;
+    let target_external_ids = crate::db::external_ids::get_for_entity(db, track_db_id)?;
     let target_keys =
         collect_unique_track_external_id_keys(&target_external_ids, unique_track_id_pairs);
     if target_keys.is_empty() {
         return Ok(vec![track_db_id]);
     }
 
-    let all_external_ids = db::external_ids::get_all_for_tracks(db)?;
+    let all_external_ids = crate::db::external_ids::get_all_for_tracks(db)?;
     let matching_ext_ids: Vec<_> = all_external_ids
         .into_iter()
         .filter(|ext_id| {
@@ -424,8 +423,8 @@ pub(crate) fn resolve_merged_track_ids_for_play_count(
         let Some(ext_db_id) = ext_id.db_id.map(DbId::from) else {
             continue;
         };
-        if let Some(owner_db_id) = db::external_ids::get_owner_id(db, ext_db_id)?
-            && db::tracks::get_by_id(db, owner_db_id)?.is_some()
+        if let Some(owner_db_id) = crate::db::external_ids::get_owner_id(db, ext_db_id)?
+            && crate::db::tracks::get_by_id(db, owner_db_id)?.is_some()
         {
             merged_track_ids.insert(owner_db_id);
         }
@@ -444,7 +443,7 @@ pub(crate) fn cleanup_evicted_playbacks(
 ) -> ServiceResult<Vec<EvictedPlaybackRecord>> {
     sessions::cleanup_stale_scopes(now_ms, ACTIVE_SESSION_TTL_MS);
     let active_session_cutoff_ms = now_ms.saturating_sub(ACTIVE_SESSION_TTL_MS);
-    let evicted_playbacks = map_internal(db::playback_sessions::evict_low_activity(
+    let evicted_playbacks = map_internal(crate::db::playback_sessions::evict_low_activity(
         db,
         now_ms,
         |playback_session_id| {
@@ -482,20 +481,25 @@ pub(crate) fn cleanup_evicted_playbacks(
 }
 
 pub(super) fn collect_playback_records(db: &DbAny) -> ServiceResult<Vec<PlaybackRecord>> {
-    let playbacks = map_internal(db::playback_sessions::get(db))?;
+    let playbacks = map_internal(crate::db::playback_sessions::get(db))?;
     let mut records = Vec::new();
 
     for playback in playbacks {
         let Some(playback_session_id) = playback.db_id else {
             continue;
         };
-        let Some(track_db_id) =
-            map_internal(db::playback_sessions::get_track_id(db, playback_session_id))?
+        let Some(track_db_id) = map_internal(crate::db::playback_sessions::get_track_id(
+            db,
+            playback_session_id,
+        ))?
         else {
             continue;
         };
-        let user_db_id = map_internal(db::playback_sessions::get_user_id(db, playback_session_id))?
-            .unwrap_or(DbId(0));
+        let user_db_id = map_internal(crate::db::playback_sessions::get_user_id(
+            db,
+            playback_session_id,
+        ))?
+        .unwrap_or(DbId(0));
 
         let Some(record) =
             build_playback_record(db, playback_session_id, track_db_id, user_db_id, playback)?
@@ -537,7 +541,8 @@ pub(crate) fn apply_playback_mutation(
     let mut last_position_ms = playback.last_position_ms.unwrap_or(playback.position_ms);
     let mut listen_recorded = playback.listen_recorded;
     if mutation.position_ms.is_some() {
-        let listen_threshold_ms = db::playback_sessions::min_required_activity_ms(duration_ms);
+        let listen_threshold_ms =
+            crate::db::playback_sessions::min_required_activity_ms(duration_ms);
         if listen_recorded.unwrap_or(false)
             && !state.is_terminal()
             && position_ms <= RESTART_POSITION_MS
@@ -640,7 +645,10 @@ pub(crate) fn pause_playing_scopes_on_disconnect(
     session_key: &str,
     now_ms: u64,
 ) -> ServiceResult<(Vec<PlaybackRecord>, Vec<EvictedPlaybackRecord>)> {
-    let Some(user_db_id) = map_internal(db::users::find_db_id_by_public_id(db, user_public_id))?
+    let Some(user_db_id) = map_internal(crate::db::users::find_db_id_by_public_id(
+        db,
+        user_public_id,
+    ))?
     else {
         return Ok((Vec::new(), Vec::new()));
     };
@@ -684,7 +692,7 @@ pub(crate) fn pause_playing_scopes_on_disconnect(
 }
 
 pub(crate) fn start_playback_in_transaction(
-    db: &mut impl db::DbAccess,
+    db: &mut impl crate::db::DbAccess,
     request: StartPlaybackRequest,
 ) -> ServiceResult<TransactionPlaybackUpdate> {
     let StartPlaybackRequest {
@@ -695,13 +703,13 @@ pub(crate) fn start_playback_in_transaction(
         now_ms,
         active_event,
     } = request;
-    if map_internal(db::tracks::get_by_id(db, track_db_id))?.is_none() {
+    if map_internal(crate::db::tracks::get_by_id(db, track_db_id))?.is_none() {
         return Err(PlaybackServiceError::not_found(format!(
             "track not found: {}",
             track_db_id.0
         )));
     }
-    if map_internal(db::users::get_by_id(db, user_db_id))?.is_none() {
+    if map_internal(crate::db::users::get_by_id(db, user_db_id))?.is_none() {
         return Err(PlaybackServiceError::not_found(format!(
             "user not found: {}",
             user_db_id.0
@@ -710,7 +718,7 @@ pub(crate) fn start_playback_in_transaction(
 
     let playback = new_playback_session(client_name, mutation, now_ms)?;
 
-    let playback_session_id = map_internal(db::playback_sessions::insert(
+    let playback_session_id = map_internal(crate::db::playback_sessions::insert(
         db,
         &playback,
         track_db_id,
@@ -774,7 +782,7 @@ pub(crate) fn report_playback(
 }
 
 pub(crate) fn report_playback_in_transaction(
-    db: &mut impl db::DbAccess,
+    db: &mut impl crate::db::DbAccess,
     request: ReportPlaybackRequest,
 ) -> ServiceResult<TransactionPlaybackUpdate> {
     let ReportPlaybackRequest {
@@ -785,15 +793,20 @@ pub(crate) fn report_playback_in_transaction(
         activity_policy,
         active_event,
     } = request;
-    let mut playback = map_internal(db::playback_sessions::get_by_id(db, playback_session_id))?
-        .ok_or_else(|| {
-            PlaybackServiceError::not_found(format!(
-                "playback session not found: {}",
-                playback_session_id.0
-            ))
-        })?;
-    let playback_user_db_id =
-        map_internal(db::playback_sessions::get_user_id(db, playback_session_id))?;
+    let mut playback = map_internal(crate::db::playback_sessions::get_by_id(
+        db,
+        playback_session_id,
+    ))?
+    .ok_or_else(|| {
+        PlaybackServiceError::not_found(format!(
+            "playback session not found: {}",
+            playback_session_id.0
+        ))
+    })?;
+    let playback_user_db_id = map_internal(crate::db::playback_sessions::get_user_id(
+        db,
+        playback_session_id,
+    ))?;
     if playback_user_db_id != Some(expected_user_db_id) {
         return Err(PlaybackServiceError::not_found(format!(
             "playback session not found: {}",
@@ -803,9 +816,12 @@ pub(crate) fn report_playback_in_transaction(
 
     apply_playback_mutation(&mut playback, &mutation, now_ms, activity_policy)?;
     playback.db_id = Some(playback_session_id);
-    map_internal(db::playback_sessions::update(db, &playback))?;
-    let track_db_id = map_internal(db::playback_sessions::get_track_id(db, playback_session_id))?
-        .ok_or_else(|| {
+    map_internal(crate::db::playback_sessions::update(db, &playback))?;
+    let track_db_id = map_internal(crate::db::playback_sessions::get_track_id(
+        db,
+        playback_session_id,
+    ))?
+    .ok_or_else(|| {
         PlaybackServiceError::not_found(format!(
             "playback session track not found: {}",
             playback_session_id.0
@@ -826,18 +842,21 @@ pub(crate) fn report_playback_in_transaction(
 }
 
 pub(crate) fn pause_playback_in_transaction(
-    db: &mut impl db::DbAccess,
+    db: &mut impl crate::db::DbAccess,
     playback_session_id: DbId,
     user_db_id: DbId,
     now_ms: u64,
 ) -> ServiceResult<Option<TransactionPlaybackUpdate>> {
-    let playback = map_internal(db::playback_sessions::get_by_id(db, playback_session_id))?
-        .ok_or_else(|| {
-            PlaybackServiceError::not_found(format!(
-                "playback session not found: {}",
-                playback_session_id.0
-            ))
-        })?;
+    let playback = map_internal(crate::db::playback_sessions::get_by_id(
+        db,
+        playback_session_id,
+    ))?
+    .ok_or_else(|| {
+        PlaybackServiceError::not_found(format!(
+            "playback session not found: {}",
+            playback_session_id.0
+        ))
+    })?;
     if !matches!(
         playback.state,
         PlaybackState::Playing | PlaybackState::Buffering
@@ -868,9 +887,10 @@ pub(crate) fn report_playback_session(
     db: &mut DbAny,
     request: SessionPlaybackReportRequest<'_>,
 ) -> ServiceResult<Option<PlaybackRecord>> {
-    let user = map_internal(db::users::get_by_id(db, request.user_db_id))?.ok_or_else(|| {
-        PlaybackServiceError::not_found(format!("user not found: {}", request.user_db_id.0))
-    })?;
+    let user =
+        map_internal(crate::db::users::get_by_id(db, request.user_db_id))?.ok_or_else(|| {
+            PlaybackServiceError::not_found(format!("user not found: {}", request.user_db_id.0))
+        })?;
     let scope = PlaybackScopeKey {
         plugin_id: request.plugin_id,
         user_public_id: &user.id,
@@ -888,7 +908,7 @@ pub(crate) fn report_playback_session(
 }
 
 fn report_playback_session_in_transaction(
-    db: &mut impl db::DbAccess,
+    db: &mut impl crate::db::DbAccess,
     request: SessionPlaybackReportRequest<'_>,
 ) -> ServiceResult<(Option<PlaybackRecord>, Option<PlaybackSessionScope>, bool)> {
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -908,17 +928,17 @@ fn report_playback_session_in_transaction(
         active_event,
     } = request;
 
-    map_internal(db::playbacks::expire_reported_for_user(
+    map_internal(crate::db::playbacks::expire_reported_for_user(
         db, user_db_id, now_ms,
     ))?;
-    if map_internal(db::users::get_by_id(db, user_db_id))?.is_none() {
+    if map_internal(crate::db::users::get_by_id(db, user_db_id))?.is_none() {
         return Err(PlaybackServiceError::not_found(format!(
             "user not found: {}",
             user_db_id.0
         )));
     }
 
-    let mut root = map_internal(db::playbacks::get_reported(
+    let mut root = map_internal(crate::db::playbacks::get_reported(
         db,
         user_db_id,
         plugin_id,
@@ -927,9 +947,9 @@ fn report_playback_session_in_transaction(
     ))?;
     let mut session = if let Some(root) = root.as_ref() {
         let root_id = root.db_id.expect("persisted playback id");
-        let current_id = db::playbacks::get_current_session_id(db, root_id)?;
+        let current_id = crate::db::playbacks::get_current_session_id(db, root_id)?;
         let current_public_id = current_id
-            .map(|id| db::playback_sessions::get_by_id(db, id))
+            .map(|id| crate::db::playback_sessions::get_by_id(db, id))
             .transpose()
             .map_err(PlaybackServiceError::internal)?
             .flatten()
@@ -939,7 +959,7 @@ fn report_playback_session_in_transaction(
             .as_ref()
             .and_then(|source| source.previous.as_ref());
         let previous_id = previous
-            .map(|previous| db::lookup::find_node_id_by_id(db, &previous.session_public_id))
+            .map(|previous| crate::db::lookup::find_node_id_by_id(db, &previous.session_public_id))
             .transpose()
             .map_err(PlaybackServiceError::internal)?
             .flatten();
@@ -1056,7 +1076,7 @@ fn report_playback_session_in_transaction(
                             .as_ref()
                             .is_some_and(|source| source.previous.is_some())
                     {
-                        map_internal(db::playbacks::update_reported_previous(
+                        map_internal(crate::db::playbacks::update_reported_previous(
                             db,
                             root.db_id.expect("persisted playback id"),
                             None,
@@ -1219,15 +1239,15 @@ fn report_playback_session_in_transaction(
         if let Some(root) = root.as_ref() {
             let root_id = root.db_id.expect("persisted playback id");
             if original_current_id == Some(current_id) {
-                map_internal(db::playbacks::touch(db, root_id, now_ms))?;
+                map_internal(crate::db::playbacks::touch(db, root_id, now_ms))?;
             } else {
-                map_internal(db::playbacks::link_current_session(
+                map_internal(crate::db::playbacks::link_current_session(
                     db, root_id, current_id, now_ms,
                 ))?;
             }
         } else {
             root = Some(
-                db::playbacks::insert_reported(
+                crate::db::playbacks::insert_reported(
                     db,
                     user_db_id,
                     plugin_id,
@@ -1236,7 +1256,7 @@ fn report_playback_session_in_transaction(
                     now_ms,
                 )
                 .map_err(|error| {
-                    if error.is::<db::playbacks::ReportedPlaybackLimitReached>() {
+                    if error.is::<crate::db::playbacks::ReportedPlaybackLimitReached>() {
                         PlaybackServiceError::bad_request(error.to_string())
                     } else {
                         PlaybackServiceError::internal(error)
@@ -1249,7 +1269,7 @@ fn report_playback_session_in_transaction(
         let previous = session_state
             .previous_playback_session_public_id
             .as_ref()
-            .map(|id| db::playbacks::ReportedPrevious {
+            .map(|id| crate::db::playbacks::ReportedPrevious {
                 session_public_id: id.clone(),
                 demoted_at_ms: session_state
                     .previous_demoted_at_ms
@@ -1264,7 +1284,7 @@ fn report_playback_session_in_transaction(
             .and_then(|source| source.previous.as_ref())
             != previous.as_ref()
         {
-            map_internal(db::playbacks::update_reported_previous(
+            map_internal(crate::db::playbacks::update_reported_previous(
                 db,
                 root.db_id.expect("persisted playback id"),
                 previous,

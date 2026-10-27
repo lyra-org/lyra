@@ -22,12 +22,10 @@ use harmony_luau::{
     render_definition_file_with_support,
 };
 
+use crate::db::favorites::FavoriteKind;
 use crate::plugins::args;
 use crate::{
-    plugins::db::{
-        self,
-        favorites::FavoriteKind,
-    },
+    plugins::db,
     services::favorites as favorite_service,
 };
 
@@ -98,8 +96,8 @@ fn add_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let mut db = db.write().await;
-        let Some(public_target_id) =
-            db::lookup::find_id_by_db_id(&*db, target_id).map_err(crate::plugins::runtime_error)?
+        let Some(public_target_id) = crate::db::lookup::find_id_by_db_id(&*db, target_id)
+            .map_err(crate::plugins::runtime_error)?
         else {
             return Ok(luau::Value::Boolean(false));
         };
@@ -140,8 +138,8 @@ fn has_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        let Some(public_target_id) =
-            db::lookup::find_id_by_db_id(&*db, target_id).map_err(crate::plugins::runtime_error)?
+        let Some(public_target_id) = crate::db::lookup::find_id_by_db_id(&*db, target_id)
+            .map_err(crate::plugins::runtime_error)?
         else {
             return Ok(luau::Value::Boolean(false));
         };
@@ -161,7 +159,7 @@ fn has_many_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        let public_ids_by_db_id = db::lookup::find_ids_by_db_ids(&*db, &target_ids)
+        let public_ids_by_db_id = crate::db::lookup::find_ids_by_db_ids(&*db, &target_ids)
             .map_err(crate::plugins::runtime_error)?;
         let public_ids = target_ids
             .iter()

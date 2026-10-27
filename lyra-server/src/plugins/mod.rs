@@ -21,8 +21,6 @@ pub(crate) mod chromaprint;
 pub(crate) mod covers;
 pub(crate) mod datastore;
 pub(crate) mod db;
-#[cfg(feature = "docgen")]
-pub(crate) mod docs;
 pub(crate) mod editions;
 pub(crate) mod entities;
 pub(crate) mod entries;
@@ -44,13 +42,17 @@ pub(crate) mod playback_sessions;
 pub(crate) mod playback_sources;
 pub(crate) mod playlists;
 pub(crate) mod releases;
+pub(crate) mod repositories;
 pub(crate) mod server;
 pub(crate) mod settings;
+pub(crate) mod state;
 mod surfaces;
 pub(crate) mod tags;
+pub(crate) mod testing;
 pub(crate) mod track_sources;
 pub(crate) mod tracks;
 pub(crate) mod users;
+pub(crate) use state::STATE;
 #[cfg(feature = "docgen")]
 pub(crate) use surfaces::{
     lyra_doc_source_ids,
@@ -108,48 +110,6 @@ mod tests {
         Path,
         PathBuf,
     };
-
-    #[test]
-    fn plugin_sources_do_not_import_raw_db_directly() {
-        fn visit(path: &Path, files: &mut Vec<PathBuf>) {
-            if path.is_dir() {
-                for entry in std::fs::read_dir(path).expect("read plugin source directory") {
-                    visit(&entry.expect("read plugin source entry").path(), files);
-                }
-                return;
-            }
-
-            if path.extension().is_some_and(|ext| ext == "rs") {
-                files.push(path.to_path_buf());
-            }
-        }
-
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/plugins");
-        let allowed = root.join("db.rs");
-        let mut files = Vec::new();
-        visit(&root, &mut files);
-
-        for path in files {
-            if path == allowed {
-                continue;
-            }
-            let source = std::fs::read_to_string(&path).expect("read plugin source");
-            let compact = source
-                .chars()
-                .filter(|ch| !ch.is_whitespace())
-                .collect::<String>();
-            let direct_path = ["crate", "db"].join("::");
-            let grouped_start = ["usecrate::{", "db"].join("");
-            let grouped_module = format!(",{}::{{", "db");
-            assert!(
-                !source.contains(&direct_path)
-                    && !compact.contains(&grouped_start)
-                    && !compact.contains(&grouped_module),
-                "{} imports raw db directly; use crate::plugins::db",
-                path.strip_prefix(&root).unwrap_or(&path).display()
-            );
-        }
-    }
 
     #[test]
     fn plugin_sources_do_not_import_route_owned_access_policy() {

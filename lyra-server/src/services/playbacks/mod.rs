@@ -17,16 +17,13 @@ use serde::{
     Serialize,
 };
 
-use crate::{
-    db,
-    services::{
-        auth::{
-            Principal,
-            access,
-        },
-        pagination,
-        playback_sessions,
+use crate::services::{
+    auth::{
+        Principal,
+        access,
     },
+    pagination,
+    playback_sessions,
 };
 
 pub(crate) const QUEUE_ITEM_HARD_CAP: usize = 1_000;
@@ -59,7 +56,7 @@ impl QueueSnapshot {
 }
 
 pub(crate) fn queue_from_playback(
-    playback: &db::playbacks::Playback,
+    playback: &crate::db::playbacks::Playback,
 ) -> Result<QueueSnapshot, PlaybackError> {
     let stored = playback
         .queue
@@ -87,7 +84,7 @@ pub(crate) fn queue_from_playback(
 #[derive(Clone, Debug)]
 pub(crate) struct PlaybackDetail {
     pub(crate) playback_db_id: DbId,
-    pub(crate) playback: db::playbacks::Playback,
+    pub(crate) playback: crate::db::playbacks::Playback,
     pub(crate) current_session: Option<CurrentSession>,
 }
 
@@ -96,7 +93,7 @@ pub(crate) struct CurrentSession {
     pub(crate) playback_session_id: DbId,
     pub(crate) track_db_id: DbId,
     pub(crate) track_public_id: String,
-    pub(crate) playback: db::PlaybackSession,
+    pub(crate) playback: crate::db::PlaybackSession,
 }
 
 impl From<&playback_sessions::PlaybackRecord> for CurrentSession {
@@ -144,7 +141,7 @@ pub(crate) enum PlaybackError {
 }
 
 pub(crate) struct PlaybackUpdate {
-    pub(crate) playback: db::playbacks::Playback,
+    pub(crate) playback: crate::db::playbacks::Playback,
     pub(crate) session: playback_sessions::PlaybackRecord,
     pub(crate) event: String,
     pub(crate) evicted_playbacks: Vec<playback_sessions::EvictedPlaybackRecord>,
@@ -175,7 +172,7 @@ pub(crate) struct CompensateProgressRequest {
     pub(crate) playback_public_id: String,
     pub(crate) user_db_id: DbId,
     pub(crate) queue_revision: u64,
-    pub(crate) expected_session: db::PlaybackSession,
+    pub(crate) expected_session: crate::db::PlaybackSession,
     pub(crate) now_ms: u64,
 }
 
@@ -208,10 +205,10 @@ pub(crate) fn create_playback(
         snapshot,
         current_track_db_id,
     } = queue;
-    let playback = db::playbacks::Playback {
+    let playback = crate::db::playbacks::Playback {
         db_id: None,
         id,
-        queue: Some(db::playbacks::Queue {
+        queue: Some(crate::db::playbacks::Queue {
             revision: 1,
             track_ids: snapshot.track_ids,
             current_index: snapshot.current_index,
@@ -224,9 +221,9 @@ pub(crate) fn create_playback(
     };
 
     let (playback, session) = db.transaction_mut(|t| {
-        db::playbacks::expire_reported_for_user(t, user_db_id, now_ms)?;
-        if db::playbacks::count_for_user_up_to_limit(t, user_db_id)?
-            >= db::playbacks::MAX_PLAYBACKS_PER_USER
+        crate::db::playbacks::expire_reported_for_user(t, user_db_id, now_ms)?;
+        if crate::db::playbacks::count_for_user_up_to_limit(t, user_db_id)?
+            >= crate::db::playbacks::MAX_PLAYBACKS_PER_USER
         {
             return Err(PlaybackError::LimitReached);
         }
@@ -241,7 +238,7 @@ pub(crate) fn create_playback(
                 active_event: playback_sessions::ActiveEvent::Started,
             },
         )?;
-        let playback_db_id = db::playbacks::insert(
+        let playback_db_id = crate::db::playbacks::insert(
             t,
             &playback,
             user_db_id,
@@ -277,11 +274,11 @@ pub(crate) fn report_progress(
     } = request;
 
     let (playback, session) = db.transaction_mut(|t| {
-        if db::playbacks::get_owner_id(t, playback_db_id)? != Some(user_db_id) {
+        if crate::db::playbacks::get_owner_id(t, playback_db_id)? != Some(user_db_id) {
             return Err(PlaybackError::NotFound);
         }
         let mut playback =
-            db::playbacks::get_by_id(t, playback_db_id)?.ok_or(PlaybackError::NotFound)?;
+            crate::db::playbacks::get_by_id(t, playback_db_id)?.ok_or(PlaybackError::NotFound)?;
         let current_revision = playback
             .queue
             .as_ref()
@@ -297,7 +294,8 @@ pub(crate) fn report_progress(
         if require_full_queue_access && !queue_tracks_accessible_to_user(t, user_db_id, &queue)? {
             return Err(PlaybackError::NotFound);
         }
-        if db::lookup::find_node_id_by_id(t, queue.current_track_id())? != Some(current_track_db_id)
+        if crate::db::lookup::find_node_id_by_id(t, queue.current_track_id())?
+            != Some(current_track_db_id)
         {
             return Err(PlaybackError::Internal(anyhow::anyhow!(
                 "playback {} current queue track changed during progress",
@@ -305,59 +303,64 @@ pub(crate) fn report_progress(
             )));
         }
 
-        let session =
-            if let Some(session_id) = db::playbacks::get_current_session_id(t, playback_db_id)? {
-                if db::playback_sessions::get_track_id(t, session_id)? != Some(current_track_db_id)
-                    || db::playback_sessions::get_user_id(t, session_id)? != Some(user_db_id)
-                {
-                    return Err(PlaybackError::Internal(anyhow::anyhow!(
-                        "playback {} current session does not match its queue and owner",
-                        playback.id
-                    )));
-                }
-                let session = playback_sessions::report_playback_in_transaction(
-                    t,
-                    playback_sessions::ReportPlaybackRequest {
-                        playback_session_id: session_id,
-                        user_db_id,
-                        mutation,
-                        now_ms,
-                        activity_policy: playback_sessions::ActivityPolicy::AnyState,
-                        active_event: playback_sessions::ActiveEvent::Progress,
-                    },
-                )?;
-                db::playbacks::touch(t, playback_db_id, now_ms)?;
-                session
-            } else {
-                if mutation.state.is_some_and(db::PlaybackState::is_terminal) {
-                    return Err(PlaybackError::Session(
-                        playback_sessions::PlaybackServiceError::BadRequest(
-                            "cannot create a current track session with terminal state".to_string(),
-                        ),
-                    ));
-                }
-                let session = playback_sessions::start_playback_in_transaction(
-                    t,
-                    playback_sessions::StartPlaybackRequest {
-                        track_db_id: current_track_db_id,
-                        user_db_id,
-                        client_name,
-                        mutation: playback_sessions::PlaybackMutation {
-                            state: mutation.state.or(Some(db::PlaybackState::Playing)),
-                            ..mutation
-                        },
-                        now_ms,
-                        active_event: playback_sessions::ActiveEvent::Started,
-                    },
-                )?;
-                db::playbacks::link_current_session(
-                    t,
-                    playback_db_id,
-                    session.playback.playback_session_id,
+        let session = if let Some(session_id) =
+            crate::db::playbacks::get_current_session_id(t, playback_db_id)?
+        {
+            if crate::db::playback_sessions::get_track_id(t, session_id)?
+                != Some(current_track_db_id)
+                || crate::db::playback_sessions::get_user_id(t, session_id)? != Some(user_db_id)
+            {
+                return Err(PlaybackError::Internal(anyhow::anyhow!(
+                    "playback {} current session does not match its queue and owner",
+                    playback.id
+                )));
+            }
+            let session = playback_sessions::report_playback_in_transaction(
+                t,
+                playback_sessions::ReportPlaybackRequest {
+                    playback_session_id: session_id,
+                    user_db_id,
+                    mutation,
                     now_ms,
-                )?;
-                session
-            };
+                    activity_policy: playback_sessions::ActivityPolicy::AnyState,
+                    active_event: playback_sessions::ActiveEvent::Progress,
+                },
+            )?;
+            crate::db::playbacks::touch(t, playback_db_id, now_ms)?;
+            session
+        } else {
+            if mutation
+                .state
+                .is_some_and(crate::db::PlaybackState::is_terminal)
+            {
+                return Err(PlaybackError::Session(
+                    playback_sessions::PlaybackServiceError::BadRequest(
+                        "cannot create a current track session with terminal state".to_string(),
+                    ),
+                ));
+            }
+            let session = playback_sessions::start_playback_in_transaction(
+                t,
+                playback_sessions::StartPlaybackRequest {
+                    track_db_id: current_track_db_id,
+                    user_db_id,
+                    client_name,
+                    mutation: playback_sessions::PlaybackMutation {
+                        state: mutation.state.or(Some(crate::db::PlaybackState::Playing)),
+                        ..mutation
+                    },
+                    now_ms,
+                    active_event: playback_sessions::ActiveEvent::Started,
+                },
+            )?;
+            crate::db::playbacks::link_current_session(
+                t,
+                playback_db_id,
+                session.playback.playback_session_id,
+                now_ms,
+            )?;
+            session
+        };
 
         playback.updated_at_ms = now_ms;
         Ok::<_, PlaybackError>((playback, session))
@@ -413,7 +416,7 @@ pub(crate) fn compensate_failed_handoff_progress(
                 };
                 if !matches!(
                     expected_session.state,
-                    db::PlaybackState::Playing | db::PlaybackState::Buffering
+                    crate::db::PlaybackState::Playing | crate::db::PlaybackState::Buffering
                 ) {
                     return Ok(None);
                 }
@@ -427,7 +430,7 @@ pub(crate) fn compensate_failed_handoff_progress(
                     return Ok(None);
                 };
                 playback.updated_at_ms = session.playback.playback.updated_at_ms;
-                db::playbacks::touch(t, playback_db_id, playback.updated_at_ms)?;
+                crate::db::playbacks::touch(t, playback_db_id, playback.updated_at_ms)?;
                 Ok(Some((playback, session)))
             })
         },
@@ -448,29 +451,31 @@ pub(crate) fn compensate_failed_handoff_progress(
 }
 
 pub(crate) fn current_handoff_playback(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     playback_db_id: DbId,
     playback_public_id: &str,
     queue_revision: u64,
     user_db_id: DbId,
-    expected_session: &db::PlaybackSession,
-) -> Result<Option<db::playbacks::Playback>, PlaybackError> {
+    expected_session: &crate::db::PlaybackSession,
+) -> Result<Option<crate::db::playbacks::Playback>, PlaybackError> {
     let Some(playback_session_id) = expected_session.db_id else {
         return Ok(None);
     };
-    if db::playbacks::get_owner_id(db, playback_db_id)? != Some(user_db_id) {
+    if crate::db::playbacks::get_owner_id(db, playback_db_id)? != Some(user_db_id) {
         return Ok(None);
     }
-    let Some(playback) = db::playbacks::get_by_id(db, playback_db_id)? else {
+    let Some(playback) = crate::db::playbacks::get_by_id(db, playback_db_id)? else {
         return Ok(None);
     };
     if playback.id != playback_public_id
         || playback.queue.as_ref().map(|queue| queue.revision) != Some(queue_revision)
-        || db::playbacks::get_current_session_id(db, playback_db_id)? != Some(playback_session_id)
+        || crate::db::playbacks::get_current_session_id(db, playback_db_id)?
+            != Some(playback_session_id)
     {
         return Ok(None);
     }
-    if db::playback_sessions::get_by_id(db, playback_session_id)?.as_ref() != Some(expected_session)
+    if crate::db::playback_sessions::get_by_id(db, playback_session_id)?.as_ref()
+        != Some(expected_session)
     {
         return Ok(None);
     }
@@ -499,19 +504,20 @@ pub(crate) enum HandoffValidationError {
 }
 
 fn get_current_session(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     playback_session_id: DbId,
 ) -> Result<Option<CurrentSession>, PlaybackError> {
-    let Some(playback) = db::playback_sessions::get_by_id(db, playback_session_id)? else {
+    let Some(playback) = crate::db::playback_sessions::get_by_id(db, playback_session_id)? else {
         return Ok(None);
     };
-    let Some(track_db_id) = db::playback_sessions::get_track_id(db, playback_session_id)? else {
+    let Some(track_db_id) = crate::db::playback_sessions::get_track_id(db, playback_session_id)?
+    else {
         return Ok(None);
     };
-    if db::tracks::get_by_id(db, track_db_id)?.is_none() {
+    if crate::db::tracks::get_by_id(db, track_db_id)?.is_none() {
         return Ok(None);
     }
-    let Some(track_public_id) = db::lookup::find_id_by_db_id(db, track_db_id)? else {
+    let Some(track_public_id) = crate::db::lookup::find_id_by_db_id(db, track_db_id)? else {
         return Ok(None);
     };
     Ok(Some(CurrentSession {
@@ -524,12 +530,12 @@ fn get_current_session(
 
 fn detail_from_playback(
     db: &DbAny,
-    playback: db::playbacks::Playback,
+    playback: crate::db::playbacks::Playback,
 ) -> Result<PlaybackDetail, PlaybackError> {
     let playback_db_id = playback
         .db_id
         .ok_or_else(|| anyhow::anyhow!("persisted playback missing db_id"))?;
-    let current_session = match db::playbacks::get_current_session_id(db, playback_db_id)? {
+    let current_session = match crate::db::playbacks::get_current_session_id(db, playback_db_id)? {
         Some(session_id) => get_current_session(db, session_id)?,
         None => None,
     };
@@ -548,7 +554,7 @@ pub(crate) fn reported_id(
     now_ms: u64,
 ) -> Result<Option<String>, PlaybackError> {
     Ok(
-        db::playbacks::get_reported(db, user_db_id, plugin_id, session_key, now_ms)?
+        crate::db::playbacks::get_reported(db, user_db_id, plugin_id, session_key, now_ms)?
             .map(|playback| playback.id),
     )
 }
@@ -559,14 +565,15 @@ pub(crate) fn get_owned_detail(
     user_db_id: DbId,
     now_ms: u64,
 ) -> Result<Option<PlaybackDetail>, PlaybackError> {
-    if db::playbacks::get_owner_id(db, playback_db_id)? != Some(user_db_id) {
+    if crate::db::playbacks::get_owner_id(db, playback_db_id)? != Some(user_db_id) {
         return Ok(None);
     }
-    let Some(playback) = db::playbacks::get_by_id(db, playback_db_id)? else {
+    let Some(playback) = crate::db::playbacks::get_by_id(db, playback_db_id)? else {
         return Ok(None);
     };
     if playback.reported.is_some()
-        && playback.updated_at_ms < now_ms.saturating_sub(db::playbacks::REPORTED_PLAYBACK_TTL_MS)
+        && playback.updated_at_ms
+            < now_ms.saturating_sub(crate::db::playbacks::REPORTED_PLAYBACK_TTL_MS)
     {
         return Ok(None);
     }
@@ -583,8 +590,8 @@ pub(crate) fn get_visible_detail(
     let Some(detail) = get_owned_detail(db, playback_db_id, user_db_id, now_ms)? else {
         return Ok(None);
     };
-    let is_admin = db::roles::has_admin_role(db, user_db_id)?;
-    let accessible_library_ids = db::libraries::accessible_library_ids(db, user_db_id)?;
+    let is_admin = crate::db::roles::has_admin_role(db, user_db_id)?;
+    let accessible_library_ids = crate::db::libraries::accessible_library_ids(db, user_db_id)?;
     if let Some(current) = detail.current_session.as_ref()
         && !track_accessible_in_scope(db, current.track_db_id, is_admin, &accessible_library_ids)?
     {
@@ -598,13 +605,15 @@ pub(crate) fn get_owned_projection(
     playback_db_id: DbId,
     user_db_id: DbId,
     now_ms: u64,
-) -> Result<Option<db::playbacks::PlaybackListProjection>, PlaybackError> {
-    if db::playbacks::get_owner_id(db, playback_db_id)? != Some(user_db_id) {
+) -> Result<Option<crate::db::playbacks::PlaybackListProjection>, PlaybackError> {
+    if crate::db::playbacks::get_owner_id(db, playback_db_id)? != Some(user_db_id) {
         return Ok(None);
     }
-    let cutoff = now_ms.saturating_sub(db::playbacks::REPORTED_PLAYBACK_TTL_MS);
-    Ok(db::playbacks::get_projection_by_id(db, playback_db_id)?
-        .filter(|p| !p.reported || p.updated_at_ms >= cutoff))
+    let cutoff = now_ms.saturating_sub(crate::db::playbacks::REPORTED_PLAYBACK_TTL_MS);
+    Ok(
+        crate::db::playbacks::get_projection_by_id(db, playback_db_id)?
+            .filter(|p| !p.reported || p.updated_at_ms >= cutoff),
+    )
 }
 
 pub(crate) fn list_visible_projections(
@@ -612,10 +621,10 @@ pub(crate) fn list_visible_projections(
     principal: &Principal,
     active_only: bool,
     now_ms: u64,
-) -> Result<Vec<db::playbacks::PlaybackListProjection>, PlaybackError> {
+) -> Result<Vec<crate::db::playbacks::PlaybackListProjection>, PlaybackError> {
     let user_db_id = principal.require(db).map_err(anyhow::Error::from)?;
-    let projections = db::playbacks::list_projections_for_user(db, user_db_id)?;
-    if projections.len() > db::playbacks::MAX_PLAYBACKS_PER_USER
+    let projections = crate::db::playbacks::list_projections_for_user(db, user_db_id)?;
+    if projections.len() > crate::db::playbacks::MAX_PLAYBACKS_PER_USER
         || projections.len() > pagination::snapshot_item_capacity()
     {
         return Err(pagination::PaginationError::SnapshotTooLarge.into());
@@ -624,23 +633,24 @@ pub(crate) fn list_visible_projections(
         .iter()
         .map(|projection| projection.db_id)
         .collect::<Vec<_>>();
-    let current_ids = db::playbacks::current_session_ids(db, &projection_ids)?;
+    let current_ids = crate::db::playbacks::current_session_ids(db, &projection_ids)?;
     let session_ids = current_ids.values().copied().collect::<Vec<_>>();
-    let sessions = db::playback_sessions::get_list_projections_by_ids(db, session_ids.clone())?;
-    let track_ids = db::playback_sessions::track_ids_for_sessions(db, &session_ids)?;
-    let is_admin = db::roles::has_admin_role(db, user_db_id)?;
+    let sessions =
+        crate::db::playback_sessions::get_list_projections_by_ids(db, session_ids.clone())?;
+    let track_ids = crate::db::playback_sessions::track_ids_for_sessions(db, &session_ids)?;
+    let is_admin = crate::db::roles::has_admin_role(db, user_db_id)?;
     let accessible_track_ids = if is_admin {
         HashSet::new()
     } else {
         let current_track_ids = track_ids.values().copied().collect::<Vec<_>>();
-        db::libraries::accessible_track_ids(db, user_db_id, &current_track_ids)?
+        crate::db::libraries::accessible_track_ids(db, user_db_id, &current_track_ids)?
     };
     let active_cutoff = now_ms.saturating_sub(playback_sessions::ACTIVE_SESSION_TTL_MS);
     let mut visible = Vec::with_capacity(projections.len());
     for projection in projections {
         if projection.reported
             && projection.updated_at_ms
-                < now_ms.saturating_sub(db::playbacks::REPORTED_PLAYBACK_TTL_MS)
+                < now_ms.saturating_sub(crate::db::playbacks::REPORTED_PLAYBACK_TTL_MS)
         {
             continue;
         }
@@ -674,7 +684,7 @@ pub(crate) fn list_visible_projections(
 }
 
 pub(crate) fn validate_queue(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     principal: &Principal,
     snapshot: QueueSnapshot,
 ) -> Result<ValidatedQueue, PlaybackError> {
@@ -715,11 +725,11 @@ pub(crate) fn validate_queue(
         let track_db_id = match validated_tracks.get(public_id.as_str()) {
             Some(track_db_id) => *track_db_id,
             None => {
-                let track_db_id =
-                    db::lookup::find_node_id_by_id(db, public_id)?.ok_or_else(|| {
+                let track_db_id = crate::db::lookup::find_node_id_by_id(db, public_id)?
+                    .ok_or_else(|| {
                         PlaybackError::InvalidQueue(format!("track not found: {public_id}"))
                     })?;
-                if db::tracks::get_by_id(db, track_db_id)?.is_none() {
+                if crate::db::tracks::get_by_id(db, track_db_id)?.is_none() {
                     return Err(PlaybackError::InvalidQueue(format!(
                         "track not found: {public_id}"
                     )));
@@ -744,17 +754,17 @@ pub(crate) fn validate_queue(
 }
 
 pub(crate) fn queue_tracks_accessible_to_user(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     user_db_id: DbId,
     snapshot: &QueueSnapshot,
 ) -> Result<bool, PlaybackError> {
-    let is_admin = db::roles::has_admin_role(db, user_db_id)?;
-    let accessible_library_ids = db::libraries::accessible_library_ids(db, user_db_id)?;
+    let is_admin = crate::db::roles::has_admin_role(db, user_db_id)?;
+    let accessible_library_ids = crate::db::libraries::accessible_library_ids(db, user_db_id)?;
     for public_id in &snapshot.track_ids {
-        let Some(track_db_id) = db::lookup::find_node_id_by_id(db, public_id)? else {
+        let Some(track_db_id) = crate::db::lookup::find_node_id_by_id(db, public_id)? else {
             return Ok(false);
         };
-        if db::tracks::get_by_id(db, track_db_id)?.is_none() {
+        if crate::db::tracks::get_by_id(db, track_db_id)?.is_none() {
             return Ok(false);
         }
         if !track_accessible_in_scope(db, track_db_id, is_admin, &accessible_library_ids)? {
@@ -765,7 +775,7 @@ pub(crate) fn queue_tracks_accessible_to_user(
 }
 
 fn track_accessible_in_scope(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     track_db_id: DbId,
     is_admin: bool,
     accessible_library_ids: &HashSet<String>,
@@ -773,7 +783,7 @@ fn track_accessible_in_scope(
     if is_admin {
         return Ok(true);
     }
-    Ok(db::libraries::get_for_entity(db, track_db_id)?
+    Ok(crate::db::libraries::get_for_entity(db, track_db_id)?
         .iter()
         .any(|library| accessible_library_ids.contains(&library.id)))
 }
@@ -781,7 +791,7 @@ fn track_accessible_in_scope(
 pub(crate) fn queue_visible_to_principal(
     db: &DbAny,
     principal: &Principal,
-    playback: &db::playbacks::Playback,
+    playback: &crate::db::playbacks::Playback,
 ) -> Result<Option<QueueSnapshot>, PlaybackError> {
     let queue = queue_from_playback(playback)?;
     let user_db_id = principal.require(db).map_err(anyhow::Error::from)?;
@@ -798,12 +808,12 @@ pub(crate) fn validate_handoff_queue(
     playback_id: &str,
     expected_revision: u64,
 ) -> Result<(), HandoffValidationError> {
-    let playback_db_id =
-        db::lookup::find_node_id_by_id(db, playback_id)?.ok_or(HandoffValidationError::NotFound)?;
-    let Some(playback) = db::playbacks::get_by_id(db, playback_db_id)? else {
+    let playback_db_id = crate::db::lookup::find_node_id_by_id(db, playback_id)?
+        .ok_or(HandoffValidationError::NotFound)?;
+    let Some(playback) = crate::db::playbacks::get_by_id(db, playback_db_id)? else {
         return Err(HandoffValidationError::NotFound);
     };
-    if db::playbacks::get_owner_id(db, playback_db_id)? != Some(user_db_id) {
+    if crate::db::playbacks::get_owner_id(db, playback_db_id)? != Some(user_db_id) {
         return Err(HandoffValidationError::WrongOwner);
     }
     let current_revision = playback
@@ -835,7 +845,7 @@ pub(crate) struct DetachedSession {
 }
 
 pub(crate) struct ReplaceQueueUpdate {
-    pub(crate) playback: db::playbacks::Playback,
+    pub(crate) playback: crate::db::playbacks::Playback,
     pub(crate) queue: QueueSnapshot,
     pub(crate) detached_session: Option<DetachedSession>,
 }
@@ -853,24 +863,25 @@ pub(crate) fn replace_queue(
         current_track_db_id,
     } = queue;
     let (playback, detached_session) = db.transaction_mut(|t| {
-        if db::playbacks::get_owner_id(t, playback_db_id)? != Some(user_db_id) {
+        if crate::db::playbacks::get_owner_id(t, playback_db_id)? != Some(user_db_id) {
             return Err(PlaybackError::NotFound);
         }
-        let raw_session_id = db::playbacks::get_current_session_id(t, playback_db_id)?;
+        let raw_session_id = crate::db::playbacks::get_current_session_id(t, playback_db_id)?;
         let clear_current_session = match raw_session_id {
             Some(session_id) => {
-                db::playback_sessions::get_track_id(t, session_id)? != Some(current_track_db_id)
-                    || db::playback_sessions::get_user_id(t, session_id)? != Some(user_db_id)
+                crate::db::playback_sessions::get_track_id(t, session_id)?
+                    != Some(current_track_db_id)
+                    || crate::db::playback_sessions::get_user_id(t, session_id)? != Some(user_db_id)
             }
             None => false,
         };
         let detached_session = if clear_current_session {
             match raw_session_id {
-                Some(session_id) => match db::playback_sessions::get_by_id(t, session_id)? {
+                Some(session_id) => match crate::db::playback_sessions::get_by_id(t, session_id)? {
                     Some(session) => {
-                        let update = if db::playback_sessions::get_track_id(t, session_id)?
+                        let update = if crate::db::playback_sessions::get_track_id(t, session_id)?
                             .is_some()
-                            && db::playback_sessions::get_user_id(t, session_id)?
+                            && crate::db::playback_sessions::get_user_id(t, session_id)?
                                 == Some(user_db_id)
                         {
                             playback_sessions::pause_playback_in_transaction(
@@ -892,10 +903,10 @@ pub(crate) fn replace_queue(
         } else {
             None
         };
-        let playback = db::playbacks::replace_queue_in_transaction(
+        let playback = crate::db::playbacks::replace_queue_in_transaction(
             t,
             playback_db_id,
-            db::playbacks::QueueReplacement {
+            crate::db::playbacks::QueueReplacement {
                 expected_revision,
                 track_ids: snapshot.track_ids.clone(),
                 current_index: snapshot.current_index,
@@ -906,20 +917,26 @@ pub(crate) fn replace_queue(
             },
         )
         .map_err(|error| match error {
-            db::playbacks::ReplaceQueueError::NotFound => PlaybackError::NotFound,
-            db::playbacks::ReplaceQueueError::QueueUnavailable => PlaybackError::QueueUnavailable,
-            db::playbacks::ReplaceQueueError::RevisionConflict {
+            crate::db::playbacks::ReplaceQueueError::NotFound => PlaybackError::NotFound,
+            crate::db::playbacks::ReplaceQueueError::QueueUnavailable => {
+                PlaybackError::QueueUnavailable
+            }
+            crate::db::playbacks::ReplaceQueueError::RevisionConflict {
                 expected_revision,
                 current_revision,
             } => PlaybackError::RevisionConflict {
                 expected_revision,
                 current_revision,
             },
-            db::playbacks::ReplaceQueueError::RevisionExhausted => PlaybackError::RevisionExhausted,
-            db::playbacks::ReplaceQueueError::Database(error) => {
+            crate::db::playbacks::ReplaceQueueError::RevisionExhausted => {
+                PlaybackError::RevisionExhausted
+            }
+            crate::db::playbacks::ReplaceQueueError::Database(error) => {
                 PlaybackError::Internal(error.into())
             }
-            db::playbacks::ReplaceQueueError::Internal(error) => PlaybackError::Internal(error),
+            crate::db::playbacks::ReplaceQueueError::Internal(error) => {
+                PlaybackError::Internal(error)
+            }
         })?;
         Ok::<_, PlaybackError>((playback, detached_session))
     })?;
@@ -933,11 +950,11 @@ pub(crate) fn replace_queue(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::test_db::{
+    use crate::db::fixtures::{
         insert_track,
-        new_test_db,
         test_user,
     };
+    use crate::db::test_db::new_test_db;
     use agdb::QueryBuilder;
     use std::cell::Cell;
 
@@ -959,7 +976,7 @@ mod tests {
         }
     }
 
-    impl db::DbAccess for CountingDb<'_> {
+    impl crate::db::DbAccess for CountingDb<'_> {
         fn exec<T: agdb::Query>(&self, query: T) -> Result<agdb::QueryResult, agdb::DbError> {
             self.reads.set(self.reads.get() + 1);
             self.db.exec(query)
@@ -975,12 +992,12 @@ mod tests {
 
     fn setup() -> anyhow::Result<(DbAny, DbId, DbId, DbId, String, String)> {
         let mut db = new_test_db()?;
-        let user_db_id = db::users::create(&mut db, &test_user("durable-playback")?)?;
+        let user_db_id = crate::db::users::create(&mut db, &test_user("durable-playback")?)?;
         let first_track_db_id = insert_track(&mut db, "First")?;
         let second_track_db_id = insert_track(&mut db, "Second")?;
-        let first_track_id = db::lookup::find_id_by_db_id(&db, first_track_db_id)?
+        let first_track_id = crate::db::lookup::find_id_by_db_id(&db, first_track_db_id)?
             .expect("first track must have a public ID");
-        let second_track_id = db::lookup::find_id_by_db_id(&db, second_track_db_id)?
+        let second_track_id = crate::db::lookup::find_id_by_db_id(&db, second_track_db_id)?
             .expect("second track must have a public ID");
         Ok((
             db,
@@ -1007,7 +1024,7 @@ mod tests {
             user_db_id,
             "user".to_string(),
             "user".to_string(),
-            vec![db::Permission::Admin],
+            vec![crate::db::Permission::Admin],
             None,
             HashSet::new(),
         );
@@ -1055,7 +1072,7 @@ mod tests {
                 mutation: playback_sessions::PlaybackMutation {
                     position_ms: Some(30_000),
                     duration_ms: Some(100_000),
-                    state: Some(db::PlaybackState::Playing),
+                    state: Some(crate::db::PlaybackState::Playing),
                 },
                 now_ms: 30_000,
             },
@@ -1113,10 +1130,10 @@ mod tests {
             Some(session_id)
         );
         assert_eq!(
-            db::playbacks::get_current_session_id(&db, playback_db_id)?,
+            crate::db::playbacks::get_current_session_id(&db, playback_db_id)?,
             None
         );
-        assert!(db::playback_sessions::get_by_id(&db, session_id)?.is_some());
+        assert!(crate::db::playback_sessions::get_by_id(&db, session_id)?.is_some());
         Ok(())
     }
 
@@ -1143,7 +1160,7 @@ mod tests {
                 mutation: playback_sessions::PlaybackMutation {
                     position_ms: Some(1_000),
                     duration_ms: Some(100_000),
-                    state: Some(db::PlaybackState::Playing),
+                    state: Some(crate::db::PlaybackState::Playing),
                 },
                 now_ms: 1_000,
             },
@@ -1166,7 +1183,7 @@ mod tests {
             .expect("playing session must be paused")
             .playback
             .playback;
-        assert_eq!(paused.state, db::PlaybackState::Paused);
+        assert_eq!(paused.state, crate::db::PlaybackState::Paused);
         assert_eq!(paused.position_ms, 6_000);
         assert_eq!(paused.activity_ms, Some(5_000));
         Ok(())

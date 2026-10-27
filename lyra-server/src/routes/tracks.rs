@@ -32,8 +32,6 @@ use url::form_urlencoded;
 use super::serve::DeliveryDescription;
 
 use crate::{
-    STATE,
-    db,
     routes::AppError,
     routes::{
         covers as route_covers,
@@ -45,6 +43,7 @@ use crate::{
             TrackResponse,
         },
     },
+    services::STATE,
     services::{
         auth::{
             Principal,
@@ -136,7 +135,7 @@ pub(crate) struct TrackListOptions {
     release_id: Option<String>,
     sort_by: Option<Vec<String>>,
     sort_order: Option<String>,
-    rating_filter: db::ratings::RatingFilter,
+    rating_filter: crate::db::ratings::RatingFilter,
     page_request: super::SnapshotPageRequest,
 }
 
@@ -173,7 +172,7 @@ pub(crate) fn parse_inc(inc: Option<Vec<String>>) -> Result<TrackRouteIncludes, 
 }
 
 fn resolve_optional_release_filter(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     principal: &Principal,
     release_id: Option<&str>,
 ) -> Result<Option<DbId>, AppError> {
@@ -185,9 +184,9 @@ fn resolve_optional_release_filter(
         return Err(AppError::bad_request("release_id cannot be empty"));
     }
 
-    let release_db_id = db::lookup::find_node_id_by_id(db, release_id)?
+    let release_db_id = crate::db::lookup::find_node_id_by_id(db, release_id)?
         .ok_or_else(|| AppError::not_found(format!("Release not found: {release_id}")))?;
-    db::releases::get_by_id(db, release_db_id)?
+    crate::db::releases::get_by_id(db, release_db_id)?
         .ok_or_else(|| AppError::not_found(format!("Release not found: {release_id}")))?;
     crate::services::auth::access::require_entity_accessible(db, principal, release_db_id, || {
         AppError::not_found(format!("Release not found: {release_id}"))
@@ -196,8 +195,8 @@ fn resolve_optional_release_filter(
 }
 
 fn release_to_response(
-    db: &impl db::DbAccess,
-    release: db::Release,
+    db: &impl crate::db::DbAccess,
+    release: crate::db::Release,
     include_cover: bool,
 ) -> anyhow::Result<ReleaseResponse> {
     let cover = if include_cover {
@@ -214,12 +213,12 @@ fn release_to_response(
 }
 
 pub(crate) fn track_detail_to_response(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     detail: track_service::TrackDetails,
     includes: TrackRouteIncludes,
 ) -> anyhow::Result<TrackResponse> {
     let artist_covers = match detail.artists.as_ref() {
-        Some(artists) if includes.artist_covers => Some(db::covers::get_many(
+        Some(artists) if includes.artist_covers => Some(crate::db::covers::get_many(
             db,
             &super::db_ids_from_credited_artists(artists),
         )?),
@@ -291,7 +290,7 @@ pub(crate) async fn list_track_responses(
         let tracks = super::load_snapshot_items(
             db,
             &page.item_ids,
-            db::tracks::get_by_id,
+            crate::db::tracks::get_by_id,
             |db, track_db_id| {
                 crate::services::auth::access::entity_accessible(db, principal, track_db_id)
             },
@@ -331,7 +330,7 @@ pub(crate) async fn get_track_response(
 ) -> Result<TrackResponse, AppError> {
     let db = &*STATE.db.read().await;
     let includes = parse_inc(inc)?;
-    let track_db_id = db::lookup::find_node_id_by_id(db, &id)?
+    let track_db_id = crate::db::lookup::find_node_id_by_id(db, &id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
     crate::services::auth::access::require_entity_accessible(db, principal, track_db_id, || {
         AppError::not_found(format!("Track not found: {id}"))
@@ -523,7 +522,7 @@ async fn create_track_playback_url(
         hls_url,
         download_url,
         download_delivery,
-        expires_at: super::unix_secs_to_rfc3339_i64(expires_at),
+        expires_at: crate::services::timestamps::unix_secs_to_rfc3339_i64(expires_at),
         idle_expires_after_seconds: MEDIA_TOKEN_IDLE_TTL_SECONDS,
     }))
 }
@@ -747,12 +746,7 @@ pub(crate) fn track_openapi_routes() -> aide::axum::ApiRouter {
 
 #[cfg(test)]
 async fn setup_route_test() -> anyhow::Result<()> {
-    crate::testing::initialize_runtime(&crate::testing::LibraryFixtureConfig {
-        directory: std::path::PathBuf::from("."),
-        language: None,
-        country: None,
-    })
-    .await
+    crate::plugins::testing::init_library_test_state(std::path::PathBuf::from(".")).await
 }
 
 #[cfg(test)]
@@ -765,27 +759,29 @@ mod tests {
     };
 
     use super::*;
+    use crate::db::fixtures::{
+        connect,
+        insert_artist,
+        insert_release,
+        insert_track,
+    };
+    use crate::db::test_db::{
+        connect_artist,
+        insert_library,
+    };
     use crate::{
-        db::test_db::{
-            connect,
-            connect_artist,
-            insert_artist,
-            insert_library,
-            insert_release,
-            insert_track,
-        },
         services::auth::Principal,
-        testing::runtime_test_lock,
+        services::testing::runtime_test_lock,
     };
     use nanoid::nanoid;
 
     async fn admin_principal(accessible_library_ids: HashSet<String>) -> Principal {
         let mut db = STATE.db.write().await;
-        let user_db_id = db::test_db::insert_user(&mut db, "admin").expect("insert admin");
+        let user_db_id = crate::db::test_db::insert_user(&mut db, "admin").expect("insert admin");
         Principal::for_user(
             &*db,
             user_db_id,
-            vec![db::Permission::Admin],
+            vec![crate::db::Permission::Admin],
             accessible_library_ids,
         )
     }
@@ -796,11 +792,11 @@ mod tests {
         disc: Option<u32>,
         track_number: Option<u32>,
     ) -> anyhow::Result<()> {
-        let mut track = db::tracks::get_by_id(db, track_db_id)?
+        let mut track = crate::db::tracks::get_by_id(db, track_db_id)?
             .ok_or_else(|| anyhow::anyhow!("track missing"))?;
         track.disc = disc;
         track.track = track_number;
-        db::tracks::update(db, &track)
+        crate::db::tracks::update(db, &track)
     }
 
     fn record_listen(
@@ -809,20 +805,20 @@ mod tests {
         track_db_id: DbId,
         listened_at_ms: u64,
     ) -> anyhow::Result<()> {
-        let track = db::tracks::get_by_id(db, track_db_id)?
+        let track = crate::db::tracks::get_by_id(db, track_db_id)?
             .ok_or_else(|| anyhow::anyhow!("track missing"))?;
-        let listen = db::Listen {
+        let listen = crate::db::Listen {
             db_id: None,
             id: nanoid!(),
             track_public_id: track.id,
             position_ms: 0,
             duration_ms: Some(180_000),
             activity_ms: 180_000,
-            state: db::PlaybackState::Completed,
+            state: crate::db::PlaybackState::Completed,
             listened_at_ms,
             created_at_ms: listened_at_ms,
         };
-        let session = db::PlaybackSession {
+        let session = crate::db::PlaybackSession {
             db_id: None,
             id: nanoid!(),
             client_name: None,
@@ -830,20 +826,20 @@ mod tests {
             duration_ms: Some(180_000),
             activity_ms: Some(180_000),
             last_position_ms: None,
-            state: db::PlaybackState::Completed,
+            state: crate::db::PlaybackState::Completed,
             listen_recorded: Some(true),
             updated_at_ms: listened_at_ms,
             created_at_ms: listened_at_ms,
         };
-        db::listens::create_and_mark_recorded(db, &listen, track_db_id, user_db_id, &session)
+        crate::db::listens::create_and_mark_recorded(db, &listen, track_db_id, user_db_id, &session)
     }
 
-    fn insert_cover_for(db: &mut DbAny, owner_db_id: DbId) -> anyhow::Result<db::Cover> {
+    fn insert_cover_for(db: &mut DbAny, owner_db_id: DbId) -> anyhow::Result<crate::db::Cover> {
         db.transaction_mut(|t| {
-            db::covers::upsert(
+            crate::db::covers::upsert(
                 t,
                 owner_db_id,
-                db::Cover {
+                crate::db::Cover {
                     db_id: None,
                     id: nanoid!(),
                     path: "/music/release/cover.jpg".to_string(),
@@ -891,7 +887,7 @@ mod tests {
                 release_id: None,
                 sort_by: None,
                 sort_order: None,
-                rating_filter: db::ratings::RatingFilter::default(),
+                rating_filter: crate::db::ratings::RatingFilter::default(),
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
@@ -923,10 +919,10 @@ mod tests {
             connect(&mut db, hidden_library, hidden_release)?;
             connect(&mut db, hidden_release, hidden_track)?;
 
-            let visible_library_id = db::libraries::get_by_id(&db, visible_library)?
+            let visible_library_id = crate::db::libraries::get_by_id(&db, visible_library)?
                 .ok_or_else(|| anyhow::anyhow!("visible library missing"))?
                 .id;
-            let hidden_library_id = db::libraries::get_by_id(&db, hidden_library)?
+            let hidden_library_id = crate::db::libraries::get_by_id(&db, hidden_library)?
                 .ok_or_else(|| anyhow::anyhow!("hidden library missing"))?
                 .id;
             (visible_library_id, hidden_library_id)
@@ -946,7 +942,7 @@ mod tests {
                 release_id: None,
                 sort_by: None,
                 sort_order: None,
-                rating_filter: db::ratings::RatingFilter::default(),
+                rating_filter: crate::db::ratings::RatingFilter::default(),
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
@@ -972,24 +968,25 @@ mod tests {
 
         let stale = {
             let mut db = STATE.db.write().await;
-            let alice = db::test_db::insert_user(&mut db, "recycled-rater")?;
+            let alice = crate::db::test_db::insert_user(&mut db, "recycled-rater")?;
             let library =
                 insert_library(&mut db, "Recycled Ratings", "/tmp/lyra-recycled-ratings")?;
             let release = insert_release(&mut db, "Recycled Rating Release")?;
             let track = insert_track(&mut db, "Rated By Replacement")?;
             connect(&mut db, library, release)?;
             connect(&mut db, release, track)?;
-            let library_id = db::libraries::get_by_id(&db, library)?
+            let library_id = crate::db::libraries::get_by_id(&db, library)?
                 .ok_or_else(|| anyhow::anyhow!("library missing"))?
                 .id;
             let stale = Principal::for_user(&*db, alice, Vec::new(), HashSet::from([library_id]));
-            let replacement = db::test_db::recycle_user(&mut db, alice, "replacement-rater")?;
-            db::ratings::upsert(
+            let replacement =
+                crate::db::test_db::recycle_user(&mut db, alice, "replacement-rater")?;
+            crate::db::ratings::upsert(
                 &mut *db,
                 replacement,
                 track,
-                db::ratings::RatingKind::Track,
-                db::ratings::RatingValue::new(5).unwrap(),
+                crate::db::ratings::RatingKind::Track,
+                crate::db::ratings::RatingValue::new(5).unwrap(),
                 1,
             )?;
             stale
@@ -1004,9 +1001,9 @@ mod tests {
                 release_id: None,
                 sort_by: None,
                 sort_order: None,
-                rating_filter: db::ratings::RatingFilter::new(
-                    db::ratings::RatingValue::new(5),
-                    db::ratings::RatingValue::new(5),
+                rating_filter: crate::db::ratings::RatingFilter::new(
+                    crate::db::ratings::RatingValue::new(5),
+                    crate::db::ratings::RatingValue::new(5),
                 )
                 .unwrap(),
                 page_request: super::super::PageQuery {
@@ -1037,10 +1034,14 @@ mod tests {
 
         let (principal, four_star_id, five_star_id) = {
             let mut db = STATE.db.write().await;
-            let user_db_id =
-                db::users::create(&mut db, &db::test_db::test_user("track-rating-user")?)?;
-            let other_user_db_id =
-                db::users::create(&mut db, &db::test_db::test_user("other-track-rating-user")?)?;
+            let user_db_id = crate::db::users::create(
+                &mut db,
+                &crate::db::fixtures::test_user("track-rating-user")?,
+            )?;
+            let other_user_db_id = crate::db::users::create(
+                &mut db,
+                &crate::db::fixtures::test_user("other-track-rating-user")?,
+            )?;
             let visible_library =
                 insert_library(&mut db, "Rated Tracks", "/tmp/lyra-rated-tracks")?;
             let hidden_library = insert_library(
@@ -1070,25 +1071,25 @@ mod tests {
                 (low_rating, 3),
                 (hidden_rating, 5),
             ] {
-                db::ratings::upsert(
+                crate::db::ratings::upsert(
                     &mut *db,
                     user_db_id,
                     target,
-                    db::ratings::RatingKind::Track,
-                    db::ratings::RatingValue::new(value).unwrap(),
+                    crate::db::ratings::RatingKind::Track,
+                    crate::db::ratings::RatingValue::new(value).unwrap(),
                     1,
                 )?;
             }
-            db::ratings::upsert(
+            crate::db::ratings::upsert(
                 &mut *db,
                 other_user_db_id,
                 other_user_rating,
-                db::ratings::RatingKind::Track,
-                db::ratings::RatingValue::new(5).unwrap(),
+                crate::db::ratings::RatingKind::Track,
+                crate::db::ratings::RatingValue::new(5).unwrap(),
                 1,
             )?;
 
-            let visible_library_id = db::libraries::get_by_id(&db, visible_library)?
+            let visible_library_id = crate::db::libraries::get_by_id(&db, visible_library)?
                 .ok_or_else(|| anyhow::anyhow!("visible library missing"))?
                 .id;
             let principal = Principal::for_user(
@@ -1097,13 +1098,13 @@ mod tests {
                 Vec::new(),
                 HashSet::from([visible_library_id]),
             );
-            let four_star_id = db::tracks::get_by_id(&db, four_star)?.unwrap().id;
-            let five_star_id = db::tracks::get_by_id(&db, five_star)?.unwrap().id;
+            let four_star_id = crate::db::tracks::get_by_id(&db, four_star)?.unwrap().id;
+            let five_star_id = crate::db::tracks::get_by_id(&db, five_star)?.unwrap().id;
             (principal, four_star_id, five_star_id)
         };
-        let rating_filter = db::ratings::RatingFilter::new(
-            db::ratings::RatingValue::new(4),
-            db::ratings::RatingValue::new(5),
+        let rating_filter = crate::db::ratings::RatingFilter::new(
+            crate::db::ratings::RatingValue::new(4),
+            crate::db::ratings::RatingValue::new(5),
         )
         .unwrap();
 
@@ -1160,9 +1161,9 @@ mod tests {
             HashSet::from([four_star_id, five_star_id.clone()])
         );
 
-        let exact_five = db::ratings::RatingFilter::new(
-            db::ratings::RatingValue::new(5),
-            db::ratings::RatingValue::new(5),
+        let exact_five = crate::db::ratings::RatingFilter::new(
+            crate::db::ratings::RatingValue::new(5),
+            crate::db::ratings::RatingValue::new(5),
         )
         .unwrap();
         let mismatch = match list_track_responses(
@@ -1238,7 +1239,7 @@ mod tests {
                 release_id: None,
                 sort_by: None,
                 sort_order: None,
-                rating_filter: db::ratings::RatingFilter::default(),
+                rating_filter: crate::db::ratings::RatingFilter::default(),
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
@@ -1275,7 +1276,7 @@ mod tests {
             let track = insert_track(&mut db, "Detail Covered Track")?;
             connect(&mut db, release, track)?;
             let cover_id = insert_cover_for(&mut db, release)?.id;
-            let track_public_id = db::tracks::get_by_id(&db, track)?
+            let track_public_id = crate::db::tracks::get_by_id(&db, track)?
                 .ok_or_else(|| anyhow::anyhow!("track missing"))?
                 .id;
             (track_public_id, cover_id)
@@ -1315,7 +1316,7 @@ mod tests {
             let artist = insert_artist(&mut db, "Covered Artist")?;
             connect_artist(&mut db, track, artist)?;
             let cover_id = insert_cover_for(&mut db, artist)?.id;
-            let track_public_id = db::tracks::get_by_id(&db, track)?
+            let track_public_id = crate::db::tracks::get_by_id(&db, track)?
                 .ok_or_else(|| anyhow::anyhow!("track missing"))?
                 .id;
             (track_public_id, cover_id)
@@ -1368,7 +1369,7 @@ mod tests {
             connect(&mut db, release, disc_two_first)?;
             connect(&mut db, other_release, other_track)?;
 
-            db::releases::get_by_id(&db, release)?
+            crate::db::releases::get_by_id(&db, release)?
                 .ok_or_else(|| anyhow::anyhow!("release missing"))?
                 .id
         };
@@ -1383,7 +1384,7 @@ mod tests {
                 release_id: Some(release_public_id),
                 sort_by: None,
                 sort_order: None,
-                rating_filter: db::ratings::RatingFilter::default(),
+                rating_filter: crate::db::ratings::RatingFilter::default(),
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
@@ -1400,10 +1401,10 @@ mod tests {
     }
 
     fn set_sort_title(db: &mut DbAny, track_db_id: DbId, sort_title: &str) -> anyhow::Result<()> {
-        let mut track = db::tracks::get_by_id(db, track_db_id)?
+        let mut track = crate::db::tracks::get_by_id(db, track_db_id)?
             .ok_or_else(|| anyhow::anyhow!("track missing"))?;
         track.sort_title = Some(sort_title.to_string());
-        db::tracks::update(db, &track)
+        crate::db::tracks::update(db, &track)
     }
 
     async fn list_titles(
@@ -1421,7 +1422,7 @@ mod tests {
                 release_id,
                 sort_by: sort_by.map(|value| vec![value.to_string()]),
                 sort_order: sort_order.map(str::to_string),
-                rating_filter: db::ratings::RatingFilter::default(),
+                rating_filter: crate::db::ratings::RatingFilter::default(),
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
@@ -1478,7 +1479,7 @@ mod tests {
                 update_track_position(&mut db, track, disc, track_number)?;
                 connect(&mut db, release, track)?;
             }
-            db::releases::get_by_id(&db, release)?
+            crate::db::releases::get_by_id(&db, release)?
                 .ok_or_else(|| anyhow::anyhow!("release missing"))?
                 .id
         };
@@ -1505,7 +1506,7 @@ mod tests {
 
         let principal = {
             let mut db = STATE.db.write().await;
-            let user_db_id = db::test_db::insert_user(&mut db, "never-played")?;
+            let user_db_id = crate::db::test_db::insert_user(&mut db, "never-played")?;
             let early = insert_track(&mut db, "Early")?;
             let late = insert_track(&mut db, "Late")?;
             insert_track(&mut db, "Never")?;
@@ -1514,7 +1515,7 @@ mod tests {
             Principal::for_user(
                 &*db,
                 user_db_id,
-                vec![db::Permission::Admin],
+                vec![crate::db::Permission::Admin],
                 HashSet::new(),
             )
         };
@@ -1537,7 +1538,7 @@ mod tests {
 
         let principal = {
             let mut db = STATE.db.write().await;
-            let user_db_id = db::test_db::insert_user(&mut db, "track-sort-user")?;
+            let user_db_id = crate::db::test_db::insert_user(&mut db, "track-sort-user")?;
             let one_listen = insert_track(&mut db, "One Listen")?;
             let two_listens = insert_track(&mut db, "Two Listens")?;
             record_listen(&mut db, user_db_id, one_listen, 1_000)?;
@@ -1546,7 +1547,7 @@ mod tests {
             Principal::for_user(
                 &*db,
                 user_db_id,
-                vec![db::Permission::Admin],
+                vec![crate::db::Permission::Admin],
                 HashSet::new(),
             )
         };
@@ -1586,7 +1587,7 @@ mod tests {
 
         let (principal, library, release) = {
             let mut db = STATE.db.write().await;
-            let user_db_id = db::test_db::insert_user(&mut db, "resume-access")?;
+            let user_db_id = crate::db::test_db::insert_user(&mut db, "resume-access")?;
             let library = insert_library(&mut db, "Resume Access", "/tmp/lyra-resume-access")?;
             let release = insert_release(&mut db, "Resume Release")?;
             connect(&mut db, library, release)?;
@@ -1594,7 +1595,7 @@ mod tests {
                 let track = insert_track(&mut db, title)?;
                 connect(&mut db, release, track)?;
             }
-            let library_id = db::libraries::get_by_id(&db, library)?
+            let library_id = crate::db::libraries::get_by_id(&db, library)?
                 .ok_or_else(|| anyhow::anyhow!("library missing"))?
                 .id;
             let principal =
@@ -1608,7 +1609,7 @@ mod tests {
             release_id: None,
             sort_by: None,
             sort_order: None,
-            rating_filter: db::ratings::RatingFilter::default(),
+            rating_filter: crate::db::ratings::RatingFilter::default(),
             page_request: super::super::PageQuery {
                 limit: Some(1),
                 cursor,
@@ -1626,7 +1627,7 @@ mod tests {
 
         {
             let mut db = STATE.db.write().await;
-            db::graph::remove_edges_between(&mut *db, library, release)?;
+            crate::db::graph::remove_edges_between(&mut *db, library, release)?;
         }
 
         let second = list_track_responses(&principal, page_options(Some(cursor)))
@@ -1838,11 +1839,11 @@ mod benches {
     };
 
     use super::*;
-    use crate::db::test_db::{
+    use crate::db::fixtures::{
         insert_track,
-        new_test_db,
         test_user,
     };
+    use crate::db::test_db::new_test_db;
     use crate::services::catalog::tracks::TrackKey;
 
     struct TrackSortBench {
@@ -1851,21 +1852,21 @@ mod benches {
     }
 
     fn record_listen(db: &mut DbAny, user_db_id: DbId, track_db_id: DbId, listened_at_ms: u64) {
-        let track = db::tracks::get_by_id(db, track_db_id)
+        let track = crate::db::tracks::get_by_id(db, track_db_id)
             .unwrap()
             .expect("track exists");
-        let listen = db::Listen {
+        let listen = crate::db::Listen {
             db_id: None,
             id: nanoid!(),
             track_public_id: track.id,
             position_ms: 0,
             duration_ms: Some(180_000),
             activity_ms: 180_000,
-            state: db::PlaybackState::Completed,
+            state: crate::db::PlaybackState::Completed,
             listened_at_ms,
             created_at_ms: listened_at_ms,
         };
-        let session = db::PlaybackSession {
+        let session = crate::db::PlaybackSession {
             db_id: None,
             id: nanoid!(),
             client_name: None,
@@ -1873,19 +1874,25 @@ mod benches {
             duration_ms: Some(180_000),
             activity_ms: Some(180_000),
             last_position_ms: None,
-            state: db::PlaybackState::Completed,
+            state: crate::db::PlaybackState::Completed,
             listen_recorded: Some(true),
             updated_at_ms: listened_at_ms,
             created_at_ms: listened_at_ms,
         };
-        db::listens::create_and_mark_recorded(db, &listen, track_db_id, user_db_id, &session)
-            .unwrap();
+        crate::db::listens::create_and_mark_recorded(
+            db,
+            &listen,
+            track_db_id,
+            user_db_id,
+            &session,
+        )
+        .unwrap();
     }
 
     fn seed_track_sort_bench(track_count: usize, listens_per_track: usize) -> TrackSortBench {
         let mut db = new_test_db().unwrap();
         let user_db_id =
-            db::users::create(&mut db, &test_user("track-sort-bench").unwrap()).unwrap();
+            crate::db::users::create(&mut db, &test_user("track-sort-bench").unwrap()).unwrap();
         for i in 0..track_count {
             let track_db_id = insert_track(&mut db, &format!("Track {i:04}")).unwrap();
             for listen_idx in 0..listens_per_track {
@@ -1901,7 +1908,7 @@ mod benches {
         let principal = Principal::for_user(
             &db,
             user_db_id,
-            vec![db::Permission::Admin],
+            vec![crate::db::Permission::Admin],
             Default::default(),
         );
         let viewer = catalog::Viewer::user(&db, principal).unwrap();

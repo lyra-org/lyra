@@ -41,11 +41,7 @@ pub(crate) struct PlaylistTrack {
 }
 
 #[cfg(test)]
-pub(crate) fn create(
-    db: &mut DbAny,
-    playlist: &Playlist,
-    owner_db_id: DbId,
-) -> anyhow::Result<DbId> {
+pub fn create(db: &mut DbAny, playlist: &Playlist, owner_db_id: DbId) -> anyhow::Result<DbId> {
     db.transaction_mut(|t| create_in_transaction(t, playlist, owner_db_id))
 }
 
@@ -176,10 +172,7 @@ pub(crate) fn delete(db: &mut DbAny, playlist_db_id: DbId) -> anyhow::Result<()>
     })
 }
 
-pub(crate) fn get_owner(
-    db: &impl super::DbAccess,
-    playlist_db_id: DbId,
-) -> anyhow::Result<Option<DbId>> {
+pub fn get_owner(db: &impl super::DbAccess, playlist_db_id: DbId) -> anyhow::Result<Option<DbId>> {
     let result = db.exec(
         QueryBuilder::select()
             .search()
@@ -323,10 +316,7 @@ pub(crate) fn remove_track(db: &mut impl DbAccess, edge_id: DbId) -> anyhow::Res
     Ok(())
 }
 
-pub(crate) fn get_tracks(
-    db: &impl DbAccess,
-    playlist_db_id: DbId,
-) -> anyhow::Result<Vec<PlaylistTrack>> {
+pub fn get_tracks(db: &impl DbAccess, playlist_db_id: DbId) -> anyhow::Result<Vec<PlaylistTrack>> {
     let result = db.exec(
         QueryBuilder::select()
             .search()
@@ -437,10 +427,7 @@ fn set_position(db: &mut impl DbAccess, edge_id: DbId, position: u64) -> anyhow:
     Ok(())
 }
 
-pub(crate) fn resolve_edge_targets(
-    db: &impl DbAccess,
-    edge_ids: &[DbId],
-) -> anyhow::Result<Vec<DbId>> {
+pub fn resolve_edge_targets(db: &impl DbAccess, edge_ids: &[DbId]) -> anyhow::Result<Vec<DbId>> {
     if edge_ids.is_empty() {
         return Ok(Vec::new());
     }

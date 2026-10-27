@@ -43,10 +43,7 @@ fn find_track_id_by_identity(db: &impl DbAccess, identity: &str) -> anyhow::Resu
     lookup::find_id_by_indexed_string_field(db, "cue_tracks", "identity", "identity", identity)
 }
 
-pub(crate) fn get_by_id(
-    db: &impl DbAccess,
-    cue_track_id: DbId,
-) -> anyhow::Result<Option<CueTrack>> {
+pub fn get_by_id(db: &impl DbAccess, cue_track_id: DbId) -> anyhow::Result<Option<CueTrack>> {
     graph::fetch_typed_by_id(db, cue_track_id, "CueTrack")
 }
 

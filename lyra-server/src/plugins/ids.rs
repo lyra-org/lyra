@@ -135,47 +135,47 @@ fn get_db_ids_callback(
     }))
 }
 async fn find_id_by_db_id(
-    db: Option<db::DbAsync>,
+    db: Option<crate::db::DbAsync>,
     db_id: DbId,
 ) -> luau::runtime::Result<Option<String>> {
     let Some(db) = db else {
         return Ok(None);
     };
     let db = db.read().await;
-    db::lookup::find_id_by_db_id(&*db, db_id).map_err(crate::plugins::runtime_error)
+    crate::db::lookup::find_id_by_db_id(&*db, db_id).map_err(crate::plugins::runtime_error)
 }
 
 async fn find_ids_by_db_ids(
-    db: Option<db::DbAsync>,
+    db: Option<crate::db::DbAsync>,
     ids: &[DbId],
 ) -> luau::runtime::Result<std::collections::HashMap<DbId, String>> {
     let Some(db) = db else {
         return Ok(std::collections::HashMap::new());
     };
     let db = db.read().await;
-    db::lookup::find_ids_by_db_ids(&*db, ids).map_err(crate::plugins::runtime_error)
+    crate::db::lookup::find_ids_by_db_ids(&*db, ids).map_err(crate::plugins::runtime_error)
 }
 
 async fn find_node_id_by_id(
-    db: Option<db::DbAsync>,
+    db: Option<crate::db::DbAsync>,
     id: &str,
 ) -> luau::runtime::Result<Option<DbId>> {
     let Some(db) = db else {
         return Ok(None);
     };
     let db = db.read().await;
-    db::lookup::find_node_id_by_id(&*db, id).map_err(crate::plugins::runtime_error)
+    crate::db::lookup::find_node_id_by_id(&*db, id).map_err(crate::plugins::runtime_error)
 }
 
 async fn find_node_ids_by_ids(
-    db: Option<db::DbAsync>,
+    db: Option<crate::db::DbAsync>,
     ids: &[&str],
 ) -> luau::runtime::Result<std::collections::HashMap<String, DbId>> {
     let Some(db) = db else {
         return Ok(std::collections::HashMap::new());
     };
     let db = db.read().await;
-    db::lookup::find_node_ids_by_ids(&*db, ids).map_err(crate::plugins::runtime_error)
+    crate::db::lookup::find_node_ids_by_ids(&*db, ids).map_err(crate::plugins::runtime_error)
 }
 fn parse_strings(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<String>> {
     let mut seen = HashSet::new();

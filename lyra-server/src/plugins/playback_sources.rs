@@ -3,9 +3,13 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    OnceLock,
+};
 
 use agdb::DbId;
+use futures::future::BoxFuture;
 use harmony_core::{
     FunctionSpec,
     ModuleExport,
@@ -26,16 +30,32 @@ use harmony_luau::{
     render_definition_file_with_support,
 };
 
+use crate::db::ResolveId;
 use crate::plugins::args;
 use crate::{
-    plugins::db::{
-        self,
-        ResolveId,
+    plugins::db,
+    services::{
+        auth::Principal,
+        playback_sources as playback_source_service,
     },
-    services::playback_sources as playback_source_service,
 };
 
 struct PlaybackSourcesModule;
+
+/// Decides what an `api.response.stream_track` response for a track and its options would
+/// deliver, answering with the description `decide` returns. The HTTP layer that serves the
+/// stream provides it, and the composition root installs it.
+pub(crate) type DecideDelivery = fn(
+    Option<Principal>,
+    DbId,
+    Option<serde_json::Value>,
+) -> BoxFuture<'static, anyhow::Result<serde_json::Value>>;
+
+static DECIDE_DELIVERY: OnceLock<DecideDelivery> = OnceLock::new();
+
+pub(crate) fn install_delivery_decider(decide: DecideDelivery) {
+    DECIDE_DELIVERY.get_or_init(|| decide);
+}
 
 #[cfg(feature = "docgen")]
 struct EntryInfo;
@@ -116,24 +136,15 @@ fn decide_callback(
         .transpose()?;
     let principal = crate::plugins::auth::dispatch_principal(&frame.context)?;
 
+    let decide = *DECIDE_DELIVERY
+        .get()
+        .ok_or_else(|| crate::plugins::runtime_error("no stream delivery decider is installed"))?;
+
     Ok(luau::ScheduledFuture::new(async move {
-        let (public, options) = crate::plugins::api::stream_track_options(options.as_ref())
-            .map_err(crate::plugins::runtime_error)?;
-        let (track_id, access) = crate::plugins::api::stream_track_access(
-            principal.as_ref(),
-            Default::default(),
-            track_id,
-            public,
-        )
-        .await
-        .map_err(crate::plugins::runtime_error)?;
-        let description = crate::routes::describe_stream(&track_id, &access, options)
+        let description = decide(principal, track_id, options)
             .await
             .map_err(crate::plugins::runtime_error)?;
-        harmony_serde::json_to_luau_owned(
-            serde_json::to_value(description).map_err(crate::plugins::runtime_error)?,
-            0,
-        )
+        harmony_serde::json_to_luau_owned(description, 0)
     }))
 }
 
@@ -155,13 +166,16 @@ fn get_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        let include_full_path =
-            db::roles::has_permission(&principal.permissions, db::Permission::ManageLibraries);
+        let include_full_path = crate::db::roles::has_permission(
+            &principal.permissions,
+            crate::db::Permission::ManageLibraries,
+        );
         let query_id = id
             .to_query_id(&db)
             .map_err(crate::plugins::runtime_error)?
             .ok_or_else(|| crate::plugins::runtime_error("could not resolve scope"))?;
-        let tracks = db::tracks::get(&db, query_id).map_err(crate::plugins::runtime_error)?;
+        let tracks =
+            crate::db::tracks::get(&db, query_id).map_err(crate::plugins::runtime_error)?;
 
         let mut rows = luau::OwnedTable::new();
         for track in tracks {
@@ -203,8 +217,10 @@ fn get_many_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        let include_full_path =
-            db::roles::has_permission(&principal.permissions, db::Permission::ManageLibraries);
+        let include_full_path = crate::db::roles::has_permission(
+            &principal.permissions,
+            crate::db::Permission::ManageLibraries,
+        );
         let mut rows = luau::OwnedTable::with_entry_capacity(0, 0, track_ids.len());
         for track_id in track_ids {
             let value =
@@ -314,7 +330,7 @@ fn source_to_table(
     table
 }
 
-fn entry_to_table(entry: db::Entry, include_full_path: bool) -> luau::OwnedTable {
+fn entry_to_table(entry: crate::db::Entry, include_full_path: bool) -> luau::OwnedTable {
     let mut table = luau::OwnedTable::with_capacity(0, 8);
     table.set_field(
         "db_id",
@@ -708,12 +724,12 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &[
             TypeAliasDescriptor::new(
                 "SourceContainer",
-                string_enum(db::track_sources::SourceContainer::VALUES),
+                string_enum(crate::db::track_sources::SourceContainer::VALUES),
                 None,
             ),
             TypeAliasDescriptor::new(
                 "SourceCodec",
-                string_enum(db::track_sources::SourceCodec::VALUES),
+                string_enum(crate::db::track_sources::SourceCodec::VALUES),
                 None,
             ),
         ],

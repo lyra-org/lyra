@@ -34,20 +34,22 @@ use serde::{
     de::DeserializeOwned,
 };
 
+use crate::db::NodeId;
+use crate::db::lyrics::{
+    LyricsDetail,
+    LyricsInput,
+    LyricsKind,
+};
 use crate::plugins::args;
 use crate::{
-    plugins::db::{
-        self,
-        NodeId,
-        lyrics::{
-            LineInput,
-            LyricsDetail,
-            LyricsInput,
-            LyricsKind,
-            WordInput,
+    plugins::db,
+    services::metadata::lyrics::{
+        self as lyrics_service,
+        payload::{
+            PluginLyricLineInput,
+            PluginLyricWordInput,
         },
     },
-    services::metadata::lyrics as lyrics_service,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -114,31 +116,6 @@ impl DescribeUserData for LyricsSource {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct PluginLyricWordInput {
-    pub(crate) ts_ms: u64,
-    pub(crate) char_start: u32,
-    pub(crate) char_end: u32,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct PluginLyricLineInput {
-    pub(crate) ts_ms: u64,
-    pub(crate) text: String,
-    #[serde(default)]
-    pub(crate) words: Vec<PluginLyricWordInput>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct PluginLyricsInput {
-    pub(crate) id: String,
-    pub(crate) language: String,
-    #[serde(default)]
-    pub(crate) plain_text: String,
-    #[serde(default)]
-    pub(crate) lines: Vec<PluginLyricLineInput>,
-}
-
 #[derive(Clone, Debug, Serialize)]
 struct ParsedLyricsInput {
     language: String,
@@ -169,38 +146,6 @@ impl ParsedLyricsInput {
                 })
                 .collect(),
         }
-    }
-}
-
-impl PluginLyricsInput {
-    pub(crate) fn into_lyrics_input(self, now_ms: u64) -> anyhow::Result<(String, LyricsInput)> {
-        anyhow::ensure!(!self.id.trim().is_empty(), "lyrics id cannot be empty");
-
-        Ok((
-            self.id,
-            LyricsInput {
-                language: self.language,
-                plain_text: self.plain_text,
-                lines: self
-                    .lines
-                    .into_iter()
-                    .map(|line| LineInput {
-                        ts_ms: line.ts_ms,
-                        text: line.text,
-                        words: line
-                            .words
-                            .into_iter()
-                            .map(|word| WordInput {
-                                ts_ms: word.ts_ms,
-                                char_start: word.char_start,
-                                char_end: word.char_end,
-                            })
-                            .collect(),
-                    })
-                    .collect(),
-                last_checked_at: now_ms,
-            },
-        ))
     }
 }
 
@@ -486,8 +431,11 @@ fn delete_for_track_callback(
     let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let track_db_id = args::positive_id(track_id, "track_id")?;
-        crate::services::auth::require_permission(&principal, db::Permission::ManageMetadata)
-            .map_err(crate::plugins::runtime_error)?;
+        crate::services::auth::require_permission(
+            &principal,
+            crate::db::Permission::ManageMetadata,
+        )
+        .map_err(crate::plugins::runtime_error)?;
         let mut db = db.write().await;
         if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)
             .map_err(crate::plugins::runtime_error)?
@@ -542,7 +490,7 @@ fn has_many_callback(
     let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        let providers = db::providers::get(&db).map_err(crate::plugins::runtime_error)?;
+        let providers = crate::db::providers::get(&db).map_err(crate::plugins::runtime_error)?;
         let owner = Some(crate::plugins::auth::require_user_db_id(&principal, &db)?);
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, track_ids.len());
 
@@ -553,12 +501,12 @@ fn has_many_callback(
                 {
                     false
                 } else {
-                    match db::tracks::get_by_id(&db, track_id)
+                    match crate::db::tracks::get_by_id(&db, track_id)
                         .map_err(crate::plugins::runtime_error)?
                     {
                         Some(track) => {
                             let candidates =
-                                db::lyrics::get_visible_for_track(&db, track_id, owner)
+                                crate::db::lyrics::get_visible_for_track(&db, track_id, owner)
                                     .map_err(crate::plugins::runtime_error)?;
                             lyrics_service::pick_preferred(
                                 &candidates,
@@ -644,66 +592,6 @@ where
         .map_err(crate::plugins::runtime_error)
 }
 
-impl LuauTypeInfo for PluginLyricWordInput {
-    fn luau_type() -> LuauType {
-        LuauType::literal("PluginLyricWordInput")
-    }
-}
-
-impl DescribeInterface for PluginLyricWordInput {
-    fn interface_descriptor() -> InterfaceDescriptor {
-        let mut descriptor = InterfaceDescriptor::new("PluginLyricWordInput", None);
-        descriptor.fields.extend([
-            FieldDescriptor {
-                name: "ts_ms",
-                ty: u64::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "char_start",
-                ty: u32::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "char_end",
-                ty: u32::luau_type(),
-                description: None,
-            },
-        ]);
-        descriptor
-    }
-}
-
-impl LuauTypeInfo for PluginLyricLineInput {
-    fn luau_type() -> LuauType {
-        LuauType::literal("PluginLyricLineInput")
-    }
-}
-
-impl DescribeInterface for PluginLyricLineInput {
-    fn interface_descriptor() -> InterfaceDescriptor {
-        let mut descriptor = InterfaceDescriptor::new("PluginLyricLineInput", None);
-        descriptor.fields.extend([
-            FieldDescriptor {
-                name: "ts_ms",
-                ty: u64::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "text",
-                ty: String::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "words",
-                ty: Vec::<PluginLyricWordInput>::luau_type(),
-                description: None,
-            },
-        ]);
-        descriptor
-    }
-}
-
 impl LuauTypeInfo for ParsedLyricsInput {
     fn luau_type() -> LuauType {
         LuauType::literal("ParsedLyricsInput")
@@ -776,7 +664,7 @@ impl DescribeInterface for LyricsInfo {
         descriptor.fields.extend([
             FieldDescriptor {
                 name: "db_id",
-                ty: Option::<NodeId>::luau_type(),
+                ty: Option::<crate::db::NodeId>::luau_type(),
                 description: None,
             },
             FieldDescriptor {
@@ -913,7 +801,7 @@ fn module_descriptor() -> ModuleDescriptor {
                     "Returns the preferred lyrics for a track, or nil when none are available. When provided, `provider` selects that metadata provider by ID.",
                 ),
                 params: vec![
-                    param("track_id", NodeId::luau_type()),
+                    param("track_id", crate::db::NodeId::luau_type()),
                     param("language", Option::<String>::luau_type()),
                     param("require_synced", Option::<bool>::luau_type()),
                     param("provider", Option::<String>::luau_type()),
@@ -937,7 +825,7 @@ fn module_descriptor() -> ModuleDescriptor {
                     "Creates or replaces the authenticated caller's personal lyrics for a track.",
                 ),
                 params: vec![
-                    param("track_id", NodeId::luau_type()),
+                    param("track_id", crate::db::NodeId::luau_type()),
                     param("track_public_id", String::luau_type()),
                     param("upload", PersonalLyricsUploadInput::luau_type()),
                 ],
@@ -949,7 +837,7 @@ fn module_descriptor() -> ModuleDescriptor {
                 description: Some(
                     "Deletes the authenticated caller's personal lyrics for a track. Shared and provider lyrics are left intact.",
                 ),
-                params: vec![param("track_id", NodeId::luau_type())],
+                params: vec![param("track_id", crate::db::NodeId::luau_type())],
                 returns: vec![bool::luau_type()],
                 yields: true,
             },
@@ -958,14 +846,14 @@ fn module_descriptor() -> ModuleDescriptor {
                 description: Some(
                     "Deletes every lyrics row for a track. Intended for trusted cleanup workflows.",
                 ),
-                params: vec![param("track_id", NodeId::luau_type())],
+                params: vec![param("track_id", crate::db::NodeId::luau_type())],
                 returns: vec![],
                 yields: true,
             },
             ModuleFunctionDescriptor {
                 path: vec!["has"],
                 description: Some("Returns true when the track has preferred lyrics available."),
-                params: vec![param("track_id", NodeId::luau_type())],
+                params: vec![param("track_id", crate::db::NodeId::luau_type())],
                 returns: vec![bool::luau_type()],
                 yields: true,
             },

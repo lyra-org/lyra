@@ -87,11 +87,7 @@ pub(crate) fn get_all_with<A: DbAccess>(db: &A) -> anyhow::Result<Vec<SettingEnt
     super::get_all_settings_with(db, parent_id(db)?)
 }
 
-pub(crate) fn upsert_with<A: DbAccess>(
-    db: &mut A,
-    key: String,
-    value: String,
-) -> anyhow::Result<DbId> {
+pub fn upsert_with<A: DbAccess>(db: &mut A, key: String, value: String) -> anyhow::Result<DbId> {
     let parent_id = parent_id(db)?;
     super::upsert_setting_with(db, parent_id, key, value)
 }

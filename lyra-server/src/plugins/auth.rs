@@ -298,7 +298,7 @@ fn no_dispatch_principal() -> luau::runtime::Error {
 /// [`ServicePrincipal::require`] as a Luau runtime error, for plugin callbacks.
 pub(crate) fn require_user_db_id(
     principal: &ServicePrincipal,
-    db: &impl crate::plugins::db::DbAccess,
+    db: &impl crate::db::DbAccess,
 ) -> luau::runtime::Result<agdb::DbId> {
     principal.require(db).map_err(crate::plugins::runtime_error)
 }
@@ -322,7 +322,10 @@ fn resolve_auth_callback(
             Ok(None) | Err(AuthError::SessionExpired) => return Ok(luau::Value::Nil),
             Err(err) => return Err(crate::plugins::runtime_error(err)),
         };
-        match resolved.principal.require(&*crate::STATE.db.read().await) {
+        match resolved
+            .principal
+            .require(&*crate::services::STATE.db.read().await)
+        {
             Ok(_) => {}
             Err(AuthError::InvalidBearerCredential) => return Ok(luau::Value::Nil),
             Err(err) => return Err(crate::plugins::runtime_error(err)),
@@ -540,12 +543,12 @@ fn auth_capabilities_spec() -> FunctionSpec {
 #[derive(Clone)]
 pub(crate) struct AuthCapabilitiesModuleStore {
     capabilities: AuthCapabilities,
-    settings: Option<crate::SettingsHandle>,
+    settings: Option<crate::services::state::SettingsHandle>,
 }
 impl AuthCapabilitiesModuleStore {
     pub(crate) fn new(
         capabilities: AuthCapabilities,
-        settings: Option<crate::SettingsHandle>,
+        settings: Option<crate::services::state::SettingsHandle>,
     ) -> Self {
         Self {
             capabilities,

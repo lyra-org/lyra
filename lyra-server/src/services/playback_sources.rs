@@ -20,7 +20,6 @@ use std::{
 };
 
 use crate::db::{
-    self,
     Entry,
     track_sources::{
         SourceCodec,
@@ -48,13 +47,13 @@ pub(crate) fn resolve(
     track_db_id: DbId,
     include_entry: bool,
 ) -> anyhow::Result<Option<PlaybackSource>> {
-    if db::tracks::get_by_id(db, track_db_id)?.is_none() {
+    if crate::db::tracks::get_by_id(db, track_db_id)?.is_none() {
         return Ok(None);
     }
 
-    let primary_source_id =
-        db::track_sources::get_primary_by_track(db, track_db_id)?.and_then(|source| source.db_id);
-    let mut sources = db::track_sources::get_by_track(db, track_db_id)?;
+    let primary_source_id = crate::db::track_sources::get_primary_by_track(db, track_db_id)?
+        .and_then(|source| source.db_id);
+    let mut sources = crate::db::track_sources::get_by_track(db, track_db_id)?;
     if let Some(primary_source_id) = primary_source_id {
         sources.sort_by_key(|source| source.db_id != Some(primary_source_id));
     } else {
@@ -65,13 +64,14 @@ pub(crate) fn resolve(
         let Some(source_id) = source.db_id else {
             continue;
         };
-        let Some(entry_db_id) = db::track_sources::get_entry_id(db, source_id)? else {
+        let Some(entry_db_id) = crate::db::track_sources::get_entry_id(db, source_id)? else {
             continue;
         };
-        let Some(entry) = db::entries::get_by_id(db, entry_db_id)? else {
+        let Some(entry) = crate::db::entries::get_by_id(db, entry_db_id)? else {
             continue;
         };
-        if entry.kind != db::entries::EntryKind::File || entry.file_kind.as_deref() != Some("audio")
+        if entry.kind != crate::db::entries::EntryKind::File
+            || entry.file_kind.as_deref() != Some("audio")
         {
             continue;
         }

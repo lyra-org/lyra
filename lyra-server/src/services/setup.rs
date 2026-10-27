@@ -11,10 +11,7 @@ use std::{
 use anyhow::Context;
 use serde::Serialize;
 
-use crate::{
-    STATE,
-    db,
-};
+use crate::services::STATE;
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Serialize)]
@@ -27,14 +24,14 @@ pub(crate) async fn status() -> anyhow::Result<Status> {
     let (account_required, skipped) = {
         let db = STATE.db.read().await;
         (
-            !db::roles::has_non_default_admin(&db)?,
-            db::server::plugin_selection_skipped(&*db)?,
+            !crate::db::roles::has_non_default_admin(&db)?,
+            crate::db::server::plugin_selection_skipped(&*db)?,
         )
     };
     Ok(Status {
         account_required,
         plugin_selection_required: !skipped
-            && !has_installed_plugins(&crate::plugins::bootstrap::plugins_dir()).await?,
+            && !has_installed_plugins(&crate::config::plugins_dir()).await?,
     })
 }
 

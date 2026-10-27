@@ -15,9 +15,6 @@ use harmony_core::{
     ModuleSpec,
 };
 
-use crate::plugins::db as server_db;
-use crate::services::EntityType;
-
 use self::layer::MetadataLayer;
 use self::provider::{
     MetadataProvider,
@@ -35,10 +32,10 @@ pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/metadata")
         .capability("lyra.metadata")
         .function(provider_new_spec())
-        .userdata(EntityType::_harmony_userdata_spec())
-        .userdata(server_db::ArtistType::_harmony_userdata_spec())
-        .userdata(server_db::CreditType::_harmony_userdata_spec())
-        .userdata(server_db::ArtistRelationType::_harmony_userdata_spec())
+        .userdata(crate::services::EntityType::_harmony_userdata_spec())
+        .userdata(crate::db::ArtistType::_harmony_userdata_spec())
+        .userdata(crate::db::CreditType::_harmony_userdata_spec())
+        .userdata(crate::db::ArtistRelationType::_harmony_userdata_spec())
         .userdata(MetadataProvider::_harmony_userdata_spec())
         .userdata(MetadataLayer::_harmony_userdata_spec())
         .install(|_| Ok(ModuleExport::new(MetadataModule)))

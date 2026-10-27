@@ -13,18 +13,18 @@ use anyhow::{
     anyhow,
 };
 
+use lyra_metadata::locale::{
+    validate_country,
+    validate_language,
+};
+
+use crate::db::{
+    Library,
+    libraries::normalize_library_name_display,
+};
 use crate::{
-    STATE,
     config::LibraryFile,
-    db::{
-        self,
-        Library,
-        libraries::normalize_library_name_display,
-    },
-    locale::{
-        validate_country,
-        validate_language,
-    },
+    services::STATE,
     services::settings::server::Config,
 };
 
@@ -155,7 +155,7 @@ async fn find_or_create_library(
     // Raw path preserved for symlink retargeting; canonicalize off the lock.
     let path_key = {
         let candidate = path.clone();
-        tokio::task::spawn_blocking(move || db::libraries::path_key_for(&candidate))
+        tokio::task::spawn_blocking(move || crate::db::libraries::path_key_for(&candidate))
             .await
             .map_err(|e| anyhow::anyhow!("path canonicalize task panicked: {e}"))?
     };
@@ -166,7 +166,7 @@ async fn find_or_create_library(
 }
 
 /// Runs under the held DB write lock. `path_key` is
-/// [`db::libraries::path_key_for`] of `path`, computed off the lock.
+/// [`crate::db::libraries::path_key_for`] of `path`, computed off the lock.
 fn find_or_create_library_locked(
     db: &mut DbAny,
     config: &LibraryConfig,
@@ -182,26 +182,28 @@ fn find_or_create_library_locked(
     // One txn so a crash between node and edge can't orphan a Library.
     let lookup_path = path.clone();
     let lookup_key = path_key.clone();
-    let outcome = db.transaction_mut(|t| -> Result<Library, db::libraries::LibraryCreateError> {
-        if let Some(existing) = db::libraries::find_by_path_key(t, &lookup_key)? {
-            return Ok(existing);
-        }
-        db::libraries::create_system(
-            t,
-            db::libraries::LibraryInsert {
-                id: nanoid!(),
-                name: display_name,
-                path: lookup_path,
-                path_key: lookup_key,
-                language: config.language.clone(),
-                country: config.country.clone(),
-            },
-        )
-    });
+    let outcome = db.transaction_mut(
+        |t| -> Result<Library, crate::db::libraries::LibraryCreateError> {
+            if let Some(existing) = crate::db::libraries::find_by_path_key(t, &lookup_key)? {
+                return Ok(existing);
+            }
+            crate::db::libraries::create_system(
+                t,
+                crate::db::libraries::LibraryInsert {
+                    id: nanoid!(),
+                    name: display_name,
+                    path: lookup_path,
+                    path_key: lookup_key,
+                    language: config.language.clone(),
+                    country: config.country.clone(),
+                },
+            )
+        },
+    );
 
     match outcome {
         Ok(library) => Ok(library),
-        Err(db::libraries::LibraryCreateError::NameInUse(name)) => Err(match source {
+        Err(crate::db::libraries::LibraryCreateError::NameInUse(name)) => Err(match source {
             BootstrapSource::Config => anyhow::anyhow!(
                 "library name '{name}' is already in use by a library at another path; \
                  set `library.name` in config.json to a unique value"
@@ -211,7 +213,7 @@ fn find_or_create_library_locked(
                  pass --library with that library's directory or rename it via the API"
             ),
         }),
-        Err(db::libraries::LibraryCreateError::PathInUse(conflicting_path)) => {
+        Err(crate::db::libraries::LibraryCreateError::PathInUse(conflicting_path)) => {
             // Unreachable unless `find_by_path_key`/`create` normalization diverges.
             tracing::error!(
                 conflicting = %conflicting_path.display(),
@@ -225,10 +227,10 @@ fn find_or_create_library_locked(
                 conflicting_path.display()
             ))
         }
-        Err(db::libraries::LibraryCreateError::InvalidName(e)) => {
+        Err(crate::db::libraries::LibraryCreateError::InvalidName(e)) => {
             Err(anyhow::anyhow!("invalid library name: {e}"))
         }
-        Err(db::libraries::LibraryCreateError::Db(e)) => Err(e),
+        Err(crate::db::libraries::LibraryCreateError::Db(e)) => Err(e),
     }
 }
 
@@ -246,13 +248,11 @@ mod tests {
         LibraryConfig,
         find_or_create_library_locked,
     };
-    use crate::{
-        config::ConfigFile,
-        db::{
-            Library,
-            libraries::path_key_for,
-            test_db::new_test_db,
-        },
+    use crate::config::ConfigFile;
+    use crate::db::{
+        Library,
+        libraries::path_key_for,
+        test_db::new_test_db,
     };
 
     fn find_or_create_at(

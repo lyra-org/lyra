@@ -7,7 +7,7 @@ use anyhow::Result;
 use harmony_luau as luau;
 
 pub(super) struct PluginModuleStores {
-    pub(super) server_settings: Option<crate::SettingsHandle>,
+    pub(super) server_settings: Option<crate::services::state::SettingsHandle>,
     db: crate::plugins::db::PluginDb,
 }
 
@@ -20,7 +20,7 @@ impl PluginModuleStores {
         }
     }
 
-    pub(super) fn with_db(db: crate::plugins::db::DbAsync) -> Self {
+    pub(super) fn with_db(db: crate::db::DbAsync) -> Self {
         Self {
             server_settings: None,
             db: crate::plugins::db::PluginDb::with_db(db),

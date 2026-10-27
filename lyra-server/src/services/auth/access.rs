@@ -13,13 +13,8 @@ use std::{
 
 use agdb::DbId;
 
-use crate::{
-    db::{
-        self,
-        libraries::Library,
-    },
-    services::SystemContext,
-};
+use crate::db::libraries::Library;
+use crate::services::SystemContext;
 
 use super::Principal;
 
@@ -93,93 +88,93 @@ fn filter_accessible_libraries(
 }
 
 pub(crate) fn libraries(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     principal: &Principal,
 ) -> anyhow::Result<Vec<LibraryView>> {
     Ok(filter_accessible_libraries(
-        db::libraries::get(db)?,
+        crate::db::libraries::get(db)?,
         principal,
     ))
 }
 
 pub(crate) fn system_libraries(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     _ctx: &SystemContext,
 ) -> anyhow::Result<Vec<LibraryFull>> {
-    Ok(db::libraries::get(db)?
+    Ok(crate::db::libraries::get(db)?
         .into_iter()
         .map(LibraryFull::from)
         .collect())
 }
 
 pub(crate) fn library_by_id(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     principal: &Principal,
     library_db_id: DbId,
 ) -> anyhow::Result<Option<LibraryView>> {
-    Ok(db::libraries::get_by_id(db, library_db_id)?
+    Ok(crate::db::libraries::get_by_id(db, library_db_id)?
         .filter(|library| principal_can_access_library(principal, library))
         .map(LibraryView::from))
 }
 
 pub(crate) fn system_library_by_id(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     _ctx: &SystemContext,
     library_db_id: DbId,
 ) -> anyhow::Result<Option<LibraryFull>> {
-    Ok(db::libraries::get_by_id(db, library_db_id)?.map(LibraryFull::from))
+    Ok(crate::db::libraries::get_by_id(db, library_db_id)?.map(LibraryFull::from))
 }
 
 pub(crate) fn libraries_by_alias(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     principal: &Principal,
     alias: &str,
 ) -> anyhow::Result<Vec<LibraryView>> {
     Ok(filter_accessible_libraries(
-        db::libraries::get_by_alias(db, alias)?,
+        crate::db::libraries::get_by_alias(db, alias)?,
         principal,
     ))
 }
 
 pub(crate) fn system_libraries_by_alias(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     _ctx: &SystemContext,
     alias: &str,
 ) -> anyhow::Result<Vec<LibraryFull>> {
-    Ok(db::libraries::get_by_alias(db, alias)?
+    Ok(crate::db::libraries::get_by_alias(db, alias)?
         .into_iter()
         .map(LibraryFull::from)
         .collect())
 }
 
 pub(crate) fn libraries_for_entity(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     principal: &Principal,
     entity_db_id: DbId,
 ) -> anyhow::Result<Vec<LibraryView>> {
     Ok(filter_accessible_libraries(
-        db::libraries::get_for_entity(db, entity_db_id)?,
+        crate::db::libraries::get_for_entity(db, entity_db_id)?,
         principal,
     ))
 }
 
 pub(crate) fn system_libraries_for_entity(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     _ctx: &SystemContext,
     entity_db_id: DbId,
 ) -> anyhow::Result<Vec<LibraryFull>> {
-    Ok(db::libraries::get_for_entity(db, entity_db_id)?
+    Ok(crate::db::libraries::get_for_entity(db, entity_db_id)?
         .into_iter()
         .map(LibraryFull::from)
         .collect())
 }
 
 pub(crate) fn libraries_for_entities(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     principal: &Principal,
     entity_ids: &[DbId],
 ) -> anyhow::Result<HashMap<DbId, LibraryView>> {
-    Ok(db::libraries::get_for_entities(db, entity_ids)?
+    Ok(crate::db::libraries::get_for_entities(db, entity_ids)?
         .into_iter()
         .filter(|(_, library)| principal_can_access_library(principal, library))
         .map(|(entity_id, library)| (entity_id, LibraryView::from(library)))
@@ -187,11 +182,11 @@ pub(crate) fn libraries_for_entities(
 }
 
 pub(crate) fn system_libraries_for_entities(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     _ctx: &SystemContext,
     entity_ids: &[DbId],
 ) -> anyhow::Result<HashMap<DbId, LibraryFull>> {
-    Ok(db::libraries::get_for_entities(db, entity_ids)?
+    Ok(crate::db::libraries::get_for_entities(db, entity_ids)?
         .into_iter()
         .map(|(entity_id, library)| (entity_id, LibraryFull::from(library)))
         .collect())
@@ -199,16 +194,21 @@ pub(crate) fn system_libraries_for_entities(
 
 /// Return the unique entity ids accessible to the principal.
 pub(crate) fn accessible_entities(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     principal: &Principal,
     entity_db_ids: &[DbId],
 ) -> anyhow::Result<HashSet<DbId>> {
-    if principal.permissions.contains(&db::Permission::Admin) {
-        return Ok(db::dedup_positive_ids(entity_db_ids).into_iter().collect());
+    if principal
+        .permissions
+        .contains(&crate::db::Permission::Admin)
+    {
+        return Ok(crate::db::dedup_positive_ids(entity_db_ids)
+            .into_iter()
+            .collect());
     }
 
     let mut accessible = HashSet::new();
-    for entity_db_id in db::dedup_positive_ids(entity_db_ids) {
+    for entity_db_id in crate::db::dedup_positive_ids(entity_db_ids) {
         if entity_accessible(db, principal, entity_db_id)? {
             accessible.insert(entity_db_id);
         }
@@ -217,46 +217,52 @@ pub(crate) fn accessible_entities(
 }
 
 pub(crate) fn entity_accessible(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     principal: &Principal,
     entity_db_id: DbId,
 ) -> anyhow::Result<bool> {
-    if principal.permissions.contains(&db::Permission::Admin) {
+    if principal
+        .permissions
+        .contains(&crate::db::Permission::Admin)
+    {
         return Ok(true);
     }
-    Ok(db::libraries::get_for_entity(db, entity_db_id)?
+    Ok(crate::db::libraries::get_for_entity(db, entity_db_id)?
         .into_iter()
         .any(|library| principal_can_access_library(principal, &library)))
 }
 
 pub(crate) fn artist_accessible(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     principal: &Principal,
     artist_db_id: DbId,
 ) -> anyhow::Result<bool> {
-    if principal.permissions.contains(&db::Permission::Admin) {
+    if principal
+        .permissions
+        .contains(&crate::db::Permission::Admin)
+    {
         return Ok(true);
     }
-    for release in db::releases::get_by_artist(db, artist_db_id)? {
+    for release in crate::db::releases::get_by_artist(db, artist_db_id)? {
         let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
             continue;
         };
-        if db::libraries::get_by_release(db, release_db_id)?
+        if crate::db::libraries::get_by_release(db, release_db_id)?
             .into_iter()
             .any(|library| principal_can_access_library(principal, &library))
         {
             return Ok(true);
         }
     }
-    for track in db::tracks::get_by_artist(db, artist_db_id)? {
+    for track in crate::db::tracks::get_by_artist(db, artist_db_id)? {
         let Some(track_db_id) = track.db_id.clone().map(DbId::from) else {
             continue;
         };
-        for release in db::releases::get_by_track(db, track_db_id)? {
+        for release in crate::db::releases::get_by_track(db, track_db_id)? {
             let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
                 continue;
             };
-            if db::libraries::get_by_release(db, release_db_id)?
+            if crate::db::libraries::get_by_release(db, release_db_id)?
                 .into_iter()
                 .any(|library| principal_can_access_library(principal, &library))
             {
@@ -268,7 +274,7 @@ pub(crate) fn artist_accessible(
 }
 
 pub(crate) fn require_entity_accessible<E>(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     principal: &Principal,
     entity_db_id: DbId,
     not_accessible: impl FnOnce() -> E,
@@ -284,7 +290,7 @@ where
 }
 
 pub(crate) fn playlist_accessible(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     principal: &Principal,
     playlist_db_id: DbId,
 ) -> anyhow::Result<bool> {
@@ -294,12 +300,15 @@ pub(crate) fn playlist_accessible(
 /// [`playlist_accessible`] for callers checking many playlists, with `user_db_id` taken from
 /// [`Principal::require`] under the same guard as `db`.
 pub(crate) fn playlist_accessible_as(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     principal: &Principal,
     user_db_id: DbId,
     playlist_db_id: DbId,
 ) -> anyhow::Result<bool> {
-    if principal.permissions.contains(&db::Permission::Admin) {
+    if principal
+        .permissions
+        .contains(&crate::db::Permission::Admin)
+    {
         return Ok(true);
     }
     playlist_visible_to_user(db, user_db_id, playlist_db_id)
@@ -307,56 +316,59 @@ pub(crate) fn playlist_accessible_as(
 
 /// Whether the user can see the playlist as a listener: a public playlist, or its own.
 pub(crate) fn playlist_visible_to_user(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     user_db_id: DbId,
     playlist_db_id: DbId,
 ) -> anyhow::Result<bool> {
-    let Some(playlist) = db::playlists::get_by_id(db, playlist_db_id)? else {
+    let Some(playlist) = crate::db::playlists::get_by_id(db, playlist_db_id)? else {
         return Ok(false);
     };
     if playlist.is_public.unwrap_or(false) {
         return Ok(true);
     }
-    Ok(db::playlists::get_owner(db, playlist_db_id)? == Some(user_db_id))
+    Ok(crate::db::playlists::get_owner(db, playlist_db_id)? == Some(user_db_id))
 }
 
 /// Whether the principal owns the playlist, verified under the guard of `db`. Anything but an
 /// existing playlist is unowned; a graph search from a missing id would fail.
 pub(crate) fn playlist_owned(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     principal: &Principal,
     playlist_db_id: DbId,
 ) -> anyhow::Result<bool> {
     let user_db_id = principal.require(db)?;
-    if db::playlists::get_by_id(db, playlist_db_id)?.is_none() {
+    if crate::db::playlists::get_by_id(db, playlist_db_id)?.is_none() {
         return Ok(false);
     }
-    Ok(db::playlists::get_owner(db, playlist_db_id)? == Some(user_db_id))
+    Ok(crate::db::playlists::get_owner(db, playlist_db_id)? == Some(user_db_id))
 }
 
 pub(crate) fn resolve_library_db_id(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     principal: &Principal,
     library_id: &str,
 ) -> Result<DbId, AccessError> {
-    if principal.permissions.contains(&db::Permission::Admin) {
+    if principal
+        .permissions
+        .contains(&crate::db::Permission::Admin)
+    {
         if !principal.accessible_library_ids.contains(library_id) {
             return Err(AccessError::LibraryNotFound(library_id.to_string()));
         }
-        let library_db_id = db::lookup::find_node_id_by_id(db, library_id)?
+        let library_db_id = crate::db::lookup::find_node_id_by_id(db, library_id)?
             .ok_or_else(|| AccessError::LibraryNotFound(library_id.to_string()))?;
-        db::libraries::get_by_id(db, library_db_id)?
+        crate::db::libraries::get_by_id(db, library_db_id)?
             .ok_or_else(|| AccessError::LibraryNotFound(library_id.to_string()))?;
         return Ok(library_db_id);
     }
 
     let user_db_id = principal.require(db).map_err(anyhow::Error::from)?;
-    db::libraries::find_node_id_accessible_to_user(db, user_db_id, library_id)?
+    crate::db::libraries::find_node_id_accessible_to_user(db, user_db_id, library_id)?
         .ok_or_else(|| AccessError::LibraryNotFound(library_id.to_string()))
 }
 
 pub(crate) fn resolve_optional_library_filter(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     principal: &Principal,
     library_id: Option<&str>,
 ) -> Result<Option<DbId>, AccessError> {
@@ -382,22 +394,26 @@ mod tests {
 
     use super::*;
     use crate::db::{
-        libraries::LibraryInsert,
-        playlists::Playlist,
-        test_db::{
+        fixtures::{
             connect,
             insert_track,
-            new_test_db,
             test_user,
         },
+        libraries::LibraryInsert,
+        playlists::Playlist,
+        test_db::new_test_db,
     };
 
-    fn principal(db: &DbAny, user_db_id: DbId, permissions: Vec<db::Permission>) -> Principal {
+    fn principal(
+        db: &DbAny,
+        user_db_id: DbId,
+        permissions: Vec<crate::db::Permission>,
+    ) -> Principal {
         Principal::for_user(db, user_db_id, permissions, HashSet::new())
     }
 
     fn create_user(db: &mut DbAny, username: &str) -> anyhow::Result<DbId> {
-        db::users::create(db, &test_user(username)?)
+        crate::db::users::create(db, &test_user(username)?)
     }
 
     fn create_library(
@@ -410,19 +426,19 @@ mod tests {
             id: nanoid!(),
             name: name.to_string(),
             path: path.clone(),
-            path_key: db::libraries::path_key_for(&path),
+            path_key: crate::db::libraries::path_key_for(&path),
             language: None,
             country: None,
         };
         db.transaction_mut(|transaction| -> anyhow::Result<Library> {
             if let Some(user_db_id) = creator_user_db_id {
-                Ok(db::libraries::create_with_creator(
+                Ok(crate::db::libraries::create_with_creator(
                     transaction,
                     request,
                     user_db_id,
                 )?)
             } else {
-                Ok(db::libraries::create_system(transaction, request)?)
+                Ok(crate::db::libraries::create_system(transaction, request)?)
             }
         })
     }
@@ -434,7 +450,8 @@ mod tests {
         let visible = create_library(&mut db, "Visible", Some(user_db_id))?;
         let hidden = create_library(&mut db, "Hidden", None)?;
         let mut principal = principal(&db, user_db_id, vec![]);
-        principal.accessible_library_ids = db::libraries::accessible_library_ids(&db, user_db_id)?;
+        principal.accessible_library_ids =
+            crate::db::libraries::accessible_library_ids(&db, user_db_id)?;
 
         let visible_libraries = libraries(&db, &principal)?;
         assert_eq!(visible_libraries.len(), 1);
@@ -491,7 +508,7 @@ mod tests {
             Err(AccessError::LibraryNotFound(_))
         ));
 
-        let mut admin = principal(&db, viewer_db_id, vec![db::Permission::Admin]);
+        let mut admin = principal(&db, viewer_db_id, vec![crate::db::Permission::Admin]);
         admin.accessible_library_ids.insert(library.id.clone());
         assert_eq!(
             resolve_library_db_id(&db, &admin, &library.id)?,
@@ -505,7 +522,7 @@ mod tests {
         let mut db = new_test_db()?;
         let owner_db_id = create_user(&mut db, "owner")?;
         let viewer_db_id = create_user(&mut db, "viewer")?;
-        let private_id = db::playlists::create(
+        let private_id = crate::db::playlists::create(
             &mut db,
             &Playlist {
                 db_id: None,
@@ -518,7 +535,7 @@ mod tests {
             },
             owner_db_id,
         )?;
-        let public_id = db::playlists::create(
+        let public_id = crate::db::playlists::create(
             &mut db,
             &Playlist {
                 db_id: None,
@@ -534,7 +551,7 @@ mod tests {
 
         let owner = principal(&db, owner_db_id, vec![]);
         let viewer = principal(&db, viewer_db_id, vec![]);
-        let admin = principal(&db, viewer_db_id, vec![db::Permission::Admin]);
+        let admin = principal(&db, viewer_db_id, vec![crate::db::Permission::Admin]);
         assert!(playlist_accessible(&db, &owner, private_id)?);
         assert!(!playlist_accessible(&db, &viewer, private_id)?);
         assert!(playlist_accessible(&db, &viewer, public_id)?);

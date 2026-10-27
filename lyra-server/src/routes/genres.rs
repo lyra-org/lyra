@@ -28,12 +28,8 @@ use serde::{
     Serialize,
 };
 
+use crate::db::genres;
 use crate::{
-    STATE,
-    db::{
-        self,
-        genres,
-    },
     routes::{
         AppError,
         covers as route_covers,
@@ -44,6 +40,7 @@ use crate::{
             PageResponse,
         },
     },
+    services::STATE,
     services::{
         auth::require_authenticated,
         catalog::{
@@ -168,7 +165,7 @@ fn genre_to_response(genre: genres::Genre) -> GenreResponse {
 }
 
 fn release_ids_for_library(db: &DbAny, library_db_id: DbId) -> anyhow::Result<Vec<DbId>> {
-    Ok(db::releases::get_direct(db, library_db_id)?
+    Ok(crate::db::releases::get_direct(db, library_db_id)?
         .into_iter()
         .filter_map(|release| release.db_id.map(DbId::from))
         .collect())
@@ -181,10 +178,10 @@ fn release_ids_for_accessible_libraries(
     let mut release_ids = Vec::new();
     let mut seen_release_ids = HashSet::new();
     for library_id in accessible_library_ids {
-        let Some(library_db_id) = db::lookup::find_node_id_by_id(db, library_id)? else {
+        let Some(library_db_id) = crate::db::lookup::find_node_id_by_id(db, library_id)? else {
             continue;
         };
-        if db::libraries::get_by_id(db, library_db_id)?.is_none() {
+        if crate::db::libraries::get_by_id(db, library_db_id)?.is_none() {
             continue;
         }
         for release_id in release_ids_for_library(db, library_db_id)? {
@@ -197,7 +194,7 @@ fn release_ids_for_accessible_libraries(
 }
 
 fn genre_accessible_to_principal(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     principal: &crate::services::auth::Principal,
     genre_db_id: DbId,
 ) -> anyhow::Result<bool> {
@@ -318,7 +315,7 @@ async fn get_genre(
     let inc = parse_genre_inc(query.inc)?;
 
     let db = &*STATE.db.read().await;
-    let genre_db_id = db::lookup::find_node_id_by_id(db, &id)?
+    let genre_db_id = crate::db::lookup::find_node_id_by_id(db, &id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
     let genre = genres::get_by_id(db, genre_db_id)?
         .ok_or_else(|| AppError::not_found(format!("Genre not found: {id}")))?;
@@ -419,37 +416,34 @@ mod tests {
     };
     use nanoid::nanoid;
 
+    use crate::db::fixtures::insert_release as insert_test_release;
+    use crate::db::fixtures::{
+        connect,
+        insert_track,
+    };
+    use crate::db::test_db::insert_library;
     use crate::{
-        db::test_db::{
-            connect,
-            insert_library,
-            insert_release as insert_test_release,
-            insert_track,
-        },
-        testing::{
-            LibraryFixtureConfig,
-            initialize_runtime,
-            runtime_test_lock,
-        },
+        plugins::testing::init_library_test_state,
+        services::testing::runtime_test_lock,
     };
 
     use super::*;
 
     async fn setup_route_test() -> anyhow::Result<()> {
-        initialize_runtime(&LibraryFixtureConfig {
-            directory: std::path::PathBuf::from("."),
-            language: None,
-            country: None,
-        })
-        .await
+        init_library_test_state(std::path::PathBuf::from(".")).await
     }
 
     async fn create_admin_headers(username: &str) -> anyhow::Result<HeaderMap> {
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            db::roles::ensure_builtin_roles(&mut db)?;
-            let user_db_id = db::users::create(&mut db, &db::test_db::test_user(username)?)?;
-            db::roles::ensure_user_has_role(&mut db, user_db_id, db::roles::BUILTIN_ADMIN_ROLE)?;
+            crate::db::roles::ensure_builtin_roles(&mut db)?;
+            let user_db_id =
+                crate::db::users::create(&mut db, &crate::db::fixtures::test_user(username)?)?;
+            crate::db::roles::ensure_user_has_role(
+                &mut db,
+                user_db_id,
+                crate::db::roles::BUILTIN_ADMIN_ROLE,
+            )?;
             user_db_id
         };
 
@@ -457,7 +451,8 @@ mod tests {
     }
 
     async fn create_headers_for_user(user_db_id: DbId) -> anyhow::Result<HeaderMap> {
-        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
+        let session =
+            crate::services::testing::create_session(user_db_id, Default::default()).await?;
         let mut headers = HeaderMap::new();
         headers.insert(
             AUTHORIZATION,
@@ -472,12 +467,12 @@ mod tests {
         db: &mut DbAny,
         release_db_id: DbId,
         cover_id: &str,
-    ) -> anyhow::Result<db::Cover> {
+    ) -> anyhow::Result<crate::db::Cover> {
         db.transaction_mut(|t| {
-            db::covers::upsert(
+            crate::db::covers::upsert(
                 t,
                 release_db_id,
-                db::Cover {
+                crate::db::Cover {
                     db_id: None,
                     id: cover_id.to_string(),
                     path: format!("/music/{cover_id}.jpg"),
@@ -495,20 +490,20 @@ mod tests {
         track_db_id: DbId,
         listened_at_ms: u64,
     ) -> anyhow::Result<()> {
-        let track = db::tracks::get_by_id(db, track_db_id)?
+        let track = crate::db::tracks::get_by_id(db, track_db_id)?
             .ok_or_else(|| anyhow::anyhow!("track missing"))?;
-        let listen = db::Listen {
+        let listen = crate::db::Listen {
             db_id: None,
             id: nanoid!(),
             track_public_id: track.id,
             position_ms: 0,
             duration_ms: Some(180_000),
             activity_ms: 180_000,
-            state: db::PlaybackState::Completed,
+            state: crate::db::PlaybackState::Completed,
             listened_at_ms,
             created_at_ms: listened_at_ms,
         };
-        let session = db::PlaybackSession {
+        let session = crate::db::PlaybackSession {
             db_id: None,
             id: nanoid!(),
             client_name: None,
@@ -516,12 +511,12 @@ mod tests {
             duration_ms: Some(180_000),
             activity_ms: Some(180_000),
             last_position_ms: None,
-            state: db::PlaybackState::Completed,
+            state: crate::db::PlaybackState::Completed,
             listen_recorded: Some(true),
             updated_at_ms: listened_at_ms,
             created_at_ms: listened_at_ms,
         };
-        db::listens::create_and_mark_recorded(db, &listen, track_db_id, user_db_id, &session)
+        crate::db::listens::create_and_mark_recorded(db, &listen, track_db_id, user_db_id, &session)
     }
 
     #[test]
@@ -550,10 +545,18 @@ mod tests {
             let hidden_release = insert_test_release(&mut db, "Hidden Jazz")?;
             connect(&mut db, visible_library, visible_release)?;
             connect(&mut db, hidden_library, hidden_release)?;
-            db::genres::sync_release_genres(&mut *db, visible_release, &["Rock".to_string()])?;
-            db::genres::sync_release_genres(&mut *db, hidden_release, &["Jazz".to_string()])?;
+            crate::db::genres::sync_release_genres(
+                &mut *db,
+                visible_release,
+                &["Rock".to_string()],
+            )?;
+            crate::db::genres::sync_release_genres(
+                &mut *db,
+                hidden_release,
+                &["Jazz".to_string()],
+            )?;
 
-            db::libraries::get_by_id(&db, visible_library)?
+            crate::db::libraries::get_by_id(&db, visible_library)?
                 .ok_or_else(|| anyhow::anyhow!("visible library missing"))?
                 .id
         };
@@ -591,10 +594,14 @@ mod tests {
                 let release =
                     insert_test_release(&mut db, &format!("{genre_name} Search Release"))?;
                 connect(&mut db, library, release)?;
-                db::genres::sync_release_genres(&mut *db, release, &[genre_name.to_string()])?;
+                crate::db::genres::sync_release_genres(
+                    &mut *db,
+                    release,
+                    &[genre_name.to_string()],
+                )?;
             }
 
-            db::libraries::get_by_id(&db, library)?
+            crate::db::libraries::get_by_id(&db, library)?
                 .ok_or_else(|| anyhow::anyhow!("genre search library missing"))?
                 .id
         };
@@ -625,11 +632,11 @@ mod tests {
 
         {
             let mut db = STATE.db.write().await;
-            let library_db_id = db::lookup::find_node_id_by_id(&db, &library_id)?
+            let library_db_id = crate::db::lookup::find_node_id_by_id(&db, &library_id)?
                 .ok_or_else(|| anyhow::anyhow!("genre search library missing"))?;
             let release = insert_test_release(&mut db, "Aardvark Search Release")?;
             connect(&mut db, library_db_id, release)?;
-            db::genres::sync_release_genres(&mut *db, release, &["Aardvark".to_string()])?;
+            crate::db::genres::sync_release_genres(&mut *db, release, &["Aardvark".to_string()])?;
         }
 
         let Json(second_page) = list_genres(
@@ -684,7 +691,7 @@ mod tests {
     ) -> anyhow::Result<DbId> {
         let release = insert_test_release(db, &format!("{genre_name} Release"))?;
         connect(db, library, release)?;
-        db::genres::sync_release_genres(db, release, &[genre_name.to_string()])?;
+        crate::db::genres::sync_release_genres(db, release, &[genre_name.to_string()])?;
         Ok(release)
     }
 
@@ -726,7 +733,7 @@ mod tests {
             for genre_name in ["Jazz", "Metal", "Rock"] {
                 let release = insert_genre_release(&mut db, library, genre_name)?;
                 genres.push(
-                    db::genres::get_for_release(&*db, release)?
+                    crate::db::genres::get_for_release(&*db, release)?
                         .into_iter()
                         .find_map(|genre| genre.db_id.map(DbId::from))
                         .ok_or_else(|| anyhow::anyhow!("genre missing"))?,
@@ -797,8 +804,10 @@ mod tests {
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            let user_db_id =
-                db::users::create(&mut db, &db::test_db::test_user("genre-listener")?)?;
+            let user_db_id = crate::db::users::create(
+                &mut db,
+                &crate::db::fixtures::test_user("genre-listener")?,
+            )?;
             let visible_library =
                 insert_library(&mut db, "Accessible Genres", "/tmp/lyra-accessible-genres")?;
             let hidden_library = insert_library(
@@ -810,14 +819,22 @@ mod tests {
             let hidden_release = insert_test_release(&mut db, "Inaccessible Jazz")?;
             connect(&mut db, visible_library, visible_release)?;
             connect(&mut db, hidden_library, hidden_release)?;
-            db::libraries::grant_access(
+            crate::db::libraries::grant_access(
                 &mut *db,
                 user_db_id,
                 visible_library,
-                db::libraries::AccessKind::ReadWrite,
+                crate::db::libraries::AccessKind::ReadWrite,
             )?;
-            db::genres::sync_release_genres(&mut *db, visible_release, &["Rock".to_string()])?;
-            db::genres::sync_release_genres(&mut *db, hidden_release, &["Jazz".to_string()])?;
+            crate::db::genres::sync_release_genres(
+                &mut *db,
+                visible_release,
+                &["Rock".to_string()],
+            )?;
+            crate::db::genres::sync_release_genres(
+                &mut *db,
+                hidden_release,
+                &["Jazz".to_string()],
+            )?;
             user_db_id
         };
         let headers = create_headers_for_user(user_db_id).await?;
@@ -849,8 +866,10 @@ mod tests {
 
         let (user_db_id, visible_genre_id, hidden_genre_id) = {
             let mut db = STATE.db.write().await;
-            let user_db_id =
-                db::users::create(&mut db, &db::test_db::test_user("genre-detail-user")?)?;
+            let user_db_id = crate::db::users::create(
+                &mut db,
+                &crate::db::fixtures::test_user("genre-detail-user")?,
+            )?;
             let visible_library = insert_library(
                 &mut db,
                 "Visible Genre Detail",
@@ -865,28 +884,28 @@ mod tests {
             let hidden_release = insert_test_release(&mut db, "Hidden Genre Detail Release")?;
             connect(&mut db, visible_library, visible_release)?;
             connect(&mut db, hidden_library, hidden_release)?;
-            db::libraries::grant_access(
+            crate::db::libraries::grant_access(
                 &mut *db,
                 user_db_id,
                 visible_library,
-                db::libraries::AccessKind::ReadWrite,
+                crate::db::libraries::AccessKind::ReadWrite,
             )?;
-            db::genres::sync_release_genres(
+            crate::db::genres::sync_release_genres(
                 &mut *db,
                 visible_release,
                 &["Visible Detail Genre".to_string()],
             )?;
-            db::genres::sync_release_genres(
+            crate::db::genres::sync_release_genres(
                 &mut *db,
                 hidden_release,
                 &["Hidden Detail Genre".to_string()],
             )?;
-            let visible_genre_id = db::genres::get_for_release(&*db, visible_release)?
+            let visible_genre_id = crate::db::genres::get_for_release(&*db, visible_release)?
                 .into_iter()
                 .find(|genre| genre.name == "Visible Detail Genre")
                 .ok_or_else(|| anyhow::anyhow!("visible genre missing"))?
                 .id;
-            let hidden_genre_id = db::genres::get_for_release(&*db, hidden_release)?
+            let hidden_genre_id = crate::db::genres::get_for_release(&*db, hidden_release)?
                 .into_iter()
                 .find(|genre| genre.name == "Hidden Detail Genre")
                 .ok_or_else(|| anyhow::anyhow!("hidden genre missing"))?
@@ -924,18 +943,20 @@ mod tests {
 
         let (user_db_id, cover_id) = {
             let mut db = STATE.db.write().await;
-            let user_db_id =
-                db::users::create(&mut db, &db::test_db::test_user("genre-random-cover")?)?;
+            let user_db_id = crate::db::users::create(
+                &mut db,
+                &crate::db::fixtures::test_user("genre-random-cover")?,
+            )?;
             let library = insert_library(&mut db, "Genre Random", "/tmp/lyra-genre-random")?;
             let release = insert_test_release(&mut db, "Random Rock")?;
             connect(&mut db, library, release)?;
-            db::libraries::grant_access(
+            crate::db::libraries::grant_access(
                 &mut *db,
                 user_db_id,
                 library,
-                db::libraries::AccessKind::ReadWrite,
+                crate::db::libraries::AccessKind::ReadWrite,
             )?;
-            db::genres::sync_release_genres(&mut *db, release, &["Rock".to_string()])?;
+            crate::db::genres::sync_release_genres(&mut *db, release, &["Rock".to_string()])?;
             let cover_id = insert_cover_for_release(&mut db, release, "genre-random-cover")?.id;
             (user_db_id, cover_id)
         };
@@ -972,8 +993,10 @@ mod tests {
 
         let (user_db_id, expected_cover_id) = {
             let mut db = STATE.db.write().await;
-            let user_db_id =
-                db::users::create(&mut db, &db::test_db::test_user("genre-personal-cover")?)?;
+            let user_db_id = crate::db::users::create(
+                &mut db,
+                &crate::db::fixtures::test_user("genre-personal-cover")?,
+            )?;
             let library = insert_library(&mut db, "Genre Personal", "/tmp/lyra-genre-personal")?;
             let release_a = insert_test_release(&mut db, "Personal A")?;
             let release_b = insert_test_release(&mut db, "Personal B")?;
@@ -983,14 +1006,14 @@ mod tests {
             connect(&mut db, library, release_b)?;
             connect(&mut db, release_a, track_a)?;
             connect(&mut db, release_b, track_b)?;
-            db::libraries::grant_access(
+            crate::db::libraries::grant_access(
                 &mut *db,
                 user_db_id,
                 library,
-                db::libraries::AccessKind::ReadWrite,
+                crate::db::libraries::AccessKind::ReadWrite,
             )?;
-            db::genres::sync_release_genres(&mut *db, release_a, &["Rock".to_string()])?;
-            db::genres::sync_release_genres(&mut *db, release_b, &["Rock".to_string()])?;
+            crate::db::genres::sync_release_genres(&mut *db, release_a, &["Rock".to_string()])?;
+            crate::db::genres::sync_release_genres(&mut *db, release_b, &["Rock".to_string()])?;
             insert_cover_for_release(&mut db, release_a, "genre-personal-a")?;
             let expected_cover_id =
                 insert_cover_for_release(&mut db, release_b, "genre-personal-b")?.id;
@@ -1031,8 +1054,10 @@ mod tests {
 
         let (request_user_db_id, expected_cover_id) = {
             let mut db = STATE.db.write().await;
-            let request_user_db_id =
-                db::users::create(&mut db, &db::test_db::test_user("genre-instance-request")?)?;
+            let request_user_db_id = crate::db::users::create(
+                &mut db,
+                &crate::db::fixtures::test_user("genre-instance-request")?,
+            )?;
             let library = insert_library(&mut db, "Genre Instance", "/tmp/lyra-genre-instance")?;
             let release_a = insert_test_release(&mut db, "Instance A")?;
             let release_b = insert_test_release(&mut db, "Instance B")?;
@@ -1042,22 +1067,24 @@ mod tests {
             connect(&mut db, library, release_b)?;
             connect(&mut db, release_a, track_a)?;
             connect(&mut db, release_b, track_b)?;
-            db::libraries::grant_access(
+            crate::db::libraries::grant_access(
                 &mut *db,
                 request_user_db_id,
                 library,
-                db::libraries::AccessKind::ReadWrite,
+                crate::db::libraries::AccessKind::ReadWrite,
             )?;
-            db::genres::sync_release_genres(&mut *db, release_a, &["Rock".to_string()])?;
-            db::genres::sync_release_genres(&mut *db, release_b, &["Rock".to_string()])?;
+            crate::db::genres::sync_release_genres(&mut *db, release_a, &["Rock".to_string()])?;
+            crate::db::genres::sync_release_genres(&mut *db, release_b, &["Rock".to_string()])?;
             insert_cover_for_release(&mut db, release_a, "genre-instance-a")?;
             let expected_cover_id =
                 insert_cover_for_release(&mut db, release_b, "genre-instance-b")?.id;
 
             for user_idx in 0..3 {
-                let user_db_id = db::users::create(
+                let user_db_id = crate::db::users::create(
                     &mut db,
-                    &db::test_db::test_user(&format!("genre-instance-listener-{user_idx}"))?,
+                    &crate::db::fixtures::test_user(&format!(
+                        "genre-instance-listener-{user_idx}"
+                    ))?,
                 )?;
                 for listen_idx in 0..4 {
                     record_listen(
@@ -1103,8 +1130,10 @@ mod tests {
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            let user_db_id =
-                db::users::create(&mut db, &db::test_db::test_user("genre-hidden-cover")?)?;
+            let user_db_id = crate::db::users::create(
+                &mut db,
+                &crate::db::fixtures::test_user("genre-hidden-cover")?,
+            )?;
             let visible_library = insert_library(
                 &mut db,
                 "Genre Visible Covers",
@@ -1119,14 +1148,22 @@ mod tests {
             let hidden_release = insert_test_release(&mut db, "Hidden Rock")?;
             connect(&mut db, visible_library, visible_release)?;
             connect(&mut db, hidden_library, hidden_release)?;
-            db::libraries::grant_access(
+            crate::db::libraries::grant_access(
                 &mut *db,
                 user_db_id,
                 visible_library,
-                db::libraries::AccessKind::ReadWrite,
+                crate::db::libraries::AccessKind::ReadWrite,
             )?;
-            db::genres::sync_release_genres(&mut *db, visible_release, &["Rock".to_string()])?;
-            db::genres::sync_release_genres(&mut *db, hidden_release, &["Rock".to_string()])?;
+            crate::db::genres::sync_release_genres(
+                &mut *db,
+                visible_release,
+                &["Rock".to_string()],
+            )?;
+            crate::db::genres::sync_release_genres(
+                &mut *db,
+                hidden_release,
+                &["Rock".to_string()],
+            )?;
             insert_cover_for_release(&mut db, hidden_release, "genre-hidden-cover")?;
             user_db_id
         };
@@ -1167,13 +1204,13 @@ mod benches {
     };
 
     use super::*;
-    use crate::db::test_db::{
+    use crate::db::fixtures::insert_release as insert_test_release;
+    use crate::db::fixtures::{
         connect,
-        insert_release as insert_test_release,
         insert_track,
-        new_test_db,
         test_user,
     };
+    use crate::db::test_db::new_test_db;
     use crate::services::catalog::genres::GenreKey;
 
     struct GenreSortBench {
@@ -1182,21 +1219,21 @@ mod benches {
     }
 
     fn record_listen(db: &mut DbAny, user_db_id: DbId, track_db_id: DbId, listened_at_ms: u64) {
-        let track = db::tracks::get_by_id(db, track_db_id)
+        let track = crate::db::tracks::get_by_id(db, track_db_id)
             .unwrap()
             .expect("track exists");
-        let listen = db::Listen {
+        let listen = crate::db::Listen {
             db_id: None,
             id: nanoid!(),
             track_public_id: track.id,
             position_ms: 0,
             duration_ms: Some(180_000),
             activity_ms: 180_000,
-            state: db::PlaybackState::Completed,
+            state: crate::db::PlaybackState::Completed,
             listened_at_ms,
             created_at_ms: listened_at_ms,
         };
-        let session = db::PlaybackSession {
+        let session = crate::db::PlaybackSession {
             db_id: None,
             id: nanoid!(),
             client_name: None,
@@ -1204,13 +1241,19 @@ mod benches {
             duration_ms: Some(180_000),
             activity_ms: Some(180_000),
             last_position_ms: None,
-            state: db::PlaybackState::Completed,
+            state: crate::db::PlaybackState::Completed,
             listen_recorded: Some(true),
             updated_at_ms: listened_at_ms,
             created_at_ms: listened_at_ms,
         };
-        db::listens::create_and_mark_recorded(db, &listen, track_db_id, user_db_id, &session)
-            .unwrap();
+        crate::db::listens::create_and_mark_recorded(
+            db,
+            &listen,
+            track_db_id,
+            user_db_id,
+            &session,
+        )
+        .unwrap();
     }
 
     fn seed_genre_sort_bench(
@@ -1221,7 +1264,7 @@ mod benches {
     ) -> GenreSortBench {
         let mut db = new_test_db().unwrap();
         let user_db_id =
-            db::users::create(&mut db, &test_user("genre-sort-bench").unwrap()).unwrap();
+            crate::db::users::create(&mut db, &test_user("genre-sort-bench").unwrap()).unwrap();
         for genre_idx in 0..genre_count {
             let genre_name = format!("Genre {genre_idx:04}");
             for release_idx in 0..releases_per_genre {
@@ -1230,7 +1273,7 @@ mod benches {
                     &format!("Genre {genre_idx:04} Release {release_idx:02}"),
                 )
                 .unwrap();
-                db::genres::sync_release_genres(
+                crate::db::genres::sync_release_genres(
                     &mut db,
                     release_db_id,
                     std::slice::from_ref(&genre_name),
@@ -1264,7 +1307,7 @@ mod benches {
         let principal = crate::services::auth::Principal::for_user(
             &db,
             user_db_id,
-            vec![db::Permission::Admin],
+            vec![crate::db::Permission::Admin],
             Default::default(),
         );
         let viewer = catalog::Viewer::user(&db, principal).unwrap();

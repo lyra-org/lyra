@@ -9,19 +9,19 @@ use std::sync::atomic::{
 };
 
 use anyhow::Context;
-use axum::response::IntoResponse;
 
+use crate::db::metadata::mapping_config::MetadataMappingConfig;
 use crate::{
-    STATE,
-    db,
+    services::STATE,
     services::{
         libraries::start_library_sync,
         metadata::{
             mapping::{
-                MetadataMappingConfig,
                 MissingRequiredField,
                 apply_mapping,
                 check_required_fields,
+                ensure_config,
+                update_config,
             },
             read_audio_tags,
         },
@@ -69,13 +69,13 @@ pub(crate) async fn dry_run_config(
 ) -> anyhow::Result<DryRunReport> {
     let entries: Vec<crate::db::Entry> = {
         let db = STATE.db.read().await;
-        let libraries = db::libraries::get(&db)?;
+        let libraries = crate::db::libraries::get(&db)?;
         let mut all = Vec::new();
         for library in libraries {
             let Some(library_db_id) = library.db_id else {
                 continue;
             };
-            let mut library_entries = db::entries::get(&db, library_db_id)?;
+            let mut library_entries = crate::db::entries::get(&db, library_db_id)?;
             all.append(&mut library_entries);
         }
         all
@@ -136,7 +136,7 @@ pub(crate) async fn dry_run_config(
     Ok(report)
 }
 
-/// Read by [`reingest_request_gate`] to fence concurrent writes.
+/// Read by the reingest request gate to fence concurrent writes.
 static REINGEST_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn reingest_in_progress() -> bool {
@@ -169,32 +169,6 @@ impl Drop for ReingestGuard {
     }
 }
 
-/// Returns 503 for non-read methods while a reingest runs; GET/HEAD/
-/// OPTIONS pass through so the UI can still poll progress.
-pub(crate) async fn reingest_request_gate(
-    request: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> axum::response::Response {
-    use axum::http::{
-        Method,
-        StatusCode,
-    };
-    if reingest_in_progress()
-        && !matches!(
-            *request.method(),
-            Method::GET | Method::HEAD | Method::OPTIONS
-        )
-    {
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            [("retry-after", "30")],
-            "metadata mapping reingest in progress; writes are temporarily unavailable",
-        )
-            .into_response();
-    }
-    next.run(request).await
-}
-
 #[derive(Debug, Default, Clone)]
 pub(crate) struct ReingestSummary {
     pub(crate) libraries_reingested: usize,
@@ -209,14 +183,14 @@ pub(crate) async fn commit_and_reingest(
 ) -> anyhow::Result<ReingestSummary> {
     let previous = {
         let mut db = STATE.db.write().await;
-        let current = db::metadata::mapping_config::ensure(&mut db)?;
-        db::metadata::mapping_config::update(&mut db, &config)?;
+        let current = ensure_config(&mut db)?;
+        update_config(&mut db, &config)?;
         current
     };
 
     let libraries = {
         let db = STATE.db.read().await;
-        db::libraries::get(&db)?
+        crate::db::libraries::get(&db)?
     };
 
     let mut summary = ReingestSummary::default();
@@ -239,7 +213,7 @@ pub(crate) async fn commit_and_reingest(
     } else {
         let rollback_result = {
             let mut db = STATE.db.write().await;
-            db::metadata::mapping_config::update(&mut db, &previous)
+            update_config(&mut db, &previous)
         };
         if let Err(rollback_err) = rollback_result {
             tracing::error!(error = %rollback_err, "failed to roll back metadata mapping config");

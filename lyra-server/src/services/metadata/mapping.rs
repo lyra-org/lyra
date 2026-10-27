@@ -15,39 +15,13 @@ use lyra_metadata::{
     RawGainTags,
     RawTrackTags,
 };
-use serde::{
-    Deserialize,
-    Serialize,
+
+use crate::db::metadata::mapping_config::{
+    self,
+    FieldName,
+    MappingRule,
+    MetadataMappingConfig,
 };
-
-/// Mapping rule destinations. Numbering and duration are read directly.
-#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum FieldName {
-    Album,
-    Title,
-    AlbumArtists,
-    Artists,
-    Date,
-    Copyright,
-    Genre,
-    Label,
-    CatalogNumber,
-}
-
-/// Rules sharing a `destination` form a fallback chain: first
-/// non-empty value wins; empty values never overwrite.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct MappingRule {
-    pub(crate) source_key: String,
-    pub(crate) destination: FieldName,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct MetadataMappingConfig {
-    pub(crate) rules: Vec<MappingRule>,
-}
 
 /// Source keys a [`MappingRule`] may name: those that can populate a [`FieldName`].
 pub(crate) const SOURCE_KEYS: &[(&str, ItemKey)] = &[
@@ -90,6 +64,28 @@ pub(crate) fn resolve_item_key(name: &str) -> Option<ItemKey> {
         .iter()
         .find(|(key_name, _)| *key_name == name)
         .map(|&(_, key)| key)
+}
+
+/// The stored rules, seeding [`default_config`] when none exist yet.
+pub(crate) fn ensure_config(db: &mut agdb::DbAny) -> anyhow::Result<MetadataMappingConfig> {
+    mapping_config::ensure(db, default_config)
+}
+
+/// Replaces the stored rules. Unknown `source_key`s are rejected here so
+/// no caller can bypass validation.
+pub(crate) fn update_config(
+    db: &mut agdb::DbAny,
+    config: &MetadataMappingConfig,
+) -> anyhow::Result<()> {
+    for rule in &config.rules {
+        if resolve_item_key(&rule.source_key).is_none() {
+            anyhow::bail!(
+                "unsupported source_key '{}': not a recognised ItemKey variant",
+                rule.source_key
+            );
+        }
+    }
+    mapping_config::update(db, config)
 }
 
 /// Fields without a [`FieldName`] (numbering, audio properties, edition
@@ -287,6 +283,21 @@ mod tests {
         assert!(resolve_item_key("NotARealKey").is_none());
         assert!(resolve_item_key("").is_none());
         assert!(resolve_item_key("album_title").is_none());
+    }
+
+    #[test]
+    fn update_config_rejects_unknown_source_key() -> anyhow::Result<()> {
+        let mut db = crate::db::test_db::new_test_db()?;
+        ensure_config(&mut db)?;
+        let bogus = MetadataMappingConfig {
+            rules: vec![MappingRule {
+                source_key: "NotARealKey".to_string(),
+                destination: FieldName::Album,
+            }],
+        };
+        let err = update_config(&mut db, &bogus).unwrap_err();
+        assert!(format!("{err}").contains("unsupported source_key"));
+        Ok(())
     }
 
     /// Only FLAC fixtures exist, so other tag formats go unchecked here.

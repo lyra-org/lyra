@@ -176,10 +176,7 @@ pub(crate) fn get_direct_many(
     Ok(related)
 }
 
-pub(crate) fn get_by_id(
-    db: &impl super::DbAccess,
-    track_db_id: DbId,
-) -> anyhow::Result<Option<Track>> {
+pub fn get_by_id(db: &impl super::DbAccess, track_db_id: DbId) -> anyhow::Result<Option<Track>> {
     super::graph::fetch_typed_by_id(db, track_db_id, "Track")
 }
 
@@ -232,10 +229,7 @@ pub(crate) fn ids_with_year(db: &impl super::DbAccess, year: u32) -> anyhow::Res
         .ids())
 }
 
-pub(crate) fn get_by_artist(
-    db: &impl super::DbAccess,
-    artist_db_id: DbId,
-) -> anyhow::Result<Vec<Track>> {
+pub fn get_by_artist(db: &impl super::DbAccess, artist_db_id: DbId) -> anyhow::Result<Vec<Track>> {
     let owner_ids = super::credits::owner_ids_by_artist::<Track>(db, artist_db_id, 0, 0)?;
     if owner_ids.is_empty() {
         return Ok(Vec::new());
@@ -412,10 +406,12 @@ mod tests {
     use nanoid::nanoid;
 
     use super::*;
-    use crate::db::test_db::{
-        connect_artist,
+    use crate::db::fixtures::{
         insert_artist,
         insert_track,
+    };
+    use crate::db::test_db::{
+        connect_artist,
         new_test_db,
     };
 

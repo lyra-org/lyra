@@ -14,7 +14,7 @@ use std::{
 use anyhow::bail;
 use tokio::sync::RwLock;
 
-use crate::plugins::lifecycle::{
+use crate::services::plugin_scope::{
     PluginId,
     PluginScopedInner,
     ScopedRegistry,
@@ -29,7 +29,7 @@ pub(crate) struct SettingsRegistries {
 }
 
 pub(crate) fn settings_registry() -> Arc<RwLock<Registry>> {
-    crate::STATE.generation().plugin_settings.registry.clone()
+    crate::plugins::STATE.generation().settings.registry.clone()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

@@ -58,9 +58,9 @@ use std::path::{
 };
 
 use crate::{
-    STATE,
     db,
     routes::AppError,
+    services::STATE,
     services::{
         auth::{
             Principal,
@@ -211,7 +211,7 @@ pub(crate) fn authorize_track_purpose(
     match purpose {
         MediaTokenPurpose::Stream | MediaTokenPurpose::HlsPlaylist => Ok(()),
         MediaTokenPurpose::Download => {
-            require_permission(principal, db::Permission::Download).map_err(Into::into)
+            require_permission(principal, crate::db::Permission::Download).map_err(Into::into)
         }
     }
 }
@@ -363,13 +363,13 @@ pub(crate) async fn validate_and_get_track_source(
         }
         TrackAccess::PublicPluginRoute(_) => {}
     }
-    let track = db::tracks::get_by_id(db, track_db_id)?.ok_or_else(not_found)?;
+    let track = crate::db::tracks::get_by_id(db, track_db_id)?.ok_or_else(not_found)?;
 
     let source = playback_source_service::resolve(db, track_db_id, false)?.ok_or_else(|| {
         AppError::not_found(format!("Playable source not found for track: {track_id}"))
     })?;
     let source_public_id =
-        db::lookup::find_id_by_db_id(db, source.source_id)?.ok_or_else(|| {
+        crate::db::lookup::find_id_by_db_id(db, source.source_id)?.ok_or_else(|| {
             AppError::not_found(format!(
                 "Playable source has no public id: {}",
                 source.source_id.0
@@ -545,23 +545,20 @@ mod tests {
     };
     use nanoid::nanoid;
 
+    use crate::db::{
+        Permission,
+        User,
+        roles::Role,
+    };
     use crate::{
-        STATE,
-        db::{
-            self,
-            Permission,
-            User,
-            roles::Role,
-        },
+        plugins::testing::init_library_test_state,
+        services::STATE,
         services::auth::media_tokens::{
             MediaTokenPurpose,
             issue_unbound_media_token,
         },
-        testing::{
-            LibraryFixtureConfig,
-            initialize_runtime,
-            runtime_test_lock,
-        },
+        services::testing::runtime_test_lock,
+        testing::LibraryFixtureConfig,
     };
     use axum::response::IntoResponse;
 
@@ -572,12 +569,7 @@ mod tests {
             SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
         ));
         std::fs::create_dir_all(&test_dir)?;
-        initialize_runtime(&LibraryFixtureConfig {
-            directory: test_dir.clone(),
-            language: None,
-            country: None,
-        })
-        .await?;
+        init_library_test_state(test_dir.clone()).await?;
         Ok(test_dir)
     }
 
@@ -587,8 +579,8 @@ mod tests {
     ) -> anyhow::Result<HeaderMap> {
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            db::roles::ensure_builtin_roles(&mut db)?;
-            let user_db_id = db::users::create(
+            crate::db::roles::ensure_builtin_roles(&mut db)?;
+            let user_db_id = crate::db::users::create(
                 &mut db,
                 &User {
                     db_id: None,
@@ -598,10 +590,10 @@ mod tests {
                 },
             )?;
             let role_name = if permissions.is_empty() {
-                db::roles::BUILTIN_USER_ROLE.to_string()
+                crate::db::roles::BUILTIN_USER_ROLE.to_string()
             } else {
                 let role_name = format!("download-test-{}", nanoid!());
-                db::roles::create(
+                crate::db::roles::create(
                     &mut db,
                     &Role {
                         db_id: None,
@@ -612,23 +604,24 @@ mod tests {
                 )?;
                 role_name
             };
-            db::roles::ensure_user_has_role(&mut db, user_db_id, &role_name)?;
-            let library_ids = db::libraries::get(&*db)?
+            crate::db::roles::ensure_user_has_role(&mut db, user_db_id, &role_name)?;
+            let library_ids = crate::db::libraries::get(&*db)?
                 .into_iter()
                 .filter_map(|library| library.db_id)
                 .collect::<Vec<_>>();
             for library_db_id in library_ids {
-                db::libraries::grant_access(
+                crate::db::libraries::grant_access(
                     &mut db,
                     user_db_id,
                     library_db_id,
-                    db::libraries::AccessKind::ReadWrite,
+                    crate::db::libraries::AccessKind::ReadWrite,
                 )?;
             }
             user_db_id
         };
 
-        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
+        let session =
+            crate::services::testing::create_session(user_db_id, Default::default()).await?;
         let mut headers = HeaderMap::new();
         headers.insert(
             AUTHORIZATION,
@@ -732,12 +725,12 @@ mod tests {
 
         let recycled_track_id = {
             let mut db = STATE.db.write().await;
-            let track_db_id = db::lookup::find_node_id_by_id(&*db, &track_id)?
+            let track_db_id = crate::db::lookup::find_node_id_by_id(&*db, &track_id)?
                 .ok_or_else(|| anyhow::anyhow!("track missing"))?;
             db.exec_mut(agdb::QueryBuilder::remove().ids(track_db_id).query())?;
-            let recycled = db::test_db::insert_track(&mut db, "Recycled")?;
+            let recycled = crate::db::fixtures::insert_track(&mut db, "Recycled")?;
             assert_eq!(recycled, track_db_id, "agdb must reuse the track DbId");
-            db::lookup::find_id_by_db_id(&*db, recycled)?
+            crate::db::lookup::find_id_by_db_id(&*db, recycled)?
                 .ok_or_else(|| anyhow::anyhow!("recycled track has no public id"))?
         };
 
@@ -764,7 +757,7 @@ mod tests {
         {
             let mut db = STATE.db.write().await;
             let user_db_id = principal.require(&*db)?;
-            db.transaction_mut(|t| db::users::delete_user(t, user_db_id))?;
+            db.transaction_mut(|t| crate::db::users::delete_user(t, user_db_id))?;
         }
 
         let status = super::validate_and_get_track_source(
@@ -937,7 +930,7 @@ mod tests {
             .track_ids
             .first()
             .ok_or_else(|| anyhow::anyhow!("prepare_fixture produced no track ids"))?;
-        db::lookup::find_id_by_db_id(&*STATE.db.read().await, agdb::DbId(track_db_id))?
+        crate::db::lookup::find_id_by_db_id(&*STATE.db.read().await, agdb::DbId(track_db_id))?
             .ok_or_else(|| anyhow::anyhow!("fixture track has no public id"))
     }
 
@@ -1105,7 +1098,7 @@ mod tests {
         {
             let mut db = STATE.db.write().await;
             let user_db_id = principal.require(&*db)?;
-            db.transaction_mut(|t| db::users::delete_user(t, user_db_id))?;
+            db.transaction_mut(|t| crate::db::users::delete_user(t, user_db_id))?;
         }
 
         let (status, _, _) = send(Method::GET, format!("/{track_id}?{query}")).await?;
@@ -1184,10 +1177,10 @@ mod tests {
         );
 
         let user = user_db_id(&headers).await?;
-        db::roles::ensure_user_has_role(
+        crate::db::roles::ensure_user_has_role(
             &mut *STATE.db.write().await,
             user,
-            db::roles::BUILTIN_USER_ROLE,
+            crate::db::roles::BUILTIN_USER_ROLE,
         )?;
         assert_eq!(
             send_download(format!("/{track_id}?{query}")).await?,
@@ -1209,12 +1202,12 @@ mod tests {
         let user = user_db_id(&headers).await?;
         {
             let mut db = STATE.db.write().await;
-            let libraries = db::libraries::get(&*db)?
+            let libraries = crate::db::libraries::get(&*db)?
                 .into_iter()
                 .filter_map(|library| library.db_id)
                 .collect::<Vec<_>>();
             for library in libraries {
-                db::libraries::revoke_access(&mut *db, user, library)?;
+                crate::db::libraries::revoke_access(&mut *db, user, library)?;
             }
         }
 

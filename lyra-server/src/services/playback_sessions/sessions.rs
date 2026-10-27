@@ -14,7 +14,6 @@ use std::{
 use agdb::DbId;
 
 use crate::db::{
-    self,
     EvictedPlayback,
     PlaybackSession,
 };
@@ -80,7 +79,11 @@ impl OwnedPlaybackScopeKey {
 pub(crate) struct PlaybackScopes(Arc<RwLock<HashMap<OwnedPlaybackScopeKey, PlaybackSessionScope>>>);
 
 fn playback_scopes() -> Arc<RwLock<HashMap<OwnedPlaybackScopeKey, PlaybackSessionScope>>> {
-    crate::STATE.generation().playback_scopes.0.clone()
+    crate::services::STATE
+        .generation()
+        .playback_scopes
+        .0
+        .clone()
 }
 
 pub(crate) fn get_playback_session(scope: &PlaybackScopeKey<'_>) -> Option<PlaybackSessionScope> {
@@ -179,11 +182,11 @@ pub(crate) struct BoundPlayback {
 }
 
 fn resolve_playback_by_id_and_public_id(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     playback_session_id: DbId,
     public_id: Option<&str>,
 ) -> anyhow::Result<Option<BoundPlayback>> {
-    let Some(playback) = db::playback_sessions::get_by_id(db, playback_session_id)? else {
+    let Some(playback) = crate::db::playback_sessions::get_by_id(db, playback_session_id)? else {
         return Ok(None);
     };
     if let Some(public_id) = public_id
@@ -191,7 +194,8 @@ fn resolve_playback_by_id_and_public_id(
     {
         return Ok(None);
     }
-    let Some(track_db_id) = db::playback_sessions::get_track_id(db, playback_session_id)? else {
+    let Some(track_db_id) = crate::db::playback_sessions::get_track_id(db, playback_session_id)?
+    else {
         return Ok(None);
     };
 
@@ -203,7 +207,7 @@ fn resolve_playback_by_id_and_public_id(
 }
 
 pub(crate) fn resolve_current_playback(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     session: &PlaybackSessionScope,
 ) -> anyhow::Result<Option<BoundPlayback>> {
     let Some(playback_session_id) = session.current_playback_session_id else {
@@ -217,7 +221,7 @@ pub(crate) fn resolve_current_playback(
 }
 
 pub(crate) fn resolve_previous_playback(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     session: &PlaybackSessionScope,
 ) -> anyhow::Result<Option<BoundPlayback>> {
     let Some(playback_session_id) = session.previous_playback_session_id else {

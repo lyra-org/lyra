@@ -10,4 +10,13 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+harmony-core = { path = "../harmony-core" }
+harmony-crypt = { path = "../harmony-crypt" }
+harmony-globals = { path = "../harmony-globals" }
+harmony-http = { path = "../harmony-http" }
+harmony-net = { path = "../harmony-net" }
+harmony-serde = { path = "../harmony-serde" }
+harmony-task = { path = "../harmony-task" }
+serde = { workspace = true }
+serde_json = { workspace = true }
 lyra-server = { path = "../lyra-server", features = ["docgen"] }

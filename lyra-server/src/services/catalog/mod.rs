@@ -25,12 +25,9 @@ use agdb::{
     DbId,
 };
 
-use crate::{
-    db,
-    services::auth::{
-        AuthError,
-        Principal,
-    },
+use crate::services::auth::{
+    AuthError,
+    Principal,
 };
 
 pub(crate) use pipeline::{
@@ -54,7 +51,10 @@ pub(crate) enum Viewer {
 
 impl Viewer {
     /// A viewer for `principal`, verified under the caller's guard.
-    pub(crate) fn user(db: &impl db::DbAccess, principal: Principal) -> Result<Self, AuthError> {
+    pub(crate) fn user(
+        db: &impl crate::db::DbAccess,
+        principal: Principal,
+    ) -> Result<Self, AuthError> {
         let user_db_id = principal.require(db)?;
         Ok(Self::User {
             principal,
@@ -64,7 +64,7 @@ impl Viewer {
 
     /// A viewer for `principal`, or the system without one.
     pub(crate) fn of(
-        db: &impl db::DbAccess,
+        db: &impl crate::db::DbAccess,
         principal: Option<Principal>,
     ) -> Result<Self, AuthError> {
         principal.map_or(Ok(Self::System), |principal| Self::user(db, principal))
@@ -85,7 +85,9 @@ impl Viewer {
     fn restricted(&self) -> Option<&Principal> {
         match self {
             Self::User { principal, .. }
-                if !principal.permissions.contains(&db::Permission::Admin) =>
+                if !principal
+                    .permissions
+                    .contains(&crate::db::Permission::Admin) =>
             {
                 Some(principal)
             }
@@ -104,19 +106,19 @@ impl Viewer {
             return Ok(true);
         };
         let accessible =
-            db::libraries::db_ids_for_public_ids(db, &principal.accessible_library_ids)?;
+            crate::db::libraries::db_ids_for_public_ids(db, &principal.accessible_library_ids)?;
         Ok(libraries.iter().all(|library| accessible.contains(library)))
     }
 
     /// The viewer's libraries, or `None` when the viewer sees every library.
     pub(crate) fn visible_libraries(
         &self,
-        db: &impl db::DbAccess,
+        db: &impl crate::db::DbAccess,
     ) -> anyhow::Result<Option<Vec<DbId>>> {
         let Some(principal) = self.restricted() else {
             return Ok(None);
         };
-        Ok(Some(db::libraries::db_ids_for_public_ids(
+        Ok(Some(crate::db::libraries::db_ids_for_public_ids(
             db,
             &principal.accessible_library_ids,
         )?))
@@ -126,7 +128,7 @@ impl Viewer {
     /// belongs to.
     pub(crate) fn sees_entity(
         &self,
-        db: &impl db::DbAccess,
+        db: &impl crate::db::DbAccess,
         entity_db_id: DbId,
     ) -> anyhow::Result<bool> {
         match self.restricted() {
@@ -140,7 +142,7 @@ impl Viewer {
     /// Whether the viewer can see `node_db_id`, by the rule for its type. A missing node is
     /// unseen; a graph search from it would fail.
     pub(crate) fn sees(&self, db: &DbAny, node_db_id: DbId) -> anyhow::Result<bool> {
-        match db::entities::get_element_type(db, node_db_id)?.as_deref() {
+        match crate::db::entities::get_element_type(db, node_db_id)?.as_deref() {
             None => Ok(false),
             Some("Artist") => self.sees_artist(db, node_db_id),
             Some("Playlist") => self.sees_playlist(db, node_db_id),
@@ -166,7 +168,7 @@ impl Viewer {
     /// Whether the viewer can see `playlist_db_id`: a public playlist, or one it owns.
     pub(crate) fn sees_playlist(
         &self,
-        db: &impl db::DbAccess,
+        db: &impl crate::db::DbAccess,
         playlist_db_id: DbId,
     ) -> anyhow::Result<bool> {
         match self {
@@ -186,7 +188,7 @@ impl Viewer {
     /// Whether the viewer can see `artist_db_id`, which is visible through its releases.
     pub(crate) fn sees_artist(
         &self,
-        db: &impl db::DbAccess,
+        db: &impl crate::db::DbAccess,
         artist_db_id: DbId,
     ) -> anyhow::Result<bool> {
         match self.restricted() {
@@ -203,9 +205,10 @@ impl Viewer {
             return Ok(None);
         };
         let mut releases = HashSet::new();
-        for library in db::libraries::db_ids_for_public_ids(db, &principal.accessible_library_ids)?
+        for library in
+            crate::db::libraries::db_ids_for_public_ids(db, &principal.accessible_library_ids)?
         {
-            releases.extend(db::graph::neighbor_ids(db, library, "Release")?);
+            releases.extend(crate::db::graph::neighbor_ids(db, library, "Release")?);
         }
         Ok(Some(releases))
     }
@@ -309,7 +312,7 @@ impl ArtistCredit {
         db: &DbAny,
         reach: impl Fn(&[DbId], CreditRole) -> anyhow::Result<HashSet<DbId>>,
     ) -> anyhow::Result<HashSet<DbId>> {
-        let artists = db::graph::existing_ids(db, &self.artists, "Artist")?;
+        let artists = crate::db::graph::existing_ids(db, &self.artists, "Artist")?;
         let reach_role = |role| -> anyhow::Result<HashSet<DbId>> {
             match role {
                 CreditRole::Any => {
@@ -340,7 +343,7 @@ pub(crate) fn scoped_releases(
 ) -> anyhow::Result<Candidates> {
     let mut scoped = Candidates::default();
     let libraries = match library {
-        Some(library) => Some(db::graph::existing_ids(db, &[library], "Library")?),
+        Some(library) => Some(crate::db::graph::existing_ids(db, &[library], "Library")?),
         None => None,
     };
     // The visible releases are those of the viewer's libraries, so a scope of libraries the
@@ -355,22 +358,24 @@ pub(crate) fn scoped_releases(
     if let Some(libraries) = libraries {
         let mut library_releases = Vec::new();
         for library in libraries {
-            library_releases.extend(db::graph::neighbor_ids(db, library, "Release")?);
+            library_releases.extend(crate::db::graph::neighbor_ids(db, library, "Release")?);
         }
         scoped.restrict(library_releases);
     }
     if let Some(releases) = releases {
-        scoped.restrict(db::graph::existing_ids(db, releases, "Release")?);
+        scoped.restrict(crate::db::graph::existing_ids(db, releases, "Release")?);
     }
     if !genres.is_empty() {
-        let genres = db::graph::existing_ids(db, genres, "Genre")?;
-        scoped.restrict(db::genres::release_ids_matching_genre_ids(db, &genres)?);
+        let genres = crate::db::graph::existing_ids(db, genres, "Genre")?;
+        scoped.restrict(crate::db::genres::release_ids_matching_genre_ids(
+            db, &genres,
+        )?);
     }
     Ok(scoped)
 }
 
 pub(crate) fn all_releases(db: &DbAny) -> anyhow::Result<Vec<DbId>> {
-    db::graph::neighbor_ids(db, "releases", "Release")
+    crate::db::graph::neighbor_ids(db, "releases", "Release")
 }
 
 /// The owners of kind `Owner` that credit any of `artists`.
@@ -380,7 +385,7 @@ pub(crate) fn credited_owners<Owner: agdb::DbType>(
 ) -> anyhow::Result<HashSet<DbId>> {
     let mut owners = HashSet::new();
     for artist in artists {
-        owners.extend(db::credits::owner_ids_by_artist::<Owner>(
+        owners.extend(crate::db::credits::owner_ids_by_artist::<Owner>(
             db, *artist, 0, 0,
         )?);
     }
@@ -393,7 +398,7 @@ pub(crate) fn tracks_of_releases(
 ) -> anyhow::Result<HashSet<DbId>> {
     let mut tracks = HashSet::new();
     for release in releases {
-        tracks.extend(db::graph::neighbor_ids(db, release, "Track")?);
+        tracks.extend(crate::db::graph::neighbor_ids(db, release, "Track")?);
     }
     Ok(tracks)
 }
@@ -404,7 +409,9 @@ pub(crate) fn releases_of_tracks(
 ) -> anyhow::Result<HashSet<DbId>> {
     let mut releases = HashSet::new();
     for track in tracks {
-        releases.extend(db::graph::inbound_neighbor_ids(db, track, "Release")?);
+        releases.extend(crate::db::graph::inbound_neighbor_ids(
+            db, track, "Release",
+        )?);
     }
     Ok(releases)
 }
@@ -434,7 +441,7 @@ pub(crate) fn track_totals(
         .into_iter()
         .collect::<Vec<_>>();
     let durations = if durations {
-        db::graph::select_fields(db, &tracks, &["duration_ms"])?
+        crate::db::graph::select_fields(db, &tracks, &["duration_ms"])?
             .into_iter()
             .filter_map(|(id, fields)| Some((id, fields.number("duration_ms")?)))
             .collect()
@@ -443,7 +450,7 @@ pub(crate) fn track_totals(
     };
     let listens = if listens {
         let user = viewer.user_db_id("listen sort keys")?;
-        db::listens::get_stats(db, &tracks, user)?
+        crate::db::listens::get_stats(db, &tracks, user)?
             .into_iter()
             .map(|stats| (stats.db_id, stats))
             .collect()

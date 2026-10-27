@@ -31,12 +31,11 @@ use serde::{
 };
 
 use crate::{
-    STATE,
-    db,
     routes::{
         AppError,
         responses::PageResponse,
     },
+    services::STATE,
     services::{
         auth::require_authenticated,
         pagination::SnapshotKey,
@@ -120,12 +119,12 @@ struct TagResponse {
     created_at: String,
 }
 
-fn tag_to_response(tag: db::Tag) -> TagResponse {
+fn tag_to_response(tag: crate::db::Tag) -> TagResponse {
     TagResponse {
         id: tag.id,
         tag: tag.tag,
         color: tag.color,
-        created_at: super::unix_ms_to_rfc3339_i64(tag.created_at_ms),
+        created_at: crate::services::timestamps::unix_ms_to_rfc3339_i64(tag.created_at_ms),
     }
 }
 

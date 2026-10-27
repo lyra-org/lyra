@@ -81,17 +81,11 @@ pub(crate) fn create(
     })
 }
 
-pub(crate) fn get_by_id(
-    db: &impl super::DbAccess,
-    api_key_db_id: DbId,
-) -> anyhow::Result<Option<ApiKey>> {
+pub fn get_by_id(db: &impl super::DbAccess, api_key_db_id: DbId) -> anyhow::Result<Option<ApiKey>> {
     super::graph::fetch_typed_by_id(db, api_key_db_id, "ApiKey")
 }
 
-pub(crate) fn get_by_public_id(
-    db: &impl super::DbAccess,
-    id: &str,
-) -> anyhow::Result<Option<ApiKey>> {
+pub fn get_by_public_id(db: &impl super::DbAccess, id: &str) -> anyhow::Result<Option<ApiKey>> {
     super::graph::fetch_typed_by_index(db, "id", id, "ApiKey")
 }
 
@@ -102,10 +96,7 @@ pub(crate) fn find_by_key_hash(
     super::graph::fetch_typed_by_index(db, "key_hash", key_hash, "ApiKey")
 }
 
-pub(crate) fn list_for_user(
-    db: &impl super::DbAccess,
-    user_db_id: DbId,
-) -> anyhow::Result<Vec<ApiKey>> {
+pub fn list_for_user(db: &impl super::DbAccess, user_db_id: DbId) -> anyhow::Result<Vec<ApiKey>> {
     let mut api_keys: Vec<ApiKey> = db
         .exec(
             QueryBuilder::select()
@@ -172,10 +163,7 @@ pub(crate) fn get_owner_id(
         .find_map(|element| (element.to.0 > 0).then_some(element.to)))
 }
 
-pub(crate) fn delete_by_id(
-    db: &mut impl super::DbAccess,
-    api_key_db_id: DbId,
-) -> anyhow::Result<bool> {
+pub fn delete_by_id(db: &mut impl super::DbAccess, api_key_db_id: DbId) -> anyhow::Result<bool> {
     if get_by_id(db, api_key_db_id)?.is_none() {
         return Ok(false);
     }
@@ -221,10 +209,8 @@ mod tests {
 
     use super::*;
     use crate::db::{
-        test_db::{
-            new_test_db,
-            test_user,
-        },
+        fixtures::test_user,
+        test_db::new_test_db,
         users,
     };
 

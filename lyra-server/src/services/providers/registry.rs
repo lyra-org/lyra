@@ -29,17 +29,17 @@ use super::links::{
     IdLinkGenerators,
 };
 use super::schemes::IdSchemes;
-use crate::plugins::lifecycle::{
-    PluginId,
-    PluginScopedInner,
-    ScopedRegistry,
-};
 use crate::services::EntityType;
 use crate::services::metadata::layers::{
     LOCAL_SOURCE_ID,
     MANUAL_SOURCE_ID,
 };
 use crate::services::metadata::lyrics::providers::unregister_handlers_for_plugin as unregister_lyrics_handlers_for_plugin;
+use crate::services::plugin_scope::{
+    PluginId,
+    PluginScopedInner,
+    ScopedRegistry,
+};
 
 pub(crate) const DEFAULT_SIMILAR_RELEASES_HANDLER_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const MAX_SIMILAR_RELEASES_HANDLER_TIMEOUT: Duration = Duration::from_secs(10);
@@ -66,7 +66,7 @@ impl ProviderRegistries {
 }
 
 pub(crate) fn provider_registry() -> Arc<RwLock<ProviderRegistry>> {
-    crate::STATE.generation().providers.registry()
+    crate::services::STATE.generation().providers.registry()
 }
 
 pub(crate) async fn id_schemes() -> Arc<IdSchemes> {
@@ -74,11 +74,15 @@ pub(crate) async fn id_schemes() -> Arc<IdSchemes> {
 }
 
 pub(crate) fn sync_locks() -> Arc<tokio::sync::Mutex<HashSet<String>>> {
-    crate::STATE.generation().providers.sync_locks.clone()
+    crate::services::STATE
+        .generation()
+        .providers
+        .sync_locks
+        .clone()
 }
 
 pub(crate) fn library_refresh_locks() -> Arc<tokio::sync::Mutex<HashSet<agdb::DbId>>> {
-    crate::STATE
+    crate::services::STATE
         .generation()
         .providers
         .library_refresh_locks
@@ -111,7 +115,7 @@ where
     F: FnOnce() -> Fut,
     Fut: Future<Output = T>,
 {
-    let generation = crate::STATE.generation();
+    let generation = crate::services::STATE.generation();
     let lock = {
         let mut locks = generation.providers.call_locks.clone().lock_owned().await;
         locks
@@ -829,7 +833,7 @@ struct ProviderState {
 pub(crate) async fn teardown_plugin_providers(plugin_id: &PluginId) {
     // One generation snapshot for the whole teardown so the captured
     // provider_ids and the purged locks belong to the same registries.
-    let generation = crate::STATE.generation();
+    let generation = crate::services::STATE.generation();
     let providers = &generation.providers;
 
     // Capture the plugin's provider_ids before the registry bucket is

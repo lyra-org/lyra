@@ -35,12 +35,9 @@ use serde::{
 };
 
 use crate::{
-    STATE,
     plugins::{
-        lifecycle::{
-            PluginId,
-            PluginRestartError,
-        },
+        lifecycle::PluginRestartError,
+        repositories as repositories_service,
         settings::{
             self as plugin_settings_registry,
             FieldDefinition,
@@ -52,13 +49,14 @@ use crate::{
         },
     },
     routes::AppError,
+    services::STATE,
+    services::plugin_scope::PluginId,
     services::{
         auth::{
             Principal,
             require_authenticated,
             require_manage_plugins,
         },
-        plugin_repositories as repositories_service,
         settings::plugins as settings_service,
     },
 };
@@ -442,7 +440,7 @@ fn resolved_repository_response(
         commit: preview.commit,
         refreshed_at: record
             .and_then(|record| record.refreshed_at_ms)
-            .map(super::unix_ms_to_rfc3339_u64),
+            .map(crate::services::timestamps::unix_ms_to_rfc3339_u64),
         plugins: preview
             .plugins
             .into_iter()
@@ -472,7 +470,9 @@ fn repository_response(
         description: record.description,
         git_ref: record.git_ref,
         commit: record.commit,
-        refreshed_at: record.refreshed_at_ms.map(super::unix_ms_to_rfc3339_u64),
+        refreshed_at: record
+            .refreshed_at_ms
+            .map(crate::services::timestamps::unix_ms_to_rfc3339_u64),
     }
 }
 
@@ -632,7 +632,7 @@ async fn load_registered_schema(plugin_id: &str, scope: SettingsScope) -> Result
     let registry = plugin_settings_registry::settings_registry()
         .read_owned()
         .await;
-    let typed_id = crate::plugins::lifecycle::PluginId::new(plugin_id.to_string())
+    let typed_id = crate::services::plugin_scope::PluginId::new(plugin_id.to_string())
         .map_err(|_| AppError::not_found(format!("plugin not found: {plugin_id}")))?;
     if !registry.is_frozen_for_plugin(&typed_id) && registry.get_schema(plugin_id, scope).is_none()
     {
@@ -733,8 +733,8 @@ fn build_status(
 
 async fn list_plugins(headers: HeaderMap) -> Result<Json<Vec<PluginManifestResponse>>, AppError> {
     let _principal = require_manage_plugins(&headers).await?;
-    let manifests = STATE.generation().plugin_manifests.get();
-    let plugins_dir = crate::plugins::bootstrap::plugins_dir();
+    let manifests = crate::plugins::STATE.generation().manifests.get();
+    let plugins_dir = crate::config::plugins_dir();
     let repositories = repositories_service::list_repositories()
         .await
         .map_err(map_repository_error)?;
@@ -763,7 +763,7 @@ impl SettingsOwner<'_> {
 async fn collect_settings_entries(
     owner: SettingsOwner<'_>,
 ) -> Result<Vec<PluginSettingsEntry>, AppError> {
-    let manifests = STATE.generation().plugin_manifests.get();
+    let manifests = crate::plugins::STATE.generation().manifests.get();
     let registry = plugin_settings_registry::settings_registry()
         .read_owned()
         .await;
@@ -806,15 +806,15 @@ async fn restart_plugin(
     let _principal = require_manage_plugins(&headers).await?;
     let plugin_id = PluginId::new(plugin_id)
         .map_err(|err| AppError::bad_request(format!("invalid plugin id: {err}")))?;
-    let harmony = STATE
+    let harmony = crate::plugins::STATE
         .generation()
-        .plugin_runtime
+        .runtime
         .get()
         .ok_or_else(|| AppError::service_unavailable("plugin runtime is not ready"))?;
 
-    STATE
+    crate::plugins::STATE
         .generation()
-        .plugin_registries
+        .registries
         .restart_plugin(&plugin_id, harmony)
         .await
         .map_err(map_plugin_restart_error)?;
@@ -1359,19 +1359,14 @@ mod tests {
     };
 
     use super::*;
+    use crate::db::{
+        Permission,
+        roles::Role,
+        users::User,
+    };
     use crate::{
-        db::{
-            self,
-            Permission,
-            roles::Role,
-            users::User,
-        },
-        services,
-        testing::{
-            LibraryFixtureConfig,
-            initialize_runtime,
-            runtime_test_lock,
-        },
+        plugins::testing::init_library_test_state,
+        services::testing::runtime_test_lock,
     };
     use axum::{
         http::{
@@ -1465,7 +1460,7 @@ mod tests {
 
     #[test]
     fn resolved_repository_response_flattens_record_and_preview() -> anyhow::Result<()> {
-        use services::plugin_repositories::{
+        use crate::plugins::repositories::{
             CatalogStatus,
             PluginPreview,
             RepositoryPreview,
@@ -1502,7 +1497,7 @@ mod tests {
                 },
             ],
         };
-        let record = db::plugin_repositories::PluginRepository {
+        let record = crate::db::plugin_repositories::PluginRepository {
             db_id: None,
             id: "repo".into(),
             origin: "https://github.com/o/r".into(),
@@ -1537,7 +1532,7 @@ mod tests {
     #[test]
     fn repository_response_omits_refresh_time_until_refreshed() -> anyhow::Result<()> {
         let json = serde_json::to_value(repository_response(
-            db::plugin_repositories::PluginRepository {
+            crate::db::plugin_repositories::PluginRepository {
                 db_id: None,
                 id: "repo".into(),
                 origin: "https://github.com/o/r".into(),
@@ -1561,28 +1556,23 @@ mod tests {
             SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
         ));
         std::fs::create_dir_all(&test_dir)?;
-        initialize_runtime(&LibraryFixtureConfig {
-            directory: test_dir.clone(),
-            language: None,
-            country: None,
-        })
-        .await?;
+        init_library_test_state(test_dir.clone()).await?;
         Ok(test_dir)
     }
 
     async fn manage_plugins_headers() -> anyhow::Result<HeaderMap> {
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            db::roles::ensure_builtin_roles(&mut db)?;
+            crate::db::roles::ensure_builtin_roles(&mut db)?;
             let user = User {
                 db_id: None,
                 id: nanoid!(),
                 username: format!("plugin-route-test-{}", nanoid!()),
                 password: "unused".to_string(),
             };
-            let user_db_id = db::users::create(&mut db, &user)?;
+            let user_db_id = crate::db::users::create(&mut db, &user)?;
             let role_name = format!("plugin-route-test-{}", nanoid!());
-            db::roles::create(
+            crate::db::roles::create(
                 &mut db,
                 &Role {
                     db_id: None,
@@ -1591,11 +1581,12 @@ mod tests {
                     permissions: vec![Permission::ManagePlugins],
                 },
             )?;
-            db::roles::ensure_user_has_role(&mut db, user_db_id, &role_name)?;
+            crate::db::roles::ensure_user_has_role(&mut db, user_db_id, &role_name)?;
             user_db_id
         };
 
-        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
+        let session =
+            crate::services::testing::create_session(user_db_id, Default::default()).await?;
         let mut headers = HeaderMap::new();
         headers.insert(
             axum::http::header::AUTHORIZATION,
@@ -1796,7 +1787,7 @@ mod tests {
     async fn load_registered_schema_returns_service_unavailable_while_registry_populates() {
         let _guard = REGISTRY_TEST_GUARD.lock().await;
         let _runtime_guard = runtime_test_lock().await;
-        crate::testing::init_default_test_state().expect("init test state");
+        crate::plugins::testing::init_default_test_state().expect("init test state");
 
         let response = load_registered_schema("demo", SettingsScope::Global)
             .await
@@ -1810,7 +1801,7 @@ mod tests {
     async fn load_registered_schema_returns_not_found_after_registry_freezes() {
         let _guard = REGISTRY_TEST_GUARD.lock().await;
         let _runtime_guard = runtime_test_lock().await;
-        crate::testing::init_default_test_state().expect("init test state");
+        crate::plugins::testing::init_default_test_state().expect("init test state");
         plugin_settings_registry::freeze_registry().await;
 
         let response = load_registered_schema("demo", SettingsScope::Global)
@@ -1828,7 +1819,7 @@ mod tests {
 
     #[test]
     fn build_status_returns_initializing_for_unknown_plugin_while_registry_is_open() {
-        let db = db::test_db::new_test_db().expect("test db");
+        let db = crate::db::test_db::new_test_db().expect("test db");
         let registry = Registry::default();
 
         let status = build_status(&registry, &db, "demo", SettingsTarget::Server);
@@ -1838,7 +1829,7 @@ mod tests {
 
     #[test]
     fn build_status_returns_not_declared_for_unknown_plugin_when_registry_is_frozen() {
-        let db = db::test_db::new_test_db().expect("test db");
+        let db = crate::db::test_db::new_test_db().expect("test db");
         let mut registry = Registry::default();
         registry.freeze();
 
@@ -1849,7 +1840,7 @@ mod tests {
 
     #[test]
     fn build_status_returns_ready_when_schema_is_registered() -> anyhow::Result<()> {
-        let db = db::test_db::new_test_db()?;
+        let db = crate::db::test_db::new_test_db()?;
         let mut registry = Registry::default();
         registry.register_schema(
             PluginId::new("demo")?,

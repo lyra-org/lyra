@@ -33,18 +33,15 @@ use serde::{
     Serialize,
 };
 
+use crate::db::PlaybackState;
 use crate::{
-    STATE,
-    db::{
-        self,
-        PlaybackState,
-    },
     routes::{
         self,
         AppError,
         deserialize_inc,
         responses::PageResponse,
     },
+    services::STATE,
     services::{
         auth::{
             Principal,
@@ -177,8 +174,8 @@ fn connection_session_key(value: Option<&str>) -> Option<&str> {
 }
 
 #[cfg(test)]
-fn resolve_id(db: &impl db::DbAccess, db_id: DbId) -> anyhow::Result<String> {
-    db::lookup::find_id_by_db_id(db, db_id)?
+fn resolve_id(db: &impl crate::db::DbAccess, db_id: DbId) -> anyhow::Result<String> {
+    crate::db::lookup::find_id_by_db_id(db, db_id)?
         .ok_or_else(|| anyhow::anyhow!("entity missing id for DbId {}", db_id.0))
 }
 
@@ -209,7 +206,7 @@ fn current_to_response(
         duration_ms: playback.duration_ms,
         state: playback.state,
         activity_ms: sessions::playback_activity_ms(playback),
-        updated_at: routes::unix_ms_to_rfc3339_u64(playback.updated_at_ms),
+        updated_at: crate::services::timestamps::unix_ms_to_rfc3339_u64(playback.updated_at_ms),
         effective_position_ms: extrapolated_position_ms(
             playback.position_ms,
             playback.duration_ms,
@@ -263,7 +260,7 @@ fn controller_to_response(
 }
 
 fn playback_to_response(
-    playback: &db::playbacks::Playback,
+    playback: &crate::db::playbacks::Playback,
     current_session: Option<&playbacks::CurrentSession>,
     user_public_id: &str,
     current_ms: u64,
@@ -280,8 +277,8 @@ fn playback_to_response(
         user_id: user_public_id.to_string(),
         queue_revision: playback.queue.as_ref().map(|queue| queue.revision),
         current: current_session.map(|current| current_to_response(current, current_ms)),
-        created_at: routes::unix_ms_to_rfc3339_u64(playback.created_at_ms),
-        updated_at: routes::unix_ms_to_rfc3339_u64(playback.updated_at_ms),
+        created_at: crate::services::timestamps::unix_ms_to_rfc3339_u64(playback.created_at_ms),
+        updated_at: crate::services::timestamps::unix_ms_to_rfc3339_u64(playback.updated_at_ms),
         controller,
     }
 }
@@ -329,7 +326,7 @@ fn revision_conflict(expected_revision: u64, current_revision: u64) -> AppError 
     )
 }
 
-fn require_queue_revision(playback: &db::playbacks::Playback) -> Result<u64, AppError> {
+fn require_queue_revision(playback: &crate::db::playbacks::Playback) -> Result<u64, AppError> {
     playback
         .queue
         .as_ref()
@@ -351,7 +348,7 @@ fn resolve_visible_playback(
     id: &str,
     current_ms: u64,
 ) -> Result<playbacks::PlaybackDetail, AppError> {
-    let playback_db_id = db::lookup::find_node_id_by_id(db, id)?
+    let playback_db_id = crate::db::lookup::find_node_id_by_id(db, id)?
         .ok_or_else(|| AppError::not_found(format!("playback not found: {id}")))?;
     playbacks::get_visible_detail(db, playback_db_id, principal, current_ms)
         .map_err(map_playback_error)?
@@ -363,8 +360,8 @@ fn resolve_owned_playback_projection(
     principal: &Principal,
     id: &str,
     current_ms: u64,
-) -> Result<db::playbacks::PlaybackListProjection, AppError> {
-    let playback_db_id = db::lookup::find_node_id_by_id(db, id)?
+) -> Result<crate::db::playbacks::PlaybackListProjection, AppError> {
+    let playback_db_id = crate::db::lookup::find_node_id_by_id(db, id)?
         .ok_or_else(|| AppError::not_found(format!("playback not found: {id}")))?;
     playbacks::get_owned_projection(db, playback_db_id, principal.require(db)?, current_ms)
         .map_err(map_playback_error)?
@@ -392,7 +389,7 @@ async fn list_playbacks(
     let (records, next_cursor) = if let Some(page) = page_request.resume(&snapshot_key)? {
         let mut records = Vec::with_capacity(page.item_ids.len());
         for id in page.item_ids {
-            let Some(playback_db_id) = db::lookup::find_node_id_by_id(&*db, &id)? else {
+            let Some(playback_db_id) = crate::db::lookup::find_node_id_by_id(&*db, &id)? else {
                 continue;
             };
             if let Some(record) =
@@ -422,7 +419,7 @@ async fn list_playbacks(
         )?;
         let mut records = Vec::with_capacity(page.item_ids.len());
         for id in &page.item_ids {
-            let Some(playback_db_id) = db::lookup::find_node_id_by_id(&*db, id)? else {
+            let Some(playback_db_id) = crate::db::lookup::find_node_id_by_id(&*db, id)? else {
                 continue;
             };
             if let Some(record) =
@@ -540,12 +537,12 @@ async fn delete_playback(
     let current_ms = now_ms()?;
     let mut db = STATE.db.write().await;
     let record = resolve_owned_playback_projection(&db, &principal, &id, current_ms)?;
-    let current = match db::playbacks::get_current_session_id(&*db, record.db_id)? {
-        Some(session_id) => db::playback_sessions::get_by_id(&*db, session_id)?
+    let current = match crate::db::playbacks::get_current_session_id(&*db, record.db_id)? {
+        Some(session_id) => crate::db::playback_sessions::get_by_id(&*db, session_id)?
             .map(|session| (session_id, session.id)),
         None => None,
     };
-    db::playbacks::delete(&mut db, record.db_id)?;
+    crate::db::playbacks::delete(&mut db, record.db_id)?;
     remote_handoffs::fail_for_playback(&record.id).await;
     if let Some((playback_session_id, playback_session_public_id)) = current {
         sessions::clear_session_bindings_for_playback(

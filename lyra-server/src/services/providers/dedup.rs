@@ -17,7 +17,6 @@ use agdb::{
     DbId,
 };
 
-use crate::db;
 use crate::services::metadata::layers::MANUAL_SOURCE_ID;
 
 pub(super) fn select_release_merge_winner(
@@ -29,23 +28,23 @@ pub(super) fn select_release_merge_winner(
         .copied()
         .ok_or_else(|| anyhow::anyhow!("select_release_merge_winner called with empty list"))?;
 
-    let mut winner_release = db::releases::get_by_id(db, winner)?
+    let mut winner_release = crate::db::releases::get_by_id(db, winner)?
         .ok_or_else(|| anyhow::anyhow!("winner release {} missing", winner.0))?;
-    let mut winner_tracks = db::tracks::get(db, winner)?;
+    let mut winner_tracks = crate::db::tracks::get(db, winner)?;
     let mut winner_min_disc = winner_tracks.iter().filter_map(|track| track.disc).min();
     let mut winner_track_count = winner_tracks.len();
     let mut winner_created_at = winner_release.created_at.unwrap_or(u64::MAX);
 
     for candidate in release_ids.iter().copied().skip(1) {
-        let Some(candidate_release) = db::releases::get_by_id(db, candidate)? else {
+        let Some(candidate_release) = crate::db::releases::get_by_id(db, candidate)? else {
             continue;
         };
-        let candidate_tracks = db::tracks::get(db, candidate)?;
+        let candidate_tracks = crate::db::tracks::get(db, candidate)?;
         let candidate_min_disc = candidate_tracks.iter().filter_map(|track| track.disc).min();
         let candidate_track_count = candidate_tracks.len();
         let candidate_created_at = candidate_release.created_at.unwrap_or(u64::MAX);
 
-        let ordering = db::compare_option(&candidate_min_disc, &winner_min_disc)
+        let ordering = crate::db::compare_option(&candidate_min_disc, &winner_min_disc)
             .then_with(|| winner_track_count.cmp(&candidate_track_count))
             .then_with(|| winner_created_at.cmp(&candidate_created_at))
             .then_with(|| winner.0.cmp(&candidate.0));
@@ -76,36 +75,36 @@ fn merge_release_into_inside_tx(
         return Ok(());
     }
 
-    for library in db::libraries::get_by_release(db, loser)? {
+    for library in crate::db::libraries::get_by_release(db, loser)? {
         let Some(library_db_id) = library.db_id else {
             continue;
         };
-        db::graph::ensure_owned_edge(db, library_db_id, winner)?;
+        crate::db::graph::ensure_owned_edge(db, library_db_id, winner)?;
     }
 
-    for track in db::tracks::get_direct(db, loser)? {
+    for track in crate::db::tracks::get_direct(db, loser)? {
         let Some(track_db_id) = track.db_id.map(Into::into) else {
             continue;
         };
-        db::releases::link_track(db, winner, track_db_id)?;
-        db::releases::unlink_track(db, loser, track_db_id)?;
+        crate::db::releases::link_track(db, winner, track_db_id)?;
+        crate::db::releases::unlink_track(db, loser, track_db_id)?;
     }
 
-    for external_id in db::external_ids::get_for_entity_inside_tx(db, loser)? {
+    for external_id in crate::db::external_ids::get_for_entity_inside_tx(db, loser)? {
         if external_id.id_value.trim().is_empty() {
             continue;
         }
-        db::external_ids::copy_inside_tx(db, winner, &external_id)?;
+        crate::db::external_ids::copy_inside_tx(db, winner, &external_id)?;
     }
 
     let mut winner_layers_by_source = HashMap::new();
-    for layer in db::metadata::layers::get_for_entity(db, winner)? {
+    for layer in crate::db::metadata::layers::get_for_entity(db, winner)? {
         winner_layers_by_source.insert(layer.source_id.clone(), layer);
     }
-    for layer in db::metadata::layers::get_for_entity(db, loser)? {
+    for layer in crate::db::metadata::layers::get_for_entity(db, loser)? {
         if layer.source_id == MANUAL_SOURCE_ID {
             // The winner's manual edits win; the loser's fill what they leave out.
-            db::metadata::layers::fill_inside_tx(db, loser, winner, MANUAL_SOURCE_ID)?;
+            crate::db::metadata::layers::fill_inside_tx(db, loser, winner, MANUAL_SOURCE_ID)?;
             continue;
         }
         let should_upsert = winner_layers_by_source
@@ -115,24 +114,24 @@ fn merge_release_into_inside_tx(
             continue;
         }
 
-        db::metadata::layers::copy_inside_tx(db, loser, winner, &layer.source_id)?;
+        crate::db::metadata::layers::copy_inside_tx(db, loser, winner, &layer.source_id)?;
         winner_layers_by_source.insert(layer.source_id.clone(), layer);
     }
-    db::labels::migrate_release_labels_inside_tx(db, winner, loser)?;
+    crate::db::labels::migrate_release_labels_inside_tx(db, winner, loser)?;
     crate::services::metadata::merging::apply_merged_metadata_to_entity_inside_tx(db, winner)?;
 
-    db::metadata::custom_fields::copy_between_entities(db, loser, winner)?;
+    crate::db::metadata::custom_fields::copy_between_entities(db, loser, winner)?;
 
-    if db::covers::get(db, winner)?.is_none()
-        && let Some(cover) = db::covers::get(db, loser)?
+    if crate::db::covers::get(db, winner)?.is_none()
+        && let Some(cover) = crate::db::covers::get(db, loser)?
         && let Some(cover_id) = cover.db_id
     {
-        db::graph::ensure_owned_edge(db, winner, cover_id)?;
-        db::covers::display::sync_release_random_candidates(db, winner)?;
-        db::covers::display::offer_release_to_playlist_covers(db, winner)?;
+        crate::db::graph::ensure_owned_edge(db, winner, cover_id)?;
+        crate::db::covers::display::sync_release_random_candidates(db, winner)?;
+        crate::db::covers::display::offer_release_to_playlist_covers(db, winner)?;
     }
 
-    db::metadata::cascade_remove_entities_in_txn(db, &[loser])?;
+    crate::db::metadata::cascade_remove_entities_in_txn(db, &[loser])?;
 
     Ok(())
 }
@@ -146,7 +145,7 @@ fn collect_track_unique_ids(
     if unique_track_id_pairs.is_empty() {
         return Ok(ids);
     }
-    let ext_ids = db::external_ids::get_for_album_tracks(db, release_db_id)?;
+    let ext_ids = crate::db::external_ids::get_for_album_tracks(db, release_db_id)?;
     for ext_id in ext_ids {
         if !unique_track_id_pairs.contains(&(ext_id.provider_id.clone(), ext_id.id_type.clone())) {
             continue;
@@ -171,14 +170,14 @@ pub(super) fn deduplicate_releases_by_external_id(
         return Ok(0);
     }
 
-    let releases = db::releases::get(db, library_db_id)?;
+    let releases = crate::db::releases::get(db, library_db_id)?;
     let mut groups: HashMap<String, Vec<DbId>> = HashMap::new();
     for release in releases {
         let Some(release_db_id) = release.db_id.map(Into::into) else {
             continue;
         };
 
-        for external_id in db::external_ids::get_for_entity(db, release_db_id)? {
+        for external_id in crate::db::external_ids::get_for_entity(db, release_db_id)? {
             if let Some(scope) = provider_scope
                 && !scope.contains(&external_id.provider_id)
             {
@@ -285,11 +284,11 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::db::test_db::{
+    use crate::db::fixtures::{
         insert_artist,
         insert_release,
-        new_test_db,
     };
+    use crate::db::test_db::new_test_db;
 
     #[test]
     fn release_merge_combines_manual_layers() -> anyhow::Result<()> {
@@ -303,22 +302,24 @@ mod tests {
                 json!({"labels": [{"name": "Loser Manual"}], "genres": ["Loser Genre"]}),
             ),
         ] {
-            db::metadata::layers::upsert(
+            crate::db::metadata::layers::upsert(
                 &mut db,
                 release,
-                &db::MetadataLayer::new(
+                &crate::db::MetadataLayer::new(
                     MANUAL_SOURCE_ID,
-                    db::metadata::layers::fields_from_json(fields),
+                    crate::db::metadata::layers::fields_from_json(fields),
                     1,
                 ),
             )?;
         }
-        db::metadata::layers::upsert(
+        crate::db::metadata::layers::upsert(
             &mut db,
             loser,
-            &db::MetadataLayer::new(
+            &crate::db::MetadataLayer::new(
                 "local",
-                db::metadata::layers::fields_from_json(json!({"labels": [{"name": "Provider"}]})),
+                crate::db::metadata::layers::fields_from_json(
+                    json!({"labels": [{"name": "Provider"}]}),
+                ),
                 1,
             ),
         )?;
@@ -328,10 +329,10 @@ mod tests {
 
         merge_release_into(&mut db, winner, loser)?;
 
-        let labels = db::labels::get_for_release(&db, winner)?;
+        let labels = crate::db::labels::get_for_release(&db, winner)?;
         assert_eq!(labels.len(), 1);
         assert_eq!(labels[0].label.name, "Manual");
-        let genres = db::genres::get_for_release(&db, winner)?;
+        let genres = crate::db::genres::get_for_release(&db, winner)?;
         assert_eq!(genres.len(), 1);
         assert_eq!(genres[0].name, "Loser Genre");
         Ok(())
@@ -349,9 +350,9 @@ mod tests {
         let loser = insert_release(&mut db, "Loser")?;
         let stale = insert_artist(&mut db, "Stale")?;
         let artist = insert_artist(&mut db, "Artist")?;
-        let label_id = db::labels::resolve(
+        let label_id = crate::db::labels::resolve(
             &mut db,
-            &db::labels::ResolveLabel {
+            &crate::db::labels::ResolveLabel {
                 name: "Blue Note",
                 external_id: None,
             },
@@ -360,9 +361,9 @@ mod tests {
             artist_id,
             detail: None,
         };
-        db::providers::upsert(
+        crate::db::providers::upsert(
             &mut db,
-            &db::ProviderConfig {
+            &crate::db::ProviderConfig {
                 db_id: None,
                 provider_id: "provider".to_string(),
                 priority: 10,
@@ -372,14 +373,17 @@ mod tests {
         layers::upsert(
             &mut db,
             winner,
-            &db::MetadataLayer::new("provider", Default::default(), 1).with_credits(
-                std::collections::BTreeMap::from([(db::CreditType::Artist, vec![credit(stale)])]),
+            &crate::db::MetadataLayer::new("provider", Default::default(), 1).with_credits(
+                std::collections::BTreeMap::from([(
+                    crate::db::CreditType::Artist,
+                    vec![credit(stale)],
+                )]),
             ),
         )?;
         layers::upsert(
             &mut db,
             loser,
-            &db::MetadataLayer::new(
+            &crate::db::MetadataLayer::new(
                 "provider",
                 layers::fields_from_json(serde_json::json!({
                     "genres": ["Jazz"],
@@ -388,7 +392,7 @@ mod tests {
                 2,
             )
             .with_credits(std::collections::BTreeMap::from([(
-                db::CreditType::Artist,
+                crate::db::CreditType::Artist,
                 vec![credit(artist)],
             )])),
         )?;
@@ -405,17 +409,17 @@ mod tests {
         assert_eq!(labels.len(), 1);
         assert_eq!(labels[0].target_id, label_id);
         assert_eq!(labels[0].edge.catalog_number.as_deref(), Some("BN-1"));
-        assert!(db::labels::get_by_id(&db, label_id)?.is_some());
+        assert!(crate::db::labels::get_by_id(&db, label_id)?.is_some());
         assert!(!edges::is_referenced(&db, stale)?);
-        let effective = db::labels::get_for_release(&db, winner)?;
+        let effective = crate::db::labels::get_for_release(&db, winner)?;
         assert_eq!(effective.len(), 1);
         assert_eq!(effective[0].catalog_number.as_deref(), Some("BN-1"));
-        let genres = db::genres::get_for_release(&db, winner)?;
+        let genres = crate::db::genres::get_for_release(&db, winner)?;
         assert_eq!(genres.len(), 1);
         assert_eq!(genres[0].name, "Jazz");
-        assert_eq!(db::credits::links_for_owner(&db, winner)?.len(), 1);
+        assert_eq!(crate::db::credits::links_for_owner(&db, winner)?.len(), 1);
         assert_eq!(
-            db::credits::links_for_owner(&db, winner)?[0].artist_id,
+            crate::db::credits::links_for_owner(&db, winner)?[0].artist_id,
             artist,
             "the effective credits follow the carried layer"
         );
@@ -428,44 +432,55 @@ mod tests {
         let winner = insert_release(&mut db, "Winner")?;
         let loser = insert_release(&mut db, "Loser")?;
         let artist = insert_artist(&mut db, "Artist")?;
-        let credits = |roles: &[db::CreditType]| -> db::metadata::layers::LayerCredits {
-            roles
-                .iter()
-                .map(|&role| {
-                    (
-                        role,
-                        vec![db::metadata::layers::edges::LayerCreditInput {
-                            artist_id: artist,
-                            detail: None,
-                        }],
-                    )
-                })
-                .collect()
-        };
+        let credits =
+            |roles: &[crate::db::CreditType]| -> crate::db::metadata::layers::LayerCredits {
+                roles
+                    .iter()
+                    .map(|&role| {
+                        (
+                            role,
+                            vec![crate::db::metadata::layers::edges::LayerCreditInput {
+                                artist_id: artist,
+                                detail: None,
+                            }],
+                        )
+                    })
+                    .collect()
+            };
         for (release, roles, updated_at) in [
-            (winner, &[db::CreditType::Artist][..], 1),
+            (winner, &[crate::db::CreditType::Artist][..], 1),
             (
                 loser,
-                &[db::CreditType::Artist, db::CreditType::Producer][..],
+                &[
+                    crate::db::CreditType::Artist,
+                    crate::db::CreditType::Producer,
+                ][..],
                 2,
             ),
         ] {
-            db::metadata::layers::upsert(
+            crate::db::metadata::layers::upsert(
                 &mut db,
                 release,
-                &db::MetadataLayer::new("local", Default::default(), updated_at)
+                &crate::db::MetadataLayer::new("local", Default::default(), updated_at)
                     .with_credits(credits(roles)),
             )?;
         }
 
         merge_release_into(&mut db, winner, loser)?;
 
-        let mut roles: Vec<db::CreditType> = db::credits::links_for_owner(&db, winner)?
-            .into_iter()
-            .map(|link| link.credit.credit_type)
-            .collect();
+        let mut roles: Vec<crate::db::CreditType> =
+            crate::db::credits::links_for_owner(&db, winner)?
+                .into_iter()
+                .map(|link| link.credit.credit_type)
+                .collect();
         roles.sort_by_key(ToString::to_string);
-        assert_eq!(roles, [db::CreditType::Artist, db::CreditType::Producer]);
+        assert_eq!(
+            roles,
+            [
+                crate::db::CreditType::Artist,
+                crate::db::CreditType::Producer
+            ]
+        );
         Ok(())
     }
 
@@ -478,26 +493,26 @@ mod tests {
         let winner = insert_release(&mut db, "Release")?;
         let loser = insert_release(&mut db, "Release")?;
         for release in [winner, loser] {
-            db::graph::ensure_owned_edge(&mut db, library, release)?;
-            db::external_ids::upsert(
+            crate::db::graph::ensure_owned_edge(&mut db, library, release)?;
+            crate::db::external_ids::upsert(
                 &mut db,
                 release,
                 "musicbrainz",
                 "release_id",
                 "release-1",
-                db::IdSource::Resolved,
+                crate::db::IdSource::Resolved,
             )?;
-            db::metadata::layers::upsert(
+            crate::db::metadata::layers::upsert(
                 &mut db,
                 release,
-                &db::MetadataLayer::new(
+                &crate::db::MetadataLayer::new(
                     MANUAL_SOURCE_ID,
-                    db::metadata::layers::fields_from_json(json!({"release_date": "1999"})),
+                    crate::db::metadata::layers::fields_from_json(json!({"release_date": "1999"})),
                     1,
                 ),
             )?;
         }
-        let layer_id = db::metadata::layers::layer_id(&db, loser, MANUAL_SOURCE_ID)?
+        let layer_id = crate::db::metadata::layers::layer_id(&db, loser, MANUAL_SOURCE_ID)?
             .expect("manual layer exists");
         db.exec_mut(
             agdb::QueryBuilder::insert()
@@ -512,8 +527,11 @@ mod tests {
             0
         );
         for release in [winner, loser] {
-            assert!(db::releases::get_by_id(&db, release)?.is_some());
-            assert_eq!(db::metadata::layers::ids_for_entity(&db, release)?.len(), 1);
+            assert!(crate::db::releases::get_by_id(&db, release)?.is_some());
+            assert_eq!(
+                crate::db::metadata::layers::ids_for_entity(&db, release)?.len(),
+                1
+            );
         }
         Ok(())
     }

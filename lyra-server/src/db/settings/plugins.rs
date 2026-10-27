@@ -34,10 +34,7 @@ pub(crate) struct UserPluginSettings {
     pub(crate) plugin_id: String,
 }
 
-pub(crate) fn find_with<A: DbAccess>(
-    db: &A,
-    plugin_id: &str,
-) -> anyhow::Result<Option<PluginSettings>> {
+pub fn find_with<A: DbAccess>(db: &A, plugin_id: &str) -> anyhow::Result<Option<PluginSettings>> {
     let mut existing: Vec<PluginSettings> = db
         .exec(
             QueryBuilder::select()

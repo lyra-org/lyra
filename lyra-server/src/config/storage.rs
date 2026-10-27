@@ -23,6 +23,15 @@ pub(crate) fn ensure_writable_directory(path: &Path, description: &str) -> Resul
     Ok(())
 }
 
+/// Explains a lockfile that could not be opened the way other storage write
+/// failures are explained.
+pub(crate) fn explain_db_open_error(error: anyhow::Error) -> anyhow::Error {
+    match error.downcast::<crate::db::process_lock::LockfileOpenError>() {
+        Ok(error) => write_error("open db lockfile", &error.path, error.source),
+        Err(error) => error,
+    }
+}
+
 pub(crate) fn write_error(operation: &str, path: &Path, error: io::Error) -> anyhow::Error {
     let mut context = format!("failed to {operation} at '{}'", path.display());
     match error.kind() {

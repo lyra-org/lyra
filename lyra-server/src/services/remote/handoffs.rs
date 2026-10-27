@@ -26,7 +26,7 @@ use super::{
     },
 };
 use crate::{
-    STATE,
+    services::STATE,
     services::{
         playback_sessions,
         playbacks::{
@@ -605,10 +605,10 @@ mod tests {
 
     async fn durable_applied_progress() -> anyhow::Result<AppliedProgress> {
         let mut db = STATE.db.write().await;
-        let user = crate::db::test_db::test_user("handoff-user")?;
+        let user = crate::db::fixtures::test_user("handoff-user")?;
         let user_public_id = user.id.clone();
         let user_db_id = crate::db::users::create(&mut db, &user)?;
-        let track_db_id = crate::db::test_db::insert_track(&mut db, "Handoff Track")?;
+        let track_db_id = crate::db::fixtures::insert_track(&mut db, "Handoff Track")?;
         let track_public_id = crate::db::lookup::find_id_by_db_id(&db, track_db_id)?
             .expect("test track must have a public ID");
         let update = playbacks::create_playback(
@@ -717,7 +717,7 @@ mod tests {
 
     #[tokio::test]
     async fn dropped_progress_claim_aborts_handoff() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         for connection in registry::list_connections().await {
             registry::unregister(connection.connection_id).await;
         }
@@ -756,8 +756,8 @@ mod tests {
 
     #[tokio::test]
     async fn cancelled_committed_progress_still_completes() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
-        crate::testing::init_default_test_state()?;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
         for connection in registry::list_connections().await {
             registry::unregister(connection.connection_id).await;
         }
@@ -826,8 +826,8 @@ mod tests {
 
     #[tokio::test]
     async fn successful_progress_moves_native_scope_from_source_to_target() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
-        crate::testing::init_default_test_state()?;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
         for connection in registry::list_connections().await {
             registry::unregister(connection.connection_id).await;
         }
@@ -924,8 +924,8 @@ mod tests {
 
     #[tokio::test]
     async fn committed_progress_requires_exact_durable_session() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
-        crate::testing::init_default_test_state()?;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
         for connection in registry::list_connections().await {
             registry::unregister(connection.connection_id).await;
         }
@@ -992,8 +992,8 @@ mod tests {
 
     #[tokio::test]
     async fn disconnected_target_cannot_be_bound_after_progress_claim() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
-        crate::testing::init_default_test_state()?;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
         for connection in registry::list_connections().await {
             registry::unregister(connection.connection_id).await;
         }

@@ -27,49 +27,46 @@ use super::{
         prepare_entry_scan_plan,
     },
 };
-pub(crate) use crate::services::system::library_sync_context as system_context;
-use crate::{
+use crate::db::{
+    DbAsync,
     Library,
-    db::{
-        self,
-        DbAsync,
-        entries::{
-            prune_missing_entries,
-            sync_entry_group,
-        },
+    entries::{
+        prune_missing_entries,
+        sync_entry_group,
     },
-    services::{
-        CoverPaths,
-        CoverSyncOptions,
-        covers::{
-            configured_covers_root,
-            resolve_cover_for_release_id,
-            sync_release_cover_for_tracks,
-            upsert_release_cover_metadata,
+};
+pub(crate) use crate::services::system::library_sync_context as system_context;
+use crate::services::{
+    CoverPaths,
+    CoverSyncOptions,
+    covers::{
+        configured_covers_root,
+        resolve_cover_for_release_id,
+        sync_release_cover_for_tracks,
+        upsert_release_cover_metadata,
+    },
+    metadata::{
+        cleanup::cleanup_orphaned_metadata,
+        ingestion::{
+            MetadataApplyResult,
+            ParsedMetadataGroup,
+            apply_metadata,
+            coalesce_disc_groups,
+            group_entries,
+            source_directory_for_group_entries,
         },
-        metadata::{
-            cleanup::cleanup_orphaned_metadata,
-            ingestion::{
-                MetadataApplyResult,
-                ParsedMetadataGroup,
-                apply_metadata,
-                coalesce_disc_groups,
-                group_entries,
-                source_directory_for_group_entries,
-            },
-            load_mapping_config,
-            log_skip_summary,
-            lyrics::providers::{
-                MAX_CONCURRENT_DISPATCHES,
-                dispatch_for_track as dispatch_lyrics_for_track,
-            },
-            parse_metadata,
+        load_mapping_config,
+        log_skip_summary,
+        lyrics::providers::{
+            MAX_CONCURRENT_DISPATCHES,
+            dispatch_for_track as dispatch_lyrics_for_track,
         },
-        providers::{
-            LibraryRefreshOptions,
-            refresh_release_metadata_for_scan_with_progress,
-            release_refresh_provider_ids,
-        },
+        parse_metadata,
+    },
+    providers::{
+        LibraryRefreshOptions,
+        refresh_release_metadata_for_scan_with_progress,
+        release_refresh_provider_ids,
     },
 };
 
@@ -99,7 +96,7 @@ async fn sync_entries_incremental(
 
     let existing = {
         let db_read = db.read().await;
-        db::entries::get(&db_read, library_db_id)?
+        crate::db::entries::get(&db_read, library_db_id)?
     };
     let scan_plan = prepare_entry_scan_plan(library, existing)?;
     let entry_group_count = scan_plan.groups.len();
@@ -709,11 +706,11 @@ async fn release_artifact_plan(
     release_id: DbId,
 ) -> anyhow::Result<Option<ReleaseArtifactPlan>> {
     let db_read = db.read().await;
-    let Some(release) = db::releases::get_by_id(&db_read, release_id)? else {
+    let Some(release) = crate::db::releases::get_by_id(&db_read, release_id)? else {
         return Ok(None);
     };
-    let release_public_id = db::lookup::find_id_by_db_id(&db_read, release_id)?;
-    let track_ids = db::tracks::get_direct(&db_read, release_id)?
+    let release_public_id = crate::db::lookup::find_id_by_db_id(&db_read, release_id)?;
+    let track_ids = crate::db::tracks::get_direct(&db_read, release_id)?
         .into_iter()
         .filter_map(|track| track.db_id.map(DbId::from))
         .collect();
@@ -966,10 +963,12 @@ async fn sync_provider_release_cover(context: &ReleaseArtifactContext<'_>) -> bo
 
     let release_bundle = {
         let db_read = context.db.read().await;
-        match db::releases::get_by_id(&db_read, context.release_id) {
+        match crate::db::releases::get_by_id(&db_read, context.release_id) {
             Ok(Some(release)) => {
-                let tracks = db::tracks::get(&db_read, context.release_id).unwrap_or_default();
-                let artists = db::artists::get(&db_read, context.release_id).unwrap_or_default();
+                let tracks =
+                    crate::db::tracks::get(&db_read, context.release_id).unwrap_or_default();
+                let artists =
+                    crate::db::artists::get(&db_read, context.release_id).unwrap_or_default();
                 Ok(Some((release, tracks, artists)))
             }
             Ok(None) => Ok(None),
@@ -1113,7 +1112,7 @@ mod tests {
     use agdb::QueryBuilder;
 
     use super::*;
-    use crate::STATE;
+    use crate::services::STATE;
 
     const CUE_SHEET: &str = r#"PERFORMER "Cue Artist"
 TITLE "Cue Album"
@@ -1163,11 +1162,11 @@ FILE "album.flac" WAVE
     ) -> anyhow::Result<BTreeMap<PathBuf, (String, Vec<String>)>> {
         let db = STATE.db.read().await;
         let mut out = BTreeMap::new();
-        for entry in db::entries::get(&db, library.db_id.expect("library db_id"))? {
+        for entry in crate::db::entries::get(&db, library.db_id.expect("library db_id"))? {
             let Some(entry_db_id) = entry.db_id else {
                 continue;
             };
-            let mut tracks = db::tracks::get_by_entry(&db, entry_db_id)?
+            let mut tracks = crate::db::tracks::get_by_entry(&db, entry_db_id)?
                 .into_iter()
                 .map(|track| track.id)
                 .collect::<Vec<_>>();
@@ -1200,8 +1199,8 @@ FILE "album.flac" WAVE
         name: &str,
         change: impl FnOnce(&Path) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
-        crate::testing::init_default_test_state()?;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
         let (root, album) = temp_library(name)?;
         let audio = album.join("track.flac");
         std::fs::copy(fixture_flac(), &audio)?;
@@ -1258,8 +1257,8 @@ FILE "album.flac" WAVE
 
     #[tokio::test(flavor = "multi_thread")]
     async fn cue_sheet_edit_keeps_its_cue_tracks() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
-        crate::testing::init_default_test_state()?;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
         let (root, album) = temp_library("cue-edit")?;
         let audio = album.join("album.flac");
         let cue = album.join("album.cue");

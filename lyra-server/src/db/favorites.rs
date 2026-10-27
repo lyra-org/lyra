@@ -83,10 +83,7 @@ pub(crate) struct FavoriteEdge {
     pub(crate) last_refreshed_at_ms: i64,
 }
 
-pub(crate) fn target_kind(
-    db: &impl DbAccess,
-    target_db_id: DbId,
-) -> anyhow::Result<Option<FavoriteKind>> {
+pub fn target_kind(db: &impl DbAccess, target_db_id: DbId) -> anyhow::Result<Option<FavoriteKind>> {
     if target_db_id.0 <= 0 {
         return Ok(None);
     }
@@ -170,11 +167,7 @@ pub(crate) fn remove(
     Ok(true)
 }
 
-pub(crate) fn has(
-    db: &impl DbAccess,
-    user_db_id: DbId,
-    target_db_id: DbId,
-) -> anyhow::Result<bool> {
+pub fn has(db: &impl DbAccess, user_db_id: DbId, target_db_id: DbId) -> anyhow::Result<bool> {
     Ok(find_favorite_edge(db, user_db_id, target_db_id)?.is_some())
 }
 
@@ -698,8 +691,8 @@ mod tests {
     #[test]
     fn delete_user_cascades_favorites() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        let user_a = crate::db::users::create(&mut db, &crate::db::test_db::test_user("alice")?)?;
-        let user_b = crate::db::users::create(&mut db, &crate::db::test_db::test_user("bob")?)?;
+        let user_a = crate::db::users::create(&mut db, &crate::db::fixtures::test_user("alice")?)?;
+        let user_b = crate::db::users::create(&mut db, &crate::db::fixtures::test_user("bob")?)?;
         let track = create_test_track(&mut db)?;
 
         add(&mut db, user_a, track, FavoriteKind::Track, 1)?;

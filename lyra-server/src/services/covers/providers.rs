@@ -23,16 +23,15 @@ use anyhow::{
 use serde_json::Value;
 use std::sync::LazyLock;
 
+use crate::db::{
+    Artist,
+    Library,
+    Release,
+    Track,
+};
 use crate::{
-    STATE,
-    db::{
-        self,
-        Artist,
-        Library,
-        Release,
-        Track,
-    },
-    plugins::executor::MetadataRefreshRequest,
+    services::STATE,
+    services::plugin_dispatch::MetadataRefreshRequest,
     services::providers::{
         ProviderCallStage,
         enabled_provider_configs_by_priority,
@@ -275,7 +274,7 @@ fn normalize_provider_search_result(
                     .as_object()
                     .and_then(|o| o.get("release_date"))
                     .and_then(|v| v.as_str())
-                    .and_then(db::releases::normalize_release_date),
+                    .and_then(crate::db::releases::normalize_release_date),
                 genres: value
                     .as_object()
                     .and_then(|o| o.get("genres"))
@@ -321,7 +320,7 @@ pub(crate) async fn search_provider(
             async move {
                 let runtime = STATE
                     .generation()
-                    .plugin_runtime
+                    .plugin_dispatch
                     .get()
                     .context("plugin runtime is not initialized")?;
                 runtime
@@ -426,7 +425,7 @@ pub(crate) fn provider_external_ids_for_entity(
     provider_id: &str,
 ) -> Result<HashMap<String, String>> {
     let mut ids = HashMap::new();
-    for external_id in db::external_ids::get_for_entity(db, entity_id)? {
+    for external_id in crate::db::external_ids::get_for_entity(db, entity_id)? {
         if external_id.provider_id != provider_id {
             continue;
         }
@@ -441,7 +440,7 @@ pub(crate) fn provider_external_ids_for_entity(
 }
 
 pub(crate) fn library_for_release(db: &DbAny, release_id: DbId) -> Result<Option<Library>> {
-    Ok(db::libraries::get_by_release(db, release_id)?
+    Ok(crate::db::libraries::get_by_release(db, release_id)?
         .into_iter()
         .next())
 }
@@ -743,7 +742,7 @@ async fn search_provider_cover(
             async move {
                 let runtime = STATE
                     .generation()
-                    .plugin_runtime
+                    .plugin_dispatch
                     .get()
                     .context("plugin runtime is not initialized")?;
                 tokio::time::timeout(timeout, async move {
@@ -827,11 +826,11 @@ pub(crate) async fn search_release_cover_candidates(
     let (release_id, provider_contexts) = {
         let db = STATE.db.read().await;
         let not_found = || anyhow!("release not found: {release_public_id}");
-        let release_id =
-            db::lookup::find_node_id_by_id(&*db, release_public_id)?.ok_or_else(not_found)?;
-        let release = db::releases::get_by_id(&db, release_id)?.ok_or_else(not_found)?;
-        let tracks = db::tracks::get_direct(&db, release_id)?;
-        let artists = db::artists::get(&db, release_id)?;
+        let release_id = crate::db::lookup::find_node_id_by_id(&*db, release_public_id)?
+            .ok_or_else(not_found)?;
+        let release = crate::db::releases::get_by_id(&db, release_id)?.ok_or_else(not_found)?;
+        let tracks = crate::db::tracks::get_direct(&db, release_id)?;
+        let artists = crate::db::artists::get(&db, release_id)?;
         let library = library_for_release(&db, release_id)?;
 
         let providers = enabled_provider_configs_by_priority(&db, provider_filter)?;
@@ -870,8 +869,8 @@ pub(crate) async fn search_artist_cover_candidates(
         let db = STATE.db.read().await;
         let not_found = || anyhow!("artist not found: {artist_public_id}");
         let artist_id =
-            db::lookup::find_node_id_by_id(&*db, artist_public_id)?.ok_or_else(not_found)?;
-        let artist = db::artists::get_by_id(&db, artist_id)?.ok_or_else(not_found)?;
+            crate::db::lookup::find_node_id_by_id(&*db, artist_public_id)?.ok_or_else(not_found)?;
+        let artist = crate::db::artists::get_by_id(&db, artist_id)?.ok_or_else(not_found)?;
 
         let providers = enabled_provider_configs_by_priority(&db, provider_filter)?;
         let mut provider_contexts = Vec::new();
@@ -900,116 +899,6 @@ mod tests {
     use nanoid::nanoid;
     use serde_json::json;
     use std::path::PathBuf;
-    use std::time::{
-        SystemTime,
-        UNIX_EPOCH,
-    };
-
-    struct TempSearchPluginDir {
-        plugins_dir: PathBuf,
-    }
-
-    impl TempSearchPluginDir {
-        fn new() -> anyhow::Result<Self> {
-            let root = std::env::temp_dir().join(format!(
-                "lyra-search-plugin-test-{}-{}",
-                std::process::id(),
-                SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
-            ));
-            let plugin_dir = root.join("searchtest");
-            std::fs::create_dir_all(&plugin_dir)?;
-            std::fs::write(
-                plugin_dir.join("plugin.json"),
-                r#"{
-                    "schema_version": 1,
-                    "id": "searchtest",
-                    "name": "Search Test",
-                    "version": "1.0.0",
-                    "description": "Search callback contract test",
-                    "entrypoint": "init.luau",
-                    "scopes": ["lyra.metadata"]
-                }"#,
-            )?;
-            std::fs::write(
-                plugin_dir.join("init.luau"),
-                r#"
-                    local metadata = require("@lyra/metadata")
-                    local provider = metadata.Provider.new("searchtest")
-
-                    provider:search(metadata.EntityType.Release, function(query)
-                        if type(query) ~= "string" then
-                            error("expected string query, got " .. type(query))
-                        end
-                        return {
-                            {
-                                title = "Search: " .. query,
-                                redirect_url = "https://example.test/releases/" .. query,
-                                ids = {
-                                    release_id = query,
-                                },
-                            },
-                        }
-                    end)
-                "#,
-            )?;
-            Ok(Self { plugins_dir: root })
-        }
-    }
-
-    impl Drop for TempSearchPluginDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.plugins_dir);
-        }
-    }
-
-    #[tokio::test]
-    async fn provider_search_dispatches_query_string_to_handler() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
-        crate::testing::initialize_runtime(&crate::testing::LibraryFixtureConfig {
-            directory: std::env::temp_dir(),
-            language: None,
-            country: None,
-        })
-        .await?;
-        let plugins = TempSearchPluginDir::new()?;
-        let server_info = crate::plugins::server::load_server_info().await?;
-        let auth_capabilities =
-            crate::plugins::auth::AuthCapabilities::from_config(&STATE.config().auth);
-        let (runtime, errors) =
-            crate::plugins::executor::PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
-                plugins.plugins_dir.clone(),
-                server_info,
-                auth_capabilities,
-                STATE.db.get(),
-                Vec::new(),
-                Some(STATE.settings.clone()),
-            )?;
-        assert!(errors.is_empty(), "{errors:?}");
-        runtime.exec_plugin("searchtest").await?;
-        crate::plugins::bootstrap::publish_runtime(runtime.clone());
-
-        let results = search_provider(ProviderSearchRequest {
-            provider_id: "searchtest",
-            entity_type: EntityType::Release,
-            query: "loveless",
-            include_cover_urls: false,
-            force_refresh: false,
-        })
-        .await?;
-
-        assert_eq!(results.len(), 1);
-        let NormalizedProviderSearchResult::Release(result) = &results[0] else {
-            panic!("expected release search result");
-        };
-        assert_eq!(result.title, "Search: loveless");
-        assert_eq!(
-            result.ids.as_ref().and_then(|ids| ids.get("release_id")),
-            Some(&"loveless".to_string())
-        );
-
-        crate::STATE.generation().plugin_runtime.replace(None);
-        Ok(())
-    }
 
     #[test]
     fn release_context_value_includes_library_and_provider_ids() -> anyhow::Result<()> {

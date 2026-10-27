@@ -40,13 +40,9 @@ use std::{
     },
 };
 
+use crate::db::Playlist;
 use crate::services::catalog::Direction;
 use crate::{
-    STATE,
-    db::{
-        self,
-        Playlist,
-    },
     routes::responses::{
         ArtistResponse,
         CoverResponse,
@@ -60,6 +56,7 @@ use crate::{
         deserialize_inc,
         double_option,
     },
+    services::STATE,
     services::{
         auth::{
             Principal,
@@ -331,10 +328,10 @@ fn compare_playlist_route_field(
             .cmp(&b.sort_name)
             .then_with(|| a.playlist.name.cmp(&b.playlist.name)),
         PlaylistRouteSortKey::CreatedAt => {
-            db::compare_option(&a.playlist.created_at, &b.playlist.created_at)
+            crate::db::compare_option(&a.playlist.created_at, &b.playlist.created_at)
         }
         PlaylistRouteSortKey::UpdatedAt => {
-            db::compare_option(&a.playlist.updated_at, &b.playlist.updated_at)
+            crate::db::compare_option(&a.playlist.updated_at, &b.playlist.updated_at)
         }
         PlaylistRouteSortKey::TrackCount => a.summary.track_count.cmp(&b.summary.track_count),
         PlaylistRouteSortKey::TotalDuration => a
@@ -387,7 +384,7 @@ fn query_playlist_route_items(
 
     // Filter before summarising: discarded playlists should not be walked.
     if let Some(term) = search_term {
-        db::search::fuzzy_filter(
+        crate::db::search::fuzzy_filter(
             &mut entries,
             term,
             |entry| entry.playlist.name.as_str(),
@@ -431,7 +428,7 @@ fn now_epoch() -> u64 {
 
 fn resolve_owner_id(db: &agdb::DbAny, owner_db_id: Option<DbId>) -> anyhow::Result<Option<String>> {
     match owner_db_id {
-        Some(db_id) => db::lookup::find_id_by_db_id(db, db_id),
+        Some(db_id) => crate::db::lookup::find_id_by_db_id(db, db_id),
         None => Ok(None),
     }
 }
@@ -453,8 +450,12 @@ fn playlist_to_response(
         tracks,
         cover,
         owner_id,
-        created_at: playlist.created_at.map(super::unix_secs_to_rfc3339_u64),
-        updated_at: playlist.updated_at.map(super::unix_secs_to_rfc3339_u64),
+        created_at: playlist
+            .created_at
+            .map(crate::services::timestamps::unix_secs_to_rfc3339_u64),
+        updated_at: playlist
+            .updated_at
+            .map(crate::services::timestamps::unix_secs_to_rfc3339_u64),
     }
 }
 
@@ -472,11 +473,11 @@ fn playlist_summary(
 
 /// Resolves `id` to a playlist the principal owns, under the guard that acts on it.
 fn require_owned_playlist(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     principal: &Principal,
     id: &str,
 ) -> Result<DbId, AppError> {
-    let playlist_db_id = db::lookup::find_node_id_by_id(db, id)?
+    let playlist_db_id = crate::db::lookup::find_node_id_by_id(db, id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
     if !crate::services::auth::access::playlist_owned(db, principal, playlist_db_id)? {
         return Err(AppError::forbidden("you do not own this playlist"));
@@ -486,7 +487,7 @@ fn require_owned_playlist(
 
 fn build_track_response_unchecked(
     db: &agdb::DbAny,
-    track: db::Track,
+    track: crate::db::Track,
     track_db_id: DbId,
     entry_id: String,
     position: u64,
@@ -503,7 +504,7 @@ fn build_track_response_unchecked(
         None
     };
     let release: Option<ReleaseResponse> = if inc.releases {
-        db::releases::get_by_track(db, track_db_id)?
+        crate::db::releases::get_by_track(db, track_db_id)?
             .into_iter()
             .next()
             .map(ReleaseResponse::from)
@@ -522,7 +523,7 @@ fn build_track_response_unchecked(
 fn build_track_response(
     db: &agdb::DbAny,
     principal: &Principal,
-    track: db::Track,
+    track: crate::db::Track,
     track_db_id: DbId,
     entry_id: String,
     position: u64,
@@ -553,7 +554,7 @@ fn build_tracks(
     let playlist_tracks = playlists::get_tracks(db, QueryId::Id(playlist_db_id))?;
     let mut items = Vec::with_capacity(playlist_tracks.len());
     for playlist_track in playlist_tracks {
-        let Some(track) = db::tracks::get_by_id(db, playlist_track.track_db_id)? else {
+        let Some(track) = crate::db::tracks::get_by_id(db, playlist_track.track_db_id)? else {
             continue;
         };
         items.push(build_track_response(
@@ -597,7 +598,7 @@ async fn create_playlist(
     )
     .map_err(|err| AppError::bad_request(err.to_string()))?;
 
-    let created = db::playlists::get_by_id(&db, playlist_db_id)?
+    let created = crate::db::playlists::get_by_id(&db, playlist_db_id)?
         .ok_or_else(|| AppError::not_found("playlist not found after creation"))?;
 
     Ok((
@@ -644,9 +645,9 @@ async fn get_playlists(
             let playlists_page = super::load_snapshot_items(
                 db,
                 &page.item_ids,
-                db::playlists::get_by_id,
+                crate::db::playlists::get_by_id,
                 |db, playlist_db_id| {
-                    Ok(db::playlists::get_owner(db, playlist_db_id)? == Some(user_db_id))
+                    Ok(crate::db::playlists::get_owner(db, playlist_db_id)? == Some(user_db_id))
                 },
             )?;
             (playlists_page, page.next_cursor, HashMap::new())
@@ -722,9 +723,9 @@ async fn get_playlist(
     let inc = parse_inc(query.inc)?;
 
     let db = &*STATE.db.read().await;
-    let playlist_db_id = db::lookup::find_node_id_by_id(db, &id)?
+    let playlist_db_id = crate::db::lookup::find_node_id_by_id(db, &id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
-    let playlist = db::playlists::get_by_id(db, playlist_db_id)?
+    let playlist = crate::db::playlists::get_by_id(db, playlist_db_id)?
         .ok_or_else(|| AppError::not_found(format!("Playlist not found: {}", id)))?;
 
     // Check access: owner or public
@@ -824,7 +825,7 @@ async fn add_playlist_tracks(
 
     let mut track_query_ids = Vec::with_capacity(request.track_ids.len());
     for track_id in request.track_ids {
-        let track_db_id = db::lookup::find_node_id_by_id(&*db, &track_id)?
+        let track_db_id = crate::db::lookup::find_node_id_by_id(&*db, &track_id)?
             .ok_or_else(|| AppError::not_found(format!("track not found: {track_id}")))?;
         crate::services::auth::access::require_entity_accessible(
             &*db,
@@ -852,7 +853,7 @@ async fn add_playlist_tracks(
 
     let mut added = Vec::with_capacity(results.len());
     for playlist_track in results {
-        let track = db::tracks::get_by_id(&db, playlist_track.track_db_id)?
+        let track = crate::db::tracks::get_by_id(&db, playlist_track.track_db_id)?
             .ok_or_else(|| AppError::not_found("playlist track target missing"))?;
         added.push(build_track_response(
             &db,
@@ -900,13 +901,14 @@ async fn remove_playlist_entries(
 
     let mut removed = Vec::new();
     for playlist_track in removed_tracks {
-        let track = db::tracks::get_by_id(&db, playlist_track.track_db_id)?.ok_or_else(|| {
-            AppError::from(anyhow::anyhow!(
-                "removed playlist entry '{}' references missing track {}",
-                playlist_track.entry_id,
-                playlist_track.track_db_id.0
-            ))
-        })?;
+        let track =
+            crate::db::tracks::get_by_id(&db, playlist_track.track_db_id)?.ok_or_else(|| {
+                AppError::from(anyhow::anyhow!(
+                    "removed playlist entry '{}' references missing track {}",
+                    playlist_track.entry_id,
+                    playlist_track.track_db_id.0
+                ))
+            })?;
         removed.push(build_track_response(
             &db,
             &principal,
@@ -1100,18 +1102,18 @@ mod tests {
     use anyhow::anyhow;
     use nanoid::nanoid;
 
-    use crate::db::test_db::{
+    use crate::db::fixtures::{
         connect,
         insert_artist,
         insert_release,
         insert_track,
-        new_test_db,
     };
+    use crate::db::test_db::new_test_db;
 
     use super::*;
 
     fn create_test_user(db: &mut DbAny) -> anyhow::Result<DbId> {
-        db::test_db::insert_user(db, "playlist-test-user")
+        crate::db::test_db::insert_user(db, "playlist-test-user")
     }
 
     fn test_principal(db: &mut DbAny) -> anyhow::Result<(DbId, Principal)> {
@@ -1121,7 +1123,7 @@ mod tests {
             Principal::for_user(
                 db,
                 user_db_id,
-                vec![db::Permission::Admin],
+                vec![crate::db::Permission::Admin],
                 std::collections::HashSet::new(),
             ),
         ))
@@ -1145,9 +1147,9 @@ mod tests {
     #[test]
     fn query_playlist_route_items_rejects_principal_whose_db_id_was_recycled() -> anyhow::Result<()>
     {
-        let mut db = db::test_db::new_test_db()?;
+        let mut db = crate::db::test_db::new_test_db()?;
         let (alice, stale) = test_principal(&mut db)?;
-        let replacement = db::test_db::recycle_user(&mut db, alice, "replacement")?;
+        let replacement = crate::db::test_db::recycle_user(&mut db, alice, "replacement")?;
         seed_playlist(&mut db, replacement, "Replacement's Playlist")?;
 
         let error = query_playlist_route_items(&db, &stale, &default_playlist_sort(), None)
@@ -1160,7 +1162,8 @@ mod tests {
     }
 
     async fn session_headers(user_db_id: DbId) -> anyhow::Result<HeaderMap> {
-        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
+        let session =
+            crate::services::testing::create_session(user_db_id, Default::default()).await?;
         let mut headers = HeaderMap::new();
         headers.insert(
             axum::http::header::AUTHORIZATION,
@@ -1208,18 +1211,22 @@ mod tests {
         gap: Option<usize>,
         request: impl AsyncFnOnce(AttackerRequest) -> T,
     ) -> anyhow::Result<(bool, RecycleOutcome<T>)> {
-        crate::testing::init_default_test_state()?;
+        crate::plugins::testing::init_default_test_state()?;
         let (attacker, victim, track_db_id, playlist_db_id, entry_ids, request_input) = {
             let mut db = STATE.db.write().await;
-            db::roles::ensure_builtin_roles(&mut db)?;
-            let attacker = db::test_db::insert_user(&mut db, "attacker")?;
-            db::roles::ensure_user_has_role(&mut db, attacker, db::roles::BUILTIN_ADMIN_ROLE)?;
-            let victim = db::test_db::insert_user(&mut db, "victim")?;
+            crate::db::roles::ensure_builtin_roles(&mut db)?;
+            let attacker = crate::db::test_db::insert_user(&mut db, "attacker")?;
+            crate::db::roles::ensure_user_has_role(
+                &mut db,
+                attacker,
+                crate::db::roles::BUILTIN_ADMIN_ROLE,
+            )?;
+            let victim = crate::db::test_db::insert_user(&mut db, "victim")?;
             let track_db_id = insert_track(&mut db, "Shared Track")?;
             let playlist_db_id = seed_playlist(&mut db, attacker, "Attacker's")?;
             let entry_ids = seed_entries(&mut db, playlist_db_id, track_db_id);
             let public_id = |db_id| {
-                db::lookup::find_id_by_db_id(&*db, db_id)?
+                crate::db::lookup::find_id_by_db_id(&*db, db_id)?
                     .ok_or_else(|| anyhow!("public id missing for {db_id:?}"))
             };
             let playlist_id = public_id(playlist_db_id)?;
@@ -1237,7 +1244,7 @@ mod tests {
         let headers = session_headers(attacker).await?;
 
         let mut victim_playlist = None;
-        let (reached, output) = crate::testing::run_with_recycle_at(
+        let (reached, output) = crate::services::testing::run_with_recycle_at(
             gap,
             request(AttackerRequest {
                 headers,
@@ -1334,7 +1341,7 @@ mod tests {
         request: impl AsyncFn(AttackerRequest) -> Result<(), StatusCode>,
         check: impl Fn(usize, &agdb::DbAny, &VictimPlaylist) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
-        crate::testing::for_each_db_gap(
+        crate::services::testing::for_each_db_gap(
             async |gap| run_against_recycled_playlist(gap, &request).await,
             async |gap, outcome| {
                 let victim = outcome
@@ -1347,7 +1354,7 @@ mod tests {
     }
 
     fn entry_ids(db: &agdb::DbAny, playlist_db_id: DbId) -> anyhow::Result<Vec<String>> {
-        Ok(db::playlists::get_tracks(db, playlist_db_id)?
+        Ok(crate::db::playlists::get_tracks(db, playlist_db_id)?
             .into_iter()
             .map(|track| track.entry_id)
             .collect())
@@ -1370,15 +1377,16 @@ mod tests {
     #[tokio::test]
     async fn update_playlist_never_renames_a_playlist_that_took_a_recycled_id() -> anyhow::Result<()>
     {
-        let _guard = crate::testing::runtime_test_lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         let (_, control) = run_against_recycled_playlist(None, rename).await?;
         assert_eq!(control.output, Ok(()));
-        let renamed = db::playlists::get_by_id(&*STATE.db.read().await, control.playlist_db_id)?
-            .ok_or_else(|| anyhow!("control playlist missing"))?;
+        let renamed =
+            crate::db::playlists::get_by_id(&*STATE.db.read().await, control.playlist_db_id)?
+                .ok_or_else(|| anyhow!("control playlist missing"))?;
         assert_eq!(renamed.name, "Renamed");
 
         for_each_recycled_gap(rename, |gap, db, victim| {
-            let victim_playlist = db::playlists::get_by_id(db, victim.db_id)?
+            let victim_playlist = crate::db::playlists::get_by_id(db, victim.db_id)?
                 .ok_or_else(|| anyhow!("victim playlist missing after gap {gap}"))?;
             assert_eq!(victim_playlist.name, "Victim's", "renamed at gap {gap}");
             Ok(())
@@ -1389,16 +1397,17 @@ mod tests {
     #[tokio::test]
     async fn delete_playlist_never_deletes_a_playlist_that_took_a_recycled_id() -> anyhow::Result<()>
     {
-        let _guard = crate::testing::runtime_test_lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         let (_, control) = run_against_recycled_playlist(None, delete).await?;
         assert_eq!(control.output, Ok(()));
         assert!(
-            db::playlists::get_by_id(&*STATE.db.read().await, control.playlist_db_id)?.is_none()
+            crate::db::playlists::get_by_id(&*STATE.db.read().await, control.playlist_db_id)?
+                .is_none()
         );
 
         for_each_recycled_gap(delete, |gap, db, victim| {
             assert!(
-                db::playlists::get_by_id(db, victim.db_id)?.is_some(),
+                crate::db::playlists::get_by_id(db, victim.db_id)?.is_some(),
                 "deleted at gap {gap}"
             );
             Ok(())
@@ -1409,7 +1418,7 @@ mod tests {
     #[tokio::test]
     async fn add_playlist_tracks_never_adds_to_a_playlist_that_took_a_recycled_id()
     -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         let (_, control) = run_against_recycled_playlist(None, add_track).await?;
         assert_eq!(control.output, Ok(()));
         assert_eq!(
@@ -1423,7 +1432,7 @@ mod tests {
     #[tokio::test]
     async fn remove_playlist_entries_never_removes_from_a_playlist_that_took_a_recycled_id()
     -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         let (_, control) = run_against_recycled_playlist(None, remove_entry).await?;
         assert_eq!(control.output, Ok(()));
         assert_eq!(
@@ -1437,7 +1446,7 @@ mod tests {
     #[tokio::test]
     async fn move_playlist_track_never_moves_within_a_playlist_that_took_a_recycled_id()
     -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         let (_, control) = run_against_recycled_playlist(None, move_entry).await?;
         assert_eq!(control.output, Ok(()));
         let moved = [control.entry_ids[1].clone(), control.entry_ids[0].clone()];
@@ -1594,10 +1603,10 @@ mod tests {
             created_at: Some(1),
             updated_at: Some(1),
         };
-        let playlist_db_id = db::playlists::create(&mut db, &playlist, user_db_id)?;
-        let pt =
-            db.transaction_mut(|t| db::playlists::add_track(t, playlist_db_id, track_db_id))?;
-        let track = db::tracks::get_by_id(&db, track_db_id)?
+        let playlist_db_id = crate::db::playlists::create(&mut db, &playlist, user_db_id)?;
+        let pt = db
+            .transaction_mut(|t| crate::db::playlists::add_track(t, playlist_db_id, track_db_id))?;
+        let track = crate::db::tracks::get_by_id(&db, track_db_id)?
             .ok_or_else(|| anyhow!("track missing after insert"))?;
 
         let response = build_track_response_unchecked(

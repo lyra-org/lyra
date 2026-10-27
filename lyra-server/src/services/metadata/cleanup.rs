@@ -20,7 +20,6 @@ use agdb::{
 use super::layers::MANUAL_SOURCE_ID;
 use super::verification::recompute_artist_verified;
 use crate::db::{
-    self,
     Artist,
     CueSheet,
     CueTrack,
@@ -51,7 +50,7 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
             Some(id) => id.into(),
             None => continue,
         };
-        if db::entries::get_by_track(db, track_db_id)?.is_empty() {
+        if crate::db::entries::get_by_track(db, track_db_id)?.is_empty() {
             orphan_track_ids.push(track_db_id);
         }
     }
@@ -128,7 +127,7 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
         .collect();
     // Layer edges point from an artist into the layer, so the walk from the
     // roots misses artists that only layers reference.
-    let spared = db::metadata::layers::edges::spared_artists(
+    let spared = crate::db::metadata::layers::edges::spared_artists(
         db,
         &orphan_artist_ids.iter().copied().collect(),
     )?;
@@ -171,7 +170,7 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
             if from_id.0 == 0 {
                 continue;
             }
-            if db::tracks::get_by_id(db, from_id)?.is_some() {
+            if crate::db::tracks::get_by_id(db, from_id)?.is_some() {
                 has_track_ref = true;
                 break;
             }
@@ -214,7 +213,7 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
             if from_id.0 == 0 {
                 continue;
             }
-            if db::track_sources::get_by_id(db, from_id)?.is_some() {
+            if crate::db::track_sources::get_by_id(db, from_id)?.is_some() {
                 has_source_ref = true;
                 break;
             }
@@ -257,7 +256,7 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
             if to_id.0 == 0 {
                 continue;
             }
-            if db::cue::tracks::get_by_id(db, to_id)?.is_some() {
+            if crate::db::cue::tracks::get_by_id(db, to_id)?.is_some() {
                 has_cue_track_ref = true;
                 break;
             }
@@ -291,7 +290,7 @@ pub(crate) fn deduplicate_artists_by_external_id(db: &mut DbAny) -> anyhow::Resu
             continue;
         };
         artist_lookup.insert(artist_db_id, artist.clone());
-        let external_ids = db::external_ids::get_for_entity(db, artist_db_id)?;
+        let external_ids = crate::db::external_ids::get_for_entity(db, artist_db_id)?;
         for ext_id in external_ids {
             if ext_id.id_type == "artist_id" {
                 let id_value = ext_id.id_value.trim();
@@ -357,7 +356,9 @@ fn select_merge_winner(
     // Layer edges are not effective references, so they never pick the winner.
     let mut edge_counts = edge_count_map(db, artist_ids)?;
     for (&artist_id, count) in &mut edge_counts {
-        *count = count.saturating_sub(db::metadata::layers::edges::reference_count(db, artist_id)?);
+        *count = count.saturating_sub(crate::db::metadata::layers::edges::reference_count(
+            db, artist_id,
+        )?);
     }
     let mut ordered_ids = artist_ids.to_vec();
 
@@ -411,16 +412,21 @@ fn merge_artist_into(
     winner: DbId,
     loser: DbId,
 ) -> anyhow::Result<()> {
-    let outgoing_relations = db::artists::relations::get_relations_from(db, loser, None)?;
-    let relation_edge_ids = db::artists::relations::incoming_edge_ids(db, loser)?;
+    let outgoing_relations = crate::db::artists::relations::get_relations_from(db, loser, None)?;
+    let relation_edge_ids = crate::db::artists::relations::incoming_edge_ids(db, loser)?;
 
     // Layers own the incoming relations; re-applying the winner below rebuilds
     // them. The outgoing ones follow the related artists' retargeted layers.
     for (relation, target_id) in outgoing_relations {
         if target_id != winner
-            && !db::artists::relations::exists(db, winner, target_id, relation.relation_type)?
+            && !crate::db::artists::relations::exists(
+                db,
+                winner,
+                target_id,
+                relation.relation_type,
+            )?
         {
-            db::artists::relations::link(
+            crate::db::artists::relations::link(
                 db,
                 winner,
                 target_id,
@@ -432,12 +438,21 @@ fn merge_artist_into(
 
     // A locked winner keeps its stored relations through the apply below, so
     // the loser's move onto it until it is unlocked.
-    if db::artists::get_by_id(db, winner)?.is_some_and(|artist| artist.locked.unwrap_or(false)) {
-        for (relation, source_id) in db::artists::relations::get_relations_to(db, loser, None)? {
+    if crate::db::artists::get_by_id(db, winner)?
+        .is_some_and(|artist| artist.locked.unwrap_or(false))
+    {
+        for (relation, source_id) in
+            crate::db::artists::relations::get_relations_to(db, loser, None)?
+        {
             if source_id != winner
-                && !db::artists::relations::exists(db, source_id, winner, relation.relation_type)?
+                && !crate::db::artists::relations::exists(
+                    db,
+                    source_id,
+                    winner,
+                    relation.relation_type,
+                )?
             {
-                db::artists::relations::link(
+                crate::db::artists::relations::link(
                     db,
                     source_id,
                     winner,
@@ -448,12 +463,13 @@ fn merge_artist_into(
         }
     }
 
-    db::metadata::layers::edges::retarget_artist(db, winner, loser)?;
+    crate::db::metadata::layers::edges::retarget_artist(db, winner, loser)?;
 
     // Layers own the credits; re-applying their owners below rebuilds them.
     // A locked owner keeps what is stored, so its credits move.
-    let winner_credits = db::credits::CreditSet::new(&db::credits::links_to_artist(db, winner)?);
-    let credit_links = db::credits::links_to_artist(db, loser)?;
+    let winner_credits =
+        crate::db::credits::CreditSet::new(&crate::db::credits::links_to_artist(db, winner)?);
+    let credit_links = crate::db::credits::links_to_artist(db, loser)?;
     let mut reapplied_owners = Vec::new();
     for link in &credit_links {
         if !credits_locked(db, link.owner_id)? {
@@ -463,7 +479,7 @@ fn merge_artist_into(
             continue;
         }
         if !winner_credits.contains(link.owner_id, winner, link.credit.role()) {
-            db::credits::link(db, link.owner_id, winner, &link.credit)?;
+            crate::db::credits::link(db, link.owner_id, winner, &link.credit)?;
         }
     }
     let credit_edge_ids: HashSet<DbId> = credit_links.iter().map(|link| link.edge_id).collect();
@@ -488,7 +504,7 @@ fn merge_artist_into(
         }
     }
 
-    db::artists::absorb_scan_names(db, winner, loser)?;
+    crate::db::artists::absorb_scan_names(db, winner, loser)?;
     // `merge_artist_into` runs inside `deduplicate_artists_by_external_id`'s outer
     // `transaction_mut`; use the in-txn variant — agdb does not support reentrant transactions.
     crate::db::metadata::cascade_remove_entities_in_txn(db, &[loser])?;
@@ -502,11 +518,10 @@ fn merge_artist_into(
 
 /// Whether a lock keeps a release's or track's stored credits.
 fn credits_locked(db: &impl crate::db::DbAccess, owner_id: DbId) -> anyhow::Result<bool> {
-    Ok(match db::releases::get_by_id(db, owner_id)? {
+    Ok(match crate::db::releases::get_by_id(db, owner_id)? {
         Some(release) => release.locked.unwrap_or(false),
-        None => {
-            db::tracks::get_by_id(db, owner_id)?.is_some_and(|track| track.locked.unwrap_or(false))
-        }
+        None => crate::db::tracks::get_by_id(db, owner_id)?
+            .is_some_and(|track| track.locked.unwrap_or(false)),
     })
 }
 
@@ -515,19 +530,19 @@ fn migrate_metadata(
     winner: DbId,
     loser: DbId,
 ) -> anyhow::Result<()> {
-    let loser_layers = db::metadata::layers::get_for_entity(db, loser)?;
-    let winner_layers = db::metadata::layers::get_for_entity(db, winner)?;
+    let loser_layers = crate::db::metadata::layers::get_for_entity(db, loser)?;
+    let winner_layers = crate::db::metadata::layers::get_for_entity(db, winner)?;
     let winner_source_ids: HashSet<&str> =
         winner_layers.iter().map(|l| l.source_id.as_str()).collect();
 
     for layer in &loser_layers {
         if layer.source_id == MANUAL_SOURCE_ID {
             // The winner's manual edits win; the loser's fill what they leave out.
-            db::metadata::layers::fill_inside_tx(db, loser, winner, MANUAL_SOURCE_ID)?;
+            crate::db::metadata::layers::fill_inside_tx(db, loser, winner, MANUAL_SOURCE_ID)?;
             continue;
         }
         if !winner_source_ids.contains(layer.source_id.as_str()) {
-            db::metadata::layers::copy_inside_tx(db, loser, winner, &layer.source_id)?;
+            crate::db::metadata::layers::copy_inside_tx(db, loser, winner, &layer.source_id)?;
             continue;
         }
         // Both duplicates heard from this source; neither one's relations
@@ -546,23 +561,27 @@ fn migrate_metadata(
             continue;
         }
         let relations =
-            db::metadata::layers::union_relations(&winner_layer.relations, loser_relations);
+            crate::db::metadata::layers::union_relations(&winner_layer.relations, loser_relations);
         let mut merged = winner_layer.clone().with_relations(relations);
         merged.updated_at = merged.updated_at.max(layer.updated_at);
-        db::metadata::layers::upsert_inside_tx(db, winner, &merged)?;
+        crate::db::metadata::layers::upsert_inside_tx(db, winner, &merged)?;
     }
 
-    let loser_ext_ids = db::external_ids::get_for_entity_inside_tx(db, loser)?;
+    let loser_ext_ids = crate::db::external_ids::get_for_entity_inside_tx(db, loser)?;
     for ext_id in &loser_ext_ids {
-        let existing =
-            db::external_ids::get_inside_tx(db, winner, &ext_id.provider_id, &ext_id.id_type)?;
+        let existing = crate::db::external_ids::get_inside_tx(
+            db,
+            winner,
+            &ext_id.provider_id,
+            &ext_id.id_type,
+        )?;
         if existing.is_some() {
             continue;
         }
-        db::external_ids::copy_inside_tx(db, winner, ext_id)?;
+        crate::db::external_ids::copy_inside_tx(db, winner, ext_id)?;
     }
 
-    db::metadata::custom_fields::copy_between_entities(db, loser, winner)?;
+    crate::db::metadata::custom_fields::copy_between_entities(db, loser, winner)?;
 
     Ok(())
 }
@@ -571,7 +590,6 @@ fn migrate_metadata(
 mod tests {
     use super::*;
     use crate::db::{
-        self,
         IdSource,
         test_db,
     };
@@ -580,9 +598,9 @@ mod tests {
     fn dedup_drops_loser_metadata_layers_instead_of_migrating() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
 
-        db::providers::upsert(
+        crate::db::providers::upsert(
             &mut db,
-            &db::ProviderConfig {
+            &crate::db::ProviderConfig {
                 db_id: None,
                 provider_id: "musicbrainz".to_string(),
                 priority: 100,
@@ -590,16 +608,16 @@ mod tests {
             },
         )?;
 
-        let artist_a = test_db::insert_artist(&mut db, "Radiohead")?;
-        let artist_b = test_db::insert_artist(&mut db, "Radiohead")?;
+        let artist_a = crate::db::fixtures::insert_artist(&mut db, "Radiohead")?;
+        let artist_b = crate::db::fixtures::insert_artist(&mut db, "Radiohead")?;
 
         // Give artist A more edges so it wins the merge
-        let release = test_db::insert_release(&mut db, "OK Computer")?;
-        test_db::connect(&mut db, release, artist_a)?;
-        let track = test_db::insert_track(&mut db, "Paranoid Android")?;
-        test_db::connect(&mut db, track, artist_a)?;
+        let release = crate::db::fixtures::insert_release(&mut db, "OK Computer")?;
+        crate::db::fixtures::connect(&mut db, release, artist_a)?;
+        let track = crate::db::fixtures::insert_track(&mut db, "Paranoid Android")?;
+        crate::db::fixtures::connect(&mut db, track, artist_a)?;
 
-        db::external_ids::upsert(
+        crate::db::external_ids::upsert(
             &mut db,
             artist_a,
             "musicbrainz",
@@ -607,7 +625,7 @@ mod tests {
             "mbid-123",
             IdSource::Resolved,
         )?;
-        db::external_ids::upsert(
+        crate::db::external_ids::upsert(
             &mut db,
             artist_b,
             "musicbrainz",
@@ -617,12 +635,12 @@ mod tests {
         )?;
 
         // Artist B (the loser) has a layer from a different provider
-        db::metadata::layers::upsert(
+        crate::db::metadata::layers::upsert(
             &mut db,
             artist_b,
-            &db::MetadataLayer::new(
+            &crate::db::MetadataLayer::new(
                 "local-scanner",
-                db::metadata::layers::fields_from_json(serde_json::json!({
+                crate::db::metadata::layers::fields_from_json(serde_json::json!({
                     "artist_name": "Radiohead",
                     "description": "English rock band",
                 })),
@@ -633,10 +651,10 @@ mod tests {
         let merged_count = deduplicate_artists_by_external_id(&mut db)?;
         assert_eq!(merged_count, 1);
 
-        let a_exists = db::artists::get_by_id(&db, artist_a)?.is_some();
+        let a_exists = crate::db::artists::get_by_id(&db, artist_a)?.is_some();
         assert!(a_exists, "artist A should win (more edges)");
 
-        let winner_layers = db::metadata::layers::get_for_entity(&db, artist_a)?;
+        let winner_layers = crate::db::metadata::layers::get_for_entity(&db, artist_a)?;
         let has_local_scanner_layer = winner_layers.iter().any(|l| l.source_id == "local-scanner");
 
         assert!(
@@ -655,13 +673,13 @@ mod tests {
         };
 
         let mut db = test_db::new_test_db()?;
-        let credited = test_db::insert_artist(&mut db, "Radiohead")?;
-        let layer_only = test_db::insert_artist(&mut db, "Radiohead")?;
-        let member = test_db::insert_artist(&mut db, "Thom Yorke")?;
-        let track = test_db::insert_track(&mut db, "Creep")?;
-        test_db::connect(&mut db, track, credited)?;
+        let credited = crate::db::fixtures::insert_artist(&mut db, "Radiohead")?;
+        let layer_only = crate::db::fixtures::insert_artist(&mut db, "Radiohead")?;
+        let member = crate::db::fixtures::insert_artist(&mut db, "Thom Yorke")?;
+        let track = crate::db::fixtures::insert_track(&mut db, "Creep")?;
+        crate::db::fixtures::connect(&mut db, track, credited)?;
         for artist in [credited, layer_only] {
-            db::external_ids::upsert(
+            crate::db::external_ids::upsert(
                 &mut db,
                 artist,
                 "musicbrainz",
@@ -674,7 +692,7 @@ mod tests {
             layers::upsert(
                 &mut db,
                 node_id,
-                &db::MetadataLayer::new("musicbrainz", Default::default(), 1),
+                &crate::db::MetadataLayer::new("musicbrainz", Default::default(), 1),
             )?;
         }
         let track_layer = layers::layer_id(&db, track, "musicbrainz")?.expect("track layer");
@@ -683,7 +701,7 @@ mod tests {
             edges::replace_credits(
                 t,
                 track_layer,
-                db::CreditType::Vocalist,
+                crate::db::CreditType::Vocalist,
                 &[edges::LayerCreditInput {
                     artist_id: layer_only,
                     detail: Some("lead".to_string()),
@@ -692,7 +710,7 @@ mod tests {
             edges::replace_relations(
                 t,
                 member_layer,
-                db::ArtistRelationType::MemberOf,
+                crate::db::ArtistRelationType::MemberOf,
                 &[edges::LayerRelationInput {
                     artist_id: layer_only,
                     attributes: Some("vocals".to_string()),
@@ -703,11 +721,11 @@ mod tests {
         assert_eq!(deduplicate_artists_by_external_id(&mut db)?, 1);
 
         let (winner, loser) = (credited, layer_only);
-        assert!(db::artists::get_by_id(&db, loser)?.is_none());
+        assert!(crate::db::artists::get_by_id(&db, loser)?.is_none());
         let credits = edges::credits(&db, track_layer)?;
         assert_eq!(credits.len(), 1);
         assert_eq!(credits[0].target_id, winner);
-        assert_eq!(credits[0].edge.credit_type, db::CreditType::Vocalist);
+        assert_eq!(credits[0].edge.credit_type, crate::db::CreditType::Vocalist);
         assert_eq!(credits[0].edge.detail.as_deref(), Some("lead"));
         let relations = edges::relations(&db, member_layer)?;
         assert_eq!(relations.len(), 1);
@@ -725,12 +743,12 @@ mod tests {
         use crate::services::metadata::layers::LOCAL_SOURCE_ID;
 
         let mut db = test_db::new_test_db()?;
-        let first = test_db::insert_artist(&mut db, "Character")?;
-        let second = test_db::insert_artist(&mut db, "Character")?;
-        let first_actor = test_db::insert_artist(&mut db, "First Actor")?;
-        let second_actor = test_db::insert_artist(&mut db, "Second Actor")?;
+        let first = crate::db::fixtures::insert_artist(&mut db, "Character")?;
+        let second = crate::db::fixtures::insert_artist(&mut db, "Character")?;
+        let first_actor = crate::db::fixtures::insert_artist(&mut db, "First Actor")?;
+        let second_actor = crate::db::fixtures::insert_artist(&mut db, "Second Actor")?;
         for (character, actor, updated_at) in [(first, first_actor, 1), (second, second_actor, 2)] {
-            db::external_ids::upsert(
+            crate::db::external_ids::upsert(
                 &mut db,
                 character,
                 "musicbrainz",
@@ -741,13 +759,13 @@ mod tests {
             layers::upsert(
                 &mut db,
                 character,
-                &db::MetadataLayer::new(
+                &crate::db::MetadataLayer::new(
                     LOCAL_SOURCE_ID,
                     layers::fields_from_json(serde_json::json!({"artist_name": "Character"})),
                     updated_at,
                 )
                 .with_relations(std::collections::BTreeMap::from([(
-                    db::ArtistRelationType::VoiceActor,
+                    crate::db::ArtistRelationType::VoiceActor,
                     vec![LayerRelationInput {
                         artist_id: actor,
                         attributes: None,
@@ -760,16 +778,16 @@ mod tests {
         }
 
         assert_eq!(deduplicate_artists_by_external_id(&mut db)?, 1);
-        let winner = if db::artists::get_by_id(&db, first)?.is_some() {
+        let winner = if crate::db::artists::get_by_id(&db, first)?.is_some() {
             first
         } else {
             second
         };
         let voice_actors = |db: &DbAny| -> anyhow::Result<Vec<DbId>> {
-            let mut actors: Vec<DbId> = db::artists::relations::get_relations_to(
+            let mut actors: Vec<DbId> = crate::db::artists::relations::get_relations_to(
                 db,
                 winner,
-                Some(db::ArtistRelationType::VoiceActor),
+                Some(crate::db::ArtistRelationType::VoiceActor),
             )?
             .into_iter()
             .map(|(_, actor)| actor)
@@ -803,19 +821,19 @@ mod tests {
         use crate::services::metadata::layers::LOCAL_SOURCE_ID;
 
         let mut db = test_db::new_test_db()?;
-        let winner = test_db::insert_artist(&mut db, "Character")?;
-        let loser = test_db::insert_artist(&mut db, "Character")?;
-        let actor = test_db::insert_artist(&mut db, "Actor")?;
+        let winner = crate::db::fixtures::insert_artist(&mut db, "Character")?;
+        let loser = crate::db::fixtures::insert_artist(&mut db, "Character")?;
+        let actor = crate::db::fixtures::insert_artist(&mut db, "Actor")?;
         layers::upsert(
             &mut db,
             loser,
-            &db::MetadataLayer::new(
+            &crate::db::MetadataLayer::new(
                 LOCAL_SOURCE_ID,
                 layers::fields_from_json(serde_json::json!({"artist_name": "Character"})),
                 1,
             )
             .with_relations(std::collections::BTreeMap::from([(
-                db::ArtistRelationType::VoiceActor,
+                crate::db::ArtistRelationType::VoiceActor,
                 vec![LayerRelationInput {
                     artist_id: actor,
                     attributes: None,
@@ -823,19 +841,19 @@ mod tests {
             )])),
         )?;
         crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, loser)?;
-        let mut locked = db::artists::get_by_id(&db, winner)?.expect("winner exists");
+        let mut locked = crate::db::artists::get_by_id(&db, winner)?.expect("winner exists");
         locked.locked = Some(true);
-        db::artists::update(&mut db, &locked)?;
+        crate::db::artists::update(&mut db, &locked)?;
 
         db.transaction_mut(|t| {
             migrate_metadata(t, winner, loser)?;
             merge_artist_into(t, winner, loser)
         })?;
         let voice_actors = |db: &DbAny| -> anyhow::Result<Vec<DbId>> {
-            Ok(db::artists::relations::get_relations_to(
+            Ok(crate::db::artists::relations::get_relations_to(
                 db,
                 winner,
-                Some(db::ArtistRelationType::VoiceActor),
+                Some(crate::db::ArtistRelationType::VoiceActor),
             )?
             .into_iter()
             .map(|(_, actor)| actor)
@@ -843,9 +861,9 @@ mod tests {
         };
         assert_eq!(voice_actors(&db)?, vec![actor]);
 
-        let mut unlocked = db::artists::get_by_id(&db, winner)?.expect("winner exists");
+        let mut unlocked = crate::db::artists::get_by_id(&db, winner)?.expect("winner exists");
         unlocked.locked = None;
-        db::artists::update(&mut db, &unlocked)?;
+        crate::db::artists::update(&mut db, &unlocked)?;
         crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, winner)?;
         assert_eq!(
             voice_actors(&db)?,
@@ -859,18 +877,18 @@ mod tests {
     fn dedup_drops_loser_external_ids_from_other_providers() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
 
-        db::providers::upsert(
+        crate::db::providers::upsert(
             &mut db,
-            &db::ProviderConfig {
+            &crate::db::ProviderConfig {
                 db_id: None,
                 provider_id: "provider-a".to_string(),
                 priority: 100,
                 enabled: true,
             },
         )?;
-        db::providers::upsert(
+        crate::db::providers::upsert(
             &mut db,
-            &db::ProviderConfig {
+            &crate::db::ProviderConfig {
                 db_id: None,
                 provider_id: "provider-b".to_string(),
                 priority: 50,
@@ -878,17 +896,17 @@ mod tests {
             },
         )?;
 
-        let artist_a = test_db::insert_artist(&mut db, "Radiohead")?;
-        let artist_b = test_db::insert_artist(&mut db, "Radiohead")?;
+        let artist_a = crate::db::fixtures::insert_artist(&mut db, "Radiohead")?;
+        let artist_b = crate::db::fixtures::insert_artist(&mut db, "Radiohead")?;
 
         // Give artist A more edges so it wins the merge
-        let release = test_db::insert_release(&mut db, "OK Computer")?;
-        test_db::connect(&mut db, release, artist_a)?;
-        let track = test_db::insert_track(&mut db, "Paranoid Android")?;
-        test_db::connect(&mut db, track, artist_a)?;
+        let release = crate::db::fixtures::insert_release(&mut db, "OK Computer")?;
+        crate::db::fixtures::connect(&mut db, release, artist_a)?;
+        let track = crate::db::fixtures::insert_track(&mut db, "Paranoid Android")?;
+        crate::db::fixtures::connect(&mut db, track, artist_a)?;
 
         // Both artists share the same ID from provider A (triggers dedup)
-        db::external_ids::upsert(
+        crate::db::external_ids::upsert(
             &mut db,
             artist_a,
             "provider-a",
@@ -896,7 +914,7 @@ mod tests {
             "shared-id",
             IdSource::Resolved,
         )?;
-        db::external_ids::upsert(
+        crate::db::external_ids::upsert(
             &mut db,
             artist_b,
             "provider-a",
@@ -906,7 +924,7 @@ mod tests {
         )?;
 
         // Artist B (the loser) also has an ID from provider B
-        db::external_ids::upsert(
+        crate::db::external_ids::upsert(
             &mut db,
             artist_b,
             "provider-b",
@@ -918,10 +936,10 @@ mod tests {
         let merged_count = deduplicate_artists_by_external_id(&mut db)?;
         assert_eq!(merged_count, 1);
 
-        let a_exists = db::artists::get_by_id(&db, artist_a)?.is_some();
+        let a_exists = crate::db::artists::get_by_id(&db, artist_a)?.is_some();
         assert!(a_exists, "artist A should win (more edges)");
 
-        let winner_ext_ids = db::external_ids::get_for_entity(&db, artist_a)?;
+        let winner_ext_ids = crate::db::external_ids::get_for_entity(&db, artist_a)?;
         let has_provider_b_id = winner_ext_ids
             .iter()
             .any(|id| id.provider_id == "provider-b");
@@ -942,11 +960,11 @@ mod tests {
         };
 
         let mut db = test_db::new_test_db()?;
-        let source = test_db::insert_artist(&mut db, "Source")?;
-        let actor = test_db::insert_artist(&mut db, "Actor")?;
-        let winner = test_db::insert_artist(&mut db, "Winner")?;
-        let loser = test_db::insert_artist(&mut db, "Loser")?;
-        let target = test_db::insert_artist(&mut db, "Target")?;
+        let source = crate::db::fixtures::insert_artist(&mut db, "Source")?;
+        let actor = crate::db::fixtures::insert_artist(&mut db, "Actor")?;
+        let winner = crate::db::fixtures::insert_artist(&mut db, "Winner")?;
+        let loser = crate::db::fixtures::insert_artist(&mut db, "Loser")?;
+        let target = crate::db::fixtures::insert_artist(&mut db, "Target")?;
         let relation = |artist_id, attributes: &str| LayerRelationInput {
             artist_id,
             attributes: Some(attributes.to_string()),
@@ -954,20 +972,20 @@ mod tests {
         layers::upsert(
             &mut db,
             winner,
-            &db::MetadataLayer::new(
+            &crate::db::MetadataLayer::new(
                 MANUAL_SOURCE_ID,
                 layers::fields_from_json(serde_json::json!({"artist_name": "Winner"})),
                 1,
             )
             .with_relations(std::collections::BTreeMap::from([(
-                db::ArtistRelationType::MemberOf,
+                crate::db::ArtistRelationType::MemberOf,
                 vec![relation(source, "winner's")],
             )])),
         )?;
         layers::upsert(
             &mut db,
             loser,
-            &db::MetadataLayer::new(
+            &crate::db::MetadataLayer::new(
                 MANUAL_SOURCE_ID,
                 layers::fields_from_json(serde_json::json!({
                     "artist_name": "Loser",
@@ -977,27 +995,27 @@ mod tests {
             )
             .with_relations(std::collections::BTreeMap::from([
                 (
-                    db::ArtistRelationType::MemberOf,
+                    crate::db::ArtistRelationType::MemberOf,
                     vec![relation(source, "loser's")],
                 ),
                 (
-                    db::ArtistRelationType::VoiceActor,
+                    crate::db::ArtistRelationType::VoiceActor,
                     vec![relation(actor, "loser's"), relation(winner, "self")],
                 ),
             ])),
         )?;
-        db::artists::relations::link(
+        crate::db::artists::relations::link(
             &mut db,
             winner,
             target,
-            db::ArtistRelationType::VoiceActor,
+            crate::db::ArtistRelationType::VoiceActor,
             Some("existing outgoing".to_string()),
         )?;
-        db::artists::relations::link(
+        crate::db::artists::relations::link(
             &mut db,
             loser,
             target,
-            db::ArtistRelationType::VoiceActor,
+            crate::db::ArtistRelationType::VoiceActor,
             Some("outgoing".to_string()),
         )?;
 
@@ -1006,28 +1024,28 @@ mod tests {
             merge_artist_into(transaction, winner, loser)
         })?;
 
-        let artist = db::artists::get_by_id(&db, winner)?.expect("winner exists");
+        let artist = crate::db::artists::get_by_id(&db, winner)?.expect("winner exists");
         assert_eq!(artist.artist_name, "Winner");
         assert_eq!(artist.description.as_deref(), Some("Loser's description"));
         let incoming = |relation_type| -> anyhow::Result<Vec<(DbId, Option<String>)>> {
             Ok(
-                db::artists::relations::get_relations_to(&db, winner, Some(relation_type))?
+                crate::db::artists::relations::get_relations_to(&db, winner, Some(relation_type))?
                     .into_iter()
                     .map(|(relation, source)| (source, relation.attributes))
                     .collect(),
             )
         };
         assert_eq!(
-            incoming(db::ArtistRelationType::MemberOf)?,
+            incoming(crate::db::ArtistRelationType::MemberOf)?,
             vec![(source, Some("winner's".to_string()))],
             "the winner's manual relations win"
         );
         assert_eq!(
-            incoming(db::ArtistRelationType::VoiceActor)?,
+            incoming(crate::db::ArtistRelationType::VoiceActor)?,
             vec![(actor, Some("loser's".to_string()))],
             "the loser's fill what the winner leaves out"
         );
-        let outgoing = db::artists::relations::get_relations_from(&db, winner, None)?;
+        let outgoing = crate::db::artists::relations::get_relations_from(&db, winner, None)?;
         assert_eq!(outgoing.len(), 1);
         assert_eq!(outgoing[0].1, target);
         assert_eq!(
@@ -1040,55 +1058,56 @@ mod tests {
     #[test]
     fn artist_merge_does_not_turn_relations_into_ownership_edges() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
-        let winner = test_db::insert_artist(&mut db, "Winner")?;
-        let loser = test_db::insert_artist(&mut db, "Loser")?;
-        db::artists::relations::link(
+        let winner = crate::db::fixtures::insert_artist(&mut db, "Winner")?;
+        let loser = crate::db::fixtures::insert_artist(&mut db, "Loser")?;
+        crate::db::artists::relations::link(
             &mut db,
             winner,
             loser,
-            db::ArtistRelationType::MemberOf,
+            crate::db::ArtistRelationType::MemberOf,
             None,
         )?;
 
         db.transaction_mut(|transaction| merge_artist_into(transaction, winner, loser))?;
 
-        assert!(db::graph::direct_edge_ids(&db, winner, winner)?.is_empty());
+        assert!(crate::db::graph::direct_edge_ids(&db, winner, winner)?.is_empty());
         Ok(())
     }
 
     #[test]
     fn artist_merge_moves_credits_with_their_values() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
-        let track = test_db::insert_track(&mut db, "Track")?;
-        let winner = test_db::insert_artist(&mut db, "Winner")?;
-        let loser = test_db::insert_artist(&mut db, "Loser")?;
-        let credit =
-            |artist_id, detail: Option<&str>| db::metadata::layers::edges::LayerCreditInput {
+        let track = crate::db::fixtures::insert_track(&mut db, "Track")?;
+        let winner = crate::db::fixtures::insert_artist(&mut db, "Winner")?;
+        let loser = crate::db::fixtures::insert_artist(&mut db, "Loser")?;
+        let credit = |artist_id, detail: Option<&str>| {
+            crate::db::metadata::layers::edges::LayerCreditInput {
                 artist_id,
                 detail: detail.map(str::to_string),
-            };
-        db::metadata::layers::upsert(
+            }
+        };
+        crate::db::metadata::layers::upsert(
             &mut db,
             track,
-            &db::MetadataLayer::new("local", Default::default(), 1).with_credits(
+            &crate::db::MetadataLayer::new("local", Default::default(), 1).with_credits(
                 std::collections::BTreeMap::from([
                     (
-                        db::CreditType::Artist,
+                        crate::db::CreditType::Artist,
                         vec![credit(winner, None), credit(loser, None)],
                     ),
                     (
-                        db::CreditType::Producer,
+                        crate::db::CreditType::Producer,
                         vec![credit(loser, Some("co-producer"))],
                     ),
                 ]),
             ),
         )?;
         crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track)?;
-        assert_eq!(db::credits::links_for_owner(&db, track)?.len(), 3);
+        assert_eq!(crate::db::credits::links_for_owner(&db, track)?.len(), 3);
 
         db.transaction_mut(|transaction| merge_artist_into(transaction, winner, loser))?;
 
-        let mut credits: Vec<db::Credit> = db::credits::links_for_owner(&db, track)?
+        let mut credits: Vec<crate::db::Credit> = crate::db::credits::links_for_owner(&db, track)?
             .into_iter()
             .inspect(|link| assert_eq!(link.artist_id, winner))
             .map(|link| link.credit)
@@ -1097,22 +1116,22 @@ mod tests {
         assert_eq!(
             credits,
             [
-                db::Credit {
-                    credit_type: db::CreditType::Artist,
+                crate::db::Credit {
+                    credit_type: crate::db::CreditType::Artist,
                     detail: None,
                     artist_order: 0,
                 },
-                db::Credit {
-                    credit_type: db::CreditType::Producer,
+                crate::db::Credit {
+                    credit_type: crate::db::CreditType::Producer,
                     detail: Some("co-producer".to_string()),
                     artist_order: 1,
                 },
             ]
         );
-        let before = db::credits::links_for_owner(&db, track)?;
+        let before = crate::db::credits::links_for_owner(&db, track)?;
         crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track)?;
         assert_eq!(
-            db::credits::links_for_owner(&db, track)?,
+            crate::db::credits::links_for_owner(&db, track)?,
             before,
             "a later apply keeps the merged credits"
         );
@@ -1122,17 +1141,17 @@ mod tests {
     #[test]
     fn an_artist_merge_credits_the_winner() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
-        let layer_track = test_db::insert_track(&mut db, "Layer Track")?;
-        let manual_track = test_db::insert_track(&mut db, "Manual Track")?;
-        let winner = test_db::insert_artist(&mut db, "Winner")?;
-        let loser = test_db::insert_artist(&mut db, "Loser")?;
-        db::metadata::layers::upsert(
+        let layer_track = crate::db::fixtures::insert_track(&mut db, "Layer Track")?;
+        let manual_track = crate::db::fixtures::insert_track(&mut db, "Manual Track")?;
+        let winner = crate::db::fixtures::insert_artist(&mut db, "Winner")?;
+        let loser = crate::db::fixtures::insert_artist(&mut db, "Loser")?;
+        crate::db::metadata::layers::upsert(
             &mut db,
             layer_track,
-            &db::MetadataLayer::new("local", Default::default(), 1).with_credits(
+            &crate::db::MetadataLayer::new("local", Default::default(), 1).with_credits(
                 std::collections::BTreeMap::from([(
-                    db::CreditType::Artist,
-                    vec![db::metadata::layers::edges::LayerCreditInput {
+                    crate::db::CreditType::Artist,
+                    vec![crate::db::metadata::layers::edges::LayerCreditInput {
                         artist_id: loser,
                         detail: None,
                     }],
@@ -1141,7 +1160,7 @@ mod tests {
         )?;
         crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, layer_track)?;
         let credited = |db: &DbAny, artist_id| -> anyhow::Result<bool> {
-            Ok(db::artists::get_by_id(db, artist_id)?.is_some_and(|artist| artist.credited))
+            Ok(crate::db::artists::get_by_id(db, artist_id)?.is_some_and(|artist| artist.credited))
         };
         assert!(!credited(&db, winner)?);
 
@@ -1151,15 +1170,15 @@ mod tests {
             "the reapplied layer credits the winner"
         );
 
-        let other = test_db::insert_artist(&mut db, "Other")?;
-        let manual_loser = test_db::insert_artist(&mut db, "Manual Loser")?;
-        db::metadata::layers::upsert(
+        let other = crate::db::fixtures::insert_artist(&mut db, "Other")?;
+        let manual_loser = crate::db::fixtures::insert_artist(&mut db, "Manual Loser")?;
+        crate::db::metadata::layers::upsert(
             &mut db,
             manual_track,
-            &db::MetadataLayer::new(MANUAL_SOURCE_ID, Default::default(), 1).with_credits(
+            &crate::db::MetadataLayer::new(MANUAL_SOURCE_ID, Default::default(), 1).with_credits(
                 std::collections::BTreeMap::from([(
-                    db::CreditType::Artist,
-                    vec![db::metadata::layers::edges::LayerCreditInput {
+                    crate::db::CreditType::Artist,
+                    vec![crate::db::metadata::layers::edges::LayerCreditInput {
                         artist_id: manual_loser,
                         detail: None,
                     }],
@@ -1177,11 +1196,11 @@ mod tests {
     fn chained_merges_carry_scan_aliases() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
         let tag_artist = |db: &mut DbAny, name: &str, verified: bool| -> anyhow::Result<DbId> {
-            let artist_id = test_db::insert_artist(db, name)?;
-            let mut artist = db::artists::get_by_id(db, artist_id)?.expect("artist");
+            let artist_id = crate::db::fixtures::insert_artist(db, name)?;
+            let mut artist = crate::db::artists::get_by_id(db, artist_id)?.expect("artist");
             artist.set_verified(verified);
-            db::artists::update(db, &artist)?;
-            db::external_ids::upsert(
+            crate::db::artists::update(db, &artist)?;
+            crate::db::external_ids::upsert(
                 db,
                 artist_id,
                 "musicbrainz",
@@ -1197,26 +1216,31 @@ mod tests {
         let last = tag_artist(&mut db, "Mr.Children (JP)", true)?;
         assert_eq!(deduplicate_artists_by_external_id(&mut db)?, 1);
 
-        assert!(db::artists::get_by_id(&db, first)?.is_none());
-        let winner = db::artists::get_by_id(&db, last)?.expect("winner");
+        assert!(crate::db::artists::get_by_id(&db, first)?.is_none());
+        let winner = crate::db::artists::get_by_id(&db, last)?.expect("winner");
         assert_eq!(winner.scan_aliases, ["mr.children", "mr children"]);
         for name in ["mr children", "mr.children"] {
-            assert_eq!(db::artists::find_id_by_scan_name(&db, name)?, Some(last));
+            assert_eq!(
+                crate::db::artists::find_id_by_scan_name(&db, name)?,
+                Some(last)
+            );
         }
         Ok(())
     }
 
     fn corrupt_manual_layer(db: &mut DbAny, node_id: DbId) -> anyhow::Result<()> {
-        db::metadata::layers::upsert(
+        crate::db::metadata::layers::upsert(
             db,
             node_id,
-            &db::MetadataLayer::new(
+            &crate::db::MetadataLayer::new(
                 MANUAL_SOURCE_ID,
-                db::metadata::layers::fields_from_json(serde_json::json!({"artist_name": "X"})),
+                crate::db::metadata::layers::fields_from_json(
+                    serde_json::json!({"artist_name": "X"}),
+                ),
                 1,
             ),
         )?;
-        let layer_id = db::metadata::layers::layer_id(db, node_id, MANUAL_SOURCE_ID)?
+        let layer_id = crate::db::metadata::layers::layer_id(db, node_id, MANUAL_SOURCE_ID)?
             .expect("manual layer exists");
         db.exec_mut(
             QueryBuilder::insert()
@@ -1230,13 +1254,13 @@ mod tests {
     #[test]
     fn dedup_skips_only_a_pair_with_an_invalid_manual_layer() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
-        let winner = test_db::insert_artist(&mut db, "Artist")?;
-        let corrupt = test_db::insert_artist(&mut db, "Artist")?;
-        let duplicate = test_db::insert_artist(&mut db, "Artist")?;
-        let release = test_db::insert_release(&mut db, "Release")?;
-        test_db::connect(&mut db, release, winner)?;
+        let winner = crate::db::fixtures::insert_artist(&mut db, "Artist")?;
+        let corrupt = crate::db::fixtures::insert_artist(&mut db, "Artist")?;
+        let duplicate = crate::db::fixtures::insert_artist(&mut db, "Artist")?;
+        let release = crate::db::fixtures::insert_release(&mut db, "Release")?;
+        crate::db::fixtures::connect(&mut db, release, winner)?;
         for artist in [winner, corrupt, duplicate] {
-            db::external_ids::upsert(
+            crate::db::external_ids::upsert(
                 &mut db,
                 artist,
                 "musicbrainz",
@@ -1249,15 +1273,15 @@ mod tests {
 
         assert_eq!(deduplicate_artists_by_external_id(&mut db)?, 1);
 
-        assert!(db::artists::get_by_id(&db, winner)?.is_some());
-        assert!(db::artists::get_by_id(&db, duplicate)?.is_none());
-        assert!(db::artists::get_by_id(&db, corrupt)?.is_some());
+        assert!(crate::db::artists::get_by_id(&db, winner)?.is_some());
+        assert!(crate::db::artists::get_by_id(&db, duplicate)?.is_none());
+        assert!(crate::db::artists::get_by_id(&db, corrupt)?.is_some());
         assert_eq!(
-            db::metadata::layers::ids_for_entity(&db, corrupt)?.len(),
+            crate::db::metadata::layers::ids_for_entity(&db, corrupt)?.len(),
             1,
             "the invalid layer is left for repair"
         );
-        assert!(db::metadata::layers::ids_for_entity(&db, winner)?.is_empty());
+        assert!(crate::db::metadata::layers::ids_for_entity(&db, winner)?.is_empty());
         Ok(())
     }
 
@@ -1266,13 +1290,13 @@ mod tests {
         use crate::db::metadata::layers::edges::LayerRelationInput;
 
         let mut db = test_db::new_test_db()?;
-        let winner = test_db::insert_artist(&mut db, "Winner")?;
-        let loser = test_db::insert_artist(&mut db, "Loser")?;
-        let actor = test_db::insert_artist(&mut db, "Actor")?;
-        let member = test_db::insert_artist(&mut db, "Member")?;
-        db::providers::upsert(
+        let winner = crate::db::fixtures::insert_artist(&mut db, "Winner")?;
+        let loser = crate::db::fixtures::insert_artist(&mut db, "Loser")?;
+        let actor = crate::db::fixtures::insert_artist(&mut db, "Actor")?;
+        let member = crate::db::fixtures::insert_artist(&mut db, "Member")?;
+        crate::db::providers::upsert(
             &mut db,
-            &db::ProviderConfig {
+            &crate::db::ProviderConfig {
                 db_id: None,
                 provider_id: "provider".to_string(),
                 priority: 10,
@@ -1280,7 +1304,7 @@ mod tests {
             },
         )?;
         let relations =
-            |pairs: &[(db::ArtistRelationType, &[DbId])]| -> db::metadata::layers::LayerRelations {
+            |pairs: &[(crate::db::ArtistRelationType, &[DbId])]| -> crate::db::metadata::layers::LayerRelations {
                 pairs
                     .iter()
                     .map(|(relation_type, artist_ids)| {
@@ -1297,34 +1321,34 @@ mod tests {
                     })
                     .collect()
             };
-        db::metadata::layers::upsert(
+        crate::db::metadata::layers::upsert(
             &mut db,
             winner,
-            &db::MetadataLayer::new("provider", Default::default(), 1).with_relations(relations(
-                &[
-                    (db::ArtistRelationType::VoiceActor, &[actor]),
-                    (db::ArtistRelationType::MemberOf, &[member]),
-                ],
-            )),
+            &crate::db::MetadataLayer::new("provider", Default::default(), 1).with_relations(
+                relations(&[
+                    (crate::db::ArtistRelationType::VoiceActor, &[actor]),
+                    (crate::db::ArtistRelationType::MemberOf, &[member]),
+                ]),
+            ),
         )?;
-        db::metadata::layers::upsert(
+        crate::db::metadata::layers::upsert(
             &mut db,
             winner,
-            &db::MetadataLayer::new(
+            &crate::db::MetadataLayer::new(
                 MANUAL_SOURCE_ID,
-                db::metadata::layers::fields_from_json(
+                crate::db::metadata::layers::fields_from_json(
                     serde_json::json!({"artist_name": "Winner"}),
                 ),
                 1,
             ),
         )?;
-        db::metadata::layers::upsert(
+        crate::db::metadata::layers::upsert(
             &mut db,
             loser,
-            &db::MetadataLayer::new(MANUAL_SOURCE_ID, Default::default(), 1).with_relations(
+            &crate::db::MetadataLayer::new(MANUAL_SOURCE_ID, Default::default(), 1).with_relations(
                 relations(&[
-                    (db::ArtistRelationType::VoiceActor, &[winner]),
-                    (db::ArtistRelationType::MemberOf, &[]),
+                    (crate::db::ArtistRelationType::VoiceActor, &[winner]),
+                    (crate::db::ArtistRelationType::MemberOf, &[]),
                 ]),
             ),
         )?;
@@ -1336,19 +1360,19 @@ mod tests {
 
         let incoming = |relation_type| -> anyhow::Result<Vec<DbId>> {
             Ok(
-                db::artists::relations::get_relations_to(&db, winner, Some(relation_type))?
+                crate::db::artists::relations::get_relations_to(&db, winner, Some(relation_type))?
                     .into_iter()
                     .map(|(_, source)| source)
                     .collect(),
             )
         };
         assert_eq!(
-            incoming(db::ArtistRelationType::VoiceActor)?,
+            incoming(crate::db::ArtistRelationType::VoiceActor)?,
             vec![actor],
             "a type that only named the winner falls through"
         );
         assert!(
-            incoming(db::ArtistRelationType::MemberOf)?.is_empty(),
+            incoming(crate::db::ArtistRelationType::MemberOf)?.is_empty(),
             "a type the loser cleared stays cleared"
         );
         Ok(())

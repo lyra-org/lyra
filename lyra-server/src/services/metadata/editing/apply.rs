@@ -15,7 +15,6 @@ use serde_json::{
 };
 
 use crate::db::{
-    self,
     DbAccess,
     MetadataField,
     MetadataLayer,
@@ -52,7 +51,7 @@ fn normalized<T: DeserializeOwned>(value: &Value) -> anyhow::Result<T> {
 }
 
 fn require_node_id(db: &impl DbAccess, public_id: &str) -> anyhow::Result<DbId> {
-    db::lookup::find_node_id_by_id(db, public_id)?.ok_or_else(|| {
+    crate::db::lookup::find_node_id_by_id(db, public_id)?.ok_or_else(|| {
         anyhow::anyhow!("normalized metadata reference '{public_id}' disappeared before apply")
     })
 }
@@ -72,7 +71,7 @@ fn edit_layer(
         MetadataField::Credits => {
             layer.credits.clear();
             if manual {
-                layer.credits = db::CreditType::ALL
+                layer.credits = crate::db::CreditType::ALL
                     .into_iter()
                     .map(|credit_type| (credit_type, Vec::new()))
                     .collect();
@@ -91,7 +90,7 @@ fn edit_layer(
         MetadataField::Relations => {
             layer.relations.clear();
             if manual {
-                layer.relations = db::ArtistRelationType::ALL
+                layer.relations = crate::db::ArtistRelationType::ALL
                     .into_iter()
                     .map(|relation_type| (relation_type, Vec::new()))
                     .collect();
@@ -138,8 +137,8 @@ fn released_keys(diff: &[MetadataFieldDiff]) -> LayerKeys {
     let mut keys = LayerKeys::default();
     for entry in diff {
         match entry.field {
-            MetadataField::Credits => keys.credits.extend(db::CreditType::ALL),
-            MetadataField::Relations => keys.relations.extend(db::ArtistRelationType::ALL),
+            MetadataField::Credits => keys.credits.extend(crate::db::CreditType::ALL),
+            MetadataField::Relations => keys.relations.extend(crate::db::ArtistRelationType::ALL),
             field => {
                 keys.fields.insert(field);
             }
@@ -153,20 +152,20 @@ fn apply_inside_tx(
     state: &EntityState,
     diff: &[MetadataFieldDiff],
 ) -> anyhow::Result<()> {
-    let stored_id = db::metadata::layers::layer_id(db, state.db_id, MANUAL_SOURCE_ID)?;
-    let mut layer = db::metadata::layers::find_valid(db, state.db_id, MANUAL_SOURCE_ID)?
+    let stored_id = crate::db::metadata::layers::layer_id(db, state.db_id, MANUAL_SOURCE_ID)?;
+    let mut layer = crate::db::metadata::layers::find_valid(db, state.db_id, MANUAL_SOURCE_ID)?
         .unwrap_or_else(|| MetadataLayer::new(MANUAL_SOURCE_ID, Default::default(), 0));
     layer.updated_at = now_secs();
     let mut labels = match stored_id {
         Some(layer_id) if layer.fields.contains_key(&MetadataField::Labels) => {
-            db::metadata::layers::label_links(db, layer_id)?
+            crate::db::metadata::layers::label_links(db, layer_id)?
         }
         _ => Vec::new(),
     };
     for entry in diff {
         edit_layer(db, &mut layer, &mut labels, entry)?;
     }
-    db::metadata::layers::replace_inside_tx(db, state.db_id, &layer, Some(&labels))?;
+    crate::db::metadata::layers::replace_inside_tx(db, state.db_id, &layer, Some(&labels))?;
     // An edit applies even to a locked entity.
     merging::apply_through_lock(db, state.db_id, &released_keys(diff))
 }

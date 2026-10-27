@@ -58,11 +58,7 @@ pub(crate) fn get(
         .find(|row| row.provider_id == provider_id && row.version == version))
 }
 
-pub(crate) fn upsert(
-    db: &mut DbAny,
-    node_id: DbId,
-    row: &ProviderCustomFields,
-) -> anyhow::Result<DbId> {
+pub fn upsert(db: &mut DbAny, node_id: DbId, row: &ProviderCustomFields) -> anyhow::Result<DbId> {
     db.transaction_mut(|t| -> anyhow::Result<DbId> { upsert_inside_tx(t, node_id, row) })
 }
 

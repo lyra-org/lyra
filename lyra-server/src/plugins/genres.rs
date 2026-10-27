@@ -30,15 +30,13 @@ use serde::{
     Serialize,
 };
 
+use crate::db::genres::{
+    ResolveExternalId,
+    ResolveGenre,
+};
 use crate::plugins::args;
 use crate::plugins::catalog;
-use crate::plugins::db::{
-    self,
-    genres::{
-        ResolveExternalId,
-        ResolveGenre,
-    },
-};
+use crate::plugins::db;
 use crate::services::catalog::genres::GenreKey;
 use crate::services::{
     self,
@@ -190,13 +188,13 @@ fn artwork_release_ids_callback(
     let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        if db::genres::get_by_id(&*db, genre_id)
+        if crate::db::genres::get_by_id(&*db, genre_id)
             .map_err(crate::plugins::runtime_error)?
             .is_none()
         {
             return harmony_luau::serializable_to_luau_owned(Vec::<i64>::new());
         }
-        let releases = db::genres::get_releases_many(&*db, &[genre_id])
+        let releases = crate::db::genres::get_releases_many(&*db, &[genre_id])
             .map_err(crate::plugins::runtime_error)?
             .remove(&genre_id)
             .unwrap_or_default();
@@ -240,7 +238,7 @@ fn add_parent_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let mut db = db.write().await;
-        db::genres::link_to_parent(&mut db, DbId(child_id), DbId(parent_id))
+        crate::db::genres::link_to_parent(&mut db, DbId(child_id), DbId(parent_id))
             .map_err(crate::plugins::runtime_error)
     }))
 }
@@ -259,10 +257,11 @@ fn find_by_name_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let genre = {
             let db = db.read().await;
-            match db::genres::find_by_name(&db, &trimmed).map_err(crate::plugins::runtime_error)? {
-                Some(db_id) => {
-                    db::genres::get_by_id(&db, db_id).map_err(crate::plugins::runtime_error)?
-                }
+            match crate::db::genres::find_by_name(&db, &trimmed)
+                .map_err(crate::plugins::runtime_error)?
+            {
+                Some(db_id) => crate::db::genres::get_by_id(&db, db_id)
+                    .map_err(crate::plugins::runtime_error)?,
                 None => None,
             }
         };
@@ -323,7 +322,7 @@ fn resolve_genre_from_request(
             id_value: &external_id.id_value,
         });
 
-    db::genres::resolve(
+    crate::db::genres::resolve(
         db,
         &ResolveGenre {
             name: &request.name,
@@ -340,8 +339,8 @@ pub(crate) struct GenreRecord {
     name: String,
 }
 
-impl From<db::genres::Genre> for GenreRecord {
-    fn from(genre: db::genres::Genre) -> Self {
+impl From<crate::db::genres::Genre> for GenreRecord {
+    fn from(genre: crate::db::genres::Genre) -> Self {
         Self {
             db_id: genre.db_id.map(DbId::from).map(|id| id.0),
             id: genre.id,
@@ -350,7 +349,9 @@ impl From<db::genres::Genre> for GenreRecord {
     }
 }
 
-fn optional_genre_value(genre: Option<db::genres::Genre>) -> luau::runtime::Result<luau::Value> {
+fn optional_genre_value(
+    genre: Option<crate::db::genres::Genre>,
+) -> luau::runtime::Result<luau::Value> {
     match genre {
         Some(genre) => harmony_luau::serializable_to_luau_owned(GenreRecord::from(genre)),
         None => Ok(luau::Value::Nil),

@@ -648,10 +648,8 @@ pub(crate) fn get_releases_many(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::test_db::{
-        insert_release,
-        new_test_db,
-    };
+    use crate::db::fixtures::insert_release;
+    use crate::db::test_db::new_test_db;
 
     fn resolve_simple(db: &mut DbAny, name: &str) -> anyhow::Result<DbId> {
         resolve(
@@ -1295,7 +1293,7 @@ mod tests {
         // the Artist resolution path (see services::metadata::ingestion::artists)
         // must only return the Artist.
         let mut db = new_test_db()?;
-        let artist_id = crate::db::test_db::insert_artist(&mut db, "EMI")?;
+        let artist_id = crate::db::fixtures::insert_artist(&mut db, "EMI")?;
         let label_id = resolve_simple(&mut db, "EMI")?;
 
         assert_ne!(artist_id, label_id);

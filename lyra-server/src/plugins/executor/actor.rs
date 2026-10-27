@@ -25,6 +25,8 @@ use harmony_core::{
     },
 };
 
+use futures::future::BoxFuture;
+
 use super::messages::PluginExecutorCommand;
 use super::{
     ApiHandlerRequest,
@@ -38,6 +40,8 @@ use super::{
     SimilarReleasesDispatchResult,
     WebSocketStartRequest,
 };
+use crate::services::playback_sessions::PlaybackUpdatePayload;
+use crate::services::plugin_dispatch::PluginDispatch;
 
 const EXECUTOR_QUEUE_CAPACITY: usize = 256;
 
@@ -110,9 +114,9 @@ impl PluginExecutorHandle {
         plugins_dir: impl Into<PathBuf>,
         server_info: crate::plugins::server::ServerInfo,
         auth_capabilities: crate::plugins::auth::AuthCapabilities,
-        db: crate::plugins::db::DbAsync,
+        db: crate::db::DbAsync,
         module_overrides: Vec<ModuleSpec>,
-        settings: Option<crate::SettingsHandle>,
+        settings: Option<crate::services::state::SettingsHandle>,
     ) -> Result<(Self, Vec<PluginLoadError>)> {
         let plugins_dir = plugins_dir.into();
         let (tx, rx) = plugin_executor_channel(EXECUTOR_QUEUE_CAPACITY);
@@ -148,14 +152,6 @@ impl PluginExecutorHandle {
             .recv()
             .context("plugin executor thread exited during startup")??;
         Ok((Self { id, tx }, errors))
-    }
-
-    pub(crate) fn same_instance(&self, other: &Self) -> bool {
-        self.id == other.id
-    }
-
-    pub(crate) fn vm_id(&self) -> u64 {
-        self.id
     }
 
     pub(crate) async fn plugin_manifests(&self) -> Result<Vec<PluginManifest>> {
@@ -200,38 +196,6 @@ impl PluginExecutorHandle {
         self.request_async(PluginExecutorCommand::ExecAll).await
     }
 
-    pub(crate) fn dispatch_playback_update(
-        &self,
-        payload: crate::services::playback_sessions::PlaybackUpdatePayload,
-    ) -> Result<()> {
-        self.tx
-            .try_send(PluginExecutorCommand::PlaybackUpdate(payload))
-    }
-
-    pub(crate) async fn dispatch_mix_handler(
-        &self,
-        request: MixHandlerRequest,
-    ) -> Result<MixHandlerResult> {
-        self.request_async(|reply| PluginExecutorCommand::MixHandler { request, reply })
-            .await
-    }
-
-    pub(crate) async fn dispatch_metadata_refresh(
-        &self,
-        request: MetadataRefreshRequest,
-    ) -> Result<MetadataRefreshResult> {
-        self.request_async(|reply| PluginExecutorCommand::MetadataRefresh { request, reply })
-            .await
-    }
-
-    pub(crate) async fn dispatch_similar_releases(
-        &self,
-        request: SimilarReleasesDispatchRequest,
-    ) -> Result<SimilarReleasesDispatchResult> {
-        self.request_async(|reply| PluginExecutorCommand::SimilarReleases { request, reply })
-            .await
-    }
-
     pub(crate) async fn dispatch_api_handler(
         &self,
         request: ApiHandlerRequest,
@@ -256,6 +220,42 @@ impl PluginExecutorHandle {
         self.tx.send(build(reply)).await?;
         rx.await
             .context("plugin executor thread dropped response")?
+    }
+}
+
+impl PluginDispatch for PluginExecutorHandle {
+    fn vm_id(&self) -> u64 {
+        self.id
+    }
+
+    fn dispatch_metadata_refresh(
+        &self,
+        request: MetadataRefreshRequest,
+    ) -> BoxFuture<'_, Result<MetadataRefreshResult>> {
+        Box::pin(
+            self.request_async(|reply| PluginExecutorCommand::MetadataRefresh { request, reply }),
+        )
+    }
+
+    fn dispatch_mix_handler(
+        &self,
+        request: MixHandlerRequest,
+    ) -> BoxFuture<'_, Result<MixHandlerResult>> {
+        Box::pin(self.request_async(|reply| PluginExecutorCommand::MixHandler { request, reply }))
+    }
+
+    fn dispatch_similar_releases(
+        &self,
+        request: SimilarReleasesDispatchRequest,
+    ) -> BoxFuture<'_, Result<SimilarReleasesDispatchResult>> {
+        Box::pin(
+            self.request_async(|reply| PluginExecutorCommand::SimilarReleases { request, reply }),
+        )
+    }
+
+    fn dispatch_playback_update(&self, payload: PlaybackUpdatePayload) -> Result<()> {
+        self.tx
+            .try_send(PluginExecutorCommand::PlaybackUpdate(payload))
     }
 }
 
@@ -381,7 +381,7 @@ mod tests {
     fn playback_update() -> crate::services::playback_sessions::PlaybackUpdatePayload {
         crate::services::playback_sessions::PlaybackUpdatePayload {
             event: "progress".to_string(),
-            state: crate::plugins::db::PlaybackState::Playing,
+            state: crate::db::PlaybackState::Playing,
             playback_session_public_id: "playback-public".to_string(),
             track_public_id: "track-public".to_string(),
             user_public_id: "user-public".to_string(),

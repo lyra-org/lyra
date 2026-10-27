@@ -15,12 +15,11 @@ use agdb::{
 };
 use rand::seq::SliceRandom;
 
-use crate::STATE;
 use crate::db::{
-    self,
     Permission,
     Track,
 };
+use crate::services::STATE;
 use crate::services::auth::{
     Principal,
     access,
@@ -89,7 +88,7 @@ impl MixSeedId {
     /// The seed's current `DbId`s, resolved under `db`'s guard; `None` when the entity is gone.
     fn resolve(&self, db: &DbAny) -> anyhow::Result<Option<MixSeed>> {
         let resolve = |seed: fn(DbId) -> MixSeed, id: &str| -> anyhow::Result<Option<MixSeed>> {
-            Ok(db::lookup::find_node_id_by_id(db, id)?.map(seed))
+            Ok(crate::db::lookup::find_node_id_by_id(db, id)?.map(seed))
         };
         match self {
             Self::Track(id) => resolve(MixSeed::Track, id),
@@ -163,19 +162,20 @@ fn seed_visible(db: &DbAny, seed: &MixSeed, options: &MixOptions) -> anyhow::Res
     let viewer = viewer(options)?;
     Ok(match seed {
         MixSeed::Track(id) => {
-            db::tracks::get_by_id(db, *id)?.is_some() && access::entity_accessible(db, viewer, *id)?
+            crate::db::tracks::get_by_id(db, *id)?.is_some()
+                && access::entity_accessible(db, viewer, *id)?
         }
         MixSeed::Release(id) => {
-            db::releases::get_by_id(db, *id)?.is_some()
+            crate::db::releases::get_by_id(db, *id)?.is_some()
                 && access::entity_accessible(db, viewer, *id)?
         }
         MixSeed::Artist(id) => {
-            db::artists::get_by_id(db, *id)?.is_some()
+            crate::db::artists::get_by_id(db, *id)?.is_some()
                 && access::entity_accessible(db, viewer, *id)?
         }
-        MixSeed::Genre(id) => db::genres::get_by_id(db, *id)?.is_some(),
+        MixSeed::Genre(id) => crate::db::genres::get_by_id(db, *id)?.is_some(),
         MixSeed::Playlist(id) => {
-            db::playlists::get_by_id(db, *id)?.is_some()
+            crate::db::playlists::get_by_id(db, *id)?.is_some()
                 && access::playlist_accessible(db, viewer, *id)?
         }
         MixSeed::Recent => {
@@ -233,7 +233,7 @@ fn filter_existing_tracks(db: &DbAny, tracks: Vec<Track>) -> anyhow::Result<Vec<
     if track_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let existing = db::tracks::get_existing_by_ids(db, &track_ids)?;
+    let existing = crate::db::tracks::get_existing_by_ids(db, &track_ids)?;
     Ok(tracks
         .into_iter()
         .filter_map(|track| {
@@ -279,7 +279,7 @@ pub(crate) async fn instant_mix_from_audio(
     if seed_id.resolve_visible(&db, options)? != Some(seed) {
         return Ok(None);
     }
-    let Some(seed) = db::tracks::get_by_id(&db, track_db_id)? else {
+    let Some(seed) = crate::db::tracks::get_by_id(&db, track_db_id)? else {
         return Ok(None);
     };
 
@@ -320,7 +320,7 @@ fn pin_seed_and_truncate(seed: Track, mut tracks: Vec<Track>, limit: usize) -> V
 /// Mixer IDs with a handler for `seed_type`, highest priority first.
 async fn prioritized_mixer_ids(seed_type: MixSeedType) -> anyhow::Result<Vec<String>> {
     let db = STATE.db.read().await;
-    let mut configs = db::mixers::get(&db)?;
+    let mut configs = crate::db::mixers::get(&db)?;
     configs.retain(|c| c.enabled);
     configs.sort_by_key(|config| std::cmp::Reverse(config.priority));
 
@@ -425,10 +425,10 @@ async fn run_callback_with_timeout(
     timeout: std::time::Duration,
     mixer_id: &str,
 ) -> anyhow::Result<HandlerOutcome> {
-    let Some(runtime) = crate::STATE.generation().plugin_runtime.get() else {
+    let Some(runtime) = crate::services::STATE.generation().plugin_dispatch.get() else {
         return Ok(HandlerOutcome::FellThrough);
     };
-    let request = crate::plugins::executor::MixHandlerRequest {
+    let request = crate::services::plugin_dispatch::MixHandlerRequest {
         handler_id,
         seed_id: seed_id.map(|id| id.0),
         limit: options.limit,
@@ -504,7 +504,7 @@ async fn tracks_from_mixer_ids(track_ids: Vec<DbId>) -> anyhow::Result<Vec<Track
 
     let requested_count = track_ids.len();
     let db = STATE.db.read().await;
-    let tracks_by_id = db::tracks::get_existing_by_ids(&db, &track_ids)?;
+    let tracks_by_id = crate::db::tracks::get_existing_by_ids(&db, &track_ids)?;
 
     let mut tracks = Vec::with_capacity(requested_count);
     for id in &track_ids {
@@ -529,13 +529,13 @@ async fn tracks_from_mixer_ids(track_ids: Vec<DbId>) -> anyhow::Result<Vec<Track
 
 fn expand_and_weight(
     db: &DbAny,
-    seed_genres: &[db::genres::Genre],
+    seed_genres: &[crate::db::genres::Genre],
 ) -> anyhow::Result<Vec<(DbId, u32)>> {
     let seed_ids: Vec<DbId> = seed_genres
         .iter()
         .filter_map(|g| g.db_id.clone().map(DbId::from))
         .collect();
-    db::genres::expand_related(db, &seed_ids, 2)
+    crate::db::genres::expand_related(db, &seed_ids, 2)
 }
 
 fn builtin_from_track(
@@ -543,7 +543,7 @@ fn builtin_from_track(
     track_db_id: DbId,
     options: &MixOptions,
 ) -> anyhow::Result<Vec<Track>> {
-    let releases = db::releases::get_by_track(db, track_db_id)?;
+    let releases = crate::db::releases::get_by_track(db, track_db_id)?;
     let seed_genres = collect_genres_from_releases(db, &releases)?;
     let weighted = expand_and_weight(db, &seed_genres)?;
     tracks_for_genres(db, &weighted, options)
@@ -554,9 +554,13 @@ fn builtin_from_release(
     release_db_id: DbId,
     options: &MixOptions,
 ) -> anyhow::Result<Vec<Track>> {
-    let seed_genres = db::genres::get_for_release(db, release_db_id)?;
+    let seed_genres = crate::db::genres::get_for_release(db, release_db_id)?;
     if seed_genres.is_empty() {
-        return fallback_from_seed_tracks(db, db::tracks::get_direct(db, release_db_id)?, options);
+        return fallback_from_seed_tracks(
+            db,
+            crate::db::tracks::get_direct(db, release_db_id)?,
+            options,
+        );
     }
     let weighted = expand_and_weight(db, &seed_genres)?;
     tracks_for_genres(db, &weighted, options)
@@ -567,7 +571,7 @@ fn builtin_from_artist(
     artist_db_id: DbId,
     options: &MixOptions,
 ) -> anyhow::Result<Vec<Track>> {
-    let releases = db::releases::get_by_artist(db, artist_db_id)?;
+    let releases = crate::db::releases::get_by_artist(db, artist_db_id)?;
     // Release credits are the artist's primary discography: when any exist, track credits are
     // never unioned in, so a lone album outranks any number of guest features.
     if releases.is_empty() {
@@ -581,7 +585,7 @@ fn builtin_from_artist(
             .collect();
         return fallback_from_seed_tracks(
             db,
-            db::tracks::get_by_releases(db, &release_ids)?,
+            crate::db::tracks::get_by_releases(db, &release_ids)?,
             options,
         );
     }
@@ -598,7 +602,7 @@ fn builtin_from_artist_track_credits(
     artist_db_id: DbId,
     options: &MixOptions,
 ) -> anyhow::Result<Vec<Track>> {
-    let track_ids = db::tracks::get_bounded_ids_by_artist(
+    let track_ids = crate::db::tracks::get_bounded_ids_by_artist(
         db,
         artist_db_id,
         options.viewer_accessible_library_ids.as_ref(),
@@ -613,7 +617,7 @@ fn builtin_from_genre(
     options: &MixOptions,
 ) -> anyhow::Result<Vec<Track>> {
     // Existence verified by the `from_genre` wrapper under the same read guard.
-    let weighted = db::genres::expand_related(db, &[genre_db_id], 2)?;
+    let weighted = crate::db::genres::expand_related(db, &[genre_db_id], 2)?;
     tracks_for_genres(db, &weighted, options)
 }
 
@@ -622,12 +626,12 @@ fn builtin_from_playlist(
     playlist_db_id: DbId,
     options: &MixOptions,
 ) -> anyhow::Result<Vec<Track>> {
-    let playlist_tracks = db::playlists::get_tracks(db, playlist_db_id)?;
+    let playlist_tracks = crate::db::playlists::get_tracks(db, playlist_db_id)?;
     if playlist_tracks.is_empty() {
         return Ok(Vec::new());
     }
     let edge_ids: Vec<DbId> = playlist_tracks.iter().map(|t| t.edge_id).collect();
-    let track_ids = db::playlists::resolve_edge_targets(db, &edge_ids)?;
+    let track_ids = crate::db::playlists::resolve_edge_targets(db, &edge_ids)?;
     builtin_from_seed_track_ids(db, &track_ids, options)
 }
 
@@ -651,10 +655,10 @@ fn recent_listen_track_ids(
     user_db_id: DbId,
     accessible_library_ids: Option<&HashSet<String>>,
 ) -> anyhow::Result<Vec<DbId>> {
-    let mut listens: Vec<db::listens::Listen> = db
+    let mut listens: Vec<crate::db::listens::Listen> = db
         .exec(
             QueryBuilder::select()
-                .elements::<db::listens::Listen>()
+                .elements::<crate::db::listens::Listen>()
                 .search()
                 .to(user_db_id)
                 .where_()
@@ -674,10 +678,11 @@ fn recent_listen_track_ids(
         if listen.track_public_id.is_empty() {
             continue;
         }
-        let Some(track_db_id) = db::lookup::find_node_id_by_id(db, &listen.track_public_id)? else {
+        let Some(track_db_id) = crate::db::lookup::find_node_id_by_id(db, &listen.track_public_id)?
+        else {
             continue;
         };
-        if !db::lookup::collection_contains_id(db, "tracks", track_db_id)? {
+        if !crate::db::lookup::collection_contains_id(db, "tracks", track_db_id)? {
             continue;
         }
         if let Some(accessible_library_ids) = accessible_library_ids
@@ -698,7 +703,7 @@ fn track_accessible_to_library_set(
     track_db_id: DbId,
     accessible_library_ids: &HashSet<String>,
 ) -> anyhow::Result<bool> {
-    Ok(db::libraries::get_for_entity(db, track_db_id)?
+    Ok(crate::db::libraries::get_for_entity(db, track_db_id)?
         .into_iter()
         .any(|library| accessible_library_ids.contains(&library.id)))
 }
@@ -707,10 +712,10 @@ fn track_accessible_to_library_set(
 fn collect_genres_from_track_ids(
     db: &DbAny,
     track_ids: &[DbId],
-) -> anyhow::Result<Vec<db::genres::Genre>> {
-    let releases_by_track = db::releases::get_by_tracks(db, track_ids)?;
+) -> anyhow::Result<Vec<crate::db::genres::Genre>> {
+    let releases_by_track = crate::db::releases::get_by_tracks(db, track_ids)?;
     let mut seen_release_ids = HashSet::new();
-    let releases: Vec<db::Release> = releases_by_track
+    let releases: Vec<crate::db::Release> = releases_by_track
         .into_values()
         .flatten()
         .filter_map(|r| {
@@ -723,15 +728,15 @@ fn collect_genres_from_track_ids(
 
 fn collect_genres_from_releases(
     db: &DbAny,
-    releases: &[db::Release],
-) -> anyhow::Result<Vec<db::genres::Genre>> {
+    releases: &[crate::db::Release],
+) -> anyhow::Result<Vec<crate::db::genres::Genre>> {
     let mut seen = HashSet::new();
     let mut genres = Vec::new();
     for release in releases {
         let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
             continue;
         };
-        for genre in db::genres::get_for_release(db, release_db_id)? {
+        for genre in crate::db::genres::get_for_release(db, release_db_id)? {
             let Some(genre_db_id) = genre.db_id.clone().map(DbId::from) else {
                 continue;
             };
@@ -777,7 +782,7 @@ fn tracks_for_genres(
         };
         tier_releases.shuffle(&mut rng);
 
-        let tier_tracks = db::tracks::get_direct_many(db, &tier_releases)?;
+        let tier_tracks = crate::db::tracks::get_direct_many(db, &tier_releases)?;
         let mut tier_flat: Vec<Track> = tier_tracks.into_values().flatten().collect();
         tier_flat.retain(|t| {
             t.db_id
@@ -818,7 +823,7 @@ fn builtin_from_seed_track_ids(
 
     let seed_genres = collect_genres_from_track_ids(db, track_ids)?;
     if seed_genres.is_empty() {
-        let tracks_by_id = db::tracks::get_by_ids(db, track_ids)?;
+        let tracks_by_id = crate::db::tracks::get_by_ids(db, track_ids)?;
         let tracks = track_ids
             .iter()
             .filter_map(|id| tracks_by_id.get(id).cloned())
@@ -862,9 +867,12 @@ fn filter_tracks_by_library_visibility(
         .iter()
         .filter_map(|track| track.db_id.clone().map(DbId::from))
         .collect::<Vec<_>>();
-    let library_db_ids = db::libraries::db_ids_for_public_ids(db, accessible_library_ids)?;
-    let accessible_track_ids =
-        db::libraries::accessible_track_ids_for_library_db_ids(db, &library_db_ids, &track_ids)?;
+    let library_db_ids = crate::db::libraries::db_ids_for_public_ids(db, accessible_library_ids)?;
+    let accessible_track_ids = crate::db::libraries::accessible_track_ids_for_library_db_ids(
+        db,
+        &library_db_ids,
+        &track_ids,
+    )?;
     tracks.retain(|track| {
         track
             .db_id
@@ -881,10 +889,10 @@ fn release_weighted_scores(
 ) -> anyhow::Result<HashMap<DbId, u32>> {
     let mut scores: HashMap<DbId, u32> = HashMap::new();
     for &(genre_id, weight) in genres {
-        let releases: Vec<db::Release> = db
+        let releases: Vec<crate::db::Release> = db
             .exec(
                 QueryBuilder::select()
-                    .elements::<db::Release>()
+                    .elements::<crate::db::Release>()
                     .search()
                     .from(genre_id)
                     .where_()
@@ -917,7 +925,7 @@ fn partition_by_listen_history(
         .filter_map(|t| t.db_id.clone().map(DbId::from))
         .collect();
 
-    let counts = db::listens::get_counts(db, &track_ids, user_db_id)?;
+    let counts = crate::db::listens::get_counts(db, &track_ids, user_db_id)?;
 
     let mut unheard = Vec::new();
     let mut heard = Vec::new();
@@ -944,7 +952,7 @@ fn cap_per_artist(db: &DbAny, tracks: Vec<Track>, limit: usize) -> anyhow::Resul
         .filter_map(|t| t.db_id.clone().map(DbId::from))
         .collect();
 
-    let artists_by_track = db::artists::get_many_by_owner(db, &track_ids)?;
+    let artists_by_track = crate::db::artists::get_many_by_owner(db, &track_ids)?;
 
     let primary_artist_for = |track: &Track| -> Option<DbId> {
         let track_db_id = track.db_id.clone().map(DbId::from)?;
@@ -996,6 +1004,12 @@ fn cap_per_artist(db: &DbAny, tracks: Vec<Track>, limit: usize) -> anyhow::Resul
 mod tests {
     use super::*;
     use crate::db::{
+        fixtures::{
+            connect,
+            insert_artist,
+            insert_release,
+            insert_track,
+        },
         genres,
         listens,
         playback_sessions::{
@@ -1003,20 +1017,16 @@ mod tests {
             PlaybackState,
         },
         test_db::{
-            connect,
             connect_artist,
-            insert_artist,
             insert_library,
-            insert_release,
-            insert_track,
             new_test_db,
         },
     };
 
     #[tokio::test]
     async fn seeds_hidden_from_the_viewer_yield_no_mix() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
-        crate::testing::init_default_test_state()?;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
         let (owner, viewer, hidden_track, private_playlist) = {
             let mut db = STATE.db.write().await;
             let owner_id = crate::db::test_db::insert_user(&mut db, "mix-playlist-owner")?;
@@ -1024,9 +1034,9 @@ mod tests {
             let library = insert_library(&mut db, "Hidden Mix Library", "/tmp/lyra-hidden-mix")?;
             let hidden_track = insert_track(&mut db, "Hidden Seed")?;
             connect(&mut db, library, hidden_track)?;
-            let private_playlist = db::playlists::create(
+            let private_playlist = crate::db::playlists::create(
                 &mut db,
-                &db::playlists::Playlist {
+                &crate::db::playlists::Playlist {
                     db_id: None,
                     id: nanoid::nanoid!(),
                     name: "Private".to_string(),
@@ -1038,7 +1048,8 @@ mod tests {
                 owner_id,
             )?;
             let public_id = |id| {
-                db::lookup::find_id_by_db_id(&*db, id).map(|id| id.expect("seed has a public id"))
+                crate::db::lookup::find_id_by_db_id(&*db, id)
+                    .map(|id| id.expect("seed has a public id"))
             };
             (
                 Principal::for_user(&*db, owner_id, Vec::new(), HashSet::new()),
@@ -1079,14 +1090,14 @@ mod tests {
     /// Mixes from a track seed while, at gap `gap`, the seed is deleted and a new track takes
     /// its `DbId`. Returns whether the gap ran and whether a mix came back.
     async fn mix_with_recycled_seed(gap: Option<usize>) -> anyhow::Result<(bool, bool)> {
-        crate::testing::init_default_test_state()?;
+        crate::services::testing::init_default_test_state()?;
         let (viewer, seed_db_id, seed_id, library) = {
             let mut db = STATE.db.write().await;
             let viewer_id = crate::db::test_db::insert_user(&mut db, "mix-recycle-viewer")?;
             let library = insert_library(&mut db, "Recycle Mix", "/tmp/lyra-recycle-mix")?;
             let seed = insert_track(&mut db, "Seed")?;
             connect(&mut db, library, seed)?;
-            let seed_id = db::lookup::find_id_by_db_id(&*db, seed)?.expect("seed public id");
+            let seed_id = crate::db::lookup::find_id_by_db_id(&*db, seed)?.expect("seed public id");
             (
                 Principal::for_user(&*db, viewer_id, vec![Permission::Admin], HashSet::new()),
                 seed,
@@ -1095,7 +1106,7 @@ mod tests {
             )
         };
         let options = MixOptions::for_principal(&viewer, None, HashMap::new());
-        let (reached, mix) = crate::testing::run_with_recycle_at(
+        let (reached, mix) = crate::services::testing::run_with_recycle_at(
             gap,
             from_seed(MixSeedId::Track(seed_id), &options),
             |db| {
@@ -1112,9 +1123,9 @@ mod tests {
 
     #[tokio::test]
     async fn from_seed_drops_a_seed_whose_id_was_recycled_mid_mix() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         assert_eq!(mix_with_recycled_seed(None).await?, (false, true));
-        crate::testing::for_each_db_gap(mix_with_recycled_seed, async |gap, mixed| {
+        crate::services::testing::for_each_db_gap(mix_with_recycled_seed, async |gap, mixed| {
             assert!(!mixed, "mixed a recycled seed at gap {gap}");
             Ok(())
         })
@@ -1267,7 +1278,7 @@ mod tests {
         connect(&mut db, polka_release, polka_track)?;
 
         assert!(
-            db::releases::get_by_artist(&db, featured)?.is_empty(),
+            crate::db::releases::get_by_artist(&db, featured)?.is_empty(),
             "fixture invariant broken: featured artist has a release-level credit"
         );
 
@@ -1314,7 +1325,7 @@ mod tests {
         let artist = insert_artist(&mut db, "Prolific Guest")?;
         let visible_library = insert_library(&mut db, "Visible", "/music/visible")?;
         let hidden_library = insert_library(&mut db, "Hidden", "/music/hidden")?;
-        let visible_library_public_id = db::libraries::get_by_id(&db, visible_library)?
+        let visible_library_public_id = crate::db::libraries::get_by_id(&db, visible_library)?
             .expect("visible library exists")
             .id;
         let visible_release = insert_release(&mut db, "Visible Release")?;
@@ -1334,7 +1345,7 @@ mod tests {
             connect(&mut db, hidden_release, track)?;
             connect_artist(&mut db, track, artist)?;
         }
-        assert!(db::releases::get_by_artist(&db, artist)?.is_empty());
+        assert!(crate::db::releases::get_by_artist(&db, artist)?.is_empty());
 
         let options = MixOptions {
             viewer_accessible_library_ids: Some(HashSet::from([visible_library_public_id])),
@@ -1345,13 +1356,13 @@ mod tests {
             .rev()
             .take(TRACK_CREDIT_SEED_COUNT)
             .collect::<Vec<_>>();
-        let first_seed_ids = db::tracks::get_bounded_ids_by_artist(
+        let first_seed_ids = crate::db::tracks::get_bounded_ids_by_artist(
             &db,
             artist,
             options.viewer_accessible_library_ids.as_ref(),
             TRACK_CREDIT_SEED_COUNT,
         )?;
-        let second_seed_ids = db::tracks::get_bounded_ids_by_artist(
+        let second_seed_ids = crate::db::tracks::get_bounded_ids_by_artist(
             &db,
             artist,
             options.viewer_accessible_library_ids.as_ref(),
@@ -1521,7 +1532,7 @@ mod tests {
     }
 
     fn record_listen(db: &mut DbAny, track_db_id: DbId, user_db_id: DbId) -> anyhow::Result<()> {
-        let track_public_id = db::lookup::find_id_by_db_id(db, track_db_id)?
+        let track_public_id = crate::db::lookup::find_id_by_db_id(db, track_db_id)?
             .ok_or_else(|| anyhow::anyhow!("missing track public id for {track_db_id:?}"))?;
         let listen = listens::Listen {
             db_id: None,
@@ -1605,7 +1616,7 @@ mod tests {
         let track = insert_track(&mut db, "Listened Track")?;
         let release = insert_release(&mut db, "Recycled Into Release")?;
 
-        let release_public_id = db::lookup::find_id_by_db_id(&db, release)?
+        let release_public_id = crate::db::lookup::find_id_by_db_id(&db, release)?
             .ok_or_else(|| anyhow::anyhow!("release missing public id"))?;
 
         let listen = listens::Listen {
@@ -1647,7 +1658,7 @@ mod tests {
         let mut db = new_test_db()?;
         let user_id = insert_user(&mut db)?;
         let library_id = insert_library(&mut db, "Recent Access", "/tmp/lyra-recent-access")?;
-        let library_public_id = db::lookup::find_id_by_db_id(&db, library_id)?
+        let library_public_id = crate::db::lookup::find_id_by_db_id(&db, library_id)?
             .ok_or_else(|| anyhow::anyhow!("library missing public id"))?;
         let track = insert_track(&mut db, "Visible Recent Track")?;
         connect(&mut db, library_id, track)?;
@@ -1885,11 +1896,11 @@ mod tests {
         let mut db = new_test_db()?;
         let release_id = insert_release(&mut db, "Not A Genre")?;
         assert!(
-            db::releases::get_by_id(&db, release_id)?.is_some(),
+            crate::db::releases::get_by_id(&db, release_id)?.is_some(),
             "fixture should produce a real Release node"
         );
         assert!(
-            db::genres::get_by_id(&db, release_id)?.is_none(),
+            crate::db::genres::get_by_id(&db, release_id)?.is_none(),
             "Release id should not resolve as a Genre"
         );
 
@@ -2002,7 +2013,7 @@ mod tests {
         let mut db = new_test_db()?;
         let visible_library = insert_library(&mut db, "Visible", "/music/visible-plugin-mix")?;
         let hidden_library = insert_library(&mut db, "Hidden", "/music/hidden-plugin-mix")?;
-        let visible_library_public_id = db::libraries::get_by_id(&db, visible_library)?
+        let visible_library_public_id = crate::db::libraries::get_by_id(&db, visible_library)?
             .expect("visible library exists")
             .id;
         let visible_release = insert_release(&mut db, "Visible Release")?;
@@ -2023,20 +2034,20 @@ mod tests {
 
         let replaced_id = insert_track(&mut db, "Replaced Candidate")?;
         connect(&mut db, visible_release, replaced_id)?;
-        let replaced = db::tracks::get_by_id(&db, replaced_id)?.expect("candidate exists");
+        let replaced = crate::db::tracks::get_by_id(&db, replaced_id)?.expect("candidate exists");
         let mut replacement = replaced.clone();
         replacement.id = nanoid::nanoid!();
         replacement.track_title = "Replacement Track".to_string();
-        db::tracks::update(&mut db, &replacement)?;
+        crate::db::tracks::update(&mut db, &replacement)?;
 
         let missing_id = insert_track(&mut db, "Deleted Candidate")?;
-        let missing = db::tracks::get_by_id(&db, missing_id)?.expect("candidate exists");
+        let missing = crate::db::tracks::get_by_id(&db, missing_id)?.expect("candidate exists");
         db.exec_mut(QueryBuilder::remove().ids(missing_id).query())?;
-        let hidden_a = db::tracks::get_by_id(&db, hidden_a)?.expect("hidden A exists");
-        let hidden_b = db::tracks::get_by_id(&db, hidden_b)?.expect("hidden B exists");
-        let visible_a = db::tracks::get_by_id(&db, visible_a)?.expect("visible A exists");
-        let visible_b = db::tracks::get_by_id(&db, visible_b)?.expect("visible B exists");
-        let seed = db::tracks::get_by_id(&db, seed_id)?.expect("seed exists");
+        let hidden_a = crate::db::tracks::get_by_id(&db, hidden_a)?.expect("hidden A exists");
+        let hidden_b = crate::db::tracks::get_by_id(&db, hidden_b)?.expect("hidden B exists");
+        let visible_a = crate::db::tracks::get_by_id(&db, visible_a)?.expect("visible A exists");
+        let visible_b = crate::db::tracks::get_by_id(&db, visible_b)?.expect("visible B exists");
+        let seed = crate::db::tracks::get_by_id(&db, seed_id)?.expect("seed exists");
         let provider_candidates = vec![
             hidden_a.clone(),
             missing.clone(),

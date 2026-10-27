@@ -34,7 +34,6 @@ use super::{
     track_totals,
 };
 use crate::db::{
-    self,
     Release,
     Track,
     favorites::FavoriteKind,
@@ -144,21 +143,21 @@ impl Catalog for Releases {
         if !filter.years.is_empty() {
             let mut matching = HashSet::new();
             for year in &filter.years {
-                matching.extend(db::releases::ids_with_year(db, *year)?);
+                matching.extend(crate::db::releases::ids_with_year(db, *year)?);
             }
             releases.restrict(matching);
         }
         if let Some(favorite) = filter.favorite {
             let user = viewer.user_db_id("the favorite filter")?;
-            let favorites = db::favorites::target_ids(db, user, FavoriteKind::Release)?;
+            let favorites = crate::db::favorites::target_ids(db, user, FavoriteKind::Release)?;
             releases.restrict_membership(favorites, favorite, || all_releases(db))?;
         }
         if let Some(listened) = filter.listened {
             let user = viewer.user_db_id("the listened filter")?;
-            let listened_tracks = db::listens::listened_track_ids(db, user)?;
+            let listened_tracks = crate::db::listens::listened_track_ids(db, user)?;
             let mut listened_ids = HashSet::new();
             for release in releases_of_tracks(db, listened_tracks.iter().copied())? {
-                if db::graph::neighbor_ids(db, release, "Track")?
+                if crate::db::graph::neighbor_ids(db, release, "Track")?
                     .iter()
                     .all(|track| listened_tracks.contains(track))
                 {
@@ -169,7 +168,11 @@ impl Catalog for Releases {
         }
         if !filter.rating.is_empty() {
             let user = viewer.user_db_id("the rating filter")?;
-            releases.restrict(db::ratings::target_ids_matching(db, user, filter.rating)?);
+            releases.restrict(crate::db::ratings::target_ids_matching(
+                db,
+                user,
+                filter.rating,
+            )?);
         }
 
         let mut excluded = filter.exclude_ids.clone();
@@ -186,7 +189,7 @@ impl Catalog for Releases {
         ids: Vec<DbId>,
         keys: &[ReleaseKey],
     ) -> Result<Vec<Row>, CatalogError> {
-        let fields = db::graph::select_fields(db, &ids, &release_fields(keys))?;
+        let fields = crate::db::graph::select_fields(db, &ids, &release_fields(keys))?;
         let needs = |wanted: &[ReleaseKey]| keys.iter().any(|key| wanted.contains(key));
         let totals = if needs(&[
             ReleaseKey::TotalDuration,
@@ -198,7 +201,7 @@ impl Catalog for Releases {
             for id in &ids {
                 tracks_by_release.insert(
                     *id,
-                    db::graph::neighbor_ids(db, *id, "Track")?
+                    crate::db::graph::neighbor_ids(db, *id, "Track")?
                         .into_iter()
                         .collect::<HashSet<_>>(),
                 );
@@ -214,7 +217,7 @@ impl Catalog for Releases {
             HashMap::new()
         };
         let artist_names = if needs(&[ReleaseKey::ArtistName]) {
-            db::artists::first_credited_names(db, &ids)?
+            crate::db::artists::first_credited_names(db, &ids)?
         } else {
             HashMap::new()
         };
@@ -238,7 +241,7 @@ impl Catalog for Releases {
                             .and_then(date_order)
                             .map(SortValue::Number),
                         ReleaseKey::Year => {
-                            db::releases::release_year(release.text("release_date"))
+                            crate::db::releases::release_year(release.text("release_date"))
                                 .map(|year| SortValue::Number(year.into()))
                         }
                         ReleaseKey::TotalDuration => Some(SortValue::Number(totals.total_duration)),
@@ -262,7 +265,7 @@ impl Catalog for Releases {
     }
 
     fn hydrate(db: &DbAny, ids: &[DbId]) -> anyhow::Result<Vec<Release>> {
-        let mut releases = db::graph::bulk_fetch_typed(db, ids.to_vec(), "Release")?;
+        let mut releases = crate::db::graph::bulk_fetch_typed(db, ids.to_vec(), "Release")?;
         Ok(ids.iter().filter_map(|id| releases.remove(id)).collect())
     }
 }

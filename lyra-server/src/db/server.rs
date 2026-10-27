@@ -77,10 +77,7 @@ pub(crate) fn plugin_selection_skipped(db: &impl DbAccess) -> anyhow::Result<boo
     }
 }
 
-pub(crate) fn set_plugin_selection_skipped(
-    db: &mut impl DbAccess,
-    skipped: bool,
-) -> anyhow::Result<()> {
+pub fn set_plugin_selection_skipped(db: &mut impl DbAccess, skipped: bool) -> anyhow::Result<()> {
     db.exec_mut(
         QueryBuilder::insert()
             .values_uniform([("plugin_selection_skipped", skipped).into()])

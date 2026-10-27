@@ -25,18 +25,19 @@ use serde::{
     Serialize,
 };
 
+use crate::db::metadata::mapping_config::{
+    FieldName,
+    MappingRule,
+    MetadataMappingConfig,
+};
 use crate::{
-    STATE,
-    db,
     routes::AppError,
+    services::STATE,
     services::{
         auth::require_manage_metadata,
         metadata::{
             mapping::{
                 self,
-                FieldName,
-                MappingRule,
-                MetadataMappingConfig,
                 SOURCE_KEYS,
             },
             mapping_admin::{
@@ -118,13 +119,13 @@ async fn get_metadata_mapping(
     require_manage_metadata(&headers).await?;
     let config = {
         let db = STATE.db.read().await;
-        db::metadata::mapping_config::get(&db)?
+        crate::db::metadata::mapping_config::get(&db)?
     };
     let config = match config {
         Some(c) => c,
         None => {
             let mut db = STATE.db.write().await;
-            db::metadata::mapping_config::ensure(&mut db)?
+            mapping::ensure_config(&mut db)?
         }
     };
     Ok(Json(MetadataMappingResponse {
@@ -240,6 +241,32 @@ fn build_candidate(rules: Vec<MetadataMappingRule>) -> Result<MetadataMappingCon
     Ok(MetadataMappingConfig {
         rules: rules.into_iter().map(MappingRule::from).collect(),
     })
+}
+
+/// Returns 503 for non-read methods while a reingest runs; GET/HEAD/
+/// OPTIONS pass through so the UI can still poll progress.
+pub(crate) async fn reingest_request_gate(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::{
+        Method,
+        StatusCode,
+    };
+    if reingest_in_progress()
+        && !matches!(
+            *request.method(),
+            Method::GET | Method::HEAD | Method::OPTIONS
+        )
+    {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [("retry-after", "30")],
+            "metadata mapping reingest in progress; writes are temporarily unavailable",
+        )
+            .into_response();
+    }
+    next.run(request).await
 }
 
 pub fn metadata_routes() -> Router {

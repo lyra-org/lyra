@@ -16,13 +16,12 @@ use unicode_properties::{
     UnicodeGeneralCategory,
 };
 
+use crate::db::{
+    Permission,
+    Session,
+};
 use crate::{
-    STATE,
-    db::{
-        self,
-        Permission,
-        Session,
-    },
+    services::STATE,
     services::auth::{
         AuthError,
         Principal,
@@ -119,7 +118,7 @@ const LAST_SEEN_SWEEP_THRESHOLD: usize = 1024;
 // Debounce last_seen_at writes to avoid grabbing the DB write lock on every
 // session-authed request. Only the in-memory mutex is taken on steady-state auth.
 fn last_seen_cache(
-    generation: &crate::GenerationState,
+    generation: &crate::services::state::GenerationState,
 ) -> std::sync::MutexGuard<'_, HashMap<String, i64>> {
     generation
         .auth_caches
@@ -170,7 +169,7 @@ pub(crate) async fn create_session_for_user(
     let metadata = metadata.normalized()?;
     let token = random_hex_secret::<SESSION_TOKEN_BYTES>();
     let token_hash = hash_secret(&token);
-    let now = db::users::now_secs();
+    let now = crate::db::users::now_secs();
     let ttl = STATE.config().auth.session_ttl_seconds;
     let expires_at = if ttl > 0 {
         now.saturating_add(ttl as i64)
@@ -189,7 +188,7 @@ pub(crate) async fn create_session_for_user(
     };
     let mut db_write = STATE.db.write().await;
     let user_db_id = principal.require(&db_write)?;
-    db::users::login(db_write.deref_mut(), user_db_id, &session)?;
+    crate::db::users::login(db_write.deref_mut(), user_db_id, &session)?;
     drop(db_write);
     // Seed the cache so the next request inside the debounce window is a no-op.
     record_persisted_last_seen(&session.id, now);
@@ -198,31 +197,32 @@ pub(crate) async fn create_session_for_user(
 }
 
 pub(crate) async fn touch_last_seen(session_public_id: &str) {
-    let now = db::users::now_secs();
+    let now = crate::db::users::now_secs();
     if !should_persist_last_seen(session_public_id, now) {
         return;
     }
 
     let mut db_write = STATE.db.write().await;
     // Resolve under the write lock: the session may have been revoked since auth.
-    let session_id = match db::users::find_session_by_public_id(&*db_write, session_public_id) {
-        Ok(Some((session_id, _))) => session_id,
-        Ok(None) => {
-            drop(db_write);
-            forget_last_seen(session_public_id);
-            return;
-        }
-        Err(err) => {
-            tracing::warn!(
-                error = %err,
-                session_public_id,
-                "failed to verify session before last_seen update",
-            );
-            return;
-        }
-    };
+    let session_id =
+        match crate::db::users::find_session_by_public_id(&*db_write, session_public_id) {
+            Ok(Some((session_id, _))) => session_id,
+            Ok(None) => {
+                drop(db_write);
+                forget_last_seen(session_public_id);
+                return;
+            }
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    session_public_id,
+                    "failed to verify session before last_seen update",
+                );
+                return;
+            }
+        };
 
-    match db::users::update_session_last_seen(&mut *db_write, session_id, now) {
+    match crate::db::users::update_session_last_seen(&mut *db_write, session_id, now) {
         Ok(()) => {
             drop(db_write);
             record_persisted_last_seen(session_public_id, now);
@@ -239,21 +239,22 @@ pub(crate) async fn touch_last_seen(session_public_id: &str) {
 }
 
 pub(crate) fn is_expired(session: &Session) -> bool {
-    session.expires_at > 0 && db::users::now_secs() >= session.expires_at
+    session.expires_at > 0 && crate::db::users::now_secs() >= session.expires_at
 }
 
 /// Revokes the session behind `token_hash` if it has expired, resolving it under the write lock
 /// that removes it.
 pub(super) async fn revoke_expired_session(token_hash: &str) -> anyhow::Result<bool> {
     let mut db = STATE.db.write().await;
-    let Some((_, session, session_id)) = db::users::find_by_session_token_hash(&*db, token_hash)?
+    let Some((_, session, session_id)) =
+        crate::db::users::find_by_session_token_hash(&*db, token_hash)?
     else {
         return Ok(false);
     };
     if !is_expired(&session) {
         return Ok(false);
     }
-    let removed = db::users::revoke_session_by_id(&mut db, session_id)?;
+    let removed = crate::db::users::revoke_session_by_id(&mut db, session_id)?;
     drop(db);
     if removed {
         forget_last_seen(&session.id);
@@ -264,9 +265,9 @@ pub(super) async fn revoke_expired_session(token_hash: &str) -> anyhow::Result<b
 pub(crate) async fn revoke_session_by_token(token: &str) -> SessionServiceResult<bool> {
     let mut db = STATE.db.write().await;
     let token_hash = hash_secret(token.trim());
-    let session_public_id =
-        db::users::find_by_session_token_hash(&*db, &token_hash)?.map(|(_, session, _)| session.id);
-    let removed = db::users::revoke_session_by_token_hash(&mut db, &token_hash)?;
+    let session_public_id = crate::db::users::find_by_session_token_hash(&*db, &token_hash)?
+        .map(|(_, session, _)| session.id);
+    let removed = crate::db::users::revoke_session_by_token_hash(&mut db, &token_hash)?;
     drop(db);
     if removed && let Some(session_public_id) = session_public_id {
         forget_last_seen(&session_public_id);
@@ -311,12 +312,12 @@ pub(crate) async fn list_sessions(
         owners => owners,
     };
     let users = match owners {
-        SessionOwners::Principal => db::users::get_by_id(&*db, principal_db_id)?
+        SessionOwners::Principal => crate::db::users::get_by_id(&*db, principal_db_id)?
             .into_iter()
             .collect(),
         SessionOwners::User(user_id) => {
             require_permission(principal, Permission::ManageUsers)?;
-            let user = db::users::get_by_public_id(&*db, user_id)?;
+            let user = crate::db::users::get_by_public_id(&*db, user_id)?;
             if let Some(user_db_id) = user.as_ref().and_then(|user| user.db_id)
                 && !manages_sessions_of(&*db, principal, principal_db_id, user_db_id)?
             {
@@ -329,7 +330,7 @@ pub(crate) async fn list_sessions(
         SessionOwners::All => {
             require_permission(principal, Permission::ManageUsers)?;
             let mut users = Vec::new();
-            for user in db::users::get(&*db)? {
+            for user in crate::db::users::get(&*db)? {
                 if let Some(user_db_id) = user.db_id
                     && manages_sessions_of(&*db, principal, principal_db_id, user_db_id)?
                 {
@@ -345,15 +346,16 @@ pub(crate) async fn list_sessions(
         let Some(user_db_id) = user.db_id else {
             continue;
         };
-        for session in db::users::sessions_for_user(&*db, user_db_id)? {
+        for session in crate::db::users::sessions_for_user(&*db, user_db_id)? {
             let Some(session_id) = session.db_id.clone().map(DbId::from) else {
                 continue;
             };
             if is_expired(&session) {
                 continue;
             }
-            let plugin_data =
-                parse_plugin_data(db::users::session_plugin_data(&*db, session_id, plugin_id)?)?;
+            let plugin_data = parse_plugin_data(crate::db::users::session_plugin_data(
+                &*db, session_id, plugin_id,
+            )?)?;
             sessions.push(SessionInfo {
                 id: session.id,
                 user_id: user.id.clone(),
@@ -382,19 +384,21 @@ pub(crate) async fn revoke_session(
 ) -> Result<bool, AuthError> {
     let mut db = STATE.db.write().await;
     let principal_db_id = principal.require(&*db)?;
-    let Some((session_id, _)) = db::users::find_session_by_public_id(&*db, session_public_id)?
+    let Some((session_id, _)) =
+        crate::db::users::find_session_by_public_id(&*db, session_public_id)?
     else {
         return Ok(false);
     };
-    let owner_db_id = db::users::session_owner(&*db, session_id)?.and_then(|user| user.db_id);
+    let owner_db_id =
+        crate::db::users::session_owner(&*db, session_id)?.and_then(|user| user.db_id);
     let manages = match owner_db_id {
         Some(owner_db_id) => manages_sessions_of(&*db, principal, principal_db_id, owner_db_id)?,
-        None => db::roles::has_permission(&principal.permissions, Permission::ManageUsers),
+        None => crate::db::roles::has_permission(&principal.permissions, Permission::ManageUsers),
     };
     if !manages {
         return Ok(false);
     }
-    let removed = db::users::revoke_session_by_id(&mut db, session_id)?;
+    let removed = crate::db::users::revoke_session_by_id(&mut db, session_id)?;
     drop(db);
     if removed {
         forget_last_seen(session_public_id);
@@ -406,7 +410,7 @@ pub(crate) async fn revoke_session(
 /// [`Permission::ManageUsers`], and an admin's only with [`Permission::Admin`] as well, like the
 /// user routes that delete an admin or reset their password.
 fn manages_sessions_of(
-    db: &impl db::DbAccess,
+    db: &impl crate::db::DbAccess,
     principal: &Principal,
     principal_db_id: DbId,
     owner_db_id: DbId,
@@ -414,12 +418,12 @@ fn manages_sessions_of(
     if owner_db_id == principal_db_id {
         return Ok(true);
     }
-    if !db::roles::has_permission(&principal.permissions, Permission::ManageUsers) {
+    if !crate::db::roles::has_permission(&principal.permissions, Permission::ManageUsers) {
         return Ok(false);
     }
     Ok(
-        db::roles::has_permission(&principal.permissions, Permission::Admin)
-            || !db::roles::has_admin_role(db, owner_db_id)?,
+        crate::db::roles::has_permission(&principal.permissions, Permission::Admin)
+            || !crate::db::roles::has_admin_role(db, owner_db_id)?,
     )
 }
 
@@ -432,9 +436,9 @@ fn parse_plugin_data(value: Option<String>) -> anyhow::Result<serde_json::Value>
         .map(|value| value.unwrap_or(serde_json::Value::Null))
 }
 
-fn live_session_id(db: &impl db::DbAccess, token: &str) -> anyhow::Result<DbId> {
+fn live_session_id(db: &impl crate::db::DbAccess, token: &str) -> anyhow::Result<DbId> {
     let (_, session, session_id) =
-        db::users::find_by_session_token_hash(db, &hash_secret(token.trim()))?
+        crate::db::users::find_by_session_token_hash(db, &hash_secret(token.trim()))?
             .ok_or_else(|| anyhow::anyhow!("invalid session token"))?;
     if is_expired(&session) {
         anyhow::bail!("session expired");
@@ -448,7 +452,9 @@ pub(crate) async fn get_plugin_data(
 ) -> anyhow::Result<serde_json::Value> {
     let db = STATE.db.read().await;
     let session_id = live_session_id(&*db, token)?;
-    parse_plugin_data(db::users::session_plugin_data(&*db, session_id, plugin_id)?)
+    parse_plugin_data(crate::db::users::session_plugin_data(
+        &*db, session_id, plugin_id,
+    )?)
 }
 
 pub(crate) async fn set_plugin_data(
@@ -469,7 +475,7 @@ pub(crate) async fn set_plugin_data(
     );
     let mut db = STATE.db.write().await;
     let session_id = live_session_id(&*db, token)?;
-    db::users::set_session_plugin_data(&mut *db, session_id, plugin_id, value.as_deref())
+    crate::db::users::set_session_plugin_data(&mut *db, session_id, plugin_id, value.as_deref())
 }
 
 #[cfg(test)]
@@ -479,18 +485,19 @@ mod tests {
     #[tokio::test]
     async fn plugin_session_data_is_scoped_bounded_and_revoked_with_session() -> anyhow::Result<()>
     {
-        let _guard = crate::testing::runtime_test_lock().await;
-        crate::testing::init_default_test_state()?;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
         let user_id = {
             let mut db = STATE.db.write().await;
-            db::users::create(&mut db, &db::test_db::test_user("session-data")?)?
+            crate::db::users::create(&mut db, &crate::db::fixtures::test_user("session-data")?)?
         };
-        let token = crate::testing::create_session(user_id, SessionMetadata::default())
+        let token = crate::services::testing::create_session(user_id, SessionMetadata::default())
             .await?
             .token;
-        let other_token = crate::testing::create_session(user_id, SessionMetadata::default())
-            .await?
-            .token;
+        let other_token =
+            crate::services::testing::create_session(user_id, SessionMetadata::default())
+                .await?
+                .token;
         let data = serde_json::json!({"device_id": "phone"});
         assert_eq!(
             get_plugin_data(&token, "external").await?,
@@ -505,7 +512,7 @@ mod tests {
             let session_id = live_session_id(&*db, &other_token)?;
             db.exec_mut(
                 agdb::QueryBuilder::insert()
-                    .values_uniform([("expires_at", db::users::now_secs() - 1).into()])
+                    .values_uniform([("expires_at", crate::db::users::now_secs() - 1).into()])
                     .ids(session_id)
                     .query(),
             )?;
@@ -545,19 +552,20 @@ mod tests {
     #[tokio::test]
     async fn listed_sessions_carry_only_the_listing_plugins_data_and_skip_expired()
     -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
-        crate::testing::init_default_test_state()?;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
         let user_id = {
             let mut db = STATE.db.write().await;
-            db::users::create(&mut db, &db::test_db::test_user("session-list")?)?
+            crate::db::users::create(&mut db, &crate::db::fixtures::test_user("session-list")?)?
         };
-        let principal = crate::testing::user_principal(user_id).await?;
-        let token = crate::testing::create_session(user_id, SessionMetadata::default())
+        let principal = crate::services::testing::user_principal(user_id).await?;
+        let token = crate::services::testing::create_session(user_id, SessionMetadata::default())
             .await?
             .token;
-        let expired_token = crate::testing::create_session(user_id, SessionMetadata::default())
-            .await?
-            .token;
+        let expired_token =
+            crate::services::testing::create_session(user_id, SessionMetadata::default())
+                .await?
+                .token;
         set_plugin_data(
             &token,
             "external",
@@ -569,7 +577,7 @@ mod tests {
             let session_id = live_session_id(&*db, &expired_token)?;
             db.exec_mut(
                 agdb::QueryBuilder::insert()
-                    .values_uniform([("expires_at", db::users::now_secs() - 1).into()])
+                    .values_uniform([("expires_at", crate::db::users::now_secs() - 1).into()])
                     .ids(session_id)
                     .query(),
             )?;

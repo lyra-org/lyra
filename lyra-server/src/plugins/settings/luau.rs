@@ -3,7 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use crate::plugins::lifecycle::PluginId;
+use crate::services::plugin_scope::PluginId;
 use std::{
     collections::{
         HashMap,
@@ -34,7 +34,7 @@ use super::{
         SettingsStringProps,
     },
 };
-use crate::plugins::db::DbAsync;
+use crate::db::DbAsync;
 use crate::services::settings::plugins as plugin_settings_service;
 
 #[harmony_macros::userdata(
@@ -235,7 +235,7 @@ async fn load_user_stored_values(
     let db =
         db.ok_or_else(|| luau::Error::Runtime("plugin settings database is unavailable".into()))?;
     let db = db.read().await;
-    let user_db_id = crate::plugins::db::users::find_db_id_by_public_id(&*db, user_public_id)
+    let user_db_id = crate::db::users::find_db_id_by_public_id(&*db, user_public_id)
         .map_err(crate::plugins::runtime_error)?
         .ok_or_else(|| crate::plugins::runtime_error("user not found"))?;
     plugin_settings_service::load_validated_user_stored_values(
@@ -256,9 +256,9 @@ fn declare_settings_callback(
     let vm = frame.vm.clone();
     let origin = frame.context.origin.clone();
     Ok(luau::ScheduledFuture::new(async move {
-        let generation = crate::STATE.generation();
+        let generation = crate::plugins::STATE.generation();
         let _registration = generation
-            .plugin_registries
+            .registries
             .ensure_registrations_open(&plugin_id)
             .await
             .map_err(crate::plugins::runtime_error)?;
@@ -301,9 +301,9 @@ fn declare_user_settings_callback(
     let vm = frame.vm.clone();
     let origin = frame.context.origin.clone();
     Ok(luau::ScheduledFuture::new(async move {
-        let generation = crate::STATE.generation();
+        let generation = crate::plugins::STATE.generation();
         let _registration = generation
-            .plugin_registries
+            .registries
             .ensure_registrations_open(&plugin_id)
             .await
             .map_err(crate::plugins::runtime_error)?;

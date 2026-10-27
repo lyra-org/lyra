@@ -33,7 +33,6 @@ use super::{
     tracks_of_releases,
 };
 use crate::db::{
-    self,
     Track,
     favorites::FavoriteKind,
     ratings::RatingFilter,
@@ -174,8 +173,8 @@ impl Catalog for Tracks {
         match (&filter.ids, releases.ids()) {
             (Some(ids), Some(releases)) => {
                 let mut on_releases = Vec::new();
-                for track in db::graph::existing_ids(db, ids, "Track")? {
-                    if db::graph::inbound_neighbor_ids(db, track, "Release")?
+                for track in crate::db::graph::existing_ids(db, ids, "Track")? {
+                    if crate::db::graph::inbound_neighbor_ids(db, track, "Release")?
                         .iter()
                         .any(|release| releases.contains(release))
                     {
@@ -184,7 +183,7 @@ impl Catalog for Tracks {
                 }
                 tracks.restrict(on_releases);
             }
-            (Some(ids), None) => tracks.restrict(db::graph::existing_ids(db, ids, "Track")?),
+            (Some(ids), None) => tracks.restrict(crate::db::graph::existing_ids(db, ids, "Track")?),
             (None, Some(releases)) => {
                 tracks.restrict(tracks_of_releases(db, releases.iter().copied())?);
             }
@@ -192,7 +191,7 @@ impl Catalog for Tracks {
         }
         let reach = |artists: &[DbId], role| match role {
             CreditRole::Release => {
-                tracks_of_releases(db, credited_owners::<db::Release>(db, artists)?)
+                tracks_of_releases(db, credited_owners::<crate::db::Release>(db, artists)?)
             }
             _ => credited_owners::<Track>(db, artists),
         };
@@ -202,23 +201,27 @@ impl Catalog for Tracks {
         if !filter.years.is_empty() {
             let mut matching = HashSet::new();
             for year in &filter.years {
-                matching.extend(db::tracks::ids_with_year(db, *year)?);
+                matching.extend(crate::db::tracks::ids_with_year(db, *year)?);
             }
             tracks.restrict(matching);
         }
         if let Some(favorite) = filter.favorite {
             let user = viewer.user_db_id("the favorite filter")?;
-            let favorites = db::favorites::target_ids(db, user, FavoriteKind::Track)?;
+            let favorites = crate::db::favorites::target_ids(db, user, FavoriteKind::Track)?;
             tracks.restrict_membership(favorites, favorite, || all_tracks(db))?;
         }
         if let Some(listened) = filter.listened {
             let user = viewer.user_db_id("the listened filter")?;
-            let listened_ids = db::listens::listened_track_ids(db, user)?;
+            let listened_ids = crate::db::listens::listened_track_ids(db, user)?;
             tracks.restrict_membership(listened_ids, listened, || all_tracks(db))?;
         }
         if !filter.rating.is_empty() {
             let user = viewer.user_db_id("the rating filter")?;
-            tracks.restrict(db::ratings::target_ids_matching(db, user, filter.rating)?);
+            tracks.restrict(crate::db::ratings::target_ids_matching(
+                db,
+                user,
+                filter.rating,
+            )?);
         }
 
         let mut excluded = filter.exclude_ids.clone();
@@ -235,13 +238,13 @@ impl Catalog for Tracks {
         ids: Vec<DbId>,
         keys: &[TrackKey],
     ) -> Result<Vec<Row>, CatalogError> {
-        let fields = db::graph::select_fields(db, &ids, &track_fields(keys))?;
+        let fields = crate::db::graph::select_fields(db, &ids, &track_fields(keys))?;
         let listens = if keys
             .iter()
             .any(|key| matches!(key, TrackKey::ListenCount | TrackKey::LastPlayedAt))
         {
             let user = viewer.user_db_id("listen sort keys")?;
-            db::listens::get_stats(db, &ids, user)?
+            crate::db::listens::get_stats(db, &ids, user)?
                 .into_iter()
                 .map(|stats| (stats.db_id, stats))
                 .collect()
@@ -249,7 +252,7 @@ impl Catalog for Tracks {
             HashMap::new()
         };
         let artist_names = if keys.contains(&TrackKey::ArtistName) {
-            db::artists::first_credited_names(db, &ids)?
+            crate::db::artists::first_credited_names(db, &ids)?
         } else {
             HashMap::new()
         };
@@ -260,7 +263,7 @@ impl Catalog for Tracks {
         };
         let release_title = match filter.single_release() {
             Some(release) if keys.contains(&TrackKey::ReleaseTitle) => {
-                db::releases::get_by_id(db, release)?
+                crate::db::releases::get_by_id(db, release)?
                     .map(|release| release.release_title.to_lowercase())
             }
             _ => None,
@@ -311,7 +314,7 @@ impl Catalog for Tracks {
     }
 
     fn hydrate(db: &DbAny, ids: &[DbId]) -> anyhow::Result<Vec<Track>> {
-        let mut tracks = db::tracks::get_by_ids(db, ids)?;
+        let mut tracks = crate::db::tracks::get_by_ids(db, ids)?;
         Ok(ids.iter().filter_map(|id| tracks.remove(id)).collect())
     }
 }
@@ -338,7 +341,7 @@ fn release_artist_names(db: &DbAny, tracks: &[DbId]) -> anyhow::Result<HashMap<D
     for track in tracks {
         releases_by_track.insert(
             *track,
-            db::graph::inbound_neighbor_ids(db, *track, "Release")?,
+            crate::db::graph::inbound_neighbor_ids(db, *track, "Release")?,
         );
     }
     let release_ids = releases_by_track
@@ -346,7 +349,7 @@ fn release_artist_names(db: &DbAny, tracks: &[DbId]) -> anyhow::Result<HashMap<D
         .flatten()
         .copied()
         .collect::<Vec<_>>();
-    let names = db::artists::first_credited_names(db, &release_ids)?;
+    let names = crate::db::artists::first_credited_names(db, &release_ids)?;
     Ok(releases_by_track
         .into_iter()
         .filter_map(|(track, releases)| {
@@ -360,5 +363,5 @@ fn release_artist_names(db: &DbAny, tracks: &[DbId]) -> anyhow::Result<HashMap<D
 }
 
 fn all_tracks(db: &DbAny) -> anyhow::Result<Vec<DbId>> {
-    db::graph::neighbor_ids(db, "tracks", "Track")
+    crate::db::graph::neighbor_ids(db, "tracks", "Track")
 }

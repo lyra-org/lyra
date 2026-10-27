@@ -20,8 +20,8 @@ use serde::{
 };
 
 use crate::{
-    STATE,
     routes::AppError,
+    services::STATE,
     services::{
         auth::require_authenticated,
         search as search_service,

@@ -398,10 +398,7 @@ pub(crate) fn list_summaries(
     Ok(summaries)
 }
 
-pub(crate) fn list_summaries_for_user(
-    db: &DbAny,
-    user_db_id: DbId,
-) -> anyhow::Result<Vec<ListenSummary>> {
+pub fn list_summaries_for_user(db: &DbAny, user_db_id: DbId) -> anyhow::Result<Vec<ListenSummary>> {
     list_summaries(db, ListenOwners::User(user_db_id), None)
 }
 

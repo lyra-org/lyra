@@ -191,10 +191,7 @@ fn ensure_targets(db: &impl DbAccess, target_ids: &[DbId], kind: &str) -> anyhow
 }
 
 /// The layer's credits, ordered within each role.
-pub(crate) fn credits(
-    db: &impl DbAccess,
-    layer_id: DbId,
-) -> anyhow::Result<Vec<LayerLink<LayerCredit>>> {
+pub fn credits(db: &impl DbAccess, layer_id: DbId) -> anyhow::Result<Vec<LayerLink<LayerCredit>>> {
     let mut links = of_layer::<LayerCredit>(db, layer_id)?;
     links.sort_by(|a, b| {
         (a.edge.credit_type.to_string(), a.edge.artist_order)
@@ -314,10 +311,7 @@ pub(crate) fn replace_relations(
 }
 
 /// The layer's genres, in order.
-pub(crate) fn genres(
-    db: &impl DbAccess,
-    layer_id: DbId,
-) -> anyhow::Result<Vec<LayerLink<LayerGenre>>> {
+pub fn genres(db: &impl DbAccess, layer_id: DbId) -> anyhow::Result<Vec<LayerLink<LayerGenre>>> {
     let mut links = of_layer::<LayerGenre>(db, layer_id)?;
     links.sort_by_key(|link| link.edge.genre_order);
     Ok(links)
@@ -361,10 +355,7 @@ pub(crate) fn replace_genres(
 }
 
 /// The layer's labels, in order.
-pub(crate) fn labels(
-    db: &impl DbAccess,
-    layer_id: DbId,
-) -> anyhow::Result<Vec<LayerLink<LayerLabel>>> {
+pub fn labels(db: &impl DbAccess, layer_id: DbId) -> anyhow::Result<Vec<LayerLink<LayerLabel>>> {
     let mut links = of_layer::<LayerLabel>(db, layer_id)?;
     links.sort_by_key(|link| link.edge.label_order);
     Ok(links)
@@ -509,11 +500,7 @@ pub(crate) fn label_ids_of(db: &impl DbAccess, layer_ids: &[DbId]) -> anyhow::Re
 /// Points every layer edge referencing artist `loser` at `winner` instead,
 /// keeping its properties. An edge the layer already holds for `winner` in the
 /// same role or relation type is dropped instead of repeated.
-pub(crate) fn retarget_artist(
-    db: &mut impl DbAccess,
-    winner: DbId,
-    loser: DbId,
-) -> anyhow::Result<()> {
+pub fn retarget_artist(db: &mut impl DbAccess, winner: DbId, loser: DbId) -> anyhow::Result<()> {
     if winner == loser {
         return Ok(());
     }
@@ -602,6 +589,11 @@ mod tests {
     use super::*;
     use crate::db::{
         MetadataLayer,
+        fixtures::{
+            insert_artist,
+            insert_release,
+            insert_track,
+        },
         labels::{
             ResolveLabel,
             get_by_id as get_label,
@@ -613,12 +605,7 @@ mod tests {
                 upsert,
             },
         },
-        test_db::{
-            insert_artist,
-            insert_release,
-            insert_track,
-            new_test_db,
-        },
+        test_db::new_test_db,
     };
 
     fn layer_of(db: &mut DbAny, node_id: DbId, source_id: &str) -> anyhow::Result<DbId> {

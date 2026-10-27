@@ -194,14 +194,12 @@ pub(crate) fn apply_metadata(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::metadata::mapping_config;
     use crate::db::test_db::{
         self,
         TestDb,
     };
     use crate::db::track_sources::SourceFormat;
     use crate::db::{
-        self,
         Artist,
         IdSource,
         Library,
@@ -209,6 +207,7 @@ mod tests {
         Release,
         Track,
     };
+    use crate::services::metadata::mapping::ensure_config;
     use crate::services::metadata::{
         TrackMetadata,
         cleanup::cleanup_orphaned_metadata,
@@ -371,11 +370,11 @@ mod tests {
     ) -> anyhow::Result<()> {
         let source_key = format!("entry:{}:embedded", entry_db_id.0);
         db.transaction_mut(|t| {
-            db::track_sources::upsert(
+            crate::db::track_sources::upsert(
                 t,
                 track_db_id,
                 entry_db_id,
-                db::track_sources::TrackSourceUpsert {
+                crate::db::track_sources::TrackSourceUpsert {
                     source_kind: "embedded_tags".to_string(),
                     source_key,
                     is_primary: true,
@@ -510,10 +509,10 @@ mod tests {
 
     fn insert_release_cover(db: &mut DbAny, release_db_id: DbId, id: &str) -> anyhow::Result<()> {
         db.transaction_mut(|t| {
-            db::covers::upsert(
+            crate::db::covers::upsert(
                 t,
                 release_db_id,
-                db::covers::Cover {
+                crate::db::covers::Cover {
                     db_id: None,
                     id: id.to_string(),
                     path: format!("/tmp/{id}.jpg"),
@@ -531,8 +530,8 @@ mod tests {
         username: &str,
         track_db_ids: &[DbId],
     ) -> anyhow::Result<DbId> {
-        let user_db_id = db::users::create(db, &test_db::test_user(username)?)?;
-        let playlist = db::playlists::Playlist {
+        let user_db_id = crate::db::users::create(db, &crate::db::fixtures::test_user(username)?)?;
+        let playlist = crate::db::playlists::Playlist {
             db_id: None,
             id: nanoid!(),
             name: "Ingestion Cover Regression".to_string(),
@@ -541,24 +540,24 @@ mod tests {
             created_at: None,
             updated_at: None,
         };
-        let playlist_db_id = db::playlists::create(db, &playlist, user_db_id)?;
+        let playlist_db_id = crate::db::playlists::create(db, &playlist, user_db_id)?;
         db.transaction_mut(|t| -> anyhow::Result<()> {
-            db::playlists::add_tracks(t, playlist_db_id, track_db_ids)?;
+            crate::db::playlists::add_tracks(t, playlist_db_id, track_db_ids)?;
             Ok(())
         })?;
         Ok(playlist_db_id)
     }
 
     fn playlist_cover_winner(db: &DbAny, playlist_db_id: DbId) -> anyhow::Result<Option<DbId>> {
-        use db::covers::display::{
+        use crate::db::covers::display::{
             DisplayCoverScope,
             DisplayCoverTargetKind,
             DisplayCoverWinnerKind,
         };
 
-        let playlist = db::playlists::get_by_id(db, playlist_db_id)?
+        let playlist = crate::db::playlists::get_by_id(db, playlist_db_id)?
             .ok_or_else(|| anyhow!("playlist missing"))?;
-        let Some((_, profile)) = db::covers::display::get_profile(
+        let Some((_, profile)) = crate::db::covers::display::get_profile(
             db,
             DisplayCoverScope::Instance,
             DisplayCoverTargetKind::Playlist,
@@ -569,7 +568,7 @@ mod tests {
             return Ok(None);
         };
         Ok(
-            db::covers::display::get_winner(db, &profile, DisplayCoverWinnerKind::Random)?
+            crate::db::covers::display::get_winner(db, &profile, DisplayCoverWinnerKind::Random)?
                 .map(|winner| winner.release_db_id),
         )
     }
@@ -583,7 +582,7 @@ mod tests {
             .db_id
             .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
         let groups = group_entries(db, library_db_id, entries)?;
-        let mapping_config = mapping_config::ensure(db)?;
+        let mapping_config = ensure_config(db)?;
         let mut parsed_groups = Vec::new();
 
         for (coalesce_group_key, entries) in groups.into_iter().enumerate() {
@@ -695,12 +694,12 @@ mod tests {
         crate::db::test_db::connect_artist(&mut db, track_db_id, artist_db_id)?;
 
         // Add a metadata layer attached to the track
-        db::metadata::layers::upsert(
+        crate::db::metadata::layers::upsert(
             &mut db,
             track_db_id,
             &MetadataLayer::new("test-provider", Default::default(), 0),
         )?;
-        let layer_id = db::metadata::collect_layer_ids(&db, track_db_id)?[0];
+        let layer_id = crate::db::metadata::collect_layer_ids(&db, track_db_id)?[0];
 
         // Add an external ID attached to the track
         let ext = ExternalId {
@@ -766,12 +765,12 @@ mod tests {
     }
 
     fn provider_layer(db: &mut DbAny, node_id: DbId) -> anyhow::Result<DbId> {
-        db::metadata::layers::upsert(
+        crate::db::metadata::layers::upsert(
             db,
             node_id,
             &MetadataLayer::new("provider", Default::default(), 0),
         )?;
-        db::metadata::layers::layer_id(db, node_id, "provider")?
+        crate::db::metadata::layers::layer_id(db, node_id, "provider")?
             .ok_or_else(|| anyhow!("provider layer missing"))
     }
 
@@ -797,13 +796,13 @@ mod tests {
         let track_layer = provider_layer(&mut db, track_db_id)?;
         let hidden_layer = provider_layer(&mut db, hidden_id)?;
         let empty_layer = provider_layer(&mut db, empty_release_id)?;
-        let jazz = db::genres::resolve_by_name(&mut db, "Jazz")?;
-        db::genres::link_to_release(&mut db, jazz, release_db_id)?;
+        let jazz = crate::db::genres::resolve_by_name(&mut db, "Jazz")?;
+        crate::db::genres::link_to_release(&mut db, jazz, release_db_id)?;
         db.transaction_mut(|t| {
             edges::replace_credits(
                 t,
                 track_layer,
-                db::CreditType::Artist,
+                crate::db::CreditType::Artist,
                 &[edges::LayerCreditInput {
                     artist_id: hidden_id,
                     detail: None,
@@ -812,7 +811,7 @@ mod tests {
             edges::replace_relations(
                 t,
                 hidden_layer,
-                db::ArtistRelationType::MemberOf,
+                crate::db::ArtistRelationType::MemberOf,
                 &[edges::LayerRelationInput {
                     artist_id: member_id,
                     attributes: None,
@@ -823,34 +822,36 @@ mod tests {
 
         let alias_id = insert_artist(&mut db, "Alias")?;
         connect(&mut db, "artists", alias_id)?;
-        db::artists::relations::link(
+        crate::db::artists::relations::link(
             &mut db,
             hidden_id,
             alias_id,
-            db::ArtistRelationType::VoiceActor,
+            crate::db::ArtistRelationType::VoiceActor,
             None,
         )?;
 
         cleanup_orphaned_metadata(&mut db)?;
 
-        assert!(db::artists::get_by_id(&db, hidden_id)?.is_some());
-        assert!(db::artists::get_by_id(&db, member_id)?.is_some());
+        assert!(crate::db::artists::get_by_id(&db, hidden_id)?.is_some());
+        assert!(crate::db::artists::get_by_id(&db, member_id)?.is_some());
         assert!(
-            db::artists::get_by_id(&db, alias_id)?.is_some(),
+            crate::db::artists::get_by_id(&db, alias_id)?.is_some(),
             "a kept artist keeps its effective relation targets"
         );
         assert!(
-            db::releases::get_by_id(&db, empty_release_id)?.is_none(),
+            crate::db::releases::get_by_id(&db, empty_release_id)?.is_none(),
             "a layer genre does not give a release tracks"
         );
 
-        db.transaction_mut(|t| db::metadata::layers::remove_inside_tx(t, track_db_id, "provider"))?;
+        db.transaction_mut(|t| {
+            crate::db::metadata::layers::remove_inside_tx(t, track_db_id, "provider")
+        })?;
         cleanup_orphaned_metadata(&mut db)?;
 
-        assert!(db::artists::get_by_id(&db, hidden_id)?.is_none());
-        assert!(db::artists::get_by_id(&db, member_id)?.is_none());
-        assert!(db::artists::get_by_id(&db, alias_id)?.is_none());
-        assert!(db::tracks::get_by_id(&db, track_db_id)?.is_some());
+        assert!(crate::db::artists::get_by_id(&db, hidden_id)?.is_none());
+        assert!(crate::db::artists::get_by_id(&db, member_id)?.is_none());
+        assert!(crate::db::artists::get_by_id(&db, alias_id)?.is_none());
+        assert!(crate::db::tracks::get_by_id(&db, track_db_id)?.is_some());
         Ok(())
     }
 
@@ -918,7 +919,7 @@ mod tests {
         assert_eq!(releases[0].release_title, "Integration Album");
 
         let release_db_id: DbId = releases[0].db_id.clone().unwrap().into();
-        let release_tracks = db::tracks::get(&db, release_db_id)?;
+        let release_tracks = crate::db::tracks::get(&db, release_db_id)?;
         assert_eq!(release_tracks.len(), 1);
         assert_eq!(release_tracks[0].track_title, "Integration Track");
         assert!(release_tracks[0].duration_ms.unwrap_or(0) > 0);
@@ -932,7 +933,7 @@ mod tests {
             format.bitrate_bps
         );
 
-        let album_artists = db::artists::get(&db, release_db_id)?;
+        let album_artists = crate::db::artists::get(&db, release_db_id)?;
         assert_eq!(album_artists.len(), 1);
         assert_eq!(album_artists[0].artist_name, "Integration Artist");
 
@@ -940,7 +941,7 @@ mod tests {
         assert_eq!(all_artists.len(), 1);
 
         let track_db_id: DbId = release_tracks[0].db_id.clone().unwrap().into();
-        let linked_entries = db::entries::get_by_track(&db, track_db_id)?;
+        let linked_entries = crate::db::entries::get_by_track(&db, track_db_id)?;
         assert_eq!(linked_entries.len(), 1);
         assert_eq!(linked_entries[0].full_path, fixture);
 
@@ -1044,7 +1045,7 @@ mod tests {
         assert_eq!(releases[0].release_title, "Integration Multi Album");
 
         let release_db_id: DbId = releases[0].db_id.clone().unwrap().into();
-        let release_tracks = db::tracks::get(&db, release_db_id)?;
+        let release_tracks = crate::db::tracks::get(&db, release_db_id)?;
         assert_eq!(release_tracks.len(), 2);
         let titles: HashSet<&str> = release_tracks
             .iter()
@@ -1053,13 +1054,13 @@ mod tests {
         assert!(titles.contains("Multi Track 1"));
         assert!(titles.contains("Multi Track 2"));
 
-        let album_artists = db::artists::get(&db, release_db_id)?;
+        let album_artists = crate::db::artists::get(&db, release_db_id)?;
         assert_eq!(album_artists.len(), 1);
         assert_eq!(album_artists[0].artist_name, "Integration Album Artist");
 
         for track in release_tracks {
             let track_db_id: DbId = track.db_id.clone().unwrap().into();
-            let track_artists = db::artists::get(&db, track_db_id)?;
+            let track_artists = crate::db::artists::get(&db, track_db_id)?;
             assert_eq!(track_artists.len(), 1);
             match track.track_title.as_str() {
                 "Multi Track 1" => {
@@ -1070,7 +1071,7 @@ mod tests {
                 }
                 _ => return Err(anyhow!("unexpected track title")),
             }
-            let linked_entries: Vec<Entry> = db::entries::get_by_track(&db, track_db_id)?;
+            let linked_entries: Vec<Entry> = crate::db::entries::get_by_track(&db, track_db_id)?;
             assert_eq!(linked_entries.len(), 1);
             assert!(
                 file_paths
@@ -1137,7 +1138,7 @@ mod tests {
         let releases = select_releases(&db)?;
         assert_eq!(releases.len(), 1);
         let release_db_id: DbId = releases[0].db_id.clone().unwrap().into();
-        let album_artists = db::artists::get(&db, release_db_id)?;
+        let album_artists = crate::db::artists::get(&db, release_db_id)?;
         let names: Vec<&str> = album_artists
             .iter()
             .map(|artist| artist.artist_name.as_str())
@@ -1219,15 +1220,15 @@ mod tests {
             .db_id
             .ok_or_else(|| anyhow!("release missing db_id"))?
             .into();
-        let release_artists = db::artists::get(&db, release_db_id)?;
+        let release_artists = crate::db::artists::get(&db, release_db_id)?;
         assert_eq!(release_artists.len(), 1);
         assert_eq!(release_artists[0].artist_name, "井ノ華六花");
         assert_eq!(
             release_artists[0].artist_type,
-            Some(db::ArtistType::Character)
+            Some(crate::db::ArtistType::Character)
         );
 
-        let character_id = db::lookup::find_id_by_indexed_string_field(
+        let character_id = crate::db::lookup::find_id_by_indexed_string_field(
             &db,
             "artists",
             "scan_name",
@@ -1235,7 +1236,7 @@ mod tests {
             "井ノ華六花",
         )?
         .ok_or_else(|| anyhow!("character artist missing"))?;
-        let actor_id = db::lookup::find_id_by_indexed_string_field(
+        let actor_id = crate::db::lookup::find_id_by_indexed_string_field(
             &db,
             "artists",
             "scan_name",
@@ -1244,14 +1245,14 @@ mod tests {
         )?
         .ok_or_else(|| anyhow!("voice actor artist missing"))?;
 
-        let actor =
-            db::artists::get_by_id(&db, actor_id)?.ok_or_else(|| anyhow!("actor missing"))?;
-        assert_eq!(actor.artist_type, Some(db::ArtistType::Person));
+        let actor = crate::db::artists::get_by_id(&db, actor_id)?
+            .ok_or_else(|| anyhow!("actor missing"))?;
+        assert_eq!(actor.artist_type, Some(crate::db::ArtistType::Person));
 
-        let relations = db::artists::relations::get_relations_from(
+        let relations = crate::db::artists::relations::get_relations_from(
             &db,
             actor_id,
-            Some(db::ArtistRelationType::VoiceActor),
+            Some(crate::db::ArtistRelationType::VoiceActor),
         )?;
         assert_eq!(relations.len(), 1);
         assert_eq!(relations[0].1, character_id);
@@ -1272,18 +1273,24 @@ mod tests {
     }
 
     fn artist_named(db: &DbAny, name: &str) -> anyhow::Result<Option<DbId>> {
-        db::lookup::find_id_by_indexed_string_field(db, "artists", "scan_name", "scan_name", name)
+        crate::db::lookup::find_id_by_indexed_string_field(
+            db,
+            "artists",
+            "scan_name",
+            "scan_name",
+            name,
+        )
     }
 
     fn voice_actors_of(db: &DbAny, character_id: DbId) -> anyhow::Result<Vec<String>> {
         let mut names = Vec::new();
-        for (_, actor_id) in db::artists::relations::get_relations_to(
+        for (_, actor_id) in crate::db::artists::relations::get_relations_to(
             db,
             character_id,
-            Some(db::ArtistRelationType::VoiceActor),
+            Some(crate::db::ArtistRelationType::VoiceActor),
         )? {
             names.push(
-                db::artists::get_by_id(db, actor_id)?
+                crate::db::artists::get_by_id(db, actor_id)?
                     .ok_or_else(|| anyhow!("actor missing"))?
                     .artist_name,
             );
@@ -1321,7 +1328,7 @@ mod tests {
         );
         let local = local_layer(&db, character_id)?;
         assert_eq!(
-            local.relations[&db::ArtistRelationType::VoiceActor].len(),
+            local.relations[&crate::db::ArtistRelationType::VoiceActor].len(),
             2,
             "the character's local layer owns both relations"
         );
@@ -1347,8 +1354,8 @@ mod tests {
             "provider",
             &crate::services::metadata::layers::ProviderValues {
                 relations: BTreeMap::from([(
-                    db::ArtistRelationType::VoiceActor,
-                    vec![db::metadata::layers::edges::LayerRelationInput {
+                    crate::db::ArtistRelationType::VoiceActor,
+                    vec![crate::db::metadata::layers::edges::LayerRelationInput {
                         artist_id: actor_id,
                         attributes: None,
                     }],
@@ -1360,14 +1367,14 @@ mod tests {
         )?;
 
         cleanup_orphaned_metadata(&mut db)?;
-        assert!(db::artists::get_by_id(&db, actor_id)?.is_some());
+        assert!(crate::db::artists::get_by_id(&db, actor_id)?.is_some());
         assert_eq!(voice_actors_of(&db, character_id)?, vec!["Actor"]);
 
         crate::services::metadata::layers::clear_provider_layer(&mut db, character_id, "provider")?;
         assert!(voice_actors_of(&db, character_id)?.is_empty());
         cleanup_orphaned_metadata(&mut db)?;
-        assert!(db::artists::get_by_id(&db, actor_id)?.is_none());
-        assert!(db::artists::get_by_id(&db, character_id)?.is_some());
+        assert!(crate::db::artists::get_by_id(&db, actor_id)?.is_none());
+        assert!(crate::db::artists::get_by_id(&db, character_id)?.is_some());
         Ok(())
     }
 
@@ -1392,7 +1399,7 @@ mod tests {
         apply_metadata(&mut db, library_id, tracks.clone())?;
         let release_id: DbId = select_releases(&db)?[0].db_id.clone().unwrap().into();
         let release_artists = |db: &DbAny| -> anyhow::Result<Vec<String>> {
-            Ok(db::artists::get(db, release_id)?
+            Ok(crate::db::artists::get(db, release_id)?
                 .into_iter()
                 .map(|artist| artist.artist_name)
                 .collect())
@@ -1440,11 +1447,11 @@ mod tests {
             .next()
             .ok_or_else(|| anyhow!("release missing"))?;
         let release_id: DbId = release.db_id.clone().unwrap().into();
-        let genres = db::genres::get_for_release(db, release_id)?
+        let genres = crate::db::genres::get_for_release(db, release_id)?
             .into_iter()
             .map(|genre| genre.name)
             .collect();
-        let labels = db::labels::get_for_release(db, release_id)?
+        let labels = crate::db::labels::get_for_release(db, release_id)?
             .into_iter()
             .map(|label| format!("{} {:?}", label.label.name, label.catalog_number))
             .collect();
@@ -1499,9 +1506,9 @@ mod tests {
         }
     }
 
-    fn artist_type_of(db: &DbAny, name: &str) -> anyhow::Result<Option<db::ArtistType>> {
+    fn artist_type_of(db: &DbAny, name: &str) -> anyhow::Result<Option<crate::db::ArtistType>> {
         let artist_id = artist_named(db, name)?.ok_or_else(|| anyhow!("{name} missing"))?;
-        Ok(db::artists::get_by_id(db, artist_id)?
+        Ok(crate::db::artists::get_by_id(db, artist_id)?
             .ok_or_else(|| anyhow!("{name} missing"))?
             .artist_type)
     }
@@ -1541,7 +1548,7 @@ mod tests {
 
         assert_eq!(
             artist_type_of(&db, "Character")?,
-            Some(db::ArtistType::Character)
+            Some(crate::db::ArtistType::Character)
         );
         Ok(())
     }
@@ -1558,7 +1565,7 @@ mod tests {
             scan_releases(&mut db, releases)?;
             assert_eq!(
                 artist_type_of(&db, "Both")?,
-                Some(db::ArtistType::Character)
+                Some(crate::db::ArtistType::Character)
             );
         }
         Ok(())
@@ -1581,11 +1588,12 @@ mod tests {
         }
         let winner = artist_named(&db, "Mr.Children")?.ok_or_else(|| anyhow!("winner"))?;
         let loser = artist_named(&db, "Mr Children")?.ok_or_else(|| anyhow!("loser"))?;
-        let mut verified = db::artists::get_by_id(&db, winner)?.ok_or_else(|| anyhow!("winner"))?;
+        let mut verified =
+            crate::db::artists::get_by_id(&db, winner)?.ok_or_else(|| anyhow!("winner"))?;
         verified.set_verified(true);
-        db::artists::update(&mut db, &verified)?;
+        crate::db::artists::update(&mut db, &verified)?;
         for artist in [winner, loser] {
-            db::external_ids::upsert(
+            crate::db::external_ids::upsert(
                 &mut db,
                 artist,
                 "musicbrainz",
@@ -1605,7 +1613,7 @@ mod tests {
         assert_eq!(artist_named(&db, "Mr Children")?, None);
         assert_eq!(select_artists(&db)?.len(), 1);
         for release in select_releases(&db)? {
-            let artists = db::artists::get(&db, DbId::from(release.db_id.unwrap()))?;
+            let artists = crate::db::artists::get(&db, DbId::from(release.db_id.unwrap()))?;
             assert_eq!(artists.len(), 1, "{}", release.release_title);
             assert_eq!(artists[0].db_id.clone().map(DbId::from), Some(winner));
         }
@@ -1639,11 +1647,12 @@ mod tests {
         }
         let winner = artist_named(&db, "Mr Children")?.ok_or_else(|| anyhow!("winner"))?;
         let loser = artist_named(&db, "Mr.Children")?.ok_or_else(|| anyhow!("loser"))?;
-        let mut verified = db::artists::get_by_id(&db, winner)?.ok_or_else(|| anyhow!("winner"))?;
+        let mut verified =
+            crate::db::artists::get_by_id(&db, winner)?.ok_or_else(|| anyhow!("winner"))?;
         verified.set_verified(true);
-        db::artists::update(&mut db, &verified)?;
+        crate::db::artists::update(&mut db, &verified)?;
         for artist in [winner, loser] {
-            db::external_ids::upsert(
+            crate::db::external_ids::upsert(
                 &mut db,
                 artist,
                 "musicbrainz",
@@ -1655,7 +1664,7 @@ mod tests {
         crate::services::metadata::cleanup::deduplicate_artists_by_external_id(&mut db)?;
 
         let local_name = |db: &DbAny| -> anyhow::Result<Option<serde_json::Value>> {
-            Ok(db::metadata::layers::get_for_entity(db, winner)?
+            Ok(crate::db::metadata::layers::get_for_entity(db, winner)?
                 .into_iter()
                 .find(|layer| layer.source_id == LOCAL_SOURCE_ID)
                 .and_then(|layer| layer.fields.get(&MetadataField::ArtistName).cloned()))
@@ -1672,7 +1681,7 @@ mod tests {
         apply_metadata(&mut db, library_id, vec![both[1].clone()])?;
         assert_eq!(local_name(&db)?, Some(serde_json::json!("Mr Children")));
         assert_eq!(
-            db::artists::get_by_id(&db, winner)?
+            crate::db::artists::get_by_id(&db, winner)?
                 .ok_or_else(|| anyhow!("winner"))?
                 .artist_name,
             "Mr Children"
@@ -1694,7 +1703,7 @@ mod tests {
         let metadata = track_metadata(entry.0, "Combined Album", "imase and なとり", None, None, 1);
         apply_metadata(&mut db, library_id, vec![metadata.clone()])?;
         let release_id: DbId = select_releases(&db)?[0].db_id.clone().unwrap().into();
-        let track_id: DbId = db::tracks::get(&db, release_id)?[0]
+        let track_id: DbId = crate::db::tracks::get(&db, release_id)?[0]
             .db_id
             .clone()
             .unwrap()
@@ -1702,17 +1711,19 @@ mod tests {
         let combined = artist_named(&db, "imase and なとり")?.ok_or_else(|| anyhow!("combined"))?;
         upsert_provider(&mut db, "test", true)?;
         let split = vec![
-            test_db::insert_artist(&mut db, "imase")?,
-            test_db::insert_artist(&mut db, "なとり")?,
+            crate::db::fixtures::insert_artist(&mut db, "imase")?,
+            crate::db::fixtures::insert_artist(&mut db, "なとり")?,
         ];
-        let credits = db::metadata::layers::LayerCredits::from([(
-            db::CreditType::Artist,
+        let credits = crate::db::metadata::layers::LayerCredits::from([(
+            crate::db::CreditType::Artist,
             split
                 .iter()
-                .map(|&artist_id| db::metadata::layers::edges::LayerCreditInput {
-                    artist_id,
-                    detail: None,
-                })
+                .map(
+                    |&artist_id| crate::db::metadata::layers::edges::LayerCreditInput {
+                        artist_id,
+                        detail: None,
+                    },
+                )
                 .collect(),
         )]);
         for owner in [release_id, track_id] {
@@ -1729,7 +1740,7 @@ mod tests {
             )?;
         }
         let artists_of = |db: &DbAny, owner: DbId| -> anyhow::Result<Vec<DbId>> {
-            Ok(db::artists::get(db, owner)?
+            Ok(crate::db::artists::get(db, owner)?
                 .into_iter()
                 .map(|artist| DbId::from(artist.db_id.unwrap()))
                 .collect())
@@ -1744,7 +1755,7 @@ mod tests {
             assert_eq!(artists_of(&db, owner)?, split, "a rescan keeps the split");
         }
         assert!(
-            db::artists::get_by_id(&db, combined)?.is_some(),
+            crate::db::artists::get_by_id(&db, combined)?.is_some(),
             "the local layer still names the combined artist"
         );
 
@@ -1772,7 +1783,7 @@ mod tests {
 
     fn source_format_of(db: &DbAny, track: &Track) -> anyhow::Result<SourceFormat> {
         let track_db_id: DbId = track.db_id.clone().expect("track has db_id").into();
-        let sources = db::track_sources::get_by_track(db, track_db_id)?;
+        let sources = crate::db::track_sources::get_by_track(db, track_db_id)?;
         assert_eq!(sources.len(), 1);
         Ok(sources[0].format())
     }
@@ -1843,7 +1854,7 @@ mod tests {
 
         let releases = select_releases(&db)?;
         let release_db_id: DbId = releases[0].db_id.clone().unwrap().into();
-        let tracks = db::tracks::get(&db, release_db_id)?;
+        let tracks = crate::db::tracks::get(&db, release_db_id)?;
         assert_eq!(tracks.len(), 1);
         assert_eq!(
             source_format_of(&db, &tracks[0])?,
@@ -1879,7 +1890,7 @@ mod tests {
 
         let releases = select_releases(&db)?;
         let release_db_id: DbId = releases[0].db_id.clone().unwrap().into();
-        let tracks = db::tracks::get(&db, release_db_id)?;
+        let tracks = crate::db::tracks::get(&db, release_db_id)?;
         assert_eq!(
             source_format_of(&db, &tracks[0])?,
             audio_properties(Some(44_100), Some(2), None, Some(128_000))
@@ -1914,7 +1925,7 @@ mod tests {
 
         let releases = select_releases(&db)?;
         let release_db_id: DbId = releases[0].db_id.clone().unwrap().into();
-        let tracks = db::tracks::get(&db, release_db_id)?;
+        let tracks = crate::db::tracks::get(&db, release_db_id)?;
         assert_eq!(
             source_format_of(&db, &tracks[0])?,
             audio_properties(Some(44_100), Some(2), Some(16), Some(900_000))
@@ -1930,7 +1941,7 @@ mod tests {
             )],
         )?;
 
-        let tracks_after = db::tracks::get(&db, release_db_id)?;
+        let tracks_after = crate::db::tracks::get(&db, release_db_id)?;
         assert_eq!(tracks_after.len(), 1);
         assert_eq!(
             source_format_of(&db, &tracks_after[0])?,
@@ -1969,12 +1980,12 @@ mod tests {
         )?;
         let releases = select_releases(&db)?;
         let release_db_id: DbId = releases[0].db_id.clone().unwrap().into();
-        let tracks = db::tracks::get(&db, release_db_id)?;
+        let tracks = crate::db::tracks::get(&db, release_db_id)?;
         assert_eq!(tracks[0].track_gain_db, Some(-6.5));
         assert_eq!(tracks[0].album_gain_db, Some(-7.25));
 
         apply_metadata(&mut db, library_db_id, vec![with_gains(None, None)])?;
-        let tracks = db::tracks::get(&db, release_db_id)?;
+        let tracks = crate::db::tracks::get(&db, release_db_id)?;
         assert_eq!(tracks[0].track_gain_db, None);
         assert_eq!(tracks[0].album_gain_db, None);
 
@@ -2051,7 +2062,7 @@ mod tests {
             .ok_or_else(|| anyhow!("release missing db_id"))?
             .into();
 
-        let labels = db::labels::get_for_release(&db, release_db_id)?;
+        let labels = crate::db::labels::get_for_release(&db, release_db_id)?;
         assert_eq!(labels.len(), 1);
         assert_eq!(labels[0].label.name, "Blue Note");
         assert!(
@@ -2130,7 +2141,7 @@ mod tests {
             .ok_or_else(|| anyhow!("release missing db_id"))?
             .into();
 
-        let labels = db::labels::get_for_release(&db, release_db_id)?;
+        let labels = crate::db::labels::get_for_release(&db, release_db_id)?;
         assert_eq!(labels.len(), 1);
         assert_eq!(labels[0].label.name, "Blue Note");
         assert_eq!(labels[0].catalog_number.as_deref(), Some("BN-1577"));
@@ -2208,7 +2219,7 @@ mod tests {
             .ok_or_else(|| anyhow!("release missing db_id"))?
             .into();
 
-        let labels = db::labels::get_for_release(&db, release_db_id)?;
+        let labels = crate::db::labels::get_for_release(&db, release_db_id)?;
         assert_eq!(labels.len(), 1);
         assert_eq!(labels[0].catalog_number.as_deref(), Some("EMEGO-001"));
         Ok(())
@@ -2260,34 +2271,34 @@ FILE "album.flac" WAVE
         assert_eq!(releases[0].release_title, "Cue Album");
         let release_db_id: DbId = releases[0].db_id.clone().unwrap().into();
 
-        let mut tracks = db::tracks::get(&db, release_db_id)?;
+        let mut tracks = crate::db::tracks::get(&db, release_db_id)?;
         tracks.sort_by_key(|track| track.track.unwrap_or(0));
         assert_eq!(tracks.len(), 2);
         assert_eq!(tracks[0].track_title, "Cue Track 1");
         assert_eq!(tracks[1].track_title, "Cue Track 2");
 
         let track_one_id: DbId = tracks[0].db_id.clone().unwrap().into();
-        let track_one_entries = db::entries::get_by_track(&db, track_one_id)?;
+        let track_one_entries = crate::db::entries::get_by_track(&db, track_one_id)?;
         assert_eq!(track_one_entries.len(), 1);
         assert_eq!(track_one_entries[0].full_path, audio_path);
 
-        let track_one_sources = db::track_sources::get_by_track(&db, track_one_id)?;
+        let track_one_sources = crate::db::track_sources::get_by_track(&db, track_one_id)?;
         assert_eq!(track_one_sources.len(), 1);
         assert_eq!(track_one_sources[0].source_kind, "cue");
         assert_eq!(track_one_sources[0].start_ms, Some(0));
         assert_eq!(track_one_sources[0].end_ms, Some(120_000));
 
         let track_two_id: DbId = tracks[1].db_id.clone().unwrap().into();
-        let track_two_sources = db::track_sources::get_by_track(&db, track_two_id)?;
+        let track_two_sources = crate::db::track_sources::get_by_track(&db, track_two_id)?;
         assert_eq!(track_two_sources.len(), 1);
         assert_eq!(track_two_sources[0].source_kind, "cue");
         assert_eq!(track_two_sources[0].start_ms, Some(120_000));
         assert_eq!(track_two_sources[0].end_ms, None);
 
-        let cue_sheets: Vec<db::CueSheet> = db
+        let cue_sheets: Vec<crate::db::CueSheet> = db
             .exec(
                 QueryBuilder::select()
-                    .elements::<db::CueSheet>()
+                    .elements::<crate::db::CueSheet>()
                     .search()
                     .from("cue_sheets")
                     .query(),
@@ -2297,12 +2308,12 @@ FILE "album.flac" WAVE
         let cue_sheet_id = cue_sheets[0]
             .db_id
             .ok_or_else(|| anyhow!("cue sheet missing db_id"))?;
-        assert!(db::graph::edge_exists(&db, cue_sheet_id, cue_id)?);
+        assert!(crate::db::graph::edge_exists(&db, cue_sheet_id, cue_id)?);
 
-        let cue_tracks: Vec<db::CueTrack> = db
+        let cue_tracks: Vec<crate::db::CueTrack> = db
             .exec(
                 QueryBuilder::select()
-                    .elements::<db::CueTrack>()
+                    .elements::<crate::db::CueTrack>()
                     .search()
                     .from("cue_tracks")
                     .query(),
@@ -2316,8 +2327,12 @@ FILE "album.flac" WAVE
             let cue_track_id = cue_track
                 .db_id
                 .ok_or_else(|| anyhow!("cue track missing db_id"))?;
-            assert!(db::graph::edge_exists(&db, cue_sheet_id, cue_track_id)?);
-            assert!(db::graph::edge_exists(&db, cue_track_id, audio_id)?);
+            assert!(crate::db::graph::edge_exists(
+                &db,
+                cue_sheet_id,
+                cue_track_id
+            )?);
+            assert!(crate::db::graph::edge_exists(&db, cue_track_id, audio_id)?);
         }
 
         let _ = fs::remove_dir_all(&dir_path);
@@ -2413,14 +2428,14 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         assert_eq!(releases[0].release_title, "Caf\u{e9} Album");
         let release_db_id: DbId = releases[0].db_id.clone().unwrap().into();
 
-        let mut tracks = db::tracks::get(&db, release_db_id)?;
+        let mut tracks = crate::db::tracks::get(&db, release_db_id)?;
         tracks.sort_by_key(|track| track.track.unwrap_or(0));
         assert_eq!(tracks.len(), 4);
         let track_numbers: Vec<u32> = tracks.iter().filter_map(|track| track.track).collect();
         assert_eq!(track_numbers, vec![1, 2, 3, 4]);
         for track in tracks {
             let track_db_id: DbId = track.db_id.clone().unwrap().into();
-            let sources = db::track_sources::get_by_track(&db, track_db_id)?;
+            let sources = crate::db::track_sources::get_by_track(&db, track_db_id)?;
             assert_eq!(sources.len(), 1);
             assert_eq!(sources[0].source_kind, "cue");
         }
@@ -2527,7 +2542,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             .clone()
             .ok_or_else(|| anyhow!("release missing db_id"))?
             .into();
-        assert_eq!(db::tracks::get(&db, release_db_id)?.len(), 2);
+        assert_eq!(crate::db::tracks::get(&db, release_db_id)?.len(), 2);
 
         Ok(())
     }
@@ -2629,7 +2644,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             .ok_or_else(|| anyhow!("release missing db_id"))?
             .into();
 
-        let tracks = db::tracks::get(&db, release_db_id)?;
+        let tracks = crate::db::tracks::get(&db, release_db_id)?;
         assert_eq!(tracks.len(), 2);
         assert!(tracks.iter().all(|track| track.disc_total == Some(2)));
 
@@ -2802,7 +2817,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             .ok_or_else(|| anyhow!("release missing db_id"))?
             .into();
 
-        let tracks = db::tracks::get(&db, release_db_id)?;
+        let tracks = crate::db::tracks::get(&db, release_db_id)?;
         assert_eq!(tracks.len(), 2);
         assert!(tracks.iter().all(|track| track.disc_total == Some(2)));
 
@@ -3054,7 +3069,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             .db_id
             .ok_or_else(|| anyhow!("release missing db_id"))?
             .into();
-        let track = db::tracks::get(&db, release_db_id)?
+        let track = crate::db::tracks::get(&db, release_db_id)?
             .into_iter()
             .next()
             .ok_or_else(|| anyhow!("track missing after first scan"))?;
@@ -3063,7 +3078,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             .ok_or_else(|| anyhow!("track missing db_id"))?
             .into();
 
-        db::providers::upsert(
+        crate::db::providers::upsert(
             &mut db,
             &ProviderConfig {
                 db_id: None,
@@ -3073,7 +3088,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             },
         )?;
 
-        db::metadata::layers::upsert(
+        crate::db::metadata::layers::upsert(
             &mut db,
             track_db_id,
             &MetadataLayer {
@@ -3089,7 +3104,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 updated_at: 1,
             },
         )?;
-        db::metadata::layers::upsert(
+        crate::db::metadata::layers::upsert(
             &mut db,
             release_db_id,
             &MetadataLayer {
@@ -3109,9 +3124,9 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             &mut db,
             release_db_id,
         )?;
-        let track_after_provider =
-            db::tracks::get_by_id(&db, track_db_id)?.ok_or_else(|| anyhow!("track missing"))?;
-        let release_after_provider = db::releases::get_by_id(&db, release_db_id)?
+        let track_after_provider = crate::db::tracks::get_by_id(&db, track_db_id)?
+            .ok_or_else(|| anyhow!("track missing"))?;
+        let release_after_provider = crate::db::releases::get_by_id(&db, release_db_id)?
             .ok_or_else(|| anyhow!("release missing"))?;
         assert_eq!(release_after_provider.release_title, "Provider Release");
         assert_eq!(
@@ -3158,9 +3173,9 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         };
         apply_metadata(&mut db, library_db_id, vec![second_scan])?;
 
-        let track_after_rescan =
-            db::tracks::get_by_id(&db, track_db_id)?.ok_or_else(|| anyhow!("track missing"))?;
-        let release_after_rescan = db::releases::get_by_id(&db, release_db_id)?
+        let track_after_rescan = crate::db::tracks::get_by_id(&db, track_db_id)?
+            .ok_or_else(|| anyhow!("track missing"))?;
+        let release_after_rescan = crate::db::releases::get_by_id(&db, release_db_id)?
             .ok_or_else(|| anyhow!("release missing"))?;
         assert_eq!(release_after_rescan.release_title, "Provider Release");
         assert_eq!(
@@ -3234,7 +3249,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             .db_id
             .ok_or_else(|| anyhow!("release missing db_id"))?
             .into();
-        let track = db::tracks::get(&db, release_db_id)?
+        let track = crate::db::tracks::get(&db, release_db_id)?
             .into_iter()
             .next()
             .ok_or_else(|| anyhow!("track missing after first scan"))?;
@@ -3245,7 +3260,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         assert_eq!(track.year, Some(1999));
         assert_eq!(track.track, Some(7));
         assert_eq!(
-            db::releases::get_by_id(&db, release_db_id)?
+            crate::db::releases::get_by_id(&db, release_db_id)?
                 .and_then(|release| release.release_date)
                 .as_deref(),
             Some("1999-05-04")
@@ -3286,8 +3301,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         };
         apply_metadata(&mut db, library_db_id, vec![stripped])?;
 
-        let track_after =
-            db::tracks::get_by_id(&db, track_db_id)?.ok_or_else(|| anyhow!("track missing"))?;
+        let track_after = crate::db::tracks::get_by_id(&db, track_db_id)?
+            .ok_or_else(|| anyhow!("track missing"))?;
         assert_eq!(track_after.year, None);
         assert_eq!(track_after.track, None);
         assert_eq!(track_after.track_total, None);
@@ -3298,7 +3313,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         assert_eq!(track_after.duration_ms, Some(180_000));
         assert!(track_after.ctime.is_some(), "ctime must survive a rescan");
 
-        let release_after = db::releases::get_by_id(&db, release_db_id)?
+        let release_after = crate::db::releases::get_by_id(&db, release_db_id)?
             .ok_or_else(|| anyhow!("release missing"))?;
         assert_eq!(release_after.release_date, None);
         assert_eq!(release_after.release_title, "Album");
@@ -3365,11 +3380,11 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             .ok_or_else(|| anyhow!("release missing db_id"))?
             .into();
 
-        let tag_labels = db::labels::get_for_release(&db, release_db_id)?;
+        let tag_labels = crate::db::labels::get_for_release(&db, release_db_id)?;
         assert_eq!(tag_labels.len(), 1);
         assert_eq!(tag_labels[0].label.name, "Tag Label");
 
-        db::providers::upsert(
+        crate::db::providers::upsert(
             &mut db,
             &ProviderConfig {
                 db_id: None,
@@ -3378,7 +3393,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 enabled: true,
             },
         )?;
-        db::metadata::layers::upsert(
+        crate::db::metadata::layers::upsert(
             &mut db,
             release_db_id,
             &MetadataLayer {
@@ -3398,7 +3413,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             release_db_id,
         )?;
 
-        let after_provider = db::labels::get_for_release(&db, release_db_id)?;
+        let after_provider = crate::db::labels::get_for_release(&db, release_db_id)?;
         assert_eq!(after_provider[0].label.name, "Provider Label");
 
         let second_scan = TrackMetadata {
@@ -3436,7 +3451,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         };
         apply_metadata(&mut db, library_db_id, vec![second_scan])?;
 
-        let after_rescan = db::labels::get_for_release(&db, release_db_id)?;
+        let after_rescan = crate::db::labels::get_for_release(&db, release_db_id)?;
         assert_eq!(after_rescan.len(), 1);
         assert_eq!(after_rescan[0].label.name, "Provider Label");
         assert_eq!(after_rescan[0].catalog_number.as_deref(), Some("PRV-001"));
@@ -3475,7 +3490,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
     }
 
     fn only_track(db: &DbAny, release_db_id: DbId) -> anyhow::Result<DbId> {
-        Ok(db::tracks::get(db, release_db_id)?
+        Ok(crate::db::tracks::get(db, release_db_id)?
             .into_iter()
             .next()
             .ok_or_else(|| anyhow!("track missing"))?
@@ -3485,14 +3500,14 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
     }
 
     fn local_layer(db: &DbAny, node_id: DbId) -> anyhow::Result<MetadataLayer> {
-        db::metadata::layers::get_for_entity(db, node_id)?
+        crate::db::metadata::layers::get_for_entity(db, node_id)?
             .into_iter()
             .find(|layer| layer.source_id == LOCAL_SOURCE_ID)
             .ok_or_else(|| anyhow!("local layer missing"))
     }
 
     fn upsert_provider(db: &mut DbAny, provider_id: &str, enabled: bool) -> anyhow::Result<()> {
-        db::providers::upsert(
+        crate::db::providers::upsert(
             db,
             &ProviderConfig {
                 db_id: None,
@@ -3512,21 +3527,22 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         apply_metadata(&mut db, library_db_id, vec![tagged_track(entry_db_id)])?;
 
         let release_db_id = only_release(&db)?;
-        let release = db::releases::get_by_id(&db, release_db_id)?
+        let release = crate::db::releases::get_by_id(&db, release_db_id)?
             .ok_or_else(|| anyhow!("release missing"))?;
         assert_eq!(release.release_title, "Album");
         assert_eq!(release.release_date.as_deref(), Some("1999-05-04"));
 
-        let genres = db::genres::get_for_release(&db, release_db_id)?;
+        let genres = crate::db::genres::get_for_release(&db, release_db_id)?;
         assert_eq!(genres.len(), 1);
         assert_eq!(genres[0].name, "Jazz");
-        let labels = db::labels::get_for_release(&db, release_db_id)?;
+        let labels = crate::db::labels::get_for_release(&db, release_db_id)?;
         assert_eq!(labels.len(), 1);
         assert_eq!(labels[0].label.name, "Blue Note");
         assert_eq!(labels[0].catalog_number.as_deref(), Some("BN-1"));
 
         let track_db_id = only_track(&db, release_db_id)?;
-        let track = db::tracks::get_by_id(&db, track_db_id)?.ok_or_else(|| anyhow!("track"))?;
+        let track =
+            crate::db::tracks::get_by_id(&db, track_db_id)?.ok_or_else(|| anyhow!("track"))?;
         assert_eq!(track.track_title, "Track 7");
         assert_eq!(track.year, Some(1999));
         assert_eq!(track.disc, Some(1));
@@ -3534,7 +3550,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         assert_eq!(track.track, Some(7));
         assert_eq!(track.track_total, Some(12));
 
-        let artists = db::artists::get(&db, release_db_id)?;
+        let artists = crate::db::artists::get(&db, release_db_id)?;
         assert_eq!(artists.len(), 1);
         assert_eq!(artists[0].artist_name, "Artist");
 
@@ -3556,7 +3572,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         let release_db_id = only_release(&db)?;
         let track_db_id = only_track(&db, release_db_id)?;
         upsert_provider(&mut db, "test", true)?;
-        db::metadata::layers::upsert(
+        crate::db::metadata::layers::upsert(
             &mut db,
             track_db_id,
             &MetadataLayer {
@@ -3570,14 +3586,16 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             },
         )?;
         crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track_db_id)?;
-        let track = db::tracks::get_by_id(&db, track_db_id)?.ok_or_else(|| anyhow!("track"))?;
+        let track =
+            crate::db::tracks::get_by_id(&db, track_db_id)?.ok_or_else(|| anyhow!("track"))?;
         assert_eq!(track.track_title, "Provider Track");
         assert_eq!(track.year, Some(2020));
 
         upsert_provider(&mut db, "test", false)?;
         crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track_db_id)?;
 
-        let track = db::tracks::get_by_id(&db, track_db_id)?.ok_or_else(|| anyhow!("track"))?;
+        let track =
+            crate::db::tracks::get_by_id(&db, track_db_id)?.ok_or_else(|| anyhow!("track"))?;
         assert_eq!(track.track_title, "Track 7");
         assert_eq!(track.year, Some(1999));
         Ok(())
@@ -3593,7 +3611,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         let track_db_id = only_track(&db, release_db_id)?;
         let release_layer = local_layer(&db, release_db_id)?;
         let track_layer = local_layer(&db, track_db_id)?;
-        let track_before = db::tracks::get_by_id(&db, track_db_id)?.ok_or_else(|| anyhow!("t"))?;
+        let track_before =
+            crate::db::tracks::get_by_id(&db, track_db_id)?.ok_or_else(|| anyhow!("t"))?;
 
         apply_metadata(&mut db, library_db_id, vec![tagged_track(entry_db_id)])?;
 
@@ -3605,7 +3624,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         assert_eq!(track_layer_after.updated_at, track_layer.updated_at);
         assert_eq!(only_release(&db)?, release_db_id);
         assert_eq!(only_track(&db, release_db_id)?, track_db_id);
-        let track_after = db::tracks::get_by_id(&db, track_db_id)?.ok_or_else(|| anyhow!("t"))?;
+        let track_after =
+            crate::db::tracks::get_by_id(&db, track_db_id)?.ok_or_else(|| anyhow!("t"))?;
         assert_eq!(track_after.track_title, track_before.track_title);
         assert_eq!(track_after.year, track_before.year);
         assert_eq!(track_after.track, track_before.track);
@@ -3613,12 +3633,12 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
     }
 
     fn save_manual(db: &mut DbAny, node_id: DbId, fields: serde_json::Value) -> anyhow::Result<()> {
-        db::metadata::layers::upsert(
+        crate::db::metadata::layers::upsert(
             db,
             node_id,
-            &db::MetadataLayer::new(
+            &crate::db::MetadataLayer::new(
                 MANUAL_SOURCE_ID,
-                db::metadata::layers::fields_from_json(fields),
+                crate::db::metadata::layers::fields_from_json(fields),
                 1,
             ),
         )?;
@@ -3642,7 +3662,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
 
         apply_metadata(&mut db, library_db_id, vec![tagged_track(entry_db_id)])?;
 
-        let track = db::tracks::get_by_id(&db, track_db_id)?.ok_or_else(|| anyhow!("track"))?;
+        let track =
+            crate::db::tracks::get_by_id(&db, track_db_id)?.ok_or_else(|| anyhow!("track"))?;
         assert_eq!(track.track_title, "Manual Title");
         Ok(())
     }
@@ -3667,7 +3688,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             release_db_id,
         )?;
         assert_eq!(
-            db::tracks::get_by_id(&db, track_db_id)?
+            crate::db::tracks::get_by_id(&db, track_db_id)?
                 .ok_or_else(|| anyhow!("track"))?
                 .year,
             Some(2020)
@@ -3675,7 +3696,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
 
         for node_id in [track_db_id, release_db_id] {
             db.transaction_mut(|t| {
-                db::metadata::layers::remove_inside_tx(t, node_id, MANUAL_SOURCE_ID)
+                crate::db::metadata::layers::remove_inside_tx(t, node_id, MANUAL_SOURCE_ID)
             })?;
         }
         crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track_db_id)?;
@@ -3685,12 +3706,12 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         )?;
 
         assert_eq!(
-            db::tracks::get_by_id(&db, track_db_id)?
+            crate::db::tracks::get_by_id(&db, track_db_id)?
                 .ok_or_else(|| anyhow!("track"))?
                 .year,
             Some(1999)
         );
-        let genres = db::genres::get_for_release(&db, release_db_id)?;
+        let genres = crate::db::genres::get_for_release(&db, release_db_id)?;
         assert_eq!(genres.len(), 1);
         assert_eq!(genres[0].name, "Jazz");
         Ok(())
@@ -3714,7 +3735,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         )?;
         let release_db_id = only_release(&db)?;
         assert!(
-            db::tracks::get(&db, release_db_id)?
+            crate::db::tracks::get(&db, release_db_id)?
                 .iter()
                 .all(|track| track.disc_total == Some(2))
         );
@@ -3733,7 +3754,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         )?;
 
         assert!(
-            db::tracks::get(&db, release_db_id)?
+            crate::db::tracks::get(&db, release_db_id)?
                 .iter()
                 .all(|track| track.disc_total == Some(2))
         );
@@ -3803,9 +3824,9 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
 
         let mut locked_release = release;
         locked_release.locked = Some(true);
-        db::releases::update(&mut db, &locked_release)?;
+        crate::db::releases::update(&mut db, &locked_release)?;
 
-        db::providers::upsert(
+        crate::db::providers::upsert(
             &mut db,
             &ProviderConfig {
                 db_id: None,
@@ -3814,7 +3835,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 enabled: true,
             },
         )?;
-        db::metadata::layers::upsert(
+        crate::db::metadata::layers::upsert(
             &mut db,
             release_db_id,
             &MetadataLayer {
@@ -3834,7 +3855,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             release_db_id,
         )?;
 
-        let labels = db::labels::get_for_release(&db, release_db_id)?;
+        let labels = crate::db::labels::get_for_release(&db, release_db_id)?;
         assert_eq!(labels.len(), 1);
         assert_eq!(labels[0].label.name, "Curated Label");
         assert_eq!(labels[0].catalog_number.as_deref(), Some("CUR-001"));
@@ -3874,18 +3895,18 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         let release_db_id = first.releases[0];
         let playlist_db_id = playlist_with_tracks(&mut db, "unchanged-covers", &first.tracks)?;
         insert_release_cover(&mut db, release_db_id, "unchanged-cover")?;
-        db::covers::display::sync_playlist_cover(&mut db, playlist_db_id)?;
+        crate::db::covers::display::sync_playlist_cover(&mut db, playlist_db_id)?;
         assert_eq!(
             playlist_cover_winner(&db, playlist_db_id)?,
             Some(release_db_id)
         );
 
-        db::covers::display::reset_playlist_cover_sync_count();
+        crate::db::covers::display::reset_playlist_cover_sync_count();
         let second = apply_metadata(&mut db, library_db_id, metadata)?;
 
         assert_eq!(second.releases, vec![release_db_id]);
         assert_eq!(
-            db::covers::display::playlist_cover_sync_count(),
+            crate::db::covers::display::playlist_cover_sync_count(),
             0,
             "an unchanged logical release membership must not publish cover work"
         );
@@ -3944,7 +3965,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         let playlist_db_id = playlist_with_tracks(&mut db, "moved-covers", &source.tracks)?;
         insert_release_cover(&mut db, source_release_db_id, "source-cover")?;
         insert_release_cover(&mut db, target_release_db_id, "target-cover")?;
-        db::covers::display::sync_playlist_cover(&mut db, playlist_db_id)?;
+        crate::db::covers::display::sync_playlist_cover(&mut db, playlist_db_id)?;
         assert_eq!(
             playlist_cover_winner(&db, playlist_db_id)?,
             Some(source_release_db_id)
@@ -3956,12 +3977,12 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         }
         target_metadata.extend(moved_metadata);
 
-        db::covers::display::reset_playlist_cover_sync_count();
+        crate::db::covers::display::reset_playlist_cover_sync_count();
         let result = apply_metadata(&mut db, library_db_id, target_metadata)?;
 
         assert_eq!(result.releases, vec![target_release_db_id]);
         assert_eq!(
-            db::covers::display::playlist_cover_sync_count(),
+            crate::db::covers::display::playlist_cover_sync_count(),
             1,
             "two moved tracks in one playlist must publish one final-state recomputation"
         );
@@ -3970,7 +3991,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             Some(target_release_db_id)
         );
         for track_db_id in source.tracks {
-            let releases = db::releases::get_by_track(&db, track_db_id)?;
+            let releases = crate::db::releases::get_by_track(&db, track_db_id)?;
             assert_eq!(releases.len(), 1);
             assert_eq!(
                 releases[0].db_id.clone().map(DbId::from),

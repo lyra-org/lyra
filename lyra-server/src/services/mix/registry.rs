@@ -15,7 +15,7 @@ use anyhow::{
 use tokio::sync::RwLock;
 
 use super::super::options::OptionDeclaration;
-use crate::plugins::lifecycle::{
+use crate::services::plugin_scope::{
     PluginId,
     PluginScopedInner,
     ScopedRegistry,
@@ -38,7 +38,7 @@ pub(crate) struct MixRegistries {
 }
 
 pub(crate) fn mix_registry() -> Arc<RwLock<MixRegistry>> {
-    crate::STATE.generation().mix.registry.clone()
+    crate::services::STATE.generation().mix.registry.clone()
 }
 
 /// Registered mixers, bucketed by the plugin that declared them.

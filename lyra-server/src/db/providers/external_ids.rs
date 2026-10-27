@@ -108,10 +108,7 @@ impl TryFrom<DbValue> for IdSource {
     }
 }
 
-pub(crate) fn get_for_album_tracks(
-    db: &DbAny,
-    release_db_id: DbId,
-) -> anyhow::Result<Vec<ExternalId>> {
+pub fn get_for_album_tracks(db: &DbAny, release_db_id: DbId) -> anyhow::Result<Vec<ExternalId>> {
     let ext_ids: Vec<ExternalId> = db
         .exec(
             QueryBuilder::select()
@@ -711,7 +708,7 @@ mod tests {
     #[test]
     fn owner_lookup_finds_only_the_effective_value() -> anyhow::Result<()> {
         let mut db = new_initialized_test_db()?;
-        let release = crate::db::test_db::insert_release(&mut db, "Release")?;
+        let release = crate::db::fixtures::insert_release(&mut db, "Release")?;
 
         upsert(
             &mut db,
@@ -868,9 +865,9 @@ mod tests {
     #[test]
     fn get_owners_returns_all_matching_owners_deduplicated_and_filtered() -> anyhow::Result<()> {
         let mut db = new_initialized_test_db()?;
-        let release_a = crate::db::test_db::insert_release(&mut db, "Release A")?;
-        let release_b = crate::db::test_db::insert_release(&mut db, "Release B")?;
-        let track = crate::db::test_db::insert_track(&mut db, "Track")?;
+        let release_a = crate::db::fixtures::insert_release(&mut db, "Release A")?;
+        let release_b = crate::db::fixtures::insert_release(&mut db, "Release B")?;
+        let track = crate::db::fixtures::insert_track(&mut db, "Track")?;
 
         let release_b_external_id = upsert(
             &mut db,

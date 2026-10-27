@@ -963,10 +963,7 @@ pub(crate) fn playlist_cover_sources(
 /// Playlist membership is authoritative and fully known at call time, so the
 /// winner is replaced outright rather than accumulated through candidate edges
 /// the way listen-driven genre winners are.
-pub(crate) fn sync_playlist_cover(
-    db: &mut impl DbAccess,
-    playlist_db_id: DbId,
-) -> anyhow::Result<()> {
+pub fn sync_playlist_cover(db: &mut impl DbAccess, playlist_db_id: DbId) -> anyhow::Result<()> {
     #[cfg(test)]
     PLAYLIST_COVER_SYNC_COUNT.with(|count| count.set(count.get().saturating_add(1)));
 
@@ -1419,15 +1416,15 @@ mod tests {
     use super::*;
     use crate::db::{
         covers,
-        genres,
-        releases,
-        test_db::{
+        fixtures::{
             connect,
             insert_release,
             insert_track,
-            new_test_db,
             test_user,
         },
+        genres,
+        releases,
+        test_db::new_test_db,
         users,
     };
 

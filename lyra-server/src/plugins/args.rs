@@ -14,10 +14,7 @@ use harmony_luau::{
     LuauTypeInfo,
 };
 
-use crate::plugins::db::{
-    self,
-    ResolveId,
-};
+use crate::db::ResolveId;
 
 /// The ids of a Luau array in array order, each once.
 pub(crate) fn unique_ids(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
@@ -152,7 +149,7 @@ pub(crate) fn resolve_id(value: luau::Value) -> luau::runtime::Result<ResolveId>
         }
         luau::Value::String(bytes) => {
             let text = String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?;
-            if db::ROOT_COLLECTION_ALIASES.contains(&text.as_str()) {
+            if crate::db::bootstrap::ROOT_COLLECTION_ALIASES.contains(&text.as_str()) {
                 Ok(ResolveId::Alias(text))
             } else {
                 Ok(ResolveId::Nanoid(text))

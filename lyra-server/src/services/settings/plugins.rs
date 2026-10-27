@@ -14,12 +14,9 @@ use anyhow::{
     anyhow,
 };
 
-use crate::{
-    db,
-    services::settings::{
-        FieldDefinition,
-        Schema,
-    },
+use crate::services::settings::{
+    FieldDefinition,
+    Schema,
 };
 
 #[derive(Debug)]
@@ -56,7 +53,7 @@ impl InvalidStoredSettings {
 
 fn parse_entries(
     plugin_id: &str,
-    entries: Vec<db::settings::SettingEntry>,
+    entries: Vec<crate::db::settings::SettingEntry>,
     make_error: fn(&str, String) -> InvalidStoredSettings,
 ) -> anyhow::Result<HashMap<String, serde_json::Value>> {
     let mut values = HashMap::with_capacity(entries.len());
@@ -154,7 +151,7 @@ pub(crate) fn validate_updates(
 }
 
 fn node_db_id(
-    plugin_node: db::settings::plugins::PluginSettings,
+    plugin_node: crate::db::settings::plugins::PluginSettings,
     plugin_id: &str,
 ) -> anyhow::Result<DbId> {
     plugin_node
@@ -163,15 +160,15 @@ fn node_db_id(
         .map(Into::into)
 }
 
-fn load_stored_values_with<A: db::DbAccess>(
+fn load_stored_values_with<A: crate::db::DbAccess>(
     db: &A,
     plugin_id: &str,
 ) -> anyhow::Result<HashMap<String, serde_json::Value>> {
-    let Some(plugin_node) = db::settings::plugins::find_with(db, plugin_id)? else {
+    let Some(plugin_node) = crate::db::settings::plugins::find_with(db, plugin_id)? else {
         return Ok(HashMap::new());
     };
     let plugin_db_id = node_db_id(plugin_node, plugin_id)?;
-    let entries = db::settings::get_all_settings_with(db, plugin_db_id)?;
+    let entries = crate::db::settings::get_all_settings_with(db, plugin_db_id)?;
     parse_entries(plugin_id, entries, InvalidStoredSettings::global)
 }
 
@@ -190,7 +187,7 @@ pub(crate) fn validate_stored_values(
     validate_stored_values_inner(plugin_id, schema, values, InvalidStoredSettings::global)
 }
 
-fn load_validated_stored_values_with<A: db::DbAccess>(
+fn load_validated_stored_values_with<A: crate::db::DbAccess>(
     db: &A,
     plugin_id: &str,
     schema: &Schema,
@@ -209,7 +206,7 @@ pub(crate) fn load_validated_stored_values(
 }
 
 pub(crate) fn clear_stored_values(db: &mut DbAny, plugin_id: &str) -> anyhow::Result<()> {
-    db.transaction_mut(|t| db::settings::plugins::remove_with(t, plugin_id))
+    db.transaction_mut(|t| crate::db::settings::plugins::remove_with(t, plugin_id))
 }
 
 pub(crate) fn apply_updates(
@@ -224,7 +221,7 @@ pub(crate) fn apply_updates(
 
     db.transaction_mut(|t| -> anyhow::Result<()> {
         load_validated_stored_values_with(t, plugin_id, schema)?;
-        let mut plugin_db_id = db::settings::plugins::find_with(t, plugin_id)?
+        let mut plugin_db_id = crate::db::settings::plugins::find_with(t, plugin_id)?
             .map(|node| node_db_id(node, plugin_id))
             .transpose()?;
 
@@ -234,27 +231,33 @@ pub(crate) fn apply_updates(
                     let plugin_db_id = match plugin_db_id {
                         Some(plugin_db_id) => plugin_db_id,
                         None => {
-                            let node = db::settings::plugins::get_or_create_with(t, plugin_id)?;
+                            let node =
+                                crate::db::settings::plugins::get_or_create_with(t, plugin_id)?;
                             let created_plugin_db_id = node_db_id(node, plugin_id)?;
                             plugin_db_id = Some(created_plugin_db_id);
                             created_plugin_db_id
                         }
                     };
 
-                    db::settings::upsert_setting_with(t, plugin_db_id, key.clone(), json.clone())?;
+                    crate::db::settings::upsert_setting_with(
+                        t,
+                        plugin_db_id,
+                        key.clone(),
+                        json.clone(),
+                    )?;
                 }
                 ValidatedChange::Remove { key } => {
                     if let Some(plugin_db_id) = plugin_db_id {
-                        db::settings::remove_setting_with(t, plugin_db_id, key)?;
+                        crate::db::settings::remove_setting_with(t, plugin_db_id, key)?;
                     }
                 }
             }
         }
 
         if let Some(plugin_db_id) = plugin_db_id
-            && db::settings::get_all_settings_with(t, plugin_db_id)?.is_empty()
+            && crate::db::settings::get_all_settings_with(t, plugin_db_id)?.is_empty()
         {
-            db::settings::plugins::remove_with(t, plugin_id)?;
+            crate::db::settings::plugins::remove_with(t, plugin_id)?;
         }
 
         Ok(())
@@ -262,7 +265,7 @@ pub(crate) fn apply_updates(
 }
 
 fn user_node_db_id(
-    node: db::settings::plugins::UserPluginSettings,
+    node: crate::db::settings::plugins::UserPluginSettings,
     user_db_id: DbId,
     plugin_id: &str,
 ) -> anyhow::Result<DbId> {
@@ -276,16 +279,17 @@ fn user_node_db_id(
         .map(Into::into)
 }
 
-fn load_user_stored_values_with<A: db::DbAccess>(
+fn load_user_stored_values_with<A: crate::db::DbAccess>(
     db: &A,
     user_db_id: DbId,
     plugin_id: &str,
 ) -> anyhow::Result<HashMap<String, serde_json::Value>> {
-    let Some(node) = db::settings::plugins::find_user_with(db, user_db_id, plugin_id)? else {
+    let Some(node) = crate::db::settings::plugins::find_user_with(db, user_db_id, plugin_id)?
+    else {
         return Ok(HashMap::new());
     };
     let node_id = user_node_db_id(node, user_db_id, plugin_id)?;
-    let entries = db::settings::get_all_settings_with(db, node_id)?;
+    let entries = crate::db::settings::get_all_settings_with(db, node_id)?;
     parse_entries(plugin_id, entries, InvalidStoredSettings::user)
 }
 
@@ -323,9 +327,10 @@ pub(crate) fn apply_user_updates(
         let values = load_user_stored_values_with(t, user_db_id, plugin_id)?;
         validate_user_stored_values(plugin_id, schema, &values)?;
 
-        let mut settings_db_id = db::settings::plugins::find_user_with(t, user_db_id, plugin_id)?
-            .map(|node| user_node_db_id(node, user_db_id, plugin_id))
-            .transpose()?;
+        let mut settings_db_id =
+            crate::db::settings::plugins::find_user_with(t, user_db_id, plugin_id)?
+                .map(|node| user_node_db_id(node, user_db_id, plugin_id))
+                .transpose()?;
 
         for change in changes {
             match change {
@@ -333,7 +338,7 @@ pub(crate) fn apply_user_updates(
                     let parent_id = match settings_db_id {
                         Some(id) => id,
                         None => {
-                            let node = db::settings::plugins::get_or_create_user_with(
+                            let node = crate::db::settings::plugins::get_or_create_user_with(
                                 t, user_db_id, plugin_id,
                             )?;
                             let created_id = user_node_db_id(node, user_db_id, plugin_id)?;
@@ -342,20 +347,25 @@ pub(crate) fn apply_user_updates(
                         }
                     };
 
-                    db::settings::upsert_setting_with(t, parent_id, key.clone(), json.clone())?;
+                    crate::db::settings::upsert_setting_with(
+                        t,
+                        parent_id,
+                        key.clone(),
+                        json.clone(),
+                    )?;
                 }
                 ValidatedChange::Remove { key } => {
                     if let Some(parent_id) = settings_db_id {
-                        db::settings::remove_setting_with(t, parent_id, key)?;
+                        crate::db::settings::remove_setting_with(t, parent_id, key)?;
                     }
                 }
             }
         }
 
         if let Some(parent_id) = settings_db_id
-            && db::settings::get_all_settings_with(t, parent_id)?.is_empty()
+            && crate::db::settings::get_all_settings_with(t, parent_id)?.is_empty()
         {
-            db::settings::plugins::remove_user_with(t, user_db_id, plugin_id)?;
+            crate::db::settings::plugins::remove_user_with(t, user_db_id, plugin_id)?;
         }
 
         Ok(())
@@ -367,30 +377,25 @@ pub(crate) fn clear_user_stored_values(
     user_db_id: DbId,
     plugin_id: &str,
 ) -> anyhow::Result<()> {
-    db.transaction_mut(|t| db::settings::plugins::remove_user_with(t, user_db_id, plugin_id))
+    db.transaction_mut(|t| crate::db::settings::plugins::remove_user_with(t, user_db_id, plugin_id))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        db::{
-            self,
-            test_db::new_test_db,
-        },
-        services::settings::{
-            ChoiceOption,
-            FieldGroupDefinition,
-            FieldProps,
-        },
+    use crate::db::test_db::new_test_db;
+    use crate::services::settings::{
+        ChoiceOption,
+        FieldGroupDefinition,
+        FieldProps,
     };
     use agdb::QueryBuilder;
 
     fn create_plugin_settings(
         db: &mut DbAny,
         plugin_id: &str,
-    ) -> anyhow::Result<db::settings::plugins::PluginSettings> {
-        db.transaction_mut(|t| db::settings::plugins::get_or_create_with(t, plugin_id))
+    ) -> anyhow::Result<crate::db::settings::plugins::PluginSettings> {
+        db.transaction_mut(|t| crate::db::settings::plugins::get_or_create_with(t, plugin_id))
     }
 
     fn upsert_setting(
@@ -399,7 +404,9 @@ mod tests {
         key: String,
         value: String,
     ) -> anyhow::Result<DbId> {
-        db.transaction_mut(|t| db::settings::upsert_setting_with(t, plugin_settings_id, key, value))
+        db.transaction_mut(|t| {
+            crate::db::settings::upsert_setting_with(t, plugin_settings_id, key, value)
+        })
     }
 
     fn props(required: bool) -> FieldProps {
@@ -433,18 +440,18 @@ mod tests {
     }
 
     fn test_user(db: &mut DbAny) -> anyhow::Result<DbId> {
-        let user = db::test_db::test_user("testuser")?;
-        db::users::create(db, &user)
+        let user = crate::db::fixtures::test_user("testuser")?;
+        crate::db::users::create(db, &user)
     }
 
     #[test]
     fn load_stored_values_is_read_only_for_missing_plugins() -> anyhow::Result<()> {
         let db = new_test_db()?;
 
-        assert!(db::settings::plugins::find_with(&db, "demo")?.is_none());
+        assert!(crate::db::settings::plugins::find_with(&db, "demo")?.is_none());
         let values = load_stored_values(&db, "demo")?;
         assert!(values.is_empty());
-        assert!(db::settings::plugins::find_with(&db, "demo")?.is_none());
+        assert!(crate::db::settings::plugins::find_with(&db, "demo")?.is_none());
 
         Ok(())
     }
@@ -469,7 +476,7 @@ mod tests {
         let plugin_db_id: DbId = plugin.db_id.unwrap().into();
         upsert_setting(&mut db, plugin_db_id, "token".into(), "\"first\"".into())?;
 
-        let duplicate = db::settings::SettingEntry {
+        let duplicate = crate::db::settings::SettingEntry {
             db_id: None,
             id: "duplicate".to_string(),
             key: "token".to_string(),
@@ -600,7 +607,7 @@ mod tests {
 
         let values = load_stored_values(&db, "demo")?;
         assert!(!values.contains_key("token"));
-        assert!(db::settings::plugins::find_with(&db, "demo")?.is_none());
+        assert!(crate::db::settings::plugins::find_with(&db, "demo")?.is_none());
 
         Ok(())
     }
@@ -614,7 +621,7 @@ mod tests {
 
         clear_stored_values(&mut db, "demo")?;
 
-        assert!(db::settings::plugins::find_with(&db, "demo")?.is_none());
+        assert!(crate::db::settings::plugins::find_with(&db, "demo")?.is_none());
         Ok(())
     }
 
@@ -647,8 +654,8 @@ mod tests {
         let mut db = new_test_db()?;
         let user_a = test_user(&mut db)?;
         let user_b = {
-            let user = db::test_db::test_user("otheruser")?;
-            db::users::create(&mut db, &user)?
+            let user = crate::db::fixtures::test_user("otheruser")?;
+            crate::db::users::create(&mut db, &user)?
         };
         let schema = schema(vec![group(
             "auth",
@@ -684,8 +691,8 @@ mod tests {
         let mut db = new_test_db()?;
         let user_a = test_user(&mut db)?;
         let user_b = {
-            let user = db::test_db::test_user("otheruser")?;
-            db::users::create(&mut db, &user)?
+            let user = crate::db::fixtures::test_user("otheruser")?;
+            crate::db::users::create(&mut db, &user)?
         };
         let schema = schema(vec![group(
             "auth",
@@ -735,7 +742,7 @@ mod tests {
         apply_user_updates(&mut db, user_db_id, "demo", &schema, &changes)?;
 
         assert!(load_user_stored_values_with(&db, user_db_id, "demo")?.is_empty());
-        assert!(db::settings::plugins::find_user_with(&db, user_db_id, "demo")?.is_none());
+        assert!(crate::db::settings::plugins::find_user_with(&db, user_db_id, "demo")?.is_none());
 
         Ok(())
     }

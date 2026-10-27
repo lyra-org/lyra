@@ -26,9 +26,8 @@ use serde::{
 use serde_json::Value;
 
 use crate::{
-    STATE,
-    db,
     routes::AppError,
+    services::STATE,
     services::{
         EntityRefreshMode,
         EntityType,
@@ -336,7 +335,9 @@ async fn list_providers(headers: HeaderMap) -> Result<Json<Vec<ProviderResponse>
     Ok(Json(build_provider_responses(providers).await))
 }
 
-async fn build_provider_responses(providers: Vec<db::ProviderConfig>) -> Vec<ProviderResponse> {
+async fn build_provider_responses(
+    providers: Vec<crate::db::ProviderConfig>,
+) -> Vec<ProviderResponse> {
     let providers = {
         let registry = provider_registry().read_owned().await;
         providers
@@ -396,7 +397,7 @@ fn check_settings_availability(
     plugin_id: &str,
     required_settings: &[String],
 ) -> (bool, Option<String>) {
-    let plugin_settings = match db::settings::plugins::find_with(db, plugin_id) {
+    let plugin_settings = match crate::db::settings::plugins::find_with(db, plugin_id) {
         Ok(Some(ps)) => ps,
         Ok(None) => {
             return (
@@ -431,7 +432,7 @@ fn check_settings_availability(
             )),
         );
     };
-    let all_entries = match db::settings::get_all_settings_with(db, plugin_db_id) {
+    let all_entries = match crate::db::settings::get_all_settings_with(db, plugin_db_id) {
         Ok(entries) => entries,
         Err(err) => {
             tracing::warn!(
@@ -824,7 +825,6 @@ pub(crate) fn entity_openapi_routes() -> aide::axum::ApiRouter {
 mod tests {
     use super::*;
     use crate::db::{
-        self,
         Entry,
         IdSource,
         Track,
@@ -840,20 +840,22 @@ mod tests {
     use nanoid::nanoid;
     use std::path::PathBuf;
 
-    use crate::db::test_db::{
+    use crate::db::fixtures::{
         connect,
         insert_artist,
-        insert_library,
         insert_release,
+    };
+    use crate::db::test_db::{
+        insert_library,
         new_test_db,
     };
 
     #[tokio::test]
     async fn provider_response_database_wait_releases_registry_for_queued_writer()
     -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
-        crate::testing::init_default_test_state()?;
-        let plugin_id = crate::plugins::lifecycle::PluginId::new("provider-lock-test")?;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        let plugin_id = crate::services::plugin_scope::PluginId::new("provider-lock-test")?;
         let provider_id = "provider-lock-test".to_string();
         let registry = provider_registry();
         {
@@ -879,7 +881,7 @@ mod tests {
 
         let db_write = STATE.db.write().await;
         let registry_read = registry.read().await;
-        let response = build_provider_responses(vec![db::ProviderConfig {
+        let response = build_provider_responses(vec![crate::db::ProviderConfig {
             db_id: None,
             provider_id: provider_id.clone(),
             priority: 50,
@@ -968,11 +970,11 @@ mod tests {
     ) -> anyhow::Result<()> {
         let source_key = format!("entry:{}:embedded", entry_db_id.0);
         db.transaction_mut(|t| {
-            db::track_sources::upsert(
+            crate::db::track_sources::upsert(
                 t,
                 track_db_id,
                 entry_db_id,
-                db::track_sources::TrackSourceUpsert {
+                crate::db::track_sources::TrackSourceUpsert {
                     source_kind: "embedded_tags".to_string(),
                     source_key,
                     is_primary: true,
@@ -1045,7 +1047,7 @@ mod tests {
         let track_db_id = insert_track(&mut db, "Track With ID", Some(1), Some(1))?;
         connect(&mut db, release_db_id, track_db_id)?;
 
-        db::external_ids::upsert(
+        crate::db::external_ids::upsert(
             &mut db,
             track_db_id,
             "musicbrainz",
@@ -1084,7 +1086,7 @@ mod tests {
         let track_db_id = insert_track(&mut db, "Plugin Track", Some(1), Some(1))?;
         connect(&mut db, release_db_id, track_db_id)?;
 
-        db::external_ids::upsert(
+        crate::db::external_ids::upsert(
             &mut db,
             release_db_id,
             "musicbrainz",
@@ -1092,7 +1094,7 @@ mod tests {
             "plugin-release",
             IdSource::Resolved,
         )?;
-        db::external_ids::upsert(
+        crate::db::external_ids::upsert(
             &mut db,
             release_db_id,
             "musicbrainz",
@@ -1100,7 +1102,7 @@ mod tests {
             "user-release",
             IdSource::Manual,
         )?;
-        db::external_ids::upsert(
+        crate::db::external_ids::upsert(
             &mut db,
             track_db_id,
             "musicbrainz",
@@ -1266,19 +1268,19 @@ mod tests {
         let release_db_id = insert_release(&mut db, "Ordered Release")?;
         let alphabetic_artist_db_id = insert_artist(&mut db, "Alpha Artist")?;
         let lead_artist_db_id = insert_artist(&mut db, "Zulu Artist")?;
-        db::test_db::connect_credit(
+        crate::db::fixtures::connect_credit(
             &mut db,
             release_db_id,
             lead_artist_db_id,
-            db::CreditType::Artist,
+            crate::db::CreditType::Artist,
             None,
             0,
         )?;
-        db::test_db::connect_credit(
+        crate::db::fixtures::connect_credit(
             &mut db,
             release_db_id,
             alphabetic_artist_db_id,
-            db::CreditType::Artist,
+            crate::db::CreditType::Artist,
             None,
             1,
         )?;
@@ -1306,19 +1308,19 @@ mod tests {
         let alphabetic_artist_db_id = insert_artist(&mut db, "Alpha Artist")?;
         let lead_artist_db_id = insert_artist(&mut db, "Zulu Artist")?;
         connect(&mut db, release_db_id, track_db_id)?;
-        db::test_db::connect_credit(
+        crate::db::fixtures::connect_credit(
             &mut db,
             track_db_id,
             lead_artist_db_id,
-            db::CreditType::Artist,
+            crate::db::CreditType::Artist,
             None,
             0,
         )?;
-        db::test_db::connect_credit(
+        crate::db::fixtures::connect_credit(
             &mut db,
             track_db_id,
             alphabetic_artist_db_id,
-            db::CreditType::Artist,
+            crate::db::CreditType::Artist,
             None,
             1,
         )?;
@@ -1350,19 +1352,19 @@ mod tests {
         let alphabetic_artist_db_id = insert_artist(&mut db, "Alpha Artist")?;
         let lead_artist_db_id = insert_artist(&mut db, "Zulu Artist")?;
         connect(&mut db, release_db_id, track_db_id)?;
-        db::test_db::connect_credit(
+        crate::db::fixtures::connect_credit(
             &mut db,
             release_db_id,
             lead_artist_db_id,
-            db::CreditType::Artist,
+            crate::db::CreditType::Artist,
             None,
             0,
         )?;
-        db::test_db::connect_credit(
+        crate::db::fixtures::connect_credit(
             &mut db,
             release_db_id,
             alphabetic_artist_db_id,
-            db::CreditType::Artist,
+            crate::db::CreditType::Artist,
             None,
             1,
         )?;

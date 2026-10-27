@@ -32,7 +32,7 @@ use crate::services::{
 };
 
 use super::AppError;
-use super::registry as route_registry;
+use crate::plugins::api::RouteKey;
 
 #[derive(Deserialize)]
 struct WsQuery {
@@ -147,11 +147,10 @@ fn ws_route() -> Router {
     Router::new().route("/ws", get(ws_upgrade))
 }
 
-pub(crate) fn install(app: Router) -> (Router, HashSet<route_registry::RouteKey>) {
+pub(crate) fn install(app: Router) -> (Router, HashSet<RouteKey>) {
     let app = app.merge(ws_route());
-    let reserved: HashSet<route_registry::RouteKey> =
-        [route_registry::RouteKey::new("GET", "/ws").expect("core ws route key")]
-            .into_iter()
-            .collect();
+    let reserved: HashSet<RouteKey> = [RouteKey::new("GET", "/ws").expect("core ws route key")]
+        .into_iter()
+        .collect();
     (app, reserved)
 }

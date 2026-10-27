@@ -23,21 +23,21 @@ pub(crate) use self::messages::{
     ApiResponseKind,
     IdLinkDispatchContext,
     MetadataDispatchContext,
-    MetadataRefreshCancellation,
-    MetadataRefreshRequest,
-    MetadataRefreshResult,
-    MixHandlerRequest,
-    MixHandlerResult,
-    SimilarReleaseCandidate,
-    SimilarReleaseExternalRef,
-    SimilarReleasesDispatchRequest,
-    SimilarReleasesDispatchResult,
     WebSocketStartRequest,
     WebSocketState,
 };
 pub(crate) use self::metadata::{
     dispatch_id_links_in_vm,
     dispatch_similar_releases_in_vm,
+};
+use crate::services::plugin_dispatch::{
+    DispatchCancellation,
+    MetadataRefreshRequest,
+    MetadataRefreshResult,
+    MixHandlerRequest,
+    MixHandlerResult,
+    SimilarReleasesDispatchRequest,
+    SimilarReleasesDispatchResult,
 };
 
 use std::{

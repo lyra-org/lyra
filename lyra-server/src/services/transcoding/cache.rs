@@ -129,7 +129,7 @@ pub(crate) struct Budget {
 
 impl Budget {
     fn configured() -> Self {
-        let config = crate::STATE.config();
+        let config = crate::services::STATE.config();
         Self {
             ttl: Duration::from_secs(config.transcoding.cache_ttl_seconds),
             max_bytes: config.transcoding.cache_max_bytes,

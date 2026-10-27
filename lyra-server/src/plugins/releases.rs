@@ -24,15 +24,13 @@ use harmony_luau::{
     render_definition_file_with_support,
 };
 
+use crate::db::Release;
 use crate::plugins::args;
 use crate::plugins::catalog;
 #[cfg(feature = "docgen")]
 use crate::services::catalog::releases::ReleaseKey;
 use crate::{
-    plugins::db::{
-        self,
-        Release,
-    },
+    plugins::db,
     services::{
         self,
         catalog::{
@@ -167,7 +165,7 @@ fn similar_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let options =
             release_service::SimilarReleaseOptions::for_principal(&principal, request.limit);
-        let releases = release_service::similar_in_vm(DbId(release_db_id), &options, provider_vm)
+        let releases = similar_in_vm(DbId(release_db_id), &options, provider_vm)
             .await
             .map_err(crate::plugins::runtime_error)?;
         match releases {
@@ -175,6 +173,29 @@ fn similar_callback(
             None => Ok(luau::Value::Nil),
         }
     }))
+}
+
+/// Dispatches to the providers on the VM making the call, which the executor
+/// is already running; queueing to it would deadlock.
+async fn similar_in_vm(
+    seed_db_id: DbId,
+    options: &release_service::SimilarReleaseOptions,
+    provider_vm: luau::Vm,
+) -> anyhow::Result<Option<Vec<crate::db::Release>>> {
+    let expected_vm_id = provider_vm.id();
+    release_service::similar_with_dispatch(
+        seed_db_id,
+        options,
+        Some(expected_vm_id),
+        move |_runtime, request| {
+            let provider_vm = provider_vm.clone();
+            async move {
+                crate::plugins::executor::dispatch_similar_releases_in_vm(provider_vm, request)
+                    .await
+            }
+        },
+    )
+    .await
 }
 
 struct SimilarReleaseRequest {
@@ -439,6 +460,10 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &[],
     )
 }
+
+#[cfg(test)]
+#[path = "releases/similar_tests.rs"]
+mod similar_tests;
 
 #[cfg(test)]
 mod tests {

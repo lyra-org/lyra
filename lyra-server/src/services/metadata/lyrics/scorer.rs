@@ -26,7 +26,7 @@ pub(crate) struct LocalTrackContext {
 
 #[derive(Clone, Debug, serde::Deserialize)]
 pub(crate) struct LyricsHandlerCandidate {
-    pub lyrics: crate::plugins::lyrics::PluginLyricsInput,
+    pub lyrics: crate::services::metadata::lyrics::payload::PluginLyricsInput,
     pub title: String,
     pub artist: String,
     /// `None` fails the duration gate.
@@ -262,7 +262,7 @@ fn language_matches(stored: &str, hint: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugins::lyrics::PluginLyricsInput;
+    use crate::services::metadata::lyrics::payload::PluginLyricsInput;
 
     fn lyrics_payload(id: &str, language: &str) -> PluginLyricsInput {
         PluginLyricsInput {

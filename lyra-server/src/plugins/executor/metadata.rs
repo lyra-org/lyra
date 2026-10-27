@@ -28,13 +28,15 @@ use super::{
     messages::{
         IdLinkDispatchContext,
         MetadataDispatchContext,
-        MetadataRefreshRequest,
-        MetadataRefreshResult,
-        SimilarReleaseCandidate,
-        SimilarReleaseExternalRef,
-        SimilarReleasesDispatchRequest,
-        SimilarReleasesDispatchResult,
     },
+};
+use crate::services::plugin_dispatch::{
+    MetadataRefreshRequest,
+    MetadataRefreshResult,
+    SimilarReleaseCandidate,
+    SimilarReleaseExternalRef,
+    SimilarReleasesDispatchRequest,
+    SimilarReleasesDispatchResult,
 };
 
 use crate::services::providers::{

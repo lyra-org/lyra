@@ -34,16 +34,16 @@ use harmony_repository::{
 use nanoid::nanoid;
 use tokio::sync::Mutex;
 
-use crate::{
-    STATE,
-    db::plugin_repositories as repo_db,
-};
+use crate::db::plugin_repositories as repo_db;
+use crate::services::STATE;
+
+const DEFAULT_ORIGIN: &str = "https://git.lyra.pub/lyra/lyra?forge=gitlab";
 
 static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     let _ = rustls::crypto::ring::default_provider().install_default();
     reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
-        .user_agent(crate::outbound_user_agent())
+        .user_agent(crate::plugins::server::outbound_user_agent())
         .build()
         .expect("failed to create plugin repository HTTP client")
 });
@@ -55,6 +55,29 @@ static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
 /// reentrant, so helpers that write to disk expect the caller to hold it.
 /// Repository resolution (network) always happens before the guard.
 static MUTATION_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+/// Subscribes the official repository once per database, pinned to this
+/// build's release tag when it has one.
+pub(crate) fn seed_default(db: &mut DbAny) -> anyhow::Result<()> {
+    let manifest = harmony_repository::RepositoryManifest::parse(
+        include_str!("../../../repository.json"),
+        None,
+    )?;
+    let release_tag = env!("LYRA_RELEASE_TAG");
+    repo_db::seed_default(
+        db,
+        &repo_db::PluginRepository {
+            db_id: None,
+            id: nanoid!(),
+            origin: DEFAULT_ORIGIN.to_string(),
+            name: manifest.name,
+            description: manifest.description,
+            git_ref: (!release_tag.is_empty()).then(|| release_tag.to_string()),
+            commit: None,
+            refreshed_at_ms: None,
+        },
+    )
+}
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum PluginRepoError {
@@ -316,10 +339,7 @@ pub(crate) async fn resolve_preview(
     git_ref: Option<&str>,
 ) -> Result<RepositoryPreview, PluginRepoError> {
     let resolved = resolve(url, git_ref).await?;
-    Ok(build_preview(
-        &resolved,
-        &crate::plugins::bootstrap::plugins_dir(),
-    ))
+    Ok(build_preview(&resolved, &crate::config::plugins_dir()))
 }
 
 #[derive(Debug, Clone)]
@@ -387,7 +407,7 @@ fn selected_candidates<'a>(
 /// Writes the selected candidates into `plugins_dir`. Per-plugin failures
 /// don't abort siblings. The caller holds `MUTATION_LOCK`.
 fn install_selected(resolved: &ResolvedRepository, plugin_ids: Option<&[String]>) -> InstallReport {
-    let plugins_dir = crate::plugins::bootstrap::plugins_dir();
+    let plugins_dir = crate::config::plugins_dir();
     let mut report = InstallReport {
         installed: Vec::new(),
         failed: Vec::new(),
@@ -536,7 +556,7 @@ fn managed_plugin_ids(plugins_dir: &Path) -> Result<BTreeSet<String>, PluginRepo
 pub(crate) async fn update_plugins(
     plugin_ids: Option<&[String]>,
 ) -> Result<UpdateReport, PluginRepoError> {
-    update_plugins_in(&crate::plugins::bootstrap::plugins_dir(), plugin_ids).await
+    update_plugins_in(&crate::config::plugins_dir(), plugin_ids).await
 }
 
 async fn update_plugins_in(
@@ -644,8 +664,7 @@ async fn update_plugins_in(
 /// Uninstalls a repository-managed plugin and reloads the runtime.
 pub(crate) async fn uninstall(plugin_id: &str) -> Result<(), PluginRepoError> {
     let _guard = MUTATION_LOCK.lock().await;
-    uninstall_plugin(&crate::plugins::bootstrap::plugins_dir(), plugin_id)
-        .map_err(map_install_error)?;
+    uninstall_plugin(&crate::config::plugins_dir(), plugin_id).map_err(map_install_error)?;
     reload_runtime().await
 }
 
@@ -658,9 +677,9 @@ pub(crate) async fn reload_plugins() -> Result<(), PluginRepoError> {
 
 /// Reloads the runtime from `plugins_dir`. The caller holds `MUTATION_LOCK`.
 async fn reload_runtime() -> Result<(), PluginRepoError> {
-    STATE
+    crate::plugins::STATE
         .generation()
-        .plugin_registries
+        .registries
         .reload_all_plugins()
         .await
         .map_err(|error| {
@@ -675,7 +694,7 @@ pub(crate) async fn add_repository(
     git_ref: Option<&str>,
 ) -> Result<(repo_db::PluginRepository, RepositoryPreview), PluginRepoError> {
     let resolved = resolve(url, git_ref).await?;
-    let preview = build_preview(&resolved, &crate::plugins::bootstrap::plugins_dir());
+    let preview = build_preview(&resolved, &crate::config::plugins_dir());
 
     let origin = resolved.spec.canonical_url();
     let mut record = repo_db::PluginRepository {
@@ -724,7 +743,7 @@ pub(crate) async fn refresh_repository(
     let mut record = load_repository(repository_id).await?;
 
     let resolved = resolve(&record.origin, record.git_ref.as_deref()).await?;
-    let preview = build_preview(&resolved, &crate::plugins::bootstrap::plugins_dir());
+    let preview = build_preview(&resolved, &crate::config::plugins_dir());
 
     record.name = preview.name.clone();
     record.description = preview.description.clone();
@@ -773,6 +792,59 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn seeds_official_repository_at_release_tag() -> anyhow::Result<()> {
+        let mut db = crate::db::test_db::new_test_db()?;
+        seed_default(&mut db)?;
+        let repositories = repo_db::list(&db)?;
+        assert_eq!(repositories.len(), 1);
+        let record = &repositories[0];
+        assert_eq!(record.origin, DEFAULT_ORIGIN);
+        let tag = env!("LYRA_RELEASE_TAG");
+        assert_eq!(record.git_ref.as_deref(), (!tag.is_empty()).then_some(tag));
+        assert_eq!(record.commit, None);
+        assert_eq!(record.refreshed_at_ms, None);
+        Ok(())
+    }
+
+    #[test]
+    fn default_catalog_lists_all_shipped_plugin_manifests() -> anyhow::Result<()> {
+        use std::collections::BTreeSet;
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
+        let catalog = harmony_repository::RepositoryManifest::parse(
+            include_str!("../../../repository.json"),
+            None,
+        )?;
+        let listed = catalog
+            .entries
+            .into_iter()
+            .map(|entry| {
+                let harmony_repository::RepositoryEntry::Path { path } = entry else {
+                    panic!("official plugins should live in this repository");
+                };
+                assert!(root.join(&path).join("plugin.json").is_file());
+                path
+            })
+            .collect::<BTreeSet<_>>();
+        let shipped = std::fs::read_dir(root.join("plugins"))?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|path| path.join("plugin.json").is_file())
+            .map(|path| {
+                path.strip_prefix(root)
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(listed, shipped);
+        Ok(())
+    }
 
     fn record(commit: Option<String>) -> SourceRecord {
         SourceRecord {

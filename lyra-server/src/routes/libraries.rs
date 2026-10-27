@@ -29,21 +29,21 @@ use serde::{
     Serialize,
 };
 
+use lyra_metadata::locale::{
+    validate_country,
+    validate_language,
+};
+
+use crate::db::{
+    Library,
+    Permission,
+};
 use crate::{
-    STATE,
-    db::{
-        self,
-        Library,
-        Permission,
-    },
-    locale::{
-        validate_country,
-        validate_language,
-    },
     routes::{
         AppError,
         double_option,
     },
+    services::STATE,
     services::{
         LibraryRefreshRunOptions,
         SyncRunStartResponse,
@@ -134,7 +134,7 @@ enum LibraryAccessKind {
     ReadWrite,
 }
 
-impl From<LibraryAccessKind> for db::libraries::AccessKind {
+impl From<LibraryAccessKind> for crate::db::libraries::AccessKind {
     fn from(kind: LibraryAccessKind) -> Self {
         match kind {
             LibraryAccessKind::ReadWrite => Self::ReadWrite,
@@ -182,8 +182,8 @@ fn library_not_found(id: &str) -> AppError {
     AppError::not_found(format!("library not found: {id}"))
 }
 
-fn public_user_role(db: &impl db::DbAccess, user_db_id: agdb::DbId) -> Option<String> {
-    db::roles::get_role_for_user(db, user_db_id)
+fn public_user_role(db: &impl crate::db::DbAccess, user_db_id: agdb::DbId) -> Option<String> {
+    crate::db::roles::get_role_for_user(db, user_db_id)
         .ok()
         .flatten()
         .map(|role| role.name)
@@ -198,9 +198,9 @@ async fn refresh_library(
 
     let library = {
         let db = STATE.db.read().await;
-        let library_db_id = db::lookup::find_node_id_by_id(&*db, &library_id)?
+        let library_db_id = crate::db::lookup::find_node_id_by_id(&*db, &library_id)?
             .ok_or_else(|| AppError::not_found(format!("not found: {library_id}")))?;
-        db::libraries::get_by_id(&db, library_db_id)?
+        crate::db::libraries::get_by_id(&db, library_db_id)?
             .ok_or_else(|| library_not_found(&library_id))?
     };
 
@@ -235,7 +235,7 @@ async fn create_library(
                     candidate.display()
                 )));
             }
-            Ok(db::libraries::path_key_for(&candidate))
+            Ok(crate::db::libraries::path_key_for(&candidate))
         })
         .await
         .map_err(|e| anyhow!("directory canonicalize task panicked: {e}"))??
@@ -256,11 +256,11 @@ async fn create_library(
     let library = {
         let mut db_write = STATE.db.write().await;
         let user_db_id = principal.require(&db_write)?;
-        let outcome =
-            db_write.transaction_mut(|t| -> Result<Library, db::libraries::LibraryCreateError> {
-                db::libraries::create_with_creator(
+        let outcome = db_write.transaction_mut(
+            |t| -> Result<Library, crate::db::libraries::LibraryCreateError> {
+                crate::db::libraries::create_with_creator(
                     t,
-                    db::libraries::LibraryInsert {
+                    crate::db::libraries::LibraryInsert {
                         id: nanoid!(),
                         name: library.name,
                         path: directory,
@@ -270,19 +270,20 @@ async fn create_library(
                     },
                     user_db_id,
                 )
-            });
+            },
+        );
         match outcome {
             Ok(library) => library,
-            Err(err @ db::libraries::LibraryCreateError::InvalidName(_)) => {
+            Err(err @ crate::db::libraries::LibraryCreateError::InvalidName(_)) => {
                 return Err(AppError::bad_request(err.to_string()));
             }
             Err(
-                err @ (db::libraries::LibraryCreateError::NameInUse(_)
-                | db::libraries::LibraryCreateError::PathInUse(_)),
+                err @ (crate::db::libraries::LibraryCreateError::NameInUse(_)
+                | crate::db::libraries::LibraryCreateError::PathInUse(_)),
             ) => {
                 return Err(AppError::conflict(err.to_string()));
             }
-            Err(db::libraries::LibraryCreateError::Db(e)) => return Err(AppError::from(e)),
+            Err(crate::db::libraries::LibraryCreateError::Db(e)) => return Err(AppError::from(e)),
         }
     };
 
@@ -312,10 +313,10 @@ async fn update_library(
     }
 
     let mut db = STATE.db.write().await;
-    let library_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
+    let library_db_id = crate::db::lookup::find_node_id_by_id(&*db, &id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
-    let library =
-        db::libraries::get_by_id(&db, library_db_id)?.ok_or_else(|| library_not_found(&id))?;
+    let library = crate::db::libraries::get_by_id(&db, library_db_id)?
+        .ok_or_else(|| library_not_found(&id))?;
 
     let mut updated_name = library.name;
     let mut updated_language = library.language;
@@ -352,18 +353,20 @@ async fn update_library(
         country: updated_country,
     };
 
-    let outcome = db.transaction_mut(|t| -> Result<Library, db::libraries::LibraryUpdateError> {
-        db::libraries::update(t, &updated)
-    });
+    let outcome = db.transaction_mut(
+        |t| -> Result<Library, crate::db::libraries::LibraryUpdateError> {
+            crate::db::libraries::update(t, &updated)
+        },
+    );
     let stored = match outcome {
         Ok(library) => library,
-        Err(err @ db::libraries::LibraryUpdateError::InvalidName(_)) => {
+        Err(err @ crate::db::libraries::LibraryUpdateError::InvalidName(_)) => {
             return Err(AppError::bad_request(err.to_string()));
         }
-        Err(err @ db::libraries::LibraryUpdateError::NameInUse(_)) => {
+        Err(err @ crate::db::libraries::LibraryUpdateError::NameInUse(_)) => {
             return Err(AppError::conflict(err.to_string()));
         }
-        Err(db::libraries::LibraryUpdateError::Db(e)) => return Err(AppError::from(e)),
+        Err(crate::db::libraries::LibraryUpdateError::Db(e)) => return Err(AppError::from(e)),
     };
 
     Ok(Json(LibraryResponse::from_library(stored, true)))
@@ -383,17 +386,17 @@ async fn delete_library(
     let track_ids = {
         let mut db = STATE.db.write().await;
         let user_db_id = principal.require(&db)?;
-        let library_db_id =
-            db::lookup::find_node_id_by_id(&*db, &id)?.ok_or_else(|| library_not_found(&id))?;
-        let library =
-            db::libraries::get_by_id(&*db, library_db_id)?.ok_or_else(|| library_not_found(&id))?;
+        let library_db_id = crate::db::lookup::find_node_id_by_id(&*db, &id)?
+            .ok_or_else(|| library_not_found(&id))?;
+        let library = crate::db::libraries::get_by_id(&*db, library_db_id)?
+            .ok_or_else(|| library_not_found(&id))?;
         db.transaction_mut(|t| -> Result<_, AppError> {
             if !principal.permissions.contains(&Permission::Admin)
-                && !db::libraries::user_has_access_in_txn(t, user_db_id, library_db_id)?
+                && !crate::db::libraries::user_has_access_in_txn(t, user_db_id, library_db_id)?
             {
                 return Err(library_not_found(&id));
             }
-            Ok(db::libraries::delete(t, &library)?)
+            Ok(crate::db::libraries::delete(t, &library)?)
         })?
     };
     crate::services::hls::state::teardown_hls_jobs_for_tracks(&track_ids).await;
@@ -426,10 +429,10 @@ fn update_library_docs(op: TransformOperation) -> TransformOperation {
 async fn list_libraries(headers: HeaderMap) -> Result<Json<Vec<LibraryResponse>>, AppError> {
     let principal = require_authenticated(&headers).await?;
     let include_directory =
-        db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
+        crate::db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
 
     let db = STATE.db.read().await;
-    let libraries = db::libraries::get(&db)?;
+    let libraries = crate::db::libraries::get(&db)?;
     let response: Vec<LibraryResponse> = libraries
         .into_iter()
         .filter(|library| principal.accessible_library_ids.contains(&library.id))
@@ -472,9 +475,10 @@ async fn start_library_sync_for_library(
     let _principal = require_manage_libraries_on(&headers, &id).await?;
     let library = {
         let db = STATE.db.read().await;
-        let library_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
+        let library_db_id = crate::db::lookup::find_node_id_by_id(&*db, &id)?
             .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
-        db::libraries::get_by_id(&db, library_db_id)?.ok_or_else(|| library_not_found(&id))?
+        crate::db::libraries::get_by_id(&db, library_db_id)?
+            .ok_or_else(|| library_not_found(&id))?
     };
 
     Ok(Json(start_library_sync(STATE.db.get(), library).await?))
@@ -500,10 +504,10 @@ async fn list_library_access(
     let _principal = require_manage_libraries_on(&headers, &id).await?;
     let db = STATE.db.read().await;
     let library_db_id =
-        db::lookup::find_node_id_by_id(&*db, &id)?.ok_or_else(|| library_not_found(&id))?;
-    db::libraries::get_by_id(&db, library_db_id)?.ok_or_else(|| library_not_found(&id))?;
+        crate::db::lookup::find_node_id_by_id(&*db, &id)?.ok_or_else(|| library_not_found(&id))?;
+    crate::db::libraries::get_by_id(&db, library_db_id)?.ok_or_else(|| library_not_found(&id))?;
 
-    let users = db::libraries::users_with_access(&db, library_db_id)?;
+    let users = crate::db::libraries::users_with_access(&db, library_db_id)?;
     let response = users
         .into_iter()
         .map(|user| {
@@ -528,12 +532,12 @@ async fn grant_library_access(
     let mut db = STATE.db.write().await;
     let user_db_id = principal.require(&db)?;
     let library_db_id =
-        db::lookup::find_node_id_by_id(&*db, &id)?.ok_or_else(|| library_not_found(&id))?;
-    db::libraries::get_by_id(&db, library_db_id)?.ok_or_else(|| library_not_found(&id))?;
+        crate::db::lookup::find_node_id_by_id(&*db, &id)?.ok_or_else(|| library_not_found(&id))?;
+    crate::db::libraries::get_by_id(&db, library_db_id)?.ok_or_else(|| library_not_found(&id))?;
 
-    let target_user = db::users::get_by_public_id(&db, &request.user_id)?
+    let target_user = crate::db::users::get_by_public_id(&db, &request.user_id)?
         .or_else(|| {
-            db::users::get_by_username(&db, &request.user_id)
+            crate::db::users::get_by_username(&db, &request.user_id)
                 .ok()
                 .flatten()
         })
@@ -544,10 +548,17 @@ async fn grant_library_access(
 
     let authorized = principal.permissions.contains(&Permission::Admin);
     let granted = db.transaction_mut(|t| -> anyhow::Result<bool> {
-        if !authorized && !db::libraries::user_has_access_in_txn(t, user_db_id, library_db_id)? {
+        if !authorized
+            && !crate::db::libraries::user_has_access_in_txn(t, user_db_id, library_db_id)?
+        {
             return Ok(false);
         }
-        db::libraries::grant_access(t, target_user_db_id, library_db_id, request.kind.into())?;
+        crate::db::libraries::grant_access(
+            t,
+            target_user_db_id,
+            library_db_id,
+            request.kind.into(),
+        )?;
         Ok(true)
     })?;
     if !granted {
@@ -564,11 +575,15 @@ async fn revoke_library_access(
     let mut db = STATE.db.write().await;
     let user_db_id = principal.require(&db)?;
     let library_db_id =
-        db::lookup::find_node_id_by_id(&*db, &id)?.ok_or_else(|| library_not_found(&id))?;
-    db::libraries::get_by_id(&db, library_db_id)?.ok_or_else(|| library_not_found(&id))?;
+        crate::db::lookup::find_node_id_by_id(&*db, &id)?.ok_or_else(|| library_not_found(&id))?;
+    crate::db::libraries::get_by_id(&db, library_db_id)?.ok_or_else(|| library_not_found(&id))?;
 
-    let target_user = db::users::get_by_public_id(&db, &user_id)?
-        .or_else(|| db::users::get_by_username(&db, &user_id).ok().flatten())
+    let target_user = crate::db::users::get_by_public_id(&db, &user_id)?
+        .or_else(|| {
+            crate::db::users::get_by_username(&db, &user_id)
+                .ok()
+                .flatten()
+        })
         .ok_or_else(|| AppError::not_found(format!("user not found: {user_id}")))?;
     let target_user_db_id = target_user
         .db_id
@@ -584,10 +599,12 @@ async fn revoke_library_access(
 
     let authorized = principal.permissions.contains(&Permission::Admin);
     let revoked = db.transaction_mut(|t| -> anyhow::Result<bool> {
-        if !authorized && !db::libraries::user_has_access_in_txn(t, user_db_id, library_db_id)? {
+        if !authorized
+            && !crate::db::libraries::user_has_access_in_txn(t, user_db_id, library_db_id)?
+        {
             return Ok(false);
         }
-        db::libraries::revoke_access(t, target_user_db_id, library_db_id)?;
+        crate::db::libraries::revoke_access(t, target_user_db_id, library_db_id)?;
         Ok(true)
     })?;
     if !revoked {
@@ -679,7 +696,6 @@ pub(crate) fn library_openapi_routes() -> aide::axum::ApiRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db;
 
     /// An explicit `null` must reach the service as `Some(None)` (a clear) and
     /// must not trip the "no fields provided" 400 guard.
@@ -709,10 +725,10 @@ mod tests {
         headers
     }
 
-    fn library_insert(name: &str, suffix: &str) -> db::libraries::LibraryInsert {
+    fn library_insert(name: &str, suffix: &str) -> crate::db::libraries::LibraryInsert {
         let path = std::path::PathBuf::from(format!("/tmp/lyra-route-library-{suffix}"));
-        let path_key = db::libraries::path_key_for(&path);
-        db::libraries::LibraryInsert {
+        let path_key = crate::db::libraries::path_key_for(&path);
+        crate::db::libraries::LibraryInsert {
             id: nanoid!(),
             name: name.to_string(),
             path,
@@ -727,31 +743,26 @@ mod tests {
         username: &str,
         permissions: Vec<Permission>,
     ) -> anyhow::Result<agdb::DbId> {
-        let user_db_id = db::users::create(db, &db::test_db::test_user(username)?)?;
-        let role = db::roles::Role {
+        let user_db_id = crate::db::users::create(db, &crate::db::fixtures::test_user(username)?)?;
+        let role = crate::db::roles::Role {
             db_id: None,
             id: nanoid!(),
             name: format!("{username}-role"),
             permissions,
         };
-        let role_db_id = db::roles::create(db, &role)?;
-        db::roles::assign_role_to_user(db, user_db_id, role_db_id)?;
+        let role_db_id = crate::db::roles::create(db, &role)?;
+        crate::db::roles::assign_role_to_user(db, user_db_id, role_db_id)?;
         Ok(user_db_id)
     }
 
     async fn setup_route_test() -> anyhow::Result<()> {
-        crate::testing::initialize_runtime(&crate::testing::LibraryFixtureConfig {
-            directory: std::path::PathBuf::from("."),
-            language: None,
-            country: None,
-        })
-        .await
+        crate::plugins::testing::init_library_test_state(std::path::PathBuf::from(".")).await
     }
 
     #[tokio::test]
     async fn delete_library_requires_permission_access_and_an_idle_library() -> anyhow::Result<()> {
         use axum::response::IntoResponse;
-        let _guard = crate::testing::runtime_test_lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         setup_route_test().await?;
         let (manager, listener, library, run_id) = {
             let mut db = STATE.db.write().await;
@@ -762,13 +773,13 @@ mod tests {
             )?;
             let listener = create_user_with_permissions(&mut db, "listener", vec![])?;
             let library = db.transaction_mut(|t| -> anyhow::Result<_> {
-                Ok(db::libraries::create_with_creator(
+                Ok(crate::db::libraries::create_with_creator(
                     t,
                     library_insert("Delete me", "delete-route"),
                     manager,
                 )?)
             })?;
-            let record = db::sync_runs::SyncRunRecord {
+            let record = crate::db::sync_runs::SyncRunRecord {
                 db_id: None,
                 id: nanoid!(),
                 library_id: library.id.clone(),
@@ -791,11 +802,13 @@ mod tests {
                 active_units: 0,
                 failure_count: 0,
             };
-            let run_id = db::sync_runs::create(&mut db, &record)?;
+            let run_id = crate::db::sync_runs::create(&mut db, &record)?;
             (manager, listener, library, run_id)
         };
-        let manager_session = crate::testing::create_session(manager, Default::default()).await?;
-        let listener_session = crate::testing::create_session(listener, Default::default()).await?;
+        let manager_session =
+            crate::services::testing::create_session(manager, Default::default()).await?;
+        let listener_session =
+            crate::services::testing::create_session(listener, Default::default()).await?;
         assert_eq!(
             delete_library(HeaderMap::new(), Path(library.id.clone()))
                 .await
@@ -830,7 +843,7 @@ mod tests {
             let mut db = STATE.db.write().await;
             db.exec_mut(agdb::QueryBuilder::remove().ids(run_id).query())?;
             db.transaction_mut(|t| {
-                db::libraries::revoke_access(t, manager, library.db_id.unwrap())
+                crate::db::libraries::revoke_access(t, manager, library.db_id.unwrap())
             })?;
         }
         assert_eq!(
@@ -847,11 +860,11 @@ mod tests {
         {
             let mut db = STATE.db.write().await;
             db.transaction_mut(|t| {
-                db::libraries::grant_access(
+                crate::db::libraries::grant_access(
                     t,
                     manager,
                     library.db_id.unwrap(),
-                    db::libraries::AccessKind::ReadWrite,
+                    crate::db::libraries::AccessKind::ReadWrite,
                 )
             })?;
         }
@@ -882,28 +895,30 @@ mod tests {
 
     #[tokio::test]
     async fn list_libraries_returns_only_accessible_libraries() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         setup_route_test().await?;
 
         let (user_db_id, visible_id) = {
             let mut db = STATE.db.write().await;
-            let user_db_id = db::users::create(&mut db, &db::test_db::test_user("listener")?)?;
-            let visible = db.transaction_mut(|t| -> anyhow::Result<db::Library> {
-                Ok(db::libraries::create_with_creator(
+            let user_db_id =
+                crate::db::users::create(&mut db, &crate::db::fixtures::test_user("listener")?)?;
+            let visible = db.transaction_mut(|t| -> anyhow::Result<crate::db::Library> {
+                Ok(crate::db::libraries::create_with_creator(
                     t,
                     library_insert("Visible", "visible"),
                     user_db_id,
                 )?)
             })?;
-            db.transaction_mut(|t| -> anyhow::Result<db::Library> {
-                Ok(db::libraries::create_system(
+            db.transaction_mut(|t| -> anyhow::Result<crate::db::Library> {
+                Ok(crate::db::libraries::create_system(
                     t,
                     library_insert("Hidden", "hidden"),
                 )?)
             })?;
             (user_db_id, visible.id)
         };
-        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
+        let session =
+            crate::services::testing::create_session(user_db_id, Default::default()).await?;
 
         let Json(libraries) = list_libraries(bearer_headers(&session.token))
             .await
@@ -917,7 +932,7 @@ mod tests {
 
     #[tokio::test]
     async fn library_access_endpoints_grant_list_and_revoke() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         setup_route_test().await?;
 
         let (manager_db_id, target_id, library_id) = {
@@ -927,12 +942,13 @@ mod tests {
                 "manager",
                 vec![Permission::ManageLibraries],
             )?;
-            let target_db_id = db::users::create(&mut db, &db::test_db::test_user("target")?)?;
-            let target_id = db::users::get_by_id(&db, target_db_id)?
+            let target_db_id =
+                crate::db::users::create(&mut db, &crate::db::fixtures::test_user("target")?)?;
+            let target_id = crate::db::users::get_by_id(&db, target_db_id)?
                 .expect("target user")
                 .id;
-            let library = db.transaction_mut(|t| -> anyhow::Result<db::Library> {
-                Ok(db::libraries::create_with_creator(
+            let library = db.transaction_mut(|t| -> anyhow::Result<crate::db::Library> {
+                Ok(crate::db::libraries::create_with_creator(
                     t,
                     library_insert("Managed", "managed"),
                     manager_db_id,
@@ -940,7 +956,8 @@ mod tests {
             })?;
             (manager_db_id, target_id, library.id)
         };
-        let session = crate::testing::create_session(manager_db_id, Default::default()).await?;
+        let session =
+            crate::services::testing::create_session(manager_db_id, Default::default()).await?;
         let headers = bearer_headers(&session.token);
 
         let granted = grant_library_access(

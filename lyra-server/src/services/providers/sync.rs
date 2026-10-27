@@ -18,9 +18,8 @@ use tokio::{
 };
 
 use crate::{
-    STATE,
-    db,
     services::EntityType,
+    services::STATE,
     services::libraries::{
         running_library_sync_count,
         wait_for_running_library_syncs,
@@ -68,7 +67,7 @@ pub(crate) async fn run_provider_sync(provider_id: &str) -> Result<(), ProviderS
 async fn run_provider_sync_inner(provider_id: &str) -> Result<(), ProviderServiceError> {
     let libraries = {
         let db = STATE.db.read().await;
-        db::libraries::get(&db)?
+        crate::db::libraries::get(&db)?
     };
 
     let library_db_ids: Vec<_> = libraries

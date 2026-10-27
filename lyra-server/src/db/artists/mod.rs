@@ -163,10 +163,7 @@ impl_luau_record_userdata!(
     }
 );
 
-pub(crate) fn get(
-    db: &impl super::DbAccess,
-    from: impl Into<QueryId>,
-) -> anyhow::Result<Vec<Artist>> {
+pub fn get(db: &impl super::DbAccess, from: impl Into<QueryId>) -> anyhow::Result<Vec<Artist>> {
     let from = from.into();
     let owner_db_id = resolve_owner_id(db, &from);
     let mut artists = get_connected_artists(db, &from)?;
@@ -370,10 +367,7 @@ pub(crate) fn first_credited_names(
         .collect())
 }
 
-pub(crate) fn get_by_id(
-    db: &impl super::DbAccess,
-    artist_db_id: DbId,
-) -> anyhow::Result<Option<Artist>> {
+pub fn get_by_id(db: &impl super::DbAccess, artist_db_id: DbId) -> anyhow::Result<Option<Artist>> {
     super::graph::fetch_typed_by_id(db, artist_db_id, "Artist")
 }
 
@@ -382,10 +376,7 @@ pub(crate) const SCAN_ALIAS_HOLDER: &str = "scan_alias_holder";
 
 /// Every artist whose scan name is exactly `scan_name`; when none is, the one artist holding it as
 /// a scan alias.
-pub(crate) fn with_scan_name(
-    db: &impl super::DbAccess,
-    scan_name: &str,
-) -> anyhow::Result<Vec<Artist>> {
+pub fn with_scan_name(db: &impl super::DbAccess, scan_name: &str) -> anyhow::Result<Vec<Artist>> {
     let ids = scan_name_ids(db, scan_name)?;
     if ids.is_empty() {
         return Ok(Vec::new());
@@ -457,10 +448,7 @@ fn scan_name_holders(db: &impl super::DbAccess, scan_name: &str) -> anyhow::Resu
 
 /// The artist whose scan name is `name`, ignoring case, else the one artist holding it as a scan
 /// alias: an exact hit on the scan name index, else a pass over every artist's scan names.
-pub(crate) fn find_by_scan_name(
-    db: &impl super::DbAccess,
-    name: &str,
-) -> anyhow::Result<Option<DbId>> {
+pub fn find_by_scan_name(db: &impl super::DbAccess, name: &str) -> anyhow::Result<Option<DbId>> {
     if let Some(id) = scan_name_holders(db, name)?
         .into_iter()
         .min_by_key(|id| id.0)
@@ -709,10 +697,12 @@ impl ArtistSortEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::test_db::{
-        connect_artist as link,
+    use crate::db::fixtures::{
         insert_artist,
         insert_release,
+    };
+    use crate::db::test_db::{
+        connect_artist as link,
         new_test_db,
     };
 
@@ -972,7 +962,7 @@ mod tests {
 
     #[test]
     fn get_credited_filters_out_non_credit_neighbors() -> anyhow::Result<()> {
-        use crate::db::test_db::{
+        use crate::db::fixtures::{
             connect,
             insert_track,
         };
@@ -1014,7 +1004,7 @@ mod tests {
     fn credited_artists_follow_credit_order() -> anyhow::Result<()> {
         use crate::db::{
             CreditType,
-            test_db::connect_credit,
+            fixtures::connect_credit,
         };
 
         let mut db = new_test_db()?;
@@ -1181,12 +1171,14 @@ mod benches {
     use test::Bencher;
 
     use super::*;
-    use crate::db::test_db::{
+    use crate::db::fixtures::{
         connect,
-        connect_artist as link,
         insert_artist,
         insert_release,
         insert_track,
+    };
+    use crate::db::test_db::{
+        connect_artist as link,
         new_test_db,
     };
 

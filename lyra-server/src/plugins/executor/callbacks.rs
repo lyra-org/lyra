@@ -47,7 +47,7 @@ pub(super) enum CallbackReply {
     },
     Similar {
         reply: tokio::sync::oneshot::Sender<Result<SimilarReleasesDispatchResult>>,
-        cancellation: super::MetadataRefreshCancellation,
+        cancellation: super::DispatchCancellation,
         max_candidates: usize,
     },
 }

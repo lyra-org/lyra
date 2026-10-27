@@ -24,15 +24,13 @@ use agdb::{
 };
 use nanoid::nanoid;
 
-pub(crate) use super::fixtures::{
-    connect,
+use super::fixtures::{
     connect_credit,
     insert_artist,
-    insert_release,
     insert_track,
     test_user,
 };
-use crate::config::DbKind;
+use crate::db::bootstrap::DbKind;
 
 static NEXT_TEST_DB_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -78,11 +76,7 @@ pub(crate) fn insert_user(db: &mut DbAny, username: &str) -> anyhow::Result<DbId
 
 /// Deletes a user the way the users route does and creates `replacement`, asserting agdb hands
 /// the replacement the deleted user's `DbId`.
-pub(crate) fn recycle_user(
-    db: &mut DbAny,
-    user_db_id: DbId,
-    replacement: &str,
-) -> anyhow::Result<DbId> {
+pub fn recycle_user(db: &mut DbAny, user_db_id: DbId, replacement: &str) -> anyhow::Result<DbId> {
     db.transaction_mut(|t| -> anyhow::Result<()> {
         super::api_keys::delete_all_for_user(t, user_db_id)?;
         super::users::delete_user(t, user_db_id)?;

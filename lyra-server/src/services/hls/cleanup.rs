@@ -24,7 +24,7 @@ use tokio::{
     time::sleep,
 };
 
-use crate::STATE;
+use crate::services::STATE;
 
 use super::state::{
     HLS_JOB_TEMP_DIR_PREFIX,
@@ -50,7 +50,7 @@ pub(crate) struct HlsCleanupState {
 }
 
 pub(crate) fn reset_cleanup_worker_state() {
-    crate::STATE
+    crate::services::STATE
         .generation()
         .hls_cleanup
         .worker_started
@@ -413,7 +413,7 @@ pub(crate) async fn cleanup_stale_hls_sessions() {
 }
 
 pub(crate) async fn ensure_hls_cleanup_worker_started() {
-    let generation = crate::STATE.generation();
+    let generation = crate::services::STATE.generation();
     let state = &generation.hls_cleanup;
     if state.worker_started.load(Ordering::Acquire) {
         return;

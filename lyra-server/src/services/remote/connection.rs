@@ -44,7 +44,7 @@ use super::registry::{
     ConnectionId,
 };
 
-use crate::STATE;
+use crate::services::STATE;
 use crate::services::auth::{
     self,
     AuthError,
@@ -586,7 +586,7 @@ mod tests {
 
     #[tokio::test]
     async fn pending_handoff_preserves_inline_command_liveness_and_order() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         for connection in registry::list_connections().await {
             registry::unregister(connection.connection_id).await;
         }
@@ -674,22 +674,17 @@ mod tests {
     /// A valid auth recheck returns the principal's current library access set.
     #[tokio::test]
     async fn check_auth_valid_carries_fresh_accessible_library_ids() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
-        crate::testing::initialize_runtime(&crate::testing::LibraryFixtureConfig {
-            directory: std::path::PathBuf::from("."),
-            language: None,
-            country: None,
-        })
-        .await?;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_library_test_state(std::path::PathBuf::from(".")).await?;
 
         let (user_db_id, user_public_id) = {
             let mut db = STATE.db.write().await;
-            let user = crate::db::test_db::test_user("ws-access")?;
+            let user = crate::db::fixtures::test_user("ws-access")?;
             let user_public_id = user.id.clone();
             let user_db_id = crate::db::users::create(&mut db, &user)?;
             (user_db_id, user_public_id)
         };
-        let token = crate::testing::create_session(user_db_id, Default::default())
+        let token = crate::services::testing::create_session(user_db_id, Default::default())
             .await?
             .token;
 
@@ -724,18 +719,13 @@ mod tests {
 
     #[tokio::test]
     async fn disconnect_pause_ignores_the_user_that_reused_the_db_id() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
-        crate::testing::initialize_runtime(&crate::testing::LibraryFixtureConfig {
-            directory: std::path::PathBuf::from("."),
-            language: None,
-            country: None,
-        })
-        .await?;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_library_test_state(std::path::PathBuf::from(".")).await?;
         for connection in registry::list_connections().await {
             registry::unregister(connection.connection_id).await;
         }
 
-        let alice = crate::db::test_db::test_user("alice")?;
+        let alice = crate::db::fixtures::test_user("alice")?;
         let alice_public_id = alice.id.clone();
         let alice_db_id = {
             let mut db = STATE.db.write().await;
@@ -753,7 +743,7 @@ mod tests {
         let bob_playback = {
             let mut db = STATE.db.write().await;
             let bob_db_id = crate::db::test_db::recycle_user(&mut db, alice_db_id, "bob")?;
-            let track_db_id = crate::db::test_db::insert_track(&mut db, "Bob's Track")?;
+            let track_db_id = crate::db::fixtures::insert_track(&mut db, "Bob's Track")?;
             playbacks::report_playback_session_with_cleanup(
                 &mut db,
                 playbacks::SessionPlaybackReportRequest {
@@ -794,15 +784,15 @@ mod tests {
 
     #[tokio::test]
     async fn confirm_registration_drops_connections_of_deleted_users() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
-        crate::testing::init_default_test_state()?;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
         for connection in registry::list_connections().await {
             registry::unregister(connection.connection_id).await;
         }
         let (kept_public_id, deleted_public_id) = {
             let mut db = STATE.db.write().await;
-            let kept = crate::db::test_db::test_user("still-here")?;
-            let deleted = crate::db::test_db::test_user("deleted-mid-upgrade")?;
+            let kept = crate::db::fixtures::test_user("still-here")?;
+            let deleted = crate::db::fixtures::test_user("deleted-mid-upgrade")?;
             crate::db::users::create(&mut db, &kept)?;
             let deleted_db_id = crate::db::users::create(&mut db, &deleted)?;
             crate::db::users::delete_user(&mut db, deleted_db_id)?;

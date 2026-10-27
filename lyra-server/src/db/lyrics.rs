@@ -47,7 +47,7 @@ fn normalize_language(raw: &str) -> anyhow::Result<String> {
     if trimmed.is_empty() || trimmed.eq_ignore_ascii_case(LANGUAGE_UNKNOWN) {
         return Ok(LANGUAGE_UNKNOWN.to_string());
     }
-    crate::locale::validate_language(trimmed).map_err(Into::into)
+    lyra_metadata::locale::validate_language(trimmed).map_err(Into::into)
 }
 
 pub(crate) fn validate_provider_id(provider_id: &str) -> anyhow::Result<()> {
@@ -152,24 +152,24 @@ pub(crate) struct LyricWord {
 
 #[derive(Clone, Debug)]
 pub(crate) struct WordInput {
-    pub ts_ms: u64,
-    pub char_start: u32,
-    pub char_end: u32,
+    pub(crate) ts_ms: u64,
+    pub(crate) char_start: u32,
+    pub(crate) char_end: u32,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct LineInput {
-    pub ts_ms: u64,
-    pub text: String,
+    pub(crate) ts_ms: u64,
+    pub(crate) text: String,
     pub words: Vec<WordInput>,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct LyricsInput {
-    pub language: String,
-    pub plain_text: String,
+    pub(crate) language: String,
+    pub(crate) plain_text: String,
     pub lines: Vec<LineInput>,
-    pub last_checked_at: u64,
+    pub(crate) last_checked_at: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -476,10 +476,7 @@ pub(crate) fn get_by_id(db: &impl DbAccess, lyrics_id: DbId) -> anyhow::Result<O
     Ok(rows.into_iter().next())
 }
 
-pub(crate) fn get_detail(
-    db: &impl DbAccess,
-    lyrics_id: DbId,
-) -> anyhow::Result<Option<LyricsDetail>> {
+pub fn get_detail(db: &impl DbAccess, lyrics_id: DbId) -> anyhow::Result<Option<LyricsDetail>> {
     let Some(lyrics) = get_by_id(db, lyrics_id)? else {
         return Ok(None);
     };
@@ -930,11 +927,7 @@ pub(crate) fn delete_by_db_id(db: &mut DbAny, lyrics_db_id: DbId) -> anyhow::Res
     })
 }
 
-pub(crate) fn delete_personal(
-    db: &mut DbAny,
-    track_id: DbId,
-    owner_db_id: DbId,
-) -> anyhow::Result<bool> {
+pub fn delete_personal(db: &mut DbAny, track_id: DbId, owner_db_id: DbId) -> anyhow::Result<bool> {
     db.transaction_mut(|t| -> anyhow::Result<bool> {
         let Some(lyrics_db_id) = find_personal(t, track_id, owner_db_id)?
             .and_then(|lyrics| lyrics.db_id.map(Into::into))
@@ -1095,7 +1088,7 @@ mod tests {
     fn plugin_upsert_creates_row_and_connects_to_track_and_lyrics_collection() -> anyhow::Result<()>
     {
         let mut db = test_db::new_test_db()?;
-        let track_id = test_db::insert_track(&mut db, "song")?;
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song")?;
 
         let lyrics_db_id = upsert_from_plugin(
             &mut db,
@@ -1126,7 +1119,7 @@ mod tests {
     #[test]
     fn plugin_manual_provider_id_is_distinct_from_manual_lyrics_kind() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db().unwrap();
-        let track_id = test_db::insert_track(&mut db, "song").unwrap();
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song").unwrap();
 
         upsert_from_plugin(
             &mut db,
@@ -1150,7 +1143,7 @@ mod tests {
     #[test]
     fn plugin_upsert_rejects_non_ascii_provider_id() {
         let mut db = test_db::new_test_db().unwrap();
-        let track_id = test_db::insert_track(&mut db, "song").unwrap();
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song").unwrap();
 
         // A Cyrillic homoglyph — blocked at the ASCII gate so the admin
         // UI can't surface spoofed provider names.
@@ -1176,7 +1169,7 @@ mod tests {
     #[test]
     fn plugin_upsert_rejects_synced_lines_without_max_ts_ms() {
         let mut db = test_db::new_test_db().unwrap();
-        let track_id = test_db::insert_track(&mut db, "song").unwrap();
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song").unwrap();
 
         let mut input = plugin_input("x", "plug", "");
         input.lines = vec![line(1_000, "one"), line(2_000, "two")];
@@ -1190,7 +1183,7 @@ mod tests {
     #[test]
     fn personal_upsert_stamps_kind_and_links_owner_edge() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
-        let track_id = test_db::insert_track(&mut db, "song")?;
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song")?;
         let alice = test_db::insert_user(&mut db, "alice")?;
 
         let input = plugin_input("u-1", "ignored", "mine");
@@ -1222,8 +1215,8 @@ mod tests {
     #[test]
     fn personal_upsert_rejects_non_user_owner() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
-        let track_id = test_db::insert_track(&mut db, "song")?;
-        let other_track = test_db::insert_track(&mut db, "other")?;
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song")?;
+        let other_track = crate::db::fixtures::insert_track(&mut db, "other")?;
 
         let err = upsert_personal(
             &mut db,
@@ -1241,7 +1234,7 @@ mod tests {
     #[test]
     fn visible_rows_never_include_another_users_personal_lyrics() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
-        let track_id = test_db::insert_track(&mut db, "song")?;
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song")?;
         let alice = test_db::insert_user(&mut db, "alice")?;
         let bob = test_db::insert_user(&mut db, "bob")?;
 
@@ -1297,7 +1290,7 @@ mod tests {
     #[test]
     fn personal_row_without_owner_edge_is_hidden_from_everyone() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
-        let track_id = test_db::insert_track(&mut db, "song")?;
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song")?;
         let alice = test_db::insert_user(&mut db, "alice")?;
         let lyrics_db_id = upsert_personal(
             &mut db,
@@ -1326,10 +1319,10 @@ mod tests {
         let mut db = test_db::new_test_db()?;
         let library_a = test_db::insert_library(&mut db, "A", "/a")?;
         let library_b = test_db::insert_library(&mut db, "B", "/b")?;
-        let release = test_db::insert_release(&mut db, "release")?;
-        let track_id = test_db::insert_track(&mut db, "song")?;
-        test_db::connect(&mut db, library_a, release)?;
-        test_db::connect(&mut db, release, track_id)?;
+        let release = crate::db::fixtures::insert_release(&mut db, "release")?;
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song")?;
+        crate::db::fixtures::connect(&mut db, library_a, release)?;
+        crate::db::fixtures::connect(&mut db, release, track_id)?;
         let entry = crate::db::entries::Entry {
             db_id: None,
             id: nanoid!(),
@@ -1345,7 +1338,7 @@ mod tests {
         let entry_id = db
             .exec_mut(QueryBuilder::insert().element(&entry).query())?
             .ids()[0];
-        test_db::connect(&mut db, library_b, entry_id)?;
+        crate::db::fixtures::connect(&mut db, library_b, entry_id)?;
         let alice = test_db::insert_user(&mut db, "alice")?;
         crate::db::libraries::grant_access(
             &mut db,
@@ -1370,7 +1363,7 @@ mod tests {
     #[test]
     fn personal_and_shared_manual_rows_are_singletons_in_their_scopes() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
-        let track_id = test_db::insert_track(&mut db, "song")?;
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song")?;
 
         let alice = test_db::insert_user(&mut db, "alice")?;
         let bob_user = test_db::insert_user(&mut db, "bob")?;
@@ -1449,8 +1442,8 @@ mod tests {
     #[test]
     fn upsert_scopes_by_track_so_shared_id_does_not_cross_tracks() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
-        let track_a = test_db::insert_track(&mut db, "a")?;
-        let track_b = test_db::insert_track(&mut db, "b")?;
+        let track_a = crate::db::fixtures::insert_track(&mut db, "a")?;
+        let track_b = crate::db::fixtures::insert_track(&mut db, "b")?;
 
         let a_id = upsert_from_plugin(&mut db, track_a, plugin_input("x", "plug", "A"), None)?;
         let b_id = upsert_from_plugin(&mut db, track_b, plugin_input("x", "plug", "B"), None)?;
@@ -1472,7 +1465,7 @@ mod tests {
     #[test]
     fn upsert_scopes_by_provider_so_shared_id_stays_separate() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
-        let track_id = test_db::insert_track(&mut db, "song")?;
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song")?;
 
         upsert_from_plugin(
             &mut db,
@@ -1504,7 +1497,7 @@ mod tests {
     #[test]
     fn personal_lyrics_coexist_with_provider_named_manual() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
-        let track_id = test_db::insert_track(&mut db, "song")?;
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song")?;
 
         let alice = test_db::insert_user(&mut db, "alice")?;
         let user_input = plugin_input("shared-id", "manual", "user-authored");
@@ -1529,7 +1522,7 @@ mod tests {
     #[test]
     fn upsert_rejects_control_characters_in_line_text() {
         let mut db = test_db::new_test_db().unwrap();
-        let track_id = test_db::insert_track(&mut db, "song").unwrap();
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song").unwrap();
 
         let cases = [
             "clean\nsecond",
@@ -1554,7 +1547,7 @@ mod tests {
     #[test]
     fn upsert_rejects_ts_ms_above_max() {
         let mut db = test_db::new_test_db().unwrap();
-        let track_id = test_db::insert_track(&mut db, "song").unwrap();
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song").unwrap();
 
         let mut input = plugin_input("x", "plug", "");
         input.lines = vec![line(100_000, "ok"), line(u64::MAX, "forged")];
@@ -1572,7 +1565,7 @@ mod tests {
     #[test]
     fn upsert_normalizes_empty_language_to_und() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
-        let track_id = test_db::insert_track(&mut db, "song")?;
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song")?;
 
         let mut input = plugin_input("abc", "plug", "hello");
         input.language = "   ".to_string();
@@ -1587,7 +1580,7 @@ mod tests {
     #[test]
     fn upsert_casefolds_language() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
-        let track_id = test_db::insert_track(&mut db, "song")?;
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song")?;
 
         let mut input = plugin_input("abc", "plug", "hello");
         input.language = "  ENG  ".to_string();
@@ -1610,7 +1603,7 @@ mod tests {
     #[test]
     fn upsert_rejects_invalid_word_ranges() {
         let mut db = test_db::new_test_db().unwrap();
-        let track_id = test_db::insert_track(&mut db, "song").unwrap();
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song").unwrap();
 
         let make = |words: Vec<WordInput>| {
             let mut input = plugin_input("x", "plug", "");
@@ -1695,7 +1688,7 @@ mod tests {
     #[test]
     fn upsert_rejects_oversize_plain_text() {
         let mut db = test_db::new_test_db().unwrap();
-        let track_id = test_db::insert_track(&mut db, "song").unwrap();
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song").unwrap();
 
         let big = "a".repeat(MAX_PLAIN_TEXT_BYTES + 1);
         let input = plugin_input("x", "plug", &big);
@@ -1706,7 +1699,7 @@ mod tests {
     #[test]
     fn upsert_rejects_oversize_line_count() {
         let mut db = test_db::new_test_db().unwrap();
-        let track_id = test_db::insert_track(&mut db, "song").unwrap();
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song").unwrap();
 
         let mut input = plugin_input("x", "plug", "");
         input.lines = (0..(MAX_LINES_PER_LYRIC + 1))
@@ -1719,7 +1712,7 @@ mod tests {
     #[test]
     fn upsert_rejects_oversize_line_text() {
         let mut db = test_db::new_test_db().unwrap();
-        let track_id = test_db::insert_track(&mut db, "song").unwrap();
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song").unwrap();
 
         let mut input = plugin_input("x", "plug", "");
         input.lines = vec![line(0, &"x".repeat(MAX_LINE_TEXT_BYTES + 1))];
@@ -1730,7 +1723,7 @@ mod tests {
     #[test]
     fn provider_upsert_replaces_changed_upstream_id() {
         let mut db = test_db::new_test_db().unwrap();
-        let track_id = test_db::insert_track(&mut db, "song").unwrap();
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song").unwrap();
 
         let first_id = upsert_from_plugin(
             &mut db,
@@ -1756,7 +1749,7 @@ mod tests {
     #[test]
     fn upsert_accepts_valid_adjacent_word_ranges() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
-        let track_id = test_db::insert_track(&mut db, "song")?;
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song")?;
 
         let mut input = plugin_input("x", "plug", "");
         input.lines = vec![LineInput {
@@ -1783,7 +1776,7 @@ mod tests {
     #[test]
     fn upsert_same_content_is_noop_but_bumps_last_checked_at() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
-        let track_id = test_db::insert_track(&mut db, "song")?;
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song")?;
 
         let first = upsert_from_plugin(
             &mut db,
@@ -1808,7 +1801,7 @@ mod tests {
     #[test]
     fn upsert_changed_content_replaces_children_and_bumps_updated_at() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
-        let track_id = test_db::insert_track(&mut db, "song")?;
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song")?;
 
         let bound = Some(10_000);
         let mut first_input = plugin_input("abc", "plug", "");
@@ -1840,7 +1833,7 @@ mod tests {
     #[test]
     fn upsert_with_word_cues_flips_has_word_cues() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
-        let track_id = test_db::insert_track(&mut db, "song")?;
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song")?;
 
         let mut input = plugin_input("xyz", "plug", "");
         input.lines = vec![LineInput {
@@ -1877,7 +1870,7 @@ mod tests {
     #[test]
     fn multiple_providers_on_same_track_coexist() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
-        let track_id = test_db::insert_track(&mut db, "song")?;
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song")?;
 
         upsert_from_plugin(
             &mut db,
@@ -1913,7 +1906,7 @@ mod tests {
     #[test]
     fn delete_for_track_removes_lyrics_and_children() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
-        let track_id = test_db::insert_track(&mut db, "song")?;
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song")?;
 
         let mut input = plugin_input("abc", "plug", "");
         input.lines = vec![LineInput {
@@ -1936,7 +1929,7 @@ mod tests {
     #[test]
     fn track_scoped_walks_ignore_a_users_personal_lyrics() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
-        let track_id = test_db::insert_track(&mut db, "song")?;
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song")?;
         let alice = test_db::insert_user(&mut db, "alice")?;
         upsert_personal(
             &mut db,
@@ -1955,7 +1948,7 @@ mod tests {
     #[test]
     fn cascade_remove_entities_removes_lyrics_for_orphan_track() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
-        let track_id = test_db::insert_track(&mut db, "song")?;
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song")?;
 
         let mut input = plugin_input("abc", "plug", "");
         input.lines = vec![LineInput {
@@ -1985,7 +1978,7 @@ mod tests {
     #[test]
     fn delete_by_db_id_removes_only_target() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
-        let track_id = test_db::insert_track(&mut db, "song")?;
+        let track_id = crate::db::fixtures::insert_track(&mut db, "song")?;
 
         let first_id =
             upsert_from_plugin(&mut db, track_id, plugin_input("a", "plug", "first"), None)?;

@@ -16,7 +16,6 @@ use agdb::{
 use lyra_metadata::LookupHints;
 
 use crate::db::{
-    self,
     Artist,
     Entry,
     Release,
@@ -86,7 +85,7 @@ pub(crate) fn release_tracks_by_release(
     db: &DbAny,
     release_ids: &[DbId],
 ) -> anyhow::Result<HashMap<DbId, Vec<Track>>> {
-    let mut tracks_by_release = db::tracks::get_direct_many(db, release_ids)?;
+    let mut tracks_by_release = crate::db::tracks::get_direct_many(db, release_ids)?;
     for tracks in tracks_by_release.values_mut() {
         sort_album_tracks(tracks);
     }
@@ -103,7 +102,7 @@ pub(crate) fn track_releases_by_track(
     db: &DbAny,
     track_ids: &[DbId],
 ) -> anyhow::Result<HashMap<DbId, Vec<Release>>> {
-    db::releases::get_by_tracks(db, track_ids)
+    crate::db::releases::get_by_tracks(db, track_ids)
 }
 
 pub(crate) fn release_credited_artists_by_release(
@@ -117,7 +116,7 @@ pub(crate) fn raw_artists_by_owner(
     db: &DbAny,
     owner_ids: &[DbId],
 ) -> anyhow::Result<HashMap<DbId, Vec<Artist>>> {
-    db::artists::get_many_by_owner(db, owner_ids)
+    crate::db::artists::get_many_by_owner(db, owner_ids)
 }
 
 pub(crate) fn track_artists_by_track(
@@ -164,7 +163,7 @@ pub(crate) fn track_credited_artists_by_track(
 }
 
 pub(crate) fn track_entries(db: &DbAny, track_id: DbId) -> anyhow::Result<Vec<Entry>> {
-    db::entries::get_by_track(db, track_id)
+    crate::db::entries::get_by_track(db, track_id)
 }
 
 pub(crate) fn entries_by_track(
@@ -214,7 +213,7 @@ pub(crate) fn unique_entries_for_tracks(
 pub(crate) fn first_file_path(entries: &[Entry]) -> Option<String> {
     entries
         .iter()
-        .filter(|entry| entry.kind == db::entries::EntryKind::File)
+        .filter(|entry| entry.kind == crate::db::entries::EntryKind::File)
         .map(|entry| entry.full_path.to_string_lossy().to_string())
         .min()
 }
@@ -247,7 +246,10 @@ pub(crate) fn external_id_rows_by_entity(
 ) -> anyhow::Result<HashMap<DbId, Vec<ExternalId>>> {
     let mut external_ids = HashMap::new();
     for entity_id in dedupe_db_ids(entity_ids) {
-        external_ids.insert(entity_id, db::external_ids::get_for_entity(db, entity_id)?);
+        external_ids.insert(
+            entity_id,
+            crate::db::external_ids::get_for_entity(db, entity_id)?,
+        );
     }
     Ok(external_ids)
 }
@@ -258,7 +260,12 @@ fn crediting_owner_ids_by_artist(
 ) -> anyhow::Result<HashMap<DbId, Vec<DbId>>> {
     dedupe_db_ids(artist_ids)
         .into_iter()
-        .map(|artist_id| Ok((artist_id, db::credits::crediting_owner_ids(db, artist_id)?)))
+        .map(|artist_id| {
+            Ok((
+                artist_id,
+                crate::db::credits::crediting_owner_ids(db, artist_id)?,
+            ))
+        })
         .collect()
 }
 
@@ -280,12 +287,12 @@ pub(crate) fn artist_owned_entities_by_artist(
     }
 
     let releases_by_id: HashMap<DbId, Release> = if include_releases {
-        db::graph::bulk_fetch_typed(db, all_owner_ids.clone(), "Release")?
+        crate::db::graph::bulk_fetch_typed(db, all_owner_ids.clone(), "Release")?
     } else {
         HashMap::new()
     };
     let tracks_by_id: HashMap<DbId, Track> = if include_tracks {
-        db::graph::bulk_fetch_typed(db, all_owner_ids, "Track")?
+        crate::db::graph::bulk_fetch_typed(db, all_owner_ids, "Track")?
     } else {
         HashMap::new()
     };

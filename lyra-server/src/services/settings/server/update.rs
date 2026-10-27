@@ -26,9 +26,8 @@ use super::{
     resolve,
 };
 use crate::{
-    STATE,
     config::BootConfig,
-    db,
+    services::STATE,
 };
 
 #[derive(Debug, PartialEq)]
@@ -104,16 +103,16 @@ pub(crate) fn validate_updates(
 }
 
 pub(crate) fn apply_updates(db: &mut agdb::DbAny, changes: &[Change]) -> Result<()> {
-    db::settings::server::ensure(db)?;
+    crate::db::settings::server::ensure(db)?;
     db.transaction_mut(|t| -> Result<()> {
         for change in changes {
             match change {
                 Change::Upsert { key, value } => {
                     let json = serde_json::to_string(value)
                         .with_context(|| format!("serialize server setting '{key}'"))?;
-                    db::settings::server::upsert_with(t, (*key).to_string(), json)?;
+                    crate::db::settings::server::upsert_with(t, (*key).to_string(), json)?;
                 }
-                Change::Remove { key } => db::settings::server::remove_with(t, key)?,
+                Change::Remove { key } => crate::db::settings::server::remove_with(t, key)?,
             }
         }
         Ok(())

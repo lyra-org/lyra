@@ -3,16 +3,13 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::{
-    path::PathBuf,
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use crate::plugins::api as plugin_api;
 use crate::{
-    STATE,
-    plugins::lifecycle::PluginId,
     services,
+    services::STATE,
+    services::plugin_scope::PluginId,
 };
 use anyhow::{
     Context,
@@ -21,15 +18,8 @@ use anyhow::{
 
 pub(crate) type PluginRuntime = crate::plugins::executor::PluginExecutorHandle;
 
-pub(crate) fn plugins_dir() -> PathBuf {
-    std::env::var_os("LYRA_PLUGINS_DIR")
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or_else(|| PathBuf::from("plugins"))
-}
-
 pub(crate) async fn initialize_harmony() -> Result<PluginRuntime> {
-    let plugins_dir = plugins_dir();
+    let plugins_dir = crate::config::plugins_dir();
 
     {
         let server_info = crate::plugins::server::load_server_info()
@@ -48,16 +38,12 @@ pub(crate) async fn initialize_harmony() -> Result<PluginRuntime> {
         for error in errors {
             tracing::warn!(error = %error, "plugin discovery error");
         }
-        STATE
+        crate::plugins::STATE
             .generation()
-            .plugin_manifests
+            .manifests
             .replace(Arc::from(runtime.plugin_manifests().await?));
         Ok(runtime)
     }
-}
-
-pub(crate) fn publish_runtime(runtime: PluginRuntime) {
-    STATE.generation().plugin_runtime.replace(Some(runtime));
 }
 
 pub(crate) async fn exec_for_capture(runtime: PluginRuntime) -> Result<()> {
@@ -77,13 +63,13 @@ pub(crate) async fn finalize_startup() -> Result<()> {
 }
 
 pub(crate) async fn teardown_loaded_plugins() {
-    for manifest in STATE.generation().plugin_manifests.get().iter() {
+    for manifest in crate::plugins::STATE.generation().manifests.get().iter() {
         match PluginId::new(manifest.id.clone()) {
             Ok(plugin_id) => {
                 tracing::debug!(plugin_id = %plugin_id, "tearing down plugin registries");
-                STATE
+                crate::plugins::STATE
                     .generation()
-                    .plugin_registries
+                    .registries
                     .teardown_plugin(&plugin_id, false)
                     .await;
             }

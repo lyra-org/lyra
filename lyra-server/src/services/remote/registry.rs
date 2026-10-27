@@ -616,7 +616,7 @@ mod tests {
 
     #[tokio::test]
     async fn close_user_connections_only_signals_that_user() {
-        let _guard = crate::testing::runtime_test_lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         for connection in list_connections().await {
             unregister(connection.connection_id).await;
         }

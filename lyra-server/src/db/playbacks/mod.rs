@@ -294,10 +294,7 @@ fn tagged_edge(
         .map(|element| (element.id, element.to)))
 }
 
-pub(crate) fn get_by_id(
-    db: &impl DbAccess,
-    playback_db_id: DbId,
-) -> anyhow::Result<Option<Playback>> {
+pub fn get_by_id(db: &impl DbAccess, playback_db_id: DbId) -> anyhow::Result<Option<Playback>> {
     super::graph::fetch_typed_by_id::<PlaybackRecord>(db, playback_db_id, "Playback")?
         .map(PlaybackRecord::into_playback)
         .transpose()
@@ -342,10 +339,7 @@ pub(crate) fn list_projections_for_user(
     Ok(projections)
 }
 
-pub(crate) fn count_for_user_up_to_limit(
-    db: &impl DbAccess,
-    user_db_id: DbId,
-) -> anyhow::Result<usize> {
+pub fn count_for_user_up_to_limit(db: &impl DbAccess, user_db_id: DbId) -> anyhow::Result<usize> {
     let result = db.exec(
         QueryBuilder::select()
             .values(vec![DbValue::from("db_element_id")])
@@ -492,10 +486,7 @@ fn tagged_targets(
         .collect())
 }
 
-pub(crate) fn get_owner_id(
-    db: &impl DbAccess,
-    playback_db_id: DbId,
-) -> Result<Option<DbId>, DbError> {
+pub fn get_owner_id(db: &impl DbAccess, playback_db_id: DbId) -> Result<Option<DbId>, DbError> {
     Ok(tagged_edge(db, playback_db_id, OWNER_EDGE_KEY)?.map(|(_, target)| target))
 }
 
@@ -656,11 +647,11 @@ mod tests {
     use crate::db::{
         PlaybackSession,
         PlaybackState,
-        test_db::{
+        fixtures::{
             insert_track,
-            new_test_db,
             test_user,
         },
+        test_db::new_test_db,
     };
 
     fn setup() -> anyhow::Result<(DbAny, DbId, DbId)> {

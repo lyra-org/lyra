@@ -27,22 +27,19 @@ use super::{
     },
     state::credit_values,
 };
-use crate::{
-    db::{
-        self,
-        MetadataField,
-        test_db::{
-            insert_artist,
-            insert_release,
-            insert_track,
-            new_test_db,
-        },
+use crate::db::{
+    MetadataField,
+    fixtures::{
+        insert_artist,
+        insert_release,
+        insert_track,
     },
-    services::metadata::layers::MANUAL_SOURCE_ID,
+    test_db::new_test_db,
 };
+use crate::services::metadata::layers::MANUAL_SOURCE_ID;
 
-fn manual_layer(db: &DbAny, entity_id: DbId) -> anyhow::Result<Option<db::MetadataLayer>> {
-    db::metadata::layers::find_valid(db, entity_id, MANUAL_SOURCE_ID)
+fn manual_layer(db: &DbAny, entity_id: DbId) -> anyhow::Result<Option<crate::db::MetadataLayer>> {
+    crate::db::metadata::layers::find_valid(db, entity_id, MANUAL_SOURCE_ID)
 }
 
 fn set(field: MetadataField, value: Value) -> MetadataChangeRequest {
@@ -135,7 +132,7 @@ fn preview_is_read_only_and_apply_persists_normalized_edit() -> anyhow::Result<(
         json!({"value": "New title", "source": "manual"})
     );
     assert_eq!(
-        db::tracks::get_by_id(&db, track_id)?
+        crate::db::tracks::get_by_id(&db, track_id)?
             .expect("track exists")
             .track_title,
         "Old title"
@@ -170,9 +167,9 @@ fn apply_rejects_a_field_changed_after_preview() -> anyhow::Result<()> {
         vec![set(MetadataField::TrackTitle, json!("Second"))],
     )?;
 
-    let mut concurrent = db::tracks::get_by_id(&db, track_id)?.expect("track exists");
+    let mut concurrent = crate::db::tracks::get_by_id(&db, track_id)?.expect("track exists");
     concurrent.set_track_title("Concurrent".to_string());
-    db::tracks::update(&mut db, &concurrent)?;
+    crate::db::tracks::update(&mut db, &concurrent)?;
 
     let error = apply(&mut db, track_id, &edit).expect_err("stale preview must conflict");
     let MetadataEditingError::Conflict(current) = error else {
@@ -253,7 +250,7 @@ fn apply_requires_expected_to_cover_only_requested_changes() -> anyhow::Result<(
     };
     assert!(message.contains("title"));
     assert_eq!(
-        db::tracks::get_by_id(&db, track_id)?
+        crate::db::tracks::get_by_id(&db, track_id)?
             .expect("track exists")
             .track_title,
         "First"
@@ -293,21 +290,21 @@ fn apply_accepts_the_preview_diff_as_expected() -> anyhow::Result<()> {
 fn apply_revalidates_track_number_invariants_against_current_state() -> anyhow::Result<()> {
     let mut db = new_test_db()?;
     let track_id = insert_track(&mut db, "Track")?;
-    let mut track = db::tracks::get_by_id(&db, track_id)?.expect("track exists");
+    let mut track = crate::db::tracks::get_by_id(&db, track_id)?.expect("track exists");
     track.set_track(1);
     track.set_track_total(3);
-    db::tracks::update(&mut db, &track)?;
+    crate::db::tracks::update(&mut db, &track)?;
 
     let edit = preview_edit(&db, track_id, vec![set(MetadataField::Track, json!(2))])?;
 
-    let mut concurrent = db::tracks::get_by_id(&db, track_id)?.expect("track exists");
+    let mut concurrent = crate::db::tracks::get_by_id(&db, track_id)?.expect("track exists");
     concurrent.set_track_total(1);
-    db::tracks::update(&mut db, &concurrent)?;
+    crate::db::tracks::update(&mut db, &concurrent)?;
 
     let error =
         apply(&mut db, track_id, &edit).expect_err("the current track_total must be revalidated");
     assert!(matches!(error, MetadataEditingError::BadRequest(_)));
-    let stored = db::tracks::get_by_id(&db, track_id)?.expect("track exists");
+    let stored = crate::db::tracks::get_by_id(&db, track_id)?.expect("track exists");
     assert_eq!(stored.track, Some(1));
     assert_eq!(stored.track_total, Some(1));
     assert!(manual_layer(&db, track_id)?.is_none());
@@ -318,10 +315,10 @@ fn apply_revalidates_track_number_invariants_against_current_state() -> anyhow::
 fn a_manual_clear_outranks_later_provider_values() -> anyhow::Result<()> {
     let mut db = new_test_db()?;
     let track_id = insert_track(&mut db, "Track")?;
-    let mut track = db::tracks::get_by_id(&db, track_id)?.expect("track exists");
+    let mut track = crate::db::tracks::get_by_id(&db, track_id)?.expect("track exists");
     track.sort_title = Some("Track, The".to_string());
     track.set_year(1999);
-    db::tracks::update(&mut db, &track)?;
+    crate::db::tracks::update(&mut db, &track)?;
 
     let edit = preview_edit(
         &db,
@@ -333,19 +330,19 @@ fn a_manual_clear_outranks_later_provider_values() -> anyhow::Result<()> {
     )?;
     apply(&mut db, track_id, &edit)?;
 
-    db::providers::upsert(
+    crate::db::providers::upsert(
         &mut db,
-        &db::ProviderConfig {
+        &crate::db::ProviderConfig {
             db_id: None,
             provider_id: "test-provider".to_string(),
             priority: 100,
             enabled: true,
         },
     )?;
-    db::metadata::layers::upsert(
+    crate::db::metadata::layers::upsert(
         &mut db,
         track_id,
-        &db::MetadataLayer {
+        &crate::db::MetadataLayer {
             source_id: "test-provider".to_string(),
             relations: Default::default(),
             credits: Default::default(),
@@ -357,7 +354,7 @@ fn a_manual_clear_outranks_later_provider_values() -> anyhow::Result<()> {
     )?;
     crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track_id)?;
 
-    let stored = db::tracks::get_by_id(&db, track_id)?.expect("track exists");
+    let stored = crate::db::tracks::get_by_id(&db, track_id)?.expect("track exists");
     assert_eq!(stored.sort_title, None);
     assert_eq!(stored.year, None);
     Ok(())
@@ -431,19 +428,19 @@ fn inherit_drops_the_manual_value_and_restores_the_resolved_one() -> anyhow::Res
     )?;
     apply(&mut db, track_id, &manual)?;
 
-    db::providers::upsert(
+    crate::db::providers::upsert(
         &mut db,
-        &db::ProviderConfig {
+        &crate::db::ProviderConfig {
             db_id: None,
             provider_id: "provider".to_string(),
             priority: 100,
             enabled: true,
         },
     )?;
-    db::metadata::layers::upsert(
+    crate::db::metadata::layers::upsert(
         &mut db,
         track_id,
-        &db::MetadataLayer {
+        &crate::db::MetadataLayer {
             source_id: "provider".to_string(),
             relations: Default::default(),
             credits: Default::default(),
@@ -455,7 +452,7 @@ fn inherit_drops_the_manual_value_and_restores_the_resolved_one() -> anyhow::Res
     )?;
     crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track_id)?;
     assert_eq!(
-        db::tracks::get_by_id(&db, track_id)?
+        crate::db::tracks::get_by_id(&db, track_id)?
             .expect("track exists")
             .track_title,
         "Manual"
@@ -483,19 +480,19 @@ fn inherit_drops_the_manual_value_and_restores_the_resolved_one() -> anyhow::Res
 fn inherit_graph_field_restores_provider_resolved_value() -> anyhow::Result<()> {
     let mut db = new_test_db()?;
     let release_id = insert_release(&mut db, "Release")?;
-    db::providers::upsert(
+    crate::db::providers::upsert(
         &mut db,
-        &db::ProviderConfig {
+        &crate::db::ProviderConfig {
             db_id: None,
             provider_id: "provider".to_string(),
             priority: 100,
             enabled: true,
         },
     )?;
-    db::metadata::layers::upsert(
+    crate::db::metadata::layers::upsert(
         &mut db,
         release_id,
-        &db::MetadataLayer {
+        &crate::db::MetadataLayer {
             source_id: "provider".to_string(),
             relations: Default::default(),
             credits: Default::default(),
@@ -529,23 +526,23 @@ fn inherit_graph_field_restores_provider_resolved_value() -> anyhow::Result<()> 
 fn inherit_conflicts_when_provider_resolution_changes_after_preview() -> anyhow::Result<()> {
     let mut db = new_test_db()?;
     let release_id = insert_release(&mut db, "Release")?;
-    db::providers::upsert(
+    crate::db::providers::upsert(
         &mut db,
-        &db::ProviderConfig {
+        &crate::db::ProviderConfig {
             db_id: None,
             provider_id: "provider".to_string(),
             priority: 100,
             enabled: true,
         },
     )?;
-    let provider_layer = |genres: &[&str], updated_at| db::MetadataLayer {
+    let provider_layer = |genres: &[&str], updated_at| crate::db::MetadataLayer {
         source_id: "provider".to_string(),
         relations: Default::default(),
         credits: Default::default(),
         fields: crate::db::metadata::layers::fields_from_json(json!({"genres": genres})),
         updated_at,
     };
-    db::metadata::layers::upsert(&mut db, release_id, &provider_layer(&["First"], 10))?;
+    crate::db::metadata::layers::upsert(&mut db, release_id, &provider_layer(&["First"], 10))?;
     crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, release_id)?;
     let manual = preview_edit(
         &db,
@@ -556,7 +553,7 @@ fn inherit_conflicts_when_provider_resolution_changes_after_preview() -> anyhow:
 
     let inherited = preview_edit(&db, release_id, vec![inherit(MetadataField::Genres)])?;
     assert_eq!(inherited.expected[0].after.value, json!(["First"]));
-    db::metadata::layers::upsert(&mut db, release_id, &provider_layer(&["Second"], 20))?;
+    crate::db::metadata::layers::upsert(&mut db, release_id, &provider_layer(&["Second"], 20))?;
 
     let error = apply(&mut db, release_id, &inherited)
         .expect_err("provider resolution changed after preview");
@@ -567,7 +564,7 @@ fn inherit_conflicts_when_provider_resolution_changes_after_preview() -> anyhow:
     assert_eq!(current[0].after.value, json!(["Second"]));
     assert_eq!(current[0].after.source, MetadataValueSource::Resolved);
     assert_eq!(
-        db::genres::get_for_release(&db, release_id)?[0].name,
+        crate::db::genres::get_for_release(&db, release_id)?[0].name,
         "Manual"
     );
     assert!(
@@ -582,22 +579,22 @@ fn label_edits_use_stable_label_identity() -> anyhow::Result<()> {
     let mut db = new_test_db()?;
     let release_id = insert_release(&mut db, "Release")?;
     let keeper_id = insert_release(&mut db, "Keeper")?;
-    let first_label_id = db::labels::resolve(
+    let first_label_id = crate::db::labels::resolve(
         &mut db,
-        &db::labels::ResolveLabel {
+        &crate::db::labels::ResolveLabel {
             name: "Shared Name",
-            external_id: Some(db::labels::ResolveExternalId {
+            external_id: Some(crate::db::labels::ResolveExternalId {
                 provider_id: "provider",
                 id_type: "label",
                 id_value: "first",
             }),
         },
     )?;
-    let second_label_id = db::labels::resolve(
+    let second_label_id = crate::db::labels::resolve(
         &mut db,
-        &db::labels::ResolveLabel {
+        &crate::db::labels::ResolveLabel {
             name: "Shared Name",
-            external_id: Some(db::labels::ResolveExternalId {
+            external_id: Some(crate::db::labels::ResolveExternalId {
                 provider_id: "provider",
                 id_type: "label",
                 id_value: "second",
@@ -606,26 +603,26 @@ fn label_edits_use_stable_label_identity() -> anyhow::Result<()> {
     )?;
     assert_ne!(first_label_id, second_label_id);
     db.transaction_mut(|transaction| {
-        db::labels::sync_release_label_links_inside_tx(
+        crate::db::labels::sync_release_label_links_inside_tx(
             transaction,
             release_id,
-            &[db::labels::LabelLinkInput {
+            &[crate::db::labels::LabelLinkInput {
                 label_id: first_label_id,
                 catalog_number: None,
             }],
         )
     })?;
     db.transaction_mut(|transaction| {
-        db::labels::sync_release_label_links_inside_tx(
+        crate::db::labels::sync_release_label_links_inside_tx(
             transaction,
             keeper_id,
-            &[db::labels::LabelLinkInput {
+            &[crate::db::labels::LabelLinkInput {
                 label_id: second_label_id,
                 catalog_number: None,
             }],
         )
     })?;
-    let second = db::labels::get_by_id(&db, second_label_id)?.expect("label exists");
+    let second = crate::db::labels::get_by_id(&db, second_label_id)?.expect("label exists");
 
     let edit = preview_edit(
         &db,
@@ -644,7 +641,7 @@ fn label_edits_use_stable_label_identity() -> anyhow::Result<()> {
     );
     apply(&mut db, release_id, &edit)?;
 
-    let labels = db::labels::get_for_release(&db, release_id)?;
+    let labels = crate::db::labels::get_for_release(&db, release_id)?;
     assert_eq!(labels.len(), 1);
     assert_eq!(labels[0].label.id, second.id);
     assert_eq!(labels[0].catalog_number.as_deref(), Some("CAT-2"));
@@ -656,33 +653,34 @@ fn inherit_labels_restores_resolvable_provider_labels() -> anyhow::Result<()> {
     let mut db = new_test_db()?;
     let release_id = insert_release(&mut db, "Release")?;
     let keeper_id = insert_release(&mut db, "Keeper")?;
-    let provider_label_id = db::labels::resolve(
+    let provider_label_id = crate::db::labels::resolve(
         &mut db,
-        &db::labels::ResolveLabel {
+        &crate::db::labels::ResolveLabel {
             name: "Provider Label",
-            external_id: Some(db::labels::ResolveExternalId {
+            external_id: Some(crate::db::labels::ResolveExternalId {
                 provider_id: "provider",
                 id_type: "label",
                 id_value: "provider-label",
             }),
         },
     )?;
-    let manual_label_id = db::labels::resolve(
+    let manual_label_id = crate::db::labels::resolve(
         &mut db,
-        &db::labels::ResolveLabel {
+        &crate::db::labels::ResolveLabel {
             name: "Manual Label",
             external_id: None,
         },
     )?;
     let provider_label =
-        db::labels::get_by_id(&db, provider_label_id)?.expect("provider label exists");
-    let manual_label = db::labels::get_by_id(&db, manual_label_id)?.expect("manual label exists");
+        crate::db::labels::get_by_id(&db, provider_label_id)?.expect("provider label exists");
+    let manual_label =
+        crate::db::labels::get_by_id(&db, manual_label_id)?.expect("manual label exists");
     for owner in [release_id, keeper_id] {
         db.transaction_mut(|transaction| {
-            db::labels::sync_release_label_links_inside_tx(
+            crate::db::labels::sync_release_label_links_inside_tx(
                 transaction,
                 owner,
-                &[db::labels::LabelLinkInput {
+                &[crate::db::labels::LabelLinkInput {
                     label_id: provider_label_id,
                     catalog_number: Some("PROV-1".to_string()),
                 }],
@@ -690,34 +688,34 @@ fn inherit_labels_restores_resolvable_provider_labels() -> anyhow::Result<()> {
         })?;
     }
     db.transaction_mut(|transaction| {
-        db::labels::sync_release_label_links_inside_tx(
+        crate::db::labels::sync_release_label_links_inside_tx(
             transaction,
             keeper_id,
             &[
-                db::labels::LabelLinkInput {
+                crate::db::labels::LabelLinkInput {
                     label_id: provider_label_id,
                     catalog_number: Some("PROV-1".to_string()),
                 },
-                db::labels::LabelLinkInput {
+                crate::db::labels::LabelLinkInput {
                     label_id: manual_label_id,
                     catalog_number: None,
                 },
             ],
         )
     })?;
-    db::providers::upsert(
+    crate::db::providers::upsert(
         &mut db,
-        &db::ProviderConfig {
+        &crate::db::ProviderConfig {
             db_id: None,
             provider_id: "provider".to_string(),
             priority: 100,
             enabled: true,
         },
     )?;
-    db::metadata::layers::upsert(
+    crate::db::metadata::layers::upsert(
         &mut db,
         release_id,
-        &db::MetadataLayer {
+        &crate::db::MetadataLayer {
             source_id: "provider".to_string(),
             relations: Default::default(),
             credits: Default::default(),
@@ -769,41 +767,41 @@ fn inherit_labels_restores_resolvable_provider_labels() -> anyhow::Result<()> {
 fn inherit_labels_takes_the_layers_own_label_not_one_with_the_same_name() -> anyhow::Result<()> {
     let mut db = new_test_db()?;
     let release_id = insert_release(&mut db, "Release")?;
-    let local_label_id = db::labels::resolve(
+    let local_label_id = crate::db::labels::resolve(
         &mut db,
-        &db::labels::ResolveLabel {
+        &crate::db::labels::ResolveLabel {
             name: "Shared Name",
-            external_id: Some(db::labels::ResolveExternalId {
+            external_id: Some(crate::db::labels::ResolveExternalId {
                 provider_id: "other",
                 id_type: "label",
                 id_value: "local-identity",
             }),
         },
     )?;
-    let local_label = db::labels::get_by_id(&db, local_label_id)?.expect("label exists");
+    let local_label = crate::db::labels::get_by_id(&db, local_label_id)?.expect("label exists");
     db.transaction_mut(|transaction| {
-        db::labels::sync_release_label_links_inside_tx(
+        crate::db::labels::sync_release_label_links_inside_tx(
             transaction,
             release_id,
-            &[db::labels::LabelLinkInput {
+            &[crate::db::labels::LabelLinkInput {
                 label_id: local_label_id,
                 catalog_number: None,
             }],
         )
     })?;
-    db::providers::upsert(
+    crate::db::providers::upsert(
         &mut db,
-        &db::ProviderConfig {
+        &crate::db::ProviderConfig {
             db_id: None,
             provider_id: "provider".to_string(),
             priority: 100,
             enabled: true,
         },
     )?;
-    db::metadata::layers::upsert(
+    crate::db::metadata::layers::upsert(
         &mut db,
         release_id,
-        &db::MetadataLayer {
+        &crate::db::MetadataLayer {
             source_id: "provider".to_string(),
             relations: Default::default(),
             credits: Default::default(),
@@ -832,10 +830,11 @@ fn inherit_labels_takes_the_layers_own_label_not_one_with_the_same_name() -> any
     apply(&mut db, release_id, &manual)?;
 
     let provider_label_id =
-        db::labels::find_by_external_id(&db, "provider", "label", "different-identity")?
+        crate::db::labels::find_by_external_id(&db, "provider", "label", "different-identity")?
             .expect("the layer's label was resolved when the layer saved");
     assert_ne!(provider_label_id, local_label_id);
-    let provider_label = db::labels::get_by_id(&db, provider_label_id)?.expect("label exists");
+    let provider_label =
+        crate::db::labels::get_by_id(&db, provider_label_id)?.expect("label exists");
 
     let inherited = preview_edit(&db, release_id, vec![inherit(MetadataField::Labels)])?;
     assert_eq!(
@@ -850,9 +849,9 @@ fn a_manually_masked_provider_label_survives_while_its_layer_names_it() -> anyho
     let mut db = new_test_db()?;
     let release_id = insert_release(&mut db, "Release")?;
     let keeper_id = insert_release(&mut db, "Keeper")?;
-    db::providers::upsert(
+    crate::db::providers::upsert(
         &mut db,
-        &db::ProviderConfig {
+        &crate::db::ProviderConfig {
             db_id: None,
             provider_id: "provider".to_string(),
             priority: 100,
@@ -883,26 +882,27 @@ fn a_manually_masked_provider_label_survives_while_its_layer_names_it() -> anyho
         &Default::default(),
     )?;
     let provider_label_id =
-        db::labels::find_by_external_id(&db, "provider", "label", "provider-label")?
+        crate::db::labels::find_by_external_id(&db, "provider", "label", "provider-label")?
             .expect("provider label was materialized and linked");
-    let manual_label_id = db::labels::resolve(
+    let manual_label_id = crate::db::labels::resolve(
         &mut db,
-        &db::labels::ResolveLabel {
+        &crate::db::labels::ResolveLabel {
             name: "Manual Label",
             external_id: None,
         },
     )?;
     db.transaction_mut(|transaction| {
-        db::labels::sync_release_label_links_inside_tx(
+        crate::db::labels::sync_release_label_links_inside_tx(
             transaction,
             keeper_id,
-            &[db::labels::LabelLinkInput {
+            &[crate::db::labels::LabelLinkInput {
                 label_id: manual_label_id,
                 catalog_number: None,
             }],
         )
     })?;
-    let manual_label = db::labels::get_by_id(&db, manual_label_id)?.expect("manual label exists");
+    let manual_label =
+        crate::db::labels::get_by_id(&db, manual_label_id)?.expect("manual label exists");
     let manual = preview_edit(
         &db,
         release_id,
@@ -912,7 +912,7 @@ fn a_manually_masked_provider_label_survives_while_its_layer_names_it() -> anyho
         )],
     )?;
     apply(&mut db, release_id, &manual)?;
-    assert!(db::labels::get_by_id(&db, provider_label_id)?.is_some());
+    assert!(crate::db::labels::get_by_id(&db, provider_label_id)?.is_some());
 
     crate::services::metadata::layers::save_provider_layer(
         &mut db,
@@ -926,18 +926,23 @@ fn a_manually_masked_provider_label_survives_while_its_layer_names_it() -> anyho
         &Default::default(),
     )?;
     assert_eq!(
-        db::labels::find_by_external_id(&db, "provider", "label", "provider-label")?,
+        crate::db::labels::find_by_external_id(&db, "provider", "label", "provider-label")?,
         Some(provider_label_id)
     );
-    assert_eq!(db::labels::get_for_release(&db, release_id)?.len(), 1);
     assert_eq!(
-        db::labels::get_for_release(&db, release_id)?[0].label.id,
+        crate::db::labels::get_for_release(&db, release_id)?.len(),
+        1
+    );
+    assert_eq!(
+        crate::db::labels::get_for_release(&db, release_id)?[0]
+            .label
+            .id,
         manual_label.id,
     );
 
     let inherited = preview_edit(&db, release_id, vec![inherit(MetadataField::Labels)])?;
     apply(&mut db, release_id, &inherited)?;
-    let labels = db::labels::get_for_release(&db, release_id)?;
+    let labels = crate::db::labels::get_for_release(&db, release_id)?;
     assert_eq!(labels.len(), 1);
     assert_eq!(
         labels[0].label.db_id.clone().map(DbId::from),
@@ -951,19 +956,19 @@ fn label_disappearance_after_preview_is_rejected() -> anyhow::Result<()> {
     let mut db = new_test_db()?;
     let release_id = insert_release(&mut db, "Release")?;
     let keeper_id = insert_release(&mut db, "Keeper")?;
-    let label_id = db::labels::resolve(
+    let label_id = crate::db::labels::resolve(
         &mut db,
-        &db::labels::ResolveLabel {
+        &crate::db::labels::ResolveLabel {
             name: "Temporary",
             external_id: None,
         },
     )?;
-    let label = db::labels::get_by_id(&db, label_id)?.expect("label exists");
+    let label = crate::db::labels::get_by_id(&db, label_id)?.expect("label exists");
     db.transaction_mut(|transaction| {
-        db::labels::sync_release_label_links_inside_tx(
+        crate::db::labels::sync_release_label_links_inside_tx(
             transaction,
             keeper_id,
-            &[db::labels::LabelLinkInput {
+            &[crate::db::labels::LabelLinkInput {
                 label_id,
                 catalog_number: None,
             }],
@@ -991,30 +996,30 @@ fn inherited_label_disappearance_after_preview_is_rejected() -> anyhow::Result<(
     let mut db = new_test_db()?;
     let release_id = insert_release(&mut db, "Release")?;
     let keeper_id = insert_release(&mut db, "Keeper")?;
-    let provider_label_id = db::labels::resolve(
+    let provider_label_id = crate::db::labels::resolve(
         &mut db,
-        &db::labels::ResolveLabel {
+        &crate::db::labels::ResolveLabel {
             name: "Provider Label",
-            external_id: Some(db::labels::ResolveExternalId {
+            external_id: Some(crate::db::labels::ResolveExternalId {
                 provider_id: "provider",
                 id_type: "label",
                 id_value: "provider-label",
             }),
         },
     )?;
-    let manual_label_id = db::labels::resolve(
+    let manual_label_id = crate::db::labels::resolve(
         &mut db,
-        &db::labels::ResolveLabel {
+        &crate::db::labels::ResolveLabel {
             name: "Manual Label",
             external_id: None,
         },
     )?;
     for owner in [release_id, keeper_id] {
         db.transaction_mut(|transaction| {
-            db::labels::sync_release_label_links_inside_tx(
+            crate::db::labels::sync_release_label_links_inside_tx(
                 transaction,
                 owner,
-                &[db::labels::LabelLinkInput {
+                &[crate::db::labels::LabelLinkInput {
                     label_id: provider_label_id,
                     catalog_number: None,
                 }],
@@ -1022,34 +1027,34 @@ fn inherited_label_disappearance_after_preview_is_rejected() -> anyhow::Result<(
         })?;
     }
     db.transaction_mut(|transaction| {
-        db::labels::sync_release_label_links_inside_tx(
+        crate::db::labels::sync_release_label_links_inside_tx(
             transaction,
             keeper_id,
             &[
-                db::labels::LabelLinkInput {
+                crate::db::labels::LabelLinkInput {
                     label_id: provider_label_id,
                     catalog_number: None,
                 },
-                db::labels::LabelLinkInput {
+                crate::db::labels::LabelLinkInput {
                     label_id: manual_label_id,
                     catalog_number: None,
                 },
             ],
         )
     })?;
-    db::providers::upsert(
+    crate::db::providers::upsert(
         &mut db,
-        &db::ProviderConfig {
+        &crate::db::ProviderConfig {
             db_id: None,
             provider_id: "provider".to_string(),
             priority: 100,
             enabled: true,
         },
     )?;
-    db::metadata::layers::upsert(
+    crate::db::metadata::layers::upsert(
         &mut db,
         release_id,
-        &db::MetadataLayer {
+        &crate::db::MetadataLayer {
             source_id: "provider".to_string(),
             relations: Default::default(),
             credits: Default::default(),
@@ -1067,7 +1072,8 @@ fn inherited_label_disappearance_after_preview_is_rejected() -> anyhow::Result<(
             updated_at: 10,
         },
     )?;
-    let manual_label = db::labels::get_by_id(&db, manual_label_id)?.expect("manual label exists");
+    let manual_label =
+        crate::db::labels::get_by_id(&db, manual_label_id)?.expect("manual label exists");
     let manual = preview_edit(
         &db,
         release_id,
@@ -1095,7 +1101,7 @@ fn credit_reference_disappearance_after_preview_is_rejected() -> anyhow::Result<
     let mut db = new_test_db()?;
     let release_id = insert_release(&mut db, "Release")?;
     let artist_id = insert_artist(&mut db, "Temporary Artist")?;
-    let artist = db::artists::get_by_id(&db, artist_id)?.expect("artist exists");
+    let artist = crate::db::artists::get_by_id(&db, artist_id)?.expect("artist exists");
     let edit = preview_edit(
         &db,
         release_id,
@@ -1118,7 +1124,7 @@ fn a_credit_edit_supplies_every_role() -> anyhow::Result<()> {
     let mut db = new_test_db()?;
     let release_id = insert_release(&mut db, "Release")?;
     let artist_id = insert_artist(&mut db, "Artist")?;
-    let artist = db::artists::get_by_id(&db, artist_id)?.expect("artist exists");
+    let artist = crate::db::artists::get_by_id(&db, artist_id)?.expect("artist exists");
 
     let edit = preview_edit(
         &db,
@@ -1132,9 +1138,9 @@ fn a_credit_edit_supplies_every_role() -> anyhow::Result<()> {
 
     assert_eq!(credit_values(&db, release_id)?.len(), 1);
     let layer = manual_layer(&db, release_id)?.expect("manual layer exists");
-    assert_eq!(layer.credits.len(), db::CreditType::ALL.len());
+    assert_eq!(layer.credits.len(), crate::db::CreditType::ALL.len());
     for (credit_type, inputs) in layer.credits {
-        let expected: &[DbId] = if credit_type == db::CreditType::Artist {
+        let expected: &[DbId] = if credit_type == crate::db::CreditType::Artist {
             &[artist_id]
         } else {
             &[]
@@ -1155,7 +1161,7 @@ fn inherit_graph_field_without_a_provider_value_clears_manual_edges() -> anyhow:
     let mut db = new_test_db()?;
     let release_id = insert_release(&mut db, "Release")?;
     let artist_id = insert_artist(&mut db, "Artist")?;
-    let artist = db::artists::get_by_id(&db, artist_id)?.expect("artist exists");
+    let artist = crate::db::artists::get_by_id(&db, artist_id)?.expect("artist exists");
     let manual = preview_edit(
         &db,
         release_id,
@@ -1190,19 +1196,21 @@ fn inheriting_credits_restores_what_the_layers_supply() -> anyhow::Result<()> {
     let track_id = insert_track(&mut db, "Track")?;
     let layer_artist = insert_artist(&mut db, "Layer Artist")?;
     let manual_artist = insert_artist(&mut db, "Manual Artist")?;
-    db::metadata::layers::upsert(
+    crate::db::metadata::layers::upsert(
         &mut db,
         track_id,
-        &db::MetadataLayer::new("local", Default::default(), 1).with_credits(BTreeMap::from([(
-            db::CreditType::Artist,
-            vec![db::metadata::layers::edges::LayerCreditInput {
-                artist_id: layer_artist,
-                detail: None,
-            }],
-        )])),
+        &crate::db::MetadataLayer::new("local", Default::default(), 1).with_credits(
+            BTreeMap::from([(
+                crate::db::CreditType::Artist,
+                vec![crate::db::metadata::layers::edges::LayerCreditInput {
+                    artist_id: layer_artist,
+                    detail: None,
+                }],
+            )]),
+        ),
     )?;
     crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track_id)?;
-    let manual = db::artists::get_by_id(&db, manual_artist)?.expect("artist exists");
+    let manual = crate::db::artists::get_by_id(&db, manual_artist)?.expect("artist exists");
     let edit = preview_edit(
         &db,
         track_id,
@@ -1213,14 +1221,14 @@ fn inheriting_credits_restores_what_the_layers_supply() -> anyhow::Result<()> {
     )?;
     apply(&mut db, track_id, &edit)?;
     assert_eq!(
-        db::credits::links_for_owner(&db, track_id)?[0].artist_id,
+        crate::db::credits::links_for_owner(&db, track_id)?[0].artist_id,
         manual_artist
     );
 
     let inherited = preview_edit(&db, track_id, vec![inherit(MetadataField::Credits)])?;
     apply(&mut db, track_id, &inherited)?;
 
-    let links = db::credits::links_for_owner(&db, track_id)?;
+    let links = crate::db::credits::links_for_owner(&db, track_id)?;
     assert_eq!(links.len(), 1);
     assert_eq!(links[0].artist_id, layer_artist);
     Ok(())
@@ -1232,24 +1240,26 @@ fn a_manual_credit_edit_moves_the_credited_flag() -> anyhow::Result<()> {
     let track_id = insert_track(&mut db, "Track")?;
     let layer_artist = insert_artist(&mut db, "Layer Artist")?;
     let manual_artist = insert_artist(&mut db, "Manual Artist")?;
-    db::metadata::layers::upsert(
+    crate::db::metadata::layers::upsert(
         &mut db,
         track_id,
-        &db::MetadataLayer::new("local", Default::default(), 1).with_credits(BTreeMap::from([(
-            db::CreditType::Artist,
-            vec![db::metadata::layers::edges::LayerCreditInput {
-                artist_id: layer_artist,
-                detail: None,
-            }],
-        )])),
+        &crate::db::MetadataLayer::new("local", Default::default(), 1).with_credits(
+            BTreeMap::from([(
+                crate::db::CreditType::Artist,
+                vec![crate::db::metadata::layers::edges::LayerCreditInput {
+                    artist_id: layer_artist,
+                    detail: None,
+                }],
+            )]),
+        ),
     )?;
     crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track_id)?;
     let credited = |db: &DbAny, artist_id| -> anyhow::Result<bool> {
-        Ok(db::artists::get_by_id(db, artist_id)?.is_some_and(|artist| artist.credited))
+        Ok(crate::db::artists::get_by_id(db, artist_id)?.is_some_and(|artist| artist.credited))
     };
     assert!(credited(&db, layer_artist)? && !credited(&db, manual_artist)?);
 
-    let manual = db::artists::get_by_id(&db, manual_artist)?.expect("artist exists");
+    let manual = crate::db::artists::get_by_id(&db, manual_artist)?.expect("artist exists");
     let edit = preview_edit(
         &db,
         track_id,
@@ -1274,9 +1284,9 @@ fn relation_edits_replace_the_incoming_relations_and_inherit_restores_them() -> 
     let actor_id = insert_artist(&mut db, "Actor")?;
     let character_id = insert_artist(&mut db, "Character")?;
     let member_id = insert_artist(&mut db, "Member")?;
-    db::providers::upsert(
+    crate::db::providers::upsert(
         &mut db,
-        &db::ProviderConfig {
+        &crate::db::ProviderConfig {
             db_id: None,
             provider_id: "provider".to_string(),
             priority: 100,
@@ -1289,8 +1299,8 @@ fn relation_edits_replace_the_incoming_relations_and_inherit_restores_them() -> 
         "provider",
         &crate::services::metadata::layers::ProviderValues {
             relations: BTreeMap::from([(
-                db::ArtistRelationType::VoiceActor,
-                vec![db::metadata::layers::edges::LayerRelationInput {
+                crate::db::ArtistRelationType::VoiceActor,
+                vec![crate::db::metadata::layers::edges::LayerRelationInput {
                     artist_id: actor_id,
                     attributes: Some("lead".to_string()),
                 }],
@@ -1300,8 +1310,8 @@ fn relation_edits_replace_the_incoming_relations_and_inherit_restores_them() -> 
         &HashMap::new(),
         &Default::default(),
     )?;
-    let actor = db::artists::get_by_id(&db, actor_id)?.expect("artist exists");
-    let member = db::artists::get_by_id(&db, member_id)?.expect("artist exists");
+    let actor = crate::db::artists::get_by_id(&db, actor_id)?.expect("artist exists");
+    let member = crate::db::artists::get_by_id(&db, member_id)?.expect("artist exists");
     let snapshot = get_snapshot(&db, character_id)?;
     assert_eq!(
         snapshot.fields["relations"].value,
@@ -1322,9 +1332,9 @@ fn relation_edits_replace_the_incoming_relations_and_inherit_restores_them() -> 
         )],
     )?;
     apply(&mut db, character_id, &manual)?;
-    let incoming = |db: &DbAny| -> anyhow::Result<Vec<(DbId, db::ArtistRelationType)>> {
+    let incoming = |db: &DbAny| -> anyhow::Result<Vec<(DbId, crate::db::ArtistRelationType)>> {
         Ok(
-            db::artists::relations::get_relations_to(db, character_id, None)?
+            crate::db::artists::relations::get_relations_to(db, character_id, None)?
                 .into_iter()
                 .map(|(relation, source)| (source, relation.relation_type))
                 .collect(),
@@ -1332,21 +1342,24 @@ fn relation_edits_replace_the_incoming_relations_and_inherit_restores_them() -> 
     };
     assert_eq!(
         incoming(&db)?,
-        vec![(member_id, db::ArtistRelationType::MemberOf)],
+        vec![(member_id, crate::db::ArtistRelationType::MemberOf)],
         "a type the edit leaves out clears"
     );
     let layer = manual_layer(&db, character_id)?.expect("manual layer exists");
-    assert_eq!(layer.relations.len(), db::ArtistRelationType::ALL.len());
+    assert_eq!(
+        layer.relations.len(),
+        crate::db::ArtistRelationType::ALL.len()
+    );
 
     let inherited = preview_edit(&db, character_id, vec![inherit(MetadataField::Relations)])?;
     apply(&mut db, character_id, &inherited)?;
 
-    let relations = db::artists::relations::get_relations_to(&db, character_id, None)?;
+    let relations = crate::db::artists::relations::get_relations_to(&db, character_id, None)?;
     assert_eq!(relations.len(), 1);
     assert_eq!(relations[0].1, actor_id);
     assert_eq!(
         relations[0].0.relation_type,
-        db::ArtistRelationType::VoiceActor
+        crate::db::ArtistRelationType::VoiceActor
     );
     assert_eq!(relations[0].0.attributes.as_deref(), Some("lead"));
     assert!(manual_layer(&db, character_id)?.is_none());
@@ -1358,10 +1371,10 @@ fn a_relation_edit_applies_through_a_lock() -> anyhow::Result<()> {
     let mut db = new_test_db()?;
     let band_id = insert_artist(&mut db, "Band")?;
     let member_id = insert_artist(&mut db, "Member")?;
-    let mut band = db::artists::get_by_id(&db, band_id)?.expect("artist exists");
+    let mut band = crate::db::artists::get_by_id(&db, band_id)?.expect("artist exists");
     band.locked = Some(true);
-    db::artists::update(&mut db, &band)?;
-    let member = db::artists::get_by_id(&db, member_id)?.expect("artist exists");
+    crate::db::artists::update(&mut db, &band)?;
+    let member = crate::db::artists::get_by_id(&db, member_id)?.expect("artist exists");
 
     let edit = preview_edit(
         &db,
@@ -1373,13 +1386,13 @@ fn a_relation_edit_applies_through_a_lock() -> anyhow::Result<()> {
     )?;
     apply(&mut db, band_id, &edit)?;
     assert_eq!(
-        db::artists::relations::get_relations_to(&db, band_id, None)?.len(),
+        crate::db::artists::relations::get_relations_to(&db, band_id, None)?.len(),
         1
     );
 
     let inherited = preview_edit(&db, band_id, vec![inherit(MetadataField::Relations)])?;
     apply(&mut db, band_id, &inherited)?;
-    assert!(db::artists::relations::get_relations_to(&db, band_id, None)?.is_empty());
+    assert!(crate::db::artists::relations::get_relations_to(&db, band_id, None)?.is_empty());
     Ok(())
 }
 
@@ -1401,7 +1414,7 @@ fn inherit_clears_a_scalar_that_no_layer_supplies() -> anyhow::Result<()> {
     apply(&mut db, track_id, &inherited)?;
 
     assert_eq!(
-        db::tracks::get_by_id(&db, track_id)?
+        crate::db::tracks::get_by_id(&db, track_id)?
             .expect("track exists")
             .sort_title,
         None
@@ -1420,7 +1433,7 @@ fn credits_apply_in_role_order() -> anyhow::Result<()> {
         insert_artist(&mut db, "Second")?,
     ];
     let public_id = |artist_id| -> anyhow::Result<String> {
-        Ok(db::artists::get_by_id(&db, artist_id)?
+        Ok(crate::db::artists::get_by_id(&db, artist_id)?
             .expect("artist exists")
             .id)
     };
@@ -1455,9 +1468,9 @@ fn credits_apply_in_role_order() -> anyhow::Result<()> {
 fn edits_apply_through_a_lock_that_keeps_provider_changes_out() -> anyhow::Result<()> {
     let mut db = new_test_db()?;
     let track_id = insert_track(&mut db, "Stored")?;
-    db::providers::upsert(
+    crate::db::providers::upsert(
         &mut db,
-        &db::ProviderConfig {
+        &crate::db::ProviderConfig {
             db_id: None,
             provider_id: "provider".to_string(),
             priority: 100,
@@ -1478,11 +1491,11 @@ fn edits_apply_through_a_lock_that_keeps_provider_changes_out() -> anyhow::Resul
         )
     };
     provider_title(&mut db, "Provider")?;
-    let mut track = db::tracks::get_by_id(&db, track_id)?.expect("track exists");
+    let mut track = crate::db::tracks::get_by_id(&db, track_id)?.expect("track exists");
     track.locked = Some(true);
-    db::tracks::update(&mut db, &track)?;
+    crate::db::tracks::update(&mut db, &track)?;
     let title = |db: &DbAny| -> anyhow::Result<String> {
-        Ok(db::tracks::get_by_id(db, track_id)?
+        Ok(crate::db::tracks::get_by_id(db, track_id)?
             .expect("track exists")
             .track_title)
     };
@@ -1521,7 +1534,7 @@ fn an_invalid_manual_layer_fails_the_edit_instead_of_being_replaced() -> anyhow:
     let track_id = insert_track(&mut db, "Track")?;
     let edit = preview_edit(&db, track_id, vec![set(MetadataField::Year, json!(1999))])?;
     apply(&mut db, track_id, &edit)?;
-    let layer_id = db::metadata::layers::layer_id(&db, track_id, MANUAL_SOURCE_ID)?
+    let layer_id = crate::db::metadata::layers::layer_id(&db, track_id, MANUAL_SOURCE_ID)?
         .expect("manual layer exists");
     db.exec_mut(
         QueryBuilder::insert()
@@ -1552,13 +1565,13 @@ fn an_invalid_manual_layer_fails_the_edit_instead_of_being_replaced() -> anyhow:
         );
     }
     assert_eq!(
-        db::tracks::get_by_id(&db, track_id)?
+        crate::db::tracks::get_by_id(&db, track_id)?
             .expect("track exists")
             .year,
         Some(1999)
     );
     assert_eq!(
-        db::metadata::layers::ids_for_entity(&db, track_id)?,
+        crate::db::metadata::layers::ids_for_entity(&db, track_id)?,
         vec![layer_id],
         "the stored layer is left for recovery"
     );

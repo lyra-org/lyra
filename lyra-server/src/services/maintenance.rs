@@ -20,13 +20,8 @@ use tokio::time::{
     sleep,
 };
 
-use crate::{
-    db::{
-        self,
-        DbAsync,
-    },
-    services::playback_sessions,
-};
+use crate::db::DbAsync;
+use crate::services::playback_sessions;
 
 const SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -58,7 +53,7 @@ async fn run(db: DbAsync, shutdown: &Notify) {
 
 async fn sweep_expired_datastore_entries(db: &DbAsync, now_ms: u64) {
     let mut db_write = db.write().await;
-    match db::datastore::sweep_expired_entries(&mut db_write, now_ms) {
+    match crate::db::datastore::sweep_expired_entries(&mut db_write, now_ms) {
         Ok(0) => {}
         Ok(removed) => {
             tracing::info!(removed, "swept expired plugin datastore entries");
@@ -74,7 +69,9 @@ async fn sweep_stale_playback_sessions(db: &DbAsync, now_ms: u64) {
     // themselves are non-blocking.
     let evicted = {
         let mut db_write = db.write().await;
-        if let Err(err) = db_write.transaction_mut(|t| db::playbacks::expire_reported(t, now_ms)) {
+        if let Err(err) =
+            db_write.transaction_mut(|t| crate::db::playbacks::expire_reported(t, now_ms))
+        {
             tracing::warn!(error = %err, "reported playback sweep failed");
         }
         match playback_sessions::cleanup_evicted_playbacks(&mut db_write, now_ms) {

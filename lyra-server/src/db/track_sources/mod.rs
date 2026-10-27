@@ -99,10 +99,7 @@ pub(crate) fn get_by_track(db: &DbAny, track_db_id: DbId) -> anyhow::Result<Vec<
     Ok(sources)
 }
 
-pub(crate) fn get_primary_by_track(
-    db: &DbAny,
-    track_db_id: DbId,
-) -> anyhow::Result<Option<TrackSource>> {
+pub fn get_primary_by_track(db: &DbAny, track_db_id: DbId) -> anyhow::Result<Option<TrackSource>> {
     let mut sources = get_by_track(db, track_db_id)?;
     sources.sort_by_key(|source| !source.is_primary);
     Ok(sources.into_iter().next())
@@ -125,10 +122,7 @@ pub(crate) fn get_entry_id(db: &DbAny, source_id: DbId) -> anyhow::Result<Option
     Ok(entries.into_iter().find_map(|e| e.db_id))
 }
 
-pub(crate) fn get_track_id_by_source_key(
-    db: &DbAny,
-    source_key: &str,
-) -> anyhow::Result<Option<DbId>> {
+pub fn get_track_id_by_source_key(db: &DbAny, source_key: &str) -> anyhow::Result<Option<DbId>> {
     let Some(source_id) = find_source_id_by_identity(db, source_key)? else {
         return Ok(None);
     };
@@ -381,10 +375,8 @@ pub(crate) fn upsert(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::test_db::{
-        insert_track,
-        new_test_db,
-    };
+    use crate::db::fixtures::insert_track;
+    use crate::db::test_db::new_test_db;
     use anyhow::anyhow;
 
     fn insert_entry(db: &mut DbAny) -> anyhow::Result<DbId> {

@@ -829,7 +829,7 @@ mod tests {
                 external_id: None,
             },
         )?;
-        let release_id = crate::db::test_db::insert_release(&mut db, "Blue Train")?;
+        let release_id = crate::db::fixtures::insert_release(&mut db, "Blue Train")?;
 
         link_to_release(&mut db, genre_id, release_id)?;
 
@@ -858,7 +858,7 @@ mod tests {
                 external_id: None,
             },
         )?;
-        let release_id = crate::db::test_db::insert_release(&mut db, "Crossroads")?;
+        let release_id = crate::db::fixtures::insert_release(&mut db, "Crossroads")?;
 
         link_to_release(&mut db, rock_id, release_id)?;
         link_to_release(&mut db, blues_id, release_id)?;
@@ -874,7 +874,7 @@ mod tests {
     #[test]
     fn sync_release_genres_removes_stale_links() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        let release_id = crate::db::test_db::insert_release(&mut db, "Shifting Genres")?;
+        let release_id = crate::db::fixtures::insert_release(&mut db, "Shifting Genres")?;
 
         sync_release_genres(
             &mut db,
@@ -897,7 +897,7 @@ mod tests {
     #[test]
     fn sync_release_genres_replaces_all_on_empty() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        let release_id = crate::db::test_db::insert_release(&mut db, "Gone")?;
+        let release_id = crate::db::fixtures::insert_release(&mut db, "Gone")?;
 
         sync_release_genres(&mut db, release_id, &["Rock".to_string()])?;
         assert_eq!(get_for_release(&db, release_id)?.len(), 1);
@@ -1045,7 +1045,7 @@ mod tests {
                 external_id: None,
             },
         )?;
-        let release_id = crate::db::test_db::insert_release(&mut db, "OK Computer")?;
+        let release_id = crate::db::fixtures::insert_release(&mut db, "OK Computer")?;
 
         link_to_parent(&mut db, alt_rock_id, rock_id)?;
         link_to_release(&mut db, alt_rock_id, release_id)?;

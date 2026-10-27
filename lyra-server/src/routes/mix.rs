@@ -18,14 +18,13 @@ use axum::{
 use serde::Deserialize;
 
 use crate::{
-    STATE,
-    db,
     routes::{
         self,
         AppError,
         responses::TrackResponse,
         tracks as route_tracks,
     },
+    services::STATE,
     services::{
         auth::{
             Principal,
@@ -102,7 +101,7 @@ fn mix_options(query: &MixQueryParams, principal: &Principal) -> mix::MixOptions
 async fn render_mix_response(
     principal: &Principal,
     query: &MixQueryParams,
-    tracks: Vec<db::Track>,
+    tracks: Vec<crate::db::Track>,
 ) -> Result<Json<Vec<TrackResponse>>, AppError> {
     let includes = route_tracks::parse_inc(query.inc.clone())?;
     let responses: Vec<TrackResponse> = {
@@ -213,14 +212,14 @@ pub(crate) async fn get_me_mix(
 fn filter_accessible_tracks(
     db: &agdb::DbAny,
     principal: &Principal,
-    tracks: Vec<db::Track>,
-) -> anyhow::Result<Vec<db::Track>> {
+    tracks: Vec<crate::db::Track>,
+) -> anyhow::Result<Vec<crate::db::Track>> {
     let mut filtered = Vec::with_capacity(tracks.len());
     for track in tracks {
         let Some(track_db_id) = track.db_id.clone().map(agdb::DbId::from) else {
             continue;
         };
-        if db::lookup::find_node_id_by_id(db, &track.id)? == Some(track_db_id)
+        if crate::db::lookup::find_node_id_by_id(db, &track.id)? == Some(track_db_id)
             && crate::services::auth::access::entity_accessible(db, principal, track_db_id)?
         {
             filtered.push(track);

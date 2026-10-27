@@ -17,13 +17,8 @@ use agdb::{
 };
 use anyhow::Result;
 
-use crate::{
-    STATE,
-    db::{
-        self,
-        Track,
-    },
-};
+use crate::db::Track;
+use crate::services::STATE;
 
 use super::{
     CoverPaths,
@@ -43,7 +38,7 @@ pub(crate) fn configured_cover_dir_for_artist(covers_root: &Path, artist_id: DbI
 }
 
 pub(super) fn cover_path_from_db(db: &DbAny, owner_db_id: DbId) -> Result<Option<PathBuf>> {
-    let Some(cover) = db::covers::get(db, owner_db_id)? else {
+    let Some(cover) = crate::db::covers::get(db, owner_db_id)? else {
         return Ok(None);
     };
 
@@ -109,7 +104,7 @@ pub(crate) fn cover_dirs_for_release(
             continue;
         }
 
-        let entries = db::entries::get_by_track(db, track_id)?;
+        let entries = crate::db::entries::get_by_track(db, track_id)?;
         for entry in entries {
             if entry.kind != crate::db::entries::EntryKind::File {
                 continue;
@@ -176,11 +171,11 @@ pub(crate) fn resolve_cover_for_release_id(
     release_id: DbId,
     paths: CoverPaths<'_>,
 ) -> Result<Option<PathBuf>> {
-    if db::releases::get_by_id(db, release_id)?.is_none() {
+    if crate::db::releases::get_by_id(db, release_id)?.is_none() {
         return Ok(None);
     }
 
-    let tracks = db::tracks::get_direct(db, release_id)?;
+    let tracks = crate::db::tracks::get_direct(db, release_id)?;
     resolve_cover_for_release(db, release_id, &tracks, paths)
 }
 
@@ -189,7 +184,7 @@ pub(crate) fn resolve_cover_for_artist_id(
     artist_id: DbId,
     paths: CoverPaths<'_>,
 ) -> Result<Option<PathBuf>> {
-    if db::artists::get_by_id(db, artist_id)?.is_none() {
+    if crate::db::artists::get_by_id(db, artist_id)?.is_none() {
         return Ok(None);
     }
 

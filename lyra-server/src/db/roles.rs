@@ -3,7 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use crate::services::auth::DEFAULT_USERNAME;
+use super::users::DEFAULT_USERNAME;
 use agdb::{
     CountComparison,
     DbAny,
@@ -146,10 +146,7 @@ pub(crate) fn get_by_name(db: &DbAny, name: &str) -> anyhow::Result<Option<Role>
     Ok(roles.pop())
 }
 
-pub(crate) fn get_by_id(
-    db: &impl super::DbAccess,
-    role_db_id: DbId,
-) -> anyhow::Result<Option<Role>> {
+pub fn get_by_id(db: &impl super::DbAccess, role_db_id: DbId) -> anyhow::Result<Option<Role>> {
     super::graph::fetch_typed_by_id(db, role_db_id, "Role")
 }
 
@@ -254,10 +251,7 @@ pub(crate) fn has_admin_role(db: &impl super::DbAccess, user_db_id: DbId) -> any
         .unwrap_or(false))
 }
 
-pub(crate) fn get_users_with_role(
-    db: &DbAny,
-    role_db_id: DbId,
-) -> anyhow::Result<Vec<super::User>> {
+pub fn get_users_with_role(db: &DbAny, role_db_id: DbId) -> anyhow::Result<Vec<super::User>> {
     let mut users: Vec<super::User> = db
         .exec(
             QueryBuilder::select()
@@ -361,10 +355,8 @@ pub(crate) fn ensure_user_has_role(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::test_db::{
-        new_test_db,
-        test_user,
-    };
+    use crate::db::fixtures::test_user;
+    use crate::db::test_db::new_test_db;
     use crate::db::users;
     use agdb::DbValue;
 

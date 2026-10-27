@@ -41,10 +41,7 @@ pub(crate) fn collect_external_id_ids(
         .collect())
 }
 
-pub(crate) fn collect_layer_ids(
-    db: &impl DbAccess,
-    track_db_id: DbId,
-) -> anyhow::Result<Vec<DbId>> {
+pub fn collect_layer_ids(db: &impl DbAccess, track_db_id: DbId) -> anyhow::Result<Vec<DbId>> {
     layers::ids_for_entity(db, track_db_id)
 }
 

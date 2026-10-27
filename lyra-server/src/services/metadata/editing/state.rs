@@ -9,7 +9,6 @@ use agdb::DbId;
 use serde_json::Value;
 
 use crate::db::{
-    self,
     DbAccess,
     MetadataField,
     MetadataLayer,
@@ -81,7 +80,7 @@ pub(super) fn credit_values(
     db: &impl DbAccess,
     owner_id: DbId,
 ) -> anyhow::Result<Vec<MetadataCreditValue>> {
-    Ok(db::artists::get_credited(db, owner_id)?
+    Ok(crate::db::artists::get_credited(db, owner_id)?
         .into_iter()
         .map(|credited| MetadataCreditValue {
             artist_id: credited.artist.id,
@@ -93,16 +92,16 @@ pub(super) fn credit_values(
 
 fn release_fields(
     db: &impl DbAccess,
-    release: db::Release,
+    release: crate::db::Release,
     release_id: DbId,
 ) -> anyhow::Result<BTreeMap<MetadataField, Value>> {
-    let mut genres: Vec<String> = db::genres::get_for_release(db, release_id)?
+    let mut genres: Vec<String> = crate::db::genres::get_for_release(db, release_id)?
         .into_iter()
         .map(|genre| genre.name)
         .collect();
     genres.sort_by_key(|name| name.to_lowercase());
 
-    let mut labels: Vec<MetadataLabelValue> = db::labels::get_for_release(db, release_id)?
+    let mut labels: Vec<MetadataLabelValue> = crate::db::labels::get_for_release(db, release_id)?
         .into_iter()
         .map(|entry| MetadataLabelValue {
             id: entry.label.id,
@@ -111,8 +110,8 @@ fn release_fields(
         })
         .collect();
     labels.sort_by(|a, b| {
-        db::labels::normalize_label_name(&a.name)
-            .cmp(&db::labels::normalize_label_name(&b.name))
+        crate::db::labels::normalize_label_name(&a.name)
+            .cmp(&crate::db::labels::normalize_label_name(&b.name))
             .then_with(|| a.id.cmp(&b.id))
             .then_with(|| a.catalog_number.cmp(&b.catalog_number))
     });
@@ -145,7 +144,7 @@ fn release_fields(
 
 fn track_fields(
     db: &impl DbAccess,
-    track: db::Track,
+    track: crate::db::Track,
     track_id: DbId,
 ) -> anyhow::Result<BTreeMap<MetadataField, Value>> {
     Ok(BTreeMap::from([
@@ -168,7 +167,7 @@ fn track_fields(
 
 fn artist_fields(
     db: &agdb::DbAny,
-    artist: db::Artist,
+    artist: crate::db::Artist,
     artist_id: DbId,
 ) -> anyhow::Result<BTreeMap<MetadataField, Value>> {
     let mut fields = BTreeMap::from([
@@ -184,8 +183,10 @@ fn artist_fields(
         ),
     ]);
     let mut relations = Vec::new();
-    for (relation, source_id) in db::artists::relations::get_relations_to(db, artist_id, None)? {
-        let Some(source) = db::artists::get_by_id(db, source_id)? else {
+    for (relation, source_id) in
+        crate::db::artists::relations::get_relations_to(db, artist_id, None)?
+    {
+        let Some(source) = crate::db::artists::get_by_id(db, source_id)? else {
             return Ok(fields);
         };
         relations.push(MetadataRelationValue {
@@ -205,21 +206,21 @@ pub(super) fn load_entity_state(
     db_id: DbId,
 ) -> Result<EntityState, MetadataEditingError> {
     let (public_id, entity_type, fields) =
-        if let Some(release) = db::releases::get_by_id(db, db_id)? {
+        if let Some(release) = crate::db::releases::get_by_id(db, db_id)? {
             let public_id = release.id.clone();
             (
                 public_id,
                 MetadataEntityType::Release,
                 release_fields(db, release, db_id)?,
             )
-        } else if let Some(track) = db::tracks::get_by_id(db, db_id)? {
+        } else if let Some(track) = crate::db::tracks::get_by_id(db, db_id)? {
             let public_id = track.id.clone();
             (
                 public_id,
                 MetadataEntityType::Track,
                 track_fields(db, track, db_id)?,
             )
-        } else if let Some(artist) = db::artists::get_by_id(db, db_id)? {
+        } else if let Some(artist) = crate::db::artists::get_by_id(db, db_id)? {
             let public_id = artist.id.clone();
             (
                 public_id,
@@ -230,7 +231,7 @@ pub(super) fn load_entity_state(
             return Err(MetadataEditingError::EntityNotFound(db_id.0.to_string()));
         };
 
-    let manual = db::metadata::layers::find_valid(db, db_id, MANUAL_SOURCE_ID)?;
+    let manual = crate::db::metadata::layers::find_valid(db, db_id, MANUAL_SOURCE_ID)?;
     let fields = fields
         .into_iter()
         .map(|(field, value)| {
