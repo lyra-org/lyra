@@ -16,11 +16,11 @@ use agdb::{
     DbId,
 };
 
-use crate::db::ratings::{
+use crate::services::auth::Principal;
+use lyra_db::ratings::{
     RatingKind,
     RatingValue,
 };
-use crate::services::auth::Principal;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MutationOutcome {
@@ -41,7 +41,7 @@ pub(crate) fn set_for_principal(
         else {
             return Ok(MutationOutcome::NotTargetable);
         };
-        crate::db::ratings::upsert(t, principal.require(t)?, target_db_id, kind, value, now_ms)?;
+        lyra_db::ratings::upsert(t, principal.require(t)?, target_db_id, kind, value, now_ms)?;
         Ok(MutationOutcome::Applied(kind))
     })
 }
@@ -56,7 +56,7 @@ pub(crate) fn remove(
         let Some((target_db_id, kind)) = resolve_whitelisted(t, public_target_id)? else {
             return Ok(MutationOutcome::NotTargetable);
         };
-        crate::db::ratings::remove(t, user_db_id, target_db_id)?;
+        lyra_db::ratings::remove(t, user_db_id, target_db_id)?;
         Ok(MutationOutcome::Applied(kind))
     })
 }
@@ -71,7 +71,7 @@ pub(crate) fn get_for_principal(
     else {
         return Ok(None);
     };
-    let Some(edge) = crate::db::ratings::get(db, principal.require(db)?, target_db_id)? else {
+    let Some(edge) = lyra_db::ratings::get(db, principal.require(db)?, target_db_id)? else {
         return Ok(None);
     };
     if edge.kind != kind {
@@ -92,10 +92,9 @@ pub(crate) fn values_for_principal(
         .collect();
     let unique_public_ids: Vec<String> = response.keys().cloned().collect();
     let public_id_refs: Vec<&str> = unique_public_ids.iter().map(String::as_str).collect();
-    let resolved_ids = crate::db::lookup::find_node_ids_by_ids(db, &public_id_refs)?;
+    let resolved_ids = lyra_db::lookup::find_node_ids_by_ids(db, &public_id_refs)?;
     let target_db_ids: Vec<DbId> = resolved_ids.values().copied().collect();
-    let stored =
-        crate::db::ratings::values_for_targets(db, principal.require(db)?, &target_db_ids)?;
+    let stored = lyra_db::ratings::values_for_targets(db, principal.require(db)?, &target_db_ids)?;
 
     for public_id in unique_public_ids {
         let Some(target_db_id) = resolved_ids.get(&public_id).copied() else {
@@ -119,7 +118,7 @@ pub(crate) fn values_for_principal(
 }
 
 fn resolve_targetable_for_principal(
-    db: &impl crate::db::DbAccess,
+    db: &impl lyra_db::DbAccess,
     principal: &Principal,
     public_target_id: &str,
 ) -> anyhow::Result<Option<(DbId, RatingKind)>> {
@@ -133,24 +132,24 @@ fn resolve_targetable_for_principal(
 }
 
 fn resolve_whitelisted(
-    db: &impl crate::db::DbAccess,
+    db: &impl lyra_db::DbAccess,
     public_target_id: &str,
 ) -> anyhow::Result<Option<(DbId, RatingKind)>> {
-    let Some(target_db_id) = crate::db::lookup::find_node_id_by_id(db, public_target_id)? else {
+    let Some(target_db_id) = lyra_db::lookup::find_node_id_by_id(db, public_target_id)? else {
         return Ok(None);
     };
     Ok(target_kind(db, target_db_id)?.map(|kind| (target_db_id, kind)))
 }
 
 fn target_kind(
-    db: &impl crate::db::DbAccess,
+    db: &impl lyra_db::DbAccess,
     target_db_id: DbId,
 ) -> anyhow::Result<Option<RatingKind>> {
-    Ok(crate::db::entities::metadata_entity_type(db, target_db_id)?.map(RatingKind::from))
+    Ok(lyra_db::entities::metadata_entity_type(db, target_db_id)?.map(RatingKind::from))
 }
 
 fn target_visible_to_principal(
-    db: &impl crate::db::DbAccess,
+    db: &impl lyra_db::DbAccess,
     principal: &Principal,
     target_db_id: DbId,
     kind: RatingKind,
@@ -174,7 +173,7 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
-    use crate::db::{
+    use lyra_db::{
         fixtures::{
             connect,
             insert_artist,
@@ -203,9 +202,9 @@ mod tests {
         let mut db = new_test_db()?;
         let user = users::create(&mut db, &test_user("alice")?)?;
         let library = insert_library(&mut db, "Music", "/tmp/lyra-ratings-service")?;
-        let library_public_id = crate::db::lookup::find_id_by_db_id(&db, library)?.unwrap();
+        let library_public_id = lyra_db::lookup::find_id_by_db_id(&db, library)?.unwrap();
         let track = insert_track(&mut db, "Track")?;
-        let track_public_id = crate::db::lookup::find_id_by_db_id(&db, track)?.unwrap();
+        let track_public_id = lyra_db::lookup::find_id_by_db_id(&db, track)?.unwrap();
         connect(&mut db, library, track)?;
         let principal = principal(&db, user, HashSet::from([library_public_id]));
 
@@ -252,8 +251,7 @@ mod tests {
         let other_user = users::create(&mut db, &test_user("bob")?)?;
         let visible_library = insert_library(&mut db, "Visible", "/tmp/lyra-ratings-check")?;
         let hidden_library = insert_library(&mut db, "Hidden", "/tmp/lyra-ratings-check-hidden")?;
-        let visible_library_id =
-            crate::db::lookup::find_id_by_db_id(&db, visible_library)?.unwrap();
+        let visible_library_id = lyra_db::lookup::find_id_by_db_id(&db, visible_library)?.unwrap();
         let principal = principal(&db, user, HashSet::from([visible_library_id]));
 
         let track = insert_track(&mut db, "Rated Track")?;
@@ -276,7 +274,7 @@ mod tests {
             (hidden, RatingKind::Track, 5),
             (kind_mismatch, RatingKind::Artist, 5),
         ] {
-            crate::db::ratings::upsert(
+            lyra_db::ratings::upsert(
                 &mut db,
                 user,
                 target,
@@ -285,7 +283,7 @@ mod tests {
                 100,
             )?;
         }
-        crate::db::ratings::upsert(
+        lyra_db::ratings::upsert(
             &mut db,
             other_user,
             other_user_rating,
@@ -294,8 +292,7 @@ mod tests {
             100,
         )?;
 
-        let public_id =
-            |target| crate::db::lookup::find_id_by_db_id(&db, target).map(Option::unwrap);
+        let public_id = |target| lyra_db::lookup::find_id_by_db_id(&db, target).map(Option::unwrap);
         let track_id = public_id(track)?;
         let release_id = public_id(release)?;
         let artist_id = public_id(artist)?;
@@ -303,7 +300,7 @@ mod tests {
         let other_user_rating_id = public_id(other_user_rating)?;
         let hidden_id = public_id(hidden)?;
         let kind_mismatch_id = public_id(kind_mismatch)?;
-        let unsupported_id = crate::db::users::get_by_id(&db, other_user)?.unwrap().id;
+        let unsupported_id = lyra_db::users::get_by_id(&db, other_user)?.unwrap().id;
         let missing_id = "missing-id".to_string();
         let malformed_id = "bad/id".to_string();
         let submitted = vec![
@@ -367,9 +364,9 @@ mod tests {
         let mut db = new_test_db()?;
         let user = users::create(&mut db, &test_user("alice")?)?;
         let library = insert_library(&mut db, "Music", "/tmp/lyra-ratings-hidden")?;
-        let library_public_id = crate::db::lookup::find_id_by_db_id(&db, library)?.unwrap();
+        let library_public_id = lyra_db::lookup::find_id_by_db_id(&db, library)?.unwrap();
         let track = insert_track(&mut db, "Track")?;
-        let track_public_id = crate::db::lookup::find_id_by_db_id(&db, track)?.unwrap();
+        let track_public_id = lyra_db::lookup::find_id_by_db_id(&db, track)?.unwrap();
         connect(&mut db, library, track)?;
         let visible = principal(&db, user, HashSet::from([library_public_id]));
         set_for_principal(
@@ -393,7 +390,7 @@ mod tests {
         let mut db = new_test_db()?;
         let user = users::create(&mut db, &test_user("alice")?)?;
         let other_user = users::create(&mut db, &test_user("bob")?)?;
-        let other_user_public_id = crate::db::lookup::find_id_by_db_id(&db, other_user)?.unwrap();
+        let other_user_public_id = lyra_db::lookup::find_id_by_db_id(&db, other_user)?.unwrap();
         let principal = principal(&db, user, HashSet::new());
 
         assert_eq!(

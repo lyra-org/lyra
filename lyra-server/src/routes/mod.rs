@@ -135,7 +135,7 @@ pub(crate) fn db_ids_from_credited_artists<'a>(
 
 pub(crate) fn credited_artist_responses(
     artists: Vec<ResolvedCreditedArtist>,
-    artist_covers: Option<&HashMap<DbId, crate::db::Cover>>,
+    artist_covers: Option<&HashMap<DbId, lyra_db::Cover>>,
 ) -> Vec<responses::ArtistResponse> {
     artists
         .into_iter()

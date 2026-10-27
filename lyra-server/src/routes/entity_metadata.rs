@@ -39,13 +39,13 @@ use crate::{
 };
 
 fn require_entity_access(
-    db: &impl crate::db::DbAccess,
+    db: &impl lyra_db::DbAccess,
     principal: &Principal,
     public_id: &str,
 ) -> Result<agdb::DbId, AppError> {
-    let entity_id = crate::db::lookup::find_node_id_by_id(db, public_id)?
+    let entity_id = lyra_db::lookup::find_node_id_by_id(db, public_id)?
         .ok_or_else(|| AppError::not_found(format!("Entity not found: {public_id}")))?;
-    let accessible = if crate::db::artists::get_by_id(db, entity_id)?.is_some() {
+    let accessible = if lyra_db::artists::get_by_id(db, entity_id)?.is_some() {
         access::artist_accessible(db, principal, entity_id)?
     } else {
         access::entity_accessible(db, principal, entity_id)?
@@ -180,17 +180,17 @@ mod tests {
     use tower::ServiceExt;
 
     use super::*;
-    use crate::db::fixtures::{
-        insert_artist,
-        insert_release,
-    };
-    use crate::db::test_db::{
-        connect_artist,
-        insert_library,
-    };
     use crate::{
         plugins::testing::init_library_test_state,
         services::testing::runtime_test_lock,
+    };
+    use lyra_db::fixtures::{
+        insert_artist,
+        insert_release,
+    };
+    use lyra_db::test_db::{
+        connect_artist,
+        insert_library,
     };
 
     async fn send(
@@ -235,61 +235,61 @@ mod tests {
         };
         let (user_id, ids, release_id, outsider_id) = {
             let mut db = STATE.db.write().await;
-            crate::db::roles::ensure_builtin_roles(&mut db)?;
-            let user_id = crate::db::users::create(
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
+            let user_id = lyra_db::users::create(
                 &mut db,
-                &crate::db::fixtures::test_user("entity-metadata-reference-manager")?,
+                &lyra_db::fixtures::test_user("entity-metadata-reference-manager")?,
             )?;
             let role_name = format!("metadata-manager-{}", nanoid!());
-            crate::db::roles::create(
+            lyra_db::roles::create(
                 &mut db,
-                &crate::db::roles::Role {
+                &lyra_db::roles::Role {
                     db_id: None,
                     id: nanoid!(),
                     name: role_name.clone(),
-                    permissions: vec![crate::db::Permission::ManageMetadata],
+                    permissions: vec![lyra_db::Permission::ManageMetadata],
                 },
             )?;
-            crate::db::roles::ensure_user_has_role(&mut db, user_id, &role_name)?;
+            lyra_db::roles::ensure_user_has_role(&mut db, user_id, &role_name)?;
 
             let visible_library_id =
                 insert_library(&mut db, "Visible Metadata", "/tmp/metadata-route-visible")?;
             let other_library_id =
                 insert_library(&mut db, "Other Metadata", "/tmp/metadata-route-other")?;
-            crate::db::libraries::grant_access(
+            lyra_db::libraries::grant_access(
                 &mut db,
                 user_id,
                 visible_library_id,
-                crate::db::libraries::AccessKind::ReadWrite,
+                lyra_db::libraries::AccessKind::ReadWrite,
             )?;
             let release_id = insert_release(&mut db, "Visible Release")?;
             let other_release_id = insert_release(&mut db, "Other Release")?;
-            crate::db::graph::ensure_owned_edge(&mut db, visible_library_id, release_id)?;
-            crate::db::graph::ensure_owned_edge(&mut db, other_library_id, other_release_id)?;
+            lyra_db::graph::ensure_owned_edge(&mut db, visible_library_id, release_id)?;
+            lyra_db::graph::ensure_owned_edge(&mut db, other_library_id, other_release_id)?;
             let character_id = insert_artist(&mut db, "Character")?;
             let actor_id = insert_artist(&mut db, "Uncredited Actor")?;
             let outsider_id = insert_artist(&mut db, "Outsider")?;
             connect_artist(&mut db, release_id, character_id)?;
             connect_artist(&mut db, other_release_id, outsider_id)?;
-            crate::db::artists::relations::link(
+            lyra_db::artists::relations::link(
                 &mut db,
                 actor_id,
                 character_id,
-                crate::db::ArtistRelationType::VoiceActor,
+                lyra_db::ArtistRelationType::VoiceActor,
                 None,
             )?;
-            let label_id = crate::db::labels::resolve(
+            let label_id = lyra_db::labels::resolve(
                 &mut db,
-                &crate::db::labels::ResolveLabel {
+                &lyra_db::labels::ResolveLabel {
                     name: "Outside Label",
                     external_id: None,
                 },
             )?;
             db.transaction_mut(|t| {
-                crate::db::labels::sync_release_label_links_inside_tx(
+                lyra_db::labels::sync_release_label_links_inside_tx(
                     t,
                     other_release_id,
-                    &[crate::db::labels::LabelLinkInput {
+                    &[lyra_db::labels::LabelLinkInput {
                         label_id,
                         catalog_number: None,
                     }],
@@ -356,7 +356,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{body}");
         {
             let db = STATE.db.read().await;
-            let credited: Vec<agdb::DbId> = crate::db::artists::get(&*db, release_id)?
+            let credited: Vec<agdb::DbId> = lyra_db::artists::get(&*db, release_id)?
                 .into_iter()
                 .filter_map(|artist| artist.db_id.map(agdb::DbId::from))
                 .collect();

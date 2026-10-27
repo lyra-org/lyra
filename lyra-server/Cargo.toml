@@ -11,8 +11,9 @@ path = "src/main.rs"
 
 [features]
 # Enables code paths that require a nightly compiler, such as libtest benchmarks.
-nightly = []
+nightly = ["lyra-db/nightly"]
 docgen = [
+	"lyra-db/docgen",
 	"dep:aide",
 	"dep:asyncapi-rust",
 	"dep:schemars",
@@ -39,7 +40,6 @@ matchit = "0.8" # pinned to axum's transitive version to avoid a duplicate
 multimap = "0.10"
 gethostname = "1"
 nanoid = "0.4"
-nucleo-matcher = "0.3"
 percent-encoding = { workspace = true }
 rand = "0.9"
 rayon = "1"
@@ -69,6 +69,7 @@ aide = { git = "https://github.com/StayBlue/aide", rev = "01dcaca928e5850818dafd
 asyncapi-rust = { version = "0.2.0", optional = true }
 lofty = "=0.25.4"
 lyra-chromaprint = { path = "../lyra-chromaprint" }
+lyra-db = { path = "../lyra-db" }
 lyra-ffmpeg = { path = "../lyra-ffmpeg" }
 lyra-metadata = { path = "../lyra-metadata" }
 celes = "2.8.2"
@@ -80,3 +81,6 @@ tempfile = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
+
+[dev-dependencies]
+lyra-db = { path = "../lyra-db", features = ["testing"] }

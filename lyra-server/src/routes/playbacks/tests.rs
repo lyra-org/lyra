@@ -44,8 +44,7 @@ async fn reported_reads_share_the_supplied_expiry_cutoff() -> anyhow::Result<()>
         .await
         .map_err(|error| anyhow::anyhow!("{error:?}"))?;
     let mut db = STATE.db.write().await;
-    let track_db_id =
-        crate::db::lookup::find_node_id_by_id(&*db, &fixture.first_track_id)?.unwrap();
+    let track_db_id = lyra_db::lookup::find_node_id_by_id(&*db, &fixture.first_track_id)?.unwrap();
     let observed_at = 1_000;
     sessions::report_playback_session_with_cleanup(
         &mut db,
@@ -63,7 +62,7 @@ async fn reported_reads_share_the_supplied_expiry_cutoff() -> anyhow::Result<()>
             active_event: sessions::ActiveEvent::Started,
         },
     )?;
-    let playback = crate::db::playbacks::get_reported(
+    let playback = lyra_db::playbacks::get_reported(
         &*db,
         fixture.user_db_id,
         "external",
@@ -72,7 +71,7 @@ async fn reported_reads_share_the_supplied_expiry_cutoff() -> anyhow::Result<()>
     )?
     .unwrap();
     let id = playback.db_id.unwrap();
-    let cutoff = observed_at + crate::db::playbacks::REPORTED_PLAYBACK_TTL_MS;
+    let cutoff = observed_at + lyra_db::playbacks::REPORTED_PLAYBACK_TTL_MS;
     for (current_ms, visible) in [(cutoff, true), (cutoff + 1, false)] {
         assert_eq!(
             !playbacks::list_visible_projections(&db, &principal, false, current_ms)?.is_empty(),
@@ -97,17 +96,17 @@ async fn setup_admin_with_tracks() -> anyhow::Result<RouteFixture> {
     }
     let (user_db_id, user_public_id, first_track_id, second_track_id) = {
         let mut db = STATE.db.write().await;
-        crate::db::roles::ensure_builtin_roles(&mut db)?;
-        let user = crate::db::fixtures::test_user(&format!("playback-route-{}", nanoid!()))?;
+        lyra_db::roles::ensure_builtin_roles(&mut db)?;
+        let user = lyra_db::fixtures::test_user(&format!("playback-route-{}", nanoid!()))?;
         let user_public_id = user.id.clone();
-        let user_db_id = crate::db::users::create(&mut db, &user)?;
-        crate::db::roles::ensure_user_has_role(
+        let user_db_id = lyra_db::users::create(&mut db, &user)?;
+        lyra_db::roles::ensure_user_has_role(
             &mut db,
             user_db_id,
-            crate::db::roles::BUILTIN_ADMIN_ROLE,
+            lyra_db::roles::BUILTIN_ADMIN_ROLE,
         )?;
-        let first_track_db_id = crate::db::fixtures::insert_track(&mut db, "First")?;
-        let second_track_db_id = crate::db::fixtures::insert_track(&mut db, "Second")?;
+        let first_track_db_id = lyra_db::fixtures::insert_track(&mut db, "First")?;
+        let second_track_db_id = lyra_db::fixtures::insert_track(&mut db, "Second")?;
         (
             user_db_id,
             user_public_id,
@@ -150,10 +149,10 @@ async fn assert_queue_revision_conflict(
 #[test]
 fn active_filter_requires_recent_non_terminal_current_session() {
     let current_ms = 1_000_000;
-    let playback = crate::db::playbacks::Playback {
+    let playback = lyra_db::playbacks::Playback {
         db_id: Some(DbId(1)),
         id: "playback".to_string(),
-        queue: Some(crate::db::playbacks::Queue {
+        queue: Some(lyra_db::playbacks::Queue {
             revision: 1,
             track_ids: vec!["track".to_string()],
             current_index: 0,
@@ -168,7 +167,7 @@ fn active_filter_requires_recent_non_terminal_current_session() {
         playback_session_id: DbId(2),
         track_db_id: DbId(3),
         track_public_id: "track".to_string(),
-        playback: crate::db::PlaybackSession {
+        playback: lyra_db::PlaybackSession {
             db_id: Some(DbId(2)),
             id: "internal".to_string(),
             client_name: None,
@@ -586,10 +585,10 @@ async fn queue_replacement_cannot_overtake_committed_handoff_finish() -> anyhow:
     let committed = {
         let current_ms = now_ms().map_err(|error| anyhow::anyhow!("{error:?}"))?;
         let mut db = STATE.db.write().await;
-        let playback_db_id = crate::db::lookup::find_node_id_by_id(&*db, &created.id)?
+        let playback_db_id = lyra_db::lookup::find_node_id_by_id(&*db, &created.id)?
             .expect("created playback should remain present");
         let current_track_db_id =
-            crate::db::lookup::find_node_id_by_id(&*db, &fixture.first_track_id)?
+            lyra_db::lookup::find_node_id_by_id(&*db, &fixture.first_track_id)?
                 .expect("created track should remain present");
         let claim = handoffs::claim_progress(
             &handoff_token,
@@ -751,7 +750,7 @@ async fn reported_playback_shares_collection_and_rejects_queue_operations() -> a
     .map_err(|error| anyhow::anyhow!("{error:?}"))?;
     let track_db_id = {
         let db = STATE.db.read().await;
-        crate::db::lookup::find_node_id_by_id(&*db, &fixture.second_track_id)?.unwrap()
+        lyra_db::lookup::find_node_id_by_id(&*db, &fixture.second_track_id)?.unwrap()
     };
     {
         let mut db = STATE.db.write().await;
@@ -848,13 +847,9 @@ async fn reported_playback_shares_collection_and_rejects_queue_operations() -> a
 
     let other_user_id = {
         let mut db = STATE.db.write().await;
-        let user = crate::db::fixtures::test_user(&format!("other-playback-user-{}", nanoid!()))?;
-        let user_id = crate::db::users::create(&mut db, &user)?;
-        crate::db::roles::ensure_user_has_role(
-            &mut db,
-            user_id,
-            crate::db::roles::BUILTIN_ADMIN_ROLE,
-        )?;
+        let user = lyra_db::fixtures::test_user(&format!("other-playback-user-{}", nanoid!()))?;
+        let user_id = lyra_db::users::create(&mut db, &user)?;
+        lyra_db::roles::ensure_user_has_role(&mut db, user_id, lyra_db::roles::BUILTIN_ADMIN_ROLE)?;
         user_id
     };
     let other_session =

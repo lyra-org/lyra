@@ -9,6 +9,7 @@ members = [
 	"harmony-macros",
 	"harmony-repository",
 	"lyra-chromaprint",
+	"lyra-db",
 	"lyra-ffmpeg",
 	"lyra-harmony-test",
 	"lyra-metadata",

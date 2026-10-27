@@ -52,8 +52,8 @@ pub(crate) use self::workflow::{
     resolve_merged_track_ids_for_play_count,
     start_playback_in_transaction,
 };
-pub(crate) use crate::db::PlaybackSession;
-use crate::db::PlaybackState;
+pub(crate) use lyra_db::PlaybackSession;
+use lyra_db::PlaybackState;
 pub(crate) use updates::{
     PlaybackUpdatePayload,
     PlaybackUpdateRegistries,
@@ -305,11 +305,11 @@ mod tests {
         report_playback_session_with_cleanup,
     };
     use super::*;
-    use crate::db::IdSource;
-    use crate::db::NodeId;
-    use crate::db::test_db::new_test_db;
     use agdb::DbAny;
     use agdb::QueryBuilder;
+    use lyra_db::IdSource;
+    use lyra_db::NodeId;
+    use lyra_db::test_db::new_test_db;
     use nanoid::nanoid;
     use std::collections::HashSet;
     use std::iter::FromIterator;
@@ -329,14 +329,14 @@ mod tests {
     }
 
     fn user_public_id(db: &DbAny, user_db_id: DbId) -> String {
-        crate::db::users::get_by_id(db, user_db_id)
+        lyra_db::users::get_by_id(db, user_db_id)
             .expect("user lookup")
             .expect("user exists")
             .id
     }
 
     fn insert_user(db: &mut DbAny, username: &str) -> anyhow::Result<DbId> {
-        let user = crate::db::User {
+        let user = lyra_db::User {
             db_id: None,
             id: nanoid!(),
             username: username.to_string(),
@@ -356,7 +356,7 @@ mod tests {
     }
 
     fn insert_track(db: &mut DbAny, title: &str, duration_ms: u64) -> anyhow::Result<DbId> {
-        let track = crate::db::Track {
+        let track = lyra_db::Track {
             db_id: None,
             id: nanoid!(),
             track_title: title.to_string(),
@@ -453,7 +453,7 @@ mod tests {
             .is_none()
         );
         assert!(
-            crate::db::playbacks::get_reported(&db, user, "external", "auth:1", 1_000)?.is_none()
+            lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", 1_000)?.is_none()
         );
         let paused = report_test_playback_session(
             &mut db,
@@ -469,9 +469,9 @@ mod tests {
         )?
         .unwrap();
         let root =
-            crate::db::playbacks::get_reported(&db, user, "external", "auth:1", 2_000)?.unwrap();
+            lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", 2_000)?.unwrap();
         assert_eq!(
-            crate::db::playbacks::get_current_session_id(&db, root.db_id.unwrap())?,
+            lyra_db::playbacks::get_current_session_id(&db, root.db_id.unwrap())?,
             Some(paused.playback_session_id)
         );
         assert_eq!(paused.playback.state, PlaybackState::Paused);
@@ -504,7 +504,7 @@ mod tests {
         )?
         .unwrap();
         let root =
-            crate::db::playbacks::get_reported(&db, user, "external", "auth:1", 1_000)?.unwrap();
+            lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", 1_000)?.unwrap();
         assert!(root.queue.is_none());
         let root_id = root.db_id.unwrap();
         sessions::clear_playback_session_scope(&scope);
@@ -528,7 +528,7 @@ mod tests {
         )?
         .unwrap();
         assert_eq!(
-            crate::db::playbacks::get_current_session_id(&db, root_id)?,
+            lyra_db::playbacks::get_current_session_id(&db, root_id)?,
             Some(b.playback_session_id)
         );
         sessions::clear_playback_session_scope(&scope);
@@ -546,11 +546,11 @@ mod tests {
         .unwrap();
         assert_eq!(late.playback_session_id, a.playback_session_id);
         let unchanged =
-            crate::db::playbacks::get_reported(&db, user, "external", "auth:1", 3_000)?.unwrap();
+            lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", 3_000)?.unwrap();
         assert_eq!(unchanged.id, root.id);
         assert_eq!(unchanged.updated_at_ms, 2_000);
         assert_eq!(
-            crate::db::playbacks::get_current_session_id(&db, root_id)?,
+            lyra_db::playbacks::get_current_session_id(&db, root_id)?,
             Some(b.playback_session_id)
         );
         report_test_playback_session(
@@ -566,7 +566,7 @@ mod tests {
         )?
         .unwrap();
         assert_eq!(
-            crate::db::playbacks::get_current_session_id(&db, root_id)?,
+            lyra_db::playbacks::get_current_session_id(&db, root_id)?,
             Some(b.playback_session_id)
         );
         sessions::clear_playback_session_scope(&scope);
@@ -582,7 +582,7 @@ mod tests {
             .is_none()
         );
         let stopped =
-            crate::db::playbacks::get_reported(&db, user, "external", "auth:1", 5_000)?.unwrap();
+            lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", 5_000)?.unwrap();
         assert_eq!(stopped.updated_at_ms, 4_000);
         let restarted = report_test_playback_session(
             &mut db,
@@ -598,7 +598,7 @@ mod tests {
             b.playback_session_public_id
         );
         assert_eq!(
-            crate::db::playbacks::get_reported(&db, user, "external", "auth:1", 6_000)?
+            lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", 6_000)?
                 .unwrap()
                 .id,
             root.id
@@ -625,7 +625,7 @@ mod tests {
             now,
         )?
         .unwrap();
-        let root_id = crate::db::playbacks::get_reported(&db, user, "external", "auth:1", now)?
+        let root_id = lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", now)?
             .unwrap()
             .id;
         for state in [
@@ -690,7 +690,7 @@ mod tests {
             );
             assert_eq!(resumed.playback.state, state);
             assert_eq!(
-                crate::db::playbacks::get_reported(&db, user, "external", "auth:1", now)?
+                lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", now)?
                     .unwrap()
                     .id,
                 root_id
@@ -737,11 +737,10 @@ mod tests {
             )?
             .is_none()
         );
-        let root =
-            crate::db::playbacks::get_reported(&db, user, "external", "auth:1", now)?.unwrap();
+        let root = lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", now)?.unwrap();
         assert_eq!(root.updated_at_ms, now - 1_000);
         assert_eq!(
-            crate::db::playbacks::get_current_session_id(&db, root.db_id.unwrap())?,
+            lyra_db::playbacks::get_current_session_id(&db, root.db_id.unwrap())?,
             Some(current.playback_session_id)
         );
         now += 1_000;
@@ -772,7 +771,7 @@ mod tests {
             current.playback_session_public_id
         );
         assert_eq!(
-            crate::db::playbacks::get_reported(&db, user, "external", "auth:1", now)?
+            lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", now)?
                 .unwrap()
                 .id,
             root_id
@@ -813,13 +812,13 @@ mod tests {
         .unwrap();
         assert!(credited.playback.listen_recorded.unwrap_or(false));
         let root =
-            crate::db::playbacks::get_reported(&db, user, "external", "auth:1", 111_000)?.unwrap();
+            lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", 111_000)?.unwrap();
         workflow::cleanup_evicted_playbacks(&mut db, 411_001)?;
         assert!(
-            crate::db::playbacks::get_reported(&db, user, "external", "auth:1", 411_001)?.is_none()
+            lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", 411_001)?.is_none()
         );
         assert!(
-            crate::db::playback_sessions::get_by_id(&db, credited.playback_session_id)?.is_some()
+            lyra_db::playback_sessions::get_by_id(&db, credited.playback_session_id)?.is_some()
         );
         report_test_playback_session(
             &mut db,
@@ -834,7 +833,7 @@ mod tests {
             412_000,
         )?;
         let fresh =
-            crate::db::playbacks::get_reported(&db, user, "external", "auth:1", 412_000)?.unwrap();
+            lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", 412_000)?.unwrap();
         assert_ne!(fresh.id, root.id);
         Ok(())
     }
@@ -865,7 +864,7 @@ mod tests {
         .expect("playback should start");
 
         assert_eq!(started.playback.client_name.as_deref(), Some("Living Room"));
-        let persisted = crate::db::playback_sessions::get_by_id(&db, started.playback_session_id)?
+        let persisted = lyra_db::playback_sessions::get_by_id(&db, started.playback_session_id)?
             .expect("playback should be persisted");
         assert_eq!(persisted.client_name.as_deref(), Some("Living Room"));
 
@@ -891,7 +890,7 @@ mod tests {
     #[test]
     fn unique_track_external_id_key_filter_matches_declared_pairs_only() {
         let external_ids = vec![
-            crate::db::external_ids::ExternalId {
+            lyra_db::external_ids::ExternalId {
                 db_id: Some(NodeId::from(DbId(1))),
                 provider_id: "musicbrainz".to_string(),
                 id_type: "recording_id".to_string(),
@@ -899,7 +898,7 @@ mod tests {
                 source: IdSource::Resolved,
                 resolved_value: None,
             },
-            crate::db::external_ids::ExternalId {
+            lyra_db::external_ids::ExternalId {
                 db_id: Some(NodeId::from(DbId(2))),
                 provider_id: "musicbrainz".to_string(),
                 id_type: "release_id".to_string(),
@@ -907,7 +906,7 @@ mod tests {
                 source: IdSource::Resolved,
                 resolved_value: None,
             },
-            crate::db::external_ids::ExternalId {
+            lyra_db::external_ids::ExternalId {
                 db_id: Some(NodeId::from(DbId(3))),
                 provider_id: "discogs".to_string(),
                 id_type: "recording_id".to_string(),
@@ -930,7 +929,7 @@ mod tests {
 
     #[test]
     fn unique_track_external_id_key_filter_ignores_blank_values() {
-        let external_ids = vec![crate::db::external_ids::ExternalId {
+        let external_ids = vec![lyra_db::external_ids::ExternalId {
             db_id: Some(NodeId::from(DbId(1))),
             provider_id: "musicbrainz".to_string(),
             id_type: "recording_id".to_string(),
@@ -953,29 +952,29 @@ mod tests {
         let track_b = insert_track(&mut db, "Track B", 200_000)?;
         let track_c = insert_track(&mut db, "Track C", 200_000)?;
 
-        crate::db::external_ids::upsert(
+        lyra_db::external_ids::upsert(
             &mut db,
             track_a,
             "musicbrainz",
             "recording_id",
             "rec-123",
-            crate::db::external_ids::IdSource::Resolved,
+            lyra_db::external_ids::IdSource::Resolved,
         )?;
-        crate::db::external_ids::upsert(
+        lyra_db::external_ids::upsert(
             &mut db,
             track_b,
             "musicbrainz",
             "recording_id",
             "rec-123",
-            crate::db::external_ids::IdSource::Resolved,
+            lyra_db::external_ids::IdSource::Resolved,
         )?;
-        crate::db::external_ids::upsert(
+        lyra_db::external_ids::upsert(
             &mut db,
             track_c,
             "musicbrainz",
             "recording_id",
             "rec-other",
-            crate::db::external_ids::IdSource::Resolved,
+            lyra_db::external_ids::IdSource::Resolved,
         )?;
 
         let pairs = HashSet::from_iter([("musicbrainz".to_string(), "recording_id".to_string())]);
@@ -1319,9 +1318,8 @@ mod tests {
         )?;
         assert!(ignored.is_none());
 
-        let persisted =
-            crate::db::playback_sessions::get_by_id(&db, started_a.playback_session_id)?
-                .expect("playback should exist");
+        let persisted = lyra_db::playback_sessions::get_by_id(&db, started_a.playback_session_id)?
+            .expect("playback should exist");
         assert_eq!(persisted.position_ms, 0);
         Ok(())
     }
@@ -1376,9 +1374,8 @@ mod tests {
         )?;
         assert!(ignored.is_none());
 
-        let persisted =
-            crate::db::playback_sessions::get_by_id(&db, started_a.playback_session_id)?
-                .expect("playback should exist");
+        let persisted = lyra_db::playback_sessions::get_by_id(&db, started_a.playback_session_id)?
+            .expect("playback should exist");
         assert_eq!(persisted.state, PlaybackState::Playing);
         Ok(())
     }
@@ -1461,8 +1458,7 @@ mod tests {
                 3_000,
             )?;
             let before =
-                crate::db::playbacks::get_reported(&db, user, "external", "auth:1", 3_000)?
-                    .unwrap();
+                lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", 3_000)?.unwrap();
             assert!(before.reported.unwrap().previous.is_some());
             let now = if missing {
                 db.exec_mut(
@@ -1489,7 +1485,7 @@ mod tests {
                 .is_none()
             );
             let after =
-                crate::db::playbacks::get_reported(&db, user, "external", "auth:1", now)?.unwrap();
+                lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", now)?.unwrap();
             assert!(after.reported.unwrap().previous.is_none());
             assert_eq!(after.updated_at_ms, 3_000);
         }
@@ -1740,13 +1736,13 @@ mod tests {
         assert!(get_playback_session(&native_scope).is_none());
 
         let persisted =
-            crate::db::playback_sessions::get_by_id(&db, demo_started.playback_session_id)?
+            lyra_db::playback_sessions::get_by_id(&db, demo_started.playback_session_id)?
                 .expect("persisted playback");
         assert_eq!(persisted.position_ms, 13_000);
         assert_eq!(persisted.state, PlaybackState::Paused);
 
         let persisted =
-            crate::db::playback_sessions::get_by_id(&db, native_started.playback_session_id)?
+            lyra_db::playback_sessions::get_by_id(&db, native_started.playback_session_id)?
                 .expect("persisted native playback");
         assert_eq!(persisted.position_ms, 22_000);
         assert_eq!(persisted.state, PlaybackState::Paused);
@@ -1830,13 +1826,13 @@ mod tests {
         assert!(get_playback_session(&scope).is_none());
 
         let persisted_a =
-            crate::db::playback_sessions::get_by_id(&db, started_a.playback_session_id)?
+            lyra_db::playback_sessions::get_by_id(&db, started_a.playback_session_id)?
                 .expect("persisted previous playback");
         assert_eq!(persisted_a.position_ms, 11_000);
         assert_eq!(persisted_a.state, PlaybackState::Paused);
 
         let persisted_b =
-            crate::db::playback_sessions::get_by_id(&db, started_b.playback_session_id)?
+            lyra_db::playback_sessions::get_by_id(&db, started_b.playback_session_id)?
                 .expect("persisted current playback");
         assert_eq!(persisted_b.position_ms, 23_000);
         assert_eq!(persisted_b.state, PlaybackState::Paused);
@@ -2077,7 +2073,7 @@ mod tests {
             61_000,
         )?;
 
-        let counts_after_first = crate::db::listens::get_counts(&db, &[track_db_id], user_db_id)?;
+        let counts_after_first = lyra_db::listens::get_counts(&db, &[track_db_id], user_db_id)?;
         assert_eq!(counts_after_first.get(&track_db_id).copied(), Some(1));
 
         // Explicit restart of the same track.
@@ -2106,7 +2102,7 @@ mod tests {
             122_000,
         )?;
 
-        let counts_after_replay = crate::db::listens::get_counts(&db, &[track_db_id], user_db_id)?;
+        let counts_after_replay = lyra_db::listens::get_counts(&db, &[track_db_id], user_db_id)?;
         assert_eq!(counts_after_replay.get(&track_db_id).copied(), Some(2));
 
         let records = workflow::collect_playback_records(&db)?;
@@ -2146,7 +2142,7 @@ mod tests {
             61_000,
         )?;
 
-        let counts_after_first = crate::db::listens::get_counts(&db, &[track_db_id], user_db_id)?;
+        let counts_after_first = lyra_db::listens::get_counts(&db, &[track_db_id], user_db_id)?;
         assert_eq!(counts_after_first.get(&track_db_id).copied(), Some(1));
 
         // No Started event — pure seek-to-zero replay within the same session.
@@ -2175,7 +2171,7 @@ mod tests {
             122_000,
         )?;
 
-        let counts_after_replay = crate::db::listens::get_counts(&db, &[track_db_id], user_db_id)?;
+        let counts_after_replay = lyra_db::listens::get_counts(&db, &[track_db_id], user_db_id)?;
         assert_eq!(counts_after_replay.get(&track_db_id).copied(), Some(2));
 
         // Heuristic resets in place; no second session.
@@ -2266,7 +2262,7 @@ mod tests {
             140_000,
         )?;
 
-        let counts = crate::db::listens::get_counts(&db, &[track_a_id], user_db_id)?;
+        let counts = lyra_db::listens::get_counts(&db, &[track_a_id], user_db_id)?;
         assert_eq!(counts.get(&track_a_id).copied(), Some(2));
         Ok(())
     }

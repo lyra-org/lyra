@@ -32,7 +32,6 @@ use harmony_luau::{
 };
 use serde::Serialize;
 
-use crate::db::ResolveId;
 use crate::plugins::args;
 use crate::plugins::db;
 use crate::services::auth::Principal;
@@ -41,6 +40,7 @@ use crate::services::auth::access::{
     LibraryFull,
     LibraryView,
 };
+use lyra_db::ResolveId;
 
 struct LibrariesModule;
 
@@ -227,8 +227,8 @@ pub(crate) struct LibraryRecord {
     country: Option<String>,
 }
 
-impl From<crate::db::libraries::Library> for LibraryRecord {
-    fn from(library: crate::db::libraries::Library) -> Self {
+impl From<lyra_db::libraries::Library> for LibraryRecord {
+    fn from(library: lyra_db::libraries::Library) -> Self {
         Self {
             db_id: library.db_id.map(|id| id.0),
             id: library.id,

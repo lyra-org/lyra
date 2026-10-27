@@ -28,13 +28,13 @@ use tokio::sync::{
     broadcast,
 };
 
-use crate::db::PlaybackState;
 use crate::services::playback_sessions as playbacks;
 use crate::services::plugin_scope::{
     PluginId,
     PluginScopedInner,
     ScopedRegistry,
 };
+use lyra_db::PlaybackState;
 
 /// Broadcast channel capacity for playback state events pushed to WS clients.
 const EVENT_BROADCAST_CAPACITY: usize = 64;
@@ -225,7 +225,7 @@ pub(crate) fn playback_to_payload(
         position_ms: playback.playback.position_ms,
         duration_ms: playback.playback.duration_ms,
         activity_ms,
-        qualifies_single_listen: crate::db::playback_sessions::activity_meets_listen_threshold(
+        qualifies_single_listen: lyra_db::playback_sessions::activity_meets_listen_threshold(
             activity_ms,
             playback.playback.duration_ms,
         ),

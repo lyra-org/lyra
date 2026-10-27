@@ -42,7 +42,7 @@ impl PluginExecutor {
         manifests: Arc<[PluginManifest]>,
         server_info: crate::plugins::server::ServerInfo,
         auth_capabilities: crate::plugins::auth::AuthCapabilities,
-        db: crate::db::DbAsync,
+        db: lyra_db::DbAsync,
         source_root: impl Into<std::path::PathBuf>,
         plugins_dir: impl Into<std::path::PathBuf>,
     ) -> Result<Self> {
@@ -60,7 +60,7 @@ impl PluginExecutor {
         plugins_dir: impl Into<PathBuf>,
         server_info: crate::plugins::server::ServerInfo,
         auth_capabilities: crate::plugins::auth::AuthCapabilities,
-        db: crate::db::DbAsync,
+        db: lyra_db::DbAsync,
         module_overrides: Vec<ModuleSpec>,
     ) -> Result<(Self, Vec<PluginLoadError>)> {
         Self::discover_from_plugins_dir_with_stores(

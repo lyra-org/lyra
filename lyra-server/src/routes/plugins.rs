@@ -427,7 +427,7 @@ fn catalog_status_response(status: repositories_service::CatalogStatus) -> Catal
 }
 
 fn resolved_repository_response(
-    record: Option<&crate::db::plugin_repositories::PluginRepository>,
+    record: Option<&lyra_db::plugin_repositories::PluginRepository>,
     preview: repositories_service::RepositoryPreview,
 ) -> ResolvedRepositoryResponse {
     ResolvedRepositoryResponse {
@@ -461,7 +461,7 @@ fn resolved_repository_response(
 }
 
 fn repository_response(
-    record: crate::db::plugin_repositories::PluginRepository,
+    record: lyra_db::plugin_repositories::PluginRepository,
 ) -> PluginRepositoryResponse {
     PluginRepositoryResponse {
         id: record.id,
@@ -478,7 +478,7 @@ fn repository_response(
 
 fn source_response(
     record: Option<SourceRecord>,
-    repositories: &[crate::db::plugin_repositories::PluginRepository],
+    repositories: &[lyra_db::plugin_repositories::PluginRepository],
 ) -> PluginSourceResponse {
     match record {
         None => PluginSourceResponse::Local,
@@ -499,7 +499,7 @@ fn source_response(
 fn manifest_responses(
     manifests: &[harmony_core::plugin::PluginManifest],
     plugins_dir: &std::path::Path,
-    repositories: &[crate::db::plugin_repositories::PluginRepository],
+    repositories: &[lyra_db::plugin_repositories::PluginRepository],
 ) -> Vec<PluginManifestResponse> {
     manifests
         .iter()
@@ -1359,11 +1359,6 @@ mod tests {
     };
 
     use super::*;
-    use crate::db::{
-        Permission,
-        roles::Role,
-        users::User,
-    };
     use crate::{
         plugins::testing::init_library_test_state,
         services::testing::runtime_test_lock,
@@ -1374,6 +1369,11 @@ mod tests {
             StatusCode,
         },
         response::IntoResponse,
+    };
+    use lyra_db::{
+        Permission,
+        roles::Role,
+        users::User,
     };
     use nanoid::nanoid;
     use tokio::sync::Mutex;
@@ -1497,7 +1497,7 @@ mod tests {
                 },
             ],
         };
-        let record = crate::db::plugin_repositories::PluginRepository {
+        let record = lyra_db::plugin_repositories::PluginRepository {
             db_id: None,
             id: "repo".into(),
             origin: "https://github.com/o/r".into(),
@@ -1532,7 +1532,7 @@ mod tests {
     #[test]
     fn repository_response_omits_refresh_time_until_refreshed() -> anyhow::Result<()> {
         let json = serde_json::to_value(repository_response(
-            crate::db::plugin_repositories::PluginRepository {
+            lyra_db::plugin_repositories::PluginRepository {
                 db_id: None,
                 id: "repo".into(),
                 origin: "https://github.com/o/r".into(),
@@ -1563,16 +1563,16 @@ mod tests {
     async fn manage_plugins_headers() -> anyhow::Result<HeaderMap> {
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::roles::ensure_builtin_roles(&mut db)?;
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
             let user = User {
                 db_id: None,
                 id: nanoid!(),
                 username: format!("plugin-route-test-{}", nanoid!()),
                 password: "unused".to_string(),
             };
-            let user_db_id = crate::db::users::create(&mut db, &user)?;
+            let user_db_id = lyra_db::users::create(&mut db, &user)?;
             let role_name = format!("plugin-route-test-{}", nanoid!());
-            crate::db::roles::create(
+            lyra_db::roles::create(
                 &mut db,
                 &Role {
                     db_id: None,
@@ -1581,7 +1581,7 @@ mod tests {
                     permissions: vec![Permission::ManagePlugins],
                 },
             )?;
-            crate::db::roles::ensure_user_has_role(&mut db, user_db_id, &role_name)?;
+            lyra_db::roles::ensure_user_has_role(&mut db, user_db_id, &role_name)?;
             user_db_id
         };
 
@@ -1819,7 +1819,7 @@ mod tests {
 
     #[test]
     fn build_status_returns_initializing_for_unknown_plugin_while_registry_is_open() {
-        let db = crate::db::test_db::new_test_db().expect("test db");
+        let db = lyra_db::test_db::new_test_db().expect("test db");
         let registry = Registry::default();
 
         let status = build_status(&registry, &db, "demo", SettingsTarget::Server);
@@ -1829,7 +1829,7 @@ mod tests {
 
     #[test]
     fn build_status_returns_not_declared_for_unknown_plugin_when_registry_is_frozen() {
-        let db = crate::db::test_db::new_test_db().expect("test db");
+        let db = lyra_db::test_db::new_test_db().expect("test db");
         let mut registry = Registry::default();
         registry.freeze();
 
@@ -1840,7 +1840,7 @@ mod tests {
 
     #[test]
     fn build_status_returns_ready_when_schema_is_registered() -> anyhow::Result<()> {
-        let db = crate::db::test_db::new_test_db()?;
+        let db = lyra_db::test_db::new_test_db()?;
         let mut registry = Registry::default();
         registry.register_schema(
             PluginId::new("demo")?,

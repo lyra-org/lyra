@@ -35,10 +35,10 @@ use serde::{
     Serialize,
 };
 
-use crate::db::Entry;
 use crate::services;
 use crate::services::STATE;
 use crate::services::testing::runtime_test_lock;
+use lyra_db::Entry;
 use tokio::sync::oneshot;
 
 #[derive(Debug, Clone)]
@@ -97,12 +97,12 @@ pub async fn prepare_fixture(
 ) -> anyhow::Result<PreparedFixture> {
     let mut db = STATE.db.write().await;
     let directory = library.directory.clone();
-    let path_key = crate::db::libraries::path_key_for(&directory);
+    let path_key = lyra_db::libraries::path_key_for(&directory);
     let created_library = db.transaction_mut(
-        |t| -> Result<crate::db::Library, crate::db::libraries::LibraryCreateError> {
-            crate::db::libraries::create_system(
+        |t| -> Result<lyra_db::Library, lyra_db::libraries::LibraryCreateError> {
+            lyra_db::libraries::create_system(
                 t,
-                crate::db::libraries::LibraryInsert {
+                lyra_db::libraries::LibraryInsert {
                     id: nanoid!(),
                     name: "Harmony Test Library".to_string(),
                     path: directory,
@@ -144,7 +144,7 @@ pub async fn prepare_fixture(
         let format = if file_path.is_file() {
             services::metadata::read_source_format(&file_path)?
         } else {
-            crate::db::track_sources::SourceFormat::default()
+            lyra_db::track_sources::SourceFormat::default()
         };
         tracks_by_source_dir.entry(source_dir).or_default().push(
             services::metadata::embedded_track_metadata(
@@ -182,7 +182,7 @@ pub async fn prepare_fixture(
 
     let mut track_db_ids = BTreeSet::new();
     for &(entry_db_id, _) in path_to_entry.values() {
-        for track in crate::db::tracks::get_by_entry(&db, entry_db_id)? {
+        for track in lyra_db::tracks::get_by_entry(&db, entry_db_id)? {
             if let Some(track_db_id) = track.db_id {
                 track_db_ids.insert(DbId::from(track_db_id));
             }
@@ -191,7 +191,7 @@ pub async fn prepare_fixture(
     let first_track_db_id = *track_db_ids
         .first()
         .ok_or_else(|| anyhow::anyhow!("fixture ingestion produced no tracks"))?;
-    let mut releases = crate::db::releases::get_by_track(&db, first_track_db_id)?;
+    let mut releases = lyra_db::releases::get_by_track(&db, first_track_db_id)?;
     let release = releases
         .pop()
         .ok_or_else(|| anyhow::anyhow!("fixture ingestion produced no release"))?;
@@ -286,9 +286,9 @@ pub async fn exec_plugins(
     runtime.exec_all().await?;
 
     let mut db = STATE.db.write().await;
-    for mut provider in crate::db::providers::get(&db)? {
+    for mut provider in lyra_db::providers::get(&db)? {
         provider.enabled = provider.provider_id == plugin.id();
-        crate::db::providers::upsert(&mut db, &provider)?;
+        lyra_db::providers::upsert(&mut db, &provider)?;
     }
 
     Ok(isolated)
@@ -335,16 +335,16 @@ pub async fn run_luau_plugin_test_file(
                 (run_as, Some(seeded))
             }
             None => {
-                let user = crate::db::users::User {
+                let user = lyra_db::users::User {
                     db_id: None,
                     id: nanoid!(),
                     username: LUAU_TEST_USERNAME.to_string(),
                     password: String::new(),
                 };
-                (crate::db::users::create(&mut db, &user)?, None)
+                (lyra_db::users::create(&mut db, &user)?, None)
             }
         };
-        let user = crate::db::users::get_by_id(&db, user_db_id)?.context("test user exists")?;
+        let user = lyra_db::users::get_by_id(&db, user_db_id)?.context("test user exists")?;
         (
             services::auth::resolve_principal(&db, user_db_id, user),
             seeded,
@@ -423,7 +423,7 @@ pub async fn snapshot_fixture(prepared: &PreparedFixture) -> anyhow::Result<Fixt
 
     let mut release_ids = BTreeSet::new();
     for track_id in &track_ids {
-        for release in crate::db::releases::get_by_track(&db, *track_id)? {
+        for release in lyra_db::releases::get_by_track(&db, *track_id)? {
             if let Some(release_id) = release.db_id {
                 release_ids.insert(DbId::from(release_id));
             }
@@ -437,14 +437,14 @@ pub async fn snapshot_fixture(prepared: &PreparedFixture) -> anyhow::Result<Fixt
 
     let mut artist_ids = BTreeSet::new();
     if let Some(release_id) = release_ids.iter().next().copied() {
-        for artist in crate::db::artists::get(&db, release_id)? {
+        for artist in lyra_db::artists::get(&db, release_id)? {
             if let Some(artist_id) = artist.db_id {
                 artist_ids.insert(DbId::from(artist_id));
             }
         }
     }
     for track_id in &track_ids {
-        for artist in crate::db::artists::get(&db, *track_id)? {
+        for artist in lyra_db::artists::get(&db, *track_id)? {
             if let Some(artist_id) = artist.db_id {
                 artist_ids.insert(DbId::from(artist_id));
             }
@@ -459,7 +459,7 @@ pub async fn snapshot_fixture(prepared: &PreparedFixture) -> anyhow::Result<Fixt
 
     let mut tracks: Vec<EntitySnapshot> = track_ids
         .into_iter()
-        .filter(|track_id| matches!(crate::db::tracks::get_by_id(&db, *track_id), Ok(Some(_))))
+        .filter(|track_id| matches!(lyra_db::tracks::get_by_id(&db, *track_id), Ok(Some(_))))
         .map(|track_id| snapshot_track(&db, track_id))
         .collect::<anyhow::Result<_>>()?;
     tracks.sort_by_key(|a| a.node_id);
@@ -480,8 +480,8 @@ fn insert_file_entry(
         db_id: None,
         id: nanoid!(),
         full_path: full_path.to_path_buf(),
-        kind: crate::db::entries::EntryKind::File,
-        file_kind: crate::db::entries::classify_file_kind(full_path).map(ToString::to_string),
+        kind: lyra_db::entries::EntryKind::File,
+        file_kind: lyra_db::entries::classify_file_kind(full_path).map(ToString::to_string),
         name: full_path
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
@@ -517,28 +517,28 @@ fn insert_file_entry(
 }
 
 fn snapshot_release(db: &DbAny, release_db_id: DbId) -> anyhow::Result<EntitySnapshot> {
-    let release = crate::db::releases::get_by_id(db, release_db_id)?
+    let release = lyra_db::releases::get_by_id(db, release_db_id)?
         .with_context(|| format!("release {} disappeared during snapshot", release_db_id.0))?;
     snapshot_entity(db, release_db_id, &release)
 }
 
 fn snapshot_artist(db: &DbAny, artist_db_id: DbId) -> anyhow::Result<EntitySnapshot> {
-    let artist = crate::db::artists::get_by_id(db, artist_db_id)?
+    let artist = lyra_db::artists::get_by_id(db, artist_db_id)?
         .with_context(|| format!("artist {} disappeared during snapshot", artist_db_id.0))?;
     snapshot_entity(db, artist_db_id, &artist)
 }
 
 fn snapshot_track(db: &DbAny, track_db_id: DbId) -> anyhow::Result<EntitySnapshot> {
-    let track = crate::db::tracks::get_by_id(db, track_db_id)?
+    let track = lyra_db::tracks::get_by_id(db, track_db_id)?
         .with_context(|| format!("track {} disappeared during snapshot", track_db_id.0))?;
     snapshot_entity(db, track_db_id, &track)
 }
 
 fn snapshot_credits(db: &DbAny, owner_id: DbId) -> anyhow::Result<Vec<CreditSnapshot>> {
     let mut snapshots = Vec::new();
-    for link in crate::db::credits::links_for_owner(db, owner_id)? {
+    for link in lyra_db::credits::links_for_owner(db, owner_id)? {
         let credit_artist_ids = external_ids_map(db, link.artist_id)?;
-        let artist = crate::db::artists::get_by_id(db, link.artist_id)?
+        let artist = lyra_db::artists::get_by_id(db, link.artist_id)?
             .context("credit artist disappeared during snapshot")?;
         let artist_ext_id = credit_artist_ids
             .first_key_value()
@@ -589,7 +589,7 @@ fn serialize_fields<T: Serialize>(
 
 fn external_ids_map(db: &DbAny, node_id: DbId) -> anyhow::Result<BTreeMap<String, String>> {
     let mut ids = BTreeMap::new();
-    for external_id in crate::db::external_ids::get_for_entity(db, node_id)? {
+    for external_id in lyra_db::external_ids::get_for_entity(db, node_id)? {
         ids.insert(external_id.id_type, external_id.id_value);
     }
     Ok(ids)
@@ -599,12 +599,12 @@ fn merged_provider_fields(
     db: &DbAny,
     node_id: DbId,
 ) -> anyhow::Result<BTreeMap<String, serde_json::Value>> {
-    let layers = crate::db::metadata::layers::get_for_entity(db, node_id)?;
+    let layers = lyra_db::metadata::layers::get_for_entity(db, node_id)?;
     if layers.is_empty() {
         return Ok(BTreeMap::new());
     }
 
-    let providers = crate::db::providers::get(db)?;
+    let providers = lyra_db::providers::get(db)?;
     let merged = crate::services::metadata::merging::merge_layers(layers, &providers);
     Ok(merged
         .fields
@@ -785,7 +785,7 @@ mod tests {
         .await?;
 
         let db = STATE.db.read().await;
-        let names: Vec<String> = crate::db::artists::get(&db, DbId(prepared.release_id))?
+        let names: Vec<String> = lyra_db::artists::get(&db, DbId(prepared.release_id))?
             .into_iter()
             .map(|artist| artist.artist_name)
             .collect();

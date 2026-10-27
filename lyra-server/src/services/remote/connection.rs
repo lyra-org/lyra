@@ -353,7 +353,7 @@ pub(crate) async fn confirm_registration(
     connection_id: ConnectionId,
     user_public_id: &str,
 ) -> anyhow::Result<bool> {
-    let user = crate::db::users::get_by_public_id(&*STATE.db.read().await, user_public_id);
+    let user = lyra_db::users::get_by_public_id(&*STATE.db.read().await, user_public_id);
     if !matches!(user, Ok(Some(_))) {
         registry::unregister(connection_id).await;
     }
@@ -567,7 +567,7 @@ pub(crate) async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::PlaybackState;
+    use lyra_db::PlaybackState;
 
     #[test]
     fn only_handoff_queue_is_detached() {
@@ -679,9 +679,9 @@ mod tests {
 
         let (user_db_id, user_public_id) = {
             let mut db = STATE.db.write().await;
-            let user = crate::db::fixtures::test_user("ws-access")?;
+            let user = lyra_db::fixtures::test_user("ws-access")?;
             let user_public_id = user.id.clone();
-            let user_db_id = crate::db::users::create(&mut db, &user)?;
+            let user_db_id = lyra_db::users::create(&mut db, &user)?;
             (user_db_id, user_public_id)
         };
         let token = crate::services::testing::create_session(user_db_id, Default::default())
@@ -697,16 +697,16 @@ mod tests {
             let mut db = STATE.db.write().await;
             let path =
                 std::path::PathBuf::from(format!("/tmp/lyra-ws-access-{}", nanoid::nanoid!()));
-            let insert = crate::db::libraries::LibraryInsert {
+            let insert = lyra_db::libraries::LibraryInsert {
                 id: nanoid::nanoid!(),
                 name: "WS Access".to_string(),
-                path_key: crate::db::libraries::path_key_for(&path),
+                path_key: lyra_db::libraries::path_key_for(&path),
                 path,
                 language: None,
                 country: None,
             };
             db.transaction_mut(|t| -> anyhow::Result<String> {
-                Ok(crate::db::libraries::create_with_creator(t, insert, user_db_id)?.id)
+                Ok(lyra_db::libraries::create_with_creator(t, insert, user_db_id)?.id)
             })?
         };
 
@@ -725,11 +725,11 @@ mod tests {
             registry::unregister(connection.connection_id).await;
         }
 
-        let alice = crate::db::fixtures::test_user("alice")?;
+        let alice = lyra_db::fixtures::test_user("alice")?;
         let alice_public_id = alice.id.clone();
         let alice_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::users::create(&mut db, &alice)?
+            lyra_db::users::create(&mut db, &alice)?
         };
         let alice_connection = registry::register(
             alice_public_id,
@@ -742,8 +742,8 @@ mod tests {
 
         let bob_playback = {
             let mut db = STATE.db.write().await;
-            let bob_db_id = crate::db::test_db::recycle_user(&mut db, alice_db_id, "bob")?;
-            let track_db_id = crate::db::fixtures::insert_track(&mut db, "Bob's Track")?;
+            let bob_db_id = lyra_db::test_db::recycle_user(&mut db, alice_db_id, "bob")?;
+            let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Bob's Track")?;
             playbacks::report_playback_session_with_cleanup(
                 &mut db,
                 playbacks::SessionPlaybackReportRequest {
@@ -772,7 +772,7 @@ mod tests {
 
         let db = STATE.db.read().await;
         let persisted =
-            crate::db::playback_sessions::get_by_id(&*db, bob_playback.playback_session_id)?
+            lyra_db::playback_sessions::get_by_id(&*db, bob_playback.playback_session_id)?
                 .expect("bob's playback persists");
         assert_eq!(
             persisted.state,
@@ -791,11 +791,11 @@ mod tests {
         }
         let (kept_public_id, deleted_public_id) = {
             let mut db = STATE.db.write().await;
-            let kept = crate::db::fixtures::test_user("still-here")?;
-            let deleted = crate::db::fixtures::test_user("deleted-mid-upgrade")?;
-            crate::db::users::create(&mut db, &kept)?;
-            let deleted_db_id = crate::db::users::create(&mut db, &deleted)?;
-            crate::db::users::delete_user(&mut db, deleted_db_id)?;
+            let kept = lyra_db::fixtures::test_user("still-here")?;
+            let deleted = lyra_db::fixtures::test_user("deleted-mid-upgrade")?;
+            lyra_db::users::create(&mut db, &kept)?;
+            let deleted_db_id = lyra_db::users::create(&mut db, &deleted)?;
+            lyra_db::users::delete_user(&mut db, deleted_db_id)?;
             (kept.id, deleted.id)
         };
         let kept = registry::register(

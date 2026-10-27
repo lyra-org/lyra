@@ -31,7 +31,7 @@ struct PublicUser {
     user_id: String,
     username: String,
     role: Option<String>,
-    permissions: Vec<crate::db::Permission>,
+    permissions: Vec<lyra_db::Permission>,
 }
 
 struct UsersModule;
@@ -54,12 +54,12 @@ fn list_callback(frame: luau::AsyncCallFrame<'_>) -> luau::runtime::Result<luau:
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        let users = crate::db::users::get(&db)
+        let users = lyra_db::users::get(&db)
             .map_err(crate::plugins::runtime_error)?
             .into_iter()
             .filter_map(|user| {
                 let user_db_id = user.db_id?;
-                let role = crate::db::roles::get_role_for_user(&db, user_db_id)
+                let role = lyra_db::roles::get_role_for_user(&db, user_db_id)
                     .ok()
                     .flatten();
                 Some(PublicUser {

@@ -8,7 +8,7 @@ use std::collections::HashSet;
 
 use agdb::DbAny;
 
-use crate::db::ratings::RatingFilter;
+use lyra_db::ratings::RatingFilter;
 
 const DEFAULT_LIMIT: u64 = 20;
 const MAX_LIMIT: u64 = 50;
@@ -55,13 +55,11 @@ pub(crate) fn search_accessible(
     principal: &crate::services::auth::Principal,
     options: &SearchOptions,
 ) -> anyhow::Result<SearchResults> {
-    let library_ids = (!principal
-        .permissions
-        .contains(&crate::db::Permission::Admin))
-    .then_some(&principal.accessible_library_ids);
-    let mut candidates = crate::db::search::collect_candidates(db, library_ids)?;
+    let library_ids = (!principal.permissions.contains(&lyra_db::Permission::Admin))
+        .then_some(&principal.accessible_library_ids);
+    let mut candidates = lyra_db::search::collect_candidates(db, library_ids)?;
     if !options.rating_filter.is_empty() {
-        let matching = crate::db::ratings::target_ids_matching(
+        let matching = lyra_db::ratings::target_ids_matching(
             db,
             principal.require(db)?,
             options.rating_filter,
@@ -77,21 +75,21 @@ pub(crate) fn search_accessible(
             .retain(|candidate| matching.contains(&candidate.db_id));
     }
     let limit = options.limit as usize;
-    let tracks = crate::db::search::rank(&candidates.tracks, &options.query, limit)
+    let tracks = lyra_db::search::rank(&candidates.tracks, &options.query, limit)
         .into_iter()
         .map(|candidate| TitleHit {
             id: candidate.id,
             title: candidate.text,
         })
         .collect();
-    let artists = crate::db::search::rank(&candidates.artists, &options.query, limit)
+    let artists = lyra_db::search::rank(&candidates.artists, &options.query, limit)
         .into_iter()
         .map(|candidate| ArtistHit {
             id: candidate.id,
             name: candidate.text,
         })
         .collect();
-    let releases = crate::db::search::rank(&candidates.releases, &options.query, limit)
+    let releases = lyra_db::search::rank(&candidates.releases, &options.query, limit)
         .into_iter()
         .map(|candidate| TitleHit {
             id: candidate.id,
@@ -109,23 +107,23 @@ pub(crate) fn search_accessible(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::fixtures::{
+    use crate::services::auth::Principal;
+    use lyra_db::fixtures::{
         insert_artist,
         insert_release,
         insert_track,
     };
-    use crate::db::test_db::{
+    use lyra_db::test_db::{
         insert_credited_artist,
         new_test_db,
     };
-    use crate::services::auth::Principal;
 
     fn admin_principal(db: &mut DbAny) -> anyhow::Result<Principal> {
-        let user_db_id = crate::db::test_db::insert_user(db, "search-user")?;
+        let user_db_id = lyra_db::test_db::insert_user(db, "search-user")?;
         Ok(Principal::for_user(
             db,
             user_db_id,
-            vec![crate::db::Permission::Admin],
+            vec![lyra_db::Permission::Admin],
             HashSet::new(),
         ))
     }
@@ -149,8 +147,8 @@ mod tests {
 
     #[test]
     fn search_scopes_and_deduplicates_shared_entities() -> anyhow::Result<()> {
-        use crate::db::fixtures::connect;
-        use crate::db::test_db::{
+        use lyra_db::fixtures::connect;
+        use lyra_db::test_db::{
             connect_artist,
             insert_library,
         };
@@ -163,7 +161,7 @@ mod tests {
         for library in [first, second] {
             principal
                 .accessible_library_ids
-                .insert(crate::db::libraries::get_by_id(&db, library)?.unwrap().id);
+                .insert(lyra_db::libraries::get_by_id(&db, library)?.unwrap().id);
         }
         principal
             .accessible_library_ids
@@ -287,24 +285,24 @@ mod tests {
 
         let user_db_id = principal.require(&db)?;
         for (target, kind, value) in [
-            (rated_track, crate::db::ratings::RatingKind::Track, 4),
-            (rated_artist, crate::db::ratings::RatingKind::Artist, 3),
-            (low_release, crate::db::ratings::RatingKind::Release, 2),
-            (high_release, crate::db::ratings::RatingKind::Release, 5),
+            (rated_track, lyra_db::ratings::RatingKind::Track, 4),
+            (rated_artist, lyra_db::ratings::RatingKind::Artist, 3),
+            (low_release, lyra_db::ratings::RatingKind::Release, 2),
+            (high_release, lyra_db::ratings::RatingKind::Release, 5),
         ] {
-            crate::db::ratings::upsert(
+            lyra_db::ratings::upsert(
                 &mut db,
                 user_db_id,
                 target,
                 kind,
-                crate::db::ratings::RatingValue::new(value).unwrap(),
+                lyra_db::ratings::RatingValue::new(value).unwrap(),
                 100,
             )?;
         }
 
         let filter = RatingFilter::new(
-            crate::db::ratings::RatingValue::new(3),
-            crate::db::ratings::RatingValue::new(4),
+            lyra_db::ratings::RatingValue::new(3),
+            lyra_db::ratings::RatingValue::new(4),
         )
         .unwrap();
         let options = SearchOptions::new("blue".to_string(), Some(1), filter);
@@ -328,27 +326,27 @@ mod benches {
     use test::Bencher;
 
     use super::*;
-    use crate::db::fixtures::{
+    use crate::services::auth::Principal;
+    use lyra_db::fixtures::{
         connect,
         insert_artist,
         insert_release,
         insert_track,
     };
-    use crate::db::test_db::{
+    use lyra_db::test_db::{
         connect_artist,
         insert_library,
         new_test_db,
     };
-    use crate::services::auth::Principal;
 
     fn fixture(track_count: usize, library_count: usize, admin: bool) -> (DbAny, Principal) {
         let mut db = new_test_db().unwrap();
-        let user_db_id = crate::db::test_db::insert_user(&mut db, "search-bench-user").unwrap();
+        let user_db_id = lyra_db::test_db::insert_user(&mut db, "search-bench-user").unwrap();
         let mut principal = Principal::for_user(
             &db,
             user_db_id,
             if admin {
-                vec![crate::db::Permission::Admin]
+                vec![lyra_db::Permission::Admin]
             } else {
                 Vec::new()
             },
@@ -362,12 +360,9 @@ mod benches {
                     &format!("/search-bench/{i}"),
                 )
                 .unwrap();
-                principal.accessible_library_ids.insert(
-                    crate::db::libraries::get_by_id(&db, id)
-                        .unwrap()
-                        .unwrap()
-                        .id,
-                );
+                principal
+                    .accessible_library_ids
+                    .insert(lyra_db::libraries::get_by_id(&db, id).unwrap().unwrap().id);
                 id
             })
             .collect();
@@ -463,25 +458,25 @@ mod benches {
         let (db, principal) = fixture(size, libraries, admin);
         let library_ids = (!admin).then_some(&principal.accessible_library_ids);
         b.iter(|| {
-            black_box(crate::db::search::collect_candidates(black_box(&db), library_ids).unwrap())
+            black_box(lyra_db::search::collect_candidates(black_box(&db), library_ids).unwrap())
         });
     }
 
     fn ranking(b: &mut Bencher, query: &str) {
         let (db, _) = fixture(100_000, 1, true);
-        let candidates = crate::db::search::collect_candidates(&db, None).unwrap();
+        let candidates = lyra_db::search::collect_candidates(&db, None).unwrap();
         b.iter(|| {
-            black_box(crate::db::search::rank(
+            black_box(lyra_db::search::rank(
                 black_box(&candidates.tracks),
                 black_box(query),
                 5,
             ));
-            black_box(crate::db::search::rank(
+            black_box(lyra_db::search::rank(
                 black_box(&candidates.artists),
                 black_box(query),
                 5,
             ));
-            black_box(crate::db::search::rank(
+            black_box(lyra_db::search::rank(
                 black_box(&candidates.releases),
                 black_box(query),
                 5,

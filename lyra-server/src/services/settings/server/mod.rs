@@ -183,8 +183,8 @@ pub(crate) struct StoredSetting {
 }
 
 pub(crate) fn load_stored(db: &mut agdb::DbAny) -> Result<Vec<StoredSetting>> {
-    crate::db::settings::server::ensure(db)?;
-    crate::db::settings::server::get_all_with(db)?
+    lyra_db::settings::server::ensure(db)?;
+    lyra_db::settings::server::get_all_with(db)?
         .into_iter()
         .map(|entry| {
             let value = serde_json::from_str(&entry.value).with_context(|| {
@@ -204,13 +204,13 @@ pub(crate) fn load_stored(db: &mut agdb::DbAny) -> Result<Vec<StoredSetting>> {
 /// Removes every stored server setting and returns the keys removed. The
 /// parent node is kept (or created) so the next start reads an empty set.
 pub(crate) fn reset_stored(db: &mut agdb::DbAny) -> Result<Vec<String>> {
-    crate::db::settings::server::ensure(db)?;
-    let mut keys: Vec<String> = crate::db::settings::server::get_all_with(db)?
+    lyra_db::settings::server::ensure(db)?;
+    let mut keys: Vec<String> = lyra_db::settings::server::get_all_with(db)?
         .into_iter()
         .map(|entry| entry.key)
         .collect();
     keys.sort_unstable();
-    db.transaction_mut(|t| crate::db::settings::server::clear_with(t))?;
+    db.transaction_mut(|t| lyra_db::settings::server::clear_with(t))?;
     Ok(keys)
 }
 
@@ -550,7 +550,7 @@ mod tests {
 
     fn stored_parent(db: &agdb::DbAny) -> anyhow::Result<DbId> {
         Ok(DbId::from(
-            crate::db::settings::server::find_with(db)?
+            lyra_db::settings::server::find_with(db)?
                 .and_then(|node| node.db_id)
                 .expect("ensure creates the parent"),
         ))
@@ -558,17 +558,17 @@ mod tests {
 
     #[test]
     fn load_stored_reads_entries_and_reset_clears_them() -> anyhow::Result<()> {
-        let mut db = crate::db::test_db::new_test_db()?;
+        let mut db = lyra_db::test_db::new_test_db()?;
         assert!(load_stored(&mut db)?.is_empty());
 
         let parent = stored_parent(&db)?;
-        crate::db::settings::upsert_setting_with(
+        lyra_db::settings::upsert_setting_with(
             &mut db,
             parent,
             "auth.enabled".into(),
             "false".into(),
         )?;
-        crate::db::settings::upsert_setting_with(
+        lyra_db::settings::upsert_setting_with(
             &mut db,
             parent,
             "sync.interval_secs".into(),
@@ -592,10 +592,10 @@ mod tests {
 
     #[test]
     fn load_stored_rejects_malformed_json_with_recovery_hint() -> anyhow::Result<()> {
-        let mut db = crate::db::test_db::new_test_db()?;
+        let mut db = lyra_db::test_db::new_test_db()?;
         load_stored(&mut db)?;
         let parent = stored_parent(&db)?;
-        crate::db::settings::upsert_setting_with(
+        lyra_db::settings::upsert_setting_with(
             &mut db,
             parent,
             "auth.enabled".into(),

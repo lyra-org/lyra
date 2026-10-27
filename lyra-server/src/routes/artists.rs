@@ -126,7 +126,7 @@ pub(crate) struct ArtistListOptions {
     library_id: Option<String>,
     sort_by: Option<Vec<String>>,
     sort_order: Option<String>,
-    rating_filter: crate::db::ratings::RatingFilter,
+    rating_filter: lyra_db::ratings::RatingFilter,
     page_request: super::SnapshotPageRequest,
 }
 
@@ -193,8 +193,8 @@ fn parse_inc(inc: Option<Vec<String>>) -> Result<ArtistRouteIncludes, AppError> 
 fn filter_accessible_releases(
     db: &DbAny,
     principal: &Principal,
-    releases: Vec<crate::db::Release>,
-) -> anyhow::Result<Vec<crate::db::Release>> {
+    releases: Vec<lyra_db::Release>,
+) -> anyhow::Result<Vec<lyra_db::Release>> {
     let mut filtered = Vec::with_capacity(releases.len());
     for release in releases {
         let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
@@ -210,8 +210,8 @@ fn filter_accessible_releases(
 fn filter_accessible_tracks(
     db: &DbAny,
     principal: &Principal,
-    tracks: Vec<crate::db::Track>,
-) -> anyhow::Result<Vec<crate::db::Track>> {
+    tracks: Vec<lyra_db::Track>,
+) -> anyhow::Result<Vec<lyra_db::Track>> {
     let mut filtered = Vec::with_capacity(tracks.len());
     for track in tracks {
         let Some(track_db_id) = track.db_id.clone().map(DbId::from) else {
@@ -307,7 +307,7 @@ fn artist_detail_to_response(
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        Some(crate::db::covers::get_many(db, &related_artist_db_ids)?)
+        Some(lyra_db::covers::get_many(db, &related_artist_db_ids)?)
     } else {
         None
     };
@@ -395,7 +395,7 @@ pub(crate) async fn list_artist_responses(
         let artists = super::load_snapshot_items(
             db,
             &page.item_ids,
-            crate::db::artists::get_by_id,
+            lyra_db::artists::get_by_id,
             |db, artist_db_id| access::artist_accessible(db, principal, artist_db_id),
         )?;
         (artists, page.next_cursor)
@@ -432,7 +432,7 @@ pub(crate) async fn get_artist_response(
 ) -> Result<ArtistResponse, AppError> {
     let db = &*STATE.db.read().await;
     let includes = parse_inc(inc)?;
-    let artist_db_id = crate::db::lookup::find_node_id_by_id(db, &id)?
+    let artist_db_id = lyra_db::lookup::find_node_id_by_id(db, &id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
     if !access::artist_accessible(db, principal, artist_db_id)? {
         return Err(AppError::not_found(format!("Artist not found: {id}")));
@@ -494,12 +494,12 @@ async fn search_artist_covers(
 
     {
         let db = STATE.db.read().await;
-        let artist_db_id = crate::db::lookup::find_node_id_by_id(&*db, &id)?
+        let artist_db_id = lyra_db::lookup::find_node_id_by_id(&*db, &id)?
             .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
         if !access::artist_accessible(&db, &principal, artist_db_id)? {
             return Err(AppError::not_found(format!("Artist not found: {id}")));
         }
-        if crate::db::artists::get_by_id(&db, artist_db_id)?.is_none() {
+        if lyra_db::artists::get_by_id(&db, artist_db_id)?.is_none() {
             return Err(AppError::not_found(format!("Artist not found: {}", id)));
         }
     }
@@ -570,20 +570,20 @@ pub(crate) fn artist_openapi_routes() -> aide::axum::ApiRouter {
 mod tests {
     use super::*;
 
-    use crate::db::fixtures::{
+    use crate::{
+        plugins::testing::init_library_test_state,
+        services::testing::runtime_test_lock,
+    };
+    use lyra_db::fixtures::{
         connect,
         insert_artist,
         insert_release,
         insert_track,
     };
-    use crate::db::test_db::{
+    use lyra_db::test_db::{
         connect_artist,
         insert_credited_artist,
         insert_library,
-    };
-    use crate::{
-        plugins::testing::init_library_test_state,
-        services::testing::runtime_test_lock,
     };
 
     use agdb::{
@@ -637,13 +637,13 @@ mod tests {
     async fn create_authenticated_headers(username: &str) -> anyhow::Result<HeaderMap> {
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::roles::ensure_builtin_roles(&mut db)?;
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
             let user_db_id =
-                crate::db::users::create(&mut db, &crate::db::fixtures::test_user(username)?)?;
-            crate::db::roles::ensure_user_has_role(
+                lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user(username)?)?;
+            lyra_db::roles::ensure_user_has_role(
                 &mut db,
                 user_db_id,
-                crate::db::roles::BUILTIN_ADMIN_ROLE,
+                lyra_db::roles::BUILTIN_ADMIN_ROLE,
             )?;
             user_db_id
         };
@@ -661,28 +661,28 @@ mod tests {
     }
 
     async fn principal(
-        permissions: Vec<crate::db::Permission>,
+        permissions: Vec<lyra_db::Permission>,
         accessible_library_ids: HashSet<String>,
     ) -> Principal {
         let mut db = STATE.db.write().await;
-        let user_db_id = crate::db::test_db::insert_user(&mut db, &nanoid!()).expect("insert user");
+        let user_db_id = lyra_db::test_db::insert_user(&mut db, &nanoid!()).expect("insert user");
         Principal::for_user(&*db, user_db_id, permissions, accessible_library_ids)
     }
 
     async fn admin_principal(accessible_library_ids: HashSet<String>) -> Principal {
-        principal(vec![crate::db::Permission::Admin], accessible_library_ids).await
+        principal(vec![lyra_db::Permission::Admin], accessible_library_ids).await
     }
 
     async fn user_principal(accessible_library_ids: HashSet<String>) -> Principal {
         principal(Vec::new(), accessible_library_ids).await
     }
 
-    fn insert_cover_for(db: &mut DbAny, owner_db_id: DbId) -> anyhow::Result<crate::db::Cover> {
+    fn insert_cover_for(db: &mut DbAny, owner_db_id: DbId) -> anyhow::Result<lyra_db::Cover> {
         db.transaction_mut(|t| {
-            crate::db::covers::upsert(
+            lyra_db::covers::upsert(
                 t,
                 owner_db_id,
-                crate::db::Cover {
+                lyra_db::Cover {
                     db_id: None,
                     id: nanoid!(),
                     path: "/music/cover.jpg".to_string(),
@@ -721,7 +721,7 @@ mod tests {
                 connect(&mut db, visible_library, release)?;
                 connect_artist(&mut db, release, visible_heavy)?;
             }
-            crate::db::libraries::get_by_id(&db, visible_library)?
+            lyra_db::libraries::get_by_id(&db, visible_library)?
                 .ok_or_else(|| anyhow::anyhow!("visible library missing"))?
                 .id
         };
@@ -769,7 +769,7 @@ mod tests {
             connect_artist(&mut db, release_id, artist_id)?;
             insert_cover_for(&mut db, release_id)?;
 
-            crate::db::artists::get_by_id(&db, artist_id)?
+            lyra_db::artists::get_by_id(&db, artist_id)?
                 .ok_or_else(|| anyhow::anyhow!("artist should exist"))?
                 .id
         };
@@ -822,15 +822,15 @@ mod tests {
             let mut db = STATE.db.write().await;
             let character = insert_artist(&mut db, "Character Artist")?;
             let voice_actor = insert_artist(&mut db, "Voice Actor")?;
-            crate::db::artists::relations::link(
+            lyra_db::artists::relations::link(
                 &mut db,
                 voice_actor,
                 character,
-                crate::db::ArtistRelationType::VoiceActor,
+                lyra_db::ArtistRelationType::VoiceActor,
                 Some("main".to_string()),
             )?;
             let cover_id = insert_cover_for(&mut db, voice_actor)?.id;
-            let artist_public_id = crate::db::artists::get_by_id(&db, character)?
+            let artist_public_id = lyra_db::artists::get_by_id(&db, character)?
                 .ok_or_else(|| anyhow::anyhow!("artist should exist"))?
                 .id;
             (artist_public_id, cover_id)
@@ -896,18 +896,18 @@ mod tests {
             connect_artist(&mut db, hidden_release, artist)?;
             connect_artist(&mut db, hidden_track, artist)?;
             connect_artist(&mut db, hidden_release, hidden_relation)?;
-            crate::db::artists::relations::link(
+            lyra_db::artists::relations::link(
                 &mut db,
                 artist,
                 hidden_relation,
-                crate::db::ArtistRelationType::MemberOf,
+                lyra_db::ArtistRelationType::MemberOf,
                 None,
             )?;
 
-            let artist_public_id = crate::db::artists::get_by_id(&db, artist)?
+            let artist_public_id = lyra_db::artists::get_by_id(&db, artist)?
                 .ok_or_else(|| anyhow::anyhow!("artist missing"))?
                 .id;
-            let visible_library_id = crate::db::libraries::get_by_id(&db, visible_library)?
+            let visible_library_id = lyra_db::libraries::get_by_id(&db, visible_library)?
                 .ok_or_else(|| anyhow::anyhow!("visible library missing"))?
                 .id;
             (artist_public_id, visible_library_id)
@@ -960,7 +960,7 @@ mod tests {
                 library_id: None,
                 sort_by: None,
                 sort_order: None,
-                rating_filter: crate::db::ratings::RatingFilter::default(),
+                rating_filter: lyra_db::ratings::RatingFilter::default(),
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
@@ -999,10 +999,10 @@ mod tests {
             connect(&mut db, hidden_release, hidden_track)?;
             connect_artist(&mut db, hidden_release, hidden_artist)?;
 
-            let visible_library_id = crate::db::libraries::get_by_id(&db, visible_library)?
+            let visible_library_id = lyra_db::libraries::get_by_id(&db, visible_library)?
                 .ok_or_else(|| anyhow::anyhow!("visible library missing"))?
                 .id;
-            let hidden_library_id = crate::db::libraries::get_by_id(&db, hidden_library)?
+            let hidden_library_id = lyra_db::libraries::get_by_id(&db, hidden_library)?
                 .ok_or_else(|| anyhow::anyhow!("hidden library missing"))?
                 .id;
             (visible_library_id, hidden_library_id)
@@ -1021,7 +1021,7 @@ mod tests {
                 library_id: Some(visible_library_id),
                 sort_by: None,
                 sort_order: None,
-                rating_filter: crate::db::ratings::RatingFilter::default(),
+                rating_filter: lyra_db::ratings::RatingFilter::default(),
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
@@ -1048,33 +1048,33 @@ mod tests {
 
         let principal = {
             let mut db = STATE.db.write().await;
-            let user_db_id = crate::db::users::create(
+            let user_db_id = lyra_db::users::create(
                 &mut db,
-                &crate::db::fixtures::test_user("artist-rating-user")?,
+                &lyra_db::fixtures::test_user("artist-rating-user")?,
             )?;
             let four_star = insert_artist(&mut db, "Four Star Artist")?;
             let five_star = insert_artist(&mut db, "Five Star Artist")?;
             insert_artist(&mut db, "Unrated Artist")?;
             for (target, value) in [(four_star, 4), (five_star, 5)] {
-                crate::db::ratings::upsert(
+                lyra_db::ratings::upsert(
                     &mut *db,
                     user_db_id,
                     target,
-                    crate::db::ratings::RatingKind::Artist,
-                    crate::db::ratings::RatingValue::new(value).unwrap(),
+                    lyra_db::ratings::RatingKind::Artist,
+                    lyra_db::ratings::RatingValue::new(value).unwrap(),
                     1,
                 )?;
             }
             Principal::for_user(
                 &*db,
                 user_db_id,
-                vec![crate::db::Permission::Admin],
+                vec![lyra_db::Permission::Admin],
                 HashSet::new(),
             )
         };
-        let exact_four = crate::db::ratings::RatingFilter::new(
-            crate::db::ratings::RatingValue::new(4),
-            crate::db::ratings::RatingValue::new(4),
+        let exact_four = lyra_db::ratings::RatingFilter::new(
+            lyra_db::ratings::RatingValue::new(4),
+            lyra_db::ratings::RatingValue::new(4),
         )
         .unwrap();
 
@@ -1106,7 +1106,7 @@ mod tests {
             library_id: None,
             sort_by: sort_by.map(|value| vec![value.to_string()]),
             sort_order: sort_order.map(str::to_string),
-            rating_filter: crate::db::ratings::RatingFilter::default(),
+            rating_filter: lyra_db::ratings::RatingFilter::default(),
             page_request: super::super::SnapshotPageRequest::first_page(100),
         }
     }
@@ -1130,18 +1130,18 @@ mod tests {
             let mut db = STATE.db.write().await;
             insert_credited_artist(&mut db, "Charlie")?;
             let zulu = insert_credited_artist(&mut db, "Zulu")?;
-            let mut artist = crate::db::artists::get_by_id(&db, zulu)?
+            let mut artist = lyra_db::artists::get_by_id(&db, zulu)?
                 .ok_or_else(|| anyhow::anyhow!("artist missing"))?;
             artist.sort_name = Some("Alpha".to_string());
-            crate::db::artists::update(&mut db, &artist)?;
+            lyra_db::artists::update(&mut db, &artist)?;
             insert_credited_artist(&mut db, "Beta")?;
             insert_credited_artist(&mut db, "beta")?;
             for name in ["Mike", "Lima"] {
                 let artist_db_id = insert_credited_artist(&mut db, name)?;
-                let mut artist = crate::db::artists::get_by_id(&db, artist_db_id)?
+                let mut artist = lyra_db::artists::get_by_id(&db, artist_db_id)?
                     .ok_or_else(|| anyhow::anyhow!("artist missing"))?;
                 artist.sort_name = Some("Delta".to_string());
-                crate::db::artists::update(&mut db, &artist)?;
+                lyra_db::artists::update(&mut db, &artist)?;
             }
         }
         let principal = admin_principal(HashSet::new()).await;
@@ -1175,7 +1175,7 @@ mod tests {
                 let artist = insert_artist(&mut db, name)?;
                 connect_artist(&mut db, release, artist)?;
             }
-            let library_id = crate::db::libraries::get_by_id(&db, library)?
+            let library_id = lyra_db::libraries::get_by_id(&db, library)?
                 .ok_or_else(|| anyhow::anyhow!("library missing"))?
                 .id;
             (library_id, library, release)
@@ -1200,7 +1200,7 @@ mod tests {
 
         {
             let mut db = STATE.db.write().await;
-            crate::db::graph::remove_edges_between(&mut *db, library, release)?;
+            lyra_db::graph::remove_edges_between(&mut *db, library, release)?;
         }
 
         let second = list_artist_responses(&principal, page(Some(cursor)))
@@ -1238,11 +1238,11 @@ mod tests {
             connect(&mut db, hidden_release, hidden_track)?;
             connect_artist(&mut db, hidden_track, hidden_artist)?;
 
-            let visible_library_id = crate::db::libraries::get_by_id(&db, visible_library)?
+            let visible_library_id = lyra_db::libraries::get_by_id(&db, visible_library)?
                 .ok_or_else(|| anyhow::anyhow!("visible library missing"))?
                 .id;
             let public_id = |artist| -> anyhow::Result<String> {
-                Ok(crate::db::artists::get_by_id(&db, artist)?
+                Ok(lyra_db::artists::get_by_id(&db, artist)?
                     .ok_or_else(|| anyhow::anyhow!("artist missing"))?
                     .id)
             };
@@ -1291,7 +1291,7 @@ mod tests {
                 library_id: None,
                 sort_by: Some(vec!["name".to_string()]),
                 sort_order: Some("descending".to_string()),
-                rating_filter: crate::db::ratings::RatingFilter::default(),
+                rating_filter: lyra_db::ratings::RatingFilter::default(),
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
@@ -1311,18 +1311,18 @@ mod tests {
 
         let (user_db_id, artist_public_id) = {
             let mut db = STATE.db.write().await;
-            crate::db::roles::ensure_builtin_roles(&mut db)?;
-            let user_db_id = crate::db::users::create(
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
+            let user_db_id = lyra_db::users::create(
                 &mut db,
-                &crate::db::fixtures::test_user("artist-mix-viewer")?,
+                &lyra_db::fixtures::test_user("artist-mix-viewer")?,
             )?;
             let visible_library = insert_library(&mut db, "Visible Mix", "/tmp/lyra-visible-mix")?;
             let hidden_library = insert_library(&mut db, "Hidden Mix", "/tmp/lyra-hidden-mix")?;
-            crate::db::libraries::grant_access(
+            lyra_db::libraries::grant_access(
                 &mut *db,
                 user_db_id,
                 visible_library,
-                crate::db::libraries::AccessKind::ReadWrite,
+                lyra_db::libraries::AccessKind::ReadWrite,
             )?;
 
             let artist = insert_artist(&mut db, "Release Credit Mix Artist")?;
@@ -1341,9 +1341,9 @@ mod tests {
                 let track = insert_track(&mut db, &format!("Hidden Track {index:02}"))?;
                 connect(&mut db, hidden_release, track)?;
             }
-            assert_eq!(crate::db::releases::get_by_artist(&db, artist)?.len(), 2);
+            assert_eq!(lyra_db::releases::get_by_artist(&db, artist)?.len(), 2);
 
-            let artist_public_id = crate::db::artists::get_by_id(&db, artist)?
+            let artist_public_id = lyra_db::artists::get_by_id(&db, artist)?
                 .expect("artist exists")
                 .id;
             (user_db_id, artist_public_id)
@@ -1396,7 +1396,7 @@ mod tests {
         let artist_id = {
             let mut db = STATE.db.write().await;
             let artist_db_id = insert_artist(&mut db, "Coverless Artist")?;
-            crate::db::artists::get_by_id(&db, artist_db_id)?
+            lyra_db::artists::get_by_id(&db, artist_db_id)?
                 .expect("artist should exist")
                 .id
         };
@@ -1431,18 +1431,18 @@ mod benches {
     };
 
     use super::*;
-    use crate::db::fixtures::{
+    use crate::services::catalog::artists::ArtistKey;
+    use lyra_db::fixtures::{
         connect,
         insert_artist,
         insert_release,
         insert_track,
         test_user,
     };
-    use crate::db::test_db::{
+    use lyra_db::test_db::{
         connect_artist,
         new_test_db,
     };
-    use crate::services::catalog::artists::ArtistKey;
 
     struct ArtistSortBench {
         db: DbAny,
@@ -1450,29 +1450,29 @@ mod benches {
     }
 
     fn update_track_duration(db: &mut DbAny, track_db_id: DbId, duration_ms: u64) {
-        let mut track = crate::db::tracks::get_by_id(db, track_db_id)
+        let mut track = lyra_db::tracks::get_by_id(db, track_db_id)
             .unwrap()
             .expect("track exists");
         track.duration_ms = Some(duration_ms);
-        crate::db::tracks::update(db, &track).unwrap();
+        lyra_db::tracks::update(db, &track).unwrap();
     }
 
     fn record_listen(db: &mut DbAny, user_db_id: DbId, track_db_id: DbId, listened_at_ms: u64) {
-        let track = crate::db::tracks::get_by_id(db, track_db_id)
+        let track = lyra_db::tracks::get_by_id(db, track_db_id)
             .unwrap()
             .expect("track exists");
-        let listen = crate::db::Listen {
+        let listen = lyra_db::Listen {
             db_id: None,
             id: nanoid!(),
             track_public_id: track.id,
             position_ms: 0,
             duration_ms: Some(180_000),
             activity_ms: 180_000,
-            state: crate::db::PlaybackState::Completed,
+            state: lyra_db::PlaybackState::Completed,
             listened_at_ms,
             created_at_ms: listened_at_ms,
         };
-        let session = crate::db::PlaybackSession {
+        let session = lyra_db::PlaybackSession {
             db_id: None,
             id: nanoid!(),
             client_name: None,
@@ -1480,19 +1480,13 @@ mod benches {
             duration_ms: Some(180_000),
             activity_ms: Some(180_000),
             last_position_ms: None,
-            state: crate::db::PlaybackState::Completed,
+            state: lyra_db::PlaybackState::Completed,
             listen_recorded: Some(true),
             updated_at_ms: listened_at_ms,
             created_at_ms: listened_at_ms,
         };
-        crate::db::listens::create_and_mark_recorded(
-            db,
-            &listen,
-            track_db_id,
-            user_db_id,
-            &session,
-        )
-        .unwrap();
+        lyra_db::listens::create_and_mark_recorded(db, &listen, track_db_id, user_db_id, &session)
+            .unwrap();
     }
 
     fn seed_artist_sort_bench(
@@ -1503,7 +1497,7 @@ mod benches {
     ) -> ArtistSortBench {
         let mut db = new_test_db().unwrap();
         let user_db_id =
-            crate::db::users::create(&mut db, &test_user("artist-sort-bench").unwrap()).unwrap();
+            lyra_db::users::create(&mut db, &test_user("artist-sort-bench").unwrap()).unwrap();
         for artist_idx in 0..artist_count {
             let artist_db_id = insert_artist(&mut db, &format!("Artist {artist_idx:04}")).unwrap();
             for release_idx in 0..releases_per_artist {
@@ -1546,7 +1540,7 @@ mod benches {
         let principal = Principal::for_user(
             &db,
             user_db_id,
-            vec![crate::db::Permission::Admin],
+            vec![lyra_db::Permission::Admin],
             Default::default(),
         );
         let viewer = catalog::Viewer::user(&db, principal).unwrap();

@@ -99,7 +99,7 @@ struct PlaybackSessionReportRequest {
     event: Option<playbacks::PlaybackEvent>,
     position_ms: Option<u64>,
     duration_ms: Option<u64>,
-    state: Option<crate::db::PlaybackState>,
+    state: Option<lyra_db::PlaybackState>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -517,7 +517,7 @@ where
 fn playback_mutation(
     position_ms: Option<u64>,
     duration_ms: Option<u64>,
-    state: Option<crate::db::PlaybackState>,
+    state: Option<lyra_db::PlaybackState>,
 ) -> playbacks::PlaybackMutation {
     playbacks::PlaybackMutation {
         position_ms,
@@ -543,7 +543,7 @@ fn remote_action_string(action: &RemoteAction) -> String {
         .unwrap_or_default()
 }
 
-fn playback_state_string(state: crate::db::PlaybackState) -> String {
+fn playback_state_string(state: lyra_db::PlaybackState) -> String {
     serde_json::to_value(state)
         .ok()
         .and_then(|value| value.as_str().map(String::from))
@@ -795,7 +795,7 @@ fn playback_request_fields<const N: usize>(leading: [FieldDescriptor; N]) -> Vec
         },
         FieldDescriptor {
             name: "state",
-            ty: Option::<crate::db::PlaybackState>::luau_type(),
+            ty: Option::<lyra_db::PlaybackState>::luau_type(),
             description: None,
         },
     ]);

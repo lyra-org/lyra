@@ -26,8 +26,6 @@ use harmony_luau::{
     TypeAliasDescriptor,
 };
 
-use crate::db::DbAsync;
-use crate::db::ResolveId;
 use crate::plugins::args;
 #[cfg(feature = "docgen")]
 use crate::services::entities::{
@@ -65,6 +63,8 @@ use crate::{
         },
     },
 };
+use lyra_db::DbAsync;
+use lyra_db::ResolveId;
 
 struct EntitiesModule;
 
@@ -213,8 +213,9 @@ fn get_type_callback(
             .to_db_id(&db)
             .map_err(crate::plugins::runtime_error)?;
         let entity_type = match db_id {
-            Some(id) => crate::db::entities::get_element_type(&db, id)
-                .map_err(crate::plugins::runtime_error),
+            Some(id) => {
+                lyra_db::entities::get_element_type(&db, id).map_err(crate::plugins::runtime_error)
+            }
             None => Ok(None),
         }?;
 

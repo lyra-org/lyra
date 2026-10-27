@@ -58,7 +58,6 @@ use std::path::{
 };
 
 use crate::{
-    db,
     routes::AppError,
     services::STATE,
     services::{
@@ -97,7 +96,7 @@ pub struct ValidatedTrackSource {
     pub start_ms: Option<u64>,
     pub end_ms: Option<u64>,
     /// The source file's format and audio properties, as scanned.
-    pub format: crate::db::track_sources::SourceFormat,
+    pub format: lyra_db::track_sources::SourceFormat,
 }
 
 #[derive(Clone, Default)]
@@ -211,7 +210,7 @@ pub(crate) fn authorize_track_purpose(
     match purpose {
         MediaTokenPurpose::Stream | MediaTokenPurpose::HlsPlaylist => Ok(()),
         MediaTokenPurpose::Download => {
-            require_permission(principal, crate::db::Permission::Download).map_err(Into::into)
+            require_permission(principal, lyra_db::Permission::Download).map_err(Into::into)
         }
     }
 }
@@ -273,7 +272,8 @@ pub(super) async fn require_session_access(
             })?)
         }
     };
-    let track_db_id = db::lookup::find_node_id_by_id(db, track_public_id)?.ok_or_else(not_found)?;
+    let track_db_id =
+        lyra_db::lookup::find_node_id_by_id(db, track_public_id)?.ok_or_else(not_found)?;
     crate::services::auth::access::require_entity_accessible(
         db,
         &principal,
@@ -338,7 +338,7 @@ pub(crate) async fn validate_and_get_track_source(
 ) -> Result<ValidatedTrackSource, AppError> {
     let db = &*STATE.db.read().await;
     let not_found = || AppError::not_found(format!("Track not found: {track_id}"));
-    let track_db_id = db::lookup::find_node_id_by_id(db, track_id)?.ok_or_else(not_found)?;
+    let track_db_id = lyra_db::lookup::find_node_id_by_id(db, track_id)?.ok_or_else(not_found)?;
     match access {
         TrackAccess::Principal(principal) => {
             principal.require(db)?;
@@ -363,13 +363,13 @@ pub(crate) async fn validate_and_get_track_source(
         }
         TrackAccess::PublicPluginRoute(_) => {}
     }
-    let track = crate::db::tracks::get_by_id(db, track_db_id)?.ok_or_else(not_found)?;
+    let track = lyra_db::tracks::get_by_id(db, track_db_id)?.ok_or_else(not_found)?;
 
     let source = playback_source_service::resolve(db, track_db_id, false)?.ok_or_else(|| {
         AppError::not_found(format!("Playable source not found for track: {track_id}"))
     })?;
     let source_public_id =
-        crate::db::lookup::find_id_by_db_id(db, source.source_id)?.ok_or_else(|| {
+        lyra_db::lookup::find_id_by_db_id(db, source.source_id)?.ok_or_else(|| {
             AppError::not_found(format!(
                 "Playable source has no public id: {}",
                 source.source_id.0
@@ -545,11 +545,6 @@ mod tests {
     };
     use nanoid::nanoid;
 
-    use crate::db::{
-        Permission,
-        User,
-        roles::Role,
-    };
     use crate::{
         plugins::testing::init_library_test_state,
         services::STATE,
@@ -561,6 +556,11 @@ mod tests {
         testing::LibraryFixtureConfig,
     };
     use axum::response::IntoResponse;
+    use lyra_db::{
+        Permission,
+        User,
+        roles::Role,
+    };
 
     async fn initialize_test_runtime() -> anyhow::Result<PathBuf> {
         let test_dir = std::env::temp_dir().join(format!(
@@ -579,8 +579,8 @@ mod tests {
     ) -> anyhow::Result<HeaderMap> {
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::roles::ensure_builtin_roles(&mut db)?;
-            let user_db_id = crate::db::users::create(
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
+            let user_db_id = lyra_db::users::create(
                 &mut db,
                 &User {
                     db_id: None,
@@ -590,10 +590,10 @@ mod tests {
                 },
             )?;
             let role_name = if permissions.is_empty() {
-                crate::db::roles::BUILTIN_USER_ROLE.to_string()
+                lyra_db::roles::BUILTIN_USER_ROLE.to_string()
             } else {
                 let role_name = format!("download-test-{}", nanoid!());
-                crate::db::roles::create(
+                lyra_db::roles::create(
                     &mut db,
                     &Role {
                         db_id: None,
@@ -604,17 +604,17 @@ mod tests {
                 )?;
                 role_name
             };
-            crate::db::roles::ensure_user_has_role(&mut db, user_db_id, &role_name)?;
-            let library_ids = crate::db::libraries::get(&*db)?
+            lyra_db::roles::ensure_user_has_role(&mut db, user_db_id, &role_name)?;
+            let library_ids = lyra_db::libraries::get(&*db)?
                 .into_iter()
                 .filter_map(|library| library.db_id)
                 .collect::<Vec<_>>();
             for library_db_id in library_ids {
-                crate::db::libraries::grant_access(
+                lyra_db::libraries::grant_access(
                     &mut db,
                     user_db_id,
                     library_db_id,
-                    crate::db::libraries::AccessKind::ReadWrite,
+                    lyra_db::libraries::AccessKind::ReadWrite,
                 )?;
             }
             user_db_id
@@ -725,12 +725,12 @@ mod tests {
 
         let recycled_track_id = {
             let mut db = STATE.db.write().await;
-            let track_db_id = crate::db::lookup::find_node_id_by_id(&*db, &track_id)?
+            let track_db_id = lyra_db::lookup::find_node_id_by_id(&*db, &track_id)?
                 .ok_or_else(|| anyhow::anyhow!("track missing"))?;
             db.exec_mut(agdb::QueryBuilder::remove().ids(track_db_id).query())?;
-            let recycled = crate::db::fixtures::insert_track(&mut db, "Recycled")?;
+            let recycled = lyra_db::fixtures::insert_track(&mut db, "Recycled")?;
             assert_eq!(recycled, track_db_id, "agdb must reuse the track DbId");
-            crate::db::lookup::find_id_by_db_id(&*db, recycled)?
+            lyra_db::lookup::find_id_by_db_id(&*db, recycled)?
                 .ok_or_else(|| anyhow::anyhow!("recycled track has no public id"))?
         };
 
@@ -757,7 +757,7 @@ mod tests {
         {
             let mut db = STATE.db.write().await;
             let user_db_id = principal.require(&*db)?;
-            db.transaction_mut(|t| crate::db::users::delete_user(t, user_db_id))?;
+            db.transaction_mut(|t| lyra_db::users::delete_user(t, user_db_id))?;
         }
 
         let status = super::validate_and_get_track_source(
@@ -832,7 +832,7 @@ mod tests {
             duration_ms: Some(20_000),
             start_ms: None,
             end_ms: None,
-            format: crate::db::track_sources::SourceFormat {
+            format: lyra_db::track_sources::SourceFormat {
                 sample_rate_hz: Some(96_000),
                 channel_count: Some(2),
                 bitrate_bps: Some(900_000),
@@ -860,7 +860,7 @@ mod tests {
             duration_ms: Some(20_000),
             start_ms: Some(10_000),
             end_ms: Some(30_000),
-            format: crate::db::track_sources::SourceFormat {
+            format: lyra_db::track_sources::SourceFormat {
                 sample_rate_hz: Some(96_000),
                 channel_count: Some(2),
                 bitrate_bps: Some(900_000),
@@ -888,7 +888,7 @@ mod tests {
             duration_ms: Some(20_000),
             start_ms: Some(10_000),
             end_ms: Some(30_000),
-            format: crate::db::track_sources::SourceFormat {
+            format: lyra_db::track_sources::SourceFormat {
                 sample_rate_hz: Some(96_000),
                 channel_count: Some(2),
                 bitrate_bps: Some(900_000),
@@ -930,7 +930,7 @@ mod tests {
             .track_ids
             .first()
             .ok_or_else(|| anyhow::anyhow!("prepare_fixture produced no track ids"))?;
-        crate::db::lookup::find_id_by_db_id(&*STATE.db.read().await, agdb::DbId(track_db_id))?
+        lyra_db::lookup::find_id_by_db_id(&*STATE.db.read().await, agdb::DbId(track_db_id))?
             .ok_or_else(|| anyhow::anyhow!("fixture track has no public id"))
     }
 
@@ -1098,7 +1098,7 @@ mod tests {
         {
             let mut db = STATE.db.write().await;
             let user_db_id = principal.require(&*db)?;
-            db.transaction_mut(|t| crate::db::users::delete_user(t, user_db_id))?;
+            db.transaction_mut(|t| lyra_db::users::delete_user(t, user_db_id))?;
         }
 
         let (status, _, _) = send(Method::GET, format!("/{track_id}?{query}")).await?;
@@ -1177,10 +1177,10 @@ mod tests {
         );
 
         let user = user_db_id(&headers).await?;
-        crate::db::roles::ensure_user_has_role(
+        lyra_db::roles::ensure_user_has_role(
             &mut *STATE.db.write().await,
             user,
-            crate::db::roles::BUILTIN_USER_ROLE,
+            lyra_db::roles::BUILTIN_USER_ROLE,
         )?;
         assert_eq!(
             send_download(format!("/{track_id}?{query}")).await?,
@@ -1202,12 +1202,12 @@ mod tests {
         let user = user_db_id(&headers).await?;
         {
             let mut db = STATE.db.write().await;
-            let libraries = crate::db::libraries::get(&*db)?
+            let libraries = lyra_db::libraries::get(&*db)?
                 .into_iter()
                 .filter_map(|library| library.db_id)
                 .collect::<Vec<_>>();
             for library in libraries {
-                crate::db::libraries::revoke_access(&mut *db, user, library)?;
+                lyra_db::libraries::revoke_access(&mut *db, user, library)?;
             }
         }
 

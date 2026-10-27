@@ -16,7 +16,7 @@ use lyra_metadata::{
     RawTrackTags,
 };
 
-use crate::db::metadata::mapping_config::{
+use lyra_db::metadata::mapping_config::{
     self,
     FieldName,
     MappingRule,
@@ -287,7 +287,7 @@ mod tests {
 
     #[test]
     fn update_config_rejects_unknown_source_key() -> anyhow::Result<()> {
-        let mut db = crate::db::test_db::new_test_db()?;
+        let mut db = lyra_db::test_db::new_test_db()?;
         ensure_config(&mut db)?;
         let bogus = MetadataMappingConfig {
             rules: vec![MappingRule {

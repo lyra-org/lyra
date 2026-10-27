@@ -42,7 +42,7 @@ async fn require_plugin_track_access(
         track_db_id,
         not_found,
     )?;
-    let track_id = crate::db::lookup::find_id_by_db_id(&*db, track_db_id)?.ok_or_else(not_found)?;
+    let track_id = lyra_db::lookup::find_id_by_db_id(&*db, track_db_id)?.ok_or_else(not_found)?;
     Ok((track_id, TrackAccess::Principal(principal.clone())))
 }
 
@@ -55,7 +55,7 @@ async fn public_plugin_track_access(
     track_db_id: agdb::DbId,
 ) -> Result<(String, TrackAccess), AppError> {
     let db = crate::services::STATE.db.read().await;
-    let track_id = crate::db::lookup::find_id_by_db_id(&*db, track_db_id)?
+    let track_id = lyra_db::lookup::find_id_by_db_id(&*db, track_db_id)?
         .ok_or_else(|| AppError::not_found(format!("Track not found: {}", track_db_id.0)))?;
     let caller = match principal {
         Some(principal) => Caller::User(principal.user_public_id.clone()),
@@ -352,7 +352,6 @@ mod tests {
         public_plugin_track_access,
         require_plugin_track_access,
     };
-    use crate::db::Permission;
     use crate::plugins::executor::{
         ApiHandlerResponse,
         ApiResponseKind,
@@ -366,6 +365,7 @@ mod tests {
         },
         services::testing::runtime_test_lock,
     };
+    use lyra_db::Permission;
 
     async fn status_of(
         principal: Option<&Principal>,
@@ -399,18 +399,18 @@ mod tests {
 
         let (user_db_id, user_public_id, library_public_id, track_db_id) = {
             let mut db = STATE.db.write().await;
-            let user = crate::db::fixtures::test_user("plugin-bridge-user")?;
+            let user = lyra_db::fixtures::test_user("plugin-bridge-user")?;
             let user_public_id = user.id.clone();
-            let user_db_id = crate::db::users::create(&mut db, &user)?;
-            let library_db_id = crate::db::test_db::insert_library(
+            let user_db_id = lyra_db::users::create(&mut db, &user)?;
+            let library_db_id = lyra_db::test_db::insert_library(
                 &mut db,
                 "Plugin Bridge Lib",
                 "/tmp/plugin-bridge",
             )?;
-            let library_public_id = crate::db::lookup::find_id_by_db_id(&*db, library_db_id)?
+            let library_public_id = lyra_db::lookup::find_id_by_db_id(&*db, library_db_id)?
                 .context("inserted library has public id")?;
-            let track_db_id = crate::db::fixtures::insert_track(&mut db, "Plugin Bridge Track")?;
-            crate::db::fixtures::connect(&mut db, library_db_id, track_db_id)?;
+            let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Plugin Bridge Track")?;
+            lyra_db::fixtures::connect(&mut db, library_db_id, track_db_id)?;
             (user_db_id, user_public_id, library_public_id, track_db_id)
         };
 
@@ -495,11 +495,11 @@ mod tests {
 
         let (track_db_id, track_public_id, release_db_id) = {
             let mut db = STATE.db.write().await;
-            let track_db_id = crate::db::fixtures::insert_track(&mut db, "Public Stream Track")?;
-            let track_public_id = crate::db::lookup::find_id_by_db_id(&*db, track_db_id)?
+            let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Public Stream Track")?;
+            let track_public_id = lyra_db::lookup::find_id_by_db_id(&*db, track_db_id)?
                 .context("inserted track has public id")?;
             let release_db_id =
-                crate::db::fixtures::insert_release(&mut db, "Public Stream Release")?;
+                lyra_db::fixtures::insert_release(&mut db, "Public Stream Release")?;
             (track_db_id, track_public_id, release_db_id)
         };
 
@@ -628,21 +628,21 @@ mod tests {
         std::fs::create_dir_all(&hidden_dir)?;
         let principal = {
             let mut db = STATE.db.write().await;
-            let library_db_id = crate::db::test_db::insert_library(
+            let library_db_id = lyra_db::test_db::insert_library(
                 &mut db,
                 "File Bridge Lib",
                 library_dir.to_str().context("library dir is utf-8")?,
             )?;
-            crate::db::test_db::insert_library(
+            lyra_db::test_db::insert_library(
                 &mut db,
                 "File Bridge Hidden",
                 hidden_dir.to_str().context("hidden dir is utf-8")?,
             )?;
-            let library_public_id = crate::db::lookup::find_id_by_db_id(&*db, library_db_id)?
+            let library_public_id = lyra_db::lookup::find_id_by_db_id(&*db, library_db_id)?
                 .context("inserted library has public id")?;
-            let user = crate::db::fixtures::test_user("file-bridge-user")?;
+            let user = lyra_db::fixtures::test_user("file-bridge-user")?;
             let user_public_id = user.id.clone();
-            let user_db_id = crate::db::users::create(&mut db, &user)?;
+            let user_db_id = lyra_db::users::create(&mut db, &user)?;
             Principal::from_parts(
                 user_db_id,
                 user_public_id,

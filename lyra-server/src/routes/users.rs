@@ -50,11 +50,6 @@ use serde::{
     Serialize,
 };
 
-use crate::db::{
-    Permission,
-    User,
-    users::DEFAULT_USERNAME,
-};
 use crate::{
     routes::{
         AppError,
@@ -82,6 +77,11 @@ use crate::{
             registry as remote_registry,
         },
     },
+};
+use lyra_db::{
+    Permission,
+    User,
+    users::DEFAULT_USERNAME,
 };
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -330,18 +330,18 @@ async fn create_user(
 
     let mut db = STATE.db.write().await;
 
-    let has_admin = crate::db::roles::has_non_default_admin(&db)?;
+    let has_admin = lyra_db::roles::has_non_default_admin(&db)?;
 
     let role_name = if has_admin {
         let principal =
             principal.ok_or_else(|| AppError::unauthorized("missing bearer credential"))?;
         require_permission(&principal, Permission::ManageUsers)?;
-        crate::db::roles::BUILTIN_USER_ROLE
+        lyra_db::roles::BUILTIN_USER_ROLE
     } else {
-        crate::db::roles::BUILTIN_ADMIN_ROLE
+        lyra_db::roles::BUILTIN_ADMIN_ROLE
     };
 
-    if crate::db::users::get_by_username(db.deref(), &normalized_username)?.is_some() {
+    if lyra_db::users::get_by_username(db.deref(), &normalized_username)?.is_some() {
         return Err(AppError::bad_request(format!(
             "user {} already exists",
             user.username,
@@ -360,9 +360,9 @@ async fn create_user(
         role: Some(role_name.to_string()),
     };
 
-    let user_db_id = crate::db::users::create(db.deref_mut(), &user)?;
+    let user_db_id = lyra_db::users::create(db.deref_mut(), &user)?;
 
-    crate::db::roles::ensure_user_has_role(&mut db, user_db_id, role_name)?;
+    lyra_db::roles::ensure_user_has_role(&mut db, user_db_id, role_name)?;
 
     Ok((StatusCode::CREATED, Json(response)))
 }
@@ -371,17 +371,13 @@ async fn list_users(headers: HeaderMap) -> Result<Json<Vec<PublicUser>>, AppErro
     let _principal = require_manage_users(&headers).await?;
 
     let db = STATE.db.read().await;
-    let users = crate::db::users::get(&db)?;
+    let users = lyra_db::users::get(&db)?;
     let public_users = users
         .into_iter()
         .map(|user| {
             let role_name = user
                 .db_id
-                .and_then(|db_id| {
-                    crate::db::roles::get_role_for_user(&db, db_id)
-                        .ok()
-                        .flatten()
-                })
+                .and_then(|db_id| lyra_db::roles::get_role_for_user(&db, db_id).ok().flatten())
                 .map(|role| role.name);
             PublicUser {
                 id: user.id,
@@ -401,7 +397,7 @@ async fn delete_user(
     let principal = require_manage_users(&headers).await?;
 
     let mut db = STATE.db.write().await;
-    let user = crate::db::users::get_by_public_id(&db, &user_id)?
+    let user = lyra_db::users::get_by_public_id(&db, &user_id)?
         .ok_or_else(|| AppError::not_found(format!("user not found: {user_id}")))?;
     let user_db_id = user
         .db_id
@@ -411,18 +407,18 @@ async fn delete_user(
         return Err(AppError::bad_request("cannot delete yourself"));
     }
 
-    if crate::db::roles::has_admin_role(&db, user_db_id)? {
-        if !crate::db::roles::has_permission(&principal.permissions, Permission::Admin) {
+    if lyra_db::roles::has_admin_role(&db, user_db_id)? {
+        if !lyra_db::roles::has_permission(&principal.permissions, Permission::Admin) {
             return Err(AppError::forbidden("cannot delete an admin user"));
         }
-        if crate::db::roles::count_admins(&db)? <= 1 {
+        if lyra_db::roles::count_admins(&db)? <= 1 {
             return Err(AppError::bad_request("cannot delete the last admin"));
         }
     }
 
     let revoked_api_key_ids = db.transaction_mut(|t| -> anyhow::Result<Vec<agdb::DbId>> {
-        let revoked = crate::db::api_keys::delete_all_for_user(t, user_db_id)?;
-        crate::db::users::delete_user(t, user_db_id)?;
+        let revoked = lyra_db::api_keys::delete_all_for_user(t, user_db_id)?;
+        lyra_db::users::delete_user(t, user_db_id)?;
         Ok(revoked)
     })?;
     crate::services::playback_sessions::clear_playback_scopes_for_user(&user.id);
@@ -443,22 +439,22 @@ async fn update_password(
     let password_hash = hash_password(&body.password)?;
 
     let mut db = STATE.db.write().await;
-    let user = crate::db::users::get_by_public_id(&db, &user_id)?
+    let user = lyra_db::users::get_by_public_id(&db, &user_id)?
         .ok_or_else(|| AppError::not_found(format!("user not found: {user_id}")))?;
     let user_db_id = user
         .db_id
         .ok_or_else(|| AppError::not_found(format!("user has no db_id: {user_id}")))?;
 
-    if crate::db::roles::has_admin_role(&db, user_db_id)?
-        && !crate::db::roles::has_permission(&principal.permissions, Permission::Admin)
+    if lyra_db::roles::has_admin_role(&db, user_db_id)?
+        && !lyra_db::roles::has_permission(&principal.permissions, Permission::Admin)
     {
         return Err(AppError::forbidden("cannot reset an admin user's password"));
     }
 
     let revoked_api_key_ids = db.transaction_mut(|t| -> anyhow::Result<Vec<agdb::DbId>> {
-        crate::db::users::update_user_password(t, user_db_id, &password_hash)?;
-        crate::db::users::revoke_all_sessions_for_user(t, user_db_id)?;
-        let revoked = crate::db::api_keys::delete_all_for_user(t, user_db_id)?;
+        lyra_db::users::update_user_password(t, user_db_id, &password_hash)?;
+        lyra_db::users::revoke_all_sessions_for_user(t, user_db_id)?;
+        let revoked = lyra_db::api_keys::delete_all_for_user(t, user_db_id)?;
         Ok(revoked)
     })?;
     drop(db);
@@ -474,13 +470,13 @@ async fn update_role(
     let principal = require_manage_roles(&headers).await?;
 
     let mut db = STATE.db.write().await;
-    let user = crate::db::users::get_by_public_id(&db, &user_id)?
+    let user = lyra_db::users::get_by_public_id(&db, &user_id)?
         .ok_or_else(|| AppError::not_found(format!("user not found: {user_id}")))?;
     let user_db_id = user
         .db_id
         .ok_or_else(|| AppError::not_found(format!("user has no db_id: {user_id}")))?;
 
-    let target_role = crate::db::roles::get_by_name(&db, &body.role)?
+    let target_role = lyra_db::roles::get_by_name(&db, &body.role)?
         .ok_or_else(|| AppError::not_found(format!("role not found: {}", body.role)))?;
     let target_role_db_id = target_role
         .db_id
@@ -489,7 +485,7 @@ async fn update_role(
     require_grantable_permissions(&principal, &target_role.permissions)?;
 
     let target_has_admin = target_role.permissions.contains(&Permission::Admin);
-    let current_is_admin = crate::db::roles::has_admin_role(&db, user_db_id)?;
+    let current_is_admin = lyra_db::roles::has_admin_role(&db, user_db_id)?;
 
     if current_is_admin && !target_has_admin {
         if user.username == DEFAULT_USERNAME {
@@ -498,12 +494,12 @@ async fn update_role(
         if user_db_id == principal.require(&db)? {
             return Err(AppError::bad_request("cannot demote yourself"));
         }
-        if crate::db::roles::count_admins(&db)? <= 1 {
+        if lyra_db::roles::count_admins(&db)? <= 1 {
             return Err(AppError::bad_request("cannot demote the last admin"));
         }
     }
 
-    crate::db::roles::assign_role_to_user(&mut db, user_db_id, target_role_db_id)?;
+    lyra_db::roles::assign_role_to_user(&mut db, user_db_id, target_role_db_id)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -548,7 +544,7 @@ async fn update_me(
         let user_db_id = principal.require(&db)?;
         let revoked_api_key_ids = db
             .transaction_mut(|t| -> anyhow::Result<Vec<agdb::DbId>> {
-                let user = crate::db::users::get_by_id(t, user_db_id)?
+                let user = lyra_db::users::get_by_id(t, user_db_id)?
                     .ok_or(PasswordRotationError::UserNotFound)?;
 
                 let parsed_hash = PasswordHash::new(&user.password)
@@ -560,13 +556,9 @@ async fn update_me(
                     return Err(PasswordRotationError::IncorrectCurrentPassword.into());
                 }
 
-                crate::db::users::update_user_password(t, user_db_id, &new_hash)?;
-                crate::db::users::revoke_sessions_for_user_except(
-                    t,
-                    user_db_id,
-                    &session_public_id,
-                )?;
-                let revoked = crate::db::api_keys::delete_all_for_user(t, user_db_id)?;
+                lyra_db::users::update_user_password(t, user_db_id, &new_hash)?;
+                lyra_db::users::revoke_sessions_for_user_except(t, user_db_id, &session_public_id)?;
+                let revoked = lyra_db::api_keys::delete_all_for_user(t, user_db_id)?;
                 Ok(revoked)
             })
             .map_err(map_password_rotation_error)?;
@@ -596,7 +588,7 @@ async fn get_me(
 
     let db = STATE.db.read().await;
     let user_db_id = principal.require(&db)?;
-    let user = crate::db::users::get_by_id(&db, user_db_id)?
+    let user = lyra_db::users::get_by_id(&db, user_db_id)?
         .ok_or_else(|| AppError::not_found("user not found"))?;
 
     Ok(Json(MeResponse {
@@ -913,7 +905,7 @@ mod tests {
             password: "unused".to_string(),
         };
         let public_id = user.id.clone();
-        let db_id = crate::db::users::create(&mut db, &user)?;
+        let db_id = lyra_db::users::create(&mut db, &user)?;
         Ok((public_id, db_id))
     }
 
@@ -948,28 +940,28 @@ mod tests {
     ) -> anyhow::Result<HeaderMap> {
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::roles::ensure_builtin_roles(&mut db)?;
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
             let user = User {
                 db_id: None,
                 id: nanoid!(),
                 username: username.to_string(),
                 password: "unused".to_string(),
             };
-            let user_db_id = crate::db::users::create(&mut db, &user)?;
-            let assigned_role_name = if crate::db::roles::is_builtin_role_name(role_name) {
+            let user_db_id = lyra_db::users::create(&mut db, &user)?;
+            let assigned_role_name = if lyra_db::roles::is_builtin_role_name(role_name) {
                 role_name.to_string()
             } else {
-                let role = crate::db::roles::Role {
+                let role = lyra_db::roles::Role {
                     db_id: None,
                     id: nanoid!(),
                     name: role_name.to_string(),
                     permissions,
                 };
-                crate::db::roles::create(&mut db, &role)?;
+                lyra_db::roles::create(&mut db, &role)?;
                 role_name.to_string()
             };
 
-            crate::db::roles::ensure_user_has_role(&mut db, user_db_id, &assigned_role_name)?;
+            lyra_db::roles::ensure_user_has_role(&mut db, user_db_id, &assigned_role_name)?;
             user_db_id
         };
 
@@ -988,8 +980,8 @@ mod tests {
     ) -> anyhow::Result<(bool, StatusCode)> {
         let (caller_db_id, target_id) = {
             let mut db = STATE.db.write().await;
-            crate::db::roles::ensure_builtin_roles(&mut db)?;
-            let caller_db_id = crate::db::users::create(
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
+            let caller_db_id = lyra_db::users::create(
                 &mut db,
                 &User {
                     db_id: None,
@@ -999,19 +991,19 @@ mod tests {
                         .map_err(|err| anyhow::anyhow!("hash_password failed: {err:?}"))?,
                 },
             )?;
-            crate::db::roles::ensure_user_has_role(
+            lyra_db::roles::ensure_user_has_role(
                 &mut db,
                 caller_db_id,
-                crate::db::roles::BUILTIN_ADMIN_ROLE,
+                lyra_db::roles::BUILTIN_ADMIN_ROLE,
             )?;
-            let target = crate::db::fixtures::test_user(&format!("target-{}", nanoid!()))?;
-            crate::db::users::create(&mut db, &target)?;
+            let target = lyra_db::fixtures::test_user(&format!("target-{}", nanoid!()))?;
+            lyra_db::users::create(&mut db, &target)?;
             (caller_db_id, target.id)
         };
         let headers = create_headers_for_user(caller_db_id).await?;
         Ok(
             crate::services::testing::run_with_recycle_at(gap, request(headers, target_id), |db| {
-                db.transaction_mut(|t| crate::db::users::delete_user(t, caller_db_id))
+                db.transaction_mut(|t| lyra_db::users::delete_user(t, caller_db_id))
                     .expect("delete caller");
             })
             .await,
@@ -1210,7 +1202,7 @@ mod tests {
             headers,
             Path(target_user_id),
             Json(UpdateRoleRequest {
-                role: crate::db::roles::BUILTIN_ADMIN_ROLE.to_string(),
+                role: lyra_db::roles::BUILTIN_ADMIN_ROLE.to_string(),
             }),
         )
         .await
@@ -1233,9 +1225,9 @@ mod tests {
 
         {
             let mut db = STATE.db.write().await;
-            crate::db::roles::create(
+            lyra_db::roles::create(
                 &mut db,
-                &crate::db::roles::Role {
+                &lyra_db::roles::Role {
                     db_id: None,
                     id: nanoid!(),
                     name: "escalated".to_string(),
@@ -1338,15 +1330,15 @@ mod tests {
             .map_err(|err| anyhow::anyhow!("hash_password failed: {err:?}"))?;
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::roles::ensure_builtin_roles(&mut db)?;
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
             let user = User {
                 db_id: None,
                 id: nanoid!(),
                 username: "rotate-user".to_string(),
                 password: initial_password_hash,
             };
-            let user_db_id = crate::db::users::create(&mut db, &user)?;
-            crate::db::roles::ensure_user_has_role(&mut db, user_db_id, "admin")?;
+            let user_db_id = lyra_db::users::create(&mut db, &user)?;
+            lyra_db::roles::ensure_user_has_role(&mut db, user_db_id, "admin")?;
             user_db_id
         };
 
@@ -1393,7 +1385,7 @@ mod tests {
         let target_user_id = nanoid!();
         let target_user_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::roles::ensure_builtin_roles(&mut db)?;
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
             let target = User {
                 db_id: None,
                 id: target_user_id.clone(),
@@ -1401,7 +1393,7 @@ mod tests {
                 password: hash_password("original-password-abc")
                     .map_err(|err| anyhow::anyhow!("hash_password failed: {err:?}"))?,
             };
-            crate::db::users::create(&mut db, &target)?
+            lyra_db::users::create(&mut db, &target)?
         };
         let target_user_principal =
             crate::services::testing::user_principal(target_user_db_id).await?;
@@ -1578,7 +1570,7 @@ mod tests {
         let password = "session-meta-pass";
         {
             let mut db = STATE.db.write().await;
-            crate::db::roles::ensure_builtin_roles(&mut db)?;
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
             let user = User {
                 db_id: None,
                 id: nanoid!(),
@@ -1586,11 +1578,11 @@ mod tests {
                 password: hash_password(password)
                     .map_err(|err| anyhow::anyhow!("hash_password failed: {err:?}"))?,
             };
-            let user_db_id = crate::db::users::create(&mut db, &user)?;
-            crate::db::roles::ensure_user_has_role(
+            let user_db_id = lyra_db::users::create(&mut db, &user)?;
+            lyra_db::roles::ensure_user_has_role(
                 &mut db,
                 user_db_id,
-                crate::db::roles::BUILTIN_USER_ROLE,
+                lyra_db::roles::BUILTIN_USER_ROLE,
             )?;
         };
 
@@ -1613,7 +1605,7 @@ mod tests {
 
         let db = STATE.db.read().await;
         let (_, session, _) =
-            crate::db::users::find_by_session_token_hash(&db, &hash_secret(&login.token))?
+            lyra_db::users::find_by_session_token_hash(&db, &hash_secret(&login.token))?
                 .ok_or_else(|| anyhow::anyhow!("session must exist after login"))?;
 
         assert_eq!(
@@ -1637,7 +1629,7 @@ mod tests {
         let password = "bad-client-name-pass";
         {
             let mut db = STATE.db.write().await;
-            crate::db::roles::ensure_builtin_roles(&mut db)?;
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
             let user = User {
                 db_id: None,
                 id: nanoid!(),
@@ -1645,11 +1637,11 @@ mod tests {
                 password: hash_password(password)
                     .map_err(|err| anyhow::anyhow!("hash_password failed: {err:?}"))?,
             };
-            let user_db_id = crate::db::users::create(&mut db, &user)?;
-            crate::db::roles::ensure_user_has_role(
+            let user_db_id = lyra_db::users::create(&mut db, &user)?;
+            lyra_db::roles::ensure_user_has_role(
                 &mut db,
                 user_db_id,
-                crate::db::roles::BUILTIN_USER_ROLE,
+                lyra_db::roles::BUILTIN_USER_ROLE,
             )?;
         };
 

@@ -13,7 +13,7 @@ use std::{
 
 use agdb::DbId;
 
-use crate::db::{
+use lyra_db::{
     EvictedPlayback,
     PlaybackSession,
 };
@@ -182,11 +182,11 @@ pub(crate) struct BoundPlayback {
 }
 
 fn resolve_playback_by_id_and_public_id(
-    db: &impl crate::db::DbAccess,
+    db: &impl lyra_db::DbAccess,
     playback_session_id: DbId,
     public_id: Option<&str>,
 ) -> anyhow::Result<Option<BoundPlayback>> {
-    let Some(playback) = crate::db::playback_sessions::get_by_id(db, playback_session_id)? else {
+    let Some(playback) = lyra_db::playback_sessions::get_by_id(db, playback_session_id)? else {
         return Ok(None);
     };
     if let Some(public_id) = public_id
@@ -194,7 +194,7 @@ fn resolve_playback_by_id_and_public_id(
     {
         return Ok(None);
     }
-    let Some(track_db_id) = crate::db::playback_sessions::get_track_id(db, playback_session_id)?
+    let Some(track_db_id) = lyra_db::playback_sessions::get_track_id(db, playback_session_id)?
     else {
         return Ok(None);
     };
@@ -207,7 +207,7 @@ fn resolve_playback_by_id_and_public_id(
 }
 
 pub(crate) fn resolve_current_playback(
-    db: &impl crate::db::DbAccess,
+    db: &impl lyra_db::DbAccess,
     session: &PlaybackSessionScope,
 ) -> anyhow::Result<Option<BoundPlayback>> {
     let Some(playback_session_id) = session.current_playback_session_id else {
@@ -221,7 +221,7 @@ pub(crate) fn resolve_current_playback(
 }
 
 pub(crate) fn resolve_previous_playback(
-    db: &impl crate::db::DbAccess,
+    db: &impl lyra_db::DbAccess,
     session: &PlaybackSessionScope,
 ) -> anyhow::Result<Option<BoundPlayback>> {
     let Some(playback_session_id) = session.previous_playback_session_id else {

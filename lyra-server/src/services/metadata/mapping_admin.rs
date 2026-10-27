@@ -10,7 +10,6 @@ use std::sync::atomic::{
 
 use anyhow::Context;
 
-use crate::db::metadata::mapping_config::MetadataMappingConfig;
 use crate::{
     services::STATE,
     services::{
@@ -27,6 +26,7 @@ use crate::{
         },
     },
 };
+use lyra_db::metadata::mapping_config::MetadataMappingConfig;
 
 /// Caps response size on libraries with widespread breakage.
 const DRY_RUN_SAMPLE_LIMIT: usize = 10;
@@ -67,15 +67,15 @@ fn missing_name(m: MissingRequiredField) -> &'static str {
 pub(crate) async fn dry_run_config(
     candidate: &MetadataMappingConfig,
 ) -> anyhow::Result<DryRunReport> {
-    let entries: Vec<crate::db::Entry> = {
+    let entries: Vec<lyra_db::Entry> = {
         let db = STATE.db.read().await;
-        let libraries = crate::db::libraries::get(&db)?;
+        let libraries = lyra_db::libraries::get(&db)?;
         let mut all = Vec::new();
         for library in libraries {
             let Some(library_db_id) = library.db_id else {
                 continue;
             };
-            let mut library_entries = crate::db::entries::get(&db, library_db_id)?;
+            let mut library_entries = lyra_db::entries::get(&db, library_db_id)?;
             all.append(&mut library_entries);
         }
         all
@@ -84,7 +84,7 @@ pub(crate) async fn dry_run_config(
     let mut report = DryRunReport::default();
 
     for entry in entries {
-        if entry.kind != crate::db::entries::EntryKind::File {
+        if entry.kind != lyra_db::entries::EntryKind::File {
             continue;
         }
         if !matches!(entry.file_kind.as_deref(), Some("audio")) {
@@ -190,7 +190,7 @@ pub(crate) async fn commit_and_reingest(
 
     let libraries = {
         let db = STATE.db.read().await;
-        crate::db::libraries::get(&db)?
+        lyra_db::libraries::get(&db)?
     };
 
     let mut summary = ReingestSummary::default();

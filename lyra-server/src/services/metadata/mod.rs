@@ -57,9 +57,6 @@ use lofty::{
 };
 use lyra_metadata::normalize_unicode_nfc;
 
-use crate::db::Entry;
-use crate::db::metadata::mapping_config::MetadataMappingConfig;
-use crate::db::track_sources::SourceFormat;
 pub(crate) use cue::sort_track_metadata;
 use cue::{
     build_audio_lookup,
@@ -67,19 +64,22 @@ use cue::{
     merge_embedded_into_cue_metadata,
     parse_cue_metadata_for_entry,
 };
+use lyra_db::Entry;
+use lyra_db::metadata::mapping_config::MetadataMappingConfig;
+use lyra_db::track_sources::SourceFormat;
 pub(crate) use model::TrackMetadata;
 
 const SOURCE_KIND_EMBEDDED_TAGS: &str = "embedded_tags";
 
 fn classify_entry_file_kind(entry: &Entry) -> Option<String> {
-    if entry.kind != crate::db::entries::EntryKind::File {
+    if entry.kind != lyra_db::entries::EntryKind::File {
         return None;
     }
 
     entry
         .file_kind
         .clone()
-        .or_else(|| crate::db::entries::classify_file_kind(&entry.full_path).map(str::to_string))
+        .or_else(|| lyra_db::entries::classify_file_kind(&entry.full_path).map(str::to_string))
 }
 
 pub(crate) fn read_audio_tags(
@@ -276,11 +276,11 @@ fn skip_reason_summary(reason: &SkipReason) -> String {
 }
 
 pub(crate) async fn load_mapping_config(
-    db: &crate::db::DbAsync,
+    db: &lyra_db::DbAsync,
 ) -> anyhow::Result<MetadataMappingConfig> {
     {
         let db_read = db.read().await;
-        if let Some(cfg) = crate::db::metadata::mapping_config::get(&db_read)? {
+        if let Some(cfg) = lyra_db::metadata::mapping_config::get(&db_read)? {
             return Ok(cfg);
         }
     }
@@ -296,7 +296,7 @@ pub(crate) async fn parse_metadata(
     let mut cue_entries = Vec::new();
 
     for entry in entries {
-        if entry.kind != crate::db::entries::EntryKind::File {
+        if entry.kind != lyra_db::entries::EntryKind::File {
             continue;
         }
 

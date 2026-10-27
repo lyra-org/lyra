@@ -40,7 +40,6 @@ use std::{
     },
 };
 
-use crate::db::Playlist;
 use crate::services::catalog::Direction;
 use crate::{
     routes::responses::{
@@ -68,6 +67,7 @@ use crate::{
         playlists,
     },
 };
+use lyra_db::Playlist;
 
 const PLAYLIST_BULK_TRACK_HARD_CAP: usize = 500;
 
@@ -328,10 +328,10 @@ fn compare_playlist_route_field(
             .cmp(&b.sort_name)
             .then_with(|| a.playlist.name.cmp(&b.playlist.name)),
         PlaylistRouteSortKey::CreatedAt => {
-            crate::db::compare_option(&a.playlist.created_at, &b.playlist.created_at)
+            lyra_db::compare_option(&a.playlist.created_at, &b.playlist.created_at)
         }
         PlaylistRouteSortKey::UpdatedAt => {
-            crate::db::compare_option(&a.playlist.updated_at, &b.playlist.updated_at)
+            lyra_db::compare_option(&a.playlist.updated_at, &b.playlist.updated_at)
         }
         PlaylistRouteSortKey::TrackCount => a.summary.track_count.cmp(&b.summary.track_count),
         PlaylistRouteSortKey::TotalDuration => a
@@ -384,7 +384,7 @@ fn query_playlist_route_items(
 
     // Filter before summarising: discarded playlists should not be walked.
     if let Some(term) = search_term {
-        crate::db::search::fuzzy_filter(
+        lyra_db::search::fuzzy_filter(
             &mut entries,
             term,
             |entry| entry.playlist.name.as_str(),
@@ -428,7 +428,7 @@ fn now_epoch() -> u64 {
 
 fn resolve_owner_id(db: &agdb::DbAny, owner_db_id: Option<DbId>) -> anyhow::Result<Option<String>> {
     match owner_db_id {
-        Some(db_id) => crate::db::lookup::find_id_by_db_id(db, db_id),
+        Some(db_id) => lyra_db::lookup::find_id_by_db_id(db, db_id),
         None => Ok(None),
     }
 }
@@ -473,11 +473,11 @@ fn playlist_summary(
 
 /// Resolves `id` to a playlist the principal owns, under the guard that acts on it.
 fn require_owned_playlist(
-    db: &impl crate::db::DbAccess,
+    db: &impl lyra_db::DbAccess,
     principal: &Principal,
     id: &str,
 ) -> Result<DbId, AppError> {
-    let playlist_db_id = crate::db::lookup::find_node_id_by_id(db, id)?
+    let playlist_db_id = lyra_db::lookup::find_node_id_by_id(db, id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
     if !crate::services::auth::access::playlist_owned(db, principal, playlist_db_id)? {
         return Err(AppError::forbidden("you do not own this playlist"));
@@ -487,7 +487,7 @@ fn require_owned_playlist(
 
 fn build_track_response_unchecked(
     db: &agdb::DbAny,
-    track: crate::db::Track,
+    track: lyra_db::Track,
     track_db_id: DbId,
     entry_id: String,
     position: u64,
@@ -504,7 +504,7 @@ fn build_track_response_unchecked(
         None
     };
     let release: Option<ReleaseResponse> = if inc.releases {
-        crate::db::releases::get_by_track(db, track_db_id)?
+        lyra_db::releases::get_by_track(db, track_db_id)?
             .into_iter()
             .next()
             .map(ReleaseResponse::from)
@@ -523,7 +523,7 @@ fn build_track_response_unchecked(
 fn build_track_response(
     db: &agdb::DbAny,
     principal: &Principal,
-    track: crate::db::Track,
+    track: lyra_db::Track,
     track_db_id: DbId,
     entry_id: String,
     position: u64,
@@ -554,7 +554,7 @@ fn build_tracks(
     let playlist_tracks = playlists::get_tracks(db, QueryId::Id(playlist_db_id))?;
     let mut items = Vec::with_capacity(playlist_tracks.len());
     for playlist_track in playlist_tracks {
-        let Some(track) = crate::db::tracks::get_by_id(db, playlist_track.track_db_id)? else {
+        let Some(track) = lyra_db::tracks::get_by_id(db, playlist_track.track_db_id)? else {
             continue;
         };
         items.push(build_track_response(
@@ -598,7 +598,7 @@ async fn create_playlist(
     )
     .map_err(|err| AppError::bad_request(err.to_string()))?;
 
-    let created = crate::db::playlists::get_by_id(&db, playlist_db_id)?
+    let created = lyra_db::playlists::get_by_id(&db, playlist_db_id)?
         .ok_or_else(|| AppError::not_found("playlist not found after creation"))?;
 
     Ok((
@@ -645,9 +645,9 @@ async fn get_playlists(
             let playlists_page = super::load_snapshot_items(
                 db,
                 &page.item_ids,
-                crate::db::playlists::get_by_id,
+                lyra_db::playlists::get_by_id,
                 |db, playlist_db_id| {
-                    Ok(crate::db::playlists::get_owner(db, playlist_db_id)? == Some(user_db_id))
+                    Ok(lyra_db::playlists::get_owner(db, playlist_db_id)? == Some(user_db_id))
                 },
             )?;
             (playlists_page, page.next_cursor, HashMap::new())
@@ -723,9 +723,9 @@ async fn get_playlist(
     let inc = parse_inc(query.inc)?;
 
     let db = &*STATE.db.read().await;
-    let playlist_db_id = crate::db::lookup::find_node_id_by_id(db, &id)?
+    let playlist_db_id = lyra_db::lookup::find_node_id_by_id(db, &id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
-    let playlist = crate::db::playlists::get_by_id(db, playlist_db_id)?
+    let playlist = lyra_db::playlists::get_by_id(db, playlist_db_id)?
         .ok_or_else(|| AppError::not_found(format!("Playlist not found: {}", id)))?;
 
     // Check access: owner or public
@@ -825,7 +825,7 @@ async fn add_playlist_tracks(
 
     let mut track_query_ids = Vec::with_capacity(request.track_ids.len());
     for track_id in request.track_ids {
-        let track_db_id = crate::db::lookup::find_node_id_by_id(&*db, &track_id)?
+        let track_db_id = lyra_db::lookup::find_node_id_by_id(&*db, &track_id)?
             .ok_or_else(|| AppError::not_found(format!("track not found: {track_id}")))?;
         crate::services::auth::access::require_entity_accessible(
             &*db,
@@ -853,7 +853,7 @@ async fn add_playlist_tracks(
 
     let mut added = Vec::with_capacity(results.len());
     for playlist_track in results {
-        let track = crate::db::tracks::get_by_id(&db, playlist_track.track_db_id)?
+        let track = lyra_db::tracks::get_by_id(&db, playlist_track.track_db_id)?
             .ok_or_else(|| AppError::not_found("playlist track target missing"))?;
         added.push(build_track_response(
             &db,
@@ -902,7 +902,7 @@ async fn remove_playlist_entries(
     let mut removed = Vec::new();
     for playlist_track in removed_tracks {
         let track =
-            crate::db::tracks::get_by_id(&db, playlist_track.track_db_id)?.ok_or_else(|| {
+            lyra_db::tracks::get_by_id(&db, playlist_track.track_db_id)?.ok_or_else(|| {
                 AppError::from(anyhow::anyhow!(
                     "removed playlist entry '{}' references missing track {}",
                     playlist_track.entry_id,
@@ -1102,18 +1102,18 @@ mod tests {
     use anyhow::anyhow;
     use nanoid::nanoid;
 
-    use crate::db::fixtures::{
+    use lyra_db::fixtures::{
         connect,
         insert_artist,
         insert_release,
         insert_track,
     };
-    use crate::db::test_db::new_test_db;
+    use lyra_db::test_db::new_test_db;
 
     use super::*;
 
     fn create_test_user(db: &mut DbAny) -> anyhow::Result<DbId> {
-        crate::db::test_db::insert_user(db, "playlist-test-user")
+        lyra_db::test_db::insert_user(db, "playlist-test-user")
     }
 
     fn test_principal(db: &mut DbAny) -> anyhow::Result<(DbId, Principal)> {
@@ -1123,7 +1123,7 @@ mod tests {
             Principal::for_user(
                 db,
                 user_db_id,
-                vec![crate::db::Permission::Admin],
+                vec![lyra_db::Permission::Admin],
                 std::collections::HashSet::new(),
             ),
         ))
@@ -1147,9 +1147,9 @@ mod tests {
     #[test]
     fn query_playlist_route_items_rejects_principal_whose_db_id_was_recycled() -> anyhow::Result<()>
     {
-        let mut db = crate::db::test_db::new_test_db()?;
+        let mut db = lyra_db::test_db::new_test_db()?;
         let (alice, stale) = test_principal(&mut db)?;
-        let replacement = crate::db::test_db::recycle_user(&mut db, alice, "replacement")?;
+        let replacement = lyra_db::test_db::recycle_user(&mut db, alice, "replacement")?;
         seed_playlist(&mut db, replacement, "Replacement's Playlist")?;
 
         let error = query_playlist_route_items(&db, &stale, &default_playlist_sort(), None)
@@ -1214,19 +1214,19 @@ mod tests {
         crate::plugins::testing::init_default_test_state()?;
         let (attacker, victim, track_db_id, playlist_db_id, entry_ids, request_input) = {
             let mut db = STATE.db.write().await;
-            crate::db::roles::ensure_builtin_roles(&mut db)?;
-            let attacker = crate::db::test_db::insert_user(&mut db, "attacker")?;
-            crate::db::roles::ensure_user_has_role(
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
+            let attacker = lyra_db::test_db::insert_user(&mut db, "attacker")?;
+            lyra_db::roles::ensure_user_has_role(
                 &mut db,
                 attacker,
-                crate::db::roles::BUILTIN_ADMIN_ROLE,
+                lyra_db::roles::BUILTIN_ADMIN_ROLE,
             )?;
-            let victim = crate::db::test_db::insert_user(&mut db, "victim")?;
+            let victim = lyra_db::test_db::insert_user(&mut db, "victim")?;
             let track_db_id = insert_track(&mut db, "Shared Track")?;
             let playlist_db_id = seed_playlist(&mut db, attacker, "Attacker's")?;
             let entry_ids = seed_entries(&mut db, playlist_db_id, track_db_id);
             let public_id = |db_id| {
-                crate::db::lookup::find_id_by_db_id(&*db, db_id)?
+                lyra_db::lookup::find_id_by_db_id(&*db, db_id)?
                     .ok_or_else(|| anyhow!("public id missing for {db_id:?}"))
             };
             let playlist_id = public_id(playlist_db_id)?;
@@ -1354,7 +1354,7 @@ mod tests {
     }
 
     fn entry_ids(db: &agdb::DbAny, playlist_db_id: DbId) -> anyhow::Result<Vec<String>> {
-        Ok(crate::db::playlists::get_tracks(db, playlist_db_id)?
+        Ok(lyra_db::playlists::get_tracks(db, playlist_db_id)?
             .into_iter()
             .map(|track| track.entry_id)
             .collect())
@@ -1381,12 +1381,12 @@ mod tests {
         let (_, control) = run_against_recycled_playlist(None, rename).await?;
         assert_eq!(control.output, Ok(()));
         let renamed =
-            crate::db::playlists::get_by_id(&*STATE.db.read().await, control.playlist_db_id)?
+            lyra_db::playlists::get_by_id(&*STATE.db.read().await, control.playlist_db_id)?
                 .ok_or_else(|| anyhow!("control playlist missing"))?;
         assert_eq!(renamed.name, "Renamed");
 
         for_each_recycled_gap(rename, |gap, db, victim| {
-            let victim_playlist = crate::db::playlists::get_by_id(db, victim.db_id)?
+            let victim_playlist = lyra_db::playlists::get_by_id(db, victim.db_id)?
                 .ok_or_else(|| anyhow!("victim playlist missing after gap {gap}"))?;
             assert_eq!(victim_playlist.name, "Victim's", "renamed at gap {gap}");
             Ok(())
@@ -1401,13 +1401,13 @@ mod tests {
         let (_, control) = run_against_recycled_playlist(None, delete).await?;
         assert_eq!(control.output, Ok(()));
         assert!(
-            crate::db::playlists::get_by_id(&*STATE.db.read().await, control.playlist_db_id)?
+            lyra_db::playlists::get_by_id(&*STATE.db.read().await, control.playlist_db_id)?
                 .is_none()
         );
 
         for_each_recycled_gap(delete, |gap, db, victim| {
             assert!(
-                crate::db::playlists::get_by_id(db, victim.db_id)?.is_some(),
+                lyra_db::playlists::get_by_id(db, victim.db_id)?.is_some(),
                 "deleted at gap {gap}"
             );
             Ok(())
@@ -1603,10 +1603,10 @@ mod tests {
             created_at: Some(1),
             updated_at: Some(1),
         };
-        let playlist_db_id = crate::db::playlists::create(&mut db, &playlist, user_db_id)?;
-        let pt = db
-            .transaction_mut(|t| crate::db::playlists::add_track(t, playlist_db_id, track_db_id))?;
-        let track = crate::db::tracks::get_by_id(&db, track_db_id)?
+        let playlist_db_id = lyra_db::playlists::create(&mut db, &playlist, user_db_id)?;
+        let pt =
+            db.transaction_mut(|t| lyra_db::playlists::add_track(t, playlist_db_id, track_db_id))?;
+        let track = lyra_db::tracks::get_by_id(&db, track_db_id)?
             .ok_or_else(|| anyhow!("track missing after insert"))?;
 
         let response = build_track_response_unchecked(

@@ -29,10 +29,6 @@ use serde::{
     Serialize,
 };
 
-use crate::db::{
-    Permission,
-    roles::Role,
-};
 use crate::{
     routes::AppError,
     services::STATE,
@@ -41,6 +37,10 @@ use crate::{
         require_grantable_permissions,
         require_manage_roles,
     },
+};
+use lyra_db::{
+    Permission,
+    roles::Role,
 };
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -93,7 +93,7 @@ fn validate_role_name(name: &str) -> Result<String, AppError> {
     if normalized.contains(' ') {
         return Err(AppError::bad_request("role name cannot contain any spaces"));
     }
-    if crate::db::roles::is_builtin_role_name(&normalized) {
+    if lyra_db::roles::is_builtin_role_name(&normalized) {
         return Err(AppError::bad_request(format!(
             "role name '{}' is reserved",
             normalized
@@ -113,7 +113,7 @@ fn normalize_permissions(permissions: Vec<Permission>) -> Vec<Permission> {
 }
 
 fn principal_has_admin(principal: &Principal) -> bool {
-    crate::db::roles::has_permission(&principal.permissions, Permission::Admin)
+    lyra_db::roles::has_permission(&principal.permissions, Permission::Admin)
 }
 
 fn role_to_response(role: Role) -> RoleResponse {
@@ -121,7 +121,7 @@ fn role_to_response(role: Role) -> RoleResponse {
         id: role.id,
         name: role.name.clone(),
         permissions: role.permissions,
-        builtin: crate::db::roles::is_builtin_role_name(&role.name),
+        builtin: lyra_db::roles::is_builtin_role_name(&role.name),
     }
 }
 
@@ -129,15 +129,15 @@ fn resolve_role_by_public_id(
     db: &agdb::DbAny,
     role_id: &str,
 ) -> Result<(agdb::DbId, Role), AppError> {
-    let role_db_id = crate::db::lookup::find_node_id_by_id(db, role_id)?
+    let role_db_id = lyra_db::lookup::find_node_id_by_id(db, role_id)?
         .ok_or_else(|| AppError::not_found(format!("role not found: {role_id}")))?;
-    let role = crate::db::roles::get_by_id(db, role_db_id)?
+    let role = lyra_db::roles::get_by_id(db, role_db_id)?
         .ok_or_else(|| AppError::not_found(format!("role not found: {role_id}")))?;
     Ok((role_db_id, role))
 }
 
 fn forbid_builtin_role_mutation(role: &Role, action: &str) -> Result<(), AppError> {
-    if crate::db::roles::is_builtin_role_name(&role.name) {
+    if lyra_db::roles::is_builtin_role_name(&role.name) {
         return Err(AppError::forbidden(format!(
             "builtin role '{}' cannot be {}",
             role.name, action
@@ -179,10 +179,10 @@ fn ensure_admin_permission_removal_allowed(
         ));
     }
 
-    let assigned_users = crate::db::roles::get_users_with_role(db, role_db_id)?;
+    let assigned_users = lyra_db::roles::get_users_with_role(db, role_db_id)?;
     if assigned_users
         .iter()
-        .any(|user| user.username == crate::db::users::DEFAULT_USERNAME)
+        .any(|user| user.username == lyra_db::users::DEFAULT_USERNAME)
     {
         return Err(AppError::bad_request(
             "cannot remove admin permission from a role assigned to the default user",
@@ -198,7 +198,7 @@ fn ensure_admin_permission_removal_allowed(
         ));
     }
 
-    let remaining_admins = crate::db::roles::count_admins(db)?.saturating_sub(assigned_users.len());
+    let remaining_admins = lyra_db::roles::count_admins(db)?.saturating_sub(assigned_users.len());
     if remaining_admins == 0 {
         return Err(AppError::bad_request(
             "cannot remove admin permission from the last admin role",
@@ -212,7 +212,7 @@ async fn list_roles(headers: HeaderMap) -> Result<Json<Vec<RoleResponse>>, AppEr
     let _principal = require_manage_roles(&headers).await?;
 
     let db = STATE.db.read().await;
-    let roles = crate::db::roles::get(&db)?;
+    let roles = lyra_db::roles::get(&db)?;
     Ok(Json(roles.into_iter().map(role_to_response).collect()))
 }
 
@@ -226,7 +226,7 @@ async fn create_role(
     require_grantable_permissions(&principal, &permissions)?;
 
     let mut db = STATE.db.write().await;
-    if crate::db::roles::get_by_name(&db, &name)?.is_some() {
+    if lyra_db::roles::get_by_name(&db, &name)?.is_some() {
         return Err(AppError::bad_request(format!(
             "role '{}' already exists",
             name
@@ -239,8 +239,8 @@ async fn create_role(
         name,
         permissions,
     };
-    let role_db_id = crate::db::roles::create(db.deref_mut(), &role)?;
-    let created = crate::db::roles::get_by_id(db.deref(), role_db_id)?
+    let role_db_id = lyra_db::roles::create(db.deref_mut(), &role)?;
+    let created = lyra_db::roles::get_by_id(db.deref(), role_db_id)?
         .ok_or_else(|| AppError::not_found("created role not found"))?;
 
     Ok((StatusCode::CREATED, Json(role_to_response(created))))
@@ -278,7 +278,7 @@ async fn update_role_definition(
         &next_permissions,
     )?;
 
-    if let Some(existing) = crate::db::roles::get_by_name(db.deref(), &next_name)?
+    if let Some(existing) = lyra_db::roles::get_by_name(db.deref(), &next_name)?
         && existing.db_id != Some(role_db_id)
     {
         return Err(AppError::bad_request(format!(
@@ -293,7 +293,7 @@ async fn update_role_definition(
         name: next_name,
         permissions: next_permissions,
     };
-    crate::db::roles::update(db.deref_mut(), &updated_role)?;
+    lyra_db::roles::update(db.deref_mut(), &updated_role)?;
 
     Ok(Json(role_to_response(updated_role)))
 }
@@ -309,7 +309,7 @@ async fn delete_role_definition(
     forbid_builtin_role_mutation(&role, "deleted")?;
     require_admin_for_admin_role(&principal, &role.permissions, "delete")?;
 
-    let assigned_users = crate::db::roles::count_users_with_role(db.deref(), role_db_id)?;
+    let assigned_users = lyra_db::roles::count_users_with_role(db.deref(), role_db_id)?;
     if assigned_users > 0 {
         return Err(AppError::conflict(format!(
             "cannot delete role '{}' while it is assigned to users",
@@ -317,7 +317,7 @@ async fn delete_role_definition(
         )));
     }
 
-    crate::db::roles::delete(db.deref_mut(), role_db_id)?;
+    lyra_db::roles::delete(db.deref_mut(), role_db_id)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -380,7 +380,6 @@ pub(crate) fn role_openapi_routes() -> aide::axum::ApiRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::User;
     use crate::{
         plugins::testing::init_library_test_state,
         services::testing::runtime_test_lock,
@@ -395,6 +394,7 @@ mod tests {
         },
         response::IntoResponse,
     };
+    use lyra_db::User;
     use std::{
         path::PathBuf,
         time::{
@@ -421,16 +421,16 @@ mod tests {
     ) -> anyhow::Result<HeaderMap> {
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::roles::ensure_builtin_roles(&mut db)?;
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
             let user = User {
                 db_id: None,
                 id: nanoid!(),
                 username: username.to_string(),
                 password: "unused".to_string(),
             };
-            let user_db_id = crate::db::users::create(&mut db, &user)?;
+            let user_db_id = lyra_db::users::create(&mut db, &user)?;
 
-            let assigned_role_name = if crate::db::roles::is_builtin_role_name(role_name) {
+            let assigned_role_name = if lyra_db::roles::is_builtin_role_name(role_name) {
                 role_name.to_string()
             } else {
                 let role = Role {
@@ -439,10 +439,10 @@ mod tests {
                     name: role_name.to_string(),
                     permissions: role_permissions,
                 };
-                crate::db::roles::create(&mut db, &role)?;
+                lyra_db::roles::create(&mut db, &role)?;
                 role_name.to_string()
             };
-            crate::db::roles::ensure_user_has_role(&mut db, user_db_id, &assigned_role_name)?;
+            lyra_db::roles::ensure_user_has_role(&mut db, user_db_id, &assigned_role_name)?;
             user_db_id
         };
 
@@ -499,7 +499,7 @@ mod tests {
             .expect("admin should be able to delete custom role");
 
         let db = STATE.db.read().await;
-        assert!(crate::db::roles::get_by_name(&db, "editor_plus")?.is_none());
+        assert!(lyra_db::roles::get_by_name(&db, "editor_plus")?.is_none());
 
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())
@@ -594,7 +594,7 @@ mod tests {
 
         let admin_role_id = {
             let db = STATE.db.read().await;
-            crate::db::roles::get_by_name(&db, crate::db::roles::BUILTIN_ADMIN_ROLE)?
+            lyra_db::roles::get_by_name(&db, lyra_db::roles::BUILTIN_ADMIN_ROLE)?
                 .expect("builtin admin role")
                 .id
         };

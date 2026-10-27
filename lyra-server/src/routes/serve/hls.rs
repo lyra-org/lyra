@@ -535,8 +535,8 @@ pub(crate) async fn serve_hls_playlist_for_track(
     let playlist_segment_count = hls_segment_count(duration_ms);
     {
         let db = STATE.db.read().await;
-        if crate::db::lookup::find_node_id_by_id(&*db, &source.track_public_id)?.is_none()
-            || crate::db::lookup::find_node_id_by_id(&*db, &source.source_public_id)?.is_none()
+        if lyra_db::lookup::find_node_id_by_id(&*db, &source.track_public_id)?.is_none()
+            || lyra_db::lookup::find_node_id_by_id(&*db, &source.source_public_id)?.is_none()
         {
             return Err(AppError::not_found("track source no longer exists"));
         }

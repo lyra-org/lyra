@@ -30,7 +30,7 @@ use super::{
     scoped_releases,
     track_totals,
 };
-use crate::db::genres::Genre;
+use lyra_db::genres::Genre;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum GenreKey {
@@ -109,9 +109,9 @@ impl Catalog for Genres {
         match &filter.ids {
             Some(ids) => {
                 let releases = releases.into_iter().collect::<HashSet<_>>();
-                let ids = crate::db::graph::existing_ids(db, ids, "Genre")?;
+                let ids = lyra_db::graph::existing_ids(db, ids, "Genre")?;
                 genres.restrict(
-                    crate::db::genres::get_releases_many(db, &ids)?
+                    lyra_db::genres::get_releases_many(db, &ids)?
                         .into_iter()
                         .filter(|(_, genre_releases)| {
                             genre_releases
@@ -122,7 +122,7 @@ impl Catalog for Genres {
                 );
             }
             None => genres.restrict(
-                crate::db::genres::get_for_releases_many(db, &releases)?
+                lyra_db::genres::get_for_releases_many(db, &releases)?
                     .into_values()
                     .flatten()
                     .filter_map(|genre| genre.db_id.map(DbId::from)),
@@ -138,7 +138,7 @@ impl Catalog for Genres {
         ids: Vec<DbId>,
         keys: &[GenreKey],
     ) -> Result<Vec<Row>, CatalogError> {
-        let fields = crate::db::graph::select_fields(db, &ids, &["name"])?;
+        let fields = lyra_db::graph::select_fields(db, &ids, &["name"])?;
         let needs = |wanted: &[GenreKey]| keys.iter().any(|key| wanted.contains(key));
         let mut release_counts = HashMap::new();
         let mut tracks_by_genre = HashMap::new();
@@ -152,7 +152,7 @@ impl Catalog for Genres {
             let visible = scoped_genre_releases(db, viewer, filter)?
                 .into_iter()
                 .collect::<HashSet<_>>();
-            for (genre, releases) in crate::db::genres::get_releases_many(db, &ids)? {
+            for (genre, releases) in lyra_db::genres::get_releases_many(db, &ids)? {
                 let releases = releases
                     .into_iter()
                     .filter(|release| visible.contains(release))
@@ -199,7 +199,7 @@ impl Catalog for Genres {
     }
 
     fn hydrate(db: &DbAny, ids: &[DbId]) -> anyhow::Result<Vec<Genre>> {
-        let mut genres = crate::db::graph::bulk_fetch_typed(db, ids.to_vec(), "Genre")?;
+        let mut genres = lyra_db::graph::bulk_fetch_typed(db, ids.to_vec(), "Genre")?;
         Ok(ids.iter().filter_map(|id| genres.remove(id)).collect())
     }
 }

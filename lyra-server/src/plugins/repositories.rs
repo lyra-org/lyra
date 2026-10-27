@@ -34,8 +34,8 @@ use harmony_repository::{
 use nanoid::nanoid;
 use tokio::sync::Mutex;
 
-use crate::db::plugin_repositories as repo_db;
 use crate::services::STATE;
+use lyra_db::plugin_repositories as repo_db;
 
 const DEFAULT_ORIGIN: &str = "https://git.lyra.pub/lyra/lyra?forge=gitlab";
 
@@ -795,7 +795,7 @@ mod tests {
 
     #[test]
     fn seeds_official_repository_at_release_tag() -> anyhow::Result<()> {
-        let mut db = crate::db::test_db::new_test_db()?;
+        let mut db = lyra_db::test_db::new_test_db()?;
         seed_default(&mut db)?;
         let repositories = repo_db::list(&db)?;
         assert_eq!(repositories.len(), 1);
@@ -972,7 +972,7 @@ mod tests {
     #[test]
     fn update_status_compares_stored_commits_of_the_matching_subscription() -> anyhow::Result<()> {
         let plugins_dir = tempfile::TempDir::new()?;
-        let mut db = crate::db::test_db::new_test_db()?;
+        let mut db = lyra_db::test_db::new_test_db()?;
         let commit = "a".repeat(40);
 
         repo_db::create(
@@ -1025,7 +1025,7 @@ mod tests {
 
     #[test]
     fn resolved_commits_are_stored_on_the_matching_subscription() -> anyhow::Result<()> {
-        let mut db = crate::db::test_db::new_test_db()?;
+        let mut db = lyra_db::test_db::new_test_db()?;
         repo_db::create(
             &mut db,
             &repo_db::PluginRepository {

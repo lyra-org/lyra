@@ -29,7 +29,7 @@ use lofty::{
     properties::FileProperties,
 };
 
-use crate::db::track_sources::{
+use lyra_db::track_sources::{
     SourceCodec,
     SourceContainer,
     SourceFormat,
@@ -145,12 +145,12 @@ mod tests {
         PathBuf,
     };
 
-    use crate::db::track_sources::{
+    use crate::services::metadata::read_source_format;
+    use lyra_db::track_sources::{
         SourceCodec,
         SourceContainer,
         SourceFormat,
     };
-    use crate::services::metadata::read_source_format;
 
     fn asset(name: &str) -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))

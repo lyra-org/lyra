@@ -9,7 +9,7 @@ use std::collections::{
     btree_map::Entry,
 };
 
-use crate::db::{
+use lyra_db::{
     IdSource,
     external_ids::ExternalId,
 };

@@ -70,7 +70,7 @@ pub(crate) fn outbound_user_agent() -> String {
 
 pub(crate) async fn load_server_info() -> anyhow::Result<ServerInfo> {
     let db = STATE.db.read().await;
-    let info = crate::db::server::get(&db)
+    let info = lyra_db::server::get(&db)
         .map_err(|error| anyhow::anyhow!(error.to_string()))?
         .ok_or_else(|| anyhow::anyhow!("server info not initialized"))?;
 

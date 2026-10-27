@@ -24,8 +24,8 @@ pub(crate) async fn status() -> anyhow::Result<Status> {
     let (account_required, skipped) = {
         let db = STATE.db.read().await;
         (
-            !crate::db::roles::has_non_default_admin(&db)?,
-            crate::db::server::plugin_selection_skipped(&*db)?,
+            !lyra_db::roles::has_non_default_admin(&db)?,
+            lyra_db::server::plugin_selection_skipped(&*db)?,
         )
     };
     Ok(Status {

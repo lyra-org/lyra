@@ -25,11 +25,6 @@ use serde::{
     Serialize,
 };
 
-use crate::db::metadata::mapping_config::{
-    FieldName,
-    MappingRule,
-    MetadataMappingConfig,
-};
 use crate::{
     routes::AppError,
     services::STATE,
@@ -49,6 +44,11 @@ use crate::{
             },
         },
     },
+};
+use lyra_db::metadata::mapping_config::{
+    FieldName,
+    MappingRule,
+    MetadataMappingConfig,
 };
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -119,7 +119,7 @@ async fn get_metadata_mapping(
     require_manage_metadata(&headers).await?;
     let config = {
         let db = STATE.db.read().await;
-        crate::db::metadata::mapping_config::get(&db)?
+        lyra_db::metadata::mapping_config::get(&db)?
     };
     let config = match config {
         Some(c) => c,

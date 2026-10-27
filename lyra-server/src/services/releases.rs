@@ -10,7 +10,7 @@ use agdb::{
     DbId,
 };
 
-use crate::db::{
+use lyra_db::{
     Entry,
     Release,
     Track,
@@ -128,7 +128,7 @@ pub(crate) fn get_details(
     release_db_id: DbId,
     includes: ReleaseIncludes,
 ) -> anyhow::Result<Option<ReleaseDetails>> {
-    let Some(release) = crate::db::releases::get_by_id(db, release_db_id)? else {
+    let Some(release) = lyra_db::releases::get_by_id(db, release_db_id)? else {
         return Ok(None);
     };
 
@@ -146,11 +146,6 @@ mod tests {
     };
 
     use super::*;
-    use crate::db::Artist;
-    use crate::db::test_db::{
-        connect_artist,
-        new_test_db,
-    };
     use crate::services::catalog::{
         self,
         pipeline::Catalog,
@@ -162,6 +157,11 @@ mod tests {
     };
     use crate::services::entities::ArtistCreditSource;
     use anyhow::Context;
+    use lyra_db::Artist;
+    use lyra_db::test_db::{
+        connect_artist,
+        new_test_db,
+    };
     use nanoid::nanoid;
 
     fn list_details_with_query(
@@ -212,7 +212,7 @@ mod tests {
         )?;
 
         if let Some(genre_names) = &genre_strings {
-            crate::db::genres::sync_release_genres(db, release_db_id, genre_names)?;
+            lyra_db::genres::sync_release_genres(db, release_db_id, genre_names)?;
         }
 
         Ok(release_db_id)
@@ -243,7 +243,7 @@ mod tests {
             Some(vec!["Rock"]),
         )?;
 
-        let rock = crate::db::genres::find_by_name(&db, "rock")?.context("rock genre")?;
+        let rock = lyra_db::genres::find_by_name(&db, "rock")?.context("rock genre")?;
         let mut query = catalog::Query::<Releases>::new(ReleaseFilter {
             years: vec![2010],
             genres: vec![rock],
@@ -347,7 +347,7 @@ mod tests {
         let artists = details.artists.expect("artists should be included");
         assert_eq!(artists.len(), 1);
         assert_eq!(artists[0].artist.artist_name, "Miles Davis");
-        assert_eq!(artists[0].credit.credit_type, crate::db::CreditType::Artist);
+        assert_eq!(artists[0].credit.credit_type, lyra_db::CreditType::Artist);
         assert_eq!(artists[0].source, ArtistCreditSource::Release);
 
         assert!(details.entries.is_none());

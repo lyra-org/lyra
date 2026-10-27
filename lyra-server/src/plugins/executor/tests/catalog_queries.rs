@@ -1,5 +1,5 @@
 use super::*;
-use crate::db::test_db;
+use lyra_db::test_db;
 
 fn tracks_runtime(db: agdb::DbAny) -> Result<PluginExecutor> {
     PluginExecutor::with_database(
@@ -30,15 +30,15 @@ fn track_titles(values: Vec<luau::Value>) -> Vec<String> {
 #[test]
 fn plugin_track_query_sorts_a_release_in_album_order() -> Result<()> {
     let mut db = test_db::new_test_db()?;
-    let release_db_id = crate::db::fixtures::insert_release(&mut db, "Album Order")?;
+    let release_db_id = lyra_db::fixtures::insert_release(&mut db, "Album Order")?;
     for (title, disc, track) in [("Third", 2, 1), ("Second", 1, 2), ("First", 1, 1)] {
-        let track_db_id = crate::db::fixtures::insert_track(&mut db, title)?;
+        let track_db_id = lyra_db::fixtures::insert_track(&mut db, title)?;
         let mut stored =
-            crate::db::tracks::get_by_id(&db, track_db_id)?.context("inserted track exists")?;
+            lyra_db::tracks::get_by_id(&db, track_db_id)?.context("inserted track exists")?;
         stored.disc = Some(disc);
         stored.track = Some(track);
-        crate::db::tracks::update(&mut db, &stored)?;
-        crate::db::fixtures::connect(&mut db, release_db_id, track_db_id)?;
+        lyra_db::tracks::update(&mut db, &stored)?;
+        lyra_db::fixtures::connect(&mut db, release_db_id, track_db_id)?;
     }
 
     let runtime = tracks_runtime(db)?;
@@ -68,7 +68,7 @@ fn plugin_track_query_sorts_a_release_in_album_order() -> Result<()> {
 fn plugin_track_query_ranks_search_matches_by_relevance() -> Result<()> {
     let mut db = test_db::new_test_db()?;
     for title in ["Blue", "A b l u e"] {
-        crate::db::fixtures::insert_track(&mut db, title)?;
+        lyra_db::fixtures::insert_track(&mut db, title)?;
     }
 
     let runtime = tracks_runtime(db)?;
@@ -98,13 +98,13 @@ fn plugin_track_query_follows_the_dispatch_principal() -> Result<()> {
     let visible_library = test_db::insert_library(&mut db, "Visible", "/tmp/lyra-query-visible")?;
     let hidden_library = test_db::insert_library(&mut db, "Hidden", "/tmp/lyra-query-hidden")?;
     for (library, title) in [(visible_library, "Visible"), (hidden_library, "Hidden")] {
-        let release = crate::db::fixtures::insert_release(&mut db, title)?;
-        let track = crate::db::fixtures::insert_track(&mut db, title)?;
-        crate::db::fixtures::connect(&mut db, library, release)?;
-        crate::db::fixtures::connect(&mut db, release, track)?;
+        let release = lyra_db::fixtures::insert_release(&mut db, title)?;
+        let track = lyra_db::fixtures::insert_track(&mut db, title)?;
+        lyra_db::fixtures::connect(&mut db, library, release)?;
+        lyra_db::fixtures::connect(&mut db, release, track)?;
     }
     let user = test_db::insert_user(&mut db, "query-viewer")?;
-    let visible_library_id = crate::db::libraries::get_by_id(&db, visible_library)?
+    let visible_library_id = lyra_db::libraries::get_by_id(&db, visible_library)?
         .context("library exists")?
         .id;
     let principal = crate::services::auth::Principal::for_user(
@@ -184,10 +184,10 @@ struct Catalog {
 fn catalog() -> Result<Catalog> {
     let mut db = test_db::new_test_db()?;
     let admin_db_id = test_db::insert_user(&mut db, "catalog-admin")?;
-    let amy = crate::db::fixtures::insert_artist(&mut db, "Amy")?;
-    let zed = crate::db::fixtures::insert_artist(&mut db, "Zed")?;
-    let album = crate::db::fixtures::insert_release(&mut db, "Album")?;
-    let other = crate::db::fixtures::insert_release(&mut db, "Other")?;
+    let amy = lyra_db::fixtures::insert_artist(&mut db, "Amy")?;
+    let zed = lyra_db::fixtures::insert_artist(&mut db, "Zed")?;
+    let album = lyra_db::fixtures::insert_release(&mut db, "Album")?;
+    let other = lyra_db::fixtures::insert_release(&mut db, "Other")?;
     test_db::connect_artist(&mut db, album, amy)?;
     let mut tracks = std::collections::HashMap::new();
     for (release, title, year, artist) in [
@@ -197,42 +197,42 @@ fn catalog() -> Result<Catalog> {
         (other, "Delta", 2005, Some(amy)),
         (other, "Echo", 2005, Some(zed)),
     ] {
-        let track = crate::db::fixtures::insert_track(&mut db, title)?;
-        let mut stored = crate::db::tracks::get_by_id(&db, track)?.context("track exists")?;
+        let track = lyra_db::fixtures::insert_track(&mut db, title)?;
+        let mut stored = lyra_db::tracks::get_by_id(&db, track)?.context("track exists")?;
         stored.year = Some(year);
-        crate::db::tracks::update(&mut db, &stored)?;
-        crate::db::fixtures::connect(&mut db, release, track)?;
+        lyra_db::tracks::update(&mut db, &stored)?;
+        lyra_db::fixtures::connect(&mut db, release, track)?;
         if let Some(artist) = artist {
             test_db::connect_artist(&mut db, track, artist)?;
         }
         tracks.insert(title, track);
     }
-    crate::db::genres::sync_release_genres(&mut db, album, &["Rock".to_string()])?;
-    crate::db::genres::sync_release_genres(
+    lyra_db::genres::sync_release_genres(&mut db, album, &["Rock".to_string()])?;
+    lyra_db::genres::sync_release_genres(
         &mut db,
         other,
         &["Rockabilly".to_string(), "Jazz".to_string()],
     )?;
-    crate::db::favorites::add(
+    lyra_db::favorites::add(
         &mut db,
         admin_db_id,
         tracks["Alpha"],
-        crate::db::favorites::FavoriteKind::Track,
+        lyra_db::favorites::FavoriteKind::Track,
         1,
     )?;
-    let bravo_public_id = crate::db::tracks::get_by_id(&db, tracks["Bravo"])?
+    let bravo_public_id = lyra_db::tracks::get_by_id(&db, tracks["Bravo"])?
         .context("track exists")?
         .id;
-    crate::db::listens::create_and_mark_recorded(
+    lyra_db::listens::create_and_mark_recorded(
         &mut db,
-        &crate::db::listens::Listen {
+        &lyra_db::listens::Listen {
             db_id: None,
             id: nanoid::nanoid!(),
             track_public_id: bravo_public_id,
             position_ms: 0,
             duration_ms: Some(180_000),
             activity_ms: 180_000,
-            state: crate::db::PlaybackState::Completed,
+            state: lyra_db::PlaybackState::Completed,
             listened_at_ms: 1_000,
             created_at_ms: 1_000,
         },
@@ -246,7 +246,7 @@ fn catalog() -> Result<Catalog> {
             duration_ms: Some(180_000),
             activity_ms: Some(180_000),
             last_position_ms: None,
-            state: crate::db::PlaybackState::Completed,
+            state: lyra_db::PlaybackState::Completed,
             listen_recorded: Some(true),
             updated_at_ms: 1_000,
             created_at_ms: 1_000,
@@ -255,7 +255,7 @@ fn catalog() -> Result<Catalog> {
     let admin = crate::services::auth::Principal::for_user(
         &db,
         admin_db_id,
-        vec![crate::db::Permission::Admin],
+        vec![lyra_db::Permission::Admin],
         Default::default(),
     );
     Ok(Catalog {
@@ -396,18 +396,18 @@ fn plugin_catalog_query_scopes_a_library_to_what_the_principal_sees() -> Result<
         (vec![hidden], "Unseen", "Hal"),
         (vec![visible, hidden], "Shared", "Sam"),
     ] {
-        let release = crate::db::fixtures::insert_release(&mut db, title)?;
-        let track = crate::db::fixtures::insert_track(&mut db, title)?;
-        let artist = crate::db::fixtures::insert_artist(&mut db, artist)?;
+        let release = lyra_db::fixtures::insert_release(&mut db, title)?;
+        let track = lyra_db::fixtures::insert_track(&mut db, title)?;
+        let artist = lyra_db::fixtures::insert_artist(&mut db, artist)?;
         for library in libraries {
-            crate::db::fixtures::connect(&mut db, library, release)?;
+            lyra_db::fixtures::connect(&mut db, library, release)?;
         }
-        crate::db::fixtures::connect(&mut db, release, track)?;
+        lyra_db::fixtures::connect(&mut db, release, track)?;
         test_db::connect_artist(&mut db, release, artist)?;
     }
     let user = test_db::insert_user(&mut db, "scope-viewer")?;
     let admin_user = test_db::insert_user(&mut db, "scope-admin")?;
-    let visible_id = crate::db::libraries::get_by_id(&db, visible)?
+    let visible_id = lyra_db::libraries::get_by_id(&db, visible)?
         .context("library exists")?
         .id;
     let viewer = crate::services::auth::Principal::for_user(
@@ -419,7 +419,7 @@ fn plugin_catalog_query_scopes_a_library_to_what_the_principal_sees() -> Result<
     let admin = crate::services::auth::Principal::for_user(
         &db,
         admin_user,
-        vec![crate::db::Permission::Admin],
+        vec![lyra_db::Permission::Admin],
         Default::default(),
     );
     let runtime = tracks_runtime(db)?;
@@ -621,30 +621,26 @@ fn track_query_treats_missing_and_hidden_ids_alike() -> Result<()> {
     let mut db = test_db::new_test_db()?;
     let visible_library = test_db::insert_library(&mut db, "Visible", "/tmp/lyra-oracle-visible")?;
     let hidden_library = test_db::insert_library(&mut db, "Hidden", "/tmp/lyra-oracle-hidden")?;
-    let hidden_artist = crate::db::fixtures::insert_artist(&mut db, "Hidden Artist")?;
+    let hidden_artist = lyra_db::fixtures::insert_artist(&mut db, "Hidden Artist")?;
     let mut hidden_release = None;
     for (library, title) in [(visible_library, "Visible"), (hidden_library, "Hidden")] {
-        let release = crate::db::fixtures::insert_release(&mut db, title)?;
-        let track = crate::db::fixtures::insert_track(&mut db, title)?;
-        crate::db::fixtures::connect(&mut db, library, release)?;
-        crate::db::fixtures::connect(&mut db, release, track)?;
+        let release = lyra_db::fixtures::insert_release(&mut db, title)?;
+        let track = lyra_db::fixtures::insert_track(&mut db, title)?;
+        lyra_db::fixtures::connect(&mut db, library, release)?;
+        lyra_db::fixtures::connect(&mut db, release, track)?;
         if library == hidden_library {
             test_db::connect_artist(&mut db, track, hidden_artist)?;
-            crate::db::genres::sync_release_genres(
-                &mut db,
-                release,
-                &["Hidden Genre".to_string()],
-            )?;
+            lyra_db::genres::sync_release_genres(&mut db, release, &["Hidden Genre".to_string()])?;
             hidden_release = Some(release);
         }
     }
     let hidden_genre =
-        crate::db::genres::get_for_release(&db, hidden_release.context("hidden release")?)?
+        lyra_db::genres::get_for_release(&db, hidden_release.context("hidden release")?)?
             .into_iter()
             .find_map(|genre| genre.db_id.map(agdb::DbId::from))
             .context("hidden genre")?;
     let user = test_db::insert_user(&mut db, "oracle-viewer")?;
-    let visible_library_id = crate::db::libraries::get_by_id(&db, visible_library)?
+    let visible_library_id = lyra_db::libraries::get_by_id(&db, visible_library)?
         .context("library exists")?
         .id;
     let principal = crate::services::auth::Principal::for_user(

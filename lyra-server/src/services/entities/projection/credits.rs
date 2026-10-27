@@ -10,7 +10,6 @@ use agdb::{
     DbId,
 };
 
-use crate::db::Release;
 use crate::services::entities::{
     CreditedArtistProjectionInfo,
     ResolvedCreditedArtist,
@@ -21,6 +20,7 @@ use crate::services::entities::{
     resolve_track_credited_artists,
     resolve_track_credited_artists_with_context,
 };
+use lyra_db::Release;
 
 pub(super) fn project(artists: Vec<ResolvedCreditedArtist>) -> Vec<CreditedArtistProjectionInfo> {
     artists.into_iter().map(Into::into).collect()
@@ -99,13 +99,6 @@ mod tests {
     use crate::services::providers::IdSchemes;
     use agdb::QueryId;
 
-    use crate::db::fixtures::{
-        connect,
-        insert_artist,
-        insert_release,
-        insert_track,
-    };
-    use crate::db::test_db::new_test_db;
     use crate::services::entities::{
         ArtistCreditSource,
         EntityInclude,
@@ -115,17 +108,24 @@ mod tests {
             project_entity,
         },
     };
+    use lyra_db::fixtures::{
+        connect,
+        insert_artist,
+        insert_release,
+        insert_track,
+    };
+    use lyra_db::test_db::new_test_db;
 
     #[test]
     fn project_release_includes_credits() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let release_id = insert_release(&mut db, "Credit Release")?;
         let artist_id = insert_artist(&mut db, "Engineer")?;
-        crate::db::fixtures::connect_credit(
+        lyra_db::fixtures::connect_credit(
             &mut db,
             release_id,
             artist_id,
-            crate::db::CreditType::Engineer,
+            lyra_db::CreditType::Engineer,
             Some("recording"),
             0,
         )?;
@@ -144,7 +144,7 @@ mod tests {
 
         assert_eq!(credits.len(), 1);
         assert_eq!(credits[0].artist.artist_name, "Engineer");
-        assert_eq!(credits[0].credit.r#type, crate::db::CreditType::Engineer);
+        assert_eq!(credits[0].credit.r#type, lyra_db::CreditType::Engineer);
         assert_eq!(credits[0].credit.detail.as_deref(), Some("recording"));
         assert_eq!(credits[0].source, ArtistCreditSource::Release);
         Ok(())
@@ -157,11 +157,11 @@ mod tests {
         let track_id = insert_track(&mut db, "Credit Track")?;
         let artist_id = insert_artist(&mut db, "Composer")?;
         connect(&mut db, release_id, track_id)?;
-        crate::db::fixtures::connect_credit(
+        lyra_db::fixtures::connect_credit(
             &mut db,
             release_id,
             artist_id,
-            crate::db::CreditType::Composer,
+            lyra_db::CreditType::Composer,
             None,
             0,
         )?;
@@ -180,7 +180,7 @@ mod tests {
 
         assert_eq!(credits.len(), 1);
         assert_eq!(credits[0].artist.artist_name, "Composer");
-        assert_eq!(credits[0].credit.r#type, crate::db::CreditType::Composer);
+        assert_eq!(credits[0].credit.r#type, lyra_db::CreditType::Composer);
         assert_eq!(credits[0].source, ArtistCreditSource::Release);
         Ok(())
     }
@@ -192,11 +192,11 @@ mod tests {
         let track_id = insert_track(&mut db, "Batch Track")?;
         let artist_id = insert_artist(&mut db, "Batch Lyricist")?;
         connect(&mut db, release_id, track_id)?;
-        crate::db::fixtures::connect_credit(
+        lyra_db::fixtures::connect_credit(
             &mut db,
             release_id,
             artist_id,
-            crate::db::CreditType::Lyricist,
+            lyra_db::CreditType::Lyricist,
             Some("translation"),
             0,
         )?;
@@ -216,7 +216,7 @@ mod tests {
 
         assert_eq!(credits.len(), 1);
         assert_eq!(credits[0].artist.artist_name, "Batch Lyricist");
-        assert_eq!(credits[0].credit.r#type, crate::db::CreditType::Lyricist);
+        assert_eq!(credits[0].credit.r#type, lyra_db::CreditType::Lyricist);
         assert_eq!(credits[0].credit.detail.as_deref(), Some("translation"));
         assert_eq!(credits[0].source, ArtistCreditSource::Release);
         Ok(())

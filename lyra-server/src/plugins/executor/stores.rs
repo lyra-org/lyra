@@ -20,7 +20,7 @@ impl PluginModuleStores {
         }
     }
 
-    pub(super) fn with_db(db: crate::db::DbAsync) -> Self {
+    pub(super) fn with_db(db: lyra_db::DbAsync) -> Self {
         Self {
             server_settings: None,
             db: crate::plugins::db::PluginDb::with_db(db),

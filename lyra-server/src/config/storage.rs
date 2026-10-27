@@ -26,7 +26,7 @@ pub(crate) fn ensure_writable_directory(path: &Path, description: &str) -> Resul
 /// Explains a lockfile that could not be opened the way other storage write
 /// failures are explained.
 pub(crate) fn explain_db_open_error(error: anyhow::Error) -> anyhow::Error {
-    match error.downcast::<crate::db::process_lock::LockfileOpenError>() {
+    match error.downcast::<lyra_db::process_lock::LockfileOpenError>() {
         Ok(error) => write_error("open db lockfile", &error.path, error.source),
         Err(error) => error,
     }

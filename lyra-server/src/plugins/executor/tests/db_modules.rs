@@ -2,9 +2,9 @@ use super::*;
 
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_ids_module() -> Result<()> {
-    let mut db = crate::db::test_db::new_test_db()?;
-    let track_db_id = crate::db::fixtures::insert_track(&mut db, "Raw ID Track")?;
-    let track_public_id = crate::db::lookup::find_id_by_db_id(&db, track_db_id)?
+    let mut db = lyra_db::test_db::new_test_db()?;
+    let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw ID Track")?;
+    let track_public_id = lyra_db::lookup::find_id_by_db_id(&db, track_db_id)?
         .context("inserted track has public id")?;
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
 
@@ -67,7 +67,7 @@ fn plugin_executor_exposes_db_backed_lyra_ids_module() -> Result<()> {
 
 #[test]
 fn id_list_arguments_reject_ids_that_are_not_positive() -> Result<()> {
-    let db = crate::db::test_db::new_test_db()?;
+    let db = lyra_db::test_db::new_test_db()?;
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.ids"])]),
         default_server_info(),
@@ -94,9 +94,9 @@ fn id_list_arguments_reject_ids_that_are_not_positive() -> Result<()> {
 
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_entities_module() -> Result<()> {
-    let mut db = crate::db::test_db::new_test_db()?;
-    let track_db_id = crate::db::fixtures::insert_track(&mut db, "Raw Entity Track")?;
-    let track_public_id = crate::db::lookup::find_id_by_db_id(&db, track_db_id)?
+    let mut db = lyra_db::test_db::new_test_db()?;
+    let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Entity Track")?;
+    let track_public_id = lyra_db::lookup::find_id_by_db_id(&db, track_db_id)?
         .context("inserted track has public id")?;
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
 
@@ -146,13 +146,13 @@ fn plugin_executor_exposes_db_backed_lyra_entities_module() -> Result<()> {
 
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_entries_module() -> Result<()> {
-    let mut db = crate::db::test_db::new_test_db()?;
-    let track_db_id = crate::db::fixtures::insert_track(&mut db, "Raw Entry Track")?;
-    let entry = crate::db::entries::Entry {
+    let mut db = lyra_db::test_db::new_test_db()?;
+    let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Entry Track")?;
+    let entry = lyra_db::entries::Entry {
         db_id: None,
         id: nanoid::nanoid!(),
         full_path: std::path::PathBuf::from("/music/raw-entry.flac"),
-        kind: crate::db::entries::EntryKind::File,
+        kind: lyra_db::entries::EntryKind::File,
         file_kind: Some("audio".to_string()),
         name: "raw-entry.flac".to_string(),
         hash: Some("raw-entry-hash".to_string()),
@@ -165,11 +165,11 @@ fn plugin_executor_exposes_db_backed_lyra_entries_module() -> Result<()> {
         .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
         .ids()[0];
     db.transaction_mut(|t| {
-        crate::db::track_sources::upsert(
+        lyra_db::track_sources::upsert(
             t,
             track_db_id,
             entry_db_id,
-            crate::db::track_sources::TrackSourceUpsert {
+            lyra_db::track_sources::TrackSourceUpsert {
                 source_kind: "embedded_tags".to_string(),
                 source_key: format!("entry:{}:embedded", entry_db_id.0),
                 is_primary: true,
@@ -226,13 +226,13 @@ fn plugin_executor_exposes_db_backed_lyra_entries_module() -> Result<()> {
 
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_chromaprint_module() -> Result<()> {
-    let mut db = crate::db::test_db::new_test_db()?;
-    let entry = crate::db::entries::Entry {
+    let mut db = lyra_db::test_db::new_test_db()?;
+    let entry = lyra_db::entries::Entry {
         db_id: None,
         id: nanoid::nanoid!(),
         full_path: std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/assets/metadata/integration_track.flac"),
-        kind: crate::db::entries::EntryKind::File,
+        kind: lyra_db::entries::EntryKind::File,
         file_kind: Some("audio".to_string()),
         name: "integration_track.flac".to_string(),
         hash: None,
@@ -277,17 +277,13 @@ fn plugin_executor_exposes_db_backed_lyra_chromaprint_module() -> Result<()> {
 
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_users_module() -> Result<()> {
-    let mut db = crate::db::test_db::new_test_db()?;
-    crate::db::roles::ensure_builtin_roles(&mut db)?;
-    crate::db::users::create(&mut db, &crate::db::fixtures::test_user("bob")?)?;
-    let alice = crate::db::fixtures::test_user("alice")?;
+    let mut db = lyra_db::test_db::new_test_db()?;
+    lyra_db::roles::ensure_builtin_roles(&mut db)?;
+    lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("bob")?)?;
+    let alice = lyra_db::fixtures::test_user("alice")?;
     let alice_public_id = alice.id.clone();
-    let alice_id = crate::db::users::create(&mut db, &alice)?;
-    crate::db::roles::ensure_user_has_role(
-        &mut db,
-        alice_id,
-        crate::db::roles::BUILTIN_ADMIN_ROLE,
-    )?;
+    let alice_id = lyra_db::users::create(&mut db, &alice)?;
+    lyra_db::roles::ensure_user_has_role(&mut db, alice_id, lyra_db::roles::BUILTIN_ADMIN_ROLE)?;
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
 
     let runtime = PluginExecutor::with_database(
@@ -333,27 +329,27 @@ fn plugin_executor_exposes_db_backed_lyra_users_module() -> Result<()> {
 
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_listens_module() -> Result<()> {
-    let mut db = crate::db::test_db::new_test_db()?;
-    let user = crate::db::fixtures::test_user("listener")?;
+    let mut db = lyra_db::test_db::new_test_db()?;
+    let user = lyra_db::fixtures::test_user("listener")?;
     let user_public_id = user.id.clone();
-    let user_db_id = crate::db::users::create(&mut db, &user)?;
-    let other_user_db_id = crate::db::test_db::insert_user(&mut db, "other-listener")?;
-    let track_db_id = crate::db::fixtures::insert_track(&mut db, "Raw Listen Track")?;
-    let track_public_id = crate::db::lookup::find_id_by_db_id(&db, track_db_id)?
+    let user_db_id = lyra_db::users::create(&mut db, &user)?;
+    let other_user_db_id = lyra_db::test_db::insert_user(&mut db, "other-listener")?;
+    let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Listen Track")?;
+    let track_public_id = lyra_db::lookup::find_id_by_db_id(&db, track_db_id)?
         .context("inserted track has public id")?;
     for (listener_db_id, listened_at_ms) in [
         (user_db_id, 1000_u64),
         (user_db_id, 2500),
         (other_user_db_id, 3000),
     ] {
-        let listen = crate::db::listens::Listen {
+        let listen = lyra_db::listens::Listen {
             db_id: None,
             id: nanoid::nanoid!(),
             track_public_id: track_public_id.clone(),
             position_ms: 0,
             duration_ms: Some(180_000),
             activity_ms: 180_000,
-            state: crate::db::PlaybackState::Completed,
+            state: lyra_db::PlaybackState::Completed,
             listened_at_ms,
             created_at_ms: listened_at_ms,
         };
@@ -365,12 +361,12 @@ fn plugin_executor_exposes_db_backed_lyra_listens_module() -> Result<()> {
             duration_ms: Some(180_000),
             activity_ms: Some(180_000),
             last_position_ms: None,
-            state: crate::db::PlaybackState::Completed,
+            state: lyra_db::PlaybackState::Completed,
             listen_recorded: Some(true),
             updated_at_ms: listened_at_ms,
             created_at_ms: listened_at_ms,
         };
-        crate::db::listens::create_and_mark_recorded(
+        lyra_db::listens::create_and_mark_recorded(
             &mut db,
             &listen,
             track_db_id,
@@ -395,7 +391,7 @@ fn plugin_executor_exposes_db_backed_lyra_listens_module() -> Result<()> {
             user_db_id,
             user_public_id,
             "listener".to_string(),
-            vec![crate::db::Permission::Admin],
+            vec![lyra_db::Permission::Admin],
             Some("admin".to_string()),
             std::collections::HashSet::new(),
         ),
@@ -435,16 +431,15 @@ fn plugin_executor_exposes_db_backed_lyra_listens_module() -> Result<()> {
 
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_favorites_module() -> Result<()> {
-    let mut db = crate::db::test_db::new_test_db()?;
-    let user = crate::db::fixtures::test_user("favorite-user")?;
+    let mut db = lyra_db::test_db::new_test_db()?;
+    let user = lyra_db::fixtures::test_user("favorite-user")?;
     let user_public_id = user.id.clone();
-    let user_db_id = crate::db::users::create(&mut db, &user)?;
-    let library_db_id =
-        crate::db::test_db::insert_library(&mut db, "Raw Favorites", "/tmp/raw-fav")?;
-    let library_public_id = crate::db::lookup::find_id_by_db_id(&db, library_db_id)?
+    let user_db_id = lyra_db::users::create(&mut db, &user)?;
+    let library_db_id = lyra_db::test_db::insert_library(&mut db, "Raw Favorites", "/tmp/raw-fav")?;
+    let library_public_id = lyra_db::lookup::find_id_by_db_id(&db, library_db_id)?
         .context("inserted library has public id")?;
-    let track_db_id = crate::db::fixtures::insert_track(&mut db, "Raw Favorite Track")?;
-    crate::db::fixtures::connect(&mut db, library_db_id, track_db_id)?;
+    let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Favorite Track")?;
+    lyra_db::fixtures::connect(&mut db, library_db_id, track_db_id)?;
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
 
     let runtime = PluginExecutor::with_database(
@@ -521,24 +516,24 @@ fn plugin_executor_exposes_db_backed_lyra_favorites_module() -> Result<()> {
 
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_artists_module() -> Result<()> {
-    let mut db = crate::db::test_db::new_test_db()?;
+    let mut db = lyra_db::test_db::new_test_db()?;
     let library_db_id =
-        crate::db::test_db::insert_library(&mut db, "Raw Artists Library", "/tmp/raw-artists")?;
-    let release_db_id = crate::db::fixtures::insert_release(&mut db, "Raw Artists Release")?;
-    crate::db::fixtures::connect(&mut db, library_db_id, release_db_id)?;
-    let artist_db_id = crate::db::fixtures::insert_artist(&mut db, "Raw Artist Module")?;
+        lyra_db::test_db::insert_library(&mut db, "Raw Artists Library", "/tmp/raw-artists")?;
+    let release_db_id = lyra_db::fixtures::insert_release(&mut db, "Raw Artists Release")?;
+    lyra_db::fixtures::connect(&mut db, library_db_id, release_db_id)?;
+    let artist_db_id = lyra_db::fixtures::insert_artist(&mut db, "Raw Artist Module")?;
     let mut artist =
-        crate::db::artists::get_by_id(&db, artist_db_id)?.context("inserted artist exists")?;
-    artist.set_artist_type(crate::db::ArtistType::Person);
-    crate::db::artists::update(&mut db, &artist)?;
-    crate::db::test_db::connect_artist(&mut db, release_db_id, artist_db_id)?;
-    let actor_db_id = crate::db::fixtures::insert_artist(&mut db, "Raw Voice Actor")?;
-    let character_db_id = crate::db::fixtures::insert_artist(&mut db, "Raw Character")?;
-    crate::db::artists::relations::link(
+        lyra_db::artists::get_by_id(&db, artist_db_id)?.context("inserted artist exists")?;
+    artist.set_artist_type(lyra_db::ArtistType::Person);
+    lyra_db::artists::update(&mut db, &artist)?;
+    lyra_db::test_db::connect_artist(&mut db, release_db_id, artist_db_id)?;
+    let actor_db_id = lyra_db::fixtures::insert_artist(&mut db, "Raw Voice Actor")?;
+    let character_db_id = lyra_db::fixtures::insert_artist(&mut db, "Raw Character")?;
+    lyra_db::artists::relations::link(
         &mut db,
         actor_db_id,
         character_db_id,
-        crate::db::ArtistRelationType::VoiceActor,
+        lyra_db::ArtistRelationType::VoiceActor,
         Some("Lead".to_string()),
     )?;
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
@@ -596,24 +591,24 @@ fn plugin_executor_exposes_db_backed_lyra_artists_module() -> Result<()> {
     )?;
 
     let mut values = values;
-    let artist_type = crate::db::ArtistType::_harmony_userdata_class().read_value(
+    let artist_type = lyra_db::ArtistType::_harmony_userdata_class().read_value(
         &runtime.vm,
         "artist_type",
         values.remove(0),
     )?;
-    let relation_type = crate::db::ArtistRelationType::_harmony_userdata_class().read_value(
+    let relation_type = lyra_db::ArtistRelationType::_harmony_userdata_class().read_value(
         &runtime.vm,
         "relation_type",
         values.remove(0),
     )?;
-    let credit_type = crate::db::CreditType::_harmony_userdata_class().read_value(
+    let credit_type = lyra_db::CreditType::_harmony_userdata_class().read_value(
         &runtime.vm,
         "credit_type",
         values.remove(0),
     )?;
-    assert_eq!(artist_type, crate::db::ArtistType::Person);
-    assert_eq!(relation_type, crate::db::ArtistRelationType::VoiceActor);
-    assert_eq!(credit_type, crate::db::CreditType::Artist);
+    assert_eq!(artist_type, lyra_db::ArtistType::Person);
+    assert_eq!(relation_type, lyra_db::ArtistRelationType::VoiceActor);
+    assert_eq!(credit_type, lyra_db::CreditType::Artist);
     assert_eq!(
         values,
         vec![
@@ -634,9 +629,9 @@ fn plugin_executor_exposes_db_backed_lyra_artists_module() -> Result<()> {
 
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_tracks_module() -> Result<()> {
-    let mut db = crate::db::test_db::new_test_db()?;
-    let release_db_id = crate::db::fixtures::insert_release(&mut db, "Raw Track Release")?;
-    let track_db_id = crate::db::fixtures::insert_track(&mut db, "Raw Track Module Song")?;
+    let mut db = lyra_db::test_db::new_test_db()?;
+    let release_db_id = lyra_db::fixtures::insert_release(&mut db, "Raw Track Release")?;
+    let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Track Module Song")?;
     db.exec_mut(
         agdb::QueryBuilder::insert()
             .edges()
@@ -644,7 +639,7 @@ fn plugin_executor_exposes_db_backed_lyra_tracks_module() -> Result<()> {
             .to(track_db_id)
             .query(),
     )?;
-    let track_public_id = crate::db::lookup::find_id_by_db_id(&db, track_db_id)?
+    let track_public_id = lyra_db::lookup::find_id_by_db_id(&db, track_db_id)?
         .context("inserted track has public id")?;
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
 
@@ -701,13 +696,13 @@ fn plugin_executor_exposes_db_backed_lyra_tracks_module() -> Result<()> {
 
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_track_sources_module() -> Result<()> {
-    let mut db = crate::db::test_db::new_test_db()?;
-    let track_db_id = crate::db::fixtures::insert_track(&mut db, "Raw Source Track")?;
-    let entry = crate::db::entries::Entry {
+    let mut db = lyra_db::test_db::new_test_db()?;
+    let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Source Track")?;
+    let entry = lyra_db::entries::Entry {
         db_id: None,
         id: nanoid::nanoid!(),
         full_path: std::path::PathBuf::from("/music/raw-source.FLAC"),
-        kind: crate::db::entries::EntryKind::File,
+        kind: lyra_db::entries::EntryKind::File,
         file_kind: Some("audio".to_string()),
         name: "raw-source.FLAC".to_string(),
         hash: None,
@@ -720,11 +715,11 @@ fn plugin_executor_exposes_db_backed_lyra_track_sources_module() -> Result<()> {
         .ids()[0];
     let source_key = format!("entry:{}:embedded", entry_db_id.0);
     db.transaction_mut(|t| {
-        crate::db::track_sources::upsert(
+        lyra_db::track_sources::upsert(
             t,
             track_db_id,
             entry_db_id,
-            crate::db::track_sources::TrackSourceUpsert {
+            lyra_db::track_sources::TrackSourceUpsert {
                 source_kind: "embedded_tags".to_string(),
                 source_key: source_key.clone(),
                 is_primary: true,
@@ -770,21 +765,21 @@ fn plugin_executor_exposes_db_backed_lyra_track_sources_module() -> Result<()> {
 
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()> {
-    let mut db = crate::db::test_db::new_test_db()?;
-    let user = crate::db::fixtures::test_user("playback-source-user")?;
+    let mut db = lyra_db::test_db::new_test_db()?;
+    let user = lyra_db::fixtures::test_user("playback-source-user")?;
     let user_public_id = user.id.clone();
-    let user_db_id = crate::db::users::create(&mut db, &user)?;
-    let track_db_id = crate::db::fixtures::insert_track(&mut db, "Raw Playback Source Track")?;
+    let user_db_id = lyra_db::users::create(&mut db, &user)?;
+    let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Playback Source Track")?;
     let entry_path = std::env::temp_dir().join(format!(
         "lyra-raw-playback-source-{}.flac",
         nanoid::nanoid!()
     ));
     std::fs::write(&entry_path, b"plugin playback source")?;
-    let entry = crate::db::entries::Entry {
+    let entry = lyra_db::entries::Entry {
         db_id: None,
         id: nanoid::nanoid!(),
         full_path: entry_path.clone(),
-        kind: crate::db::entries::EntryKind::File,
+        kind: lyra_db::entries::EntryKind::File,
         file_kind: Some("audio".to_string()),
         name: "raw-playback-source.flac".to_string(),
         hash: Some("raw-playback-hash".to_string()),
@@ -797,19 +792,19 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
         .ids()[0];
     let source_key = format!("entry:{}:embedded", entry_db_id.0);
     let source_id = db.transaction_mut(|t| {
-        crate::db::track_sources::upsert(
+        lyra_db::track_sources::upsert(
             t,
             track_db_id,
             entry_db_id,
-            crate::db::track_sources::TrackSourceUpsert {
+            lyra_db::track_sources::TrackSourceUpsert {
                 source_kind: "embedded_tags".to_string(),
                 source_key: source_key.clone(),
                 is_primary: true,
                 start_ms: Some(100),
                 end_ms: Some(200),
-                format: crate::db::track_sources::SourceFormat {
-                    container: Some(crate::db::track_sources::SourceContainer::M4a),
-                    codec: Some(crate::db::track_sources::SourceCodec::Alac),
+                format: lyra_db::track_sources::SourceFormat {
+                    container: Some(lyra_db::track_sources::SourceContainer::M4a),
+                    codec: Some(lyra_db::track_sources::SourceCodec::Alac),
                     ..Default::default()
                 },
             },
@@ -834,8 +829,8 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
             user_public_id,
             "playback-source-user".to_string(),
             vec![
-                crate::db::Permission::Admin,
-                crate::db::Permission::ManageLibraries,
+                lyra_db::Permission::Admin,
+                lyra_db::Permission::ManageLibraries,
             ],
             Some("admin".to_string()),
             std::collections::HashSet::new(),
@@ -912,12 +907,12 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
 
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
-    let mut db = crate::db::test_db::new_test_db()?;
-    let user = crate::db::fixtures::test_user("playlist-user")?;
+    let mut db = lyra_db::test_db::new_test_db()?;
+    let user = lyra_db::fixtures::test_user("playlist-user")?;
     let user_public_id = user.id.clone();
     let expected_owner = user_public_id.clone();
-    let user_db_id = crate::db::users::create(&mut db, &user)?;
-    let track_db_id = crate::db::fixtures::insert_track(&mut db, "Raw Playlist Track")?;
+    let user_db_id = lyra_db::users::create(&mut db, &user)?;
+    let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Playlist Track")?;
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
 
     let runtime = PluginExecutor::with_database(
@@ -935,7 +930,7 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
             user_db_id,
             user_public_id,
             "playlist-user".to_string(),
-            vec![crate::db::Permission::Admin],
+            vec![lyra_db::Permission::Admin],
             Some("admin".to_string()),
             std::collections::HashSet::new(),
         ),
@@ -1018,18 +1013,18 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
 
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_covers_module() -> Result<()> {
-    let mut db = crate::db::test_db::new_test_db()?;
-    let release_db_id = crate::db::fixtures::insert_release(&mut db, "Raw Covered Release")?;
-    let track_db_id = crate::db::fixtures::insert_track(&mut db, "Raw Covered Track")?;
-    crate::db::fixtures::connect(&mut db, release_db_id, track_db_id)?;
+    let mut db = lyra_db::test_db::new_test_db()?;
+    let release_db_id = lyra_db::fixtures::insert_release(&mut db, "Raw Covered Release")?;
+    let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Covered Track")?;
+    lyra_db::fixtures::connect(&mut db, release_db_id, track_db_id)?;
     let cover_path = std::env::temp_dir().join(format!("lyra-raw-cover-{}.jpg", nanoid::nanoid!()));
     std::fs::write(&cover_path, b"raw cover")?;
     let cover_path_string = cover_path.to_string_lossy().into_owned();
     db.transaction_mut(|t| {
-        crate::db::covers::upsert(
+        lyra_db::covers::upsert(
             t,
             release_db_id,
-            crate::db::Cover {
+            lyra_db::Cover {
                 db_id: None,
                 id: nanoid::nanoid!(),
                 path: cover_path_string.clone(),
@@ -1109,25 +1104,25 @@ fn plugin_executor_exposes_db_backed_lyra_covers_module() -> Result<()> {
 
 #[test]
 fn plugin_executor_exposes_playlist_sources_from_lyra_covers_module() -> Result<()> {
-    let mut db = crate::db::test_db::new_test_db()?;
-    let user_db_id = crate::db::users::create(
+    let mut db = lyra_db::test_db::new_test_db()?;
+    let user_db_id = lyra_db::users::create(
         &mut db,
-        &crate::db::fixtures::test_user("playlist-sources-user")?,
+        &lyra_db::fixtures::test_user("playlist-sources-user")?,
     )?;
     let mut cover_paths = Vec::new();
     let mut release_db_ids = Vec::new();
     for name in ["A", "B", "C", "D", "E"] {
-        let release_db_id = crate::db::fixtures::insert_release(&mut db, name)?;
-        let track_db_id = crate::db::fixtures::insert_track(&mut db, name)?;
-        crate::db::fixtures::connect(&mut db, release_db_id, track_db_id)?;
+        let release_db_id = lyra_db::fixtures::insert_release(&mut db, name)?;
+        let track_db_id = lyra_db::fixtures::insert_track(&mut db, name)?;
+        lyra_db::fixtures::connect(&mut db, release_db_id, track_db_id)?;
         let cover_path =
             std::env::temp_dir().join(format!("lyra-playlist-source-{}.jpg", nanoid::nanoid!()));
         std::fs::write(&cover_path, b"playlist source cover")?;
         db.transaction_mut(|t| {
-            crate::db::covers::upsert(
+            lyra_db::covers::upsert(
                 t,
                 release_db_id,
-                crate::db::Cover {
+                lyra_db::Cover {
                     db_id: None,
                     id: nanoid::nanoid!(),
                     path: cover_path.to_string_lossy().into_owned(),
@@ -1140,8 +1135,8 @@ fn plugin_executor_exposes_playlist_sources_from_lyra_covers_module() -> Result<
         cover_paths.push(cover_path);
         release_db_ids.push((release_db_id, track_db_id));
     }
-    let uncovered_track_db_id = crate::db::fixtures::insert_track(&mut db, "Uncovered")?;
-    let playlist = crate::db::Playlist {
+    let uncovered_track_db_id = lyra_db::fixtures::insert_track(&mut db, "Uncovered")?;
+    let playlist = lyra_db::Playlist {
         db_id: None,
         id: nanoid::nanoid!(),
         name: "Sources".to_string(),
@@ -1150,21 +1145,21 @@ fn plugin_executor_exposes_playlist_sources_from_lyra_covers_module() -> Result<
         created_at: None,
         updated_at: None,
     };
-    let playlist_db_id = crate::db::playlists::create(&mut db, &playlist, user_db_id)?;
+    let playlist_db_id = lyra_db::playlists::create(&mut db, &playlist, user_db_id)?;
     for (_, track_db_id) in &release_db_ids {
-        db.transaction_mut(|t| crate::db::playlists::add_track(t, playlist_db_id, *track_db_id))?;
+        db.transaction_mut(|t| lyra_db::playlists::add_track(t, playlist_db_id, *track_db_id))?;
     }
     db.transaction_mut(|t| {
-        crate::db::playlists::add_track(t, playlist_db_id, uncovered_track_db_id)
+        lyra_db::playlists::add_track(t, playlist_db_id, uncovered_track_db_id)
     })?;
 
     let mut expected = Vec::new();
     for (release_db_id, _) in &release_db_ids {
-        let release_public_id = crate::db::releases::get_by_id(&db, *release_db_id)?
+        let release_public_id = lyra_db::releases::get_by_id(&db, *release_db_id)?
             .expect("release should exist")
             .id;
-        let score = crate::db::covers::display::deterministic_random_score(
-            crate::db::covers::display::DisplayCoverTargetKind::Playlist,
+        let score = lyra_db::covers::display::deterministic_random_score(
+            lyra_db::covers::display::DisplayCoverTargetKind::Playlist,
             &playlist.id,
             &release_public_id,
         );
@@ -1231,15 +1226,15 @@ fn plugin_executor_exposes_playlist_sources_from_lyra_covers_module() -> Result<
 
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_releases_module() -> Result<()> {
-    let mut db = crate::db::test_db::new_test_db()?;
-    let release_db_id = crate::db::fixtures::insert_release(&mut db, "Raw Release Module")?;
-    crate::db::fixtures::insert_release(&mut db, "Other Release")?;
-    let track_db_id = crate::db::fixtures::insert_track(&mut db, "Raw Release Track")?;
-    crate::db::fixtures::connect(&mut db, release_db_id, track_db_id)?;
-    let album_artist_id = crate::db::fixtures::insert_artist(&mut db, "Raw Album Artist")?;
-    crate::db::test_db::connect_artist(&mut db, release_db_id, album_artist_id)?;
-    let guest_artist_id = crate::db::fixtures::insert_artist(&mut db, "Raw Guest Artist")?;
-    crate::db::test_db::connect_artist(&mut db, track_db_id, guest_artist_id)?;
+    let mut db = lyra_db::test_db::new_test_db()?;
+    let release_db_id = lyra_db::fixtures::insert_release(&mut db, "Raw Release Module")?;
+    lyra_db::fixtures::insert_release(&mut db, "Other Release")?;
+    let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Release Track")?;
+    lyra_db::fixtures::connect(&mut db, release_db_id, track_db_id)?;
+    let album_artist_id = lyra_db::fixtures::insert_artist(&mut db, "Raw Album Artist")?;
+    lyra_db::test_db::connect_artist(&mut db, release_db_id, album_artist_id)?;
+    let guest_artist_id = lyra_db::fixtures::insert_artist(&mut db, "Raw Guest Artist")?;
+    lyra_db::test_db::connect_artist(&mut db, track_db_id, guest_artist_id)?;
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
 
     let runtime = PluginExecutor::with_database(
@@ -1311,11 +1306,11 @@ fn plugin_executor_exposes_db_backed_lyra_releases_module() -> Result<()> {
 
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_libraries_module() -> Result<()> {
-    let mut db = crate::db::test_db::new_test_db()?;
-    let library_db_id = crate::db::test_db::insert_library(&mut db, "Raw Library", "/tmp/raw-lib")?;
-    let track_db_id = crate::db::fixtures::insert_track(&mut db, "Raw Library Track")?;
-    crate::db::fixtures::connect(&mut db, library_db_id, track_db_id)?;
-    let library_public_id = crate::db::lookup::find_id_by_db_id(&db, library_db_id)?
+    let mut db = lyra_db::test_db::new_test_db()?;
+    let library_db_id = lyra_db::test_db::insert_library(&mut db, "Raw Library", "/tmp/raw-lib")?;
+    let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Library Track")?;
+    lyra_db::fixtures::connect(&mut db, library_db_id, track_db_id)?;
+    let library_public_id = lyra_db::lookup::find_id_by_db_id(&db, library_db_id)?
         .context("inserted library has public id")?;
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
 
@@ -1369,16 +1364,14 @@ fn plugin_executor_exposes_db_backed_lyra_libraries_module() -> Result<()> {
 
 #[test]
 fn libraries_expose_db_ids_of_accessible_libraries_to_a_dispatch_principal() -> Result<()> {
-    let mut db = crate::db::test_db::new_test_db()?;
-    let shared_db_id =
-        crate::db::test_db::insert_library(&mut db, "Shared Library", "/tmp/shared")?;
-    let hidden_db_id =
-        crate::db::test_db::insert_library(&mut db, "Hidden Library", "/tmp/hidden")?;
-    let shared_track_db_id = crate::db::fixtures::insert_track(&mut db, "Shared Track")?;
-    let hidden_track_db_id = crate::db::fixtures::insert_track(&mut db, "Hidden Track")?;
-    crate::db::fixtures::connect(&mut db, shared_db_id, shared_track_db_id)?;
-    crate::db::fixtures::connect(&mut db, hidden_db_id, hidden_track_db_id)?;
-    let shared_public_id = crate::db::lookup::find_id_by_db_id(&db, shared_db_id)?
+    let mut db = lyra_db::test_db::new_test_db()?;
+    let shared_db_id = lyra_db::test_db::insert_library(&mut db, "Shared Library", "/tmp/shared")?;
+    let hidden_db_id = lyra_db::test_db::insert_library(&mut db, "Hidden Library", "/tmp/hidden")?;
+    let shared_track_db_id = lyra_db::fixtures::insert_track(&mut db, "Shared Track")?;
+    let hidden_track_db_id = lyra_db::fixtures::insert_track(&mut db, "Hidden Track")?;
+    lyra_db::fixtures::connect(&mut db, shared_db_id, shared_track_db_id)?;
+    lyra_db::fixtures::connect(&mut db, hidden_db_id, hidden_track_db_id)?;
+    let shared_public_id = lyra_db::lookup::find_id_by_db_id(&db, shared_db_id)?
         .context("inserted library has public id")?;
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
 
@@ -1445,11 +1438,11 @@ fn libraries_expose_db_ids_of_accessible_libraries_to_a_dispatch_principal() -> 
 
 #[test]
 fn libraries_refuse_a_client_dispatch_without_a_principal() -> Result<()> {
-    let mut db = crate::db::test_db::new_test_db()?;
+    let mut db = lyra_db::test_db::new_test_db()?;
     let library_db_id =
-        crate::db::test_db::insert_library(&mut db, "Private Library", "/tmp/private")?;
-    let track_db_id = crate::db::fixtures::insert_track(&mut db, "Private Track")?;
-    crate::db::fixtures::connect(&mut db, library_db_id, track_db_id)?;
+        lyra_db::test_db::insert_library(&mut db, "Private Library", "/tmp/private")?;
+    let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Private Track")?;
+    lyra_db::fixtures::connect(&mut db, library_db_id, track_db_id)?;
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
 
     let runtime = PluginExecutor::with_database(
@@ -1488,9 +1481,9 @@ fn libraries_refuse_a_client_dispatch_without_a_principal() -> Result<()> {
 
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_genres_module() -> Result<()> {
-    let mut db = crate::db::test_db::new_test_db()?;
-    let release_db_id = crate::db::fixtures::insert_release(&mut db, "Raw Genre Release")?;
-    crate::db::genres::sync_release_genres(&mut db, release_db_id, &["Synthpop".to_string()])?;
+    let mut db = lyra_db::test_db::new_test_db()?;
+    let release_db_id = lyra_db::fixtures::insert_release(&mut db, "Raw Genre Release")?;
+    lyra_db::genres::sync_release_genres(&mut db, release_db_id, &["Synthpop".to_string()])?;
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
 
     let runtime = PluginExecutor::with_database(
@@ -1554,19 +1547,19 @@ fn plugin_executor_exposes_db_backed_lyra_genres_module() -> Result<()> {
 
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_tags_module() -> Result<()> {
-    let mut db = crate::db::test_db::new_test_db()?;
-    let user = crate::db::fixtures::test_user("raw-tags")?;
+    let mut db = lyra_db::test_db::new_test_db()?;
+    let user = lyra_db::fixtures::test_user("raw-tags")?;
     let user_public_id = user.id.clone();
-    let user_db_id = crate::db::users::create(&mut db, &user)?;
-    let track_db_id = crate::db::fixtures::insert_track(&mut db, "Raw Tag Track")?;
+    let user_db_id = lyra_db::users::create(&mut db, &user)?;
+    let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Tag Track")?;
     let suffix = nanoid::nanoid!();
     let library_path = std::path::PathBuf::from(format!("/tmp/lyra-plugin-tags-{suffix}"));
-    let library = crate::db::libraries::create_with_creator(
+    let library = lyra_db::libraries::create_with_creator(
         &mut db,
-        crate::db::libraries::LibraryInsert {
+        lyra_db::libraries::LibraryInsert {
             id: nanoid::nanoid!(),
             name: format!("Plugin Tags {suffix}"),
-            path_key: crate::db::libraries::path_key_for(&library_path),
+            path_key: lyra_db::libraries::path_key_for(&library_path),
             path: library_path,
             language: None,
             country: None,
@@ -1665,7 +1658,7 @@ fn plugin_executor_exposes_db_backed_lyra_tags_module() -> Result<()> {
 
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_datastore_module() -> Result<()> {
-    let db = crate::db::test_db::new_test_db()?;
+    let db = lyra_db::test_db::new_test_db()?;
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
 
     let runtime = PluginExecutor::with_database(
@@ -1721,10 +1714,10 @@ fn plugin_executor_exposes_db_backed_lyra_datastore_module() -> Result<()> {
 fn plugin_executor_reports_playback_acceptance_rejection_and_internal_failure() -> Result<()> {
     let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
     crate::plugins::testing::init_default_test_state()?;
-    let mut db = crate::db::test_db::new_test_db()?;
-    let user = crate::db::fixtures::test_user("report-user")?;
-    let user_db_id = crate::db::users::create(&mut db, &user)?;
-    let track_db_id = crate::db::fixtures::insert_track(&mut db, "Reported Track")?;
+    let mut db = lyra_db::test_db::new_test_db()?;
+    let user = lyra_db::fixtures::test_user("report-user")?;
+    let user_db_id = lyra_db::users::create(&mut db, &user)?;
+    let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Reported Track")?;
     let db = Arc::new(tokio::sync::RwLock::new(db));
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("reporter", &["lyra.playback_sessions"])]),
@@ -1741,7 +1734,7 @@ fn plugin_executor_reports_playback_acceptance_rejection_and_internal_failure() 
             user_db_id,
             user.id,
             user.username,
-            vec![crate::db::Permission::Admin],
+            vec![lyra_db::Permission::Admin],
             Some("admin".into()),
             Default::default(),
         ),
@@ -1766,13 +1759,13 @@ fn plugin_executor_reports_playback_acceptance_rejection_and_internal_failure() 
     let (root, quota_message) = futures::executor::block_on(async {
         let mut db = db.write().await;
         let now = crate::services::playback_sessions::now_ms()?;
-        let root = crate::db::playbacks::get_reported(&*db, user_db_id, "reporter", "player", now)?
+        let root = lyra_db::playbacks::get_reported(&*db, user_db_id, "reporter", "player", now)?
             .context("accepted report creates durable root")?;
-        let session_id = crate::db::playbacks::get_current_session_id(&*db, root.db_id.unwrap())?
+        let session_id = lyra_db::playbacks::get_current_session_id(&*db, root.db_id.unwrap())?
             .context("accepted root has accounting session")?;
-        for index in 0..crate::db::playbacks::MAX_PLAYBACKS_PER_USER {
+        for index in 0..lyra_db::playbacks::MAX_PLAYBACKS_PER_USER {
             let result = db.transaction_mut(|db| {
-                crate::db::playbacks::insert_reported(
+                lyra_db::playbacks::insert_reported(
                     db,
                     user_db_id,
                     "reporter",
@@ -1782,7 +1775,7 @@ fn plugin_executor_reports_playback_acceptance_rejection_and_internal_failure() 
                 )
             });
             if let Err(error) = result {
-                assert!(error.is::<crate::db::playbacks::ReportedPlaybackLimitReached>());
+                assert!(error.is::<lyra_db::playbacks::ReportedPlaybackLimitReached>());
                 return Ok::<_, anyhow::Error>((root, error.to_string()));
             }
         }
@@ -1826,11 +1819,11 @@ fn recycled_user_principal(
     db: &mut agdb::DbAny,
     accessible_library_ids: std::collections::HashSet<String>,
 ) -> Result<(crate::services::auth::Principal, agdb::DbId)> {
-    let stale = crate::db::fixtures::test_user("deleted-user")?;
+    let stale = lyra_db::fixtures::test_user("deleted-user")?;
     let stale_public_id = stale.id.clone();
-    let stale_db_id = crate::db::users::create(db, &stale)?;
-    crate::db::users::delete_user(db, stale_db_id)?;
-    let current_db_id = crate::db::test_db::insert_user(db, "current-user")?;
+    let stale_db_id = lyra_db::users::create(db, &stale)?;
+    lyra_db::users::delete_user(db, stale_db_id)?;
+    let current_db_id = lyra_db::test_db::insert_user(db, "current-user")?;
     assert_eq!(current_db_id, stale_db_id, "agdb reuses freed ids");
     Ok((
         crate::services::auth::Principal::from_parts(
@@ -1847,24 +1840,24 @@ fn recycled_user_principal(
 
 #[test]
 fn stale_principal_cannot_use_favorites_of_a_user_with_its_recycled_db_id() -> Result<()> {
-    let mut db = crate::db::test_db::new_test_db()?;
+    let mut db = lyra_db::test_db::new_test_db()?;
     let library_db_id =
-        crate::db::test_db::insert_library(&mut db, "Stale Favorites", "/tmp/stale-fav")?;
-    let library_public_id = crate::db::lookup::find_id_by_db_id(&db, library_db_id)?
+        lyra_db::test_db::insert_library(&mut db, "Stale Favorites", "/tmp/stale-fav")?;
+    let library_public_id = lyra_db::lookup::find_id_by_db_id(&db, library_db_id)?
         .context("inserted library has public id")?;
-    let track_db_id = crate::db::fixtures::insert_track(&mut db, "Favored Track")?;
-    let other_track_db_id = crate::db::fixtures::insert_track(&mut db, "Other Track")?;
-    crate::db::fixtures::connect(&mut db, library_db_id, track_db_id)?;
-    crate::db::fixtures::connect(&mut db, library_db_id, other_track_db_id)?;
+    let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Favored Track")?;
+    let other_track_db_id = lyra_db::fixtures::insert_track(&mut db, "Other Track")?;
+    lyra_db::fixtures::connect(&mut db, library_db_id, track_db_id)?;
+    lyra_db::fixtures::connect(&mut db, library_db_id, other_track_db_id)?;
     let (stale, current_db_id) = recycled_user_principal(
         &mut db,
         std::collections::HashSet::from([library_public_id]),
     )?;
-    crate::db::favorites::add(
+    lyra_db::favorites::add(
         &mut db,
         current_db_id,
         track_db_id,
-        crate::db::favorites::FavoriteKind::Track,
+        lyra_db::favorites::FavoriteKind::Track,
         1,
     )?;
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
@@ -1901,8 +1894,8 @@ fn stale_principal_cannot_use_favorites_of_a_user_with_its_recycled_db_id() -> R
     assert_eq!(values, vec![luau::Value::Boolean(true); 5]);
 
     let db = futures::executor::block_on(db.read());
-    assert!(crate::db::favorites::has(&*db, current_db_id, track_db_id)?);
-    assert!(!crate::db::favorites::has(
+    assert!(lyra_db::favorites::has(&*db, current_db_id, track_db_id)?);
+    assert!(!lyra_db::favorites::has(
         &*db,
         current_db_id,
         other_track_db_id
@@ -1912,7 +1905,7 @@ fn stale_principal_cannot_use_favorites_of_a_user_with_its_recycled_db_id() -> R
 
 #[test]
 fn stale_principal_cannot_use_playlists_of_a_user_with_its_recycled_db_id() -> Result<()> {
-    let mut db = crate::db::test_db::new_test_db()?;
+    let mut db = lyra_db::test_db::new_test_db()?;
     let (stale, current_db_id) =
         recycled_user_principal(&mut db, std::collections::HashSet::new())?;
     let playlist_db_id = crate::services::playlists::create(
@@ -1972,10 +1965,10 @@ fn stale_principal_cannot_use_playlists_of_a_user_with_its_recycled_db_id() -> R
 fn stale_principal_cannot_report_playback_for_a_user_with_its_recycled_db_id() -> Result<()> {
     let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
     crate::plugins::testing::init_default_test_state()?;
-    let mut db = crate::db::test_db::new_test_db()?;
-    let track_db_id = crate::db::fixtures::insert_track(&mut db, "Reported Track")?;
+    let mut db = lyra_db::test_db::new_test_db()?;
+    let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Reported Track")?;
     let (mut stale, current_db_id) = recycled_user_principal(&mut db, Default::default())?;
-    stale.permissions = vec![crate::db::Permission::Admin];
+    stale.permissions = vec![lyra_db::Permission::Admin];
     let db = Arc::new(tokio::sync::RwLock::new(db));
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("reporter", &["lyra.playback_sessions"])]),
@@ -2008,7 +2001,7 @@ fn stale_principal_cannot_report_playback_for_a_user_with_its_recycled_db_id() -
     let reported = futures::executor::block_on(async {
         let db = db.read().await;
         let now = crate::services::playback_sessions::now_ms()?;
-        crate::db::playbacks::get_reported(&*db, current_db_id, "reporter", "player", now)
+        lyra_db::playbacks::get_reported(&*db, current_db_id, "reporter", "player", now)
     })?;
     assert!(reported.is_none());
     Ok(())
@@ -2019,11 +2012,11 @@ fn entities_links_include_resolves_templates_and_functions() -> Result<()> {
     let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
     crate::plugins::testing::init_default_test_state()?;
     let release = futures::executor::block_on(async {
-        use crate::db::external_ids::{
+        use lyra_db::external_ids::{
             self,
             IdSource,
         };
-        use crate::db::test_db;
+        use lyra_db::test_db;
         let mut db = crate::services::STATE.db.write().await;
         let library = test_db::insert_library(&mut db, "Link Library", "/tmp/lyra-link-library")?;
         db.exec_mut(
@@ -2032,10 +2025,10 @@ fn entities_links_include_resolves_templates_and_functions() -> Result<()> {
                 .ids(library)
                 .query(),
         )?;
-        let release = crate::db::fixtures::insert_release(&mut db, "Link Release")?;
-        let track = crate::db::fixtures::insert_track(&mut db, "Link Track")?;
-        crate::db::fixtures::connect(&mut db, library, release)?;
-        crate::db::fixtures::connect(&mut db, release, track)?;
+        let release = lyra_db::fixtures::insert_release(&mut db, "Link Release")?;
+        let track = lyra_db::fixtures::insert_track(&mut db, "Link Track")?;
+        lyra_db::fixtures::connect(&mut db, library, release)?;
+        lyra_db::fixtures::connect(&mut db, release, track)?;
         for (node, id_type, value) in [
             (release, "thing_id", "r1"),
             (release, "localized_id", "l1"),
@@ -2129,13 +2122,13 @@ fn entities_links_include_resolves_templates_and_functions() -> Result<()> {
 
 fn insert_release_with_ids(provider_id: &str, ids: &[(&str, &str)]) -> Result<agdb::DbId> {
     futures::executor::block_on(async {
-        use crate::db::external_ids::{
+        use lyra_db::external_ids::{
             self,
             IdSource,
         };
 
         let mut db = crate::services::STATE.db.write().await;
-        let release = crate::db::fixtures::insert_release(&mut db, "Link Release")?;
+        let release = lyra_db::fixtures::insert_release(&mut db, "Link Release")?;
         for (id_type, value) in ids {
             external_ids::upsert(
                 &mut db,

@@ -58,13 +58,13 @@ pub(super) fn entity_type_for_node(
     db: &agdb::DbAny,
     node_id: DbId,
 ) -> anyhow::Result<Option<EntityType>> {
-    if crate::db::releases::get_by_id(db, node_id)?.is_some() {
+    if lyra_db::releases::get_by_id(db, node_id)?.is_some() {
         return Ok(Some(EntityType::Release));
     }
-    if crate::db::artists::get_by_id(db, node_id)?.is_some() {
+    if lyra_db::artists::get_by_id(db, node_id)?.is_some() {
         return Ok(Some(EntityType::Artist));
     }
-    if crate::db::tracks::get_by_id(db, node_id)?.is_some() {
+    if lyra_db::tracks::get_by_id(db, node_id)?.is_some() {
         return Ok(Some(EntityType::Track));
     }
 
@@ -414,12 +414,12 @@ pub(super) fn optional_artist_type(
     vm: &luau::Vm,
     table: &luau::Table,
     key: &'static str,
-) -> luau::runtime::Result<Option<crate::db::ArtistType>> {
+) -> luau::runtime::Result<Option<lyra_db::ArtistType>> {
     let value = table.get_raw(vm, key)?;
     if matches!(value, luau::Value::Nil) {
         return Ok(None);
     }
-    crate::db::ArtistType::_harmony_userdata_class()
+    lyra_db::ArtistType::_harmony_userdata_class()
         .read_value(vm, key, value)
         .map(Some)
 }

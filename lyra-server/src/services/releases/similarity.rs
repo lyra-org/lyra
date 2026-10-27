@@ -28,7 +28,6 @@ use anyhow::{
 };
 use serde_json::Value;
 
-use crate::db::Release;
 use crate::{
     services::STATE,
     services::auth::Principal,
@@ -51,6 +50,7 @@ use crate::{
         },
     },
 };
+use lyra_db::Release;
 
 pub(crate) const DEFAULT_SIMILAR_RELEASE_LIMIT: usize = 20;
 pub(crate) const MAX_SIMILAR_RELEASE_LIMIT: usize = 100;
@@ -72,10 +72,8 @@ impl SimilarReleaseOptions {
     pub(crate) fn for_principal(principal: &Principal, limit: usize) -> Self {
         Self {
             limit,
-            accessible_library_ids: (!principal
-                .permissions
-                .contains(&crate::db::Permission::Admin))
-            .then(|| principal.accessible_library_ids.clone()),
+            accessible_library_ids: (!principal.permissions.contains(&lyra_db::Permission::Admin))
+                .then(|| principal.accessible_library_ids.clone()),
             viewer: Some(principal.clone()),
         }
     }
@@ -298,7 +296,7 @@ where
         if !release_is_accessible(&db, identity.db_id, options.accessible_library_ids.as_ref())? {
             continue;
         }
-        if let Some(release) = crate::db::releases::get_by_id(&db, identity.db_id)? {
+        if let Some(release) = lyra_db::releases::get_by_id(&db, identity.db_id)? {
             releases.push(release);
         }
     }
@@ -365,14 +363,14 @@ fn build_seed_context(
     schemes: &IdSchemes,
     accessible_library_ids: Option<&HashSet<String>>,
 ) -> Result<Option<SeedContext>> {
-    let Some(release) = crate::db::releases::get_by_id(db, seed_db_id)? else {
+    let Some(release) = lyra_db::releases::get_by_id(db, seed_db_id)? else {
         return Ok(None);
     };
     let library_ids = release_library_ids(db, seed_db_id)?;
     if !libraries_are_accessible(&library_ids, accessible_library_ids) {
         return Ok(None);
     }
-    let id_rows = crate::db::external_ids::get_for_entity(db, seed_db_id)?;
+    let id_rows = lyra_db::external_ids::get_for_entity(db, seed_db_id)?;
     let identifiers = schemes.resolve(&id_rows);
     let mut external_ids: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
     for external_id in id_rows {
@@ -387,12 +385,12 @@ fn build_seed_context(
             .or_default()
             .insert(id_type.to_string(), id_value.to_string());
     }
-    let artist_names = crate::db::artists::get(db, seed_db_id)?
+    let artist_names = lyra_db::artists::get(db, seed_db_id)?
         .into_iter()
         .map(|artist| artist.artist_name.trim().to_string())
         .filter(|name| !name.is_empty())
         .collect::<Vec<_>>();
-    let genres = crate::db::genres::get_names_for_release(db, seed_db_id)?.unwrap_or_default();
+    let genres = lyra_db::genres::get_names_for_release(db, seed_db_id)?.unwrap_or_default();
     let mut provider_contexts = HashMap::with_capacity(handlers.len());
     for handler in handlers {
         let ids = external_ids
@@ -489,7 +487,7 @@ fn resolve_candidates(
             }
             SimilarReleaseCandidate::Local { .. } => continue,
             SimilarReleaseCandidate::External(ref external) => {
-                let owners = crate::db::external_ids::get_owners(
+                let owners = lyra_db::external_ids::get_owners(
                     db,
                     &external.provider_id,
                     &external.id_type,
@@ -564,7 +562,7 @@ fn representative_release(
         if !seen.insert(db_id) {
             continue;
         }
-        let Some(release) = crate::db::releases::get_by_id(db, db_id)? else {
+        let Some(release) = lyra_db::releases::get_by_id(db, db_id)? else {
             continue;
         };
         let library_ids = release_library_ids(db, db_id)?;
@@ -607,7 +605,7 @@ fn libraries_are_accessible(
 }
 
 fn release_library_ids(db: &DbAny, release_db_id: DbId) -> Result<HashSet<String>> {
-    Ok(crate::db::libraries::get_by_release(db, release_db_id)?
+    Ok(lyra_db::libraries::get_by_release(db, release_db_id)?
         .into_iter()
         .map(|library| library.id)
         .collect())
@@ -615,19 +613,19 @@ fn release_library_ids(db: &DbAny, release_db_id: DbId) -> Result<HashSet<String
 
 fn release_identity_is_current(db: &DbAny, db_id: DbId, public_id: &str) -> Result<bool> {
     Ok(
-        crate::db::lookup::find_node_id_by_id(db, public_id)? == Some(db_id)
-            && crate::db::releases::get_by_id(db, db_id)?.is_some(),
+        lyra_db::lookup::find_node_id_by_id(db, public_id)? == Some(db_id)
+            && lyra_db::releases::get_by_id(db, db_id)?.is_some(),
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::fixtures::{
+    use lyra_db::fixtures::{
         connect,
         insert_release,
     };
-    use crate::db::test_db::{
+    use lyra_db::test_db::{
         insert_library,
         new_test_db,
     };
@@ -655,7 +653,7 @@ mod tests {
         .ok_or_else(|| anyhow!("expected representative"))?;
         assert_eq!(chosen.db_id, same_library);
 
-        let other_library_id = crate::db::libraries::get_by_id(&db, other_library)?
+        let other_library_id = lyra_db::libraries::get_by_id(&db, other_library)?
             .ok_or_else(|| anyhow!("other library missing"))?
             .id;
         let chosen = representative_release(

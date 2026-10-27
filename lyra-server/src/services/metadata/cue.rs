@@ -26,8 +26,8 @@ use lyra_metadata::{
 };
 
 use super::model::TrackMetadata;
-use crate::db::Entry;
-use crate::db::track_sources::SourceFormat;
+use lyra_db::Entry;
+use lyra_db::track_sources::SourceFormat;
 
 const SOURCE_KIND_CUE: &str = "cue";
 
@@ -1010,7 +1010,7 @@ FILE "02 second.wav" WAVE
             db_id: Some(DbId(db_id)),
             id: format!("entry-{db_id}"),
             full_path: path.to_path_buf(),
-            kind: crate::db::entries::EntryKind::File,
+            kind: lyra_db::entries::EntryKind::File,
             file_kind: None,
             name: path
                 .file_name()
@@ -1071,8 +1071,8 @@ FILE "02 second.wav" WAVE
         .await?;
 
         let wav = SourceFormat {
-            container: Some(crate::db::track_sources::SourceContainer::Wav),
-            codec: Some(crate::db::track_sources::SourceCodec::PcmS16Le),
+            container: Some(lyra_db::track_sources::SourceContainer::Wav),
+            codec: Some(lyra_db::track_sources::SourceCodec::PcmS16Le),
             sample_rate_hz: Some(44_100),
             channel_count: Some(2),
             bit_depth: Some(16),

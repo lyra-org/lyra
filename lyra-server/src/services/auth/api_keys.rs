@@ -19,7 +19,7 @@ use crate::{
 
 const API_KEY_BYTES: usize = 16;
 pub(crate) const MAX_API_KEYS_PER_USER: usize = 50;
-pub(crate) use crate::db::api_keys::MAX_NAME_LEN as MAX_API_KEY_NAME_LEN;
+pub(crate) use lyra_db::api_keys::MAX_NAME_LEN as MAX_API_KEY_NAME_LEN;
 const LAST_USED_DEBOUNCE_SECS: i64 = 60;
 const LAST_USED_SWEEP_THRESHOLD: usize = 1024;
 
@@ -110,7 +110,7 @@ pub(crate) struct ResolvedApiKey {
     pub(crate) principal: Principal,
 }
 
-fn to_api_key_info(api_key: crate::db::api_keys::ApiKey) -> ApiKeyInfo {
+fn to_api_key_info(api_key: lyra_db::api_keys::ApiKey) -> ApiKeyInfo {
     assert!(
         api_key.db_id.is_some(),
         "persisted api key must have db_id set"
@@ -141,19 +141,19 @@ pub(crate) async fn create_api_key(
 
     let key = random_hex_secret::<API_KEY_BYTES>();
     let key_hash = hash_secret(&key);
-    let created_at = crate::db::users::now_secs();
+    let created_at = lyra_db::users::now_secs();
 
     let mut db_write = STATE.db.write().await;
     let user_db_id = principal.require(&db_write).map_err(anyhow::Error::from)?;
-    if crate::db::api_keys::count_for_user(&db_write, user_db_id)? >= MAX_API_KEYS_PER_USER {
+    if lyra_db::api_keys::count_for_user(&db_write, user_db_id)? >= MAX_API_KEYS_PER_USER {
         return Err(ApiKeyServiceError::BadRequest(format!(
             "api key limit reached ({MAX_API_KEYS_PER_USER} per user); revoke an existing key first"
         )));
     }
 
     let api_key_id =
-        crate::db::api_keys::create(&mut db_write, user_db_id, name, &key_hash, created_at)?;
-    let api_key = crate::db::api_keys::get_by_id(&db_write, api_key_id)?
+        lyra_db::api_keys::create(&mut db_write, user_db_id, name, &key_hash, created_at)?;
+    let api_key = lyra_db::api_keys::get_by_id(&db_write, api_key_id)?
         .ok_or_else(|| anyhow::anyhow!("created api key could not be read"))?;
 
     Ok(CreatedApiKey {
@@ -170,7 +170,7 @@ pub(crate) async fn list_api_keys_for_user(
 ) -> anyhow::Result<Vec<ApiKeyInfo>> {
     let db_read = STATE.db.read().await;
     let user_db_id = principal.require(&db_read)?;
-    Ok(crate::db::api_keys::list_for_user(&db_read, user_db_id)?
+    Ok(lyra_db::api_keys::list_for_user(&db_read, user_db_id)?
         .into_iter()
         .map(to_api_key_info)
         .collect())
@@ -182,17 +182,17 @@ pub(crate) async fn revoke_api_key_for_user(
 ) -> anyhow::Result<bool> {
     let mut db_write = STATE.db.write().await;
     let user_db_id = principal.require(&db_write)?;
-    let Some(api_key) = crate::db::api_keys::get_by_public_id(&db_write, id)? else {
+    let Some(api_key) = lyra_db::api_keys::get_by_public_id(&db_write, id)? else {
         return Ok(false);
     };
     let Some(api_key_id) = api_key.db_id.map(Into::into) else {
         return Ok(false);
     };
-    if crate::db::api_keys::get_owner_id(&db_write, api_key_id)? != Some(user_db_id) {
+    if lyra_db::api_keys::get_owner_id(&db_write, api_key_id)? != Some(user_db_id) {
         return Ok(false);
     }
 
-    let deleted = crate::db::api_keys::delete_by_id(&mut db_write, api_key_id)?;
+    let deleted = lyra_db::api_keys::delete_by_id(&mut db_write, api_key_id)?;
     if deleted {
         forget_last_used(api_key_id);
     }
@@ -209,16 +209,16 @@ pub(crate) async fn resolve_api_key(key: &str) -> anyhow::Result<Option<Resolved
 
     let key_hash = hash_secret(key);
     let db_read = STATE.db.read().await;
-    let Some(api_key) = crate::db::api_keys::find_by_key_hash(&db_read, &key_hash)? else {
+    let Some(api_key) = lyra_db::api_keys::find_by_key_hash(&db_read, &key_hash)? else {
         return Ok(None);
     };
     let Some(api_key_id) = api_key.db_id.map(Into::into) else {
         return Ok(None);
     };
-    let Some(user_db_id) = crate::db::api_keys::get_owner_id(&db_read, api_key_id)? else {
+    let Some(user_db_id) = lyra_db::api_keys::get_owner_id(&db_read, api_key_id)? else {
         return Ok(None);
     };
-    let Some(user) = crate::db::users::get_by_id(&db_read, user_db_id)? else {
+    let Some(user) = lyra_db::users::get_by_id(&db_read, user_db_id)? else {
         return Ok(None);
     };
     let principal = resolve_principal(&db_read, user_db_id, user);
@@ -226,11 +226,11 @@ pub(crate) async fn resolve_api_key(key: &str) -> anyhow::Result<Option<Resolved
     let public_id = api_key.id;
     drop(db_read);
 
-    let now = crate::db::users::now_secs();
+    let now = lyra_db::users::now_secs();
     if should_persist_last_used(api_key_id, now) {
         let mut db_write = STATE.db.write().await;
         // Re-verify under write lock: key may have been revoked between read and write.
-        let fresh_id = match crate::db::api_keys::find_by_key_hash(&db_write, &key_hash)? {
+        let fresh_id = match lyra_db::api_keys::find_by_key_hash(&db_write, &key_hash)? {
             Some(fresh) => fresh.db_id.map(Into::into),
             None => None,
         };
@@ -239,7 +239,7 @@ pub(crate) async fn resolve_api_key(key: &str) -> anyhow::Result<Option<Resolved
             forget_last_used(api_key_id);
             return Ok(None);
         }
-        match crate::db::api_keys::update_last_used_at(&mut db_write, api_key_id, now) {
+        match lyra_db::api_keys::update_last_used_at(&mut db_write, api_key_id, now) {
             Ok(()) => {
                 drop(db_write);
                 record_persisted_last_used(api_key_id, now);
@@ -277,12 +277,12 @@ mod tests {
 
         let alice_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::users::create(&mut db, &crate::db::fixtures::test_user("alice")?)?
+            lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("alice")?)?
         };
         let stale_alice = crate::services::testing::user_principal(alice_db_id).await?;
         {
             let mut db = STATE.db.write().await;
-            crate::db::test_db::recycle_user(&mut db, alice_db_id, "bob")?;
+            lyra_db::test_db::recycle_user(&mut db, alice_db_id, "bob")?;
         }
         let bob = crate::services::testing::user_principal(alice_db_id).await?;
         let bob_key = create_api_key(&bob, "bob laptop").await?;
@@ -317,7 +317,7 @@ mod tests {
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::users::create(&mut db, &crate::db::fixtures::test_user("alice")?)?
+            lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("alice")?)?
         };
         let principal = crate::services::testing::user_principal(user_db_id).await?;
 
@@ -339,7 +339,7 @@ mod tests {
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::users::create(&mut db, &crate::db::fixtures::test_user("alice")?)?
+            lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("alice")?)?
         };
         let principal = crate::services::testing::user_principal(user_db_id).await?;
 
@@ -367,7 +367,7 @@ mod tests {
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::users::create(&mut db, &crate::db::fixtures::test_user("alice")?)?
+            lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("alice")?)?
         };
         let principal = crate::services::testing::user_principal(user_db_id).await?;
 
@@ -393,7 +393,7 @@ mod tests {
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::users::create(&mut db, &crate::db::fixtures::test_user("alice")?)?
+            lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("alice")?)?
         };
         let principal = crate::services::testing::user_principal(user_db_id).await?;
         let created = create_api_key(&principal, "laptop").await?;
@@ -421,7 +421,7 @@ mod tests {
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::users::create(&mut db, &crate::db::fixtures::test_user("alice")?)?
+            lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("alice")?)?
         };
         let principal = crate::services::testing::user_principal(user_db_id).await?;
         let created = create_api_key(&principal, "laptop").await?;
@@ -444,7 +444,7 @@ mod tests {
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::users::create(&mut db, &crate::db::fixtures::test_user("alice")?)?
+            lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("alice")?)?
         };
         let principal = crate::services::testing::user_principal(user_db_id).await?;
         let created = create_api_key(&principal, "laptop").await?;
@@ -458,13 +458,13 @@ mod tests {
 
         {
             let mut db = STATE.db.write().await;
-            let api_key = crate::db::api_keys::get_by_public_id(&db, &created.id)?
+            let api_key = lyra_db::api_keys::get_by_public_id(&db, &created.id)?
                 .ok_or_else(|| anyhow::anyhow!("api key should exist"))?;
             let api_key_db_id: DbId = api_key
                 .db_id
                 .ok_or_else(|| anyhow::anyhow!("persisted api key has db_id"))?
                 .into();
-            crate::db::api_keys::update_last_used_at(&mut db, api_key_db_id, first_bump - 1)?;
+            lyra_db::api_keys::update_last_used_at(&mut db, api_key_db_id, first_bump - 1)?;
         }
 
         resolve_api_key(&created.key)

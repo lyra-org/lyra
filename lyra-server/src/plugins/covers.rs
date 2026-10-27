@@ -35,12 +35,12 @@ use harmony_luau::{
     render_definition_file_with_support,
 };
 
-use crate::db::Cover;
-use crate::db::DbAsync;
-use crate::db::ResolveId;
 use crate::plugins::args;
 use crate::plugins::db;
 use crate::services::catalog::Viewer;
+use lyra_db::Cover;
+use lyra_db::DbAsync;
+use lyra_db::ResolveId;
 
 enum CoverValidity {
     Valid(Cover),
@@ -296,7 +296,7 @@ fn resolve_playlist_sources(
     if !viewer.sees_playlist(db, playlist_id)? {
         return Ok(sources);
     }
-    for (_, release_id) in crate::db::covers::display::playlist_cover_sources(db, playlist_id)? {
+    for (_, release_id) in lyra_db::covers::display::playlist_cover_sources(db, playlist_id)? {
         if !viewer.sees_entity(db, release_id)? {
             continue;
         }
@@ -348,14 +348,14 @@ fn resolve_persisted_covers(
             continue;
         }
         if seen.insert(*item_id) {
-            if crate::db::entities::get_element_type(db, *item_id)?.is_none() {
+            if lyra_db::entities::get_element_type(db, *item_id)?.is_none() {
                 continue;
             }
             unique_ids.push(*item_id);
         }
     }
 
-    let direct_covers = crate::db::covers::get_many(db, &unique_ids)?;
+    let direct_covers = lyra_db::covers::get_many(db, &unique_ids)?;
 
     let mut resolved = HashMap::new();
     let mut unresolved = Vec::new();
@@ -377,7 +377,7 @@ fn resolve_persisted_covers(
         return Ok(resolved);
     }
 
-    let track_releases = crate::db::releases::get_by_tracks(db, &unresolved)?;
+    let track_releases = lyra_db::releases::get_by_tracks(db, &unresolved)?;
     let mut release_ids = Vec::new();
     let mut seen_release_ids = HashSet::new();
     for related_releases in track_releases.values() {
@@ -391,7 +391,7 @@ fn resolve_persisted_covers(
         }
     }
 
-    let covers_by_release = crate::db::covers::get_many(db, &release_ids)?;
+    let covers_by_release = lyra_db::covers::get_many(db, &release_ids)?;
 
     for item_id in unresolved {
         let Some(mut releases) = track_releases.get(&item_id).cloned() else {
@@ -431,11 +431,11 @@ async fn remove_still_stale_covers(
         if !seen.insert(owner_id) {
             continue;
         }
-        let Ok(Some(cover)) = crate::db::covers::get(&*db_write, owner_id) else {
+        let Ok(Some(cover)) = lyra_db::covers::get(&*db_write, owner_id) else {
             continue;
         };
         if matches!(check_cover_validity(cover), CoverValidity::NotFound) {
-            let _ = crate::db::covers::remove(&mut *db_write, owner_id);
+            let _ = lyra_db::covers::remove(&mut *db_write, owner_id);
         }
     }
     Ok(())

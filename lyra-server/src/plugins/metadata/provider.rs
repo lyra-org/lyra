@@ -21,7 +21,6 @@ use harmony_luau as luau;
 use nanoid::nanoid;
 use serde_json::Value as JsonValue;
 
-use crate::db::ProviderConfig;
 use crate::plugins::args;
 use crate::plugins::db;
 use crate::services::plugin_dispatch::MetadataRefreshRequest;
@@ -40,6 +39,7 @@ use crate::services::{
         provider_registry,
     },
 };
+use lyra_db::ProviderConfig;
 
 use super::MetadataCallbackRegistry;
 use super::layer::MetadataLayer;
@@ -101,7 +101,7 @@ fn provider_new_callback(
 
         if let Some(db) = db {
             let mut db_write = db.write().await;
-            if crate::db::providers::get_by_provider_id(&db_write, &provider_id)
+            if lyra_db::providers::get_by_provider_id(&db_write, &provider_id)
                 .map_err(crate::plugins::runtime_error)?
                 .is_none()
             {
@@ -111,7 +111,7 @@ fn provider_new_callback(
                     priority: 50,
                     enabled: true,
                 };
-                crate::db::providers::upsert(&mut db_write, &provider_config)
+                lyra_db::providers::upsert(&mut db_write, &provider_config)
                     .map_err(crate::plugins::runtime_error)?;
             }
         }
@@ -536,7 +536,7 @@ fn similar_releases_callback(
 }
 
 fn validate_lyrics_provider_id(provider_id: &str) -> luau::runtime::Result<()> {
-    crate::db::lyrics::validate_provider_id(provider_id).map_err(crate::plugins::runtime_error)
+    lyra_db::lyrics::validate_provider_id(provider_id).map_err(crate::plugins::runtime_error)
 }
 
 fn refresh_callback(
@@ -619,7 +619,7 @@ fn ensure_artist_callback(
         let mut db_write = db.write().await;
         let mut resolved_artist_id: Option<DbId> = None;
 
-        if let Some(owner_id) = crate::db::external_ids::get_owner(
+        if let Some(owner_id) = lyra_db::external_ids::get_owner(
             &db_write,
             &provider_id,
             &id_type,
@@ -627,7 +627,7 @@ fn ensure_artist_callback(
             Some("Artist"),
         )
         .map_err(crate::plugins::runtime_error)?
-            && let Some(artist) = crate::db::artists::get_by_id(&db_write, owner_id)
+            && let Some(artist) = lyra_db::artists::get_by_id(&db_write, owner_id)
                 .map_err(crate::plugins::runtime_error)?
         {
             if let (Some(existing_type), Some(incoming_type)) = (artist.artist_type, artist_type)
@@ -643,7 +643,7 @@ fn ensure_artist_callback(
         if resolved_artist_id.is_none()
             && let Some(scan_name) = artist_name.as_deref()
         {
-            let mut candidates = crate::db::artists::with_scan_name(&db_write, scan_name)
+            let mut candidates = lyra_db::artists::with_scan_name(&db_write, scan_name)
                 .map_err(crate::plugins::runtime_error)?
                 .into_iter()
                 .filter_map(|artist| Some((DbId::from(artist.db_id.clone()?), artist)))
@@ -659,7 +659,7 @@ fn ensure_artist_callback(
                 }
 
                 if let Some(existing_for_provider) =
-                    crate::db::external_ids::get(&db_write, candidate_id, &provider_id, &id_type)
+                    lyra_db::external_ids::get(&db_write, candidate_id, &provider_id, &id_type)
                         .map_err(crate::plugins::runtime_error)?
                 {
                     let existing_value = existing_for_provider.id_value.trim();
@@ -677,7 +677,7 @@ fn ensure_artist_callback(
             existing
         } else {
             let fallback_name = artist_name.clone().unwrap_or_else(|| id_value.clone());
-            let created_artist = crate::db::Artist {
+            let created_artist = lyra_db::Artist {
                 db_id: None,
                 id: nanoid!(),
                 artist_name: fallback_name.clone(),
@@ -721,17 +721,17 @@ fn ensure_artist_callback(
         };
 
         let fields = [
-            (crate::db::MetadataField::ArtistName, artist_name),
+            (lyra_db::MetadataField::ArtistName, artist_name),
             (
-                crate::db::MetadataField::ArtistType,
+                lyra_db::MetadataField::ArtistType,
                 artist_type.as_ref().map(ToString::to_string),
             ),
-            (crate::db::MetadataField::SortName, sort_name),
-            (crate::db::MetadataField::Description, description),
+            (lyra_db::MetadataField::SortName, sort_name),
+            (lyra_db::MetadataField::Description, description),
         ]
         .into_iter()
         .filter_map(|(field, value)| Some((field, JsonValue::String(value?))))
-        .collect::<crate::db::metadata::layers::LayerFields>();
+        .collect::<lyra_db::metadata::layers::LayerFields>();
 
         let mut external_ids = HashMap::new();
         external_ids.insert(id_type, id_value);

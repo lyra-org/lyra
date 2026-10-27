@@ -36,8 +36,8 @@ fn bounded(test: fn() -> Result<()>) -> Result<()> {
     }
 }
 
-fn fixture() -> Result<(PluginExecutor, crate::db::DbAsync)> {
-    let db = Arc::new(tokio::sync::RwLock::new(crate::db::test_db::new_test_db()?));
+fn fixture() -> Result<(PluginExecutor, lyra_db::DbAsync)> {
+    let db = Arc::new(tokio::sync::RwLock::new(lyra_db::test_db::new_test_db()?));
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest(
             "demo",

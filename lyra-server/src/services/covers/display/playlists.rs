@@ -10,13 +10,13 @@ use agdb::{
     DbId,
 };
 
-use crate::db::covers::display::{
+use crate::services::auth::Principal;
+use lyra_db::covers::display::{
     self as db_display,
     DisplayCoverScope,
     DisplayCoverTargetKind,
     DisplayCoverWinnerKind,
 };
-use crate::services::auth::Principal;
 
 /// A playlist's display cover: the deterministically chosen release cover from
 /// its membership. Unlike genres there is no listen-driven personal or instance
@@ -24,8 +24,8 @@ use crate::services::auth::Principal;
 pub(crate) fn cover_for_playlist(
     db: &DbAny,
     principal: &Principal,
-    playlist: &crate::db::Playlist,
-) -> anyhow::Result<Option<crate::db::Cover>> {
+    playlist: &lyra_db::Playlist,
+) -> anyhow::Result<Option<lyra_db::Cover>> {
     let Some((_, profile)) = db_display::get_profile(
         db,
         DisplayCoverScope::Instance,
@@ -48,8 +48,8 @@ pub(crate) fn cover_for_playlist(
 pub(crate) fn covers_for_playlists(
     db: &DbAny,
     principal: &Principal,
-    playlists: &[crate::db::Playlist],
-) -> anyhow::Result<HashMap<DbId, crate::db::Cover>> {
+    playlists: &[lyra_db::Playlist],
+) -> anyhow::Result<HashMap<DbId, lyra_db::Cover>> {
     let mut covers = HashMap::new();
     for playlist in playlists {
         let Some(playlist_db_id) = playlist.db_id.clone().map(DbId::from) else {

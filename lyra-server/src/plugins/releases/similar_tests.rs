@@ -20,11 +20,6 @@ use anyhow::{
     anyhow,
 };
 
-use crate::db::fixtures::{
-    connect,
-    insert_release,
-};
-use crate::db::test_db::insert_library;
 use crate::{
     plugins::executor::PluginExecutorHandle,
     services::{
@@ -41,6 +36,11 @@ use crate::{
         },
     },
 };
+use lyra_db::fixtures::{
+    connect,
+    insert_release,
+};
+use lyra_db::test_db::insert_library;
 
 struct TempSimilarPluginDir {
     root: PathBuf,
@@ -145,13 +145,13 @@ async fn provider_external_reference_resolves_all_owners_and_excludes_seed() -> 
         connect(&mut db, seed_library, same_library)?;
         connect(&mut db, other_library, other)?;
         for release in [seed, same_library, other] {
-            crate::db::external_ids::upsert(
+            lyra_db::external_ids::upsert(
                 &mut db,
                 release,
                 "similartest",
                 "release_group_id",
                 "group-1",
-                crate::db::IdSource::Resolved,
+                lyra_db::IdSource::Resolved,
             )?;
         }
         (seed, same_library)
@@ -187,7 +187,7 @@ async fn timed_out_provider_falls_through_to_lower_priority_provider() -> Result
         let mut db = STATE.db.write().await;
         let seed = insert_release(&mut db, "Seed")?;
         let candidate = insert_release(&mut db, "Candidate")?;
-        let public_id = crate::db::releases::get_by_id(&db, candidate)?
+        let public_id = lyra_db::releases::get_by_id(&db, candidate)?
             .ok_or_else(|| anyhow!("candidate missing"))?
             .id;
         (seed, candidate, public_id)
@@ -221,8 +221,8 @@ async fn timed_out_provider_falls_through_to_lower_priority_provider() -> Result
     let runtime = publish_test_runtime(&plugin).await?;
     {
         let mut db = STATE.db.write().await;
-        crate::db::providers::update_priority(&mut db, "slow", 100)?;
-        crate::db::providers::update_priority(&mut db, "fallback", 50)?;
+        lyra_db::providers::update_priority(&mut db, "slow", 100)?;
+        lyra_db::providers::update_priority(&mut db, "fallback", 50)?;
     }
 
     let started = Instant::now();
@@ -256,7 +256,7 @@ async fn dispatcher_queue_delay_does_not_consume_handler_timeout() -> Result<()>
         let mut db = STATE.db.write().await;
         let seed = insert_release(&mut db, "Seed")?;
         let candidate = insert_release(&mut db, "Candidate")?;
-        let public_id = crate::db::releases::get_by_id(&db, candidate)?
+        let public_id = lyra_db::releases::get_by_id(&db, candidate)?
             .ok_or_else(|| anyhow!("candidate missing"))?
             .id;
         (seed, candidate, public_id)
@@ -312,7 +312,7 @@ async fn in_vm_dispatch_is_not_wrapped_in_provider_call_lock() -> Result<()> {
         let mut db = STATE.db.write().await;
         let seed = insert_release(&mut db, "Seed")?;
         let candidate = insert_release(&mut db, "Candidate")?;
-        let public_id = crate::db::releases::get_by_id(&db, candidate)?
+        let public_id = lyra_db::releases::get_by_id(&db, candidate)?
             .ok_or_else(|| anyhow!("candidate missing"))?
             .id;
         (seed, candidate, public_id)

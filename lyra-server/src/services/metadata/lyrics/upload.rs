@@ -14,13 +14,13 @@ use agdb::{
 };
 use serde::Deserialize;
 
-use crate::db::lyrics::{
+use crate::services::auth::Principal;
+use lyra_db::lyrics::{
     LineInput,
     LyricsDetail,
     LyricsInput,
     WordInput,
 };
-use crate::services::auth::Principal;
 
 const LYRICS_UPLOAD_MAX_BYTES: usize = 64 * 1024;
 
@@ -136,10 +136,10 @@ pub(crate) fn upsert_plugin_lyrics(
     lyrics_id: String,
     provider_id: &str,
 ) -> Result<DbId, LyricsUploadError> {
-    let track = crate::db::tracks::get_by_id(db, track_db_id)?.ok_or_else(|| {
+    let track = lyra_db::tracks::get_by_id(db, track_db_id)?.ok_or_else(|| {
         LyricsUploadError::NotFound(format!("Track not found: {}", track_db_id.0))
     })?;
-    crate::db::lyrics::upsert_from_plugin(
+    lyra_db::lyrics::upsert_from_plugin(
         db,
         track_db_id,
         input,
@@ -156,17 +156,17 @@ pub(crate) fn delete_personal_lyrics_for_track_by_db_id(
     owner: &Principal,
 ) -> Result<bool, LyricsUploadError> {
     let owner_db_id = owner.require(db).map_err(anyhow::Error::from)?;
-    if crate::db::tracks::get_by_id(db, track_db_id)?.is_none() {
+    if lyra_db::tracks::get_by_id(db, track_db_id)?.is_none() {
         return Ok(false);
     }
-    crate::db::lyrics::delete_personal(db, track_db_id, owner_db_id).map_err(Into::into)
+    lyra_db::lyrics::delete_personal(db, track_db_id, owner_db_id).map_err(Into::into)
 }
 
 pub(crate) fn delete_all_lyrics_for_track(
     db: &mut DbAny,
     track_db_id: DbId,
 ) -> Result<(), LyricsUploadError> {
-    crate::db::lyrics::delete_for_track(db, track_db_id)?;
+    lyra_db::lyrics::delete_for_track(db, track_db_id)?;
     Ok(())
 }
 
@@ -178,7 +178,7 @@ pub(crate) fn upsert_personal_lyrics_by_db_id(
     input: LyricsInput,
 ) -> Result<LyricsDetail, LyricsUploadError> {
     let owner_db_id = owner.require(db).map_err(anyhow::Error::from)?;
-    let track = crate::db::tracks::get_by_id(db, track_db_id)?.ok_or_else(|| {
+    let track = lyra_db::tracks::get_by_id(db, track_db_id)?.ok_or_else(|| {
         LyricsUploadError::NotFound(format!("Track not found: {}", track_db_id.0))
     })?;
     if track.id != expected_track_public_id {
@@ -188,9 +188,9 @@ pub(crate) fn upsert_personal_lyrics_by_db_id(
     }
 
     let lyrics_db_id =
-        crate::db::lyrics::upsert_personal(db, track_db_id, input, owner_db_id, track.duration_ms)
+        lyra_db::lyrics::upsert_personal(db, track_db_id, input, owner_db_id, track.duration_ms)
             .map_err(|err| LyricsUploadError::BadRequest(err.to_string()))?;
-    crate::db::lyrics::get_detail(db, lyrics_db_id)?
+    lyra_db::lyrics::get_detail(db, lyrics_db_id)?
         .ok_or_else(|| LyricsUploadError::NotFound("lyrics not found after upsert".to_string()))
 }
 
@@ -199,12 +199,12 @@ pub(crate) fn upsert_shared_lyrics_by_db_id(
     track_db_id: DbId,
     input: LyricsInput,
 ) -> Result<LyricsDetail, LyricsUploadError> {
-    let track = crate::db::tracks::get_by_id(db, track_db_id)?.ok_or_else(|| {
+    let track = lyra_db::tracks::get_by_id(db, track_db_id)?.ok_or_else(|| {
         LyricsUploadError::NotFound(format!("Track not found: {}", track_db_id.0))
     })?;
-    let lyrics_db_id = crate::db::lyrics::upsert_shared(db, track_db_id, input, track.duration_ms)
+    let lyrics_db_id = lyra_db::lyrics::upsert_shared(db, track_db_id, input, track.duration_ms)
         .map_err(|err| LyricsUploadError::BadRequest(err.to_string()))?;
-    crate::db::lyrics::get_detail(db, lyrics_db_id)?
+    lyra_db::lyrics::get_detail(db, lyrics_db_id)?
         .ok_or_else(|| LyricsUploadError::NotFound("lyrics not found after upsert".to_string()))
 }
 
@@ -212,10 +212,10 @@ pub(crate) fn delete_shared_lyrics_for_track_by_db_id(
     db: &mut DbAny,
     track_db_id: DbId,
 ) -> Result<bool, LyricsUploadError> {
-    crate::db::tracks::get_by_id(db, track_db_id)?.ok_or_else(|| {
+    lyra_db::tracks::get_by_id(db, track_db_id)?.ok_or_else(|| {
         LyricsUploadError::NotFound(format!("Track not found: {}", track_db_id.0))
     })?;
-    crate::db::lyrics::delete_shared(db, track_db_id).map_err(Into::into)
+    lyra_db::lyrics::delete_shared(db, track_db_id).map_err(Into::into)
 }
 
 fn plain_text_to_input(contents: &str, language: String, now_ms: u64) -> LyricsInput {
@@ -428,7 +428,7 @@ mod tests {
     use super::*;
 
     fn create_principal(db: &mut DbAny, username: &str) -> anyhow::Result<Principal> {
-        let user_db_id = crate::db::test_db::insert_user(db, username)?;
+        let user_db_id = lyra_db::test_db::insert_user(db, username)?;
         Ok(Principal::for_user(
             db,
             user_db_id,
@@ -578,11 +578,11 @@ mod tests {
 
     #[test]
     fn personal_delete_is_owner_scoped_without_an_access_check() -> anyhow::Result<()> {
-        let mut db = crate::db::test_db::new_test_db()?;
-        let track_id = crate::db::fixtures::insert_track(&mut db, "song")?;
+        let mut db = lyra_db::test_db::new_test_db()?;
+        let track_id = lyra_db::fixtures::insert_track(&mut db, "song")?;
         let alice_input = plain_text_to_input("alice", "eng".to_string(), 1);
         let bob_input = plain_text_to_input("bob", "eng".to_string(), 2);
-        let track_public_id = crate::db::tracks::get_by_id(&db, track_id)?.unwrap().id;
+        let track_public_id = lyra_db::tracks::get_by_id(&db, track_id)?.unwrap().id;
         let alice = create_principal(&mut db, "alice")?;
         let bob = create_principal(&mut db, "bob")?;
         upsert_personal_lyrics_by_db_id(&mut db, track_id, &track_public_id, &alice, alice_input)?;
@@ -603,18 +603,18 @@ mod tests {
         assert!(!delete_personal_lyrics_for_track_by_db_id(
             &mut db, bob_db_id, &alice
         )?);
-        let rows = crate::db::lyrics::get_visible_for_track(&db, track_id, Some(bob_db_id))?;
+        let rows = lyra_db::lyrics::get_visible_for_track(&db, track_id, Some(bob_db_id))?;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].plain_text, "bob");
-        assert!(crate::db::lyrics::find_personal(&db, track_id, bob_db_id)?.is_some());
+        assert!(lyra_db::lyrics::find_personal(&db, track_id, bob_db_id)?.is_some());
         Ok(())
     }
 
     #[test]
     fn personal_upsert_rejects_a_reused_track_db_id() -> anyhow::Result<()> {
-        let mut db = crate::db::test_db::new_test_db()?;
-        let track_db_id = crate::db::fixtures::insert_track(&mut db, "original")?;
-        let original = crate::db::tracks::get_by_id(&db, track_db_id)?.expect("original track");
+        let mut db = lyra_db::test_db::new_test_db()?;
+        let track_db_id = lyra_db::fixtures::insert_track(&mut db, "original")?;
+        let original = lyra_db::tracks::get_by_id(&db, track_db_id)?.expect("original track");
         let original_public_id = original.id.clone();
         let mut replacement = original;
         replacement.db_id = None;
@@ -637,7 +637,7 @@ mod tests {
         )
         .expect_err("stale public ID must reject the replacement track");
         assert!(matches!(error, LyricsUploadError::NotFound(_)));
-        assert!(crate::db::lyrics::find_personal(&db, track_db_id, alice.require(&db)?)?.is_none());
+        assert!(lyra_db::lyrics::find_personal(&db, track_db_id, alice.require(&db)?)?.is_none());
         Ok(())
     }
 
@@ -655,12 +655,12 @@ mod tests {
     #[test]
     fn stale_principal_cannot_touch_lyrics_of_a_user_with_its_recycled_db_id() -> anyhow::Result<()>
     {
-        let mut db = crate::db::test_db::new_test_db()?;
-        let track_id = crate::db::fixtures::insert_track(&mut db, "song")?;
-        let track_public_id = crate::db::tracks::get_by_id(&db, track_id)?.unwrap().id;
+        let mut db = lyra_db::test_db::new_test_db()?;
+        let track_id = lyra_db::fixtures::insert_track(&mut db, "song")?;
+        let track_public_id = lyra_db::tracks::get_by_id(&db, track_id)?.unwrap().id;
         let stale = create_principal(&mut db, "deleted")?;
         let stale_db_id = stale.require(&db)?;
-        crate::db::users::delete_user(&mut db, stale_db_id)?;
+        lyra_db::users::delete_user(&mut db, stale_db_id)?;
         let current = create_principal(&mut db, "current")?;
         assert_eq!(current.require(&db)?, stale_db_id, "agdb reuses freed ids");
         upsert_personal_lyrics_by_db_id(

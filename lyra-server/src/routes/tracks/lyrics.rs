@@ -112,23 +112,23 @@ async fn get_track_lyrics(
     let db = &*STATE.db.read().await;
     let not_found = || AppError::not_found(format!("No lyrics for track: {id}"));
 
-    let track_db_id = crate::db::lookup::find_node_id_by_id(db, &id)?.ok_or_else(not_found)?;
+    let track_db_id = lyra_db::lookup::find_node_id_by_id(db, &id)?.ok_or_else(not_found)?;
     crate::services::auth::access::require_entity_accessible(
         db,
         &principal,
         track_db_id,
         not_found,
     )?;
-    let track = crate::db::tracks::get_by_id(db, track_db_id)?.ok_or_else(not_found)?;
+    let track = lyra_db::tracks::get_by_id(db, track_db_id)?.ok_or_else(not_found)?;
 
     let format = parse_lyrics_format(query.format.as_deref())?;
     if let Some(provider_id) = query.provider.as_deref() {
-        crate::db::lyrics::validate_provider_id(provider_id)
+        lyra_db::lyrics::validate_provider_id(provider_id)
             .map_err(|error| AppError::bad_request(error.to_string()))?;
     }
     let require_synced = format == "lrc";
     let candidates = lyrics_service::visible_for_track(db, track_db_id, Some(&principal))?;
-    let providers = crate::db::providers::get(db)?;
+    let providers = lyra_db::providers::get(db)?;
     let language_hint = lyrics_service::normalize_language_hint(query.language.as_deref())
         .map_err(|error| AppError::bad_request(error.to_string()))?;
 
@@ -163,7 +163,7 @@ async fn get_track_lyrics(
     let Some(winner_db_id) = winner.db_id.clone().map(Into::into) else {
         return Err(not_found());
     };
-    let detail = crate::db::lyrics::get_detail(db, winner_db_id)?.ok_or_else(not_found)?;
+    let detail = lyra_db::lyrics::get_detail(db, winner_db_id)?.ok_or_else(not_found)?;
 
     match format.as_str() {
         "json" => Ok(lyrics_response_json(detail).into_response()),
@@ -181,20 +181,20 @@ async fn get_track_lyrics_candidates(
     let principal = require_authenticated(&headers).await?;
     let db = &*STATE.db.read().await;
     let not_found = || AppError::not_found(format!("Track not found: {id}"));
-    let track_db_id = crate::db::lookup::find_node_id_by_id(db, &id)?.ok_or_else(not_found)?;
+    let track_db_id = lyra_db::lookup::find_node_id_by_id(db, &id)?.ok_or_else(not_found)?;
     crate::services::auth::access::require_entity_accessible(
         db,
         &principal,
         track_db_id,
         not_found,
     )?;
-    let track = crate::db::tracks::get_by_id(db, track_db_id)?
+    let track = lyra_db::tracks::get_by_id(db, track_db_id)?
         .ok_or_else(|| AppError::not_found(format!("Track not found: {id}")))?;
 
     let format = parse_lyrics_format(query.format.as_deref())?;
     let require_synced = format == "lrc";
     let candidates = lyrics_service::visible_for_track(db, track_db_id, Some(&principal))?;
-    let providers = crate::db::providers::get(db)?;
+    let providers = lyra_db::providers::get(db)?;
     let mut items: Vec<_> = lyrics_service::eligible_candidates(
         &candidates,
         &providers,
@@ -226,7 +226,7 @@ async fn put_personal_track_lyrics(
         .map_err(lyrics_upload_error_to_app_error)?;
 
     let mut db = STATE.db.write().await;
-    let track_db_id = crate::db::lookup::find_node_id_by_id(&*db, &id)?
+    let track_db_id = lyra_db::lookup::find_node_id_by_id(&*db, &id)?
         .ok_or_else(|| AppError::not_found(format!("Track not found: {id}")))?;
     crate::services::auth::access::require_entity_accessible(
         &*db,
@@ -252,7 +252,7 @@ async fn delete_personal_track_lyrics(
 ) -> Result<StatusCode, AppError> {
     let principal = require_authenticated(&headers).await?;
     let mut db = STATE.db.write().await;
-    let Some(track_db_id) = crate::db::lookup::find_node_id_by_id(&*db, &id)? else {
+    let Some(track_db_id) = lyra_db::lookup::find_node_id_by_id(&*db, &id)? else {
         return Ok(StatusCode::NO_CONTENT);
     };
     lyrics_service::delete_personal_lyrics_for_track_by_db_id(&mut db, track_db_id, &principal)
@@ -267,14 +267,14 @@ async fn put_shared_track_lyrics(
     body: Bytes,
 ) -> Result<Json<LyricsResponse>, AppError> {
     let principal = require_authenticated(&headers).await?;
-    require_permission(&principal, crate::db::Permission::ManageMetadata)?;
+    require_permission(&principal, lyra_db::Permission::ManageMetadata)?;
     let now = lyrics_service::now_ms().map_err(lyrics_upload_error_to_app_error)?;
     let content_type = request_content_type(&headers)?;
     validate_upload_content_type(content_type)?;
     let input = lyrics_service::input_from_upload(content_type, &body, query.language, now)
         .map_err(lyrics_upload_error_to_app_error)?;
     let mut db = STATE.db.write().await;
-    let track_db_id = crate::db::lookup::find_node_id_by_id(&*db, &id)?
+    let track_db_id = lyra_db::lookup::find_node_id_by_id(&*db, &id)?
         .ok_or_else(|| AppError::not_found(format!("Track not found: {id}")))?;
     crate::services::auth::access::require_entity_accessible(
         &*db,
@@ -292,9 +292,9 @@ async fn delete_shared_track_lyrics(
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
     let principal = require_authenticated(&headers).await?;
-    require_permission(&principal, crate::db::Permission::ManageMetadata)?;
+    require_permission(&principal, lyra_db::Permission::ManageMetadata)?;
     let mut db = STATE.db.write().await;
-    let track_db_id = crate::db::lookup::find_node_id_by_id(&*db, &id)?
+    let track_db_id = lyra_db::lookup::find_node_id_by_id(&*db, &id)?
         .ok_or_else(|| AppError::not_found(format!("Track not found: {id}")))?;
     crate::services::auth::access::require_entity_accessible(
         &*db,
@@ -314,7 +314,7 @@ async fn refresh_track_lyrics(
     let principal = require_authenticated(&headers).await?;
     let track_db_id = {
         let db = &*STATE.db.read().await;
-        let track_db_id = crate::db::lookup::find_node_id_by_id(db, &id)?
+        let track_db_id = lyra_db::lookup::find_node_id_by_id(db, &id)?
             .ok_or_else(|| AppError::not_found(format!("No track: {id}")))?;
         crate::services::auth::access::require_entity_accessible(
             db,
@@ -373,7 +373,7 @@ fn parse_lyrics_format(raw: Option<&str>) -> Result<String, AppError> {
 }
 
 fn lyrics_candidate_summary(
-    lyrics: &crate::db::Lyrics,
+    lyrics: &lyra_db::Lyrics,
     duration_ms: Option<u64>,
 ) -> LyricsCandidateSummaryResponse {
     LyricsCandidateSummaryResponse {
@@ -387,8 +387,8 @@ fn lyrics_candidate_summary(
     }
 }
 
-fn lyrics_response_json(detail: crate::db::lyrics::LyricsDetail) -> Json<LyricsResponse> {
-    let crate::db::lyrics::LyricsDetail { lyrics, lines } = detail;
+fn lyrics_response_json(detail: lyra_db::lyrics::LyricsDetail) -> Json<LyricsResponse> {
+    let lyra_db::lyrics::LyricsDetail { lyrics, lines } = detail;
     let scope = LyricsScopeResponse::from_lyrics(&lyrics);
     let source = LyricsSourceResponse::from_lyrics(&lyrics);
     let provider_id = lyrics.provider_id.clone();
@@ -422,7 +422,7 @@ fn lyrics_response_json(detail: crate::db::lyrics::LyricsDetail) -> Json<LyricsR
     })
 }
 
-fn lyrics_response_plain(detail: crate::db::lyrics::LyricsDetail) -> Response {
+fn lyrics_response_plain(detail: lyra_db::lyrics::LyricsDetail) -> Response {
     let language = detail.lyrics.language.clone();
     let body = if !detail.lyrics.plain_text.is_empty() {
         detail.lyrics.plain_text
@@ -439,7 +439,7 @@ fn lyrics_response_plain(detail: crate::db::lyrics::LyricsDetail) -> Response {
 
 const LRC_MAX_TS_MS: u64 = 99 * 60 * 1000 + 59 * 1000 + 990;
 
-fn lyrics_response_lrc(detail: crate::db::lyrics::LyricsDetail) -> Response {
+fn lyrics_response_lrc(detail: lyra_db::lyrics::LyricsDetail) -> Response {
     let language = detail.lyrics.language.clone();
     let mut body = String::new();
     for line in &detail.lines {
@@ -617,13 +617,13 @@ mod tests {
     use agdb::DbId;
 
     use super::*;
-    use crate::db::fixtures::{
+    use crate::services::testing::runtime_test_lock;
+    use lyra_db::fixtures::{
         connect,
         insert_release,
         insert_track,
     };
-    use crate::db::test_db::insert_library;
-    use crate::services::testing::runtime_test_lock;
+    use lyra_db::test_db::insert_library;
 
     async fn bearer_headers_for_user(user_db_id: DbId) -> anyhow::Result<HeaderMap> {
         let session =
@@ -665,63 +665,63 @@ mod tests {
 
         let (track_db_id, track_public_id, library_db_id, alice_id, bob_id, admin_id) = {
             let mut db = STATE.db.write().await;
-            crate::db::roles::ensure_builtin_roles(&mut db)?;
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
             let library = insert_library(&mut db, "Lyrics Routes", "/tmp/lyra-lyrics-routes")?;
             let release = insert_release(&mut db, "Lyrics Release")?;
             let track = insert_track(&mut db, "Lyrics Track")?;
             connect(&mut db, library, release)?;
             connect(&mut db, release, track)?;
-            let mut track_row = crate::db::tracks::get_by_id(&db, track)?
+            let mut track_row = lyra_db::tracks::get_by_id(&db, track)?
                 .ok_or_else(|| anyhow::anyhow!("track missing"))?;
             track_row.duration_ms = Some(4_000);
-            crate::db::tracks::update(&mut db, &track_row)?;
+            lyra_db::tracks::update(&mut db, &track_row)?;
 
-            let alice = crate::db::fixtures::test_user("lyrics-alice")?;
-            let bob = crate::db::fixtures::test_user("lyrics-bob")?;
-            let admin = crate::db::fixtures::test_user("lyrics-admin")?;
-            let alice_id = crate::db::users::create(&mut db, &alice)?;
-            let bob_id = crate::db::users::create(&mut db, &bob)?;
-            let admin_id = crate::db::users::create(&mut db, &admin)?;
-            crate::db::libraries::grant_access(
+            let alice = lyra_db::fixtures::test_user("lyrics-alice")?;
+            let bob = lyra_db::fixtures::test_user("lyrics-bob")?;
+            let admin = lyra_db::fixtures::test_user("lyrics-admin")?;
+            let alice_id = lyra_db::users::create(&mut db, &alice)?;
+            let bob_id = lyra_db::users::create(&mut db, &bob)?;
+            let admin_id = lyra_db::users::create(&mut db, &admin)?;
+            lyra_db::libraries::grant_access(
                 &mut db,
                 alice_id,
                 library,
-                crate::db::libraries::AccessKind::ReadWrite,
+                lyra_db::libraries::AccessKind::ReadWrite,
             )?;
-            crate::db::libraries::grant_access(
+            lyra_db::libraries::grant_access(
                 &mut db,
                 bob_id,
                 library,
-                crate::db::libraries::AccessKind::ReadWrite,
+                lyra_db::libraries::AccessKind::ReadWrite,
             )?;
-            crate::db::roles::ensure_user_has_role(
+            lyra_db::roles::ensure_user_has_role(
                 &mut db,
                 admin_id,
-                crate::db::roles::BUILTIN_ADMIN_ROLE,
+                lyra_db::roles::BUILTIN_ADMIN_ROLE,
             )?;
 
-            crate::db::providers::upsert(
+            lyra_db::providers::upsert(
                 &mut db,
-                &crate::db::ProviderConfig {
+                &lyra_db::ProviderConfig {
                     db_id: None,
                     provider_id: "route-provider".to_string(),
                     priority: 50,
                     enabled: true,
                 },
             )?;
-            crate::db::lyrics::upsert_from_plugin(
+            lyra_db::lyrics::upsert_from_plugin(
                 &mut db,
                 track,
-                crate::db::lyrics::LyricsInput {
+                lyra_db::lyrics::LyricsInput {
                     language: "eng".to_string(),
                     plain_text: "provider lyrics".to_string(),
                     lines: vec![
-                        crate::db::lyrics::LineInput {
+                        lyra_db::lyrics::LineInput {
                             ts_ms: 1_000,
                             text: "provider one".to_string(),
                             words: Vec::new(),
                         },
-                        crate::db::lyrics::LineInput {
+                        lyra_db::lyrics::LineInput {
                             ts_ms: 3_000,
                             text: "provider two".to_string(),
                             words: Vec::new(),
@@ -863,7 +863,7 @@ mod tests {
 
         {
             let mut db = STATE.db.write().await;
-            crate::db::libraries::revoke_access(&mut db, alice_id, library_db_id)?;
+            lyra_db::libraries::revoke_access(&mut db, alice_id, library_db_id)?;
         }
         assert_eq!(
             route_ok(
@@ -883,8 +883,8 @@ mod tests {
             StatusCode::NO_CONTENT
         );
         let db = STATE.db.read().await;
-        assert!(crate::db::lyrics::find_personal(&*db, track_db_id, alice_id)?.is_none());
-        assert!(crate::db::lyrics::find_personal(&*db, track_db_id, bob_id)?.is_some());
+        assert!(lyra_db::lyrics::find_personal(&*db, track_db_id, alice_id)?.is_none());
+        assert!(lyra_db::lyrics::find_personal(&*db, track_db_id, bob_id)?.is_some());
         Ok(())
     }
 }

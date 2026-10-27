@@ -330,7 +330,7 @@ mod tests {
     async fn session_user(username: &str) -> anyhow::Result<(agdb::DbId, String)> {
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::test_db::insert_user(&mut db, username)?
+            lyra_db::test_db::insert_user(&mut db, username)?
         };
         let session =
             crate::services::testing::create_session(user_db_id, Default::default()).await?;
@@ -356,7 +356,7 @@ mod tests {
         crate::plugins::testing::init_default_test_state()?;
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::test_db::insert_user(&mut db, "socket-key-owner")?
+            lyra_db::test_db::insert_user(&mut db, "socket-key-owner")?
         };
         let principal = crate::services::testing::user_principal(user_db_id).await?;
         let key = crate::services::auth::api_keys::create_api_key(&principal, "socket")
@@ -384,16 +384,16 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("slot should be seeded"))?;
         assert_ne!(
             before.role_name.as_deref(),
-            Some(crate::db::roles::BUILTIN_ADMIN_ROLE)
+            Some(lyra_db::roles::BUILTIN_ADMIN_ROLE)
         );
 
         {
             let mut db = STATE.db.write().await;
-            crate::db::roles::ensure_builtin_roles(&mut db)?;
-            crate::db::roles::ensure_user_has_role(
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
+            lyra_db::roles::ensure_user_has_role(
                 &mut db,
                 user_db_id,
-                crate::db::roles::BUILTIN_ADMIN_ROLE,
+                lyra_db::roles::BUILTIN_ADMIN_ROLE,
             )?;
         }
         assert!(reauth.check().await);
@@ -404,7 +404,7 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("slot should stay seeded"))?;
         assert_eq!(
             after.role_name.as_deref(),
-            Some(crate::db::roles::BUILTIN_ADMIN_ROLE)
+            Some(lyra_db::roles::BUILTIN_ADMIN_ROLE)
         );
         assert!(after.permissions.len() > before.permissions.len());
         Ok(())
@@ -419,7 +419,7 @@ mod tests {
 
         {
             let mut db = STATE.db.write().await;
-            crate::db::users::delete_user(&mut db, user_db_id)?;
+            lyra_db::users::delete_user(&mut db, user_db_id)?;
         }
         assert!(!reauth.check().await);
         Ok(())
@@ -431,7 +431,7 @@ mod tests {
         crate::plugins::testing::init_default_test_state()?;
         {
             let mut db = STATE.db.write().await;
-            crate::db::users::ensure_default_user(&mut db)?;
+            lyra_db::users::ensure_default_user(&mut db)?;
         }
         let (_, token) = session_user("socket-collapsed").await?;
         let mut reauth = socket_reauth(&token).await?;

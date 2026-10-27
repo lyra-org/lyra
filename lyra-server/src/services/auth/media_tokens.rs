@@ -13,7 +13,6 @@ use std::{
 };
 
 use crate::{
-    db,
     services::STATE,
     services::playback_sources::SourceVersion,
 };
@@ -73,8 +72,12 @@ impl MediaTokenHolder {
 
     /// The holder's principal as it stands now, read under the caller's guard, or `None` when
     /// the user is gone or the credential that obtained the token no longer authenticates them.
-    pub(crate) fn principal(&self, db: &impl db::DbAccess) -> anyhow::Result<Option<Principal>> {
-        let Some(user_db_id) = db::users::find_db_id_by_public_id(db, &self.user_public_id)? else {
+    pub(crate) fn principal(
+        &self,
+        db: &impl lyra_db::DbAccess,
+    ) -> anyhow::Result<Option<Principal>> {
+        let Some(user_db_id) = lyra_db::users::find_db_id_by_public_id(db, &self.user_public_id)?
+        else {
             return Ok(None);
         };
         if !self.credential.is_live(db, user_db_id)? {
@@ -141,7 +144,7 @@ fn tokens(
 }
 
 fn now_secs() -> i64 {
-    crate::db::users::now_secs()
+    lyra_db::users::now_secs()
 }
 
 fn token_is_expired(grant: &MediaTokenGrant, now: Instant, now_secs: i64) -> bool {

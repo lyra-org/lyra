@@ -36,11 +36,11 @@ use percent_encoding::{
 use serde::Serialize;
 
 use super::registry::ProviderIdUrlGenerator;
-use crate::db::{
+use crate::services::EntityType;
+use lyra_db::{
     Library,
     external_ids::ExternalId,
 };
-use crate::services::EntityType;
 
 /// CPU budget for each resume of one generator call.
 pub(crate) const ID_LINK_CALL_BUDGET: Duration = Duration::from_millis(100);
@@ -543,8 +543,8 @@ mod tests {
     };
 
     use super::*;
-    use crate::db::IdSource;
     use crate::services::providers::ProviderCallbackHandle;
+    use lyra_db::IdSource;
 
     fn row(provider_id: &str, id_type: &str, id_value: &str) -> ExternalId {
         ExternalId {

@@ -24,7 +24,7 @@ use std::{
     },
 };
 
-use crate::db::bootstrap::DbKind;
+use lyra_db::bootstrap::DbKind;
 
 const LYRA_CONFIG_PATH_ENV: &str = "LYRA_CONFIG_PATH";
 

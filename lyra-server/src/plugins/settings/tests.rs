@@ -37,10 +37,10 @@ fn server_info() -> crate::plugins::server::ServerInfo {
 fn declare_settings_registers_global_and_user_schemas() -> Result<()> {
     let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
     crate::plugins::testing::init_default_test_state()?;
-    let mut db = crate::db::test_db::new_test_db()?;
-    let user = crate::db::fixtures::test_user("settings-test")?;
+    let mut db = lyra_db::test_db::new_test_db()?;
+    let user = lyra_db::fixtures::test_user("settings-test")?;
     let user_public_id = user.id.clone();
-    crate::db::users::create(&mut db, &user)?;
+    lyra_db::users::create(&mut db, &user)?;
     let db = Arc::new(tokio::sync::RwLock::new(db));
 
     let runtime = PluginExecutor::with_database(

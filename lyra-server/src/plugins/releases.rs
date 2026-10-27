@@ -24,7 +24,6 @@ use harmony_luau::{
     render_definition_file_with_support,
 };
 
-use crate::db::Release;
 use crate::plugins::args;
 use crate::plugins::catalog;
 #[cfg(feature = "docgen")]
@@ -43,6 +42,7 @@ use crate::{
         releases as release_service,
     },
 };
+use lyra_db::Release;
 
 struct ReleasesModule;
 
@@ -181,7 +181,7 @@ async fn similar_in_vm(
     seed_db_id: DbId,
     options: &release_service::SimilarReleaseOptions,
     provider_vm: luau::Vm,
-) -> anyhow::Result<Option<Vec<crate::db::Release>>> {
+) -> anyhow::Result<Option<Vec<lyra_db::Release>>> {
     let expected_vm_id = provider_vm.id();
     release_service::similar_with_dispatch(
         seed_db_id,

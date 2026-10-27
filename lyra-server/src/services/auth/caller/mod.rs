@@ -25,10 +25,7 @@ use std::{
 use axum::http::HeaderMap;
 
 use super::AuthCredential;
-use crate::{
-    db,
-    services::STATE,
-};
+use crate::services::STATE;
 
 pub(crate) use address::ClientAddress;
 
@@ -114,7 +111,7 @@ pub(crate) async fn look_up_identity(bearer_hash: &str) -> Option<Identity> {
 
 async fn bearer_identity(hash: &str) -> anyhow::Result<Option<Identity>> {
     let db = STATE.db.read().await;
-    if let Some((user, session, _)) = db::users::find_by_session_token_hash(&*db, hash)? {
+    if let Some((user, session, _)) = lyra_db::users::find_by_session_token_hash(&*db, hash)? {
         let expired = super::sessions::is_expired(&session);
         return Ok((!expired).then_some(Identity {
             user: user.id,
@@ -123,20 +120,22 @@ async fn bearer_identity(hash: &str) -> anyhow::Result<Option<Identity>> {
             },
         }));
     }
-    let Some(key) = db::api_keys::find_by_key_hash(&*db, hash)? else {
+    let Some(key) = lyra_db::api_keys::find_by_key_hash(&*db, hash)? else {
         return Ok(None);
     };
     let Some(key_id) = key.db_id else {
         return Ok(None);
     };
-    let Some(owner) = db::api_keys::get_owner_id(&*db, key_id.into())? else {
+    let Some(owner) = lyra_db::api_keys::get_owner_id(&*db, key_id.into())? else {
         return Ok(None);
     };
-    Ok(db::users::get_by_id(&*db, owner)?.map(|user| Identity {
-        user: user.id,
-        credential: AuthCredential::ApiKey {
-            public_id: key.id,
-            name: key.name,
-        },
-    }))
+    Ok(
+        lyra_db::users::get_by_id(&*db, owner)?.map(|user| Identity {
+            user: user.id,
+            credential: AuthCredential::ApiKey {
+                public_id: key.id,
+                name: key.name,
+            },
+        }),
+    )
 }

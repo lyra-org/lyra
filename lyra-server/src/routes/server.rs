@@ -24,7 +24,6 @@ use serde::{
     Serialize,
 };
 
-use crate::db::Permission;
 use crate::{
     config::BootConfig,
     services::STATE,
@@ -44,6 +43,7 @@ use crate::{
         },
     },
 };
+use lyra_db::Permission;
 
 use super::{
     AppError,
@@ -302,7 +302,7 @@ async fn require_manage_server_session(headers: &HeaderMap) -> Result<(), AppErr
 
 async fn get_server_info() -> Result<Json<ServerInfoResponse>, AppError> {
     let db = STATE.db.read().await;
-    let info = crate::db::server::get(&db)?
+    let info = lyra_db::server::get(&db)?
         .ok_or_else(|| AppError::not_found("server info not initialized"))?;
 
     let config = STATE.config();
@@ -331,7 +331,7 @@ async fn update_setup(
 ) -> Result<StatusCode, AppError> {
     require_manage_plugins(&headers).await?;
     let mut db = STATE.db.write().await;
-    crate::db::server::set_plugin_selection_skipped(&mut *db, request.plugin_selection_skipped)?;
+    lyra_db::server::set_plugin_selection_skipped(&mut *db, request.plugin_selection_skipped)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -449,10 +449,6 @@ pub(crate) fn server_openapi_routes() -> aide::axum::ApiRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{
-        roles::Role,
-        users::User,
-    };
     use crate::{
         services::auth::api_keys,
         services::testing::runtime_test_lock,
@@ -464,6 +460,10 @@ mod tests {
             header::AUTHORIZATION,
         },
         response::IntoResponse,
+    };
+    use lyra_db::{
+        roles::Role,
+        users::User,
     };
     use nanoid::nanoid;
     use serde_json::{
@@ -479,7 +479,7 @@ mod tests {
         )?;
         {
             let mut db = STATE.db.write().await;
-            crate::db::server::ensure(&mut db)?;
+            lyra_db::server::ensure(&mut db)?;
         }
         // A file that disables auth resolves every request to the default
         // user, which the server creates at startup.
@@ -488,8 +488,8 @@ mod tests {
 
     async fn user_with(permissions: Vec<Permission>) -> anyhow::Result<agdb::DbId> {
         let mut db = STATE.db.write().await;
-        crate::db::roles::ensure_builtin_roles(&mut db)?;
-        let user_db_id = crate::db::users::create(
+        lyra_db::roles::ensure_builtin_roles(&mut db)?;
+        let user_db_id = lyra_db::users::create(
             &mut db,
             &User {
                 db_id: None,
@@ -499,7 +499,7 @@ mod tests {
             },
         )?;
         let role_name = format!("server-route-test-{}", nanoid!());
-        crate::db::roles::create(
+        lyra_db::roles::create(
             &mut db,
             &Role {
                 db_id: None,
@@ -508,7 +508,7 @@ mod tests {
                 permissions,
             },
         )?;
-        crate::db::roles::ensure_user_has_role(&mut db, user_db_id, &role_name)?;
+        lyra_db::roles::ensure_user_has_role(&mut db, user_db_id, &role_name)?;
         Ok(user_db_id)
     }
 
@@ -574,7 +574,7 @@ mod tests {
 
     async fn stored_keys() -> anyhow::Result<Vec<String>> {
         let db = STATE.db.read().await;
-        let mut keys: Vec<String> = crate::db::settings::server::get_all_with(&db)?
+        let mut keys: Vec<String> = lyra_db::settings::server::get_all_with(&db)?
             .into_iter()
             .map(|entry| entry.key)
             .collect();
@@ -633,7 +633,7 @@ mod tests {
             error(update_setup(headers, request()).await).await.0,
             StatusCode::FORBIDDEN
         );
-        assert!(!crate::db::server::plugin_selection_skipped(
+        assert!(!lyra_db::server::plugin_selection_skipped(
             &*STATE.db.read().await
         )?);
         let headers = headers_with(vec![Permission::ManagePlugins])
@@ -642,7 +642,7 @@ mod tests {
         update_setup(headers.clone(), request())
             .await
             .expect("request succeeds");
-        assert!(crate::db::server::plugin_selection_skipped(
+        assert!(lyra_db::server::plugin_selection_skipped(
             &*STATE.db.read().await
         )?);
         update_setup(
@@ -653,7 +653,7 @@ mod tests {
         )
         .await
         .expect("request succeeds");
-        assert!(!crate::db::server::plugin_selection_skipped(
+        assert!(!lyra_db::server::plugin_selection_skipped(
             &*STATE.db.read().await
         )?);
         Ok(())

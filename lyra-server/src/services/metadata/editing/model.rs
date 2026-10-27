@@ -11,7 +11,7 @@ use serde::{
 };
 use serde_json::Value;
 
-use crate::db::{
+use lyra_db::{
     MetadataField,
     entities::MetadataEntityType,
 };
@@ -85,7 +85,7 @@ pub(crate) struct MetadataSnapshot {
 pub(crate) struct MetadataCreditValue {
     pub(crate) artist_id: String,
     #[serde(rename = "type")]
-    pub(crate) credit_type: crate::db::CreditType,
+    pub(crate) credit_type: lyra_db::CreditType,
     pub(crate) detail: Option<String>,
 }
 
@@ -111,6 +111,6 @@ pub(crate) struct MetadataLabelEditValue {
 pub(crate) struct MetadataRelationValue {
     pub(crate) artist_id: String,
     #[serde(rename = "type")]
-    pub(crate) relation_type: crate::db::ArtistRelationType,
+    pub(crate) relation_type: lyra_db::ArtistRelationType,
     pub(crate) attributes: Option<String>,
 }

@@ -119,7 +119,7 @@ struct TagResponse {
     created_at: String,
 }
 
-fn tag_to_response(tag: crate::db::Tag) -> TagResponse {
+fn tag_to_response(tag: lyra_db::Tag) -> TagResponse {
     TagResponse {
         id: tag.id,
         tag: tag.tag,

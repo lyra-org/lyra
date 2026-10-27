@@ -10,13 +10,13 @@ use agdb::{
     DbId,
 };
 
-use crate::db::{
+use crate::services::catalog::Viewer;
+use lyra_db::{
     Artist,
     Entry,
     Release,
     Track,
 };
-use crate::services::catalog::Viewer;
 
 #[derive(Clone, Copy)]
 pub(crate) struct EntryIncludes {
@@ -48,7 +48,7 @@ fn collect_releases(db: &DbAny, tracks: &[Track]) -> anyhow::Result<Vec<Release>
         let Some(track_db_id) = track.db_id.clone() else {
             continue;
         };
-        let track_releases = crate::db::releases::get_by_track(db, DbId::from(track_db_id))?;
+        let track_releases = lyra_db::releases::get_by_track(db, DbId::from(track_db_id))?;
         for release in track_releases {
             let Some(release_db_id) = release.db_id.clone() else {
                 releases.push(release);
@@ -71,7 +71,7 @@ fn collect_artists(db: &DbAny, releases: &[Release]) -> anyhow::Result<Vec<Artis
         let Some(release_db_id) = release.db_id.clone() else {
             continue;
         };
-        let release_artists = crate::db::artists::get(db, DbId::from(release_db_id))?;
+        let release_artists = lyra_db::artists::get(db, DbId::from(release_db_id))?;
         for artist in release_artists {
             let Some(artist_db_id) = artist.db_id.clone() else {
                 artists.push(artist);
@@ -96,7 +96,7 @@ fn build_entry_details(
         .ok_or_else(|| anyhow::anyhow!("entry missing db id"))?;
     let need_tracks = include.tracks || include.releases || include.artists;
     let tracks = if need_tracks {
-        crate::db::tracks::get_by_entry(db, entry_db_id)?
+        lyra_db::tracks::get_by_entry(db, entry_db_id)?
     } else {
         Vec::new()
     };
@@ -129,21 +129,21 @@ pub(crate) fn visible(
     let not_found = || EntryServiceError::NotFound(format!("no visible entries under {from:?}"));
     let Some(from) = from else {
         let Some(libraries) = viewer.visible_libraries(db)? else {
-            return Ok(crate::db::entries::get(db, "libraries")?);
+            return Ok(lyra_db::entries::get(db, "libraries")?);
         };
         let mut entries = Vec::new();
         for library in libraries {
-            entries.extend(crate::db::entries::get(db, library)?);
+            entries.extend(lyra_db::entries::get(db, library)?);
         }
         return Ok(entries);
     };
 
-    if crate::db::tracks::get_by_id(db, from)?.is_some() {
+    if lyra_db::tracks::get_by_id(db, from)?.is_some() {
         if !viewer.sees_entity(db, from)? {
             return Err(not_found());
         }
         let mut entries = Vec::new();
-        for entry in crate::db::entries::get_by_track(db, from)? {
+        for entry in lyra_db::entries::get_by_track(db, from)? {
             let entry_db_id = entry
                 .db_id
                 .ok_or_else(|| anyhow::anyhow!("entry missing db id"))?;
@@ -154,17 +154,17 @@ pub(crate) fn visible(
         return Ok(entries);
     }
 
-    let visible = if crate::db::libraries::get_by_id(db, from)?.is_some() {
+    let visible = if lyra_db::libraries::get_by_id(db, from)?.is_some() {
         viewer
             .visible_libraries(db)?
             .is_none_or(|libraries| libraries.contains(&from))
     } else {
-        crate::db::entries::get_by_id(db, from)?.is_some() && viewer.sees_entity(db, from)?
+        lyra_db::entries::get_by_id(db, from)?.is_some() && viewer.sees_entity(db, from)?
     };
     if !visible {
         return Err(not_found());
     }
-    Ok(crate::db::entries::get(db, from)?)
+    Ok(lyra_db::entries::get(db, from)?)
 }
 
 pub(crate) fn list_details(
@@ -187,8 +187,8 @@ pub(crate) fn get_details(
     include: EntryIncludes,
 ) -> Result<EntryDetails, EntryServiceError> {
     let not_found = || EntryServiceError::NotFound(format!("Entry not found: {id}"));
-    let entry_db_id = crate::db::lookup::find_node_id_by_id(db, id)?.ok_or_else(not_found)?;
-    let entry = crate::db::entries::get_by_id(db, entry_db_id)?.ok_or_else(not_found)?;
+    let entry_db_id = lyra_db::lookup::find_node_id_by_id(db, id)?.ok_or_else(not_found)?;
+    let entry = lyra_db::entries::get_by_id(db, entry_db_id)?.ok_or_else(not_found)?;
     if !viewer.sees_entity(db, entry_db_id)? {
         return Err(not_found());
     }
@@ -207,7 +207,8 @@ mod tests {
     use nanoid::nanoid;
 
     use super::*;
-    use crate::db::{
+    use crate::services::auth::Principal;
+    use lyra_db::{
         entries::EntryKind,
         fixtures::{
             connect,
@@ -219,7 +220,6 @@ mod tests {
             new_test_db,
         },
     };
-    use crate::services::auth::Principal;
 
     fn insert_entry(db: &mut DbAny, parent: DbId, name: &str) -> anyhow::Result<DbId> {
         let entry = Entry {
@@ -248,12 +248,10 @@ mod tests {
     #[test]
     fn visible_entries_follow_library_access() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        let user_db_id = crate::db::users::create(&mut db, &test_user("listener")?)?;
+        let user_db_id = lyra_db::users::create(&mut db, &test_user("listener")?)?;
         let shown_db_id = insert_library(&mut db, "Shown", "/music/shown")?;
         let hidden_db_id = insert_library(&mut db, "Hidden", "/music/hidden")?;
-        let shown_public_id = crate::db::libraries::get_by_id(&db, shown_db_id)?
-            .unwrap()
-            .id;
+        let shown_public_id = lyra_db::libraries::get_by_id(&db, shown_db_id)?.unwrap().id;
         let shown_entry = insert_entry(&mut db, shown_db_id, "shown.flac")?;
         let hidden_entry = insert_entry(&mut db, hidden_db_id, "hidden.flac")?;
         let hidden_track = insert_track(&mut db, "Hidden")?;
@@ -269,7 +267,7 @@ mod tests {
             Principal::for_user(
                 &db,
                 user_db_id,
-                vec![crate::db::Permission::Admin],
+                vec![lyra_db::Permission::Admin],
                 HashSet::new(),
             ),
         )?;
@@ -289,9 +287,7 @@ mod tests {
                 Err(EntryServiceError::NotFound(_))
             ));
         }
-        let hidden_public_id = crate::db::entries::get_by_id(&db, hidden_entry)?
-            .unwrap()
-            .id;
+        let hidden_public_id = lyra_db::entries::get_by_id(&db, hidden_entry)?.unwrap().id;
         let include = EntryIncludes {
             tracks: false,
             releases: false,

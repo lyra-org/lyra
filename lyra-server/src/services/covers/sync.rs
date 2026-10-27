@@ -32,13 +32,13 @@ use url::Url;
 
 use nanoid::nanoid;
 
-use crate::db::{
+use crate::services::providers::enabled_provider_configs_by_priority;
+use lyra_db::{
     Artist,
     Cover,
     Release,
     Track,
 };
-use crate::services::providers::enabled_provider_configs_by_priority;
 
 use super::{
     CoverPaths,
@@ -176,7 +176,7 @@ async fn prune_other_covers(dirs: &[PathBuf], target_path: Option<&Path>) -> Res
 }
 
 pub(crate) async fn sync_release_cover_for_tracks(
-    db: &crate::db::DbAsync,
+    db: &lyra_db::DbAsync,
     tracks: &[Track],
     release: &Release,
     artists: &[Artist],
@@ -295,7 +295,7 @@ pub(crate) async fn sync_release_cover_for_tracks(
 }
 
 pub(crate) async fn sync_artist_cover(
-    db: &crate::db::DbAsync,
+    db: &lyra_db::DbAsync,
     artist: &Artist,
     paths: CoverPaths<'_>,
     options: CoverSyncOptions,
@@ -524,13 +524,13 @@ pub(crate) fn resolve_release_covers(
     library_id: DbId,
     paths: CoverPaths<'_>,
 ) -> Result<Vec<(DbId, PathBuf)>> {
-    let releases = crate::db::releases::get(db, library_id)?;
+    let releases = lyra_db::releases::get(db, library_id)?;
     let mut resolved = Vec::new();
     for release in &releases {
         let Some(release_id) = release.db_id.clone().map(Into::<DbId>::into) else {
             continue;
         };
-        let tracks = crate::db::tracks::get_direct(db, release_id)?;
+        let tracks = lyra_db::tracks::get_direct(db, release_id)?;
         if let Some(cover_path) = resolve_cover_for_release(db, release_id, &tracks, paths)? {
             resolved.push((release_id, cover_path));
         }
@@ -543,7 +543,7 @@ pub(crate) fn resolve_artist_covers(
     library_id: DbId,
     paths: CoverPaths<'_>,
 ) -> Result<Vec<(DbId, PathBuf)>> {
-    let artists = crate::db::artists::get_by_library(db, library_id)?;
+    let artists = lyra_db::artists::get_by_library(db, library_id)?;
     let mut resolved = Vec::new();
     for artist in &artists {
         let Some(artist_id) = artist.db_id.clone().map(Into::<DbId>::into) else {
@@ -557,7 +557,7 @@ pub(crate) fn resolve_artist_covers(
 }
 
 pub(crate) async fn sync_release_covers_for_library(
-    db: &crate::db::DbAsync,
+    db: &lyra_db::DbAsync,
     paths: CoverPaths<'_>,
     library_id: DbId,
     options: CoverSyncOptions,
@@ -565,7 +565,7 @@ pub(crate) async fn sync_release_covers_for_library(
 ) -> Result<usize> {
     let resolve_contexts = {
         let db_read = db.read().await;
-        let releases = crate::db::releases::get(&db_read, library_id)?;
+        let releases = lyra_db::releases::get(&db_read, library_id)?;
 
         let sorted_providers = enabled_provider_configs_by_priority(&db_read, provider_filter)?;
         if sorted_providers.is_empty() {
@@ -582,8 +582,8 @@ pub(crate) async fn sync_release_covers_for_library(
                 continue;
             }
 
-            let tracks = crate::db::tracks::get_direct(&db_read, release_id)?;
-            let artists = crate::db::artists::get(&db_read, release_id)?;
+            let tracks = lyra_db::tracks::get_direct(&db_read, release_id)?;
+            let artists = lyra_db::artists::get(&db_read, release_id)?;
             let library = library_for_release(&db_read, release_id)?;
             let existing_cover = resolve_cover_for_release(&db_read, release_id, &tracks, paths)?;
             let target_dir = configured_cover_dir_for_release(paths.covers_root, release_id);
@@ -695,7 +695,7 @@ pub(crate) async fn sync_release_covers_for_library(
 }
 
 pub(crate) async fn sync_artist_covers_for_library(
-    db: &crate::db::DbAsync,
+    db: &lyra_db::DbAsync,
     paths: CoverPaths<'_>,
     library_id: DbId,
     options: CoverSyncOptions,
@@ -703,7 +703,7 @@ pub(crate) async fn sync_artist_covers_for_library(
 ) -> Result<usize> {
     let artists = {
         let db_read = db.read().await;
-        crate::db::artists::get_by_library(&db_read, library_id)?
+        lyra_db::artists::get_by_library(&db_read, library_id)?
     };
 
     let mut synced = 0usize;
@@ -718,7 +718,7 @@ pub(crate) async fn sync_artist_covers_for_library(
 
 async fn sync_covers_for_library_scope(
     scope: CoverScope,
-    db: &crate::db::DbAsync,
+    db: &lyra_db::DbAsync,
     paths: CoverPaths<'_>,
     library_id: DbId,
     options: CoverSyncOptions,
@@ -735,7 +735,7 @@ async fn sync_covers_for_library_scope(
 }
 
 pub(crate) async fn upsert_cover_metadata(
-    db: &crate::db::DbAsync,
+    db: &lyra_db::DbAsync,
     owner_id: DbId,
     cover_path: &Path,
 ) -> Result<bool> {
@@ -764,7 +764,7 @@ pub(crate) async fn upsert_cover_metadata(
     let path_str = path.to_string_lossy().into_owned();
     let mut db_write = db.write().await;
     db_write.transaction_mut(|t| {
-        if let Some(existing) = crate::db::covers::get(t, owner_id)?
+        if let Some(existing) = lyra_db::covers::get(t, owner_id)?
             && existing.hash == hash
             && existing.path == path_str
         {
@@ -779,13 +779,13 @@ pub(crate) async fn upsert_cover_metadata(
             hash,
             blurhash,
         };
-        crate::db::covers::upsert(t, owner_id, cover)?;
+        lyra_db::covers::upsert(t, owner_id, cover)?;
         Ok(true)
     })
 }
 
 pub(crate) async fn upsert_release_cover_metadata(
-    db: &crate::db::DbAsync,
+    db: &lyra_db::DbAsync,
     release_id: DbId,
     cover_path: &Path,
 ) -> Result<bool> {
@@ -793,7 +793,7 @@ pub(crate) async fn upsert_release_cover_metadata(
 }
 
 pub(crate) async fn upsert_artist_cover_metadata(
-    db: &crate::db::DbAsync,
+    db: &lyra_db::DbAsync,
     artist_id: DbId,
     cover_path: &Path,
 ) -> Result<bool> {
@@ -815,7 +815,7 @@ struct ComputedCover {
 }
 
 async fn sync_cover_metadata_from_resolved(
-    db: &crate::db::DbAsync,
+    db: &lyra_db::DbAsync,
     resolved: &[(DbId, PathBuf)],
     entity_type: &'static str,
 ) -> Result<usize> {
@@ -826,7 +826,7 @@ async fn sync_cover_metadata_from_resolved(
 
         let skip = {
             let db_read = db.read().await;
-            if let Some(existing) = crate::db::covers::get(&db_read, *owner_id)? {
+            if let Some(existing) = lyra_db::covers::get(&db_read, *owner_id)? {
                 cover_hash(cover_path).is_some_and(|hash| existing.hash == hash)
             } else {
                 false
@@ -873,7 +873,7 @@ async fn sync_cover_metadata_from_resolved(
             blurhash: c.blurhash,
         };
         let mut db_write = db.write().await;
-        db_write.transaction_mut(|t| crate::db::covers::upsert(t, c.owner_id, cover))?;
+        db_write.transaction_mut(|t| lyra_db::covers::upsert(t, c.owner_id, cover))?;
     }
 
     tracing::info!(count, entity_type, "persisted cover metadata");
@@ -881,14 +881,14 @@ async fn sync_cover_metadata_from_resolved(
 }
 
 pub(crate) async fn sync_release_cover_metadata_from_resolved(
-    db: &crate::db::DbAsync,
+    db: &lyra_db::DbAsync,
     resolved: &[(DbId, PathBuf)],
 ) -> Result<usize> {
     sync_cover_metadata_from_resolved(db, resolved, "release").await
 }
 
 pub(crate) async fn sync_artist_cover_metadata_from_resolved(
-    db: &crate::db::DbAsync,
+    db: &lyra_db::DbAsync,
     resolved: &[(DbId, PathBuf)],
 ) -> Result<usize> {
     sync_cover_metadata_from_resolved(db, resolved, "artist").await
@@ -896,7 +896,7 @@ pub(crate) async fn sync_artist_cover_metadata_from_resolved(
 
 async fn sync_cover_metadata_for_scope(
     scope: CoverScope,
-    db: &crate::db::DbAsync,
+    db: &lyra_db::DbAsync,
     resolved: &[(DbId, PathBuf)],
 ) -> Result<usize> {
     match scope {
@@ -906,7 +906,7 @@ async fn sync_cover_metadata_for_scope(
 }
 
 pub(crate) async fn sync_and_persist_covers_for_library(
-    db: &crate::db::DbAsync,
+    db: &lyra_db::DbAsync,
     paths: CoverPaths<'_>,
     library_id: DbId,
     options: CoverSyncOptions,
@@ -944,8 +944,8 @@ mod tests {
     };
 
     use super::*;
-    use crate::db::fixtures::insert_release;
-    use crate::db::test_db::new_test_db;
+    use lyra_db::fixtures::insert_release;
+    use lyra_db::test_db::new_test_db;
     use tokio::sync::RwLock;
 
     const PNG_1X1: &[u8] = &[

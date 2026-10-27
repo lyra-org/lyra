@@ -14,8 +14,8 @@ use agdb::{
 };
 
 fn linked_entity_count(db: &DbAny, artist_db_id: DbId) -> anyhow::Result<usize> {
-    let release_count = crate::db::releases::get_by_artist(db, artist_db_id)?.len();
-    let track_count = crate::db::tracks::get_by_artist(db, artist_db_id)?.len();
+    let release_count = lyra_db::releases::get_by_artist(db, artist_db_id)?.len();
+    let track_count = lyra_db::tracks::get_by_artist(db, artist_db_id)?.len();
     Ok(release_count + track_count)
 }
 
@@ -23,11 +23,11 @@ pub(crate) fn recompute_artist_verified(
     db: &mut DbAny,
     artist_db_id: DbId,
 ) -> anyhow::Result<bool> {
-    let Some(mut artist) = crate::db::artists::get_by_id(db, artist_db_id)? else {
+    let Some(mut artist) = lyra_db::artists::get_by_id(db, artist_db_id)? else {
         return Ok(false);
     };
 
-    let external_ids = crate::db::external_ids::get_for_entity(db, artist_db_id)?;
+    let external_ids = lyra_db::external_ids::get_for_entity(db, artist_db_id)?;
     let mut provider_to_values: HashMap<String, HashSet<String>> = HashMap::new();
     let mut has_user_artist_id = false;
 
@@ -46,7 +46,7 @@ pub(crate) fn recompute_artist_verified(
             .or_default()
             .insert(value.to_string());
 
-        if external_id.source == crate::db::IdSource::Manual {
+        if external_id.source == lyra_db::IdSource::Manual {
             has_user_artist_id = true;
         }
     }
@@ -86,7 +86,7 @@ pub(crate) fn recompute_artist_verified(
 
     if artist.verified != verified {
         artist.set_verified(verified);
-        crate::db::artists::update(db, &artist)?;
+        lyra_db::artists::update(db, &artist)?;
     }
 
     Ok(verified)
@@ -97,20 +97,20 @@ mod tests {
     use agdb::QueryBuilder;
 
     use super::*;
-    use crate::db::IdSource;
-    use crate::db::fixtures::{
+    use lyra_db::IdSource;
+    use lyra_db::fixtures::{
         connect,
         insert_artist,
         insert_release,
         insert_track,
     };
-    use crate::db::test_db::{
+    use lyra_db::test_db::{
         connect_artist,
         new_test_db,
     };
 
     fn artist_verified(db: &DbAny, artist_db_id: DbId) -> anyhow::Result<bool> {
-        let artist = crate::db::artists::get_by_id(db, artist_db_id)?
+        let artist = lyra_db::artists::get_by_id(db, artist_db_id)?
             .ok_or_else(|| anyhow::anyhow!("artist missing after verification"))?;
         Ok(artist.verified)
     }
@@ -132,7 +132,7 @@ mod tests {
         let mut db = new_test_db()?;
         let artist_db_id = insert_artist(&mut db, "Blank ID Artist")?;
 
-        crate::db::external_ids::upsert(
+        lyra_db::external_ids::upsert(
             &mut db,
             artist_db_id,
             "musicbrainz",
@@ -153,7 +153,7 @@ mod tests {
         let mut db = new_test_db()?;
         let artist_db_id = insert_artist(&mut db, "User Verified Artist")?;
 
-        crate::db::external_ids::upsert(
+        lyra_db::external_ids::upsert(
             &mut db,
             artist_db_id,
             "musicbrainz",
@@ -174,7 +174,7 @@ mod tests {
         let mut db = new_test_db()?;
         let artist_db_id = insert_artist(&mut db, "Plugin Threshold Artist")?;
 
-        crate::db::external_ids::upsert(
+        lyra_db::external_ids::upsert(
             &mut db,
             artist_db_id,
             "musicbrainz",
@@ -203,7 +203,7 @@ mod tests {
         let mut db = new_test_db()?;
         let artist_db_id = insert_artist(&mut db, "Conflict Artist")?;
 
-        let first = crate::db::external_ids::ExternalId {
+        let first = lyra_db::external_ids::ExternalId {
             db_id: None,
             provider_id: "musicbrainz".to_string(),
             id_type: "artist_db_id".to_string(),
@@ -219,7 +219,7 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("first conflicting id insert missing id"))?;
         connect(&mut db, artist_db_id, first_id)?;
 
-        let second = crate::db::external_ids::ExternalId {
+        let second = lyra_db::external_ids::ExternalId {
             db_id: None,
             provider_id: "musicbrainz".to_string(),
             id_type: "artist_db_id".to_string(),

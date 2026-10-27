@@ -37,14 +37,14 @@ use tokio::time::{
     sleep,
 };
 
-use crate::db::{
-    DbAsync,
-    Library,
-};
 use crate::{
     services::STATE,
     services::providers::LibraryRefreshOptions,
     services::timestamps::unix_ms_to_rfc3339_u64,
+};
+use lyra_db::{
+    DbAsync,
+    Library,
 };
 
 use super::sync::{
@@ -525,13 +525,13 @@ impl SyncRunState {
         }
     }
 
-    fn record(&self, db_id: Option<DbId>) -> anyhow::Result<crate::db::sync_runs::SyncRunRecord> {
+    fn record(&self, db_id: Option<DbId>) -> anyhow::Result<lyra_db::sync_runs::SyncRunRecord> {
         let run_id = (!self.run_id.is_empty())
             .then(|| self.run_id.clone())
             .ok_or_else(|| anyhow::anyhow!("cannot persist idle sync run"))?;
         let progress = self.progress_summary();
         let current = self.current();
-        Ok(crate::db::sync_runs::SyncRunRecord {
+        Ok(lyra_db::sync_runs::SyncRunRecord {
             db_id,
             id: run_id,
             library_id: self.library_id.clone(),
@@ -923,7 +923,7 @@ pub(crate) async fn get_sync_run(run_id: &str) -> anyhow::Result<Option<SyncRunS
         return Ok(Some(summary));
     }
     let db = STATE.db.read().await;
-    crate::db::sync_runs::get_by_id(&db, run_id)?
+    lyra_db::sync_runs::get_by_id(&db, run_id)?
         .map(record_to_summary)
         .transpose()
 }
@@ -987,7 +987,7 @@ async fn start_library_run(
         let db_read = db.read().await;
         let current = library
             .db_id
-            .map(|id| crate::db::libraries::get_by_id(&*db_read, id))
+            .map(|id| lyra_db::libraries::get_by_id(&*db_read, id))
             .transpose()?
             .flatten();
         anyhow::ensure!(
@@ -1229,8 +1229,8 @@ pub(crate) async fn get_library_sync_status(
     }
     let library = {
         let db_read = db.read().await;
-        match crate::db::lookup::find_node_id_by_id(&*db_read, library_id)? {
-            Some(library_db_id) => crate::db::libraries::get_by_id(&db_read, library_db_id)?,
+        match lyra_db::lookup::find_node_id_by_id(&*db_read, library_id)? {
+            Some(library_db_id) => lyra_db::libraries::get_by_id(&db_read, library_db_id)?,
             None => None,
         }
     };
@@ -1252,7 +1252,7 @@ async fn active_or_latest_run_for_library(
         return Ok(Some(active));
     }
     let db_read = db.read().await;
-    crate::db::sync_runs::latest_for_library(&db_read, library_id)?
+    lyra_db::sync_runs::latest_for_library(&db_read, library_id)?
         .map(record_to_summary)
         .transpose()
 }
@@ -1271,7 +1271,7 @@ async fn active_run_for_library(
         return Ok(Some(summary));
     }
     let db_read = db.read().await;
-    crate::db::sync_runs::active_for_library(&db_read, library_id)?
+    lyra_db::sync_runs::active_for_library(&db_read, library_id)?
         .map(record_to_summary)
         .transpose()
 }
@@ -1300,7 +1300,7 @@ async fn reconcile_interrupted_runs(db: &DbAsync) -> anyhow::Result<()> {
         states.keys().cloned().collect::<Vec<_>>()
     };
     let mut db_write = db.write().await;
-    let records = crate::db::sync_runs::list(&db_write)?;
+    let records = lyra_db::sync_runs::list(&db_write)?;
     for mut record in records {
         if live_run_ids.iter().any(|id| id == &record.id) {
             continue;
@@ -1321,24 +1321,24 @@ async fn reconcile_interrupted_runs(db: &DbAsync) -> anyhow::Result<()> {
         record.current_subject = None;
         record.active_units = 0;
         record.sequence = record.sequence.saturating_add(1);
-        crate::db::sync_runs::update(&mut db_write, &record)?;
+        lyra_db::sync_runs::update(&mut db_write, &record)?;
     }
     Ok(())
 }
 
-async fn persist_record(db: &DbAsync, mut record: crate::db::sync_runs::SyncRunRecord) {
+async fn persist_record(db: &DbAsync, mut record: lyra_db::sync_runs::SyncRunRecord) {
     let run_id = record.id.clone();
     let result = async {
         let mut db_write = db.write().await;
-        if crate::db::lookup::find_node_id_by_id(&*db_write, &record.library_id)?.is_none() {
+        if lyra_db::lookup::find_node_id_by_id(&*db_write, &record.library_id)?.is_none() {
             return Ok(());
         }
-        let existing = crate::db::sync_runs::get_by_id(&db_write, &run_id)?;
+        let existing = lyra_db::sync_runs::get_by_id(&db_write, &run_id)?;
         record.db_id = existing.as_ref().and_then(|run| run.db_id);
         if existing.is_some() {
-            crate::db::sync_runs::update(&mut db_write, &record)?;
+            lyra_db::sync_runs::update(&mut db_write, &record)?;
         } else {
-            crate::db::sync_runs::create(&mut db_write, &record)?;
+            lyra_db::sync_runs::create(&mut db_write, &record)?;
         }
         Ok::<(), anyhow::Error>(())
     }
@@ -1348,9 +1348,7 @@ async fn persist_record(db: &DbAsync, mut record: crate::db::sync_runs::SyncRunR
     }
 }
 
-fn record_to_summary(
-    record: crate::db::sync_runs::SyncRunRecord,
-) -> anyhow::Result<SyncRunSummary> {
+fn record_to_summary(record: lyra_db::sync_runs::SyncRunRecord) -> anyhow::Result<SyncRunSummary> {
     let current = record
         .current_stage
         .as_deref()

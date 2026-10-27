@@ -32,7 +32,6 @@ use harmony_luau::{
 };
 use serde::Serialize;
 
-use crate::db::ResolveId;
 use crate::plugins::args;
 use crate::{
     plugins::db,
@@ -41,6 +40,7 @@ use crate::{
         playlists as playlist_service,
     },
 };
+use lyra_db::ResolveId;
 
 struct PlaylistsModule;
 
@@ -55,8 +55,8 @@ struct PlaylistInfo {
     updated_at: Option<u64>,
 }
 
-impl From<crate::db::Playlist> for PlaylistInfo {
-    fn from(playlist: crate::db::Playlist) -> Self {
+impl From<lyra_db::Playlist> for PlaylistInfo {
+    fn from(playlist: lyra_db::Playlist) -> Self {
         Self {
             db_id: playlist.db_id.map(|id| DbId::from(id).0),
             id: playlist.id,
@@ -425,8 +425,8 @@ fn get_owner_callback(
         else {
             return Ok(luau::Value::Nil);
         };
-        let owner = crate::db::users::get_by_id(&*db, owner_db_id)
-            .map_err(crate::plugins::runtime_error)?;
+        let owner =
+            lyra_db::users::get_by_id(&*db, owner_db_id).map_err(crate::plugins::runtime_error)?;
         Ok(owner
             .map(|owner| luau::Value::String(owner.id.into_bytes()))
             .unwrap_or(luau::Value::Nil))
@@ -598,7 +598,7 @@ fn add_track_callback(
         else {
             return Ok(luau::Value::Nil);
         };
-        if crate::db::tracks::get_by_id(&db, track_db_id)
+        if lyra_db::tracks::get_by_id(&db, track_db_id)
             .map_err(crate::plugins::runtime_error)?
             .is_none()
             || !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)
@@ -705,7 +705,7 @@ fn require_accessible_tracks(
     let accessible = crate::services::auth::access::accessible_entities(db, principal, track_ids)
         .map_err(crate::plugins::runtime_error)?;
     for track_id in track_ids {
-        let exists = crate::db::tracks::get_by_id(db, *track_id)
+        let exists = lyra_db::tracks::get_by_id(db, *track_id)
             .map_err(crate::plugins::runtime_error)?
             .is_some();
         if !exists || !accessible.contains(track_id) {

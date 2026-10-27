@@ -14,8 +14,8 @@ use agdb::{
 use anyhow::bail;
 use nanoid::nanoid;
 
-use crate::db::Playlist;
 use crate::services::auth::Principal;
+use lyra_db::Playlist;
 
 #[derive(Clone, Debug)]
 pub(crate) struct PlaylistTrackLink {
@@ -87,25 +87,25 @@ fn validate_name(raw_name: &str) -> anyhow::Result<String> {
 }
 
 pub(crate) fn list(db: &DbAny) -> anyhow::Result<Vec<Playlist>> {
-    crate::db::playlists::get(db)
+    lyra_db::playlists::get(db)
 }
 
 pub(crate) fn get(db: &DbAny, query_id: QueryId) -> anyhow::Result<Option<Playlist>> {
     let Some(playlist_db_id) = resolve_optional_id(db, query_id)? else {
         return Ok(None);
     };
-    crate::db::playlists::get_by_id(db, playlist_db_id)
+    lyra_db::playlists::get_by_id(db, playlist_db_id)
 }
 
 pub(crate) fn get_by_user(db: &DbAny, user_db_id: DbId) -> anyhow::Result<Vec<Playlist>> {
-    crate::db::playlists::get_by_user(db, user_db_id)
+    lyra_db::playlists::get_by_user(db, user_db_id)
 }
 
 pub(crate) fn get_owner(db: &DbAny, playlist_id: QueryId) -> anyhow::Result<Option<DbId>> {
     let Some(playlist_db_id) = resolve_optional_id(db, playlist_id)? else {
         return Ok(None);
     };
-    crate::db::playlists::get_owner(db, playlist_db_id)
+    lyra_db::playlists::get_owner(db, playlist_db_id)
 }
 
 pub(crate) fn get_tracks(
@@ -114,9 +114,9 @@ pub(crate) fn get_tracks(
 ) -> anyhow::Result<Vec<PlaylistTrackLink>> {
     let playlist_db_id = resolve_id(db, playlist_id)?;
 
-    let playlist_tracks = crate::db::playlists::get_tracks(db, playlist_db_id)?;
+    let playlist_tracks = lyra_db::playlists::get_tracks(db, playlist_db_id)?;
     let edge_ids: Vec<DbId> = playlist_tracks.iter().map(|track| track.edge_id).collect();
-    let track_ids = crate::db::playlists::resolve_edge_targets(db, &edge_ids)?;
+    let track_ids = lyra_db::playlists::resolve_edge_targets(db, &edge_ids)?;
 
     let mut links = Vec::with_capacity(playlist_tracks.len());
     for (playlist_track, track_db_id) in playlist_tracks.into_iter().zip(track_ids) {
@@ -135,11 +135,11 @@ pub(crate) fn get_tracks_many(
     db: &DbAny,
     playlist_db_ids: &[DbId],
 ) -> anyhow::Result<HashMap<DbId, Vec<PlaylistTrackLink>>> {
-    let raw = crate::db::playlists::get_tracks_many(db, playlist_db_ids)?;
+    let raw = lyra_db::playlists::get_tracks_many(db, playlist_db_ids)?;
     let mut result = HashMap::new();
     for (playlist_id, playlist_tracks) in raw {
         let edge_ids: Vec<DbId> = playlist_tracks.iter().map(|t| t.edge_id).collect();
-        let track_ids = crate::db::playlists::resolve_edge_targets(db, &edge_ids)?;
+        let track_ids = lyra_db::playlists::resolve_edge_targets(db, &edge_ids)?;
         let mut links = Vec::with_capacity(playlist_tracks.len());
         for (pt, track_db_id) in playlist_tracks.into_iter().zip(track_ids) {
             links.push(PlaylistTrackLink {
@@ -178,7 +178,7 @@ pub(crate) fn summaries(
         .flatten()
         .map(|link| link.track_db_id)
         .collect::<Vec<_>>();
-    let tracks = crate::db::tracks::get_by_ids(db, &track_db_ids)?;
+    let tracks = lyra_db::tracks::get_by_ids(db, &track_db_ids)?;
     let accessible =
         crate::services::auth::access::accessible_entities(db, principal, &track_db_ids)?;
 
@@ -218,10 +218,10 @@ pub(crate) fn create(db: &mut DbAny, request: &CreatePlaylistRequest) -> anyhow:
 
     db.transaction_mut(|t| -> anyhow::Result<DbId> {
         let playlist_db_id =
-            crate::db::playlists::create_in_transaction(t, &playlist, request.user_db_id)?;
+            lyra_db::playlists::create_in_transaction(t, &playlist, request.user_db_id)?;
         if !request.track_db_ids.is_empty() {
-            crate::db::playlists::add_tracks(t, playlist_db_id, &request.track_db_ids)?;
-            crate::db::covers::display::sync_playlist_cover(t, playlist_db_id)?;
+            lyra_db::playlists::add_tracks(t, playlist_db_id, &request.track_db_ids)?;
+            lyra_db::covers::display::sync_playlist_cover(t, playlist_db_id)?;
         }
         Ok(playlist_db_id)
     })
@@ -229,7 +229,7 @@ pub(crate) fn create(db: &mut DbAny, request: &CreatePlaylistRequest) -> anyhow:
 
 fn require_tracks(db: &DbAny, track_db_ids: &[DbId]) -> anyhow::Result<()> {
     for &track_db_id in track_db_ids {
-        if crate::db::tracks::get_by_id(db, track_db_id)?.is_none() {
+        if lyra_db::tracks::get_by_id(db, track_db_id)?.is_none() {
             bail!("track not found: {}", track_db_id.0);
         }
     }
@@ -240,11 +240,11 @@ pub(crate) fn delete(db: &mut DbAny, playlist_id: QueryId) -> anyhow::Result<Opt
     let Some(playlist_db_id) = resolve_optional_id(db, playlist_id)? else {
         return Ok(None);
     };
-    let Some(playlist) = crate::db::playlists::get_by_id(db, playlist_db_id)? else {
+    let Some(playlist) = lyra_db::playlists::get_by_id(db, playlist_db_id)? else {
         return Ok(None);
     };
 
-    crate::db::playlists::delete(db, playlist_db_id)?;
+    lyra_db::playlists::delete(db, playlist_db_id)?;
     Ok(Some(playlist))
 }
 
@@ -255,12 +255,12 @@ pub(crate) fn update(
     let Some(playlist_db_id) = resolve_optional_id(db, request.playlist_id.clone())? else {
         return Ok(None);
     };
-    let Some(mut playlist) = crate::db::playlists::get_by_id(db, playlist_db_id)? else {
+    let Some(mut playlist) = lyra_db::playlists::get_by_id(db, playlist_db_id)? else {
         return Ok(None);
     };
     apply_update(&mut playlist, request)?;
 
-    crate::db::playlists::update(db, &playlist)?;
+    lyra_db::playlists::update(db, &playlist)?;
     Ok(Some(playlist))
 }
 
@@ -290,20 +290,20 @@ pub(crate) fn replace(
     let Some(playlist_db_id) = resolve_optional_id(db, request.playlist_id.clone())? else {
         return Ok(None);
     };
-    let Some(mut playlist) = crate::db::playlists::get_by_id(db, playlist_db_id)? else {
+    let Some(mut playlist) = lyra_db::playlists::get_by_id(db, playlist_db_id)? else {
         return Ok(None);
     };
     apply_update(&mut playlist, request)?;
     require_tracks(db, track_db_ids)?;
-    let entries = crate::db::playlists::get_tracks(db, playlist_db_id)?;
+    let entries = lyra_db::playlists::get_tracks(db, playlist_db_id)?;
 
     db.transaction_mut(|t| -> anyhow::Result<()> {
-        crate::db::playlists::update_in_transaction(t, &playlist)?;
+        lyra_db::playlists::update_in_transaction(t, &playlist)?;
         for entry in &entries {
-            crate::db::playlists::remove_track(t, entry.edge_id)?;
+            lyra_db::playlists::remove_track(t, entry.edge_id)?;
         }
-        crate::db::playlists::add_tracks(t, playlist_db_id, track_db_ids)?;
-        crate::db::covers::display::sync_playlist_cover(t, playlist_db_id)
+        lyra_db::playlists::add_tracks(t, playlist_db_id, track_db_ids)?;
+        lyra_db::covers::display::sync_playlist_cover(t, playlist_db_id)
     })?;
     Ok(Some(playlist))
 }
@@ -312,12 +312,12 @@ pub(crate) fn add_track(
     db: &mut DbAny,
     playlist_id: QueryId,
     track_db_id: QueryId,
-) -> anyhow::Result<crate::db::playlists::PlaylistTrack> {
+) -> anyhow::Result<lyra_db::playlists::PlaylistTrack> {
     let playlist_db_id = resolve_id(db, playlist_id)?;
     let track_db_id = resolve_id(db, track_db_id)?;
     db.transaction_mut(|t| {
-        let added = crate::db::playlists::add_track(t, playlist_db_id, track_db_id)?;
-        crate::db::covers::display::offer_track_to_playlist_cover(t, playlist_db_id, track_db_id)?;
+        let added = lyra_db::playlists::add_track(t, playlist_db_id, track_db_id)?;
+        lyra_db::covers::display::offer_track_to_playlist_cover(t, playlist_db_id, track_db_id)?;
         Ok(added)
     })
 }
@@ -334,7 +334,7 @@ pub(crate) fn add_tracks(
     let mut resolved_track_ids = Vec::with_capacity(track_ids.len());
     for track_id in track_ids {
         let track_db_id = resolve_id(db, track_id.clone())?;
-        if crate::db::tracks::get_by_id(db, track_db_id)?.is_none() {
+        if lyra_db::tracks::get_by_id(db, track_db_id)?.is_none() {
             bail!("track not found: {}", track_db_id.0);
         }
         resolved_track_ids.push(track_db_id);
@@ -342,15 +342,12 @@ pub(crate) fn add_tracks(
 
     let results = db.transaction_mut(|t| -> anyhow::Result<_> {
         let results = match position {
-            Some(position) => crate::db::playlists::insert_tracks(
-                t,
-                playlist_db_id,
-                &resolved_track_ids,
-                position,
-            )?,
-            None => crate::db::playlists::add_tracks(t, playlist_db_id, &resolved_track_ids)?,
+            Some(position) => {
+                lyra_db::playlists::insert_tracks(t, playlist_db_id, &resolved_track_ids, position)?
+            }
+            None => lyra_db::playlists::add_tracks(t, playlist_db_id, &resolved_track_ids)?,
         };
-        crate::db::covers::display::sync_playlist_cover(t, playlist_db_id)?;
+        lyra_db::covers::display::sync_playlist_cover(t, playlist_db_id)?;
         Ok(results)
     })?;
     Ok(results
@@ -399,9 +396,9 @@ pub(crate) fn remove_tracks(
 
     db.transaction_mut(|t| -> anyhow::Result<()> {
         for track in &removed {
-            crate::db::playlists::remove_track(t, track.entry_db_id)?;
+            lyra_db::playlists::remove_track(t, track.entry_db_id)?;
         }
-        crate::db::covers::display::sync_playlist_cover(t, playlist_db_id)
+        lyra_db::covers::display::sync_playlist_cover(t, playlist_db_id)
     })?;
 
     Ok(removed)
@@ -415,18 +412,18 @@ pub(crate) fn move_track(
 ) -> anyhow::Result<()> {
     let entry_db_id = require_entry(db, playlist_db_id, entry_id)?.entry_db_id;
     db.transaction_mut(|t| {
-        crate::db::playlists::move_track(t, playlist_db_id, entry_db_id, new_position)
+        lyra_db::playlists::move_track(t, playlist_db_id, entry_db_id, new_position)
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::fixtures::{
+    use lyra_db::fixtures::{
         insert_track,
         test_user,
     };
-    use crate::db::test_db::new_test_db;
+    use lyra_db::test_db::new_test_db;
 
     fn insert_track_with_duration(
         db: &mut DbAny,
@@ -434,14 +431,14 @@ mod tests {
         duration_ms: u64,
     ) -> anyhow::Result<DbId> {
         let track_db_id = insert_track(db, title)?;
-        let mut track = crate::db::tracks::get_by_id(db, track_db_id)?
+        let mut track = lyra_db::tracks::get_by_id(db, track_db_id)?
             .ok_or_else(|| anyhow::anyhow!("track missing after insert"))?;
         track.set_duration_ms(duration_ms);
         db.exec_mut(QueryBuilder::insert().element(&track).query())?;
         Ok(track_db_id)
     }
 
-    fn principal(user_db_id: DbId, permissions: Vec<crate::db::Permission>) -> Principal {
+    fn principal(user_db_id: DbId, permissions: Vec<lyra_db::Permission>) -> Principal {
         Principal::from_parts(
             user_db_id,
             "summary-principal".to_string(),
@@ -471,22 +468,22 @@ mod tests {
     /// the stored description alone.
     #[test]
     fn delete_cleans_up_entries_favorites_and_cover_profile() -> anyhow::Result<()> {
-        use crate::db::covers::display::{
+        use lyra_db::covers::display::{
             self,
             DisplayCoverScope,
             DisplayCoverTargetKind,
         };
         let mut db = new_test_db()?;
-        let user = crate::db::users::create(&mut db, &test_user("playlist-delete")?)?;
+        let user = lyra_db::users::create(&mut db, &test_user("playlist-delete")?)?;
         let track = insert_track(&mut db, "Retained track")?;
         let playlist_id = create_playlist(&mut db, user, "Deleted")?;
         let playlist = get(&db, QueryId::Id(playlist_id))?.expect("playlist");
         let entry = add_track(&mut db, QueryId::Id(playlist_id), QueryId::Id(track))?;
-        crate::db::favorites::add(
+        lyra_db::favorites::add(
             &mut db,
             user,
             playlist_id,
-            crate::db::favorites::FavoriteKind::Playlist,
+            lyra_db::favorites::FavoriteKind::Playlist,
             1,
         )?;
         display::sync_playlist_cover(&mut db, playlist_id)?;
@@ -506,7 +503,7 @@ mod tests {
             db.exec(agdb::QueryBuilder::select().ids(entry.edge_id).query())
                 .is_err()
         );
-        assert!(!crate::db::favorites::has(&db, user, playlist_id)?);
+        assert!(!lyra_db::favorites::has(&db, user, playlist_id)?);
         assert!(
             display::get_profile(
                 &db,
@@ -517,14 +514,14 @@ mod tests {
             )?
             .is_none()
         );
-        assert!(crate::db::tracks::get_by_id(&db, track)?.is_some());
+        assert!(lyra_db::tracks::get_by_id(&db, track)?.is_some());
         Ok(())
     }
 
     #[test]
     fn update_distinguishes_absent_description_from_explicit_clear() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        let user_db_id = crate::db::users::create(&mut db, &test_user("describer")?)?;
+        let user_db_id = lyra_db::users::create(&mut db, &test_user("describer")?)?;
         let playlist_db_id = create(
             &mut db,
             &CreatePlaylistRequest {
@@ -563,7 +560,7 @@ mod tests {
         )?
         .ok_or_else(|| anyhow::anyhow!("playlist missing"))?;
 
-        let stored = crate::db::playlists::get_by_id(&db, playlist_db_id)?
+        let stored = lyra_db::playlists::get_by_id(&db, playlist_db_id)?
             .ok_or_else(|| anyhow::anyhow!("playlist missing"))?;
         assert_eq!(stored.description, None);
         assert_eq!(stored.name, "Renamed");
@@ -590,7 +587,7 @@ mod tests {
     #[test]
     fn replace_updates_fields_and_entries_keeping_order_and_repeats() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        let user_db_id = crate::db::users::create(&mut db, &test_user("replacer")?)?;
+        let user_db_id = lyra_db::users::create(&mut db, &test_user("replacer")?)?;
         let first = insert_track(&mut db, "First")?;
         let second = insert_track(&mut db, "Second")?;
         let playlist_db_id = create_playlist(&mut db, user_db_id, "Before")?;
@@ -624,7 +621,7 @@ mod tests {
     #[test]
     fn replace_changes_nothing_when_a_track_is_missing() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        let user_db_id = crate::db::users::create(&mut db, &test_user("failed-replacer")?)?;
+        let user_db_id = lyra_db::users::create(&mut db, &test_user("failed-replacer")?)?;
         let kept = insert_track(&mut db, "Kept")?;
         let deleted = insert_track(&mut db, "Deleted")?;
         db.exec_mut(QueryBuilder::remove().ids(deleted).query())?;
@@ -645,7 +642,7 @@ mod tests {
             .is_err()
         );
 
-        let stored = crate::db::playlists::get_by_id(&db, playlist_db_id)?
+        let stored = lyra_db::playlists::get_by_id(&db, playlist_db_id)?
             .ok_or_else(|| anyhow::anyhow!("playlist missing"))?;
         assert_eq!(stored.name, "Unchanged");
         assert_eq!(entry_tracks(&db, playlist_db_id)?, vec![kept]);
@@ -655,7 +652,7 @@ mod tests {
     #[test]
     fn summaries_count_entries_and_sum_known_durations() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        let user_db_id = crate::db::users::create(&mut db, &test_user("summaries")?)?;
+        let user_db_id = lyra_db::users::create(&mut db, &test_user("summaries")?)?;
         let short = insert_track_with_duration(&mut db, "Short", 1_000)?;
         let long = insert_track_with_duration(&mut db, "Long", 2_500)?;
         let unknown = insert_track(&mut db, "Unknown Duration")?;
@@ -677,7 +674,7 @@ mod tests {
 
         let summaries = summaries(
             &db,
-            &principal(user_db_id, vec![crate::db::Permission::Admin]),
+            &principal(user_db_id, vec![lyra_db::Permission::Admin]),
             &[filled, empty],
         )?;
         let filled_summary = summaries.get(&filled).copied().unwrap_or_default();
@@ -694,7 +691,7 @@ mod tests {
     #[test]
     fn summaries_withhold_durations_of_inaccessible_tracks() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        let user_db_id = crate::db::users::create(&mut db, &test_user("summary-access")?)?;
+        let user_db_id = lyra_db::users::create(&mut db, &test_user("summary-access")?)?;
         let track = insert_track_with_duration(&mut db, "Private", 9_000)?;
         let playlist_db_id = create_playlist(&mut db, user_db_id, "Public Playlist")?;
         add_tracks(
@@ -715,7 +712,7 @@ mod tests {
         assert_eq!(summary.track_count, 1);
         assert_eq!(summary.total_duration_ms, 0);
 
-        let admin = principal(user_db_id, vec![crate::db::Permission::Admin]);
+        let admin = principal(user_db_id, vec![lyra_db::Permission::Admin]);
         let summary = summaries(&db, &admin, &[playlist_db_id])?
             .get(&playlist_db_id)
             .copied()
@@ -729,7 +726,7 @@ mod tests {
     #[test]
     fn summaries_follow_entry_removal() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        let user_db_id = crate::db::users::create(&mut db, &test_user("summary-removal")?)?;
+        let user_db_id = lyra_db::users::create(&mut db, &test_user("summary-removal")?)?;
         let track = insert_track_with_duration(&mut db, "Track", 4_000)?;
         let playlist_db_id = create_playlist(&mut db, user_db_id, "Shrinking")?;
         let added = add_tracks(
@@ -743,7 +740,7 @@ mod tests {
 
         let summary = summaries(
             &db,
-            &principal(user_db_id, vec![crate::db::Permission::Admin]),
+            &principal(user_db_id, vec![lyra_db::Permission::Admin]),
             &[playlist_db_id],
         )?
         .get(&playlist_db_id)

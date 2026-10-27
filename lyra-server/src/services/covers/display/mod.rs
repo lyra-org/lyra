@@ -8,7 +8,7 @@ pub(crate) mod playlists;
 
 use agdb::DbId;
 
-use crate::db::covers::display::{
+use lyra_db::covers::display::{
     DisplayCoverProfile,
     DisplayCoverWinner,
 };
@@ -52,7 +52,7 @@ fn instance_signal_is_enough(instance_profile: &DisplayCoverProfile) -> bool {
 }
 
 fn profile_is_current(profile: &DisplayCoverProfile) -> bool {
-    crate::db::covers::display::profile_is_clean(profile)
+    lyra_db::covers::display::profile_is_clean(profile)
 }
 
 fn release_is_visible(
@@ -66,11 +66,11 @@ fn cover_for_release(
     db: &agdb::DbAny,
     release_db_id: DbId,
     visible_release_ids: Option<&std::collections::HashSet<DbId>>,
-) -> anyhow::Result<Option<crate::db::Cover>> {
+) -> anyhow::Result<Option<lyra_db::Cover>> {
     if !release_is_visible(release_db_id, visible_release_ids) {
         return Ok(None);
     }
-    crate::db::covers::get(db, release_db_id)
+    lyra_db::covers::get(db, release_db_id)
 }
 
 /// Per-release visibility check, for callers that would otherwise have to
@@ -79,9 +79,9 @@ fn cover_for_accessible_release(
     db: &agdb::DbAny,
     principal: &crate::services::auth::Principal,
     release_db_id: DbId,
-) -> anyhow::Result<Option<crate::db::Cover>> {
+) -> anyhow::Result<Option<lyra_db::Cover>> {
     if !crate::services::auth::access::entity_accessible(db, principal, release_db_id)? {
         return Ok(None);
     }
-    crate::db::covers::get(db, release_db_id)
+    lyra_db::covers::get(db, release_db_id)
 }

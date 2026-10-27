@@ -147,7 +147,7 @@ pub(crate) fn public_cover_url(id: &str, hash: &str) -> String {
     format!("/api/covers/{id}?v={hash}")
 }
 
-pub(crate) fn cover_to_response(cover: crate::db::Cover) -> CoverResponse {
+pub(crate) fn cover_to_response(cover: lyra_db::Cover) -> CoverResponse {
     let url = public_cover_url(&cover.id, &cover.hash);
     CoverResponse {
         id: cover.id,
@@ -159,7 +159,7 @@ pub(crate) fn cover_to_response(cover: crate::db::Cover) -> CoverResponse {
 }
 
 pub(crate) fn build_cover_response(
-    db: &impl crate::db::DbAccess,
+    db: &impl lyra_db::DbAccess,
     owner_db_id: agdb::DbId,
     include_covers: bool,
 ) -> anyhow::Result<Option<Option<CoverResponse>>> {
@@ -168,7 +168,7 @@ pub(crate) fn build_cover_response(
     }
 
     Ok(Some(
-        crate::db::covers::get(db, owner_db_id)?.map(cover_to_response),
+        lyra_db::covers::get(db, owner_db_id)?.map(cover_to_response),
     ))
 }
 
@@ -232,7 +232,7 @@ async fn get_public_cover(
     let transform_options = parse_cover_transform_options(&query)?;
     let cover = {
         let db = STATE.db.read().await;
-        crate::db::covers::get_by_public_id(&*db, &id)?
+        lyra_db::covers::get_by_public_id(&*db, &id)?
             .ok_or_else(|| AppError::not_found(format!("Cover not found: {id}")))?
     };
     let path = PathBuf::from(&cover.path);
@@ -268,7 +268,7 @@ mod tests {
 
     #[test]
     fn cover_to_response_sets_public_url() {
-        let response = cover_to_response(crate::db::Cover {
+        let response = cover_to_response(lyra_db::Cover {
             db_id: None,
             id: "cover-1".to_string(),
             path: "/music/cover.jpg".to_string(),

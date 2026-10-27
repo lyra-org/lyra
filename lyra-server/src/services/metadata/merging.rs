@@ -16,7 +16,11 @@ use agdb::{
 };
 use serde::de::DeserializeOwned;
 
-use crate::db::{
+use crate::services::metadata::layers::{
+    LOCAL_SOURCE_ID,
+    MANUAL_SOURCE_ID,
+};
+use lyra_db::{
     Artist,
     ArtistRelationType,
     CreditType,
@@ -35,10 +39,6 @@ use crate::db::{
             LayerRelationInput,
         },
     },
-};
-use crate::services::metadata::layers::{
-    LOCAL_SOURCE_ID,
-    MANUAL_SOURCE_ID,
 };
 
 #[derive(Debug, Clone)]
@@ -69,7 +69,7 @@ impl MergedMetadata {
         field: MetadataField,
     ) -> anyhow::Result<Option<DbId>> {
         match self.provenance.get(&field) {
-            Some(source_id) => crate::db::metadata::layers::layer_id(db, node_id, source_id),
+            Some(source_id) => lyra_db::metadata::layers::layer_id(db, node_id, source_id),
             None => Ok(None),
         }
     }
@@ -221,11 +221,11 @@ pub(crate) fn resolve_without(
     node_id: DbId,
     excluded_source: &str,
 ) -> anyhow::Result<MergedMetadata> {
-    let layers = crate::db::metadata::layers::get_for_entity(db, node_id)?
+    let layers = lyra_db::metadata::layers::get_for_entity(db, node_id)?
         .into_iter()
         .filter(|layer| layer.source_id != excluded_source)
         .collect();
-    Ok(merge_layers(layers, &crate::db::providers::get(db)?))
+    Ok(merge_layers(layers, &lyra_db::providers::get(db)?))
 }
 
 pub(crate) fn apply_merged_metadata_to_entity(db: &mut DbAny, node_id: DbId) -> anyhow::Result<()> {
@@ -250,20 +250,20 @@ pub(crate) fn apply_through_lock(
     node_id: DbId,
     released: &LayerKeys,
 ) -> anyhow::Result<()> {
-    let layers = crate::db::metadata::layers::get_for_entity(db, node_id)?;
+    let layers = lyra_db::metadata::layers::get_for_entity(db, node_id)?;
     let mut unlocked = layers
         .iter()
         .find(|layer| layer.source_id == MANUAL_SOURCE_ID)
         .map(LayerKeys::supplied_by)
         .unwrap_or_default();
     unlocked.extend(released);
-    let providers = crate::db::providers::get(db)?;
+    let providers = lyra_db::providers::get(db)?;
     let merged = merge_layers(layers, &providers);
 
-    if let Some(mut release) = crate::db::releases::get_by_id(db, node_id)? {
+    if let Some(mut release) = lyra_db::releases::get_by_id(db, node_id)? {
         let scope = Scope::new(release.locked, unlocked);
         if apply_to_release(&mut release, &merged, &scope)? {
-            crate::db::releases::update_in_transaction(db, &release)?;
+            lyra_db::releases::update_in_transaction(db, &release)?;
         }
         if scope.field(MetadataField::Genres) {
             let genre_ids: Vec<DbId> =
@@ -274,7 +274,7 @@ pub(crate) fn apply_through_lock(
                         .collect(),
                     None => Vec::new(),
                 };
-            crate::db::genres::sync_release_genre_ids(db, node_id, &genre_ids)?;
+            lyra_db::genres::sync_release_genre_ids(db, node_id, &genre_ids)?;
         }
         if scope.field(MetadataField::Labels) {
             let label_links: Vec<LabelLinkInput> =
@@ -288,19 +288,19 @@ pub(crate) fn apply_through_lock(
                         .collect(),
                     None => Vec::new(),
                 };
-            crate::db::labels::sync_release_label_links_inside_tx(db, node_id, &label_links)?;
+            lyra_db::labels::sync_release_label_links_inside_tx(db, node_id, &label_links)?;
         }
         sync_credits(db, node_id, &merged, &scope)?;
-    } else if let Some(mut track) = crate::db::tracks::get_by_id(db, node_id)? {
+    } else if let Some(mut track) = lyra_db::tracks::get_by_id(db, node_id)? {
         let scope = Scope::new(track.locked, unlocked);
         if apply_to_track(&mut track, &merged, &scope)? {
-            crate::db::tracks::update_in_transaction(db, &track)?;
+            lyra_db::tracks::update_in_transaction(db, &track)?;
         }
         sync_credits(db, node_id, &merged, &scope)?;
-    } else if let Some(mut artist) = crate::db::artists::get_by_id(db, node_id)? {
+    } else if let Some(mut artist) = lyra_db::artists::get_by_id(db, node_id)? {
         let scope = Scope::new(artist.locked, unlocked);
         if apply_to_artist(&mut artist, &merged, &scope)? {
-            crate::db::artists::update_in_transaction(db, &artist)?;
+            lyra_db::artists::update_in_transaction(db, &artist)?;
         }
         sync_incoming_relations(db, node_id, &merged, &scope)?;
     }
@@ -322,18 +322,18 @@ fn sync_credits(
     {
         return Ok(());
     }
-    let mut stored = crate::db::credits::links_for_owner(db, owner_id)?;
+    let mut stored = lyra_db::credits::links_for_owner(db, owner_id)?;
     stored.sort_by_key(|link| link.credit.artist_order);
-    let desired: Vec<crate::db::credits::CreditLinkInput> = CreditType::ALL
+    let desired: Vec<lyra_db::credits::CreditLinkInput> = CreditType::ALL
         .into_iter()
-        .flat_map(|credit_type| -> Vec<crate::db::credits::CreditLinkInput> {
+        .flat_map(|credit_type| -> Vec<lyra_db::credits::CreditLinkInput> {
             if scope.credit(credit_type) {
                 merged
                     .credits
                     .get(&credit_type)
                     .into_iter()
                     .flatten()
-                    .map(|input| crate::db::credits::CreditLinkInput {
+                    .map(|input| lyra_db::credits::CreditLinkInput {
                         artist_id: input.artist_id,
                         credit_type,
                         detail: input.detail.clone(),
@@ -343,7 +343,7 @@ fn sync_credits(
                 stored
                     .iter()
                     .filter(|link| link.credit.credit_type == credit_type)
-                    .map(|link| crate::db::credits::CreditLinkInput {
+                    .map(|link| lyra_db::credits::CreditLinkInput {
                         artist_id: link.artist_id,
                         credit_type,
                         detail: link.credit.detail.clone(),
@@ -365,7 +365,7 @@ fn sync_credits(
             .iter()
             .map(|input| (input.artist_id, input.credit_type, input.detail.as_deref())));
     if !unchanged {
-        crate::db::credits::replace_for_owner(db, owner_id, &desired)?;
+        lyra_db::credits::replace_for_owner(db, owner_id, &desired)?;
     }
     Ok(())
 }
@@ -390,17 +390,17 @@ fn sync_incoming_relations(
             .map(|input| (input.artist_id, input.attributes.clone()))
             .collect();
         let stored =
-            crate::db::artists::relations::get_relations_to(db, artist_id, Some(relation_type))?;
+            lyra_db::artists::relations::get_relations_to(db, artist_id, Some(relation_type))?;
         for (_, source_id) in &stored {
             if !desired.contains_key(source_id) {
-                crate::db::artists::relations::unlink(db, *source_id, artist_id, relation_type)?;
+                lyra_db::artists::relations::unlink(db, *source_id, artist_id, relation_type)?;
             }
         }
         for (source_id, attributes) in desired {
             if !stored.iter().any(|(relation, stored_source)| {
                 *stored_source == source_id && relation.attributes == attributes
             }) {
-                crate::db::artists::relations::link(
+                lyra_db::artists::relations::link(
                     db,
                     source_id,
                     artist_id,
@@ -620,7 +620,7 @@ mod tests {
             id: "release".to_string(),
             release_title: "Stored Title".to_string(),
             sort_title: Some("Stored Sort".to_string()),
-            release_type: Some(crate::db::releases::ReleaseType::Album),
+            release_type: Some(lyra_db::releases::ReleaseType::Album),
             release_date: Some("1999".to_string()),
             media_formats: None,
             barcode: None,
@@ -750,18 +750,18 @@ mod tests {
         use agdb::DbAny;
 
         use super::*;
-        use crate::db::fixtures::{
+        use lyra_db::fixtures::{
             insert_artist,
             insert_release,
             insert_track,
         };
-        use crate::db::test_db::{
+        use lyra_db::test_db::{
             new_test_db,
             stored_keys,
         };
 
         fn enable_provider(db: &mut DbAny, provider_id: &str, priority: u32) -> anyhow::Result<()> {
-            crate::db::providers::upsert(db, &make_provider(provider_id, priority, true))?;
+            lyra_db::providers::upsert(db, &make_provider(provider_id, priority, true))?;
             Ok(())
         }
 
@@ -772,7 +772,7 @@ mod tests {
             fields: serde_json::Value,
             updated_at: u64,
         ) -> anyhow::Result<()> {
-            crate::db::metadata::layers::upsert(
+            lyra_db::metadata::layers::upsert(
                 db,
                 node_id,
                 &make_layer(source_id, &fields.to_string(), updated_at),
@@ -791,7 +791,7 @@ mod tests {
                 node_id,
                 provider_id,
                 &crate::services::metadata::layers::ProviderValues {
-                    fields: crate::db::metadata::layers::fields_from_json(fields),
+                    fields: lyra_db::metadata::layers::fields_from_json(fields),
                     ..Default::default()
                 },
                 &HashMap::new(),
@@ -800,14 +800,14 @@ mod tests {
         }
 
         fn genre_names(db: &DbAny, release_id: DbId) -> anyhow::Result<Vec<String>> {
-            Ok(crate::db::genres::get_for_release(db, release_id)?
+            Ok(lyra_db::genres::get_for_release(db, release_id)?
                 .into_iter()
                 .map(|genre| genre.name)
                 .collect())
         }
 
         fn label_names(db: &DbAny, release_id: DbId) -> anyhow::Result<Vec<String>> {
-            Ok(crate::db::labels::get_for_release(db, release_id)?
+            Ok(lyra_db::labels::get_for_release(db, release_id)?
                 .into_iter()
                 .map(|label| label.label.name)
                 .collect())
@@ -826,7 +826,7 @@ mod tests {
                 .map_err(|error| anyhow::anyhow!("{error:?}"))?;
             let mut names: Vec<String> = ids
                 .into_iter()
-                .filter_map(|id| crate::db::genres::get_by_id(db, id).transpose())
+                .filter_map(|id| lyra_db::genres::get_by_id(db, id).transpose())
                 .map(|genre| genre.map(|genre| genre.name))
                 .collect::<anyhow::Result<_>>()?;
             names.sort();
@@ -844,7 +844,7 @@ mod tests {
                 artist_id,
                 provider_id,
                 &crate::services::metadata::layers::ProviderValues {
-                    fields: crate::db::metadata::layers::fields_from_json(serde_json::json!({})),
+                    fields: lyra_db::metadata::layers::fields_from_json(serde_json::json!({})),
                     relations: relations
                         .iter()
                         .map(|(relation_type, artist_ids)| {
@@ -872,14 +872,11 @@ mod tests {
             artist_id: DbId,
             relation_type: ArtistRelationType,
         ) -> anyhow::Result<Vec<DbId>> {
-            let mut sources: Vec<DbId> = crate::db::artists::relations::get_relations_to(
-                db,
-                artist_id,
-                Some(relation_type),
-            )?
-            .into_iter()
-            .map(|(_, source_id)| source_id)
-            .collect();
+            let mut sources: Vec<DbId> =
+                lyra_db::artists::relations::get_relations_to(db, artist_id, Some(relation_type))?
+                    .into_iter()
+                    .map(|(_, source_id)| source_id)
+                    .collect();
             sources.sort();
             Ok(sources)
         }
@@ -961,9 +958,9 @@ mod tests {
             let mut db = new_test_db()?;
             let character = insert_artist(&mut db, "Character")?;
             let actor = insert_artist(&mut db, "Actor")?;
-            let mut locked = crate::db::artists::get_by_id(&db, character)?.expect("artist exists");
+            let mut locked = lyra_db::artists::get_by_id(&db, character)?.expect("artist exists");
             locked.locked = Some(true);
-            crate::db::artists::update(&mut db, &locked)?;
+            lyra_db::artists::update(&mut db, &locked)?;
             enable_provider(&mut db, "provider", 10)?;
 
             save_relations(
@@ -974,14 +971,13 @@ mod tests {
             )?;
             assert!(related_into(&db, character, ArtistRelationType::VoiceActor)?.is_empty());
             assert_eq!(
-                crate::db::metadata::layers::get_for_entity(&db, character)?.len(),
+                lyra_db::metadata::layers::get_for_entity(&db, character)?.len(),
                 1
             );
 
-            let mut unlocked =
-                crate::db::artists::get_by_id(&db, character)?.expect("artist exists");
+            let mut unlocked = lyra_db::artists::get_by_id(&db, character)?.expect("artist exists");
             unlocked.locked = None;
-            crate::db::artists::update(&mut db, &unlocked)?;
+            lyra_db::artists::update(&mut db, &unlocked)?;
             apply_merged_metadata_to_entity(&mut db, character)?;
             assert_eq!(
                 related_into(&db, character, ArtistRelationType::VoiceActor)?,
@@ -998,7 +994,7 @@ mod tests {
             let provider_actor = insert_artist(&mut db, "Provider Actor")?;
             let member = insert_artist(&mut db, "Member")?;
             enable_provider(&mut db, "provider", 1000)?;
-            crate::db::metadata::layers::upsert(
+            lyra_db::metadata::layers::upsert(
                 &mut db,
                 character,
                 &MetadataLayer::new(MANUAL_SOURCE_ID, Default::default(), 1).with_relations(
@@ -1034,11 +1030,8 @@ mod tests {
             Ok(())
         }
 
-        fn credits_of(
-            db: &DbAny,
-            owner: DbId,
-        ) -> anyhow::Result<Vec<(crate::db::CreditType, DbId)>> {
-            let mut links = crate::db::credits::links_for_owner(db, owner)?;
+        fn credits_of(db: &DbAny, owner: DbId) -> anyhow::Result<Vec<(lyra_db::CreditType, DbId)>> {
+            let mut links = lyra_db::credits::links_for_owner(db, owner)?;
             links.sort_by_key(|link| link.credit.artist_order);
             Ok(links
                 .into_iter()
@@ -1060,7 +1053,7 @@ mod tests {
             db: &mut DbAny,
             owner: DbId,
             provider_id: &str,
-            credits: &[(crate::db::CreditType, &[DbId])],
+            credits: &[(lyra_db::CreditType, &[DbId])],
         ) -> anyhow::Result<()> {
             crate::services::metadata::layers::save_provider_layer(
                 db,
@@ -1088,13 +1081,13 @@ mod tests {
                 insert_artist(&mut db, "First")?,
                 insert_artist(&mut db, "Second")?,
             ];
-            crate::db::metadata::layers::upsert(
+            lyra_db::metadata::layers::upsert(
                 &mut db,
                 track,
                 &MetadataLayer::new(LOCAL_SOURCE_ID, Default::default(), 1).with_credits(
                     BTreeMap::from([
-                        (crate::db::CreditType::Artist, credit_list(&[local_artist])),
-                        (crate::db::CreditType::Composer, credit_list(&[composer])),
+                        (lyra_db::CreditType::Artist, credit_list(&[local_artist])),
+                        (lyra_db::CreditType::Composer, credit_list(&[composer])),
                     ]),
                 ),
             )?;
@@ -1103,14 +1096,14 @@ mod tests {
                 &mut db,
                 track,
                 "provider",
-                &[(crate::db::CreditType::Artist, &[second, first])],
+                &[(lyra_db::CreditType::Artist, &[second, first])],
             )?;
             assert_eq!(
                 credits_of(&db, track)?,
                 vec![
-                    (crate::db::CreditType::Artist, second),
-                    (crate::db::CreditType::Artist, first),
-                    (crate::db::CreditType::Composer, composer),
+                    (lyra_db::CreditType::Artist, second),
+                    (lyra_db::CreditType::Artist, first),
+                    (lyra_db::CreditType::Composer, composer),
                 ],
                 "the provider wins the artist role; the local composer stays"
             );
@@ -1119,13 +1112,13 @@ mod tests {
                 &mut db,
                 track,
                 "provider",
-                &[(crate::db::CreditType::Composer, &[])],
+                &[(lyra_db::CreditType::Composer, &[])],
             )?;
             assert_eq!(
                 credits_of(&db, track)?,
                 vec![
-                    (crate::db::CreditType::Artist, second),
-                    (crate::db::CreditType::Artist, first)
+                    (lyra_db::CreditType::Artist, second),
+                    (lyra_db::CreditType::Artist, first)
                 ],
                 "an empty set clears its role and leaves the others"
             );
@@ -1134,8 +1127,8 @@ mod tests {
             assert_eq!(
                 credits_of(&db, track)?,
                 vec![
-                    (crate::db::CreditType::Artist, local_artist),
-                    (crate::db::CreditType::Composer, composer),
+                    (lyra_db::CreditType::Artist, local_artist),
+                    (lyra_db::CreditType::Composer, composer),
                 ]
             );
             Ok(())
@@ -1158,11 +1151,11 @@ mod tests {
                 insert_artist(&mut db, "Alpha")?,
                 insert_artist(&mut db, "Beta")?,
             ];
-            crate::db::metadata::layers::upsert(
+            lyra_db::metadata::layers::upsert(
                 &mut db,
                 track,
                 &MetadataLayer::new(LOCAL_SOURCE_ID, Default::default(), 1).with_credits(
-                    BTreeMap::from([(crate::db::CreditType::Artist, credit_list(&[combined]))]),
+                    BTreeMap::from([(lyra_db::CreditType::Artist, credit_list(&[combined]))]),
                 ),
             )?;
             apply_merged_metadata_to_entity(&mut db, track)?;
@@ -1173,7 +1166,7 @@ mod tests {
                 Ok(ids)
             };
             let searched = |db: &DbAny| -> anyhow::Result<Vec<DbId>> {
-                let mut ids: Vec<DbId> = crate::db::search::collect_candidates(db, None)?
+                let mut ids: Vec<DbId> = lyra_db::search::collect_candidates(db, None)?
                     .artists
                     .into_iter()
                     .map(|candidate| candidate.db_id)
@@ -1189,13 +1182,12 @@ mod tests {
                 &mut db,
                 track,
                 "provider",
-                &[(crate::db::CreditType::Artist, &[alpha, beta])],
+                &[(lyra_db::CreditType::Artist, &[alpha, beta])],
             )?;
             assert_eq!(browsed(&db, ArtistFilter::default())?, vec![alpha, beta]);
             assert_eq!(searched(&db)?, vec![alpha, beta]);
             assert!(
-                crate::db::artists::get_by_id(&db, combined)?
-                    .is_some_and(|artist| !artist.credited),
+                lyra_db::artists::get_by_id(&db, combined)?.is_some_and(|artist| !artist.credited),
                 "the combined artist survives, uncredited"
             );
             let by_id = ArtistFilter {
@@ -1223,25 +1215,25 @@ mod tests {
             let stored = insert_artist(&mut db, "Stored")?;
             let provider_artist = insert_artist(&mut db, "Provider")?;
             let manual_composer = insert_artist(&mut db, "Manual Composer")?;
-            crate::db::credits::replace_for_owner(
+            lyra_db::credits::replace_for_owner(
                 &mut db,
                 track,
-                &[crate::db::credits::CreditLinkInput {
+                &[lyra_db::credits::CreditLinkInput {
                     artist_id: stored,
-                    credit_type: crate::db::CreditType::Artist,
+                    credit_type: lyra_db::CreditType::Artist,
                     detail: None,
                 }],
             )?;
-            let mut locked = crate::db::tracks::get_by_id(&db, track)?.expect("track exists");
+            let mut locked = lyra_db::tracks::get_by_id(&db, track)?.expect("track exists");
             locked.locked = Some(true);
-            crate::db::tracks::update(&mut db, &locked)?;
+            lyra_db::tracks::update(&mut db, &locked)?;
             enable_provider(&mut db, "provider", 10)?;
 
             save_credits(
                 &mut db,
                 track,
                 "provider",
-                &[(crate::db::CreditType::Artist, &[provider_artist])],
+                &[(lyra_db::CreditType::Artist, &[provider_artist])],
             )?;
             provider_save(
                 &mut db,
@@ -1251,42 +1243,40 @@ mod tests {
             )?;
             assert_eq!(
                 credits_of(&db, track)?,
-                vec![(crate::db::CreditType::Artist, stored)]
+                vec![(lyra_db::CreditType::Artist, stored)]
             );
 
-            crate::db::metadata::layers::upsert(
+            lyra_db::metadata::layers::upsert(
                 &mut db,
                 track,
                 &MetadataLayer::new(
                     MANUAL_SOURCE_ID,
-                    crate::db::metadata::layers::fields_from_json(
-                        serde_json::json!({"year": 2001}),
-                    ),
+                    lyra_db::metadata::layers::fields_from_json(serde_json::json!({"year": 2001})),
                     1,
                 )
                 .with_credits(BTreeMap::from([(
-                    crate::db::CreditType::Composer,
+                    lyra_db::CreditType::Composer,
                     credit_list(&[manual_composer]),
                 )])),
             )?;
             apply_merged_metadata_to_entity(&mut db, track)?;
-            let applied = crate::db::tracks::get_by_id(&db, track)?.expect("track exists");
+            let applied = lyra_db::tracks::get_by_id(&db, track)?.expect("track exists");
             assert_eq!(applied.track_title, "Stored Title");
             assert_eq!(applied.year, Some(2001));
             assert_eq!(
                 credits_of(&db, track)?,
                 vec![
-                    (crate::db::CreditType::Artist, stored),
-                    (crate::db::CreditType::Composer, manual_composer),
+                    (lyra_db::CreditType::Artist, stored),
+                    (lyra_db::CreditType::Composer, manual_composer),
                 ]
             );
 
-            let mut unlocked = crate::db::tracks::get_by_id(&db, track)?.expect("track exists");
+            let mut unlocked = lyra_db::tracks::get_by_id(&db, track)?.expect("track exists");
             unlocked.locked = None;
-            crate::db::tracks::update(&mut db, &unlocked)?;
+            lyra_db::tracks::update(&mut db, &unlocked)?;
             apply_merged_metadata_to_entity(&mut db, track)?;
             assert_eq!(
-                crate::db::tracks::get_by_id(&db, track)?
+                lyra_db::tracks::get_by_id(&db, track)?
                     .expect("track exists")
                     .track_title,
                 "Provider Title"
@@ -1294,8 +1284,8 @@ mod tests {
             assert_eq!(
                 credits_of(&db, track)?,
                 vec![
-                    (crate::db::CreditType::Artist, provider_artist),
-                    (crate::db::CreditType::Composer, manual_composer),
+                    (lyra_db::CreditType::Artist, provider_artist),
+                    (lyra_db::CreditType::Composer, manual_composer),
                 ]
             );
             Ok(())
@@ -1306,12 +1296,12 @@ mod tests {
             let mut db = new_test_db()?;
             let track = insert_track(&mut db, "Track")?;
             let artist = insert_artist(&mut db, "Artist")?;
-            crate::db::credits::replace_for_owner(
+            lyra_db::credits::replace_for_owner(
                 &mut db,
                 track,
-                &[crate::db::credits::CreditLinkInput {
+                &[lyra_db::credits::CreditLinkInput {
                     artist_id: artist,
-                    credit_type: crate::db::CreditType::Artist,
+                    credit_type: lyra_db::CreditType::Artist,
                     detail: None,
                 }],
             )?;
@@ -1327,10 +1317,9 @@ mod tests {
             let mut db = new_test_db()?;
             let release_id = insert_release(&mut db, "Release")?;
             let locked_id = insert_release(&mut db, "Locked")?;
-            let mut locked =
-                crate::db::releases::get_by_id(&db, locked_id)?.expect("release exists");
+            let mut locked = lyra_db::releases::get_by_id(&db, locked_id)?.expect("release exists");
             locked.locked = Some(true);
-            crate::db::releases::update(&mut db, &locked)?;
+            lyra_db::releases::update(&mut db, &locked)?;
             enable_provider(&mut db, "low", 10)?;
             enable_provider(&mut db, "high", 100)?;
 
@@ -1353,15 +1342,15 @@ mod tests {
                 serde_json::json!({"genres": ["Locked"]}),
             )?;
 
-            assert!(crate::db::genres::find_by_name(&db, "Losing")?.is_some());
-            assert!(crate::db::genres::find_by_name(&db, "Locked")?.is_some());
+            assert!(lyra_db::genres::find_by_name(&db, "Losing")?.is_some());
+            assert!(lyra_db::genres::find_by_name(&db, "Locked")?.is_some());
             assert_eq!(genre_names(&db, release_id)?, vec!["Winning"]);
             assert!(
                 genre_names(&db, locked_id)?.is_empty(),
                 "a locked release is not re-applied"
             );
             assert_eq!(
-                crate::db::metadata::layers::get_for_entity(&db, locked_id)?.len(),
+                lyra_db::metadata::layers::get_for_entity(&db, locked_id)?.len(),
                 1,
                 "a locked release still records its layer"
             );
@@ -1415,7 +1404,7 @@ mod tests {
             assert_eq!(genre_names(&db, release_id)?, vec!["Low Genre"]);
             assert_eq!(label_names(&db, release_id)?, vec!["Low Label"]);
             assert!(
-                crate::db::labels::find_by_name(&db, "High Label")?.is_none(),
+                lyra_db::labels::find_by_name(&db, "High Label")?.is_none(),
                 "a label nothing names any more is collected"
             );
             Ok(())
@@ -1426,10 +1415,10 @@ mod tests {
             let mut db = new_test_db()?;
             let track_id = insert_track(&mut db, "Track")?;
             let mut track =
-                crate::db::tracks::get_by_id(&db, track_id)?.expect("track exists after insert");
+                lyra_db::tracks::get_by_id(&db, track_id)?.expect("track exists after insert");
             track.year = Some(1999);
             track.disc = Some(2);
-            crate::db::tracks::update(&mut db, &track)?;
+            lyra_db::tracks::update(&mut db, &track)?;
             assert!(stored_keys(&db, track_id)?.contains("year"));
 
             enable_provider(&mut db, "provider", 10)?;
@@ -1448,7 +1437,7 @@ mod tests {
                 "year must be removed from storage, not merely left unchanged"
             );
             assert!(stored.contains("disc"));
-            let track = crate::db::tracks::get_by_id(&db, track_id)?.expect("track still exists");
+            let track = lyra_db::tracks::get_by_id(&db, track_id)?.expect("track still exists");
             assert_eq!(track.year, None);
             assert_eq!(track.disc, Some(2));
             Ok(())
@@ -1470,7 +1459,7 @@ mod tests {
             )?;
             apply_merged_metadata_to_entity(&mut db, artist_id)?;
             assert_eq!(
-                crate::db::artists::get_by_id(&db, artist_id)?
+                lyra_db::artists::get_by_id(&db, artist_id)?
                     .expect("artist exists")
                     .description
                     .as_deref(),
@@ -1487,7 +1476,7 @@ mod tests {
             apply_merged_metadata_to_entity(&mut db, artist_id)?;
 
             assert!(
-                crate::db::artists::get_by_id(&db, artist_id)?
+                lyra_db::artists::get_by_id(&db, artist_id)?
                     .expect("artist exists")
                     .description
                     .is_none()
@@ -1518,20 +1507,20 @@ mod tests {
             )?;
             apply_merged_metadata_to_entity(&mut db, artist_id)?;
             assert_eq!(
-                crate::db::artists::get_by_id(&db, artist_id)?
+                lyra_db::artists::get_by_id(&db, artist_id)?
                     .expect("artist exists")
                     .artist_type,
-                Some(crate::db::ArtistType::Person)
+                Some(lyra_db::ArtistType::Person)
             );
 
-            crate::db::providers::upsert(&mut db, &make_provider("provider", 10, false))?;
+            lyra_db::providers::upsert(&mut db, &make_provider("provider", 10, false))?;
             apply_merged_metadata_to_entity(&mut db, artist_id)?;
 
             assert_eq!(
-                crate::db::artists::get_by_id(&db, artist_id)?
+                lyra_db::artists::get_by_id(&db, artist_id)?
                     .expect("artist exists")
                     .artist_type,
-                Some(crate::db::ArtistType::Group)
+                Some(lyra_db::ArtistType::Group)
             );
             Ok(())
         }
@@ -1540,11 +1529,11 @@ mod tests {
         fn unsupplied_genres_and_labels_drop_their_relationships() -> anyhow::Result<()> {
             let mut db = new_test_db()?;
             let release_id = insert_release(&mut db, "Release")?;
-            crate::db::genres::sync_release_genres(&mut db, release_id, &["Jazz".to_string()])?;
-            crate::db::labels::sync_release_labels(
+            lyra_db::genres::sync_release_genres(&mut db, release_id, &["Jazz".to_string()])?;
+            lyra_db::labels::sync_release_labels(
                 &mut db,
                 release_id,
-                &[crate::db::labels::LabelInput {
+                &[lyra_db::labels::LabelInput {
                     name: "Blue Note".to_string(),
                     catalog_number: None,
                     external_id: None,
@@ -1561,8 +1550,8 @@ mod tests {
             )?;
             apply_merged_metadata_to_entity(&mut db, release_id)?;
 
-            assert!(crate::db::genres::get_for_release(&db, release_id)?.is_empty());
-            assert!(crate::db::labels::get_for_release(&db, release_id)?.is_empty());
+            assert!(lyra_db::genres::get_for_release(&db, release_id)?.is_empty());
+            assert!(lyra_db::labels::get_for_release(&db, release_id)?.is_empty());
             Ok(())
         }
 
@@ -1595,7 +1584,7 @@ mod tests {
             apply_merged_metadata_to_entity(&mut db, release_id)?;
 
             assert_eq!(
-                crate::db::releases::get_by_id(&db, release_id)?
+                lyra_db::releases::get_by_id(&db, release_id)?
                     .expect("release exists")
                     .sort_title
                     .as_deref(),
@@ -1604,12 +1593,12 @@ mod tests {
             assert_eq!(genre_names(&db, release_id)?, vec!["Manual Genre"]);
 
             db.transaction_mut(|t| {
-                crate::db::metadata::layers::remove_inside_tx(t, release_id, MANUAL_SOURCE_ID)
+                lyra_db::metadata::layers::remove_inside_tx(t, release_id, MANUAL_SOURCE_ID)
             })?;
             apply_merged_metadata_to_entity(&mut db, release_id)?;
 
             assert_eq!(
-                crate::db::releases::get_by_id(&db, release_id)?
+                lyra_db::releases::get_by_id(&db, release_id)?
                     .expect("release exists")
                     .sort_title
                     .as_deref(),
@@ -1623,10 +1612,10 @@ mod tests {
         fn a_locked_entity_records_its_layer_without_applying_it() -> anyhow::Result<()> {
             let mut db = new_test_db()?;
             let track_id = insert_track(&mut db, "Curated Title")?;
-            let mut track = crate::db::tracks::get_by_id(&db, track_id)?.expect("track exists");
+            let mut track = lyra_db::tracks::get_by_id(&db, track_id)?.expect("track exists");
             track.year = Some(1999);
             track.locked = Some(true);
-            crate::db::tracks::update(&mut db, &track)?;
+            lyra_db::tracks::update(&mut db, &track)?;
 
             enable_provider(&mut db, "provider", 10)?;
             crate::services::metadata::layers::save_provider_layer(
@@ -1644,20 +1633,20 @@ mod tests {
                 &Default::default(),
             )?;
 
-            let layers = crate::db::metadata::layers::get_for_entity(&db, track_id)?;
+            let layers = lyra_db::metadata::layers::get_for_entity(&db, track_id)?;
             assert_eq!(layers.len(), 1, "a locked entity still records its layer");
             assert_eq!(layers[0].source_id, "provider");
 
-            let track = crate::db::tracks::get_by_id(&db, track_id)?.expect("track exists");
+            let track = lyra_db::tracks::get_by_id(&db, track_id)?.expect("track exists");
             assert_eq!(track.track_title, "Curated Title");
             assert_eq!(track.year, Some(1999));
 
             let mut track = track;
             track.locked = None;
-            crate::db::tracks::update(&mut db, &track)?;
+            lyra_db::tracks::update(&mut db, &track)?;
             apply_merged_metadata_to_entity(&mut db, track_id)?;
 
-            let track = crate::db::tracks::get_by_id(&db, track_id)?.expect("track exists");
+            let track = lyra_db::tracks::get_by_id(&db, track_id)?.expect("track exists");
             assert_eq!(track.track_title, "Provider Title");
             assert_eq!(track.year, None);
             Ok(())

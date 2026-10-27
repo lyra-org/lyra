@@ -26,7 +26,7 @@ use rayon::iter::{
 };
 use walkdir::WalkDir;
 
-use crate::db::{
+use lyra_db::{
     Entry,
     Library,
     entries::{
@@ -350,13 +350,13 @@ mod tests {
     };
 
     use super::*;
-    use crate::db::entries::{
+    use lyra_db::entries::{
         EntryKind,
         load_existing,
         prune_missing_entries,
         sync_entry_group,
     };
-    use crate::db::test_db::TestDb;
+    use lyra_db::test_db::TestDb;
 
     fn temp_path(name: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -376,7 +376,7 @@ mod tests {
     }
 
     fn new_library(db: &mut DbAny, root: &Path) -> anyhow::Result<Library> {
-        crate::db::test_db::insert_test_library_node(db, "Test", root.to_path_buf())
+        lyra_db::test_db::insert_test_library_node(db, "Test", root.to_path_buf())
     }
 
     fn full_sync(db: &mut DbAny, library: &Library) -> anyhow::Result<Vec<DbId>> {

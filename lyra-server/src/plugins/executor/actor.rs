@@ -114,7 +114,7 @@ impl PluginExecutorHandle {
         plugins_dir: impl Into<PathBuf>,
         server_info: crate::plugins::server::ServerInfo,
         auth_capabilities: crate::plugins::auth::AuthCapabilities,
-        db: crate::db::DbAsync,
+        db: lyra_db::DbAsync,
         module_overrides: Vec<ModuleSpec>,
         settings: Option<crate::services::state::SettingsHandle>,
     ) -> Result<(Self, Vec<PluginLoadError>)> {
@@ -381,7 +381,7 @@ mod tests {
     fn playback_update() -> crate::services::playback_sessions::PlaybackUpdatePayload {
         crate::services::playback_sessions::PlaybackUpdatePayload {
             event: "progress".to_string(),
-            state: crate::db::PlaybackState::Playing,
+            state: lyra_db::PlaybackState::Playing,
             playback_session_public_id: "playback-public".to_string(),
             track_public_id: "track-public".to_string(),
             user_public_id: "user-public".to_string(),

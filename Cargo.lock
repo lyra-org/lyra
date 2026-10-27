@@ -1444,6 +1444,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "lyra-db"
+version = "0.0.1"
+dependencies = [
+ "agdb",
+ "anyhow",
+ "argon2",
+ "blake3",
+ "harmony-core",
+ "harmony-luau",
+ "harmony-macros",
+ "lofty",
+ "lyra-metadata",
+ "nanoid",
+ "nucleo-matcher",
+ "rand 0.9.2",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "unicode-normalization",
+ "unicode-properties",
+]
+
+[[package]]
 name = "lyra-docs"
 version = "0.0.1"
 dependencies = [
@@ -1534,12 +1561,12 @@ dependencies = [
  "libc",
  "lofty",
  "lyra-chromaprint",
+ "lyra-db",
  "lyra-ffmpeg",
  "lyra-metadata",
  "matchit",
  "multimap",
  "nanoid",
- "nucleo-matcher",
  "percent-encoding",
  "rand 0.9.2",
  "rayon",

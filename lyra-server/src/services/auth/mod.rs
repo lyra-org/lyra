@@ -25,14 +25,13 @@ use argon2::{
 };
 use axum::http::HeaderMap;
 
-use crate::db::{
-    Permission,
-    users::DEFAULT_USERNAME,
-};
 use crate::{
-    db,
     services::STATE,
     services::settings::server::Config,
+};
+use lyra_db::{
+    Permission,
+    users::DEFAULT_USERNAME,
 };
 
 // Defeat user-enumeration via response timing: the miss branch of login_with_password
@@ -133,23 +132,23 @@ impl Principal {
     /// The principal of `user_db_id`, read under the caller's guard, or `None` when the user is
     /// gone.
     pub(crate) fn load(
-        db: &impl crate::db::DbAccess,
+        db: &impl lyra_db::DbAccess,
         user_db_id: DbId,
     ) -> anyhow::Result<Option<Self>> {
-        let Some(user) = crate::db::users::get_by_id(db, user_db_id)? else {
+        let Some(user) = lyra_db::users::get_by_id(db, user_db_id)? else {
             return Ok(None);
         };
-        let (permissions, role_name) = crate::db::roles::get_role_for_user(db, user_db_id)?
+        let (permissions, role_name) = lyra_db::roles::get_role_for_user(db, user_db_id)?
             .map_or((Vec::new(), None), |role| {
                 (role.permissions, Some(role.name))
             });
         let accessible_library_ids = if permissions.contains(&Permission::Admin) {
-            crate::db::libraries::get(db)?
+            lyra_db::libraries::get(db)?
                 .into_iter()
                 .map(|library| library.id)
                 .collect()
         } else {
-            crate::db::libraries::accessible_library_ids(db, user_db_id)?
+            lyra_db::libraries::accessible_library_ids(db, user_db_id)?
         };
         Ok(Some(Self {
             user_db_id,
@@ -164,12 +163,12 @@ impl Principal {
     /// A principal for an existing user with the given grants.
     #[cfg(test)]
     pub(crate) fn for_user(
-        db: &impl crate::db::DbAccess,
+        db: &impl lyra_db::DbAccess,
         user_db_id: DbId,
         permissions: Vec<Permission>,
         accessible_library_ids: HashSet<String>,
     ) -> Self {
-        let user = crate::db::users::get_by_id(db, user_db_id)
+        let user = lyra_db::users::get_by_id(db, user_db_id)
             .expect("principal user lookup")
             .expect("principal user exists");
         Self {
@@ -185,8 +184,8 @@ impl Principal {
     /// The user's `DbId`, verified under the caller's guard. `DbId`s are recycled, so the stored
     /// id only counts while it still points at a User with this principal's public id. Call it
     /// under the same guard or transaction as the operation it authorizes.
-    pub(crate) fn require(&self, db: &impl crate::db::DbAccess) -> AuthResult<DbId> {
-        match crate::db::users::get_by_id(db, self.user_db_id)? {
+    pub(crate) fn require(&self, db: &impl lyra_db::DbAccess) -> AuthResult<DbId> {
+        match lyra_db::users::get_by_id(db, self.user_db_id)? {
             Some(user) if user.id == self.user_public_id => Ok(self.user_db_id),
             _ => Err(AuthError::InvalidBearerCredential),
         }
@@ -204,25 +203,29 @@ impl AuthCredential {
     /// Whether this credential still authenticates `user_db_id`, read under the caller's guard:
     /// the session is unexpired and unrevoked, the API key unrevoked, or authentication still
     /// disabled for the default credential.
-    pub(crate) fn is_live(&self, db: &impl db::DbAccess, user_db_id: DbId) -> anyhow::Result<bool> {
+    pub(crate) fn is_live(
+        &self,
+        db: &impl lyra_db::DbAccess,
+        user_db_id: DbId,
+    ) -> anyhow::Result<bool> {
         match self {
             Self::Session { public_id } => {
                 let Some((session_id, session)) =
-                    db::users::find_session_by_public_id(db, public_id)?
+                    lyra_db::users::find_session_by_public_id(db, public_id)?
                 else {
                     return Ok(false);
                 };
                 Ok(!sessions::is_expired(&session)
-                    && db::users::session_owner(db, session_id)?.and_then(|user| user.db_id)
+                    && lyra_db::users::session_owner(db, session_id)?.and_then(|user| user.db_id)
                         == Some(user_db_id))
             }
             Self::ApiKey { public_id, .. } => {
                 let Some(key_id) =
-                    db::api_keys::get_by_public_id(db, public_id)?.and_then(|key| key.db_id)
+                    lyra_db::api_keys::get_by_public_id(db, public_id)?.and_then(|key| key.db_id)
                 else {
                     return Ok(false);
                 };
-                Ok(db::api_keys::get_owner_id(db, key_id.into())? == Some(user_db_id))
+                Ok(lyra_db::api_keys::get_owner_id(db, key_id.into())? == Some(user_db_id))
             }
             Self::Default => Ok(!STATE.config().auth.enabled),
         }
@@ -246,7 +249,7 @@ pub(crate) fn require_permission(
     principal: &Principal,
     permission: Permission,
 ) -> Result<(), AuthError> {
-    if !crate::db::roles::has_permission(&principal.permissions, permission) {
+    if !lyra_db::roles::has_permission(&principal.permissions, permission) {
         return Err(AuthError::Forbidden(format!(
             "{permission:?} permission required"
         )));
@@ -260,9 +263,7 @@ pub(crate) fn require_grantable_permissions(
 ) -> Result<(), AuthError> {
     let missing: Vec<String> = permissions
         .iter()
-        .filter(|permission| {
-            !crate::db::roles::has_permission(&principal.permissions, **permission)
-        })
+        .filter(|permission| !lyra_db::roles::has_permission(&principal.permissions, **permission))
         .map(|permission| format!("{permission:?}"))
         .collect();
     if !missing.is_empty() {
@@ -346,7 +347,7 @@ fn extract_bearer_credential(headers: &HeaderMap) -> Option<String> {
 }
 
 fn resolve_role_info(db: &agdb::DbAny, user_db_id: DbId) -> (Vec<Permission>, Option<String>) {
-    match crate::db::roles::get_role_for_user(db, user_db_id) {
+    match lyra_db::roles::get_role_for_user(db, user_db_id) {
         Ok(Some(role)) => (role.permissions, Some(role.name)),
         Ok(None) => (vec![], None),
         Err(e) => {
@@ -366,10 +367,10 @@ fn resolve_accessible_library_ids(
     permissions: &[Permission],
 ) -> HashSet<String> {
     let resolved = if permissions.contains(&Permission::Admin) {
-        crate::db::libraries::get(db)
+        lyra_db::libraries::get(db)
             .map(|libraries| libraries.into_iter().map(|library| library.id).collect())
     } else {
-        crate::db::libraries::accessible_library_ids(db, user_db_id)
+        lyra_db::libraries::accessible_library_ids(db, user_db_id)
     };
 
     match resolved {
@@ -388,7 +389,7 @@ fn resolve_accessible_library_ids(
 pub(crate) fn resolve_principal(
     db: &agdb::DbAny,
     user_db_id: DbId,
-    user: crate::db::User,
+    user: lyra_db::User,
 ) -> Principal {
     let (permissions, role_name) = resolve_role_info(db, user_db_id);
     let accessible_library_ids = resolve_accessible_library_ids(db, user_db_id, &permissions);
@@ -427,7 +428,7 @@ async fn resolve_auth_from_session_token(token: &str) -> AuthResult<Option<Resol
     let db = STATE.db.read().await;
     let token_hash = hash_secret(token);
     let Some((user, session, _)) =
-        crate::db::users::find_by_session_token_hash(&db, &token_hash).map_err(AuthError::from)?
+        lyra_db::users::find_by_session_token_hash(&db, &token_hash).map_err(AuthError::from)?
     else {
         return Ok(None);
     };
@@ -536,7 +537,7 @@ async fn resolve_default_principal() -> AuthResult<Principal> {
     let username = DEFAULT_USERNAME;
 
     let db = STATE.db.read().await;
-    let user = crate::db::users::get_by_username(&db, username)?
+    let user = lyra_db::users::get_by_username(&db, username)?
         .ok_or_else(|| anyhow::anyhow!("default user '{}' does not exist", DEFAULT_USERNAME))?;
     let user_db_id = user
         .db_id
@@ -593,7 +594,7 @@ pub(crate) async fn login_with_password(
         }
 
         let db = STATE.db.read().await;
-        let user = crate::db::users::get_by_username(&db, default_username)
+        let user = lyra_db::users::get_by_username(&db, default_username)
             .map_err(AuthError::from)?
             .ok_or_else(|| anyhow::anyhow!("default user '{}' does not exist", DEFAULT_USERNAME))
             .map_err(AuthError::from)?;
@@ -608,7 +609,7 @@ pub(crate) async fn login_with_password(
     }
 
     let db = STATE.db.read().await;
-    let maybe_user = crate::db::users::get_by_username(&db, username).map_err(AuthError::from)?;
+    let maybe_user = lyra_db::users::get_by_username(&db, username).map_err(AuthError::from)?;
 
     let argon2 = Argon2::default();
     let Some(user) = maybe_user else {
@@ -677,12 +678,12 @@ pub(crate) async fn resolve_optional_auth(headers: &HeaderMap) -> AuthResult<Opt
 pub(crate) async fn ensure_default_user(config: &Config) -> anyhow::Result<()> {
     {
         let mut db_write = STATE.db.write().await;
-        let user_db_id = crate::db::users::ensure_default_user(&mut db_write)?;
-        crate::db::roles::ensure_builtin_roles(&mut db_write)?;
-        crate::db::roles::ensure_user_has_role(
+        let user_db_id = lyra_db::users::ensure_default_user(&mut db_write)?;
+        lyra_db::roles::ensure_builtin_roles(&mut db_write)?;
+        lyra_db::roles::ensure_user_has_role(
             &mut db_write,
             user_db_id,
-            crate::db::roles::BUILTIN_ADMIN_ROLE,
+            lyra_db::roles::BUILTIN_ADMIN_ROLE,
         )?;
     }
     let _ = &*DUMMY_PASSWORD_HASH;
@@ -714,13 +715,13 @@ mod tests {
         headers
     }
 
-    fn library_insert(name: &str, suffix: &str) -> crate::db::libraries::LibraryInsert {
+    fn library_insert(name: &str, suffix: &str) -> lyra_db::libraries::LibraryInsert {
         let path = std::path::PathBuf::from(format!(
             "/tmp/lyra-auth-test-{}-{suffix}",
             nanoid::nanoid!()
         ));
-        let path_key = crate::db::libraries::path_key_for(&path);
-        crate::db::libraries::LibraryInsert {
+        let path_key = lyra_db::libraries::path_key_for(&path);
+        lyra_db::libraries::LibraryInsert {
             id: nanoid::nanoid!(),
             name: name.to_string(),
             path,
@@ -771,7 +772,7 @@ mod tests {
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::users::create(&mut db, &crate::db::fixtures::test_user("alice")?)?
+            lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("alice")?)?
         };
         let principal = crate::services::testing::user_principal(user_db_id).await?;
         let api_key = api_keys::create_api_key(&principal, "laptop").await?;
@@ -804,13 +805,13 @@ mod tests {
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::users::create(&mut db, &crate::db::fixtures::test_user("expiring")?)?
+            lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("expiring")?)?
         };
         let session =
             crate::services::testing::create_session(user_db_id, Default::default()).await?;
         let session_db_id = {
             let db = STATE.db.read().await;
-            crate::db::users::find_by_session_token_hash(&db, &hash_secret(&session.token))?
+            lyra_db::users::find_by_session_token_hash(&db, &hash_secret(&session.token))?
                 .map(|(_, _, session_id)| session_id)
                 .ok_or_else(|| anyhow::anyhow!("session should have a db id"))?
         };
@@ -818,7 +819,7 @@ mod tests {
             let mut db = STATE.db.write().await;
             db.exec_mut(
                 agdb::QueryBuilder::insert()
-                    .values_uniform([("expires_at", crate::db::users::now_secs() - 1).into()])
+                    .values_uniform([("expires_at", lyra_db::users::now_secs() - 1).into()])
                     .ids(session_db_id)
                     .query(),
             )?;
@@ -832,7 +833,7 @@ mod tests {
         {
             let db = STATE.db.read().await;
             assert!(
-                crate::db::users::find_by_session_token_hash(&db, &hash_secret(&session.token))?
+                lyra_db::users::find_by_session_token_hash(&db, &hash_secret(&session.token))?
                     .is_none(),
                 "expired session should be revoked"
             );
@@ -854,12 +855,11 @@ mod tests {
 
         let (alice_session_id, bob) = {
             let mut db = STATE.db.write().await;
-            let alice =
-                crate::db::users::create(&mut db, &crate::db::fixtures::test_user("alice")?)?;
-            let bob = crate::db::users::create(&mut db, &crate::db::fixtures::test_user("bob")?)?;
-            let mut expired = crate::db::test_db::test_session(&hash_secret("alice-token"));
-            expired.expires_at = crate::db::users::now_secs() - 1;
-            (crate::db::users::login(&mut db, alice, &expired)?, bob)
+            let alice = lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("alice")?)?;
+            let bob = lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("bob")?)?;
+            let mut expired = lyra_db::test_db::test_session(&hash_secret("alice-token"));
+            expired.expires_at = lyra_db::users::now_secs() - 1;
+            (lyra_db::users::login(&mut db, alice, &expired)?, bob)
         };
 
         Ok(crate::services::testing::run_with_recycle_at(
@@ -869,7 +869,7 @@ mod tests {
                 db.exec_mut(agdb::QueryBuilder::remove().ids(alice_session_id).query())
                     .expect("remove alice session");
                 let recycled =
-                    crate::db::users::login(db, bob, &crate::db::test_db::test_session("bob-hash"))
+                    lyra_db::users::login(db, bob, &lyra_db::test_db::test_session("bob-hash"))
                         .expect("log bob in");
                 assert_eq!(
                     recycled, alice_session_id,
@@ -889,7 +889,7 @@ mod tests {
             "got {control:?}"
         );
         assert!(
-            crate::db::users::find_by_session_token_hash(
+            lyra_db::users::find_by_session_token_hash(
                 &STATE.db.read().await,
                 &hash_secret("alice-token")
             )?
@@ -902,7 +902,7 @@ mod tests {
             async |gap, _| {
                 let db = STATE.db.read().await;
                 assert!(
-                    crate::db::users::find_by_session_token_hash(&db, "bob-hash")?.is_some(),
+                    lyra_db::users::find_by_session_token_hash(&db, "bob-hash")?.is_some(),
                     "bob's session revoked at gap {gap}"
                 );
                 Ok(())
@@ -923,16 +923,13 @@ mod tests {
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::users::create(
-                &mut db,
-                &crate::db::fixtures::test_user("optional-expiring")?,
-            )?
+            lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("optional-expiring")?)?
         };
         let session =
             crate::services::testing::create_session(user_db_id, Default::default()).await?;
         let session_db_id = {
             let db = STATE.db.read().await;
-            crate::db::users::find_by_session_token_hash(&db, &hash_secret(&session.token))?
+            lyra_db::users::find_by_session_token_hash(&db, &hash_secret(&session.token))?
                 .map(|(_, _, session_id)| session_id)
                 .ok_or_else(|| anyhow::anyhow!("session should have a db id"))?
         };
@@ -940,7 +937,7 @@ mod tests {
             let mut db = STATE.db.write().await;
             db.exec_mut(
                 agdb::QueryBuilder::insert()
-                    .values_uniform([("expires_at", crate::db::users::now_secs() - 1).into()])
+                    .values_uniform([("expires_at", lyra_db::users::now_secs() - 1).into()])
                     .ids(session_db_id)
                     .query(),
             )?;
@@ -952,7 +949,7 @@ mod tests {
         {
             let db = STATE.db.read().await;
             assert!(
-                crate::db::users::find_by_session_token_hash(&db, &hash_secret(&session.token))?
+                lyra_db::users::find_by_session_token_hash(&db, &hash_secret(&session.token))?
                     .is_none(),
                 "expired session should be revoked"
             );
@@ -974,7 +971,7 @@ mod tests {
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::users::create(&mut db, &crate::db::fixtures::test_user("no-ttl")?)?
+            lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("no-ttl")?)?
         };
         let session =
             crate::services::testing::create_session(user_db_id, Default::default()).await?;
@@ -998,14 +995,10 @@ mod tests {
 
         let (session_user_db_id, api_key_user_db_id) = {
             let mut db = STATE.db.write().await;
-            let session_user_db_id = crate::db::users::create(
-                &mut db,
-                &crate::db::fixtures::test_user("session-user")?,
-            )?;
-            let api_key_user_db_id = crate::db::users::create(
-                &mut db,
-                &crate::db::fixtures::test_user("api-key-user")?,
-            )?;
+            let session_user_db_id =
+                lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("session-user")?)?;
+            let api_key_user_db_id =
+                lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("api-key-user")?)?;
             (session_user_db_id, api_key_user_db_id)
         };
 
@@ -1019,19 +1012,19 @@ mod tests {
         .await?;
         let session_public_id = {
             let db = STATE.db.read().await;
-            crate::db::users::find_by_session_token_hash(&db, &hash_secret(&session.token))?
+            lyra_db::users::find_by_session_token_hash(&db, &hash_secret(&session.token))?
                 .map(|(_, stored, _)| stored.id)
                 .ok_or_else(|| anyhow::anyhow!("session should have a db id"))?
         };
         let key_hash = blake3::hash(session.token.as_bytes()).to_hex().to_string();
         {
             let mut db = STATE.db.write().await;
-            crate::db::api_keys::create(
+            lyra_db::api_keys::create(
                 &mut db,
                 api_key_user_db_id,
                 "colliding key",
                 &key_hash,
-                crate::db::users::now_secs(),
+                lyra_db::users::now_secs(),
             )?;
         }
 
@@ -1070,7 +1063,7 @@ mod tests {
         {
             let db = STATE.db.read().await;
             let token_hash = hash_secret(bearer);
-            assert!(crate::db::users::find_by_session_token_hash(&db, &token_hash)?.is_none());
+            assert!(lyra_db::users::find_by_session_token_hash(&db, &token_hash)?.is_none());
         }
 
         let mut config = STATE.config().as_ref().clone();
@@ -1094,7 +1087,7 @@ mod tests {
 
         let other_user_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::users::create(&mut db, &crate::db::fixtures::test_user("other-user")?)?
+            lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("other-user")?)?
         };
         let other_session =
             crate::services::testing::create_session(other_user_db_id, Default::default()).await?;
@@ -1116,12 +1109,12 @@ mod tests {
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::users::create(&mut db, &crate::db::fixtures::test_user("listener")?)?
+            lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("listener")?)?
         };
         let library = {
             let mut db = STATE.db.write().await;
-            db.transaction_mut(|t| -> anyhow::Result<crate::db::Library> {
-                Ok(crate::db::libraries::create_with_creator(
+            db.transaction_mut(|t| -> anyhow::Result<lyra_db::Library> {
+                Ok(lyra_db::libraries::create_with_creator(
                     t,
                     library_insert("Music", "explicit"),
                     user_db_id,
@@ -1146,16 +1139,16 @@ mod tests {
 
         let (user_db_id, library_id) = {
             let mut db = STATE.db.write().await;
-            crate::db::roles::ensure_builtin_roles(&mut db)?;
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
             let user_db_id =
-                crate::db::users::create(&mut db, &crate::db::fixtures::test_user("admin-user")?)?;
-            crate::db::roles::ensure_user_has_role(
+                lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("admin-user")?)?;
+            lyra_db::roles::ensure_user_has_role(
                 &mut db,
                 user_db_id,
-                crate::db::roles::BUILTIN_ADMIN_ROLE,
+                lyra_db::roles::BUILTIN_ADMIN_ROLE,
             )?;
-            let library = db.transaction_mut(|t| -> anyhow::Result<crate::db::Library> {
-                Ok(crate::db::libraries::create_system(
+            let library = db.transaction_mut(|t| -> anyhow::Result<lyra_db::Library> {
+                Ok(lyra_db::libraries::create_system(
                     t,
                     library_insert("System Music", "admin"),
                 )?)
@@ -1181,20 +1174,18 @@ mod tests {
 
         let (user_db_id, library_db_id, library_id) = {
             let mut db = STATE.db.write().await;
-            let user_db_id = crate::db::users::create(
-                &mut db,
-                &crate::db::fixtures::test_user("library-manager")?,
-            )?;
-            let role = crate::db::roles::Role {
+            let user_db_id =
+                lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("library-manager")?)?;
+            let role = lyra_db::roles::Role {
                 db_id: None,
                 id: nanoid::nanoid!(),
                 name: "library-manager".to_string(),
                 permissions: vec![Permission::ManageLibraries],
             };
-            let role_db_id = crate::db::roles::create(&mut db, &role)?;
-            crate::db::roles::assign_role_to_user(&mut db, user_db_id, role_db_id)?;
-            let library = db.transaction_mut(|t| -> anyhow::Result<crate::db::Library> {
-                Ok(crate::db::libraries::create_system(
+            let role_db_id = lyra_db::roles::create(&mut db, &role)?;
+            lyra_db::roles::assign_role_to_user(&mut db, user_db_id, role_db_id)?;
+            let library = db.transaction_mut(|t| -> anyhow::Result<lyra_db::Library> {
+                Ok(lyra_db::libraries::create_system(
                     t,
                     library_insert("Hidden Music", "guard"),
                 )?)
@@ -1214,11 +1205,11 @@ mod tests {
         {
             let mut db = STATE.db.write().await;
             db.transaction_mut(|t| -> anyhow::Result<()> {
-                crate::db::libraries::grant_access(
+                lyra_db::libraries::grant_access(
                     t,
                     user_db_id,
                     library_db_id,
-                    crate::db::libraries::AccessKind::ReadWrite,
+                    lyra_db::libraries::AccessKind::ReadWrite,
                 )?;
                 Ok(())
             })?;
@@ -1241,14 +1232,14 @@ mod tests {
 
         let alice_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::users::create(&mut db, &crate::db::fixtures::test_user("alice")?)?
+            lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("alice")?)?
         };
         let alice = crate::services::testing::user_principal(alice_db_id).await?;
         let api_key = api_keys::create_api_key(&alice, "laptop").await?;
         let headers = bearer_headers(&api_key.key);
         Ok(
             crate::services::testing::run_with_recycle_at(gap, require_auth(&headers), |db| {
-                crate::db::test_db::recycle_user(db, alice_db_id, "bob").expect("recycle alice");
+                lyra_db::test_db::recycle_user(db, alice_db_id, "bob").expect("recycle alice");
             })
             .await,
         )
@@ -1281,12 +1272,12 @@ mod tests {
 
         let alice_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::users::create(&mut db, &crate::db::fixtures::test_user("alice")?)?
+            lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("alice")?)?
         };
         let stale_alice = crate::services::testing::user_principal(alice_db_id).await?;
         {
             let mut db = STATE.db.write().await;
-            crate::db::test_db::recycle_user(&mut db, alice_db_id, "bob")?;
+            lyra_db::test_db::recycle_user(&mut db, alice_db_id, "bob")?;
         }
 
         let result = create_login_result(stale_alice, Default::default()).await;
@@ -1295,7 +1286,7 @@ mod tests {
             "login verified for a deleted user must not create a session"
         );
         let db = STATE.db.read().await;
-        assert!(crate::db::users::find_sessions_for_user(&db, alice_db_id)?.is_empty());
+        assert!(lyra_db::users::find_sessions_for_user(&db, alice_db_id)?.is_empty());
 
         Ok(())
     }
@@ -1307,11 +1298,11 @@ mod tests {
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::users::create(&mut db, &crate::db::fixtures::test_user("recycled")?)?
+            lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("recycled")?)?
         };
         let user_public_id = {
             let db = STATE.db.read().await;
-            crate::db::users::get_by_id(&db, user_db_id)?
+            lyra_db::users::get_by_id(&db, user_db_id)?
                 .ok_or_else(|| anyhow::anyhow!("user must exist"))?
                 .id
         };
@@ -1332,7 +1323,7 @@ mod tests {
 
         {
             let mut db = STATE.db.write().await;
-            crate::db::users::delete_user(&mut db, user_db_id)?;
+            lyra_db::users::delete_user(&mut db, user_db_id)?;
         }
 
         {
@@ -1345,9 +1336,9 @@ mod tests {
 
         let new_user_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::users::create(
+            lyra_db::users::create(
                 &mut db,
-                &crate::db::fixtures::test_user("recycled-replacement")?,
+                &lyra_db::fixtures::test_user("recycled-replacement")?,
             )?
         };
 
@@ -1358,7 +1349,7 @@ mod tests {
                 stale_principal.require(&db).is_err(),
                 "stale principal must not bind to a freshly-inserted user even if agdb reused the slot"
             );
-            let new_user = crate::db::users::get_by_id(&db, new_user_db_id)?
+            let new_user = lyra_db::users::get_by_id(&db, new_user_db_id)?
                 .ok_or_else(|| anyhow::anyhow!("new user must exist"))?;
             let fresh_principal = Principal {
                 user_db_id: new_user_db_id,

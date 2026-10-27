@@ -27,7 +27,6 @@ use tokio::sync::{
     OwnedRwLockWriteGuard,
 };
 
-use crate::db::DbAsync;
 use crate::{
     config::{
         BootConfig,
@@ -54,6 +53,7 @@ use crate::{
         },
     },
 };
+use lyra_db::DbAsync;
 
 #[derive(Clone)]
 pub(crate) struct SwapHandle<T: Clone> {
@@ -87,11 +87,11 @@ impl<T: Clone> SwapHandle<T> {
 #[derive(Clone)]
 pub(crate) struct DbHandle {
     db: SwapHandle<DbAsync>,
-    lock: Arc<StdMutex<Option<crate::db::process_lock::DbProcessLock>>>,
+    lock: Arc<StdMutex<Option<lyra_db::process_lock::DbProcessLock>>>,
 }
 
 impl DbHandle {
-    fn new(created: crate::db::Created) -> Self {
+    fn new(created: lyra_db::Created) -> Self {
         Self {
             db: SwapHandle::new(created.db),
             lock: Arc::new(StdMutex::new(created.lock)),
@@ -102,7 +102,7 @@ impl DbHandle {
         self.db.get()
     }
 
-    fn reset(&self, created: crate::db::Created) {
+    fn reset(&self, created: lyra_db::Created) {
         let old_lock = self.lock.lock().expect("db lock poisoned").take();
         drop(old_lock);
 
@@ -201,7 +201,7 @@ pub(crate) struct AppState {
 
 fn build_app_state(
     boot: BootConfig,
-    created: crate::db::Created,
+    created: lyra_db::Created,
     resolved: ResolvedSettings,
 ) -> AppState {
     AppState {
@@ -227,7 +227,7 @@ impl AppState {
     /// different path). The generation, with every layer's state in it,
     /// is swapped before the database so the new database never meets the
     /// old generation's plugin runtime.
-    fn reset(&self, boot: BootConfig, created: crate::db::Created, resolved: ResolvedSettings) {
+    fn reset(&self, boot: BootConfig, created: lyra_db::Created, resolved: ResolvedSettings) {
         self.generation.replace(Arc::default());
         self.db.reset(created);
         self.boot.replace(Arc::new(boot));
@@ -252,7 +252,7 @@ impl AppState {
 /// Reads stored server settings and resolves the runtime config against the
 /// freshly opened, not yet shared database.
 pub(crate) fn resolve_settings(
-    created: &mut crate::db::Created,
+    created: &mut lyra_db::Created,
     boot: &BootConfig,
     library: Option<LibraryConfig>,
     file_settings: FileSettings,
@@ -283,7 +283,7 @@ impl StateCell {
     pub(crate) fn initialize(
         &self,
         boot: BootConfig,
-        created: crate::db::Created,
+        created: lyra_db::Created,
         resolved: ResolvedSettings,
     ) -> Result<()> {
         match self.inner.get() {

@@ -27,14 +27,6 @@ use super::{
         prepare_entry_scan_plan,
     },
 };
-use crate::db::{
-    DbAsync,
-    Library,
-    entries::{
-        prune_missing_entries,
-        sync_entry_group,
-    },
-};
 pub(crate) use crate::services::system::library_sync_context as system_context;
 use crate::services::{
     CoverPaths,
@@ -69,6 +61,14 @@ use crate::services::{
         release_refresh_provider_ids,
     },
 };
+use lyra_db::{
+    DbAsync,
+    Library,
+    entries::{
+        prune_missing_entries,
+        sync_entry_group,
+    },
+};
 
 pub(crate) const MAX_CONCURRENT_ALBUM_PIPELINE: usize = 4;
 
@@ -96,7 +96,7 @@ async fn sync_entries_incremental(
 
     let existing = {
         let db_read = db.read().await;
-        crate::db::entries::get(&db_read, library_db_id)?
+        lyra_db::entries::get(&db_read, library_db_id)?
     };
     let scan_plan = prepare_entry_scan_plan(library, existing)?;
     let entry_group_count = scan_plan.groups.len();
@@ -462,7 +462,7 @@ async fn process_metadata_for_entries(
         let entry_source_dirs: BTreeMap<DbId, std::path::PathBuf> = entries
             .iter()
             .filter_map(|entry| {
-                if entry.kind != crate::db::entries::EntryKind::File {
+                if entry.kind != lyra_db::entries::EntryKind::File {
                     return None;
                 }
                 let entry_db_id = entry.db_id?;
@@ -706,11 +706,11 @@ async fn release_artifact_plan(
     release_id: DbId,
 ) -> anyhow::Result<Option<ReleaseArtifactPlan>> {
     let db_read = db.read().await;
-    let Some(release) = crate::db::releases::get_by_id(&db_read, release_id)? else {
+    let Some(release) = lyra_db::releases::get_by_id(&db_read, release_id)? else {
         return Ok(None);
     };
-    let release_public_id = crate::db::lookup::find_id_by_db_id(&db_read, release_id)?;
-    let track_ids = crate::db::tracks::get_direct(&db_read, release_id)?
+    let release_public_id = lyra_db::lookup::find_id_by_db_id(&db_read, release_id)?;
+    let track_ids = lyra_db::tracks::get_direct(&db_read, release_id)?
         .into_iter()
         .filter_map(|track| track.db_id.map(DbId::from))
         .collect();
@@ -963,12 +963,11 @@ async fn sync_provider_release_cover(context: &ReleaseArtifactContext<'_>) -> bo
 
     let release_bundle = {
         let db_read = context.db.read().await;
-        match crate::db::releases::get_by_id(&db_read, context.release_id) {
+        match lyra_db::releases::get_by_id(&db_read, context.release_id) {
             Ok(Some(release)) => {
-                let tracks =
-                    crate::db::tracks::get(&db_read, context.release_id).unwrap_or_default();
+                let tracks = lyra_db::tracks::get(&db_read, context.release_id).unwrap_or_default();
                 let artists =
-                    crate::db::artists::get(&db_read, context.release_id).unwrap_or_default();
+                    lyra_db::artists::get(&db_read, context.release_id).unwrap_or_default();
                 Ok(Some((release, tracks, artists)))
             }
             Ok(None) => Ok(None),
@@ -1162,11 +1161,11 @@ FILE "album.flac" WAVE
     ) -> anyhow::Result<BTreeMap<PathBuf, (String, Vec<String>)>> {
         let db = STATE.db.read().await;
         let mut out = BTreeMap::new();
-        for entry in crate::db::entries::get(&db, library.db_id.expect("library db_id"))? {
+        for entry in lyra_db::entries::get(&db, library.db_id.expect("library db_id"))? {
             let Some(entry_db_id) = entry.db_id else {
                 continue;
             };
-            let mut tracks = crate::db::tracks::get_by_entry(&db, entry_db_id)?
+            let mut tracks = lyra_db::tracks::get_by_entry(&db, entry_db_id)?
                 .into_iter()
                 .map(|track| track.id)
                 .collect::<Vec<_>>();

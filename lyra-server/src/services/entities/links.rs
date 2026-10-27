@@ -11,16 +11,16 @@ use agdb::{
 };
 
 use super::EntityProjectionInfo;
-use crate::db::{
-    NodeId,
-    external_ids::ExternalId,
-};
 use crate::services::EntityType;
 use crate::services::providers::{
     IdLink,
     IdLinkGenerators,
     IdLinkLocale,
     IdLinkTarget,
+};
+use lyra_db::{
+    NodeId,
+    external_ids::ExternalId,
 };
 
 /// ID rows of each projected entity whose `links` include was requested,
@@ -45,7 +45,7 @@ pub(crate) fn id_link_targets(
 ) -> anyhow::Result<Vec<IdLinkTarget>> {
     let request_locale = library_id
         .map(|library_id| {
-            crate::db::libraries::get_by_id(db, library_id)
+            lyra_db::libraries::get_by_id(db, library_id)
                 .map(|library| library.as_ref().map(IdLinkLocale::from).unwrap_or_default())
         })
         .transpose()?;
@@ -56,7 +56,7 @@ pub(crate) fn id_link_targets(
         } else if let Some(locale) = &request_locale {
             locale.clone()
         } else {
-            crate::db::libraries::get_for_entity(db, entity_db_id)?
+            lyra_db::libraries::get_for_entity(db, entity_db_id)?
                 .iter()
                 .filter(|library| library.db_id.is_some())
                 .min_by_key(|library| library.db_id.map(|id| id.0))

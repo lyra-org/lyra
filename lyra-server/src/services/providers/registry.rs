@@ -684,12 +684,12 @@ pub(crate) mod tests {
                 .get("demo", EntityType::Release, "item")
                 .is_some()
         );
-        let rows = [crate::db::external_ids::ExternalId {
+        let rows = [lyra_db::external_ids::ExternalId {
             db_id: None,
             provider_id: "demo".to_string(),
             id_type: "item".to_string(),
             id_value: "x".to_string(),
-            source: crate::db::IdSource::Resolved,
+            source: lyra_db::IdSource::Resolved,
             resolved_value: None,
         }];
         assert!(

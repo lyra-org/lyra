@@ -3,7 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use crate::db::DbAsync;
+use lyra_db::DbAsync;
 
 #[derive(Clone, Default)]
 pub(crate) struct PluginDb {

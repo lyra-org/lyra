@@ -34,8 +34,8 @@ use super::{
         SettingsStringProps,
     },
 };
-use crate::db::DbAsync;
 use crate::services::settings::plugins as plugin_settings_service;
+use lyra_db::DbAsync;
 
 #[harmony_macros::userdata(
     name = "SettingsBuilder",
@@ -235,7 +235,7 @@ async fn load_user_stored_values(
     let db =
         db.ok_or_else(|| luau::Error::Runtime("plugin settings database is unavailable".into()))?;
     let db = db.read().await;
-    let user_db_id = crate::db::users::find_db_id_by_public_id(&*db, user_public_id)
+    let user_db_id = lyra_db::users::find_db_id_by_public_id(&*db, user_public_id)
         .map_err(crate::plugins::runtime_error)?
         .ok_or_else(|| crate::plugins::runtime_error("user not found"))?;
     plugin_settings_service::load_validated_user_stored_values(

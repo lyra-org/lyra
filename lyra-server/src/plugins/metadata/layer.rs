@@ -17,21 +17,21 @@ use harmony_luau as luau;
 use serde_json::Value as JsonValue;
 
 use super::parsing::parse_custom_field_version;
-use crate::db::ArtistRelationType;
-use crate::db::CreditType;
-use crate::db::DbAsync;
-use crate::db::MetadataField;
-use crate::db::metadata::layers::LayerCredits;
-use crate::db::metadata::layers::LayerFields;
-use crate::db::metadata::layers::LayerRelations;
-use crate::db::metadata::layers::edges::LayerCreditInput;
-use crate::db::metadata::layers::edges::LayerRelationInput;
-use crate::db::metadata::layers::normalize_value;
 use crate::plugins::args;
 use crate::services::metadata::layers::{
     CustomFieldChanges,
     ProviderValues,
 };
+use lyra_db::ArtistRelationType;
+use lyra_db::CreditType;
+use lyra_db::DbAsync;
+use lyra_db::MetadataField;
+use lyra_db::metadata::layers::LayerCredits;
+use lyra_db::metadata::layers::LayerFields;
+use lyra_db::metadata::layers::LayerRelations;
+use lyra_db::metadata::layers::edges::LayerCreditInput;
+use lyra_db::metadata::layers::edges::LayerRelationInput;
+use lyra_db::metadata::layers::normalize_value;
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]

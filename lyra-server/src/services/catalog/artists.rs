@@ -33,7 +33,7 @@ use super::{
     track_totals,
     tracks_of_releases,
 };
-use crate::db::{
+use lyra_db::{
     Artist,
     ArtistType,
     CreditType,
@@ -149,7 +149,7 @@ impl Catalog for Artists {
     ) -> Result<Vec<DbId>, CatalogError> {
         let mut artists = Candidates::default();
         if let Some(ids) = &filter.ids {
-            let ids = crate::db::graph::existing_ids(db, ids, "Artist")?;
+            let ids = lyra_db::graph::existing_ids(db, ids, "Artist")?;
             match &viewer.visible_releases(db)? {
                 Some(visible) => {
                     let mut credited_visibly = Vec::new();
@@ -168,18 +168,18 @@ impl Catalog for Artists {
         }
         if let Some(artist_type) = filter.artist_type {
             artists.restrict(match filter.ids {
-                Some(_) => crate::db::artists::ids_with_type(db, artist_type)?,
-                None => crate::db::artists::credited_ids(db, Some(artist_type))?,
+                Some(_) => lyra_db::artists::ids_with_type(db, artist_type)?,
+                None => lyra_db::artists::credited_ids(db, Some(artist_type))?,
             });
         }
         if let Some(favorite) = filter.favorite {
             let user = viewer.user_db_id("the favorite filter")?;
-            let favorites = crate::db::favorites::target_ids(db, user, FavoriteKind::Artist)?;
+            let favorites = lyra_db::favorites::target_ids(db, user, FavoriteKind::Artist)?;
             artists.restrict_membership(favorites, favorite, || all_artists(db))?;
         }
         if let Some(listened) = filter.listened {
             let user = viewer.user_db_id("the listened filter")?;
-            let tracks = crate::db::listens::listened_track_ids(db, user)?;
+            let tracks = lyra_db::listens::listened_track_ids(db, user)?;
             let mut listened_artists = HashSet::new();
             for track in &tracks {
                 listened_artists.extend(credited_artist_ids(db, *track)?);
@@ -191,7 +191,7 @@ impl Catalog for Artists {
         }
         if !filter.rating.is_empty() {
             let user = viewer.user_db_id("the rating filter")?;
-            artists.restrict(crate::db::ratings::target_ids_matching(
+            artists.restrict(lyra_db::ratings::target_ids_matching(
                 db,
                 user,
                 filter.rating,
@@ -208,7 +208,7 @@ impl Catalog for Artists {
         ids: Vec<DbId>,
         keys: &[ArtistKey],
     ) -> Result<Vec<Row>, CatalogError> {
-        let fields = crate::db::graph::select_fields(db, &ids, &artist_fields(keys))?;
+        let fields = lyra_db::graph::select_fields(db, &ids, &artist_fields(keys))?;
         let needs = |wanted: &[ArtistKey]| keys.iter().any(|key| wanted.contains(key));
         let visible = if needs(&[
             ArtistKey::ReleaseCount,
@@ -294,7 +294,7 @@ impl Catalog for Artists {
     }
 
     fn hydrate(db: &DbAny, ids: &[DbId]) -> anyhow::Result<Vec<Artist>> {
-        let mut artists = crate::db::graph::bulk_fetch_typed(db, ids.to_vec(), "Artist")?;
+        let mut artists = lyra_db::graph::bulk_fetch_typed(db, ids.to_vec(), "Artist")?;
         Ok(ids.iter().filter_map(|id| artists.remove(id)).collect())
     }
 }
@@ -316,7 +316,7 @@ fn credited_artists(
     let mut tracks = Candidates::default();
     tracks.restrict(tracks_of_releases(db, releases.iter().copied())?);
     if let Some(ids) = &filter.tracks {
-        tracks.restrict(crate::db::graph::existing_ids(db, ids, "Track")?);
+        tracks.restrict(lyra_db::graph::existing_ids(db, ids, "Track")?);
     }
     let tracks = tracks.resolve(&[], || Ok(Vec::new()))?;
 
@@ -331,7 +331,7 @@ fn credited_artists(
         let mut artists = HashSet::new();
         let mut uncredited = Vec::new();
         for owner in owners {
-            let links = crate::db::credits::links_for_owner(db, *owner)?;
+            let links = lyra_db::credits::links_for_owner(db, *owner)?;
             if links.is_empty() {
                 uncredited.push(*owner);
             }
@@ -372,9 +372,9 @@ fn credited_artists(
 
 /// Whether the artist holds a credit on a visible release or on a track of one.
 fn credited_on_visible(db: &DbAny, artist: DbId, visible: &HashSet<DbId>) -> anyhow::Result<bool> {
-    for owner in crate::db::credits::crediting_owner_ids(db, artist)? {
+    for owner in lyra_db::credits::crediting_owner_ids(db, artist)? {
         if visible.contains(&owner)
-            || crate::db::graph::inbound_neighbor_ids(db, owner, "Release")?
+            || lyra_db::graph::inbound_neighbor_ids(db, owner, "Release")?
                 .iter()
                 .any(|release| visible.contains(release))
         {
@@ -385,7 +385,7 @@ fn credited_on_visible(db: &DbAny, artist: DbId, visible: &HashSet<DbId>) -> any
 }
 
 fn credited_artist_ids(db: &DbAny, owner: DbId) -> anyhow::Result<Vec<DbId>> {
-    Ok(crate::db::credits::links_for_owner(db, owner)?
+    Ok(lyra_db::credits::links_for_owner(db, owner)?
         .into_iter()
         .map(|link| link.artist_id)
         .collect())
@@ -402,5 +402,5 @@ fn artist_fields(keys: &[ArtistKey]) -> Vec<&'static str> {
 
 /// The artists browsing reaches: those a release or track credits.
 fn all_artists(db: &DbAny) -> anyhow::Result<Vec<DbId>> {
-    crate::db::artists::credited_ids(db, None)
+    lyra_db::artists::credited_ids(db, None)
 }

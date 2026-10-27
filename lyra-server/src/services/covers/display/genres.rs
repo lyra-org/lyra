@@ -13,7 +13,7 @@ use agdb::{
     DbId,
 };
 
-use crate::db::covers::display::{
+use lyra_db::covers::display::{
     self as db_display,
     DisplayCoverScope,
     DisplayCoverTargetKind,
@@ -40,7 +40,7 @@ fn winner_cover(
     profile: &db_display::DisplayCoverProfile,
     kind: DisplayCoverWinnerKind,
     visible_release_ids: Option<&HashSet<DbId>>,
-) -> anyhow::Result<Option<(db_display::DisplayCoverWinner, crate::db::Cover)>> {
+) -> anyhow::Result<Option<(db_display::DisplayCoverWinner, lyra_db::Cover)>> {
     let Some(winner) = db_display::get_winner(db, profile, kind)? else {
         return Ok(None);
     };
@@ -53,10 +53,10 @@ fn winner_cover(
 
 pub(crate) fn cover_for_genre(
     db: &DbAny,
-    genre: &crate::db::genres::Genre,
+    genre: &lyra_db::genres::Genre,
     user_public_id: &str,
     visible_release_ids: Option<&HashSet<DbId>>,
-) -> anyhow::Result<Option<crate::db::Cover>> {
+) -> anyhow::Result<Option<lyra_db::Cover>> {
     let user_profile =
         profile_for_genre(db, DisplayCoverScope::User, Some(user_public_id), &genre.id)?;
     let instance_profile = profile_for_genre(db, DisplayCoverScope::Instance, None, &genre.id)?;
@@ -106,10 +106,10 @@ pub(crate) fn cover_for_genre(
 
 pub(crate) fn covers_for_genres(
     db: &DbAny,
-    genres: &[crate::db::genres::Genre],
+    genres: &[lyra_db::genres::Genre],
     user_public_id: &str,
     visible_release_ids: Option<&HashSet<DbId>>,
-) -> anyhow::Result<HashMap<DbId, crate::db::Cover>> {
+) -> anyhow::Result<HashMap<DbId, lyra_db::Cover>> {
     let mut covers = HashMap::new();
     for genre in genres {
         let Some(genre_db_id) = genre.db_id.clone().map(DbId::from) else {

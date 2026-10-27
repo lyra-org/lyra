@@ -384,7 +384,7 @@ async fn dispatch_one(
         with_provider_call(provider_id, ProviderCallStage::Lyrics, || async {
             {
                 let db = STATE.db.read().await;
-                if crate::db::tracks::get_by_id(&*db, track_db_id)?
+                if lyra_db::tracks::get_by_id(&*db, track_db_id)?
                     .is_none_or(|track| track.id != track_public_id)
                 {
                     return Ok(None);
@@ -488,7 +488,7 @@ async fn record_hit(
     };
 
     let mut db = STATE.db.write().await;
-    let current_track = crate::db::tracks::get_by_id(&*db, track_db_id)?;
+    let current_track = lyra_db::tracks::get_by_id(&*db, track_db_id)?;
     if current_track
         .as_ref()
         .is_none_or(|track| track.id != track_public_id)
@@ -557,16 +557,15 @@ async fn build_track_context(
     let schemes = id_schemes().await;
     let (track, artists, release, external_ids_raw, libraries) = {
         let db = STATE.db.read().await;
-        let Some(track) = crate::db::tracks::get_by_id(&db, track_db_id)? else {
+        let Some(track) = lyra_db::tracks::get_by_id(&db, track_db_id)? else {
             return Ok(None);
         };
-        let artists = crate::db::artists::get(&db, track_db_id)?;
-        let release = crate::db::releases::get_by_track(&db, track_db_id)?
+        let artists = lyra_db::artists::get(&db, track_db_id)?;
+        let release = lyra_db::releases::get_by_track(&db, track_db_id)?
             .into_iter()
             .next();
-        let external_ids_raw =
-            crate::db::providers::external_ids::get_for_entity(&db, track_db_id)?;
-        let libraries = crate::db::libraries::get_for_entity(&db, track_db_id)
+        let external_ids_raw = lyra_db::providers::external_ids::get_for_entity(&db, track_db_id)?;
+        let libraries = lyra_db::libraries::get_for_entity(&db, track_db_id)
             .ok()
             .unwrap_or_default();
         (track, artists, release, external_ids_raw, libraries)
@@ -618,7 +617,7 @@ async fn build_track_context(
 pub(crate) async fn rescan(force_refresh: bool, cancel: CancellationToken) -> Result<()> {
     let track_ids: Vec<(DbId, String)> = {
         let db = STATE.db.read().await;
-        let tracks = crate::db::tracks::get(&db, "tracks")?;
+        let tracks = lyra_db::tracks::get(&db, "tracks")?;
         let mut filtered = Vec::with_capacity(tracks.len());
         for track in tracks {
             let Some(track_db_id) = track.db_id.clone().map(DbId::from) else {
@@ -742,15 +741,15 @@ mod tests {
 
     async fn install_track_in_state_db(title: &str, artist: &str, duration_ms: u64) -> DbId {
         let mut db = STATE.db.write().await;
-        let track_id = crate::db::fixtures::insert_track(&mut db, title).expect("insert track");
-        let mut track = crate::db::tracks::get_by_id(&db, track_id)
+        let track_id = lyra_db::fixtures::insert_track(&mut db, title).expect("insert track");
+        let mut track = lyra_db::tracks::get_by_id(&db, track_id)
             .expect("get_by_id")
             .expect("track");
         track.duration_ms = Some(duration_ms);
         db.exec_mut(agdb::QueryBuilder::insert().element(&track).query())
             .expect("update track");
-        let artist_id = crate::db::fixtures::insert_artist(&mut db, artist).expect("insert artist");
-        crate::db::fixtures::connect(&mut db, track_id, artist_id).expect("connect");
+        let artist_id = lyra_db::fixtures::insert_artist(&mut db, artist).expect("insert artist");
+        lyra_db::fixtures::connect(&mut db, track_id, artist_id).expect("connect");
         track_id
     }
 
@@ -838,7 +837,7 @@ mod tests {
         let track_id = install_track_in_state_db("Original", "Artist", 180_000).await;
         let mut original = {
             let mut db = STATE.db.write().await;
-            let track = crate::db::tracks::get_by_id(&*db, track_id)?.unwrap();
+            let track = lyra_db::tracks::get_by_id(&*db, track_id)?.unwrap();
             db.exec_mut(agdb::QueryBuilder::remove().ids(track_id).query())?;
             track
         };
@@ -908,7 +907,7 @@ mod tests {
         );
 
         let db = STATE.db.read().await;
-        let lyrics = crate::db::lyrics::get_visible_for_track(&*db, track_id, None)?;
+        let lyrics = lyra_db::lyrics::get_visible_for_track(&*db, track_id, None)?;
         assert!(
             lyrics
                 .iter()
@@ -928,7 +927,7 @@ mod tests {
 
         let replacement = {
             let db = STATE.db.read().await;
-            let mut track = crate::db::tracks::get_by_id(&*db, track_id)?
+            let mut track = lyra_db::tracks::get_by_id(&*db, track_id)?
                 .ok_or_else(|| anyhow::anyhow!("original track missing"))?;
             track.db_id = None;
             track.id = "replacement-track-public-id".to_string();
@@ -965,11 +964,11 @@ mod tests {
         dispatch_for_track(track_id, false).await?;
 
         let db = STATE.db.read().await;
-        let current = crate::db::tracks::get_by_id(&*db, track_id)?
+        let current = lyra_db::tracks::get_by_id(&*db, track_id)?
             .ok_or_else(|| anyhow::anyhow!("replacement track missing"))?;
         assert_eq!(current.id, replacement_public_id);
         assert!(
-            crate::db::lyrics::get_visible_for_track(&*db, track_id, None)?.is_empty(),
+            lyra_db::lyrics::get_visible_for_track(&*db, track_id, None)?.is_empty(),
             "stale provider result must not be written to the replacement track"
         );
         Ok(())

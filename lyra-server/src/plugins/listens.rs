@@ -28,7 +28,6 @@ use harmony_luau::{
     render_definition_file_with_support,
 };
 
-use crate::db::DbAsync;
 use crate::plugins::args;
 use crate::{
     plugins::db,
@@ -38,6 +37,7 @@ use crate::{
         providers::provider_registry,
     },
 };
+use lyra_db::DbAsync;
 
 struct ListensModule;
 
@@ -113,7 +113,7 @@ async fn resolve_stats(
             }
         }
 
-        let stats = crate::db::listens::get_stats(&db, &accessible_track_ids, viewer_db_id)
+        let stats = lyra_db::listens::get_stats(&db, &accessible_track_ids, viewer_db_id)
             .map_err(crate::plugins::runtime_error)?;
         for stat in stats {
             counts.insert(stat.db_id, stat.count);
@@ -162,9 +162,9 @@ async fn resolve_stats(
     }
 
     let merged_track_ids = merged_unique_ids.into_iter().collect::<Vec<_>>();
-    let merged_stats = crate::db::listens::get_stats(&db, &merged_track_ids, viewer_db_id)
+    let merged_stats = lyra_db::listens::get_stats(&db, &merged_track_ids, viewer_db_id)
         .map_err(crate::plugins::runtime_error)?;
-    let merged_by_id: HashMap<DbId, &crate::db::listens::ListenStats> =
+    let merged_by_id: HashMap<DbId, &lyra_db::listens::ListenStats> =
         merged_stats.iter().map(|stat| (stat.db_id, stat)).collect();
 
     let mut last_played = HashMap::new();

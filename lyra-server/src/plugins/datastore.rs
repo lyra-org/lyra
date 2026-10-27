@@ -22,9 +22,9 @@ use harmony_luau::{
     render_definition_file_with_support,
 };
 
-use crate::db::DataStore;
-use crate::db::DbAsync;
 use crate::plugins::db;
+use lyra_db::DataStore;
+use lyra_db::DbAsync;
 struct PluginCaller;
 
 #[cfg(feature = "docgen")]
@@ -160,15 +160,15 @@ async fn get_or_create(db: &DbAsync, name: String) -> luau::runtime::Result<agdb
     {
         let db = db.read().await;
         if let Some(existing) =
-            crate::db::datastore::find_by_name(&db, &name).map_err(crate::plugins::runtime_error)?
+            lyra_db::datastore::find_by_name(&db, &name).map_err(crate::plugins::runtime_error)?
         {
             return datastore_db_id(existing);
         }
     }
 
     let mut db = db.write().await;
-    let datastore = crate::db::datastore::get_or_create(&mut db, name)
-        .map_err(crate::plugins::runtime_error)?;
+    let datastore =
+        lyra_db::datastore::get_or_create(&mut db, name).map_err(crate::plugins::runtime_error)?;
     datastore_db_id(datastore)
 }
 
@@ -179,7 +179,7 @@ async fn read_value(
 ) -> luau::runtime::Result<luau::Value> {
     let stored_value = {
         let db = db.read().await;
-        crate::db::datastore::get_entry(&db, datastore_id, &key)
+        lyra_db::datastore::get_entry(&db, datastore_id, &key)
             .map_err(crate::plugins::runtime_error)?
             .map(|entry| entry.value)
     };
@@ -199,7 +199,7 @@ async fn write_value(
 ) -> luau::runtime::Result<()> {
     let json = serde_json::to_string(&json).map_err(crate::plugins::runtime_error)?;
     let mut db = db.write().await;
-    crate::db::datastore::upsert_entry(&mut db, datastore_id, key, json)
+    lyra_db::datastore::upsert_entry(&mut db, datastore_id, key, json)
         .map(|_| ())
         .map_err(crate::plugins::runtime_error)
 }
@@ -210,7 +210,7 @@ async fn remove_value(
     key: String,
 ) -> luau::runtime::Result<bool> {
     let mut db = db.write().await;
-    crate::db::datastore::remove_entry(&mut db, datastore_id, &key)
+    lyra_db::datastore::remove_entry(&mut db, datastore_id, &key)
         .map_err(crate::plugins::runtime_error)
 }
 
@@ -224,7 +224,7 @@ async fn read_values(
         let mut out = Vec::with_capacity(keys.len());
         for key in &keys {
             out.push(
-                crate::db::datastore::get_entry(&db, datastore_id, key)
+                lyra_db::datastore::get_entry(&db, datastore_id, key)
                     .map_err(crate::plugins::runtime_error)?
                     .map(|entry| entry.value),
             );
@@ -261,7 +261,7 @@ async fn write_values(
     }
     let mut db = db.write().await;
     for (key, value) in prepared {
-        crate::db::datastore::upsert_entry(&mut db, datastore_id, key, value)
+        lyra_db::datastore::upsert_entry(&mut db, datastore_id, key, value)
             .map_err(crate::plugins::runtime_error)?;
     }
     Ok(())
@@ -269,7 +269,7 @@ async fn write_values(
 
 async fn clear_values(db: &DbAsync, datastore_id: agdb::DbId) -> luau::runtime::Result<u64> {
     let mut db = db.write().await;
-    crate::db::datastore::clear_entries(&mut db, datastore_id)
+    lyra_db::datastore::clear_entries(&mut db, datastore_id)
         .map(|removed| removed as u64)
         .map_err(crate::plugins::runtime_error)
 }

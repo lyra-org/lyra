@@ -30,7 +30,6 @@ use harmony_luau::{
     render_definition_file_with_support,
 };
 
-use crate::db::ResolveId;
 use crate::plugins::args;
 use crate::{
     plugins::db,
@@ -39,6 +38,7 @@ use crate::{
         playback_sources as playback_source_service,
     },
 };
+use lyra_db::ResolveId;
 
 struct PlaybackSourcesModule;
 
@@ -166,16 +166,15 @@ fn get_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        let include_full_path = crate::db::roles::has_permission(
+        let include_full_path = lyra_db::roles::has_permission(
             &principal.permissions,
-            crate::db::Permission::ManageLibraries,
+            lyra_db::Permission::ManageLibraries,
         );
         let query_id = id
             .to_query_id(&db)
             .map_err(crate::plugins::runtime_error)?
             .ok_or_else(|| crate::plugins::runtime_error("could not resolve scope"))?;
-        let tracks =
-            crate::db::tracks::get(&db, query_id).map_err(crate::plugins::runtime_error)?;
+        let tracks = lyra_db::tracks::get(&db, query_id).map_err(crate::plugins::runtime_error)?;
 
         let mut rows = luau::OwnedTable::new();
         for track in tracks {
@@ -217,9 +216,9 @@ fn get_many_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        let include_full_path = crate::db::roles::has_permission(
+        let include_full_path = lyra_db::roles::has_permission(
             &principal.permissions,
-            crate::db::Permission::ManageLibraries,
+            lyra_db::Permission::ManageLibraries,
         );
         let mut rows = luau::OwnedTable::with_entry_capacity(0, 0, track_ids.len());
         for track_id in track_ids {
@@ -330,7 +329,7 @@ fn source_to_table(
     table
 }
 
-fn entry_to_table(entry: crate::db::Entry, include_full_path: bool) -> luau::OwnedTable {
+fn entry_to_table(entry: lyra_db::Entry, include_full_path: bool) -> luau::OwnedTable {
     let mut table = luau::OwnedTable::with_capacity(0, 8);
     table.set_field(
         "db_id",
@@ -724,12 +723,12 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &[
             TypeAliasDescriptor::new(
                 "SourceContainer",
-                string_enum(crate::db::track_sources::SourceContainer::VALUES),
+                string_enum(lyra_db::track_sources::SourceContainer::VALUES),
                 None,
             ),
             TypeAliasDescriptor::new(
                 "SourceCodec",
-                string_enum(crate::db::track_sources::SourceCodec::VALUES),
+                string_enum(lyra_db::track_sources::SourceCodec::VALUES),
                 None,
             ),
         ],

@@ -8,8 +8,8 @@ use super::EntityType;
 pub(crate) fn enabled_provider_configs_by_priority(
     db: &agdb::DbAny,
     provider_filter: Option<&str>,
-) -> anyhow::Result<Vec<crate::db::ProviderConfig>> {
-    let mut providers = crate::db::providers::get(db)?
+) -> anyhow::Result<Vec<lyra_db::ProviderConfig>> {
+    let mut providers = lyra_db::providers::get(db)?
         .into_iter()
         .filter(|provider| provider.enabled)
         .collect::<Vec<_>>();
@@ -151,25 +151,25 @@ pub(crate) enum EntityRefreshMode {
 mod tests {
     use super::dedup::deduplicate_releases_by_external_id;
     use super::refresh::resolve_library_id_for_entity;
-    use crate::db::fixtures::{
+    use agdb::{
+        DbAny,
+        DbId,
+    };
+    use lyra_db::fixtures::{
         connect,
         insert_artist,
         insert_release,
         insert_track,
     };
-    use crate::db::test_db::{
+    use lyra_db::test_db::{
         insert_library,
         new_test_db,
     };
-    use crate::db::{
+    use lyra_db::{
         IdSource,
         external_ids,
         releases,
         tracks,
-    };
-    use agdb::{
-        DbAny,
-        DbId,
     };
     use std::collections::HashSet;
 

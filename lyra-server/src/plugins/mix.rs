@@ -37,8 +37,6 @@ use harmony_luau::{
     LuauTypeInfo,
 };
 
-use crate::db::Track;
-use crate::db::mixers::MixerConfig;
 use crate::{
     plugins::OptionConfig,
     plugins::db,
@@ -55,6 +53,8 @@ use crate::{
         OptionType,
     },
 };
+use lyra_db::Track;
+use lyra_db::mixers::MixerConfig;
 
 struct MixHandler;
 struct MixRecentListensHandler;
@@ -352,7 +352,7 @@ fn mixer_new_callback(
             .map_err(crate::plugins::runtime_error)?;
 
         let mut db = db.write().await;
-        if crate::db::mixers::get_by_mixer_id(&db, &id)
+        if lyra_db::mixers::get_by_mixer_id(&db, &id)
             .map_err(crate::plugins::runtime_error)?
             .is_none()
         {
@@ -363,7 +363,7 @@ fn mixer_new_callback(
                 priority: 50,
                 enabled: true,
             };
-            crate::db::mixers::upsert(&mut db, &mixer_config)
+            lyra_db::mixers::upsert(&mut db, &mixer_config)
                 .map_err(crate::plugins::runtime_error)?;
         }
 
@@ -597,12 +597,9 @@ fn core_call_context(context: &luau::CallContext) -> harmony_core::CallContext {
 }
 
 /// The mix service seeds by public id, which it re-resolves under each guard it takes.
-async fn seed_public_id(
-    db: crate::db::DbAsync,
-    seed: DbId,
-) -> luau::runtime::Result<Option<String>> {
+async fn seed_public_id(db: lyra_db::DbAsync, seed: DbId) -> luau::runtime::Result<Option<String>> {
     let db = db.read().await;
-    crate::db::lookup::find_id_by_db_id(&*db, seed).map_err(crate::plugins::runtime_error)
+    lyra_db::lookup::find_id_by_db_id(&*db, seed).map_err(crate::plugins::runtime_error)
 }
 
 fn parse_seed_id(seed_id: i64, label: &'static str) -> luau::runtime::Result<DbId> {
@@ -945,7 +942,7 @@ mod tests {
 
     use super::*;
 
-    fn principal(permissions: Vec<crate::db::Permission>) -> Principal {
+    fn principal(permissions: Vec<lyra_db::Permission>) -> Principal {
         Principal::from_parts(
             DbId(7),
             "viewer".to_string(),
@@ -973,7 +970,7 @@ mod tests {
         );
 
         let admin =
-            parse_consumer_options(&vm, None, &principal(vec![crate::db::Permission::Admin]))?;
+            parse_consumer_options(&vm, None, &principal(vec![lyra_db::Permission::Admin]))?;
         assert!(admin.viewer.is_some());
         assert_eq!(admin.viewer_accessible_library_ids, None);
         Ok(())

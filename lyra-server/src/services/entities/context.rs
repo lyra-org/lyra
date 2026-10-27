@@ -75,7 +75,7 @@ fn merge_includes<T: Serialize>(
 }
 
 fn custom_fields_value_for_entity(db: &DbAny, entity_id: DbId) -> anyhow::Result<Option<Value>> {
-    let rows = crate::db::metadata::custom_fields::get_for_entity(db, entity_id)?;
+    let rows = lyra_db::metadata::custom_fields::get_for_entity(db, entity_id)?;
     if rows.is_empty() {
         return Ok(None);
     }
@@ -168,9 +168,9 @@ fn attach_manual_ids_to_context(db: &DbAny, value: &mut Value) -> anyhow::Result
                 && let Some(entity_id) = object.get("db_id").and_then(Value::as_i64)
                 && entity_id > 0
             {
-                let manual = crate::db::external_ids::get_for_entity(db, DbId(entity_id))?
+                let manual = lyra_db::external_ids::get_for_entity(db, DbId(entity_id))?
                     .into_iter()
-                    .filter(|id| id.source == crate::db::IdSource::Manual)
+                    .filter(|id| id.source == lyra_db::IdSource::Manual)
                     .collect::<Vec<_>>();
                 if !manual.is_empty() {
                     object.insert(
@@ -221,12 +221,12 @@ pub(crate) fn build_release_context(
     schemes: &IdSchemes,
 ) -> anyhow::Result<Value> {
     let library_root = if let Some(lib_id) = library_id {
-        crate::db::libraries::get_by_id(db, lib_id)?
+        lyra_db::libraries::get_by_id(db, lib_id)?
             .map(|library| library.path.to_string_lossy().to_string())
     } else {
         None
     };
-    let release = crate::db::releases::get_by_id(db, entity_id)?
+    let release = lyra_db::releases::get_by_id(db, entity_id)?
         .ok_or_else(|| anyhow::anyhow!("release not found: {}", entity_id.0))?;
     let projection = project_release(
         db,

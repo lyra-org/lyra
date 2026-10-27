@@ -70,7 +70,7 @@ impl SnapshotPageRequest {
 
 /// The public ids of `db_ids`, in the same order, for a cursor snapshot.
 pub(crate) fn public_ids(db: &agdb::DbAny, db_ids: &[agdb::DbId]) -> anyhow::Result<Vec<String>> {
-    let mut public_ids = crate::db::lookup::find_ids_by_db_ids(db, db_ids)?;
+    let mut public_ids = lyra_db::lookup::find_ids_by_db_ids(db, db_ids)?;
     db_ids
         .iter()
         .map(|db_id| {
@@ -88,7 +88,7 @@ pub(crate) fn load_snapshot_items<T>(
     mut is_visible: impl FnMut(&agdb::DbAny, agdb::DbId) -> anyhow::Result<bool>,
 ) -> anyhow::Result<Vec<T>> {
     let public_ids = item_ids.iter().map(String::as_str).collect::<Vec<_>>();
-    let db_ids = crate::db::lookup::find_node_ids_by_ids(db, &public_ids)?;
+    let db_ids = lyra_db::lookup::find_node_ids_by_ids(db, &public_ids)?;
     let mut items = Vec::with_capacity(item_ids.len());
     for public_id in item_ids {
         let Some(db_id) = db_ids.get(public_id).copied() else {

@@ -12,7 +12,7 @@ use agdb::DbId;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::db::{
+use lyra_db::{
     DbAccess,
     MetadataField,
     entities::MetadataEntityType,
@@ -129,8 +129,8 @@ fn finish_normalized_labels(
         }
     }
     labels.sort_by(|a, b| {
-        crate::db::labels::normalize_label_name(&a.name)
-            .cmp(&crate::db::labels::normalize_label_name(&b.name))
+        lyra_db::labels::normalize_label_name(&a.name)
+            .cmp(&lyra_db::labels::normalize_label_name(&b.name))
             .then_with(|| a.id.cmp(&b.id))
             .then_with(|| a.catalog_number.cmp(&b.catalog_number))
     });
@@ -147,9 +147,9 @@ fn normalize_label_edits(db: &impl DbAccess, value: &Value) -> Result<Value, Met
                 "label IDs cannot be empty".to_string(),
             ));
         }
-        let label_id = crate::db::lookup::find_node_id_by_id(db, &id)?
+        let label_id = lyra_db::lookup::find_node_id_by_id(db, &id)?
             .ok_or_else(|| MetadataEditingError::BadRequest(format!("unknown label '{id}'")))?;
-        let stored = crate::db::labels::get_by_id(db, label_id)?
+        let stored = lyra_db::labels::get_by_id(db, label_id)?
             .ok_or_else(|| MetadataEditingError::BadRequest(format!("unknown label '{id}'")))?;
         labels.push(MetadataLabelValue {
             id,
@@ -166,8 +166,8 @@ pub(super) fn layer_labels(
     layer_id: DbId,
 ) -> Result<Value, MetadataEditingError> {
     let mut labels = Vec::new();
-    for link in crate::db::metadata::layers::edges::labels(db, layer_id)? {
-        let stored = crate::db::labels::get_by_id(db, link.target_id)?.ok_or_else(|| {
+    for link in lyra_db::metadata::layers::edges::labels(db, layer_id)? {
+        let stored = lyra_db::labels::get_by_id(db, link.target_id)?.ok_or_else(|| {
             MetadataEditingError::Internal(anyhow::anyhow!("a layer's label disappeared"))
         })?;
         labels.push(MetadataLabelValue {
@@ -191,8 +191,8 @@ fn require_artist_id(
             public_id,
         ))
     };
-    let db_id = crate::db::lookup::find_node_id_by_id(db, public_id)?.ok_or_else(unknown)?;
-    if crate::db::artists::get_by_id(db, db_id)?.is_none() {
+    let db_id = lyra_db::lookup::find_node_id_by_id(db, public_id)?.ok_or_else(unknown)?;
+    if lyra_db::artists::get_by_id(db, db_id)?.is_none() {
         return Err(unknown());
     }
     Ok(db_id)
@@ -229,7 +229,7 @@ fn normalize_credits(db: &impl DbAccess, value: &Value) -> Result<Value, Metadat
     }
     // Credits resolve role by role, so they apply in role order.
     normalized.sort_by_key(|credit| {
-        crate::db::CreditType::ALL
+        lyra_db::CreditType::ALL
             .iter()
             .position(|credit_type| *credit_type == credit.credit_type)
     });
@@ -316,13 +316,13 @@ pub(super) fn normalized_set_value(
         | MetadataField::SortName
         | MetadataField::Description => Ok(Value::String(normalize_nonempty_string(value, field)?)),
         MetadataField::ReleaseType => {
-            let value: crate::db::releases::ReleaseType = decode_value(value, field)?;
+            let value: lyra_db::releases::ReleaseType = decode_value(value, field)?;
             Ok(serde_json::to_value(value)?)
         }
         MetadataField::ReleaseDate => {
             let value = normalize_nonempty_string(value, field)?;
             let normalized =
-                crate::db::releases::normalize_release_date(&value).ok_or_else(|| {
+                lyra_db::releases::normalize_release_date(&value).ok_or_else(|| {
                     MetadataEditingError::BadRequest(
                         "release_date must use YYYY, YYYY-MM, or YYYY-MM-DD".to_string(),
                     )
@@ -338,7 +338,7 @@ pub(super) fn normalized_set_value(
         | MetadataField::Track
         | MetadataField::TrackTotal => normalize_positive_u32(value, field, u32::MAX),
         MetadataField::ArtistType => {
-            let value: crate::db::ArtistType = decode_value(value, field)?;
+            let value: lyra_db::ArtistType = decode_value(value, field)?;
             Ok(serde_json::to_value(value)?)
         }
         MetadataField::Relations => normalize_relations(db, state.db_id, value),

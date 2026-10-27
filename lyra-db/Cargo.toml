@@ -1,0 +1,37 @@
+[package]
+name = "lyra-db"
+version = "0.0.1"
+edition = "2024"
+license-file = "../LICENSE"
+
+[features]
+docgen = ["dep:schemars"]
+# Enables code paths that require a nightly compiler, such as libtest benchmarks.
+nightly = []
+# Exposes `test_db` to dependent crates' tests.
+testing = []
+
+[dependencies]
+harmony-core = { path = "../harmony-core" }
+harmony-luau = { workspace = true }
+harmony-macros = { path = "../harmony-macros" }
+agdb = { version = "0.15.0", features = ["serde"] }
+anyhow = { workspace = true }
+argon2 = { version = "0.5", features = ["std", "password-hash"] }
+blake3 = { workspace = true }
+lofty = "=0.25.4"
+lyra-metadata = { path = "../lyra-metadata" }
+nanoid = "0.4"
+nucleo-matcher = "0.3"
+rand = "0.9"
+schemars = { version = "1.2.1", features = ["derive"], optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+tracing = { workspace = true }
+unicode-normalization = "0.1"
+unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }

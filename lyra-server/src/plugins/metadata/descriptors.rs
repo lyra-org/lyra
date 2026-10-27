@@ -58,7 +58,7 @@ fn metadata_type_aliases() -> Vec<TypeAliasDescriptor> {
         alias(
             "MetadataLayerField",
             LuauType::union(
-                crate::db::MetadataField::ALL
+                lyra_db::MetadataField::ALL
                     .into_iter()
                     .filter(|field| field.is_layered())
                     .map(|field| LuauType::string_literal(field.as_str()))
@@ -637,9 +637,9 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
 fn metadata_classes() -> Vec<ClassDescriptor> {
     vec![
         <crate::services::EntityType as harmony_luau::DescribeUserData>::class_descriptor(),
-        <crate::db::ArtistType as harmony_luau::DescribeUserData>::class_descriptor(),
-        <crate::db::CreditType as harmony_luau::DescribeUserData>::class_descriptor(),
-        <crate::db::ArtistRelationType as harmony_luau::DescribeUserData>::class_descriptor(),
+        <lyra_db::ArtistType as harmony_luau::DescribeUserData>::class_descriptor(),
+        <lyra_db::CreditType as harmony_luau::DescribeUserData>::class_descriptor(),
+        <lyra_db::ArtistRelationType as harmony_luau::DescribeUserData>::class_descriptor(),
         layer_class(),
         provider_class(),
     ]

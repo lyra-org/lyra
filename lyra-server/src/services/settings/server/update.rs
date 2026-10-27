@@ -103,16 +103,16 @@ pub(crate) fn validate_updates(
 }
 
 pub(crate) fn apply_updates(db: &mut agdb::DbAny, changes: &[Change]) -> Result<()> {
-    crate::db::settings::server::ensure(db)?;
+    lyra_db::settings::server::ensure(db)?;
     db.transaction_mut(|t| -> Result<()> {
         for change in changes {
             match change {
                 Change::Upsert { key, value } => {
                     let json = serde_json::to_string(value)
                         .with_context(|| format!("serialize server setting '{key}'"))?;
-                    crate::db::settings::server::upsert_with(t, (*key).to_string(), json)?;
+                    lyra_db::settings::server::upsert_with(t, (*key).to_string(), json)?;
                 }
-                Change::Remove { key } => crate::db::settings::server::remove_with(t, key)?,
+                Change::Remove { key } => lyra_db::settings::server::remove_with(t, key)?,
             }
         }
         Ok(())
@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn apply_updates_persists_and_reset_clears() -> Result<()> {
-        let mut db = crate::db::test_db::new_test_db()?;
+        let mut db = lyra_db::test_db::new_test_db()?;
 
         apply_updates(
             &mut db,

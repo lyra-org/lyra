@@ -379,9 +379,9 @@ async fn register_hls_job(
 ) -> Result<bool, HlsError> {
     let replaced_job = {
         let db = crate::services::STATE.db.read().await;
-        let exists = crate::db::lookup::find_node_id_by_id(&*db, job_key.track_public_id());
+        let exists = lyra_db::lookup::find_node_id_by_id(&*db, job_key.track_public_id());
         let source_exists =
-            crate::db::lookup::find_node_id_by_id(&*db, &job_key.source.source_public_id);
+            lyra_db::lookup::find_node_id_by_id(&*db, &job_key.source.source_public_id);
         if !matches!(exists, Ok(Some(_))) || !matches!(source_exists, Ok(Some(_))) {
             drop(db);
             teardown_hls_job(job).await;

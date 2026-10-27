@@ -26,17 +26,17 @@ use serde::{
 };
 use std::collections::HashMap;
 
-use crate::db::ratings::{
-    MAX_VALUE,
-    MIN_VALUE,
-    RatingValue,
-};
 use crate::{
     services::STATE,
     services::{
         auth::require_authenticated,
         ratings as rating_service,
     },
+};
+use lyra_db::ratings::{
+    MAX_VALUE,
+    MIN_VALUE,
+    RatingValue,
 };
 
 use super::AppError;
@@ -71,7 +71,7 @@ impl RatingFilterQuery {
         }
     }
 
-    pub(crate) fn parse(self) -> Result<crate::db::ratings::RatingFilter, AppError> {
+    pub(crate) fn parse(self) -> Result<lyra_db::ratings::RatingFilter, AppError> {
         let min = self
             .min_rating
             .map(|value| parse_rating_bound("min_rating", value))
@@ -80,7 +80,7 @@ impl RatingFilterQuery {
             .max_rating
             .map(|value| parse_rating_bound("max_rating", value))
             .transpose()?;
-        crate::db::ratings::RatingFilter::new(min, max)
+        lyra_db::ratings::RatingFilter::new(min, max)
             .map_err(|_| AppError::bad_request("min_rating must not exceed max_rating"))
     }
 }
@@ -301,11 +301,6 @@ pub(crate) fn rating_openapi_routes() -> aide::axum::ApiRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::fixtures::{
-        connect,
-        insert_track,
-    };
-    use crate::db::test_db::insert_library;
     use crate::{
         plugins::testing::init_library_test_state,
         services::testing::runtime_test_lock,
@@ -323,6 +318,11 @@ mod tests {
             },
         },
     };
+    use lyra_db::fixtures::{
+        connect,
+        insert_track,
+    };
+    use lyra_db::test_db::insert_library;
     use tower::ServiceExt;
 
     #[test]
@@ -412,30 +412,30 @@ mod tests {
 
         let (user_db_id, track_id) = {
             let mut db = STATE.db.write().await;
-            crate::db::roles::ensure_builtin_roles(&mut db)?;
-            let user_db_id = crate::db::users::create(
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
+            let user_db_id = lyra_db::users::create(
                 &mut db,
-                &crate::db::fixtures::test_user("ratings-check-admin")?,
+                &lyra_db::fixtures::test_user("ratings-check-admin")?,
             )?;
-            crate::db::roles::ensure_user_has_role(
+            lyra_db::roles::ensure_user_has_role(
                 &mut db,
                 user_db_id,
-                crate::db::roles::BUILTIN_ADMIN_ROLE,
+                lyra_db::roles::BUILTIN_ADMIN_ROLE,
             )?;
             let library = insert_library(&mut db, "Ratings", "/tmp/lyra-ratings-check-route")?;
             let track = insert_track(&mut db, "Checked Track")?;
             connect(&mut db, library, track)?;
-            crate::db::ratings::upsert(
+            lyra_db::ratings::upsert(
                 &mut *db,
                 user_db_id,
                 track,
-                crate::db::ratings::RatingKind::Track,
-                crate::db::ratings::RatingValue::new(2).unwrap(),
+                lyra_db::ratings::RatingKind::Track,
+                lyra_db::ratings::RatingValue::new(2).unwrap(),
                 100,
             )?;
             (
                 user_db_id,
-                crate::db::lookup::find_id_by_db_id(&db, track)?.unwrap(),
+                lyra_db::lookup::find_id_by_db_id(&db, track)?.unwrap(),
             )
         };
         let session =

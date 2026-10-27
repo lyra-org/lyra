@@ -3,11 +3,11 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use crate::db::{
+use crate::services::STATE;
+use lyra_db::{
     IdSource,
     ProviderConfig,
 };
-use crate::services::STATE;
 
 use super::{
     EntityRefreshMode,
@@ -37,8 +37,8 @@ pub(crate) struct EntityExternalIdRecord {
     pub(crate) resolved_value: Option<String>,
 }
 
-impl From<crate::db::external_ids::ExternalId> for EntityExternalIdRecord {
-    fn from(id: crate::db::external_ids::ExternalId) -> Self {
+impl From<lyra_db::external_ids::ExternalId> for EntityExternalIdRecord {
+    fn from(id: lyra_db::external_ids::ExternalId) -> Self {
         Self {
             provider_id: id.provider_id,
             id_type: id.id_type,
@@ -58,7 +58,7 @@ pub(crate) struct SetEntityExternalIdRequest {
 
 pub(crate) async fn list_provider_configs() -> Result<Vec<ProviderConfig>, ProviderAdminError> {
     let db = STATE.db.read().await;
-    Ok(crate::db::providers::get(&db)?)
+    Ok(lyra_db::providers::get(&db)?)
 }
 
 pub(crate) async fn update_provider_priority(
@@ -66,14 +66,13 @@ pub(crate) async fn update_provider_priority(
     priority: u32,
 ) -> Result<ProviderConfig, ProviderAdminError> {
     let mut db = STATE.db.write().await;
-    let mut config = crate::db::providers::get(&db)?
+    let mut config = lyra_db::providers::get(&db)?
         .into_iter()
         .find(|provider| provider.provider_id == provider_id)
         .ok_or_else(|| ProviderAdminError::ProviderNotFound(provider_id.to_string()))?;
     db.transaction_mut(|transaction| -> anyhow::Result<()> {
-        crate::db::providers::update_priority(transaction, provider_id, priority)?;
-        for entity_id in
-            crate::db::metadata::layers::entity_ids_for_source(transaction, provider_id)?
+        lyra_db::providers::update_priority(transaction, provider_id, priority)?;
+        for entity_id in lyra_db::metadata::layers::entity_ids_for_source(transaction, provider_id)?
         {
             crate::services::metadata::merging::apply_merged_metadata_to_entity_inside_tx(
                 transaction,
@@ -90,9 +89,9 @@ pub(crate) async fn list_entity_external_ids(
     entity_id: &str,
 ) -> Result<Vec<EntityExternalIdRecord>, ProviderAdminError> {
     let db = STATE.db.read().await;
-    let entity_db_id = crate::db::lookup::find_node_id_by_id(&db, entity_id)?
+    let entity_db_id = lyra_db::lookup::find_node_id_by_id(&db, entity_id)?
         .ok_or_else(|| ProviderAdminError::EntityNotFound(entity_id.to_string()))?;
-    let ids = crate::db::external_ids::get_for_entity(&db, entity_db_id)?;
+    let ids = lyra_db::external_ids::get_for_entity(&db, entity_db_id)?;
 
     Ok(ids.into_iter().map(Into::into).collect())
 }
@@ -102,13 +101,13 @@ pub(crate) async fn set_entity_external_id(
     request: SetEntityExternalIdRequest,
 ) -> Result<EntityExternalIdRecord, ProviderAdminError> {
     let mut db = STATE.db.write().await;
-    let entity_db_id = crate::db::lookup::find_node_id_by_id(&db, entity_id)?
+    let entity_db_id = lyra_db::lookup::find_node_id_by_id(&db, entity_id)?
         .ok_or_else(|| ProviderAdminError::EntityNotFound(entity_id.to_string()))?;
-    if !crate::db::entities::exists(&db, entity_db_id)? {
+    if !lyra_db::entities::exists(&db, entity_db_id)? {
         return Err(ProviderAdminError::EntityNotFound(entity_id.to_string()));
     }
 
-    crate::db::external_ids::upsert(
+    lyra_db::external_ids::upsert(
         &mut db,
         entity_db_id,
         &request.provider_id,
@@ -118,7 +117,7 @@ pub(crate) async fn set_entity_external_id(
     )?;
 
     if request.id_type == "artist_db_id"
-        && crate::db::artists::get_by_id(&db, entity_db_id)?.is_some()
+        && lyra_db::artists::get_by_id(&db, entity_db_id)?.is_some()
     {
         let _ = crate::services::metadata::verification::recompute_artist_verified(
             &mut db,
@@ -126,7 +125,7 @@ pub(crate) async fn set_entity_external_id(
         );
     }
 
-    crate::db::external_ids::get(&db, entity_db_id, &request.provider_id, &request.id_type)?
+    lyra_db::external_ids::get(&db, entity_db_id, &request.provider_id, &request.id_type)?
         .map(Into::into)
         .ok_or_else(|| anyhow::anyhow!("external id missing after it was set").into())
 }
@@ -137,16 +136,16 @@ pub(crate) async fn inherit_entity_external_id(
     id_type: &str,
 ) -> Result<(), ProviderAdminError> {
     let mut db = STATE.db.write().await;
-    let entity_db_id = crate::db::lookup::find_node_id_by_id(&db, entity_id)?
+    let entity_db_id = lyra_db::lookup::find_node_id_by_id(&db, entity_id)?
         .ok_or_else(|| ProviderAdminError::EntityNotFound(entity_id.to_string()))?;
 
-    if !crate::db::external_ids::remove_manual(&mut db, entity_db_id, provider_id, id_type)? {
+    if !lyra_db::external_ids::remove_manual(&mut db, entity_db_id, provider_id, id_type)? {
         return Err(ProviderAdminError::ManualIdNotFound(format!(
             "{provider_id}/{id_type}"
         )));
     }
 
-    if id_type == "artist_db_id" && crate::db::artists::get_by_id(&db, entity_db_id)?.is_some() {
+    if id_type == "artist_db_id" && lyra_db::artists::get_by_id(&db, entity_db_id)?.is_some() {
         let _ = crate::services::metadata::verification::recompute_artist_verified(
             &mut db,
             entity_db_id,
@@ -161,9 +160,9 @@ pub(crate) async fn set_entity_locked(
     locked: bool,
 ) -> Result<(), ProviderAdminError> {
     let mut db = STATE.db.write().await;
-    let entity_db_id = crate::db::lookup::find_node_id_by_id(&db, entity_id)?
+    let entity_db_id = lyra_db::lookup::find_node_id_by_id(&db, entity_id)?
         .ok_or_else(|| ProviderAdminError::EntityNotFound(entity_id.to_string()))?;
-    if !crate::db::entities::set_locked(&mut db, entity_db_id, locked)? {
+    if !lyra_db::entities::set_locked(&mut db, entity_db_id, locked)? {
         return Err(ProviderAdminError::EntityNotFound(entity_id.to_string()));
     }
     if !locked {
@@ -178,7 +177,7 @@ pub(crate) async fn refresh_entity_by_id(
 ) -> Result<EntityRefreshResult, ProviderAdminError> {
     let entity_db_id = {
         let db = STATE.db.read().await;
-        crate::db::lookup::find_node_id_by_id(&db, entity_id)?
+        lyra_db::lookup::find_node_id_by_id(&db, entity_id)?
             .ok_or_else(|| ProviderAdminError::EntityNotFound(entity_id.to_string()))?
     };
 
@@ -201,7 +200,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::db::fixtures::insert_track;
+    use lyra_db::fixtures::insert_track;
 
     #[tokio::test]
     async fn unlocking_applies_layers_recorded_while_locked() -> anyhow::Result<()> {
@@ -211,11 +210,11 @@ mod tests {
         let track_id = {
             let mut db = STATE.db.write().await;
             let track_db_id = insert_track(&mut db, "Curated Title")?;
-            let mut track = crate::db::tracks::get_by_id(&db, track_db_id)?
+            let mut track = lyra_db::tracks::get_by_id(&db, track_db_id)?
                 .ok_or_else(|| anyhow::anyhow!("track missing"))?;
             track.locked = Some(true);
-            crate::db::tracks::update(&mut db, &track)?;
-            crate::db::providers::upsert(
+            lyra_db::tracks::update(&mut db, &track)?;
+            lyra_db::providers::upsert(
                 &mut db,
                 &ProviderConfig {
                     db_id: None,
@@ -230,7 +229,7 @@ mod tests {
                 "test",
                 &crate::services::metadata::layers::ProviderValues {
                     fields: BTreeMap::from([(
-                        crate::db::MetadataField::TrackTitle,
+                        lyra_db::MetadataField::TrackTitle,
                         serde_json::json!("Provider Title"),
                     )]),
                     ..Default::default()
@@ -239,7 +238,7 @@ mod tests {
                 &Default::default(),
             )?;
             assert_eq!(
-                crate::db::tracks::get_by_id(&db, track_db_id)?
+                lyra_db::tracks::get_by_id(&db, track_db_id)?
                     .ok_or_else(|| anyhow::anyhow!("track missing"))?
                     .track_title,
                 "Curated Title"
@@ -250,10 +249,10 @@ mod tests {
         set_entity_locked(&track_id, false).await?;
 
         let db = STATE.db.read().await;
-        let track_db_id = crate::db::lookup::find_node_id_by_id(&db, &track_id)?
+        let track_db_id = lyra_db::lookup::find_node_id_by_id(&db, &track_id)?
             .ok_or_else(|| anyhow::anyhow!("track node missing"))?;
         assert_eq!(
-            crate::db::tracks::get_by_id(&db, track_db_id)?
+            lyra_db::tracks::get_by_id(&db, track_db_id)?
                 .ok_or_else(|| anyhow::anyhow!("track missing"))?
                 .track_title,
             "Provider Title"
@@ -272,7 +271,7 @@ mod tests {
             for (provider_id, priority, title) in
                 [("low", 10, "Low Title"), ("high", 100, "High Title")]
             {
-                crate::db::providers::upsert(
+                lyra_db::providers::upsert(
                     &mut db,
                     &ProviderConfig {
                         db_id: None,
@@ -287,7 +286,7 @@ mod tests {
                     provider_id,
                     &crate::services::metadata::layers::ProviderValues {
                         fields: BTreeMap::from([(
-                            crate::db::MetadataField::TrackTitle,
+                            lyra_db::MetadataField::TrackTitle,
                             serde_json::json!(title),
                         )]),
                         ..Default::default()
@@ -297,12 +296,12 @@ mod tests {
                 )?;
             }
             assert_eq!(
-                crate::db::tracks::get_by_id(&db, track_db_id)?
+                lyra_db::tracks::get_by_id(&db, track_db_id)?
                     .ok_or_else(|| anyhow::anyhow!("track missing"))?
                     .track_title,
                 "High Title"
             );
-            crate::db::tracks::get_by_id(&db, track_db_id)?
+            lyra_db::tracks::get_by_id(&db, track_db_id)?
                 .ok_or_else(|| anyhow::anyhow!("track missing"))?
                 .id
         };
@@ -311,10 +310,10 @@ mod tests {
         assert_eq!(config.priority, 200);
 
         let db = STATE.db.read().await;
-        let track_db_id = crate::db::lookup::find_node_id_by_id(&db, &track_id)?
+        let track_db_id = lyra_db::lookup::find_node_id_by_id(&db, &track_id)?
             .ok_or_else(|| anyhow::anyhow!("track node missing"))?;
         assert_eq!(
-            crate::db::tracks::get_by_id(&db, track_db_id)?
+            lyra_db::tracks::get_by_id(&db, track_db_id)?
                 .ok_or_else(|| anyhow::anyhow!("track missing"))?
                 .track_title,
             "Low Title"

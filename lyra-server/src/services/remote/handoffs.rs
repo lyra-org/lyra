@@ -360,7 +360,7 @@ pub(crate) struct AppliedProgress {
     pub(crate) playback_db_id: DbId,
     pub(crate) playback_public_id: String,
     pub(crate) queue_revision: u64,
-    pub(crate) expected_session: crate::db::PlaybackSession,
+    pub(crate) expected_session: lyra_db::PlaybackSession,
 }
 
 impl CommittedProgress {
@@ -401,10 +401,10 @@ impl CommittedProgress {
 
 /// The handoff owner's `DbId` under the caller's guard, or `None` once the owner is gone.
 fn owner_db_id(
-    db: &impl crate::db::DbAccess,
+    db: &impl lyra_db::DbAccess,
     user_public_id: &str,
 ) -> Result<Option<DbId>, playbacks::PlaybackError> {
-    crate::db::users::find_db_id_by_public_id(db, user_public_id)
+    lyra_db::users::find_db_id_by_public_id(db, user_public_id)
         .map_err(playbacks::PlaybackError::Internal)
 }
 
@@ -605,11 +605,11 @@ mod tests {
 
     async fn durable_applied_progress() -> anyhow::Result<AppliedProgress> {
         let mut db = STATE.db.write().await;
-        let user = crate::db::fixtures::test_user("handoff-user")?;
+        let user = lyra_db::fixtures::test_user("handoff-user")?;
         let user_public_id = user.id.clone();
-        let user_db_id = crate::db::users::create(&mut db, &user)?;
-        let track_db_id = crate::db::fixtures::insert_track(&mut db, "Handoff Track")?;
-        let track_public_id = crate::db::lookup::find_id_by_db_id(&db, track_db_id)?
+        let user_db_id = lyra_db::users::create(&mut db, &user)?;
+        let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Handoff Track")?;
+        let track_public_id = lyra_db::lookup::find_id_by_db_id(&db, track_db_id)?
             .expect("test track must have a public ID");
         let update = playbacks::create_playback(
             &mut db,
@@ -652,7 +652,7 @@ mod tests {
             playback_db_id: DbId(20),
             playback_public_id: "playback".to_string(),
             queue_revision: 4,
-            expected_session: crate::db::PlaybackSession {
+            expected_session: lyra_db::PlaybackSession {
                 db_id: Some(DbId(10)),
                 id: "playback-session".to_string(),
                 client_name: None,
@@ -660,7 +660,7 @@ mod tests {
                 duration_ms: None,
                 activity_ms: Some(0),
                 last_position_ms: Some(0),
-                state: crate::db::PlaybackState::Playing,
+                state: lyra_db::PlaybackState::Playing,
                 listen_recorded: None,
                 updated_at_ms: 2,
                 created_at_ms: 1,
@@ -972,7 +972,7 @@ mod tests {
                 durable.playback_db_id,
                 &durable.playback_public_id,
                 durable.queue_revision,
-                crate::db::users::find_db_id_by_public_id(&*db, &durable.user_public_id)?
+                lyra_db::users::find_db_id_by_public_id(&*db, &durable.user_public_id)?
                     .expect("durable user exists"),
                 &durable.expected_session,
             )?

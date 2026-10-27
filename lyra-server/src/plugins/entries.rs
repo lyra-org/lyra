@@ -25,10 +25,10 @@ use harmony_luau::{
 };
 use serde::Serialize;
 
-use crate::db::ResolveId;
 use crate::plugins::args;
 use crate::plugins::db;
 use crate::services;
+use lyra_db::ResolveId;
 
 struct EntriesModule;
 
@@ -88,8 +88,8 @@ pub(crate) struct EntryRecord {
     mtime: u64,
 }
 
-impl From<crate::db::Entry> for EntryRecord {
-    fn from(entry: crate::db::Entry) -> Self {
+impl From<lyra_db::Entry> for EntryRecord {
+    fn from(entry: lyra_db::Entry) -> Self {
         Self {
             db_id: entry.db_id.map(|id| id.0),
             id: entry.id,

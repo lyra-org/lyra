@@ -25,15 +25,15 @@ use harmony_luau::{
     render_definition_file_with_support,
 };
 
-use crate::db::Permission;
-use crate::db::labels::{
-    ResolveExternalId,
-    ResolveLabel,
-};
 use crate::plugins::args;
 use crate::{
     plugins::db,
     services::auth::Principal,
+};
+use lyra_db::Permission;
+use lyra_db::labels::{
+    ResolveExternalId,
+    ResolveLabel,
 };
 
 struct LabelsModule;
@@ -119,7 +119,7 @@ fn resolve_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let label_id = {
             let mut db = db.write().await;
-            crate::db::labels::resolve(
+            lyra_db::labels::resolve(
                 &mut db,
                 &ResolveLabel {
                     name: &request.name,
@@ -141,7 +141,7 @@ fn get_by_id_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let label = {
             let db = db.read().await;
-            crate::db::labels::get_by_id(&db, label_id).map_err(crate::plugins::runtime_error)
+            lyra_db::labels::get_by_id(&db, label_id).map_err(crate::plugins::runtime_error)
         }?;
         Ok(label
             .map(|label| luau::Value::TableData(label_info_table(label)))
@@ -161,7 +161,7 @@ fn get_for_release_callback(
                 .sees_entity(&*db, release_id)
                 .map_err(crate::plugins::runtime_error)?
             {
-                crate::db::labels::get_for_release(&db, release_id)
+                lyra_db::labels::get_for_release(&db, release_id)
                     .map_err(crate::plugins::runtime_error)?
             } else {
                 Vec::new()
@@ -183,7 +183,7 @@ fn get_for_releases_many_callback(
             let readable = viewer
                 .visible(&db, ids)
                 .map_err(crate::plugins::runtime_error)?;
-            crate::db::labels::get_for_releases_many(&db, &readable)
+            lyra_db::labels::get_for_releases_many(&db, &readable)
                 .map_err(crate::plugins::runtime_error)
         }?;
         let mut table = luau::OwnedTable::with_capacity(0, labels.len());
@@ -205,7 +205,7 @@ fn get_releases_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let release_ids = {
             let (db, viewer) = db.read().await?;
-            let release_ids = crate::db::labels::get_releases(&db, label_id)
+            let release_ids = lyra_db::labels::get_releases(&db, label_id)
                 .map_err(crate::plugins::runtime_error)?;
             viewer
                 .visible(&db, release_ids)
@@ -225,7 +225,7 @@ fn get_releases_many_callback(
         let release_ids = {
             let (db, viewer) = db.read().await?;
             let mut visible = Vec::new();
-            for (label_id, release_ids) in crate::db::labels::get_releases_many(&db, &ids)
+            for (label_id, release_ids) in lyra_db::labels::get_releases_many(&db, &ids)
                 .map_err(crate::plugins::runtime_error)?
             {
                 let release_ids = viewer
@@ -314,11 +314,11 @@ fn caller_principal(context: &luau::CallContext) -> luau::runtime::Result<Option
 
 fn can_mutate_global(principal: Option<&Principal>) -> bool {
     principal.is_none_or(|principal| {
-        crate::db::roles::has_permission(&principal.permissions, Permission::ManageLibraries)
+        lyra_db::roles::has_permission(&principal.permissions, Permission::ManageLibraries)
     })
 }
 
-fn label_info_table(label: crate::db::labels::Label) -> luau::OwnedTable {
+fn label_info_table(label: lyra_db::labels::Label) -> luau::OwnedTable {
     let mut table = luau::OwnedTable::with_capacity(0, 3);
     let db_id = label.db_id.map(DbId::from);
     table.set_field(
@@ -332,7 +332,7 @@ fn label_info_table(label: crate::db::labels::Label) -> luau::OwnedTable {
     table
 }
 
-fn label_for_release_table(label: crate::db::labels::LabelForRelease) -> luau::OwnedTable {
+fn label_for_release_table(label: lyra_db::labels::LabelForRelease) -> luau::OwnedTable {
     let mut table = luau::OwnedTable::with_capacity(0, 2);
     table.set_field(
         "label",
@@ -348,7 +348,7 @@ fn label_for_release_table(label: crate::db::labels::LabelForRelease) -> luau::O
     table
 }
 
-fn label_release_array(labels: Vec<crate::db::labels::LabelForRelease>) -> luau::OwnedTable {
+fn label_release_array(labels: Vec<lyra_db::labels::LabelForRelease>) -> luau::OwnedTable {
     let mut table = luau::OwnedTable::with_entry_capacity(0, 0, labels.len());
     for (index, label) in labels.into_iter().enumerate() {
         table.set_key(

@@ -10,13 +10,13 @@ use agdb::{
     DbId,
 };
 
-use crate::db::{
+use crate::services::auth::Principal;
+use lyra_db::{
     Lyrics,
     ProviderConfig,
     lyrics::LyricsDetail,
     lyrics::LyricsKind,
 };
-use crate::services::auth::Principal;
 
 /// Coverage threshold for the selector's synced tier.
 const MEANINGFUL_SYNCED_COVERAGE: f64 = 0.5;
@@ -57,7 +57,7 @@ pub(crate) fn visible_for_track(
     viewer: Option<&Principal>,
 ) -> anyhow::Result<Vec<Lyrics>> {
     let owner = viewer.map(|principal| principal.require(db)).transpose()?;
-    crate::db::lyrics::get_visible_for_track(db, track_db_id, owner)
+    lyra_db::lyrics::get_visible_for_track(db, track_db_id, owner)
 }
 
 fn is_eligible(lyrics: &Lyrics, priorities: &HashMap<&str, u32>) -> bool {
@@ -169,11 +169,11 @@ pub(crate) fn get_preferred_detail(
     language_hint: Option<&str>,
     require_synced: bool,
 ) -> anyhow::Result<Option<LyricsDetail>> {
-    let Some(track) = crate::db::tracks::get_by_id(db, track_db_id)? else {
+    let Some(track) = lyra_db::tracks::get_by_id(db, track_db_id)? else {
         return Ok(None);
     };
     let candidates = visible_for_track(db, track_db_id, viewer)?;
-    let providers = crate::db::providers::get(db)?;
+    let providers = lyra_db::providers::get(db)?;
     let language_hint = normalize_language_hint(language_hint)?;
 
     let Some(winner) = pick_preferred(
@@ -190,7 +190,7 @@ pub(crate) fn get_preferred_detail(
         return Ok(None);
     };
 
-    crate::db::lyrics::get_detail(db, winner_db_id)
+    lyra_db::lyrics::get_detail(db, winner_db_id)
 }
 
 #[cfg(test)]

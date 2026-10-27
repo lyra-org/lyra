@@ -25,13 +25,13 @@ use serde::{
     Serialize,
 };
 
-use crate::db::metadata::layers::edges::LayerCreditInput;
-use crate::db::{
+use crate::services;
+use crate::services::metadata::layers::LocalLayer;
+use lyra_db::metadata::layers::edges::LayerCreditInput;
+use lyra_db::{
     MetadataField,
     fixtures,
 };
-use crate::services;
-use crate::services::metadata::layers::LocalLayer;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -71,7 +71,7 @@ struct User {
     admin: bool,
     /// Permissions of a role of the user's own, for a user who is not an admin.
     #[serde(default)]
-    permissions: Vec<crate::db::Permission>,
+    permissions: Vec<lyra_db::Permission>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -97,7 +97,7 @@ struct Artist {
     key: String,
     name: String,
     #[serde(rename = "type")]
-    artist_type: Option<crate::db::ArtistType>,
+    artist_type: Option<lyra_db::ArtistType>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -151,7 +151,7 @@ struct Track {
 struct Credit {
     artist: String,
     #[serde(rename = "type")]
-    credit_type: crate::db::CreditType,
+    credit_type: lyra_db::CreditType,
     detail: Option<String>,
 }
 
@@ -196,7 +196,7 @@ struct Keys {
     users: BTreeMap<String, (DbId, String)>,
     api_keys: BTreeSet<String>,
     sessions: BTreeSet<String>,
-    entities: BTreeMap<String, (DbId, crate::db::favorites::FavoriteKind)>,
+    entities: BTreeMap<String, (DbId, lyra_db::favorites::FavoriteKind)>,
     genres: BTreeMap<String, String>,
 }
 
@@ -208,7 +208,7 @@ impl Keys {
             .with_context(|| format!("fixture has no user `{key}`"))
     }
 
-    fn entity(&self, key: &str) -> anyhow::Result<(DbId, crate::db::favorites::FavoriteKind)> {
+    fn entity(&self, key: &str) -> anyhow::Result<(DbId, lyra_db::favorites::FavoriteKind)> {
         self.entities
             .get(key)
             .copied()
@@ -247,34 +247,34 @@ impl Fixture {
         let mut seeded = Seeded::default();
 
         if self.users.iter().any(|user| user.admin) {
-            crate::db::roles::ensure_builtin_roles(db)?;
+            lyra_db::roles::ensure_builtin_roles(db)?;
         }
         for user in &self.users {
             keys.claim(&user.key)?;
             let record = fixtures::test_user(&user.key)?;
             let public_id = record.id.clone();
-            let user_db_id = crate::db::users::create(db, &record)?;
+            let user_db_id = lyra_db::users::create(db, &record)?;
             anyhow::ensure!(
                 !user.admin || user.permissions.is_empty(),
                 "fixture user `{}` is an admin and takes no permissions",
                 user.key
             );
             if user.admin {
-                let role = crate::db::roles::get_by_name(db, crate::db::roles::BUILTIN_ADMIN_ROLE)?
+                let role = lyra_db::roles::get_by_name(db, lyra_db::roles::BUILTIN_ADMIN_ROLE)?
                     .and_then(|role| role.db_id)
                     .context("built-in admin role exists")?;
-                crate::db::roles::assign_role_to_user(db, user_db_id, role)?;
+                lyra_db::roles::assign_role_to_user(db, user_db_id, role)?;
             } else if !user.permissions.is_empty() {
-                let role = crate::db::roles::create(
+                let role = lyra_db::roles::create(
                     db,
-                    &crate::db::roles::Role {
+                    &lyra_db::roles::Role {
                         db_id: None,
                         id: nanoid::nanoid!(),
                         name: user.key.clone(),
                         permissions: user.permissions.clone(),
                     },
                 )?;
-                crate::db::roles::assign_role_to_user(db, user_db_id, role)?;
+                lyra_db::roles::assign_role_to_user(db, user_db_id, role)?;
             }
             seeded.users.insert(user.key.clone(), public_id.clone());
             keys.users.insert(user.key.clone(), (user_db_id, public_id));
@@ -283,12 +283,12 @@ impl Fixture {
         for api_key in &self.api_keys {
             keys.claim(&api_key.key)?;
             let secret = services::auth::random_hex_secret::<16>();
-            crate::db::api_keys::create(
+            lyra_db::api_keys::create(
                 db,
                 keys.user(&api_key.user)?,
                 &api_key.key,
                 &services::auth::hash_secret(&secret),
-                crate::db::users::now_secs(),
+                lyra_db::users::now_secs(),
             )?;
             seeded.api_keys.insert(api_key.key.clone(), secret);
             keys.api_keys.insert(api_key.key.clone());
@@ -297,11 +297,11 @@ impl Fixture {
         for session in &self.sessions {
             keys.claim(&session.key)?;
             let token = services::auth::random_hex_secret::<16>();
-            let now = crate::db::users::now_secs();
-            crate::db::users::login(
+            let now = lyra_db::users::now_secs();
+            lyra_db::users::login(
                 db,
                 keys.user(&session.user)?,
-                &crate::db::users::Session {
+                &lyra_db::users::Session {
                     db_id: None,
                     id: nanoid::nanoid!(),
                     token_hash: services::auth::hash_secret(&token),
@@ -325,10 +325,10 @@ impl Fixture {
             keys.claim(&artist.key)?;
             let artist_db_id = fixtures::insert_artist(db, &artist.name)?;
             let mut stored =
-                crate::db::artists::get_by_id(db, artist_db_id)?.context("artist exists")?;
+                lyra_db::artists::get_by_id(db, artist_db_id)?.context("artist exists")?;
             // A scan names an artist by its exact spelling.
             stored.scan_name = artist.name.clone();
-            crate::db::artists::update(db, &stored)?;
+            lyra_db::artists::update(db, &stored)?;
             let mut layer = LocalLayer::default();
             layer.supply(MetadataField::ArtistName, Some(artist.name.as_str()))?;
             layer.supply(
@@ -340,7 +340,7 @@ impl Fixture {
             save_local(db, artist_db_id, layer)?;
             keys.entities.insert(
                 artist.key.clone(),
-                (artist_db_id, crate::db::favorites::FavoriteKind::Artist),
+                (artist_db_id, lyra_db::favorites::FavoriteKind::Artist),
             );
         }
 
@@ -349,9 +349,9 @@ impl Fixture {
             let release_db_id = fixtures::insert_release(db, &release.title)?;
             if release.added.is_some() {
                 let mut stored =
-                    crate::db::releases::get_by_id(db, release_db_id)?.context("release exists")?;
+                    lyra_db::releases::get_by_id(db, release_db_id)?.context("release exists")?;
                 stored.ctime = release.added;
-                db.transaction_mut(|t| crate::db::releases::update_in_transaction(t, &stored))?;
+                db.transaction_mut(|t| lyra_db::releases::update_in_transaction(t, &stored))?;
             }
             let genre_names = release
                 .genres
@@ -379,10 +379,10 @@ impl Fixture {
                     path.display()
                 );
                 db.transaction_mut(|t| {
-                    crate::db::covers::upsert(
+                    lyra_db::covers::upsert(
                         t,
                         release_db_id,
-                        crate::db::Cover {
+                        lyra_db::Cover {
                             db_id: None,
                             id: nanoid::nanoid!(),
                             mime_type: services::covers::cover_mime_from_path(&path).into(),
@@ -395,7 +395,7 @@ impl Fixture {
             }
             keys.entities.insert(
                 release.key.clone(),
-                (release_db_id, crate::db::favorites::FavoriteKind::Release),
+                (release_db_id, lyra_db::favorites::FavoriteKind::Release),
             );
         }
 
@@ -404,9 +404,9 @@ impl Fixture {
             let track_db_id = fixtures::insert_track(db, &track.title)?;
             if track.added.is_some() {
                 let mut stored =
-                    crate::db::tracks::get_by_id(db, track_db_id)?.context("track exists")?;
+                    lyra_db::tracks::get_by_id(db, track_db_id)?.context("track exists")?;
                 stored.ctime = track.added;
-                db.transaction_mut(|t| crate::db::tracks::update_in_transaction(t, &stored))?;
+                db.transaction_mut(|t| lyra_db::tracks::update_in_transaction(t, &stored))?;
             }
             if let Some(release) = &track.release {
                 let (release_db_id, _) = keys.entity(release)?;
@@ -432,7 +432,7 @@ impl Fixture {
                     path.display()
                 );
                 let format = services::metadata::read_source_format(&path)?;
-                let entry = crate::db::Entry {
+                let entry = lyra_db::Entry {
                     db_id: None,
                     id: nanoid::nanoid!(),
                     name: path
@@ -442,7 +442,7 @@ impl Fixture {
                         .into_owned(),
                     size: std::fs::metadata(&path)?.len(),
                     full_path: path,
-                    kind: crate::db::entries::EntryKind::File,
+                    kind: lyra_db::entries::EntryKind::File,
                     file_kind: Some("audio".into()),
                     hash: None,
                     mtime: 0,
@@ -452,11 +452,11 @@ impl Fixture {
                     .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
                     .ids()[0];
                 db.transaction_mut(|t| {
-                    crate::db::track_sources::upsert(
+                    lyra_db::track_sources::upsert(
                         t,
                         track_db_id,
                         entry_db_id,
-                        crate::db::track_sources::TrackSourceUpsert {
+                        lyra_db::track_sources::TrackSourceUpsert {
                             source_kind: "embedded_tags".into(),
                             source_key: track.key.clone(),
                             is_primary: true,
@@ -470,7 +470,7 @@ impl Fixture {
             }
             keys.entities.insert(
                 track.key.clone(),
-                (track_db_id, crate::db::favorites::FavoriteKind::Track),
+                (track_db_id, lyra_db::favorites::FavoriteKind::Track),
             );
         }
 
@@ -500,7 +500,7 @@ impl Fixture {
             seeded.entries.insert(playlist.key.clone(), entries);
             keys.entities.insert(
                 playlist.key.clone(),
-                (playlist_db_id, crate::db::favorites::FavoriteKind::Playlist),
+                (playlist_db_id, lyra_db::favorites::FavoriteKind::Playlist),
             );
         }
 
@@ -511,14 +511,14 @@ impl Fixture {
 
         for favorite in &self.favorites {
             let (target_db_id, kind) = keys.entity(&favorite.target)?;
-            crate::db::favorites::add(db, keys.user(&favorite.user)?, target_db_id, kind, 1)?;
+            lyra_db::favorites::add(db, keys.user(&favorite.user)?, target_db_id, kind, 1)?;
         }
 
         for (key, (db_id, _)) in &keys.entities {
             seeded.ids.insert(key.clone(), db_id.0);
         }
         for (key, name) in &keys.genres {
-            let genre_db_id = crate::db::genres::find_by_name(db, name)?
+            let genre_db_id = lyra_db::genres::find_by_name(db, name)?
                 .with_context(|| format!("fixture genre `{key}` is on no release"))?;
             seeded.ids.insert(key.clone(), genre_db_id.0);
         }
@@ -542,11 +542,11 @@ fn supply_credits(
 ) -> anyhow::Result<()> {
     let artist_credits = artists
         .iter()
-        .map(|key| (key, crate::db::CreditType::Artist, None));
+        .map(|key| (key, lyra_db::CreditType::Artist, None));
     let other_credits = credits
         .iter()
         .map(|credit| (&credit.artist, credit.credit_type, credit.detail.clone()));
-    let mut by_role: BTreeMap<crate::db::CreditType, Vec<LayerCreditInput>> = BTreeMap::new();
+    let mut by_role: BTreeMap<lyra_db::CreditType, Vec<LayerCreditInput>> = BTreeMap::new();
     for (key, credit_type, detail) in artist_credits.chain(other_credits) {
         let (artist_id, _) = keys.entity(key)?;
         by_role
@@ -562,25 +562,25 @@ fn supply_credits(
 
 /// A completed listen of the whole track.
 fn record_listen(db: &mut DbAny, track_db_id: DbId, user_db_id: DbId) -> anyhow::Result<()> {
-    let track_public_id = crate::db::tracks::get_by_id(db, track_db_id)?
+    let track_public_id = lyra_db::tracks::get_by_id(db, track_db_id)?
         .context("track exists")?
         .id;
-    crate::db::listens::create_and_mark_recorded(
+    lyra_db::listens::create_and_mark_recorded(
         db,
-        &crate::db::listens::Listen {
+        &lyra_db::listens::Listen {
             db_id: None,
             id: nanoid::nanoid!(),
             track_public_id,
             position_ms: 0,
             duration_ms: Some(180_000),
             activity_ms: 180_000,
-            state: crate::db::PlaybackState::Completed,
+            state: lyra_db::PlaybackState::Completed,
             listened_at_ms: 1_000,
             created_at_ms: 1_000,
         },
         track_db_id,
         user_db_id,
-        &crate::db::playback_sessions::PlaybackSession {
+        &lyra_db::playback_sessions::PlaybackSession {
             db_id: None,
             id: nanoid::nanoid!(),
             client_name: None,
@@ -588,7 +588,7 @@ fn record_listen(db: &mut DbAny, track_db_id: DbId, user_db_id: DbId) -> anyhow:
             duration_ms: Some(180_000),
             activity_ms: Some(180_000),
             last_position_ms: None,
-            state: crate::db::PlaybackState::Completed,
+            state: lyra_db::PlaybackState::Completed,
             listen_recorded: Some(true),
             updated_at_ms: 1_000,
             created_at_ms: 1_000,

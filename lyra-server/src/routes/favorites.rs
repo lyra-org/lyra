@@ -31,7 +31,6 @@ use serde::{
 };
 use std::collections::HashMap;
 
-use crate::db::favorites::FavoriteKind;
 use crate::{
     routes::{
         AppError,
@@ -44,6 +43,7 @@ use crate::{
         pagination::SnapshotKey,
     },
 };
+use lyra_db::favorites::FavoriteKind;
 
 const CHECK_TARGET_CAP: usize = 500;
 
@@ -398,9 +398,9 @@ mod tests {
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            crate::db::users::create(
+            lyra_db::users::create(
                 &mut db,
-                &crate::db::fixtures::test_user("favorites-check-user")?,
+                &lyra_db::fixtures::test_user("favorites-check-user")?,
             )?
         };
         let session =

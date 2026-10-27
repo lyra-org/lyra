@@ -18,7 +18,7 @@ use agdb::{
 };
 use nanoid::nanoid;
 
-use crate::db::{
+use lyra_db::{
     Artist,
     DbAccess,
 };
@@ -39,7 +39,7 @@ pub(crate) fn resolve_artist_ids(
             continue;
         }
 
-        let id = if let Some(existing_id) = crate::db::artists::find_id_by_scan_name(db, name)? {
+        let id = if let Some(existing_id) = lyra_db::artists::find_id_by_scan_name(db, name)? {
             existing_id
         } else {
             let artist = Artist {

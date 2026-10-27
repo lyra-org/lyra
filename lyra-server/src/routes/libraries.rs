@@ -34,10 +34,6 @@ use lyra_metadata::locale::{
     validate_language,
 };
 
-use crate::db::{
-    Library,
-    Permission,
-};
 use crate::{
     routes::{
         AppError,
@@ -56,6 +52,10 @@ use crate::{
         start_library_refresh,
         start_library_sync,
     },
+};
+use lyra_db::{
+    Library,
+    Permission,
 };
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -134,7 +134,7 @@ enum LibraryAccessKind {
     ReadWrite,
 }
 
-impl From<LibraryAccessKind> for crate::db::libraries::AccessKind {
+impl From<LibraryAccessKind> for lyra_db::libraries::AccessKind {
     fn from(kind: LibraryAccessKind) -> Self {
         match kind {
             LibraryAccessKind::ReadWrite => Self::ReadWrite,
@@ -182,8 +182,8 @@ fn library_not_found(id: &str) -> AppError {
     AppError::not_found(format!("library not found: {id}"))
 }
 
-fn public_user_role(db: &impl crate::db::DbAccess, user_db_id: agdb::DbId) -> Option<String> {
-    crate::db::roles::get_role_for_user(db, user_db_id)
+fn public_user_role(db: &impl lyra_db::DbAccess, user_db_id: agdb::DbId) -> Option<String> {
+    lyra_db::roles::get_role_for_user(db, user_db_id)
         .ok()
         .flatten()
         .map(|role| role.name)
@@ -198,9 +198,9 @@ async fn refresh_library(
 
     let library = {
         let db = STATE.db.read().await;
-        let library_db_id = crate::db::lookup::find_node_id_by_id(&*db, &library_id)?
+        let library_db_id = lyra_db::lookup::find_node_id_by_id(&*db, &library_id)?
             .ok_or_else(|| AppError::not_found(format!("not found: {library_id}")))?;
-        crate::db::libraries::get_by_id(&db, library_db_id)?
+        lyra_db::libraries::get_by_id(&db, library_db_id)?
             .ok_or_else(|| library_not_found(&library_id))?
     };
 
@@ -235,7 +235,7 @@ async fn create_library(
                     candidate.display()
                 )));
             }
-            Ok(crate::db::libraries::path_key_for(&candidate))
+            Ok(lyra_db::libraries::path_key_for(&candidate))
         })
         .await
         .map_err(|e| anyhow!("directory canonicalize task panicked: {e}"))??
@@ -257,10 +257,10 @@ async fn create_library(
         let mut db_write = STATE.db.write().await;
         let user_db_id = principal.require(&db_write)?;
         let outcome = db_write.transaction_mut(
-            |t| -> Result<Library, crate::db::libraries::LibraryCreateError> {
-                crate::db::libraries::create_with_creator(
+            |t| -> Result<Library, lyra_db::libraries::LibraryCreateError> {
+                lyra_db::libraries::create_with_creator(
                     t,
-                    crate::db::libraries::LibraryInsert {
+                    lyra_db::libraries::LibraryInsert {
                         id: nanoid!(),
                         name: library.name,
                         path: directory,
@@ -274,16 +274,16 @@ async fn create_library(
         );
         match outcome {
             Ok(library) => library,
-            Err(err @ crate::db::libraries::LibraryCreateError::InvalidName(_)) => {
+            Err(err @ lyra_db::libraries::LibraryCreateError::InvalidName(_)) => {
                 return Err(AppError::bad_request(err.to_string()));
             }
             Err(
-                err @ (crate::db::libraries::LibraryCreateError::NameInUse(_)
-                | crate::db::libraries::LibraryCreateError::PathInUse(_)),
+                err @ (lyra_db::libraries::LibraryCreateError::NameInUse(_)
+                | lyra_db::libraries::LibraryCreateError::PathInUse(_)),
             ) => {
                 return Err(AppError::conflict(err.to_string()));
             }
-            Err(crate::db::libraries::LibraryCreateError::Db(e)) => return Err(AppError::from(e)),
+            Err(lyra_db::libraries::LibraryCreateError::Db(e)) => return Err(AppError::from(e)),
         }
     };
 
@@ -313,10 +313,10 @@ async fn update_library(
     }
 
     let mut db = STATE.db.write().await;
-    let library_db_id = crate::db::lookup::find_node_id_by_id(&*db, &id)?
+    let library_db_id = lyra_db::lookup::find_node_id_by_id(&*db, &id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
-    let library = crate::db::libraries::get_by_id(&db, library_db_id)?
-        .ok_or_else(|| library_not_found(&id))?;
+    let library =
+        lyra_db::libraries::get_by_id(&db, library_db_id)?.ok_or_else(|| library_not_found(&id))?;
 
     let mut updated_name = library.name;
     let mut updated_language = library.language;
@@ -354,19 +354,19 @@ async fn update_library(
     };
 
     let outcome = db.transaction_mut(
-        |t| -> Result<Library, crate::db::libraries::LibraryUpdateError> {
-            crate::db::libraries::update(t, &updated)
+        |t| -> Result<Library, lyra_db::libraries::LibraryUpdateError> {
+            lyra_db::libraries::update(t, &updated)
         },
     );
     let stored = match outcome {
         Ok(library) => library,
-        Err(err @ crate::db::libraries::LibraryUpdateError::InvalidName(_)) => {
+        Err(err @ lyra_db::libraries::LibraryUpdateError::InvalidName(_)) => {
             return Err(AppError::bad_request(err.to_string()));
         }
-        Err(err @ crate::db::libraries::LibraryUpdateError::NameInUse(_)) => {
+        Err(err @ lyra_db::libraries::LibraryUpdateError::NameInUse(_)) => {
             return Err(AppError::conflict(err.to_string()));
         }
-        Err(crate::db::libraries::LibraryUpdateError::Db(e)) => return Err(AppError::from(e)),
+        Err(lyra_db::libraries::LibraryUpdateError::Db(e)) => return Err(AppError::from(e)),
     };
 
     Ok(Json(LibraryResponse::from_library(stored, true)))
@@ -386,17 +386,17 @@ async fn delete_library(
     let track_ids = {
         let mut db = STATE.db.write().await;
         let user_db_id = principal.require(&db)?;
-        let library_db_id = crate::db::lookup::find_node_id_by_id(&*db, &id)?
+        let library_db_id = lyra_db::lookup::find_node_id_by_id(&*db, &id)?
             .ok_or_else(|| library_not_found(&id))?;
-        let library = crate::db::libraries::get_by_id(&*db, library_db_id)?
+        let library = lyra_db::libraries::get_by_id(&*db, library_db_id)?
             .ok_or_else(|| library_not_found(&id))?;
         db.transaction_mut(|t| -> Result<_, AppError> {
             if !principal.permissions.contains(&Permission::Admin)
-                && !crate::db::libraries::user_has_access_in_txn(t, user_db_id, library_db_id)?
+                && !lyra_db::libraries::user_has_access_in_txn(t, user_db_id, library_db_id)?
             {
                 return Err(library_not_found(&id));
             }
-            Ok(crate::db::libraries::delete(t, &library)?)
+            Ok(lyra_db::libraries::delete(t, &library)?)
         })?
     };
     crate::services::hls::state::teardown_hls_jobs_for_tracks(&track_ids).await;
@@ -429,10 +429,10 @@ fn update_library_docs(op: TransformOperation) -> TransformOperation {
 async fn list_libraries(headers: HeaderMap) -> Result<Json<Vec<LibraryResponse>>, AppError> {
     let principal = require_authenticated(&headers).await?;
     let include_directory =
-        crate::db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
+        lyra_db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
 
     let db = STATE.db.read().await;
-    let libraries = crate::db::libraries::get(&db)?;
+    let libraries = lyra_db::libraries::get(&db)?;
     let response: Vec<LibraryResponse> = libraries
         .into_iter()
         .filter(|library| principal.accessible_library_ids.contains(&library.id))
@@ -475,10 +475,9 @@ async fn start_library_sync_for_library(
     let _principal = require_manage_libraries_on(&headers, &id).await?;
     let library = {
         let db = STATE.db.read().await;
-        let library_db_id = crate::db::lookup::find_node_id_by_id(&*db, &id)?
+        let library_db_id = lyra_db::lookup::find_node_id_by_id(&*db, &id)?
             .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
-        crate::db::libraries::get_by_id(&db, library_db_id)?
-            .ok_or_else(|| library_not_found(&id))?
+        lyra_db::libraries::get_by_id(&db, library_db_id)?.ok_or_else(|| library_not_found(&id))?
     };
 
     Ok(Json(start_library_sync(STATE.db.get(), library).await?))
@@ -504,10 +503,10 @@ async fn list_library_access(
     let _principal = require_manage_libraries_on(&headers, &id).await?;
     let db = STATE.db.read().await;
     let library_db_id =
-        crate::db::lookup::find_node_id_by_id(&*db, &id)?.ok_or_else(|| library_not_found(&id))?;
-    crate::db::libraries::get_by_id(&db, library_db_id)?.ok_or_else(|| library_not_found(&id))?;
+        lyra_db::lookup::find_node_id_by_id(&*db, &id)?.ok_or_else(|| library_not_found(&id))?;
+    lyra_db::libraries::get_by_id(&db, library_db_id)?.ok_or_else(|| library_not_found(&id))?;
 
-    let users = crate::db::libraries::users_with_access(&db, library_db_id)?;
+    let users = lyra_db::libraries::users_with_access(&db, library_db_id)?;
     let response = users
         .into_iter()
         .map(|user| {
@@ -532,12 +531,12 @@ async fn grant_library_access(
     let mut db = STATE.db.write().await;
     let user_db_id = principal.require(&db)?;
     let library_db_id =
-        crate::db::lookup::find_node_id_by_id(&*db, &id)?.ok_or_else(|| library_not_found(&id))?;
-    crate::db::libraries::get_by_id(&db, library_db_id)?.ok_or_else(|| library_not_found(&id))?;
+        lyra_db::lookup::find_node_id_by_id(&*db, &id)?.ok_or_else(|| library_not_found(&id))?;
+    lyra_db::libraries::get_by_id(&db, library_db_id)?.ok_or_else(|| library_not_found(&id))?;
 
-    let target_user = crate::db::users::get_by_public_id(&db, &request.user_id)?
+    let target_user = lyra_db::users::get_by_public_id(&db, &request.user_id)?
         .or_else(|| {
-            crate::db::users::get_by_username(&db, &request.user_id)
+            lyra_db::users::get_by_username(&db, &request.user_id)
                 .ok()
                 .flatten()
         })
@@ -548,17 +547,11 @@ async fn grant_library_access(
 
     let authorized = principal.permissions.contains(&Permission::Admin);
     let granted = db.transaction_mut(|t| -> anyhow::Result<bool> {
-        if !authorized
-            && !crate::db::libraries::user_has_access_in_txn(t, user_db_id, library_db_id)?
+        if !authorized && !lyra_db::libraries::user_has_access_in_txn(t, user_db_id, library_db_id)?
         {
             return Ok(false);
         }
-        crate::db::libraries::grant_access(
-            t,
-            target_user_db_id,
-            library_db_id,
-            request.kind.into(),
-        )?;
+        lyra_db::libraries::grant_access(t, target_user_db_id, library_db_id, request.kind.into())?;
         Ok(true)
     })?;
     if !granted {
@@ -575,12 +568,12 @@ async fn revoke_library_access(
     let mut db = STATE.db.write().await;
     let user_db_id = principal.require(&db)?;
     let library_db_id =
-        crate::db::lookup::find_node_id_by_id(&*db, &id)?.ok_or_else(|| library_not_found(&id))?;
-    crate::db::libraries::get_by_id(&db, library_db_id)?.ok_or_else(|| library_not_found(&id))?;
+        lyra_db::lookup::find_node_id_by_id(&*db, &id)?.ok_or_else(|| library_not_found(&id))?;
+    lyra_db::libraries::get_by_id(&db, library_db_id)?.ok_or_else(|| library_not_found(&id))?;
 
-    let target_user = crate::db::users::get_by_public_id(&db, &user_id)?
+    let target_user = lyra_db::users::get_by_public_id(&db, &user_id)?
         .or_else(|| {
-            crate::db::users::get_by_username(&db, &user_id)
+            lyra_db::users::get_by_username(&db, &user_id)
                 .ok()
                 .flatten()
         })
@@ -599,12 +592,11 @@ async fn revoke_library_access(
 
     let authorized = principal.permissions.contains(&Permission::Admin);
     let revoked = db.transaction_mut(|t| -> anyhow::Result<bool> {
-        if !authorized
-            && !crate::db::libraries::user_has_access_in_txn(t, user_db_id, library_db_id)?
+        if !authorized && !lyra_db::libraries::user_has_access_in_txn(t, user_db_id, library_db_id)?
         {
             return Ok(false);
         }
-        crate::db::libraries::revoke_access(t, target_user_db_id, library_db_id)?;
+        lyra_db::libraries::revoke_access(t, target_user_db_id, library_db_id)?;
         Ok(true)
     })?;
     if !revoked {
@@ -725,10 +717,10 @@ mod tests {
         headers
     }
 
-    fn library_insert(name: &str, suffix: &str) -> crate::db::libraries::LibraryInsert {
+    fn library_insert(name: &str, suffix: &str) -> lyra_db::libraries::LibraryInsert {
         let path = std::path::PathBuf::from(format!("/tmp/lyra-route-library-{suffix}"));
-        let path_key = crate::db::libraries::path_key_for(&path);
-        crate::db::libraries::LibraryInsert {
+        let path_key = lyra_db::libraries::path_key_for(&path);
+        lyra_db::libraries::LibraryInsert {
             id: nanoid!(),
             name: name.to_string(),
             path,
@@ -743,15 +735,15 @@ mod tests {
         username: &str,
         permissions: Vec<Permission>,
     ) -> anyhow::Result<agdb::DbId> {
-        let user_db_id = crate::db::users::create(db, &crate::db::fixtures::test_user(username)?)?;
-        let role = crate::db::roles::Role {
+        let user_db_id = lyra_db::users::create(db, &lyra_db::fixtures::test_user(username)?)?;
+        let role = lyra_db::roles::Role {
             db_id: None,
             id: nanoid!(),
             name: format!("{username}-role"),
             permissions,
         };
-        let role_db_id = crate::db::roles::create(db, &role)?;
-        crate::db::roles::assign_role_to_user(db, user_db_id, role_db_id)?;
+        let role_db_id = lyra_db::roles::create(db, &role)?;
+        lyra_db::roles::assign_role_to_user(db, user_db_id, role_db_id)?;
         Ok(user_db_id)
     }
 
@@ -773,13 +765,13 @@ mod tests {
             )?;
             let listener = create_user_with_permissions(&mut db, "listener", vec![])?;
             let library = db.transaction_mut(|t| -> anyhow::Result<_> {
-                Ok(crate::db::libraries::create_with_creator(
+                Ok(lyra_db::libraries::create_with_creator(
                     t,
                     library_insert("Delete me", "delete-route"),
                     manager,
                 )?)
             })?;
-            let record = crate::db::sync_runs::SyncRunRecord {
+            let record = lyra_db::sync_runs::SyncRunRecord {
                 db_id: None,
                 id: nanoid!(),
                 library_id: library.id.clone(),
@@ -802,7 +794,7 @@ mod tests {
                 active_units: 0,
                 failure_count: 0,
             };
-            let run_id = crate::db::sync_runs::create(&mut db, &record)?;
+            let run_id = lyra_db::sync_runs::create(&mut db, &record)?;
             (manager, listener, library, run_id)
         };
         let manager_session =
@@ -843,7 +835,7 @@ mod tests {
             let mut db = STATE.db.write().await;
             db.exec_mut(agdb::QueryBuilder::remove().ids(run_id).query())?;
             db.transaction_mut(|t| {
-                crate::db::libraries::revoke_access(t, manager, library.db_id.unwrap())
+                lyra_db::libraries::revoke_access(t, manager, library.db_id.unwrap())
             })?;
         }
         assert_eq!(
@@ -860,11 +852,11 @@ mod tests {
         {
             let mut db = STATE.db.write().await;
             db.transaction_mut(|t| {
-                crate::db::libraries::grant_access(
+                lyra_db::libraries::grant_access(
                     t,
                     manager,
                     library.db_id.unwrap(),
-                    crate::db::libraries::AccessKind::ReadWrite,
+                    lyra_db::libraries::AccessKind::ReadWrite,
                 )
             })?;
         }
@@ -901,16 +893,16 @@ mod tests {
         let (user_db_id, visible_id) = {
             let mut db = STATE.db.write().await;
             let user_db_id =
-                crate::db::users::create(&mut db, &crate::db::fixtures::test_user("listener")?)?;
-            let visible = db.transaction_mut(|t| -> anyhow::Result<crate::db::Library> {
-                Ok(crate::db::libraries::create_with_creator(
+                lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("listener")?)?;
+            let visible = db.transaction_mut(|t| -> anyhow::Result<lyra_db::Library> {
+                Ok(lyra_db::libraries::create_with_creator(
                     t,
                     library_insert("Visible", "visible"),
                     user_db_id,
                 )?)
             })?;
-            db.transaction_mut(|t| -> anyhow::Result<crate::db::Library> {
-                Ok(crate::db::libraries::create_system(
+            db.transaction_mut(|t| -> anyhow::Result<lyra_db::Library> {
+                Ok(lyra_db::libraries::create_system(
                     t,
                     library_insert("Hidden", "hidden"),
                 )?)
@@ -943,12 +935,12 @@ mod tests {
                 vec![Permission::ManageLibraries],
             )?;
             let target_db_id =
-                crate::db::users::create(&mut db, &crate::db::fixtures::test_user("target")?)?;
-            let target_id = crate::db::users::get_by_id(&db, target_db_id)?
+                lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("target")?)?;
+            let target_id = lyra_db::users::get_by_id(&db, target_db_id)?
                 .expect("target user")
                 .id;
-            let library = db.transaction_mut(|t| -> anyhow::Result<crate::db::Library> {
-                Ok(crate::db::libraries::create_with_creator(
+            let library = db.transaction_mut(|t| -> anyhow::Result<lyra_db::Library> {
+                Ok(lyra_db::libraries::create_with_creator(
                     t,
                     library_insert("Managed", "managed"),
                     manager_db_id,

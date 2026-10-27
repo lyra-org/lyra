@@ -298,7 +298,7 @@ fn no_dispatch_principal() -> luau::runtime::Error {
 /// [`ServicePrincipal::require`] as a Luau runtime error, for plugin callbacks.
 pub(crate) fn require_user_db_id(
     principal: &ServicePrincipal,
-    db: &impl crate::db::DbAccess,
+    db: &impl lyra_db::DbAccess,
 ) -> luau::runtime::Result<agdb::DbId> {
     principal.require(db).map_err(crate::plugins::runtime_error)
 }

@@ -14,7 +14,7 @@ use std::{
     },
 };
 
-use crate::db::bootstrap::{
+use lyra_db::bootstrap::{
     DbConfig,
     DbKind,
 };
@@ -79,7 +79,7 @@ fn memory_boot_config() -> anyhow::Result<BootConfig> {
 /// on-disk DB would block on the live process lock.
 pub(crate) fn open_memory_state(
     file: ConfigFile,
-) -> anyhow::Result<(BootConfig, crate::db::Created, ResolvedSettings)> {
+) -> anyhow::Result<(BootConfig, lyra_db::Created, ResolvedSettings)> {
     let boot = memory_boot_config()?;
     assert!(
         matches!(boot.db.kind, DbKind::Memory),
@@ -87,7 +87,7 @@ pub(crate) fn open_memory_state(
     );
     let library = LibraryConfig::resolve(file.library.as_ref())?;
     let file_settings = server_settings::normalize_file(&file.settings, &boot)?;
-    let mut created = crate::db::create(&boot.db)?;
+    let mut created = lyra_db::create(&boot.db)?;
     let resolved = resolve_settings(&mut created, &boot, library, file_settings)?;
     Ok((boot, created, resolved))
 }
@@ -111,7 +111,7 @@ pub(crate) fn library_config(
 
 /// The server record and HLS state the runtime starts with.
 pub(crate) async fn start_runtime() -> anyhow::Result<()> {
-    crate::db::server::ensure(&mut *STATE.db.write().await)?;
+    lyra_db::server::ensure(&mut *STATE.db.write().await)?;
     crate::services::hls::init::initialize().await;
     crate::services::transcoding::initialize().await;
     Ok(())
@@ -156,7 +156,7 @@ mod test_state {
         user_db_id: DbId,
     ) -> anyhow::Result<crate::services::auth::Principal> {
         let db = STATE.db.read().await;
-        let user = crate::db::users::get_by_id(&db, user_db_id)?
+        let user = lyra_db::users::get_by_id(&db, user_db_id)?
             .ok_or_else(|| anyhow::anyhow!("user {user_db_id:?} does not exist"))?;
         Ok(crate::services::auth::resolve_principal(
             &db, user_db_id, user,

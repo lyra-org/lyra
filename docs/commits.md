@@ -31,11 +31,11 @@ docs: document commit convention
 ## Scope Selection
 
 - Prefer the most specific ownership scope that describes the change.
-- Use `server/<layer>` when a change is isolated to a server layer such as DB, routes, services, or plugin bindings.
+- Use `server/<layer>` when a change is isolated to a server layer such as routes, services, or plugin bindings.
 - Use `server/<domain>` when one server domain crosses layers, such as tags, metadata, libraries, playback, or covers.
 - Use `plugins/<name>` when a change belongs to one first-party plugin.
 - Use `harmony/<name>` for the shared Harmony crates, and `harmony/test` for `lyra-harmony-test`.
-- Use package scopes such as `metadata`, `ffmpeg`, and `chromaprint` for standalone Lyra support crates.
+- Use package scopes such as `db`, `metadata`, `ffmpeg`, and `chromaprint` for standalone Lyra crates.
 - Use infrastructure scopes such as `build`, `ci`, `docker`, `deps`, and `release` only when the change is not owned by a product domain.
 - Avoid vague scopes such as `misc`, `chore`, `cleanup`, or `changes`.
 - Split unrelated domains into separate commits instead of using a broad scope.
@@ -50,7 +50,6 @@ server/auth
 server/config
 server/cors
 server/covers
-server/db
 server/favorites
 server/hls
 server/libraries
@@ -88,6 +87,7 @@ Lyra support crate scopes:
 
 ```text
 chromaprint
+db
 ffmpeg
 metadata
 ```

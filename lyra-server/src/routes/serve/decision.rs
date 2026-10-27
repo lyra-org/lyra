@@ -791,7 +791,7 @@ mod tests {
             duration_ms: Some(20_000),
             start_ms,
             end_ms,
-            format: crate::db::track_sources::SourceFormat {
+            format: lyra_db::track_sources::SourceFormat {
                 sample_rate_hz: Some(96_000),
                 channel_count: Some(2),
                 bitrate_bps: Some(900_000),

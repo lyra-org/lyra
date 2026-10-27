@@ -695,7 +695,7 @@ mod tests {
         crate::plugins::testing::init_library_test_state(std::path::PathBuf::from(".")).await?;
         let user_db_id = {
             let mut db = crate::services::STATE.db.write().await;
-            crate::db::users::create(&mut db, &crate::db::fixtures::test_user("budget")?)?
+            lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("budget")?)?
         };
         Ok((
             user_db_id,
@@ -829,11 +829,11 @@ mod tests {
         let (user_db_id, _) = initialize_user_runtime().await?;
         let expired = {
             let mut db = crate::services::STATE.db.write().await;
-            let mut session = crate::db::test_db::test_session(
-                &crate::services::auth::hash_secret("expired-session"),
-            );
-            session.expires_at = crate::db::users::now_secs() - 1;
-            crate::db::users::login(&mut db, user_db_id, &session)?;
+            let mut session = lyra_db::test_db::test_session(&crate::services::auth::hash_secret(
+                "expired-session",
+            ));
+            session.expires_at = lyra_db::users::now_secs() - 1;
+            lyra_db::users::login(&mut db, user_db_id, &session)?;
             "expired-session"
         };
         let app = budget_app(2);

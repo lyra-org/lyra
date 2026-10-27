@@ -27,7 +27,6 @@ use tracing_subscriber::{
 };
 
 mod config;
-mod db;
 mod plugins;
 mod routes;
 mod services;
@@ -56,7 +55,7 @@ pub async fn run_server(capture: Option<CaptureArgs>) -> Result<()> {
         "plugins directory (LYRA_PLUGINS_DIR)",
     )?;
     let mut created =
-        crate::db::create(&loaded.boot.db).map_err(config::storage::explain_db_open_error)?;
+        lyra_db::create(&loaded.boot.db).map_err(config::storage::explain_db_open_error)?;
     plugins::repositories::seed_default(
         created
             .unshared_mut()
@@ -103,7 +102,7 @@ async fn serve(capture: Option<CaptureArgs>, listener: TcpListener) -> Result<()
     services::auth::ensure_default_user(&config).await?;
     {
         let mut db_write = services::STATE.db.write().await;
-        crate::db::server::ensure(&mut db_write)?;
+        lyra_db::server::ensure(&mut db_write)?;
     }
 
     let plugin_runtime = plugin_bootstrap::initialize_harmony().await?;
@@ -266,14 +265,14 @@ pub async fn run_plugins_add(url: &str, git_ref: Option<&str>) -> Result<()> {
 struct CliDb {
     db: DbAny,
     path: std::path::PathBuf,
-    _lock: Option<crate::db::process_lock::DbProcessLock>,
+    _lock: Option<lyra_db::process_lock::DbProcessLock>,
 }
 
 /// `command` is the CLI command name (for example `db optimize`) used in
 /// diagnostics; `verb` describes the action in "nothing to <verb>" errors.
 fn open_cli_db(command: &'static str, verb: &str) -> Result<CliDb> {
     let boot = config::load()?.boot;
-    if matches!(boot.db.kind, crate::db::bootstrap::DbKind::Memory) {
+    if matches!(boot.db.kind, lyra_db::bootstrap::DbKind::Memory) {
         anyhow::bail!(
             "nothing to {verb}: db kind is memory; configure DbKind::File or DbKind::Mmap to use this command"
         );
@@ -284,13 +283,13 @@ fn open_cli_db(command: &'static str, verb: &str) -> Result<CliDb> {
         anyhow::bail!("nothing to {verb}: no database file at {}", path.display());
     }
 
-    let lock = crate::db::process_lock::acquire(
+    let lock = lyra_db::process_lock::acquire(
         &boot.db,
-        crate::db::process_lock::LockMode::NonBlocking { command },
+        lyra_db::process_lock::LockMode::NonBlocking { command },
     )
     .map_err(config::storage::explain_db_open_error)?;
-    let db = crate::db::bootstrap::open(
-        crate::db::bootstrap::DbKind::File,
+    let db = lyra_db::bootstrap::open(
+        lyra_db::bootstrap::DbKind::File,
         path.to_string_lossy().as_ref(),
     )?;
     Ok(CliDb {

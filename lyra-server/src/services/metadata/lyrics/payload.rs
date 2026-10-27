@@ -15,7 +15,7 @@ use serde::{
     Serialize,
 };
 
-use crate::db::lyrics::{
+use lyra_db::lyrics::{
     LineInput,
     LyricsInput,
     WordInput,

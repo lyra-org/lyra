@@ -17,7 +17,7 @@ use crate::{
 pub(crate) async fn library_roots(principal: Option<&Principal>) -> anyhow::Result<Vec<PathBuf>> {
     let db = STATE.db.read().await;
     let visible = Viewer::of(&*db, principal.cloned())?.visible_libraries(&*db)?;
-    Ok(crate::db::libraries::get(&*db)?
+    Ok(lyra_db::libraries::get(&*db)?
         .into_iter()
         .filter(|library| {
             visible

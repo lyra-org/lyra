@@ -61,7 +61,7 @@ fn compute_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let path = {
             let (db, viewer) = db.read().await?;
-            let entry = crate::db::entries::get_by_id(&db, DbId(entry_id))
+            let entry = lyra_db::entries::get_by_id(&db, DbId(entry_id))
                 .map_err(crate::plugins::runtime_error)?
                 .filter(|_| viewer.sees_entity(&*db, DbId(entry_id)).unwrap_or(false))
                 .ok_or_else(|| crate::plugins::runtime_error("entry not found"))?;

@@ -29,7 +29,7 @@ use super::super::{
     },
 };
 use super::artists::resolve_artist_ids;
-use crate::db::{
+use lyra_db::{
     ArtistRelationType,
     ArtistType,
     DbAccess,
@@ -56,7 +56,7 @@ pub(crate) struct ReleaseIngestResult {
 fn select_release_id(db: &impl DbAccess, track_ids: &[DbId]) -> anyhow::Result<Option<DbId>> {
     let mut counts: HashMap<DbId, usize> = HashMap::new();
     for track_db_id in track_ids {
-        let releases = crate::db::releases::get_by_track(db, *track_db_id)?;
+        let releases = lyra_db::releases::get_by_track(db, *track_db_id)?;
         for release in releases {
             if let Some(release_db_id) = release.db_id.map(Into::into) {
                 *counts.entry(release_db_id).or_default() += 1;
@@ -86,7 +86,7 @@ fn scanned_media_formats(release_tracks: &[TrackIngest]) -> Option<Vec<String>> 
 
 /// The local layer a scan stored on an entity, if any.
 fn stored_local_layer(db: &impl DbAccess, node_id: DbId) -> anyhow::Result<Option<MetadataLayer>> {
-    Ok(crate::db::metadata::layers::get_for_entity(db, node_id)?
+    Ok(lyra_db::metadata::layers::get_for_entity(db, node_id)?
         .into_iter()
         .find(|layer| layer.source_id == LOCAL_SOURCE_ID))
 }
@@ -104,7 +104,7 @@ fn other_track_ids(
         .iter()
         .filter_map(|track| track.track_db_id)
         .collect();
-    Ok(crate::db::tracks::get_direct(db, release_db_id)?
+    Ok(lyra_db::tracks::get_direct(db, release_db_id)?
         .into_iter()
         .filter_map(|track| track.db_id.map(DbId::from))
         .filter(|track_id| !batch_track_ids.contains(track_id))
@@ -135,7 +135,7 @@ fn release_artist_ids(
     }
     for &track_id in other_track_ids {
         let local_artists = stored_local_layer(db, track_id)?
-            .and_then(|mut layer| layer.credits.remove(&crate::db::CreditType::Artist))
+            .and_then(|mut layer| layer.credits.remove(&lyra_db::CreditType::Artist))
             .unwrap_or_default();
         track_artists.push(
             local_artists
@@ -253,7 +253,7 @@ fn scanned_artist_name(
     stored: Option<&MetadataLayer>,
     scan_name: String,
 ) -> anyhow::Result<Option<String>> {
-    if crate::db::artists::get_by_id(db, artist_db_id)?
+    if lyra_db::artists::get_by_id(db, artist_db_id)?
         .is_some_and(|artist| artist.scan_name == scan_name)
     {
         return Ok(Some(scan_name));
@@ -272,7 +272,7 @@ fn scanned_artist_type(
     let stored = stored
         .and_then(|layer| layer.fields.get(&MetadataField::ArtistType))
         .filter(|value| !value.is_null())
-        .map(|value| crate::db::metadata::layers::decode(MetadataField::ArtistType, value))
+        .map(|value| lyra_db::metadata::layers::decode(MetadataField::ArtistType, value))
         .transpose()?;
     Ok(match (stored, scanned) {
         (Some(stored), Some(scanned)) => Some(combine_scanned_artist_types(stored, scanned)),
@@ -293,10 +293,10 @@ fn scanned_release_labels(release_tracks: &[TrackIngest]) -> Option<Vec<serde_js
             .map(str::to_string)
     })?;
 
-    let picked = crate::db::labels::normalize_label_name(&name);
+    let picked = lyra_db::labels::normalize_label_name(&name);
     let catalog_number = release_tracks.iter().find_map(|track| {
         let track_label = track.meta.label.as_deref()?;
-        if crate::db::labels::normalize_label_name(track_label) != picked {
+        if lyra_db::labels::normalize_label_name(track_label) != picked {
             return None;
         }
         track
@@ -320,7 +320,7 @@ fn release_date_from_track(track: &TrackMetadata) -> Option<String> {
     track
         .date
         .as_deref()
-        .and_then(crate::db::releases::normalize_release_date)
+        .and_then(lyra_db::releases::normalize_release_date)
         .or_else(|| track.year.map(|year| format!("{year:04}")))
 }
 
@@ -340,7 +340,7 @@ fn persist_release_inner(
     release_tracks: Vec<TrackIngest>,
 ) -> anyhow::Result<ReleaseIngestResult> {
     ensure_index(db, "scan_name")?;
-    ensure_index(db, crate::db::artists::SCAN_ALIAS_HOLDER)?;
+    ensure_index(db, lyra_db::artists::SCAN_ALIAS_HOLDER)?;
 
     let mut artist_cache: BTreeMap<String, DbId> = BTreeMap::new();
     let mut scanned_relations = ScannedRelations::new();
@@ -372,13 +372,13 @@ fn persist_release_inner(
     // "no ctime", and ctime drives date-added ordering.
     let mut earliest_ctime: Option<u64> = None;
     for track in release_tracks.iter() {
-        if let Some(entry) = crate::db::entries::get_by_id(db, track.meta.entry_db_id)? {
+        if let Some(entry) = lyra_db::entries::get_by_id(db, track.meta.entry_db_id)? {
             earliest_ctime = Some(earliest_ctime.map_or(entry.ctime, |c| c.min(entry.ctime)));
         }
     }
 
     let release_db_id = if let Some(release_db_id) = existing_release_id {
-        let mut release = crate::db::releases::get_by_id(db, release_db_id)?.unwrap_or(Release {
+        let mut release = lyra_db::releases::get_by_id(db, release_db_id)?.unwrap_or(Release {
             db_id: Some(release_db_id.into()),
             id: nanoid!(),
             release_title: release_title.to_string(),
@@ -402,7 +402,7 @@ fn persist_release_inner(
         if earliest_ctime.is_some() {
             release.ctime = earliest_ctime;
         }
-        crate::db::releases::update_in_transaction(db, &release)?;
+        lyra_db::releases::update_in_transaction(db, &release)?;
         release_db_id
     } else {
         let release = Release {
@@ -481,7 +481,7 @@ fn persist_release_inner(
         .iter()
         .filter_map(|track| track.meta.disc)
         .chain(
-            crate::db::tracks::get_direct(db, release_db_id)?
+            lyra_db::tracks::get_direct(db, release_db_id)?
                 .into_iter()
                 .filter_map(|track| track.disc),
         )
@@ -529,10 +529,10 @@ fn persist_release_inner(
 
         let effective_disc_total = disc_total.or(inferred_disc_total);
 
-        let entry_ctime = crate::db::entries::get_by_id(db, entry_db_id)?.map(|e| e.ctime);
+        let entry_ctime = lyra_db::entries::get_by_id(db, entry_db_id)?.map(|e| e.ctime);
 
         let track_db_id = if let Some(track_db_id) = track.track_db_id {
-            let mut existing = crate::db::tracks::get_by_id(db, track_db_id)?.unwrap_or(Track {
+            let mut existing = lyra_db::tracks::get_by_id(db, track_db_id)?.unwrap_or(Track {
                 db_id: Some(track_db_id.into()),
                 id: nanoid!(),
                 track_title: title.clone().unwrap_or_default(),
@@ -560,7 +560,7 @@ fn persist_release_inner(
             if entry_ctime.is_some() {
                 existing.ctime = entry_ctime;
             }
-            crate::db::tracks::update_in_transaction(db, &existing)?;
+            lyra_db::tracks::update_in_transaction(db, &existing)?;
             track_db_id
         } else {
             let track_db = Track {
@@ -625,8 +625,8 @@ fn persist_release_inner(
                     Some(cue_index01_frames),
                 ) => {
                     let cue_sheet_id =
-                        crate::db::cue::sheets::upsert(db, cue_sheet_entry_id, &cue_sheet_hash)?;
-                    Some(crate::db::cue::tracks::upsert(
+                        lyra_db::cue::sheets::upsert(db, cue_sheet_entry_id, &cue_sheet_hash)?;
+                    Some(lyra_db::cue::tracks::upsert(
                         db,
                         cue_sheet_id,
                         cue_sheet_entry_id,
@@ -648,11 +648,11 @@ fn persist_release_inner(
             None
         };
 
-        crate::db::track_sources::upsert(
+        lyra_db::track_sources::upsert(
             db,
             track_db_id,
             entry_db_id,
-            crate::db::track_sources::TrackSourceUpsert {
+            lyra_db::track_sources::TrackSourceUpsert {
                 source_kind,
                 source_key,
                 is_primary: true,
@@ -672,7 +672,7 @@ fn persist_release_inner(
         )?;
 
         let release_delta =
-            crate::db::releases::replace_track_release(db, release_db_id, track_db_id)?;
+            lyra_db::releases::replace_track_release(db, release_db_id, track_db_id)?;
         if release_delta.membership_changed && changed_track_id_set.insert(track_db_id) {
             changed_track_ids.push(track_db_id);
         }
@@ -700,7 +700,7 @@ fn persist_release_inner(
         if let Some(scanned) = scanned_relations.remove(&artist_db_id) {
             let stored = stored.map(|layer| layer.relations).unwrap_or_default();
             for (relation_type, inputs) in
-                crate::db::metadata::layers::union_relations(&stored, scanned)
+                lyra_db::metadata::layers::union_relations(&stored, scanned)
             {
                 artist_layer.supply_relations(relation_type, inputs);
             }
@@ -709,11 +709,11 @@ fn persist_release_inner(
     }
 
     if target_gained_track {
-        crate::db::covers::display::mark_genre_profiles_dirty_for_release(db, release_db_id)?;
+        lyra_db::covers::display::mark_genre_profiles_dirty_for_release(db, release_db_id)?;
     }
     let affected_playlist_ids =
-        crate::db::covers::display::playlist_ids_for_tracks(db, &changed_track_ids)?;
-    crate::db::covers::display::sync_playlist_covers(db, &affected_playlist_ids)?;
+        lyra_db::covers::display::playlist_ids_for_tracks(db, &changed_track_ids)?;
+    lyra_db::covers::display::sync_playlist_covers(db, &affected_playlist_ids)?;
 
     Ok(ReleaseIngestResult {
         release_db_id,

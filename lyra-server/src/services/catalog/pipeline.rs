@@ -294,7 +294,7 @@ fn sorted<C: Catalog>(
         })
         .collect::<Vec<_>>();
     if let Some(term) = search {
-        crate::db::search::fuzzy_filter(
+        lyra_db::search::fuzzy_filter(
             &mut entries,
             term,
             |entry| entry.row.name.as_str(),

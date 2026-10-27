@@ -27,7 +27,6 @@ use harmony_luau::{
 };
 use serde::Serialize;
 
-use crate::db::NodeId;
 use crate::plugins::args;
 use crate::{
     plugins::db,
@@ -36,9 +35,10 @@ use crate::{
         tags as tag_service,
     },
 };
+use lyra_db::NodeId;
 
 /// `lyra/tags` plugin bindings, scoped to the dispatch principal. Tag names are normalized via
-/// [`crate::db::tags::normalize_tag_name`]; return values use the canonical form.
+/// [`lyra_db::tags::normalize_tag_name`]; return values use the canonical form.
 struct TagsModule;
 
 #[derive(Debug, Serialize)]
@@ -50,7 +50,7 @@ struct TagInfo {
     created_at_ms: i64,
 }
 
-fn tag_to_info(tag: crate::db::Tag) -> TagInfo {
+fn tag_to_info(tag: lyra_db::Tag) -> TagInfo {
     TagInfo {
         db_id: tag.db_id,
         id: tag.id,
@@ -231,7 +231,7 @@ fn get_tagged_callback(
     }))
 }
 async fn add(
-    db: crate::db::DbAsync,
+    db: lyra_db::DbAsync,
     principal: Principal,
     target_id: DbId,
     tag: String,
@@ -245,7 +245,7 @@ async fn add(
 }
 
 async fn remove(
-    db: crate::db::DbAsync,
+    db: lyra_db::DbAsync,
     principal: Principal,
     target_id: DbId,
     tag: String,
@@ -257,7 +257,7 @@ async fn remove(
 }
 
 async fn has(
-    db: crate::db::DbAsync,
+    db: lyra_db::DbAsync,
     principal: Principal,
     target_id: DbId,
     tag: String,
@@ -269,7 +269,7 @@ async fn has(
 }
 
 async fn has_many(
-    db: crate::db::DbAsync,
+    db: lyra_db::DbAsync,
     principal: Principal,
     target_ids: Vec<DbId>,
     tag: String,
@@ -281,7 +281,7 @@ async fn has_many(
 }
 
 async fn get_for_target(
-    db: crate::db::DbAsync,
+    db: lyra_db::DbAsync,
     principal: Principal,
     target_id: DbId,
 ) -> luau::runtime::Result<Vec<TagInfo>> {
@@ -293,7 +293,7 @@ async fn get_for_target(
 }
 
 async fn get_for_targets_many(
-    db: crate::db::DbAsync,
+    db: lyra_db::DbAsync,
     principal: Principal,
     target_ids: Vec<DbId>,
 ) -> luau::runtime::Result<std::collections::HashMap<DbId, Vec<TagInfo>>> {
@@ -308,7 +308,7 @@ async fn get_for_targets_many(
 }
 
 async fn get_tagged(
-    db: crate::db::DbAsync,
+    db: lyra_db::DbAsync,
     principal: Principal,
     tag: String,
 ) -> luau::runtime::Result<Vec<DbId>> {
@@ -368,7 +368,7 @@ impl DescribeInterface for TagInfo {
         descriptor.fields.extend([
             FieldDescriptor {
                 name: "db_id",
-                ty: Option::<crate::db::NodeId>::luau_type(),
+                ty: Option::<lyra_db::NodeId>::luau_type(),
                 description: None,
             },
             FieldDescriptor {
@@ -418,7 +418,7 @@ fn module_descriptor() -> ModuleDescriptor {
                 path: vec!["add"],
                 description: Some("Returns the canonical tag name. color is ignored on reuse."),
                 params: vec![
-                    param("target_id", crate::db::NodeId::luau_type()),
+                    param("target_id", lyra_db::NodeId::luau_type()),
                     param("tag", String::luau_type()),
                     param("color", String::luau_type()),
                 ],
@@ -429,7 +429,7 @@ fn module_descriptor() -> ModuleDescriptor {
                 path: vec!["remove"],
                 description: Some("Removes a tag from a target."),
                 params: vec![
-                    param("target_id", crate::db::NodeId::luau_type()),
+                    param("target_id", lyra_db::NodeId::luau_type()),
                     param("tag", String::luau_type()),
                 ],
                 returns: Vec::new(),
@@ -439,7 +439,7 @@ fn module_descriptor() -> ModuleDescriptor {
                 path: vec!["has"],
                 description: Some("Returns whether a target has a tag."),
                 params: vec![
-                    param("target_id", crate::db::NodeId::luau_type()),
+                    param("target_id", lyra_db::NodeId::luau_type()),
                     param("tag", String::luau_type()),
                 ],
                 returns: vec![bool::luau_type()],
@@ -458,7 +458,7 @@ fn module_descriptor() -> ModuleDescriptor {
             ModuleFunctionDescriptor {
                 path: vec!["get_for_target"],
                 description: Some("Returns tags for a target."),
-                params: vec![param("target_id", crate::db::NodeId::luau_type())],
+                params: vec![param("target_id", lyra_db::NodeId::luau_type())],
                 returns: vec![Vec::<TagInfo>::luau_type()],
                 yields: true,
             },
@@ -473,7 +473,7 @@ fn module_descriptor() -> ModuleDescriptor {
                 path: vec!["get_tagged"],
                 description: Some("Returns target IDs tagged with the given tag."),
                 params: vec![param("tag", String::luau_type())],
-                returns: vec![Vec::<crate::db::NodeId>::luau_type()],
+                returns: vec![Vec::<lyra_db::NodeId>::luau_type()],
                 yields: true,
             },
         ],

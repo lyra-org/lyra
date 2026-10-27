@@ -19,7 +19,7 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-use crate::db::{
+use lyra_db::{
     Entry,
     track_sources::{
         SourceCodec,
@@ -47,13 +47,13 @@ pub(crate) fn resolve(
     track_db_id: DbId,
     include_entry: bool,
 ) -> anyhow::Result<Option<PlaybackSource>> {
-    if crate::db::tracks::get_by_id(db, track_db_id)?.is_none() {
+    if lyra_db::tracks::get_by_id(db, track_db_id)?.is_none() {
         return Ok(None);
     }
 
-    let primary_source_id = crate::db::track_sources::get_primary_by_track(db, track_db_id)?
+    let primary_source_id = lyra_db::track_sources::get_primary_by_track(db, track_db_id)?
         .and_then(|source| source.db_id);
-    let mut sources = crate::db::track_sources::get_by_track(db, track_db_id)?;
+    let mut sources = lyra_db::track_sources::get_by_track(db, track_db_id)?;
     if let Some(primary_source_id) = primary_source_id {
         sources.sort_by_key(|source| source.db_id != Some(primary_source_id));
     } else {
@@ -64,13 +64,13 @@ pub(crate) fn resolve(
         let Some(source_id) = source.db_id else {
             continue;
         };
-        let Some(entry_db_id) = crate::db::track_sources::get_entry_id(db, source_id)? else {
+        let Some(entry_db_id) = lyra_db::track_sources::get_entry_id(db, source_id)? else {
             continue;
         };
-        let Some(entry) = crate::db::entries::get_by_id(db, entry_db_id)? else {
+        let Some(entry) = lyra_db::entries::get_by_id(db, entry_db_id)? else {
             continue;
         };
-        if entry.kind != crate::db::entries::EntryKind::File
+        if entry.kind != lyra_db::entries::EntryKind::File
             || entry.file_kind.as_deref() != Some("audio")
         {
             continue;

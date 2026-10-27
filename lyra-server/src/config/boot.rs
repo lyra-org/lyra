@@ -24,7 +24,7 @@ use super::{
     ConfigFile,
     non_empty_path,
 };
-use crate::db::bootstrap::{
+use lyra_db::bootstrap::{
     DbConfig,
     DbKind,
 };
@@ -181,7 +181,7 @@ mod tests {
         ConfigFile,
         temp_dir,
     };
-    use crate::db::bootstrap::DbKind;
+    use lyra_db::bootstrap::DbKind;
     use std::{
         ffi::OsString,
         path::PathBuf,

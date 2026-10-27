@@ -27,7 +27,6 @@ use std::{
     },
 };
 
-use crate::db::Permission;
 use crate::services::catalog::Direction;
 use crate::{
     routes::{
@@ -47,6 +46,7 @@ use crate::{
         providers::provider_registry,
     },
 };
+use lyra_db::Permission;
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
@@ -369,7 +369,7 @@ fn validate_merge_usage(
     Ok(())
 }
 
-fn aggregate_stats(stats: Vec<crate::db::listens::ListenStats>) -> (u64, Option<u64>) {
+fn aggregate_stats(stats: Vec<lyra_db::listens::ListenStats>) -> (u64, Option<u64>) {
     let mut listen_count = 0u64;
     let mut last_played_ms: Option<u64> = None;
     for stat in stats {
@@ -405,7 +405,7 @@ fn resolve_accessible_track_filter(
     track_id: &str,
     merge_pairs: Option<&HashSet<(String, String)>>,
 ) -> Result<ResolvedTrackFilter, AppError> {
-    let track_db_id = crate::db::lookup::find_node_id_by_id(db, track_id)?
+    let track_db_id = lyra_db::lookup::find_node_id_by_id(db, track_id)?
         .ok_or_else(|| AppError::not_found(format!("Track not found: {}", track_id)))?;
     crate::services::auth::access::require_entity_accessible(db, principal, track_db_id, || {
         AppError::not_found(format!("Track not found: {}", track_id))
@@ -425,7 +425,7 @@ fn resolve_accessible_track_filter(
         }
     }
 
-    let track_public_ids = crate::db::lookup::find_ids_by_db_ids(db, &accessible_track_ids)?
+    let track_public_ids = lyra_db::lookup::find_ids_by_db_ids(db, &accessible_track_ids)?
         .into_values()
         .collect::<HashSet<_>>();
 
@@ -446,7 +446,7 @@ impl ListenOwner<'_> {
         match self {
             Self::Principal => Ok((principal.require(db)?, principal.user_public_id.clone())),
             Self::Public(user_id) => {
-                let user = crate::db::users::get_by_public_id(db, user_id)?
+                let user = lyra_db::users::get_by_public_id(db, user_id)?
                     .ok_or_else(|| AppError::not_found(format!("User not found: {user_id}")))?;
                 let user_db_id = user
                     .db_id
@@ -469,7 +469,7 @@ async fn rows_for_user(
         let track_filter =
             resolve_accessible_track_filter(&db, principal, &track_id, merge_pairs.as_ref())?;
         let (user_db_id, user_public_id) = owner.resolve(&db, principal)?;
-        let stats = crate::db::listens::get_stats(&db, &track_filter.track_db_ids, user_db_id)?;
+        let stats = lyra_db::listens::get_stats(&db, &track_filter.track_db_ids, user_db_id)?;
         let (listen_count, last_played_ms) = aggregate_stats(stats);
         return Ok(vec![ListenRow {
             user_id: user_public_id,
@@ -481,7 +481,7 @@ async fn rows_for_user(
 
     let db = STATE.db.read().await;
     let (user_db_id, _) = owner.resolve(&db, principal)?;
-    let summaries = crate::db::listens::list_summaries_for_user(&db, user_db_id)?;
+    let summaries = lyra_db::listens::list_summaries_for_user(&db, user_db_id)?;
     let mut rows = Vec::with_capacity(summaries.len());
     for summary in summaries {
         if !crate::services::auth::access::entity_accessible(&*db, principal, summary.track_db_id)?
@@ -524,9 +524,9 @@ async fn rows_for_managed_listens(
             resolve_accessible_track_filter(&db, principal, track_id, merge_pairs.as_ref())
         })
         .transpose()?;
-    let summaries = crate::db::listens::list_summaries(
+    let summaries = lyra_db::listens::list_summaries(
         &db,
-        crate::db::listens::ListenOwners::All,
+        lyra_db::listens::ListenOwners::All,
         track_filter.as_ref().map(|filter| &filter.track_public_ids),
     )?;
 
@@ -587,14 +587,14 @@ async fn hydrate_listen_rows(
         .iter()
         .map(|row| row.track_id.as_str())
         .collect::<Vec<_>>();
-    let track_db_ids = crate::db::lookup::find_node_ids_by_ids(&db, &track_public_ids)?;
+    let track_db_ids = lyra_db::lookup::find_node_ids_by_ids(&db, &track_public_ids)?;
     let mut visible_users = HashMap::new();
     let mut hydrated = Vec::with_capacity(rows.len());
     for row in rows {
         let user_exists = match visible_users.get(&row.user_id).copied() {
             Some(exists) => exists,
             None => {
-                let exists = crate::db::users::get_by_public_id(&db, &row.user_id)?.is_some();
+                let exists = lyra_db::users::get_by_public_id(&db, &row.user_id)?.is_some();
                 visible_users.insert(row.user_id.clone(), exists);
                 exists
             }
