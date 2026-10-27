@@ -83,3 +83,28 @@ end
 assert(not universal_direct({ container = "ogg" }), "an unknown bitrate counts as 40 Mbps, over the default")
 assert(universal_direct({ container = "ogg", maxStreamingBitrate = "40000000" }), "40 Mbps allowed")
 playback.resolve_playback_source_for_track = resolve_source
+
+-- The routes serve what upstream's transcoding profiles name: HLS in any codec the server
+-- encodes, and a progressive stream in any name of its container.
+local hls_master = request(audio.handle_hls_master_route, ids.song, fixture.api_keys.desk, { audioCodec = "opus" })
+assert(hls_master.status == 200, `opus master status {hls_master.status}`)
+assert(string.find(hls_master.body, 'CODECS="Opus"', 1, true), hls_master.body)
+local mp3_master = request(audio.handle_hls_master_route, ids.song, fixture.api_keys.desk, { audioCodec = "mp3" })
+assert(string.find(mp3_master.body, 'CODECS="mp4a.40.34"', 1, true), mp3_master.body)
+local hls_main = request(audio.handle_hls_main_route, ids.song, fixture.api_keys.desk, { audioCodec = "opus" })
+assert(hls_main.kind == "hls_playlist", `opus main kind {hls_main.kind} status {hls_main.status}`)
+assert(hls_main.options.preferred_codecs[1] == "opus", "opus main codec")
+local universal_hls = request(
+	audio.handle_universal_route,
+	ids.song,
+	fixture.api_keys.desk,
+	{ container = "mp3", transcodingProtocol = "hls", audioCodec = "opus" }
+)
+assert(
+	universal_hls.kind == "hls_playlist",
+	`universal opus hls kind {universal_hls.kind} status {universal_hls.status}`
+)
+assert(
+	request(audio.handle_hls_master_route, ids.song, fixture.api_keys.desk, { audioCodec = "vorbis" }).status == 400,
+	"vorbis has no HLS segments"
+)

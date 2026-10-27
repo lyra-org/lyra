@@ -97,6 +97,19 @@ contains(hls_url, "SegmentContainer=ts")
 contains(hls_url, "ApiKey=secret")
 assert(not string.find(media_source(hls, nil).TranscodingUrl, "ApiKey", 1, true), "no token, no ApiKey")
 
+-- As upstream, the first encodable profile is taken whatever its container or protocol; the
+-- routes serve Opus over HLS and MP4 by any of its names.
+local function first_profile_url(profile: any): string
+	return media_source({ DeviceProfile = { DirectPlayProfiles = {}, TranscodingProfiles = { profile } } }, "secret").TranscodingUrl
+end
+local opus_hls_url = first_profile_url(audio_profile("mp4", "opus", "hls"))
+contains(opus_hls_url, "/master.m3u8?")
+contains(opus_hls_url, "AudioCodec=opus")
+contains(opus_hls_url, "SegmentContainer=mp4")
+local mp4_url = first_profile_url(audio_profile("mp4", "aac", "http"))
+contains(mp4_url, "/stream.mp4?")
+contains(mp4_url, "AudioCodec=aac")
+
 -- Upstream plays an audio item's default stream whatever stream index the client asks for.
 local indexed = playback_info({ AudioStreamIndex = 3 }, "secret")
 assert(indexed.ErrorCode == nil and indexed.MediaSources[1] ~= nil, `error {indexed.ErrorCode}`)

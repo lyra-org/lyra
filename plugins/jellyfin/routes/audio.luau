@@ -77,8 +77,23 @@ local function parse_first_csv_value(raw: string?): string?
 	return if values then values[1] else nil
 end
 
+-- The HLS codec strings of the codecs the server segments, as upstream's `HlsCodecStringHelpers`.
+local AUDIO_HLS_CODEC_STRINGS: { [string]: string } = {
+	aac = "mp4a.40.2",
+	alac = "alac",
+	flac = "fLaC",
+	mp3 = "mp4a.40.34",
+	opus = "Opus",
+}
+
+local LOSSY_AUDIO_HLS_CODECS: { [string]: boolean } = {
+	aac = true,
+	mp3 = true,
+	opus = true,
+}
+
 local function is_supported_audio_hls_codec(codec: string): boolean
-	return codec == "aac" or codec == "alac" or codec == "flac"
+	return AUDIO_HLS_CODEC_STRINGS[codec] ~= nil
 end
 
 local function find_supported_audio_hls_codec(preferred_codecs: { string }?): string?
@@ -272,7 +287,7 @@ function module.handle_universal_route(ctx: ApiContext): ApiResponse
 
 	if hls_requested then
 		if preferred_codecs ~= nil and hls_codec == nil then
-			return responses.bad_request("unsupported hls codec; supported values: aac, alac, flac")
+			return responses.bad_request("unsupported hls codec; supported values: aac, alac, flac, mp3, opus")
 		end
 		local settings = encoder.settings(
 			query,
@@ -427,7 +442,7 @@ type ResolvedAudioHlsPlaylistRequest = {
 }
 
 local DEFAULT_AUDIO_HLS_BANDWIDTH_BPS = 192000
-local MIN_AUDIO_HLS_AAC_BANDWIDTH_BPS = 32000
+local MIN_AUDIO_HLS_LOSSY_BANDWIDTH_BPS = 32000
 
 local function encode_hls_query_component(value: string): string
 	local encoded = string.gsub(value, "[^%w%-_%.~]", function(char)
@@ -463,19 +478,6 @@ local function build_audio_hls_master_query_string(query: ApiQueryParams?, codec
 	return table.concat(parts, "&")
 end
 
-local function codec_string_for_audio_hls(codec: string): string?
-	if codec == "aac" then
-		return "mp4a.40.2"
-	end
-	if codec == "flac" then
-		return "fLaC"
-	end
-	if codec == "alac" then
-		return "alac"
-	end
-	return nil
-end
-
 local function resolve_audio_hls_query_options(
 	query: ApiQueryParams?,
 	track: Track
@@ -484,7 +486,7 @@ local function resolve_audio_hls_query_options(
 	local preferred_codecs = parse_preferred_csv_values(raw_codec)
 	local selected_codec = find_supported_audio_hls_codec(preferred_codecs)
 	if preferred_codecs ~= nil and selected_codec == nil then
-		return nil, nil, responses.bad_request("unsupported hls codec; supported values: aac, alac, flac")
+		return nil, nil, responses.bad_request("unsupported hls codec; supported values: aac, alac, flac, mp3, opus")
 	end
 
 	local raw_audio_bitrate =
@@ -545,13 +547,13 @@ local function resolve_audio_hls_variant_bandwidth(
 	local source = media.resolve_playback_source_for_track(track)
 	local track_bitrate = if source and source.bitrate_bps and source.bitrate_bps > 0 then source.bitrate_bps else nil
 
-	if codec == "aac" then
+	if LOSSY_AUDIO_HLS_CODECS[codec] then
 		if requested_bitrate ~= nil then
 			if track_bitrate ~= nil and requested_bitrate > track_bitrate then
 				return DEFAULT_AUDIO_HLS_BANDWIDTH_BPS
 			end
-			if requested_bitrate < MIN_AUDIO_HLS_AAC_BANDWIDTH_BPS then
-				return MIN_AUDIO_HLS_AAC_BANDWIDTH_BPS
+			if requested_bitrate < MIN_AUDIO_HLS_LOSSY_BANDWIDTH_BPS then
+				return MIN_AUDIO_HLS_LOSSY_BANDWIDTH_BPS
 			end
 			return requested_bitrate
 		end
@@ -568,7 +570,7 @@ local function build_audio_hls_master_playlist(
 	selected_codec: string
 ): string
 	local bandwidth = resolve_audio_hls_variant_bandwidth(track, options, selected_codec)
-	local codec_string = codec_string_for_audio_hls(selected_codec)
+	local codec_string = AUDIO_HLS_CODEC_STRINGS[selected_codec]
 	local stream_inf = `#EXT-X-STREAM-INF:BANDWIDTH={bandwidth},AVERAGE-BANDWIDTH={bandwidth}`
 	if codec_string then
 		stream_inf ..= `,CODECS="{codec_string}"`
@@ -627,7 +629,7 @@ local function resolve_audio_hls_playlist_request(ctx: ApiContext): (ResolvedAud
 		nil
 end
 
-local function handle_audio_hls_master_playlist_route(ctx: ApiContext): ApiResponse
+function module.handle_hls_master_route(ctx: ApiContext): ApiResponse
 	local request, err = resolve_audio_hls_playlist_request(ctx)
 	if request == nil then
 		return err or responses.bad_request("invalid hls request")
@@ -642,7 +644,7 @@ local function handle_audio_hls_master_playlist_route(ctx: ApiContext): ApiRespo
 	)
 end
 
-local function handle_audio_hls_main_playlist_route(ctx: ApiContext): ApiResponse
+function module.handle_hls_main_route(ctx: ApiContext): ApiResponse
 	local request, err = resolve_audio_hls_playlist_request(ctx)
 	if request == nil then
 		return err or responses.bad_request("invalid hls request")
@@ -757,10 +759,10 @@ function module.register()
 	api.head(P .. "/Audio/{itemId}/stream", module.handle_stream_route, "public", true)
 	api.get(P .. "/Audio/{itemId}/stream.{container}", module.handle_stream_route, "public", true)
 	api.head(P .. "/Audio/{itemId}/stream.{container}", module.handle_stream_route, "public", true)
-	api.get(P .. "/Audio/{itemId}/master.m3u8", handle_audio_hls_master_playlist_route, "public", true)
-	api.head(P .. "/Audio/{itemId}/master.m3u8", handle_audio_hls_master_playlist_route, "public", true)
-	api.get(P .. "/Audio/{itemId}/main.m3u8", handle_audio_hls_main_playlist_route, "public", true)
-	api.head(P .. "/Audio/{itemId}/main.m3u8", handle_audio_hls_main_playlist_route, "public", true)
+	api.get(P .. "/Audio/{itemId}/master.m3u8", module.handle_hls_master_route, "public", true)
+	api.head(P .. "/Audio/{itemId}/master.m3u8", module.handle_hls_master_route, "public", true)
+	api.get(P .. "/Audio/{itemId}/main.m3u8", module.handle_hls_main_route, "public", true)
+	api.head(P .. "/Audio/{itemId}/main.m3u8", module.handle_hls_main_route, "public", true)
 end
 
 return module
