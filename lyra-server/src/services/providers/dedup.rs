@@ -17,6 +17,10 @@ use agdb::{
     DbId,
 };
 
+use crate::services::metadata::id_links::{
+    LinkedIds,
+    provider_ranks,
+};
 use crate::services::metadata::layers::MANUAL_SOURCE_ID;
 
 pub(super) fn select_release_merge_winner(
@@ -171,80 +175,46 @@ pub(super) fn deduplicate_releases_by_external_id(
     }
 
     let releases = lyra_db::releases::get(db, library_db_id)?;
-    let mut groups: HashMap<String, Vec<DbId>> = HashMap::new();
+    let mut linked = LinkedIds::default();
     for release in releases {
         let Some(release_db_id) = release.db_id.map(Into::into) else {
             continue;
         };
-
         for external_id in lyra_db::external_ids::get_for_entity(db, release_db_id)? {
-            if let Some(scope) = provider_scope
-                && !scope.contains(&external_id.provider_id)
-            {
-                continue;
-            }
-
             if !unique_release_id_pairs
                 .contains(&(external_id.provider_id.clone(), external_id.id_type.clone()))
             {
                 continue;
             }
-
-            let id_value = external_id.id_value.trim();
-            if id_value.is_empty() {
-                continue;
-            }
-
-            let key = format!(
-                "{}:{}:{}",
-                external_id.provider_id, external_id.id_type, id_value
+            // Every provider's IDs keep conflicting releases apart, in scope or not.
+            let in_scope =
+                provider_scope.is_none_or(|scope| scope.contains(&external_id.provider_id));
+            linked.add(
+                release_db_id,
+                &external_id.provider_id,
+                &external_id.id_type,
+                &external_id.id_value,
+                in_scope,
             );
-            groups.entry(key).or_default().push(release_db_id);
         }
     }
 
-    let mut releases_in_merge_groups = HashSet::new();
-    for release_ids in groups.values() {
-        if release_ids.len() > 1 {
-            for release_db_id in release_ids {
-                releases_in_merge_groups.insert(*release_db_id);
-            }
-        }
-    }
-
+    let ranks = provider_ranks(db)?;
+    let components = linked.components(&ranks);
     let mut track_ids_cache: HashMap<DbId, HashSet<String>> = HashMap::new();
     if !unique_track_id_pairs.is_empty() {
-        for &release_db_id in &releases_in_merge_groups {
+        for &release_db_id in components.iter().flat_map(|component| &component.ids) {
             let ids = collect_track_unique_ids(db, release_db_id, unique_track_id_pairs)?;
             track_ids_cache.insert(release_db_id, ids);
         }
     }
 
-    let mut live_releases: HashSet<DbId> = releases_in_merge_groups.clone();
     let mut merged_count = 0;
-    for (key, release_ids) in groups {
-        let mut unique_release_ids = Vec::new();
-        let mut seen = HashSet::new();
-        for release_db_id in release_ids {
-            if seen.insert(release_db_id) && live_releases.contains(&release_db_id) {
-                unique_release_ids.push(release_db_id);
-            }
-        }
-        if unique_release_ids.len() <= 1 {
-            continue;
-        }
-
-        let winner = select_release_merge_winner(db, &unique_release_ids)?;
-        let winner_track_ids = track_ids_cache.get(&winner);
-        for loser in unique_release_ids
-            .into_iter()
-            .filter(|release_db_id| *release_db_id != winner)
-        {
-            if !live_releases.contains(&loser) {
-                continue;
-            }
-
-            if let Some(w_ids) = winner_track_ids
+    for component in components {
+        let winner = select_release_merge_winner(db, &component.ids)?;
+        for &loser in component.ids.iter().filter(|&&id| id != winner) {
+            // The winner's tracks include those it absorbed from earlier losers.
+            if let Some(w_ids) = track_ids_cache.get(&winner)
                 && !w_ids.is_empty()
                 && let Some(l_ids) = track_ids_cache.get(&loser)
                 && !l_ids.is_empty()
@@ -254,7 +224,7 @@ pub(super) fn deduplicate_releases_by_external_id(
                     library_db_id = library_db_id.0,
                     winner = winner.0,
                     loser = loser.0,
-                    unique_id = %key,
+                    unique_ids = ?component.keys,
                     "skipping release merge due to overlapping track unique ids"
                 );
                 continue;
@@ -264,11 +234,13 @@ pub(super) fn deduplicate_releases_by_external_id(
                 library_db_id = library_db_id.0,
                 winner = winner.0,
                 loser = loser.0,
-                unique_id = %key,
+                unique_ids = ?component.keys,
                 "merging releases by provider unique id"
             );
             merge_release_into(db, winner, loser)?;
-            live_releases.remove(&loser);
+            if let Some(l_ids) = track_ids_cache.remove(&loser) {
+                track_ids_cache.entry(winner).or_default().extend(l_ids);
+            }
             merged_count += 1;
         }
     }

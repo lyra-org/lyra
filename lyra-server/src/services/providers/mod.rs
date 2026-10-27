@@ -467,4 +467,284 @@ mod tests {
 
         Ok(())
     }
+
+    /// Both orders in which the two linking providers' groups can run.
+    const LINK_ORDERS: [(&str, &str); 2] =
+        [("provider-a", "provider-b"), ("provider-b", "provider-a")];
+
+    /// Three releases in one library, the middle one sharing a release ID from
+    /// each linking provider with one neighbour, plus the release IDs
+    /// `other_ids` lists by index; each release gets a track per recording ID.
+    /// MusicBrainz ranks above `provider-a`, which ranks above `provider-b`.
+    fn insert_bridged_releases(
+        db: &mut DbAny,
+        library_db_id: DbId,
+        (first, second): (&str, &str),
+        recordings: [&[&str]; 3],
+        other_ids: &[(usize, &str, &str)],
+    ) -> anyhow::Result<Vec<DbId>> {
+        for (position, provider_id) in ["musicbrainz", "provider-a", "provider-b"]
+            .into_iter()
+            .enumerate()
+        {
+            lyra_db::providers::upsert(
+                db,
+                &lyra_db::ProviderConfig {
+                    db_id: None,
+                    provider_id: provider_id.to_string(),
+                    position: position as u32,
+                    enabled: true,
+                },
+            )?;
+        }
+        let mut releases = Vec::new();
+        for (title, recordings) in ["Left", "Bridge", "Right"].into_iter().zip(recordings) {
+            let release = insert_release(db, title)?;
+            connect(db, library_db_id, release)?;
+            for &recording in recordings {
+                let track = insert_track(db, recording)?;
+                connect(db, release, track)?;
+                external_ids::upsert(
+                    db,
+                    track,
+                    "musicbrainz",
+                    "recording_id",
+                    recording,
+                    IdSource::Resolved,
+                )?;
+            }
+            releases.push(release);
+        }
+        let links = [
+            (0, first, "left"),
+            (1, first, "left"),
+            (1, second, "right"),
+            (2, second, "right"),
+        ];
+        for &(index, provider_id, id_value) in links.iter().chain(other_ids) {
+            external_ids::upsert(
+                db,
+                releases[index],
+                provider_id,
+                "release_id",
+                id_value,
+                IdSource::Resolved,
+            )?;
+        }
+        Ok(releases)
+    }
+
+    fn deduplicate_bridged_releases(db: &mut DbAny, library_db_id: DbId) -> anyhow::Result<u32> {
+        let release_pairs = ["musicbrainz", "provider-a", "provider-b"]
+            .into_iter()
+            .map(|provider_id| (provider_id.to_string(), "release_id".to_string()))
+            .collect();
+        let track_pairs = HashSet::from([("musicbrainz".to_string(), "recording_id".to_string())]);
+        deduplicate_releases_by_external_id(db, library_db_id, &release_pairs, &track_pairs, None)
+    }
+
+    #[test]
+    fn deduplicate_releases_merges_a_release_sharing_ids_with_two_others() -> anyhow::Result<()> {
+        // The bridging release is merged away by whichever of its groups runs first.
+        for order in LINK_ORDERS {
+            let mut db = new_test_db()?;
+            let library_db_id = insert_library(&mut db, "Music", "/music")?;
+            insert_bridged_releases(
+                &mut db,
+                library_db_id,
+                order,
+                [&["r1"], &["r2"], &["r3"]],
+                &[],
+            )?;
+
+            let merged = deduplicate_bridged_releases(&mut db, library_db_id)?;
+            assert_eq!(merged, 2, "{order:?}");
+            assert_eq!(release_ids_for_library(&db, library_db_id)?.len(), 1);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn deduplicate_releases_checks_overlap_against_the_tracks_a_winner_absorbed()
+    -> anyhow::Result<()> {
+        for order in LINK_ORDERS {
+            let mut db = new_test_db()?;
+            let library_db_id = insert_library(&mut db, "Music", "/music")?;
+            // The left release wins ties and absorbs the bridge first, whose
+            // recording returns on the right one.
+            insert_bridged_releases(
+                &mut db,
+                library_db_id,
+                order,
+                [&["r1"], &["r2"], &["r2"]],
+                &[],
+            )?;
+
+            let merged = deduplicate_bridged_releases(&mut db, library_db_id)?;
+            assert_eq!(merged, 1, "{order:?}");
+            assert_eq!(release_ids_for_library(&db, library_db_id)?.len(), 2);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn deduplicate_releases_merges_into_the_one_ranked_first_across_all_of_them()
+    -> anyhow::Result<()> {
+        // Merging the first pair alone would lift its winner above the right
+        // release, which has the most tracks of all three.
+        for order in LINK_ORDERS {
+            let mut db = new_test_db()?;
+            let library_db_id = insert_library(&mut db, "Music", "/music")?;
+            let releases = insert_bridged_releases(
+                &mut db,
+                library_db_id,
+                order,
+                [&["l1", "l2"], &["b1", "b2"], &["r1", "r2", "r3"]],
+                &[],
+            )?;
+
+            assert_eq!(deduplicate_bridged_releases(&mut db, library_db_id)?, 2);
+            assert_eq!(
+                release_ids_for_library(&db, library_db_id)?,
+                [releases[2]],
+                "{order:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn deduplicate_releases_keeps_releases_with_other_musicbrainz_ids_apart() -> anyhow::Result<()>
+    {
+        for order in LINK_ORDERS {
+            let mut db = new_test_db()?;
+            let library_db_id = insert_library(&mut db, "Music", "/music")?;
+            insert_bridged_releases(
+                &mut db,
+                library_db_id,
+                order,
+                [&["r1"], &["r2"], &["r3"]],
+                &[
+                    (0, "musicbrainz", "one"),
+                    (1, "musicbrainz", "two"),
+                    (2, "musicbrainz", "three"),
+                ],
+            )?;
+
+            assert_eq!(deduplicate_bridged_releases(&mut db, library_db_id)?, 0);
+            assert_eq!(release_ids_for_library(&db, library_db_id)?.len(), 3);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn deduplicate_releases_does_not_merge_a_chain_across_a_conflict() -> anyhow::Result<()> {
+        // The bridge may join either end, but never both ends together.
+        for order in LINK_ORDERS {
+            let mut db = new_test_db()?;
+            let library_db_id = insert_library(&mut db, "Music", "/music")?;
+            let releases = insert_bridged_releases(
+                &mut db,
+                library_db_id,
+                order,
+                [&["l1", "l2"], &["b1"], &["r1", "r2"]],
+                &[(0, "musicbrainz", "one"), (2, "musicbrainz", "two")],
+            )?;
+
+            assert_eq!(
+                deduplicate_bridged_releases(&mut db, library_db_id)?,
+                1,
+                "{order:?}"
+            );
+            let mut remaining = release_ids_for_library(&db, library_db_id)?;
+            remaining.sort();
+            assert_eq!(remaining, [releases[0], releases[2]], "{order:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn deduplicate_releases_merges_past_a_lower_ranked_conflicting_id() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let library_db_id = insert_library(&mut db, "Music", "/music")?;
+        // The left pair shares a MusicBrainz ID; provider-a matched each to
+        // its own album.
+        insert_bridged_releases(
+            &mut db,
+            library_db_id,
+            ("musicbrainz", "provider-b"),
+            [&["r1"], &["r2"], &["r3"]],
+            &[(0, "provider-a", "one"), (1, "provider-a", "two")],
+        )?;
+
+        assert_eq!(deduplicate_bridged_releases(&mut db, library_db_id)?, 2);
+        let remaining = release_ids_for_library(&db, library_db_id)?;
+        assert_eq!(remaining.len(), 1);
+        let provider_a_ids = external_ids::get_for_entity(&db, remaining[0])?
+            .into_iter()
+            .filter(|id| id.provider_id == "provider-a")
+            .count();
+        assert_eq!(provider_a_ids, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn a_scoped_dedup_merges_releases_that_conflict_only_with_a_third() -> anyhow::Result<()> {
+        // The out-of-scope MusicBrainz IDs keep the odd release apart without
+        // linking the other two. It takes every place, so it is first in its
+        // group in one of them.
+        for odd in 0..3 {
+            let mut db = new_test_db()?;
+            let library_db_id = insert_library(&mut db, "Music", "/music")?;
+            for (position, provider_id) in ["musicbrainz", "provider"].into_iter().enumerate() {
+                lyra_db::providers::upsert(
+                    &mut db,
+                    &lyra_db::ProviderConfig {
+                        db_id: None,
+                        provider_id: provider_id.to_string(),
+                        position: position as u32,
+                        enabled: true,
+                    },
+                )?;
+            }
+            let mut releases = Vec::new();
+            for index in 0..3 {
+                let release = insert_release(&mut db, "Release")?;
+                connect(&mut db, library_db_id, release)?;
+                let musicbrainz_id = if index == odd { "one" } else { "two" };
+                for (provider_id, id_value) in
+                    [("provider", "shared"), ("musicbrainz", musicbrainz_id)]
+                {
+                    external_ids::upsert(
+                        &mut db,
+                        release,
+                        provider_id,
+                        "release_id",
+                        id_value,
+                        IdSource::Resolved,
+                    )?;
+                }
+                releases.push(release);
+            }
+            let release_pairs = ["musicbrainz", "provider"]
+                .into_iter()
+                .map(|provider_id| (provider_id.to_string(), "release_id".to_string()))
+                .collect();
+            let scope = HashSet::from(["provider".to_string()]);
+
+            let merged = deduplicate_releases_by_external_id(
+                &mut db,
+                library_db_id,
+                &release_pairs,
+                &HashSet::new(),
+                Some(&scope),
+            )?;
+
+            assert_eq!(merged, 1, "{odd}");
+            let remaining = release_ids_for_library(&db, library_db_id)?;
+            assert_eq!(remaining.len(), 2, "{odd}");
+            assert!(remaining.contains(&releases[odd]), "{odd}");
+        }
+        Ok(())
+    }
 }
