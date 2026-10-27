@@ -1,0 +1,11 @@
+run_as = "listener"
+
+# A listener with one playlist whose name holds characters a file name can't.
+
+[[users]]
+key = "listener"
+
+[[playlists]]
+key = "trip"
+owner = "listener"
+name = 'Road/Trip: "Mix"?'

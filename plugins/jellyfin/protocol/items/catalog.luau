@@ -1289,6 +1289,16 @@ function module.to_music_view_items(include_child_count: boolean): { ItemInfo }
 	return items
 end
 
+-- Where upstream keeps the playlists it creates, `<DataPath>/playlists`. Lyra's playlists aren't
+-- files, but clients tell a server's own playlists apart by this path, as Jellify does.
+local PLAYLISTS_PATH = "/config/data/playlists"
+
+-- A playlist's folder as upstream names it: the name with the characters its file system rejects
+-- replaced by spaces.
+function helpers.playlist_path(name: string): string
+	return `{PLAYLISTS_PATH}/{(string.gsub(name, '[%z\1-\31"<>|:%*%?\\/]', " "))}`
+end
+
 -- Upstream's playlists view, the folder its playlists live in.
 function module.playlists_folder_item(child_count: number?): ItemInfo
 	local id = constants.PLAYLISTS_FOLDER_ID
@@ -1298,6 +1308,7 @@ function module.playlists_folder_item(child_count: number?): ItemInfo
 		SortName = "playlists",
 		Type = "ManualPlaylistsFolder",
 		CollectionType = "playlists",
+		Path = PLAYLISTS_PATH,
 		IsFolder = true,
 		UserData = user_data.get_user_data({ key = id, item_hex_id = id }),
 		LocationType = "FileSystem",
@@ -1336,6 +1347,7 @@ function helpers.to_playlist_item(
 		Name = playlist_name,
 		Type = "Playlist",
 		SortName = playlist_name,
+		Path = helpers.playlist_path(playlist_name),
 		ChildCount = child_count,
 		RunTimeTicks = helpers.lookup_by_id(
 			if context then context.runtime_ticks_by_playlist_id else nil,
