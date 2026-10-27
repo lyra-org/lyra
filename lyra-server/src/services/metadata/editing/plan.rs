@@ -18,6 +18,7 @@ use crate::services::metadata::{
 use lyra_db::{
     DbAccess,
     MetadataField,
+    metadata::layers::FieldValue,
 };
 
 use super::{
@@ -32,7 +33,7 @@ use super::{
         MetadataValueSource,
     },
     normalize::{
-        layer_labels,
+        linked_labels,
         normalized_set_value,
         validate_target,
     },
@@ -91,27 +92,11 @@ fn inherited_value(
             }
             serde_json::to_value(relations)?
         }
-        field => {
-            let Some(value) = merged.fields.get(&field).filter(|value| !value.is_null()) else {
-                return cleared_value(state, field);
-            };
-            if field == MetadataField::Labels {
-                // The winning layer's own labels, not ones that share their names.
-                let source_id = merged.provenance.get(&field).ok_or_else(|| {
-                    MetadataEditingError::Internal(anyhow::anyhow!(
-                        "resolved labels have no source"
-                    ))
-                })?;
-                let layer_id = lyra_db::metadata::layers::layer_id(db, state.db_id, source_id)?
-                    .ok_or_else(|| {
-                        MetadataEditingError::Internal(anyhow::anyhow!(
-                            "the labels' layer disappeared"
-                        ))
-                    })?;
-                return layer_labels(db, layer_id);
-            }
-            value.clone()
-        }
+        field => match merged.fields.get(&field).and_then(Option::as_ref) {
+            None => return cleared_value(state, field),
+            Some(FieldValue::Labels(links)) => return linked_labels(db, links),
+            Some(value) => crate::services::metadata::layers::json::value_json(db, Some(value))?,
+        },
     };
     normalized_set_value(db, state, field, &value)
 }

@@ -10,20 +10,15 @@ use agdb::{
     DbType,
 };
 use anyhow::Context;
-use serde::Serialize;
-use serde_json::{
-    Value,
-    json,
-};
 
 use super::{
+    FieldValue,
     LayerCredits,
     LayerFields,
     LayerRelations,
     MetadataLayer,
-    decode,
     edges,
-    label_inputs,
+    field_value,
     normalize_value,
 };
 use crate::{
@@ -35,11 +30,7 @@ use crate::{
     },
     credits::CreditType,
     entities::MetadataEntityType,
-    genres,
-    labels::{
-        self,
-        LabelLinkInput,
-    },
+    labels::LabelLinkInput,
     releases::ReleaseType,
 };
 
@@ -47,19 +38,17 @@ use crate::{
 /// fields the source has an opinion on: a supplied field without its property
 /// clears it, and an unsupplied field falls through to the next layer.
 pub(super) trait LayerElement: DbType<ValueType = Self> + PartialEq + Sized {
+    const ENTITY: MetadataEntityType;
+    /// Builds the element from a layer [`validated`] for its entity.
     fn from_layer(layer: &MetadataLayer) -> anyhow::Result<Self>;
     /// Reads the stored layer, with relationship fields from its edges.
     fn to_layer(&self, db: &impl DbAccess) -> anyhow::Result<MetadataLayer>;
-    /// Writes the relationship fields as edges, linking `labels` by id when
-    /// given. Returns false when unchanged.
+    /// Writes the relationship fields as edges. Returns false when unchanged.
     fn save_edges(
-        _db: &mut DbAnyTransactionMut<'_>,
-        _layer_id: DbId,
-        _layer: &MetadataLayer,
-        _labels: Option<&[LabelLinkInput]>,
-    ) -> anyhow::Result<bool> {
-        Ok(false)
-    }
+        db: &mut DbAnyTransactionMut<'_>,
+        layer_id: DbId,
+        layer: &MetadataLayer,
+    ) -> anyhow::Result<bool>;
     fn source_id(&self) -> &str;
     fn updated_at(&self) -> u64;
     fn set_db_id(&mut self, db_id: Option<DbId>);
@@ -81,9 +70,10 @@ pub(super) struct ReleaseLayer {
 }
 
 impl LayerElement for ReleaseLayer {
+    const ENTITY: MetadataEntityType = MetadataEntityType::Release;
+
     fn from_layer(layer: &MetadataLayer) -> anyhow::Result<Self> {
-        let fields = validated_fields(MetadataEntityType::Release, &layer.fields)?;
-        anyhow::ensure!(layer.relations.is_empty(), "only an artist has relations");
+        let fields = &layer.fields;
         let mut element = Self {
             source_id: layer.source_id.clone(),
             updated_at: layer.updated_at,
@@ -99,17 +89,10 @@ impl LayerElement for ReleaseLayer {
                 .collect(),
             ..Self::default()
         };
-        for (field, value) in fields.into_iter().filter(|(_, value)| !value.is_null()) {
-            match field {
-                MetadataField::ReleaseTitle => element.release_title = Some(decode(field, &value)?),
-                MetadataField::SortTitle => element.sort_title = Some(decode(field, &value)?),
-                MetadataField::ReleaseType => element.release_type = Some(decode(field, &value)?),
-                MetadataField::ReleaseDate => element.release_date = Some(decode(field, &value)?),
-                // Stored as edges by `save_edges`.
-                MetadataField::Genres | MetadataField::Labels => {}
-                _ => unreachable!("validated_fields rejects fields a release cannot hold"),
-            }
-        }
+        element.release_title = field_value(fields, MetadataField::ReleaseTitle)?;
+        element.sort_title = field_value(fields, MetadataField::SortTitle)?;
+        element.release_type = field_value(fields, MetadataField::ReleaseType)?;
+        element.release_date = field_value(fields, MetadataField::ReleaseDate)?;
         Ok(element)
     }
 
@@ -119,15 +102,12 @@ impl LayerElement for ReleaseLayer {
             MetadataEntityType::Release,
             &self.supplied,
             [
-                (
-                    MetadataField::ReleaseTitle,
-                    json_value(&self.release_title)?,
-                ),
-                (MetadataField::SortTitle, json_value(&self.sort_title)?),
-                (MetadataField::ReleaseType, json_value(&self.release_type)?),
-                (MetadataField::ReleaseDate, json_value(&self.release_date)?),
-                (MetadataField::Genres, genre_names(db, layer_id)?),
-                (MetadataField::Labels, label_values(db, layer_id)?),
+                (MetadataField::ReleaseTitle, stored(&self.release_title)),
+                (MetadataField::SortTitle, stored(&self.sort_title)),
+                (MetadataField::ReleaseType, stored(&self.release_type)),
+                (MetadataField::ReleaseDate, stored(&self.release_date)),
+                (MetadataField::Genres, genre_ids(db, layer_id)?),
+                (MetadataField::Labels, label_links(db, layer_id)?),
             ],
         )?;
         Ok(
@@ -169,20 +149,11 @@ impl LayerElement for ReleaseLayer {
         db: &mut DbAnyTransactionMut<'_>,
         layer_id: DbId,
         layer: &MetadataLayer,
-        labels: Option<&[LabelLinkInput]>,
     ) -> anyhow::Result<bool> {
-        let supplied = |field| layer.fields.get(&field).filter(|value| !value.is_null());
-        let genre_ids = match supplied(MetadataField::Genres) {
-            Some(value) => {
-                genres::resolve_names(db, &decode::<Vec<String>>(MetadataField::Genres, value)?)?
-            }
-            None => Vec::new(),
-        };
-        let label_links = match (supplied(MetadataField::Labels), labels) {
-            (Some(_), Some(labels)) => labels.to_vec(),
-            (Some(value), None) => labels::resolve_label_inputs(db, &label_inputs(value)?)?,
-            (None, _) => Vec::new(),
-        };
+        let genre_ids: Vec<DbId> =
+            field_value(&layer.fields, MetadataField::Genres)?.unwrap_or_default();
+        let label_links: Vec<LabelLinkInput> =
+            field_value(&layer.fields, MetadataField::Labels)?.unwrap_or_default();
         let genres_changed = edges::replace_genres(db, layer_id, &genre_ids)?;
         let labels_changed = edges::replace_labels(db, layer_id, &label_links)?;
         let credits_changed = save_credits(db, layer_id, layer)?;
@@ -206,9 +177,10 @@ pub(super) struct TrackLayer {
 }
 
 impl LayerElement for TrackLayer {
+    const ENTITY: MetadataEntityType = MetadataEntityType::Track;
+
     fn from_layer(layer: &MetadataLayer) -> anyhow::Result<Self> {
-        let fields = validated_fields(MetadataEntityType::Track, &layer.fields)?;
-        anyhow::ensure!(layer.relations.is_empty(), "only an artist has relations");
+        let fields = &layer.fields;
         let mut element = Self {
             source_id: layer.source_id.clone(),
             updated_at: layer.updated_at,
@@ -224,18 +196,13 @@ impl LayerElement for TrackLayer {
                 .collect(),
             ..Self::default()
         };
-        for (field, value) in fields.into_iter().filter(|(_, value)| !value.is_null()) {
-            match field {
-                MetadataField::TrackTitle => element.track_title = Some(decode(field, &value)?),
-                MetadataField::SortTitle => element.sort_title = Some(decode(field, &value)?),
-                MetadataField::Year => element.year = Some(decode(field, &value)?),
-                MetadataField::Disc => element.disc = Some(decode(field, &value)?),
-                MetadataField::DiscTotal => element.disc_total = Some(decode(field, &value)?),
-                MetadataField::Track => element.track = Some(decode(field, &value)?),
-                MetadataField::TrackTotal => element.track_total = Some(decode(field, &value)?),
-                _ => unreachable!("validated_fields rejects fields a track cannot hold"),
-            }
-        }
+        element.track_title = field_value(fields, MetadataField::TrackTitle)?;
+        element.sort_title = field_value(fields, MetadataField::SortTitle)?;
+        element.year = field_value(fields, MetadataField::Year)?;
+        element.disc = field_value(fields, MetadataField::Disc)?;
+        element.disc_total = field_value(fields, MetadataField::DiscTotal)?;
+        element.track = field_value(fields, MetadataField::Track)?;
+        element.track_total = field_value(fields, MetadataField::TrackTotal)?;
         Ok(element)
     }
 
@@ -245,13 +212,13 @@ impl LayerElement for TrackLayer {
             MetadataEntityType::Track,
             &self.supplied,
             [
-                (MetadataField::TrackTitle, json_value(&self.track_title)?),
-                (MetadataField::SortTitle, json_value(&self.sort_title)?),
-                (MetadataField::Year, json_value(&self.year)?),
-                (MetadataField::Disc, json_value(&self.disc)?),
-                (MetadataField::DiscTotal, json_value(&self.disc_total)?),
-                (MetadataField::Track, json_value(&self.track)?),
-                (MetadataField::TrackTotal, json_value(&self.track_total)?),
+                (MetadataField::TrackTitle, stored(&self.track_title)),
+                (MetadataField::SortTitle, stored(&self.sort_title)),
+                (MetadataField::Year, stored(&self.year)),
+                (MetadataField::Disc, stored(&self.disc)),
+                (MetadataField::DiscTotal, stored(&self.disc_total)),
+                (MetadataField::Track, stored(&self.track)),
+                (MetadataField::TrackTotal, stored(&self.track_total)),
             ],
         )?;
         Ok(
@@ -296,7 +263,6 @@ impl LayerElement for TrackLayer {
         db: &mut DbAnyTransactionMut<'_>,
         layer_id: DbId,
         layer: &MetadataLayer,
-        _labels: Option<&[LabelLinkInput]>,
     ) -> anyhow::Result<bool> {
         save_credits(db, layer_id, layer)
     }
@@ -315,9 +281,10 @@ pub(super) struct ArtistLayer {
 }
 
 impl LayerElement for ArtistLayer {
+    const ENTITY: MetadataEntityType = MetadataEntityType::Artist;
+
     fn from_layer(layer: &MetadataLayer) -> anyhow::Result<Self> {
-        let fields = validated_fields(MetadataEntityType::Artist, &layer.fields)?;
-        anyhow::ensure!(layer.credits.is_empty(), "an artist has no credits");
+        let fields = &layer.fields;
         let mut element = Self {
             source_id: layer.source_id.clone(),
             updated_at: layer.updated_at,
@@ -333,15 +300,10 @@ impl LayerElement for ArtistLayer {
                 .collect(),
             ..Self::default()
         };
-        for (field, value) in fields.into_iter().filter(|(_, value)| !value.is_null()) {
-            match field {
-                MetadataField::ArtistName => element.artist_name = Some(decode(field, &value)?),
-                MetadataField::SortName => element.sort_name = Some(decode(field, &value)?),
-                MetadataField::ArtistType => element.artist_type = Some(decode(field, &value)?),
-                MetadataField::Description => element.description = Some(decode(field, &value)?),
-                _ => unreachable!("validated_fields rejects fields an artist cannot hold"),
-            }
-        }
+        element.artist_name = field_value(fields, MetadataField::ArtistName)?;
+        element.sort_name = field_value(fields, MetadataField::SortName)?;
+        element.artist_type = field_value(fields, MetadataField::ArtistType)?;
+        element.description = field_value(fields, MetadataField::Description)?;
         Ok(element)
     }
 
@@ -374,10 +336,10 @@ impl LayerElement for ArtistLayer {
             MetadataEntityType::Artist,
             &self.supplied,
             [
-                (MetadataField::ArtistName, json_value(&self.artist_name)?),
-                (MetadataField::SortName, json_value(&self.sort_name)?),
-                (MetadataField::ArtistType, json_value(&self.artist_type)?),
-                (MetadataField::Description, json_value(&self.description)?),
+                (MetadataField::ArtistName, stored(&self.artist_name)),
+                (MetadataField::SortName, stored(&self.sort_name)),
+                (MetadataField::ArtistType, stored(&self.artist_type)),
+                (MetadataField::Description, stored(&self.description)),
             ],
         )?;
         Ok(
@@ -419,7 +381,6 @@ impl LayerElement for ArtistLayer {
         db: &mut DbAnyTransactionMut<'_>,
         layer_id: DbId,
         layer: &MetadataLayer,
-        _labels: Option<&[LabelLinkInput]>,
     ) -> anyhow::Result<bool> {
         let mut changed = false;
         for relation_type in ArtistRelationType::ALL {
@@ -514,12 +475,22 @@ fn parse_relation_key(name: &str) -> anyhow::Result<Option<ArtistRelationType>> 
     ))
 }
 
-/// Validates and normalizes a layer's fields for `entity`.
-fn validated_fields(
+/// `layer` checked against what `entity` holds, with its values normalized.
+pub(super) fn validated(
     entity: MetadataEntityType,
-    fields: &LayerFields,
-) -> anyhow::Result<LayerFields> {
-    fields
+    layer: &MetadataLayer,
+) -> anyhow::Result<MetadataLayer> {
+    let is_artist = entity == MetadataEntityType::Artist;
+    anyhow::ensure!(
+        is_artist || layer.relations.is_empty(),
+        "only an artist has relations"
+    );
+    anyhow::ensure!(
+        !is_artist || layer.credits.is_empty(),
+        "an artist has no credits"
+    );
+    let fields = layer
+        .fields
         .iter()
         .map(|(&field, value)| {
             anyhow::ensure!(
@@ -529,15 +500,19 @@ fn validated_fields(
             );
             Ok((field, normalize_value(field, value.clone())?))
         })
-        .collect()
+        .collect::<anyhow::Result<_>>()?;
+    Ok(MetadataLayer {
+        fields,
+        ..layer.clone()
+    })
 }
 
-/// Reads stored properties back as layer fields, `null` for a supplied field
-/// without its property.
+/// Reads stored values back as layer fields, `None` for a supplied field
+/// without a stored value.
 fn stored_fields(
     entity: MetadataEntityType,
     supplied: &[String],
-    stored: impl IntoIterator<Item = (MetadataField, Option<Value>)>,
+    stored: impl IntoIterator<Item = (MetadataField, Option<FieldValue>)>,
 ) -> anyhow::Result<LayerFields> {
     let mut fields = LayerFields::new();
     for name in supplied {
@@ -564,7 +539,7 @@ fn stored_fields(
             entity.as_str()
         );
         anyhow::ensure!(
-            fields.insert(field, Value::Null).is_none(),
+            fields.insert(field, None).is_none(),
             "'{field}' is supplied twice"
         );
     }
@@ -574,7 +549,7 @@ fn stored_fields(
         };
         *fields
             .get_mut(&field)
-            .with_context(|| format!("'{field}' is stored but not supplied"))? = value;
+            .with_context(|| format!("'{field}' is stored but not supplied"))? = Some(value);
     }
     fields
         .into_iter()
@@ -582,32 +557,28 @@ fn stored_fields(
         .collect()
 }
 
-/// A release layer's genres, by name, or `None` when it links none.
-fn genre_names(db: &impl DbAccess, layer_id: DbId) -> anyhow::Result<Option<Value>> {
-    let mut names = Vec::new();
-    for link in edges::genres(db, layer_id)? {
-        let genre = genres::get_by_id(db, link.target_id)?
-            .with_context(|| format!("genre {} is gone", link.target_id.0))?;
-        names.push(Value::String(genre.name));
-    }
-    Ok((!names.is_empty()).then_some(Value::Array(names)))
+fn stored<T: Clone + Into<FieldValue>>(value: &Option<T>) -> Option<FieldValue> {
+    value.clone().map(Into::into)
 }
 
-/// A release layer's labels with their catalog numbers, or `None` when it links none.
-fn label_values(db: &impl DbAccess, layer_id: DbId) -> anyhow::Result<Option<Value>> {
-    let mut values = Vec::new();
-    for link in edges::labels(db, layer_id)? {
-        let label = labels::get_by_id(db, link.target_id)?
-            .with_context(|| format!("label {} is gone", link.target_id.0))?;
-        let mut value = json!({ "name": label.name });
-        if let Some(catalog_number) = link.edge.catalog_number {
-            value["catalog_number"] = json!(catalog_number);
-        }
-        values.push(value);
-    }
-    Ok((!values.is_empty()).then_some(Value::Array(values)))
+/// A release layer's genres, in order, or `None` when it links none.
+fn genre_ids(db: &impl DbAccess, layer_id: DbId) -> anyhow::Result<Option<FieldValue>> {
+    let genre_ids: Vec<DbId> = edges::genres(db, layer_id)?
+        .into_iter()
+        .map(|link| link.target_id)
+        .collect();
+    Ok((!genre_ids.is_empty()).then_some(FieldValue::Genres(genre_ids)))
 }
 
-fn json_value<T: Serialize>(value: &Option<T>) -> anyhow::Result<Option<Value>> {
-    Ok(value.as_ref().map(serde_json::to_value).transpose()?)
+/// A release layer's labels with their catalog numbers, in order, or `None`
+/// when it links none.
+fn label_links(db: &impl DbAccess, layer_id: DbId) -> anyhow::Result<Option<FieldValue>> {
+    let links: Vec<LabelLinkInput> = edges::labels(db, layer_id)?
+        .into_iter()
+        .map(|link| LabelLinkInput {
+            label_id: link.target_id,
+            catalog_number: link.edge.catalog_number,
+        })
+        .collect();
+    Ok((!links.is_empty()).then_some(FieldValue::Labels(links)))
 }

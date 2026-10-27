@@ -152,7 +152,7 @@ fn preview_is_read_only_and_apply_persists_normalized_edit() -> anyhow::Result<(
         manual_layer(&db, track_id)?
             .expect("manual layer exists")
             .fields[&MetadataField::TrackTitle],
-        json!("New title")
+        Some("New title".into())
     );
     Ok(())
 }
@@ -346,7 +346,7 @@ fn a_manual_clear_outranks_later_provider_values() -> anyhow::Result<()> {
             source_id: "test-provider".to_string(),
             relations: Default::default(),
             credits: Default::default(),
-            fields: lyra_db::metadata::layers::fields_from_json(
+            fields: crate::services::metadata::layers::json::fields_from_json(
                 json!({"sort_title": "Provider sort", "year": 2024}),
             ),
             updated_at: 10,
@@ -444,7 +444,9 @@ fn inherit_drops_the_manual_value_and_restores_the_resolved_one() -> anyhow::Res
             source_id: "provider".to_string(),
             relations: Default::default(),
             credits: Default::default(),
-            fields: lyra_db::metadata::layers::fields_from_json(json!({"track_title": "Resolved"})),
+            fields: crate::services::metadata::layers::json::fields_from_json(
+                json!({"track_title": "Resolved"}),
+            ),
             updated_at: 10,
         },
     )?;
@@ -487,17 +489,17 @@ fn inherit_graph_field_restores_provider_resolved_value() -> anyhow::Result<()> 
             enabled: true,
         },
     )?;
-    lyra_db::metadata::layers::upsert(
-        &mut db,
-        release_id,
-        &lyra_db::MetadataLayer {
-            source_id: "provider".to_string(),
-            relations: Default::default(),
-            credits: Default::default(),
-            fields: lyra_db::metadata::layers::fields_from_json(json!({"genres": ["Provider"]})),
-            updated_at: 10,
-        },
-    )?;
+    let layer = lyra_db::MetadataLayer {
+        source_id: "provider".to_string(),
+        relations: Default::default(),
+        credits: Default::default(),
+        fields: crate::services::metadata::layers::json::resolved_fields_from_json(
+            &mut db,
+            json!({"genres": ["Provider"]}),
+        ),
+        updated_at: 10,
+    };
+    lyra_db::metadata::layers::upsert(&mut db, release_id, &layer)?;
     crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, release_id)?;
 
     let manual = preview_edit(
@@ -533,14 +535,18 @@ fn inherit_conflicts_when_provider_resolution_changes_after_preview() -> anyhow:
             enabled: true,
         },
     )?;
-    let provider_layer = |genres: &[&str], updated_at| lyra_db::MetadataLayer {
+    let provider_layer = |db: &mut DbAny, genres: &[&str], updated_at| lyra_db::MetadataLayer {
         source_id: "provider".to_string(),
         relations: Default::default(),
         credits: Default::default(),
-        fields: lyra_db::metadata::layers::fields_from_json(json!({"genres": genres})),
+        fields: crate::services::metadata::layers::json::resolved_fields_from_json(
+            db,
+            json!({"genres": genres}),
+        ),
         updated_at,
     };
-    lyra_db::metadata::layers::upsert(&mut db, release_id, &provider_layer(&["First"], 10))?;
+    let first = provider_layer(&mut db, &["First"], 10);
+    lyra_db::metadata::layers::upsert(&mut db, release_id, &first)?;
     crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, release_id)?;
     let manual = preview_edit(
         &db,
@@ -551,7 +557,8 @@ fn inherit_conflicts_when_provider_resolution_changes_after_preview() -> anyhow:
 
     let inherited = preview_edit(&db, release_id, vec![inherit(MetadataField::Genres)])?;
     assert_eq!(inherited.expected[0].after.value, json!(["First"]));
-    lyra_db::metadata::layers::upsert(&mut db, release_id, &provider_layer(&["Second"], 20))?;
+    let second = provider_layer(&mut db, &["Second"], 20);
+    lyra_db::metadata::layers::upsert(&mut db, release_id, &second)?;
 
     let error = apply(&mut db, release_id, &inherited)
         .expect_err("provider resolution changed after preview");
@@ -710,14 +717,13 @@ fn inherit_labels_restores_resolvable_provider_labels() -> anyhow::Result<()> {
             enabled: true,
         },
     )?;
-    lyra_db::metadata::layers::upsert(
-        &mut db,
-        release_id,
-        &lyra_db::MetadataLayer {
-            source_id: "provider".to_string(),
-            relations: Default::default(),
-            credits: Default::default(),
-            fields: lyra_db::metadata::layers::fields_from_json(json!({
+    let layer = lyra_db::MetadataLayer {
+        source_id: "provider".to_string(),
+        relations: Default::default(),
+        credits: Default::default(),
+        fields: crate::services::metadata::layers::json::resolved_fields_from_json(
+            &mut db,
+            json!({
                 "labels": [{
                     "name": "Provider Label",
                     "catalog_number": "PROV-1",
@@ -727,10 +733,11 @@ fn inherit_labels_restores_resolvable_provider_labels() -> anyhow::Result<()> {
                         "id_value": "provider-label"
                     }
                 }]
-            })),
-            updated_at: 10,
-        },
-    )?;
+            }),
+        ),
+        updated_at: 10,
+    };
+    lyra_db::metadata::layers::upsert(&mut db, release_id, &layer)?;
 
     let manual = preview_edit(
         &db,
@@ -796,14 +803,13 @@ fn inherit_labels_takes_the_layers_own_label_not_one_with_the_same_name() -> any
             enabled: true,
         },
     )?;
-    lyra_db::metadata::layers::upsert(
-        &mut db,
-        release_id,
-        &lyra_db::MetadataLayer {
-            source_id: "provider".to_string(),
-            relations: Default::default(),
-            credits: Default::default(),
-            fields: lyra_db::metadata::layers::fields_from_json(json!({
+    let layer = lyra_db::MetadataLayer {
+        source_id: "provider".to_string(),
+        relations: Default::default(),
+        credits: Default::default(),
+        fields: crate::services::metadata::layers::json::resolved_fields_from_json(
+            &mut db,
+            json!({
                 "labels": [{
                     "name": "Shared Name",
                     "catalog_number": null,
@@ -813,10 +819,11 @@ fn inherit_labels_takes_the_layers_own_label_not_one_with_the_same_name() -> any
                         "id_value": "different-identity"
                     }
                 }]
-            })),
-            updated_at: 10,
-        },
-    )?;
+            }),
+        ),
+        updated_at: 10,
+    };
+    lyra_db::metadata::layers::upsert(&mut db, release_id, &layer)?;
     let manual = preview_edit(
         &db,
         release_id,
@@ -855,9 +862,8 @@ fn a_manually_masked_provider_label_survives_while_its_layer_names_it() -> anyho
             enabled: true,
         },
     )?;
-    let fields = BTreeMap::from([(
-        MetadataField::Labels,
-        json!([{
+    let fields = crate::services::metadata::layers::json::inputs_from_json(json!({
+        "labels": [{
             "name": "Provider Label",
             "catalog_number": "PROV-1",
             "external_id": {
@@ -865,8 +871,8 @@ fn a_manually_masked_provider_label_survives_while_its_layer_names_it() -> anyho
                 "id_type": "label",
                 "id_value": "provider-label"
             }
-        }]),
-    )]);
+        }],
+    }));
     crate::services::metadata::layers::save_provider_layer(
         &mut db,
         release_id,
@@ -1045,14 +1051,13 @@ fn inherited_label_disappearance_after_preview_is_rejected() -> anyhow::Result<(
             enabled: true,
         },
     )?;
-    lyra_db::metadata::layers::upsert(
-        &mut db,
-        release_id,
-        &lyra_db::MetadataLayer {
-            source_id: "provider".to_string(),
-            relations: Default::default(),
-            credits: Default::default(),
-            fields: lyra_db::metadata::layers::fields_from_json(json!({
+    let layer = lyra_db::MetadataLayer {
+        source_id: "provider".to_string(),
+        relations: Default::default(),
+        credits: Default::default(),
+        fields: crate::services::metadata::layers::json::resolved_fields_from_json(
+            &mut db,
+            json!({
                 "labels": [{
                     "name": "Provider Label",
                     "catalog_number": null,
@@ -1062,10 +1067,11 @@ fn inherited_label_disappearance_after_preview_is_rejected() -> anyhow::Result<(
                         "id_value": "provider-label"
                     }
                 }]
-            })),
-            updated_at: 10,
-        },
-    )?;
+            }),
+        ),
+        updated_at: 10,
+    };
+    lyra_db::metadata::layers::upsert(&mut db, release_id, &layer)?;
     let manual_label =
         lyra_db::labels::get_by_id(&db, manual_label_id)?.expect("manual label exists");
     let manual = preview_edit(
@@ -1477,7 +1483,9 @@ fn edits_apply_through_a_lock_that_keeps_provider_changes_out() -> anyhow::Resul
             track_id,
             "provider",
             &crate::services::metadata::layers::ProviderValues {
-                fields: BTreeMap::from([(MetadataField::TrackTitle, json!(title))]),
+                fields: crate::services::metadata::layers::json::inputs_from_json(
+                    json!({"track_title": title}),
+                ),
                 ..Default::default()
             },
             &HashMap::new(),

@@ -19,7 +19,6 @@ use anyhow::Context;
 use harmony_core::FunctionSpec;
 use harmony_luau as luau;
 use nanoid::nanoid;
-use serde_json::Value as JsonValue;
 
 use crate::plugins::args;
 use crate::plugins::db;
@@ -38,6 +37,11 @@ use crate::services::{
         ProviderSimilarReleasesSpec,
         provider_registry,
     },
+};
+use lyra_db::metadata::layers::{
+    FieldInput,
+    FieldInputs,
+    FieldValue,
 };
 
 use super::MetadataCallbackRegistry;
@@ -707,17 +711,25 @@ fn ensure_artist_callback(
         };
 
         let fields = [
-            (lyra_db::MetadataField::ArtistName, artist_name),
+            (
+                lyra_db::MetadataField::ArtistName,
+                artist_name.map(Into::into),
+            ),
             (
                 lyra_db::MetadataField::ArtistType,
-                artist_type.as_ref().map(ToString::to_string),
+                artist_type.map(Into::into),
             ),
-            (lyra_db::MetadataField::SortName, sort_name),
-            (lyra_db::MetadataField::Description, description),
+            (lyra_db::MetadataField::SortName, sort_name.map(Into::into)),
+            (
+                lyra_db::MetadataField::Description,
+                description.map(Into::into),
+            ),
         ]
         .into_iter()
-        .filter_map(|(field, value)| Some((field, JsonValue::String(value?))))
-        .collect::<lyra_db::metadata::layers::LayerFields>();
+        .filter_map(|(field, value): (_, Option<FieldValue>)| {
+            Some((field, Some(FieldInput::Value(value?))))
+        })
+        .collect::<FieldInputs>();
 
         let mut external_ids = HashMap::new();
         external_ids.insert(id_type, id_value);

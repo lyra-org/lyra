@@ -1,10 +1,6 @@
-// This Source Code Form is subject to the terms of the Lyra Public License,
-// v1.0. If a copy of the Lyra Public License was not distributed with this file,
-// You can obtain one here:
-// www.meshiplaw.com/lyra.
-
 pub mod edges;
 mod elements;
+mod values;
 
 use std::collections::BTreeMap;
 
@@ -15,8 +11,6 @@ use agdb::{
     QueryBuilder,
 };
 use anyhow::Context;
-use serde::de::DeserializeOwned;
-use serde_json::Value;
 
 use self::elements::{
     ArtistLayer,
@@ -24,28 +18,22 @@ use self::elements::{
     ReleaseLayer,
     TrackLayer,
 };
+pub use self::values::{
+    FieldInput,
+    FieldInputs,
+    FieldType,
+    FieldValue,
+    LayerFields,
+    field_value,
+    normalize_value,
+    resolve_inputs,
+};
 use super::super::{
     DbAccess,
-    MetadataField,
-    artists::{
-        ArtistType,
-        relations::ArtistRelationType,
-    },
+    artists::relations::ArtistRelationType,
     credits::CreditType,
     entities::MetadataEntityType,
-    labels::{
-        LabelExternalIdInput,
-        LabelInput,
-        LabelLinkInput,
-    },
-    releases::{
-        ReleaseType,
-        normalize_release_date,
-    },
 };
-
-/// Layer values keyed by field; `null` explicitly clears a field.
-pub type LayerFields = BTreeMap<MetadataField, Value>;
 
 /// An artist layer's incoming relations by type: the artists that relate to
 /// the layer's artist. A listed type is supplied; an empty list clears it.
@@ -108,116 +96,6 @@ impl MetadataLayer {
     }
 }
 
-/// Validates a layer value and returns its stored form.
-pub fn normalize_value(field: MetadataField, value: Value) -> anyhow::Result<Value> {
-    anyhow::ensure!(
-        field.is_layered(),
-        "metadata layers supply '{field}' per role or relation type, not as one value"
-    );
-    if value.is_null() {
-        anyhow::ensure!(!field.is_required(), "'{field}' cannot be cleared");
-        return Ok(value);
-    }
-    match field {
-        MetadataField::ReleaseTitle | MetadataField::TrackTitle | MetadataField::ArtistName => {
-            let title: String = decode(field, &value)?;
-            anyhow::ensure!(!title.trim().is_empty(), "'{field}' cannot be empty");
-        }
-        MetadataField::SortTitle | MetadataField::SortName | MetadataField::Description => {
-            decode::<String>(field, &value)?;
-        }
-        MetadataField::ReleaseType => {
-            decode::<ReleaseType>(field, &value)?;
-        }
-        MetadataField::ArtistType => {
-            decode::<ArtistType>(field, &value)?;
-        }
-        MetadataField::ReleaseDate => {
-            let date: String = decode(field, &value)?;
-            let normalized = normalize_release_date(&date).with_context(|| {
-                format!("'{field}' must use YYYY, YYYY-MM, or YYYY-MM-DD, got '{date}'")
-            })?;
-            return Ok(Value::String(normalized));
-        }
-        MetadataField::Year
-        | MetadataField::Disc
-        | MetadataField::DiscTotal
-        | MetadataField::Track
-        | MetadataField::TrackTotal => {
-            decode::<u32>(field, &value)?;
-        }
-        MetadataField::Genres => {
-            decode::<Vec<String>>(field, &value)?;
-        }
-        MetadataField::Labels => {
-            label_inputs(&value)?;
-        }
-        MetadataField::Credits | MetadataField::Relations => {
-            unreachable!("graph-only fields are rejected above")
-        }
-    }
-    Ok(value)
-}
-
-pub fn decode<T: DeserializeOwned>(field: MetadataField, value: &Value) -> anyhow::Result<T> {
-    serde_json::from_value(value.clone())
-        .with_context(|| format!("invalid value for '{field}': {value}"))
-}
-
-/// Decodes a `labels` value: objects with a required `name`, an optional
-/// `catalog_number`, and an optional complete `external_id`.
-pub(crate) fn label_inputs(value: &Value) -> anyhow::Result<Vec<LabelInput>> {
-    let entries = value
-        .as_array()
-        .with_context(|| format!("'labels' must be an array, got {value}"))?;
-    entries.iter().map(label_input).collect()
-}
-
-fn label_input(entry: &Value) -> anyhow::Result<LabelInput> {
-    let object = entry
-        .as_object()
-        .with_context(|| format!("label entries must be objects, got {entry}"))?;
-    let name = object
-        .get("name")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .with_context(|| format!("label entry needs a non-empty 'name': {entry}"))?;
-    let catalog_number = match object.get("catalog_number") {
-        None | Some(Value::Null) => None,
-        Some(Value::String(catalog_number)) => {
-            Some(catalog_number.trim()).filter(|catalog_number| !catalog_number.is_empty())
-        }
-        Some(other) => anyhow::bail!("label 'catalog_number' must be a string, got {other}"),
-    };
-    let external_id = match object.get("external_id") {
-        None | Some(Value::Null) => None,
-        Some(external_id) => Some(label_external_id(external_id)?),
-    };
-    Ok(LabelInput {
-        name: name.to_string(),
-        catalog_number: catalog_number.map(str::to_string),
-        external_id,
-    })
-}
-
-fn label_external_id(value: &Value) -> anyhow::Result<LabelExternalIdInput> {
-    let part = |key: &str| {
-        value
-            .get(key)
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|part| !part.is_empty())
-            .map(str::to_string)
-            .with_context(|| format!("label 'external_id' needs a non-empty '{key}': {value}"))
-    };
-    Ok(LabelExternalIdInput {
-        provider_id: part("provider_id")?,
-        id_type: part("id_type")?,
-        id_value: part("id_value")?,
-    })
-}
-
 fn entity_type(db: &impl DbAccess, node_id: DbId) -> anyhow::Result<MetadataEntityType> {
     super::super::entities::metadata_entity_type(db, node_id)?.with_context(|| {
         format!(
@@ -276,11 +154,6 @@ fn load<T: LayerElement>(db: &impl DbAccess, node_id: DbId) -> anyhow::Result<Ve
                 .ok()
         })
         .collect())
-}
-
-#[cfg(any(test, feature = "testing"))]
-pub fn fields_from_json(value: Value) -> LayerFields {
-    serde_json::from_value(value).expect("test layer fields deserialize")
 }
 
 /// Ids of every layer attached to an entity, valid or not.
@@ -380,24 +253,22 @@ pub fn upsert_inside_tx(
             layer.credits.entry(credit_type).or_insert(inputs);
         }
     }
-    save_any(db, node_id, &layer, None)
+    save_any(db, node_id, &layer)
 }
 
 /// Saves `layer` as its source's whole layer: unlike [`upsert_inside_tx`], the
 /// relation types and credit roles it does not supply go, and a layer that
-/// supplies nothing is removed. A supplied `labels` field links `labels` by id
-/// when given, rather than resolving the field's names.
+/// supplies nothing is removed.
 pub fn replace_inside_tx(
     db: &mut DbAnyTransactionMut<'_>,
     node_id: DbId,
     layer: &MetadataLayer,
-    labels: Option<&[LabelLinkInput]>,
 ) -> anyhow::Result<()> {
     if layer.fields.is_empty() && layer.relations.is_empty() && layer.credits.is_empty() {
         remove_inside_tx(db, node_id, &layer.source_id)?;
         return Ok(());
     }
-    save_any(db, node_id, layer, labels)?;
+    save_any(db, node_id, layer)?;
     Ok(())
 }
 
@@ -405,12 +276,11 @@ fn save_any(
     db: &mut DbAnyTransactionMut<'_>,
     node_id: DbId,
     layer: &MetadataLayer,
-    labels: Option<&[LabelLinkInput]>,
 ) -> anyhow::Result<bool> {
     match entity_type(db, node_id)? {
-        MetadataEntityType::Release => save::<ReleaseLayer>(db, node_id, layer, labels),
-        MetadataEntityType::Track => save::<TrackLayer>(db, node_id, layer, labels),
-        MetadataEntityType::Artist => save::<ArtistLayer>(db, node_id, layer, labels),
+        MetadataEntityType::Release => save::<ReleaseLayer>(db, node_id, layer),
+        MetadataEntityType::Track => save::<TrackLayer>(db, node_id, layer),
+        MetadataEntityType::Artist => save::<ArtistLayer>(db, node_id, layer),
     }
     .with_context(|| format!("invalid '{}' metadata layer", layer.source_id))
 }
@@ -419,10 +289,10 @@ fn save<T: LayerElement>(
     db: &mut DbAnyTransactionMut<'_>,
     node_id: DbId,
     layer: &MetadataLayer,
-    labels: Option<&[LabelLinkInput]>,
 ) -> anyhow::Result<bool> {
-    let (layer_id, values_changed) = store(db, node_id, T::from_layer(layer)?)?;
-    let edges_changed = T::save_edges(db, layer_id, layer, labels)?;
+    let layer = elements::validated(T::ENTITY, layer)?;
+    let (layer_id, values_changed) = store(db, node_id, T::from_layer(&layer)?)?;
+    let edges_changed = T::save_edges(db, layer_id, &layer)?;
     if edges_changed && !values_changed {
         set_updated_at(db, layer_id, layer.updated_at)?;
     }
@@ -471,17 +341,6 @@ fn load_one<T: LayerElement>(
         .with_context(|| format!("the stored '{source_id}' metadata layer is invalid"))
 }
 
-/// The labels a layer links, by id, in order.
-pub fn label_links(db: &impl DbAccess, layer_id: DbId) -> anyhow::Result<Vec<LabelLinkInput>> {
-    Ok(edges::labels(db, layer_id)?
-        .into_iter()
-        .map(|link| LabelLinkInput {
-            label_id: link.target_id,
-            catalog_number: link.edge.catalog_number,
-        })
-        .collect())
-}
-
 /// Fills the keys `to_node`'s layer from `source_id` does not supply with
 /// `from_node`'s, or copies `from_node`'s layer when `to_node` has none. A
 /// filled layer is as recent as the newer of the two. Either layer failing to
@@ -495,17 +354,10 @@ pub fn fill_inside_tx(
     let Some(from) = find_valid(db, from_node, source_id)? else {
         return Ok(());
     };
-    let from_id = layer_id(db, from_node, source_id)?.context("filled layer is gone")?;
     let Some(mut to) = find_valid(db, to_node, source_id)? else {
         return copy_inside_tx(db, from_node, to_node, source_id);
     };
-    let to_id = layer_id(db, to_node, source_id)?.context("filling layer is gone")?;
     to.updated_at = to.updated_at.max(from.updated_at);
-    let labels_from = if to.fields.contains_key(&MetadataField::Labels) {
-        to_id
-    } else {
-        from_id
-    };
     for (field, value) in from.fields {
         to.fields.entry(field).or_insert(value);
     }
@@ -520,8 +372,7 @@ pub fn fill_inside_tx(
     for (credit_type, inputs) in from.credits {
         to.credits.entry(credit_type).or_insert(inputs);
     }
-    let labels = label_links(db, labels_from)?;
-    replace_inside_tx(db, to_node, &to, Some(&labels))
+    replace_inside_tx(db, to_node, &to)
 }
 
 /// Stores `element` as its source's layer on the entity. Returns the layer's id
@@ -663,9 +514,13 @@ mod tests {
     use std::collections::HashSet;
 
     use agdb::DbAny;
-    use serde_json::json;
+    use serde_json::{
+        Value,
+        json,
+    };
 
     use super::*;
+    use crate::MetadataField;
     use crate::fixtures::{
         connect,
         insert_artist,
@@ -677,8 +532,86 @@ mod tests {
         stored_keys,
     };
 
+    #[derive(serde::Deserialize)]
+    struct TestLabel {
+        name: String,
+        catalog_number: Option<String>,
+        external_id: Option<TestExternalId>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct TestExternalId {
+        provider_id: String,
+        id_type: String,
+        id_value: String,
+    }
+
+    fn parse<T: serde::de::DeserializeOwned>(value: Value) -> T {
+        serde_json::from_value(value).expect("test field value")
+    }
+
+    /// Field inputs from a JSON object of field names to values.
+    fn inputs(value: Value) -> FieldInputs {
+        let Value::Object(object) = value else {
+            panic!("test layer fields are a JSON object, got {value}");
+        };
+        object
+            .into_iter()
+            .map(|(name, value)| {
+                let field = MetadataField::from_name(&name).expect("known test field");
+                let input = match (field, value) {
+                    (_, Value::Null) => None,
+                    (MetadataField::Genres, value) => Some(FieldInput::Genres(parse(value))),
+                    (MetadataField::Labels, value) => {
+                        let labels: Vec<TestLabel> = parse(value);
+                        Some(FieldInput::Labels(
+                            labels
+                                .into_iter()
+                                .map(|label| crate::labels::LabelInput {
+                                    name: label.name,
+                                    catalog_number: label.catalog_number,
+                                    external_id: label.external_id.map(|id| {
+                                        crate::labels::LabelExternalIdInput {
+                                            provider_id: id.provider_id,
+                                            id_type: id.id_type,
+                                            id_value: id.id_value,
+                                        }
+                                    }),
+                                })
+                                .collect(),
+                        ))
+                    }
+                    (MetadataField::ReleaseType, value) => {
+                        Some(FieldInput::Value(FieldValue::ReleaseType(parse(value))))
+                    }
+                    (_, Value::String(text)) => Some(FieldInput::Value(FieldValue::Text(text))),
+                    (_, value) => Some(FieldInput::Value(FieldValue::Number(parse(value)))),
+                };
+                (field, input)
+            })
+            .collect()
+    }
+
     fn layer(source_id: &str, fields: Value, updated_at: u64) -> MetadataLayer {
-        MetadataLayer::new(source_id, fields_from_json(fields), updated_at)
+        let fields = inputs(fields)
+            .into_iter()
+            .map(|(field, input)| match input {
+                Some(FieldInput::Value(value)) => (field, Some(value)),
+                None => (field, None),
+                Some(_) => panic!("'{field}' needs a database to resolve"),
+            })
+            .collect();
+        MetadataLayer::new(source_id, fields, updated_at)
+    }
+
+    /// A layer whose genres and labels resolve by name.
+    fn resolved(db: &mut DbAny, source_id: &str, fields: Value, updated_at: u64) -> MetadataLayer {
+        let fields = resolve_inputs(db, inputs(fields)).expect("test layer fields resolve");
+        MetadataLayer::new(source_id, fields, updated_at)
+    }
+
+    fn genre(db: &DbAny, name: &str) -> anyhow::Result<DbId> {
+        crate::genres::find_by_name(db, name)?.context("genre exists")
     }
 
     fn only_layer(db: &DbAny, node_id: DbId) -> anyhow::Result<MetadataLayer> {
@@ -754,20 +687,24 @@ mod tests {
     fn a_genre_or_label_only_change_moves_updated_at() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let release_id = insert_release(&mut db, "Release")?;
-        let release = |genre: &str, label: &str, updated_at: u64| {
-            layer(
+        let release = |db: &mut DbAny, genre: &str, label: &str, updated_at: u64| {
+            resolved(
+                db,
                 "provider",
                 json!({"genres": [genre], "labels": [{"name": label}]}),
                 updated_at,
             )
         };
-        upsert(&mut db, release_id, &release("Jazz", "A", 1))?;
+        let first = release(&mut db, "Jazz", "A", 1);
+        upsert(&mut db, release_id, &first)?;
 
-        for change in [release("Rock", "A", 2), release("Rock", "B", 3)] {
+        for (genre, label, updated_at) in [("Rock", "A", 2), ("Rock", "B", 3)] {
+            let change = release(&mut db, genre, label, updated_at);
             assert!(upsert(&mut db, release_id, &change)?);
             assert_eq!(only_layer(&db, release_id)?.updated_at, change.updated_at);
         }
-        assert!(!upsert(&mut db, release_id, &release("Rock", "B", 4))?);
+        let unchanged = release(&mut db, "Rock", "B", 4);
+        assert!(!upsert(&mut db, release_id, &unchanged)?);
         assert_eq!(
             only_layer(&db, release_id)?.updated_at,
             3,
@@ -781,16 +718,10 @@ mod tests {
         let mut db = new_test_db()?;
         let from = insert_release(&mut db, "From")?;
         let to = insert_release(&mut db, "To")?;
-        upsert(
-            &mut db,
-            from,
-            &layer("provider", json!({"genres": ["Rock"]}), 9),
-        )?;
-        upsert(
-            &mut db,
-            to,
-            &layer("provider", json!({"genres": ["Jazz"]}), 1),
-        )?;
+        let rock = resolved(&mut db, "provider", json!({"genres": ["Rock"]}), 9);
+        upsert(&mut db, from, &rock)?;
+        let jazz = resolved(&mut db, "provider", json!({"genres": ["Jazz"]}), 1);
+        upsert(&mut db, to, &jazz)?;
 
         db.transaction_mut(|t| copy_inside_tx(t, from, to, "provider"))?;
 
@@ -803,11 +734,8 @@ mod tests {
         let mut db = new_test_db()?;
         let from = insert_release(&mut db, "From")?;
         let to = insert_release(&mut db, "To")?;
-        upsert(
-            &mut db,
-            from,
-            &layer("manual", json!({"genres": ["Rock"]}), 9),
-        )?;
+        let rock = resolved(&mut db, "manual", json!({"genres": ["Rock"]}), 9);
+        upsert(&mut db, from, &rock)?;
         upsert(
             &mut db,
             to,
@@ -817,7 +745,16 @@ mod tests {
         db.transaction_mut(|t| fill_inside_tx(t, from, to, "manual"))?;
 
         let filled = only_layer(&db, to)?;
-        assert_eq!(filled.fields[&MetadataField::Genres], json!(["Rock"]));
+        assert_eq!(
+            filled.fields,
+            LayerFields::from([
+                (MetadataField::ReleaseTitle, Some("To".into())),
+                (
+                    MetadataField::Genres,
+                    Some(FieldValue::Genres(vec![genre(&db, "Rock")?]))
+                ),
+            ])
+        );
         assert_eq!(filled.updated_at, 9);
         Ok(())
     }
@@ -826,14 +763,11 @@ mod tests {
     fn replacing_only_a_layers_edges_moves_updated_at() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let release_id = insert_release(&mut db, "Release")?;
-        upsert(
-            &mut db,
-            release_id,
-            &layer("manual", json!({"genres": ["Jazz"]}), 1),
-        )?;
+        let jazz = resolved(&mut db, "manual", json!({"genres": ["Jazz"]}), 1);
+        upsert(&mut db, release_id, &jazz)?;
 
-        let replaced = layer("manual", json!({"genres": ["Rock"]}), 2);
-        db.transaction_mut(|t| replace_inside_tx(t, release_id, &replaced, None))?;
+        let replaced = resolved(&mut db, "manual", json!({"genres": ["Rock"]}), 2);
+        db.transaction_mut(|t| replace_inside_tx(t, release_id, &replaced))?;
 
         assert_eq!(only_layer(&db, release_id)?, replaced);
         Ok(())
@@ -856,7 +790,7 @@ mod tests {
         assert!(!keys.contains("sort_name"));
         let loaded = only_layer(&db, artist_id)?;
         assert_eq!(loaded, saved);
-        assert_eq!(loaded.fields[&MetadataField::Description], Value::Null);
+        assert_eq!(loaded.fields[&MetadataField::Description], None);
         assert!(!loaded.fields.contains_key(&MetadataField::SortName));
         Ok(())
     }
@@ -865,19 +799,17 @@ mod tests {
     fn replacing_a_layer_removes_properties_it_no_longer_supplies() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let release_id = insert_release(&mut db, "Release")?;
-        upsert(
+        let first = resolved(
             &mut db,
-            release_id,
-            &layer(
-                "provider",
-                json!({
-                    "release_date": "1999",
-                    "genres": ["Jazz"],
-                    "labels": [{"name": "Blue Note"}],
-                }),
-                1,
-            ),
-        )?;
+            "provider",
+            json!({
+                "release_date": "1999",
+                "genres": ["Jazz"],
+                "labels": [{"name": "Blue Note"}],
+            }),
+            1,
+        );
+        upsert(&mut db, release_id, &first)?;
         let replacement = layer("provider", json!({"release_type": "ep"}), 2);
         upsert(&mut db, release_id, &replacement)?;
 
@@ -914,13 +846,11 @@ mod tests {
                 {"name": "Impulse!"},
             ],
         });
-        assert!(upsert(
-            &mut db,
-            release_id,
-            &layer("provider", fields.clone(), 1)
-        )?);
+        let first = resolved(&mut db, "provider", fields.clone(), 1);
+        assert!(upsert(&mut db, release_id, &first)?);
+        let second = resolved(&mut db, "provider", fields, 2);
         assert!(
-            !upsert(&mut db, release_id, &layer("provider", fields, 2))?,
+            !upsert(&mut db, release_id, &second)?,
             "the same lists change nothing"
         );
 
@@ -931,13 +861,7 @@ mod tests {
             .into_iter()
             .map(|link| link.target_id)
             .collect();
-        assert_eq!(
-            genre_ids,
-            vec![
-                crate::genres::find_by_name(&db, "Jazz")?.expect("jazz"),
-                crate::genres::find_by_name(&db, "Bebop")?.expect("bebop"),
-            ]
-        );
+        assert_eq!(genre_ids, vec![genre(&db, "Jazz")?, genre(&db, "Bebop")?]);
         let blue_note = crate::labels::find_by_external_id(&db, "mb", "label_id", "bn")?
             .expect("label resolved with its external id");
         let impulse = crate::labels::find_by_name(&db, "Impulse!")?.expect("impulse");
@@ -951,26 +875,36 @@ mod tests {
         );
         assert_eq!(
             only_layer(&db, release_id)?.fields,
-            fields_from_json(json!({
-                "genres": ["Jazz", "Bebop"],
-                "labels": [
-                    {"name": "Blue Note", "catalog_number": "BN-1577"},
-                    {"name": "Impulse!"},
-                ],
-            }))
+            LayerFields::from([
+                (MetadataField::Genres, Some(FieldValue::Genres(genre_ids))),
+                (
+                    MetadataField::Labels,
+                    Some(FieldValue::Labels(
+                        labels
+                            .into_iter()
+                            .map(|(label_id, catalog_number)| crate::labels::LabelLinkInput {
+                                label_id,
+                                catalog_number,
+                            })
+                            .collect()
+                    ))
+                ),
+            ])
         );
 
-        assert!(upsert(
+        let cleared = resolved(
             &mut db,
-            release_id,
-            &layer("provider", json!({"genres": [], "labels": null}), 3),
-        )?);
+            "provider",
+            json!({"genres": [], "labels": null}),
+            3,
+        );
+        assert!(upsert(&mut db, release_id, &cleared)?);
         assert!(edges::genres(&db, layer_id)?.is_empty());
         assert!(edges::labels(&db, layer_id)?.is_empty());
         assert!(crate::labels::get_by_id(&db, impulse)?.is_none());
         assert_eq!(
             only_layer(&db, release_id)?.fields,
-            fields_from_json(json!({"genres": null, "labels": null})),
+            LayerFields::from([(MetadataField::Genres, None), (MetadataField::Labels, None)]),
             "an empty list clears like null"
         );
         Ok(())
@@ -993,15 +927,22 @@ mod tests {
     fn upsert_rejects_fields_the_entity_cannot_hold_or_clear() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let track_id = insert_track(&mut db, "Track")?;
+        let jazz = crate::genres::resolve_by_name(&mut db, "Jazz")?;
 
         for fields in [
-            json!({"genres": ["Jazz"]}),
-            json!({"artist_name": "Artist"}),
-            json!({"track_title": null}),
+            LayerFields::from([(MetadataField::Genres, Some(FieldValue::Genres(vec![jazz])))]),
+            LayerFields::from([(MetadataField::ArtistName, Some("Artist".into()))]),
+            LayerFields::from([(MetadataField::TrackTitle, None)]),
+            LayerFields::from([(MetadataField::Year, Some("1999".into()))]),
         ] {
             assert!(
-                upsert(&mut db, track_id, &layer("provider", fields.clone(), 1)).is_err(),
-                "accepted {fields}"
+                upsert(
+                    &mut db,
+                    track_id,
+                    &MetadataLayer::new("provider", fields.clone(), 1)
+                )
+                .is_err(),
+                "accepted {fields:?}"
             );
         }
         assert!(ids_for_entity(&db, track_id)?.is_empty());
@@ -1107,103 +1048,6 @@ mod tests {
 
         assert_eq!(only_layer(&db, character_id)?.updated_at, 2);
         Ok(())
-    }
-
-    #[test]
-    fn normalize_value_rejects_values_the_field_cannot_hold() {
-        use serde_json::json;
-
-        for (field, value) in [
-            (MetadataField::Credits, json!([])),
-            (MetadataField::Relations, json!([])),
-            (MetadataField::TrackTitle, Value::Null),
-            (MetadataField::ReleaseTitle, json!("  ")),
-            (MetadataField::Disc, json!("1")),
-            (MetadataField::Year, json!(-1)),
-            (MetadataField::ReleaseType, json!("mixtape")),
-            (MetadataField::ArtistType, json!("Person")),
-            (MetadataField::ReleaseDate, json!("1999-13")),
-            (MetadataField::Genres, json!("Jazz")),
-            (MetadataField::Genres, json!([1])),
-        ] {
-            assert!(
-                normalize_value(field, value.clone()).is_err(),
-                "{field} accepted {value}"
-            );
-        }
-    }
-
-    #[test]
-    fn normalize_value_accepts_clears_and_normalizes_dates() -> anyhow::Result<()> {
-        use serde_json::json;
-
-        assert_eq!(
-            normalize_value(MetadataField::SortTitle, Value::Null)?,
-            Value::Null
-        );
-        assert_eq!(
-            normalize_value(MetadataField::ReleaseDate, json!(" 1999-02 "))?,
-            json!("1999-02")
-        );
-        assert_eq!(
-            normalize_value(MetadataField::ReleaseType, json!("ep"))?,
-            json!("ep")
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn label_inputs_parse_the_full_shape() -> anyhow::Result<()> {
-        let inputs = label_inputs(&serde_json::json!([
-            {
-                "name": "Blue Note",
-                "catalog_number": " BN-1577 ",
-                "external_id": {
-                    "provider_id": "  mb  ",
-                    "id_type": " label_id ",
-                    "id_value": " bn-001 "
-                }
-            },
-            {"name": "Impulse!", "catalog_number": "  ", "external_id": null}
-        ]))?;
-
-        assert_eq!(inputs.len(), 2);
-        assert_eq!(inputs[0].name, "Blue Note");
-        assert_eq!(inputs[0].catalog_number.as_deref(), Some("BN-1577"));
-        let external_id = inputs[0].external_id.as_ref().expect("external_id present");
-        assert_eq!(external_id.provider_id, "mb");
-        assert_eq!(external_id.id_type, "label_id");
-        assert_eq!(external_id.id_value, "bn-001");
-        assert_eq!(inputs[1].name, "Impulse!");
-        assert!(inputs[1].catalog_number.is_none());
-        assert!(inputs[1].external_id.is_none());
-        assert!(label_inputs(&serde_json::json!([]))?.is_empty());
-        Ok(())
-    }
-
-    #[test]
-    fn label_inputs_reject_malformed_entries() {
-        use serde_json::json;
-
-        for value in [
-            json!("Blue Note"),
-            json!({"name": "Blue Note"}),
-            json!(["Blue Note"]),
-            json!([{"catalog_number": "BN-1"}]),
-            json!([{"name": "   "}]),
-            json!([{"name": "Blue Note", "catalog_number": 12345}]),
-            json!([{"name": "Blue Note", "external_id": "mb"}]),
-            json!([{
-                "name": "Blue Note",
-                "external_id": {"provider_id": "mb", "id_type": "label_id"}
-            }]),
-            json!([{
-                "name": "Blue Note",
-                "external_id": {"provider_id": "mb", "id_type": "label_id", "id_value": "   "}
-            }]),
-        ] {
-            assert!(label_inputs(&value).is_err(), "accepted {value}");
-        }
     }
 
     #[test]

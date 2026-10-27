@@ -6,19 +6,16 @@
 use std::collections::{
     HashMap,
     HashSet,
-    hash_map::Entry,
 };
-
-use agdb::{
-    DbAny,
-    DbAnyTransactionMut,
-    DbId,
-};
-use serde::de::DeserializeOwned;
 
 use crate::services::metadata::layers::{
     LOCAL_SOURCE_ID,
     MANUAL_SOURCE_ID,
+};
+use agdb::{
+    DbAny,
+    DbAnyTransactionMut,
+    DbId,
 };
 use lyra_db::{
     Artist,
@@ -32,47 +29,23 @@ use lyra_db::{
     Track,
     labels::LabelLinkInput,
     metadata::layers::{
-        decode,
+        FieldType,
+        LayerFields,
         edges::{
-            self as layer_edges,
             LayerCreditInput,
             LayerRelationInput,
         },
+        field_value,
     },
 };
 
 #[derive(Debug, Clone)]
 pub(crate) struct MergedMetadata {
-    pub(crate) fields: HashMap<MetadataField, serde_json::Value>,
-    pub(crate) provenance: HashMap<MetadataField, String>,
+    pub(crate) fields: LayerFields,
     /// Each relation type's whole set, from the highest-priority layer supplying it.
     pub(crate) relations: HashMap<ArtistRelationType, Vec<LayerRelationInput>>,
     /// Each credit role's whole ordered list, from the highest-priority layer supplying it.
     pub(crate) credits: HashMap<CreditType, Vec<LayerCreditInput>>,
-}
-
-impl MergedMetadata {
-    /// The resolved value, or `None` when no source supplies one or it was cleared.
-    fn value<T: DeserializeOwned>(&self, field: MetadataField) -> anyhow::Result<Option<T>> {
-        match self.fields.get(&field) {
-            None | Some(serde_json::Value::Null) => Ok(None),
-            Some(value) => decode(field, value).map(Some),
-        }
-    }
-
-    /// The layer whose whole list wins a graph field, or `None` when no layer
-    /// supplies it. A layer that clears the field links nothing.
-    fn winning_layer(
-        &self,
-        db: &impl DbAccess,
-        node_id: DbId,
-        field: MetadataField,
-    ) -> anyhow::Result<Option<DbId>> {
-        match self.provenance.get(&field) {
-            Some(source_id) => lyra_db::metadata::layers::layer_id(db, node_id, source_id),
-            None => Ok(None),
-        }
-    }
 }
 
 /// The keys a layer supplies.
@@ -137,7 +110,7 @@ impl Scope {
     }
 }
 
-fn assign<T: PartialEq + DeserializeOwned>(
+fn assign<T: PartialEq + FieldType>(
     target: &mut Option<T>,
     merged: &MergedMetadata,
     scope: &Scope,
@@ -146,7 +119,7 @@ fn assign<T: PartialEq + DeserializeOwned>(
     if !scope.field(field) {
         return Ok(false);
     }
-    let next = merged.value(field)?;
+    let next = field_value(&merged.fields, field)?;
     if *target == next {
         return Ok(false);
     }
@@ -186,18 +159,14 @@ pub(crate) fn merge_layers(
             .then_with(|| a.source_id.cmp(&b.source_id))
     });
 
-    let mut merged_fields = HashMap::new();
-    let mut provenance = HashMap::new();
+    let mut merged_fields = LayerFields::new();
     let mut relations = HashMap::new();
     let mut credits = HashMap::new();
 
     for layer in sorted_layers {
         for (field, value) in layer.fields {
             // The highest-priority layer mentioning a field wins, including explicit null.
-            if let Entry::Vacant(entry) = merged_fields.entry(field) {
-                entry.insert(value);
-                provenance.insert(field, layer.source_id.clone());
-            }
+            merged_fields.entry(field).or_insert(value);
         }
         for (relation_type, inputs) in layer.relations {
             relations.entry(relation_type).or_insert(inputs);
@@ -209,7 +178,6 @@ pub(crate) fn merge_layers(
 
     MergedMetadata {
         fields: merged_fields,
-        provenance,
         relations,
         credits,
     }
@@ -267,27 +235,12 @@ pub(crate) fn apply_through_lock(
         }
         if scope.field(MetadataField::Genres) {
             let genre_ids: Vec<DbId> =
-                match merged.winning_layer(db, node_id, MetadataField::Genres)? {
-                    Some(layer_id) => layer_edges::genres(db, layer_id)?
-                        .into_iter()
-                        .map(|link| link.target_id)
-                        .collect(),
-                    None => Vec::new(),
-                };
+                field_value(&merged.fields, MetadataField::Genres)?.unwrap_or_default();
             lyra_db::genres::sync_release_genre_ids(db, node_id, &genre_ids)?;
         }
         if scope.field(MetadataField::Labels) {
             let label_links: Vec<LabelLinkInput> =
-                match merged.winning_layer(db, node_id, MetadataField::Labels)? {
-                    Some(layer_id) => layer_edges::labels(db, layer_id)?
-                        .into_iter()
-                        .map(|link| LabelLinkInput {
-                            label_id: link.target_id,
-                            catalog_number: link.edge.catalog_number,
-                        })
-                        .collect(),
-                    None => Vec::new(),
-                };
+                field_value(&merged.fields, MetadataField::Labels)?.unwrap_or_default();
             lyra_db::labels::sync_release_label_links_inside_tx(db, node_id, &label_links)?;
         }
         sync_credits(db, node_id, &merged, &scope)?;
@@ -422,7 +375,7 @@ fn apply_to_release(
 
     // Required titles keep their stored value when unresolved.
     if scope.field(MetadataField::ReleaseTitle)
-        && let Some(title) = merged.value::<String>(MetadataField::ReleaseTitle)?
+        && let Some(title) = field_value::<String>(&merged.fields, MetadataField::ReleaseTitle)?
         && release.release_title != title
     {
         release.set_release_title(title);
@@ -458,7 +411,7 @@ fn apply_to_track(
     let mut changed = false;
 
     if scope.field(MetadataField::TrackTitle)
-        && let Some(title) = merged.value::<String>(MetadataField::TrackTitle)?
+        && let Some(title) = field_value::<String>(&merged.fields, MetadataField::TrackTitle)?
         && track.track_title != title
     {
         track.set_track_title(title);
@@ -491,7 +444,7 @@ fn apply_to_artist(
     let mut changed = false;
 
     if scope.field(MetadataField::ArtistName)
-        && let Some(name) = merged.value::<String>(MetadataField::ArtistName)?
+        && let Some(name) = field_value::<String>(&merged.fields, MetadataField::ArtistName)?
         && artist.artist_name != name
     {
         artist.set_artist_name(name);
@@ -526,9 +479,15 @@ mod tests {
     fn make_layer(source_id: &str, fields_json: &str, updated_at: u64) -> MetadataLayer {
         MetadataLayer::new(
             source_id,
-            serde_json::from_str(fields_json).expect("test layer fields parse"),
+            crate::services::metadata::layers::json::fields_from_json(
+                serde_json::from_str(fields_json).expect("test layer fields parse"),
+            ),
             updated_at,
         )
+    }
+
+    fn text(merged: &MergedMetadata, field: MetadataField) -> Option<String> {
+        field_value(&merged.fields, field).expect("resolved text")
     }
 
     fn make_provider(provider_id: &str, position: u32, enabled: bool) -> ProviderConfig {
@@ -554,18 +513,8 @@ mod tests {
         let merged = merge_layers(layers, &providers);
 
         assert_eq!(
-            merged
-                .fields
-                .get(&MetadataField::TrackTitle)
-                .and_then(|v| v.as_str()),
+            text(&merged, MetadataField::TrackTitle).as_deref(),
             Some("High Priority Title")
-        );
-        assert_eq!(
-            merged
-                .provenance
-                .get(&MetadataField::TrackTitle)
-                .map(String::as_str),
-            Some("high")
         );
     }
 
@@ -586,30 +535,10 @@ mod tests {
 
         let merged = merge_layers(layers, &providers);
 
+        assert_eq!(merged.fields.get(&MetadataField::SortTitle), Some(&None));
         assert_eq!(
-            merged.fields.get(&MetadataField::SortTitle),
-            Some(&serde_json::Value::Null)
-        );
-        assert_eq!(
-            merged
-                .provenance
-                .get(&MetadataField::SortTitle)
-                .map(String::as_str),
-            Some("high")
-        );
-        assert_eq!(
-            merged
-                .fields
-                .get(&MetadataField::ReleaseDate)
-                .and_then(|v| v.as_str()),
+            text(&merged, MetadataField::ReleaseDate).as_deref(),
             Some("1999")
-        );
-        assert_eq!(
-            merged
-                .provenance
-                .get(&MetadataField::ReleaseDate)
-                .map(String::as_str),
-            Some("low")
         );
     }
 
@@ -675,18 +604,8 @@ mod tests {
         let merged = merge_layers(layers, &[]);
 
         assert_eq!(
-            merged
-                .fields
-                .get(&MetadataField::TrackTitle)
-                .and_then(|v| v.as_str()),
+            text(&merged, MetadataField::TrackTitle).as_deref(),
             Some("Tagged Title")
-        );
-        assert_eq!(
-            merged
-                .provenance
-                .get(&MetadataField::TrackTitle)
-                .map(String::as_str),
-            Some(LOCAL_SOURCE_ID)
         );
     }
 
@@ -701,18 +620,8 @@ mod tests {
         let merged = merge_layers(layers, &providers);
 
         assert_eq!(
-            merged
-                .fields
-                .get(&MetadataField::TrackTitle)
-                .and_then(|v| v.as_str()),
+            text(&merged, MetadataField::TrackTitle).as_deref(),
             Some("Provider Title")
-        );
-        assert_eq!(
-            merged
-                .provenance
-                .get(&MetadataField::TrackTitle)
-                .map(String::as_str),
-            Some("provider")
         );
     }
 
@@ -730,18 +639,8 @@ mod tests {
         let merged = merge_layers(layers, &providers);
 
         assert_eq!(
-            merged
-                .fields
-                .get(&MetadataField::TrackTitle)
-                .and_then(|v| v.as_str()),
+            text(&merged, MetadataField::TrackTitle).as_deref(),
             Some("Active Title")
-        );
-        assert_eq!(
-            merged
-                .provenance
-                .get(&MetadataField::TrackTitle)
-                .map(String::as_str),
-            Some("active")
         );
     }
     mod snapshot {
@@ -772,10 +671,12 @@ mod tests {
             fields: serde_json::Value,
             updated_at: u64,
         ) -> anyhow::Result<()> {
+            let fields =
+                crate::services::metadata::layers::json::resolved_fields_from_json(db, fields);
             lyra_db::metadata::layers::upsert(
                 db,
                 node_id,
-                &make_layer(source_id, &fields.to_string(), updated_at),
+                &MetadataLayer::new(source_id, fields, updated_at),
             )?;
             Ok(())
         }
@@ -791,7 +692,7 @@ mod tests {
                 node_id,
                 provider_id,
                 &crate::services::metadata::layers::ProviderValues {
-                    fields: lyra_db::metadata::layers::fields_from_json(fields),
+                    fields: crate::services::metadata::layers::json::inputs_from_json(fields),
                     ..Default::default()
                 },
                 &HashMap::new(),
@@ -844,7 +745,6 @@ mod tests {
                 artist_id,
                 provider_id,
                 &crate::services::metadata::layers::ProviderValues {
-                    fields: lyra_db::metadata::layers::fields_from_json(serde_json::json!({})),
                     relations: relations
                         .iter()
                         .map(|(relation_type, artist_ids)| {
@@ -1251,7 +1151,9 @@ mod tests {
                 track,
                 &MetadataLayer::new(
                     MANUAL_SOURCE_ID,
-                    lyra_db::metadata::layers::fields_from_json(serde_json::json!({"year": 2001})),
+                    crate::services::metadata::layers::json::fields_from_json(
+                        serde_json::json!({"year": 2001}),
+                    ),
                     1,
                 )
                 .with_credits(BTreeMap::from([(
@@ -1623,10 +1525,9 @@ mod tests {
                 track_id,
                 "provider",
                 &crate::services::metadata::layers::ProviderValues {
-                    fields: std::collections::BTreeMap::from([(
-                        MetadataField::TrackTitle,
-                        serde_json::json!("Provider Title"),
-                    )]),
+                    fields: crate::services::metadata::layers::json::inputs_from_json(
+                        serde_json::json!({"track_title": "Provider Title"}),
+                    ),
                     ..Default::default()
                 },
                 &HashMap::new(),

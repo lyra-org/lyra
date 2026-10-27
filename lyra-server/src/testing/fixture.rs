@@ -27,6 +27,7 @@ use serde::{
 
 use crate::services;
 use crate::services::metadata::layers::LocalLayer;
+use lyra_db::metadata::layers::FieldInput;
 use lyra_db::metadata::layers::edges::LayerCreditInput;
 use lyra_db::{
     MetadataField,
@@ -330,13 +331,8 @@ impl Fixture {
             stored.scan_name = artist.name.clone();
             lyra_db::artists::update(db, &stored)?;
             let mut layer = LocalLayer::default();
-            layer.supply(MetadataField::ArtistName, Some(artist.name.as_str()))?;
-            layer.supply(
-                MetadataField::ArtistType,
-                artist
-                    .artist_type
-                    .map(|artist_type| artist_type.to_string()),
-            )?;
+            layer.supply(MetadataField::ArtistName, Some(artist.name.as_str()));
+            layer.supply(MetadataField::ArtistType, artist.artist_type);
             save_local(db, artist_db_id, layer)?;
             keys.entities.insert(
                 artist.key.clone(),
@@ -364,11 +360,11 @@ impl Fixture {
                 })
                 .collect::<anyhow::Result<Vec<_>>>()?;
             let mut layer = LocalLayer::default();
-            layer.supply(MetadataField::ReleaseTitle, Some(release.title.as_str()))?;
-            layer.supply(
+            layer.supply(MetadataField::ReleaseTitle, Some(release.title.as_str()));
+            layer.supply_input(
                 MetadataField::Genres,
-                (!genre_names.is_empty()).then_some(genre_names),
-            )?;
+                (!genre_names.is_empty()).then_some(Some(FieldInput::Genres(genre_names))),
+            );
             supply_credits(&mut layer, &keys, &release.artists, &release.credits)?;
             save_local(db, release_db_id, layer)?;
             if let Some(cover) = &release.cover {
@@ -413,10 +409,10 @@ impl Fixture {
                 fixtures::connect(db, release_db_id, track_db_id)?;
             }
             let mut layer = LocalLayer::default();
-            layer.supply(MetadataField::TrackTitle, Some(track.title.as_str()))?;
-            layer.supply(MetadataField::Disc, track.disc)?;
-            layer.supply(MetadataField::Track, track.track)?;
-            layer.supply(MetadataField::Year, track.year)?;
+            layer.supply(MetadataField::TrackTitle, Some(track.title.as_str()));
+            layer.supply(MetadataField::Disc, track.disc);
+            layer.supply(MetadataField::Track, track.track);
+            layer.supply(MetadataField::Year, track.year);
             supply_credits(&mut layer, &keys, &track.artists, &track.credits)?;
             save_local(db, track_db_id, layer)?;
             anyhow::ensure!(

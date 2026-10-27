@@ -606,11 +606,14 @@ fn merged_provider_fields(
 
     let providers = lyra_db::providers::get(db)?;
     let merged = crate::services::metadata::merging::merge_layers(layers, &providers);
-    Ok(merged
+    merged
         .fields
         .into_iter()
-        .map(|(field, value)| (field.as_str().to_string(), value))
-        .collect())
+        .map(|(field, value)| {
+            let value = crate::services::metadata::layers::json::value_json(db, value.as_ref())?;
+            Ok((field.as_str().to_string(), value))
+        })
+        .collect()
 }
 
 /// A temporary directory holding the test plugin under its manifest ID.

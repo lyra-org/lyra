@@ -239,7 +239,10 @@ mod tests {
     };
     use lyra_db::MetadataField;
     use lyra_db::external_ids::ExternalId;
-    use lyra_db::metadata::layers::MetadataLayer;
+    use lyra_db::metadata::layers::{
+        FieldValue,
+        MetadataLayer,
+    };
     use std::collections::BTreeMap;
 
     fn new_test_db() -> anyhow::Result<DbAny> {
@@ -1657,7 +1660,7 @@ mod tests {
         }
         crate::services::metadata::cleanup::deduplicate_artists_by_external_id(&mut db)?;
 
-        let local_name = |db: &DbAny| -> anyhow::Result<Option<serde_json::Value>> {
+        let local_name = |db: &DbAny| -> anyhow::Result<Option<Option<FieldValue>>> {
             Ok(lyra_db::metadata::layers::get_for_entity(db, winner)?
                 .into_iter()
                 .find(|layer| layer.source_id == LOCAL_SOURCE_ID)
@@ -1671,9 +1674,9 @@ mod tests {
             track_metadata(entry.0, "Atomic Heart", artist, None, Some(1), number)
         });
         apply_metadata(&mut db, library_id, both.to_vec())?;
-        assert_eq!(local_name(&db)?, Some(serde_json::json!("Mr Children")));
+        assert_eq!(local_name(&db)?, Some(Some("Mr Children".into())));
         apply_metadata(&mut db, library_id, vec![both[1].clone()])?;
-        assert_eq!(local_name(&db)?, Some(serde_json::json!("Mr Children")));
+        assert_eq!(local_name(&db)?, Some(Some("Mr Children".into())));
         assert_eq!(
             lyra_db::artists::get_by_id(&db, winner)?
                 .ok_or_else(|| anyhow!("winner"))?
@@ -3085,12 +3088,14 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 source_id: "test".to_string(),
                 relations: Default::default(),
                 credits: Default::default(),
-                fields: lyra_db::metadata::layers::fields_from_json(serde_json::json!({
-                    "track_title": "Provider Track",
-                    "year": 1999,
-                    "disc": 9,
-                    "track": 12
-                })),
+                fields: crate::services::metadata::layers::json::fields_from_json(
+                    serde_json::json!({
+                        "track_title": "Provider Track",
+                        "year": 1999,
+                        "disc": 9,
+                        "track": 12
+                    }),
+                ),
                 updated_at: 1,
             },
         )?;
@@ -3101,10 +3106,12 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 source_id: "test".to_string(),
                 relations: Default::default(),
                 credits: Default::default(),
-                fields: lyra_db::metadata::layers::fields_from_json(serde_json::json!({
-                    "release_title": "Provider Release",
-                    "release_date": "1988-08-08"
-                })),
+                fields: crate::services::metadata::layers::json::fields_from_json(
+                    serde_json::json!({
+                        "release_title": "Provider Release",
+                        "release_date": "1988-08-08"
+                    }),
+                ),
                 updated_at: 1,
             },
         )?;
@@ -3383,21 +3390,21 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 enabled: true,
             },
         )?;
-        lyra_db::metadata::layers::upsert(
-            &mut db,
-            release_db_id,
-            &MetadataLayer {
-                source_id: "test".to_string(),
-                relations: Default::default(),
-                credits: Default::default(),
-                fields: lyra_db::metadata::layers::fields_from_json(serde_json::json!({
+        let layer = MetadataLayer {
+            source_id: "test".to_string(),
+            relations: Default::default(),
+            credits: Default::default(),
+            fields: crate::services::metadata::layers::json::resolved_fields_from_json(
+                &mut db,
+                serde_json::json!({
                     "labels": [
                         {"name": "Provider Label", "catalog_number": "PRV-001"}
                     ]
-                })),
-                updated_at: 1,
-            },
-        )?;
+                }),
+            ),
+            updated_at: 1,
+        };
+        lyra_db::metadata::layers::upsert(&mut db, release_db_id, &layer)?;
         crate::services::metadata::merging::apply_merged_metadata_to_entity(
             &mut db,
             release_db_id,
@@ -3545,7 +3552,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         assert_eq!(artists[0].artist_name, "Artist");
 
         let layer_fields = local_layer(&db, track_db_id)?.fields;
-        assert_eq!(layer_fields[&MetadataField::Year], serde_json::json!(1999));
+        assert_eq!(layer_fields[&MetadataField::Year], Some(1999.into()));
         assert!(
             !layer_fields.contains_key(&MetadataField::SortTitle),
             "an untagged field must stay absent instead of null"
@@ -3569,7 +3576,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 source_id: "test".to_string(),
                 relations: Default::default(),
                 credits: Default::default(),
-                fields: lyra_db::metadata::layers::fields_from_json(
+                fields: crate::services::metadata::layers::json::fields_from_json(
                     serde_json::json!({"track_title": "Provider Track", "year": 2020}),
                 ),
                 updated_at: 1,
@@ -3623,14 +3630,11 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
     }
 
     fn save_manual(db: &mut DbAny, node_id: DbId, fields: serde_json::Value) -> anyhow::Result<()> {
+        let fields = crate::services::metadata::layers::json::resolved_fields_from_json(db, fields);
         lyra_db::metadata::layers::upsert(
             db,
             node_id,
-            &lyra_db::MetadataLayer::new(
-                MANUAL_SOURCE_ID,
-                lyra_db::metadata::layers::fields_from_json(fields),
-                1,
-            ),
+            &lyra_db::MetadataLayer::new(MANUAL_SOURCE_ID, fields, 1),
         )?;
         Ok(())
     }
@@ -3825,21 +3829,21 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 enabled: true,
             },
         )?;
-        lyra_db::metadata::layers::upsert(
-            &mut db,
-            release_db_id,
-            &MetadataLayer {
-                source_id: "test".to_string(),
-                relations: Default::default(),
-                credits: Default::default(),
-                fields: lyra_db::metadata::layers::fields_from_json(serde_json::json!({
+        let layer = MetadataLayer {
+            source_id: "test".to_string(),
+            relations: Default::default(),
+            credits: Default::default(),
+            fields: crate::services::metadata::layers::json::resolved_fields_from_json(
+                &mut db,
+                serde_json::json!({
                     "labels": [
                         {"name": "Provider Override", "catalog_number": "PRV-999"}
                     ]
-                })),
-                updated_at: 1,
-            },
-        )?;
+                }),
+            ),
+            updated_at: 1,
+        };
+        lyra_db::metadata::layers::upsert(&mut db, release_db_id, &layer)?;
         crate::services::metadata::merging::apply_merged_metadata_to_entity(
             &mut db,
             release_db_id,

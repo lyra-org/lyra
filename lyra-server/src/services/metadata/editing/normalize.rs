@@ -16,6 +16,7 @@ use lyra_db::{
     DbAccess,
     MetadataField,
     entities::MetadataEntityType,
+    labels::LabelLinkInput,
 };
 
 use super::{
@@ -160,20 +161,20 @@ fn normalize_label_edits(db: &impl DbAccess, value: &Value) -> Result<Value, Met
     finish_normalized_labels(labels)
 }
 
-/// The labels a provider layer links, as the editing value of an inherited field.
-pub(super) fn layer_labels(
+/// The labels a layer links, as the editing value of an inherited field.
+pub(super) fn linked_labels(
     db: &impl DbAccess,
-    layer_id: DbId,
+    links: &[LabelLinkInput],
 ) -> Result<Value, MetadataEditingError> {
-    let mut labels = Vec::new();
-    for link in lyra_db::metadata::layers::edges::labels(db, layer_id)? {
-        let stored = lyra_db::labels::get_by_id(db, link.target_id)?.ok_or_else(|| {
+    let mut labels = Vec::with_capacity(links.len());
+    for link in links {
+        let stored = lyra_db::labels::get_by_id(db, link.label_id)?.ok_or_else(|| {
             MetadataEditingError::Internal(anyhow::anyhow!("a layer's label disappeared"))
         })?;
         labels.push(MetadataLabelValue {
             id: stored.id,
             name: stored.name,
-            catalog_number: normalized_catalog_number(link.edge.catalog_number),
+            catalog_number: normalized_catalog_number(link.catalog_number.clone()),
         });
     }
     finish_normalized_labels(labels)

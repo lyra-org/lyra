@@ -209,10 +209,7 @@ pub(crate) async fn refresh_entity_by_id(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{
-        BTreeMap,
-        HashMap,
-    };
+    use std::collections::HashMap;
 
     use super::*;
     use lyra_db::fixtures::insert_track;
@@ -243,10 +240,9 @@ mod tests {
                 track_db_id,
                 "test",
                 &crate::services::metadata::layers::ProviderValues {
-                    fields: BTreeMap::from([(
-                        lyra_db::MetadataField::TrackTitle,
-                        serde_json::json!("Provider Title"),
-                    )]),
+                    fields: crate::services::metadata::layers::json::inputs_from_json(
+                        serde_json::json!({"track_title": "Provider Title"}),
+                    ),
                     ..Default::default()
                 },
                 &HashMap::new(),
@@ -300,10 +296,9 @@ mod tests {
                     track_db_id,
                     provider_id,
                     &crate::services::metadata::layers::ProviderValues {
-                        fields: BTreeMap::from([(
-                            lyra_db::MetadataField::TrackTitle,
-                            serde_json::json!(title),
-                        )]),
+                        fields: crate::services::metadata::layers::json::inputs_from_json(
+                            serde_json::json!({"track_title": title}),
+                        ),
                         ..Default::default()
                     },
                     &HashMap::new(),

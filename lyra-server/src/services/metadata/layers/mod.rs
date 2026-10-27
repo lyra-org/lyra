@@ -3,6 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+pub(crate) mod json;
+
 use std::collections::{
     HashMap,
     HashSet,
@@ -28,14 +30,16 @@ use lyra_db::{
     MetadataLayer,
     ProviderCustomFields,
     metadata::layers::{
+        FieldInput,
+        FieldInputs,
+        FieldValue,
         LayerCredits,
-        LayerFields,
         LayerRelations,
         edges::{
             LayerCreditInput,
             LayerRelationInput,
         },
-        normalize_value,
+        resolve_inputs,
     },
 };
 
@@ -64,25 +68,29 @@ pub(crate) fn manual_layers_mergeable(db: &impl DbAccess, winner: DbId, loser: D
     true
 }
 
-/// File-derived metadata; omitted fields express no opinion, while null clears.
+/// File-derived metadata; omitted fields express no opinion, while `None`
+/// clears.
 #[derive(Default)]
 pub(crate) struct LocalLayer {
-    fields: LayerFields,
+    fields: FieldInputs,
     relations: LayerRelations,
     credits: LayerCredits,
 }
 
 impl LocalLayer {
-    pub(crate) fn supply<T: Into<serde_json::Value>>(
-        &mut self,
-        field: MetadataField,
-        value: Option<T>,
-    ) -> anyhow::Result<()> {
+    pub(crate) fn supply(&mut self, field: MetadataField, value: Option<impl Into<FieldValue>>) {
         if let Some(value) = value {
             self.fields
-                .insert(field, normalize_value(field, value.into())?);
+                .insert(field, Some(FieldInput::Value(value.into())));
         }
-        Ok(())
+    }
+
+    /// Supplies an input that may name genres or labels, found or created on
+    /// save; `Some(None)` clears the field.
+    pub(crate) fn supply_input(&mut self, field: MetadataField, input: Option<Option<FieldInput>>) {
+        if let Some(input) = input {
+            self.fields.insert(field, input);
+        }
     }
 
     /// Supplies the primary artist credits the tags name, in order. Tags only
@@ -121,7 +129,8 @@ impl LocalLayer {
         db: &mut DbAnyTransactionMut<'_>,
         node_id: DbId,
     ) -> anyhow::Result<()> {
-        let layer = MetadataLayer::new(LOCAL_SOURCE_ID, self.fields, now_secs())
+        let fields = resolve_inputs(db, self.fields)?;
+        let layer = MetadataLayer::new(LOCAL_SOURCE_ID, fields, now_secs())
             .with_relations(self.relations)
             .with_credits(self.credits);
         lyra_db::metadata::layers::upsert_inside_tx(db, node_id, &layer)?;
@@ -129,25 +138,18 @@ impl LocalLayer {
     }
 }
 
-/// Validates provider-supplied fields for the entity they describe.
-fn validated_fields(
-    db: &DbAny,
-    node_id: DbId,
-    fields: &LayerFields,
-) -> anyhow::Result<LayerFields> {
+/// Checks that the entity holds every field a provider supplies.
+fn ensure_supported(db: &DbAny, node_id: DbId, fields: &FieldInputs) -> anyhow::Result<()> {
     let entity_type = lyra_db::entities::metadata_entity_type(db, node_id)?
         .ok_or_else(|| anyhow::anyhow!("Entity not found: {}", node_id.0))?;
-    fields
-        .iter()
-        .map(|(&field, value)| {
-            anyhow::ensure!(
-                entity_type.supports(field),
-                "a {} has no '{field}' field",
-                entity_type.as_str()
-            );
-            Ok((field, normalize_value(field, value.clone())?))
-        })
-        .collect()
+    for &field in fields.keys() {
+        anyhow::ensure!(
+            entity_type.supports(field),
+            "a {} has no '{field}' field",
+            entity_type.as_str()
+        );
+    }
+    Ok(())
 }
 
 pub(super) fn now_secs() -> u64 {
@@ -159,23 +161,20 @@ pub(super) fn now_secs() -> u64 {
 
 fn artist_type_conflicts_with_layer(
     artist: Option<&lyra_db::Artist>,
-    fields: &LayerFields,
+    fields: &FieldInputs,
     node_id: DbId,
     provider_id: &str,
-) -> anyhow::Result<bool> {
+) -> bool {
     let Some(existing_type) = artist.and_then(|artist| artist.artist_type) else {
-        return Ok(false);
+        return false;
     };
-    let Some(incoming) = fields
-        .get(&MetadataField::ArtistType)
-        .filter(|value| !value.is_null())
+    let Some(Some(FieldInput::Value(FieldValue::ArtistType(incoming_type)))) =
+        fields.get(&MetadataField::ArtistType)
     else {
-        return Ok(false);
+        return false;
     };
-    let incoming_type: lyra_db::ArtistType =
-        lyra_db::metadata::layers::decode(MetadataField::ArtistType, incoming)?;
-    if existing_type == incoming_type {
-        return Ok(false);
+    if existing_type == *incoming_type {
+        return false;
     }
 
     tracing::warn!(
@@ -185,13 +184,13 @@ fn artist_type_conflicts_with_layer(
         incoming_artist_type = %incoming_type,
         "skipping provider artist identity update with conflicting artist_type"
     );
-    Ok(true)
+    true
 }
 
 /// What a provider supplies for one entity in a layer save.
 #[derive(Clone, Default)]
 pub(crate) struct ProviderValues {
-    pub(crate) fields: LayerFields,
+    pub(crate) fields: FieldInputs,
     pub(crate) relations: LayerRelations,
     pub(crate) credits: LayerCredits,
 }
@@ -249,34 +248,33 @@ pub(crate) fn save_provider_layer(
     external_ids: &HashMap<String, String>,
     custom_fields: &CustomFieldChanges,
 ) -> anyhow::Result<()> {
-    let fields = validated_fields(db, node_id, &values.fields)?;
-    let relations = &values.relations;
+    ensure_supported(db, node_id, &values.fields)?;
     let artist = lyra_db::artists::get_by_id(db, node_id)?;
     let artist_type_conflict =
-        artist_type_conflicts_with_layer(artist.as_ref(), &fields, node_id, provider_id)?;
+        artist_type_conflicts_with_layer(artist.as_ref(), &values.fields, node_id, provider_id);
 
-    // A conflicting artist type keeps the source's stored fields, but its
-    // relations still save. Layers save while locked; only application is
-    // suppressed.
-    let fields = if artist_type_conflict {
-        lyra_db::metadata::layers::get_for_entity(db, node_id)?
-            .into_iter()
-            .find(|stored| stored.source_id == provider_id)
-            .map(|stored| stored.fields)
-            .unwrap_or_default()
-    } else {
-        fields
-    };
-    let has_content = !relations.is_empty()
+    let has_content = !values.relations.is_empty()
         || !values.credits.is_empty()
-        || (!artist_type_conflict && !fields.is_empty());
+        || (!artist_type_conflict && !values.fields.is_empty());
     if has_content {
-        let layer = MetadataLayer::new(provider_id, fields, now_secs())
-            .with_relations(relations.clone())
-            .with_credits(values.credits.clone());
         // One transaction, so a failed apply also undoes the save that an
         // identical later save would skip as unchanged.
         db.transaction_mut(|t| -> anyhow::Result<()> {
+            // A conflicting artist type keeps the source's stored fields, but
+            // its relations still save. Layers save while locked; only
+            // application is suppressed.
+            let fields = if artist_type_conflict {
+                lyra_db::metadata::layers::get_for_entity(t, node_id)?
+                    .into_iter()
+                    .find(|stored| stored.source_id == provider_id)
+                    .map(|stored| stored.fields)
+                    .unwrap_or_default()
+            } else {
+                resolve_inputs(t, values.fields.clone())?
+            };
+            let layer = MetadataLayer::new(provider_id, fields, now_secs())
+                .with_relations(values.relations.clone())
+                .with_credits(values.credits.clone());
             if lyra_db::metadata::layers::upsert_inside_tx(t, node_id, &layer)? {
                 super::merging::apply_merged_metadata_to_entity_inside_tx(t, node_id)?;
             }
@@ -417,6 +415,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::services::metadata::layers::json::inputs_from_json;
     use lyra_db::fixtures::{
         insert_artist,
         insert_release,
@@ -437,17 +436,17 @@ mod tests {
             },
         )?;
         let mut local = LocalLayer::default();
-        local.supply(MetadataField::ReleaseTitle, Some("Local Title"))?;
+        local.supply(MetadataField::ReleaseTitle, Some("Local Title"));
         db.transaction_mut(|t| local.save(t, release_id))?;
         save_provider_layer(
             &mut db,
             release_id,
             "provider",
             &ProviderValues {
-                fields: LayerFields::from([
-                    (MetadataField::ReleaseTitle, json!("Wrong Title")),
-                    (MetadataField::ReleaseDate, json!("1999")),
-                ]),
+                fields: inputs_from_json(json!({
+                    "release_title": "Wrong Title",
+                    "release_date": "1999",
+                })),
                 ..Default::default()
             },
             &HashMap::new(),
@@ -491,7 +490,7 @@ mod tests {
                 release_id,
                 "provider",
                 &ProviderValues {
-                    fields: LayerFields::from([(MetadataField::ReleaseTitle, json!("Title"))]),
+                    fields: inputs_from_json(json!({"release_title": "Title"})),
                     ..Default::default()
                 },
                 &HashMap::new(),
@@ -511,8 +510,11 @@ mod tests {
         let character = insert_artist(&mut db, "Character")?;
         let actor = insert_artist(&mut db, "Actor")?;
         let mut local = LocalLayer::default();
-        local.supply(MetadataField::ArtistName, Some("Character"))?;
-        local.supply(MetadataField::ArtistType, Some("character"))?;
+        local.supply(MetadataField::ArtistName, Some("Character"));
+        local.supply(
+            MetadataField::ArtistType,
+            Some(lyra_db::ArtistType::Character),
+        );
         db.transaction_mut(|t| local.save(t, character))?;
         lyra_db::providers::upsert(
             &mut db,
@@ -529,10 +531,10 @@ mod tests {
             character,
             "provider",
             &ProviderValues {
-                fields: LayerFields::from([
-                    (MetadataField::ArtistName, json!("Renamed")),
-                    (MetadataField::ArtistType, json!("person")),
-                ]),
+                fields: inputs_from_json(json!({
+                    "artist_name": "Renamed",
+                    "artist_type": "person",
+                })),
                 relations: LayerRelations::from([(
                     lyra_db::ArtistRelationType::VoiceActor,
                     vec![LayerRelationInput {
@@ -576,7 +578,7 @@ mod tests {
             matched,
             "musicbrainz",
             &ProviderValues {
-                fields: LayerFields::from([(MetadataField::ArtistName, json!("Matched"))]),
+                fields: inputs_from_json(json!({"artist_name": "Matched"})),
                 ..Default::default()
             },
             &HashMap::from([("artist_id".to_string(), "artist-1".to_string())]),

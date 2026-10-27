@@ -9,14 +9,12 @@ use agdb::{
     DbId,
 };
 use serde::de::DeserializeOwned;
-use serde_json::{
-    Value,
-    json,
-};
+use serde_json::Value;
 
 use crate::services::metadata::{
     layers::{
         MANUAL_SOURCE_ID,
+        json::input_from_json,
         now_secs,
     },
     merging::{
@@ -29,9 +27,12 @@ use lyra_db::{
     MetadataField,
     MetadataLayer,
     labels::LabelLinkInput,
-    metadata::layers::edges::{
-        LayerCreditInput,
-        LayerRelationInput,
+    metadata::layers::{
+        FieldValue,
+        edges::{
+            LayerCreditInput,
+            LayerRelationInput,
+        },
     },
 };
 
@@ -60,9 +61,8 @@ fn require_node_id(db: &impl DbAccess, public_id: &str) -> anyhow::Result<DbId> 
 /// supplies it empty, and an inherit stops supplying it. Credits and relations
 /// supply every role or type, so ones the value leaves out clear.
 fn edit_layer(
-    db: &impl DbAccess,
+    db: &mut impl DbAccess,
     layer: &mut MetadataLayer,
-    labels: &mut Vec<LabelLinkInput>,
     entry: &MetadataFieldDiff,
 ) -> anyhow::Result<()> {
     let manual = entry.after.source == MetadataValueSource::Manual;
@@ -107,24 +107,24 @@ fn edit_layer(
             }
         }
         MetadataField::Labels if manual => {
-            let edited: Vec<MetadataLabelValue> = normalized(value)?;
-            *labels = edited
-                .iter()
+            let links = normalized::<Vec<MetadataLabelValue>>(value)?
+                .into_iter()
                 .map(|label| {
                     Ok(LabelLinkInput {
                         label_id: require_node_id(db, &label.id)?,
-                        catalog_number: label.catalog_number.clone(),
+                        catalog_number: label.catalog_number,
                     })
                 })
                 .collect::<anyhow::Result<_>>()?;
-            let names = edited
-                .into_iter()
-                .map(|label| json!({"name": label.name}))
-                .collect();
-            layer.fields.insert(entry.field, Value::Array(names));
+            layer
+                .fields
+                .insert(entry.field, Some(FieldValue::Labels(links)));
         }
         field if manual => {
-            layer.fields.insert(field, value.clone());
+            let value = input_from_json(field, value.clone())?
+                .map(|input| input.resolve(db))
+                .transpose()?;
+            layer.fields.insert(field, value);
         }
         field => {
             layer.fields.remove(&field);
@@ -152,20 +152,13 @@ fn apply_inside_tx(
     state: &EntityState,
     diff: &[MetadataFieldDiff],
 ) -> anyhow::Result<()> {
-    let stored_id = lyra_db::metadata::layers::layer_id(db, state.db_id, MANUAL_SOURCE_ID)?;
     let mut layer = lyra_db::metadata::layers::find_valid(db, state.db_id, MANUAL_SOURCE_ID)?
         .unwrap_or_else(|| MetadataLayer::new(MANUAL_SOURCE_ID, Default::default(), 0));
     layer.updated_at = now_secs();
-    let mut labels = match stored_id {
-        Some(layer_id) if layer.fields.contains_key(&MetadataField::Labels) => {
-            lyra_db::metadata::layers::label_links(db, layer_id)?
-        }
-        _ => Vec::new(),
-    };
     for entry in diff {
-        edit_layer(db, &mut layer, &mut labels, entry)?;
+        edit_layer(db, &mut layer, entry)?;
     }
-    lyra_db::metadata::layers::replace_inside_tx(db, state.db_id, &layer, Some(&labels))?;
+    lyra_db::metadata::layers::replace_inside_tx(db, state.db_id, &layer)?;
     // An edit applies even to a locked entity.
     merging::apply_through_lock(db, state.db_id, &released_keys(diff))
 }

@@ -82,12 +82,12 @@ pub struct LabelInput {
 
 #[derive(Debug, Clone)]
 pub struct LabelExternalIdInput {
-    pub(crate) provider_id: String,
-    pub(crate) id_type: String,
-    pub(crate) id_value: String,
+    pub provider_id: String,
+    pub id_type: String,
+    pub id_value: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LabelLinkInput {
     pub label_id: DbId,
     pub catalog_number: Option<String>,

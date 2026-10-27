@@ -39,7 +39,12 @@ use lyra_db::{
     Track,
     graph::ensure_owned_edge,
     indexes::ensure_index,
-    metadata::layers::edges::LayerRelationInput,
+    labels::LabelInput,
+    metadata::layers::{
+        FieldInput,
+        edges::LayerRelationInput,
+        field_value,
+    },
 };
 
 pub(crate) struct TrackIngest {
@@ -258,9 +263,9 @@ fn scanned_artist_name(
     {
         return Ok(Some(scan_name));
     }
-    Ok(stored
-        .and_then(|layer| layer.fields.get(&MetadataField::ArtistName))
-        .and_then(|name| name.as_str().map(str::to_string)))
+    stored.map_or(Ok(None), |layer| {
+        field_value(&layer.fields, MetadataField::ArtistName)
+    })
 }
 
 /// The type an artist's local layer supplies after this scan: what earlier
@@ -269,11 +274,9 @@ fn scanned_artist_type(
     stored: Option<&MetadataLayer>,
     scanned: Option<ArtistType>,
 ) -> anyhow::Result<Option<ArtistType>> {
-    let stored = stored
-        .and_then(|layer| layer.fields.get(&MetadataField::ArtistType))
-        .filter(|value| !value.is_null())
-        .map(|value| lyra_db::metadata::layers::decode(MetadataField::ArtistType, value))
-        .transpose()?;
+    let stored = stored.map_or(Ok(None), |layer| {
+        field_value(&layer.fields, MetadataField::ArtistType)
+    })?;
     Ok(match (stored, scanned) {
         (Some(stored), Some(scanned)) => Some(combine_scanned_artist_types(stored, scanned)),
         (stored, scanned) => scanned.or(stored),
@@ -282,7 +285,7 @@ fn scanned_artist_type(
 
 /// Selects a catalog number only from a track whose normalized label matches
 /// the chosen release label.
-fn scanned_release_labels(release_tracks: &[TrackIngest]) -> Option<Vec<serde_json::Value>> {
+fn scanned_release_labels(release_tracks: &[TrackIngest]) -> Option<Vec<LabelInput>> {
     let name = release_tracks.iter().find_map(|track| {
         track
             .meta
@@ -308,12 +311,11 @@ fn scanned_release_labels(release_tracks: &[TrackIngest]) -> Option<Vec<serde_js
             .map(str::to_string)
     });
 
-    let mut label = serde_json::Map::new();
-    label.insert("name".to_string(), name.into());
-    if let Some(catalog_number) = catalog_number {
-        label.insert("catalog_number".to_string(), catalog_number.into());
-    }
-    Some(vec![label.into()])
+    Some(vec![LabelInput {
+        name,
+        catalog_number,
+        external_id: None,
+    }])
 }
 
 fn release_date_from_track(track: &TrackMetadata) -> Option<String> {
@@ -439,16 +441,24 @@ fn persist_release_inner(
     } else {
         Default::default()
     };
-    let or_stored = |field: MetadataField, scanned: Option<serde_json::Value>| {
-        scanned.or_else(|| stored_release_fields.get(&field).cloned())
+    let or_stored = |field: MetadataField, scanned: Option<FieldInput>| {
+        scanned.map(Some).or_else(|| {
+            stored_release_fields
+                .get(&field)
+                .cloned()
+                .map(|value| value.map(FieldInput::Value))
+        })
     };
     let mut release_layer = LocalLayer::default();
-    release_layer.supply(MetadataField::ReleaseTitle, Some(release_title.to_string()))?;
-    release_layer.supply(
+    release_layer.supply(MetadataField::ReleaseTitle, Some(release_title));
+    release_layer.supply_input(
         MetadataField::ReleaseDate,
-        or_stored(MetadataField::ReleaseDate, release_date.map(Into::into)),
-    )?;
-    release_layer.supply(
+        or_stored(
+            MetadataField::ReleaseDate,
+            release_date.map(|date| FieldInput::Value(date.into())),
+        ),
+    );
+    release_layer.supply_input(
         MetadataField::Genres,
         or_stored(
             MetadataField::Genres,
@@ -457,16 +467,16 @@ fn persist_release_inner(
                 .genres
                 .clone()
                 .filter(|genres| !genres.is_empty())
-                .map(Into::into),
+                .map(FieldInput::Genres),
         ),
-    )?;
-    release_layer.supply(
+    );
+    release_layer.supply_input(
         MetadataField::Labels,
         or_stored(
             MetadataField::Labels,
-            scanned_release_labels(&release_tracks).map(Into::into),
+            scanned_release_labels(&release_tracks).map(FieldInput::Labels),
         ),
-    )?;
+    );
     release_layer.supply_artists(&release_artist_ids(
         db,
         &other_track_ids,
@@ -596,12 +606,12 @@ fn persist_release_inner(
         let track_artist_ids = resolve_artist_ids(db, &track_artist_names, &mut artist_cache)?;
         let mut track_layer = LocalLayer::default();
         track_layer.supply_artists(&track_artist_ids);
-        track_layer.supply(MetadataField::TrackTitle, title)?;
-        track_layer.supply(MetadataField::Year, year)?;
-        track_layer.supply(MetadataField::Disc, disc)?;
-        track_layer.supply(MetadataField::DiscTotal, effective_disc_total)?;
-        track_layer.supply(MetadataField::Track, track_number)?;
-        track_layer.supply(MetadataField::TrackTotal, track_total)?;
+        track_layer.supply(MetadataField::TrackTitle, title);
+        track_layer.supply(MetadataField::Year, year);
+        track_layer.supply(MetadataField::Disc, disc);
+        track_layer.supply(MetadataField::DiscTotal, effective_disc_total);
+        track_layer.supply(MetadataField::Track, track_number);
+        track_layer.supply(MetadataField::TrackTotal, track_total);
         track_layer.save(db, track_db_id)?;
 
         let source_kind = source_kind.unwrap_or_else(|| "embedded_tags".to_string());
@@ -688,15 +698,14 @@ fn persist_release_inner(
         artist_layer.supply(
             MetadataField::ArtistName,
             scanned_artist_name(db, artist_db_id, stored.as_ref(), scan_name)?,
-        )?;
+        );
         artist_layer.supply(
             MetadataField::ArtistType,
             scanned_artist_type(
                 stored.as_ref(),
                 scanned_artist_types.get(&artist_db_id).copied(),
-            )?
-            .map(|artist_type| artist_type.to_string()),
-        )?;
+            )?,
+        );
         if let Some(scanned) = scanned_relations.remove(&artist_db_id) {
             let stored = stored.map(|layer| layer.relations).unwrap_or_default();
             for (relation_type, inputs) in

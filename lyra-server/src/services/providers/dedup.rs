@@ -302,27 +302,23 @@ mod tests {
                 json!({"labels": [{"name": "Loser Manual"}], "genres": ["Loser Genre"]}),
             ),
         ] {
+            let fields =
+                crate::services::metadata::layers::json::resolved_fields_from_json(&mut db, fields);
             lyra_db::metadata::layers::upsert(
                 &mut db,
                 release,
-                &lyra_db::MetadataLayer::new(
-                    MANUAL_SOURCE_ID,
-                    lyra_db::metadata::layers::fields_from_json(fields),
-                    1,
-                ),
+                &lyra_db::MetadataLayer::new(MANUAL_SOURCE_ID, fields, 1),
             )?;
         }
-        lyra_db::metadata::layers::upsert(
-            &mut db,
-            loser,
-            &lyra_db::MetadataLayer::new(
-                "local",
-                lyra_db::metadata::layers::fields_from_json(
-                    json!({"labels": [{"name": "Provider"}]}),
-                ),
-                1,
+        let layer = lyra_db::MetadataLayer::new(
+            "local",
+            crate::services::metadata::layers::json::resolved_fields_from_json(
+                &mut db,
+                json!({"labels": [{"name": "Provider"}]}),
             ),
-        )?;
+            1,
+        );
+        lyra_db::metadata::layers::upsert(&mut db, loser, &layer)?;
         for release in [winner, loser] {
             crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, release)?;
         }
@@ -380,22 +376,22 @@ mod tests {
                 )]),
             ),
         )?;
-        layers::upsert(
-            &mut db,
-            loser,
-            &lyra_db::MetadataLayer::new(
-                "provider",
-                layers::fields_from_json(serde_json::json!({
+        let layer = lyra_db::MetadataLayer::new(
+            "provider",
+            crate::services::metadata::layers::json::resolved_fields_from_json(
+                &mut db,
+                serde_json::json!({
                     "genres": ["Jazz"],
                     "labels": [{"name": "Blue Note", "catalog_number": "BN-1"}],
-                })),
-                2,
-            )
-            .with_credits(std::collections::BTreeMap::from([(
-                lyra_db::CreditType::Artist,
-                vec![credit(artist)],
-            )])),
-        )?;
+                }),
+            ),
+            2,
+        )
+        .with_credits(std::collections::BTreeMap::from([(
+            lyra_db::CreditType::Artist,
+            vec![credit(artist)],
+        )]));
+        layers::upsert(&mut db, loser, &layer)?;
 
         merge_release_into(&mut db, winner, loser)?;
 
@@ -499,7 +495,9 @@ mod tests {
                 release,
                 &lyra_db::MetadataLayer::new(
                     MANUAL_SOURCE_ID,
-                    lyra_db::metadata::layers::fields_from_json(json!({"release_date": "1999"})),
+                    crate::services::metadata::layers::json::fields_from_json(
+                        json!({"release_date": "1999"}),
+                    ),
                     1,
                 ),
             )?;

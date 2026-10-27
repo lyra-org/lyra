@@ -22,18 +22,18 @@ use serde_json::Value as JsonValue;
 
 use super::parsing::parse_custom_field_version;
 use crate::plugins::args;
+use crate::services::metadata::layers::json::input_from_json;
 use crate::services::metadata::layers::{
     CustomFieldChanges,
     ProviderValues,
 };
 use lyra_db::DbAsync;
 use lyra_db::MetadataField;
+use lyra_db::metadata::layers::FieldInputs;
 use lyra_db::metadata::layers::LayerCredits;
-use lyra_db::metadata::layers::LayerFields;
 use lyra_db::metadata::layers::LayerRelations;
 use lyra_db::metadata::layers::edges::LayerCreditInput;
 use lyra_db::metadata::layers::edges::LayerRelationInput;
-use lyra_db::metadata::layers::normalize_value;
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -60,7 +60,7 @@ pub(super) struct MetadataLayer {
 struct LayerBuilderState {
     node_id: DbId,
     provider_id: String,
-    fields: LayerFields,
+    fields: FieldInputs,
     relations: LayerRelations,
     credits: LayerCredits,
     external_ids: HashMap<String, String>,
@@ -93,7 +93,7 @@ impl MetadataLayer {
         let field = MetadataField::from_name(&name).ok_or_else(|| {
             crate::plugins::runtime_error(format!("unknown metadata layer field '{name}'"))
         })?;
-        let value = normalize_value(field, harmony_serde::luau_to_json(vm, &value, 0)?)
+        let value = input_from_json(field, harmony_serde::luau_to_json(vm, &value, 0)?)
             .map_err(crate::plugins::runtime_error)?;
         self.state
             .lock()
@@ -275,7 +275,7 @@ impl MetadataLayer {
             state: Arc::new(Mutex::new(LayerBuilderState {
                 node_id,
                 provider_id,
-                fields: LayerFields::new(),
+                fields: FieldInputs::new(),
                 relations: LayerRelations::new(),
                 credits: LayerCredits::new(),
                 external_ids: HashMap::new(),

@@ -629,7 +629,7 @@ mod tests {
             artist_b,
             &lyra_db::MetadataLayer::new(
                 "local-scanner",
-                lyra_db::metadata::layers::fields_from_json(serde_json::json!({
+                crate::services::metadata::layers::json::fields_from_json(serde_json::json!({
                     "artist_name": "Radiohead",
                     "description": "English rock band",
                 })),
@@ -750,7 +750,9 @@ mod tests {
                 character,
                 &lyra_db::MetadataLayer::new(
                     LOCAL_SOURCE_ID,
-                    layers::fields_from_json(serde_json::json!({"artist_name": "Character"})),
+                    crate::services::metadata::layers::json::fields_from_json(
+                        serde_json::json!({"artist_name": "Character"}),
+                    ),
                     updated_at,
                 )
                 .with_relations(std::collections::BTreeMap::from([(
@@ -818,7 +820,9 @@ mod tests {
             loser,
             &lyra_db::MetadataLayer::new(
                 LOCAL_SOURCE_ID,
-                layers::fields_from_json(serde_json::json!({"artist_name": "Character"})),
+                crate::services::metadata::layers::json::fields_from_json(
+                    serde_json::json!({"artist_name": "Character"}),
+                ),
                 1,
             )
             .with_relations(std::collections::BTreeMap::from([(
@@ -963,7 +967,9 @@ mod tests {
             winner,
             &lyra_db::MetadataLayer::new(
                 MANUAL_SOURCE_ID,
-                layers::fields_from_json(serde_json::json!({"artist_name": "Winner"})),
+                crate::services::metadata::layers::json::fields_from_json(
+                    serde_json::json!({"artist_name": "Winner"}),
+                ),
                 1,
             )
             .with_relations(std::collections::BTreeMap::from([(
@@ -976,7 +982,7 @@ mod tests {
             loser,
             &lyra_db::MetadataLayer::new(
                 MANUAL_SOURCE_ID,
-                layers::fields_from_json(serde_json::json!({
+                crate::services::metadata::layers::json::fields_from_json(serde_json::json!({
                     "artist_name": "Loser",
                     "description": "Loser's description",
                 })),
@@ -1222,7 +1228,7 @@ mod tests {
             node_id,
             &lyra_db::MetadataLayer::new(
                 MANUAL_SOURCE_ID,
-                lyra_db::metadata::layers::fields_from_json(
+                crate::services::metadata::layers::json::fields_from_json(
                     serde_json::json!({"artist_name": "X"}),
                 ),
                 1,
@@ -1324,7 +1330,7 @@ mod tests {
             winner,
             &lyra_db::MetadataLayer::new(
                 MANUAL_SOURCE_ID,
-                lyra_db::metadata::layers::fields_from_json(
+                crate::services::metadata::layers::json::fields_from_json(
                     serde_json::json!({"artist_name": "Winner"}),
                 ),
                 1,
