@@ -19,11 +19,6 @@ pub(crate) fn enabled_provider_configs_by_priority(
     {
         providers.retain(|provider| provider.provider_id == provider_filter);
     }
-    providers.sort_by(|a, b| {
-        b.priority
-            .cmp(&a.priority)
-            .then_with(|| a.provider_id.cmp(&b.provider_id))
-    });
     Ok(providers)
 }
 
@@ -50,6 +45,7 @@ mod capture {
 pub(crate) use admin::{
     EntityExternalIdRecord,
     ProviderAdminError,
+    ProviderUpdate,
     SetEntityExternalIdRequest,
     inherit_entity_external_id,
     list_entity_external_ids,
@@ -57,7 +53,7 @@ pub(crate) use admin::{
     refresh_entity_by_id,
     set_entity_external_id,
     set_entity_locked,
-    update_provider_priority,
+    update_provider,
 };
 pub(crate) use capture::run_capture;
 pub(crate) use links::{

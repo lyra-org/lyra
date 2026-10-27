@@ -61,17 +61,33 @@ pub(crate) async fn list_provider_configs() -> Result<Vec<ProviderConfig>, Provi
     Ok(lyra_db::providers::get(&db)?)
 }
 
-pub(crate) async fn update_provider_priority(
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ProviderUpdate {
+    pub(crate) position: Option<u32>,
+    pub(crate) enabled: Option<bool>,
+}
+
+/// Applies the update and returns every provider in priority order.
+///
+/// Moving or toggling one provider only changes how its layers rank against
+/// the others, so only entities carrying its layers need their merge reapplied.
+pub(crate) async fn update_provider(
     provider_id: &str,
-    priority: u32,
-) -> Result<ProviderConfig, ProviderAdminError> {
+    update: ProviderUpdate,
+) -> Result<Vec<ProviderConfig>, ProviderAdminError> {
     let mut db = STATE.db.write().await;
-    let mut config = lyra_db::providers::get(&db)?
-        .into_iter()
-        .find(|provider| provider.provider_id == provider_id)
-        .ok_or_else(|| ProviderAdminError::ProviderNotFound(provider_id.to_string()))?;
+    if lyra_db::providers::get_by_provider_id(&db, provider_id)?.is_none() {
+        return Err(ProviderAdminError::ProviderNotFound(
+            provider_id.to_string(),
+        ));
+    }
     db.transaction_mut(|transaction| -> anyhow::Result<()> {
-        lyra_db::providers::update_priority(transaction, provider_id, priority)?;
+        if let Some(position) = update.position {
+            lyra_db::providers::move_to(transaction, provider_id, position)?;
+        }
+        if let Some(enabled) = update.enabled {
+            lyra_db::providers::set_enabled(transaction, provider_id, enabled)?;
+        }
         for entity_id in lyra_db::metadata::layers::entity_ids_for_source(transaction, provider_id)?
         {
             crate::services::metadata::merging::apply_merged_metadata_to_entity_inside_tx(
@@ -81,8 +97,7 @@ pub(crate) async fn update_provider_priority(
         }
         Ok(())
     })?;
-    config.priority = priority;
-    Ok(config)
+    Ok(lyra_db::providers::get(&db)?)
 }
 
 pub(crate) async fn list_entity_external_ids(
@@ -219,7 +234,7 @@ mod tests {
                 &ProviderConfig {
                     db_id: None,
                     provider_id: "test".to_string(),
-                    priority: 100,
+                    position: 0,
                     enabled: true,
                 },
             )?;
@@ -261,22 +276,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn changing_priority_reapplies_affected_entities() -> anyhow::Result<()> {
+    async fn updating_a_provider_reapplies_affected_entities() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         crate::services::testing::init_default_test_state()?;
 
         let track_id = {
             let mut db = STATE.db.write().await;
             let track_db_id = insert_track(&mut db, "Local Title")?;
-            for (provider_id, priority, title) in
-                [("low", 10, "Low Title"), ("high", 100, "High Title")]
+            for (provider_id, position, title) in
+                [("low", 1, "Low Title"), ("high", 0, "High Title")]
             {
                 lyra_db::providers::upsert(
                     &mut db,
                     &ProviderConfig {
                         db_id: None,
                         provider_id: provider_id.to_string(),
-                        priority,
+                        position,
                         enabled: true,
                     },
                 )?;
@@ -306,18 +321,54 @@ mod tests {
                 .id
         };
 
-        let config = update_provider_priority("low", 200).await?;
-        assert_eq!(config.priority, 200);
+        let track_title = || async {
+            let db = STATE.db.read().await;
+            let track_db_id = lyra_db::lookup::find_node_id_by_id(&db, &track_id)?
+                .ok_or_else(|| anyhow::anyhow!("track node missing"))?;
+            anyhow::Ok(
+                lyra_db::tracks::get_by_id(&db, track_db_id)?
+                    .ok_or_else(|| anyhow::anyhow!("track missing"))?
+                    .track_title,
+            )
+        };
 
-        let db = STATE.db.read().await;
-        let track_db_id = lyra_db::lookup::find_node_id_by_id(&db, &track_id)?
-            .ok_or_else(|| anyhow::anyhow!("track node missing"))?;
-        assert_eq!(
-            lyra_db::tracks::get_by_id(&db, track_db_id)?
-                .ok_or_else(|| anyhow::anyhow!("track missing"))?
-                .track_title,
-            "Low Title"
-        );
+        let providers = update_provider(
+            "low",
+            ProviderUpdate {
+                position: Some(0),
+                enabled: None,
+            },
+        )
+        .await?;
+        let order = providers
+            .iter()
+            .map(|provider| (provider.provider_id.as_str(), provider.position))
+            .collect::<Vec<_>>();
+        assert_eq!(order, [("low", 0), ("high", 1)]);
+        assert_eq!(track_title().await?, "Low Title");
+
+        update_provider(
+            "low",
+            ProviderUpdate {
+                position: None,
+                enabled: Some(false),
+            },
+        )
+        .await?;
+        assert_eq!(track_title().await?, "High Title");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn updating_a_missing_provider_fails() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+
+        let result = update_provider("missing", ProviderUpdate::default()).await;
+        assert!(matches!(
+            result,
+            Err(ProviderAdminError::ProviderNotFound(_))
+        ));
         Ok(())
     }
 }

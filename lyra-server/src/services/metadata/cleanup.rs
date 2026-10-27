@@ -592,7 +592,7 @@ mod tests {
             &lyra_db::ProviderConfig {
                 db_id: None,
                 provider_id: "musicbrainz".to_string(),
-                priority: 100,
+                position: 0,
                 enabled: true,
             },
         )?;
@@ -871,7 +871,7 @@ mod tests {
             &lyra_db::ProviderConfig {
                 db_id: None,
                 provider_id: "provider-a".to_string(),
-                priority: 100,
+                position: 0,
                 enabled: true,
             },
         )?;
@@ -880,7 +880,7 @@ mod tests {
             &lyra_db::ProviderConfig {
                 db_id: None,
                 provider_id: "provider-b".to_string(),
-                priority: 50,
+                position: 1,
                 enabled: true,
             },
         )?;
@@ -1287,7 +1287,7 @@ mod tests {
             &lyra_db::ProviderConfig {
                 db_id: None,
                 provider_id: "provider".to_string(),
-                priority: 10,
+                position: 0,
                 enabled: true,
             },
         )?;

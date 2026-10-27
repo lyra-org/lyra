@@ -21,12 +21,13 @@ pub struct ProviderConfig {
     #[serde(skip)]
     pub db_id: Option<NodeId>,
     pub provider_id: String,
-    pub priority: u32,
+    /// Zero-based rank; lower positions take precedence.
+    pub position: u32,
     pub enabled: bool,
 }
 
 pub fn get(db: &impl super::DbAccess) -> anyhow::Result<Vec<ProviderConfig>> {
-    let providers: Vec<ProviderConfig> = db
+    let mut providers: Vec<ProviderConfig> = db
         .exec(
             QueryBuilder::select()
                 .elements::<ProviderConfig>()
@@ -37,6 +38,7 @@ pub fn get(db: &impl super::DbAccess) -> anyhow::Result<Vec<ProviderConfig>> {
                 .query(),
         )?
         .try_into()?;
+    sort(&mut providers);
 
     Ok(providers)
 }
@@ -86,30 +88,79 @@ pub fn upsert(db: &mut DbAny, provider: &ProviderConfig) -> anyhow::Result<DbId>
     Ok(id)
 }
 
-pub fn update_priority(
+/// Registers a provider at the end of the order unless it is already stored.
+pub fn register(db: &mut DbAny, provider_id: &str) -> anyhow::Result<()> {
+    if get_by_provider_id(db, provider_id)?.is_some() {
+        return Ok(());
+    }
+    let position = u32::try_from(get(db)?.len())?;
+    upsert(
+        db,
+        &ProviderConfig {
+            db_id: None,
+            provider_id: provider_id.to_string(),
+            position,
+            enabled: true,
+        },
+    )?;
+    Ok(())
+}
+
+/// Moves a provider to `position`, clamped to the end, and renumbers the rest
+/// without gaps. Returns `false` when the provider does not exist.
+pub fn move_to(
     db: &mut impl super::DbAccess,
     provider_id: &str,
-    priority: u32,
-) -> anyhow::Result<()> {
-    let providers: Vec<ProviderConfig> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<ProviderConfig>()
-                .search()
-                .from("providers")
-                .where_()
-                .key("provider_id")
-                .value(provider_id)
-                .query(),
-        )?
-        .try_into()?;
+    position: u32,
+) -> anyhow::Result<bool> {
+    let mut providers = get(db)?;
+    let Some(current) = providers
+        .iter()
+        .position(|provider| provider.provider_id == provider_id)
+    else {
+        return Ok(false);
+    };
+    let provider = providers.remove(current);
+    let insert_at = usize::try_from(position)
+        .unwrap_or(usize::MAX)
+        .min(providers.len());
+    providers.insert(insert_at, provider);
 
-    if let Some(mut provider) = providers.into_iter().next() {
-        provider.priority = priority;
+    for (index, mut provider) in providers.into_iter().enumerate() {
+        let index = u32::try_from(index)?;
+        if provider.position != index {
+            provider.position = index;
+            db.exec_mut(QueryBuilder::insert().element(&provider).query())?;
+        }
+    }
+    Ok(true)
+}
+
+/// Returns `false` when the provider does not exist.
+pub fn set_enabled(
+    db: &mut impl super::DbAccess,
+    provider_id: &str,
+    enabled: bool,
+) -> anyhow::Result<bool> {
+    let Some(mut provider) = get(db)?
+        .into_iter()
+        .find(|provider| provider.provider_id == provider_id)
+    else {
+        return Ok(false);
+    };
+    if provider.enabled != enabled {
+        provider.enabled = enabled;
         db.exec_mut(QueryBuilder::insert().element(&provider).query())?;
     }
+    Ok(true)
+}
 
-    Ok(())
+fn sort(providers: &mut [ProviderConfig]) {
+    providers.sort_by(|a, b| {
+        a.position
+            .cmp(&b.position)
+            .then_with(|| a.provider_id.cmp(&b.provider_id))
+    });
 }
 
 #[cfg(test)]
@@ -126,7 +177,7 @@ mod tests {
         ProviderConfig {
             db_id: None,
             provider_id: id.to_string(),
-            priority: 0,
+            position: 0,
             enabled: true,
         }
     }
@@ -173,18 +224,75 @@ mod tests {
     fn upsert_provider_updates_fields() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let mut provider = make_provider("test-provider");
-        provider.priority = 1;
+        provider.position = 1;
         upsert(&mut db, &provider)?;
 
         provider.enabled = false;
-        provider.priority = 5;
+        provider.position = 5;
         upsert(&mut db, &provider)?;
 
         let providers = get(&db)?;
         assert_eq!(providers.len(), 1);
         assert!(!providers[0].enabled);
-        assert_eq!(providers[0].priority, 5);
+        assert_eq!(providers[0].position, 5);
 
+        Ok(())
+    }
+
+    fn order(db: &DbAny) -> anyhow::Result<Vec<(String, u32)>> {
+        Ok(get(db)?
+            .into_iter()
+            .map(|provider| (provider.provider_id, provider.position))
+            .collect())
+    }
+
+    #[test]
+    fn register_appends_new_providers_and_keeps_existing_ones() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        register(&mut db, "a")?;
+        register(&mut db, "b")?;
+        move_to(&mut db, "b", 0)?;
+        register(&mut db, "a")?;
+        register(&mut db, "c")?;
+
+        assert_eq!(
+            order(&db)?,
+            [("b".into(), 0), ("a".into(), 1), ("c".into(), 2)]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn move_to_renumbers_without_gaps_and_clamps_to_the_end() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        for provider_id in ["a", "b", "c"] {
+            register(&mut db, provider_id)?;
+        }
+
+        assert!(move_to(&mut db, "a", 1)?);
+        assert_eq!(
+            order(&db)?,
+            [("b".into(), 0), ("a".into(), 1), ("c".into(), 2)]
+        );
+
+        assert!(move_to(&mut db, "b", 99)?);
+        assert_eq!(
+            order(&db)?,
+            [("a".into(), 0), ("c".into(), 1), ("b".into(), 2)]
+        );
+
+        assert!(!move_to(&mut db, "missing", 0)?);
+        Ok(())
+    }
+
+    #[test]
+    fn set_enabled_reports_missing_providers() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        register(&mut db, "a")?;
+
+        assert!(set_enabled(&mut db, "a", false)?);
+        assert!(!get(&db)?[0].enabled);
+        assert!(!set_enabled(&mut db, "missing", false)?);
         Ok(())
     }
 }

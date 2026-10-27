@@ -221,8 +221,7 @@ async fn timed_out_provider_falls_through_to_lower_priority_provider() -> Result
     let runtime = publish_test_runtime(&plugin).await?;
     {
         let mut db = STATE.db.write().await;
-        lyra_db::providers::update_priority(&mut db, "slow", 100)?;
-        lyra_db::providers::update_priority(&mut db, "fallback", 50)?;
+        lyra_db::providers::move_to(&mut db, "slow", 0)?;
     }
 
     let started = Instant::now();

@@ -158,17 +158,17 @@ pub(crate) fn merge_layers(
     layers: Vec<MetadataLayer>,
     providers: &[ProviderConfig],
 ) -> MergedMetadata {
-    let mut priority_map: HashMap<&str, u32> = HashMap::new();
+    let mut position_map: HashMap<&str, u32> = HashMap::new();
     for provider in providers.iter().filter(|provider| provider.enabled) {
-        priority_map.insert(&provider.provider_id, provider.priority);
+        position_map.insert(&provider.provider_id, provider.position);
     }
 
-    // Local ranks below even a priority-0 provider, and manual above them all.
+    // Manual ranks above every provider, and local below the last one.
     let layer_rank = |layer: &MetadataLayer| -> (u8, u32) {
         match layer.source_id.as_str() {
-            LOCAL_SOURCE_ID => (0, 0),
-            MANUAL_SOURCE_ID => (2, 0),
-            source_id => (1, priority_map.get(source_id).copied().unwrap_or_default()),
+            MANUAL_SOURCE_ID => (0, 0),
+            LOCAL_SOURCE_ID => (2, 0),
+            source_id => (1, position_map.get(source_id).copied().unwrap_or_default()),
         }
     };
 
@@ -176,12 +176,12 @@ pub(crate) fn merge_layers(
         .into_iter()
         .filter(|layer| {
             matches!(layer.source_id.as_str(), LOCAL_SOURCE_ID | MANUAL_SOURCE_ID)
-                || priority_map.contains_key(layer.source_id.as_str())
+                || position_map.contains_key(layer.source_id.as_str())
         })
         .collect();
     sorted_layers.sort_by(|a, b| {
-        layer_rank(b)
-            .cmp(&layer_rank(a))
+        layer_rank(a)
+            .cmp(&layer_rank(b))
             .then_with(|| b.updated_at.cmp(&a.updated_at))
             .then_with(|| a.source_id.cmp(&b.source_id))
     });
@@ -531,11 +531,11 @@ mod tests {
         )
     }
 
-    fn make_provider(provider_id: &str, priority: u32, enabled: bool) -> ProviderConfig {
+    fn make_provider(provider_id: &str, position: u32, enabled: bool) -> ProviderConfig {
         ProviderConfig {
             db_id: None,
             provider_id: provider_id.to_string(),
-            priority,
+            position,
             enabled,
         }
     }
@@ -547,8 +547,8 @@ mod tests {
             make_layer("high", r#"{"track_title": "High Priority Title"}"#, 1000),
         ];
         let providers = vec![
-            make_provider("low", 10, true),
-            make_provider("high", 100, true),
+            make_provider("low", 1, true),
+            make_provider("high", 0, true),
         ];
 
         let merged = merge_layers(layers, &providers);
@@ -580,8 +580,8 @@ mod tests {
             ),
         ];
         let providers = vec![
-            make_provider("high", 100, true),
-            make_provider("low", 10, true),
+            make_provider("high", 0, true),
+            make_provider("low", 1, true),
         ];
 
         let merged = merge_layers(layers, &providers);
@@ -630,7 +630,7 @@ mod tests {
         };
         let merged = merge_layers(
             vec![make_layer("provider", r#"{"release_title": "Layer"}"#, 1)],
-            &[make_provider("provider", 10, true)],
+            &[make_provider("provider", 0, true)],
         );
 
         assert!(apply_to_release(&mut release, &merged, &Scope::All)?);
@@ -723,8 +723,8 @@ mod tests {
             make_layer("disabled", r#"{"track_title": "Disabled Title"}"#, 1000),
         ];
         let providers = vec![
-            make_provider("active", 10, true),
-            make_provider("disabled", 100, false),
+            make_provider("active", 1, true),
+            make_provider("disabled", 0, false),
         ];
 
         let merged = merge_layers(layers, &providers);
@@ -760,8 +760,8 @@ mod tests {
             stored_keys,
         };
 
-        fn enable_provider(db: &mut DbAny, provider_id: &str, priority: u32) -> anyhow::Result<()> {
-            lyra_db::providers::upsert(db, &make_provider(provider_id, priority, true))?;
+        fn enable_provider(db: &mut DbAny, provider_id: &str, position: u32) -> anyhow::Result<()> {
+            lyra_db::providers::upsert(db, &make_provider(provider_id, position, true))?;
             Ok(())
         }
 
@@ -888,8 +888,8 @@ mod tests {
             let low_actor = insert_artist(&mut db, "Low Actor")?;
             let high_actor = insert_artist(&mut db, "High Actor")?;
             let member = insert_artist(&mut db, "Member")?;
-            enable_provider(&mut db, "low", 10)?;
-            enable_provider(&mut db, "high", 100)?;
+            enable_provider(&mut db, "low", 1)?;
+            enable_provider(&mut db, "high", 0)?;
             save_relations(
                 &mut db,
                 character,
@@ -961,7 +961,7 @@ mod tests {
             let mut locked = lyra_db::artists::get_by_id(&db, character)?.expect("artist exists");
             locked.locked = Some(true);
             lyra_db::artists::update(&mut db, &locked)?;
-            enable_provider(&mut db, "provider", 10)?;
+            enable_provider(&mut db, "provider", 0)?;
 
             save_relations(
                 &mut db,
@@ -993,7 +993,7 @@ mod tests {
             let manual_actor = insert_artist(&mut db, "Manual Actor")?;
             let provider_actor = insert_artist(&mut db, "Provider Actor")?;
             let member = insert_artist(&mut db, "Member")?;
-            enable_provider(&mut db, "provider", 1000)?;
+            enable_provider(&mut db, "provider", 0)?;
             lyra_db::metadata::layers::upsert(
                 &mut db,
                 character,
@@ -1091,7 +1091,7 @@ mod tests {
                     ]),
                 ),
             )?;
-            enable_provider(&mut db, "provider", 10)?;
+            enable_provider(&mut db, "provider", 0)?;
             save_credits(
                 &mut db,
                 track,
@@ -1177,7 +1177,7 @@ mod tests {
             assert_eq!(browsed(&db, ArtistFilter::default())?, vec![combined]);
             assert_eq!(searched(&db)?, vec![combined]);
 
-            enable_provider(&mut db, "provider", 10)?;
+            enable_provider(&mut db, "provider", 0)?;
             save_credits(
                 &mut db,
                 track,
@@ -1227,7 +1227,7 @@ mod tests {
             let mut locked = lyra_db::tracks::get_by_id(&db, track)?.expect("track exists");
             locked.locked = Some(true);
             lyra_db::tracks::update(&mut db, &locked)?;
-            enable_provider(&mut db, "provider", 10)?;
+            enable_provider(&mut db, "provider", 0)?;
 
             save_credits(
                 &mut db,
@@ -1320,8 +1320,8 @@ mod tests {
             let mut locked = lyra_db::releases::get_by_id(&db, locked_id)?.expect("release exists");
             locked.locked = Some(true);
             lyra_db::releases::update(&mut db, &locked)?;
-            enable_provider(&mut db, "low", 10)?;
-            enable_provider(&mut db, "high", 100)?;
+            enable_provider(&mut db, "low", 1)?;
+            enable_provider(&mut db, "high", 0)?;
 
             provider_save(
                 &mut db,
@@ -1362,8 +1362,8 @@ mod tests {
         fn genres_and_labels_follow_the_layer_that_supplies_them() -> anyhow::Result<()> {
             let mut db = new_test_db()?;
             let release_id = insert_release(&mut db, "Release")?;
-            enable_provider(&mut db, "low", 10)?;
-            enable_provider(&mut db, "high", 100)?;
+            enable_provider(&mut db, "low", 1)?;
+            enable_provider(&mut db, "high", 0)?;
             provider_save(
                 &mut db,
                 release_id,
@@ -1421,7 +1421,7 @@ mod tests {
             lyra_db::tracks::update(&mut db, &track)?;
             assert!(stored_keys(&db, track_id)?.contains("year"));
 
-            enable_provider(&mut db, "provider", 10)?;
+            enable_provider(&mut db, "provider", 0)?;
             save_layer(
                 &mut db,
                 track_id,
@@ -1448,8 +1448,8 @@ mod tests {
             let mut db = new_test_db()?;
             let artist_id = insert_artist(&mut db, "Artist")?;
 
-            enable_provider(&mut db, "low", 10)?;
-            enable_provider(&mut db, "high", 100)?;
+            enable_provider(&mut db, "low", 1)?;
+            enable_provider(&mut db, "high", 0)?;
             save_layer(
                 &mut db,
                 artist_id,
@@ -1497,7 +1497,7 @@ mod tests {
                 serde_json::json!({"artist_type": "group"}),
                 1,
             )?;
-            enable_provider(&mut db, "provider", 10)?;
+            enable_provider(&mut db, "provider", 0)?;
             save_layer(
                 &mut db,
                 artist_id,
@@ -1513,7 +1513,7 @@ mod tests {
                 Some(lyra_db::ArtistType::Person)
             );
 
-            lyra_db::providers::upsert(&mut db, &make_provider("provider", 10, false))?;
+            lyra_db::providers::upsert(&mut db, &make_provider("provider", 0, false))?;
             apply_merged_metadata_to_entity(&mut db, artist_id)?;
 
             assert_eq!(
@@ -1540,7 +1540,7 @@ mod tests {
                 }],
             )?;
 
-            enable_provider(&mut db, "provider", 10)?;
+            enable_provider(&mut db, "provider", 0)?;
             save_layer(
                 &mut db,
                 release_id,
@@ -1560,7 +1560,7 @@ mod tests {
             let mut db = new_test_db()?;
             let release_id = insert_release(&mut db, "Release")?;
 
-            enable_provider(&mut db, "provider", 1000)?;
+            enable_provider(&mut db, "provider", 0)?;
             save_layer(
                 &mut db,
                 release_id,
@@ -1617,7 +1617,7 @@ mod tests {
             track.locked = Some(true);
             lyra_db::tracks::update(&mut db, &track)?;
 
-            enable_provider(&mut db, "provider", 10)?;
+            enable_provider(&mut db, "provider", 0)?;
             crate::services::metadata::layers::save_provider_layer(
                 &mut db,
                 track_id,

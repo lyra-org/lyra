@@ -335,7 +335,7 @@ fn a_manual_clear_outranks_later_provider_values() -> anyhow::Result<()> {
         &lyra_db::ProviderConfig {
             db_id: None,
             provider_id: "test-provider".to_string(),
-            priority: 100,
+            position: 0,
             enabled: true,
         },
     )?;
@@ -433,7 +433,7 @@ fn inherit_drops_the_manual_value_and_restores_the_resolved_one() -> anyhow::Res
         &lyra_db::ProviderConfig {
             db_id: None,
             provider_id: "provider".to_string(),
-            priority: 100,
+            position: 0,
             enabled: true,
         },
     )?;
@@ -483,7 +483,7 @@ fn inherit_graph_field_restores_provider_resolved_value() -> anyhow::Result<()> 
         &lyra_db::ProviderConfig {
             db_id: None,
             provider_id: "provider".to_string(),
-            priority: 100,
+            position: 0,
             enabled: true,
         },
     )?;
@@ -529,7 +529,7 @@ fn inherit_conflicts_when_provider_resolution_changes_after_preview() -> anyhow:
         &lyra_db::ProviderConfig {
             db_id: None,
             provider_id: "provider".to_string(),
-            priority: 100,
+            position: 0,
             enabled: true,
         },
     )?;
@@ -706,7 +706,7 @@ fn inherit_labels_restores_resolvable_provider_labels() -> anyhow::Result<()> {
         &lyra_db::ProviderConfig {
             db_id: None,
             provider_id: "provider".to_string(),
-            priority: 100,
+            position: 0,
             enabled: true,
         },
     )?;
@@ -792,7 +792,7 @@ fn inherit_labels_takes_the_layers_own_label_not_one_with_the_same_name() -> any
         &lyra_db::ProviderConfig {
             db_id: None,
             provider_id: "provider".to_string(),
-            priority: 100,
+            position: 0,
             enabled: true,
         },
     )?;
@@ -851,7 +851,7 @@ fn a_manually_masked_provider_label_survives_while_its_layer_names_it() -> anyho
         &lyra_db::ProviderConfig {
             db_id: None,
             provider_id: "provider".to_string(),
-            priority: 100,
+            position: 0,
             enabled: true,
         },
     )?;
@@ -1041,7 +1041,7 @@ fn inherited_label_disappearance_after_preview_is_rejected() -> anyhow::Result<(
         &lyra_db::ProviderConfig {
             db_id: None,
             provider_id: "provider".to_string(),
-            priority: 100,
+            position: 0,
             enabled: true,
         },
     )?;
@@ -1283,7 +1283,7 @@ fn relation_edits_replace_the_incoming_relations_and_inherit_restores_them() -> 
         &lyra_db::ProviderConfig {
             db_id: None,
             provider_id: "provider".to_string(),
-            priority: 100,
+            position: 0,
             enabled: true,
         },
     )?;
@@ -1467,7 +1467,7 @@ fn edits_apply_through_a_lock_that_keeps_provider_changes_out() -> anyhow::Resul
         &lyra_db::ProviderConfig {
             db_id: None,
             provider_id: "provider".to_string(),
-            priority: 100,
+            position: 0,
             enabled: true,
         },
     )?;

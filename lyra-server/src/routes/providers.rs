@@ -39,6 +39,7 @@ use crate::{
         ProviderSearchError,
         ProviderSearchRequest,
         auth::{
+            require_authenticated,
             require_manage_metadata,
             require_manage_providers,
             require_sync_metadata,
@@ -47,6 +48,7 @@ use crate::{
         providers::provider_registry,
         providers::{
             EntityExternalIdRecord,
+            ProviderUpdate,
             SetEntityExternalIdRequest as ProviderSetEntityExternalIdRequest,
             inherit_entity_external_id as inherit_entity_external_id_service,
             list_entity_external_ids as list_entity_external_ids_service,
@@ -54,7 +56,7 @@ use crate::{
             refresh_entity_by_id,
             set_entity_external_id as set_entity_external_id_service,
             set_entity_locked,
-            update_provider_priority as update_provider_priority_service,
+            update_provider as update_provider_service,
         },
         run_provider_sync,
         search_provider as search_provider_results,
@@ -81,7 +83,8 @@ pub struct OptionResponse {
 pub struct ProviderResponse {
     pub provider_id: String,
     pub display_name: String,
-    pub priority: u32,
+    /// Zero-based rank; lower positions take precedence.
+    pub position: u32,
     pub enabled: bool,
     pub options: Vec<OptionResponse>,
 }
@@ -303,8 +306,10 @@ pub struct SearchQuery {
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
-pub struct UpdatePriorityRequest {
-    pub priority: u32,
+pub struct UpdateProviderRequest {
+    /// Moves the provider to this zero-based rank, clamped to the last one.
+    pub position: Option<u32>,
+    pub enabled: Option<bool>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -330,7 +335,7 @@ pub struct ExternalIdResponse {
 }
 
 async fn list_providers(headers: HeaderMap) -> Result<Json<Vec<ProviderResponse>>, AppError> {
-    let _principal = require_manage_metadata(bearer_credential(&headers)).await?;
+    let _principal = require_authenticated(bearer_credential(&headers)).await?;
 
     let providers = list_provider_configs().await?;
     Ok(Json(build_provider_responses(providers).await))
@@ -384,7 +389,7 @@ async fn build_provider_responses(
             ProviderResponse {
                 provider_id: config.provider_id,
                 display_name,
-                priority: config.priority,
+                position: config.position,
                 enabled: config.enabled,
                 options,
             }
@@ -498,25 +503,22 @@ async fn search_provider(
     Ok(Json(results.into_iter().map(Into::into).collect()))
 }
 
-async fn update_provider_priority(
+async fn update_provider(
     headers: HeaderMap,
     Path(provider_id): Path<String>,
-    Json(request): Json<UpdatePriorityRequest>,
-) -> Result<Json<ProviderResponse>, AppError> {
+    Json(request): Json<UpdateProviderRequest>,
+) -> Result<Json<Vec<ProviderResponse>>, AppError> {
     let _principal = require_manage_providers(bearer_credential(&headers)).await?;
 
-    let config = update_provider_priority_service(&provider_id, request.priority).await?;
-    let display_name = provider_registry()
-        .read()
-        .await
-        .display_name(&config.provider_id);
-    Ok(Json(ProviderResponse {
-        provider_id: config.provider_id,
-        display_name,
-        priority: config.priority,
-        enabled: config.enabled,
-        options: Vec::new(),
-    }))
+    let providers = update_provider_service(
+        &provider_id,
+        ProviderUpdate {
+            position: request.position,
+            enabled: request.enabled,
+        },
+    )
+    .await?;
+    Ok(Json(build_provider_responses(providers).await))
 }
 
 async fn get_entity_external_ids(
@@ -645,7 +647,7 @@ async fn refresh_entity(
 #[cfg(feature = "docgen")]
 fn list_providers_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List providers").description(
-        "Returns all registered metadata providers with their priorities and option availability. Requires ManageMetadata permission.",
+        "Returns all registered metadata providers in priority order, with their positions and option availability. Requires authentication.",
     )
 }
 
@@ -660,9 +662,9 @@ fn search_provider_docs(op: TransformOperation) -> TransformOperation {
 }
 
 #[cfg(feature = "docgen")]
-fn update_priority_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Update provider priority").description(
-        "Updates the priority of a metadata provider. Higher priority providers take precedence. Requires ManageProviders permission.",
+fn update_provider_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Update provider").description(
+        "Moves a metadata provider to `position` and/or sets `enabled`, then returns every provider in priority order. Positions are zero-based and gap-free; position 0 takes precedence, and a position past the end moves the provider last. Requires ManageProviders permission.",
     )
 }
 
@@ -741,14 +743,14 @@ fn sync_provider_docs(op: TransformOperation) -> TransformOperation {
 pub fn provider_routes() -> Router {
     use axum::routing::{
         get,
+        patch,
         post,
-        put,
     };
 
     Router::new()
         .route("/", get(list_providers))
         .route("/{provider_id}/search", post(search_provider))
-        .route("/{provider_id}/priority", put(update_provider_priority))
+        .route("/{provider_id}", patch(update_provider))
         .route("/{provider_id}/sync", post(sync_provider))
 }
 
@@ -756,8 +758,8 @@ pub fn provider_routes() -> Router {
 pub(crate) fn provider_openapi_routes() -> aide::axum::ApiRouter {
     use aide::axum::routing::{
         get_with,
+        patch_with,
         post_with,
-        put_with,
     };
 
     aide::axum::ApiRouter::new()
@@ -767,8 +769,8 @@ pub(crate) fn provider_openapi_routes() -> aide::axum::ApiRouter {
             post_with(search_provider, search_provider_docs),
         )
         .api_route(
-            "/{provider_id}/priority",
-            put_with(update_provider_priority, update_priority_docs),
+            "/{provider_id}",
+            patch_with(update_provider, update_provider_docs),
         )
         .api_route(
             "/{provider_id}/sync",
@@ -885,7 +887,7 @@ mod tests {
         let response = build_provider_responses(vec![lyra_db::ProviderConfig {
             db_id: None,
             provider_id: provider_id.clone(),
-            priority: 50,
+            position: 0,
             enabled: true,
         }]);
         tokio::pin!(response);

@@ -411,7 +411,7 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("GET", "/api/download/{track_id}"),
     ("GET", "/api/providers/"),
     ("POST", "/api/providers/{provider_id}/search"),
-    ("PUT", "/api/providers/{provider_id}/priority"),
+    ("PATCH", "/api/providers/{provider_id}"),
     ("POST", "/api/providers/{provider_id}/sync"),
     ("GET", "/api/entities/{id}/external-ids"),
     (

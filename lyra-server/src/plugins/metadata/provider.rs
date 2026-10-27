@@ -39,7 +39,6 @@ use crate::services::{
         provider_registry,
     },
 };
-use lyra_db::ProviderConfig;
 
 use super::MetadataCallbackRegistry;
 use super::layer::MetadataLayer;
@@ -101,19 +100,8 @@ fn provider_new_callback(
 
         if let Some(db) = db {
             let mut db_write = db.write().await;
-            if lyra_db::providers::get_by_provider_id(&db_write, &provider_id)
-                .map_err(crate::plugins::runtime_error)?
-                .is_none()
-            {
-                let provider_config = ProviderConfig {
-                    db_id: None,
-                    provider_id: provider_id.clone(),
-                    priority: 50,
-                    enabled: true,
-                };
-                lyra_db::providers::upsert(&mut db_write, &provider_config)
-                    .map_err(crate::plugins::runtime_error)?;
-            }
+            lyra_db::providers::register(&mut db_write, &provider_id)
+                .map_err(crate::plugins::runtime_error)?;
         }
 
         let provider = MetadataProvider {

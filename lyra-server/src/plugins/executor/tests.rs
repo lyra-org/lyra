@@ -240,7 +240,7 @@ fn plugin_executor_scopes_personal_lyrics_to_the_dispatch_principal() -> Result<
             &lyra_db::ProviderConfig {
                 db_id: None,
                 provider_id: "test_provider".to_string(),
-                priority: 10,
+                position: 0,
                 enabled: true,
             },
         )?;
