@@ -1,0 +1,19 @@
+run_as = "listener"
+
+# The track is in no library the listener can access.
+
+[[users]]
+key = "listener"
+
+[[api_keys]]
+key = "phone"
+user = "listener"
+
+[[releases]]
+key = "album"
+title = "Album"
+
+[[tracks]]
+key = "hidden"
+title = "Hidden"
+release = "album"

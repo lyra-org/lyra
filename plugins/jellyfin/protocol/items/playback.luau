@@ -1046,20 +1046,19 @@ function module.report_playback_event(
 	local item_public_id =
 		item_ids.decode_jellyfin_public_id(if type(raw_item_id) == "string" then raw_item_id else nil)
 	local item_id = if item_public_id then ids.get_db_id(item_public_id) else nil
-	if item_public_id == nil or item_id == nil then
+	-- As upstream, a report naming no item records nothing and still succeeds. A track the caller
+	-- can't see reads as one that doesn't exist.
+	local track = module.resolve_track_for_playback(item_id)
+	if item_public_id == nil or item_id == nil or track == nil then
 		-- A stop ends whatever this session was playing, even when it can't name the item.
 		if event_name == "stopped" then
 			forget_session_state(session_key)
 		end
-		return false, "invalid or missing playback item id"
+		return true, nil
 	end
 
 	local position_ms = ticks_to_ms(scalar_field(payload, "PositionTicks"))
-	local duration_ms = ticks_to_ms(scalar_field(payload, "RunTimeTicks"))
-	if duration_ms == nil then
-		local track = module.resolve_track_for_playback(item_id)
-		duration_ms = if track then track.duration_ms else nil
-	end
+	local duration_ms = ticks_to_ms(scalar_field(payload, "RunTimeTicks")) or track.duration_ms
 	local state = playback_state_for_event(event_name, payload, position_ms, duration_ms)
 	local normalized_event_name: string = if should_normalize_progress_to_started(
 			event_name,
