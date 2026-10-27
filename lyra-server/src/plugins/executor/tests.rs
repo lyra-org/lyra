@@ -1076,6 +1076,7 @@ fn plugin_executor_dispatches_registered_api_handler() -> Result<()> {
     // api::install resets the shared API route registry; serialize with the
     // other global-registry mutators.
     let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+    crate::plugins::testing::init_default_test_state()?;
     futures::executor::block_on(crate::plugins::api::initialize_registry(
         std::collections::HashSet::new(),
         None,
@@ -1321,6 +1322,7 @@ fn plugin_executor_dispatches_registered_websocket_handler() -> Result<()> {
     // api::install resets the shared API route registry; serialize with the
     // other global-registry mutators.
     let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+    crate::plugins::testing::init_default_test_state()?;
     futures::executor::block_on(crate::plugins::api::initialize_registry(
         std::collections::HashSet::new(),
         None,
@@ -1397,6 +1399,7 @@ fn foreground_dispatch_does_not_hide_finished_websocket_cleanup() -> Result<()> 
     // api::install resets the shared API route registry; serialize with the
     // other global-registry mutators.
     let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+    crate::plugins::testing::init_default_test_state()?;
     futures::executor::block_on(crate::plugins::api::initialize_registry(
         std::collections::HashSet::new(),
         None,
@@ -2179,6 +2182,7 @@ fn cover_artwork_bindings_serve_anonymous_public_routes() -> Result<()> {
     // api::install resets the shared API route registry; serialize with the
     // other global-registry mutators.
     let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+    crate::plugins::testing::init_default_test_state()?;
     let mut database = lyra_db::test_db::TestDb::initialized()?.into_inner();
     let owner = lyra_db::users::create(
         &mut database,
@@ -2288,6 +2292,7 @@ fn streamable_bindings_serve_anonymous_public_routes() -> Result<()> {
     // api::install resets the shared API route registry; serialize with the
     // other global-registry mutators.
     let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+    crate::plugins::testing::init_default_test_state()?;
     let mut database = lyra_db::test_db::TestDb::initialized()?.into_inner();
     let library = lyra_db::test_db::insert_library(&mut database, "Library", "/music")?;
     let release = lyra_db::fixtures::insert_release(&mut database, "Release")?;

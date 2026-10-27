@@ -9,6 +9,7 @@ use harmony_core::plugin::PluginManifest;
 
 use crate::{
     plugins::{
+        api::ApiRouteRegistries,
         bootstrap::PluginRuntime,
         lifecycle::PluginRegistries,
         settings::SettingsRegistries,
@@ -33,6 +34,7 @@ pub(crate) struct GenerationState {
     pub(crate) runtime: RuntimeHandle,
     pub(crate) registries: PluginRegistries,
     pub(crate) settings: SettingsRegistries,
+    pub(crate) api: ApiRouteRegistries,
 }
 
 /// The plugin layer's view of the application state.

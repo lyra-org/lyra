@@ -63,8 +63,8 @@ impl ApiRouteStore {
             .borrow_mut()
             .insert(handler_id, ApiHandlerRegistration { handler, context });
         futures::executor::block_on(async {
-            API_ROUTE_REGISTRY
-                .write()
+            api_route_registry()
+                .write_owned()
                 .await
                 .register(RegisteredRoute {
                     key,
@@ -98,8 +98,8 @@ impl ApiRouteStore {
             .borrow_mut()
             .insert(handler_id, ApiHandlerRegistration { handler, context });
         futures::executor::block_on(async {
-            API_ROUTE_REGISTRY
-                .write()
+            api_route_registry()
+                .write_owned()
                 .await
                 .register(RegisteredRoute {
                     key,
@@ -125,8 +125,16 @@ pub(crate) struct ApiHandlerRegistration {
     pub(crate) context: harmony_core::CallContext,
 }
 
-pub(super) static API_ROUTE_REGISTRY: LazyLock<Arc<tokio::sync::RwLock<ApiRouteRegistry>>> =
-    LazyLock::new(|| Arc::new(tokio::sync::RwLock::new(ApiRouteRegistry::new())));
+/// Generation-owned plugin API routes: the registered routes, their freeze state, and the host
+/// that serves them.
+#[derive(Default)]
+pub(crate) struct ApiRouteRegistries {
+    registry: Arc<tokio::sync::RwLock<ApiRouteRegistry>>,
+}
+
+pub(super) fn api_route_registry() -> Arc<tokio::sync::RwLock<ApiRouteRegistry>> {
+    crate::plugins::STATE.generation().api.registry.clone()
+}
 
 #[derive(Clone, Debug)]
 pub(crate) enum RouteAuthMode {
@@ -199,10 +207,6 @@ pub(super) struct ApiRouteRegistry {
 }
 
 impl ApiRouteRegistry {
-    fn new() -> Self {
-        Self::default()
-    }
-
     fn reset(&mut self, core_routes: HashSet<RouteKey>, host: Option<Arc<dyn RouteHost>>) {
         self.core_routes = core_routes;
         self.host = host;
@@ -363,16 +367,19 @@ pub(crate) async fn initialize_registry(
     core_routes: HashSet<RouteKey>,
     host: Option<Arc<dyn RouteHost>>,
 ) {
-    API_ROUTE_REGISTRY.write().await.reset(core_routes, host);
+    api_route_registry()
+        .write_owned()
+        .await
+        .reset(core_routes, host);
 }
 
 /// The registered routes ordered by path then method, with their
 /// case-insensitive lookup.
 pub(crate) async fn registered_routes() -> (Vec<RegisteredRoute>, CaseInsensitiveRouter) {
-    let registry = API_ROUTE_REGISTRY.read().await;
+    let registry = api_route_registry().read_owned().await;
     (registry.snapshot(), registry.ci_router_snapshot())
 }
 
 pub(super) async fn freeze_registry() {
-    API_ROUTE_REGISTRY.write().await.freeze();
+    api_route_registry().write_owned().await.freeze();
 }

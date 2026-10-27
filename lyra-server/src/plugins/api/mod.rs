@@ -9,11 +9,12 @@ mod route_key;
 mod types;
 
 use self::registry::{
-    API_ROUTE_REGISTRY,
     ApiRouteRegistration,
+    api_route_registry,
     freeze_registry,
 };
 pub(crate) use self::registry::{
+    ApiRouteRegistries,
     ApiRouteStore,
     CaseInsensitiveRouter,
     RegisteredRoute,
@@ -60,10 +61,7 @@ use std::{
         HashMap,
         HashSet,
     },
-    sync::{
-        Arc,
-        LazyLock,
-    },
+    sync::Arc,
 };
 
 use anyhow::{
@@ -111,7 +109,7 @@ pub(crate) async fn finalize() -> anyhow::Result<()> {
 /// Rebuilds the installed HTTP routes from the registry; a no-op until a
 /// host installs them.
 pub(crate) async fn rebuild_registered_routes() -> anyhow::Result<()> {
-    let host = API_ROUTE_REGISTRY.read().await.host();
+    let host = api_route_registry().read_owned().await.host();
     match host {
         Some(host) => host.rebuild().await,
         None => Ok(()),
@@ -119,15 +117,24 @@ pub(crate) async fn rebuild_registered_routes() -> anyhow::Result<()> {
 }
 
 pub(crate) async fn unfreeze_plugin_routes(plugin_id: crate::services::plugin_scope::PluginId) {
-    API_ROUTE_REGISTRY.write().await.unfreeze_plugin(plugin_id);
+    api_route_registry()
+        .write_owned()
+        .await
+        .unfreeze_plugin(plugin_id);
 }
 
 pub(crate) async fn refreeze_plugin_routes(plugin_id: &crate::services::plugin_scope::PluginId) {
-    API_ROUTE_REGISTRY.write().await.refreeze_plugin(plugin_id);
+    api_route_registry()
+        .write_owned()
+        .await
+        .refreeze_plugin(plugin_id);
 }
 
 pub(crate) async fn teardown_plugin_routes(plugin_id: &crate::services::plugin_scope::PluginId) {
-    API_ROUTE_REGISTRY.write().await.clear_bucket(plugin_id);
+    api_route_registry()
+        .write_owned()
+        .await
+        .clear_bucket(plugin_id);
     rebuild_registered_routes()
         .await
         .unwrap_or_else(|err| panic!("router rebuild must not fail post-teardown: {err}"));
@@ -1315,7 +1322,7 @@ pub(crate) mod tests {
     use super::*;
 
     pub(crate) async fn registered_handler(method: &str, path: &str) -> Option<u64> {
-        let registry = API_ROUTE_REGISTRY.read().await;
+        let registry = api_route_registry().read_owned().await;
         registry
             .snapshot()
             .into_iter()
