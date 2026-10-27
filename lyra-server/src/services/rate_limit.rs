@@ -34,6 +34,7 @@ use axum::{
         HeaderValue,
         Method,
         StatusCode,
+        Uri,
         header,
     },
     middleware::{
@@ -47,7 +48,17 @@ use axum::{
 };
 
 use crate::services::{
-    auth::caller::ClientAddress,
+    auth::{
+        caller::{
+            self,
+            ClientAddress,
+            Identity,
+        },
+        media_tokens::{
+            self,
+            MediaTokenPurpose,
+        },
+    },
     settings::server::{
         Config,
         RateLimitConfig,
@@ -56,9 +67,12 @@ use crate::services::{
 
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
 const IDLE_BUCKET_TTL: Duration = Duration::from_secs(600);
+/// How many credentials' global budgets one user may spend together: enough for a handful of
+/// devices all busy at once, while minting more sessions or API keys buys no more.
+const USER_CREDENTIALS: u32 = 4;
 
 /// Resolves each request's [`ClientAddress`] into its extensions and, when rate limiting is
-/// enabled, limits the request.
+/// enabled, charges the request to its caller.
 pub(crate) fn apply(router: Router, config: &Config) -> Router {
     let limiter = Arc::new(RateLimiter::new(&config.rate_limit));
     router.layer(middleware::from_fn_with_state(limiter, enforce))
@@ -75,7 +89,25 @@ async fn enforce(
         &limiter.config.trusted_proxies,
     );
     request.extensions_mut().insert(client);
-    match limiter.check(&request, client) {
+    let Some(route) = limiter.route(&request) else {
+        return next.run(request).await;
+    };
+    let charged = match route {
+        // A plugin's protocol authenticates its own way, after this runs, so its callers are
+        // only known by their address.
+        Route::Plugin => limiter.charge(limiter.checks(route, client, None)),
+        Route::Api | Route::Media => {
+            let bearer_hash = caller::bearer_hash(request.headers());
+            let uri = request.uri().clone();
+            limiter
+                .identify(bearer_hash, &uri, client)
+                .await
+                .and_then(|identity| {
+                    limiter.charge(limiter.checks(route, client, identity.as_ref()))
+                })
+        }
+    };
+    match charged {
         Ok(()) => next.run(request).await,
         Err(retry_after) => too_many_requests_response(retry_after),
     }
@@ -128,6 +160,7 @@ struct RuntimeConfig {
     enabled: bool,
     trusted_proxies: HashSet<IpAddr>,
     global: Option<Policy>,
+    user: Option<Policy>,
     authenticated: Option<Policy>,
 }
 
@@ -137,6 +170,10 @@ impl RuntimeConfig {
             enabled: config.enabled,
             trusted_proxies: config.trusted_proxies.iter().copied().collect(),
             global: Policy::new(config.global_per_minute, config.global_burst),
+            user: Policy::new(
+                config.global_per_minute.saturating_mul(USER_CREDENTIALS),
+                config.global_burst.saturating_mul(USER_CREDENTIALS),
+            ),
             authenticated: Policy::new(config.authenticated_per_minute, config.authenticated_burst),
         }
     }
@@ -145,9 +182,8 @@ impl RuntimeConfig {
 static LOGIN_LIMITER: LazyLock<Mutex<LimiterState>> =
     LazyLock::new(|| Mutex::new(LimiterState::new()));
 
-/// Charges one login attempt against the client's brute-force budget. Lives in
-/// the service layer so every credential-verifying caller is covered, not just
-/// path-matched REST routes.
+/// Charges one login attempt against the client's brute-force budget. Lives in the service layer
+/// so every credential-verifying caller is covered, not just path-matched REST routes.
 pub(crate) fn check_login_rate(client: ClientAddress) -> Result<(), Duration> {
     let config = crate::STATE.startup_config.get();
     if !config.rate_limit.enabled {
@@ -185,6 +221,17 @@ fn check_login_bucket(
     Ok(())
 }
 
+/// Which limits a request is subject to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Route {
+    /// A core API route.
+    Api,
+    /// A core route serving covers or downloads, which clients fetch in bulk.
+    Media,
+    /// A route a plugin registered.
+    Plugin,
+}
+
 struct RateLimiter {
     config: RuntimeConfig,
     state: Mutex<LimiterState>,
@@ -198,13 +245,61 @@ impl RateLimiter {
         }
     }
 
-    fn check(&self, request: &Request, client: ClientAddress) -> Result<(), Duration> {
-        if !self.config.enabled {
-            return Ok(());
+    /// The limits `request` is subject to, or `None` when it is not limited.
+    fn route(&self, request: &Request) -> Option<Route> {
+        if !self.config.enabled || request.method() == Method::OPTIONS {
+            return None;
         }
         let path = request.uri().path();
-        let plugin_route = !is_api_path(path) && crate::plugins::api::is_plugin_route_path(path);
-        let checks = self.checks_for_request(request, client, plugin_route);
+        if !is_api_path(path) {
+            return crate::plugins::api::is_plugin_route_path(path).then_some(Route::Plugin);
+        }
+        // A playback fetches its stream in many range or segment requests, and what is costly
+        // about streaming, transcoding, is bounded by the transcode capacity instead.
+        if is_streaming_path(path) {
+            return None;
+        }
+        Some(if is_media_path(path) {
+            Route::Media
+        } else {
+            Route::Api
+        })
+    }
+
+    /// Who sent a core request. With authentication disabled everyone is the same user, so callers
+    /// are told apart by address alone.
+    async fn identify(
+        &self,
+        bearer_hash: Option<String>,
+        uri: &Uri,
+        client: ClientAddress,
+    ) -> Result<Option<Identity>, Duration> {
+        if !crate::STATE.config().auth.enabled {
+            return Ok(None);
+        }
+        let identity = match bearer_hash {
+            Some(hash) => match caller::remembered_identity(&hash) {
+                Some(identity) => identity,
+                None => {
+                    // Looking up a credential not seen lately is charged to its address, so a
+                    // flood of made-up credentials is held to that budget before reaching the
+                    // database. It is a budget of its own, which the address's anonymous
+                    // requests cannot spend for the users behind it.
+                    if let Some(policy) = self.config.global {
+                        self.charge(vec![Check {
+                            key: BucketKey::Lookup(client),
+                            policy,
+                        }])?;
+                    }
+                    caller::look_up_identity(&hash).await
+                }
+            },
+            None => None,
+        };
+        Ok(identity.or_else(|| download_token_identity(uri)))
+    }
+
+    fn charge(&self, checks: Vec<Check>) -> Result<(), Duration> {
         if checks.is_empty() {
             return Ok(());
         }
@@ -240,55 +335,47 @@ impl RateLimiter {
         Ok(())
     }
 
-    fn checks_for_request(
+    /// An anonymous request is charged to its address. A user's is charged to the credential's
+    /// global budget and the user's larger one, and their API calls, but not their media
+    /// fetches, also to the credential's stricter authenticated budget.
+    fn checks(
         &self,
-        request: &Request,
+        route: Route,
         client: ClientAddress,
-        plugin_route: bool,
+        identity: Option<&Identity>,
     ) -> Vec<Check> {
-        let method = request.method();
-        if *method == Method::OPTIONS {
-            return Vec::new();
-        }
-
-        // Plugin surfaces serve media-heavy clients; like core media paths
-        // they get the per-client global policy only.
-        if plugin_route {
-            let Some(policy) = self.config.global else {
-                return Vec::new();
-            };
-            return vec![Check {
-                key: BucketKey::Global(client),
-                policy,
-            }];
-        }
-
-        let path = request.uri().path();
-        if !is_api_path(path) || is_streaming_path(path) {
-            return Vec::new();
-        }
-
-        let mut checks = Vec::with_capacity(2);
+        let Some(identity) = identity else {
+            return self
+                .config
+                .global
+                .map(|policy| Check {
+                    key: BucketKey::Client(client),
+                    policy,
+                })
+                .into_iter()
+                .collect();
+        };
+        let mut checks = Vec::with_capacity(3);
         if let Some(policy) = self.config.global {
             checks.push(Check {
-                key: BucketKey::Global(client),
+                key: BucketKey::Credential(identity.clone()),
                 policy,
             });
         }
-
-        if is_media_path(path) {
-            return checks;
+        if let Some(policy) = self.config.user {
+            checks.push(Check {
+                key: BucketKey::User(identity.user.clone()),
+                policy,
+            });
         }
-
-        if let Some(credential) = credential_key(request)
+        if route == Route::Api
             && let Some(policy) = self.config.authenticated
         {
             checks.push(Check {
-                key: BucketKey::Authenticated(credential),
+                key: BucketKey::Authenticated(identity.clone()),
                 policy,
             });
         }
-
         checks
     }
 }
@@ -322,10 +409,13 @@ struct Check {
     policy: Policy,
 }
 
-#[derive(Clone, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 enum BucketKey {
-    Global(ClientAddress),
-    Authenticated(String),
+    Client(ClientAddress),
+    Credential(Identity),
+    User(String),
+    Authenticated(Identity),
+    Lookup(ClientAddress),
     Login(ClientAddress),
 }
 
@@ -376,18 +466,14 @@ fn peer_addr(request: &Request) -> Option<SocketAddr> {
         .map(|ConnectInfo(addr)| *addr)
 }
 
-fn credential_key(request: &Request) -> Option<String> {
-    let raw = request
-        .headers()
-        .get(header::AUTHORIZATION)?
-        .to_str()
-        .ok()?;
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    Some(blake3::hash(trimmed.as_bytes()).to_hex().to_string())
+/// The identity of the media token a download request carries, when it was issued to download
+/// that track. Only downloads take a media token among the limited routes; elsewhere one is
+/// ignored, so a token leaked with a stream URL cannot spend its user's budget.
+fn download_token_identity(uri: &Uri) -> Option<Identity> {
+    let track_id = uri.path().strip_prefix("/api/download/")?;
+    let (_, token) = url::form_urlencoded::parse(uri.query()?.as_bytes())
+        .find(|(key, _)| key == "media_token")?;
+    media_tokens::token_identity(&token, MediaTokenPurpose::Download, track_id)
 }
 
 #[cfg(test)]
@@ -490,31 +576,100 @@ mod tests {
         Ok(())
     }
 
+    fn identity(user: &str, session: &str) -> Identity {
+        Identity {
+            user: user.to_string(),
+            credential: crate::services::auth::AuthCredential::Session {
+                public_id: session.to_string(),
+            },
+        }
+    }
+
     #[test]
-    fn plugin_routes_use_global_limit_only() {
+    fn requests_are_charged_to_their_address_or_credential() {
         let mut rate_limit = disabled_rate_limit_config();
         rate_limit.global_per_minute = 60;
         rate_limit.global_burst = 1;
         rate_limit.authenticated_per_minute = 60;
         rate_limit.authenticated_burst = 1;
         let limiter = RateLimiter::new(&rate_limit);
-
-        let mut plugin_request = request_with_peer(Method::GET, "/demo/Users", [203, 0, 113, 20]);
-        plugin_request.headers_mut().insert(
-            header::AUTHORIZATION,
-            HeaderValue::from_static("Custom Token=abc"),
-        );
         let client = address("203.0.113.20");
-        let checks = limiter.checks_for_request(&plugin_request, client, true);
-        assert_eq!(checks.len(), 1);
-        assert!(matches!(checks[0].key, BucketKey::Global(_)));
+        let laptop = identity("amy", "laptop");
+
+        let keys = |route, identity: Option<&Identity>| {
+            limiter
+                .checks(route, client, identity)
+                .into_iter()
+                .map(|check| check.key)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(keys(Route::Plugin, None), [BucketKey::Client(client)]);
+        assert_eq!(keys(Route::Api, None), [BucketKey::Client(client)]);
+        assert_eq!(
+            keys(Route::Media, Some(&laptop)),
+            [
+                BucketKey::Credential(laptop.clone()),
+                BucketKey::User("amy".to_string()),
+            ]
+        );
+        assert_eq!(
+            keys(Route::Api, Some(&laptop)),
+            [
+                BucketKey::Credential(laptop.clone()),
+                BucketKey::User("amy".to_string()),
+                BucketKey::Authenticated(laptop.clone()),
+            ]
+        );
 
         let static_request = request_with_peer(Method::GET, "/assets/app.js", [203, 0, 113, 20]);
+        assert_eq!(limiter.route(&static_request), None);
+    }
+
+    #[test]
+    fn a_users_credentials_have_their_own_budgets_under_a_shared_ceiling() {
+        let mut rate_limit = disabled_rate_limit_config();
+        rate_limit.global_per_minute = 60;
+        rate_limit.global_burst = 1;
+        let limiter = RateLimiter::new(&rate_limit);
+        let client = address("203.0.113.20");
+        let charge = |identity: &Identity| {
+            limiter.charge(limiter.checks(Route::Media, client, Some(identity)))
+        };
+
+        assert!(charge(&identity("amy", "laptop")).is_ok());
         assert!(
-            limiter
-                .checks_for_request(&static_request, client, false)
-                .is_empty()
+            charge(&identity("amy", "laptop")).is_err(),
+            "one credential spends only its own budget"
         );
+        for device in ["phone", "tv", "desktop"] {
+            assert!(
+                charge(&identity("amy", device)).is_ok(),
+                "a busy device leaves the user's others theirs"
+            );
+        }
+        assert!(
+            charge(&identity("amy", "fifth")).is_err(),
+            "more credentials buy no more than the user's ceiling"
+        );
+        assert!(charge(&identity("bob", "laptop")).is_ok());
+    }
+
+    #[test]
+    fn anonymous_clients_share_no_budget() {
+        let mut rate_limit = disabled_rate_limit_config();
+        rate_limit.global_per_minute = 60;
+        rate_limit.global_burst = 1;
+        let limiter = RateLimiter::new(&rate_limit);
+
+        for host in 1..=64 {
+            let client = address(&format!("203.0.113.{host}"));
+            assert!(
+                limiter
+                    .charge(limiter.checks(Route::Api, client, None))
+                    .is_ok(),
+                "no number of other clients exhausts a fresh one's budget"
+            );
+        }
     }
 
     #[test]
@@ -579,6 +734,8 @@ mod tests {
 
     #[tokio::test]
     async fn global_limit_applies_to_api_routes() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::init_default_test_state()?;
         let mut rate_limit = disabled_rate_limit_config();
         rate_limit.global_per_minute = 60;
         rate_limit.global_burst = 1;
@@ -606,6 +763,8 @@ mod tests {
 
     #[tokio::test]
     async fn trusted_proxy_uses_forwarded_client_ip() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::init_default_test_state()?;
         let mut rate_limit = disabled_rate_limit_config();
         rate_limit.trusted_proxies = vec![IpAddr::V4(Ipv4Addr::LOCALHOST)];
         rate_limit.global_per_minute = 60;
@@ -650,6 +809,8 @@ mod tests {
 
     #[tokio::test]
     async fn untrusted_proxy_ignores_forwarded_client_ip() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::init_default_test_state()?;
         let mut rate_limit = disabled_rate_limit_config();
         rate_limit.trusted_proxies = vec![IpAddr::V4(Ipv4Addr::LOCALHOST)];
         rate_limit.global_per_minute = 60;
@@ -684,6 +845,8 @@ mod tests {
 
     #[tokio::test]
     async fn ipv6_clients_share_a_request_budget_across_their_64() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::init_default_test_state()?;
         let mut rate_limit = disabled_rate_limit_config();
         rate_limit.global_per_minute = 60;
         rate_limit.global_burst = 1;
@@ -709,8 +872,226 @@ mod tests {
         Ok(())
     }
 
+    async fn initialize_user_runtime()
+    -> anyhow::Result<(agdb::DbId, crate::services::auth::Principal)> {
+        crate::testing::initialize_runtime(&crate::testing::LibraryFixtureConfig {
+            directory: std::path::PathBuf::from("."),
+            language: None,
+            country: None,
+        })
+        .await?;
+        let user_db_id = {
+            let mut db = crate::STATE.db.write().await;
+            crate::db::users::create(&mut db, &crate::db::test_db::test_user("budget")?)?
+        };
+        Ok((
+            user_db_id,
+            crate::testing::user_principal(user_db_id).await?,
+        ))
+    }
+
+    async fn session_token(principal: &crate::services::auth::Principal) -> anyhow::Result<String> {
+        let metadata = crate::services::auth::sessions::SessionMetadata {
+            user_agent: None,
+            client_name: None,
+        };
+        Ok(
+            crate::services::auth::sessions::create_session_for_user(principal, metadata)
+                .await?
+                .token,
+        )
+    }
+
+    fn bearer_request(path: &str, token: &str, peer: [u8; 4]) -> Request<Body> {
+        let mut request = request_with_peer(Method::GET, path, peer);
+        request.headers_mut().insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {token}")).expect("valid header"),
+        );
+        request
+    }
+
+    async fn status(app: &Router, request: Request<Body>) -> anyhow::Result<StatusCode> {
+        Ok(app.clone().oneshot(request).await?.status())
+    }
+
+    fn budget_app(burst: u32) -> Router {
+        let mut rate_limit = disabled_rate_limit_config();
+        rate_limit.global_per_minute = 60;
+        rate_limit.global_burst = burst;
+        apply(
+            Router::new()
+                .route("/api/server/public", get(|| async { "ok" }))
+                .route("/api/download/{track_id}", get(|| async { "ok" })),
+            &config_with_rate_limit(rate_limit),
+        )
+    }
+
+    #[tokio::test]
+    async fn credentials_are_charged_wherever_they_come_from() -> anyhow::Result<()> {
+        use crate::services::{
+            auth::media_tokens,
+            playback_sources::SourceVersion,
+        };
+
+        let _guard = crate::testing::runtime_test_lock().await;
+        let (_, principal) = initialize_user_runtime().await?;
+        let laptop = session_token(&principal).await?;
+        let phone = session_token(&principal).await?;
+        let auth = crate::services::auth::resolve_auth_from_bearer(Some(&laptop))
+            .await?
+            .expect("session resolves");
+        let media_token = media_tokens::issue_media_token(
+            "track-1",
+            media_tokens::MediaTokenPurpose::Download,
+            media_tokens::MediaTokenHolder::new(&auth),
+            SourceVersion::fixed("source"),
+            media_tokens::DeliveryOptions::default(),
+        )
+        .token;
+        let app = budget_app(1);
+
+        assert_eq!(
+            status(
+                &app,
+                bearer_request("/api/server/public", &laptop, [203, 0, 113, 1])
+            )
+            .await?,
+            StatusCode::OK
+        );
+        assert_eq!(
+            status(
+                &app,
+                bearer_request("/api/server/public", &laptop, [198, 51, 100, 2])
+            )
+            .await?,
+            StatusCode::TOO_MANY_REQUESTS,
+            "a credential's budget follows it across addresses"
+        );
+        assert_eq!(
+            status(
+                &app,
+                bearer_request("/api/server/public", &phone, [192, 0, 2, 7])
+            )
+            .await?,
+            StatusCode::OK,
+            "the user's other session keeps its own budget"
+        );
+        assert_eq!(
+            status(
+                &app,
+                request_with_peer(
+                    Method::GET,
+                    &format!("/api/download/track-1?media_token={media_token}"),
+                    [192, 0, 2, 3],
+                )
+            )
+            .await?,
+            StatusCode::TOO_MANY_REQUESTS,
+            "a download's media token counts against the session that obtained it"
+        );
+        for (path, host) in [
+            (format!("/api/server/public?media_token={media_token}"), 4),
+            (
+                format!("/api/download/track-2?media_token={media_token}"),
+                5,
+            ),
+        ] {
+            assert_eq!(
+                status(
+                    &app,
+                    request_with_peer(Method::GET, &path, [192, 0, 2, host])
+                )
+                .await?,
+                StatusCode::OK,
+                "a token is ignored where it does not apply, so {path} counts against its address"
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn unidentified_credentials_count_against_their_address() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        let (user_db_id, _) = initialize_user_runtime().await?;
+        let expired = {
+            let mut db = crate::STATE.db.write().await;
+            let mut session = crate::db::test_db::test_session(
+                &crate::services::auth::hash_secret("expired-session"),
+            );
+            session.expires_at = crate::db::users::now_secs() - 1;
+            crate::db::users::login(&mut db, user_db_id, &session)?;
+            "expired-session"
+        };
+        let app = budget_app(2);
+
+        for token in ["made-up-credential", expired] {
+            let peer = if token == expired {
+                [198, 51, 100, 9]
+            } else {
+                [203, 0, 113, 9]
+            };
+            for _ in 0..2 {
+                assert_eq!(
+                    status(&app, bearer_request("/api/server/public", token, peer)).await?,
+                    StatusCode::OK
+                );
+            }
+            assert_eq!(
+                status(
+                    &app,
+                    request_with_peer(Method::GET, "/api/server/public", peer)
+                )
+                .await?,
+                StatusCode::TOO_MANY_REQUESTS,
+                "{token} is charged to its address like an anonymous request"
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn disabled_authentication_tells_callers_apart_by_address() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        let (_, principal) = initialize_user_runtime().await?;
+        let token = session_token(&principal).await?;
+        let mut config = crate::STATE.config().as_ref().clone();
+        config.auth.enabled = false;
+        crate::testing::publish_config(config);
+        let app = budget_app(1);
+
+        assert_eq!(
+            status(
+                &app,
+                bearer_request("/api/server/public", &token, [203, 0, 113, 1])
+            )
+            .await?,
+            StatusCode::OK
+        );
+        assert_eq!(
+            status(
+                &app,
+                bearer_request("/api/server/public", &token, [198, 51, 100, 2])
+            )
+            .await?,
+            StatusCode::OK,
+            "another address is another caller"
+        );
+        assert_eq!(
+            status(
+                &app,
+                request_with_peer(Method::GET, "/api/server/public", [203, 0, 113, 1])
+            )
+            .await?,
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     async fn stream_routes_skip_rate_limit() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::init_default_test_state()?;
         let mut rate_limit = disabled_rate_limit_config();
         rate_limit.global_per_minute = 60;
         rate_limit.global_burst = 1;
@@ -735,6 +1116,8 @@ mod tests {
 
     #[tokio::test]
     async fn media_routes_use_global_limit() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::init_default_test_state()?;
         let mut rate_limit = disabled_rate_limit_config();
         rate_limit.global_per_minute = 60;
         rate_limit.global_burst = 1;

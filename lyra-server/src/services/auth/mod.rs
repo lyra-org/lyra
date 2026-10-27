@@ -193,7 +193,7 @@ impl Principal {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum AuthCredential {
     Session { public_id: String },
     ApiKey { public_id: String, name: String },

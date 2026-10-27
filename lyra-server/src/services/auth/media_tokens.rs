@@ -233,6 +233,26 @@ pub(crate) fn validate_media_token(
     Ok(grant.access.clone())
 }
 
+/// Whom an unexpired token for `purpose` and `track_id` was issued to, without using it.
+pub(crate) fn token_identity(
+    token: &str,
+    purpose: MediaTokenPurpose,
+    track_id: &str,
+) -> Option<super::caller::Identity> {
+    let now = Instant::now();
+    let now_secs = now_secs();
+    let generation = STATE.generation();
+    let cache = tokens(&generation);
+    let grant = cache.get(token.trim())?;
+    let usable = !token_is_expired(grant, now, now_secs)
+        && grant.access.purpose == purpose
+        && grant.track_id == track_id;
+    usable.then(|| super::caller::Identity {
+        user: grant.access.holder.user_public_id.clone(),
+        credential: grant.access.holder.credential.clone(),
+    })
+}
+
 /// A token for `track_id` held by a placeholder user over a placeholder source, for tests that
 /// only exercise purpose and track matching.
 #[cfg(test)]

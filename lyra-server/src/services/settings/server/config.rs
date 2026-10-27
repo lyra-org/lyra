@@ -95,9 +95,10 @@ pub(crate) struct CorsConfig {
 pub(crate) struct RateLimitConfig {
     pub(crate) enabled: bool,
     pub(crate) trusted_proxies: Vec<IpAddr>,
+    /// Per credential, or per client address for anonymous requests.
     pub(crate) global_per_minute: u32,
     pub(crate) global_burst: u32,
-    // Checked in addition to the global client bucket.
+    /// Per credential, for API calls on top of the global budget.
     pub(crate) authenticated_per_minute: u32,
     pub(crate) authenticated_burst: u32,
     pub(crate) login_per_minute: u32,
