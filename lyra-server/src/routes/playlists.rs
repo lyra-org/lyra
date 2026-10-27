@@ -112,7 +112,7 @@ struct RemovePlaylistTracksRequest {
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
 struct MovePlaylistTrackRequest {
-    new_position: u64,
+    position: u64,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -948,16 +948,14 @@ async fn move_playlist_track(
 
     let mut db = STATE.db.write().await;
     let playlist_db_id = require_owned_playlist(&db, &principal, &id)?;
-    playlists::move_track(&mut db, playlist_db_id, &entry_id, request.new_position).map_err(
-        |err| {
-            let message = err.to_string();
-            if message.starts_with("playlist entry not found") {
-                AppError::not_found(message)
-            } else {
-                AppError::from(err)
-            }
-        },
-    )?;
+    playlists::move_track(&mut db, playlist_db_id, &entry_id, request.position).map_err(|err| {
+        let message = err.to_string();
+        if message.starts_with("playlist entry not found") {
+            AppError::not_found(message)
+        } else {
+            AppError::from(err)
+        }
+    })?;
 
     let items = build_tracks(&db, &principal, playlist_db_id, PlaylistInc::TRACKS_ONLY)?;
     Ok(Json(items))
@@ -1016,7 +1014,7 @@ fn delete_track_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn move_track_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Move track within playlist")
-        .description("Moves a playlist track entry to a new position. `new_position` is a 0-based index into the list after the moved entry is removed. Returns the full updated item list without artists or release details.")
+        .description("Moves a playlist track entry to a new position. `position` is a 0-based index into the list after the moved entry is removed. Returns the full updated item list without artists or release details.")
 }
 
 pub fn playlist_routes() -> Router {
@@ -1331,7 +1329,7 @@ mod tests {
             move_playlist_track(
                 request.headers,
                 Path((request.playlist_id, request.entry_id)),
-                Json(MovePlaylistTrackRequest { new_position: 1 }),
+                Json(MovePlaylistTrackRequest { position: 1 }),
             )
             .await,
         )
