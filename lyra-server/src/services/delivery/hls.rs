@@ -171,10 +171,7 @@ fn hls_copy_is_eligible_for_request(
         return false;
     };
 
-    if !matches!(
-        source_codec,
-        AudioCodec::Aac | AudioCodec::Alac | AudioCodec::Flac
-    ) {
+    if HlsCodecProfile::for_copy_source(source_codec).is_err() {
         return false;
     }
 
@@ -265,7 +262,7 @@ fn resolve_hls_audio_bitrate_kbps(
         return None;
     }
 
-    matches!(profile.codec, AudioCodec::Aac).then(|| {
+    (!profile.codec.is_lossless()).then(|| {
         bitrate_bps
             .map(bitrate_kbps_from_bps)
             .unwrap_or(HLS_AUDIO_BITRATE_KBPS)

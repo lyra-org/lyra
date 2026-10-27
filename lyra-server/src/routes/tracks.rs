@@ -1791,16 +1791,16 @@ mod tests {
 
     #[test]
     fn resolve_playback_transports_rejects_an_hls_codec_the_playlist_cannot_honor() {
-        // opus parses as a codec name but has no HLS profile, so the minted hls_url would
+        // vorbis parses as a codec name but has no HLS profile, so the minted hls_url would
         // have failed at GET time with this same message.
         let err = resolve_playback_transports(
-            &playback_url_query(None, None, Some("opus")),
+            &playback_url_query(None, None, Some("vorbis")),
             flac_playback_source(),
         )
-        .expect_err("opus is not an HLS codec");
+        .expect_err("vorbis is not an HLS codec");
         assert_eq!(
             format!("{err:?}"),
-            "AppError(400 Bad Request: Unsupported HLS codec. Supported values: copy, aac, alac, flac.)"
+            "AppError(400 Bad Request: Unsupported HLS codec. Supported values: copy, aac, alac, flac, opus, mp3.)"
         );
     }
 

@@ -77,35 +77,29 @@ impl HlsCodecProfile {
                 segment_extension: "m4s",
                 init_filename: Some("init.mp4"),
             }),
+            AudioCodec::Opus => Ok(Self {
+                codec: AudioCodec::Opus,
+                is_copy: false,
+                segment_type: HlsSegmentType::FragmentedMp4,
+                segment_extension: "m4s",
+                init_filename: Some("init.mp4"),
+            }),
+            AudioCodec::Mp3 => Ok(Self {
+                codec: AudioCodec::Mp3,
+                is_copy: false,
+                segment_type: HlsSegmentType::MpegTs,
+                segment_extension: "ts",
+                init_filename: None,
+            }),
             _ => Err(HlsError::UnsupportedCodec),
         }
     }
 
     pub(crate) fn for_copy_source(codec: AudioCodec) -> Result<Self, HlsError> {
-        match codec {
-            AudioCodec::Aac => Ok(Self {
-                codec: AudioCodec::Aac,
-                is_copy: true,
-                segment_type: HlsSegmentType::MpegTs,
-                segment_extension: "ts",
-                init_filename: None,
-            }),
-            AudioCodec::Alac => Ok(Self {
-                codec: AudioCodec::Alac,
-                is_copy: true,
-                segment_type: HlsSegmentType::FragmentedMp4,
-                segment_extension: "m4s",
-                init_filename: Some("init.mp4"),
-            }),
-            AudioCodec::Flac => Ok(Self {
-                codec: AudioCodec::Flac,
-                is_copy: true,
-                segment_type: HlsSegmentType::FragmentedMp4,
-                segment_extension: "m4s",
-                init_filename: Some("init.mp4"),
-            }),
-            _ => Err(HlsError::UnsupportedCodec),
-        }
+        Ok(Self {
+            is_copy: true,
+            ..Self::from_requested(Some(codec))?
+        })
     }
 
     pub(crate) fn from_requested_codecs(preferred_codecs: &[AudioCodec]) -> Result<Self, HlsError> {
@@ -221,18 +215,75 @@ mod tests {
         assert_eq!(flac.segment_type, HlsSegmentType::FragmentedMp4);
         assert_eq!(flac.segment_extension, "m4s");
         assert_eq!(flac.init_filename, Some("init.mp4"));
+
+        let opus =
+            HlsCodecProfile::from_requested_codecs(&[AudioCodec::Opus]).expect("opus profile");
+        assert_eq!(opus.segment_type, HlsSegmentType::FragmentedMp4);
+        assert_eq!(opus.segment_extension, "m4s");
+        assert_eq!(opus.init_filename, Some("init.mp4"));
+    }
+
+    #[test]
+    fn codec_profile_segments_mp3_as_mpeg_ts() {
+        let mp3 = HlsCodecProfile::from_requested_codecs(&[AudioCodec::Mp3]).expect("mp3 profile");
+        assert_eq!(mp3.segment_type, HlsSegmentType::MpegTs);
+        assert_eq!(mp3.segment_extension, "ts");
+        assert!(mp3.init_filename.is_none());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
+    fn hls_output_encodes_every_codec_profile() {
+        let input = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/assets/metadata/integration_track.flac"
+        );
+        for codec in [
+            AudioCodec::Aac,
+            AudioCodec::Alac,
+            AudioCodec::Flac,
+            AudioCodec::Opus,
+            AudioCodec::Mp3,
+        ] {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let profile = HlsCodecProfile::from_requested(Some(codec)).expect("hls profile");
+            let playlist = dir.path().join("index.m3u8");
+            let segments = dir
+                .path()
+                .join(format!("segment-%05d.{}", profile.segment_extension));
+            let output = build_hls_output(
+                &playlist,
+                &segments,
+                HlsOutputConfig::new(profile, Some(128), None, None, false),
+            );
+            lyra_ffmpeg::FfmpegContext::builder()
+                .input(input)
+                .output(output)
+                .build()
+                .expect("hls output should build")
+                .start()
+                .expect("hls encode should start")
+                .wait()
+                .unwrap_or_else(|err| panic!("{codec:?} hls encode failed: {err}"));
+
+            let playlist = std::fs::read_to_string(&playlist).expect("playlist");
+            assert!(
+                playlist.contains(&format!("segment-00000.{}", profile.segment_extension)),
+                "{codec:?}: {playlist}"
+            );
+        }
     }
 
     #[test]
     fn codec_profile_rejects_unsupported_codecs() {
-        assert!(HlsCodecProfile::from_requested_codecs(&[AudioCodec::Opus]).is_err());
+        assert!(HlsCodecProfile::from_requested_codecs(&[AudioCodec::Vorbis]).is_err());
         assert!(HlsCodecProfile::from_requested_codecs(&[AudioCodec::Copy]).is_err());
     }
 
     #[test]
     fn codec_profile_chooses_first_supported_codec_from_preferences() {
         let profile = HlsCodecProfile::from_requested_codecs(&[
-            AudioCodec::Opus,
+            AudioCodec::Vorbis,
             AudioCodec::Copy,
             AudioCodec::Aac,
             AudioCodec::Flac,

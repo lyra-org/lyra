@@ -285,9 +285,9 @@ impl From<ProviderServiceError> for AppError {
 impl From<HlsError> for AppError {
     fn from(err: HlsError) -> Self {
         match err {
-            HlsError::UnsupportedCodec => {
-                Self::bad_request("Unsupported HLS codec. Supported values: copy, aac, alac, flac.")
-            }
+            HlsError::UnsupportedCodec => Self::bad_request(
+                "Unsupported HLS codec. Supported values: copy, aac, alac, flac, opus, mp3.",
+            ),
             HlsError::JobNotFound => Self::not_found("HLS transcode job not found"),
             HlsError::Saturated => Self::too_many_requests(
                 crate::services::transcoding::capacity::SATURATED_RETRY_AFTER,

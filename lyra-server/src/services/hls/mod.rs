@@ -10,7 +10,7 @@ pub(crate) mod state;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum HlsError {
-    #[error("Unsupported HLS codec. Supported values: copy, aac, alac, flac.")]
+    #[error("Unsupported HLS codec. Supported values: copy, aac, alac, flac, opus, mp3.")]
     UnsupportedCodec,
     #[error("HLS transcode job not found")]
     JobNotFound,
