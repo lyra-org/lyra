@@ -14,6 +14,10 @@ name = "Chara"
 type = "character"
 
 [[artists]]
+key = "beyonce"
+name = "Beyoncé"
+
+[[artists]]
 key = "manny"
 name = "Manny"
 manual_type = "character"

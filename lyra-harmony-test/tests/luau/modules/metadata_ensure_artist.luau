@@ -61,3 +61,12 @@ found = provider:ensure_artist({
 	artist_type = ArtistType.Person,
 })
 assert(found == fixture.ids.otto, `expected the artist another provider typed, got {found}`)
+
+-- A decomposed spelling finds the scanned, composed one.
+found = provider:ensure_artist({ id_type = "artist_id", id_value = "beyonce", artist_name = "Beyonce\u{301}" })
+assert(found == fixture.ids.beyonce, `expected the scanned artist, got {found}`)
+
+-- A new artist takes the composed spelling, as a scan would.
+found = provider:ensure_artist({ id_type = "artist_id", id_value = "zoe", artist_name = "Zoe\u{308}" })
+local created = artists.get({ found })[found]
+assert(created.scan_name == "Zo\u{eb}" and created.artist_name == "Zo\u{eb}", `got {created.scan_name}`)

@@ -584,7 +584,9 @@ fn ensure_artist_callback(
     ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
     let id_type = required_table_string(vm, &request, "id_type", "provider:ensure_artist")?;
     let id_value = required_table_string(vm, &request, "id_value", "provider:ensure_artist")?;
-    let artist_name = optional_table_string(vm, &request, "artist_name", "provider:ensure_artist")?;
+    // Scanned names are NFC, so a provider's spelling matches them only as NFC.
+    let artist_name = optional_table_string(vm, &request, "artist_name", "provider:ensure_artist")?
+        .map(|name| lyra_metadata::normalize_unicode_nfc(&name));
     let sort_name = optional_table_string(vm, &request, "sort_name", "provider:ensure_artist")?;
     let artist_type = optional_artist_type(vm, &request, "artist_type")?;
     let description = optional_table_string(vm, &request, "description", "provider:ensure_artist")?;
