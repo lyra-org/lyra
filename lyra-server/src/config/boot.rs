@@ -37,6 +37,7 @@ const LYRA_PORT_ENV: &str = "LYRA_PORT";
 const DEFAULT_DATA_DIR: &str = "data";
 const DEFAULT_COVERS_DIR_NAME: &str = "covers";
 const TRANSCODE_CACHE_DIR_NAME: &str = "transcodes";
+const HLS_DIR_NAME: &str = "hls";
 
 /// Boot-class environment overrides. Read once from the process environment;
 /// tests construct it directly so they never touch real variables.
@@ -117,6 +118,7 @@ impl BootConfig {
                 "database directory (LYRA_DB_DIR or db.path)",
             )?;
         }
+        super::storage::ensure_writable_directory(&self.hls_dir(), "HLS directory")?;
         Ok(())
     }
 
@@ -128,6 +130,12 @@ impl BootConfig {
     /// startup and created on first use.
     pub(crate) fn transcode_cache_dir(&self) -> PathBuf {
         self.data_dir.join(TRANSCODE_CACHE_DIR_NAME)
+    }
+
+    /// Where HLS jobs write their segments. Server-owned: its startup purge and cleanup touch
+    /// nothing outside it.
+    pub(crate) fn hls_dir(&self) -> PathBuf {
+        self.data_dir.join(HLS_DIR_NAME)
     }
 }
 
@@ -399,6 +407,7 @@ mod tests {
 
         assert!(data_dir.is_dir());
         assert!(db_dir.is_dir());
+        assert!(boot.hls_dir().is_dir());
         Ok(())
     }
 

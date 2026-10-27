@@ -139,12 +139,12 @@ async fn collect_dir_entries(dir: &FsPath, context: &str) -> Vec<(PathBuf, std::
 }
 
 pub(crate) async fn purge_orphaned_hls_temp_dirs(
-    temp_dir: &FsPath,
+    root: &FsPath,
     active_job_dirs: &HashSet<PathBuf>,
 ) -> usize {
     let mut purged_dirs = 0usize;
 
-    for (entry_path, metadata) in collect_dir_entries(temp_dir, "HLS startup purge").await {
+    for (entry_path, metadata) in collect_dir_entries(root, "HLS startup purge").await {
         let Some(entry_name) = entry_path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
@@ -172,12 +172,12 @@ async fn cleanup_hls_startup_orphaned_dirs() {
             .collect::<HashSet<_>>()
     };
 
-    let temp_dir = std::env::temp_dir();
-    let purged_dirs = purge_orphaned_hls_temp_dirs(&temp_dir, &active_job_dirs).await;
+    let hls_dir = STATE.boot.get().hls_dir();
+    let purged_dirs = purge_orphaned_hls_temp_dirs(&hls_dir, &active_job_dirs).await;
     if purged_dirs > 0 {
         tracing::info!(
             purged_dirs,
-            path = %temp_dir.display(),
+            path = %hls_dir.display(),
             "purged orphaned HLS temp outputs on startup"
         );
     }
