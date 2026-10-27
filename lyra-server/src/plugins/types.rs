@@ -15,9 +15,6 @@ use harmony_luau::{
     DescribeUserData,
     FieldDescriptor,
     InterfaceDescriptor,
-    MethodDescriptor,
-    MethodKind,
-    ParameterDescriptor,
 };
 use harmony_luau::{
     LuauType,
@@ -30,8 +27,7 @@ macro_rules! describe_record {
     (
         $marker:ident for $source:path,
         $name:literal,
-        fields { $($field:ident : $field_ty:ty as $key:literal),* $(,)? },
-        methods { $($method:ident($arg:ident : $arg_ty:ty)),* $(,)? }
+        fields { $($field:ident : $field_ty:ty as $key:literal),* $(,)? }
     ) => {
         #[cfg(feature = "docgen")]
         pub(crate) struct $marker;
@@ -58,23 +54,7 @@ macro_rules! describe_record {
                             }
                         ),*
                     ],
-                    methods: vec![
-                        $(
-                            MethodDescriptor {
-                                name: stringify!($method),
-                                description: None,
-                                params: vec![ParameterDescriptor {
-                                    name: stringify!($arg),
-                                    ty: <$arg_ty as LuauTypeInfo>::luau_type(),
-                                    description: None,
-                                    variadic: false,
-                                }],
-                                returns: vec![],
-                                yields: false,
-                                kind: MethodKind::Instance,
-                            }
-                        ),*
-                    ],
+                    methods: vec![],
                 }
             }
         }
@@ -242,9 +222,6 @@ describe_record!(
         locked: Option<bool> as "locked",
         created_at: Option<u64> as "created_at",
         ctime: Option<u64> as "ctime",
-    },
-    methods {
-        set_release_title(release_title: String),
     }
 );
 
@@ -267,13 +244,6 @@ describe_record!(
         locked: Option<bool> as "locked",
         created_at: Option<u64> as "created_at",
         ctime: Option<u64> as "ctime",
-    },
-    methods {
-        set_track_title(track_title: String),
-        set_year(year: u32),
-        set_track(track: u32),
-        set_track_total(track_total: u32),
-        set_duration_ms(duration_ms: u64),
     }
 );
 
@@ -291,11 +261,6 @@ describe_record!(
         verified: bool as "verified",
         locked: Option<bool> as "locked",
         created_at: Option<u64> as "created_at",
-    },
-    methods {
-        set_artist_name(artist_name: String),
-        set_artist_type(artist_type: LuauArtistType),
-        set_verified(verified: bool),
     }
 );
 
