@@ -82,7 +82,7 @@ local user_data = require("@self/protocol/items/user_data")
 local websocket = require("@self/protocol/websocket")
 
 -- Represents the last known supported Jellyfin server version.
-local SERVER_VERSION = "12.1.0"
+local SERVER_VERSION = "12.4.0"
 local SERVER_ID = constants.SERVER_ID
 local P = constants.ROUTE_PREFIX
 
