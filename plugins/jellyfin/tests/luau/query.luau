@@ -10,8 +10,8 @@ local function parse(params: { [string]: string }): options.ItemsQueryOptions
 	return options.parse(raw :: any)
 end
 
-local function keys(entity: query.Entity, params: { [string]: string }, single_release: boolean?): string
-	local terms = query.sort(entity, parse(params), single_release).sort
+local function keys(entity: query.Entity, params: { [string]: string }): string
+	local terms = query.sort(entity, parse(params)).sort
 	if terms == nil then
 		return "request order"
 	end
@@ -37,9 +37,9 @@ assert(paired == "listen_count descending,name ascending,date_created descending
 local dropped = keys("release", { SortBy = "CommunityRating,Budget,Album,Name", SortOrder = "Descending" })
 assert(dropped == "name descending", dropped)
 
--- Only one release's tracks have a release title to sort by.
-assert(keys("track", { SortBy = "Album" }) == "")
-assert(keys("track", { SortBy = "Album" }, true) == "release_title ascending")
+-- Finamp's library-wide song sort.
+local by_album = keys("track", { SortBy = "Album,SortName" })
+assert(by_album == "release_title ascending,disc ascending,track ascending,sort_name ascending", by_album)
 
 assert(keys("track", { SortBy = "PremiereDate" }) == "year ascending")
 -- A track's album artist is its release's, so a compilation's tracks sort together.

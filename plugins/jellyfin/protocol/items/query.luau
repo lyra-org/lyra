@@ -99,12 +99,7 @@ function module.direction(sort_order: string?): "ascending" | "descending"
 end
 
 -- Pairs each `SortBy` key with the `SortOrder` at its index; keys past the orders take the first.
-local function translate_sort(
-	entity: Entity,
-	sort_by: { string },
-	sort_order: string?,
-	single_release: boolean
-): { SortTerm }
+local function translate_sort(entity: Entity, sort_by: { string }, sort_order: string?): { SortTerm }
 	local keys = SORT_KEYS[entity]
 	local orders = string.split(sort_order or "", ",")
 	local terms: { SortTerm } = {}
@@ -112,10 +107,6 @@ local function translate_sort(
 	for index, token in sort_by do
 		local order = direction(if index <= #orders then orders[index] else orders[1])
 		for _, key in keys[string.lower(token)] or {} do
-			-- Only tracks of one release have a release title to sort by.
-			if key == "release_title" and not single_release then
-				continue
-			end
 			if not seen[key] then
 				seen[key] = true
 				table.insert(terms, { key = key, order = order })
@@ -131,7 +122,7 @@ end
 
 -- The Lyra sort for a listing, with upstream's defaults: request order with `Ids`, newest year
 -- first for an artist's albums, relevance when searching, and SortName otherwise.
-function module.sort(entity: Entity, options: ItemsQueryOptions, single_release: boolean?): Sort
+function module.sort(entity: Entity, options: ItemsQueryOptions): Sort
 	local sort_by = options.sort_by
 	if #sort_by == 0 then
 		if #options.ids > 0 then
@@ -149,7 +140,7 @@ function module.sort(entity: Entity, options: ItemsQueryOptions, single_release:
 		sort_by = { "SortName" }
 	end
 
-	local terms = translate_sort(entity, sort_by, options.sort_order, single_release == true)
+	local terms = translate_sort(entity, sort_by, options.sort_order)
 	local seed: number? = nil
 	for _, term in terms do
 		if term.key == "random" then
@@ -389,7 +380,7 @@ function module.tracks(options: ItemsQueryOptions, scope: Scope): TrackQuery?
 	query.sort_name_at_least = options.name_starts_with_or_greater
 	query.sort_name_below = options.name_less_than
 	query.search = options.search_term
-	local sort = module.sort("track", options, release_ids ~= nil and #release_ids == 1)
+	local sort = module.sort("track", options)
 	query.sort = sort.sort :: any
 	query.seed = sort.seed
 	query.offset, query.limit = page(options)

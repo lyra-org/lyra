@@ -59,13 +59,14 @@ do
 		"V1:Audio (3)",
 		"SortBy orders a playlist's tracks before they page"
 	)
-	for _, untranslatable in { "Default", "Album", "CommunityRating,IsFavoriteOrLiked" } do
+	for _, untranslatable in { "Default", "CommunityRating,IsFavoriteOrLiked" } do
 		check(
 			items({ SortBy = untranslatable }, ids.mix),
 			in_order,
 			`keys without a Lyra meaning keep playlist order: {untranslatable}`
 		)
 	end
+	check(items({ SortBy = "Album" }, ids.mix), "S1:Audio,S2:Audio,V1:Audio (3)", "a playlist's tracks sort by album")
 	check(items({ Years = "2005" }, ids.mix), "V1:Audio (1)", "the listing's filters apply to a playlist's tracks")
 	check(items({ Filters = "IsFavorite" }, ids.mix), "S2:Audio (1)")
 end
@@ -148,7 +149,7 @@ do
 	check(items({ Filters = "IsUnplayed", IsPlayed = "true" }, ids.mix), "V1:Audio (1)")
 end
 
--- Tracks sort by their album artist.
+-- Tracks sort by their album artist and album.
 do
 	local function sorted(sort_by: string): string
 		return items({ IncludeItemTypes = "Audio", Recursive = "true", SortBy = sort_by })
@@ -159,6 +160,8 @@ do
 		"the compilation track sorts under Various Artists"
 	)
 	check(sorted("Artist,Album,SortName"), "V1:Audio,S1:Audio,S2:Audio (3)")
+	check(sorted("SortName"), "S1:Audio,V1:Audio,S2:Audio (3)")
+	check(sorted("Album,SortName"), "S1:Audio,S2:Audio,V1:Audio (3)", "library-wide tracks sort by album title")
 end
 
 -- The latest audio groups into albums.
