@@ -21,8 +21,11 @@ use reqwest::Client;
 use crate::fetch::{
     FetchError,
     FetchedRepo,
+    RefPlan,
     RepoSpec,
+    fetch_planned,
     fetch_repo,
+    plan_refs,
 };
 use crate::manifest::{
     ManifestError,
@@ -112,7 +115,18 @@ pub async fn resolve_plugins(
     spec: &RepoSpec,
     valid_scope_ids: &HashSet<Arc<str>>,
 ) -> Result<ResolvedRepository, ResolveError> {
-    let fetched = fetch_repo(client, spec).await?;
+    let plan = plan_refs(client, spec).await;
+    resolve_planned(client, spec, &plan, valid_scope_ids).await
+}
+
+/// Like [`resolve_plugins`], starting from a ref `plan` already resolved.
+pub async fn resolve_planned(
+    client: &Client,
+    spec: &RepoSpec,
+    plan: &RefPlan,
+    valid_scope_ids: &HashSet<Arc<str>>,
+) -> Result<ResolvedRepository, ResolveError> {
+    let fetched = fetch_planned(client, spec, plan).await?;
     let root = fetched.root().to_path_buf();
 
     let has_plugin = root.join(PLUGIN_CONFIG_FILENAME).is_file();

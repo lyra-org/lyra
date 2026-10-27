@@ -28,6 +28,8 @@ use harmony_repository::{
     SourceRecord,
     install_candidate,
     manifest::SOURCE_RECORD_FILENAME,
+    plan_refs,
+    resolve_planned,
     resolve_plugins,
     uninstall_plugin,
 };
@@ -543,6 +545,53 @@ fn find_update<'a>(
     Ok(Some(candidate))
 }
 
+/// Where the plugins installed from one origin and ref update from.
+enum UpdateSource {
+    /// Every plugin is already at the commit the ref resolves to, so
+    /// nothing was downloaded.
+    Current {
+        commit: String,
+    },
+    Changed(Box<ResolvedRepository>),
+}
+
+impl UpdateSource {
+    fn commit(&self) -> Option<String> {
+        match self {
+            Self::Current { commit } => Some(commit.clone()),
+            Self::Changed(repository) => repository.commit.clone(),
+        }
+    }
+}
+
+/// Resolves the ref first and downloads only when some plugin in
+/// `installed` (their recorded commits) is not at the resolved commit.
+async fn resolve_update_source(
+    client: &reqwest::Client,
+    origin: &str,
+    git_ref: Option<&str>,
+    installed: &[Option<&str>],
+) -> Result<UpdateSource, PluginRepoError> {
+    let spec =
+        RepoSpec::parse(origin, git_ref).map_err(|e| PluginRepoError::BadRequest(e.to_string()))?;
+    let plan = plan_refs(client, &spec).await;
+    if let Some(commit) = plan.commit()
+        && all_at_commit(installed, commit)
+    {
+        return Ok(UpdateSource::Current {
+            commit: commit.to_string(),
+        });
+    }
+    resolve_planned(client, &spec, &plan, &crate::plugins::module_scope_ids())
+        .await
+        .map(|repository| UpdateSource::Changed(Box::new(repository)))
+        .map_err(map_resolve_error)
+}
+
+fn all_at_commit(installed: &[Option<&str>], commit: &str) -> bool {
+    installed.iter().all(|installed| *installed == Some(commit))
+}
+
 /// Ids of installed plugins that carry a source record file. Unreadable
 /// records are included so they surface as per-plugin failures.
 fn managed_plugin_ids(plugins_dir: &Path) -> Result<BTreeSet<String>, PluginRepoError> {
@@ -570,7 +619,8 @@ fn managed_plugin_ids(plugins_dir: &Path) -> Result<BTreeSet<String>, PluginRepo
 /// Updates the named plugins, or every repository-managed plugin when
 /// `plugin_ids` is `None`. An explicitly empty selection is rejected.
 /// Pinned plugins are up to date by construction and are not resolved.
-/// Each distinct origin and ref is resolved once; per-plugin failures
+/// Each distinct origin and ref is resolved once and downloaded only when
+/// a plugin installed from it is behind its commit; per-plugin failures
 /// don't abort siblings. The runtime reloads once, and only when
 /// something was reinstalled.
 pub(crate) async fn update_plugins(
@@ -606,28 +656,27 @@ async fn update_plugins_in(
         }
     }
 
-    let build = server_build();
-    let mut resolved: HashMap<(String, Option<String>), Result<ResolvedRepository, String>> =
-        HashMap::new();
+    let client = http_client(&server_build())?;
+    let mut installed: HashMap<(String, Option<String>), Vec<Option<&str>>> = HashMap::new();
     for (_, record) in &records {
-        let key = (record.origin.clone(), record.git_ref.clone());
-        if let std::collections::hash_map::Entry::Vacant(entry) = resolved.entry(key) {
-            let result = resolve(&record.origin, record.git_ref.as_deref(), &build)
-                .await
-                .map_err(|error| error.to_string());
-            entry.insert(result);
-        }
+        installed
+            .entry((record.origin.clone(), record.git_ref.clone()))
+            .or_default()
+            .push(record.commit.as_deref());
+    }
+    let mut resolved: HashMap<(String, Option<String>), Result<UpdateSource, String>> =
+        HashMap::new();
+    for ((origin, git_ref), commits) in &installed {
+        let result = resolve_update_source(&client, origin, git_ref.as_deref(), commits)
+            .await
+            .map_err(|error| error.to_string());
+        resolved.insert((origin.clone(), git_ref.clone()), result);
     }
     if resolved.values().any(Result::is_ok) {
         let mut db = STATE.db.write().await;
-        for ((origin, git_ref), repository) in &resolved {
-            if let Ok(repository) = repository {
-                record_resolved_commit(
-                    &mut db,
-                    origin,
-                    git_ref.as_deref(),
-                    repository.commit.clone(),
-                )?;
+        for ((origin, git_ref), source) in &resolved {
+            if let Ok(source) = source {
+                record_resolved_commit(&mut db, origin, git_ref.as_deref(), source.commit())?;
             }
         }
     }
@@ -635,7 +684,11 @@ async fn update_plugins_in(
     let mut pending = Vec::new();
     for (id, record) in &records {
         let repository = match &resolved[&(record.origin.clone(), record.git_ref.clone())] {
-            Ok(repository) => repository,
+            Ok(UpdateSource::Current { .. }) => {
+                report.up_to_date.push(id.clone());
+                continue;
+            }
+            Ok(UpdateSource::Changed(repository)) => repository,
             Err(error) => {
                 report.failed.push(FailedInstall {
                     id: id.clone(),
@@ -939,6 +992,69 @@ mod tests {
         assert!(report.failed.is_empty());
         assert_eq!(report.up_to_date, vec!["pinned".to_string()]);
         Ok(())
+    }
+
+    /// A Gitea-style forge that answers API calls for `o/r` at `commit`
+    /// and serves no archives, so any download fails.
+    async fn api_only_forge(commit: &str) -> anyhow::Result<String> {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let base = format!("http://{}", listener.local_addr()?);
+        let commit = commit.to_string();
+        let router = axum::Router::new()
+            .route(
+                "/api/v1/repos/o/r",
+                axum::routing::get(|| async {
+                    axum::Json(serde_json::json!({ "default_branch": "main" }))
+                }),
+            )
+            .route(
+                "/api/v1/repos/o/r/git/commits/main",
+                axum::routing::get(move || async move {
+                    axum::Json(serde_json::json!({ "sha": commit }))
+                }),
+            );
+        tokio::spawn(async move { axum::serve(listener, router).await });
+        Ok(format!("{base}/o/r"))
+    }
+
+    #[tokio::test]
+    async fn update_plugins_skips_the_download_when_installed_commits_match() -> anyhow::Result<()>
+    {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        let commit = "c".repeat(40);
+        let origin = api_only_forge(&commit).await?;
+        let plugins_dir = tempfile::TempDir::new()?;
+        for (id, installed) in [("current", commit.clone()), ("behind", "d".repeat(40))] {
+            let dir = plugins_dir.path().join(id);
+            std::fs::create_dir_all(&dir)?;
+            let mut managed = record(Some(installed));
+            managed.origin = origin.clone();
+            managed.forge = Forge::Gitea;
+            managed.store(&dir)?;
+        }
+
+        let report = update_plugins_in(plugins_dir.path(), Some(&["current".into()])).await?;
+        assert!(report.failed.is_empty(), "{:?}", report.failed);
+        assert_eq!(report.up_to_date, vec!["current".to_string()]);
+
+        let report = update_plugins_in(plugins_dir.path(), None).await?;
+        assert!(report.up_to_date.is_empty());
+        let failed = report
+            .failed
+            .iter()
+            .map(|f| f.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(failed, ["behind", "current"]);
+        Ok(())
+    }
+
+    #[test]
+    fn all_at_commit_requires_every_recorded_commit_to_match() {
+        let commit = "a".repeat(40);
+        assert!(all_at_commit(&[Some(&commit), Some(&commit)], &commit));
+        assert!(!all_at_commit(&[Some(&commit), None], &commit));
+        assert!(!all_at_commit(&[Some(&commit), Some("b")], &commit));
     }
 
     #[tokio::test]

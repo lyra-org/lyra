@@ -393,13 +393,24 @@ impl FetchedRepo {
     }
 }
 
-struct RefPlan {
+/// What a repository's ref resolves to, worked out from the forge API
+/// alone. [`fetch_planned`] downloads it.
+#[derive(Debug)]
+pub struct RefPlan {
     candidates: Vec<String>,
     commit: Option<String>,
     pinned: bool,
     /// True when the candidates came from an explicit ref or the forge API.
     /// Guessed candidates may 404 without it being an error.
     authoritative: bool,
+}
+
+impl RefPlan {
+    /// The commit the ref resolves to; `None` when the forge API could not
+    /// say, so only a download reveals the content.
+    pub fn commit(&self) -> Option<&str> {
+        self.commit.as_deref()
+    }
 }
 
 /// Downloads the repository as a tarball and extracts it.
@@ -409,7 +420,15 @@ struct RefPlan {
 /// Unreachable forge APIs (rate limits, exotic self-hosted setups) degrade
 /// to probing common branch names with `commit: None`.
 pub async fn fetch_repo(client: &Client, spec: &RepoSpec) -> Result<FetchedRepo, FetchError> {
-    let plan = plan_refs(client, spec).await;
+    fetch_planned(client, spec, &plan_refs(client, spec).await).await
+}
+
+/// Downloads and extracts the tarball `plan` resolved.
+pub async fn fetch_planned(
+    client: &Client,
+    spec: &RepoSpec,
+    plan: &RefPlan,
+) -> Result<FetchedRepo, FetchError> {
     let mut last_status: Option<FetchError> = None;
 
     for candidate in &plan.candidates {
@@ -452,7 +471,9 @@ pub async fn fetch_repo(client: &Client, spec: &RepoSpec) -> Result<FetchedRepo,
     })
 }
 
-async fn plan_refs(client: &Client, spec: &RepoSpec) -> RefPlan {
+/// Resolves the ref `spec` names, or the default branch, without
+/// downloading anything.
+pub async fn plan_refs(client: &Client, spec: &RepoSpec) -> RefPlan {
     if let Some(explicit) = &spec.explicit_ref {
         if is_commit_sha(explicit) {
             return RefPlan {
@@ -1010,6 +1031,32 @@ mod tests {
         assert_eq!(fetched.commit.as_deref(), Some(sha.as_str()));
         assert!(!fetched.pinned);
         assert!(fetched.root().join("plugin.json").is_file());
+    }
+
+    #[tokio::test]
+    async fn plans_refs_from_the_api_without_downloading() {
+        let sha = "b".repeat(40);
+        let server = TestServer::start(HashMap::from([
+            (
+                "/api/v1/repos/owner/repo".to_string(),
+                CannedResponse::json(r#"{"default_branch":"develop"}"#),
+            ),
+            (
+                "/api/v1/repos/owner/repo/git/commits/develop".to_string(),
+                CannedResponse::json(&format!(r#"{{"sha":"{sha}"}}"#)),
+            ),
+        ]))
+        .await;
+
+        let spec = RepoSpec::parse(&format!("{}/owner/repo", server.url()), None).unwrap();
+        let plan = plan_refs(&client(), &spec).await;
+        assert_eq!(plan.commit(), Some(sha.as_str()));
+
+        let err = fetch_planned(&client(), &spec, &plan).await.unwrap_err();
+        assert!(
+            matches!(&err, FetchError::Status { url, .. } if url.ends_with(&format!("{sha}.tar.gz"))),
+            "{err}"
+        );
     }
 
     #[tokio::test]

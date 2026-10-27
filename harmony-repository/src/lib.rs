@@ -17,8 +17,11 @@ pub use fetch::{
     FetchError,
     FetchedRepo,
     Forge,
+    RefPlan,
     RepoSpec,
+    fetch_planned,
     fetch_repo,
+    plan_refs,
 };
 pub use install::{
     InstallError,
@@ -35,6 +38,7 @@ pub use resolve::{
     PluginCandidate,
     ResolveError,
     ResolvedRepository,
+    resolve_planned,
     resolve_plugins,
 };
 
