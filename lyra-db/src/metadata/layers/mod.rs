@@ -96,6 +96,27 @@ impl MetadataLayer {
     }
 }
 
+/// Evaluates `$body` with `$element` naming the element type that stores
+/// `$entity`'s layers.
+macro_rules! with_element {
+    ($entity:expr, $element:ident => $body:expr) => {
+        match $entity {
+            MetadataEntityType::Release => {
+                type $element = ReleaseLayer;
+                $body
+            }
+            MetadataEntityType::Track => {
+                type $element = TrackLayer;
+                $body
+            }
+            MetadataEntityType::Artist => {
+                type $element = ArtistLayer;
+                $body
+            }
+        }
+    };
+}
+
 fn entity_type(db: &impl DbAccess, node_id: DbId) -> anyhow::Result<MetadataEntityType> {
     super::super::entities::metadata_entity_type(db, node_id)?.with_context(|| {
         format!(
@@ -107,12 +128,10 @@ fn entity_type(db: &impl DbAccess, node_id: DbId) -> anyhow::Result<MetadataEnti
 
 /// The entity's layers.
 pub fn get_for_entity(db: &impl DbAccess, node_id: DbId) -> anyhow::Result<Vec<MetadataLayer>> {
-    match super::super::entities::metadata_entity_type(db, node_id)? {
-        Some(MetadataEntityType::Release) => load::<ReleaseLayer>(db, node_id),
-        Some(MetadataEntityType::Track) => load::<TrackLayer>(db, node_id),
-        Some(MetadataEntityType::Artist) => load::<ArtistLayer>(db, node_id),
-        None => Ok(Vec::new()),
-    }
+    let Some(entity) = super::super::entities::metadata_entity_type(db, node_id)? else {
+        return Ok(Vec::new());
+    };
+    with_element!(entity, T => load::<T>(db, node_id))
 }
 
 // An entity's own layers hang off untyped edges. Its typed relationship edges
@@ -274,12 +293,8 @@ fn save_any(
     node_id: DbId,
     layer: &MetadataLayer,
 ) -> anyhow::Result<bool> {
-    match entity_type(db, node_id)? {
-        MetadataEntityType::Release => save::<ReleaseLayer>(db, node_id, layer),
-        MetadataEntityType::Track => save::<TrackLayer>(db, node_id, layer),
-        MetadataEntityType::Artist => save::<ArtistLayer>(db, node_id, layer),
-    }
-    .with_context(|| format!("invalid '{}' metadata layer", layer.source_id))
+    with_element!(entity_type(db, node_id)?, T => save::<T>(db, node_id, layer))
+        .with_context(|| format!("invalid '{}' metadata layer", layer.source_id))
 }
 
 fn save<T: LayerElement>(
@@ -312,12 +327,10 @@ pub fn find(
     node_id: DbId,
     source_id: &str,
 ) -> anyhow::Result<Option<MetadataLayer>> {
-    match super::super::entities::metadata_entity_type(db, node_id)? {
-        Some(MetadataEntityType::Release) => load_one::<ReleaseLayer>(db, node_id, source_id),
-        Some(MetadataEntityType::Track) => load_one::<TrackLayer>(db, node_id, source_id),
-        Some(MetadataEntityType::Artist) => load_one::<ArtistLayer>(db, node_id, source_id),
-        None => Ok(None),
-    }
+    let Some(entity) = super::super::entities::metadata_entity_type(db, node_id)? else {
+        return Ok(None);
+    };
+    with_element!(entity, T => load_one::<T>(db, node_id, source_id))
 }
 
 fn load_one<T: LayerElement>(
@@ -410,12 +423,10 @@ pub fn layer_id(
     node_id: DbId,
     source_id: &str,
 ) -> anyhow::Result<Option<DbId>> {
-    match super::super::entities::metadata_entity_type(db, node_id)? {
-        Some(MetadataEntityType::Release) => find_id::<ReleaseLayer>(db, node_id, source_id),
-        Some(MetadataEntityType::Track) => find_id::<TrackLayer>(db, node_id, source_id),
-        Some(MetadataEntityType::Artist) => find_id::<ArtistLayer>(db, node_id, source_id),
-        None => Ok(None),
-    }
+    let Some(entity) = super::super::entities::metadata_entity_type(db, node_id)? else {
+        return Ok(None);
+    };
+    with_element!(entity, T => find_id::<T>(db, node_id, source_id))
 }
 
 /// The entity a layer belongs to: the only untyped edge into the layer, since
@@ -451,11 +462,8 @@ pub fn copy_inside_tx(
     let Some(from_layer) = layer_id(db, from_node, source_id)? else {
         return Ok(());
     };
-    let (to_layer, updated_at) = match entity_type(db, to_node)? {
-        MetadataEntityType::Release => copy_element::<ReleaseLayer>(db, from_layer, to_node)?,
-        MetadataEntityType::Track => copy_element::<TrackLayer>(db, from_layer, to_node)?,
-        MetadataEntityType::Artist => copy_element::<ArtistLayer>(db, from_layer, to_node)?,
-    };
+    let (to_layer, updated_at) =
+        with_element!(entity_type(db, to_node)?, T => copy_element::<T>(db, from_layer, to_node)?);
     edges::copy_all(db, from_layer, to_layer)?;
     set_updated_at(db, to_layer, updated_at)
 }
@@ -904,7 +912,7 @@ mod tests {
     }
 
     #[test]
-    fn edges_without_supplied_fields_do_not_validate() -> anyhow::Result<()> {
+    fn edges_of_an_unsupplied_field_are_not_read() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let release_id = insert_release(&mut db, "Release")?;
         upsert(&mut db, release_id, &layer("provider", json!({}), 1))?;
@@ -912,7 +920,7 @@ mod tests {
         let jazz = crate::genres::resolve_by_name(&mut db, "Jazz")?;
         db.transaction_mut(|t| edges::replace_genres(t, layer_id, &[jazz]))?;
 
-        assert!(get_for_entity(&db, release_id).is_err());
+        assert!(only_layer(&db, release_id)?.fields.is_empty());
         Ok(())
     }
 
@@ -959,6 +967,7 @@ mod tests {
                 ("source_id", "corrupt").into(),
                 ("updated_at", 1_u64).into(),
                 ("supplied", vec!["year".to_string()]).into(),
+                ("supplied_credits", Vec::<String>::new()).into(),
                 ("year", "1999").into(),
             ],
         )?;

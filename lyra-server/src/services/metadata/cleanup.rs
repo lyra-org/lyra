@@ -1311,4 +1311,62 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn a_relation_type_left_only_naming_the_winner_still_clears() -> anyhow::Result<()> {
+        use lyra_db::metadata::layers::edges::LayerRelationInput;
+
+        let mut db = test_db::new_test_db()?;
+        let winner = lyra_db::fixtures::insert_artist(&mut db, "Winner")?;
+        let loser = lyra_db::fixtures::insert_artist(&mut db, "Loser")?;
+        let member = lyra_db::fixtures::insert_artist(&mut db, "Member")?;
+        for (provider_id, position) in [("high", 0), ("low", 1)] {
+            lyra_db::providers::upsert(
+                &mut db,
+                &lyra_db::ProviderConfig {
+                    db_id: None,
+                    provider_id: provider_id.to_string(),
+                    position,
+                    enabled: true,
+                },
+            )?;
+        }
+        for (provider_id, artist_id) in [("high", loser), ("low", member)] {
+            lyra_db::metadata::layers::upsert(
+                &mut db,
+                winner,
+                &lyra_db::MetadataLayer::new(provider_id, Default::default(), 1).with_relations(
+                    lyra_db::metadata::layers::LayerRelations::from([(
+                        lyra_db::ArtistRelationType::MemberOf,
+                        vec![LayerRelationInput {
+                            artist_id,
+                            attributes: None,
+                        }],
+                    )]),
+                ),
+            )?;
+        }
+
+        db.transaction_mut(|transaction| {
+            migrate_metadata(transaction, winner, loser)?;
+            merge_artist_into(transaction, winner, loser)
+        })?;
+
+        let high = lyra_db::metadata::layers::find(&db, winner, "high")?.expect("high layer");
+        assert_eq!(
+            high.relations[&lyra_db::ArtistRelationType::MemberOf],
+            Vec::new(),
+            "the self relation goes, but the type stays supplied"
+        );
+        assert!(
+            lyra_db::artists::relations::get_relations_to(
+                &db,
+                winner,
+                Some(lyra_db::ArtistRelationType::MemberOf)
+            )?
+            .is_empty(),
+            "the emptied type still clears the lower layer's members"
+        );
+        Ok(())
+    }
 }

@@ -3,6 +3,11 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use agdb::{
+    DbError,
+    DbTypeMarker,
+    DbValue,
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -12,7 +17,9 @@ use crate::entities::MetadataEntityType;
 
 /// A resolvable metadata field, named after the entity property it resolves.
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(
+    Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, DbTypeMarker,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum MetadataField {
     ReleaseTitle,
@@ -110,6 +117,32 @@ impl MetadataField {
 impl std::fmt::Display for MetadataField {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+impl From<MetadataField> for DbValue {
+    fn from(value: MetadataField) -> Self {
+        Self::from(value.as_str())
+    }
+}
+
+impl From<&MetadataField> for DbValue {
+    fn from(value: &MetadataField) -> Self {
+        (*value).into()
+    }
+}
+
+impl TryFrom<DbValue> for MetadataField {
+    type Error = DbError;
+
+    fn try_from(value: DbValue) -> Result<Self, Self::Error> {
+        let name = value.string()?;
+        Self::from_name(name).ok_or_else(|| {
+            DbError::serialization(
+                agdb::DbErrorType::TypeError,
+                format!("invalid MetadataField value '{name}'"),
+            )
+        })
     }
 }
 

@@ -34,9 +34,38 @@ use crate::{
     releases::ReleaseType,
 };
 
-/// A stored layer. Each field is a native property, and `supplied` names the
-/// fields the source has an opinion on: a supplied field without its property
-/// clears it, and an unsupplied field falls through to the next layer.
+/// The [`LayerElement`] methods every element implements alike over its
+/// `db_id`, `source_id`, and `updated_at`.
+macro_rules! shared_methods {
+    () => {
+        fn source_id(&self) -> &str {
+            &self.source_id
+        }
+
+        fn updated_at(&self) -> u64 {
+            self.updated_at
+        }
+
+        fn set_db_id(&mut self, db_id: Option<DbId>) {
+            self.db_id = db_id;
+        }
+
+        fn same_values(&self, other: &Self) -> bool {
+            Self {
+                db_id: other.db_id,
+                updated_at: other.updated_at,
+                ..self.clone()
+            } == *other
+        }
+    };
+}
+
+/// A stored layer. `supplied` names the fields the source has an opinion on,
+/// each held as a native property or, for genres and labels, as edges: a
+/// supplied field with neither clears it, and an unsupplied field falls through
+/// to the next layer. `supplied_credits` and `supplied_relations` do the same
+/// for credit roles and relation types. Values stored for anything unsupplied
+/// are never read.
 pub(super) trait LayerElement: DbType<ValueType = Self> + PartialEq + Sized {
     const ENTITY: MetadataEntityType;
     /// Builds the element from a layer [`validated`] for its entity.
@@ -57,12 +86,13 @@ pub(super) trait LayerElement: DbType<ValueType = Self> + PartialEq + Sized {
     fn optional_keys(&self) -> Vec<(&'static str, bool)>;
 }
 
-#[derive(DbElement, Clone, Debug, Default, PartialEq)]
+#[derive(DbElement, Clone, Debug, PartialEq)]
 pub(super) struct ReleaseLayer {
     db_id: Option<DbId>,
     source_id: String,
     updated_at: u64,
-    supplied: Vec<String>,
+    supplied: Vec<MetadataField>,
+    supplied_credits: Vec<CreditType>,
     release_title: Option<String>,
     sort_title: Option<String>,
     release_type: Option<ReleaseType>,
@@ -74,67 +104,43 @@ impl LayerElement for ReleaseLayer {
 
     fn from_layer(layer: &MetadataLayer) -> anyhow::Result<Self> {
         let fields = &layer.fields;
-        let mut element = Self {
+        Ok(Self {
+            db_id: None,
             source_id: layer.source_id.clone(),
             updated_at: layer.updated_at,
-            supplied: fields
-                .keys()
-                .map(|field| field.as_str().to_string())
-                .chain(
-                    layer
-                        .credits
-                        .keys()
-                        .map(|&credit_type| credit_key(credit_type)),
-                )
-                .collect(),
-            ..Self::default()
-        };
-        element.release_title = field_value(fields, MetadataField::ReleaseTitle)?;
-        element.sort_title = field_value(fields, MetadataField::SortTitle)?;
-        element.release_type = field_value(fields, MetadataField::ReleaseType)?;
-        element.release_date = field_value(fields, MetadataField::ReleaseDate)?;
-        Ok(element)
+            supplied: fields.keys().copied().collect(),
+            supplied_credits: layer.credits.keys().copied().collect(),
+            release_title: field_value(fields, MetadataField::ReleaseTitle)?,
+            sort_title: field_value(fields, MetadataField::SortTitle)?,
+            release_type: field_value(fields, MetadataField::ReleaseType)?,
+            release_date: field_value(fields, MetadataField::ReleaseDate)?,
+        })
     }
 
     fn to_layer(&self, db: &impl DbAccess) -> anyhow::Result<MetadataLayer> {
         let layer_id = self.db_id.context("a stored release layer has an id")?;
-        let fields = stored_fields(
-            MetadataEntityType::Release,
+        let mut fields = read_fields(
             &self.supplied,
             [
                 (MetadataField::ReleaseTitle, stored(&self.release_title)),
                 (MetadataField::SortTitle, stored(&self.sort_title)),
                 (MetadataField::ReleaseType, stored(&self.release_type)),
                 (MetadataField::ReleaseDate, stored(&self.release_date)),
-                (MetadataField::Genres, genre_ids(db, layer_id)?),
-                (MetadataField::Labels, label_links(db, layer_id)?),
             ],
-        )?;
+        );
+        if self.supplied.contains(&MetadataField::Genres) {
+            fields.insert(MetadataField::Genres, genre_ids(db, layer_id)?);
+        }
+        if self.supplied.contains(&MetadataField::Labels) {
+            fields.insert(MetadataField::Labels, label_links(db, layer_id)?);
+        }
         Ok(
             MetadataLayer::new(self.source_id.clone(), fields, self.updated_at)
-                .with_credits(stored_credits(db, layer_id, &self.supplied)?),
+                .with_credits(read_credits(db, layer_id, &self.supplied_credits)?),
         )
     }
 
-    fn source_id(&self) -> &str {
-        &self.source_id
-    }
-
-    fn updated_at(&self) -> u64 {
-        self.updated_at
-    }
-
-    fn set_db_id(&mut self, db_id: Option<DbId>) {
-        self.db_id = db_id;
-    }
-
-    fn same_values(&self, other: &Self) -> bool {
-        Self {
-            db_id: other.db_id,
-            updated_at: other.updated_at,
-            ..self.clone()
-        } == *other
-    }
+    shared_methods!();
 
     fn optional_keys(&self) -> Vec<(&'static str, bool)> {
         vec![
@@ -161,12 +167,13 @@ impl LayerElement for ReleaseLayer {
     }
 }
 
-#[derive(DbElement, Clone, Debug, Default, PartialEq)]
+#[derive(DbElement, Clone, Debug, PartialEq)]
 pub(super) struct TrackLayer {
     db_id: Option<DbId>,
     source_id: String,
     updated_at: u64,
-    supplied: Vec<String>,
+    supplied: Vec<MetadataField>,
+    supplied_credits: Vec<CreditType>,
     track_title: Option<String>,
     sort_title: Option<String>,
     year: Option<u32>,
@@ -181,35 +188,25 @@ impl LayerElement for TrackLayer {
 
     fn from_layer(layer: &MetadataLayer) -> anyhow::Result<Self> {
         let fields = &layer.fields;
-        let mut element = Self {
+        Ok(Self {
+            db_id: None,
             source_id: layer.source_id.clone(),
             updated_at: layer.updated_at,
-            supplied: fields
-                .keys()
-                .map(|field| field.as_str().to_string())
-                .chain(
-                    layer
-                        .credits
-                        .keys()
-                        .map(|&credit_type| credit_key(credit_type)),
-                )
-                .collect(),
-            ..Self::default()
-        };
-        element.track_title = field_value(fields, MetadataField::TrackTitle)?;
-        element.sort_title = field_value(fields, MetadataField::SortTitle)?;
-        element.year = field_value(fields, MetadataField::Year)?;
-        element.disc = field_value(fields, MetadataField::Disc)?;
-        element.disc_total = field_value(fields, MetadataField::DiscTotal)?;
-        element.track = field_value(fields, MetadataField::Track)?;
-        element.track_total = field_value(fields, MetadataField::TrackTotal)?;
-        Ok(element)
+            supplied: fields.keys().copied().collect(),
+            supplied_credits: layer.credits.keys().copied().collect(),
+            track_title: field_value(fields, MetadataField::TrackTitle)?,
+            sort_title: field_value(fields, MetadataField::SortTitle)?,
+            year: field_value(fields, MetadataField::Year)?,
+            disc: field_value(fields, MetadataField::Disc)?,
+            disc_total: field_value(fields, MetadataField::DiscTotal)?,
+            track: field_value(fields, MetadataField::Track)?,
+            track_total: field_value(fields, MetadataField::TrackTotal)?,
+        })
     }
 
     fn to_layer(&self, db: &impl DbAccess) -> anyhow::Result<MetadataLayer> {
         let layer_id = self.db_id.context("a stored track layer has an id")?;
-        let fields = stored_fields(
-            MetadataEntityType::Track,
+        let fields = read_fields(
             &self.supplied,
             [
                 (MetadataField::TrackTitle, stored(&self.track_title)),
@@ -220,32 +217,14 @@ impl LayerElement for TrackLayer {
                 (MetadataField::Track, stored(&self.track)),
                 (MetadataField::TrackTotal, stored(&self.track_total)),
             ],
-        )?;
+        );
         Ok(
             MetadataLayer::new(self.source_id.clone(), fields, self.updated_at)
-                .with_credits(stored_credits(db, layer_id, &self.supplied)?),
+                .with_credits(read_credits(db, layer_id, &self.supplied_credits)?),
         )
     }
 
-    fn source_id(&self) -> &str {
-        &self.source_id
-    }
-
-    fn updated_at(&self) -> u64 {
-        self.updated_at
-    }
-
-    fn set_db_id(&mut self, db_id: Option<DbId>) {
-        self.db_id = db_id;
-    }
-
-    fn same_values(&self, other: &Self) -> bool {
-        Self {
-            db_id: other.db_id,
-            updated_at: other.updated_at,
-            ..self.clone()
-        } == *other
-    }
+    shared_methods!();
 
     fn optional_keys(&self) -> Vec<(&'static str, bool)> {
         vec![
@@ -268,12 +247,13 @@ impl LayerElement for TrackLayer {
     }
 }
 
-#[derive(DbElement, Clone, Debug, Default, PartialEq)]
+#[derive(DbElement, Clone, Debug, PartialEq)]
 pub(super) struct ArtistLayer {
     db_id: Option<DbId>,
     source_id: String,
     updated_at: u64,
-    supplied: Vec<String>,
+    supplied: Vec<MetadataField>,
+    supplied_relations: Vec<ArtistRelationType>,
     artist_name: Option<String>,
     sort_name: Option<String>,
     artist_type: Option<ArtistType>,
@@ -285,55 +265,22 @@ impl LayerElement for ArtistLayer {
 
     fn from_layer(layer: &MetadataLayer) -> anyhow::Result<Self> {
         let fields = &layer.fields;
-        let mut element = Self {
+        Ok(Self {
+            db_id: None,
             source_id: layer.source_id.clone(),
             updated_at: layer.updated_at,
-            supplied: fields
-                .keys()
-                .map(|field| field.as_str().to_string())
-                .chain(
-                    layer
-                        .relations
-                        .keys()
-                        .map(|&relation_type| relation_key(relation_type)),
-                )
-                .collect(),
-            ..Self::default()
-        };
-        element.artist_name = field_value(fields, MetadataField::ArtistName)?;
-        element.sort_name = field_value(fields, MetadataField::SortName)?;
-        element.artist_type = field_value(fields, MetadataField::ArtistType)?;
-        element.description = field_value(fields, MetadataField::Description)?;
-        Ok(element)
+            supplied: fields.keys().copied().collect(),
+            supplied_relations: layer.relations.keys().copied().collect(),
+            artist_name: field_value(fields, MetadataField::ArtistName)?,
+            sort_name: field_value(fields, MetadataField::SortName)?,
+            artist_type: field_value(fields, MetadataField::ArtistType)?,
+            description: field_value(fields, MetadataField::Description)?,
+        })
     }
 
     fn to_layer(&self, db: &impl DbAccess) -> anyhow::Result<MetadataLayer> {
         let layer_id = self.db_id.context("a stored artist layer has an id")?;
-        let mut relations = LayerRelations::new();
-        for name in &self.supplied {
-            if let Some(relation_type) = parse_relation_key(name)? {
-                anyhow::ensure!(
-                    relations.insert(relation_type, Vec::new()).is_none(),
-                    "'{name}' is supplied twice"
-                );
-            }
-        }
-        for link in edges::relations(db, layer_id)? {
-            relations
-                .get_mut(&link.edge.relation_type)
-                .with_context(|| {
-                    format!(
-                        "'{}' is stored but not supplied",
-                        relation_key(link.edge.relation_type)
-                    )
-                })?
-                .push(edges::LayerRelationInput {
-                    artist_id: link.target_id,
-                    attributes: link.edge.attributes,
-                });
-        }
-        let fields = stored_fields(
-            MetadataEntityType::Artist,
+        let fields = read_fields(
             &self.supplied,
             [
                 (MetadataField::ArtistName, stored(&self.artist_name)),
@@ -341,32 +288,14 @@ impl LayerElement for ArtistLayer {
                 (MetadataField::ArtistType, stored(&self.artist_type)),
                 (MetadataField::Description, stored(&self.description)),
             ],
-        )?;
+        );
         Ok(
             MetadataLayer::new(self.source_id.clone(), fields, self.updated_at)
-                .with_relations(relations),
+                .with_relations(read_relations(db, layer_id, &self.supplied_relations)?),
         )
     }
 
-    fn source_id(&self) -> &str {
-        &self.source_id
-    }
-
-    fn updated_at(&self) -> u64 {
-        self.updated_at
-    }
-
-    fn set_db_id(&mut self, db_id: Option<DbId>) {
-        self.db_id = db_id;
-    }
-
-    fn same_values(&self, other: &Self) -> bool {
-        Self {
-            db_id: other.db_id,
-            updated_at: other.updated_at,
-            ..self.clone()
-        } == *other
-    }
+    shared_methods!();
 
     fn optional_keys(&self) -> Vec<(&'static str, bool)> {
         vec![
@@ -395,51 +324,52 @@ impl LayerElement for ArtistLayer {
     }
 }
 
-/// The supplied key of one credit role, such as `credits.composer`.
-fn credit_key(credit_type: CreditType) -> String {
-    format!("credits.{credit_type}")
-}
-
-/// The credit role a supplied key names, or `None` for any other key.
-fn parse_credit_key(name: &str) -> anyhow::Result<Option<CreditType>> {
-    let Some(credit_type) = name.strip_prefix("credits.") else {
-        return Ok(None);
-    };
-    Ok(Some(CreditType::from_db_str(credit_type).with_context(
-        || format!("unknown supplied credit role '{credit_type}'"),
-    )?))
-}
-
 /// A release or track layer's supplied credit roles, each in credit order.
-fn stored_credits(
+fn read_credits(
     db: &impl DbAccess,
     layer_id: DbId,
-    supplied: &[String],
+    supplied: &[CreditType],
 ) -> anyhow::Result<LayerCredits> {
-    let mut credits = LayerCredits::new();
-    for name in supplied {
-        if let Some(credit_type) = parse_credit_key(name)? {
-            anyhow::ensure!(
-                credits.insert(credit_type, Vec::new()).is_none(),
-                "'{name}' is supplied twice"
-            );
-        }
+    if supplied.is_empty() {
+        return Ok(LayerCredits::new());
     }
+    let mut credits: LayerCredits = supplied
+        .iter()
+        .map(|&credit_type| (credit_type, Vec::new()))
+        .collect();
     for link in edges::credits(db, layer_id)? {
-        credits
-            .get_mut(&link.edge.credit_type)
-            .with_context(|| {
-                format!(
-                    "'{}' is stored but not supplied",
-                    credit_key(link.edge.credit_type)
-                )
-            })?
-            .push(edges::LayerCreditInput {
+        if let Some(inputs) = credits.get_mut(&link.edge.credit_type) {
+            inputs.push(edges::LayerCreditInput {
                 artist_id: link.target_id,
                 detail: link.edge.detail,
             });
+        }
     }
     Ok(credits)
+}
+
+/// An artist layer's supplied relation types.
+fn read_relations(
+    db: &impl DbAccess,
+    layer_id: DbId,
+    supplied: &[ArtistRelationType],
+) -> anyhow::Result<LayerRelations> {
+    if supplied.is_empty() {
+        return Ok(LayerRelations::new());
+    }
+    let mut relations: LayerRelations = supplied
+        .iter()
+        .map(|&relation_type| (relation_type, Vec::new()))
+        .collect();
+    for link in edges::relations(db, layer_id)? {
+        if let Some(inputs) = relations.get_mut(&link.edge.relation_type) {
+            inputs.push(edges::LayerRelationInput {
+                artist_id: link.target_id,
+                attributes: link.edge.attributes,
+            });
+        }
+    }
+    Ok(relations)
 }
 
 fn save_credits(
@@ -457,22 +387,6 @@ fn save_credits(
         changed |= edges::replace_credits(db, layer_id, credit_type, desired)?;
     }
     Ok(changed)
-}
-
-/// The supplied key of one relation type, such as `relations.voice_actor`.
-pub(super) fn relation_key(relation_type: ArtistRelationType) -> String {
-    format!("relations.{relation_type}")
-}
-
-/// The relation type a supplied key names, or `None` for a field name.
-fn parse_relation_key(name: &str) -> anyhow::Result<Option<ArtistRelationType>> {
-    let Some(relation_type) = name.strip_prefix("relations.") else {
-        return Ok(None);
-    };
-    Ok(Some(
-        ArtistRelationType::from_db_str(relation_type)
-            .with_context(|| format!("unknown supplied relation type '{relation_type}'"))?,
-    ))
 }
 
 /// `layer` checked against what `entity` holds, with its values normalized.
@@ -507,51 +421,15 @@ pub(super) fn validated(
     })
 }
 
-/// Reads stored values back as layer fields, `None` for a supplied field
-/// without a stored value.
-fn stored_fields(
-    entity: MetadataEntityType,
-    supplied: &[String],
+/// An element's supplied fields, `None` for one it stores no value for.
+fn read_fields(
+    supplied: &[MetadataField],
     stored: impl IntoIterator<Item = (MetadataField, Option<FieldValue>)>,
-) -> anyhow::Result<LayerFields> {
-    let mut fields = LayerFields::new();
-    for name in supplied {
-        if parse_relation_key(name)?.is_some() {
-            anyhow::ensure!(
-                entity == MetadataEntityType::Artist,
-                "a {} has no relations",
-                entity.as_str()
-            );
-            continue;
-        }
-        if parse_credit_key(name)?.is_some() {
-            anyhow::ensure!(
-                entity != MetadataEntityType::Artist,
-                "an artist has no credits"
-            );
-            continue;
-        }
-        let field = MetadataField::from_name(name)
-            .with_context(|| format!("unknown supplied field '{name}'"))?;
-        anyhow::ensure!(
-            entity.supports(field),
-            "a {} has no '{field}' field",
-            entity.as_str()
-        );
-        anyhow::ensure!(
-            fields.insert(field, None).is_none(),
-            "'{field}' is supplied twice"
-        );
-    }
-    for (field, value) in stored {
-        let Some(value) = value else {
-            continue;
-        };
-        *fields
-            .get_mut(&field)
-            .with_context(|| format!("'{field}' is stored but not supplied"))? = Some(value);
-    }
-    Ok(fields)
+) -> LayerFields {
+    stored
+        .into_iter()
+        .filter(|(field, _)| supplied.contains(field))
+        .collect()
 }
 
 fn stored<T: Clone + Into<FieldValue>>(value: &Option<T>) -> Option<FieldValue> {
