@@ -69,15 +69,16 @@ impl AudioFormat {
         }
     }
 
+    /// Also reads the other names of MP4, Ogg and WebM audio files as those formats.
     pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "mp3" => Some(Self::Mp3),
             "flac" => Some(Self::Flac),
             "wav" => Some(Self::Wav),
-            "ogg" => Some(Self::Ogg),
-            "webm" => Some(Self::Webm),
+            "ogg" | "oga" => Some(Self::Ogg),
+            "webm" | "webma" => Some(Self::Webm),
             "aac" => Some(Self::Aac),
-            "m4a" => Some(Self::M4a),
+            "m4a" | "mp4" | "m4b" | "m4p" | "m4r" => Some(Self::M4a),
             "opus" => Some(Self::Opus),
             "aiff" => Some(Self::Aiff),
             "alac" => Some(Self::Alac),
@@ -387,6 +388,20 @@ mod tests {
         for name in super::SUPPORTED_FORMATS {
             let format = AudioFormat::parse(name).expect("supported formats parse");
             assert_eq!(format.as_str(), *name);
+        }
+    }
+
+    #[test]
+    fn container_aliases_parse_as_their_format() {
+        for (name, format) in [
+            ("mp4", AudioFormat::M4a),
+            ("M4B", AudioFormat::M4a),
+            ("m4p", AudioFormat::M4a),
+            ("m4r", AudioFormat::M4a),
+            ("oga", AudioFormat::Ogg),
+            ("webma", AudioFormat::Webm),
+        ] {
+            assert_eq!(AudioFormat::parse(name), Some(format), "{name}");
         }
     }
 
