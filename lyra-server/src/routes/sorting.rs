@@ -5,21 +5,18 @@
 
 use crate::{
     routes::AppError,
-    services::catalog::Direction,
+    services::catalog::{
+        Direction,
+        SortSpec,
+    },
 };
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct RouteSortSpec<K> {
-    pub(crate) key: K,
-    pub(crate) direction: Direction,
-}
 
 pub(crate) fn parse_route_sort_specs<K>(
     sort_by: Option<Vec<String>>,
     sort_order: Option<String>,
     map_token: impl Fn(&str) -> Option<K>,
     supported_values: &'static str,
-) -> Result<Vec<RouteSortSpec<K>>, AppError> {
+) -> Result<SortSpec<K>, AppError> {
     let direction = sort_order
         .as_deref()
         .map(Direction::parse)
@@ -37,7 +34,7 @@ pub(crate) fn parse_route_sort_specs<K>(
                 }
                 let token = entry.to_ascii_lowercase();
                 match map_token(&token) {
-                    Some(key) => sort.push(RouteSortSpec { key, direction }),
+                    Some(key) => sort.push((key, direction)),
                     None => unknown.push(token),
                 }
             }

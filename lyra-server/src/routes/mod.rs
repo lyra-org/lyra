@@ -107,10 +107,7 @@ pub use serve::{
     stream_routes,
 };
 pub use server::server_routes;
-pub(crate) use sorting::{
-    RouteSortSpec,
-    parse_route_sort_specs,
-};
+pub(crate) use sorting::parse_route_sort_specs;
 pub use tags::tag_routes;
 pub use tracks::track_routes;
 pub use users::{

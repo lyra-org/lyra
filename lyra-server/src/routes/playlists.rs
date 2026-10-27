@@ -32,7 +32,6 @@ use serde::{
     Serialize,
 };
 use std::{
-    cmp::Ordering,
     collections::HashMap,
     time::{
         SystemTime,
@@ -41,7 +40,8 @@ use std::{
 };
 
 use crate::routes::request::bearer_credential;
-use crate::services::catalog::Direction;
+use crate::services::catalog::SortSpec;
+use crate::services::playlists::SortKey as PlaylistSortKey;
 use crate::{
     routes::responses::{
         ArtistResponse,
@@ -263,161 +263,24 @@ fn parse_inc(inc: Option<Vec<String>>) -> Result<PlaylistInc, AppError> {
     Ok(result)
 }
 
-#[derive(Clone, Copy, Debug)]
-enum PlaylistRouteSortKey {
-    Name,
-    CreatedAt,
-    UpdatedAt,
-    TrackCount,
-    TotalDuration,
-    Id,
-}
-
-type PlaylistRouteSortSpec = super::RouteSortSpec<PlaylistRouteSortKey>;
-
-fn default_playlist_sort() -> Vec<PlaylistRouteSortSpec> {
-    vec![PlaylistRouteSortSpec {
-        key: PlaylistRouteSortKey::Name,
-        direction: Direction::Ascending,
-    }]
-}
-
 fn parse_playlist_sort_specs(
     sort_by: Option<Vec<String>>,
     sort_order: Option<String>,
-) -> Result<Vec<PlaylistRouteSortSpec>, AppError> {
+) -> Result<SortSpec<PlaylistSortKey>, AppError> {
     super::parse_route_sort_specs(
         sort_by,
         sort_order,
         |token| match token {
-            "name" => Some(PlaylistRouteSortKey::Name),
-            "created_at" => Some(PlaylistRouteSortKey::CreatedAt),
-            "updated_at" => Some(PlaylistRouteSortKey::UpdatedAt),
-            "track_count" => Some(PlaylistRouteSortKey::TrackCount),
-            "total_duration" => Some(PlaylistRouteSortKey::TotalDuration),
-            "id" => Some(PlaylistRouteSortKey::Id),
+            "name" => Some(PlaylistSortKey::Name),
+            "created_at" => Some(PlaylistSortKey::CreatedAt),
+            "updated_at" => Some(PlaylistSortKey::UpdatedAt),
+            "track_count" => Some(PlaylistSortKey::TrackCount),
+            "total_duration" => Some(PlaylistSortKey::TotalDuration),
+            "id" => Some(PlaylistSortKey::Id),
             _ => None,
         },
         "name, created_at, updated_at, track_count, total_duration, id",
     )
-}
-
-fn playlist_sort_needs_summaries(sort: &[PlaylistRouteSortSpec]) -> bool {
-    sort.iter().any(|spec| {
-        matches!(
-            spec.key,
-            PlaylistRouteSortKey::TrackCount | PlaylistRouteSortKey::TotalDuration
-        )
-    })
-}
-
-struct PlaylistRouteSortEntry {
-    playlist: Playlist,
-    sort_name: String,
-    summary: playlists::PlaylistSummary,
-    match_score: u32,
-}
-
-fn compare_playlist_route_field(
-    a: &PlaylistRouteSortEntry,
-    b: &PlaylistRouteSortEntry,
-    key: PlaylistRouteSortKey,
-) -> Ordering {
-    match key {
-        PlaylistRouteSortKey::Name => a
-            .sort_name
-            .cmp(&b.sort_name)
-            .then_with(|| a.playlist.name.cmp(&b.playlist.name)),
-        PlaylistRouteSortKey::CreatedAt => {
-            lyra_db::compare_option(&a.playlist.created_at, &b.playlist.created_at)
-        }
-        PlaylistRouteSortKey::UpdatedAt => {
-            lyra_db::compare_option(&a.playlist.updated_at, &b.playlist.updated_at)
-        }
-        PlaylistRouteSortKey::TrackCount => a.summary.track_count.cmp(&b.summary.track_count),
-        PlaylistRouteSortKey::TotalDuration => a
-            .summary
-            .total_duration_ms
-            .cmp(&b.summary.total_duration_ms),
-        PlaylistRouteSortKey::Id => a.playlist.id.cmp(&b.playlist.id),
-    }
-}
-
-fn compare_playlist_route_entries(
-    a: &PlaylistRouteSortEntry,
-    b: &PlaylistRouteSortEntry,
-    sort: &[PlaylistRouteSortSpec],
-) -> Ordering {
-    for spec in sort {
-        let ord = spec
-            .direction
-            .apply(compare_playlist_route_field(a, b, spec.key));
-        if ord != Ordering::Equal {
-            return ord;
-        }
-    }
-
-    b.match_score
-        .cmp(&a.match_score)
-        .then_with(|| a.sort_name.cmp(&b.sort_name))
-        .then_with(|| a.playlist.name.cmp(&b.playlist.name))
-        .then_with(|| a.playlist.id.cmp(&b.playlist.id))
-}
-
-/// Ordered playlists for the caller, plus any summaries computed along the way
-/// so the caller does not have to recompute them for the page.
-fn query_playlist_route_items(
-    db: &agdb::DbAny,
-    principal: &Principal,
-    sort: &[PlaylistRouteSortSpec],
-    search_term: Option<&str>,
-) -> anyhow::Result<(Vec<Playlist>, HashMap<DbId, playlists::PlaylistSummary>)> {
-    let playlists_for_user = playlists::get_by_user(db, principal.require(db)?)?;
-    let mut entries = playlists_for_user
-        .into_iter()
-        .map(|playlist| PlaylistRouteSortEntry {
-            sort_name: playlist.name.to_lowercase(),
-            playlist,
-            summary: playlists::PlaylistSummary::default(),
-            match_score: 0,
-        })
-        .collect::<Vec<_>>();
-
-    // Filter before summarising: discarded playlists should not be walked.
-    if let Some(term) = search_term {
-        crate::services::search::fuzzy_filter(
-            &mut entries,
-            term,
-            |entry| entry.playlist.name.as_str(),
-            |entry, score| entry.match_score = score,
-        );
-    }
-
-    let summaries = if playlist_sort_needs_summaries(sort) {
-        let playlist_db_ids = entries
-            .iter()
-            .filter_map(|entry| entry.playlist.db_id.clone().map(DbId::from))
-            .collect::<Vec<_>>();
-        let summaries = playlists::summaries(db, principal, &playlist_db_ids)?;
-        for entry in &mut entries {
-            entry.summary = entry
-                .playlist
-                .db_id
-                .clone()
-                .map(DbId::from)
-                .and_then(|playlist_db_id| summaries.get(&playlist_db_id).copied())
-                .unwrap_or_default();
-        }
-        summaries
-    } else {
-        HashMap::new()
-    };
-
-    entries.sort_by(|a, b| compare_playlist_route_entries(a, b, sort));
-    Ok((
-        entries.into_iter().map(|entry| entry.playlist).collect(),
-        summaries,
-    ))
 }
 
 fn now_epoch() -> u64 {
@@ -634,10 +497,7 @@ async fn get_playlists(
         .values(sort_by.as_deref())
         .field(sort_order.as_deref())
         .finish();
-    let mut sort = parse_playlist_sort_specs(sort_by, sort_order)?;
-    if sort.is_empty() {
-        sort = default_playlist_sort();
-    }
+    let sort = parse_playlist_sort_specs(sort_by, sort_order)?;
 
     let db = &*STATE.db.read().await;
     let (page_playlists, next_cursor, mut summaries) =
@@ -654,7 +514,7 @@ async fn get_playlists(
             (playlists_page, page.next_cursor, HashMap::new())
         } else {
             let (mut playlists_page, summaries) =
-                query_playlist_route_items(db, &principal, &sort, search_term.as_deref())?;
+                playlists::list_owned(db, &principal, &sort, search_term.as_deref())?;
             let page = page_request.start(
                 &snapshot_key,
                 playlists_page
@@ -1115,19 +975,6 @@ mod tests {
         lyra_db::test_db::insert_user(db, "playlist-test-user")
     }
 
-    fn test_principal(db: &mut DbAny) -> anyhow::Result<(DbId, Principal)> {
-        let user_db_id = create_test_user(db)?;
-        Ok((
-            user_db_id,
-            Principal::for_user(
-                db,
-                user_db_id,
-                vec![lyra_db::Permission::Admin],
-                std::collections::HashSet::new(),
-            ),
-        ))
-    }
-
     fn seed_playlist(db: &mut DbAny, user_db_id: DbId, name: &str) -> anyhow::Result<DbId> {
         playlists::create(
             db,
@@ -1141,23 +988,6 @@ mod tests {
                 track_db_ids: Vec::new(),
             },
         )
-    }
-
-    #[test]
-    fn query_playlist_route_items_rejects_principal_whose_db_id_was_recycled() -> anyhow::Result<()>
-    {
-        let mut db = lyra_db::test_db::new_test_db()?;
-        let (alice, stale) = test_principal(&mut db)?;
-        let replacement = lyra_db::test_db::recycle_user(&mut db, alice, "replacement")?;
-        seed_playlist(&mut db, replacement, "Replacement's Playlist")?;
-
-        let error = query_playlist_route_items(&db, &stale, &default_playlist_sort(), None)
-            .expect_err("a deleted user's principal must not list its replacement's playlists");
-        assert!(matches!(
-            error.downcast_ref::<crate::services::auth::AuthError>(),
-            Some(crate::services::auth::AuthError::InvalidBearerCredential)
-        ));
-        Ok(())
     }
 
     async fn session_headers(user_db_id: DbId) -> anyhow::Result<HeaderMap> {
@@ -1459,15 +1289,21 @@ mod tests {
 
     #[test]
     fn parse_playlist_sort_specs_rejects_unknown_keys() -> anyhow::Result<()> {
+        use crate::services::catalog::Direction::Descending;
+
         let specs = parse_playlist_sort_specs(
             Some(vec!["track_count,name".to_string()]),
             Some("descending".to_string()),
         )
         .map_err(|err| anyhow::anyhow!("{err:?}"))?;
         assert_eq!(specs.len(), 2);
-        assert!(matches!(specs[0].key, PlaylistRouteSortKey::TrackCount));
-        assert!(matches!(specs[1].key, PlaylistRouteSortKey::Name));
-        assert!(matches!(specs[0].direction, Direction::Descending));
+        assert_eq!(
+            specs,
+            [
+                (PlaylistSortKey::TrackCount, Descending),
+                (PlaylistSortKey::Name, Descending),
+            ]
+        );
 
         let err = parse_playlist_sort_specs(Some(vec!["bogus".to_string()]), None)
             .expect_err("unknown sort key should be rejected");
@@ -1486,61 +1322,6 @@ mod tests {
         let inc = parse_inc(Some(vec!["releases".to_string()]))
             .map_err(|err| anyhow::anyhow!("{err:?}"))?;
         assert!(inc.tracks, "releases should imply tracks");
-
-        Ok(())
-    }
-
-    #[test]
-    fn query_playlist_route_items_sorts_by_track_count() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        let (user_db_id, principal) = test_principal(&mut db)?;
-        let empty = seed_playlist(&mut db, user_db_id, "Zebra")?;
-        let filled = seed_playlist(&mut db, user_db_id, "Alpha")?;
-        let track = insert_track(&mut db, "Track")?;
-        playlists::add_tracks(&mut db, QueryId::Id(filled), &[QueryId::Id(track)], None)?;
-
-        let sort = parse_playlist_sort_specs(
-            Some(vec!["track_count".to_string()]),
-            Some("descending".to_string()),
-        )
-        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
-        let (ordered, summaries) = query_playlist_route_items(&db, &principal, &sort, None)?;
-        assert_eq!(
-            ordered.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
-            ["Alpha", "Zebra"]
-        );
-        assert_eq!(summaries.get(&filled).map(|s| s.track_count), Some(1));
-
-        // Default sort is by name, so the empty playlist comes second.
-        let (ordered, summaries) =
-            query_playlist_route_items(&db, &principal, &default_playlist_sort(), None)?;
-        assert_eq!(
-            ordered.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
-            ["Alpha", "Zebra"]
-        );
-        assert!(
-            summaries.is_empty(),
-            "name sort should not pay for summaries"
-        );
-        assert_eq!(ordered.len(), 2);
-        let _ = empty;
-
-        Ok(())
-    }
-
-    #[test]
-    fn query_playlist_route_items_filters_by_search_term() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        let (user_db_id, principal) = test_principal(&mut db)?;
-        seed_playlist(&mut db, user_db_id, "Late Night Jazz")?;
-        seed_playlist(&mut db, user_db_id, "Morning Rock")?;
-
-        let (ordered, _) =
-            query_playlist_route_items(&db, &principal, &default_playlist_sort(), Some("jazz"))?;
-        assert_eq!(
-            ordered.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
-            ["Late Night Jazz"]
-        );
 
         Ok(())
     }

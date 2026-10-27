@@ -3,7 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashMap;
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+};
 
 use agdb::{
     DbAny,
@@ -14,7 +17,11 @@ use agdb::{
 use anyhow::bail;
 use nanoid::nanoid;
 
-use crate::services::auth::Principal;
+use crate::services::{
+    auth::Principal,
+    catalog::Direction,
+    search::fuzzy_filter,
+};
 use lyra_db::Playlist;
 
 #[derive(Clone, Debug)]
@@ -202,6 +209,125 @@ pub(crate) fn summaries(
             (playlist_db_id, summary)
         })
         .collect())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SortKey {
+    Name,
+    CreatedAt,
+    UpdatedAt,
+    TrackCount,
+    TotalDuration,
+    Id,
+}
+
+impl SortKey {
+    fn needs_summary(self) -> bool {
+        matches!(self, Self::TrackCount | Self::TotalDuration)
+    }
+}
+
+struct ListEntry {
+    playlist: Playlist,
+    sort_name: String,
+    summary: PlaylistSummary,
+    match_score: u32,
+}
+
+fn compare_field(a: &ListEntry, b: &ListEntry, key: SortKey) -> Ordering {
+    match key {
+        SortKey::Name => a
+            .sort_name
+            .cmp(&b.sort_name)
+            .then_with(|| a.playlist.name.cmp(&b.playlist.name)),
+        SortKey::CreatedAt => {
+            lyra_db::compare_option(&a.playlist.created_at, &b.playlist.created_at)
+        }
+        SortKey::UpdatedAt => {
+            lyra_db::compare_option(&a.playlist.updated_at, &b.playlist.updated_at)
+        }
+        SortKey::TrackCount => a.summary.track_count.cmp(&b.summary.track_count),
+        SortKey::TotalDuration => a
+            .summary
+            .total_duration_ms
+            .cmp(&b.summary.total_duration_ms),
+        SortKey::Id => a.playlist.id.cmp(&b.playlist.id),
+    }
+}
+
+fn compare_entries(a: &ListEntry, b: &ListEntry, sort: &[(SortKey, Direction)]) -> Ordering {
+    for &(key, direction) in sort {
+        let ord = direction.apply(compare_field(a, b, key));
+        if ord != Ordering::Equal {
+            return ord;
+        }
+    }
+
+    b.match_score
+        .cmp(&a.match_score)
+        .then_with(|| a.sort_name.cmp(&b.sort_name))
+        .then_with(|| a.playlist.name.cmp(&b.playlist.name))
+        .then_with(|| a.playlist.id.cmp(&b.playlist.id))
+}
+
+/// The principal's playlists matching `search`, ordered by `sort` (by name when
+/// empty), with any summaries the sort computed so callers need not repeat them.
+pub(crate) fn list_owned(
+    db: &DbAny,
+    principal: &Principal,
+    sort: &[(SortKey, Direction)],
+    search: Option<&str>,
+) -> anyhow::Result<(Vec<Playlist>, HashMap<DbId, PlaylistSummary>)> {
+    let sort = if sort.is_empty() {
+        &[(SortKey::Name, Direction::Ascending)]
+    } else {
+        sort
+    };
+    let mut entries = get_by_user(db, principal.require(db)?)?
+        .into_iter()
+        .map(|playlist| ListEntry {
+            sort_name: playlist.name.to_lowercase(),
+            playlist,
+            summary: PlaylistSummary::default(),
+            match_score: 0,
+        })
+        .collect::<Vec<_>>();
+
+    // Filter before summarising: discarded playlists should not be walked.
+    if let Some(term) = search {
+        fuzzy_filter(
+            &mut entries,
+            term,
+            |entry| entry.playlist.name.as_str(),
+            |entry, score| entry.match_score = score,
+        );
+    }
+
+    let summaries = if sort.iter().any(|(key, _)| key.needs_summary()) {
+        let playlist_db_ids = entries
+            .iter()
+            .filter_map(|entry| entry.playlist.db_id.clone().map(DbId::from))
+            .collect::<Vec<_>>();
+        let computed = summaries(db, principal, &playlist_db_ids)?;
+        for entry in &mut entries {
+            entry.summary = entry
+                .playlist
+                .db_id
+                .clone()
+                .map(DbId::from)
+                .and_then(|playlist_db_id| computed.get(&playlist_db_id).copied())
+                .unwrap_or_default();
+        }
+        computed
+    } else {
+        HashMap::new()
+    };
+
+    entries.sort_by(|a, b| compare_entries(a, b, sort));
+    Ok((
+        entries.into_iter().map(|entry| entry.playlist).collect(),
+        summaries,
+    ))
 }
 
 pub(crate) fn create(db: &mut DbAny, request: &CreatePlaylistRequest) -> anyhow::Result<DbId> {
@@ -462,6 +588,78 @@ mod tests {
                 track_db_ids: Vec::new(),
             },
         )
+    }
+
+    fn owner(db: &mut DbAny) -> anyhow::Result<(DbId, Principal)> {
+        let user_db_id = lyra_db::test_db::insert_user(db, "playlist-owner")?;
+        let principal = Principal::for_user(
+            db,
+            user_db_id,
+            vec![lyra_db::Permission::Admin],
+            std::collections::HashSet::new(),
+        );
+        Ok((user_db_id, principal))
+    }
+
+    fn names(playlists: &[Playlist]) -> Vec<&str> {
+        playlists
+            .iter()
+            .map(|playlist| playlist.name.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn list_owned_rejects_principal_whose_db_id_was_recycled() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (alice, stale) = owner(&mut db)?;
+        let replacement = lyra_db::test_db::recycle_user(&mut db, alice, "replacement")?;
+        create_playlist(&mut db, replacement, "Replacement's Playlist")?;
+
+        let error = list_owned(&db, &stale, &[], None)
+            .expect_err("a deleted user's principal must not list its replacement's playlists");
+        assert!(matches!(
+            error.downcast_ref::<crate::services::auth::AuthError>(),
+            Some(crate::services::auth::AuthError::InvalidBearerCredential)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn list_owned_sorts_by_track_count() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (user_db_id, principal) = owner(&mut db)?;
+        create_playlist(&mut db, user_db_id, "Zebra")?;
+        let filled = create_playlist(&mut db, user_db_id, "Alpha")?;
+        let track = insert_track(&mut db, "Track")?;
+        add_tracks(&mut db, QueryId::Id(filled), &[QueryId::Id(track)], None)?;
+
+        let sort = [(SortKey::TrackCount, Direction::Descending)];
+        let (ordered, summaries) = list_owned(&db, &principal, &sort, None)?;
+        assert_eq!(names(&ordered), ["Alpha", "Zebra"]);
+        assert_eq!(summaries.get(&filled).map(|s| s.track_count), Some(1));
+
+        // An empty sort orders by name, which needs no summaries.
+        let (ordered, summaries) = list_owned(&db, &principal, &[], None)?;
+        assert_eq!(names(&ordered), ["Alpha", "Zebra"]);
+        assert!(
+            summaries.is_empty(),
+            "name sort should not pay for summaries"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn list_owned_filters_by_search_term() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (user_db_id, principal) = owner(&mut db)?;
+        create_playlist(&mut db, user_db_id, "Late Night Jazz")?;
+        create_playlist(&mut db, user_db_id, "Morning Rock")?;
+
+        let (ordered, _) = list_owned(&db, &principal, &[], Some("jazz"))?;
+        assert_eq!(names(&ordered), ["Late Night Jazz"]);
+
+        Ok(())
     }
 
     /// `Some(None)` is an explicit clear and must reach storage; `None` leaves
