@@ -22,13 +22,21 @@ use super::{
     AuthCredential,
     Principal,
     ResolvedAuth,
+    caller::Caller,
     random_hex_secret,
 };
 
 pub(crate) const MEDIA_TOKEN_IDLE_TTL_SECONDS: u64 = 15 * 60;
 pub(crate) const MEDIA_TOKEN_MAX_TTL_SECONDS: u64 = 8 * 60 * 60;
 const MEDIA_TOKEN_BYTES: usize = 24;
-const MAX_MEDIA_TOKENS: usize = 4096;
+/// A backstop on memory across every holder.
+const MAX_MEDIA_TOKENS: usize = 65_536;
+/// What one credential may have outstanding, so a device's requests only ever evict its own
+/// tokens.
+const MAX_MEDIA_TOKENS_PER_HOLDER: usize = 256;
+/// What one user may have outstanding across all their credentials: a handful of busy devices'
+/// worth, while minting more sessions or API keys buys no more.
+const MAX_MEDIA_TOKENS_PER_USER: usize = 4 * MAX_MEDIA_TOKENS_PER_HOLDER;
 
 /// Opaque grant store on the generation state so a reset drops all
 /// outstanding media tokens; grant internals stay private to this module.
@@ -44,7 +52,7 @@ pub(crate) enum MediaTokenPurpose {
 
 /// Who a media token was issued to: the user and the credential they presented. The token only
 /// works while that credential still authenticates that user.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct MediaTokenHolder {
     user_public_id: String,
     credential: AuthCredential,
@@ -58,8 +66,9 @@ impl MediaTokenHolder {
         }
     }
 
-    pub(crate) fn user_public_id(&self) -> &str {
-        &self.user_public_id
+    /// Whom the token's use is charged to: its user, whichever credential obtained it.
+    pub(crate) fn caller(&self) -> Caller {
+        Caller::User(self.user_public_id.clone())
     }
 
     /// The holder's principal as it stands now, read under the caller's guard, or `None` when
@@ -150,20 +159,38 @@ fn cleanup_expired_tokens(
     cache.retain(|_, grant| !token_is_expired(grant, now, now_secs));
 }
 
-fn enforce_media_token_cap(cache: &mut HashMap<String, MediaTokenGrant>) {
-    if cache.len() <= MAX_MEDIA_TOKENS {
-        return;
-    }
-
-    let overflow = cache.len() - MAX_MEDIA_TOKENS;
+/// Removes the least recently used tokens `matching`, beyond the newest `cap` of them.
+fn evict_least_recently_used(
+    cache: &mut HashMap<String, MediaTokenGrant>,
+    cap: usize,
+    matching: impl Fn(&MediaTokenGrant) -> bool,
+) {
     let mut by_age = cache
         .iter()
+        .filter(|(_, grant)| matching(grant))
         .map(|(token, grant)| (token.clone(), grant.last_used_at))
         .collect::<Vec<_>>();
+    if by_age.len() <= cap {
+        return;
+    }
+    let overflow = by_age.len() - cap;
     by_age.sort_by_key(|(_, last_used_at)| *last_used_at);
     for (token, _) in by_age.into_iter().take(overflow) {
         cache.remove(&token);
     }
+}
+
+fn enforce_media_token_caps(
+    cache: &mut HashMap<String, MediaTokenGrant>,
+    holder: &MediaTokenHolder,
+) {
+    evict_least_recently_used(cache, MAX_MEDIA_TOKENS_PER_HOLDER, |grant| {
+        grant.access.holder == *holder
+    });
+    evict_least_recently_used(cache, MAX_MEDIA_TOKENS_PER_USER, |grant| {
+        grant.access.holder.user_public_id == holder.user_public_id
+    });
+    evict_least_recently_used(cache, MAX_MEDIA_TOKENS, |_| true);
 }
 
 pub(crate) fn issue_media_token(
@@ -189,11 +216,12 @@ pub(crate) fn issue_media_token(
         expires_at,
     };
 
+    let holder = grant.access.holder.clone();
     let generation = STATE.generation();
     let mut cache = tokens(&generation);
     cleanup_expired_tokens(&mut cache, now, now_secs());
     cache.insert(token.clone(), grant);
-    enforce_media_token_cap(&mut cache);
+    enforce_media_token_caps(&mut cache, &holder);
 
     IssuedMediaToken { token, expires_at }
 }
@@ -304,5 +332,51 @@ mod tests {
             validate_media_token(&issued.token, MediaTokenPurpose::HlsPlaylist, "track-42"),
             Err(MediaTokenError::Invalid)
         ));
+    }
+
+    #[test]
+    fn a_credential_only_evicts_its_own_tokens_up_to_its_users_ceiling() {
+        let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+        crate::testing::init_default_test_state().expect("init test state");
+        let holder = |user: &str, session: &str| MediaTokenHolder {
+            user_public_id: user.to_string(),
+            credential: AuthCredential::Session {
+                public_id: session.to_string(),
+            },
+        };
+        let issue_for = |user: &str, session: &str| {
+            issue_media_token(
+                "track-42",
+                MediaTokenPurpose::Stream,
+                holder(user, session),
+                SourceVersion::fixed("source"),
+                DeliveryOptions::default(),
+            )
+        };
+
+        let valid = |issued: &IssuedMediaToken| {
+            validate_media_token(&issued.token, MediaTokenPurpose::Stream, "track-42").is_ok()
+        };
+
+        let bystander = issue_for("bystander", "bystander-laptop");
+        let laptop = issue_for("flooder", "flooder-laptop");
+        let oldest_phone = issue_for("flooder", "flooder-phone");
+        for _ in 0..MAX_MEDIA_TOKENS_PER_HOLDER {
+            issue_for("flooder", "flooder-phone");
+        }
+        assert!(valid(&bystander));
+        assert!(valid(&laptop), "another device's token survives");
+        assert!(!valid(&oldest_phone), "the flooding device evicts its own");
+
+        for device in 0..MAX_MEDIA_TOKENS_PER_USER / MAX_MEDIA_TOKENS_PER_HOLDER {
+            for _ in 0..MAX_MEDIA_TOKENS_PER_HOLDER {
+                issue_for("flooder", &format!("flooder-minted-{device}"));
+            }
+        }
+        assert!(
+            !valid(&laptop),
+            "more credentials buy no more than the user's ceiling"
+        );
+        assert!(valid(&bystander));
     }
 }

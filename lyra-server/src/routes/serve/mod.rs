@@ -243,7 +243,7 @@ impl TrackAccess {
     pub(crate) fn caller(&self) -> Caller {
         match self {
             Self::Principal(principal) => Caller::User(principal.user_public_id.clone()),
-            Self::MediaToken(token) => Caller::User(token.holder.user_public_id().to_string()),
+            Self::MediaToken(token) => token.holder.caller(),
             Self::PublicPluginRoute(caller) => caller.clone(),
         }
     }
