@@ -19,7 +19,7 @@ use anyhow::{
 pub(crate) type PluginRuntime = crate::plugins::executor::PluginExecutorHandle;
 
 pub(crate) async fn initialize_harmony() -> Result<PluginRuntime> {
-    let plugins_dir = crate::config::plugins_dir();
+    let plugins_dir = STATE.boot.get().plugins_dir.clone();
 
     {
         let server_info = crate::plugins::server::load_server_info()

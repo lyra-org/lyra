@@ -33,22 +33,19 @@ pub(crate) use self::test_state::{
     run_with_recycle_at,
     user_principal,
 };
-use crate::{
-    config::{
-        BootConfig,
+use crate::services::{
+    STATE,
+    boot::{
+        Boot,
         BuildInfo,
-        ConfigFile,
-        LibraryFile,
     },
-    services::{
-        STATE,
-        libraries::LibraryConfig,
-        settings::server::{
-            self as server_settings,
-            ResolvedSettings,
-        },
-        state::resolve_settings,
+    libraries::LibraryConfig,
+    settings::server::{
+        self as server_settings,
+        FileSettings,
+        ResolvedSettings,
     },
+    state::resolve_settings,
 };
 
 static RUNTIME_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -57,58 +54,59 @@ pub(crate) async fn runtime_test_lock() -> MutexGuard<'static, ()> {
     RUNTIME_TEST_LOCK.lock().await
 }
 
-/// Boot config backed by a uniquely named in-memory DB so tests never touch
+/// Boot values backed by a uniquely named in-memory DB so tests never touch
 /// the data directory or any on-disk database.
-fn memory_boot_config() -> anyhow::Result<BootConfig> {
+fn memory_boot() -> anyhow::Result<Boot> {
     let unique_db_name = format!(
         "lyra-harmony-test-{}-{}",
         std::process::id(),
         SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
     );
-    Ok(BootConfig {
+    let data_dir = std::env::temp_dir().join(&unique_db_name);
+    Ok(Boot {
         port: 0,
-        data_dir: std::env::temp_dir().join(&unique_db_name),
+        transcode_cache_dir: data_dir.join("transcodes"),
+        hls_dir: data_dir.join("hls"),
+        data_dir,
         db: DbConfig {
             kind: DbKind::Memory,
             path: PathBuf::from(unique_db_name),
         },
+        plugins_dir: PathBuf::from("plugins"),
         build: BuildInfo::default(),
     })
 }
 
-/// Opens a memory database and resolves `file` against it the way the server
-/// does. Memory kind is required: state is re-initialized per test, and an
-/// on-disk DB would block on the live process lock.
+/// Opens a memory database and resolves `library` and the `settings` file layer
+/// against it the way the server does. Memory kind is required: state is
+/// re-initialized per test, and an on-disk DB would block on the live process lock.
 pub(crate) fn open_memory_state(
-    file: ConfigFile,
-) -> anyhow::Result<(BootConfig, lyra_db::Created, ResolvedSettings)> {
-    let boot = memory_boot_config()?;
+    library: Option<LibraryConfig>,
+    settings: FileSettings,
+) -> anyhow::Result<(Boot, lyra_db::Created, ResolvedSettings)> {
+    let boot = memory_boot()?;
     assert!(
         matches!(boot.db.kind, DbKind::Memory),
         "test state must use a memory database"
     );
-    let library = LibraryConfig::resolve(file.library.as_ref())?;
-    let file_settings = server_settings::normalize_file(&file.settings, &boot)?;
+    let file_settings = server_settings::normalize_file(&settings, &boot.data_dir)?;
     let mut created = lyra_db::create(&boot.db)?;
-    let resolved = resolve_settings(&mut created, &boot, library, file_settings)?;
+    let resolved = resolve_settings(&mut created, &boot.data_dir, library, file_settings)?;
     Ok((boot, created, resolved))
 }
 
-/// A `config.json` whose library is `directory`.
+/// A library seed at `directory`.
 pub(crate) fn library_config(
     directory: PathBuf,
     language: Option<String>,
     country: Option<String>,
-) -> ConfigFile {
-    ConfigFile {
-        library: Some(LibraryFile {
-            path: Some(directory),
-            name: None,
-            language,
-            country,
-        }),
-        ..ConfigFile::default()
-    }
+) -> anyhow::Result<LibraryConfig> {
+    LibraryConfig::resolve(
+        Some(directory),
+        None,
+        language.as_deref(),
+        country.as_deref(),
+    )
 }
 
 /// The server record and HLS state the runtime starts with.
@@ -136,13 +134,10 @@ mod test_state {
         open_memory_state,
         start_runtime,
     };
-    use crate::{
-        config::ConfigFile,
-        services::STATE,
-    };
+    use crate::services::STATE;
 
-    fn initialize_state(file: ConfigFile) -> anyhow::Result<()> {
-        let (boot, created, resolved) = open_memory_state(file)?;
+    fn initialize_state(library: Option<super::LibraryConfig>) -> anyhow::Result<()> {
+        let (boot, created, resolved) = open_memory_state(library, Default::default())?;
         STATE.initialize(boot, created, resolved)
     }
 
@@ -150,7 +145,7 @@ mod test_state {
     /// library fixture: default config, in-memory DB. Call while holding
     /// [`runtime_test_lock`].
     pub(crate) fn init_default_test_state() -> anyhow::Result<()> {
-        initialize_state(ConfigFile::default())
+        initialize_state(None)
     }
 
     /// Principal for an existing user, built the way request auth builds one.
@@ -260,7 +255,7 @@ mod test_state {
 
     /// Services state over a library at `directory`, started like the runtime.
     pub(crate) async fn init_library_test_state(directory: PathBuf) -> anyhow::Result<()> {
-        initialize_state(library_config(directory, None, None))?;
+        initialize_state(Some(library_config(directory, None, None)?))?;
         start_runtime().await
     }
 }

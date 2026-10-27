@@ -3,6 +3,29 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+//! What the server was started with from outside its database.
+
+use std::path::PathBuf;
+
+use lyra_db::bootstrap::DbConfig;
+
+/// The values the server was started with, resolved before the database opened.
+#[derive(Clone)]
+pub(crate) struct Boot {
+    pub(crate) port: u16,
+    pub(crate) data_dir: PathBuf,
+    pub(crate) db: DbConfig,
+    /// Where plugins are installed and discovered.
+    pub(crate) plugins_dir: PathBuf,
+    /// Where finished and in-progress transcodes are kept. Server-owned scratch space: emptied at
+    /// startup and created on first use.
+    pub(crate) transcode_cache_dir: PathBuf,
+    /// Where HLS jobs write their segments. Server-owned: its startup purge and cleanup touch
+    /// nothing outside it.
+    pub(crate) hls_dir: PathBuf,
+    pub(crate) build: BuildInfo,
+}
+
 /// Identity of the build running the server, supplied by the binary so that
 /// a new commit relinks the binary instead of recompiling this crate.
 #[derive(Clone, Debug, Default)]

@@ -172,7 +172,7 @@ async fn cleanup_hls_startup_orphaned_dirs() {
             .collect::<HashSet<_>>()
     };
 
-    let hls_dir = STATE.boot.get().hls_dir();
+    let hls_dir = STATE.boot.get().hls_dir.clone();
     let purged_dirs = purge_orphaned_hls_temp_dirs(&hls_dir, &active_job_dirs).await;
     if purged_dirs > 0 {
         tracing::info!(

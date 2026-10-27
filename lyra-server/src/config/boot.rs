@@ -21,7 +21,6 @@ use std::{
 };
 
 use super::{
-    BuildInfo,
     ConfigFile,
     non_empty_path,
 };
@@ -35,7 +34,6 @@ const LYRA_DATA_DIR_ENV: &str = "LYRA_DATA_DIR";
 const LYRA_DB_DIR_ENV: &str = "LYRA_DB_DIR";
 const LYRA_PORT_ENV: &str = "LYRA_PORT";
 const DEFAULT_DATA_DIR: &str = "data";
-const DEFAULT_COVERS_DIR_NAME: &str = "covers";
 const TRANSCODE_CACHE_DIR_NAME: &str = "transcodes";
 const HLS_DIR_NAME: &str = "hls";
 
@@ -63,7 +61,6 @@ pub(crate) struct BootConfig {
     pub(crate) port: u16,
     pub(crate) data_dir: PathBuf,
     pub(crate) db: DbConfig,
-    pub(crate) build: BuildInfo,
 }
 
 impl Default for BootConfig {
@@ -72,7 +69,6 @@ impl Default for BootConfig {
             port: DEFAULT_PORT,
             data_dir: PathBuf::from(DEFAULT_DATA_DIR),
             db: DbConfig::default(),
-            build: BuildInfo::default(),
         }
     }
 }
@@ -122,18 +118,10 @@ impl BootConfig {
         Ok(())
     }
 
-    pub(crate) fn default_covers_path(&self) -> PathBuf {
-        self.data_dir.join(DEFAULT_COVERS_DIR_NAME)
-    }
-
-    /// Where finished and in-progress transcodes are kept. Server-owned scratch space: emptied at
-    /// startup and created on first use.
     pub(crate) fn transcode_cache_dir(&self) -> PathBuf {
         self.data_dir.join(TRANSCODE_CACHE_DIR_NAME)
     }
 
-    /// Where HLS jobs write their segments. Server-owned: its startup purge and cleanup touch
-    /// nothing outside it.
     pub(crate) fn hls_dir(&self) -> PathBuf {
         self.data_dir.join(HLS_DIR_NAME)
     }

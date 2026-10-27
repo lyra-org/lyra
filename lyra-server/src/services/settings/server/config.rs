@@ -8,16 +8,13 @@ use std::{
     path::PathBuf,
 };
 
-use super::Lookup;
 #[cfg(test)]
-use crate::config::{
-    BootConfig,
-    FileSettings,
-};
+use super::FileSettings;
+use super::Lookup;
 use crate::services::libraries::LibraryConfig;
 
 /// Runtime configuration. Every field except `library` is a declared server
-/// setting; boot values live on [`crate::config::BootConfig`] and are not
+/// setting; boot values live on [`crate::services::boot::Boot`] and are not
 /// duplicated here.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Config {
@@ -80,8 +77,13 @@ impl Config {
     /// config without a file or database.
     #[cfg(test)]
     pub(crate) fn for_tests() -> Self {
-        let resolved = super::resolve(&BootConfig::default(), None, FileSettings::default(), &[])
-            .expect("default config resolves");
+        let resolved = super::resolve(
+            std::path::Path::new("data"),
+            None,
+            FileSettings::default(),
+            &[],
+        )
+        .expect("default config resolves");
         (*resolved.config).clone()
     }
 }

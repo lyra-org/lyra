@@ -5,7 +5,10 @@
 
 use std::{
     net::IpAddr,
-    path::PathBuf,
+    path::{
+        Path,
+        PathBuf,
+    },
 };
 
 use anyhow::{
@@ -17,8 +20,6 @@ use serde_json::{
     Value,
     json,
 };
-
-use crate::config::BootConfig;
 
 /// Value type of a server setting. Each kind owns its default and its
 /// normalization, so a setting is declared as data.
@@ -35,9 +36,9 @@ pub(crate) enum Kind {
     },
     NullableU64,
     NullableOrigin,
-    /// Relative values resolve under the boot data directory.
+    /// Relative values resolve under the data directory.
     Path {
-        default: fn(&BootConfig) -> PathBuf,
+        default: fn(&Path) -> PathBuf,
     },
     OriginList {
         default: &'static [&'static str],
@@ -48,20 +49,20 @@ pub(crate) enum Kind {
 }
 
 impl Kind {
-    pub(crate) fn default(self, boot: &BootConfig) -> Result<Value> {
+    pub(crate) fn default(self, data_dir: &Path) -> Result<Value> {
         Ok(match self {
             Self::Bool { default } => json!(default),
             Self::U32 { default } => json!(default),
             Self::U64 { default } => json!(default),
             Self::NullableU64 | Self::NullableOrigin => Value::Null,
-            Self::Path { default } => path_value(default(boot))?,
+            Self::Path { default } => path_value(default(data_dir))?,
             Self::OriginList { default } | Self::IpList { default } => json!(default),
         })
     }
 
     /// Validates and canonicalizes a candidate from any source. Null is only
     /// a value for nullable kinds.
-    pub(crate) fn normalize(self, value: &Value, boot: &BootConfig) -> Result<Value> {
+    pub(crate) fn normalize(self, value: &Value, data_dir: &Path) -> Result<Value> {
         match self {
             Self::Bool { .. } => match value {
                 Value::Bool(_) => Ok(value.clone()),
@@ -85,7 +86,7 @@ impl Kind {
                 if raw.trim().is_empty() {
                     bail!("must not be empty");
                 }
-                path_value(boot.data_dir.join(raw.trim()))
+                path_value(data_dir.join(raw.trim()))
             }
             Self::OriginList { .. } => {
                 let origins = strings_of(value)?
@@ -190,15 +191,12 @@ pub(crate) fn normalize_cors_origin(raw: &str) -> Result<String> {
 mod tests {
     use super::*;
 
-    fn boot() -> BootConfig {
-        BootConfig {
-            data_dir: PathBuf::from("/srv/lyra"),
-            ..BootConfig::default()
-        }
+    fn data_dir() -> PathBuf {
+        PathBuf::from("/srv/lyra")
     }
 
     fn normalize(kind: Kind, value: Value) -> Result<Value> {
-        kind.normalize(&value, &boot())
+        kind.normalize(&value, &data_dir())
     }
 
     #[test]
@@ -331,7 +329,7 @@ mod tests {
     #[test]
     fn paths_resolve_relative_values_under_the_data_dir() {
         let kind = Kind::Path {
-            default: BootConfig::default_covers_path,
+            default: super::super::definitions::default_covers_path,
         };
         assert_eq!(
             normalize(kind, json!("./covers")).unwrap(),
@@ -345,7 +343,10 @@ mod tests {
             normalize(kind, json!(" covers")).unwrap(),
             json!("/srv/lyra/covers")
         );
-        assert_eq!(kind.default(&boot()).unwrap(), json!("/srv/lyra/covers"));
+        assert_eq!(
+            kind.default(&data_dir()).unwrap(),
+            json!("/srv/lyra/covers")
+        );
         assert!(normalize(kind, json!("  ")).is_err());
         assert!(normalize(kind, json!(null)).is_err());
     }
@@ -359,13 +360,10 @@ mod tests {
         };
 
         let kind = Kind::Path {
-            default: BootConfig::default_covers_path,
+            default: super::super::definitions::default_covers_path,
         };
-        let boot = BootConfig {
-            data_dir: PathBuf::from(OsStr::from_bytes(b"/srv/\xff")),
-            ..BootConfig::default()
-        };
-        assert!(kind.default(&boot).is_err());
-        assert!(kind.normalize(&json!("covers"), &boot).is_err());
+        let data_dir = PathBuf::from(OsStr::from_bytes(b"/srv/\xff"));
+        assert!(kind.default(&data_dir).is_err());
+        assert!(kind.normalize(&json!("covers"), &data_dir).is_err());
     }
 }

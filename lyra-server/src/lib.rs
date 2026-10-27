@@ -32,7 +32,7 @@ mod routes;
 mod services;
 pub mod testing;
 
-pub use config::BuildInfo;
+pub use services::boot::BuildInfo;
 
 use plugins::bootstrap as plugin_bootstrap;
 use services::hls::init as hls_init;
@@ -44,16 +44,18 @@ use services::settings::server::{
 
 pub async fn run_server(build: BuildInfo, capture: Option<CaptureArgs>) -> Result<()> {
     let _tracing_guard = init_tracing();
-    let loaded = config::load(build)?;
+    let loaded = config::load()?;
     // Validate the file before touching the port, directories, or database.
-    let library = LibraryConfig::resolve(loaded.file.library.as_ref())?;
-    let file_settings = server_settings::normalize_file(&loaded.file.settings, &loaded.boot)?;
+    let library = configured_library(&loaded.file)?;
+    let file_settings =
+        server_settings::normalize_file(&loaded.file.settings, &loaded.boot.data_dir)?;
     // Bind first: a port collision with a running server must fail fast
     // instead of blocking on that server's DB process lock.
     let listener = bind_configured_listener(loaded.boot.port).await?;
     loaded.boot.ensure_directories()?;
+    let plugins_dir = config::plugins_dir();
     config::storage::ensure_writable_directory(
-        &config::plugins_dir(),
+        &plugins_dir,
         "plugins directory (LYRA_PLUGINS_DIR)",
     )?;
     let mut created =
@@ -62,12 +64,40 @@ pub async fn run_server(build: BuildInfo, capture: Option<CaptureArgs>) -> Resul
         created
             .unshared_mut()
             .ok_or_else(|| anyhow::anyhow!("database was shared before it was seeded"))?,
-        loaded.boot.build.release_tag.as_deref(),
+        build.release_tag.as_deref(),
     )?;
-    let resolved =
-        services::state::resolve_settings(&mut created, &loaded.boot, library, file_settings)?;
-    services::STATE.initialize(loaded.boot, created, resolved)?;
+    let resolved = services::state::resolve_settings(
+        &mut created,
+        &loaded.boot.data_dir,
+        library,
+        file_settings,
+    )?;
+    let boot = services::boot::Boot {
+        port: loaded.boot.port,
+        transcode_cache_dir: loaded.boot.transcode_cache_dir(),
+        hls_dir: loaded.boot.hls_dir(),
+        data_dir: loaded.boot.data_dir,
+        db: loaded.boot.db,
+        plugins_dir,
+        build,
+    };
+    services::STATE.initialize(boot, created, resolved)?;
     serve(capture, listener).await
+}
+
+/// The library `file` seeds, validated before anything is touched.
+fn configured_library(file: &config::ConfigFile) -> Result<Option<LibraryConfig>> {
+    file.library
+        .as_ref()
+        .map(|library| {
+            LibraryConfig::resolve(
+                library.path.clone(),
+                library.name.as_deref(),
+                library.language.as_deref(),
+                library.country.as_deref(),
+            )
+        })
+        .transpose()
 }
 
 async fn bind_configured_listener(port: u16) -> Result<TcpListener> {
@@ -238,9 +268,10 @@ pub fn asyncapi_spec() -> impl serde::Serialize {
 /// Disk-only: the next server start (or a runtime reload through the API)
 /// loads them, so this works whether or not the server is running.
 pub async fn run_plugins_add(build: BuildInfo, url: &str, git_ref: Option<&str>) -> Result<()> {
-    let report = plugins::repositories::install_to_disk(url, git_ref, None, &build)
-        .await
-        .map_err(|err| anyhow::anyhow!("{err}"))?;
+    let report =
+        plugins::repositories::install_to_disk(url, git_ref, None, &build, &config::plugins_dir())
+            .await
+            .map_err(|err| anyhow::anyhow!("{err}"))?;
 
     for plugin in &report.installed {
         let commit = plugin
@@ -273,7 +304,7 @@ struct CliDb {
 /// `command` is the CLI command name (for example `db optimize`) used in
 /// diagnostics; `verb` describes the action in "nothing to <verb>" errors.
 fn open_cli_db(command: &'static str, verb: &str) -> Result<CliDb> {
-    let boot = config::load(BuildInfo::default())?.boot;
+    let boot = config::load()?.boot;
     if matches!(boot.db.kind, lyra_db::bootstrap::DbKind::Memory) {
         anyhow::bail!(
             "nothing to {verb}: db kind is memory; configure DbKind::File or DbKind::Mmap to use this command"
@@ -359,4 +390,15 @@ pub async fn run_settings_reset() -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_library_resolves_to_none() -> anyhow::Result<()> {
+        assert!(configured_library(&config::ConfigFile::parse("{}")?)?.is_none());
+        Ok(())
+    }
 }

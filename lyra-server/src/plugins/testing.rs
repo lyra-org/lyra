@@ -12,16 +12,22 @@ pub(crate) use self::test_state::{
     init_test_state_with_file_settings,
 };
 use crate::{
-    config::ConfigFile,
     plugins,
-    services,
+    services::{
+        self,
+        libraries::LibraryConfig,
+        settings::server::FileSettings,
+    },
 };
 
-/// Opens a memory database for `file` the way the server opens its own and
-/// publishes it to every layer. Call while holding
-/// [`services::testing::runtime_test_lock`].
-pub(crate) fn initialize_state(file: ConfigFile) -> anyhow::Result<()> {
-    let (boot, mut created, resolved) = services::testing::open_memory_state(file)?;
+/// Opens a memory database seeded with `library` and the `settings` file layer
+/// the way the server opens its own and publishes it to every layer. Call while
+/// holding [`services::testing::runtime_test_lock`].
+pub(crate) fn initialize_state(
+    library: Option<LibraryConfig>,
+    settings: FileSettings,
+) -> anyhow::Result<()> {
+    let (boot, mut created, resolved) = services::testing::open_memory_state(library, settings)?;
     plugins::repositories::seed_default(
         created
             .unshared_mut()
@@ -45,31 +51,28 @@ mod test_state {
         initialize_state,
         start_runtime,
     };
-    use crate::{
-        config::{
-            ConfigFile,
-            FileSettings,
-        },
-        services::testing::library_config,
+    use crate::services::{
+        settings::server::FileSettings,
+        testing::library_config,
     };
 
     /// Default config over an in-memory DB.
     pub(crate) fn init_default_test_state() -> anyhow::Result<()> {
-        initialize_state(ConfigFile::default())
+        initialize_state(None, FileSettings::default())
     }
 
     /// [`init_default_test_state`] with `settings` as the `config.json`
     /// layer, for tests that need file-locked server settings.
     pub(crate) fn init_test_state_with_file_settings(settings: FileSettings) -> anyhow::Result<()> {
-        initialize_state(ConfigFile {
-            settings,
-            ..ConfigFile::default()
-        })
+        initialize_state(None, settings)
     }
 
     /// State over a library at `directory`, started like the runtime.
     pub(crate) async fn init_library_test_state(directory: PathBuf) -> anyhow::Result<()> {
-        initialize_state(library_config(directory, None, None))?;
+        initialize_state(
+            Some(library_config(directory, None, None)?),
+            FileSettings::default(),
+        )?;
         start_runtime().await
     }
 }

@@ -34,8 +34,8 @@ use harmony_repository::{
 use nanoid::nanoid;
 use tokio::sync::Mutex;
 
-use crate::config::BuildInfo;
 use crate::services::STATE;
+use crate::services::boot::BuildInfo;
 use lyra_db::plugin_repositories as repo_db;
 
 const DEFAULT_ORIGIN: &str = "https://git.lyra.pub/lyra/lyra?forge=gitlab";
@@ -353,7 +353,7 @@ pub(crate) async fn resolve_preview(
     git_ref: Option<&str>,
 ) -> Result<RepositoryPreview, PluginRepoError> {
     let resolved = resolve(url, git_ref, &server_build()).await?;
-    Ok(build_preview(&resolved, &crate::config::plugins_dir()))
+    Ok(build_preview(&resolved, &STATE.boot.get().plugins_dir))
 }
 
 #[derive(Debug, Clone)]
@@ -421,14 +421,17 @@ fn selected_candidates<'a>(
 
 /// Writes the selected candidates into `plugins_dir`. Per-plugin failures
 /// don't abort siblings. The caller holds `MUTATION_LOCK`.
-fn install_selected(resolved: &ResolvedRepository, plugin_ids: Option<&[String]>) -> InstallReport {
-    let plugins_dir = crate::config::plugins_dir();
+fn install_selected(
+    resolved: &ResolvedRepository,
+    plugin_ids: Option<&[String]>,
+    plugins_dir: &Path,
+) -> InstallReport {
     let mut report = InstallReport {
         installed: Vec::new(),
         failed: Vec::new(),
     };
     for candidate in selected_candidates(resolved, plugin_ids) {
-        match install_candidate(candidate, &plugins_dir, Some(now_rfc3339())) {
+        match install_candidate(candidate, plugins_dir, Some(now_rfc3339())) {
             Ok(record) => report.installed.push(InstalledPlugin {
                 id: candidate.id().to_string(),
                 version: candidate.plugin.manifest.version.clone(),
@@ -451,10 +454,11 @@ pub(crate) async fn install_to_disk(
     git_ref: Option<&str>,
     plugin_ids: Option<&[String]>,
     build: &BuildInfo,
+    plugins_dir: &Path,
 ) -> Result<InstallReport, PluginRepoError> {
     let resolved = resolve_selection(url, git_ref, plugin_ids, build).await?;
     let _guard = MUTATION_LOCK.lock().await;
-    Ok(install_selected(&resolved, plugin_ids))
+    Ok(install_selected(&resolved, plugin_ids, plugins_dir))
 }
 
 /// Installs and then reloads the plugin runtime so the new set goes live.
@@ -465,7 +469,7 @@ pub(crate) async fn install(
 ) -> Result<InstallReport, PluginRepoError> {
     let resolved = resolve_selection(url, git_ref, plugin_ids, &server_build()).await?;
     let _guard = MUTATION_LOCK.lock().await;
-    let report = install_selected(&resolved, plugin_ids);
+    let report = install_selected(&resolved, plugin_ids, &STATE.boot.get().plugins_dir);
     if !report.installed.is_empty() {
         reload_runtime().await?;
     }
@@ -572,7 +576,7 @@ fn managed_plugin_ids(plugins_dir: &Path) -> Result<BTreeSet<String>, PluginRepo
 pub(crate) async fn update_plugins(
     plugin_ids: Option<&[String]>,
 ) -> Result<UpdateReport, PluginRepoError> {
-    update_plugins_in(&crate::config::plugins_dir(), plugin_ids).await
+    update_plugins_in(&STATE.boot.get().plugins_dir, plugin_ids).await
 }
 
 async fn update_plugins_in(
@@ -681,7 +685,7 @@ async fn update_plugins_in(
 /// Uninstalls a repository-managed plugin and reloads the runtime.
 pub(crate) async fn uninstall(plugin_id: &str) -> Result<(), PluginRepoError> {
     let _guard = MUTATION_LOCK.lock().await;
-    uninstall_plugin(&crate::config::plugins_dir(), plugin_id).map_err(map_install_error)?;
+    uninstall_plugin(&STATE.boot.get().plugins_dir, plugin_id).map_err(map_install_error)?;
     reload_runtime().await
 }
 
@@ -711,7 +715,7 @@ pub(crate) async fn add_repository(
     git_ref: Option<&str>,
 ) -> Result<(repo_db::PluginRepository, RepositoryPreview), PluginRepoError> {
     let resolved = resolve(url, git_ref, &server_build()).await?;
-    let preview = build_preview(&resolved, &crate::config::plugins_dir());
+    let preview = build_preview(&resolved, &STATE.boot.get().plugins_dir);
 
     let origin = resolved.spec.canonical_url();
     let mut record = repo_db::PluginRepository {
@@ -760,7 +764,7 @@ pub(crate) async fn refresh_repository(
     let mut record = load_repository(repository_id).await?;
 
     let resolved = resolve(&record.origin, record.git_ref.as_deref(), &server_build()).await?;
-    let preview = build_preview(&resolved, &crate::config::plugins_dir());
+    let preview = build_preview(&resolved, &STATE.boot.get().plugins_dir);
 
     record.name = preview.name.clone();
     record.description = preview.description.clone();
@@ -907,6 +911,8 @@ mod tests {
 
     #[tokio::test]
     async fn update_plugins_rejects_empty_selection() {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state().expect("test state");
         assert!(matches!(
             update_plugins(Some(&[])).await,
             Err(PluginRepoError::BadRequest(_))
@@ -943,6 +949,7 @@ mod tests {
                 None,
                 Some(&[]),
                 &BuildInfo::default(),
+                Path::new("plugins"),
             )
             .await,
             Err(PluginRepoError::BadRequest(_))

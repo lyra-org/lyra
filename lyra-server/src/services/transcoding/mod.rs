@@ -12,7 +12,11 @@ pub(crate) mod capacity;
 /// Empties the transcode cache directory left by a previous run and starts the sweeper for the
 /// current generation's cache.
 pub(crate) async fn initialize() {
-    let dir = crate::services::STATE.boot.get().transcode_cache_dir();
+    let dir = crate::services::STATE
+        .boot
+        .get()
+        .transcode_cache_dir
+        .clone();
     match tokio::fs::remove_dir_all(&dir).await {
         Ok(()) => tracing::info!(path = %dir.display(), "emptied the transcode cache"),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
@@ -31,7 +35,11 @@ mod tests {
     async fn startup_empties_the_cache_directory() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         crate::services::testing::init_default_test_state()?;
-        let dir = crate::services::STATE.boot.get().transcode_cache_dir();
+        let dir = crate::services::STATE
+            .boot
+            .get()
+            .transcode_cache_dir
+            .clone();
         std::fs::create_dir_all(&dir)?;
         std::fs::write(dir.join("leftover-1.part"), b"partial")?;
         std::fs::write(dir.join("leftover.mp3"), b"finished")?;

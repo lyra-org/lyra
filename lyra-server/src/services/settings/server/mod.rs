@@ -7,7 +7,11 @@
 //! stored database values, and `config.json` into the runtime [`Config`].
 
 use std::{
-    collections::BTreeSet,
+    collections::{
+        BTreeMap,
+        BTreeSet,
+    },
+    path::Path,
     sync::Arc,
 };
 
@@ -18,13 +22,7 @@ use anyhow::{
     bail,
 };
 
-use crate::{
-    config::{
-        BootConfig,
-        FileSettings,
-    },
-    services::libraries::LibraryConfig,
-};
+use crate::services::libraries::LibraryConfig;
 
 mod config;
 mod definitions;
@@ -44,6 +42,9 @@ pub(crate) use update::{
     republish,
     validate_updates,
 };
+
+/// The `config.json` settings layer: values by setting key.
+pub(crate) type FileSettings = BTreeMap<String, serde_json::Value>;
 
 pub(super) const RECOVERY_HINT: &str = "run `lyra settings reset` to clear stored server settings";
 
@@ -159,7 +160,7 @@ impl Lookup<'_> {
 
 /// Rejects undeclared keys and invalid values before the server binds or
 /// opens anything. Returns the canonical file values.
-pub(crate) fn normalize_file(file: &FileSettings, boot: &BootConfig) -> Result<FileSettings> {
+pub(crate) fn normalize_file(file: &FileSettings, data_dir: &Path) -> Result<FileSettings> {
     let registry = registry();
     let mut normalized = FileSettings::new();
     for (key, value) in file {
@@ -168,7 +169,7 @@ pub(crate) fn normalize_file(file: &FileSettings, boot: &BootConfig) -> Result<F
         };
         let value = definition
             .kind
-            .normalize(value, boot)
+            .normalize(value, data_dir)
             .with_context(|| format!("invalid config {key}"))?;
         normalized.insert(key.clone(), value);
     }
@@ -220,7 +221,7 @@ pub(crate) fn reset_stored(db: &mut agdb::DbAny) -> Result<Vec<String>> {
 /// being ignored: silently falling back would run with settings the operator
 /// did not choose.
 pub(crate) fn resolve(
-    boot: &BootConfig,
+    data_dir: &Path,
     library: Option<LibraryConfig>,
     file: FileSettings,
     stored: &[StoredSetting],
@@ -239,11 +240,11 @@ pub(crate) fn resolve(
     for definition in registry.definitions() {
         let key = definition.key;
         let kind = definition.kind;
-        let default = kind.default(boot)?;
+        let default = kind.default(data_dir)?;
         let (mut value, mut source) = (default, SettingSource::Default);
 
         if let Some(entry) = stored.iter().find(|entry| entry.key == key) {
-            value = kind.normalize(&entry.value, boot).map_err(|err| {
+            value = kind.normalize(&entry.value, data_dir).map_err(|err| {
                 anyhow!("stored server setting '{key}' is invalid: {err}; {RECOVERY_HINT}")
             })?;
             source = SettingSource::Database;
@@ -252,7 +253,7 @@ pub(crate) fn resolve(
         let locked = file.contains_key(key);
         if let Some(file_value) = file.get(key) {
             value = kind
-                .normalize(file_value, boot)
+                .normalize(file_value, data_dir)
                 .with_context(|| format!("invalid config {key}"))?;
             source = SettingSource::File;
         }
@@ -302,11 +303,8 @@ mod tests {
         *,
     };
 
-    fn boot() -> BootConfig {
-        BootConfig {
-            data_dir: PathBuf::from("/srv/lyra"),
-            ..BootConfig::default()
-        }
+    fn data_dir() -> PathBuf {
+        PathBuf::from("/srv/lyra")
     }
 
     fn stored(pairs: &[(&str, serde_json::Value)]) -> Vec<StoredSetting> {
@@ -336,7 +334,7 @@ mod tests {
 
     #[test]
     fn all_defaults_match_hand_built_config() -> anyhow::Result<()> {
-        let resolved = resolve(&boot(), None, FileSettings::default(), &[])?;
+        let resolved = resolve(&data_dir(), None, FileSettings::default(), &[])?;
 
         let expected = Config {
             published_url: None,
@@ -395,7 +393,7 @@ mod tests {
         ]);
         let file = file(&[("auth.session_ttl_seconds", json!(120))]);
 
-        let resolved = resolve(&boot(), None, file.clone(), &stored)?;
+        let resolved = resolve(&data_dir(), None, file.clone(), &stored)?;
 
         assert_eq!(resolved.config.rate_limit.login_burst, 9);
         assert_eq!(resolved.config.auth.session_ttl_seconds, 120);
@@ -417,7 +415,7 @@ mod tests {
     fn file_presence_locks_even_when_equal_to_default() -> anyhow::Result<()> {
         let file = file(&[("auth.enabled", json!(true))]);
 
-        let resolved = resolve(&boot(), None, file, &[])?;
+        let resolved = resolve(&data_dir(), None, file, &[])?;
 
         let setting = effective(&resolved, "auth.enabled");
         assert!(setting.locked);
@@ -427,22 +425,25 @@ mod tests {
 
     #[test]
     fn normalize_file_rejects_unknown_leaf() {
-        let error = normalize_file(&file(&[("hls.signed_url_ttl_seconds", json!(1))]), &boot())
-            .expect_err("unknown key should fail");
+        let error = normalize_file(
+            &file(&[("hls.signed_url_ttl_seconds", json!(1))]),
+            &data_dir(),
+        )
+        .expect_err("unknown key should fail");
         assert!(
             error
                 .to_string()
                 .contains("unknown config key 'hls.signed_url_ttl_seconds'")
         );
 
-        let error = normalize_file(&file(&[("prot", json!(5000))]), &boot())
+        let error = normalize_file(&file(&[("prot", json!(5000))]), &data_dir())
             .expect_err("unknown key should fail");
         assert!(error.to_string().contains("'prot'"));
     }
 
     #[test]
     fn normalize_file_rejects_empty_object_leaves() {
-        let error = normalize_file(&file(&[("rate_limit", json!({}))]), &boot())
+        let error = normalize_file(&file(&[("rate_limit", json!({}))]), &data_dir())
             .expect_err("empty group should fail");
         assert!(
             error
@@ -450,7 +451,7 @@ mod tests {
                 .contains("unknown config key 'rate_limit'")
         );
 
-        let error = normalize_file(&file(&[("cors.allowed_origins", json!({}))]), &boot())
+        let error = normalize_file(&file(&[("cors.allowed_origins", json!({}))]), &data_dir())
             .expect_err("empty object value should fail");
         assert!(
             error
@@ -463,13 +464,13 @@ mod tests {
     fn normalize_file_canonicalizes_and_names_invalid_keys() -> anyhow::Result<()> {
         let normalized = normalize_file(
             &file(&[("published_url", json!("http://LOCALHOST:8080/"))]),
-            &boot(),
+            &data_dir(),
         )?;
         assert_eq!(normalized["published_url"], json!("http://localhost:8080"));
 
         let error = normalize_file(
             &file(&[("published_url", json!("https://example.com/app"))]),
-            &boot(),
+            &data_dir(),
         )
         .expect_err("path should be rejected");
         assert!(error.to_string().contains("invalid config published_url"));
@@ -479,15 +480,15 @@ mod tests {
     #[test]
     fn file_null_locks_nullable_settings_and_rejects_others() -> anyhow::Result<()> {
         let stored = stored(&[("published_url", json!("https://stored.example"))]);
-        let file = normalize_file(&file(&[("published_url", json!(null))]), &boot())?;
+        let file = normalize_file(&file(&[("published_url", json!(null))]), &data_dir())?;
 
-        let resolved = resolve(&boot(), None, file, &stored)?;
+        let resolved = resolve(&data_dir(), None, file, &stored)?;
         assert!(resolved.config.published_url.is_none());
         let setting = effective(&resolved, "published_url");
         assert!(setting.locked);
         assert_eq!(setting.source, SettingSource::File);
 
-        let error = normalize_file(&self::file(&[("auth.enabled", json!(null))]), &boot())
+        let error = normalize_file(&self::file(&[("auth.enabled", json!(null))]), &data_dir())
             .expect_err("null for a required setting should fail");
         let message = format!("{error:#}");
         assert!(message.contains("invalid config auth.enabled"));
@@ -499,7 +500,7 @@ mod tests {
     fn undeclared_stored_key_fails_with_recovery_hint() {
         let stored = stored(&[("legacy.key", json!(1))]);
 
-        let error = resolve(&boot(), None, FileSettings::default(), &stored)
+        let error = resolve(&data_dir(), None, FileSettings::default(), &stored)
             .expect_err("undeclared stored key should fail");
 
         let message = error.to_string();
@@ -511,7 +512,7 @@ mod tests {
     fn invalid_stored_value_fails_with_recovery_hint() {
         let stored = stored(&[("rate_limit.login_burst", json!("many"))]);
 
-        let error = resolve(&boot(), None, FileSettings::default(), &stored)
+        let error = resolve(&data_dir(), None, FileSettings::default(), &stored)
             .expect_err("invalid stored value should fail");
 
         let message = error.to_string();
@@ -526,7 +527,12 @@ mod tests {
             ..LibraryConfig::default()
         };
 
-        let resolved = resolve(&boot(), Some(library.clone()), FileSettings::default(), &[])?;
+        let resolved = resolve(
+            &data_dir(),
+            Some(library.clone()),
+            FileSettings::default(),
+            &[],
+        )?;
 
         assert_eq!(resolved.config.library, Some(library));
         Ok(())
@@ -537,7 +543,7 @@ mod tests {
         let stored = stored(&[("published_url", json!(null))]);
         let file = file(&[("hls.temp_disk_budget_bytes", json!(null))]);
 
-        let resolved = resolve(&boot(), None, file, &stored)?;
+        let resolved = resolve(&data_dir(), None, file, &stored)?;
 
         assert!(resolved.config.published_url.is_none());
         assert!(resolved.config.hls.temp_disk_budget_bytes.is_none());
@@ -577,7 +583,7 @@ mod tests {
 
         let stored = load_stored(&mut db)?;
         assert_eq!(stored.len(), 2);
-        let resolved = resolve(&boot(), None, FileSettings::default(), &stored)?;
+        let resolved = resolve(&data_dir(), None, FileSettings::default(), &stored)?;
         assert!(!resolved.config.auth.enabled);
         assert_eq!(resolved.config.sync.interval_secs, 5);
 

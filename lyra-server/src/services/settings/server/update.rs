@@ -9,6 +9,7 @@
 
 use std::{
     collections::HashMap,
+    path::Path,
     sync::Arc,
 };
 
@@ -25,10 +26,7 @@ use super::{
     registry,
     resolve,
 };
-use crate::{
-    config::BootConfig,
-    services::STATE,
-};
+use crate::services::STATE;
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum Change {
@@ -52,7 +50,7 @@ pub(crate) enum UpdateError {
 /// a file or stored value is.
 pub(crate) fn validate_updates(
     current: &ResolvedSettings,
-    boot: &BootConfig,
+    data_dir: &Path,
     values: &HashMap<String, Value>,
 ) -> Result<Vec<Change>, UpdateError> {
     let registry = registry();
@@ -89,14 +87,13 @@ pub(crate) fn validate_updates(
             if value.is_null() {
                 return Ok(Change::Remove { key });
             }
-            let value =
-                definition
-                    .kind
-                    .normalize(value, boot)
-                    .map_err(|source| UpdateError::Invalid {
-                        key: key.to_string(),
-                        source,
-                    })?;
+            let value = definition
+                .kind
+                .normalize(value, data_dir)
+                .map_err(|source| UpdateError::Invalid {
+                    key: key.to_string(),
+                    source,
+                })?;
             Ok(Change::Upsert { key, value })
         })
         .collect()
@@ -130,7 +127,7 @@ pub(crate) fn republish(db: &mut agdb::DbAny) -> Result<()> {
     let previous = STATE.settings.get();
     let resolved = load_stored(db).and_then(|stored| {
         resolve(
-            &boot,
+            &boot.data_dir,
             previous.config.library.clone(),
             previous.file.clone(),
             &stored,
@@ -162,14 +159,11 @@ mod tests {
 
     use serde_json::json;
 
+    use super::super::FileSettings;
     use super::*;
-    use crate::config::FileSettings;
 
-    fn boot() -> BootConfig {
-        BootConfig {
-            data_dir: PathBuf::from("/srv/lyra"),
-            ..BootConfig::default()
-        }
+    fn data_dir() -> PathBuf {
+        PathBuf::from("/srv/lyra")
     }
 
     fn resolved(file: &[(&str, Value)]) -> ResolvedSettings {
@@ -177,7 +171,7 @@ mod tests {
             .iter()
             .map(|(key, value)| ((*key).to_string(), value.clone()))
             .collect();
-        resolve(&boot(), None, file, &[]).expect("resolves")
+        resolve(&data_dir(), None, file, &[]).expect("resolves")
     }
 
     fn values(entries: &[(&str, Value)]) -> HashMap<String, Value> {
@@ -191,7 +185,7 @@ mod tests {
     fn normalizes_values_and_maps_null_to_removal() {
         let changes = validate_updates(
             &resolved(&[]),
-            &boot(),
+            &data_dir(),
             &values(&[
                 ("published_url", json!(" http://LOCALHOST:8080/ ")),
                 ("covers_path", json!("covers")),
@@ -222,7 +216,7 @@ mod tests {
     fn rejects_undeclared_keys() {
         let error = validate_updates(
             &resolved(&[]),
-            &boot(),
+            &data_dir(),
             &values(&[("auth.enabled", json!(false)), ("nope", json!(1))]),
         )
         .expect_err("undeclared key should fail");
@@ -234,7 +228,7 @@ mod tests {
     fn rejects_invalid_values_with_key() {
         let error = validate_updates(
             &resolved(&[]),
-            &boot(),
+            &data_dir(),
             &values(&[("rate_limit.login_burst", json!("many"))]),
         )
         .expect_err("invalid value should fail");
@@ -256,7 +250,7 @@ mod tests {
         ]);
         let error = validate_updates(
             &current,
-            &boot(),
+            &data_dir(),
             &values(&[
                 ("published_url", json!("https://example.com")),
                 ("auth.enabled", json!("not even a bool")),

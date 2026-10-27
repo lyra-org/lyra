@@ -31,7 +31,7 @@ pub(crate) async fn status() -> anyhow::Result<Status> {
     Ok(Status {
         account_required,
         plugin_selection_required: !skipped
-            && !has_installed_plugins(&crate::config::plugins_dir()).await?,
+            && !has_installed_plugins(&STATE.boot.get().plugins_dir).await?,
     })
 }
 

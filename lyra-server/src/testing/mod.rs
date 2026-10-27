@@ -80,11 +80,14 @@ pub struct FixtureSnapshot {
 }
 
 pub async fn initialize_runtime(library: &LibraryFixtureConfig) -> anyhow::Result<()> {
-    crate::plugins::testing::initialize_state(services::testing::library_config(
-        library.directory.clone(),
-        library.language.clone(),
-        library.country.clone(),
-    ))?;
+    crate::plugins::testing::initialize_state(
+        Some(services::testing::library_config(
+            library.directory.clone(),
+            library.language.clone(),
+            library.country.clone(),
+        )?),
+        Default::default(),
+    )?;
     crate::plugins::testing::start_runtime().await
 }
 

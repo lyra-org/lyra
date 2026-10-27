@@ -34,6 +34,7 @@ impl fmt::Display for EntityType {
 
 pub(crate) mod artists;
 pub(crate) mod auth;
+pub(crate) mod boot;
 pub(crate) mod catalog;
 pub(crate) mod covers;
 pub(crate) mod delivery;

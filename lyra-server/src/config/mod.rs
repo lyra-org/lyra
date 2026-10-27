@@ -10,7 +10,6 @@ use std::{
 };
 
 mod boot;
-mod build;
 mod file;
 pub(crate) mod storage;
 
@@ -18,12 +17,7 @@ pub(crate) use boot::{
     BootConfig,
     BootEnv,
 };
-pub use build::BuildInfo;
-pub(crate) use file::{
-    ConfigFile,
-    FileSettings,
-    LibraryFile,
-};
+pub(crate) use file::ConfigFile;
 
 const LYRA_PLUGINS_DIR_ENV: &str = "LYRA_PLUGINS_DIR";
 
@@ -48,10 +42,9 @@ pub(crate) struct LoadedConfig {
 /// Locates and parses the config file and resolves boot values. Touches no
 /// directories; the serving path creates them via
 /// [`BootConfig::ensure_directories`].
-pub(crate) fn load(build: BuildInfo) -> Result<LoadedConfig> {
+pub(crate) fn load() -> Result<LoadedConfig> {
     let file = ConfigFile::load()?.unwrap_or_default();
-    let mut boot = BootConfig::resolve(&file, BootEnv::from_process())?;
-    boot.build = build;
+    let boot = BootConfig::resolve(&file, BootEnv::from_process())?;
     Ok(LoadedConfig { boot, file })
 }
 

@@ -19,7 +19,6 @@ use lyra_metadata::locale::{
 };
 
 use crate::{
-    config::LibraryFile,
     services::STATE,
     services::settings::server::Config,
 };
@@ -49,40 +48,36 @@ pub(crate) struct LibraryConfig {
 impl LibraryConfig {
     /// Validates the name and locale inputs up front so a bad file fails
     /// before any directory or database is touched.
-    pub(crate) fn resolve(file: Option<&LibraryFile>) -> Result<Option<Self>> {
-        file.map(|library| -> Result<Self> {
-            Ok(Self {
-                path: library.path.clone(),
-                name: library
-                    .name
-                    .as_deref()
-                    .map(|raw| {
-                        normalize_library_name_display(raw).map_err(|err| {
-                            anyhow!("invalid config library.name '{}': {err}", raw.trim())
-                        })
+    pub(crate) fn resolve(
+        path: Option<PathBuf>,
+        name: Option<&str>,
+        language: Option<&str>,
+        country: Option<&str>,
+    ) -> Result<Self> {
+        Ok(Self {
+            path,
+            name: name
+                .map(|raw| {
+                    normalize_library_name_display(raw).map_err(|err| {
+                        anyhow!("invalid config library.name '{}': {err}", raw.trim())
                     })
-                    .transpose()?,
-                language: library
-                    .language
-                    .as_deref()
-                    .map(|raw| {
-                        validate_language(raw).map_err(|err| {
-                            anyhow!("invalid config library.language '{}': {err}", raw.trim())
-                        })
+                })
+                .transpose()?,
+            language: language
+                .map(|raw| {
+                    validate_language(raw).map_err(|err| {
+                        anyhow!("invalid config library.language '{}': {err}", raw.trim())
                     })
-                    .transpose()?,
-                country: library
-                    .country
-                    .as_deref()
-                    .map(|raw| {
-                        validate_country(raw).map_err(|err| {
-                            anyhow!("invalid config library.country '{}': {err}", raw.trim())
-                        })
+                })
+                .transpose()?,
+            country: country
+                .map(|raw| {
+                    validate_country(raw).map_err(|err| {
+                        anyhow!("invalid config library.country '{}': {err}", raw.trim())
                     })
-                    .transpose()?,
-            })
+                })
+                .transpose()?,
         })
-        .transpose()
     }
 }
 
@@ -248,7 +243,6 @@ mod tests {
         LibraryConfig,
         find_or_create_library_locked,
     };
-    use crate::config::ConfigFile;
     use lyra_db::{
         Library,
         libraries::path_key_for,
@@ -308,16 +302,14 @@ mod tests {
         Ok(())
     }
 
-    fn resolve_library(json: &str) -> anyhow::Result<Option<LibraryConfig>> {
-        LibraryConfig::resolve(ConfigFile::parse(json)?.library.as_ref())
-    }
-
     #[test]
     fn config_library_locale_inputs_are_normalized() -> anyhow::Result<()> {
-        let library = resolve_library(
-            r#"{"library": {"path": "/music", "language": "Japanese", "country": "Japan"}}"#,
-        )?
-        .expect("library should be present");
+        let library = LibraryConfig::resolve(
+            Some(PathBuf::from("/music")),
+            None,
+            Some("Japanese"),
+            Some("Japan"),
+        )?;
 
         assert_eq!(library.path.as_deref(), Some(Path::new("/music")));
         assert_eq!(library.language.as_deref(), Some("jpn"));
@@ -326,14 +318,8 @@ mod tests {
     }
 
     #[test]
-    fn missing_library_resolves_to_none() -> anyhow::Result<()> {
-        assert!(resolve_library("{}")?.is_none());
-        Ok(())
-    }
-
-    #[test]
     fn invalid_library_language_returns_error() {
-        let error = resolve_library(r#"{"library": {"language": "not-a-language"}}"#)
+        let error = LibraryConfig::resolve(None, None, Some("not-a-language"), None)
             .expect_err("expected error");
 
         assert!(
@@ -345,8 +331,8 @@ mod tests {
 
     #[test]
     fn invalid_library_name_returns_error() {
-        let error =
-            resolve_library(r#"{"library": {"name": " \u200b "}}"#).expect_err("expected error");
+        let error = LibraryConfig::resolve(None, Some(" \u{200b} "), None, None)
+            .expect_err("expected error");
 
         assert!(error.to_string().contains("invalid config library.name"));
     }

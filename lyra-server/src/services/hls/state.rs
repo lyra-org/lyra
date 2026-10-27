@@ -255,7 +255,7 @@ async fn create_hls_job(input_path: &str, job_key: &HlsJobKey) -> Result<HlsJob,
         .map_err(|_| HlsError::Saturated)?;
 
     let job_id = generate_hls_session_id();
-    let job_dir = crate::services::STATE.boot.get().hls_dir().join(format!(
+    let job_dir = crate::services::STATE.boot.get().hls_dir.join(format!(
         "{HLS_JOB_TEMP_DIR_PREFIX}{}-{}-{job_id}",
         job_key.track_public_id, job_key.source.source_public_id
     ));

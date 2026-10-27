@@ -13,7 +13,10 @@ use super::{
     SettingDefinition,
     SettingGroup,
 };
-use crate::config::BootConfig;
+use std::path::{
+    Path,
+    PathBuf,
+};
 
 const SERVER: SettingGroup = SettingGroup {
     id: "server",
@@ -62,6 +65,12 @@ const fn setting(
     }
 }
 
+const DEFAULT_COVERS_DIR_NAME: &str = "covers";
+
+pub(super) fn default_covers_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(DEFAULT_COVERS_DIR_NAME)
+}
+
 pub(super) static ALL: &[SettingDefinition] = &[
     setting(
         "published_url",
@@ -78,7 +87,7 @@ pub(super) static ALL: &[SettingDefinition] = &[
         "Directory cover images are stored in; relative paths resolve under the data directory.",
         Live,
         Kind::Path {
-            default: BootConfig::default_covers_path,
+            default: default_covers_path,
         },
     ),
     setting(

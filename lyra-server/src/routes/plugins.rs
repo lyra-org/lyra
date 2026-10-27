@@ -735,7 +735,7 @@ fn build_status(
 async fn list_plugins(headers: HeaderMap) -> Result<Json<Vec<PluginManifestResponse>>, AppError> {
     let _principal = require_manage_plugins(bearer_credential(&headers)).await?;
     let manifests = crate::plugins::STATE.generation().manifests.get();
-    let plugins_dir = crate::config::plugins_dir();
+    let plugins_dir = STATE.boot.get().plugins_dir.clone();
     let repositories = repositories_service::list_repositories()
         .await
         .map_err(map_repository_error)?;

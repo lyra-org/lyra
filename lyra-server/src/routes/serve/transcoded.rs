@@ -120,7 +120,7 @@ pub(super) async fn transcoded_response(
             delivery.configure_output(output)
         }),
     };
-    let dir = STATE.boot.get().transcode_cache_dir();
+    let dir = STATE.boot.get().transcode_cache_dir.clone();
     let lookup = tokio::task::spawn_blocking(move || {
         cache.get_or_start(key, &dir, spec, || try_acquire_for(&caller))
     })

@@ -9,6 +9,7 @@ use std::{
         TypeId,
     },
     collections::HashMap,
+    path::Path,
     sync::{
         Arc,
         Mutex as StdMutex,
@@ -27,30 +28,26 @@ use tokio::sync::{
     OwnedRwLockWriteGuard,
 };
 
-use crate::{
-    config::{
-        BootConfig,
-        FileSettings,
+use crate::services::{
+    auth::media_tokens::MediaTokenStore,
+    boot::Boot,
+    hls::cleanup::HlsCleanupState,
+    libraries::LibraryConfig,
+    libraries::LibrarySyncRegistries,
+    mix::MixRegistries,
+    pagination::SnapshotRegistry,
+    playback_sessions::{
+        PlaybackScopes,
+        PlaybackUpdateRegistries,
     },
-    services::{
-        auth::media_tokens::MediaTokenStore,
-        hls::cleanup::HlsCleanupState,
-        libraries::LibraryConfig,
-        libraries::LibrarySyncRegistries,
-        mix::MixRegistries,
-        pagination::SnapshotRegistry,
-        playback_sessions::{
-            PlaybackScopes,
-            PlaybackUpdateRegistries,
-        },
-        plugin_dispatch::PluginDispatch,
-        providers::ProviderRegistries,
-        settings::server::{
-            self as server_settings,
-            Config,
-            EffectiveSetting,
-            ResolvedSettings,
-        },
+    plugin_dispatch::PluginDispatch,
+    providers::ProviderRegistries,
+    settings::server::{
+        self as server_settings,
+        Config,
+        EffectiveSetting,
+        FileSettings,
+        ResolvedSettings,
     },
 };
 use lyra_db::DbAsync;
@@ -119,7 +116,7 @@ impl DbHandle {
     }
 }
 
-pub(crate) type BootHandle = SwapHandle<Arc<BootConfig>>;
+pub(crate) type BootHandle = SwapHandle<Arc<Boot>>;
 pub(crate) type SettingsHandle = SwapHandle<Arc<ResolvedSettings>>;
 pub(crate) type PluginDispatchHandle = SwapHandle<Option<Arc<dyn PluginDispatch>>>;
 
@@ -182,7 +179,7 @@ impl LayerStates {
 
 pub(crate) struct AppState {
     pub(crate) db: DbHandle,
-    /// Canonical home for port, data dir, and db location.
+    /// What the server was started with: port, directories, and build.
     pub(crate) boot: BootHandle,
     /// The current resolution: config, per-setting provenance, and the file
     /// layer it was resolved against. Read the config through
@@ -199,11 +196,7 @@ pub(crate) struct AppState {
     generation: SwapHandle<Arc<GenerationState>>,
 }
 
-fn build_app_state(
-    boot: BootConfig,
-    created: lyra_db::Created,
-    resolved: ResolvedSettings,
-) -> AppState {
+fn build_app_state(boot: Boot, created: lyra_db::Created, resolved: ResolvedSettings) -> AppState {
     AppState {
         db: DbHandle::new(created),
         boot: BootHandle::new(Arc::new(boot)),
@@ -227,7 +220,7 @@ impl AppState {
     /// different path). The generation, with every layer's state in it,
     /// is swapped before the database so the new database never meets the
     /// old generation's plugin runtime.
-    fn reset(&self, boot: BootConfig, created: lyra_db::Created, resolved: ResolvedSettings) {
+    fn reset(&self, boot: Boot, created: lyra_db::Created, resolved: ResolvedSettings) {
         self.generation.replace(Arc::default());
         self.db.reset(created);
         self.boot.replace(Arc::new(boot));
@@ -253,7 +246,7 @@ impl AppState {
 /// freshly opened, not yet shared database.
 pub(crate) fn resolve_settings(
     created: &mut lyra_db::Created,
-    boot: &BootConfig,
+    data_dir: &Path,
     library: Option<LibraryConfig>,
     file_settings: FileSettings,
 ) -> Result<ResolvedSettings> {
@@ -261,7 +254,7 @@ pub(crate) fn resolve_settings(
         .unshared_mut()
         .ok_or_else(|| anyhow::anyhow!("database was shared before settings were resolved"))?;
     let stored = server_settings::load_stored(db)?;
-    server_settings::resolve(boot, library, file_settings, &stored)
+    server_settings::resolve(data_dir, library, file_settings, &stored)
 }
 
 /// Application state slot with explicit initialization. Entry points that
@@ -282,7 +275,7 @@ impl StateCell {
     /// generation. Serialize calls externally (today `RUNTIME_TEST_LOCK`).
     pub(crate) fn initialize(
         &self,
-        boot: BootConfig,
+        boot: Boot,
         created: lyra_db::Created,
         resolved: ResolvedSettings,
     ) -> Result<()> {

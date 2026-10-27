@@ -28,10 +28,6 @@ use lyra_db::bootstrap::DbKind;
 
 const LYRA_CONFIG_PATH_ENV: &str = "LYRA_CONFIG_PATH";
 
-/// Runtime settings present in the file, keyed by dotted path
-/// (`rate_limit.login_burst`). Presence locks the setting to the file value.
-pub(crate) type FileSettings = BTreeMap<String, serde_json::Value>;
-
 #[derive(Clone, Default)]
 pub(crate) struct ConfigFile {
     pub(crate) port: Option<u16>,
@@ -39,7 +35,9 @@ pub(crate) struct ConfigFile {
     /// Dev-only bootstrap that seeds one library at startup; libraries are
     /// otherwise managed through the API.
     pub(crate) library: Option<LibraryFile>,
-    pub(crate) settings: FileSettings,
+    /// Runtime settings present in the file, keyed by dotted path
+    /// (`rate_limit.login_burst`). Presence locks the setting to the file value.
+    pub(crate) settings: BTreeMap<String, serde_json::Value>,
 }
 
 /// Dev-only bootstrap; resolved into the libraries service's `LibraryConfig`.
@@ -70,7 +68,7 @@ impl ConfigFile {
         let db = take_typed(&mut root, "db")?;
         let library = take_typed(&mut root, "library")?;
 
-        let mut settings = FileSettings::new();
+        let mut settings = BTreeMap::new();
         for (key, value) in root {
             collect_leaves(&key, value, &mut settings)?;
         }
@@ -115,7 +113,11 @@ fn take_typed<T: serde::de::DeserializeOwned>(
 /// Non-empty objects nest into dotted keys; anything else (arrays and empty
 /// objects included) is a leaf, so `{"rate_limit": {}}` surfaces as a key
 /// instead of vanishing.
-fn collect_leaves(prefix: &str, value: serde_json::Value, out: &mut FileSettings) -> Result<()> {
+fn collect_leaves(
+    prefix: &str,
+    value: serde_json::Value,
+    out: &mut BTreeMap<String, serde_json::Value>,
+) -> Result<()> {
     match value {
         serde_json::Value::Object(map) if !map.is_empty() => {
             for (key, value) in map {

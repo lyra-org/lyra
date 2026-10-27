@@ -26,7 +26,6 @@ use serde::{
 
 use crate::routes::request::bearer_credential;
 use crate::{
-    config::BootConfig,
     services::STATE,
     services::{
         auth::{
@@ -199,12 +198,12 @@ fn string_list_of(value: &serde_json::Value) -> Option<Vec<String>> {
 
 fn field_response(
     setting: &EffectiveSetting,
-    boot: &BootConfig,
+    data_dir: &std::path::Path,
 ) -> anyhow::Result<SettingFieldResponse> {
     let definition = setting.definition;
     let kind = definition.kind;
     let key = definition.key.to_string();
-    let default = kind.default(boot)?;
+    let default = kind.default(data_dir)?;
     let value = &setting.value;
     let props = |required: bool| SettingPropsResponse {
         label: definition.label.to_string(),
@@ -255,7 +254,7 @@ fn settings_response() -> Result<ServerSettingsResponse, AppError> {
     let mut groups: Vec<SettingGroupResponse> = Vec::new();
     for setting in &current.effective {
         let group = setting.definition.group;
-        let field = field_response(setting, &boot)?;
+        let field = field_response(setting, &boot.data_dir)?;
         match groups.iter_mut().find(|existing| existing.id == group.id) {
             Some(existing) => existing.fields.push(field),
             None => groups.push(SettingGroupResponse {
@@ -351,7 +350,7 @@ async fn update_server_settings(
         let mut db = STATE.db.write().await;
         // Read under the write lock so lock flags reflect the latest republish.
         let current = STATE.settings.get();
-        let changes = server_settings::validate_updates(&current, &boot, &request.values)
+        let changes = server_settings::validate_updates(&current, &boot.data_dir, &request.values)
             .map_err(map_update_error)?;
         server_settings::apply_updates(&mut db, &changes)?;
         server_settings::republish(&mut db)?;
