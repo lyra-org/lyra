@@ -746,6 +746,8 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn provider_calls_are_serialized_per_provider() {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state().expect("test state");
         let provider_id = format!("test-provider-{}", nanoid::nanoid!());
         let active = Arc::new(AtomicUsize::new(0));
         let max_active = Arc::new(AtomicUsize::new(0));
@@ -774,6 +776,8 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn provider_calls_for_different_providers_can_overlap() {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state().expect("test state");
         let provider_a = format!("test-provider-a-{}", nanoid::nanoid!());
         let provider_b = format!("test-provider-b-{}", nanoid::nanoid!());
         let barrier = Arc::new(Barrier::new(2));

@@ -456,10 +456,6 @@ pub(crate) mod test_helpers {
             UNIX_EPOCH,
         },
     };
-    use tokio::sync::Mutex as TokioMutex;
-
-    pub(crate) static HLS_TEST_MUTEX: LazyLock<TokioMutex<()>> =
-        LazyLock::new(|| TokioMutex::new(()));
 
     pub(crate) fn unique_test_dir(prefix: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -471,6 +467,9 @@ pub(crate) mod test_helpers {
         ))
     }
 
+    /// Empties the process-wide HLS registries. Call while holding
+    /// [`crate::services::testing::runtime_test_lock`], which every test that starts the runtime,
+    /// and with it the HLS cleanup worker, holds too.
     pub(crate) async fn reset_hls_state_for_test() {
         teardown_all_hls_jobs().await;
     }
@@ -499,7 +498,7 @@ mod tests {
 
     #[tokio::test]
     async fn attach_session_to_job_keeps_single_shared_job_for_concurrent_sessions() {
-        let _guard = HLS_TEST_MUTEX.lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         reset_hls_state_for_test().await;
 
         let test_dir = unique_test_dir("lyra-hls-shared-job-test");

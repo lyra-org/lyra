@@ -1057,6 +1057,8 @@ mod tests {
 
     #[test]
     fn initial_reported_position_is_not_counted_as_observed_activity() -> anyhow::Result<()> {
+        let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+        crate::services::testing::init_default_test_state()?;
         let (mut db, user_db_id, first_track_db_id, _, first_track_id, _) = setup()?;
         let update = create_playback(
             &mut db,
@@ -1083,6 +1085,8 @@ mod tests {
 
     #[test]
     fn replacing_queue_heals_unresolvable_current_session_edge() -> anyhow::Result<()> {
+        let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+        crate::services::testing::init_default_test_state()?;
         let (
             mut db,
             user_db_id,
@@ -1138,6 +1142,8 @@ mod tests {
 
     #[test]
     fn replacing_queue_pauses_displaced_session_at_effective_position() -> anyhow::Result<()> {
+        let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+        crate::services::testing::init_default_test_state()?;
         let (
             mut db,
             user_db_id,

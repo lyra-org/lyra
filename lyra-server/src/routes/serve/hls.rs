@@ -851,8 +851,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_hls_segment_allows_public_session_without_auth_header() {
-        let _runtime_guard = crate::services::testing::runtime_test_lock().await;
-        let _guard = HLS_TEST_MUTEX.lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         crate::services::shutdown::reset();
         reset_hls_state_for_test().await;
 

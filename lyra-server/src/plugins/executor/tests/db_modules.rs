@@ -94,6 +94,8 @@ fn id_list_arguments_reject_ids_that_are_not_positive() -> Result<()> {
 
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_entities_module() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+    crate::plugins::testing::init_default_test_state()?;
     let mut db = lyra_db::test_db::new_test_db()?;
     let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Entity Track")?;
     let track_public_id = lyra_db::lookup::find_id_by_db_id(&db, track_db_id)?

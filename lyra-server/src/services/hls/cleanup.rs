@@ -515,7 +515,8 @@ mod tests {
 
     #[tokio::test]
     async fn cleanup_stale_hls_sessions_detaches_expired_session_and_marks_job_idle() {
-        let _guard = HLS_TEST_MUTEX.lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state().expect("init test state");
         reset_hls_state_for_test().await;
 
         let track_public_id = "track-pub-333".to_string();
@@ -577,7 +578,7 @@ mod tests {
 
     #[tokio::test]
     async fn enforce_hls_temp_disk_budget_evicts_oldest_inactive_job() {
-        let _guard = HLS_TEST_MUTEX.lock().await;
+        let _guard = crate::services::testing::runtime_test_lock().await;
         reset_hls_state_for_test().await;
 
         let older_dir = unique_test_dir("lyra-hls-budget-older");

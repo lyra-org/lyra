@@ -916,6 +916,8 @@ mod tests {
     #[tokio::test]
     async fn update_plugins_reports_pinned_plugins_up_to_date_without_resolving()
     -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
         let plugins_dir = tempfile::TempDir::new()?;
         let dir = plugins_dir.path().join("pinned");
         std::fs::create_dir_all(&dir)?;
