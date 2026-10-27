@@ -17,6 +17,10 @@ use agdb::{
     QueryBuilder,
 };
 
+use super::id_links::{
+    LinkedIds,
+    provider_ranks,
+};
 use super::layers::MANUAL_SOURCE_ID;
 use super::verification::recompute_artist_verified;
 use lyra_db::{
@@ -283,47 +287,35 @@ pub(crate) fn deduplicate_artists_by_external_id(db: &mut DbAny) -> anyhow::Resu
         )?
         .try_into()?;
 
-    let mut groups: HashMap<String, Vec<DbId>> = HashMap::new();
+    let mut linked = LinkedIds::default();
     let mut artist_lookup: HashMap<DbId, Artist> = HashMap::new();
     for artist in &all_artists {
         let Some(artist_db_id) = artist.db_id.clone().map(DbId::from) else {
             continue;
         };
         artist_lookup.insert(artist_db_id, artist.clone());
-        let external_ids = lyra_db::external_ids::get_for_entity(db, artist_db_id)?;
-        for ext_id in external_ids {
+        for ext_id in lyra_db::external_ids::get_for_entity(db, artist_db_id)? {
             if ext_id.id_type == "artist_id" {
-                let id_value = ext_id.id_value.trim();
-                if id_value.is_empty() {
-                    continue;
-                }
-                let key = format!("{}:{}", ext_id.provider_id, id_value);
-                groups.entry(key).or_default().push(artist_db_id);
+                linked.add(
+                    artist_db_id,
+                    &ext_id.provider_id,
+                    &ext_id.id_type,
+                    &ext_id.id_value,
+                    true,
+                );
             }
         }
     }
 
+    let ranks = provider_ranks(db)?;
     let mut merged_count: u32 = 0;
-    let mut winners: Vec<DbId> = Vec::new();
-    for (key, artist_ids) in &groups {
-        let mut unique_artist_ids = Vec::new();
-        let mut seen_artist_ids: HashSet<DbId> = HashSet::new();
-        for &artist_id in artist_ids {
-            if seen_artist_ids.insert(artist_id) {
-                unique_artist_ids.push(artist_id);
-            }
-        }
-
-        if unique_artist_ids.len() <= 1 {
-            continue;
-        }
-
-        let winner = select_merge_winner(db, &artist_lookup, &unique_artist_ids)?;
-        for loser in unique_artist_ids.into_iter().filter(|id| *id != winner) {
+    for component in linked.components(&ranks) {
+        let winner = select_merge_winner(db, &artist_lookup, &component.ids)?;
+        for &loser in component.ids.iter().filter(|&&id| id != winner) {
             tracing::info!(
                 winner = winner.0,
                 loser = loser.0,
-                external_id = %key,
+                external_ids = ?component.keys,
                 "merging duplicate artist"
             );
             db.transaction_mut(|t| {
@@ -332,13 +324,10 @@ pub(crate) fn deduplicate_artists_by_external_id(db: &mut DbAny) -> anyhow::Resu
             })?;
             merged_count += 1;
         }
-        winners.push(winner);
+        let _ = recompute_artist_verified(db, winner);
     }
 
     if merged_count > 0 {
-        for &winner in &winners {
-            let _ = recompute_artist_verified(db, winner);
-        }
         tracing::info!(merged_count, "deduplicated artists by external id");
     }
 
@@ -939,6 +928,219 @@ mod tests {
             "winner should have inherited loser's provider-b external ID"
         );
 
+        Ok(())
+    }
+
+    /// Three artists of one name, each credited on as many releases as
+    /// `releases` gives it and holding the `artist_id`s `ids` lists by index.
+    /// MusicBrainz ranks above `provider-a`, which ranks above `provider-b`.
+    fn insert_linked_artists(
+        db: &mut DbAny,
+        releases: [usize; 3],
+        ids: &[(usize, &str, &str)],
+    ) -> anyhow::Result<[DbId; 3]> {
+        for (position, provider_id) in ["musicbrainz", "provider-a", "provider-b"]
+            .into_iter()
+            .enumerate()
+        {
+            lyra_db::providers::upsert(
+                db,
+                &lyra_db::ProviderConfig {
+                    db_id: None,
+                    provider_id: provider_id.to_string(),
+                    position: position as u32,
+                    enabled: true,
+                },
+            )?;
+        }
+        let mut artists = [DbId(0); 3];
+        for (artist, count) in artists.iter_mut().zip(releases) {
+            *artist = lyra_db::fixtures::insert_artist(db, "Radiohead")?;
+            for _ in 0..count {
+                let release = lyra_db::fixtures::insert_release(db, "Release")?;
+                lyra_db::fixtures::connect(db, release, *artist)?;
+            }
+        }
+        for &(index, provider_id, id_value) in ids {
+            lyra_db::external_ids::upsert(
+                db,
+                artists[index],
+                provider_id,
+                "artist_id",
+                id_value,
+                IdSource::Resolved,
+            )?;
+        }
+        Ok(artists)
+    }
+
+    fn remaining_artists(db: &DbAny, artists: [DbId; 3]) -> anyhow::Result<Vec<DbId>> {
+        let mut remaining = Vec::new();
+        for artist in artists {
+            if lyra_db::artists::get_by_id(db, artist)?.is_some() {
+                remaining.push(artist);
+            }
+        }
+        Ok(remaining)
+    }
+
+    /// Both orders in which the two linking providers' groups can run.
+    const LINK_ORDERS: [(&str, &str); 2] =
+        [("provider-a", "provider-b"), ("provider-b", "provider-a")];
+
+    #[test]
+    fn an_artist_sharing_ids_with_two_others_merges_all_three() -> anyhow::Result<()> {
+        // The bridging artist loses whichever of its two groups merges first.
+        for (first, second) in LINK_ORDERS {
+            let mut db = test_db::new_test_db()?;
+            let artists = insert_linked_artists(
+                &mut db,
+                [2, 0, 2],
+                &[
+                    (0, first, "left"),
+                    (1, first, "left"),
+                    (1, second, "right"),
+                    (2, second, "right"),
+                ],
+            )?;
+
+            assert_eq!(deduplicate_artists_by_external_id(&mut db)?, 2);
+            let remaining = remaining_artists(&db, artists)?;
+            assert_eq!(remaining.len(), 1, "{first} first leaves {remaining:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn linked_artists_merge_into_the_one_ranked_first_across_all_of_them() -> anyhow::Result<()> {
+        // Merging the first pair alone would lift its winner above the third
+        // artist, which has the most releases of all three.
+        for (first, second) in LINK_ORDERS {
+            let mut db = test_db::new_test_db()?;
+            let artists = insert_linked_artists(
+                &mut db,
+                [3, 1, 4],
+                &[
+                    (0, first, "left"),
+                    (1, first, "left"),
+                    (1, second, "right"),
+                    (2, second, "right"),
+                ],
+            )?;
+
+            assert_eq!(deduplicate_artists_by_external_id(&mut db)?, 2);
+            assert_eq!(
+                remaining_artists(&db, artists)?,
+                [artists[2]],
+                "{first} first"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn artists_sharing_an_id_but_not_their_musicbrainz_ids_stay_apart() -> anyhow::Result<()> {
+        let mut db = test_db::new_test_db()?;
+        let artists = insert_linked_artists(
+            &mut db,
+            [1, 1, 0],
+            &[
+                (0, "provider-a", "shared"),
+                (1, "provider-a", "shared"),
+                (0, "musicbrainz", "one"),
+                (1, "musicbrainz", "two"),
+            ],
+        )?;
+
+        assert_eq!(deduplicate_artists_by_external_id(&mut db)?, 0);
+        assert_eq!(remaining_artists(&db, artists)?, artists);
+        Ok(())
+    }
+
+    #[test]
+    fn artists_sharing_a_musicbrainz_id_merge_past_a_lower_ranked_conflict() -> anyhow::Result<()> {
+        // provider-a matched each spelling to its own artist by name.
+        let mut db = test_db::new_test_db()?;
+        let artists = insert_linked_artists(
+            &mut db,
+            [1, 0, 0],
+            &[
+                (0, "musicbrainz", "shared"),
+                (1, "musicbrainz", "shared"),
+                (0, "provider-a", "one"),
+                (1, "provider-a", "two"),
+            ],
+        )?;
+
+        assert_eq!(deduplicate_artists_by_external_id(&mut db)?, 1);
+        assert_eq!(remaining_artists(&db, artists)?, [artists[0], artists[2]]);
+        let provider_a_ids = lyra_db::external_ids::get_for_entity(&db, artists[0])?
+            .into_iter()
+            .filter(|id| id.provider_id == "provider-a")
+            .count();
+        assert_eq!(provider_a_ids, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn artists_that_conflict_only_with_a_third_still_merge() -> anyhow::Result<()> {
+        // All three share a provider-b ID. The odd one conflicts with each of
+        // the others through a higher-ranked provider, but they agree; it
+        // takes every place, so it is first in its group in one of them.
+        for odd in 0..3 {
+            let (second, third) = ((odd + 1) % 3, (odd + 2) % 3);
+            let mut db = test_db::new_test_db()?;
+            let artists = insert_linked_artists(
+                &mut db,
+                [0, 0, 0],
+                &[
+                    (0, "provider-b", "shared"),
+                    (1, "provider-b", "shared"),
+                    (2, "provider-b", "shared"),
+                    (odd, "musicbrainz", "one"),
+                    (second, "musicbrainz", "two"),
+                    (odd, "provider-a", "x"),
+                    (third, "provider-a", "y"),
+                ],
+            )?;
+
+            assert_eq!(deduplicate_artists_by_external_id(&mut db)?, 1, "{odd}");
+            let remaining = remaining_artists(&db, artists)?;
+            assert_eq!(remaining.len(), 2, "{odd}");
+            assert!(remaining.contains(&artists[odd]), "{odd}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_chain_of_shared_ids_does_not_merge_across_a_conflict() -> anyhow::Result<()> {
+        // The bridge may join either end, but never both ends together.
+        for (first, second) in LINK_ORDERS {
+            let mut db = test_db::new_test_db()?;
+            let [left, bridge, right] = insert_linked_artists(
+                &mut db,
+                [1, 0, 1],
+                &[
+                    (0, "musicbrainz", "one"),
+                    (0, first, "left"),
+                    (1, first, "left"),
+                    (1, second, "right"),
+                    (2, second, "right"),
+                    (2, "musicbrainz", "two"),
+                ],
+            )?;
+
+            assert_eq!(
+                deduplicate_artists_by_external_id(&mut db)?,
+                1,
+                "{first} first"
+            );
+            assert_eq!(
+                remaining_artists(&db, [left, bridge, right])?,
+                [left, right],
+                "{first} first"
+            );
+        }
         Ok(())
     }
 

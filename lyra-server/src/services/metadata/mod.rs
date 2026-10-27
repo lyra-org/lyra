@@ -7,6 +7,7 @@ pub(crate) mod cleanup;
 mod cue;
 pub(crate) mod editing;
 mod format;
+pub(crate) mod id_links;
 pub(crate) mod ingestion;
 pub(crate) mod layers;
 pub(crate) mod lyrics;
