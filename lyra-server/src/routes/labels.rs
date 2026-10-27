@@ -19,6 +19,7 @@ use serde::{
     Serialize,
 };
 
+use crate::routes::request::bearer_credential;
 use crate::{
     routes::{
         AppError,
@@ -74,7 +75,7 @@ fn parse_label_inc(inc: Option<Vec<String>>) -> Result<LabelInc, AppError> {
 }
 
 async fn list_labels(headers: HeaderMap) -> Result<Json<Vec<LabelResponse>>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
 
     let db = &*STATE.db.read().await;
     let all = labels::get_all(db)?;
@@ -110,7 +111,7 @@ async fn get_label(
     Path(id): Path<String>,
     axum::extract::Query(query): axum::extract::Query<LabelQuery>,
 ) -> Result<Json<LabelResponse>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     let inc = parse_label_inc(query.inc)?;
 
     let db = &*STATE.db.read().await;

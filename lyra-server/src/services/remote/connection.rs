@@ -5,32 +5,9 @@
 
 use std::collections::HashSet;
 
-use axum::extract::ws::{
-    CloseFrame,
-    Message,
-    Utf8Bytes,
-    WebSocket,
-};
-use tokio::sync::{
-    broadcast,
-    mpsc,
-    watch,
-};
 use tokio::task::JoinSet;
-use tokio::time::{
-    Instant,
-    interval_at,
-};
 
-use super::constants::{
-    AUTH_CHECK_INTERVAL,
-    CloseReason,
-    MAX_CONSECUTIVE_AUTH_ERRORS,
-    PING_INTERVAL,
-    PONG_TIMEOUT,
-    RemoteAction,
-    WRITE_TIMEOUT,
-};
+use super::constants::RemoteAction;
 use super::handoffs;
 use super::messages::{
     ClientCommand,
@@ -52,37 +29,11 @@ use crate::services::auth::{
 use crate::services::playback_sessions as playbacks;
 use crate::services::playback_sessions::{
     PlaybackUpdatePayload,
-    subscribe_playback_events,
     unsubscribe_playback_events,
 };
 
 const NATIVE_SOURCE_ID: &str = "native";
 const MAX_IN_FLIGHT_COMMANDS: usize = 16;
-
-async fn send_message(socket: &mut WebSocket, msg: Message) -> bool {
-    tokio::time::timeout(WRITE_TIMEOUT, socket.send(msg))
-        .await
-        .is_ok_and(|r| r.is_ok())
-}
-
-pub(crate) async fn send_close(socket: &mut WebSocket, reason: CloseReason) -> bool {
-    send_message(
-        socket,
-        Message::Close(Some(CloseFrame {
-            code: reason.code(),
-            reason: Utf8Bytes::from_static(reason.reason()),
-        })),
-    )
-    .await
-}
-
-async fn send(socket: &mut WebSocket, msg: OutgoingMessage) -> bool {
-    let text = match serde_json::to_string(&msg) {
-        Ok(text) => text,
-        Err(_) => return false,
-    };
-    send_message(socket, Message::Text(text.into())).await
-}
 
 fn extract_id(text: &str) -> String {
     #[derive(serde::Deserialize)]
@@ -113,7 +64,7 @@ fn spawn_handoff_response(
     responses.spawn(handle_message(command, connection_id));
 }
 
-async fn abort_handoff_responses(responses: &mut JoinSet<OutgoingMessage>) {
+pub(crate) async fn abort_handoff_responses(responses: &mut JoinSet<OutgoingMessage>) {
     responses.abort_all();
     while responses.join_next().await.is_some() {}
 }
@@ -270,7 +221,7 @@ fn playback_event_visible_to_connection(
             .is_some_and(|library_id| accessible_library_ids.contains(library_id))
 }
 
-fn mark_sync_required_pending(sync_required_pending: &mut bool) -> bool {
+pub(crate) fn mark_sync_required_pending(sync_required_pending: &mut bool) -> bool {
     if *sync_required_pending {
         false
     } else {
@@ -279,7 +230,7 @@ fn mark_sync_required_pending(sync_required_pending: &mut bool) -> bool {
     }
 }
 
-enum AuthStatus {
+pub(crate) enum AuthStatus {
     /// Carries the re-resolved library access set so a long-lived connection
     /// picks up grants and revocations made after it was established.
     Valid(HashSet<String>),
@@ -287,7 +238,10 @@ enum AuthStatus {
     Error,
 }
 
-async fn check_auth(token: &Option<String>, expected_user_public_id: &str) -> AuthStatus {
+pub(crate) async fn check_auth(
+    token: &Option<String>,
+    expected_user_public_id: &str,
+) -> AuthStatus {
     match auth::resolve_auth_from_bearer(token.as_deref()).await {
         Ok(Some(auth)) => {
             if auth.principal.user_public_id == expected_user_public_id {
@@ -360,198 +314,58 @@ pub(crate) async fn confirm_registration(
     Ok(user?.is_some())
 }
 
-pub(crate) async fn run(
-    mut socket: WebSocket,
+/// The response to a text message from a connection, unless the command it carries was handed
+/// to `handoff_responses` to answer once it completes.
+pub(crate) async fn respond(
+    text: &str,
+    handoff_responses: &mut JoinSet<OutgoingMessage>,
     connection_id: ConnectionId,
-    user_public_id: String,
-    mut accessible_library_ids: HashSet<String>,
-    mut close: watch::Receiver<Option<CloseReason>>,
-    token: Option<String>,
-    mut command_rx: mpsc::Receiver<OutgoingMessage>,
-) {
-    let mut ping_interval = interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
-    let mut auth_interval = interval_at(Instant::now() + AUTH_CHECK_INTERVAL, AUTH_CHECK_INTERVAL);
-    let mut event_rx = subscribe_playback_events(&user_public_id);
-    let mut awaiting_pong = false;
-    let mut pong_deadline: Option<Instant> = None;
-    let mut consecutive_auth_errors: u32 = 0;
-    let mut sync_required_pending = false;
-    let mut handoff_responses = JoinSet::new();
-
-    loop {
-        let sleep = async {
-            if let Some(deadline) = pong_deadline {
-                tokio::time::sleep_until(deadline).await;
-            } else {
-                std::future::pending::<()>().await;
-            }
-        };
-
-        tokio::select! {
-            msg = socket.recv() => {
-                match msg {
-                    Some(Ok(Message::Pong(_))) => {
-                        awaiting_pong = false;
-                        pong_deadline = None;
-                    }
-                    Some(Ok(Message::Ping(data))) => {
-                        if !send_message(&mut socket, Message::Pong(data)).await {
-                            break;
-                        }
-                    }
-                    Some(Ok(Message::Close(_))) | None => {
-                        break;
-                    }
-                    Some(Ok(Message::Text(text))) => {
-                        let response = match serde_json::from_str::<ClientCommand>(&text) {
-                            Ok(msg) if is_detached_command(&msg)
-                                && handoff_responses.len() < MAX_IN_FLIGHT_COMMANDS => {
-                                spawn_handoff_response(
-                                    &mut handoff_responses,
-                                    msg,
-                                    connection_id,
-                                );
-                                continue;
-                            }
-                            Ok(msg) if is_detached_command(&msg) => {
-                                let id = extract_id(&text);
-                                OutgoingMessage::Response(ResponseMessage::error(
-                                    id,
-                                    "too many handoffs in flight",
-                                ))
-                            }
-                            Ok(msg) => handle_message(msg, connection_id).await,
-                            Err(err) => {
-                                let id = extract_id(&text);
-                                OutgoingMessage::Response(ResponseMessage::error(
-                                    id,
-                                    format!("malformed message: {err}"),
-                                ))
-                            }
-                        };
-                        if !send(&mut socket, response).await {
-                            break;
-                        }
-                    }
-                    // Binary frames are intentionally ignored; only JSON text is supported.
-                    Some(Ok(Message::Binary(_))) => {}
-                    Some(Err(_)) => {
-                        break;
-                    }
-                }
-            }
-
-            Some(forwarded) = command_rx.recv() => {
-                if !send(&mut socket, forwarded).await {
-                    break;
-                }
-            }
-
-            Some(result) = handoff_responses.join_next(), if !handoff_responses.is_empty() => {
-                match result {
-                    Ok(response) => {
-                        if !send(&mut socket, response).await {
-                            break;
-                        }
-                    }
-                    Err(error) => {
-                        tracing::warn!(connection_id, error = %error, "command task failed");
-                    }
-                }
-            }
-
-            result = event_rx.recv() => {
-                match result {
-                    Ok(payload) => {
-                        if playback_event_visible_to_connection(
-                            &payload,
-                            &user_public_id,
-                            &accessible_library_ids,
-                        ) && let Some(msg) = playback_event_to_message(payload) {
-                            if !send(&mut socket, msg).await {
-                                break;
-                            }
-                            sync_required_pending = false;
-                        }
-                    }
-                    // Missed events can't be replayed; tell the client to
-                    // resync state via REST instead.
-                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                        tracing::debug!(connection_id, skipped, "broadcast lagged");
-                        if !mark_sync_required_pending(&mut sync_required_pending) {
-                            continue;
-                        }
-                        let msg = OutgoingMessage::Event(EventMessage {
-                            event: "sync_required".to_string(),
-                            data: serde_json::Value::Null,
-                        });
-                        if !send(&mut socket, msg).await {
-                            break;
-                        }
-                    }
-                    Err(broadcast::error::RecvError::Closed) => break,
-                }
-            }
-
-            _ = ping_interval.tick() => {
-                if !send_message(&mut socket, Message::Ping(vec![].into())).await {
-                    break;
-                }
-                awaiting_pong = true;
-                pong_deadline = Some(Instant::now() + PONG_TIMEOUT);
-            }
-
-            _ = auth_interval.tick() => {
-                match check_auth(&token, &user_public_id).await {
-                    AuthStatus::Valid(refreshed_library_ids) => {
-                        consecutive_auth_errors = 0;
-                        accessible_library_ids = refreshed_library_ids;
-                    }
-                    AuthStatus::Revoked => {
-                        tracing::info!(connection_id, "session revoked, closing connection");
-                        let _ = send_message(&mut socket, Message::Close(None)).await;
-                        break;
-                    }
-                    AuthStatus::Error => {
-                        consecutive_auth_errors += 1;
-                        tracing::warn!(
-                            connection_id,
-                            consecutive_auth_errors,
-                            "auth check failed, skipping"
-                        );
-                        if consecutive_auth_errors >= MAX_CONSECUTIVE_AUTH_ERRORS {
-                            tracing::warn!(
-                                connection_id,
-                                consecutive_auth_errors,
-                                "auth check failed repeatedly, closing connection"
-                            );
-                            let _ = send_message(&mut socket, Message::Close(None)).await;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            Ok(()) = close.changed() => {
-                let Some(reason) = *close.borrow_and_update() else {
-                    continue;
-                };
-                tracing::info!(connection_id, ?reason, "closing connection at server request");
-                let _ = send_close(&mut socket, reason).await;
-                break;
-            }
-
-            _ = sleep, if awaiting_pong => {
-                tracing::debug!(connection_id, "pong timeout, closing connection");
-                let _ = send_message(&mut socket, Message::Close(None)).await;
-                break;
-            }
+) -> Option<OutgoingMessage> {
+    Some(match serde_json::from_str::<ClientCommand>(text) {
+        Ok(msg)
+            if is_detached_command(&msg) && handoff_responses.len() < MAX_IN_FLIGHT_COMMANDS =>
+        {
+            spawn_handoff_response(handoff_responses, msg, connection_id);
+            return None;
         }
-    }
+        Ok(msg) if is_detached_command(&msg) => {
+            let id = extract_id(text);
+            OutgoingMessage::Response(ResponseMessage::error(id, "too many handoffs in flight"))
+        }
+        Ok(msg) => handle_message(msg, connection_id).await,
+        Err(err) => {
+            let id = extract_id(text);
+            OutgoingMessage::Response(ResponseMessage::error(
+                id,
+                format!("malformed message: {err}"),
+            ))
+        }
+    })
+}
 
-    abort_handoff_responses(&mut handoff_responses).await;
-    drop(event_rx);
-    unsubscribe_playback_events(&user_public_id);
+/// The event a connection is sent for a playback update, when it may see it.
+pub(crate) fn playback_event_message(
+    payload: PlaybackUpdatePayload,
+    user_public_id: &str,
+    accessible_library_ids: &HashSet<String>,
+) -> Option<OutgoingMessage> {
+    playback_event_visible_to_connection(&payload, user_public_id, accessible_library_ids)
+        .then(|| playback_event_to_message(payload))
+        .flatten()
+}
+
+/// Tells a connection that missed playback events to resync its state via REST, since they
+/// can't be replayed.
+pub(crate) fn sync_required_message() -> OutgoingMessage {
+    OutgoingMessage::Event(EventMessage {
+        event: "sync_required".to_string(),
+        data: serde_json::Value::Null,
+    })
+}
+
+/// Releases what a closed connection held and pauses the playback it was driving.
+pub(crate) async fn disconnect(connection_id: ConnectionId, user_public_id: &str) {
+    unsubscribe_playback_events(user_public_id);
     let handle = registry::unregister(connection_id).await;
     if let Some(handle) = &handle {
         tracing::info!(
@@ -568,6 +382,7 @@ pub(crate) async fn run(
 mod tests {
     use super::*;
     use lyra_db::PlaybackState;
+    use tokio::sync::watch;
 
     #[test]
     fn only_handoff_queue_is_detached() {

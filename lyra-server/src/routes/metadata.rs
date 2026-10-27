@@ -25,6 +25,7 @@ use serde::{
     Serialize,
 };
 
+use crate::routes::request::bearer_credential;
 use crate::{
     routes::AppError,
     services::STATE,
@@ -116,7 +117,7 @@ struct PutMetadataMappingResponse {
 async fn get_metadata_mapping(
     headers: HeaderMap,
 ) -> Result<Json<MetadataMappingResponse>, AppError> {
-    require_manage_metadata(&headers).await?;
+    require_manage_metadata(bearer_credential(&headers)).await?;
     let config = {
         let db = STATE.db.read().await;
         lyra_db::metadata::mapping_config::get(&db)?
@@ -152,7 +153,7 @@ async fn put_metadata_mapping(
     headers: HeaderMap,
     Json(body): Json<PutMetadataMappingRequest>,
 ) -> Result<axum::response::Response, AppError> {
-    require_manage_metadata(&headers).await?;
+    require_manage_metadata(bearer_credential(&headers)).await?;
 
     // Atomic CAS at the route boundary: concurrent PUTs race here
     // before any work runs. Losers get 409 immediately instead of a
@@ -213,7 +214,7 @@ async fn preview_metadata_mapping(
     headers: HeaderMap,
     Json(body): Json<PreviewMetadataMappingRequest>,
 ) -> Result<Json<DryRunReport>, AppError> {
-    require_manage_metadata(&headers).await?;
+    require_manage_metadata(bearer_credential(&headers)).await?;
     let candidate = build_candidate(body.rules)?;
     let report = dry_run_config(&candidate).await?;
     Ok(Json(report))

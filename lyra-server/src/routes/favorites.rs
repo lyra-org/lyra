@@ -31,6 +31,7 @@ use serde::{
 };
 use std::collections::HashMap;
 
+use crate::routes::request::bearer_credential;
 use crate::{
     routes::{
         AppError,
@@ -145,7 +146,7 @@ async fn put_favorite(
     headers: HeaderMap,
     Path(target_id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     if !looks_like_public_id(&target_id) {
         return Err(AppError::bad_request(format!(
             "malformed target id: {target_id}"
@@ -165,7 +166,7 @@ async fn delete_favorite(
     headers: HeaderMap,
     Path(target_id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     if !looks_like_public_id(&target_id) {
         return Err(AppError::bad_request(format!(
             "malformed target id: {target_id}"
@@ -187,7 +188,7 @@ async fn get_favorite_state(
     Path(target_id): Path<String>,
     Query(_): Query<FavoriteStateResponseQuery>,
 ) -> Result<Json<FavoriteStateResponse>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     if !looks_like_public_id(&target_id) {
         return Err(AppError::bad_request(format!(
             "malformed target id: {target_id}"
@@ -203,7 +204,7 @@ async fn check_favorites(
     headers: HeaderMap,
     Json(request): Json<CheckRequest>,
 ) -> Result<Json<CheckResponse>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
 
     if request.target_ids.len() > CHECK_TARGET_CAP {
         return Err(AppError::bad_request(format!(
@@ -222,7 +223,7 @@ async fn list_favorites(
     headers: HeaderMap,
     Query(query): Query<ListQuery>,
 ) -> Result<Json<PageResponse<FavoriteItem>>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     let page_request = query.page.resolve_snapshot();
     let kind = FavoriteKind::from(query.entity);
     let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "favorites")

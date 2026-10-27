@@ -38,6 +38,7 @@ use futures::{
 };
 use serde::Deserialize;
 
+use crate::routes::request::bearer_credential;
 use crate::{
     routes::AppError,
     services::{
@@ -68,7 +69,8 @@ async fn load_authorized_run(
     let summary = get_sync_run(run_id)
         .await?
         .ok_or_else(|| AppError::not_found(format!("sync run not found: {run_id}")))?;
-    let _principal = require_manage_libraries_on(headers, &summary.run.library_id).await?;
+    let _principal =
+        require_manage_libraries_on(bearer_credential(headers), &summary.run.library_id).await?;
     Ok(summary)
 }
 

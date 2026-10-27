@@ -17,6 +17,7 @@ use axum::{
 };
 use serde::Deserialize;
 
+use crate::routes::request::bearer_credential;
 use crate::{
     routes::{
         self,
@@ -121,7 +122,7 @@ pub(crate) async fn get_track_mix(
     Path(id): Path<String>,
     Query(query): Query<TrackMixQueryParams>,
 ) -> Result<Json<Vec<TrackResponse>>, AppError> {
-    let principal = require_principal(&headers).await?;
+    let principal = require_principal(bearer_credential(&headers)).await?;
     validate_limit(query.base.limit)?;
 
     let options = mix_options(&query.base, &principal);
@@ -139,7 +140,7 @@ pub(crate) async fn get_release_mix(
     Path(id): Path<String>,
     Query(query): Query<MixQueryParams>,
 ) -> Result<Json<Vec<TrackResponse>>, AppError> {
-    let principal = require_principal(&headers).await?;
+    let principal = require_principal(bearer_credential(&headers)).await?;
     validate_limit(query.limit)?;
 
     let options = mix_options(&query, &principal);
@@ -154,7 +155,7 @@ pub(crate) async fn get_artist_mix(
     Path(id): Path<String>,
     Query(query): Query<MixQueryParams>,
 ) -> Result<Json<Vec<TrackResponse>>, AppError> {
-    let principal = require_principal(&headers).await?;
+    let principal = require_principal(bearer_credential(&headers)).await?;
     validate_limit(query.limit)?;
 
     let options = mix_options(&query, &principal);
@@ -169,7 +170,7 @@ pub(crate) async fn get_genre_mix(
     Path(id): Path<String>,
     Query(query): Query<MixQueryParams>,
 ) -> Result<Json<Vec<TrackResponse>>, AppError> {
-    let principal = require_principal(&headers).await?;
+    let principal = require_principal(bearer_credential(&headers)).await?;
     validate_limit(query.limit)?;
 
     let options = mix_options(&query, &principal);
@@ -183,7 +184,7 @@ pub(crate) async fn get_playlist_mix(
     Path(id): Path<String>,
     Query(query): Query<MixQueryParams>,
 ) -> Result<Json<Vec<TrackResponse>>, AppError> {
-    let principal = require_principal(&headers).await?;
+    let principal = require_principal(bearer_credential(&headers)).await?;
     validate_limit(query.limit)?;
 
     let options = mix_options(&query, &principal);
@@ -197,7 +198,7 @@ pub(crate) async fn get_me_mix(
     headers: HeaderMap,
     Query(query): Query<MixQueryParams>,
 ) -> Result<Json<Vec<TrackResponse>>, AppError> {
-    let principal = require_principal(&headers).await?;
+    let principal = require_principal(bearer_credential(&headers)).await?;
     validate_limit(query.limit)?;
 
     let options = mix_options(&query, &principal);

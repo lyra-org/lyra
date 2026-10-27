@@ -19,6 +19,7 @@ use serde::{
     Serialize,
 };
 
+use crate::routes::request::bearer_credential;
 use crate::{
     routes::AppError,
     services::STATE,
@@ -78,7 +79,7 @@ async fn search(
     headers: HeaderMap,
     Query(params): Query<SearchQuery>,
 ) -> Result<Json<SearchResponse>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
 
     let trimmed = params.query.trim();
     if trimmed.is_empty() {

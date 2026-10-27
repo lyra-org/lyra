@@ -27,6 +27,7 @@ use std::{
     },
 };
 
+use crate::routes::request::bearer_credential;
 use crate::services::catalog::Direction;
 use crate::{
     routes::{
@@ -616,7 +617,7 @@ pub(super) async fn get_me_listens(
     headers: HeaderMap,
     Query(query): Query<MeListenQuery>,
 ) -> Result<Json<PageResponse<MeListenResponse>>, AppError> {
-    let principal = require_principal(&headers).await?;
+    let principal = require_principal(bearer_credential(&headers)).await?;
     let page_request = query.page.clone().resolve_snapshot();
     let merge_unique_external_ids = query.merge_unique_external_ids.unwrap_or(false);
     validate_merge_usage(query.track_id.as_deref(), merge_unique_external_ids)?;
@@ -658,7 +659,7 @@ async fn get_listens(
     headers: HeaderMap,
     Query(query): Query<ListenQuery>,
 ) -> Result<Json<PageResponse<ListenResponse>>, AppError> {
-    let principal = require_principal(&headers).await?;
+    let principal = require_principal(bearer_credential(&headers)).await?;
     require_permission(&principal, Permission::ManageLibraries)?;
     let page_request = query.page.clone().resolve_snapshot();
     let merge_unique_external_ids = query.merge_unique_external_ids.unwrap_or(false);

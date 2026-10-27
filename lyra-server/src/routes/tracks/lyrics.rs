@@ -32,6 +32,7 @@ use axum::{
 };
 use serde::Deserialize;
 
+use crate::routes::request::bearer_credential;
 use crate::{
     routes::{
         AppError,
@@ -108,7 +109,7 @@ async fn get_track_lyrics(
     Path(id): Path<String>,
     Query(query): Query<LyricsQuery>,
 ) -> Result<Response, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     let db = &*STATE.db.read().await;
     let not_found = || AppError::not_found(format!("No lyrics for track: {id}"));
 
@@ -178,7 +179,7 @@ async fn get_track_lyrics_candidates(
     Path(id): Path<String>,
     Query(query): Query<LyricsCandidatesQuery>,
 ) -> Result<Json<LyricsCandidatesResponse>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     let db = &*STATE.db.read().await;
     let not_found = || AppError::not_found(format!("Track not found: {id}"));
     let track_db_id = lyra_db::lookup::find_node_id_by_id(db, &id)?.ok_or_else(not_found)?;
@@ -218,7 +219,7 @@ async fn put_personal_track_lyrics(
     Query(query): Query<LyricsWriteQuery>,
     body: Bytes,
 ) -> Result<Json<LyricsResponse>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     let now = lyrics_service::now_ms().map_err(lyrics_upload_error_to_app_error)?;
     let content_type = request_content_type(&headers)?;
     validate_upload_content_type(content_type)?;
@@ -250,7 +251,7 @@ async fn delete_personal_track_lyrics(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     let mut db = STATE.db.write().await;
     let Some(track_db_id) = lyra_db::lookup::find_node_id_by_id(&*db, &id)? else {
         return Ok(StatusCode::NO_CONTENT);
@@ -266,7 +267,7 @@ async fn put_shared_track_lyrics(
     Query(query): Query<LyricsWriteQuery>,
     body: Bytes,
 ) -> Result<Json<LyricsResponse>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     require_permission(&principal, lyra_db::Permission::ManageMetadata)?;
     let now = lyrics_service::now_ms().map_err(lyrics_upload_error_to_app_error)?;
     let content_type = request_content_type(&headers)?;
@@ -291,7 +292,7 @@ async fn delete_shared_track_lyrics(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     require_permission(&principal, lyra_db::Permission::ManageMetadata)?;
     let mut db = STATE.db.write().await;
     let track_db_id = lyra_db::lookup::find_node_id_by_id(&*db, &id)?
@@ -311,7 +312,7 @@ async fn refresh_track_lyrics(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     let track_db_id = {
         let db = &*STATE.db.read().await;
         let track_db_id = lyra_db::lookup::find_node_id_by_id(db, &id)?

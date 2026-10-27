@@ -26,6 +26,7 @@ use serde::{
 };
 use std::collections::HashMap;
 
+use crate::routes::request::bearer_credential;
 use crate::{
     services::STATE,
     services::{
@@ -136,7 +137,7 @@ async fn set_rating(
     Path(target_id): Path<String>,
     Json(request): Json<SetRatingRequest>,
 ) -> Result<StatusCode, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     validate_target_id(&target_id)?;
     let rating = parse_rating(request.rating)?;
 
@@ -153,7 +154,7 @@ async fn get_rating(
     headers: HeaderMap,
     Path(target_id): Path<String>,
 ) -> Result<Json<RatingStateResponse>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     validate_target_id(&target_id)?;
 
     let db = STATE.db.read().await;
@@ -166,7 +167,7 @@ async fn delete_rating(
     headers: HeaderMap,
     Path(target_id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     validate_target_id(&target_id)?;
 
     let mut db = STATE.db.write().await;
@@ -183,7 +184,7 @@ async fn check_ratings(
     headers: HeaderMap,
     Json(request): Json<CheckRatingsRequest>,
 ) -> Result<Json<CheckRatingsResponse>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     if request.target_ids.len() > CHECK_TARGET_CAP {
         return Err(AppError::bad_request(format!(
             "rating check cap exceeded: {} > {}",

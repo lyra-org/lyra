@@ -3,6 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+mod socket;
+
 use std::collections::HashSet;
 
 use axum::{
@@ -20,7 +22,6 @@ use tokio::sync::watch;
 
 use crate::services::{
     auth,
-    origin,
     remote::{
         connection,
         constants::{
@@ -32,6 +33,7 @@ use crate::services::{
 };
 
 use super::AppError;
+use super::request::origin;
 use crate::plugins::api::RouteKey;
 
 #[derive(Deserialize)]
@@ -89,7 +91,7 @@ async fn ws_upgrade(
                         error = %err,
                         "websocket registration rejected"
                     );
-                    connection::send_close(&mut socket, CloseReason::RegistrationRejected).await;
+                    socket::send_close(&mut socket, CloseReason::RegistrationRejected).await;
                     return;
                 }
             };
@@ -101,7 +103,7 @@ async fn ws_upgrade(
                         user_public_id = %user_public_id,
                         "websocket user deleted during upgrade"
                     );
-                    connection::send_close(&mut socket, CloseReason::UserDeleted).await;
+                    socket::send_close(&mut socket, CloseReason::UserDeleted).await;
                     return;
                 }
                 Err(err) => {
@@ -110,7 +112,7 @@ async fn ws_upgrade(
                         error = %err,
                         "websocket registration could not be confirmed"
                     );
-                    connection::send_close(&mut socket, CloseReason::RegistrationRejected).await;
+                    socket::send_close(&mut socket, CloseReason::RegistrationRejected).await;
                     return;
                 }
             }
@@ -130,7 +132,7 @@ async fn ws_upgrade(
                 "websocket connected"
             );
 
-            connection::run(
+            socket::run(
                 socket,
                 result.connection_id,
                 user_public_id,

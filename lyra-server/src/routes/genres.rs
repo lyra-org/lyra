@@ -28,6 +28,7 @@ use serde::{
     Serialize,
 };
 
+use crate::routes::request::bearer_credential;
 use crate::{
     routes::{
         AppError,
@@ -219,7 +220,7 @@ async fn list_genres(
         page,
     } = query;
     let page_request = page.resolve_snapshot();
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     let inc = parse_genre_inc(inc)?;
     let search_term = super::parse_text_query(query);
 
@@ -311,7 +312,7 @@ async fn get_genre(
     Path(id): Path<String>,
     axum::extract::Query(query): axum::extract::Query<GenreQuery>,
 ) -> Result<Json<GenreResponse>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     let inc = parse_genre_inc(query.inc)?;
 
     let db = &*STATE.db.read().await;

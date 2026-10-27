@@ -33,6 +33,7 @@ use serde::{
     Serialize,
 };
 
+use crate::routes::request::bearer_credential;
 use crate::{
     routes::{
         self,
@@ -372,7 +373,7 @@ async fn list_playbacks(
     headers: HeaderMap,
     Query(query): Query<PlaybackQuery>,
 ) -> Result<Json<PageResponse<PlaybackResponse>>, AppError> {
-    let principal = require_principal(&headers).await?;
+    let principal = require_principal(bearer_credential(&headers)).await?;
     let inc = parse_inc(query.inc)?;
     let active_only = query.active.unwrap_or(false);
     let page_request = query.page.resolve_snapshot();
@@ -454,7 +455,7 @@ async fn create_playback(
     headers: HeaderMap,
     Json(request): Json<PlaybackCreateRequest>,
 ) -> Result<(StatusCode, Json<PlaybackResponse>), AppError> {
-    let auth = require_auth(&headers).await?;
+    let auth = require_auth(bearer_credential(&headers)).await?;
     let current_ms = now_ms()?;
     let mut db = STATE.db.write().await;
     let user_db_id = auth.principal.require(&db)?;
@@ -509,7 +510,7 @@ async fn get_playback(
     Path(id): Path<String>,
     Query(query): Query<PlaybackDetailQuery>,
 ) -> Result<Json<PlaybackResponse>, AppError> {
-    let principal = require_principal(&headers).await?;
+    let principal = require_principal(bearer_credential(&headers)).await?;
     let inc = parse_inc(query.inc)?;
     let current_ms = now_ms()?;
     let connections = if inc.controller {
@@ -533,7 +534,7 @@ async fn delete_playback(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let principal = require_principal(&headers).await?;
+    let principal = require_principal(bearer_credential(&headers)).await?;
     let current_ms = now_ms()?;
     let mut db = STATE.db.write().await;
     let record = resolve_owned_playback_projection(&db, &principal, &id, current_ms)?;

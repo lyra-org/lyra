@@ -46,7 +46,6 @@ pub(crate) mod maintenance;
 pub(crate) mod metadata;
 pub(crate) mod mix;
 pub(crate) mod options;
-pub(crate) mod origin;
 pub(crate) mod pagination;
 pub(crate) mod playback_sessions;
 pub(crate) mod playback_sources;

@@ -4,6 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 use super::*;
+use crate::routes::request::bearer_credential;
 
 pub(super) struct WebSocketRouteRequest {
     pub(super) route: RegisteredRoute,
@@ -36,7 +37,7 @@ struct SocketReauth {
 impl SocketReauth {
     /// Returns whether the socket may stay open.
     async fn check(&mut self) -> bool {
-        match resolve_optional_auth(&self.headers).await {
+        match resolve_optional_auth(bearer_credential(&self.headers)).await {
             Ok(Some(auth)) if auth.principal.user_public_id == self.user_public_id => {
                 self.consecutive_errors = 0;
                 self.dispatch_auth.refresh(auth.principal);
@@ -98,11 +99,11 @@ pub(super) async fn dispatch_websocket_route(
         params,
     } = request;
 
-    if let Err(reason) = crate::services::origin::validate(&headers) {
+    if let Err(reason) = crate::routes::request::origin::validate(&headers) {
         return (StatusCode::FORBIDDEN, reason).into_response();
     }
 
-    let auth = match resolve_optional_auth(&headers).await {
+    let auth = match resolve_optional_auth(bearer_credential(&headers)).await {
         Ok(auth) => auth,
         Err(err) => {
             tracing::warn!(
@@ -314,7 +315,7 @@ mod tests {
             axum::http::header::AUTHORIZATION,
             format!("Bearer {bearer}").parse()?,
         );
-        let auth = resolve_optional_auth(&headers)
+        let auth = resolve_optional_auth(bearer_credential(&headers))
             .await?
             .ok_or_else(|| anyhow::anyhow!("credential should resolve"))?;
         let dispatch_auth = crate::plugins::auth::DispatchAuth::default();
@@ -583,7 +584,7 @@ mod tests {
         crate::plugins::testing::init_default_test_state()?;
         let (_, token) = session_user("socket-seeded").await?;
         let seeded = socket_reauth(&token).await?;
-        let auth = resolve_optional_auth(&seeded.headers)
+        let auth = resolve_optional_auth(bearer_credential(&seeded.headers))
             .await?
             .ok_or_else(|| anyhow::anyhow!("credential should resolve"))?;
 

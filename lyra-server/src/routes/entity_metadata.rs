@@ -16,6 +16,7 @@ use axum::{
     },
 };
 
+use crate::routes::request::bearer_credential;
 use crate::{
     routes::AppError,
     services::STATE,
@@ -77,7 +78,7 @@ async fn get_entity_metadata(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<MetadataSnapshot>, AppError> {
-    let principal = require_manage_metadata(&headers).await?;
+    let principal = require_manage_metadata(bearer_credential(&headers)).await?;
     let db = STATE.db.read().await;
     let entity_id = require_entity_access(&*db, &principal, &id)?;
     editing::get_snapshot(&db, entity_id)
@@ -90,7 +91,7 @@ async fn preview_entity_metadata(
     Path(id): Path<String>,
     Json(request): Json<MetadataPreviewRequest>,
 ) -> Result<Json<Vec<MetadataFieldDiff>>, AppError> {
-    let principal = require_manage_metadata(&headers).await?;
+    let principal = require_manage_metadata(bearer_credential(&headers)).await?;
     let db = STATE.db.read().await;
     let entity_id = require_entity_access(&*db, &principal, &id)?;
     editing::preview(&db, entity_id, &request)
@@ -103,7 +104,7 @@ async fn apply_entity_metadata(
     Path(id): Path<String>,
     Json(request): Json<MetadataApplyRequest>,
 ) -> Result<Json<MetadataSnapshot>, AppError> {
-    let principal = require_manage_metadata(&headers).await?;
+    let principal = require_manage_metadata(bearer_credential(&headers)).await?;
     let mut db = STATE.db.write().await;
     let entity_id = require_entity_access(&*db, &principal, &id)?;
     editing::apply(&mut db, entity_id, &request)

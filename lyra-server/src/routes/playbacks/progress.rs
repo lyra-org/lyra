@@ -4,6 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 use super::*;
+use crate::routes::request::bearer_credential;
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
@@ -36,7 +37,7 @@ pub(super) async fn report_progress(
     Path(id): Path<String>,
     Json(request): Json<PlaybackProgressRequest>,
 ) -> Result<Json<PlaybackResponse>, AppError> {
-    let auth = require_auth(&headers).await?;
+    let auth = require_auth(bearer_credential(&headers)).await?;
     let principal = &auth.principal;
     let current_ms = now_ms()?;
     let connection_session_key =

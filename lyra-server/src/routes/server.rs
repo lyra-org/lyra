@@ -24,6 +24,7 @@ use serde::{
     Serialize,
 };
 
+use crate::routes::request::bearer_credential;
 use crate::{
     config::BootConfig,
     services::STATE,
@@ -329,14 +330,14 @@ async fn update_setup(
     headers: HeaderMap,
     Json(request): Json<UpdateSetupRequest>,
 ) -> Result<StatusCode, AppError> {
-    require_manage_plugins(&headers).await?;
+    require_manage_plugins(bearer_credential(&headers)).await?;
     let mut db = STATE.db.write().await;
     lyra_db::server::set_plugin_selection_skipped(&mut *db, request.plugin_selection_skipped)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn get_server_settings(headers: HeaderMap) -> Result<Json<ServerSettingsResponse>, AppError> {
-    let _principal = require_manage_server(&headers).await?;
+    let _principal = require_manage_server(bearer_credential(&headers)).await?;
     Ok(Json(settings_response()?))
 }
 

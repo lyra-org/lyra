@@ -31,6 +31,7 @@ use axum::{
 };
 use std::path::Path as FsPath;
 
+use crate::routes::request::bearer_credential;
 use crate::{
     routes::AppError,
     services::{
@@ -79,7 +80,7 @@ async fn authorize_track_request(
     headers: &HeaderMap,
     purpose: MediaTokenPurpose,
 ) -> Result<Principal, AppError> {
-    let principal = require_authenticated(headers).await?;
+    let principal = require_authenticated(bearer_credential(headers)).await?;
     authorize_track_purpose(&principal, purpose)?;
     Ok(principal)
 }
@@ -231,6 +232,7 @@ mod tests {
         AppError,
         require_track_access,
     };
+    use crate::routes::request::bearer_credential;
     use crate::services::auth::caller::{
         Caller,
         ClientAddress,
@@ -468,7 +470,8 @@ mod tests {
         let test_dir = initialize_test_runtime().await?;
         let track_id = prepare_streamable_track(&test_dir).await?;
         let headers = create_user_with_permissions("departed", vec![]).await?;
-        let principal = crate::services::auth::require_authenticated(&headers).await?;
+        let principal =
+            crate::services::auth::require_authenticated(bearer_credential(&headers)).await?;
         {
             let mut db = STATE.db.write().await;
             let user_db_id = principal.require(&*db)?;
@@ -660,7 +663,8 @@ mod tests {
         let track_id = prepare_streamable_track(&test_dir).await?;
         let headers =
             create_user_with_permissions("plugin-downloader", vec![Permission::Download]).await?;
-        let principal = crate::services::auth::require_authenticated(&headers).await?;
+        let principal =
+            crate::services::auth::require_authenticated(bearer_credential(&headers)).await?;
 
         let response = super::track_response(
             &Method::GET,
@@ -820,7 +824,8 @@ mod tests {
         let track_id = prepare_streamable_track(&test_dir).await?;
         let headers = create_user_with_permissions("departing-listener", vec![]).await?;
         let query = playback_url_query(&track_id, &headers, "stream_url", "").await?;
-        let principal = crate::services::auth::require_authenticated(&headers).await?;
+        let principal =
+            crate::services::auth::require_authenticated(bearer_credential(&headers)).await?;
         {
             let mut db = STATE.db.write().await;
             let user_db_id = principal.require(&*db)?;
@@ -835,7 +840,8 @@ mod tests {
     }
 
     async fn user_db_id(headers: &HeaderMap) -> anyhow::Result<agdb::DbId> {
-        let principal = crate::services::auth::require_authenticated(headers).await?;
+        let principal =
+            crate::services::auth::require_authenticated(bearer_credential(headers)).await?;
         Ok(principal.require(&*STATE.db.read().await)?)
     }
 
@@ -869,7 +875,8 @@ mod tests {
         let test_dir = initialize_test_runtime().await?;
         let track_id = prepare_streamable_track(&test_dir).await?;
         let headers = create_user_with_permissions("key-listener", vec![]).await?;
-        let principal = crate::services::auth::require_authenticated(&headers).await?;
+        let principal =
+            crate::services::auth::require_authenticated(bearer_credential(&headers)).await?;
         let key = crate::services::auth::api_keys::create_api_key(&principal, "phone")
             .await
             .map_err(|err| anyhow::anyhow!("{err:?}"))?;
@@ -1121,7 +1128,7 @@ mod tests {
         let test_dir = initialize_test_runtime().await?;
         let track_id = prepare_streamable_track(&test_dir).await?;
         let headers = create_user_with_permissions("busy-listener", vec![]).await?;
-        let user = crate::services::auth::require_authenticated(&headers)
+        let user = crate::services::auth::require_authenticated(bearer_credential(&headers))
             .await?
             .user_public_id;
         let cached = playback_url_query(

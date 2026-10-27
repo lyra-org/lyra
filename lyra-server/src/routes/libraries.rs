@@ -34,6 +34,7 @@ use lyra_metadata::locale::{
     validate_language,
 };
 
+use crate::routes::request::bearer_credential;
 use crate::{
     routes::{
         AppError,
@@ -194,7 +195,7 @@ async fn refresh_library(
     Path(library_id): Path<String>,
     Query(query): Query<LibraryRefreshQuery>,
 ) -> Result<Json<SyncRunStartResponse>, AppError> {
-    let _principal = require_manage_libraries_on(&headers, &library_id).await?;
+    let _principal = require_manage_libraries_on(bearer_credential(&headers), &library_id).await?;
 
     let library = {
         let db = STATE.db.read().await;
@@ -217,7 +218,7 @@ async fn create_library(
     headers: HeaderMap,
     Json(library): Json<LibraryRequest>,
 ) -> Result<(StatusCode, Json<LibraryResponse>), AppError> {
-    let principal = require_can_create_library(&headers).await?;
+    let principal = require_can_create_library(bearer_credential(&headers)).await?;
 
     let directory_input = library.directory.trim();
     if directory_input.is_empty() {
@@ -306,7 +307,7 @@ async fn update_library(
     Path(id): Path<String>,
     Json(update): Json<LibraryUpdateRequest>,
 ) -> Result<Json<LibraryResponse>, AppError> {
-    let _principal = require_manage_libraries_on(&headers, &id).await?;
+    let _principal = require_manage_libraries_on(bearer_credential(&headers), &id).await?;
 
     if update.name.is_none() && update.language.is_none() && update.country.is_none() {
         return Err(AppError::bad_request("no library fields provided"));
@@ -376,7 +377,7 @@ async fn delete_library(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let principal = require_manage_libraries_on(&headers, &id).await?;
+    let principal = require_manage_libraries_on(bearer_credential(&headers), &id).await?;
     let _guard = crate::services::libraries::library_mutation_guard().await;
     if crate::services::libraries::library_has_active_run(&id).await? {
         return Err(AppError::conflict(
@@ -427,7 +428,7 @@ fn update_library_docs(op: TransformOperation) -> TransformOperation {
 }
 
 async fn list_libraries(headers: HeaderMap) -> Result<Json<Vec<LibraryResponse>>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     let include_directory =
         lyra_db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
 
@@ -461,7 +462,7 @@ async fn get_library_sync_status(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<crate::services::LibrarySyncStatus>, AppError> {
-    let _principal = require_manage_libraries_on(&headers, &id).await?;
+    let _principal = require_manage_libraries_on(bearer_credential(&headers), &id).await?;
     get_library_sync_status_summary(&id)
         .await?
         .map(Json)
@@ -472,7 +473,7 @@ async fn start_library_sync_for_library(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<SyncRunStartResponse>, AppError> {
-    let _principal = require_manage_libraries_on(&headers, &id).await?;
+    let _principal = require_manage_libraries_on(bearer_credential(&headers), &id).await?;
     let library = {
         let db = STATE.db.read().await;
         let library_db_id = lyra_db::lookup::find_node_id_by_id(&*db, &id)?
@@ -500,7 +501,7 @@ async fn list_library_access(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<LibraryAccessResponse>>, AppError> {
-    let _principal = require_manage_libraries_on(&headers, &id).await?;
+    let _principal = require_manage_libraries_on(bearer_credential(&headers), &id).await?;
     let db = STATE.db.read().await;
     let library_db_id =
         lyra_db::lookup::find_node_id_by_id(&*db, &id)?.ok_or_else(|| library_not_found(&id))?;
@@ -527,7 +528,7 @@ async fn grant_library_access(
     Path(id): Path<String>,
     Json(request): Json<LibraryGrantAccessRequest>,
 ) -> Result<StatusCode, AppError> {
-    let principal = require_manage_libraries_on(&headers, &id).await?;
+    let principal = require_manage_libraries_on(bearer_credential(&headers), &id).await?;
     let mut db = STATE.db.write().await;
     let user_db_id = principal.require(&db)?;
     let library_db_id =
@@ -564,7 +565,7 @@ async fn revoke_library_access(
     headers: HeaderMap,
     Path((id, user_id)): Path<(String, String)>,
 ) -> Result<StatusCode, AppError> {
-    let principal = require_manage_libraries_on(&headers, &id).await?;
+    let principal = require_manage_libraries_on(bearer_credential(&headers), &id).await?;
     let mut db = STATE.db.write().await;
     let user_db_id = principal.require(&db)?;
     let library_db_id =

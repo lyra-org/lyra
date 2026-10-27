@@ -26,6 +26,7 @@ mod providers;
 mod rate_limit;
 mod ratings;
 mod releases;
+mod request;
 pub(crate) mod responses;
 mod roles;
 mod search;
@@ -45,6 +46,7 @@ use serde::{
 };
 use std::collections::HashMap;
 
+use crate::routes::request::bearer_credential;
 use crate::services::{
     auth::{
         AuthCredential,
@@ -174,7 +176,7 @@ pub(crate) struct PageQuery {
 pub(super) async fn forbid_api_key_credential(
     headers: &HeaderMap,
 ) -> Result<ResolvedAuth, AppError> {
-    let auth = require_auth(headers).await?;
+    let auth = require_auth(bearer_credential(headers)).await?;
     match auth.credential {
         AuthCredential::ApiKey { .. } => Err(AppError::forbidden(
             "this operation cannot be performed with an api key credential",

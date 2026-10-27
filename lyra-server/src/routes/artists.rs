@@ -29,6 +29,7 @@ use serde::{
     Serialize,
 };
 
+use crate::routes::request::bearer_credential;
 use crate::{
     routes::AppError,
     routes::{
@@ -457,7 +458,7 @@ async fn get_artists(
         page,
     } = list_query;
     let page = page.resolve_snapshot();
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     let rating_filter = rating.parse()?;
     Ok(Json(
         list_artist_responses(
@@ -481,7 +482,7 @@ async fn get_artist(
     Path(id): Path<String>,
     Query(query): Query<ArtistQuery>,
 ) -> Result<Json<ArtistResponse>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     Ok(Json(get_artist_response(&principal, id, query.inc).await?))
 }
 
@@ -490,7 +491,7 @@ async fn search_artist_covers(
     Path(id): Path<String>,
     Json(query): Json<route_covers::CoverSearchQuery>,
 ) -> Result<Json<ArtistCoverSearchResponse>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
 
     {
         let db = STATE.db.read().await;

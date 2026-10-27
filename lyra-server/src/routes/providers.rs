@@ -25,6 +25,7 @@ use serde::{
 };
 use serde_json::Value;
 
+use crate::routes::request::bearer_credential;
 use crate::{
     routes::AppError,
     services::STATE,
@@ -329,7 +330,7 @@ pub struct ExternalIdResponse {
 }
 
 async fn list_providers(headers: HeaderMap) -> Result<Json<Vec<ProviderResponse>>, AppError> {
-    let _principal = require_manage_metadata(&headers).await?;
+    let _principal = require_manage_metadata(bearer_credential(&headers)).await?;
 
     let providers = list_provider_configs().await?;
     Ok(Json(build_provider_responses(providers).await))
@@ -473,7 +474,7 @@ async fn search_provider(
     Path(provider_id): Path<String>,
     Json(query): Json<SearchQuery>,
 ) -> Result<Json<Vec<SearchResult>>, AppError> {
-    let _principal = require_manage_metadata(&headers).await?;
+    let _principal = require_manage_metadata(bearer_credential(&headers)).await?;
 
     let results = search_provider_results(ProviderSearchRequest {
         provider_id: &provider_id,
@@ -502,7 +503,7 @@ async fn update_provider_priority(
     Path(provider_id): Path<String>,
     Json(request): Json<UpdatePriorityRequest>,
 ) -> Result<Json<ProviderResponse>, AppError> {
-    let _principal = require_manage_providers(&headers).await?;
+    let _principal = require_manage_providers(bearer_credential(&headers)).await?;
 
     let config = update_provider_priority_service(&provider_id, request.priority).await?;
     let display_name = provider_registry()
@@ -522,7 +523,7 @@ async fn get_entity_external_ids(
     headers: HeaderMap,
     Path(entity_id): Path<String>,
 ) -> Result<Json<Vec<ExternalIdResponse>>, AppError> {
-    let _principal = require_manage_metadata(&headers).await?;
+    let _principal = require_manage_metadata(bearer_credential(&headers)).await?;
 
     let response: Vec<ExternalIdResponse> = list_entity_external_ids_service(&entity_id)
         .await?
@@ -538,7 +539,7 @@ async fn set_entity_external_id(
     Path((entity_id, provider_id, id_type)): Path<(String, String, String)>,
     Json(request): Json<SetExternalIdRequest>,
 ) -> Result<Json<ExternalIdResponse>, AppError> {
-    let _principal = require_manage_metadata(&headers).await?;
+    let _principal = require_manage_metadata(bearer_credential(&headers)).await?;
 
     let record = set_entity_external_id_service(
         &entity_id,
@@ -557,7 +558,7 @@ async fn inherit_entity_external_id(
     headers: HeaderMap,
     Path((entity_id, provider_id, id_type)): Path<(String, String, String)>,
 ) -> Result<StatusCode, AppError> {
-    let _principal = require_manage_metadata(&headers).await?;
+    let _principal = require_manage_metadata(bearer_credential(&headers)).await?;
     inherit_entity_external_id_service(&entity_id, &provider_id, &id_type).await?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -567,7 +568,7 @@ async fn lock_entity(
     headers: HeaderMap,
     Path(entity_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let _principal = require_manage_metadata(&headers).await?;
+    let _principal = require_manage_metadata(bearer_credential(&headers)).await?;
     set_entity_locked(&entity_id, true).await?;
 
     Ok(Json(serde_json::json!({ "locked": true })))
@@ -577,7 +578,7 @@ async fn unlock_entity(
     headers: HeaderMap,
     Path(entity_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let _principal = require_manage_metadata(&headers).await?;
+    let _principal = require_manage_metadata(bearer_credential(&headers)).await?;
     set_entity_locked(&entity_id, false).await?;
 
     Ok(Json(serde_json::json!({ "locked": false })))
@@ -621,7 +622,7 @@ async fn refresh_entity(
     Path(entity_id): Path<String>,
     Query(query): Query<RefreshEntityQuery>,
 ) -> Result<Json<RefreshResponse>, AppError> {
-    let _principal = require_sync_metadata(&headers).await?;
+    let _principal = require_sync_metadata(bearer_credential(&headers)).await?;
     let mut options: HashMap<String, String> = query.extra;
     options.retain(|key, _| !KNOWN_REFRESH_PARAMS.contains(&key.as_str()));
     let result = refresh_entity_by_id(
@@ -720,7 +721,7 @@ async fn sync_provider(
     headers: HeaderMap,
     Path(provider_id): Path<String>,
 ) -> Result<Json<SyncResponse>, AppError> {
-    let _principal = require_sync_metadata(&headers).await?;
+    let _principal = require_sync_metadata(bearer_credential(&headers)).await?;
 
     run_provider_sync(&provider_id).await?;
 

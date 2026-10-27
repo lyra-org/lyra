@@ -46,6 +46,10 @@ use axum::{
 };
 
 use super::plugin_api;
+use super::request::{
+    bearer_credential,
+    client_address,
+};
 use crate::services::{
     auth::{
         caller::{
@@ -86,7 +90,7 @@ async fn enforce(
     mut request: Request,
     next: Next,
 ) -> Response {
-    let client = ClientAddress::resolve(
+    let client = client_address(
         peer_addr(&request),
         request.headers(),
         &limiter.config.trusted_proxies,
@@ -100,7 +104,7 @@ async fn enforce(
         // only known by their address.
         Route::Plugin => limiter.charge(limiter.checks(route, client, None)),
         Route::Api | Route::Media => {
-            let bearer_hash = caller::bearer_hash(request.headers());
+            let bearer_hash = bearer_credential(request.headers()).map(caller::bearer_hash);
             let uri = request.uri().clone();
             limiter
                 .identify(bearer_hash, &uri, client)

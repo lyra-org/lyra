@@ -14,6 +14,7 @@ use super::{
         replace_queue,
     },
 };
+use crate::routes::request::bearer_credential;
 use crate::services::remote::handoffs;
 use axum::{
     body::to_bytes,
@@ -40,7 +41,7 @@ struct RouteFixture {
 async fn reported_reads_share_the_supplied_expiry_cutoff() -> anyhow::Result<()> {
     let _guard = crate::services::testing::runtime_test_lock().await;
     let fixture = setup_admin_with_tracks().await?;
-    let principal = require_principal(&fixture.headers)
+    let principal = require_principal(bearer_credential(&fixture.headers))
         .await
         .map_err(|error| anyhow::anyhow!("{error:?}"))?;
     let mut db = STATE.db.write().await;

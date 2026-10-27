@@ -29,6 +29,7 @@ use serde::{
     Serialize,
 };
 
+use crate::routes::request::bearer_credential;
 use crate::{
     routes::AppError,
     services::STATE,
@@ -209,7 +210,7 @@ fn ensure_admin_permission_removal_allowed(
 }
 
 async fn list_roles(headers: HeaderMap) -> Result<Json<Vec<RoleResponse>>, AppError> {
-    let _principal = require_manage_roles(&headers).await?;
+    let _principal = require_manage_roles(bearer_credential(&headers)).await?;
 
     let db = STATE.db.read().await;
     let roles = lyra_db::roles::get(&db)?;
@@ -220,7 +221,7 @@ async fn create_role(
     headers: HeaderMap,
     Json(body): Json<RoleRequest>,
 ) -> Result<(StatusCode, Json<RoleResponse>), AppError> {
-    let principal = require_manage_roles(&headers).await?;
+    let principal = require_manage_roles(bearer_credential(&headers)).await?;
     let name = validate_role_name(&body.name)?;
     let permissions = normalize_permissions(body.permissions);
     require_grantable_permissions(&principal, &permissions)?;
@@ -251,7 +252,7 @@ async fn update_role_definition(
     Path(role_id): Path<String>,
     Json(body): Json<UpdateRoleDefinitionRequest>,
 ) -> Result<Json<RoleResponse>, AppError> {
-    let principal = require_manage_roles(&headers).await?;
+    let principal = require_manage_roles(bearer_credential(&headers)).await?;
     if body.name.is_none() && body.permissions.is_none() {
         return Err(AppError::bad_request("no role fields provided"));
     }
@@ -302,7 +303,7 @@ async fn delete_role_definition(
     headers: HeaderMap,
     Path(role_id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let principal = require_manage_roles(&headers).await?;
+    let principal = require_manage_roles(bearer_credential(&headers)).await?;
 
     let mut db = STATE.db.write().await;
     let (role_db_id, role) = resolve_role_by_public_id(db.deref(), &role_id)?;

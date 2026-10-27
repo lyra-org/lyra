@@ -109,6 +109,7 @@ use crate::plugins::api::{
     placeholder_offset,
     registered_routes,
 };
+use crate::routes::request::bearer_credential;
 use crate::routes::{
     build_ranged_file_body,
     serve_hls_playlist_for_track,
@@ -541,7 +542,7 @@ async fn dispatch_registered_route(request: RegisteredRouteRequest) -> Response 
         body,
     } = request;
 
-    let auth = match resolve_optional_auth(&headers).await {
+    let auth = match resolve_optional_auth(bearer_credential(&headers)).await {
         Ok(auth) => auth,
         Err(err) => {
             tracing::error!(

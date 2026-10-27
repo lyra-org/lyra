@@ -15,6 +15,7 @@ use axum::{
 };
 use serde::Deserialize;
 
+use crate::routes::request::bearer_credential;
 use crate::{
     routes::{
         AppError,
@@ -56,7 +57,7 @@ pub(super) async fn get_similar_releases(
     Path(id): Path<String>,
     Query(query): Query<SimilarReleasesQuery>,
 ) -> Result<Json<Vec<ReleaseResponse>>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     let limit = query
         .limit
         .unwrap_or(releases::DEFAULT_SIMILAR_RELEASE_LIMIT);

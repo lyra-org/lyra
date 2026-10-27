@@ -22,8 +22,6 @@ use std::{
     },
 };
 
-use axum::http::HeaderMap;
-
 use super::AuthCredential;
 use crate::services::STATE;
 
@@ -74,9 +72,9 @@ type IdentityCache = HashMap<String, (Option<Identity>, Instant)>;
 
 static IDENTITIES: LazyLock<Mutex<IdentityCache>> = LazyLock::new(Default::default);
 
-/// The hashed bearer credential a request presents, the key its identity is looked up by.
-pub(crate) fn bearer_hash(headers: &HeaderMap) -> Option<String> {
-    super::extract_bearer_credential(headers).map(|bearer| super::hash_secret(&bearer))
+/// The hash of a bearer credential, the key its identity is looked up by.
+pub(crate) fn bearer_hash(bearer: &str) -> String {
+    super::hash_secret(bearer)
 }
 
 /// The identity a bearer credential was recently found to have: `Some(None)` when it identified

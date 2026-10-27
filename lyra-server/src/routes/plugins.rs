@@ -34,6 +34,7 @@ use serde::{
     Serialize,
 };
 
+use crate::routes::request::bearer_credential;
 use crate::{
     plugins::{
         lifecycle::PluginRestartError,
@@ -732,7 +733,7 @@ fn build_status(
 }
 
 async fn list_plugins(headers: HeaderMap) -> Result<Json<Vec<PluginManifestResponse>>, AppError> {
-    let _principal = require_manage_plugins(&headers).await?;
+    let _principal = require_manage_plugins(bearer_credential(&headers)).await?;
     let manifests = crate::plugins::STATE.generation().manifests.get();
     let plugins_dir = crate::config::plugins_dir();
     let repositories = repositories_service::list_repositories()
@@ -786,14 +787,14 @@ async fn collect_settings_entries(
 }
 
 async fn list_all_settings(headers: HeaderMap) -> Result<Json<Vec<PluginSettingsEntry>>, AppError> {
-    let _principal = require_manage_plugins(&headers).await?;
+    let _principal = require_manage_plugins(bearer_credential(&headers)).await?;
     Ok(Json(collect_settings_entries(SettingsOwner::Server).await?))
 }
 
 async fn list_all_user_settings(
     headers: HeaderMap,
 ) -> Result<Json<Vec<PluginSettingsEntry>>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     Ok(Json(
         collect_settings_entries(SettingsOwner::User(&principal)).await?,
     ))
@@ -803,7 +804,7 @@ async fn restart_plugin(
     headers: HeaderMap,
     Path(plugin_id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let _principal = require_manage_plugins(&headers).await?;
+    let _principal = require_manage_plugins(bearer_credential(&headers)).await?;
     let plugin_id = PluginId::new(plugin_id)
         .map_err(|err| AppError::bad_request(format!("invalid plugin id: {err}")))?;
     let harmony = crate::plugins::STATE
@@ -826,7 +827,7 @@ async fn resolve_repository(
     headers: HeaderMap,
     Json(request): Json<RepositoryUrlRequest>,
 ) -> Result<Json<ResolvedRepositoryResponse>, AppError> {
-    let _principal = require_manage_plugins(&headers).await?;
+    let _principal = require_manage_plugins(bearer_credential(&headers)).await?;
     let preview = repositories_service::resolve_preview(&request.url, request.git_ref.as_deref())
         .await
         .map_err(map_repository_error)?;
@@ -837,7 +838,7 @@ async fn install_plugins(
     headers: HeaderMap,
     Json(request): Json<InstallPluginsRequest>,
 ) -> Result<Json<InstallPluginsResponse>, AppError> {
-    let _principal = require_manage_plugins(&headers).await?;
+    let _principal = require_manage_plugins(bearer_credential(&headers)).await?;
     let report = repositories_service::install(
         &request.url,
         request.git_ref.as_deref(),
@@ -853,7 +854,7 @@ async fn install_repository_plugins(
     Path(repository_id): Path<String>,
     Json(request): Json<RepositoryInstallRequest>,
 ) -> Result<Json<InstallPluginsResponse>, AppError> {
-    let _principal = require_manage_plugins(&headers).await?;
+    let _principal = require_manage_plugins(bearer_credential(&headers)).await?;
     let report =
         repositories_service::install_from_repository(&repository_id, request.plugins.as_deref())
             .await
@@ -887,7 +888,7 @@ async fn update_installed_plugins(
     headers: HeaderMap,
     Json(request): Json<UpdatePluginsRequest>,
 ) -> Result<Json<UpdatePluginsResponse>, AppError> {
-    let _principal = require_manage_plugins(&headers).await?;
+    let _principal = require_manage_plugins(bearer_credential(&headers)).await?;
     let report = repositories_service::update_plugins(request.plugins.as_deref())
         .await
         .map_err(map_repository_error)?;
@@ -918,7 +919,7 @@ fn update_report_response(report: repositories_service::UpdateReport) -> UpdateP
 }
 
 async fn reload_plugins(headers: HeaderMap) -> Result<StatusCode, AppError> {
-    let _principal = require_manage_plugins(&headers).await?;
+    let _principal = require_manage_plugins(bearer_credential(&headers)).await?;
     repositories_service::reload_plugins()
         .await
         .map_err(map_repository_error)?;
@@ -929,7 +930,7 @@ async fn uninstall_installed_plugin(
     headers: HeaderMap,
     Path(plugin_id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let _principal = require_manage_plugins(&headers).await?;
+    let _principal = require_manage_plugins(bearer_credential(&headers)).await?;
     repositories_service::uninstall(&plugin_id)
         .await
         .map_err(map_repository_error)?;
@@ -939,7 +940,7 @@ async fn uninstall_installed_plugin(
 async fn list_plugin_repositories(
     headers: HeaderMap,
 ) -> Result<Json<Vec<PluginRepositoryResponse>>, AppError> {
-    let _principal = require_manage_plugins(&headers).await?;
+    let _principal = require_manage_plugins(bearer_credential(&headers)).await?;
     let repositories = repositories_service::list_repositories()
         .await
         .map_err(map_repository_error)?;
@@ -952,7 +953,7 @@ async fn add_plugin_repository(
     headers: HeaderMap,
     Json(request): Json<RepositoryUrlRequest>,
 ) -> Result<Json<ResolvedRepositoryResponse>, AppError> {
-    let _principal = require_manage_plugins(&headers).await?;
+    let _principal = require_manage_plugins(bearer_credential(&headers)).await?;
     let (record, preview) =
         repositories_service::add_repository(&request.url, request.git_ref.as_deref())
             .await
@@ -964,7 +965,7 @@ async fn refresh_plugin_repository(
     headers: HeaderMap,
     Path(repository_id): Path<String>,
 ) -> Result<Json<ResolvedRepositoryResponse>, AppError> {
-    let _principal = require_manage_plugins(&headers).await?;
+    let _principal = require_manage_plugins(bearer_credential(&headers)).await?;
     let (record, preview) = repositories_service::refresh_repository(&repository_id)
         .await
         .map_err(map_repository_error)?;
@@ -975,7 +976,7 @@ async fn delete_plugin_repository(
     headers: HeaderMap,
     Path(repository_id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let _principal = require_manage_plugins(&headers).await?;
+    let _principal = require_manage_plugins(bearer_credential(&headers)).await?;
     repositories_service::remove_repository(&repository_id)
         .await
         .map_err(map_repository_error)?;
@@ -986,7 +987,7 @@ async fn get_settings(
     headers: HeaderMap,
     Path(plugin_id): Path<String>,
 ) -> Result<Json<PluginSettingsResponse>, AppError> {
-    let _principal = require_manage_plugins(&headers).await?;
+    let _principal = require_manage_plugins(bearer_credential(&headers)).await?;
     let schema = load_registered_schema(&plugin_id, SettingsScope::Global).await?;
     load_settings_response(plugin_id, schema).await
 }
@@ -996,7 +997,7 @@ async fn update_settings(
     Path(plugin_id): Path<String>,
     Json(request): Json<UpdateSettingsRequest>,
 ) -> Result<Json<PluginSettingsResponse>, AppError> {
-    let _principal = require_manage_plugins(&headers).await?;
+    let _principal = require_manage_plugins(bearer_credential(&headers)).await?;
     let schema = load_registered_schema(&plugin_id, SettingsScope::Global).await?;
     let changes = settings_service::validate_updates(&schema, &request.values)
         .map_err(|error| AppError::bad_request(error.to_string()))?;
@@ -1010,7 +1011,7 @@ async fn delete_settings(
     headers: HeaderMap,
     Path(plugin_id): Path<String>,
 ) -> Result<(), AppError> {
-    let _principal = require_manage_plugins(&headers).await?;
+    let _principal = require_manage_plugins(bearer_credential(&headers)).await?;
     settings_service::clear_stored_values(&mut *STATE.db.write().await, &plugin_id)?;
     Ok(())
 }
@@ -1042,7 +1043,7 @@ async fn get_user_settings(
     headers: HeaderMap,
     Path(plugin_id): Path<String>,
 ) -> Result<Json<PluginSettingsResponse>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     let schema = load_registered_schema(&plugin_id, SettingsScope::User).await?;
     load_user_settings_response(plugin_id, &principal, schema).await
 }
@@ -1052,7 +1053,7 @@ async fn update_user_settings(
     Path(plugin_id): Path<String>,
     Json(request): Json<UpdateSettingsRequest>,
 ) -> Result<Json<PluginSettingsResponse>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     let schema = load_registered_schema(&plugin_id, SettingsScope::User).await?;
     let changes = settings_service::validate_updates(&schema, &request.values)
         .map_err(|error| AppError::bad_request(error.to_string()))?;
@@ -1070,7 +1071,7 @@ async fn delete_user_settings(
     headers: HeaderMap,
     Path(plugin_id): Path<String>,
 ) -> Result<(), AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     let mut db = STATE.db.write().await;
     let user_db_id = principal.require(&db)?;
     settings_service::clear_user_stored_values(&mut db, user_db_id, &plugin_id)?;

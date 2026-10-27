@@ -4,6 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 use super::*;
+use crate::routes::request::bearer_credential;
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
@@ -36,7 +37,7 @@ pub(super) async fn get_queue(
     Path(id): Path<String>,
     Query(query): Query<QueueGetQuery>,
 ) -> Result<Json<QueueResponse>, AppError> {
-    let principal = require_principal(&headers).await?;
+    let principal = require_principal(bearer_credential(&headers)).await?;
     let current_ms = now_ms()?;
     let db = STATE.db.read().await;
     let record = resolve_visible_playback(&db, &principal, &id, current_ms)?;
@@ -57,7 +58,7 @@ pub(super) async fn replace_queue(
     Path(id): Path<String>,
     Json(request): Json<QueueReplaceRequest>,
 ) -> Result<Json<QueueResponse>, AppError> {
-    let principal = require_principal(&headers).await?;
+    let principal = require_principal(bearer_credential(&headers)).await?;
     let current_ms = now_ms()?;
     let mut db = STATE.db.write().await;
     let user_db_id = principal.require(&db)?;

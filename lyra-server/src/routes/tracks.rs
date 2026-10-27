@@ -29,6 +29,7 @@ use serde::{
 };
 use url::form_urlencoded;
 
+use crate::routes::request::bearer_credential;
 use crate::services::delivery::{
     self,
     DeliveryDescription,
@@ -475,7 +476,7 @@ async fn create_track_playback_url(
     Query(query): Query<PlaybackUrlQuery>,
 ) -> Result<Json<PlaybackUrlResponse>, AppError> {
     validate_playback_url_query(&query)?;
-    let auth = require_auth(&headers).await?;
+    let auth = require_auth(bearer_credential(&headers)).await?;
     let holder = MediaTokenHolder::new(&auth);
     let principal = auth.into_principal();
 
@@ -546,7 +547,7 @@ async fn get_tracks(
         page,
     } = list_query;
     let page = page.resolve_snapshot();
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     let rating_filter = rating.parse()?;
     Ok(Json(
         list_track_responses(
@@ -571,7 +572,7 @@ async fn get_track(
     Path(id): Path<String>,
     Query(query): Query<TrackQuery>,
 ) -> Result<Json<TrackResponse>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     Ok(Json(get_track_response(&principal, id, query.inc).await?))
 }
 

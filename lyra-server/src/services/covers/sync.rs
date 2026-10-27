@@ -17,11 +17,11 @@ use anyhow::{
     Result,
     anyhow,
 };
-use axum::http::header::CONTENT_TYPE;
 use rayon::iter::{
     IntoParallelIterator,
     ParallelIterator,
 };
+use reqwest::header::CONTENT_TYPE;
 use tokio::{
     fs,
     io::AsyncWriteExt,

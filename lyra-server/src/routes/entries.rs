@@ -19,6 +19,7 @@ use axum::{
 };
 use serde::Deserialize;
 
+use crate::routes::request::bearer_credential;
 use crate::{
     routes::responses::{
         EntryResponse,
@@ -93,7 +94,7 @@ async fn get_entries(
     headers: HeaderMap,
     Query(query): Query<EntryQuery>,
 ) -> Result<Json<Vec<EntryResponse>>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     let include_full_path =
         lyra_db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
     let include = parse_inc(query.inc)?;
@@ -112,7 +113,7 @@ async fn get_entry(
     Path(id): Path<String>,
     Query(query): Query<EntryQuery>,
 ) -> Result<Json<EntryResponse>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     let include_full_path =
         lyra_db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
     let include = parse_inc(query.inc)?;

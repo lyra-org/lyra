@@ -30,6 +30,7 @@ use serde::{
     Serialize,
 };
 
+use crate::routes::request::bearer_credential;
 use crate::{
     routes::{
         AppError,
@@ -179,7 +180,7 @@ async fn create_tag(
     headers: HeaderMap,
     Json(request): Json<CreateTagRequest>,
 ) -> Result<StatusCode, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     if !looks_like_public_id(&request.target_id) {
         return Err(AppError::bad_request(format!(
             "malformed target id: {}",
@@ -206,7 +207,7 @@ async fn list_tags(
     headers: HeaderMap,
     Query(query): Query<ListQuery>,
 ) -> Result<Json<PageResponse<TagResponse>>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     let page_request = query.page.resolve_snapshot();
     let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "tags").finish();
 
@@ -237,7 +238,7 @@ async fn get_tag(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<TagResponse>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     if !looks_like_public_id(&id) {
         return Err(AppError::bad_request(format!("malformed tag id: {id}")));
     }
@@ -253,7 +254,7 @@ async fn list_tag_targets(
     Path(id): Path<String>,
     Query(query): Query<ListQuery>,
 ) -> Result<Json<PageResponse<String>>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     if !looks_like_public_id(&id) {
         return Err(AppError::bad_request(format!("malformed tag id: {id}")));
     }
@@ -290,7 +291,7 @@ async fn get_tag_target_state(
     headers: HeaderMap,
     Path((id, target_id)): Path<(String, String)>,
 ) -> Result<Json<TargetStateResponse>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     if !looks_like_public_id(&id) {
         return Err(AppError::bad_request(format!("malformed tag id: {id}")));
     }
@@ -312,7 +313,7 @@ async fn update_tag(
     Path(id): Path<String>,
     Json(request): Json<UpdateTagRequest>,
 ) -> Result<Json<TagResponse>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     if !looks_like_public_id(&id) {
         return Err(AppError::bad_request(format!("malformed tag id: {id}")));
     }
@@ -331,7 +332,7 @@ async fn update_tag(
 }
 
 async fn delete_tag(headers: HeaderMap, Path(id): Path<String>) -> Result<StatusCode, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     if !looks_like_public_id(&id) {
         return Err(AppError::bad_request(format!("malformed tag id: {id}")));
     }
@@ -347,7 +348,7 @@ async fn delete_tag_target(
     headers: HeaderMap,
     Path((id, target_id)): Path<(String, String)>,
 ) -> Result<StatusCode, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     if !looks_like_public_id(&id) {
         return Err(AppError::bad_request(format!("malformed tag id: {id}")));
     }

@@ -50,6 +50,7 @@ use serde::{
     Serialize,
 };
 
+use crate::routes::request::bearer_credential;
 use crate::{
     routes::{
         AppError,
@@ -322,7 +323,7 @@ async fn create_user(
     validate_password(&user.password)?;
     let password_hash = hash_password(&user.password)?;
 
-    let principal = match require_principal(&headers).await {
+    let principal = match require_principal(bearer_credential(&headers)).await {
         Ok(p) => Some(p),
         Err(AuthError::MissingBearerCredential) => None,
         Err(e) => return Err(e.into()),
@@ -368,7 +369,7 @@ async fn create_user(
 }
 
 async fn list_users(headers: HeaderMap) -> Result<Json<Vec<PublicUser>>, AppError> {
-    let _principal = require_manage_users(&headers).await?;
+    let _principal = require_manage_users(bearer_credential(&headers)).await?;
 
     let db = STATE.db.read().await;
     let users = lyra_db::users::get(&db)?;
@@ -394,7 +395,7 @@ async fn delete_user(
     headers: HeaderMap,
     Path(user_id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let principal = require_manage_users(&headers).await?;
+    let principal = require_manage_users(bearer_credential(&headers)).await?;
 
     let mut db = STATE.db.write().await;
     let user = lyra_db::users::get_by_public_id(&db, &user_id)?
@@ -433,7 +434,7 @@ async fn update_password(
     Path(user_id): Path<String>,
     Json(body): Json<UpdatePasswordRequest>,
 ) -> Result<StatusCode, AppError> {
-    let principal = require_manage_users(&headers).await?;
+    let principal = require_manage_users(bearer_credential(&headers)).await?;
 
     validate_password(&body.password)?;
     let password_hash = hash_password(&body.password)?;
@@ -467,7 +468,7 @@ async fn update_role(
     Path(user_id): Path<String>,
     Json(body): Json<UpdateRoleRequest>,
 ) -> Result<StatusCode, AppError> {
-    let principal = require_manage_roles(&headers).await?;
+    let principal = require_manage_roles(bearer_credential(&headers)).await?;
 
     let mut db = STATE.db.write().await;
     let user = lyra_db::users::get_by_public_id(&db, &user_id)?
@@ -583,7 +584,7 @@ async fn get_me(
     headers: HeaderMap,
     Query(query): Query<MeQuery>,
 ) -> Result<Json<MeResponse>, AppError> {
-    let principal = require_principal(&headers).await?;
+    let principal = require_principal(bearer_credential(&headers)).await?;
     let include_permissions = parse_me_includes(query.inc)?;
 
     let db = STATE.db.read().await;

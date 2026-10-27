@@ -29,6 +29,7 @@ use serde::{
     Serialize,
 };
 
+use crate::routes::request::bearer_credential;
 use crate::{
     routes::AppError,
     routes::{
@@ -310,7 +311,7 @@ async fn get_releases(
         page,
     } = list_query;
     let page_request = page.resolve_snapshot();
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     let rating_filter = rating.parse()?;
     let include_entry_paths =
         lyra_db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
@@ -392,7 +393,7 @@ async fn get_release(
     Path(id): Path<String>,
     Query(query): Query<ReleaseQuery>,
 ) -> Result<Json<ReleaseResponse>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     let include_entry_paths =
         lyra_db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
 
@@ -425,7 +426,7 @@ async fn search_release_covers(
     Path(id): Path<String>,
     Json(query): Json<route_covers::CoverSearchQuery>,
 ) -> Result<Json<ReleaseCoverSearchResponse>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
 
     {
         let db = STATE.db.read().await;

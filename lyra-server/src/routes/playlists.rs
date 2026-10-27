@@ -40,6 +40,7 @@ use std::{
     },
 };
 
+use crate::routes::request::bearer_credential;
 use crate::services::catalog::Direction;
 use crate::{
     routes::responses::{
@@ -574,7 +575,7 @@ async fn create_playlist(
     headers: HeaderMap,
     Json(request): Json<CreatePlaylistRequest>,
 ) -> Result<(StatusCode, Json<PlaylistResponse>), AppError> {
-    let principal = require_principal(&headers).await?;
+    let principal = require_principal(bearer_credential(&headers)).await?;
 
     let name = request.name.trim().to_string();
     if name.is_empty() {
@@ -624,7 +625,7 @@ async fn get_playlists(
         sort_order,
         page,
     } = query;
-    let principal = require_principal(&headers).await?;
+    let principal = require_principal(bearer_credential(&headers)).await?;
     let inc = parse_inc(inc)?;
     let search_term = super::parse_text_query(query);
     let page_request = page.resolve_snapshot();
@@ -719,7 +720,7 @@ async fn get_playlist(
     Path(id): Path<String>,
     Query(query): Query<PlaylistQuery>,
 ) -> Result<Json<PlaylistResponse>, AppError> {
-    let principal = require_principal(&headers).await?;
+    let principal = require_principal(bearer_credential(&headers)).await?;
     let inc = parse_inc(query.inc)?;
 
     let db = &*STATE.db.read().await;
@@ -762,7 +763,7 @@ async fn update_playlist(
     Path(id): Path<String>,
     Json(request): Json<UpdatePlaylistRequest>,
 ) -> Result<Json<PlaylistResponse>, AppError> {
-    let principal = require_principal(&headers).await?;
+    let principal = require_principal(bearer_credential(&headers)).await?;
 
     let mut db = STATE.db.write().await;
     let playlist_db_id = require_owned_playlist(&db, &principal, &id)?;
@@ -793,7 +794,7 @@ async fn delete_playlist(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let principal = require_principal(&headers).await?;
+    let principal = require_principal(bearer_credential(&headers)).await?;
 
     let mut db = STATE.db.write().await;
     let playlist_db_id = require_owned_playlist(&db, &principal, &id)?;
@@ -808,7 +809,7 @@ async fn add_playlist_tracks(
     Path(id): Path<String>,
     Json(request): Json<AddPlaylistTracksRequest>,
 ) -> Result<Json<Vec<PlaylistTrackResponse>>, AppError> {
-    let principal = require_principal(&headers).await?;
+    let principal = require_principal(bearer_credential(&headers)).await?;
 
     if request.track_ids.is_empty() {
         return Err(AppError::bad_request("track_ids cannot be empty"));
@@ -874,7 +875,7 @@ async fn remove_playlist_entries(
     id: String,
     entry_ids: Vec<String>,
 ) -> Result<Json<Vec<PlaylistTrackResponse>>, AppError> {
-    let principal = require_principal(&headers).await?;
+    let principal = require_principal(bearer_credential(&headers)).await?;
 
     if entry_ids.is_empty() {
         return Err(AppError::bad_request("entry_ids cannot be empty"));
@@ -943,7 +944,7 @@ async fn move_playlist_track(
     Path((id, entry_id)): Path<(String, String)>,
     Json(request): Json<MovePlaylistTrackRequest>,
 ) -> Result<Json<Vec<PlaylistTrackResponse>>, AppError> {
-    let principal = require_principal(&headers).await?;
+    let principal = require_principal(bearer_credential(&headers)).await?;
 
     let mut db = STATE.db.write().await;
     let playlist_db_id = require_owned_playlist(&db, &principal, &id)?;

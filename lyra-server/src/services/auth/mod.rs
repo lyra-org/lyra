@@ -23,7 +23,6 @@ use argon2::{
         },
     },
 };
-use axum::http::HeaderMap;
 
 use crate::{
     services::STATE,
@@ -276,22 +275,22 @@ pub(crate) fn require_grantable_permissions(
 }
 
 async fn require_permission_principal(
-    headers: &HeaderMap,
+    bearer: Option<&str>,
     permission: Permission,
 ) -> AuthResult<Principal> {
-    let principal = require_principal(headers).await?;
+    let principal = require_principal(bearer).await?;
     require_permission(&principal, permission)?;
     Ok(principal)
 }
 
-pub(crate) async fn require_authenticated(headers: &HeaderMap) -> AuthResult<Principal> {
-    require_principal(headers).await
+pub(crate) async fn require_authenticated(bearer: Option<&str>) -> AuthResult<Principal> {
+    require_principal(bearer).await
 }
 
 macro_rules! define_permission_guard {
     ($name:ident, $permission:expr) => {
-        pub(crate) async fn $name(headers: &HeaderMap) -> AuthResult<Principal> {
-            require_permission_principal(headers, $permission).await
+        pub(crate) async fn $name(bearer: Option<&str>) -> AuthResult<Principal> {
+            require_permission_principal(bearer, $permission).await
         }
     };
 }
@@ -304,15 +303,15 @@ define_permission_guard!(require_manage_server, Permission::ManageServer);
 define_permission_guard!(require_manage_users, Permission::ManageUsers);
 define_permission_guard!(require_sync_metadata, Permission::SyncMetadata);
 
-pub(crate) async fn require_can_create_library(headers: &HeaderMap) -> AuthResult<Principal> {
-    require_permission_principal(headers, Permission::ManageLibraries).await
+pub(crate) async fn require_can_create_library(bearer: Option<&str>) -> AuthResult<Principal> {
+    require_permission_principal(bearer, Permission::ManageLibraries).await
 }
 
 pub(crate) async fn require_manage_libraries_on(
-    headers: &HeaderMap,
+    bearer: Option<&str>,
     library_public_id: &str,
 ) -> AuthResult<Principal> {
-    let principal = require_permission_principal(headers, Permission::ManageLibraries).await?;
+    let principal = require_permission_principal(bearer, Permission::ManageLibraries).await?;
 
     let db = STATE.db.read().await;
     access::resolve_library_db_id(&*db, &principal, library_public_id).map_err(
@@ -329,21 +328,6 @@ pub(crate) async fn require_manage_libraries_on(
 
 pub(crate) struct LoginResult {
     pub(crate) token: String,
-}
-
-fn extract_bearer_credential(headers: &HeaderMap) -> Option<String> {
-    let header = headers.get(axum::http::header::AUTHORIZATION)?;
-    let header = header.to_str().ok()?;
-    let (scheme, credential) = header.split_once(' ')?;
-    if !scheme.eq_ignore_ascii_case("bearer") {
-        return None;
-    }
-    let credential = credential.trim();
-    if credential.is_empty() {
-        None
-    } else {
-        Some(credential.to_string())
-    }
 }
 
 fn resolve_role_info(db: &agdb::DbAny, user_db_id: DbId) -> (Vec<Permission>, Option<String>) {
@@ -639,17 +623,16 @@ pub(crate) async fn login_with_password(
     create_login_result(principal, metadata).await.map(Some)
 }
 
-pub(crate) async fn require_principal(headers: &HeaderMap) -> Result<Principal, AuthError> {
-    Ok(require_auth(headers).await?.into_principal())
+pub(crate) async fn require_principal(bearer: Option<&str>) -> Result<Principal, AuthError> {
+    Ok(require_auth(bearer).await?.into_principal())
 }
 
-pub(crate) async fn require_auth(headers: &HeaderMap) -> Result<ResolvedAuth, AuthError> {
-    let bearer = extract_bearer_credential(headers);
+pub(crate) async fn require_auth(bearer: Option<&str>) -> Result<ResolvedAuth, AuthError> {
     if STATE.config().auth.enabled && bearer.is_none() {
         return Err(AuthError::MissingBearerCredential);
     }
 
-    let Some(auth) = resolve_auth_from_bearer(bearer.as_deref()).await? else {
+    let Some(auth) = resolve_auth_from_bearer(bearer).await? else {
         return Err(AuthError::InvalidBearerCredential);
     };
 
@@ -658,9 +641,10 @@ pub(crate) async fn require_auth(headers: &HeaderMap) -> Result<ResolvedAuth, Au
     Ok(auth)
 }
 
-pub(crate) async fn resolve_optional_auth(headers: &HeaderMap) -> AuthResult<Option<ResolvedAuth>> {
-    let bearer = extract_bearer_credential(headers);
-    let auth = match resolve_auth_from_bearer(bearer.as_deref()).await {
+pub(crate) async fn resolve_optional_auth(
+    bearer: Option<&str>,
+) -> AuthResult<Option<ResolvedAuth>> {
+    let auth = match resolve_auth_from_bearer(bearer).await {
         Ok(Some(auth)) => auth,
         Ok(None) | Err(AuthError::SessionExpired) => return Ok(None),
         Err(err) => return Err(err),
@@ -704,17 +688,6 @@ mod tests {
         crate::services::testing::init_library_test_state(std::path::PathBuf::from(".")).await
     }
 
-    fn bearer_headers(token: &str) -> HeaderMap {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            axum::http::header::AUTHORIZATION,
-            format!("Bearer {token}")
-                .parse()
-                .expect("valid auth header"),
-        );
-        headers
-    }
-
     fn library_insert(name: &str, suffix: &str) -> lyra_db::libraries::LibraryInsert {
         let path = std::path::PathBuf::from(format!(
             "/tmp/lyra-auth-test-{}-{suffix}",
@@ -737,32 +710,6 @@ mod tests {
         assert_eq!(secret.len(), 32);
         assert!(secret.chars().all(|ch| ch.is_ascii_hexdigit()));
         assert_eq!(secret, secret.to_ascii_lowercase());
-    }
-
-    #[test]
-    fn bearer_credential_parser_rejects_non_bearer() {
-        let mut headers = HeaderMap::new();
-        headers.insert("Authorization", "Basic abc".parse().expect("valid header"));
-        assert!(extract_bearer_credential(&headers).is_none());
-    }
-
-    #[test]
-    fn bearer_credential_parser_extracts_credential() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "Authorization",
-            "Bearer abc123".parse().expect("valid header"),
-        );
-        assert_eq!(
-            extract_bearer_credential(&headers).as_deref(),
-            Some("abc123")
-        );
-    }
-
-    #[test]
-    fn extract_bearer_credential_requires_bearer() {
-        let headers = HeaderMap::new();
-        assert!(extract_bearer_credential(&headers).is_none());
     }
 
     #[tokio::test]
@@ -943,7 +890,7 @@ mod tests {
             )?;
         }
 
-        let auth = resolve_optional_auth(&bearer_headers(&session.token)).await?;
+        let auth = resolve_optional_auth(Some(&session.token)).await?;
         assert!(auth.is_none(), "expired optional session should be absent");
 
         {
@@ -1196,8 +1143,7 @@ mod tests {
 
         let session =
             crate::services::testing::create_session(user_db_id, Default::default()).await?;
-        let headers = bearer_headers(&session.token);
-        let err = require_manage_libraries_on(&headers, &library_id)
+        let err = require_manage_libraries_on(Some(&session.token), &library_id)
             .await
             .expect_err("manager without library access must not pass scoped guard");
         assert!(matches!(err, AuthError::NotFound(_)), "got {err:?}");
@@ -1215,7 +1161,7 @@ mod tests {
             })?;
         }
 
-        let principal = require_manage_libraries_on(&headers, &library_id).await?;
+        let principal = require_manage_libraries_on(Some(&session.token), &library_id).await?;
         assert_eq!(principal.user_db_id, user_db_id);
         Ok(())
     }
@@ -1236,13 +1182,14 @@ mod tests {
         };
         let alice = crate::services::testing::user_principal(alice_db_id).await?;
         let api_key = api_keys::create_api_key(&alice, "laptop").await?;
-        let headers = bearer_headers(&api_key.key);
-        Ok(
-            crate::services::testing::run_with_recycle_at(gap, require_auth(&headers), |db| {
+        Ok(crate::services::testing::run_with_recycle_at(
+            gap,
+            require_auth(Some(&api_key.key)),
+            |db| {
                 lyra_db::test_db::recycle_user(db, alice_db_id, "bob").expect("recycle alice");
-            })
-            .await,
+            },
         )
+        .await)
     }
 
     #[tokio::test]
