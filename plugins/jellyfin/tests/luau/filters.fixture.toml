@@ -1,0 +1,60 @@
+run_as = "admin"
+
+# "Solo" (Rock, jazz) by Amy holds S1 from 2001 and S2 without a year; "Live" (Blues) by Ben holds
+# L1 from 2009.
+
+[[users]]
+key = "admin"
+admin = true
+
+[[artists]]
+key = "amy"
+name = "Amy"
+
+[[artists]]
+key = "ben"
+name = "Ben"
+
+[[genres]]
+key = "rock"
+name = "Rock"
+
+[[genres]]
+key = "jazz"
+name = "jazz"
+
+[[genres]]
+key = "blues"
+name = "Blues"
+
+[[releases]]
+key = "solo"
+title = "Solo"
+artists = ["amy"]
+genres = ["rock", "jazz"]
+
+[[releases]]
+key = "live"
+title = "Live"
+artists = ["ben"]
+genres = ["blues"]
+
+[[tracks]]
+key = "s1"
+title = "S1"
+release = "solo"
+year = 2001
+artists = ["amy"]
+
+[[tracks]]
+key = "s2"
+title = "S2"
+release = "solo"
+artists = ["amy"]
+
+[[tracks]]
+key = "l1"
+title = "L1"
+release = "live"
+year = 2009
+artists = ["ben"]

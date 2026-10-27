@@ -64,6 +64,7 @@ local active_sessions = require("@self/protocol/active_sessions")
 local audio_routes = require("@self/routes/audio")
 local catalog = require("@self/protocol/items/catalog")
 local discovery = require("@self/protocol/discovery")
+local filters = require("@self/protocol/items/filters")
 local instant_mix = require("@self/protocol/items/instant_mix")
 local item_ids = require("@self/protocol/items/identifiers")
 local items_options = require("@self/protocol/items/options")
@@ -2186,7 +2187,7 @@ api.get(P .. "/Items/Counts", function(ctx: ApiContext)
 		BookCount = 0,
 	})
 end, "public", true)
-api.get(P .. "/Items/Filters", function(ctx: ApiContext)
+local function respond_with_filters(ctx: ApiContext, legacy: boolean): ApiResponse
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
 		return session.unauthorized()
@@ -2195,28 +2196,20 @@ api.get(P .. "/Items/Filters", function(ctx: ApiContext)
 		return session.unauthorized()
 	end
 
-	return api.response.json(200, {
-		Genres = {},
-		Tags = {},
-		OfficialRatings = {},
-		Years = {},
-	})
+	local query = if ctx and ctx.request then ctx.request.query else nil
+	local options = items_options.for_user(items_options.parse(query), principal.user_id)
+	local values = filters.collect(options)
+	return api.response.json(
+		200,
+		if legacy then filters.legacy_json(values) else filters.to_json(values, options.include_item_types)
+	)
+end
+
+api.get(P .. "/Items/Filters", function(ctx: ApiContext)
+	return respond_with_filters(ctx, true)
 end, "public", true)
 api.get(P .. "/Items/Filters2", function(ctx: ApiContext)
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-	if not session.require_matching_user_scope(ctx, principal) then
-		return session.unauthorized()
-	end
-
-	return api.response.json(200, {
-		Genres = {},
-		Tags = {},
-		AudioLanguages = {},
-		SubtitleLanguages = {},
-	})
+	return respond_with_filters(ctx, false)
 end, "public", true)
 api.get(P .. "/Items/{id}/Ancestors", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
