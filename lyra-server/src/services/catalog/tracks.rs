@@ -47,7 +47,7 @@ pub(crate) enum TrackKey {
     Duration,
     Disc,
     Track,
-    /// The title of the one release the query is scoped to.
+    /// The title of the track's release.
     ReleaseTitle,
     /// The first artist credited on the track.
     ArtistName,
@@ -146,17 +146,6 @@ impl Catalog for Tracks {
         }
     }
 
-    fn check_sort(filter: &TrackFilter, sort: &SortSpec<TrackKey>) -> Result<(), CatalogError> {
-        if filter.single_release().is_none()
-            && sort.iter().any(|(key, _)| *key == TrackKey::ReleaseTitle)
-        {
-            return Err(CatalogError::Invalid(
-                "the release_title sort key needs a query scoped to one release".to_string(),
-            ));
-        }
-        Ok(())
-    }
-
     fn candidates(
         db: &DbAny,
         viewer: &Viewer,
@@ -234,7 +223,7 @@ impl Catalog for Tracks {
     fn rows(
         db: &DbAny,
         viewer: &Viewer,
-        filter: &TrackFilter,
+        _filter: &TrackFilter,
         ids: Vec<DbId>,
         keys: &[TrackKey],
     ) -> Result<Vec<Row>, CatalogError> {
@@ -256,17 +245,35 @@ impl Catalog for Tracks {
         } else {
             HashMap::new()
         };
+        let releases = if keys
+            .iter()
+            .any(|key| matches!(key, TrackKey::ReleaseTitle | TrackKey::ReleaseArtistName))
+        {
+            TrackReleases::of(db, &ids)?
+        } else {
+            TrackReleases::default()
+        };
         let release_artist_names = if keys.contains(&TrackKey::ReleaseArtistName) {
-            release_artist_names(db, &ids)?
+            releases.least(&lyra_db::artists::first_credited_names(
+                db,
+                &releases.release_ids(),
+            )?)
         } else {
             HashMap::new()
         };
-        let release_title = match filter.single_release() {
-            Some(release) if keys.contains(&TrackKey::ReleaseTitle) => {
-                lyra_db::releases::get_by_id(db, release)?
-                    .map(|release| release.release_title.to_lowercase())
-            }
-            _ => None,
+        let release_titles = if keys.contains(&TrackKey::ReleaseTitle) {
+            let fields =
+                lyra_db::graph::select_fields(db, &releases.release_ids(), &["release_title"])?;
+            releases.least(
+                &fields
+                    .iter()
+                    .filter_map(|(id, release)| {
+                        Some((*id, release.text("release_title")?.to_string()))
+                    })
+                    .collect(),
+            )
+        } else {
+            HashMap::new()
         };
 
         Ok(ids
@@ -286,13 +293,15 @@ impl Catalog for Tracks {
                         TrackKey::Duration => number("duration_ms"),
                         TrackKey::Disc => number("disc"),
                         TrackKey::Track => number("track"),
-                        TrackKey::ReleaseTitle => release_title.clone().map(SortValue::Text),
+                        TrackKey::ReleaseTitle => release_titles
+                            .get(&id)
+                            .map(|title| SortValue::Text(title.clone())),
                         TrackKey::ArtistName => artist_names
                             .get(&id)
                             .map(|name| SortValue::Text(name.to_lowercase())),
                         TrackKey::ReleaseArtistName => release_artist_names
                             .get(&id)
-                            .map(|name| SortValue::Text(name.to_lowercase())),
+                            .map(|name| SortValue::Text(name.clone())),
                         TrackKey::ListenCount => Some(SortValue::Number(
                             listens.get(&id).map_or(0, |stats| stats.count),
                         )),
@@ -335,31 +344,46 @@ fn track_fields(keys: &[TrackKey]) -> Vec<&'static str> {
     fields
 }
 
-/// The name each track's release credits first; the least such name when a track is on several.
-fn release_artist_names(db: &DbAny, tracks: &[DbId]) -> anyhow::Result<HashMap<DbId, String>> {
-    let mut releases_by_track = HashMap::new();
-    for track in tracks {
-        releases_by_track.insert(
-            *track,
-            lyra_db::graph::inbound_neighbor_ids(db, *track, "Release")?,
-        );
+/// The releases each track is on.
+#[derive(Default)]
+struct TrackReleases(HashMap<DbId, Vec<DbId>>);
+
+impl TrackReleases {
+    fn of(db: &DbAny, tracks: &[DbId]) -> anyhow::Result<Self> {
+        let mut releases = HashMap::new();
+        for track in tracks {
+            releases.insert(
+                *track,
+                lyra_db::graph::inbound_neighbor_ids(db, *track, "Release")?,
+            );
+        }
+        Ok(Self(releases))
     }
-    let release_ids = releases_by_track
-        .values()
-        .flatten()
-        .copied()
-        .collect::<Vec<_>>();
-    let names = lyra_db::artists::first_credited_names(db, &release_ids)?;
-    Ok(releases_by_track
-        .into_iter()
-        .filter_map(|(track, releases)| {
-            let name = releases
-                .iter()
-                .filter_map(|release| names.get(release))
-                .min_by_key(|name| name.to_lowercase())?;
-            Some((track, name.clone()))
-        })
-        .collect())
+
+    fn release_ids(&self) -> Vec<DbId> {
+        self.0
+            .values()
+            .flatten()
+            .copied()
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
+    /// Each track's lowercased value from its releases; the least when a track is on several.
+    fn least(&self, values: &HashMap<DbId, String>) -> HashMap<DbId, String> {
+        self.0
+            .iter()
+            .filter_map(|(track, releases)| {
+                let value = releases
+                    .iter()
+                    .filter_map(|release| values.get(release))
+                    .map(|value| value.to_lowercase())
+                    .min()?;
+                Some((*track, value))
+            })
+            .collect()
+    }
 }
 
 fn all_tracks(db: &DbAny) -> anyhow::Result<Vec<DbId>> {

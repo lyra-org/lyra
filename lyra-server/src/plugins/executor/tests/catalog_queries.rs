@@ -546,6 +546,13 @@ fn track_query_sorts_each_key_in_its_own_direction() -> Result<()> {
         ))?,
         vec!["Alpha", "Bravo", "Charlie"]
     );
+    assert_eq!(
+        catalog.titles(
+            r#"{ sort = { { key = "release_title", order = "descending" }, { key = "name" } } }"#
+        )?,
+        vec!["Delta", "Echo", "Alpha", "Bravo", "Charlie"],
+        "tracks across releases sort by their release's title"
+    );
     Ok(())
 }
 

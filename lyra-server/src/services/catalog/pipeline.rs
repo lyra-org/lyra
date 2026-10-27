@@ -94,11 +94,6 @@ pub(crate) trait Catalog {
     /// The order used when a query names no keys and has no search term.
     fn default_sort(filter: &Self::Filter) -> SortSpec<Self::Key>;
 
-    /// Rejects keys that the filter cannot give a meaning to.
-    fn check_sort(_filter: &Self::Filter, _sort: &SortSpec<Self::Key>) -> Result<(), CatalogError> {
-        Ok(())
-    }
-
     /// The ids the viewer can see that pass the filter, read from edges and ids only.
     fn candidates(
         db: &DbAny,
@@ -343,7 +338,6 @@ fn resolve_sort<C: Catalog>(
             "the relevance sort key needs a search term".to_string(),
         ));
     }
-    C::check_sort(filter, &sort)?;
     Ok(sort)
 }
 
