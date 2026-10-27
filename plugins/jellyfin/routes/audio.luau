@@ -349,8 +349,9 @@ end
 -- anything else encodes into `container` as the audio parameters ask, even audio the client could
 -- take as it is. Encodes use a constant bitrate: upstream's `enableAudioVbrEncoding` only applies
 -- once a server encoding option it leaves off by default is on. Public, as upstream: any
--- caller streams any track.
+-- caller streams any track, though one who sends a valid token streams as its user.
 function module.handle_stream_route(ctx: ApiContext): ApiResponse
+	session.adopt_optional_auth(ctx)
 	local request = if ctx then ctx.request else nil
 	local query = if request then request.query else nil
 	local params = if ctx then ctx.params else nil

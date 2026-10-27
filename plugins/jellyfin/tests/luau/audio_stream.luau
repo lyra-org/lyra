@@ -41,6 +41,13 @@ assert_public_stream(request(audio.handle_stream_route, ids.song, nil, { static 
 assert_public_stream(request(audio.handle_stream_route, ids.song, nil, nil, "HEAD"), "HEAD transcode")
 assert(request(audio.handle_stream_route, ids.album, nil, nil, "HEAD").status == 404, "HEAD of a release")
 
+-- A valid token makes the stream act as its user, which the server counts transcodes against;
+-- an invalid one leaves the caller as it was. Only the owner sees the song.
+local playback = require("../../protocol/items/playback")
+assert(playback.resolve_track_for_playback(ids.song) == nil, "the viewer, after an invalid key")
+assert_public_stream(request(audio.handle_stream_route, ids.song, fixture.api_keys.desk), "owner")
+assert(playback.resolve_track_for_playback(ids.song) ~= nil, "the owner, after the owner's key")
+
 -- `/universal` requires auth and the caller's access to the track.
 local universal = request(audio.handle_universal_route, ids.song)
 assert(universal.status == 401, `anonymous universal status {universal.status}`)
@@ -64,7 +71,6 @@ assert(not universal_direct({ container = "mp3", maxStreamingBitrate = "50000000
 assert(universal_direct({ container = "ogg", audioBitRate = "1000", maxStreamingBitrate = "3000" }), "audio bitrate")
 assert(not universal_direct({ container = "ogg", maxStreamingBitrate = "2999" }), "over the maximum")
 assert(universal_direct({ container = "ogg" }), "under the default maximum")
-local playback = require("../../protocol/items/playback")
 local resolve_source = playback.resolve_playback_source_for_track
 playback.resolve_playback_source_for_track = function(song: any, include_entry: boolean?): any
 	local source = resolve_source(song, include_entry)

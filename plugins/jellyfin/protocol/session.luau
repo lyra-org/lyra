@@ -330,6 +330,13 @@ local function resolve_jellyfin_auth(ctx: ApiContext?): (ResolvedAuth?, string?)
 	return resolved_auth, token
 end
 
+-- For routes upstream leaves open to anyone: when the request's token resolves, the request acts
+-- as its user, so the server counts what it does against that user. A missing, unknown or
+-- failing token changes nothing.
+function module.adopt_optional_auth(ctx: ApiContext?)
+	pcall(resolve_jellyfin_auth, ctx)
+end
+
 -- Request identity overrides the login defaults without changing the saved binding.
 -- Browser WebSockets supply these via query parameters instead of custom headers.
 function module.resolve_client_identity(
