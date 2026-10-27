@@ -110,23 +110,6 @@ impl TryFrom<DbValue> for ReleaseType {
     }
 }
 
-impl_luau_enum_userdata!(
-    ReleaseType,
-    "ReleaseType",
-    [
-        Album,
-        Single,
-        EP,
-        Compilation,
-        Soundtrack,
-        Live,
-        Remix,
-        Broadcast,
-        Other,
-        Unknown,
-    ]
-);
-
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(DbElement, Serialize, Deserialize, Clone, Debug)]
 pub struct Release {
@@ -150,27 +133,6 @@ impl Release {
         self.release_title = release_title;
     }
 }
-
-impl_luau_record_userdata!(
-    Release,
-    "Release",
-    fields {
-        db_id: Option<NodeId> as "db_id",
-        id: String as "id",
-        release_title: String as "release_title",
-        sort_title: Option<String> as "sort_title",
-        release_type: Option<ReleaseType> as "release_type",
-        release_date: Option<String> as "release_date",
-        media_formats: Option<Vec<String>> as "media_formats",
-        barcode: Option<String> as "barcode",
-        locked: Option<bool> as "locked",
-        created_at: Option<u64> as "created_at",
-        ctime: Option<u64> as "ctime",
-    },
-    methods {
-        set_release_title(release_title: String),
-    }
-);
 
 pub fn normalize_release_date(value: &str) -> Option<String> {
     let value = value.trim();

@@ -3,13 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use harmony_luau::{
-    DescribeInterface,
-    FieldDescriptor,
-    InterfaceDescriptor,
-    LuauType,
-    LuauTypeInfo,
-};
 use std::{
     collections::{
         BTreeMap,
@@ -212,42 +205,6 @@ pub(crate) struct IdLink {
     pub(crate) id_type: String,
     pub(crate) id: String,
     pub(crate) url: String,
-}
-
-impl LuauTypeInfo for IdLink {
-    fn luau_type() -> LuauType {
-        LuauType::literal("IdLink")
-    }
-}
-
-impl DescribeInterface for IdLink {
-    fn interface_descriptor() -> InterfaceDescriptor {
-        let field = |name, ty, description| FieldDescriptor {
-            name,
-            ty,
-            description,
-        };
-        InterfaceDescriptor {
-            name: "IdLink",
-            description: Some(
-                "Web link for one external ID, from the `links` include. Computed when read.",
-            ),
-            fields: vec![
-                field("provider_id", String::luau_type(), None),
-                field(
-                    "label",
-                    String::luau_type(),
-                    Some(
-                        "Name of the site the link points to: the registration's `label`, else the provider's display name.",
-                    ),
-                ),
-                field("scheme", Option::<String>::luau_type(), None),
-                field("id_type", String::luau_type(), None),
-                field("id", String::luau_type(), None),
-                field("url", String::luau_type(), Some("Absolute http(s) URL.")),
-            ],
-        }
-    }
 }
 
 /// A generator function's identity: its VM and handler id. Both change

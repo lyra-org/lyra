@@ -636,10 +636,10 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
 #[cfg(feature = "docgen")]
 fn metadata_classes() -> Vec<ClassDescriptor> {
     vec![
-        <crate::services::EntityType as harmony_luau::DescribeUserData>::class_descriptor(),
-        <lyra_db::ArtistType as harmony_luau::DescribeUserData>::class_descriptor(),
-        <lyra_db::CreditType as harmony_luau::DescribeUserData>::class_descriptor(),
-        <lyra_db::ArtistRelationType as harmony_luau::DescribeUserData>::class_descriptor(),
+        <crate::plugins::types::LuauEntityType as harmony_luau::DescribeUserData>::class_descriptor(),
+        <crate::plugins::types::LuauArtistType as harmony_luau::DescribeUserData>::class_descriptor(),
+        <crate::plugins::types::LuauCreditType as harmony_luau::DescribeUserData>::class_descriptor(),
+        <crate::plugins::types::LuauArtistRelationType as harmony_luau::DescribeUserData>::class_descriptor(),
         layer_class(),
         provider_class(),
     ]

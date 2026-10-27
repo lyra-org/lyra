@@ -25,7 +25,6 @@ pub struct CreditLinkInput {
     pub detail: Option<String>,
 }
 
-#[harmony_macros::userdata(name = "CreditType")]
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(
     Clone,

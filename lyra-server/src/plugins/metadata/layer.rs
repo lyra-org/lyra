@@ -14,6 +14,10 @@ use std::{
 use agdb::DbId;
 use harmony_luau as luau;
 
+use crate::plugins::types::{
+    LuauArtistRelationType,
+    LuauCreditType,
+};
 use serde_json::Value as JsonValue;
 
 use super::parsing::parse_custom_field_version;
@@ -22,8 +26,6 @@ use crate::services::metadata::layers::{
     CustomFieldChanges,
     ProviderValues,
 };
-use lyra_db::ArtistRelationType;
-use lyra_db::CreditType;
 use lyra_db::DbAsync;
 use lyra_db::MetadataField;
 use lyra_db::metadata::layers::LayerCredits;
@@ -104,11 +106,11 @@ impl MetadataLayer {
     /// Replaces this release or track layer's credits in `role`, in credit
     /// order. An empty list clears the role; roles never set keep what this
     /// source stored before.
-    #[harmony(args(role: CreditType, credits: luau::JsonValue))]
+    #[harmony(args(role: LuauCreditType, credits: luau::JsonValue))]
     fn set_credits(
         &self,
         vm: &luau::Vm,
-        role: CreditType,
+        role: LuauCreditType,
         credits: luau::Value,
     ) -> luau::runtime::Result<()> {
         let entries: Vec<CreditEntry> = serde_json::from_value(harmony_serde::luau_to_json(
@@ -133,18 +135,18 @@ impl MetadataLayer {
             .lock()
             .expect("metadata layer mutex poisoned")
             .credits
-            .insert(role, inputs);
+            .insert(role.into(), inputs);
         Ok(())
     }
 
     /// Replaces the artists related to this layer's artist by `relation_type`,
     /// such as a character's voice actors or a group's members. An empty list
     /// clears the type; types never set keep what this source stored before.
-    #[harmony(args(relation_type: ArtistRelationType, relations: luau::JsonValue))]
+    #[harmony(args(relation_type: LuauArtistRelationType, relations: luau::JsonValue))]
     fn set_relations(
         &self,
         vm: &luau::Vm,
-        relation_type: ArtistRelationType,
+        relation_type: LuauArtistRelationType,
         relations: luau::Value,
     ) -> luau::runtime::Result<()> {
         let entries: Vec<RelationEntry> = serde_json::from_value(harmony_serde::luau_to_json(
@@ -169,7 +171,7 @@ impl MetadataLayer {
             .lock()
             .expect("metadata layer mutex poisoned")
             .relations
-            .insert(relation_type, inputs);
+            .insert(relation_type.into(), inputs);
         Ok(())
     }
 

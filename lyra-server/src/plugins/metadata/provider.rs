@@ -152,21 +152,21 @@ impl MetadataProvider {
         &self,
         vm: &luau::Vm,
         context: &luau::CallContext,
-        entity: EntityType,
+        entity: crate::plugins::types::LuauEntityType,
         handler: luau::Function,
     ) -> luau::runtime::Result<luau::ScheduledFuture> {
-        search_callback(self, vm, context, entity, handler)
+        search_callback(self, vm, context, entity.into(), handler)
     }
 
     fn cover(
         &self,
         vm: &luau::Vm,
         context: &luau::CallContext,
-        entity: EntityType,
+        entity: crate::plugins::types::LuauEntityType,
         config: luau::Table,
         handler: luau::Function,
     ) -> luau::runtime::Result<luau::ScheduledFuture> {
-        cover_callback(self, vm, context, entity, config, handler)
+        cover_callback(self, vm, context, entity.into(), config, handler)
     }
 
     fn lyrics(
@@ -193,11 +193,11 @@ impl MetadataProvider {
         &self,
         vm: &luau::Vm,
         context: &luau::CallContext,
-        entity: EntityType,
+        entity: crate::plugins::types::LuauEntityType,
         handler: luau::Function,
         filter: Option<luau::Function>,
     ) -> luau::runtime::Result<luau::ScheduledFuture> {
-        refresh_callback(self, vm, context, entity, handler, filter)
+        refresh_callback(self, vm, context, entity.into(), handler, filter)
     }
 
     fn declare_option(

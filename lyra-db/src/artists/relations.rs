@@ -27,7 +27,6 @@ use serde::{
 
 use super::super::DbAccess;
 
-#[harmony_macros::userdata(name = "ArtistRelationType")]
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(
     Clone,

@@ -42,8 +42,6 @@ use serde::{
 };
 
 use crate::plugins::args;
-#[cfg(feature = "docgen")]
-use crate::services::playback_sessions::PlaybackUpdatePayload;
 use crate::{
     plugins::db,
     services::plugin_scope::PluginId,
@@ -612,10 +610,10 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &module_descriptor(),
         &[
             PlaybackUpdateHandler::type_alias_descriptor(),
-            playbacks::PlaybackEvent::type_alias_descriptor(),
+            LuauPlaybackEvent::type_alias_descriptor(),
         ],
         &[
-            PlaybackUpdatePayload::interface_descriptor(),
+            LuauPlaybackUpdatePayload::interface_descriptor(),
             PlaybackSessionReportRequest::interface_descriptor(),
             SendCommandRequest::interface_descriptor(),
             ConnectionInfo::interface_descriptor(),
@@ -652,7 +650,7 @@ impl DescribeInterface for PlaybackSessionReportRequest {
             },
             FieldDescriptor {
                 name: "event",
-                ty: Option::<playbacks::PlaybackEvent>::luau_type(),
+                ty: Option::<LuauPlaybackEvent>::luau_type(),
                 description: None,
             },
         ]));
@@ -795,11 +793,100 @@ fn playback_request_fields<const N: usize>(leading: [FieldDescriptor; N]) -> Vec
         },
         FieldDescriptor {
             name: "state",
-            ty: Option::<lyra_db::PlaybackState>::luau_type(),
+            ty: Option::<crate::plugins::types::LuauPlaybackState>::luau_type(),
             description: None,
         },
     ]);
     fields
+}
+
+const _: fn(&crate::services::playback_sessions::PlaybackUpdatePayload) = |value| {
+    let _ = (
+        &value.event,
+        &value.state,
+        &value.playback_session_public_id,
+        &value.track_public_id,
+        &value.user_public_id,
+        &value.library_public_id,
+        &value.position_ms,
+        &value.duration_ms,
+        &value.activity_ms,
+        &value.qualifies_single_listen,
+        &value.updated_at_ms,
+    );
+};
+
+const _: fn(playbacks::PlaybackEvent) = |value| match value {
+    playbacks::PlaybackEvent::Started
+    | playbacks::PlaybackEvent::Progress
+    | playbacks::PlaybackEvent::Stopped
+    | playbacks::PlaybackEvent::Completed => {}
+};
+
+/// [`crate::services::playback_sessions::PlaybackUpdatePayload`] as described to Luau.
+#[cfg(feature = "docgen")]
+pub(crate) struct LuauPlaybackUpdatePayload;
+
+/// [`crate::services::playback_sessions::PlaybackEvent`] as described to Luau.
+pub(crate) struct LuauPlaybackEvent;
+
+#[cfg(feature = "docgen")]
+impl LuauTypeInfo for LuauPlaybackUpdatePayload {
+    fn luau_type() -> LuauType {
+        LuauType::literal("PlaybackUpdatePayload")
+    }
+}
+
+#[cfg(feature = "docgen")]
+impl DescribeInterface for LuauPlaybackUpdatePayload {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let field = |name: &'static str, ty: LuauType| FieldDescriptor {
+            name,
+            ty,
+            description: None,
+        };
+        InterfaceDescriptor {
+            name: "PlaybackUpdatePayload",
+            description: None,
+            fields: vec![
+                field("event", String::luau_type()),
+                field(
+                    "state",
+                    crate::plugins::types::LuauPlaybackState::luau_type(),
+                ),
+                field("playback_session_public_id", String::luau_type()),
+                field("track_public_id", String::luau_type()),
+                field("user_public_id", String::luau_type()),
+                field("library_public_id", Option::<String>::luau_type()),
+                field("position_ms", u64::luau_type()),
+                field("duration_ms", Option::<u64>::luau_type()),
+                field("activity_ms", u64::luau_type()),
+                field("qualifies_single_listen", bool::luau_type()),
+                field("updated_at_ms", u64::luau_type()),
+            ],
+        }
+    }
+}
+
+impl LuauTypeInfo for LuauPlaybackEvent {
+    fn luau_type() -> LuauType {
+        LuauType::union(vec![
+            LuauType::literal("\"started\""),
+            LuauType::literal("\"progress\""),
+            LuauType::literal("\"stopped\""),
+            LuauType::literal("\"completed\""),
+        ])
+    }
+}
+
+impl DescribeTypeAlias for LuauPlaybackEvent {
+    fn type_alias_descriptor() -> TypeAliasDescriptor {
+        TypeAliasDescriptor::new(
+            "PlaybackEvent",
+            Self::luau_type(),
+            Some("Playback event reported by plugin helpers."),
+        )
+    }
 }
 
 #[cfg(test)]

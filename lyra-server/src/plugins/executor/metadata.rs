@@ -328,10 +328,10 @@ fn id_link_context(
     let mut ctx = OwnedTable::with_capacity(0, 4);
     ctx.set_field(
         "entity",
-        crate::services::EntityType::_harmony_userdata_class().create_value(
+        crate::plugins::types::LuauEntityType::_harmony_userdata_class().create_value(
             vm,
             &handler.function.origin,
-            call.entity,
+            call.entity.into(),
         )?,
     );
     ctx.set_field("id_type", string(&call.id_type));

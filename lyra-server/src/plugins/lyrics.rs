@@ -611,7 +611,7 @@ impl DescribeInterface for ParsedLyricsInput {
             },
             FieldDescriptor {
                 name: "lines",
-                ty: Vec::<PluginLyricLineInput>::luau_type(),
+                ty: Vec::<LuauPluginLyricLineInput>::luau_type(),
                 description: None,
             },
         ]);
@@ -661,7 +661,7 @@ impl DescribeInterface for LyricsInfo {
         descriptor.fields.extend([
             FieldDescriptor {
                 name: "db_id",
-                ty: Option::<lyra_db::NodeId>::luau_type(),
+                ty: Option::<crate::plugins::types::LuauNodeId>::luau_type(),
                 description: None,
             },
             FieldDescriptor {
@@ -798,7 +798,7 @@ fn module_descriptor() -> ModuleDescriptor {
                     "Returns the preferred lyrics for a track, or nil when none are available. When provided, `provider` selects that metadata provider by ID.",
                 ),
                 params: vec![
-                    param("track_id", lyra_db::NodeId::luau_type()),
+                    param("track_id", crate::plugins::types::LuauNodeId::luau_type()),
                     param("language", Option::<String>::luau_type()),
                     param("require_synced", Option::<bool>::luau_type()),
                     param("provider", Option::<String>::luau_type()),
@@ -822,7 +822,7 @@ fn module_descriptor() -> ModuleDescriptor {
                     "Creates or replaces the authenticated caller's personal lyrics for a track.",
                 ),
                 params: vec![
-                    param("track_id", lyra_db::NodeId::luau_type()),
+                    param("track_id", crate::plugins::types::LuauNodeId::luau_type()),
                     param("track_public_id", String::luau_type()),
                     param("upload", PersonalLyricsUploadInput::luau_type()),
                 ],
@@ -834,7 +834,10 @@ fn module_descriptor() -> ModuleDescriptor {
                 description: Some(
                     "Deletes the authenticated caller's personal lyrics for a track. Shared and provider lyrics are left intact.",
                 ),
-                params: vec![param("track_id", lyra_db::NodeId::luau_type())],
+                params: vec![param(
+                    "track_id",
+                    crate::plugins::types::LuauNodeId::luau_type(),
+                )],
                 returns: vec![bool::luau_type()],
                 yields: true,
             },
@@ -843,14 +846,20 @@ fn module_descriptor() -> ModuleDescriptor {
                 description: Some(
                     "Deletes every lyrics row for a track. Intended for trusted cleanup workflows.",
                 ),
-                params: vec![param("track_id", lyra_db::NodeId::luau_type())],
+                params: vec![param(
+                    "track_id",
+                    crate::plugins::types::LuauNodeId::luau_type(),
+                )],
                 returns: vec![],
                 yields: true,
             },
             ModuleFunctionDescriptor {
                 path: vec!["has"],
                 description: Some("Returns true when the track has preferred lyrics available."),
-                params: vec![param("track_id", lyra_db::NodeId::luau_type())],
+                params: vec![param(
+                    "track_id",
+                    crate::plugins::types::LuauNodeId::luau_type(),
+                )],
                 returns: vec![bool::luau_type()],
                 yields: true,
             },
@@ -872,8 +881,8 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &[],
         &[
             ParsedLyricsInput::interface_descriptor(),
-            PluginLyricLineInput::interface_descriptor(),
-            PluginLyricWordInput::interface_descriptor(),
+            LuauPluginLyricLineInput::interface_descriptor(),
+            LuauPluginLyricWordInput::interface_descriptor(),
             PersonalLyricsUploadInput::interface_descriptor(),
             LyricsInfo::interface_descriptor(),
             LyricLineInfo::interface_descriptor(),
@@ -885,3 +894,77 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         ],
     )
 }
+
+/// [`PluginLyricWordInput`] as described to Luau.
+pub(crate) struct LuauPluginLyricWordInput;
+
+/// [`PluginLyricLineInput`] as described to Luau.
+pub(crate) struct LuauPluginLyricLineInput;
+
+impl LuauTypeInfo for LuauPluginLyricWordInput {
+    fn luau_type() -> LuauType {
+        LuauType::literal("PluginLyricWordInput")
+    }
+}
+
+impl DescribeInterface for LuauPluginLyricWordInput {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("PluginLyricWordInput", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "ts_ms",
+                ty: u64::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "char_start",
+                ty: u32::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "char_end",
+                ty: u32::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
+    }
+}
+
+impl LuauTypeInfo for LuauPluginLyricLineInput {
+    fn luau_type() -> LuauType {
+        LuauType::literal("PluginLyricLineInput")
+    }
+}
+
+impl DescribeInterface for LuauPluginLyricLineInput {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("PluginLyricLineInput", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "ts_ms",
+                ty: u64::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "text",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "words",
+                ty: Vec::<LuauPluginLyricWordInput>::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
+    }
+}
+
+const _: fn(&PluginLyricWordInput) = |value| {
+    let _ = (&value.ts_ms, &value.char_start, &value.char_end);
+};
+
+const _: fn(&PluginLyricLineInput) = |value| {
+    let _ = (&value.ts_ms, &value.text, &value.words);
+};

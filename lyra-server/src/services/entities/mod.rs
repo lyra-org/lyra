@@ -18,17 +18,6 @@ use agdb::{
     DbAny,
     DbId,
 };
-use harmony_luau::{
-    ClassDescriptor,
-    DescribeInterface,
-    DescribeTypeAlias,
-    DescribeUserData,
-    FieldDescriptor,
-    InterfaceDescriptor,
-    LuauType,
-    LuauTypeInfo,
-    TypeAliasDescriptor,
-};
 use lyra_metadata::LookupHints;
 use serde::Serialize;
 
@@ -115,80 +104,29 @@ impl EntityInclude {
     ];
 }
 
-macro_rules! interface_into_lua {
-    ($ty:ident => $($field:tt as $key:literal),* $(,)?) => {};
-}
-
-macro_rules! describe_interface {
-    ($ty:ty, $name:literal, {$($field:tt : $field_ty:ty as $key:literal),* $(,)?}) => {
-        impl LuauTypeInfo for $ty {
-            fn luau_type() -> LuauType {
-                LuauType::literal($name)
-            }
-        }
-
-        impl DescribeInterface for $ty {
-            fn interface_descriptor() -> InterfaceDescriptor {
-                InterfaceDescriptor {
-                    name: $name,
-                    description: None,
-                    fields: vec![
-                        $(FieldDescriptor {
-                            name: $key,
-                            ty: <$field_ty as LuauTypeInfo>::luau_type(),
-                            description: None,
-                        }),*
-                    ],
-                }
-            }
-        }
-
-        const _: fn(&$ty) = |value| {
-            $(let _ = &value.$field;)*
-        };
-    };
-}
-
+/// A projection's `entity_type` tag, which serializes as `LITERAL`.
 macro_rules! projection_kind {
-    ($name:ident, $variant:ident, $literal:literal, $doc:literal) => {
-        #[derive(Clone, Copy, Debug, Serialize)]
+    ($name:ident, $variant:ident, $literal:literal) => {
+        #[derive(Clone, Copy, Debug)]
         pub(crate) enum $name {
-            #[serde(rename = $literal)]
             $variant,
         }
 
-        impl LuauTypeInfo for $name {
-            fn luau_type() -> LuauType {
-                LuauType::literal(concat!("\"", $literal, "\""))
-            }
+        impl $name {
+            pub(crate) const LITERAL: &'static str = $literal;
         }
 
-        impl DescribeTypeAlias for $name {
-            fn type_alias_descriptor() -> TypeAliasDescriptor {
-                TypeAliasDescriptor::new(stringify!($name), Self::luau_type(), Some($doc))
+        impl Serialize for $name {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                serializer.serialize_str(Self::LITERAL)
             }
         }
     };
 }
 
-projection_kind!(
-    ReleaseProjectionKind,
-    Release,
-    "release",
-    "Release entity projection kind."
-);
-projection_kind!(
-    TrackProjectionKind,
-    Track,
-    "track",
-    "Track entity projection kind."
-);
-projection_kind!(
-    ArtistProjectionKind,
-    Artist,
-    "artist",
-    "Artist entity projection kind."
-);
+projection_kind!(ReleaseProjectionKind, Release, "release");
+projection_kind!(TrackProjectionKind, Track, "track");
+projection_kind!(ArtistProjectionKind, Artist, "artist");
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub(crate) struct EntityLookupHints {
@@ -196,12 +134,6 @@ pub(crate) struct EntityLookupHints {
     pub(crate) release_title: Option<String>,
     pub(crate) year: Option<u32>,
 }
-
-describe_interface!(EntityLookupHints, "EntityLookupHints", {
-    artist_name: Option<String> as "artist_name",
-    release_title: Option<String> as "release_title",
-    year: Option<u32> as "year",
-});
 
 impl From<LookupHints> for EntityLookupHints {
     fn from(value: LookupHints) -> Self {
@@ -212,12 +144,6 @@ impl From<LookupHints> for EntityLookupHints {
         }
     }
 }
-
-interface_into_lua!(EntityLookupHints =>
-    artist_name as "artist_name",
-    release_title as "release_title",
-    year as "year",
-);
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct ProjectionEntryInfo {
@@ -230,17 +156,6 @@ pub(crate) struct ProjectionEntryInfo {
     pub(crate) size: u64,
     pub(crate) mtime: u64,
 }
-
-describe_interface!(ProjectionEntryInfo, "ProjectionEntryInfo", {
-    db_id: Option<NodeId> as "db_id",
-    id: String as "id",
-    full_path: String as "full_path",
-    kind: String as "kind",
-    name: String as "name",
-    hash: Option<String> as "hash",
-    size: u64 as "size",
-    mtime: u64 as "mtime",
-});
 
 impl From<lyra_db::Entry> for ProjectionEntryInfo {
     fn from(value: lyra_db::Entry) -> Self {
@@ -257,27 +172,11 @@ impl From<lyra_db::Entry> for ProjectionEntryInfo {
     }
 }
 
-interface_into_lua!(ProjectionEntryInfo =>
-    db_id as "db_id",
-    id as "id",
-    full_path as "full_path",
-    kind as "kind",
-    name as "name",
-    hash as "hash",
-    size as "size",
-    mtime as "mtime",
-);
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct CreditProjectionInfo {
     pub(crate) r#type: CreditType,
     pub(crate) detail: Option<String>,
 }
-
-describe_interface!(CreditProjectionInfo, "CreditProjectionInfo", {
-    r#type: CreditType as "type",
-    detail: Option<String> as "detail",
-});
 
 impl From<Credit> for CreditProjectionInfo {
     fn from(value: Credit) -> Self {
@@ -288,23 +187,12 @@ impl From<Credit> for CreditProjectionInfo {
     }
 }
 
-interface_into_lua!(CreditProjectionInfo =>
-    r#type as "type",
-    detail as "detail",
-);
-
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct CreditedArtistProjectionInfo {
     pub(crate) artist: Artist,
     pub(crate) credit: CreditProjectionInfo,
     pub(crate) source: ArtistCreditSource,
 }
-
-describe_interface!(CreditedArtistProjectionInfo, "CreditedArtistProjectionInfo", {
-    artist: Artist as "artist",
-    credit: CreditProjectionInfo as "credit",
-    source: ArtistCreditSource as "source",
-});
 
 impl From<ResolvedCreditedArtist> for CreditedArtistProjectionInfo {
     fn from(value: ResolvedCreditedArtist) -> Self {
@@ -315,12 +203,6 @@ impl From<ResolvedCreditedArtist> for CreditedArtistProjectionInfo {
         }
     }
 }
-
-interface_into_lua!(CreditedArtistProjectionInfo =>
-    artist as "artist",
-    credit as "credit",
-    source as "source",
-);
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct ReleaseProjectionTrack {
@@ -345,29 +227,6 @@ pub(crate) struct ReleaseProjectionTrack {
     pub(crate) artists: Vec<Artist>,
     pub(crate) lookup_hints: EntityLookupHints,
 }
-
-describe_interface!(ReleaseProjectionTrack, "ReleaseProjectionTrack", {
-    db_id: Option<NodeId> as "db_id",
-    id: String as "id",
-    track_title: String as "track_title",
-    sort_title: Option<String> as "sort_title",
-    year: Option<u32> as "year",
-    disc: Option<u32> as "disc",
-    disc_total: Option<u32> as "disc_total",
-    track: Option<u32> as "track",
-    track_total: Option<u32> as "track_total",
-    duration_ms: Option<u64> as "duration_ms",
-    track_gain_db: Option<f64> as "track_gain_db",
-    album_gain_db: Option<f64> as "album_gain_db",
-    locked: Option<bool> as "locked",
-    created_at: Option<u64> as "created_at",
-    ctime: Option<u64> as "ctime",
-    external_ids: ExternalIdsByProvider as "external_ids",
-    identifiers: IdentifiersByScheme as "identifiers",
-    links: Option<Vec<IdLink>> as "links",
-    artists: Vec<Artist> as "artists",
-    lookup_hints: EntityLookupHints as "lookup_hints",
-});
 
 impl ReleaseProjectionTrack {
     pub(super) fn from_track(
@@ -403,29 +262,6 @@ impl ReleaseProjectionTrack {
     }
 }
 
-interface_into_lua!(ReleaseProjectionTrack =>
-    db_id as "db_id",
-    id as "id",
-    track_title as "track_title",
-    sort_title as "sort_title",
-    year as "year",
-    disc as "disc",
-    disc_total as "disc_total",
-    track as "track",
-    track_total as "track_total",
-    duration_ms as "duration_ms",
-    track_gain_db as "track_gain_db",
-    album_gain_db as "album_gain_db",
-    locked as "locked",
-    created_at as "created_at",
-    ctime as "ctime",
-    external_ids as "external_ids",
-    identifiers as "identifiers",
-    links as "links",
-    artists as "artists",
-    lookup_hints as "lookup_hints",
-);
-
 #[derive(Clone, Debug, Default, Serialize)]
 pub(crate) struct ReleaseProjectionIncludes {
     pub(crate) external_ids: Option<ExternalIdsByProvider>,
@@ -435,24 +271,6 @@ pub(crate) struct ReleaseProjectionIncludes {
     pub(crate) tracks: Option<Vec<ReleaseProjectionTrack>>,
     pub(crate) credits: Option<Vec<CreditedArtistProjectionInfo>>,
 }
-
-describe_interface!(ReleaseProjectionIncludes, "ReleaseProjectionIncludes", {
-    external_ids: Option<ExternalIdsByProvider> as "external_ids",
-    identifiers: Option<IdentifiersByScheme> as "identifiers",
-    links: Option<Vec<IdLink>> as "links",
-    artists: Option<Vec<Artist>> as "artists",
-    tracks: Option<Vec<ReleaseProjectionTrack>> as "tracks",
-    credits: Option<Vec<CreditedArtistProjectionInfo>> as "credits",
-});
-
-interface_into_lua!(ReleaseProjectionIncludes =>
-    external_ids as "external_ids",
-    identifiers as "identifiers",
-    links as "links",
-    artists as "artists",
-    tracks as "tracks",
-    credits as "credits",
-);
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub(crate) struct TrackProjectionIncludes {
@@ -465,26 +283,6 @@ pub(crate) struct TrackProjectionIncludes {
     pub(crate) credits: Option<Vec<CreditedArtistProjectionInfo>>,
 }
 
-describe_interface!(TrackProjectionIncludes, "TrackProjectionIncludes", {
-    external_ids: Option<ExternalIdsByProvider> as "external_ids",
-    identifiers: Option<IdentifiersByScheme> as "identifiers",
-    links: Option<Vec<IdLink>> as "links",
-    releases: Option<Vec<Release>> as "releases",
-    artists: Option<Vec<Artist>> as "artists",
-    entries: Option<Vec<ProjectionEntryInfo>> as "entries",
-    credits: Option<Vec<CreditedArtistProjectionInfo>> as "credits",
-});
-
-interface_into_lua!(TrackProjectionIncludes =>
-    external_ids as "external_ids",
-    identifiers as "identifiers",
-    links as "links",
-    releases as "releases",
-    artists as "artists",
-    entries as "entries",
-    credits as "credits",
-);
-
 #[derive(Clone, Debug, Default, Serialize)]
 pub(crate) struct ArtistProjectionIncludes {
     pub(crate) external_ids: Option<ExternalIdsByProvider>,
@@ -494,22 +292,6 @@ pub(crate) struct ArtistProjectionIncludes {
     pub(crate) tracks: Option<Vec<Track>>,
 }
 
-describe_interface!(ArtistProjectionIncludes, "ArtistProjectionIncludes", {
-    external_ids: Option<ExternalIdsByProvider> as "external_ids",
-    identifiers: Option<IdentifiersByScheme> as "identifiers",
-    links: Option<Vec<IdLink>> as "links",
-    releases: Option<Vec<Release>> as "releases",
-    tracks: Option<Vec<Track>> as "tracks",
-});
-
-interface_into_lua!(ArtistProjectionIncludes =>
-    external_ids as "external_ids",
-    identifiers as "identifiers",
-    links as "links",
-    releases as "releases",
-    tracks as "tracks",
-);
-
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct ReleaseProjectionInfo {
     pub(crate) entity_type: ReleaseProjectionKind,
@@ -518,38 +300,12 @@ pub(crate) struct ReleaseProjectionInfo {
     pub(crate) includes: ReleaseProjectionIncludes,
 }
 
-describe_interface!(ReleaseProjectionInfo, "ReleaseProjectionInfo", {
-    entity_type: ReleaseProjectionKind as "entity_type",
-    entity: Release as "entity",
-    lookup_hints: EntityLookupHints as "lookup_hints",
-    includes: ReleaseProjectionIncludes as "includes",
-});
-
-interface_into_lua!(ReleaseProjectionInfo =>
-    entity_type as "entity_type",
-    entity as "entity",
-    lookup_hints as "lookup_hints",
-    includes as "includes",
-);
-
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct TrackProjectionInfo {
     pub(crate) entity_type: TrackProjectionKind,
     pub(crate) entity: Track,
     pub(crate) includes: TrackProjectionIncludes,
 }
-
-describe_interface!(TrackProjectionInfo, "TrackProjectionInfo", {
-    entity_type: TrackProjectionKind as "entity_type",
-    entity: Track as "entity",
-    includes: TrackProjectionIncludes as "includes",
-});
-
-interface_into_lua!(TrackProjectionInfo =>
-    entity_type as "entity_type",
-    entity as "entity",
-    includes as "includes",
-);
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct ArtistProjectionInfo {
@@ -558,44 +314,12 @@ pub(crate) struct ArtistProjectionInfo {
     pub(crate) includes: ArtistProjectionIncludes,
 }
 
-describe_interface!(ArtistProjectionInfo, "ArtistProjectionInfo", {
-    entity_type: ArtistProjectionKind as "entity_type",
-    entity: Artist as "entity",
-    includes: ArtistProjectionIncludes as "includes",
-});
-
-interface_into_lua!(ArtistProjectionInfo =>
-    entity_type as "entity_type",
-    entity as "entity",
-    includes as "includes",
-);
-
 #[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
 pub(crate) enum EntityProjectionInfo {
     Release(ReleaseProjectionInfo),
     Track(TrackProjectionInfo),
     Artist(ArtistProjectionInfo),
-}
-
-impl LuauTypeInfo for EntityProjectionInfo {
-    fn luau_type() -> LuauType {
-        LuauType::literal("EntityProjectionInfo")
-    }
-}
-
-impl DescribeTypeAlias for EntityProjectionInfo {
-    fn type_alias_descriptor() -> TypeAliasDescriptor {
-        TypeAliasDescriptor::new(
-            "EntityProjectionInfo",
-            LuauType::union(vec![
-                LuauType::literal("ReleaseProjectionInfo"),
-                LuauType::literal("TrackProjectionInfo"),
-                LuauType::literal("ArtistProjectionInfo"),
-            ]),
-            Some("Typed entity projection keyed by entity_type."),
-        )
-    }
 }
 
 pub(super) fn dedupe_artists(artists: Vec<Artist>) -> Vec<Artist> {
@@ -619,34 +343,6 @@ pub(super) fn dedupe_artists(artists: Vec<Artist>) -> Vec<Artist> {
 pub(crate) enum ArtistCreditSource {
     Track,
     Release,
-}
-
-impl LuauTypeInfo for ArtistCreditSource {
-    fn luau_type() -> LuauType {
-        LuauType::literal("ArtistCreditSource")
-    }
-}
-
-impl DescribeUserData for ArtistCreditSource {
-    fn class_descriptor() -> ClassDescriptor {
-        ClassDescriptor {
-            name: "ArtistCreditSource",
-            description: None,
-            fields: vec![
-                FieldDescriptor {
-                    name: "Track",
-                    ty: ArtistCreditSource::luau_type(),
-                    description: None,
-                },
-                FieldDescriptor {
-                    name: "Release",
-                    ty: ArtistCreditSource::luau_type(),
-                    description: None,
-                },
-            ],
-            methods: vec![],
-        }
-    }
 }
 
 #[derive(Clone, Debug)]

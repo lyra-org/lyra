@@ -69,35 +69,6 @@ impl Track {
     }
 }
 
-impl_luau_record_userdata!(
-    Track,
-    "Track",
-    fields {
-        db_id: Option<NodeId> as "db_id",
-        id: String as "id",
-        track_title: String as "track_title",
-        sort_title: Option<String> as "sort_title",
-        year: Option<u32> as "year",
-        disc: Option<u32> as "disc",
-        disc_total: Option<u32> as "disc_total",
-        track: Option<u32> as "track",
-        track_total: Option<u32> as "track_total",
-        duration_ms: Option<u64> as "duration_ms",
-        track_gain_db: Option<f64> as "track_gain_db",
-        album_gain_db: Option<f64> as "album_gain_db",
-        locked: Option<bool> as "locked",
-        created_at: Option<u64> as "created_at",
-        ctime: Option<u64> as "ctime",
-    },
-    methods {
-        set_track_title(track_title: String),
-        set_year(year: u32),
-        set_track(track: u32),
-        set_track_total(track_total: u32),
-        set_duration_ms(duration_ms: u64),
-    }
-);
-
 pub fn get(db: &DbAny, from: impl Into<QueryId>) -> anyhow::Result<Vec<Track>> {
     let tracks: Vec<Track> = db
         .exec(

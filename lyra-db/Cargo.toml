@@ -12,9 +12,6 @@ nightly = []
 testing = []
 
 [dependencies]
-harmony-core = { path = "../harmony-core" }
-harmony-luau = { workspace = true }
-harmony-macros = { path = "../harmony-macros" }
 agdb = { version = "0.15.0", features = ["serde"] }
 anyhow = { workspace = true }
 argon2 = { version = "0.5", features = ["std", "password-hash"] }

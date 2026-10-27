@@ -368,7 +368,7 @@ impl DescribeInterface for TagInfo {
         descriptor.fields.extend([
             FieldDescriptor {
                 name: "db_id",
-                ty: Option::<lyra_db::NodeId>::luau_type(),
+                ty: Option::<crate::plugins::types::LuauNodeId>::luau_type(),
                 description: None,
             },
             FieldDescriptor {
@@ -418,7 +418,7 @@ fn module_descriptor() -> ModuleDescriptor {
                 path: vec!["add"],
                 description: Some("Returns the canonical tag name. color is ignored on reuse."),
                 params: vec![
-                    param("target_id", lyra_db::NodeId::luau_type()),
+                    param("target_id", crate::plugins::types::LuauNodeId::luau_type()),
                     param("tag", String::luau_type()),
                     param("color", String::luau_type()),
                 ],
@@ -429,7 +429,7 @@ fn module_descriptor() -> ModuleDescriptor {
                 path: vec!["remove"],
                 description: Some("Removes a tag from a target."),
                 params: vec![
-                    param("target_id", lyra_db::NodeId::luau_type()),
+                    param("target_id", crate::plugins::types::LuauNodeId::luau_type()),
                     param("tag", String::luau_type()),
                 ],
                 returns: Vec::new(),
@@ -439,7 +439,7 @@ fn module_descriptor() -> ModuleDescriptor {
                 path: vec!["has"],
                 description: Some("Returns whether a target has a tag."),
                 params: vec![
-                    param("target_id", lyra_db::NodeId::luau_type()),
+                    param("target_id", crate::plugins::types::LuauNodeId::luau_type()),
                     param("tag", String::luau_type()),
                 ],
                 returns: vec![bool::luau_type()],
@@ -458,7 +458,10 @@ fn module_descriptor() -> ModuleDescriptor {
             ModuleFunctionDescriptor {
                 path: vec!["get_for_target"],
                 description: Some("Returns tags for a target."),
-                params: vec![param("target_id", lyra_db::NodeId::luau_type())],
+                params: vec![param(
+                    "target_id",
+                    crate::plugins::types::LuauNodeId::luau_type(),
+                )],
                 returns: vec![Vec::<TagInfo>::luau_type()],
                 yields: true,
             },
@@ -473,7 +476,7 @@ fn module_descriptor() -> ModuleDescriptor {
                 path: vec!["get_tagged"],
                 description: Some("Returns target IDs tagged with the given tag."),
                 params: vec![param("tag", String::luau_type())],
-                returns: vec![Vec::<lyra_db::NodeId>::luau_type()],
+                returns: vec![Vec::<crate::plugins::types::LuauNodeId>::luau_type()],
                 yields: true,
             },
         ],

@@ -3,12 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use harmony_luau::{
-    DescribeTypeAlias,
-    LuauType,
-    LuauTypeInfo,
-    TypeAliasDescriptor,
-};
 use std::{
     fmt,
     time::{
@@ -254,27 +248,6 @@ impl fmt::Display for PlaybackEvent {
             Self::Stopped => f.write_str("stopped"),
             Self::Completed => f.write_str("completed"),
         }
-    }
-}
-
-impl LuauTypeInfo for PlaybackEvent {
-    fn luau_type() -> LuauType {
-        LuauType::union(vec![
-            LuauType::literal("\"started\""),
-            LuauType::literal("\"progress\""),
-            LuauType::literal("\"stopped\""),
-            LuauType::literal("\"completed\""),
-        ])
-    }
-}
-
-impl DescribeTypeAlias for PlaybackEvent {
-    fn type_alias_descriptor() -> TypeAliasDescriptor {
-        TypeAliasDescriptor::new(
-            "PlaybackEvent",
-            Self::luau_type(),
-            Some("Playback event reported by plugin helpers."),
-        )
     }
 }
 

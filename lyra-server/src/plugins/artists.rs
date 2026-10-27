@@ -73,9 +73,9 @@ pub(crate) fn module_spec() -> ModuleSpec {
         .function(by_track_spec())
         .function(relations_spec())
         .function(artwork_id_by_name_spec())
-        .userdata(lyra_db::ArtistType::_harmony_userdata_spec())
-        .userdata(lyra_db::ArtistRelationType::_harmony_userdata_spec())
-        .userdata(lyra_db::CreditType::_harmony_userdata_spec())
+        .userdata(crate::plugins::types::LuauArtistType::_harmony_userdata_spec())
+        .userdata(crate::plugins::types::LuauArtistRelationType::_harmony_userdata_spec())
+        .userdata(crate::plugins::types::LuauCreditType::_harmony_userdata_spec())
         .install(|_| Ok(ModuleExport::new(ArtistsModule)))
 }
 
@@ -286,9 +286,9 @@ fn parse_optional_artist_type(
     if matches!(value, luau::Value::Nil) {
         return Ok(None);
     }
-    lyra_db::ArtistType::_harmony_userdata_class()
+    crate::plugins::types::LuauArtistType::_harmony_userdata_class()
         .read_value(vm, key, value)
-        .map(Some)
+        .map(|value| Some(value.into()))
 }
 
 fn parse_optional_credit_types(
@@ -301,7 +301,9 @@ fn parse_optional_credit_types(
         luau::Value::Table(table) => args::array_values(vm, &table)?
             .into_iter()
             .map(|(_, value)| {
-                lyra_db::CreditType::_harmony_userdata_class().read_value(vm, key, value)
+                crate::plugins::types::LuauCreditType::_harmony_userdata_class()
+                    .read_value(vm, key, value)
+                    .map(Into::into)
             })
             .collect::<luau::runtime::Result<Vec<_>>>()
             .map(Some),
@@ -454,9 +456,9 @@ fn artist_interfaces() -> Vec<InterfaceDescriptor> {
             "exclude_credit_role",
             LuauType::optional(LuauType::named("CreditRole")),
         ),
-        field("credit_types", Option::<Vec<lyra_db::CreditType>>::luau_type()),
-        field("exclude_credit_types", Option::<Vec<lyra_db::CreditType>>::luau_type()),
-        field("artist_type", Option::<lyra_db::ArtistType>::luau_type()),
+        field("credit_types", Option::<Vec<crate::plugins::types::LuauCreditType>>::luau_type()),
+        field("exclude_credit_types", Option::<Vec<crate::plugins::types::LuauCreditType>>::luau_type()),
+        field("artist_type", Option::<crate::plugins::types::LuauArtistType>::luau_type()),
         field("favorite", Option::<bool>::luau_type()),
         described_field(
             "listened",
@@ -551,9 +553,9 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &artist_type_aliases(),
         &artist_interfaces(),
         &[
-            <lyra_db::ArtistType as harmony_luau::DescribeUserData>::class_descriptor(),
-            <lyra_db::ArtistRelationType as harmony_luau::DescribeUserData>::class_descriptor(),
-            <lyra_db::CreditType as harmony_luau::DescribeUserData>::class_descriptor(),
+            <crate::plugins::types::LuauArtistType as harmony_luau::DescribeUserData>::class_descriptor(),
+            <crate::plugins::types::LuauArtistRelationType as harmony_luau::DescribeUserData>::class_descriptor(),
+            <crate::plugins::types::LuauCreditType as harmony_luau::DescribeUserData>::class_descriptor(),
         ],
     )
 }

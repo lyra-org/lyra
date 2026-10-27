@@ -21,10 +21,6 @@ use agdb::{
     DbValue,
     QueryBuilder,
 };
-use harmony_luau::{
-    LuauType,
-    LuauTypeInfo,
-};
 use serde::{
     Deserialize,
     Serialize,
@@ -102,18 +98,6 @@ impl TryFrom<DbValue> for PlaybackState {
 
     fn try_from(value: DbValue) -> Result<Self, Self::Error> {
         Self::from_db_str(value.string()?)
-    }
-}
-
-impl LuauTypeInfo for PlaybackState {
-    fn luau_type() -> LuauType {
-        LuauType::union(vec![
-            LuauType::literal("\"playing\""),
-            LuauType::literal("\"paused\""),
-            LuauType::literal("\"stopped\""),
-            LuauType::literal("\"buffering\""),
-            LuauType::literal("\"completed\""),
-        ])
     }
 }
 

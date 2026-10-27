@@ -10,10 +10,6 @@ use agdb::{
     DbId,
     QueryId,
 };
-use harmony_luau::{
-    LuauType,
-    LuauTypeInfo,
-};
 use serde::{
     Deserialize,
     Serialize,
@@ -49,12 +45,6 @@ impl schemars::JsonSchema for NodeId {
 
     fn json_schema(schema_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
         <i64 as schemars::JsonSchema>::json_schema(schema_gen)
-    }
-}
-
-impl LuauTypeInfo for NodeId {
-    fn luau_type() -> LuauType {
-        f64::luau_type()
     }
 }
 
@@ -141,20 +131,5 @@ impl ResolveId {
     /// Creates a ResolveId for a known root collection alias.
     pub fn alias(name: &str) -> Self {
         ResolveId::Alias(name.to_string())
-    }
-}
-
-impl LuauTypeInfo for ResolveId {
-    fn luau_type() -> LuauType {
-        let mut variants: Vec<LuauType> = super::bootstrap::ROOT_COLLECTION_ALIASES
-            .iter()
-            .map(|alias| {
-                let quoted: &'static str = Box::leak(format!("\"{alias}\"").into_boxed_str());
-                LuauType::literal(quoted)
-            })
-            .collect();
-        variants.push(f64::luau_type());
-        variants.push(String::luau_type());
-        LuauType::union(variants)
     }
 }

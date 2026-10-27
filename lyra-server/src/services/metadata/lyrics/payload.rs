@@ -3,13 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use harmony_luau::{
-    DescribeInterface,
-    FieldDescriptor,
-    InterfaceDescriptor,
-    LuauType,
-    LuauTypeInfo,
-};
 use serde::{
     Deserialize,
     Serialize,
@@ -75,65 +68,5 @@ impl PluginLyricsInput {
                 last_checked_at: now_ms,
             },
         ))
-    }
-}
-
-impl LuauTypeInfo for PluginLyricWordInput {
-    fn luau_type() -> LuauType {
-        LuauType::literal("PluginLyricWordInput")
-    }
-}
-
-impl DescribeInterface for PluginLyricWordInput {
-    fn interface_descriptor() -> InterfaceDescriptor {
-        let mut descriptor = InterfaceDescriptor::new("PluginLyricWordInput", None);
-        descriptor.fields.extend([
-            FieldDescriptor {
-                name: "ts_ms",
-                ty: u64::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "char_start",
-                ty: u32::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "char_end",
-                ty: u32::luau_type(),
-                description: None,
-            },
-        ]);
-        descriptor
-    }
-}
-
-impl LuauTypeInfo for PluginLyricLineInput {
-    fn luau_type() -> LuauType {
-        LuauType::literal("PluginLyricLineInput")
-    }
-}
-
-impl DescribeInterface for PluginLyricLineInput {
-    fn interface_descriptor() -> InterfaceDescriptor {
-        let mut descriptor = InterfaceDescriptor::new("PluginLyricLineInput", None);
-        descriptor.fields.extend([
-            FieldDescriptor {
-                name: "ts_ms",
-                ty: u64::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "text",
-                ty: String::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "words",
-                ty: Vec::<PluginLyricWordInput>::luau_type(),
-                description: None,
-            },
-        ]);
-        descriptor
     }
 }

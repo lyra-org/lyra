@@ -3,6 +3,9 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+#[cfg(feature = "docgen")]
+mod types;
+
 use harmony_core::{
     FunctionSpec,
     ModuleExport,
@@ -27,25 +30,6 @@ use harmony_luau::{
 };
 
 use crate::plugins::args;
-#[cfg(feature = "docgen")]
-use crate::services::entities::{
-    ArtistProjectionIncludes,
-    ArtistProjectionInfo,
-    ArtistProjectionKind,
-    CreditProjectionInfo,
-    CreditedArtistProjectionInfo,
-    EntityLookupHints,
-    ProjectionEntryInfo,
-    ReleaseProjectionIncludes,
-    ReleaseProjectionInfo,
-    ReleaseProjectionKind,
-    ReleaseProjectionTrack,
-    TrackProjectionIncludes,
-    TrackProjectionInfo,
-    TrackProjectionKind,
-};
-#[cfg(feature = "docgen")]
-use crate::services::providers::IdLink;
 use crate::{
     plugins::db,
     services::{
@@ -661,9 +645,9 @@ fn entity_type_aliases() -> Vec<TypeAliasDescriptor> {
         TypeAliasDescriptor::new("Track", track_type(), None),
         TypeAliasDescriptor::new("Release", release_type(), None),
         TypeAliasDescriptor::new("Artist", artist_type(), None),
-        ReleaseProjectionKind::type_alias_descriptor(),
-        TrackProjectionKind::type_alias_descriptor(),
-        ArtistProjectionKind::type_alias_descriptor(),
+        types::LuauReleaseProjectionKind::type_alias_descriptor(),
+        types::LuauTrackProjectionKind::type_alias_descriptor(),
+        types::LuauArtistProjectionKind::type_alias_descriptor(),
         TypeAliasDescriptor::new("EntityIncludeSelector", include_selector_type(), None),
         TypeAliasDescriptor::new(
             "EntityQueryRequest",
@@ -704,18 +688,18 @@ fn entity_type_aliases() -> Vec<TypeAliasDescriptor> {
 #[cfg(feature = "docgen")]
 fn entity_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
     vec![
-        EntityLookupHints::interface_descriptor(),
-        ProjectionEntryInfo::interface_descriptor(),
-        CreditProjectionInfo::interface_descriptor(),
-        CreditedArtistProjectionInfo::interface_descriptor(),
-        ReleaseProjectionTrack::interface_descriptor(),
-        ReleaseProjectionIncludes::interface_descriptor(),
-        TrackProjectionIncludes::interface_descriptor(),
-        ArtistProjectionIncludes::interface_descriptor(),
-        ReleaseProjectionInfo::interface_descriptor(),
-        TrackProjectionInfo::interface_descriptor(),
-        ArtistProjectionInfo::interface_descriptor(),
-        IdLink::interface_descriptor(),
+        types::LuauEntityLookupHints::interface_descriptor(),
+        types::LuauProjectionEntryInfo::interface_descriptor(),
+        types::LuauCreditProjectionInfo::interface_descriptor(),
+        types::LuauCreditedArtistProjectionInfo::interface_descriptor(),
+        types::LuauReleaseProjectionTrack::interface_descriptor(),
+        types::LuauReleaseProjectionIncludes::interface_descriptor(),
+        types::LuauTrackProjectionIncludes::interface_descriptor(),
+        types::LuauArtistProjectionIncludes::interface_descriptor(),
+        types::LuauReleaseProjectionInfo::interface_descriptor(),
+        types::LuauTrackProjectionInfo::interface_descriptor(),
+        types::LuauArtistProjectionInfo::interface_descriptor(),
+        crate::plugins::types::LuauIdLink::interface_descriptor(),
     ]
 }
 

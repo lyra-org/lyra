@@ -442,12 +442,15 @@ fn plugin_executor_declares_metadata_provider_ids_and_options() -> Result<()> {
     )?;
 
     assert_eq!(values.len(), 1);
-    let entity = crate::services::EntityType::_harmony_userdata_class().read_value(
+    let entity = crate::plugins::types::LuauEntityType::_harmony_userdata_class().read_value(
         &runtime.vm,
         "entity",
         values[0].clone(),
     )?;
-    assert_eq!(entity, crate::services::EntityType::Release);
+    assert_eq!(
+        crate::services::EntityType::from(entity),
+        crate::services::EntityType::Release
+    );
 
     let registry =
         futures::executor::block_on(crate::services::providers::provider_registry().read_owned());

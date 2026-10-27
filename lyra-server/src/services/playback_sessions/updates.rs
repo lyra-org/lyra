@@ -3,13 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use harmony_luau::{
-    DescribeInterface,
-    FieldDescriptor,
-    InterfaceDescriptor,
-    LuauType,
-    LuauTypeInfo,
-};
 use std::{
     collections::HashMap,
     sync::{
@@ -175,39 +168,6 @@ pub(crate) struct PlaybackUpdatePayload {
     pub activity_ms: u64,
     pub qualifies_single_listen: bool,
     pub updated_at_ms: u64,
-}
-
-impl LuauTypeInfo for PlaybackUpdatePayload {
-    fn luau_type() -> LuauType {
-        LuauType::literal("PlaybackUpdatePayload")
-    }
-}
-
-impl DescribeInterface for PlaybackUpdatePayload {
-    fn interface_descriptor() -> InterfaceDescriptor {
-        let field = |name: &'static str, ty: LuauType| FieldDescriptor {
-            name,
-            ty,
-            description: None,
-        };
-        InterfaceDescriptor {
-            name: "PlaybackUpdatePayload",
-            description: None,
-            fields: vec![
-                field("event", String::luau_type()),
-                field("state", PlaybackState::luau_type()),
-                field("playback_session_public_id", String::luau_type()),
-                field("track_public_id", String::luau_type()),
-                field("user_public_id", String::luau_type()),
-                field("library_public_id", Option::<String>::luau_type()),
-                field("position_ms", u64::luau_type()),
-                field("duration_ms", Option::<u64>::luau_type()),
-                field("activity_ms", u64::luau_type()),
-                field("qualifies_single_listen", bool::luau_type()),
-                field("updated_at_ms", u64::luau_type()),
-            ],
-        }
-    }
 }
 
 pub(crate) fn playback_to_payload(

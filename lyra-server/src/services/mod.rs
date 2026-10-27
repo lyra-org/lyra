@@ -7,7 +7,6 @@ use std::fmt;
 
 use serde::Serialize;
 
-#[harmony_macros::userdata(name = "EntityType")]
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]

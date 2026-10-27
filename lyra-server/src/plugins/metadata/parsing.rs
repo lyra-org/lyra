@@ -407,7 +407,9 @@ fn required_entity_type(
     key: &'static str,
 ) -> luau::runtime::Result<EntityType> {
     let value = table.get_raw(vm, key)?;
-    crate::services::EntityType::_harmony_userdata_class().read_value(vm, key, value)
+    crate::plugins::types::LuauEntityType::_harmony_userdata_class()
+        .read_value(vm, key, value)
+        .map(Into::into)
 }
 
 pub(super) fn optional_artist_type(
@@ -419,9 +421,9 @@ pub(super) fn optional_artist_type(
     if matches!(value, luau::Value::Nil) {
         return Ok(None);
     }
-    lyra_db::ArtistType::_harmony_userdata_class()
+    crate::plugins::types::LuauArtistType::_harmony_userdata_class()
         .read_value(vm, key, value)
-        .map(Some)
+        .map(|value| Some(value.into()))
 }
 
 fn optional_bool(

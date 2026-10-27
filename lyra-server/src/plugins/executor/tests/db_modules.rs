@@ -591,24 +591,30 @@ fn plugin_executor_exposes_db_backed_lyra_artists_module() -> Result<()> {
     )?;
 
     let mut values = values;
-    let artist_type = lyra_db::ArtistType::_harmony_userdata_class().read_value(
+    let artist_type = crate::plugins::types::LuauArtistType::_harmony_userdata_class().read_value(
         &runtime.vm,
         "artist_type",
         values.remove(0),
     )?;
-    let relation_type = lyra_db::ArtistRelationType::_harmony_userdata_class().read_value(
-        &runtime.vm,
-        "relation_type",
-        values.remove(0),
-    )?;
-    let credit_type = lyra_db::CreditType::_harmony_userdata_class().read_value(
+    let relation_type = crate::plugins::types::LuauArtistRelationType::_harmony_userdata_class()
+        .read_value(&runtime.vm, "relation_type", values.remove(0))?;
+    let credit_type = crate::plugins::types::LuauCreditType::_harmony_userdata_class().read_value(
         &runtime.vm,
         "credit_type",
         values.remove(0),
     )?;
-    assert_eq!(artist_type, lyra_db::ArtistType::Person);
-    assert_eq!(relation_type, lyra_db::ArtistRelationType::VoiceActor);
-    assert_eq!(credit_type, lyra_db::CreditType::Artist);
+    assert_eq!(
+        lyra_db::ArtistType::from(artist_type),
+        lyra_db::ArtistType::Person
+    );
+    assert_eq!(
+        lyra_db::ArtistRelationType::from(relation_type),
+        lyra_db::ArtistRelationType::VoiceActor
+    );
+    assert_eq!(
+        lyra_db::CreditType::from(credit_type),
+        lyra_db::CreditType::Artist
+    );
     assert_eq!(
         values,
         vec![
@@ -2111,12 +2117,15 @@ fn entities_links_include_resolves_templates_and_functions() -> Result<()> {
         ]
     );
     let seen = runtime.eval_plugin_source("demo", "seen.luau", &b"return seen_entity"[..])?;
-    let entity = crate::services::EntityType::_harmony_userdata_class().read_value(
+    let entity = crate::plugins::types::LuauEntityType::_harmony_userdata_class().read_value(
         &runtime.vm,
         "entity",
         seen[0].clone(),
     )?;
-    assert_eq!(entity, crate::services::EntityType::Release);
+    assert_eq!(
+        crate::services::EntityType::from(entity),
+        crate::services::EntityType::Release
+    );
     Ok(())
 }
 

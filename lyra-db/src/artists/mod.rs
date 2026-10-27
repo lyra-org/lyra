@@ -27,7 +27,6 @@ use serde::{
 
 use super::NodeId;
 
-#[harmony_macros::userdata(name = "ArtistType")]
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(
     Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, DbTypeMarker,
@@ -140,28 +139,6 @@ impl Artist {
         self.verified = verified;
     }
 }
-
-impl_luau_record_userdata!(
-    Artist,
-    "Artist",
-    fields {
-        db_id: Option<NodeId> as "db_id",
-        id: String as "id",
-        artist_name: String as "artist_name",
-        scan_name: String as "scan_name",
-        sort_name: Option<String> as "sort_name",
-        artist_type: Option<ArtistType> as "artist_type",
-        description: Option<String> as "description",
-        verified: bool as "verified",
-        locked: Option<bool> as "locked",
-        created_at: Option<u64> as "created_at",
-    },
-    methods {
-        set_artist_name(artist_name: String),
-        set_artist_type(artist_type: ArtistType),
-        set_verified(verified: bool),
-    }
-);
 
 pub fn get(db: &impl super::DbAccess, from: impl Into<QueryId>) -> anyhow::Result<Vec<Artist>> {
     let from = from.into();
