@@ -78,7 +78,7 @@ pub(crate) struct Row {
     pub(crate) id: DbId,
     /// The display name, which search matches against.
     pub(crate) name: String,
-    /// The lowercase sort name, which ties break on and name ranges bound.
+    /// The lowercase sort name, which search also matches, ties break on and name ranges bound.
     pub(crate) sort_name: String,
     pub(crate) values: Vec<Option<SortValue>>,
 }
@@ -244,6 +244,8 @@ struct Entry {
     row: Row,
     lower_name: String,
     score: u32,
+    /// Whether the display name scored `score`, which ranks ahead of a sort name scoring the same.
+    by_name: bool,
 }
 
 /// The matching entries in order, keeping only the first `keep` when given, and the number that
@@ -291,15 +293,22 @@ fn sorted<C: Catalog>(
             lower_name: row.name.to_lowercase(),
             row,
             score: 0,
+            by_name: false,
         })
         .collect::<Vec<_>>();
     if let Some(term) = search {
-        crate::services::search::fuzzy_filter(
-            &mut entries,
-            term,
-            |entry| entry.row.name.as_str(),
-            |entry, score| entry.score = score,
-        );
+        crate::services::search::fuzzy_retain(&mut entries, term, |entry, score| {
+            let by_name = score(&entry.row.name);
+            let by_sort_name = (entry.row.sort_name != entry.lower_name)
+                .then(|| score(&entry.row.sort_name))
+                .flatten();
+            let Some(best) = by_name.max(by_sort_name) else {
+                return false;
+            };
+            entry.score = best;
+            entry.by_name = by_name == Some(best);
+            true
+        });
     }
 
     let total = entries.len();
@@ -347,7 +356,11 @@ fn compare<K: SortKey>(
 ) -> Ordering {
     for ((key, direction), column) in sort.iter().zip(columns) {
         let ordering = match (key.kind(), column) {
-            (KeyKind::Relevance, _) => direction.apply(b.score.cmp(&a.score)),
+            (KeyKind::Relevance, _) => direction.apply(
+                b.score
+                    .cmp(&a.score)
+                    .then_with(|| b.by_name.cmp(&a.by_name)),
+            ),
             (KeyKind::Random, _) => {
                 direction.apply(shuffle(seed, a.row.id).cmp(&shuffle(seed, b.row.id)))
             }
@@ -398,4 +411,126 @@ fn shuffle(seed: u64, id: DbId) -> u64 {
     value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
     value ^ (value >> 31)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::catalog::{
+        artists::Artists,
+        releases::Releases,
+        tracks::Tracks,
+    };
+    use lyra_db::{
+        fixtures::{
+            insert_release,
+            insert_track,
+        },
+        test_db::{
+            insert_credited_artist,
+            new_test_db,
+        },
+    };
+
+    fn search<C: Catalog>(db: &DbAny, filter: C::Filter, term: &str) -> Vec<DbId> {
+        let mut query = Query::<C>::new(filter);
+        query.search = Some(term.to_string());
+        order(db, &Viewer::System, &query).expect("search runs")
+    }
+
+    /// Inserts a `display` entity and a `transliterated` one whose sort name is `sort`.
+    fn insert_pair(
+        db: &mut DbAny,
+        display: &str,
+        transliterated: &str,
+        sort: &str,
+        insert: fn(&mut DbAny, &str) -> anyhow::Result<DbId>,
+        set_sort: fn(&mut DbAny, DbId, &str) -> anyhow::Result<()>,
+    ) -> anyhow::Result<(DbId, DbId)> {
+        let by_name = insert(db, display)?;
+        let by_sort = insert(db, transliterated)?;
+        set_sort(db, by_sort, sort)?;
+        Ok((by_name, by_sort))
+    }
+
+    fn set_track_sort(db: &mut DbAny, id: DbId, sort: &str) -> anyhow::Result<()> {
+        let mut track = lyra_db::tracks::get_by_id(db, id)?.expect("track exists");
+        track.sort_title = Some(sort.to_string());
+        lyra_db::tracks::update(db, &track)
+    }
+
+    fn set_release_sort(db: &mut DbAny, id: DbId, sort: &str) -> anyhow::Result<()> {
+        let mut release = lyra_db::releases::get_by_id(db, id)?.expect("release exists");
+        release.sort_title = Some(sort.to_string());
+        lyra_db::releases::update(db, &release)
+    }
+
+    fn set_artist_sort(db: &mut DbAny, id: DbId, sort: &str) -> anyhow::Result<()> {
+        let mut artist = lyra_db::artists::get_by_id(db, id)?.expect("artist exists");
+        artist.sort_name = Some(sort.to_string());
+        lyra_db::artists::update(db, &artist)
+    }
+
+    #[test]
+    fn search_matches_sort_names_after_equal_display_name_matches() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let tracks = insert_pair(
+            &mut db,
+            "Tokyo Story",
+            "東京",
+            "Tokyo",
+            insert_track,
+            set_track_sort,
+        )?;
+        let releases = insert_pair(
+            &mut db,
+            "Tokyo Story",
+            "東京",
+            "Tokyo",
+            insert_release,
+            set_release_sort,
+        )?;
+        let artists = insert_pair(
+            &mut db,
+            "Tokyo Story",
+            "東京",
+            "Tokyo",
+            insert_credited_artist,
+            set_artist_sort,
+        )?;
+
+        for (found, (by_name, by_sort)) in [
+            (search::<Tracks>(&db, Default::default(), "tokyo"), tracks),
+            (
+                search::<Releases>(&db, Default::default(), "tokyo"),
+                releases,
+            ),
+            (search::<Artists>(&db, Default::default(), "tokyo"), artists),
+        ] {
+            assert_eq!(found, vec![by_name, by_sort]);
+        }
+        assert_eq!(
+            search::<Tracks>(&db, Default::default(), "東京"),
+            vec![tracks.1]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn search_ranks_a_better_sort_name_match_first() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (weak, strong) = insert_pair(
+            &mut db,
+            "T o k y o",
+            "東京",
+            "Tokyo",
+            insert_track,
+            set_track_sort,
+        )?;
+        assert_eq!(
+            search::<Tracks>(&db, Default::default(), "tokyo"),
+            vec![strong, weak]
+        );
+        Ok(())
+    }
 }

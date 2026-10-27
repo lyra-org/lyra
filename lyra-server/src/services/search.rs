@@ -40,6 +40,24 @@ pub(crate) fn fuzzy_filter<T>(
     text_of: impl Fn(&T) -> &str,
     set_score: impl Fn(&mut T, u32),
 ) {
+    fuzzy_retain(entries, needle, |entry, score| {
+        match score(text_of(entry)) {
+            Some(value) => {
+                set_score(entry, value);
+                true
+            }
+            None => false,
+        }
+    });
+}
+
+/// Keeps the entries `keep` accepts, handing it a scorer for any of the entry's texts, under the
+/// same needle rules as [`fuzzy_filter`]. `keep` must not call back into this.
+pub(crate) fn fuzzy_retain<T>(
+    entries: &mut Vec<T>,
+    needle: &str,
+    mut keep: impl FnMut(&mut T, &mut dyn FnMut(&str) -> Option<u32>) -> bool,
+) {
     let trimmed = needle.trim();
     if trimmed.is_empty() {
         return;
@@ -53,16 +71,8 @@ pub(crate) fn fuzzy_filter<T>(
 
     MATCHER.with_borrow_mut(|matcher| {
         let mut buf = Vec::new();
-        entries.retain_mut(|entry| {
-            let utf32 = Utf32Str::new(text_of(entry), &mut buf);
-            match pattern.score(utf32, matcher) {
-                Some(score) => {
-                    set_score(entry, score);
-                    true
-                }
-                None => false,
-            }
-        });
+        let mut score = |text: &str| pattern.score(Utf32Str::new(text, &mut buf), matcher);
+        entries.retain_mut(|entry| keep(entry, &mut score));
     });
 }
 
