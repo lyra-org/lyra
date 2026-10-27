@@ -1,0 +1,15 @@
+run_as = "listener"
+
+# A listener who sees no playlist: the admin's only one is private.
+
+[[users]]
+key = "admin"
+admin = true
+
+[[users]]
+key = "listener"
+
+[[playlists]]
+key = "mix"
+owner = "admin"
+name = "Mix"

@@ -1,0 +1,30 @@
+run_as = "admin"
+
+# The owner has a private "Mix" and a public "Shared"; the admin owns "Own".
+
+[[users]]
+key = "owner"
+
+[[users]]
+key = "admin"
+admin = true
+
+[[api_keys]]
+key = "admin_key"
+user = "admin"
+
+[[playlists]]
+key = "mix"
+owner = "owner"
+name = "Mix"
+
+[[playlists]]
+key = "shared"
+owner = "owner"
+name = "Shared"
+public = true
+
+[[playlists]]
+key = "own"
+owner = "admin"
+name = "Own"

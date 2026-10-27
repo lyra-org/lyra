@@ -83,7 +83,7 @@ function module.list_instant_mix_audio(
 		return empty_items, 0, start_index, false
 	end
 
-	local kind = lookups.visible_kind(item_id)
+	local kind = lookups.visible_kind(item_id, options.user_id)
 	if not kind then
 		return empty_items, 0, start_index, false
 	end

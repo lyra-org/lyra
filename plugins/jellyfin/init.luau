@@ -1009,6 +1009,9 @@ api.get(P .. "/Users/{userId}/Items/{itemId}", function(ctx: ApiContext)
 	if not raw_item_id then
 		return responses.bad_request("missing item id")
 	end
+	if constants.is_playlists_folder_id(raw_item_id) then
+		return api.response.json(200, catalog.item_to_json(catalog.playlists_folder_item(nil)))
+	end
 
 	local item = listing.find_item_by_id(item_ids.decode_jellyfin_item_id(raw_item_id), principal.user_id, true)
 	if not item then
@@ -1033,6 +1036,9 @@ api.get(P .. "/Items/{id}", function(ctx: ApiContext)
 	end
 	if constants.is_root_item_id(raw_id) then
 		return api.response.json(200, root_folder_json(principal.user_id))
+	end
+	if constants.is_playlists_folder_id(raw_id) then
+		return api.response.json(200, catalog.item_to_json(catalog.playlists_folder_item(nil)))
 	end
 
 	local item = listing.find_item_by_id(item_ids.decode_jellyfin_item_id(raw_id), principal.user_id, true)
@@ -1217,32 +1223,7 @@ api.post(P .. "/Playlists", function(ctx: ApiContext)
 		Id = jellyfin_playlist_id,
 	})
 end, "public", true)
-api.delete(P .. "/Items/{id}", function(ctx: ApiContext): ApiResponse
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-	if not session.require_matching_user_scope(ctx, principal) then
-		return session.unauthorized()
-	end
-
-	local playlist = playlist_access.find(item_ids.decode_jellyfin_item_id(ctx.params.id))
-	if not playlist or playlist.db_id == nil then
-		return responses.not_found("playlist not found")
-	end
-	local can_edit, edit_err = session.ensure_playlist_editable(playlist, principal)
-	if not can_edit then
-		return edit_err or responses.forbidden("playlist is read-only")
-	end
-	local ok, deleted = pcall(playlists.delete, playlist.db_id)
-	if not ok then
-		return responses.bad_request("failed to delete playlist")
-	end
-	if not deleted then
-		return responses.not_found("playlist not found")
-	end
-	return api.response.empty(204)
-end, "public", true)
+api.delete(P .. "/Items/{id}", session.handle_delete_item_route, "public", true)
 api.post(P .. "/Playlists/{playlistId}/Items", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -1304,13 +1285,11 @@ api.delete(P .. "/Playlists/{playlistId}/Items", function(ctx: ApiContext)
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
 	local entry_ids = session.parse_playlist_query_entry_ids(query, playlist)
-	if not entry_ids or #entry_ids == 0 then
-		return responses.bad_request("invalid or missing playlist entryIds")
-	end
-
-	local ok, removed = pcall(playlists.remove_tracks, playlist.id, entry_ids)
-	if not ok or not removed then
-		return responses.bad_request("failed to remove playlist entry")
+	if #entry_ids > 0 then
+		local ok, removed = pcall(playlists.remove_tracks, playlist.id, entry_ids)
+		if not ok or not removed then
+			return responses.bad_request("failed to remove playlist entry")
+		end
 	end
 
 	return api.response.empty(204)
@@ -1336,11 +1315,12 @@ api.post(P .. "/Playlists/{playlistId}/Items/{itemId}/Move/{newIdx}", function(c
 	if not string.match(raw_position, "^%d+$") or not position or position > 9007199254740991 then
 		return responses.bad_request("newIdx must be a non-negative integer within the exact numeric range")
 	end
-	local entry_ids = playlist_access.resolve_entry_ids(playlist, { ctx.params.itemId })
-	if not entry_ids or #entry_ids ~= 1 then
-		return responses.not_found("playlist entry not found")
+	-- Upstream moves the item's first entry, and moves nothing for an item the playlist lacks.
+	local entry_id: string? = playlist_access.entries_of_items(playlist, { ctx.params.itemId })[1]
+	if entry_id == nil then
+		return api.response.empty(204)
 	end
-	local ok, moved = pcall(playlists.move_track, playlist.db_id, entry_ids[1], position)
+	local ok, moved = pcall(playlists.move_track, playlist.db_id, entry_id, position)
 	if not ok then
 		return responses.bad_request("failed to move playlist entry")
 	end

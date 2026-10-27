@@ -65,7 +65,7 @@ function module.list_similar_items(
 		return {}, 0, 0, false
 	end
 
-	local kind = lookups.visible_kind(item_id)
+	local kind = lookups.visible_kind(item_id, options.user_id)
 	if kind == nil then
 		return {}, 0, 0, false
 	end

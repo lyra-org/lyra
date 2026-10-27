@@ -4,7 +4,6 @@
 -- You can obtain one here:
 -- www.meshiplaw.com/lyra.
 
-local constants = require("../constants")
 local item_ids = require("./items/identifiers")
 local playlists = require("@lyra/playlists")
 
@@ -64,6 +63,28 @@ function module.list_owned(): { PlaylistInfo }
 	return playlist_items
 end
 
+-- Playlists the dispatch principal sees as upstream shows them: its own and the public ones,
+-- whatever its role.
+function module.list_visible(): { PlaylistInfo }
+	local visible = module.list_owned()
+	local owned: { [number]: boolean } = {}
+	for _, playlist in visible do
+		if playlist.db_id then
+			owned[playlist.db_id] = true
+		end
+	end
+	local ok, listed = pcall(playlists.list)
+	if not ok or type(listed) ~= "table" then
+		return visible
+	end
+	for _, playlist in listed :: { PlaylistInfo } do
+		if playlist.is_public == true and playlist.db_id and not owned[playlist.db_id] then
+			table.insert(visible, playlist)
+		end
+	end
+	return visible
+end
+
 function module.load_track_refs(playlist: PlaylistInfo?): { PlaylistTrackLink }?
 	local playlist_id = if playlist then playlist.db_id else nil
 	if playlist_id == nil or playlist_id <= 0 then
@@ -94,28 +115,24 @@ function module.track_ids(playlist: PlaylistInfo): { number }
 	return track_ids
 end
 
-function module.resolve_entry_ids(playlist: PlaylistInfo, raw_ids: { string }): { string }?
-	local by_hex: { [string]: string } = {}
-	for _, entry in module.track_refs(playlist) do
-		local hex_id = item_ids.encode_jellyfin_item_id(entry.entry_id)
-		if hex_id then
-			by_hex[hex_id] = entry.entry_id
-		end
-	end
-	local resolved: { string } = {}
-	local seen: { [string]: boolean } = {}
+-- Upstream names a playlist entry by its item: `PlaylistItemId` is the track's id, and requests
+-- that name one match every entry of that track, in playlist order. Ids that match none are
+-- ignored, as upstream.
+function module.entries_of_items(playlist: PlaylistInfo, raw_ids: { string }): { string }
+	local wanted: { [number]: boolean } = {}
 	for _, raw_id in raw_ids do
-		local hex_id = constants.normalize_item_id(raw_id)
-		local entry_id = if hex_id then by_hex[hex_id] else nil
-		if not hex_id or entry_id == nil then
-			return nil
-		end
-		if not seen[hex_id] then
-			seen[hex_id] = true
-			table.insert(resolved, entry_id)
+		local track_id = item_ids.decode_jellyfin_item_id(raw_id)
+		if track_id then
+			wanted[track_id] = true
 		end
 	end
-	return resolved
+	local entry_ids: { string } = {}
+	for _, entry in module.track_refs(playlist) do
+		if wanted[entry.track_id] then
+			table.insert(entry_ids, entry.entry_id)
+		end
+	end
+	return entry_ids
 end
 
 return module

@@ -1289,6 +1289,25 @@ function module.to_music_view_items(include_child_count: boolean): { ItemInfo }
 	return items
 end
 
+-- Upstream's playlists view, the folder its playlists live in.
+function module.playlists_folder_item(child_count: number?): ItemInfo
+	local id = constants.PLAYLISTS_FOLDER_ID
+	return {
+		Id = id,
+		Name = "Playlists",
+		SortName = "playlists",
+		Type = "ManualPlaylistsFolder",
+		CollectionType = "playlists",
+		IsFolder = true,
+		UserData = user_data.get_user_data({ key = id, item_hex_id = id }),
+		LocationType = "FileSystem",
+		MediaType = "Unknown",
+		DisplayPreferencesId = id,
+		ParentId = constants.ROOT_ITEM_ID,
+		ChildCount = child_count,
+	} :: ItemInfo
+end
+
 function helpers.to_playlist_item(
 	playlist: PlaylistInfo?,
 	user_id: string?,

@@ -1,7 +1,9 @@
 local fixture = ...
+local constants = require("../../constants")
 local item_ids = require("../../protocol/items/identifiers")
 local listing = require("../../protocol/items/listing")
 local options = require("../../protocol/items/options")
+local playlist_access = require("../../protocol/playlist_access")
 
 type Params = { [string]: string }
 
@@ -171,4 +173,35 @@ do
 	)
 	check(latest({ Limit = "1" }), "Solo:MusicAlbum", "the limit counts albums")
 	check(latest({ GroupItems = "false" }), "V1:Audio,S2:Audio,S1:Audio")
+end
+
+-- The playlists view lists the playlists the caller sees, whatever type is named, as upstream.
+do
+	constants.configure_root_item_id(string.rep("1", 32))
+	local folder = constants.PLAYLISTS_FOLDER_ID
+	local view = "Playlists:ManualPlaylistsFolder (1)"
+	check(list(listing.list_views, {}), view, "the view shows while the caller sees a playlist")
+	check(items({ IncludeItemTypes = "ManualPlaylistsFolder", ExcludeItemTypes = "CollectionFolder" }), view)
+	check(items({ Ids = folder }), view)
+	local all = "Liked:Playlist,Mix:Playlist,Played:Playlist,Shared:Playlist (4)"
+	check(items({ ParentId = folder, SortBy = "SortName" }), all)
+	check(items({ ParentId = folder, IncludeItemTypes = "Audio" }), all, "the view lists playlists only")
+	check(items({ ParentId = folder, Filters = "IsFavorite" }), "Liked:Playlist (1)")
+end
+
+-- As upstream, an entry's PlaylistItemId is its track's id, which names every entry of the track.
+do
+	local mix = playlist_access.find(ids.mix) :: any
+	local entries = fixture.entries.mix
+	local tracks = listing.list_playlist_track_items(mix, options.for_user(options.parse(nil), fixture.users.admin))
+	assert(#tracks == 4, `four entries, got {#tracks}`)
+	for _, track in tracks do
+		assert(track.PlaylistItemId == track.Id, `PlaylistItemId {track.PlaylistItemId} is the track id {track.Id}`)
+	end
+	local matched = playlist_access.entries_of_items(mix, { hex(ids.s2), "unknown", hex(ids.liked) })
+	assert(
+		#matched == 2 and matched[1] == entries[2] and matched[2] == entries[4],
+		"a track names each of its entries, and ids that match none are ignored"
+	)
+	assert(#playlist_access.entries_of_items(mix, { hex(ids.v1) }) == 1)
 end

@@ -15,6 +15,7 @@ local releases = require("@lyra/releases")
 local tracks = require("@lyra/tracks")
 
 local catalog = require("./catalog")
+local constants = require("../../constants")
 local item_ids = require("./identifiers")
 local lookups = require("./lookups")
 local options_module = require("./options")
@@ -129,17 +130,17 @@ local function playlist_source(options: ItemsQueryOptions, scope: Scope): Source
 	end
 	local search = if options.search_term then string.lower(options.search_term) else nil
 
-	-- `Ids` may name playlists others share; without it, the caller's own playlists list.
+	-- `Ids` may name any playlist the caller can see; without it, every one lists.
 	local candidates: { PlaylistInfo } = {}
 	if wanted ~= nil then
 		for id in wanted do
 			local playlist = playlist_access.find(id)
-			if playlist then
+			if playlist and playlist_access.can_view(playlist, options.user_id) then
 				table.insert(candidates, playlist)
 			end
 		end
 	else
-		candidates = playlist_access.list_owned()
+		candidates = playlist_access.list_visible()
 	end
 
 	local shown: { PlaylistInfo } = {}
@@ -248,19 +249,25 @@ local function in_request_order(
 			end
 		end
 	end
+	-- Views without an entity of their own match by their item id.
+	local found_views: { [string]: ItemInfo } = {}
 	for _, extra in extras do
 		local id = item_ids.decode_jellyfin_item_id(extra.Id)
 		if id then
 			found[id] = extra
+		elseif extra.Id then
+			found_views[extra.Id] = extra
 		end
 	end
 
 	local ordered: { ItemInfo } = {}
-	local seen: { [number]: boolean } = {}
-	for _, id in item_ids.parse_jellyfin_ids_array(options.ids) do
-		local stub = found[id]
-		if stub and not seen[id] then
-			seen[id] = true
+	local seen: { [ItemInfo]: boolean } = {}
+	for _, raw_id in options.ids do
+		local id = item_ids.decode_jellyfin_item_id(raw_id)
+		local view_id = constants.normalize_item_id(raw_id)
+		local stub = if id then found[id] elseif view_id then found_views[view_id] else nil
+		if stub and not seen[stub] then
+			seen[stub] = true
 			table.insert(ordered, stub)
 		end
 	end
@@ -285,10 +292,28 @@ local function sorted(options: ItemsQueryOptions): boolean
 	return false
 end
 
--- Genres and libraries named by `Ids`; they don't list otherwise.
-local function named_extras(options: ItemsQueryOptions): { ItemInfo }
+-- Whether `IncludeItemTypes` names `item_type` itself, not just by naming no type.
+local function names_item_type(options: ItemsQueryOptions, item_type: string): boolean
+	if #options.include_item_types == 0 then
+		return false
+	end
+	return options_module.wants_item_type(options, item_type)
+end
+
+-- Playlists the caller sees, by the folder upstream lists them under.
+local function playlists_folder(options: ItemsQueryOptions): ItemInfo
+	local count = if options.include_child_count then #playlist_access.list_visible() else nil
+	return catalog.playlists_folder_item(count)
+end
+
+-- Genres and libraries named by `Ids`, and the playlists view when `Ids` or `IncludeItemTypes`
+-- names it; they don't list otherwise.
+local function named_extras(options: ItemsQueryOptions, scope: Scope): { ItemInfo }
 	local extras: { ItemInfo } = {}
 	if #options.ids == 0 then
+		if scope.db_id == nil and names_item_type(options, "manualplaylistsfolder") then
+			table.insert(extras, playlists_folder(options))
+		end
 		return extras
 	end
 	if options_module.wants_item_type(options, "musicgenre") then
@@ -310,6 +335,14 @@ local function named_extras(options: ItemsQueryOptions): { ItemInfo }
 		for _, view in catalog.to_music_view_items(options.include_child_count) do
 			if view.Id and wanted[view.Id] then
 				table.insert(extras, view)
+			end
+		end
+	end
+	if options_module.wants_item_type(options, "manualplaylistsfolder") then
+		for _, id in options.ids do
+			if constants.is_playlists_folder_id(id) then
+				table.insert(extras, playlists_folder(options))
+				break
 			end
 		end
 	end
@@ -380,7 +413,7 @@ local function list(options: ItemsQueryOptions, playlist_order: boolean): ({ Ite
 		add(playlist_source(options, scope))
 	end
 
-	local extras = named_extras(options)
+	local extras = named_extras(options, scope)
 	local stubs: { ItemInfo }, total: number
 	if #options.ids > 0 and (if playlist_order then not sorted(options) else #options.sort_by == 0) then
 		stubs, total = in_request_order(sources, options, extras)
@@ -397,6 +430,13 @@ local function list(options: ItemsQueryOptions, playlist_order: boolean): ({ Ite
 end
 
 function module.list_items(options: ItemsQueryOptions): ({ ItemInfo }, number, number)
+	-- As upstream, the playlists view lists every playlist the caller sees, whatever type is named.
+	if constants.is_playlists_folder_id(options.parent_id) then
+		options = table.clone(options)
+		options.parent_id = nil
+		options.include_item_types = { "Playlist" }
+		options.recursive = true
+	end
 	local scope = lookups.scope(options.parent_id)
 	local child_types = if scope.entity_type then CHILD_TYPES[scope.entity_type] else nil
 	if child_types and #options.include_item_types == 0 then
@@ -510,11 +550,20 @@ function module.list_genre_items(options: ItemsQueryOptions): ({ ItemInfo }, num
 	return items, page.total, page.offset
 end
 
--- Library views answer searches by name and sort by name.
+-- Library views answer searches by name and sort by name. As upstream, the playlists view shows
+-- only while the caller can see a playlist.
 function module.list_views(options: ItemsQueryOptions): ({ ItemInfo }, number, number)
 	local search = if options.search_term then string.lower(options.search_term) else nil
+	local candidates = catalog.to_music_view_items(options.include_child_count)
+	local visible_playlists = #playlist_access.list_visible()
+	if visible_playlists > 0 then
+		table.insert(
+			candidates,
+			catalog.playlists_folder_item(if options.include_child_count then visible_playlists else nil)
+		)
+	end
 	local views: { ItemInfo } = {}
-	for _, view in catalog.to_music_view_items(options.include_child_count) do
+	for _, view in candidates do
 		if search == nil or string.find(string.lower(view.Name or ""), search, 1, true) ~= nil then
 			table.insert(views, view)
 		end
@@ -643,19 +692,18 @@ function module.list_playlist_track_items(
 	local tracks_by_id: { [number]: tracks.Track } = if #track_ids > 0 then tracks.get(track_ids) else {}
 
 	local entries: { tracks.Track } = {}
-	local entry_ids: { string? } = {}
 	for _, track_ref in track_refs do
 		local track = tracks_by_id[track_ref.track_id]
 		if track then
 			table.insert(entries, track)
-			table.insert(entry_ids, item_ids.encode_jellyfin_item_id(track_ref.entry_id))
 		end
 	end
 
+	-- As upstream, an entry's `PlaylistItemId` is its track's id.
 	local page, total_count, start_index = results.paginate_items(entries, options.start_index, options.limit)
 	local items = catalog.realize(catalog.track_stubs(page), options)
-	for index, item in items do
-		item.PlaylistItemId = entry_ids[start_index + index]
+	for _, item in items do
+		item.PlaylistItemId = item.Id
 	end
 	return items, total_count, start_index
 end

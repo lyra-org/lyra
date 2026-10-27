@@ -31,8 +31,9 @@ function module.scope_entity_type(scope: number?): string?
 	return if ok and type(element_type) == "string" then element_type else nil
 end
 
--- The kind of entity `item_id` is, when the caller can see it.
-function module.visible_kind(item_id: number): string?
+-- The kind of entity `item_id` is, when the caller can see it. A playlist is visible as upstream
+-- shows it, to its owner or as a public one, whatever the caller's role.
+function module.visible_kind(item_id: number, user_id: string?): string?
 	local kind = module.scope_entity_type(item_id)
 	local visible: boolean
 	if kind == "Release" then
@@ -44,7 +45,7 @@ function module.visible_kind(item_id: number): string?
 	elseif kind == "Genre" then
 		visible = genres.get({ item_id })[item_id] ~= nil
 	elseif kind == "Playlist" then
-		visible = playlist_access.find(item_id) ~= nil
+		visible = playlist_access.can_view(playlist_access.find(item_id), user_id)
 	else
 		visible = kind ~= nil
 	end

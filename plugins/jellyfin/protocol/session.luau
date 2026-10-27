@@ -590,20 +590,16 @@ function module.parse_playlist_query_track_ids(query: ApiQueryParams?): { number
 	return item_ids.parse_jellyfin_ids_csv(raw_ids)
 end
 
-function module.parse_playlist_query_entry_ids(query: ApiQueryParams?, playlist: PlaylistInfo): { string }?
+function module.parse_playlist_query_entry_ids(query: ApiQueryParams?, playlist: PlaylistInfo): { string }
 	local raw = requests.parse_query_string(query, { "entryIds", "EntryIds", "entryids" }, nil)
-	if not raw then
-		return nil
-	end
 	local raw_ids: { string } = {}
-	for _, value in string.split(raw, ",") do
+	for _, value in if raw then string.split(raw, ",") else {} do
 		local trimmed = requests.trim(value)
-		if not trimmed then
-			return nil
+		if trimmed then
+			table.insert(raw_ids, trimmed)
 		end
-		table.insert(raw_ids, trimmed)
 	end
-	return playlist_access.resolve_entry_ids(playlist, raw_ids)
+	return playlist_access.entries_of_items(playlist, raw_ids)
 end
 
 function module.ensure_user_scope_matches_principal(requested_user_id: string?, principal: Principal): boolean
@@ -643,6 +639,34 @@ function module.ensure_playlist_editable(playlist: PlaylistInfo, principal: Prin
 	end
 
 	return false, responses.forbidden("playlist is read-only")
+end
+
+-- Deletes a playlist as upstream's item delete does: one the caller can't see isn't found, one
+-- it can see is deleted by its owner or an admin, and anyone else is unauthorized.
+function module.handle_delete_item_route(ctx: ApiContext): ApiResponse
+	local principal = module.require_jellyfin_principal(ctx)
+	if not principal then
+		return module.unauthorized()
+	end
+	if not module.require_matching_user_scope(ctx, principal) then
+		return module.unauthorized()
+	end
+
+	local playlist = playlist_access.find(item_ids.decode_jellyfin_item_id(ctx.params.id))
+	if not playlist or playlist.db_id == nil or not playlist_access.can_view(playlist, principal.user_id) then
+		return responses.not_found("item not found")
+	end
+	if not playlist_access.can_edit(playlist, principal.user_id) and not module.is_admin(principal) then
+		return module.unauthorized()
+	end
+	local ok, deleted = pcall(playlists.delete, playlist.db_id)
+	if not ok then
+		return responses.bad_request("failed to delete playlist")
+	end
+	if not deleted then
+		return responses.not_found("item not found")
+	end
+	return api.response.empty(204)
 end
 
 local function playlist_item_ids(playlist: PlaylistInfo): { string }

@@ -6,6 +6,8 @@
 
 local plugins = require("@lyra/plugins")
 
+local crypt = require("@harmony/crypt")
+
 local encoding = require("./encoding")
 
 type SettingsBuilder = plugins.SettingsBuilder
@@ -18,6 +20,7 @@ local module = {
 	ITEM_ID_HEX_PATTERN = "^[0-9a-f]+$",
 	EMPTY_ITEM_ID = string.rep("0", 32),
 	ROOT_ITEM_ID = "",
+	PLAYLISTS_FOLDER_ID = "",
 	DEFAULT_ITEMS_FIELDS = {
 		"ChildCount",
 		"DateCreated",
@@ -62,11 +65,18 @@ function module.configure_root_item_id(value: string)
 		error("Jellyfin root item id cannot be the empty GUID")
 	end
 	module.ROOT_ITEM_ID = normalized
+	-- The playlists view has no entity of its own; its id follows the root's.
+	module.PLAYLISTS_FOLDER_ID = module.normalize_item_id(crypt.hash("xxh3_128", `{normalized}:playlists`)) or ""
 end
 
 function module.is_root_item_id(value: string?): boolean
 	local normalized = module.normalize_item_id(value)
 	return normalized == module.ROOT_ITEM_ID or normalized == EMPTY_ITEM_ID
+end
+
+function module.is_playlists_folder_id(value: string?): boolean
+	local normalized = module.normalize_item_id(value)
+	return normalized ~= nil and normalized == module.PLAYLISTS_FOLDER_ID
 end
 
 function module.declare_settings(builder: SettingsBuilder)
