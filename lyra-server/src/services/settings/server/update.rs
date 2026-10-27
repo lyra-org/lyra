@@ -20,7 +20,6 @@ use anyhow::{
 use serde_json::Value;
 
 use super::{
-    RECOVERY_HINT,
     ResolvedSettings,
     load_stored,
     registry,
@@ -141,7 +140,7 @@ pub(crate) fn republish(db: &mut agdb::DbAny) -> Result<()> {
         Err(error) => {
             tracing::error!(
                 error = %error,
-                "stored server settings were written but could not be applied; the database is ahead of the running config; {RECOVERY_HINT}"
+                "stored server settings were written but could not be applied; the database is ahead of the running config"
             );
             Err(error)
         }

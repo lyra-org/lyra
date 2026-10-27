@@ -46,8 +46,6 @@ pub(crate) use update::{
 /// The `config.json` settings layer: values by setting key.
 pub(crate) type FileSettings = BTreeMap<String, serde_json::Value>;
 
-pub(super) const RECOVERY_HINT: &str = "run `lyra settings reset` to clear stored server settings";
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ApplyMode {
     Live,
@@ -189,10 +187,7 @@ pub(crate) fn load_stored(db: &mut agdb::DbAny) -> Result<Vec<StoredSetting>> {
         .into_iter()
         .map(|entry| {
             let value = serde_json::from_str(&entry.value).with_context(|| {
-                format!(
-                    "stored server setting '{}' is not valid JSON; {RECOVERY_HINT}",
-                    entry.key
-                )
+                format!("stored server setting '{}' is not valid JSON", entry.key)
             })?;
             Ok(StoredSetting {
                 key: entry.key,
@@ -230,7 +225,7 @@ pub(crate) fn resolve(
     for entry in stored {
         if registry.definition(&entry.key).is_none() {
             bail!(
-                "stored server setting '{}' is not a declared setting; {RECOVERY_HINT}",
+                "stored server setting '{}' is not a declared setting",
                 entry.key
             );
         }
@@ -244,9 +239,9 @@ pub(crate) fn resolve(
         let (mut value, mut source) = (default, SettingSource::Default);
 
         if let Some(entry) = stored.iter().find(|entry| entry.key == key) {
-            value = kind.normalize(&entry.value, data_dir).map_err(|err| {
-                anyhow!("stored server setting '{key}' is invalid: {err}; {RECOVERY_HINT}")
-            })?;
+            value = kind
+                .normalize(&entry.value, data_dir)
+                .map_err(|err| anyhow!("stored server setting '{key}' is invalid: {err}"))?;
             source = SettingSource::Database;
         }
 
@@ -497,7 +492,7 @@ mod tests {
     }
 
     #[test]
-    fn undeclared_stored_key_fails_with_recovery_hint() {
+    fn undeclared_stored_key_fails() {
         let stored = stored(&[("legacy.key", json!(1))]);
 
         let error = resolve(&data_dir(), None, FileSettings::default(), &stored)
@@ -505,11 +500,10 @@ mod tests {
 
         let message = error.to_string();
         assert!(message.contains("'legacy.key'"));
-        assert!(message.contains("lyra settings reset"));
     }
 
     #[test]
-    fn invalid_stored_value_fails_with_recovery_hint() {
+    fn invalid_stored_value_fails() {
         let stored = stored(&[("rate_limit.login_burst", json!("many"))]);
 
         let error = resolve(&data_dir(), None, FileSettings::default(), &stored)
@@ -517,7 +511,6 @@ mod tests {
 
         let message = error.to_string();
         assert!(message.contains("'rate_limit.login_burst'"));
-        assert!(message.contains("lyra settings reset"));
     }
 
     #[test]
@@ -597,7 +590,7 @@ mod tests {
     }
 
     #[test]
-    fn load_stored_rejects_malformed_json_with_recovery_hint() -> anyhow::Result<()> {
+    fn load_stored_rejects_malformed_json() -> anyhow::Result<()> {
         let mut db = lyra_db::test_db::new_test_db()?;
         load_stored(&mut db)?;
         let parent = stored_parent(&db)?;
@@ -610,7 +603,6 @@ mod tests {
 
         let error = load_stored(&mut db).expect_err("malformed JSON should fail");
         assert!(error.to_string().contains("'auth.enabled'"));
-        assert!(error.to_string().contains("lyra settings reset"));
         Ok(())
     }
 }
