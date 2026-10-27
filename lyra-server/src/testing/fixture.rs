@@ -99,6 +99,8 @@ struct Artist {
     name: String,
     #[serde(rename = "type")]
     artist_type: Option<lyra_db::ArtistType>,
+    /// A manually edited type, ranked above the scanned one.
+    manual_type: Option<lyra_db::ArtistType>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -334,6 +336,23 @@ impl Fixture {
             layer.supply(MetadataField::ArtistName, Some(artist.name.as_str()));
             layer.supply(MetadataField::ArtistType, artist.artist_type);
             save_local(db, artist_db_id, layer)?;
+            if let Some(manual_type) = artist.manual_type {
+                let layer = lyra_db::MetadataLayer::new(
+                    services::metadata::layers::MANUAL_SOURCE_ID,
+                    lyra_db::metadata::layers::LayerFields::from([(
+                        MetadataField::ArtistType,
+                        Some(manual_type.into()),
+                    )]),
+                    0,
+                );
+                db.transaction_mut(|t| {
+                    lyra_db::metadata::layers::upsert_inside_tx(t, artist_db_id, &layer)?;
+                    services::metadata::merging::apply_merged_metadata_to_entity_inside_tx(
+                        t,
+                        artist_db_id,
+                    )
+                })?;
+            }
             keys.entities.insert(
                 artist.key.clone(),
                 (artist_db_id, lyra_db::favorites::FavoriteKind::Artist),

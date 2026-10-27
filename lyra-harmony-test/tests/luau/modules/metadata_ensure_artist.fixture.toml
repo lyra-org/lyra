@@ -7,3 +7,17 @@ admin = true
 [[artists]]
 key = "amy"
 name = "Amy"
+
+[[artists]]
+key = "chara"
+name = "Chara"
+type = "character"
+
+[[artists]]
+key = "manny"
+name = "Manny"
+manual_type = "character"
+
+[[artists]]
+key = "otto"
+name = "Otto"

@@ -73,6 +73,7 @@ seen = 300                # optional last_seen_at, in unix seconds
 key = "amy"
 name = "Amy"
 type = "person"      # optional artist type
+manual_type = "group" # optional manually edited artist type
 
 [[genres]]
 key = "rock"

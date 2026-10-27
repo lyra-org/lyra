@@ -617,14 +617,18 @@ fn ensure_artist_callback(
             Some("Artist"),
         )
         .map_err(crate::plugins::runtime_error)?
-            && let Some(artist) = lyra_db::artists::get_by_id(&db_write, owner_id)
+            && lyra_db::artists::get_by_id(&db_write, owner_id)
                 .map_err(crate::plugins::runtime_error)?
+                .is_some()
         {
-            if let (Some(existing_type), Some(incoming_type)) = (artist.artist_type, artist_type)
-                && existing_type != incoming_type
+            if let (Some(scanned_type), Some(incoming_type)) = (
+                crate::services::metadata::layers::scanned_artist_type(&db_write, owner_id)
+                    .map_err(crate::plugins::runtime_error)?,
+                artist_type,
+            ) && scanned_type != incoming_type
             {
                 return Err(crate::plugins::runtime_error(format!(
-                    "provider:ensure_artist: {id_type} '{id_value}' is already attached to artist type '{existing_type}', not '{incoming_type}'"
+                    "provider:ensure_artist: {id_type} '{id_value}' is already attached to scanned artist type '{scanned_type}', not '{incoming_type}'"
                 )));
             }
             resolved_artist_id = Some(owner_id);
@@ -636,14 +640,16 @@ fn ensure_artist_callback(
             let mut candidates = lyra_db::artists::with_scan_name(&db_write, scan_name)
                 .map_err(crate::plugins::runtime_error)?
                 .into_iter()
-                .filter_map(|artist| Some((DbId::from(artist.db_id.clone()?), artist)))
+                .filter_map(|artist| artist.db_id.map(DbId::from))
                 .collect::<Vec<_>>();
-            candidates.sort_by_key(|(id, _)| id.0);
+            candidates.sort_by_key(|id| id.0);
 
-            for (candidate_id, candidate_artist) in candidates {
-                if let (Some(existing_type), Some(incoming_type)) =
-                    (candidate_artist.artist_type, artist_type)
-                    && existing_type != incoming_type
+            for candidate_id in candidates {
+                if let (Some(scanned_type), Some(incoming_type)) = (
+                    crate::services::metadata::layers::scanned_artist_type(&db_write, candidate_id)
+                        .map_err(crate::plugins::runtime_error)?,
+                    artist_type,
+                ) && scanned_type != incoming_type
                 {
                     continue;
                 }

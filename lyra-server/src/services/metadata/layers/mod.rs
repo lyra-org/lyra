@@ -23,6 +23,7 @@ use agdb::{
 use crate::services::EntityType;
 use lyra_db::{
     ArtistRelationType,
+    ArtistType,
     CreditType,
     IdSource,
     MetadataField,
@@ -140,32 +141,49 @@ pub(super) fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-fn artist_type_conflicts_with_layer(
-    artist: Option<&lyra_db::Artist>,
-    fields: &FieldInputs,
-    node_id: DbId,
-    provider_id: &str,
-) -> bool {
-    let Some(existing_type) = artist.and_then(|artist| artist.artist_type) else {
-        return false;
+/// The type the scanned files give an artist: its identity evidence, which
+/// providers must agree with.
+pub(crate) fn scanned_artist_type(
+    db: &DbAny,
+    artist_id: DbId,
+) -> anyhow::Result<Option<ArtistType>> {
+    let Some(local_layer) = lyra_db::metadata::layers::get_for_entity(db, artist_id)?
+        .into_iter()
+        .find(|layer| layer.source_id == LOCAL_SOURCE_ID)
+    else {
+        return Ok(None);
     };
+    lyra_db::metadata::layers::field_value(&local_layer.fields, MetadataField::ArtistType)
+}
+
+/// Whether a provider names a different type than the scanned files; its own
+/// earlier type and manual edits do not conflict.
+fn artist_type_conflicts_with_layer(
+    db: &DbAny,
+    node_id: DbId,
+    fields: &FieldInputs,
+    provider_id: &str,
+) -> anyhow::Result<bool> {
     let Some(Some(FieldInput::Value(FieldValue::ArtistType(incoming_type)))) =
         fields.get(&MetadataField::ArtistType)
     else {
-        return false;
+        return Ok(false);
     };
-    if existing_type == *incoming_type {
-        return false;
+    let Some(scanned_type) = scanned_artist_type(db, node_id)? else {
+        return Ok(false);
+    };
+    if scanned_type == *incoming_type {
+        return Ok(false);
     }
 
     tracing::warn!(
         node_id = node_id.0,
         provider_id,
-        existing_artist_type = %existing_type,
+        scanned_artist_type = %scanned_type,
         incoming_artist_type = %incoming_type,
         "skipping provider artist identity update with conflicting artist_type"
     );
-    true
+    Ok(true)
 }
 
 /// What a provider supplies for one entity in a layer save.
@@ -231,8 +249,8 @@ pub(crate) fn save_provider_layer(
 ) -> anyhow::Result<()> {
     ensure_supported(db, node_id, &values.fields)?;
     let artist = lyra_db::artists::get_by_id(db, node_id)?;
-    let artist_type_conflict =
-        artist_type_conflicts_with_layer(artist.as_ref(), &values.fields, node_id, provider_id);
+    let artist_type_conflict = artist.is_some()
+        && artist_type_conflicts_with_layer(db, node_id, &values.fields, provider_id)?;
 
     let has_content = !values.relations.is_empty()
         || !values.credits.is_empty()
@@ -525,7 +543,7 @@ mod tests {
                 )]),
                 ..Default::default()
             },
-            &HashMap::new(),
+            &HashMap::from([("artist_id".to_string(), "person-id".to_string())]),
             &Default::default(),
         )?;
 
@@ -535,6 +553,10 @@ mod tests {
             artist.artist_name, "Character",
             "conflicting fields are skipped"
         );
+        assert!(
+            lyra_db::external_ids::get(&db, character, "provider", "artist_id")?.is_none(),
+            "a conflicting provider's ids are skipped"
+        );
         let relations = lyra_db::artists::relations::get_relations_to(
             &db,
             character,
@@ -542,6 +564,95 @@ mod tests {
         )?;
         assert_eq!(relations.len(), 1);
         assert_eq!(relations[0].1, actor);
+        Ok(())
+    }
+
+    fn save_typed_provider_layer(
+        db: &mut DbAny,
+        artist_id: DbId,
+        artist_type: &str,
+        provider_artist_id: &str,
+    ) -> anyhow::Result<()> {
+        save_provider_layer(
+            db,
+            artist_id,
+            "provider",
+            &ProviderValues {
+                fields: inputs_from_json(json!({"artist_type": artist_type})),
+                ..Default::default()
+            },
+            &HashMap::from([("artist_id".to_string(), provider_artist_id.to_string())]),
+            &Default::default(),
+        )
+    }
+
+    fn provider_artist_id(db: &DbAny, artist_id: DbId) -> anyhow::Result<Option<String>> {
+        Ok(
+            lyra_db::external_ids::get(db, artist_id, "provider", "artist_id")?
+                .map(|id| id.id_value),
+        )
+    }
+
+    fn insert_provider(db: &mut DbAny) -> anyhow::Result<()> {
+        lyra_db::providers::upsert(
+            db,
+            &lyra_db::ProviderConfig {
+                db_id: None,
+                provider_id: "provider".to_string(),
+                position: 0,
+                enabled: true,
+            },
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_provider_corrects_the_artist_type_it_supplied() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        insert_provider(&mut db)?;
+        let artist_id = insert_artist(&mut db, "Artist")?;
+        save_typed_provider_layer(&mut db, artist_id, "person", "first-id")?;
+
+        save_typed_provider_layer(&mut db, artist_id, "group", "second-id")?;
+
+        let artist = lyra_db::artists::get_by_id(&db, artist_id)?.expect("artist exists");
+        assert_eq!(artist.artist_type, Some(lyra_db::ArtistType::Group));
+        assert_eq!(
+            provider_artist_id(&db, artist_id)?.as_deref(),
+            Some("second-id")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_manual_artist_type_does_not_block_providers() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        insert_provider(&mut db)?;
+        let artist_id = insert_artist(&mut db, "Artist")?;
+        lyra_db::metadata::layers::upsert(
+            &mut db,
+            artist_id,
+            &MetadataLayer::new(
+                MANUAL_SOURCE_ID,
+                json::fields_from_json(json!({"artist_type": "character"})),
+                1,
+            ),
+        )?;
+        crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, artist_id)?;
+
+        save_typed_provider_layer(&mut db, artist_id, "person", "provider-id")?;
+
+        let artist = lyra_db::artists::get_by_id(&db, artist_id)?.expect("artist exists");
+        assert_eq!(
+            artist.artist_type,
+            Some(lyra_db::ArtistType::Character),
+            "the manual type still wins"
+        );
+        assert!(lyra_db::metadata::layers::layer_id(&db, artist_id, "provider")?.is_some());
+        assert_eq!(
+            provider_artist_id(&db, artist_id)?.as_deref(),
+            Some("provider-id")
+        );
         Ok(())
     }
 
