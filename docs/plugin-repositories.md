@@ -49,6 +49,18 @@ construction, so indexes cannot nest or form cycles. Duplicate entries,
 entries pointing at the index itself, and unknown fields are rejected.
 Entries are capped at 64 and the manifest at 64 KiB.
 
+## Excluding Files
+
+Lyra downloads the forge's archive of the repository, so paths marked
+`export-ignore` in `.gitattributes` are neither downloaded nor installed.
+Mark test fixtures and other development-only files this way:
+
+```gitattributes
+tests export-ignore
+```
+
+This repository excludes `plugins/*/tests`.
+
 ## Repository URLs
 
 Plain repository URLs and browser URLs both work:
