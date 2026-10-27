@@ -385,7 +385,7 @@ fn query_playlist_route_items(
 
     // Filter before summarising: discarded playlists should not be walked.
     if let Some(term) = search_term {
-        lyra_db::search::fuzzy_filter(
+        crate::services::search::fuzzy_filter(
             &mut entries,
             term,
             |entry| entry.playlist.name.as_str(),

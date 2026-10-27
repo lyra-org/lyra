@@ -19,7 +19,6 @@ blake3 = { workspace = true }
 lofty = "=0.25.4"
 lyra-metadata = { path = "../lyra-metadata" }
 nanoid = "0.4"
-nucleo-matcher = "0.3"
 rand = "0.9"
 schemars = { version = "1.2.1", features = ["derive"], optional = true }
 serde = { workspace = true }
