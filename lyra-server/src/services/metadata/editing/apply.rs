@@ -152,7 +152,7 @@ fn apply_inside_tx(
     state: &EntityState,
     diff: &[MetadataFieldDiff],
 ) -> anyhow::Result<()> {
-    let mut layer = lyra_db::metadata::layers::find_valid(db, state.db_id, MANUAL_SOURCE_ID)?
+    let mut layer = lyra_db::metadata::layers::find(db, state.db_id, MANUAL_SOURCE_ID)?
         .unwrap_or_else(|| MetadataLayer::new(MANUAL_SOURCE_ID, Default::default(), 0));
     layer.updated_at = now_secs();
     for entry in diff {

@@ -260,9 +260,6 @@ pub(super) fn deduplicate_releases_by_external_id(
                 continue;
             }
 
-            if !crate::services::metadata::layers::manual_layers_mergeable(db, winner, loser) {
-                continue;
-            }
             tracing::info!(
                 library_db_id = library_db_id.0,
                 winner = winner.0,
@@ -469,60 +466,6 @@ mod tests {
             roles,
             [lyra_db::CreditType::Artist, lyra_db::CreditType::Producer]
         );
-        Ok(())
-    }
-
-    #[test]
-    fn release_dedup_skips_a_pair_with_an_invalid_manual_layer() -> anyhow::Result<()> {
-        use lyra_db::test_db::insert_library;
-
-        let mut db = new_test_db()?;
-        let library = insert_library(&mut db, "Library", "/tmp/dedup-invalid-manual")?;
-        let winner = insert_release(&mut db, "Release")?;
-        let loser = insert_release(&mut db, "Release")?;
-        for release in [winner, loser] {
-            lyra_db::graph::ensure_owned_edge(&mut db, library, release)?;
-            lyra_db::external_ids::upsert(
-                &mut db,
-                release,
-                "musicbrainz",
-                "release_id",
-                "release-1",
-                lyra_db::IdSource::Resolved,
-            )?;
-            lyra_db::metadata::layers::upsert(
-                &mut db,
-                release,
-                &lyra_db::MetadataLayer::new(
-                    MANUAL_SOURCE_ID,
-                    crate::services::metadata::layers::json::fields_from_json(
-                        json!({"release_date": "1999"}),
-                    ),
-                    1,
-                ),
-            )?;
-        }
-        let layer_id = lyra_db::metadata::layers::layer_id(&db, loser, MANUAL_SOURCE_ID)?
-            .expect("manual layer exists");
-        db.exec_mut(
-            agdb::QueryBuilder::insert()
-                .values_uniform([("supplied", vec!["work_id".to_string()]).into()])
-                .ids(layer_id)
-                .query(),
-        )?;
-
-        let pairs = HashSet::from([("musicbrainz".to_string(), "release_id".to_string())]);
-        assert_eq!(
-            deduplicate_releases_by_external_id(&mut db, library, &pairs, &HashSet::new(), None)?,
-            0
-        );
-        for release in [winner, loser] {
-            assert!(lyra_db::releases::get_by_id(&db, release)?.is_some());
-            assert_eq!(
-                lyra_db::metadata::layers::ids_for_entity(&db, release)?.len(),
-                1
-            );
-        }
         Ok(())
     }
 }

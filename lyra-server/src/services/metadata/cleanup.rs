@@ -320,9 +320,6 @@ pub(crate) fn deduplicate_artists_by_external_id(db: &mut DbAny) -> anyhow::Resu
 
         let winner = select_merge_winner(db, &artist_lookup, &unique_artist_ids)?;
         for loser in unique_artist_ids.into_iter().filter(|id| *id != winner) {
-            if !super::layers::manual_layers_mergeable(db, winner, loser) {
-                continue;
-            }
             tracing::info!(
                 winner = winner.0,
                 loser = loser.0,
@@ -1219,63 +1216,6 @@ mod tests {
                 Some(last)
             );
         }
-        Ok(())
-    }
-
-    fn corrupt_manual_layer(db: &mut DbAny, node_id: DbId) -> anyhow::Result<()> {
-        lyra_db::metadata::layers::upsert(
-            db,
-            node_id,
-            &lyra_db::MetadataLayer::new(
-                MANUAL_SOURCE_ID,
-                crate::services::metadata::layers::json::fields_from_json(
-                    serde_json::json!({"artist_name": "X"}),
-                ),
-                1,
-            ),
-        )?;
-        let layer_id = lyra_db::metadata::layers::layer_id(db, node_id, MANUAL_SOURCE_ID)?
-            .expect("manual layer exists");
-        db.exec_mut(
-            QueryBuilder::insert()
-                .values_uniform([("supplied", vec!["work_id".to_string()]).into()])
-                .ids(layer_id)
-                .query(),
-        )?;
-        Ok(())
-    }
-
-    #[test]
-    fn dedup_skips_only_a_pair_with_an_invalid_manual_layer() -> anyhow::Result<()> {
-        let mut db = test_db::new_test_db()?;
-        let winner = lyra_db::fixtures::insert_artist(&mut db, "Artist")?;
-        let corrupt = lyra_db::fixtures::insert_artist(&mut db, "Artist")?;
-        let duplicate = lyra_db::fixtures::insert_artist(&mut db, "Artist")?;
-        let release = lyra_db::fixtures::insert_release(&mut db, "Release")?;
-        lyra_db::fixtures::connect(&mut db, release, winner)?;
-        for artist in [winner, corrupt, duplicate] {
-            lyra_db::external_ids::upsert(
-                &mut db,
-                artist,
-                "musicbrainz",
-                "artist_id",
-                "mbid-123",
-                IdSource::Resolved,
-            )?;
-        }
-        corrupt_manual_layer(&mut db, corrupt)?;
-
-        assert_eq!(deduplicate_artists_by_external_id(&mut db)?, 1);
-
-        assert!(lyra_db::artists::get_by_id(&db, winner)?.is_some());
-        assert!(lyra_db::artists::get_by_id(&db, duplicate)?.is_none());
-        assert!(lyra_db::artists::get_by_id(&db, corrupt)?.is_some());
-        assert_eq!(
-            lyra_db::metadata::layers::ids_for_entity(&db, corrupt)?.len(),
-            1,
-            "the invalid layer is left for repair"
-        );
-        assert!(lyra_db::metadata::layers::ids_for_entity(&db, winner)?.is_empty());
         Ok(())
     }
 

@@ -39,7 +39,7 @@ use lyra_db::{
 };
 
 fn manual_layer(db: &DbAny, entity_id: DbId) -> anyhow::Result<Option<lyra_db::MetadataLayer>> {
-    lyra_db::metadata::layers::find_valid(db, entity_id, MANUAL_SOURCE_ID)
+    lyra_db::metadata::layers::find(db, entity_id, MANUAL_SOURCE_ID)
 }
 
 fn set(field: MetadataField, value: Value) -> MetadataChangeRequest {

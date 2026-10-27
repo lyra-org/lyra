@@ -551,10 +551,7 @@ fn stored_fields(
             .get_mut(&field)
             .with_context(|| format!("'{field}' is stored but not supplied"))? = Some(value);
     }
-    fields
-        .into_iter()
-        .map(|(field, value)| Ok((field, normalize_value(field, value)?)))
-        .collect()
+    Ok(fields)
 }
 
 fn stored<T: Clone + Into<FieldValue>>(value: &Option<T>) -> Option<FieldValue> {

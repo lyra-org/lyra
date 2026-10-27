@@ -105,8 +105,7 @@ fn entity_type(db: &impl DbAccess, node_id: DbId) -> anyhow::Result<MetadataEnti
     })
 }
 
-/// The entity's layers; a stored layer that no longer validates is skipped
-/// until its source replaces it.
+/// The entity's layers.
 pub fn get_for_entity(db: &impl DbAccess, node_id: DbId) -> anyhow::Result<Vec<MetadataLayer>> {
     match super::super::entities::metadata_entity_type(db, node_id)? {
         Some(MetadataEntityType::Release) => load::<ReleaseLayer>(db, node_id),
@@ -137,26 +136,24 @@ fn load<T: LayerElement>(db: &impl DbAccess, node_id: DbId) -> anyhow::Result<Ve
             .end_where()
             .query(),
     )?;
-    Ok(result
+    result
         .elements
         .iter()
-        .filter_map(|element| {
-            T::from_db_element(element)
-                .map_err(anyhow::Error::from)
-                .and_then(|layer| layer.to_layer(db))
-                .inspect_err(|err| {
-                    tracing::warn!(
-                        layer_id = element.id.0,
-                        error = %format!("{err:#}"),
-                        "skipping metadata layer that no longer validates"
-                    );
-                })
-                .ok()
+        .map(|element| {
+            read::<T>(db, element)
+                .with_context(|| format!("stored metadata layer {} is invalid", element.id.0))
         })
-        .collect())
+        .collect()
 }
 
-/// Ids of every layer attached to an entity, valid or not.
+fn read<T: LayerElement>(
+    db: &impl DbAccess,
+    element: &agdb::DbElement,
+) -> anyhow::Result<MetadataLayer> {
+    T::from_db_element(element)?.to_layer(db)
+}
+
+/// Ids of every layer attached to an entity.
 pub fn ids_for_entity(db: &impl DbAccess, node_id: DbId) -> anyhow::Result<Vec<DbId>> {
     Ok(db
         .exec(
@@ -309,9 +306,8 @@ fn set_updated_at(db: &mut impl DbAccess, layer_id: DbId, updated_at: u64) -> an
     Ok(())
 }
 
-/// The layer `source_id` contributed to an entity; unlike [`get_for_entity`],
-/// a stored layer that no longer validates is an error.
-pub fn find_valid(
+/// The layer `source_id` contributed to an entity, if any.
+pub fn find(
     db: &impl DbAccess,
     node_id: DbId,
     source_id: &str,
@@ -334,27 +330,24 @@ fn load_one<T: LayerElement>(
     };
     let stored = db.exec(QueryBuilder::select().ids(layer_id).query())?;
     let element = stored.elements.first().context("metadata layer is gone")?;
-    T::from_db_element(element)
-        .map_err(anyhow::Error::from)
-        .and_then(|layer| layer.to_layer(db))
+    read::<T>(db, element)
         .map(Some)
         .with_context(|| format!("the stored '{source_id}' metadata layer is invalid"))
 }
 
 /// Fills the keys `to_node`'s layer from `source_id` does not supply with
 /// `from_node`'s, or copies `from_node`'s layer when `to_node` has none. A
-/// filled layer is as recent as the newer of the two. Either layer failing to
-/// validate is an error.
+/// filled layer is as recent as the newer of the two.
 pub fn fill_inside_tx(
     db: &mut DbAnyTransactionMut<'_>,
     from_node: DbId,
     to_node: DbId,
     source_id: &str,
 ) -> anyhow::Result<()> {
-    let Some(from) = find_valid(db, from_node, source_id)? else {
+    let Some(from) = find(db, from_node, source_id)? else {
         return Ok(());
     };
-    let Some(mut to) = find_valid(db, to_node, source_id)? else {
+    let Some(mut to) = find(db, to_node, source_id)? else {
         return copy_inside_tx(db, from_node, to_node, source_id);
     };
     to.updated_at = to.updated_at.max(from.updated_at);
@@ -919,7 +912,7 @@ mod tests {
         let jazz = crate::genres::resolve_by_name(&mut db, "Jazz")?;
         db.transaction_mut(|t| edges::replace_genres(t, layer_id, &[jazz]))?;
 
-        assert!(get_for_entity(&db, release_id)?.is_empty());
+        assert!(get_for_entity(&db, release_id).is_err());
         Ok(())
     }
 
@@ -950,46 +943,29 @@ mod tests {
     }
 
     #[test]
-    fn get_for_entity_skips_a_stored_layer_that_no_longer_validates() -> anyhow::Result<()> {
+    fn a_stored_layer_that_does_not_decode_is_an_error() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let track_id = insert_track(&mut db, "Track")?;
-        let base = |source_id: &str, supplied: Vec<&str>| -> Vec<agdb::DbKeyValue> {
-            vec![
-                ("db_element_id", "TrackLayer").into(),
-                ("source_id", source_id).into(),
-                ("updated_at", 1_u64).into(),
-                (
-                    "supplied",
-                    supplied.into_iter().map(String::from).collect::<Vec<_>>(),
-                )
-                    .into(),
-            ]
-        };
-        insert_raw_layer(&mut db, track_id, base("unknown", vec!["work_id"]))?;
-        let mut unsupplied = base("unsupplied", Vec::new());
-        unsupplied.push(("track_title", "Title").into());
-        insert_raw_layer(&mut db, track_id, unsupplied)?;
-        insert_raw_layer(&mut db, track_id, base("cleared", vec!["track_title"]))?;
-        insert_raw_layer(&mut db, track_id, base("foreign", vec!["genres"]))?;
         upsert(
             &mut db,
             track_id,
             &layer("valid", json!({"track_title": "Title"}), 1),
         )?;
-
-        let sources: Vec<String> = get_for_entity(&db, track_id)?
-            .into_iter()
-            .map(|layer| layer.source_id)
-            .collect();
-        assert_eq!(sources, vec!["valid".to_string()]);
-
-        upsert(
+        insert_raw_layer(
             &mut db,
             track_id,
-            &layer("unknown", json!({"track_title": "Fixed"}), 2),
+            vec![
+                ("db_element_id", "TrackLayer").into(),
+                ("source_id", "corrupt").into(),
+                ("updated_at", 1_u64).into(),
+                ("supplied", vec!["year".to_string()]).into(),
+                ("year", "1999").into(),
+            ],
         )?;
-        assert_eq!(get_for_entity(&db, track_id)?.len(), 2);
-        assert_eq!(ids_for_entity(&db, track_id)?.len(), 5);
+
+        assert!(get_for_entity(&db, track_id).is_err());
+        assert!(find(&db, track_id, "corrupt").is_err());
+        assert!(find(&db, track_id, "valid")?.is_some());
         Ok(())
     }
 

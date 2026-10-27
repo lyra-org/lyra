@@ -230,7 +230,7 @@ pub(super) fn load_entity_state(
             return Err(MetadataEditingError::EntityNotFound(db_id.0.to_string()));
         };
 
-    let manual = lyra_db::metadata::layers::find_valid(db, db_id, MANUAL_SOURCE_ID)?;
+    let manual = lyra_db::metadata::layers::find(db, db_id, MANUAL_SOURCE_ID)?;
     let fields = fields
         .into_iter()
         .map(|(field, value)| {
