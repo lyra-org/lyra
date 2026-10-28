@@ -4,21 +4,13 @@
 // www.meshiplaw.com/lyra.
 
 use std::{
-    collections::{
-        HashMap,
-        HashSet,
-    },
+    collections::HashSet,
     sync::Arc,
 };
 
-use agdb::{
-    DbId,
-    QueryBuilder,
-};
 use anyhow::Context;
 use harmony_core::FunctionSpec;
 use harmony_luau as luau;
-use nanoid::nanoid;
 
 use crate::plugins::args;
 use crate::plugins::db;
@@ -26,9 +18,16 @@ use crate::services::plugin_dispatch::MetadataRefreshRequest;
 use crate::services::plugin_scope::PluginId;
 use crate::services::{
     EntityType,
-    metadata::lyrics::{
-        providers as lyrics_dispatcher,
-        providers::RegisteredHandler,
+    metadata::{
+        layers::{
+            EnsureArtistError,
+            ProviderArtist,
+            ensure_provider_artist,
+        },
+        lyrics::{
+            providers as lyrics_dispatcher,
+            providers::RegisteredHandler,
+        },
     },
     providers::{
         ProviderCallbackHandle,
@@ -37,11 +36,6 @@ use crate::services::{
         ProviderSimilarReleasesSpec,
         provider_registry,
     },
-};
-use lyra_db::metadata::layers::{
-    FieldInput,
-    FieldInputs,
-    FieldValue,
 };
 
 use super::MetadataCallbackRegistry;
@@ -582,24 +576,25 @@ fn ensure_artist_callback(
     request: luau::Table,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
-    let id_type = required_table_string(vm, &request, "id_type", "provider:ensure_artist")?;
-    let id_value = required_table_string(vm, &request, "id_value", "provider:ensure_artist")?;
-    // Scanned names are NFC, so a provider's spelling matches them only as NFC.
-    let artist_name = optional_table_string(vm, &request, "artist_name", "provider:ensure_artist")?
-        .map(|name| lyra_metadata::normalize_unicode_nfc(&name));
-    let sort_name = optional_table_string(vm, &request, "sort_name", "provider:ensure_artist")?;
-    let artist_type = optional_artist_type(vm, &request, "artist_type")?;
-    let description = optional_table_string(vm, &request, "description", "provider:ensure_artist")?;
+    let artist = ProviderArtist {
+        id_type: required_table_string(vm, &request, "id_type", "provider:ensure_artist")?,
+        id_value: required_table_string(vm, &request, "id_value", "provider:ensure_artist")?,
+        artist_name: optional_table_string(vm, &request, "artist_name", "provider:ensure_artist")?,
+        sort_name: optional_table_string(vm, &request, "sort_name", "provider:ensure_artist")?,
+        artist_type: optional_artist_type(vm, &request, "artist_type")?,
+        description: optional_table_string(vm, &request, "description", "provider:ensure_artist")?,
+    };
     let provider_id = provider.provider_id.clone();
     let db = db::get_optional(vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let is_registered_artist_id = {
             let registry = provider_registry().read_owned().await;
-            registry.id_spec_matches_entity(&provider_id, &id_type, EntityType::Artist)
+            registry.id_spec_matches_entity(&provider_id, &artist.id_type, EntityType::Artist)
         };
         if !is_registered_artist_id {
             return Err(crate::plugins::runtime_error(format!(
-                "provider:ensure_artist: id_type '{id_type}' is not registered for artist on provider '{provider_id}'"
+                "provider:ensure_artist: id_type '{}' is not registered for artist on provider '{provider_id}'",
+                artist.id_type
             )));
         }
 
@@ -609,151 +604,14 @@ fn ensure_artist_callback(
             ));
         };
         let mut db_write = db.write().await;
-        let mut resolved_artist_id: Option<DbId> = None;
-
-        if let Some(owner_id) = lyra_db::external_ids::get_owner(
-            &db_write,
-            &provider_id,
-            &id_type,
-            &id_value,
-            Some("Artist"),
-        )
-        .map_err(crate::plugins::runtime_error)?
-            && lyra_db::artists::get_by_id(&db_write, owner_id)
-                .map_err(crate::plugins::runtime_error)?
-                .is_some()
-        {
-            if let (Some(scanned_type), Some(incoming_type)) = (
-                crate::services::metadata::layers::scanned_artist_type(&db_write, owner_id)
-                    .map_err(crate::plugins::runtime_error)?,
-                artist_type,
-            ) && scanned_type != incoming_type
-            {
-                return Err(crate::plugins::runtime_error(format!(
-                    "provider:ensure_artist: {id_type} '{id_value}' is already attached to scanned artist type '{scanned_type}', not '{incoming_type}'"
-                )));
-            }
-            resolved_artist_id = Some(owner_id);
-        }
-
-        if resolved_artist_id.is_none()
-            && let Some(scan_name) = artist_name.as_deref()
-        {
-            let mut candidates = lyra_db::artists::with_scan_name(&db_write, scan_name)
-                .map_err(crate::plugins::runtime_error)?
-                .into_iter()
-                .filter_map(|artist| artist.db_id.map(DbId::from))
-                .collect::<Vec<_>>();
-            candidates.sort_by_key(|id| id.0);
-
-            for candidate_id in candidates {
-                if let (Some(scanned_type), Some(incoming_type)) = (
-                    crate::services::metadata::layers::scanned_artist_type(&db_write, candidate_id)
-                        .map_err(crate::plugins::runtime_error)?,
-                    artist_type,
-                ) && scanned_type != incoming_type
-                {
-                    continue;
+        let artist_db_id = ensure_provider_artist(&mut db_write, &provider_id, artist).map_err(
+            |error| match error {
+                EnsureArtistError::ScannedTypeConflict { .. } => {
+                    crate::plugins::runtime_error(format!("provider:ensure_artist: {error}"))
                 }
-
-                if let Some(existing_for_provider) =
-                    lyra_db::external_ids::get(&db_write, candidate_id, &provider_id, &id_type)
-                        .map_err(crate::plugins::runtime_error)?
-                {
-                    let existing_value = existing_for_provider.id_value.trim();
-                    if !existing_value.is_empty() && existing_value != id_value {
-                        continue;
-                    }
-                }
-
-                resolved_artist_id = Some(candidate_id);
-                break;
-            }
-        }
-
-        let artist_db_id = if let Some(existing) = resolved_artist_id {
-            existing
-        } else {
-            let fallback_name = artist_name.clone().unwrap_or_else(|| id_value.clone());
-            let created_artist = lyra_db::Artist {
-                db_id: None,
-                id: nanoid!(),
-                artist_name: fallback_name.clone(),
-                scan_name: fallback_name,
-                scan_aliases: Vec::new(),
-                sort_name: None,
-                artist_type,
-                description: None,
-                verified: false,
-                credited: false,
-                locked: None,
-                created_at: Some(
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs(),
-                ),
-            };
-            let insert_result = db_write
-                .exec_mut(QueryBuilder::insert().element(&created_artist).query())
-                .map_err(crate::plugins::runtime_error)?;
-            let inner_artist_db_id = insert_result
-                .elements
-                .first()
-                .map(|element| element.id)
-                .ok_or_else(|| {
-                    crate::plugins::runtime_error(
-                        "provider:ensure_artist: artist insert missing id",
-                    )
-                })?;
-            db_write
-                .exec_mut(
-                    QueryBuilder::insert()
-                        .edges()
-                        .from("artists")
-                        .to(inner_artist_db_id)
-                        .query(),
-                )
-                .map_err(crate::plugins::runtime_error)?;
-            inner_artist_db_id
-        };
-
-        let fields = [
-            (
-                lyra_db::MetadataField::ArtistName,
-                artist_name.map(Into::into),
-            ),
-            (
-                lyra_db::MetadataField::ArtistType,
-                artist_type.map(Into::into),
-            ),
-            (lyra_db::MetadataField::SortName, sort_name.map(Into::into)),
-            (
-                lyra_db::MetadataField::Description,
-                description.map(Into::into),
-            ),
-        ]
-        .into_iter()
-        .filter_map(|(field, value): (_, Option<FieldValue>)| {
-            Some((field, Some(FieldInput::Value(value?))))
-        })
-        .collect::<FieldInputs>();
-
-        let mut external_ids = HashMap::new();
-        external_ids.insert(id_type, id_value);
-        crate::services::metadata::layers::save_provider_layer(
-            &mut db_write,
-            artist_db_id,
-            &provider_id,
-            &crate::services::metadata::layers::ProviderValues {
-                fields,
-                ..Default::default()
+                EnsureArtistError::Internal(error) => crate::plugins::runtime_error(error),
             },
-            &external_ids,
-            &Default::default(),
-        )
-        .map_err(crate::plugins::runtime_error)?;
-
+        )?;
         Ok(artist_db_id.0)
     }))
 }

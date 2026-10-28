@@ -347,6 +347,136 @@ pub(crate) fn save_provider_layer(
     Ok(())
 }
 
+/// An artist a provider names by one of its external IDs.
+pub(crate) struct ProviderArtist {
+    pub(crate) id_type: String,
+    pub(crate) id_value: String,
+    pub(crate) artist_name: Option<String>,
+    pub(crate) sort_name: Option<String>,
+    pub(crate) artist_type: Option<ArtistType>,
+    pub(crate) description: Option<String>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum EnsureArtistError {
+    #[error(
+        "{id_type} '{id_value}' is already attached to scanned artist type '{scanned_type}', not '{incoming_type}'"
+    )]
+    ScannedTypeConflict {
+        id_type: String,
+        id_value: String,
+        scanned_type: ArtistType,
+        incoming_type: ArtistType,
+    },
+    #[error(transparent)]
+    Internal(#[from] anyhow::Error),
+}
+
+/// Resolves the artist `provider_id` names, by its external ID or else by scan
+/// name, creating one when neither matches, and saves the provider's layer on
+/// it.
+pub(crate) fn ensure_provider_artist(
+    db: &mut DbAny,
+    provider_id: &str,
+    artist: ProviderArtist,
+) -> Result<DbId, EnsureArtistError> {
+    let ProviderArtist {
+        id_type,
+        id_value,
+        artist_name,
+        sort_name,
+        artist_type,
+        description,
+    } = artist;
+    // Scanned names are NFC, so a provider's spelling matches them only as NFC.
+    let artist_name = artist_name.map(|name| lyra_metadata::normalize_unicode_nfc(&name));
+    let scanned_type_conflicts = |db: &DbAny, artist_id: DbId| -> anyhow::Result<_> {
+        Ok(match (scanned_artist_type(db, artist_id)?, artist_type) {
+            (Some(scanned_type), Some(incoming_type)) if scanned_type != incoming_type => {
+                Some((scanned_type, incoming_type))
+            }
+            _ => None,
+        })
+    };
+
+    let mut resolved_artist_id = None;
+    if let Some(owner_id) =
+        lyra_db::external_ids::get_owner(db, provider_id, &id_type, &id_value, Some("Artist"))?
+        && lyra_db::artists::get_by_id(db, owner_id)?.is_some()
+    {
+        if let Some((scanned_type, incoming_type)) = scanned_type_conflicts(db, owner_id)? {
+            return Err(EnsureArtistError::ScannedTypeConflict {
+                id_type,
+                id_value,
+                scanned_type,
+                incoming_type,
+            });
+        }
+        resolved_artist_id = Some(owner_id);
+    }
+
+    if resolved_artist_id.is_none()
+        && let Some(scan_name) = artist_name.as_deref()
+    {
+        let mut candidates = lyra_db::artists::with_scan_name(db, scan_name)?
+            .into_iter()
+            .filter_map(|artist| artist.db_id.map(DbId::from))
+            .collect::<Vec<_>>();
+        candidates.sort_by_key(|id| id.0);
+
+        for candidate_id in candidates {
+            if scanned_type_conflicts(db, candidate_id)?.is_some() {
+                continue;
+            }
+
+            if let Some(existing_for_provider) =
+                lyra_db::external_ids::get(db, candidate_id, provider_id, &id_type)?
+            {
+                let existing_value = existing_for_provider.id_value.trim();
+                if !existing_value.is_empty() && existing_value != id_value {
+                    continue;
+                }
+            }
+
+            resolved_artist_id = Some(candidate_id);
+            break;
+        }
+    }
+
+    let artist_db_id = match resolved_artist_id {
+        Some(existing) => existing,
+        None => {
+            lyra_db::artists::create(db, artist_name.as_deref().unwrap_or(&id_value), artist_type)?
+        }
+    };
+
+    let fields = [
+        (MetadataField::ArtistName, artist_name.map(Into::into)),
+        (MetadataField::ArtistType, artist_type.map(Into::into)),
+        (MetadataField::SortName, sort_name.map(Into::into)),
+        (MetadataField::Description, description.map(Into::into)),
+    ]
+    .into_iter()
+    .filter_map(|(field, value): (_, Option<FieldValue>)| {
+        Some((field, Some(FieldInput::Value(value?))))
+    })
+    .collect::<FieldInputs>();
+
+    save_provider_layer(
+        db,
+        artist_db_id,
+        provider_id,
+        &ProviderValues {
+            fields,
+            ..Default::default()
+        },
+        &HashMap::from([(id_type, id_value)]),
+        &Default::default(),
+    )?;
+
+    Ok(artist_db_id)
+}
+
 /// Records that `provider_id` found no match for an entity: blanks `id_types`
 /// and clears the provider's layer. Artists are shared across releases, so one
 /// release failing to match says nothing about them: an artist keeps its layer
