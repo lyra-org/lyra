@@ -8,9 +8,19 @@ use std::path::{
     Path,
     PathBuf,
 };
+use std::sync::{
+    Arc,
+    Mutex,
+    PoisonError,
+};
+use std::time::Duration;
 
 use flate2::read::GzDecoder;
 use harmony_core::plugin::PLUGIN_CONFIG_MAX_BYTES;
+use reqwest::header::{
+    HeaderMap,
+    RETRY_AFTER,
+};
 use reqwest::{
     Client,
     StatusCode,
@@ -33,8 +43,11 @@ use crate::manifest::REPOSITORY_MANIFEST_MAX_BYTES;
 
 const FALLBACK_REFS: &[&str] = &["main", "master", "trunk"];
 
+/// Cap on each archive download.
 pub const MAX_ARCHIVE_BYTES: u64 = 50 * 1024 * 1024;
+/// Cap on the bytes unpacked under one [`UnpackBudget`].
 pub const MAX_UNPACKED_BYTES: u64 = 256 * 1024 * 1024;
+/// Cap on the entries unpacked under one [`UnpackBudget`].
 pub const MAX_ARCHIVE_ENTRIES: usize = 16 * 1024;
 /// Cap on a single manifest file read through [`fetch_file`] or from an
 /// extracted archive: the `repository.json` cap, which `plugin.json` shares.
@@ -51,12 +64,24 @@ pub enum FetchError {
     },
     #[error("failed to fetch {url}: HTTP {status}")]
     Status { url: String, status: StatusCode },
+    #[error(
+        "failed to fetch {url}: rate limited by the forge{}",
+        retry_after.map(|wait| format!(", retry after {}s", wait.as_secs())).unwrap_or_default()
+    )]
+    RateLimited {
+        url: String,
+        retry_after: Option<Duration>,
+    },
     #[error("archive at {url} exceeds the {limit} byte limit")]
     ArchiveTooLarge { url: String, limit: u64 },
     #[error("file at {location} exceeds the {limit} byte limit")]
     FileTooLarge { location: String, limit: u64 },
     #[error("invalid archive: {reason}")]
     InvalidArchive { reason: String },
+    #[error("archives unpack to more than {limit} bytes")]
+    UnpackedBytesExceeded { limit: u64 },
+    #[error("archives unpack to more than {limit} entries")]
+    UnpackedEntriesExceeded { limit: usize },
     #[error("archive entry '{path}' is not allowed: {reason}")]
     UnsafeArchiveEntry { path: String, reason: String },
     #[error("no downloadable ref found for {repo}: {detail}")]
@@ -115,7 +140,7 @@ fn ref_is_pinned(git_ref: &str, commit: Option<&str>, branch: Option<bool>) -> b
 /// removed when this value is dropped; callers copy what they keep.
 #[derive(Debug)]
 pub struct FetchedRepo {
-    _tempdir: TempDir,
+    _extracted: Extracted,
     root: PathBuf,
     pub git_ref: String,
     pub commit: Option<String>,
@@ -134,7 +159,7 @@ impl FetchedRepo {
 /// removed when this value is dropped.
 #[derive(Debug)]
 pub struct FetchedDirectory {
-    _tempdir: TempDir,
+    _extracted: Extracted,
     path: PathBuf,
 }
 
@@ -144,8 +169,108 @@ impl FetchedDirectory {
     }
 }
 
+/// An extracted archive on disk. Its files are removed, then its share of
+/// the budget released, when this value drops.
+#[derive(Debug)]
+struct Extracted {
+    tempdir: TempDir,
+    reservation: UnpackReservation,
+}
+
+/// The unpacked bytes and entries the archives one operation keeps on disk
+/// share, within [`MAX_UNPACKED_BYTES`] and [`MAX_ARCHIVE_ENTRIES`]. Each
+/// extracted archive holds its share until it is dropped, so a failed or
+/// discarded tree frees its share. Clones share the budget.
+#[derive(Debug, Clone)]
+pub struct UnpackBudget(Arc<BudgetState>);
+
+#[derive(Debug)]
+struct BudgetState {
+    max_bytes: u64,
+    max_entries: usize,
+    used: Mutex<UnpackUsage>,
+}
+
+#[derive(Debug, Default)]
+struct UnpackUsage {
+    bytes: u64,
+    entries: usize,
+}
+
+impl Default for UnpackBudget {
+    fn default() -> Self {
+        Self::with_limits(MAX_UNPACKED_BYTES, MAX_ARCHIVE_ENTRIES)
+    }
+}
+
+impl UnpackBudget {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn with_limits(max_bytes: u64, max_entries: usize) -> Self {
+        Self(Arc::new(BudgetState {
+            max_bytes,
+            max_entries,
+            used: Mutex::default(),
+        }))
+    }
+
+    /// An empty share of the budget for one archive to take from.
+    fn reserve(&self) -> UnpackReservation {
+        UnpackReservation {
+            budget: self.clone(),
+            held: UnpackUsage::default(),
+        }
+    }
+
+    fn used(&self) -> std::sync::MutexGuard<'_, UnpackUsage> {
+        self.0.used.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// The share of an [`UnpackBudget`] one archive holds, returned to the
+/// budget when dropped. Takes past the limit are refused and hold nothing.
+#[derive(Debug)]
+struct UnpackReservation {
+    budget: UnpackBudget,
+    held: UnpackUsage,
+}
+
+impl UnpackReservation {
+    fn take_entry(&mut self) -> Result<(), FetchError> {
+        let max_entries = self.budget.0.max_entries;
+        let mut used = self.budget.used();
+        if used.entries >= max_entries {
+            return Err(FetchError::UnpackedEntriesExceeded { limit: max_entries });
+        }
+        used.entries += 1;
+        self.held.entries += 1;
+        Ok(())
+    }
+
+    fn take_bytes(&mut self, bytes: u64) -> Result<(), FetchError> {
+        let max_bytes = self.budget.0.max_bytes;
+        let mut used = self.budget.used();
+        if used.bytes.saturating_add(bytes) > max_bytes {
+            return Err(FetchError::UnpackedBytesExceeded { limit: max_bytes });
+        }
+        used.bytes += bytes;
+        self.held.bytes += bytes;
+        Ok(())
+    }
+}
+
+impl Drop for UnpackReservation {
+    fn drop(&mut self) {
+        let mut used = self.budget.used();
+        used.bytes -= self.held.bytes;
+        used.entries -= self.held.entries;
+    }
+}
+
 /// What a repository's ref resolves to, worked out from the forge API
-/// alone. [`fetch_planned`] downloads it.
+/// alone, for [`crate::resolve_planned`] to download.
 #[derive(Debug, Clone)]
 pub struct RefPlan {
     candidates: Vec<String>,
@@ -173,21 +298,12 @@ impl RefPlan {
     }
 }
 
-/// Downloads the repository as a tarball and extracts it.
-///
-/// The ref is resolved to a commit through the forge API when possible so
-/// the download is pinned and the commit can be recorded for update checks.
-/// Unreachable forge APIs (rate limits, exotic self-hosted setups) degrade
-/// to probing common branch names with `commit: None`.
-pub async fn fetch_repo(client: &Client, spec: &RepoSpec) -> Result<FetchedRepo, FetchError> {
-    fetch_planned(client, spec, &plan_refs(client, spec).await).await
-}
-
-/// Downloads and extracts the tarball `plan` resolved.
-pub async fn fetch_planned(
+/// Downloads the tarball `plan` resolved and extracts it within `budget`.
+pub(crate) async fn fetch_planned(
     client: &Client,
     spec: &RepoSpec,
     plan: &RefPlan,
+    budget: &UnpackBudget,
 ) -> Result<FetchedRepo, FetchError> {
     let mut last_status: Option<FetchError> = None;
 
@@ -210,10 +326,10 @@ pub async fn fetch_planned(
             Err(err) => return Err(err),
         };
 
-        let (tempdir, root) = unpack(bytes).await?;
+        let (extracted, root) = unpack(bytes, budget).await?;
         return Ok(FetchedRepo {
             root,
-            _tempdir: tempdir,
+            _extracted: extracted,
             git_ref: candidate.clone(),
             commit: plan.commit.clone(),
             pinned: plan.pinned,
@@ -228,14 +344,15 @@ pub async fn fetch_planned(
     })
 }
 
-/// Downloads the directory `dir` at `commit` and extracts it: as a
-/// single-directory archive where the forge serves one, otherwise, and for
-/// the root, as the whole repository.
-pub async fn fetch_directory(
+/// Downloads the directory `dir` at `commit` and extracts it within
+/// `budget`: as a single-directory archive where the forge serves one,
+/// otherwise, and for the root, as the whole repository.
+pub(crate) async fn fetch_directory(
     client: &Client,
     spec: &RepoSpec,
     commit: &str,
     dir: &str,
+    budget: &UnpackBudget,
 ) -> Result<FetchedDirectory, FetchError> {
     let url = Some(dir)
         .filter(|dir| !dir.is_empty())
@@ -246,7 +363,7 @@ pub async fn fetch_directory(
     })
     .await?;
 
-    let (tempdir, root) = unpack(bytes).await?;
+    let (extracted, root) = unpack(bytes, budget).await?;
     let path = match dir {
         "" => root,
         dir => root.join(dir),
@@ -257,23 +374,30 @@ pub async fn fetch_directory(
         });
     }
     Ok(FetchedDirectory {
-        _tempdir: tempdir,
+        _extracted: extracted,
         path,
     })
 }
 
-/// Extracts a downloaded tarball into a new temporary directory and
-/// returns it with the archive's root.
-async fn unpack(bytes: Vec<u8>) -> Result<(TempDir, PathBuf), FetchError> {
-    let tempdir = TempDir::new()?;
-    let dest = tempdir.path().to_path_buf();
-    tokio::task::spawn_blocking(move || extract_archive(&bytes, &dest))
-        .await
-        .map_err(|e| FetchError::InvalidArchive {
-            reason: format!("extraction task failed: {e}"),
-        })??;
-    let root = locate_root(tempdir.path())?;
-    Ok((tempdir, root))
+/// Extracts a downloaded tarball into a new temporary directory within
+/// `budget` and returns it with the archive's root.
+/// The directory is created and owned inside the blocking task, so a
+/// cancelled caller cannot remove it, or release its share, mid-extraction.
+async fn unpack(bytes: Vec<u8>, budget: &UnpackBudget) -> Result<(Extracted, PathBuf), FetchError> {
+    let budget = budget.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut extracted = Extracted {
+            tempdir: TempDir::new()?,
+            reservation: budget.reserve(),
+        };
+        extract_archive(&bytes, extracted.tempdir.path(), &mut extracted.reservation)?;
+        let root = locate_root(extracted.tempdir.path())?;
+        Ok((extracted, root))
+    })
+    .await
+    .map_err(|e| FetchError::InvalidArchive {
+        reason: format!("extraction task failed: {e}"),
+    })?
 }
 
 /// Resolves the ref `spec` names, or the default branch, without
@@ -432,6 +556,12 @@ async fn download(
         })?;
 
     let status = response.status();
+    if status == StatusCode::TOO_MANY_REQUESTS {
+        return Err(FetchError::RateLimited {
+            url: url.to_string(),
+            retry_after: retry_after(response.headers()),
+        });
+    }
     if !status.is_success() {
         return Err(FetchError::Status {
             url: url.to_string(),
@@ -461,12 +591,30 @@ async fn download(
     Ok(bytes)
 }
 
-fn extract_archive(bytes: &[u8], dest: &Path) -> Result<(), FetchError> {
+/// The wait a `Retry-After` header asks for, in its delta-seconds form, and
+/// at least a second: a zero wait still means the request was refused.
+fn retry_after(headers: &HeaderMap) -> Option<Duration> {
+    let seconds: u64 = headers
+        .get(RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    Some(Duration::from_secs(seconds.max(1)))
+}
+
+/// Extracts `bytes` into `dest`, taking what the files hold from
+/// `reservation`. On failure the caller drops the partial extraction, then
+/// the reservation.
+fn extract_archive(
+    bytes: &[u8],
+    dest: &Path,
+    reservation: &mut UnpackReservation,
+) -> Result<(), FetchError> {
     let invalid = |reason: String| FetchError::InvalidArchive { reason };
 
     let mut archive = Archive::new(GzDecoder::new(Cursor::new(bytes)));
-    let mut entry_count = 0usize;
-    let mut unpacked_bytes = 0u64;
 
     for entry in archive.entries().map_err(|e| invalid(e.to_string()))? {
         let mut entry = entry.map_err(|e| invalid(e.to_string()))?;
@@ -489,21 +637,11 @@ fn extract_archive(bytes: &[u8], dest: &Path) -> Result<(), FetchError> {
             }
         }
 
-        entry_count += 1;
-        if entry_count > MAX_ARCHIVE_ENTRIES {
-            return Err(invalid(format!("more than {MAX_ARCHIVE_ENTRIES} entries")));
-        }
-
+        reservation.take_entry()?;
         if entry.header().entry_type() == EntryType::Symlink {
             continue;
         }
-
-        unpacked_bytes = unpacked_bytes.saturating_add(entry.size());
-        if unpacked_bytes > MAX_UNPACKED_BYTES {
-            return Err(invalid(format!(
-                "unpacked size exceeds {MAX_UNPACKED_BYTES} bytes"
-            )));
-        }
+        reservation.take_bytes(entry.size())?;
 
         if !entry.unpack_in(dest).map_err(|e| invalid(e.to_string()))? {
             return Err(FetchError::UnsafeArchiveEntry {
@@ -542,6 +680,16 @@ mod tests {
         targz_entries,
     };
 
+    /// Extracts `bytes` within `budget`, returning the share the files hold.
+    fn extract_within(
+        bytes: &[u8],
+        dest: &Path,
+        budget: &UnpackBudget,
+    ) -> Result<UnpackReservation, FetchError> {
+        let mut reservation = budget.reserve();
+        extract_archive(bytes, dest, &mut reservation).map(|()| reservation)
+    }
+
     #[test]
     fn classifies_refs_as_pinned_or_tracking() {
         let sha = "a".repeat(40);
@@ -559,6 +707,11 @@ mod tests {
         assert!(ref_is_pinned("refs/tags/v1", Some(&sha), Some(false)));
     }
 
+    async fn fetch_repo(client: &Client, spec: &RepoSpec) -> Result<FetchedRepo, FetchError> {
+        let plan = plan_refs(client, spec).await;
+        fetch_planned(client, spec, &plan, &UnpackBudget::new()).await
+    }
+
     #[test]
     fn detects_commit_shas() {
         assert!(is_object_id(&"a".repeat(40)));
@@ -572,7 +725,7 @@ mod tests {
     fn extracts_archives_and_locates_root() {
         let bytes = targz(&[("repo-main/plugin.json", "{}")]);
         let dir = TempDir::new().unwrap();
-        extract_archive(&bytes, dir.path()).unwrap();
+        extract_within(&bytes, dir.path(), &UnpackBudget::new()).unwrap();
 
         let root = locate_root(dir.path()).unwrap();
         assert_eq!(root.file_name().unwrap(), "repo-main");
@@ -583,7 +736,7 @@ mod tests {
     fn locate_root_keeps_multi_entry_roots() {
         let bytes = targz(&[("a.txt", "a"), ("b.txt", "b")]);
         let dir = TempDir::new().unwrap();
-        extract_archive(&bytes, dir.path()).unwrap();
+        extract_within(&bytes, dir.path(), &UnpackBudget::new()).unwrap();
 
         let root = locate_root(dir.path()).unwrap();
         assert_eq!(root, dir.path());
@@ -601,7 +754,7 @@ mod tests {
         entries.file("repo/file", "replacement");
         let dest = TempDir::new().unwrap();
 
-        extract_archive(&entries.finish(), dest.path()).unwrap();
+        extract_within(&entries.finish(), dest.path(), &UnpackBudget::new()).unwrap();
 
         assert_eq!(std::fs::read_to_string(&sentinel).unwrap(), "original");
         assert_eq!(
@@ -626,7 +779,12 @@ mod tests {
     fn rejects_path_traversal_entries() {
         let mut entries = targz_entries();
         entries.file_with_raw_path("../evil.txt", "x");
-        let err = extract_archive(&entries.finish(), TempDir::new().unwrap().path()).unwrap_err();
+        let err = extract_within(
+            &entries.finish(),
+            TempDir::new().unwrap().path(),
+            &UnpackBudget::new(),
+        )
+        .unwrap_err();
         assert!(
             matches!(err, FetchError::UnsafeArchiveEntry { .. }),
             "{err}"
@@ -680,7 +838,9 @@ mod tests {
         let plan = plan_refs(&client(), &spec).await;
         assert_eq!(plan.commit(), Some(sha.as_str()));
 
-        let err = fetch_planned(&client(), &spec, &plan).await.unwrap_err();
+        let err = fetch_planned(&client(), &spec, &plan, &UnpackBudget::new())
+            .await
+            .unwrap_err();
         assert!(
             matches!(&err, FetchError::Status { url, .. } if url.ends_with(&format!("{sha}.tar.gz"))),
             "{err}"
@@ -856,6 +1016,96 @@ mod tests {
         let err = fetch_repo(&client(), &spec).await.unwrap_err();
 
         assert!(matches!(err, FetchError::ArchiveTooLarge { .. }), "{err}");
+    }
+
+    #[test]
+    fn archives_share_one_unpack_budget() {
+        let first = targz(&[("repo/a.txt", "123456")]);
+        let second = targz(&[("repo/b.txt", "123456")]);
+        let extract = |bytes: &[u8], budget: &UnpackBudget| {
+            extract_within(bytes, TempDir::new().unwrap().path(), budget)
+        };
+
+        let budget = UnpackBudget::with_limits(10, 100);
+        let held = extract(&first, &budget).unwrap();
+        let err = extract(&second, &budget).unwrap_err();
+        assert!(
+            matches!(err, FetchError::UnpackedBytesExceeded { limit: 10 }),
+            "{err}"
+        );
+        drop(held);
+        extract(&second, &budget).unwrap();
+
+        let budget = UnpackBudget::with_limits(100, 1);
+        let held = extract(&first, &budget).unwrap();
+        let err = extract(&second, &budget).unwrap_err();
+        assert!(
+            matches!(err, FetchError::UnpackedEntriesExceeded { limit: 1 }),
+            "{err}"
+        );
+        drop(held);
+        extract(&second, &budget).unwrap();
+    }
+
+    #[test]
+    fn failed_extractions_release_their_share_of_the_budget() {
+        let mut hostile = targz_entries();
+        hostile.file("repo/a.txt", "123456");
+        hostile.file_with_raw_path("../evil.txt", "x");
+        let fits = targz(&[("repo/b.txt", "1234567890")]);
+        let budget = UnpackBudget::with_limits(10, 100);
+        let extract = |bytes: &[u8]| extract_within(bytes, TempDir::new().unwrap().path(), &budget);
+
+        let err = extract(&hostile.finish()).unwrap_err();
+        assert!(
+            matches!(err, FetchError::UnsafeArchiveEntry { .. }),
+            "{err}"
+        );
+        let err = extract(&targz(&[
+            ("repo/a.txt", "123456"),
+            ("repo/c.txt", "123456"),
+        ]))
+        .unwrap_err();
+        assert!(
+            matches!(err, FetchError::UnpackedBytesExceeded { .. }),
+            "{err}"
+        );
+
+        extract(&fits).unwrap();
+    }
+
+    #[tokio::test]
+    async fn rate_limited_downloads_report_the_requested_wait() {
+        for (retry_after, expected) in [
+            (Some("30"), Some(Duration::from_secs(30))),
+            (Some("0"), Some(Duration::from_secs(1))),
+            (Some("Wed, 21 Oct 2015 07:28:00 GMT"), None),
+            (None, None),
+        ] {
+            let mut response = CannedResponse::status(429);
+            if let Some(value) = retry_after {
+                response = response.with_header("Retry-After", value);
+            }
+            let server = TestServer::start(HashMap::from([(
+                "/owner/repo/archive/main.tar.gz".to_string(),
+                response,
+            )]))
+            .await;
+
+            let url = format!("{}/owner/repo?ref=main", server.url());
+            let spec = RepoSpec::parse(&url, None).unwrap();
+            let err = fetch_repo(&client(), &spec).await.unwrap_err();
+
+            assert!(
+                matches!(
+                    &err,
+                    FetchError::RateLimited { url, retry_after }
+                        if url.ends_with("/owner/repo/archive/main.tar.gz")
+                            && *retry_after == expected
+                ),
+                "{err}"
+            );
+        }
     }
 
     fn upload_pack_route(lines: &[&str]) -> (String, CannedResponse) {

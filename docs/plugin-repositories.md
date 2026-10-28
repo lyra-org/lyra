@@ -61,6 +61,11 @@ tests export-ignore
 
 This repository excludes `plugins/*/tests`.
 
+Update checks compare a plugin's own directory, so export rules in a
+`.gitattributes` above it, such as at the repository root, do not mark
+existing installs as outdated; reinstall the plugin to pick them up. Rules
+in the plugin directory's own `.gitattributes` are part of that comparison.
+
 ## Repository URLs
 
 Plain repository URLs and browser URLs both work:

@@ -29,6 +29,7 @@ use harmony_repository::{
     ResolvedRepository,
     Revision,
     SourceRecord,
+    UnpackBudget,
     forge::tree_hashes,
     install_candidate,
     list_plugins,
@@ -102,6 +103,11 @@ pub(crate) enum PluginRepoError {
     Conflict(String),
     #[error("{0}")]
     BadGateway(String),
+    #[error("{message}")]
+    Unavailable {
+        message: String,
+        retry_after: Option<Duration>,
+    },
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -113,6 +119,18 @@ fn map_resolve_error(error: ResolveError) -> PluginRepoError {
             PluginRepoError::BadGateway(
                 "The plugin repository could not be downloaded. Try again shortly.".into(),
             )
+        }
+        ResolveError::Fetch(FetchError::RateLimited { retry_after, .. }) => {
+            tracing::warn!(error = %error, "plugin repository download rate limited");
+            let wait = match retry_after.map(|wait| wait.as_secs()) {
+                Some(seconds) if seconds > 1 => format!("Try again in {seconds} seconds."),
+                Some(_) => "Try again in a moment.".to_string(),
+                None => "Try again later.".to_string(),
+            };
+            PluginRepoError::Unavailable {
+                message: format!("The plugin repository's host is rate limiting downloads. {wait}"),
+                retry_after: *retry_after,
+            }
         }
         ResolveError::Io(_) | ResolveError::Fetch(FetchError::Io(_)) => {
             PluginRepoError::Internal(anyhow::Error::new(error))
@@ -127,6 +145,11 @@ fn map_resolve_error(error: ResolveError) -> PluginRepoError {
         }
         ResolveError::Fetch(FetchError::ArchiveTooLarge { .. }) => PluginRepoError::BadRequest(
             "The plugin repository archive exceeds the download size limit.".into(),
+        ),
+        ResolveError::Fetch(
+            FetchError::UnpackedBytesExceeded { .. } | FetchError::UnpackedEntriesExceeded { .. },
+        ) => PluginRepoError::BadRequest(
+            "The plugin repository archives exceed the unpacked size limit.".into(),
         ),
         ResolveError::Fetch(FetchError::FileTooLarge { .. }) => PluginRepoError::BadRequest(
             "A plugin repository manifest exceeds the download size limit.".into(),
@@ -744,6 +767,7 @@ async fn resolve_update_source(
     origin: &str,
     git_ref: Option<&str>,
     installed: &[&(String, SourceRecord)],
+    budget: &UnpackBudget,
 ) -> Result<UpdateSource, PluginRepoError> {
     let spec =
         RepoSpec::parse(origin, git_ref).map_err(|e| PluginRepoError::BadRequest(e.to_string()))?;
@@ -778,6 +802,7 @@ async fn resolve_update_source(
         }),
         Some(&changed),
         &crate::plugins::module_scope_ids(),
+        budget,
     )
     .await
     .map_err(map_resolve_error)?;
@@ -916,9 +941,11 @@ async fn update_plugins_in(
             .or_default()
             .push(plugin);
     }
+    // Every changed origin's tree stays on disk until the installs finish.
+    let budget = UnpackBudget::new();
     let mut resolved: HashMap<UpdateKey, Result<UpdateSource, String>> = HashMap::new();
     for ((origin, git_ref), group) in &installed {
-        let result = resolve_update_source(&client, origin, git_ref.as_deref(), group)
+        let result = resolve_update_source(&client, origin, git_ref.as_deref(), group, &budget)
             .await
             .map_err(|error| error.to_string());
         resolved.insert((origin.clone(), git_ref.clone()), result);
@@ -1133,6 +1160,43 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn rate_limited_downloads_map_to_unavailable_with_the_forge_wait() {
+        let rate_limited = |retry_after| {
+            map_resolve_error(ResolveError::Fetch(FetchError::RateLimited {
+                url: "https://forge.example/archive.tar.gz".to_string(),
+                retry_after,
+            }))
+        };
+
+        let error = rate_limited(Some(Duration::from_secs(42)));
+        let PluginRepoError::Unavailable {
+            message,
+            retry_after,
+        } = &error
+        else {
+            panic!("expected unavailable: {error:?}");
+        };
+        assert_eq!(*retry_after, Some(Duration::from_secs(42)));
+        assert!(message.ends_with("Try again in 42 seconds."), "{message}");
+
+        let error = rate_limited(Some(Duration::from_secs(1)));
+        assert!(
+            error.to_string().ends_with("Try again in a moment."),
+            "{error}"
+        );
+
+        let error = rate_limited(None);
+        assert!(
+            matches!(
+                &error,
+                PluginRepoError::Unavailable { message, retry_after: None }
+                    if message.ends_with("Try again later.")
+            ),
+            "{error:?}"
+        );
+    }
 
     #[test]
     fn seeds_official_repository_at_release_tag() -> anyhow::Result<()> {

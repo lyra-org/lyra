@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use std::collections::hash_map::Entry;
 use std::collections::{
     HashMap,
     HashSet,
@@ -32,6 +33,7 @@ use crate::fetch::{
     FetchedRepo,
     MAX_FILE_BYTES,
     RefPlan,
+    UnpackBudget,
     fetch_directory,
     fetch_file,
     fetch_planned,
@@ -52,6 +54,13 @@ use crate::manifest::{
 
 /// Path entries whose manifests are read at once, to stay polite to forges.
 const MAX_CONCURRENT_ENTRIES: usize = 4;
+
+/// Most plugins an install downloads from one tree as single-directory
+/// archives; past it the tree's whole archive is downloaded once instead.
+/// GitLab rate-limits archive requests per project (anonymous clients share
+/// one allowance, believed to be a few a minute), and every archive costs a
+/// request and an archive build on the forge.
+const MAX_DIRECTORY_ARCHIVES: usize = 3;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ResolveError {
@@ -120,7 +129,7 @@ pub struct ResolvedRepository {
     /// The selected plugins only, in index order.
     pub candidates: Vec<PluginCandidate>,
     _trees: Vec<InstallTree>,
-    _directories: Vec<FetchedDirectory>,
+    _downloads: Downloads,
 }
 
 /// A plugin offered by a repository, known from its `plugin.json` alone.
@@ -166,7 +175,17 @@ pub async fn resolve_plugins(
     valid_scope_ids: &HashSet<Arc<str>>,
 ) -> Result<ResolvedRepository, ResolveError> {
     let plan = plan_refs(client, spec).await;
-    resolve_planned(client, spec, &plan, None, selected, valid_scope_ids).await
+    let budget = UnpackBudget::new();
+    resolve_planned(
+        client,
+        spec,
+        &plan,
+        None,
+        selected,
+        valid_scope_ids,
+        &budget,
+    )
+    .await
 }
 
 /// Tree hashes a caller already holds for a repository at `commit`, keyed
@@ -180,6 +199,8 @@ pub struct KnownTreeHashes<'a> {
 /// Like [`resolve_plugins`], starting from a ref `plan` already resolved.
 /// `known` hashes are used for the repository's own plugins when the plan
 /// resolves to their commit; directories missing from them are looked up.
+/// Every archive extracted shares `budget`, which callers keeping several
+/// resolved repositories alive at once can share between them.
 pub async fn resolve_planned(
     client: &Client,
     spec: &RepoSpec,
@@ -187,9 +208,10 @@ pub async fn resolve_planned(
     known: Option<KnownTreeHashes<'_>>,
     selected: Option<&[String]>,
     valid_scope_ids: &HashSet<Arc<str>>,
+    budget: &UnpackBudget,
 ) -> Result<ResolvedRepository, ResolveError> {
     let walk = walk(client, spec, plan.clone(), known, |spec, plan| {
-        open_install(client.clone(), spec, plan)
+        open_install(client.clone(), spec, plan, budget.clone())
     })
     .await?;
 
@@ -205,24 +227,19 @@ pub async fn resolve_planned(
             .map(|(loaded, entry)| (loaded.manifest.id.as_str(), &entry.source)),
     )?;
 
+    let entries: Vec<FoundEntry> = walk
+        .entries
+        .into_iter()
+        .zip(manifests)
+        .filter(|(_, loaded)| selected.is_none_or(|ids| ids.contains(&loaded.manifest.id)))
+        .map(|(entry, _)| entry)
+        .collect();
+    let mut downloads = Downloads::new(&entries);
     let mut candidates = Vec::new();
-    let mut directories = Vec::new();
-    for (entry, loaded) in walk.entries.into_iter().zip(manifests) {
-        if selected.is_some_and(|ids| !ids.contains(&loaded.manifest.id)) {
-            continue;
-        }
-        let source_dir = match &walk.trees[entry.tree] {
-            InstallTree::Archive(fetched) => match entry.dir.as_str() {
-                "" => fetched.root().to_path_buf(),
-                dir => fetched.root().join(dir),
-            },
-            InstallTree::Directories { spec, commit } => {
-                let fetched = fetch_directory(client, spec, commit, &entry.dir).await?;
-                let path = fetched.path().to_path_buf();
-                directories.push(fetched);
-                path
-            }
-        };
+    for entry in entries {
+        let source_dir = downloads
+            .source_dir(client, &walk.trees, &entry, budget)
+            .await?;
         let plugin =
             PluginManager::load_plugin_dir(&source_dir, valid_scope_ids).map_err(|source| {
                 ResolveError::Plugin {
@@ -244,8 +261,68 @@ pub async fn resolve_planned(
         index: walk.index,
         candidates,
         _trees: walk.trees,
-        _directories: directories,
+        _downloads: downloads,
     })
+}
+
+/// What an install downloads from deferred trees once plugins are
+/// selected, each archive at most once: a plugin's own directory while its
+/// tree has at most [`MAX_DIRECTORY_ARCHIVES`] selected plugins, otherwise
+/// the tree's whole archive, which its selected plugins share.
+#[derive(Debug)]
+struct Downloads {
+    selected_per_tree: HashMap<usize, usize>,
+    /// Keyed by tree and the directory downloaded, empty for the whole tree.
+    fetched: HashMap<(usize, String), FetchedDirectory>,
+}
+
+impl Downloads {
+    fn new(selected: &[FoundEntry]) -> Self {
+        let mut selected_per_tree = HashMap::new();
+        for entry in selected {
+            *selected_per_tree.entry(entry.tree).or_default() += 1;
+        }
+        Self {
+            selected_per_tree,
+            fetched: HashMap::new(),
+        }
+    }
+
+    /// Where `entry`'s plugin directory is on disk, downloading it first
+    /// from a deferred tree.
+    async fn source_dir(
+        &mut self,
+        client: &Client,
+        trees: &[InstallTree],
+        entry: &FoundEntry,
+        budget: &UnpackBudget,
+    ) -> Result<PathBuf, FetchError> {
+        let (spec, commit) = match &trees[entry.tree] {
+            InstallTree::Archive(fetched) => return Ok(tree_dir(fetched.root(), &entry.dir)),
+            InstallTree::Deferred { spec, commit } => (spec, commit),
+        };
+        let whole = self.selected_per_tree[&entry.tree] > MAX_DIRECTORY_ARCHIVES;
+        let dir = if whole { "" } else { entry.dir.as_str() };
+        let fetched = match self.fetched.entry((entry.tree, dir.to_string())) {
+            Entry::Occupied(slot) => slot.into_mut(),
+            Entry::Vacant(slot) => {
+                slot.insert(fetch_directory(client, spec, commit, dir, budget).await?)
+            }
+        };
+        Ok(if whole {
+            tree_dir(fetched.path(), &entry.dir)
+        } else {
+            fetched.path().to_path_buf()
+        })
+    }
+}
+
+/// The directory `dir` of a tree extracted at `root`; empty names the root.
+fn tree_dir(root: &Path, dir: &str) -> PathBuf {
+    match dir {
+        "" => root.to_path_buf(),
+        dir => root.join(dir),
+    }
 }
 
 /// Validates a found entry's `plugin.json` on its own.
@@ -276,8 +353,9 @@ pub async fn list_plugins(
     valid_scope_ids: &HashSet<Arc<str>>,
 ) -> Result<RepositoryListing, ResolveError> {
     let plan = plan_refs(client, spec).await;
+    let budget = UnpackBudget::new();
     let walk = walk(client, spec, plan, None, |spec, plan| {
-        open_listed(client.clone(), spec, plan)
+        open_listed(client.clone(), spec, plan, budget.clone())
     })
     .await?;
 
@@ -305,8 +383,9 @@ async fn open_archive(
     client: Client,
     spec: RepoSpec,
     plan: RefPlan,
+    budget: UnpackBudget,
 ) -> Result<Opened<FetchedRepo>, ResolveError> {
-    let fetched = fetch_planned(&client, &spec, &plan).await?;
+    let fetched = fetch_planned(&client, &spec, &plan, &budget).await?;
     Ok(Opened {
         files: Files::Archive {
             root: fetched.root().to_path_buf(),
@@ -323,8 +402,10 @@ async fn open_archive(
 #[derive(Debug)]
 enum InstallTree {
     Archive(FetchedRepo),
-    /// Each plugin's directory is downloaded on its own, at `commit`.
-    Directories {
+    /// Nothing is downloaded until the plugins are selected: then each
+    /// selected plugin's directory at `commit`, or the whole archive once
+    /// past [`MAX_DIRECTORY_ARCHIVES`].
+    Deferred {
         spec: RepoSpec,
         commit: String,
     },
@@ -332,13 +413,14 @@ enum InstallTree {
 
 /// Opens a repository for installing. Where the forge serves
 /// single-directory archives and resolved a commit, manifests are read as
-/// raw files and each installed plugin's directory is downloaded later;
-/// plugin directories never overlap, so together they are never larger than
-/// the whole archive. Otherwise the whole archive is downloaded now.
+/// raw files and the download waits for the selection; plugin directories
+/// never overlap, so together they are never larger than the whole archive.
+/// Otherwise the whole archive is downloaded now.
 async fn open_install(
     client: Client,
     spec: RepoSpec,
     plan: RefPlan,
+    budget: UnpackBudget,
 ) -> Result<Opened<InstallTree>, ResolveError> {
     if let Some((git_ref, commit)) = plan.resolved()
         && spec.has_directory_archives()
@@ -347,7 +429,7 @@ async fn open_install(
             git_ref: git_ref.to_string(),
             commit: Some(commit.to_string()),
             pinned: plan.pinned(),
-            tree: InstallTree::Directories {
+            tree: InstallTree::Deferred {
                 spec: spec.clone(),
                 commit: commit.to_string(),
             },
@@ -358,7 +440,7 @@ async fn open_install(
             },
         });
     }
-    Ok(open_archive(client, spec, plan)
+    Ok(open_archive(client, spec, plan, budget)
         .await?
         .map_tree(InstallTree::Archive))
 }
@@ -369,9 +451,12 @@ async fn open_listed(
     client: Client,
     spec: RepoSpec,
     plan: RefPlan,
+    budget: UnpackBudget,
 ) -> Result<Opened<Option<FetchedRepo>>, ResolveError> {
     let Some((git_ref, commit)) = plan.resolved() else {
-        return Ok(open_archive(client, spec, plan).await?.map_tree(Some));
+        return Ok(open_archive(client, spec, plan, budget)
+            .await?
+            .map_tree(Some));
     };
     Ok(Opened {
         git_ref: git_ref.to_string(),
@@ -1465,9 +1550,18 @@ mod tests {
             })
         };
 
-        let stale = resolve_planned(&client(), &spec, &plan, known("b"), None, &HashSet::new())
-            .await
-            .unwrap();
+        let budget = UnpackBudget::new();
+        let stale = resolve_planned(
+            &client(),
+            &spec,
+            &plan,
+            known("b"),
+            None,
+            &HashSet::new(),
+            &budget,
+        )
+        .await
+        .unwrap();
         assert_eq!(stale.candidates[0].source.tree_hash, None);
         assert!(
             server
@@ -1477,9 +1571,17 @@ mod tests {
         );
 
         let seen = server.requests().len();
-        let resolved = resolve_planned(&client(), &spec, &plan, known(&sha), None, &HashSet::new())
-            .await
-            .unwrap();
+        let resolved = resolve_planned(
+            &client(),
+            &spec,
+            &plan,
+            known(&sha),
+            None,
+            &HashSet::new(),
+            &budget,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(
             resolved.candidates[0].source.tree_hash.as_deref(),
@@ -1494,20 +1596,29 @@ mod tests {
         );
     }
 
-    /// A GitLab index of `plugins/foo` and `plugins/bar`, both downloadable
-    /// as directory archives, with no whole-repository archive.
-    async fn gitlab_index(sha: &str) -> TestServer {
-        let index = index_json(r#"{ "path": "plugins/foo" }, { "path": "plugins/bar" }"#);
-        let prefix = format!("repo-main-{sha}");
-        let mut routes = gitlab_repo_routes(
-            sha,
-            &[
-                ("repository.json", &index),
-                ("plugins/foo/plugin.json", &plugin_json("foo")),
-                ("plugins/bar/plugin.json", &plugin_json("bar")),
-            ],
+    /// A GitLab index of `plugins/<id>` for each of `ids`, downloadable both
+    /// as directory archives and as the whole repository's archive.
+    async fn gitlab_index(sha: &str, ids: &[&str]) -> TestServer {
+        let entries: Vec<String> = ids
+            .iter()
+            .map(|id| format!(r#"{{ "path": "plugins/{id}" }}"#))
+            .collect();
+        let index = index_json(&entries.join(", "));
+        let manifests: Vec<(String, String)> = ids
+            .iter()
+            .map(|id| (format!("plugins/{id}/plugin.json"), plugin_json(id)))
+            .collect();
+        let mut files = vec![("repository.json", index.as_str())];
+        files.extend(
+            manifests
+                .iter()
+                .map(|(path, json)| (path.as_str(), json.as_str())),
         );
-        for id in ["foo", "bar"] {
+        let mut routes = gitlab_repo_routes(sha, &files);
+
+        let prefix = format!("repo-main-{sha}");
+        let mut whole = vec![(format!("{prefix}/repository.json"), index.clone())];
+        for id in ids {
             let top = format!("{prefix}-plugins-{id}/plugins/{id}");
             routes.push(gitlab_directory_archive(
                 sha,
@@ -1517,19 +1628,45 @@ mod tests {
                     (&format!("{top}/init.luau"), "return {}"),
                 ]),
             ));
+            whole.push((
+                format!("{prefix}/plugins/{id}/plugin.json"),
+                plugin_json(id),
+            ));
+            whole.push((
+                format!("{prefix}/plugins/{id}/init.luau"),
+                "return {}".to_string(),
+            ));
         }
+        let whole: Vec<(&str, &str)> = whole
+            .iter()
+            .map(|(path, content)| (path.as_str(), content.as_str()))
+            .collect();
+        routes.push((
+            format!("/owner/repo/-/archive/{sha}/repo-{sha}.tar.gz"),
+            CannedResponse::targz(targz(&whole)),
+        ));
+
+        let trees: Vec<String> = ids
+            .iter()
+            .map(|id| {
+                format!(r#"{{"id":"{id}-tree","name":"{id}","type":"tree","path":"plugins/{id}"}}"#)
+            })
+            .collect();
         routes.push((
             format!(
                 "/api/v4/projects/owner%2Frepo/repository/tree?path=plugins&ref={sha}&per_page=100"
             ),
-            CannedResponse::json(
-                r#"[
-                    {"id":"foo-tree","name":"foo","type":"tree","path":"plugins/foo"},
-                    {"id":"bar-tree","name":"bar","type":"tree","path":"plugins/bar"}
-                ]"#,
-            ),
+            CannedResponse::json(&format!("[{}]", trees.join(","))),
         ));
         TestServer::start(routes.into_iter().collect()).await
+    }
+
+    fn archive_requests(server: &TestServer) -> Vec<String> {
+        server
+            .requests()
+            .into_iter()
+            .filter(|path| path.contains("archive"))
+            .collect()
     }
 
     fn gitlab_spec(server: &TestServer) -> RepoSpec {
@@ -1539,7 +1676,7 @@ mod tests {
     #[tokio::test]
     async fn gitlab_installs_download_only_the_selected_plugin_directories() {
         let sha = "a".repeat(40);
-        let server = gitlab_index(&sha).await;
+        let server = gitlab_index(&sha, &["foo", "bar"]).await;
         let spec = gitlab_spec(&server);
 
         let selected = ["foo".to_string()];
@@ -1556,13 +1693,8 @@ mod tests {
         assert_eq!(foo.source.commit.as_deref(), Some(sha.as_str()));
         assert_eq!(foo.source.tree_hash.as_deref(), Some("foo-tree"));
 
-        let archives: Vec<_> = server
-            .requests()
-            .into_iter()
-            .filter(|path| path.contains("archive"))
-            .collect();
         assert_eq!(
-            archives,
+            archive_requests(&server),
             [format!(
                 "/api/v4/projects/owner%2Frepo/repository/archive.tar.gz?sha={sha}&path=plugins%2Ffoo"
             )]
@@ -1572,7 +1704,7 @@ mod tests {
     #[tokio::test]
     async fn gitlab_installs_record_the_sources_listings_show() {
         let sha = "a".repeat(40);
-        let server = gitlab_index(&sha).await;
+        let server = gitlab_index(&sha, &["foo", "bar"]).await;
         let spec = gitlab_spec(&server);
 
         let listing = list_plugins(&client(), &spec, &HashSet::new())
@@ -1600,6 +1732,225 @@ mod tests {
                 .any(|path| path.contains("/-/archive/")),
             "{:?}",
             server.requests()
+        );
+    }
+
+    #[tokio::test]
+    async fn gitlab_installs_past_the_directory_archive_limit_download_the_whole_archive_once() {
+        let sha = "a".repeat(40);
+        let ids = ["p1", "p2", "p3", "p4"];
+        let server = gitlab_index(&sha, &ids).await;
+        let spec = gitlab_spec(&server);
+        let directory_archive = |id: &str| {
+            format!(
+                "/api/v4/projects/owner%2Frepo/repository/archive.tar.gz?sha={sha}&path=plugins%2F{id}"
+            )
+        };
+
+        let within: Vec<String> = ids[..MAX_DIRECTORY_ARCHIVES]
+            .iter()
+            .map(|id| id.to_string())
+            .collect();
+        let resolved = resolve_plugins(&client(), &spec, Some(&within), &HashSet::new())
+            .await
+            .unwrap();
+        assert_eq!(resolved.candidates.len(), MAX_DIRECTORY_ARCHIVES);
+        let expected: Vec<String> = within.iter().map(|id| directory_archive(id)).collect();
+        assert_eq!(archive_requests(&server), expected);
+
+        let seen = archive_requests(&server).len();
+        let resolved = resolve_plugins(&client(), &spec, None, &HashSet::new())
+            .await
+            .unwrap();
+        assert_eq!(
+            archive_requests(&server)[seen..],
+            [format!("/owner/repo/-/archive/{sha}/repo-{sha}.tar.gz")]
+        );
+        let installed: Vec<_> = resolved
+            .candidates
+            .iter()
+            .map(|candidate| {
+                assert!(candidate.source_dir().join("init.luau").is_file());
+                (
+                    candidate.id(),
+                    candidate.source.subpath.as_deref(),
+                    candidate.source.tree_hash.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            installed,
+            [
+                ("p1", Some("plugins/p1"), Some("p1-tree")),
+                ("p2", Some("plugins/p2"), Some("p2-tree")),
+                ("p3", Some("plugins/p3"), Some("p3-tree")),
+                ("p4", Some("plugins/p4"), Some("p4-tree")),
+            ]
+        );
+    }
+
+    async fn resolve_within(
+        server: &TestServer,
+        path: &str,
+        budget: &UnpackBudget,
+    ) -> Result<ResolvedRepository, ResolveError> {
+        let spec = RepoSpec::parse(&format!("{}{path}", server.url()), None).unwrap();
+        let plan = plan_refs(&client(), &spec).await;
+        resolve_planned(&client(), &spec, &plan, None, None, &HashSet::new(), budget).await
+    }
+
+    #[tokio::test]
+    async fn origins_and_remote_entries_share_one_unpack_budget() {
+        let server = TestServer::start_with(|base| {
+            let index = index_json(&format!(
+                r#"{{ "path": "plugins/foo" }}, {{ "url": "{base}/other/single" }}"#
+            ));
+            HashMap::from([
+                (
+                    "/owner/repo/archive/main.tar.gz".to_string(),
+                    CannedResponse::targz(targz(&[
+                        ("repo/repository.json", &index),
+                        ("repo/plugins/foo/plugin.json", &plugin_json("foo")),
+                        ("repo/plugins/foo/init.luau", "return {}"),
+                    ])),
+                ),
+                single_plugin_routes("other/single", "bar"),
+            ])
+        })
+        .await;
+        let index_len = index_json(&format!(
+            r#"{{ "path": "plugins/foo" }}, {{ "url": "{}/other/single" }}"#,
+            server.url()
+        ))
+        .len();
+        let plugin_len = plugin_json("foo").len() + "return {}".len();
+        let total = (index_len + 2 * plugin_len) as u64;
+
+        let err = resolve_within(
+            &server,
+            "/owner/repo",
+            &UnpackBudget::with_limits(total - 1, 100),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ResolveError::Fetch(FetchError::UnpackedBytesExceeded { .. })
+            ),
+            "{err}"
+        );
+        let resolved = resolve_within(
+            &server,
+            "/owner/repo",
+            &UnpackBudget::with_limits(total, 100),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resolved.candidates.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn failed_resolves_release_their_share_of_a_shared_budget() {
+        let server = TestServer::start(HashMap::from([
+            (
+                "/broken/repo/archive/main.tar.gz".to_string(),
+                CannedResponse::targz(targz(&[("repo/plugin.json", &plugin_json("foo"))])),
+            ),
+            single_plugin_routes("good/repo", "bar"),
+        ]))
+        .await;
+        let good_len = (plugin_json("bar").len() + "return {}".len()) as u64;
+        let budget = UnpackBudget::with_limits(good_len, 100);
+
+        let err = resolve_within(&server, "/broken/repo", &budget)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ResolveError::Plugin {
+                    source: PluginLoadError::EntrypointNotFound { .. },
+                    ..
+                }
+            ),
+            "{err}"
+        );
+        let resolved = resolve_within(&server, "/good/repo", &budget)
+            .await
+            .unwrap();
+        assert_eq!(resolved.candidates[0].id(), "bar");
+
+        let err = resolve_within(&server, "/good/repo", &budget)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ResolveError::Fetch(FetchError::UnpackedBytesExceeded { .. })
+            ),
+            "a kept tree holds its share: {err}"
+        );
+        drop(resolved);
+        resolve_within(&server, "/good/repo", &budget)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn resolving_shares_one_unpack_budget_across_archives() {
+        let sha = "a".repeat(40);
+        let server = gitlab_index(&sha, &["foo", "bar"]).await;
+        let spec = gitlab_spec(&server);
+        let plan = plan_refs(&client(), &spec).await;
+        let resolve_within = async |max_bytes| {
+            let budget = UnpackBudget::with_limits(max_bytes, 100);
+            resolve_planned(
+                &client(),
+                &spec,
+                &plan,
+                None,
+                None,
+                &HashSet::new(),
+                &budget,
+            )
+            .await
+        };
+        let directory_bytes = (plugin_json("foo").len() + "return {}".len()) as u64;
+
+        let err = resolve_within(directory_bytes * 2 - 1).await.unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ResolveError::Fetch(FetchError::UnpackedBytesExceeded { .. })
+            ),
+            "{err}"
+        );
+        resolve_within(directory_bytes * 2).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rate_limited_manifest_reads_fail_the_listing() {
+        let sha = "a".repeat(40);
+        let err = list_routes(|_| {
+            let mut routes = raw_repo_routes("owner/repo", &sha, &[]);
+            routes.push((
+                format!("/owner/repo/raw/commit/{sha}/plugin.json"),
+                CannedResponse::status(429).with_header("Retry-After", "7"),
+            ));
+            routes
+        })
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ResolveError::Fetch(FetchError::RateLimited {
+                    retry_after: Some(wait),
+                    ..
+                }) if wait.as_secs() == 7
+            ),
+            "{err}"
         );
     }
 

@@ -69,6 +69,11 @@ fn map_repository_error(error: repositories_service::PluginRepoError) -> AppErro
         PluginRepoError::NotFound(message) => AppError::not_found(message),
         PluginRepoError::Conflict(message) => AppError::conflict(message),
         PluginRepoError::BadGateway(message) => AppError::bad_gateway(message),
+        PluginRepoError::Unavailable {
+            message,
+            retry_after: Some(retry_after),
+        } => AppError::service_unavailable_for(message, retry_after),
+        PluginRepoError::Unavailable { message, .. } => AppError::service_unavailable(message),
         PluginRepoError::Internal(error) => error.into(),
     }
 }
@@ -1387,6 +1392,25 @@ mod tests {
     use tokio::sync::Mutex;
 
     static REGISTRY_TEST_GUARD: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    #[test]
+    fn unavailable_repositories_answer_503_with_the_forge_wait() {
+        let unavailable = |retry_after| {
+            map_repository_error(repositories_service::PluginRepoError::Unavailable {
+                message: "rate limited".to_string(),
+                retry_after,
+            })
+            .into_response()
+        };
+
+        let response = unavailable(Some(std::time::Duration::from_secs(42)));
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.headers()["retry-after"], "42");
+
+        let response = unavailable(None);
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(response.headers().get("retry-after").is_none());
+    }
 
     fn props(required: bool) -> FieldProps {
         FieldProps {
