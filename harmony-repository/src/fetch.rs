@@ -10,6 +10,7 @@ use std::path::{
 };
 
 use flate2::read::GzDecoder;
+use harmony_core::plugin::PLUGIN_CONFIG_MAX_BYTES;
 use reqwest::{
     Client,
     StatusCode,
@@ -28,12 +29,17 @@ use crate::forge::{
     default_branch,
     resolve_commit,
 };
+use crate::manifest::REPOSITORY_MANIFEST_MAX_BYTES;
 
 const FALLBACK_REFS: &[&str] = &["main", "master", "trunk"];
 
 pub const MAX_ARCHIVE_BYTES: u64 = 50 * 1024 * 1024;
 pub const MAX_UNPACKED_BYTES: u64 = 256 * 1024 * 1024;
 pub const MAX_ARCHIVE_ENTRIES: usize = 16 * 1024;
+/// Cap on a single manifest file read through [`fetch_file`] or from an
+/// extracted archive: the `repository.json` cap, which `plugin.json` shares.
+pub const MAX_FILE_BYTES: u64 = REPOSITORY_MANIFEST_MAX_BYTES;
+const _: () = assert!(PLUGIN_CONFIG_MAX_BYTES == REPOSITORY_MANIFEST_MAX_BYTES);
 
 #[derive(Debug, thiserror::Error)]
 pub enum FetchError {
@@ -47,6 +53,8 @@ pub enum FetchError {
     Status { url: String, status: StatusCode },
     #[error("archive at {url} exceeds the {limit} byte limit")]
     ArchiveTooLarge { url: String, limit: u64 },
+    #[error("file at {location} exceeds the {limit} byte limit")]
+    FileTooLarge { location: String, limit: u64 },
     #[error("invalid archive: {reason}")]
     InvalidArchive { reason: String },
     #[error("archive entry '{path}' is not allowed: {reason}")]
@@ -110,7 +118,7 @@ impl FetchedRepo {
 
 /// What a repository's ref resolves to, worked out from the forge API
 /// alone. [`fetch_planned`] downloads it.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RefPlan {
     candidates: Vec<String>,
     commit: Option<String>,
@@ -125,6 +133,15 @@ impl RefPlan {
     /// say, so only a download reveals the content.
     pub fn commit(&self) -> Option<&str> {
         self.commit.as_deref()
+    }
+
+    /// The ref and the commit it resolves to, when the forge API said.
+    pub(crate) fn resolved(&self) -> Option<(&str, &str)> {
+        Some((self.candidates.first()?, self.commit.as_deref()?))
+    }
+
+    pub(crate) fn pinned(&self) -> bool {
+        self.pinned
     }
 }
 
@@ -150,7 +167,11 @@ pub async fn fetch_planned(
         let download_ref = plan.commit.as_deref().unwrap_or(candidate);
         let url = spec.archive_url(download_ref);
 
-        let bytes = match download(client, &url).await {
+        let bytes = match download(client, &url, MAX_ARCHIVE_BYTES, |url, limit| {
+            FetchError::ArchiveTooLarge { url, limit }
+        })
+        .await
+        {
             Ok(bytes) => bytes,
             Err(FetchError::Status { url, status })
                 if status == StatusCode::NOT_FOUND && !plan.authoritative =>
@@ -230,7 +251,35 @@ pub async fn plan_refs(client: &Client, spec: &RepoSpec) -> RefPlan {
     }
 }
 
-async fn download(client: &Client, url: &str) -> Result<Vec<u8>, FetchError> {
+/// Downloads the file at `path` in `commit`; `None` when the forge has no
+/// such file.
+pub async fn fetch_file(
+    client: &Client,
+    spec: &RepoSpec,
+    commit: &str,
+    path: &str,
+) -> Result<Option<Vec<u8>>, FetchError> {
+    let url = spec.raw_file_url(commit, path);
+    let downloaded = download(client, &url, MAX_FILE_BYTES, |url, limit| {
+        FetchError::FileTooLarge {
+            location: url,
+            limit,
+        }
+    })
+    .await;
+    match downloaded {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(FetchError::Status { status, .. }) if status == StatusCode::NOT_FOUND => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+async fn download(
+    client: &Client,
+    url: &str,
+    limit: u64,
+    too_large: fn(String, u64) -> FetchError,
+) -> Result<Vec<u8>, FetchError> {
     let mut response = client
         .get(url)
         .header(header::USER_AGENT, USER_AGENT)
@@ -249,14 +298,8 @@ async fn download(client: &Client, url: &str) -> Result<Vec<u8>, FetchError> {
         });
     }
 
-    if response
-        .content_length()
-        .is_some_and(|len| len > MAX_ARCHIVE_BYTES)
-    {
-        return Err(FetchError::ArchiveTooLarge {
-            url: url.to_string(),
-            limit: MAX_ARCHIVE_BYTES,
-        });
+    if response.content_length().is_some_and(|len| len > limit) {
+        return Err(too_large(url.to_string(), limit));
     }
 
     let mut bytes = Vec::new();
@@ -268,11 +311,8 @@ async fn download(client: &Client, url: &str) -> Result<Vec<u8>, FetchError> {
             source,
         })?
     {
-        if (bytes.len() + chunk.len()) as u64 > MAX_ARCHIVE_BYTES {
-            return Err(FetchError::ArchiveTooLarge {
-                url: url.to_string(),
-                limit: MAX_ARCHIVE_BYTES,
-            });
+        if (bytes.len() + chunk.len()) as u64 > limit {
+            return Err(too_large(url.to_string(), limit));
         }
         bytes.extend_from_slice(&chunk);
     }

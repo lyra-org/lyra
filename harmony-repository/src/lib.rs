@@ -18,6 +18,7 @@ pub use fetch::{
     FetchError,
     FetchedRepo,
     RefPlan,
+    fetch_file,
     fetch_planned,
     fetch_repo,
     plan_refs,
@@ -39,9 +40,12 @@ pub use manifest::{
     SourceRecord,
 };
 pub use resolve::{
+    ListedPlugin,
     PluginCandidate,
+    RepositoryListing,
     ResolveError,
     ResolvedRepository,
+    list_plugins,
     resolve_planned,
     resolve_plugins,
 };

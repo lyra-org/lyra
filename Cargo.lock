@@ -960,6 +960,7 @@ name = "harmony-repository"
 version = "0.0.1"
 dependencies = [
  "flate2",
+ "futures-util",
  "harmony-core",
  "percent-encoding",
  "reqwest",

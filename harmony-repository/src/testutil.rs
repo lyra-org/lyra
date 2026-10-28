@@ -53,6 +53,26 @@ impl CannedResponse {
         }
     }
 
+    pub(crate) fn bytes(body: Vec<u8>) -> Self {
+        Self {
+            status: 200,
+            content_type: "application/octet-stream",
+            body,
+            content_length_override: None,
+            headers: Vec::new(),
+        }
+    }
+
+    pub(crate) fn status(status: u16) -> Self {
+        Self {
+            status,
+            content_type: "text/plain",
+            body: Vec::new(),
+            content_length_override: None,
+            headers: Vec::new(),
+        }
+    }
+
     pub(crate) fn with_content_length(mut self, length: u64) -> Self {
         self.content_length_override = Some(length);
         self
@@ -251,4 +271,30 @@ pub(crate) fn single_plugin_routes(owner_repo: &str, id: &str) -> (String, Canne
             ("repo/init.luau", "return {}"),
         ])),
     )
+}
+
+/// Routes for a Gitea-style repository whose default branch `main` is at
+/// `sha`, serving `files` as raw files and no archives.
+pub(crate) fn raw_repo_routes(
+    owner_repo: &str,
+    sha: &str,
+    files: &[(&str, &str)],
+) -> Vec<(String, CannedResponse)> {
+    let mut routes = vec![
+        (
+            format!("/api/v1/repos/{owner_repo}"),
+            CannedResponse::json(r#"{"default_branch":"main"}"#),
+        ),
+        (
+            format!("/api/v1/repos/{owner_repo}/git/commits/main"),
+            CannedResponse::json(&format!(r#"{{"sha":"{sha}"}}"#)),
+        ),
+    ];
+    routes.extend(files.iter().map(|(path, content)| {
+        (
+            format!("/{owner_repo}/raw/commit/{sha}/{path}"),
+            CannedResponse::json(content),
+        )
+    }));
+    routes
 }

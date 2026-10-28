@@ -23,10 +23,12 @@ use harmony_repository::{
     InstallError,
     PluginCandidate,
     RepoSpec,
+    RepositoryListing,
     ResolveError,
     ResolvedRepository,
     SourceRecord,
     install_candidate,
+    list_plugins,
     manifest::SOURCE_RECORD_FILENAME,
     plan_refs,
     resolve_planned,
@@ -122,6 +124,9 @@ fn map_resolve_error(error: ResolveError) -> PluginRepoError {
         }
         ResolveError::Fetch(FetchError::ArchiveTooLarge { .. }) => PluginRepoError::BadRequest(
             "The plugin repository archive exceeds the download size limit.".into(),
+        ),
+        ResolveError::Fetch(FetchError::FileTooLarge { .. }) => PluginRepoError::BadRequest(
+            "A plugin repository manifest exceeds the download size limit.".into(),
         ),
         ResolveError::Fetch(FetchError::RefNotFound { .. }) => PluginRepoError::BadRequest(
             "The plugin repository or requested branch could not be found.".into(),
@@ -236,6 +241,23 @@ async fn resolve(
     .map_err(map_resolve_error)
 }
 
+/// Lists a repository URL's plugins from their manifests, for previews.
+async fn list(
+    url: &str,
+    git_ref: Option<&str>,
+    build: &BuildInfo,
+) -> Result<RepositoryListing, PluginRepoError> {
+    let spec =
+        RepoSpec::parse(url, git_ref).map_err(|e| PluginRepoError::BadRequest(e.to_string()))?;
+    list_plugins(
+        &http_client(build)?,
+        &spec,
+        &crate::plugins::module_scope_ids(),
+    )
+    .await
+    .map_err(map_resolve_error)
+}
+
 fn catalog_status(installed_dir: &Path, available_commit: Option<&str>) -> CatalogStatus {
     if !installed_dir.is_dir() {
         return CatalogStatus::Available;
@@ -308,13 +330,13 @@ fn record_resolved_commit(
     Ok(())
 }
 
-fn build_preview(resolved: &ResolvedRepository, plugins_dir: &Path) -> RepositoryPreview {
-    let plugins = resolved
-        .candidates
+fn build_preview(listing: &RepositoryListing, plugins_dir: &Path) -> RepositoryPreview {
+    let plugins = listing
+        .plugins
         .iter()
-        .map(|candidate| {
-            let manifest = &candidate.plugin.manifest;
-            let source = &candidate.source;
+        .map(|plugin| {
+            let manifest = &plugin.loaded.manifest;
+            let source = &plugin.source;
             PluginPreview {
                 id: manifest.id.clone(),
                 name: manifest.name.clone(),
@@ -322,7 +344,7 @@ fn build_preview(resolved: &ResolvedRepository, plugins_dir: &Path) -> Repositor
                 description: manifest.description.clone(),
                 scopes: manifest.scopes.clone(),
                 commit: source.commit.clone(),
-                status: catalog_status(&plugins_dir.join(candidate.id()), source.commit.as_deref()),
+                status: catalog_status(&plugins_dir.join(plugin.id()), source.commit.as_deref()),
                 source_origin: source
                     .via_repository
                     .is_some()
@@ -331,14 +353,14 @@ fn build_preview(resolved: &ResolvedRepository, plugins_dir: &Path) -> Repositor
         })
         .collect();
 
-    let index = resolved.index.as_ref();
+    let index = listing.index.as_ref();
     RepositoryPreview {
-        origin: resolved.spec.canonical_url(),
-        git_ref: resolved.spec.explicit_ref.clone(),
-        resolved_ref: resolved.git_ref.clone(),
-        commit: resolved.commit.clone(),
+        origin: listing.spec.canonical_url(),
+        git_ref: listing.spec.explicit_ref.clone(),
+        resolved_ref: listing.git_ref.clone(),
+        commit: listing.commit.clone(),
         name: index.map_or_else(
-            || resolved.spec.repo_name.clone(),
+            || listing.spec.repo_name.clone(),
             |index| index.name.clone(),
         ),
         description: index
@@ -348,13 +370,14 @@ fn build_preview(resolved: &ResolvedRepository, plugins_dir: &Path) -> Repositor
     }
 }
 
-/// Resolves a repository URL without touching disk or database state.
+/// Previews a repository URL from its manifests, without touching disk or
+/// database state.
 pub(crate) async fn resolve_preview(
     url: &str,
     git_ref: Option<&str>,
 ) -> Result<RepositoryPreview, PluginRepoError> {
-    let resolved = resolve(url, git_ref, &server_build()).await?;
-    Ok(build_preview(&resolved, &STATE.boot.get().plugins_dir))
+    let listing = list(url, git_ref, &server_build()).await?;
+    Ok(build_preview(&listing, &STATE.boot.get().plugins_dir))
 }
 
 #[derive(Debug, Clone)]
@@ -766,18 +789,18 @@ pub(crate) async fn add_repository(
     url: &str,
     git_ref: Option<&str>,
 ) -> Result<(repo_db::PluginRepository, RepositoryPreview), PluginRepoError> {
-    let resolved = resolve(url, git_ref, &server_build()).await?;
-    let preview = build_preview(&resolved, &STATE.boot.get().plugins_dir);
+    let listing = list(url, git_ref, &server_build()).await?;
+    let preview = build_preview(&listing, &STATE.boot.get().plugins_dir);
 
-    let origin = resolved.spec.canonical_url();
+    let origin = listing.spec.canonical_url();
     let mut record = repo_db::PluginRepository {
         db_id: None,
         id: nanoid!(),
         origin: origin.clone(),
         name: preview.name.clone(),
         description: preview.description.clone(),
-        git_ref: resolved.spec.explicit_ref.clone(),
-        commit: resolved.commit.clone(),
+        git_ref: listing.spec.explicit_ref.clone(),
+        commit: listing.commit.clone(),
         refreshed_at_ms: Some(now_ms()),
     };
 
@@ -815,12 +838,12 @@ pub(crate) async fn refresh_repository(
 ) -> Result<(repo_db::PluginRepository, RepositoryPreview), PluginRepoError> {
     let mut record = load_repository(repository_id).await?;
 
-    let resolved = resolve(&record.origin, record.git_ref.as_deref(), &server_build()).await?;
-    let preview = build_preview(&resolved, &STATE.boot.get().plugins_dir);
+    let listing = list(&record.origin, record.git_ref.as_deref(), &server_build()).await?;
+    let preview = build_preview(&listing, &STATE.boot.get().plugins_dir);
 
     record.name = preview.name.clone();
     record.description = preview.description.clone();
-    record.commit = resolved.commit.clone();
+    record.commit = listing.commit.clone();
     record.refreshed_at_ms = Some(now_ms());
     {
         let mut db = STATE.db.write().await;

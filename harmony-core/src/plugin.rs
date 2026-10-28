@@ -50,7 +50,7 @@ pub(crate) const PLUGIN_SCHEMA_VERSION: u32 = 1;
 
 /// Hard caps applied to `plugin.json` before `serde_json` parses it.
 /// Prevents a hostile or malformed plugin config from OOMing `discover_plugins`.
-pub(crate) const PLUGIN_CONFIG_MAX_BYTES: u64 = 64 * 1024;
+pub const PLUGIN_CONFIG_MAX_BYTES: u64 = 64 * 1024;
 pub(crate) const PLUGIN_CONFIG_MAX_SCOPES: usize = 32;
 pub(crate) const PLUGIN_CONFIG_MAX_SCOPE_LEN: usize = 128;
 pub(crate) const PLUGIN_CONFIG_MAX_DEPENDENCIES: usize = 32;
