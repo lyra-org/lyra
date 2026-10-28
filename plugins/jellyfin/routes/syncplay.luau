@@ -864,13 +864,6 @@ local function syncplay_new_group(entry: SessionEntry, group_name: string?): Syn
 	return group
 end
 
-local function syncplay_clamp_position(value: number?): number
-	if not value or value < 0 then
-		return 0
-	end
-	return value
-end
-
 local function syncplay_set_current_index(group: SyncPlayGroup, index: number)
 	if index < 0 or index >= #group.queue then
 		group.current_index = -1
@@ -1099,13 +1092,14 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 			return responses.bad_request(parse_err)
 		end
 		local playing_position = syncplay_number(body.PlayingItemPosition, 0) or 0
-		local start_ticks = syncplay_clamp_position(syncplay_number(body.StartPositionTicks, 0))
+		local start_ticks = syncplay_number(body.StartPositionTicks, 0)
 
 		local group_value = group :: SyncPlayGroup
 		group_value.queue = queue
 		syncplay_set_current_index(group_value, playing_position)
 		group_value.run_time_ticks = syncplay_current_run_time(group_value)
-		syncplay_set_position(group_value, start_ticks)
+		-- Within the item, unlike upstream, so members reporting ready at its end aren't sent back.
+		syncplay_set_position(group_value, syncplay_sanitize_position(group_value, start_ticks))
 		group_value.resume_playing = true
 		syncplay_set_state(group_value, "Waiting")
 		group_value.position_jumped = true

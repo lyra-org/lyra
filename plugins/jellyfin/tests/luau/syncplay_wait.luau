@@ -194,3 +194,22 @@ received("a")
 received("b")
 task.wait(0.3)
 check(received("a") .. received("b"), "", "a disbanded group is silent")
+
+-- A queue starting past the end of its item starts at the end, so members reporting ready there
+-- aren't sent back.
+group_id = post("a", "New", { GroupName = "Party" }).body.GroupId
+post("b", "Join", { GroupId = group_id })
+post("a", "SetNewQueue", {
+	PlayingQueue = { item_ids.encode_jellyfin_item_id(fixture.ids.song) },
+	StartPositionTicks = 100 * 10000000,
+})
+received("a")
+received("b")
+post("a", "Ready", { IsPlaying = false, PositionTicks = 60 * 10000000 })
+post("b", "Ready", { IsPlaying = false, PositionTicks = 60 * 10000000 })
+check(received("a"), "Pause,Unpause,Playing/Ready", "the group starts at the end of the item")
+received("b")
+post("a", "Leave")
+post("b", "Leave")
+received("a")
+received("b")
