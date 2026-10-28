@@ -314,7 +314,7 @@ end
 local id_specs: { ProviderIdSpec } = {
 	{ id_type = "release", entity = ET.Release, unique = true },
 	{ id_type = "release-group", entity = ET.Release },
-	{ id_type = "artist", entity = ET.Artist },
+	{ id_type = "artist", entity = ET.Artist, unique = true },
 	{ id_type = "recording", entity = ET.Track, unique = true },
 	{ id_type = "track", field = "release_track_id", entity = ET.Track, unique = true },
 	{ id_type = "work", entity = ET.Track },
