@@ -251,10 +251,12 @@ fn declare_settings_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let plugin_id = current_plugin_id(&frame.context)?;
+    harmony_core::ensure_current_plugin_run(frame.vm, &frame.context)?;
     let callback: luau::Function = frame.args.read_named("callback")?;
     let db = crate::plugins::db::get_optional(frame.vm)?;
     let vm = frame.vm.clone();
     let origin = frame.context.origin.clone();
+    let context = frame.context.clone();
     Ok(luau::ScheduledFuture::new(async move {
         let generation = crate::plugins::STATE.generation();
         let _registration = generation
@@ -270,7 +272,7 @@ fn declare_settings_callback(
             builder.clone(),
         )?;
 
-        callback.call(&vm, &[builder_value])?;
+        callback.call_with_context(&vm, &[builder_value], context)?;
 
         let groups = take_groups(&builder)?;
         let schema = Schema { groups };
@@ -296,10 +298,12 @@ fn declare_user_settings_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let plugin_id = current_plugin_id(&frame.context)?;
+    harmony_core::ensure_current_plugin_run(frame.vm, &frame.context)?;
     let callback: luau::Function = frame.args.read_named("callback")?;
     let db = crate::plugins::db::get_optional(frame.vm)?;
     let vm = frame.vm.clone();
     let origin = frame.context.origin.clone();
+    let context = frame.context.clone();
     Ok(luau::ScheduledFuture::new(async move {
         let generation = crate::plugins::STATE.generation();
         let _registration = generation
@@ -314,7 +318,7 @@ fn declare_user_settings_callback(
             builder.clone(),
         )?;
 
-        callback.call(&vm, &[builder_value])?;
+        callback.call_with_context(&vm, &[builder_value], context)?;
 
         let groups = take_groups(&builder)?;
         let schema = Schema { groups };

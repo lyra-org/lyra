@@ -184,6 +184,14 @@ impl PluginExecutorHandle {
         .await
     }
 
+    pub(crate) async fn stop_plugin(&self, plugin_id: &str) -> Result<()> {
+        self.request_async(|reply| PluginExecutorCommand::StopPlugin {
+            plugin_id: plugin_id.to_string(),
+            reply,
+        })
+        .await
+    }
+
     pub(crate) async fn restart_plugin(&self, plugin_id: &str) -> Result<()> {
         self.request_async(|reply| PluginExecutorCommand::RestartPlugin {
             plugin_id: plugin_id.to_string(),
@@ -200,7 +208,8 @@ impl PluginExecutorHandle {
         .await
     }
 
-    pub(crate) async fn exec_all(&self) -> Result<()> {
+    /// The ids of the plugins whose entrypoint failed.
+    pub(crate) async fn exec_all(&self) -> Result<Vec<String>> {
         self.request_async(PluginExecutorCommand::ExecAll).await
     }
 
@@ -330,6 +339,9 @@ fn handle_plugin_executor_command(
         PluginExecutorCommand::VerifyPluginManifest { plugin_id, reply } => {
             reply_if_open(reply, || runtime.verify_plugin_manifest(&plugin_id));
         }
+        PluginExecutorCommand::StopPlugin { plugin_id, reply } => {
+            reply_if_open(reply, || runtime.stop_plugin(&plugin_id));
+        }
         PluginExecutorCommand::RestartPlugin { plugin_id, reply } => {
             reply_if_open(reply, || runtime.restart_plugin(&plugin_id));
         }
@@ -337,7 +349,7 @@ fn handle_plugin_executor_command(
             reply_if_open(reply, || runtime.clear_plugin_callbacks(&plugin_id));
         }
         PluginExecutorCommand::ExecAll(reply) => {
-            reply_if_open(reply, || runtime.exec_all());
+            reply_if_open(reply, || Ok(runtime.exec_all()));
         }
         PluginExecutorCommand::MixHandler { request, reply } => {
             runtime.start_mix_handler(request, reply, permit);

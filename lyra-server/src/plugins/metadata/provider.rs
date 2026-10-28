@@ -75,6 +75,7 @@ fn provider_new_callback(
         crate::plugins::runtime_error("metadata.Provider.new must be called from plugin Lua code")
     })?;
     let plugin_id = PluginId::new(plugin_id.to_string()).map_err(crate::plugins::runtime_error)?;
+    harmony_core::ensure_current_plugin_run(frame.vm, &frame.context)?;
     let db = db::get_optional(frame.vm)?;
 
     let vm = frame.vm.clone();
@@ -230,7 +231,7 @@ fn provider_id_callback(
     spec: luau::Table,
     generator: Option<luau::Value>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
+    ensure_provider_owner(vm, context, &provider.plugin_id, &provider.provider_id)?;
 
     let id_spec = parse_id_spec(vm, &spec)?;
     let generator = match generator {
@@ -300,7 +301,7 @@ fn declare_option_callback(
     context: &luau::CallContext,
     config: luau::Table,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
+    ensure_provider_owner(vm, context, &provider.plugin_id, &provider.provider_id)?;
     let option = parse_option_declaration(vm, &config)?;
 
     let provider = provider.clone();
@@ -326,7 +327,7 @@ fn search_callback(
     entity_type: EntityType,
     handler: luau::Function,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
+    ensure_provider_owner(vm, context, &provider.plugin_id, &provider.provider_id)?;
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
     let context = core_call_context(context);
     let provider = provider.clone();
@@ -358,7 +359,7 @@ fn cover_callback(
     config: luau::Table,
     handler: luau::Function,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
+    ensure_provider_owner(vm, context, &provider.plugin_id, &provider.provider_id)?;
     if !matches!(entity_type, EntityType::Release | EntityType::Artist) {
         return Err(crate::plugins::runtime_error(
             "provider:cover entity_type must be EntityType.Release or EntityType.Artist",
@@ -406,7 +407,7 @@ fn lyrics_callback(
     config: luau::Table,
     handler: luau::Function,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
+    ensure_provider_owner(vm, context, &provider.plugin_id, &provider.provider_id)?;
 
     let (timeout, require) = parse_lyrics_spec(vm, &config)?;
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
@@ -447,7 +448,7 @@ fn similar_releases_callback(
     config: luau::Table,
     handler: luau::Function,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
+    ensure_provider_owner(vm, context, &provider.plugin_id, &provider.provider_id)?;
     let (timeout, require) = parse_similar_releases_spec(vm, &config)?;
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
     let context = core_call_context(context);
@@ -487,7 +488,7 @@ fn refresh_callback(
     handler: luau::Function,
     filter: Option<luau::Function>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
+    ensure_provider_owner(vm, context, &provider.plugin_id, &provider.provider_id)?;
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
     let context = core_call_context(context);
     let provider = provider.clone();
@@ -531,7 +532,7 @@ fn ensure_artist_callback(
     context: &luau::CallContext,
     request: luau::Table,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
+    ensure_provider_owner(vm, context, &provider.plugin_id, &provider.provider_id)?;
     let artist = ProviderArtist {
         id_type: required_table_string(vm, &request, "id_type", "provider:ensure_artist")?,
         id_value: required_table_string(vm, &request, "id_value", "provider:ensure_artist")?,
@@ -579,7 +580,7 @@ fn mark_unmatched_callback(
     node_id: i64,
     id_types_table: luau::Table,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
+    ensure_provider_owner(vm, context, &provider.plugin_id, &provider.provider_id)?;
     let node_id = args::positive_id(node_id, "node_id")?;
     let id_types = string_array_from_table(vm, &id_types_table)?;
     let provider_id = provider.provider_id.clone();
@@ -655,7 +656,7 @@ fn layer_callback(
     origin: &luau::ChunkOrigin,
     node_id: i64,
 ) -> luau::runtime::Result<luau::Value> {
-    ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
+    ensure_provider_owner(vm, context, &provider.plugin_id, &provider.provider_id)?;
     let node_id = args::positive_id(node_id, "node_id")?;
     let db = db::get_optional(vm)?;
     MetadataLayer::new_value(vm, origin, db, node_id, provider.provider_id.clone())

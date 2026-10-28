@@ -135,13 +135,14 @@ pub(super) fn parse_custom_field_version(raw: &str) -> luau::runtime::Result<u64
 }
 
 pub(super) fn ensure_provider_owner(
+    vm: &luau::Vm,
     context: &luau::CallContext,
     plugin_id: &PluginId,
     provider_id: &str,
 ) -> luau::runtime::Result<()> {
     let caller = context.origin.plugin.as_deref();
     if caller == Some(plugin_id.as_ref()) {
-        return Ok(());
+        return harmony_core::ensure_current_plugin_run(vm, context);
     }
 
     Err(crate::plugins::runtime_error(format!(

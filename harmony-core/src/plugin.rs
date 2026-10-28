@@ -41,6 +41,7 @@ use crate::{
     scheduler::{
         CapabilityId,
         ChunkOrigin,
+        TaskGroupId,
     },
 };
 
@@ -616,7 +617,7 @@ impl PluginManager {
             }
         }
 
-        let (_, cycle_members) = self.kahn_visit();
+        let (_, cycle_members) = kahn_visit(&self.plugins);
         if !cycle_members.is_empty() {
             for plugin_id in &cycle_members {
                 if let Some(removed) = self.plugins.remove(plugin_id) {
@@ -629,72 +630,6 @@ impl PluginManager {
         }
 
         errors
-    }
-
-    // Kahn's algorithm. `unscheduled` is non-empty iff the graph has a
-    // cycle, and lists ids in or downstream of one.
-    fn kahn_visit(&self) -> (Vec<String>, Vec<String>) {
-        let (mut in_degree, adjacency) = self.build_dependency_graph();
-
-        let mut ready: BTreeSet<String> = in_degree
-            .iter()
-            .filter_map(|(id, deg)| if *deg == 0 { Some(id.clone()) } else { None })
-            .collect();
-
-        let mut scheduled: Vec<String> = Vec::with_capacity(self.plugins.len());
-        while let Some(id) = ready.iter().next().cloned() {
-            ready.remove(&id);
-            scheduled.push(id.clone());
-            if let Some(successors) = adjacency.get(&id) {
-                for successor in successors {
-                    if let Some(deg) = in_degree.get_mut(successor) {
-                        *deg -= 1;
-                        if *deg == 0 {
-                            ready.insert(successor.clone());
-                        }
-                    }
-                }
-            }
-        }
-
-        let mut unscheduled: Vec<String> = in_degree
-            .into_iter()
-            .filter_map(|(id, deg)| if deg > 0 { Some(id) } else { None })
-            .collect();
-        unscheduled.sort();
-        (scheduled, unscheduled)
-    }
-
-    // Edges fan out to every installed alternative — required or not,
-    // once a dep is present the dependent runs after it.
-    fn build_dependency_graph(&self) -> (HashMap<String, usize>, HashMap<String, Vec<String>>) {
-        let mut in_degree: HashMap<String, usize> =
-            self.plugins.keys().map(|id| (id.clone(), 0)).collect();
-        let mut adjacency: HashMap<String, Vec<String>> = HashMap::new();
-
-        for plugin in self.plugins.values() {
-            let dependent = &plugin.manifest.id;
-            let mut already_edged: HashSet<&str> = HashSet::new();
-            for dep in &plugin.dependencies {
-                for alt in &dep.alternatives {
-                    if !self.plugins.contains_key(alt) {
-                        continue;
-                    }
-                    if !already_edged.insert(alt.as_str()) {
-                        continue;
-                    }
-                    adjacency
-                        .entry(alt.clone())
-                        .or_default()
-                        .push(dependent.clone());
-                    if let Some(deg) = in_degree.get_mut(dependent) {
-                        *deg += 1;
-                    }
-                }
-            }
-        }
-
-        (in_degree, adjacency)
     }
 
     pub fn reload_plugin(
@@ -741,7 +676,7 @@ impl PluginManager {
 
         // The new manifest could introduce a cycle — probe the updated
         // graph and roll back if so.
-        let (_, cycle_members) = self.kahn_visit();
+        let (_, cycle_members) = kahn_visit(&self.plugins);
         if !cycle_members.is_empty() {
             self.by_root.remove(&plugin.directory);
             match previous {
@@ -954,29 +889,99 @@ impl PluginManager {
     pub fn list_plugins(&self) -> impl Iterator<Item = &LoadedPlugin> {
         self.plugins.values()
     }
+}
 
-    /// Plugins in execution order. Ties break by id so the order is
-    /// stable (the underlying `HashMap` is not). Discovery and reload
-    /// reject cycles, which is what the `debug_assert!` relies on.
-    pub fn topological_order(&self) -> Vec<LoadedPlugin> {
-        let (scheduled, unscheduled) = self.kahn_visit();
-        debug_assert!(
-            unscheduled.is_empty(),
-            "topological_order missed plugins — cycle invariant broken: {unscheduled:?}"
-        );
-        scheduled
-            .into_iter()
-            .map(|id| {
-                self.plugins
-                    .get(&id)
-                    .cloned()
-                    .expect("kahn_visit produced id not present in self.plugins")
-            })
-            .collect()
+// Kahn's algorithm. `unscheduled` is non-empty iff the graph has a
+// cycle, and lists ids in or downstream of one.
+fn kahn_visit(plugins: &HashMap<String, LoadedPlugin>) -> (Vec<String>, Vec<String>) {
+    let (mut in_degree, adjacency) = build_dependency_graph(plugins);
+
+    let mut ready: BTreeSet<String> = in_degree
+        .iter()
+        .filter_map(|(id, deg)| if *deg == 0 { Some(id.clone()) } else { None })
+        .collect();
+
+    let mut scheduled: Vec<String> = Vec::with_capacity(plugins.len());
+    while let Some(id) = ready.iter().next().cloned() {
+        ready.remove(&id);
+        scheduled.push(id.clone());
+        if let Some(successors) = adjacency.get(&id) {
+            for successor in successors {
+                if let Some(deg) = in_degree.get_mut(successor) {
+                    *deg -= 1;
+                    if *deg == 0 {
+                        ready.insert(successor.clone());
+                    }
+                }
+            }
+        }
     }
+
+    let mut unscheduled: Vec<String> = in_degree
+        .into_iter()
+        .filter_map(|(id, deg)| if deg > 0 { Some(id) } else { None })
+        .collect();
+    unscheduled.sort();
+    (scheduled, unscheduled)
+}
+
+// Edges fan out to every installed alternative — required or not,
+// once a dep is present the dependent runs after it.
+fn build_dependency_graph(
+    plugins: &HashMap<String, LoadedPlugin>,
+) -> (HashMap<String, usize>, HashMap<String, Vec<String>>) {
+    let mut in_degree: HashMap<String, usize> = plugins.keys().map(|id| (id.clone(), 0)).collect();
+    let mut adjacency: HashMap<String, Vec<String>> = HashMap::new();
+
+    for plugin in plugins.values() {
+        let dependent = &plugin.manifest.id;
+        let mut already_edged: HashSet<&str> = HashSet::new();
+        for dep in &plugin.dependencies {
+            for alt in &dep.alternatives {
+                if !plugins.contains_key(alt) {
+                    continue;
+                }
+                if !already_edged.insert(alt.as_str()) {
+                    continue;
+                }
+                adjacency
+                    .entry(alt.clone())
+                    .or_default()
+                    .push(dependent.clone());
+                if let Some(deg) = in_degree.get_mut(dependent) {
+                    *deg += 1;
+                }
+            }
+        }
+    }
+
+    (in_degree, adjacency)
+}
+
+/// `plugins` in execution order: each runs after every installed plugin it
+/// depends on, and ties break by id so the order is stable.
+fn execution_order(
+    plugins: impl IntoIterator<Item = LoadedPlugin>,
+) -> anyhow::Result<Vec<LoadedPlugin>> {
+    let mut by_id = HashMap::new();
+    for plugin in plugins {
+        let id = plugin.manifest.id.clone();
+        if by_id.insert(id.clone(), plugin).is_some() {
+            anyhow::bail!("plugin '{id}' is listed more than once");
+        }
+    }
+    let (scheduled, unscheduled) = kahn_visit(&by_id);
+    if !unscheduled.is_empty() {
+        anyhow::bail!("plugin dependencies form a cycle: {unscheduled:?}");
+    }
+    Ok(scheduled
+        .into_iter()
+        .filter_map(|id| by_id.remove(&id))
+        .collect())
 }
 
 type VmConfigurator = Box<dyn FnOnce(&luau::Vm) -> anyhow::Result<()> + 'static>;
+type RunEndHook = Box<dyn Fn(&luau::Vm, &str) + 'static>;
 
 pub struct RuntimeBuilder<L> {
     loader: L,
@@ -987,6 +992,7 @@ pub struct RuntimeBuilder<L> {
     memory_limit: usize,
     luau_resume_budget: Option<Duration>,
     configure_vm: Vec<VmConfigurator>,
+    run_end_hooks: Vec<RunEndHook>,
 }
 
 impl<L> RuntimeBuilder<L>
@@ -1003,6 +1009,7 @@ where
             memory_limit: 256 * 1024 * 1024,
             luau_resume_budget: Some(Duration::from_secs(300)),
             configure_vm: Vec::new(),
+            run_end_hooks: Vec::new(),
         }
     }
 
@@ -1039,6 +1046,16 @@ where
         self
     }
 
+    /// Runs with the plugin's id after each of its runs ends, whatever ended
+    /// it: a stop, a restart or a failed entrypoint.
+    pub fn on_run_end<F>(mut self, hook: F) -> Self
+    where
+        F: Fn(&luau::Vm, &str) + 'static,
+    {
+        self.run_end_hooks.push(Box::new(hook));
+        self
+    }
+
     pub fn build(self) -> anyhow::Result<Runtime> {
         let vm =
             luau::Vm::with_options(luau::VmOptions::default().memory_limit(self.memory_limit))?;
@@ -1067,16 +1084,19 @@ where
 
         Ok(Runtime {
             vm,
-            plugins: self.plugins,
+            plugins: Arc::from(execution_order(self.plugins.iter().cloned())?),
             tokio_runtime: TokioRuntimeContext::new()?,
+            run_end_hooks: self.run_end_hooks,
         })
     }
 }
 
 pub struct Runtime {
     pub vm: luau::Vm,
+    /// In execution order, dependencies first.
     pub plugins: Arc<[LoadedPlugin]>,
     pub tokio_runtime: TokioRuntimeContext,
+    run_end_hooks: Vec<RunEndHook>,
 }
 
 impl Runtime {
@@ -1136,22 +1156,61 @@ impl Runtime {
     /// required its modules keep the exports they have until they restart.
     pub fn restart_plugin(&self, plugin_id: &str) -> anyhow::Result<()> {
         let plugin = self.loaded_plugin(plugin_id)?;
+        self.stop_plugin(plugin_id)?;
         let require = self.vm.data().get::<RequireRuntime>()?;
         require.invalidate_plugin(plugin_id);
         self.exec_loaded_plugin(plugin)
     }
 
-    pub fn exec_all(&self) -> anyhow::Result<()> {
-        for plugin in self.plugins.iter() {
-            match self.exec_loaded_plugin(plugin) {
-                Ok(()) => tracing::debug!("plugin '{}' executed", plugin.manifest.id),
-                Err(error) => tracing::warn!("plugin '{}' error: {error}", plugin.manifest.id),
-            }
+    /// Cancels every task of the plugin's current run, including handler
+    /// calls running in it and tasks spawned into it later, then runs the
+    /// run-end hooks.
+    pub fn stop_plugin(&self, plugin_id: &str) -> anyhow::Result<()> {
+        self.loaded_plugin(plugin_id)?;
+        let require = self.vm.data().get::<RequireRuntime>()?;
+        let Some(group) = require.end_plugin_run(plugin_id) else {
+            return Ok(());
+        };
+        self.vm.data().get::<LocalScheduler>()?.cancel_group(group);
+        for hook in &self.run_end_hooks {
+            hook(&self.vm, plugin_id);
         }
         Ok(())
     }
 
+    /// Runs every plugin's entrypoint, dependencies first, and returns the
+    /// ids of the plugins whose entrypoint failed.
+    pub fn exec_all(&self) -> Vec<String> {
+        let mut failed = Vec::new();
+        for plugin in self.plugins.iter() {
+            match self.exec_loaded_plugin(plugin) {
+                Ok(()) => tracing::debug!("plugin '{}' executed", plugin.manifest.id),
+                Err(error) => {
+                    tracing::warn!("plugin '{}' error: {error:#}", plugin.manifest.id);
+                    failed.push(plugin.manifest.id.clone());
+                }
+            }
+        }
+        failed
+    }
+
+    /// Starts the plugin's run, libraries included, so its sources can be
+    /// required. A failed entrypoint ends the run, so the tasks it spawned
+    /// before failing stop with it.
     fn exec_loaded_plugin(&self, plugin: &LoadedPlugin) -> anyhow::Result<()> {
+        let scheduler = self.vm.data().get::<LocalScheduler>()?;
+        self.vm
+            .data()
+            .get::<RequireRuntime>()?
+            .plugin_group(&scheduler, &plugin.manifest.id);
+        let result = self.run_entrypoint(plugin);
+        if result.is_err() {
+            self.stop_plugin(&plugin.manifest.id)?;
+        }
+        result
+    }
+
+    fn run_entrypoint(&self, plugin: &LoadedPlugin) -> anyhow::Result<()> {
         let Some(entrypoint) = plugin.manifest.entrypoint.as_deref() else {
             return Ok(());
         };
@@ -1163,15 +1222,20 @@ impl Runtime {
         // of re-running its side effects; evaluation still happens on a
         // scheduler-driven thread so entrypoints may yield.
         require
-            .load_source_cached(&specifier, &ChunkOrigin::default(), |source| {
-                let function =
-                    load_chunk_with_require(&self.vm, source.bytes.clone(), &source.origin)?;
+            .load_source_cached(&specifier, &ChunkOrigin::default(), |source, task_group| {
+                let scheduler = self.vm.data().get::<LocalScheduler>()?;
+                let function = load_chunk_with_require(
+                    &self.vm,
+                    source.bytes.clone(),
+                    &source.origin,
+                    task_group,
+                )?;
                 let thread = self.vm.create_thread(&function)?;
                 self.vm.sandbox_thread(&thread)?;
-                let scheduler = self.vm.data().get::<LocalScheduler>()?;
                 scheduler.spawn_luau_thread(
                     CallContext {
                         origin: source.origin.clone(),
+                        task_group,
                         ..CallContext::default()
                     },
                     self.vm.clone(),
@@ -1222,11 +1286,22 @@ impl Runtime {
         context: CallContext,
         args: Vec<luau::Value>,
     ) -> anyhow::Result<Vec<luau::Value>> {
+        let mut context = context;
         let origin = context.origin.clone();
-        let function = load_chunk_with_require(&self.vm, source, &origin)?;
+        let scheduler = self.vm.data().get::<LocalScheduler>()?;
+        // Plugin code runs in its plugin's current run, never the default group.
+        if let Some(plugin_id) = origin.plugin.as_deref()
+            && context.task_group == TaskGroupId::default()
+        {
+            context.task_group = self
+                .vm
+                .data()
+                .get::<RequireRuntime>()?
+                .plugin_group(&scheduler, plugin_id);
+        }
+        let function = load_chunk_with_require(&self.vm, source, &origin, context.task_group)?;
         let thread = self.vm.create_thread(&function)?;
         self.vm.sandbox_thread(&thread)?;
-        let scheduler = self.vm.data().get::<LocalScheduler>()?;
         scheduler.spawn_luau_thread(context, self.vm.clone(), thread.clone(), args);
         drive_thread(
             &self.tokio_runtime,
@@ -1278,6 +1353,7 @@ mod tests {
         PluginManager,
         PluginManifest,
         RuntimeBuilder,
+        execution_order,
         normalize_dependencies,
         plugin_origin,
         validate_plugin_id,
@@ -1317,6 +1393,17 @@ mod tests {
 
     fn manifest_arc(manifests: Vec<PluginManifest>) -> Arc<[PluginManifest]> {
         Arc::from(manifests)
+    }
+
+    /// `manifest` as discovery would load it from `plugins/<id>`.
+    fn loaded(manifest: PluginManifest) -> LoadedPlugin {
+        LoadedPlugin {
+            dependencies: normalize_dependencies(&manifest.id, &manifest.dependencies)
+                .expect("valid test dependencies"),
+            directory: PathBuf::from(format!("plugins/{}", manifest.id)),
+            manifest,
+            declared_scopes: HashSet::new(),
+        }
     }
 
     #[test]
@@ -1441,19 +1528,8 @@ mod tests {
 
     fn loaded_plugin(id: &str, deps: Vec<NormalizedDependency>) -> LoadedPlugin {
         LoadedPlugin {
-            manifest: PluginManifest {
-                schema_version: super::PLUGIN_SCHEMA_VERSION,
-                id: id.to_string(),
-                name: id.to_string(),
-                version: "0.0.0".to_string(),
-                description: String::new(),
-                entrypoint: Some("init.luau".to_string()),
-                scopes: Vec::new(),
-                dependencies: Vec::new(),
-            },
-            directory: PathBuf::from(format!("plugins/{id}")),
-            declared_scopes: HashSet::new(),
             dependencies: deps,
+            ..loaded(manifest(id, &[]))
         }
     }
 
@@ -1481,18 +1557,21 @@ mod tests {
         }
     }
 
+    fn execution_order_ids(plugins: Vec<LoadedPlugin>) -> Vec<String> {
+        execution_order(plugins)
+            .expect("plugins have an execution order")
+            .into_iter()
+            .map(|plugin| plugin.manifest.id)
+            .collect()
+    }
+
     #[test]
-    fn topological_order_orders_after_every_installed_alternative() {
-        let mgr = manager_with(vec![
+    fn execution_order_orders_after_every_installed_alternative() {
+        let order = execution_order_ids(vec![
             loaded_plugin("consumer", vec![required(&["a", "b"])]),
             loaded_plugin("a", vec![]),
             loaded_plugin("b", vec![]),
         ]);
-        let order: Vec<String> = mgr
-            .topological_order()
-            .into_iter()
-            .map(|p| p.manifest.id)
-            .collect();
         let consumer_pos = order.iter().position(|id| id == "consumer").unwrap();
         let a_pos = order.iter().position(|id| id == "a").unwrap();
         let b_pos = order.iter().position(|id| id == "b").unwrap();
@@ -1501,32 +1580,32 @@ mod tests {
     }
 
     #[test]
-    fn topological_order_is_stable_via_id_sort() {
-        let mgr = manager_with(vec![
+    fn execution_order_is_stable_via_id_sort() {
+        let order = execution_order_ids(vec![
             loaded_plugin("zeta", vec![]),
             loaded_plugin("alpha", vec![]),
             loaded_plugin("mu", vec![]),
         ]);
-        let order: Vec<String> = mgr
-            .topological_order()
-            .into_iter()
-            .map(|p| p.manifest.id)
-            .collect();
         assert_eq!(order, vec!["alpha", "mu", "zeta"]);
     }
 
     #[test]
-    fn topological_order_respects_optional_edges_when_provider_installed() {
-        let mgr = manager_with(vec![
+    fn execution_order_respects_optional_edges_when_provider_installed() {
+        let order = execution_order_ids(vec![
             loaded_plugin("consumer", vec![optional(&["provider"])]),
             loaded_plugin("provider", vec![]),
         ]);
-        let order: Vec<String> = mgr
-            .topological_order()
-            .into_iter()
-            .map(|p| p.manifest.id)
-            .collect();
         assert_eq!(order, vec!["provider", "consumer"]);
+    }
+
+    #[test]
+    fn execution_order_rejects_cycles() {
+        let error = execution_order(vec![
+            loaded_plugin("a", vec![required(&["b"])]),
+            loaded_plugin("b", vec![required(&["a"])]),
+        ])
+        .expect_err("a cycle has no execution order");
+        assert!(error.to_string().contains("cycle"), "{error}");
     }
 
     #[test]
@@ -1600,7 +1679,12 @@ mod tests {
     fn runtime_builder_installs_require_and_loads_memory_sources() -> anyhow::Result<()> {
         let mut loader = MemorySourceLoader::new();
         loader.insert("plugin:demo/util", b"return { answer = 42 }".as_slice());
-        let runtime = RuntimeBuilder::new(loader, manifest_arc(Vec::new())).build()?;
+        let mut demo = loaded_plugin("demo", Vec::new());
+        demo.manifest.entrypoint = None;
+        let runtime = RuntimeBuilder::new(loader, manifest_arc(vec![demo.manifest.clone()]))
+            .plugins(Arc::from(vec![demo]))
+            .build()?;
+        assert!(runtime.exec_all().is_empty());
 
         let values = runtime.eval_source_with_context(
             Arc::<[u8]>::from(
@@ -1726,30 +1810,936 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn eval_sources_run_as_their_own_chunk() -> anyhow::Result<()> {
-        let runtime = RuntimeBuilder::new(
-            MemorySourceLoader::new(),
-            manifest_arc(vec![manifest("lib", &[])]),
-        )
-        .build()?;
-        let context = || CallContext {
-            origin: super::plugin_origin("lib", "eval.luau"),
+    #[derive(Default)]
+    struct TestHandlers(std::cell::RefCell<Vec<(luau::Function, CallContext)>>);
+
+    /// `later(seconds, fn)` runs `fn` after a delay in the caller's task
+    /// group, `register(fn)` keeps `fn` with the caller's group for the test
+    /// to call, `run()` numbers each call and `record(value)` logs a value.
+    fn task_test_module(recorded: Arc<Mutex<Vec<String>>>) -> ModuleSpec {
+        let runs = Arc::new(Mutex::new(0usize));
+        let eventually_recorded = recorded.clone();
+        let read_function = |frame: &mut luau::CallFrame<'_>| match frame.args.read()? {
+            luau::Value::Function(function) => Ok(function),
+            other => Err(luau::Error::Runtime(format!(
+                "expected a function, got {}",
+                other.type_name()
+            ))),
+        };
+        let group_context = |frame: &luau::CallFrame<'_>| CallContext {
+            task_group: crate::TaskGroupId(frame.context.task_group.0),
             ..CallContext::default()
         };
-
-        let escape = runtime
-            .eval_source_with_context(
-                &b"end end and (function() error('escaped') end)() and function(require) return function(...) return 1"[..],
-                context(),
+        ModuleSpec::new("test/tasks")
+            .capability("test.tasks")
+            .function(FunctionSpec::sync_fn("later").call(move |mut frame| {
+                let seconds: f64 = frame.args.read()?;
+                let function = read_function(&mut frame)?;
+                let thread = frame.vm.create_thread(&function)?;
+                frame
+                    .vm
+                    .data()
+                    .get::<crate::LocalScheduler>()?
+                    .schedule_luau_thread_after(
+                        group_context(&frame),
+                        std::time::Duration::from_secs_f64(seconds),
+                        frame.vm.clone(),
+                        thread,
+                        Vec::new(),
+                    );
+                Ok(())
+            }))
+            .function(FunctionSpec::sync_fn("register").call(move |mut frame| {
+                let function = read_function(&mut frame)?;
+                let context = group_context(&frame);
+                frame
+                    .vm
+                    .data()
+                    .get::<TestHandlers>()?
+                    .0
+                    .borrow_mut()
+                    .push((function, context));
+                Ok(())
+            }))
+            .function(FunctionSpec::sync_fn("run").call(move |mut frame| {
+                let mut runs = runs.lock().expect("runs mutex poisoned");
+                *runs += 1;
+                frame.returns.write(*runs as i64)?;
+                Ok(())
+            }))
+            .function(FunctionSpec::sync_fn("record").call(move |mut frame| {
+                let value: String = frame.args.read()?;
+                recorded
+                    .lock()
+                    .expect("recorded mutex poisoned")
+                    .push(value);
+                Ok(())
+            }))
+            .function(FunctionSpec::sync_fn("check").call(|mut frame| {
+                let checked = crate::ensure_current_plugin_run(frame.vm, &frame.context);
+                frame
+                    .returns
+                    .write(checked.err().map(|error| error.to_string()))?;
+                Ok(())
+            }))
+            .function(
+                FunctionSpec::async_fn("forever").call_async(Arc::new(|_frame| {
+                    Ok(luau::ScheduledFuture::new(std::future::pending::<
+                        luau::runtime::Result<()>,
+                    >()))
+                })),
             )
-            .expect_err("source can't close a wrapper around it");
+            .function(
+                FunctionSpec::async_fn("soon").call_async(Arc::new(|_frame| {
+                    Ok(luau::ScheduledFuture::after(
+                        std::time::Duration::from_millis(10),
+                        async { Ok(()) },
+                    ))
+                })),
+            )
+            .function(FunctionSpec::async_fn("eventually").call_async(Arc::new(
+                move |mut frame| {
+                    let value: String = frame.args.read()?;
+                    let recorded = eventually_recorded.clone();
+                    Ok(luau::ScheduledFuture::after(
+                        std::time::Duration::from_millis(10),
+                        async move {
+                            recorded
+                                .lock()
+                                .expect("recorded mutex poisoned")
+                                .push(value);
+                            Ok(())
+                        },
+                    ))
+                },
+            )))
+            .function(FunctionSpec::sync_fn("thread_plugin").call(|mut frame| {
+                let plugin = frame
+                    .vm
+                    .thread_call_context(&frame.thread)?
+                    .and_then(|context| context.origin.plugin)
+                    .map(|plugin| plugin.to_string());
+                frame.returns.write(plugin)?;
+                Ok(())
+            }))
+            .install(|_| Ok(ModuleExport::new(())))
+    }
+
+    /// A capability only `lib` holds in the task test runtimes.
+    fn secret_module() -> ModuleSpec {
+        ModuleSpec::new("test/secret")
+            .capability("test.secret")
+            .function(FunctionSpec::sync_fn("get").call(|mut frame| {
+                frame.returns.write("secret")?;
+                Ok(())
+            }))
+            .install(|_| Ok(ModuleExport::new(())))
+    }
+
+    fn task_test_runtime(recorded: Arc<Mutex<Vec<String>>>) -> anyhow::Result<super::Runtime> {
+        let source = r#"
+            local tasks = require('@test/tasks')
+            local run = tasks.run()
+            tasks.later(0.05, function()
+                tasks.record(`{PLUGIN}:{run}`)
+            end)
+            tasks.register(function()
+                tasks.forever()
+            end)
+        "#;
+        task_test_runtime_with(
+            recorded,
+            &[
+                ("demo", &[], &source.replace("{PLUGIN}", "demo")),
+                ("other", &[], &source.replace("{PLUGIN}", "other")),
+            ],
+            &[],
+        )
+    }
+
+    /// Plugins as `(id, dependencies, entrypoint source)` and extra plugin
+    /// modules as `(source key, source)`.
+    fn task_test_runtime_with(
+        recorded: Arc<Mutex<Vec<String>>>,
+        sources: &[(&str, &[&str], &str)],
+        modules: &[(&str, &str)],
+    ) -> anyhow::Result<super::Runtime> {
+        let mut loader = MemorySourceLoader::new();
+        for (key, source) in modules {
+            loader.insert(key.to_string(), source.as_bytes());
+        }
+        let mut plugins = Vec::new();
+        for (id, dependencies, source) in sources {
+            loader.insert(format!("plugin:{id}/init"), source.as_bytes());
+            let scopes: &[&str] = if *id == "lib" {
+                &["test.tasks", "test.secret"]
+            } else {
+                &["test.tasks"]
+            };
+            let mut plugin_manifest = manifest(id, scopes);
+            plugin_manifest.dependencies = dependencies
+                .iter()
+                .map(|dependency| DependencyEntry::Id(dependency.to_string()))
+                .collect();
+            plugins.push(loaded(plugin_manifest));
+        }
+        task_test_runtime_from(recorded, loader, plugins)
+    }
+
+    fn task_test_runtime_from(
+        recorded: Arc<Mutex<Vec<String>>>,
+        loader: MemorySourceLoader,
+        plugins: Vec<LoadedPlugin>,
+    ) -> anyhow::Result<super::Runtime> {
+        RuntimeBuilder::new(
+            loader,
+            manifest_arc(
+                plugins
+                    .iter()
+                    .map(|plugin| plugin.manifest.clone())
+                    .collect(),
+            ),
+        )
+        .plugins(Arc::from(plugins))
+        .module_specs(vec![task_test_module(recorded), secret_module()])
+        .configure_vm(|vm| {
+            vm.data().insert(TestHandlers::default())?;
+            Ok(())
+        })
+        .build()
+    }
+
+    /// An entrypoint exporting these `@test/tasks` functions.
+    fn lib_exporting(functions: &[&str]) -> String {
+        let exports = functions
+            .iter()
+            .map(|function| format!("{function} = tasks.{function}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("local tasks = require('@test/tasks')\nreturn {{ {exports} }}")
+    }
+
+    fn poll_for(runtime: &super::Runtime, duration: std::time::Duration) {
+        let deadline = std::time::Instant::now() + duration;
+        while std::time::Instant::now() < deadline {
+            runtime.poll_background_tasks();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    fn recorded_after(runtime: &super::Runtime, recorded: &Arc<Mutex<Vec<String>>>) -> Vec<String> {
+        poll_for(runtime, std::time::Duration::from_millis(200));
+        recorded.lock().expect("recorded mutex poisoned").clone()
+    }
+
+    fn leftover_tasks(runtime: &super::Runtime) -> anyhow::Result<Vec<crate::TaskSnapshot>> {
+        let scheduler = runtime.vm.data().get::<crate::LocalScheduler>()?;
+        scheduler.remove_finished();
+        Ok(scheduler.snapshots())
+    }
+
+    /// Evaluates `source` as plugin code of `plugin`.
+    fn eval_as(
+        runtime: &super::Runtime,
+        plugin: &str,
+        source: &'static [u8],
+    ) -> anyhow::Result<Vec<luau::Value>> {
+        runtime.eval_source_with_context(
+            Arc::<[u8]>::from(source),
+            CallContext {
+                origin: plugin_origin(plugin, "check.luau"),
+                ..CallContext::default()
+            },
+        )
+    }
+
+    fn call_handler(
+        runtime: &super::Runtime,
+        index: usize,
+    ) -> anyhow::Result<std::rc::Rc<crate::LocalLuauTaskCompletion>> {
+        let (function, context) =
+            runtime.vm.data().get::<TestHandlers>()?.0.borrow()[index].clone();
+        let completion = std::rc::Rc::new(crate::LocalLuauTaskCompletion::default());
+        let scheduler = runtime.vm.data().get::<crate::LocalScheduler>()?;
+        scheduler.schedule_luau_thread_with_budget_and_completion(
+            context,
+            runtime.vm.clone(),
+            runtime.vm.create_thread(&function)?,
+            Vec::new(),
+            std::time::Duration::from_secs(5),
+            completion.clone(),
+        );
+        Ok(completion)
+    }
+
+    fn completion_result(
+        completion: &crate::LocalLuauTaskCompletion,
+    ) -> Option<Result<Vec<luau::Value>, String>> {
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        match completion.poll(&mut context) {
+            std::task::Poll::Ready(result) => Some(result),
+            std::task::Poll::Pending => None,
+        }
+    }
+
+    #[test]
+    fn run_end_hooks_run_whenever_a_run_ends() -> anyhow::Result<()> {
+        let mut loader = MemorySourceLoader::new();
+        loader.insert("plugin:demo/init".to_string(), &b"return nil"[..]);
+        loader.insert("plugin:broken/init".to_string(), &b"error('boom')"[..]);
+        let manifests = vec![manifest("demo", &[]), manifest("broken", &[])];
+        let plugins = manifests.iter().cloned().map(loaded).collect::<Vec<_>>();
+        let ended = Arc::new(Mutex::new(Vec::new()));
+        let hook_ended = ended.clone();
+        let runtime = RuntimeBuilder::new(loader, manifest_arc(manifests))
+            .plugins(Arc::from(plugins))
+            .on_run_end(move |_vm, plugin_id| {
+                hook_ended.lock().unwrap().push(plugin_id.to_string());
+            })
+            .build()?;
+        let ended = || ended.lock().unwrap().clone();
+
+        assert_eq!(runtime.exec_all(), ["broken"]);
+        assert_eq!(ended(), ["broken"], "a failed entrypoint ends its run");
+
+        runtime.restart_plugin("demo")?;
+        assert_eq!(ended(), ["broken", "demo"]);
+
+        runtime.stop_plugin("demo")?;
+        runtime.stop_plugin("demo")?;
+        assert_eq!(
+            ended(),
+            ["broken", "demo", "demo"],
+            "stopping a stopped plugin ends no run"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn restart_plugin_cancels_tasks_of_the_previous_run_only() -> anyhow::Result<()> {
+        let recorded = Arc::new(Mutex::new(Vec::new()));
+        let runtime = task_test_runtime(recorded.clone())?;
+        assert!(runtime.exec_all().is_empty());
+
+        runtime.restart_plugin("demo")?;
+
+        let mut recorded = recorded_after(&runtime, &recorded);
+        recorded.sort();
+        assert_eq!(recorded, ["demo:3", "other:2"]);
+        Ok(())
+    }
+
+    #[test]
+    fn restart_plugin_cancels_tasks_spawned_inside_coroutines() -> anyhow::Result<()> {
+        let recorded = Arc::new(Mutex::new(Vec::new()));
+        let runtime = task_test_runtime_with(
+            recorded.clone(),
+            &[(
+                "demo",
+                &[],
+                r#"
+                    local tasks = require('@test/tasks')
+                    local run = tasks.run()
+                    coroutine.wrap(function()
+                        tasks.later(0.05, function()
+                            tasks.record(`coroutine:{run}`)
+                        end)
+                    end)()
+                "#,
+            )],
+            &[],
+        )?;
+        assert!(runtime.exec_all().is_empty());
+
+        runtime.restart_plugin("demo")?;
+
+        assert_eq!(recorded_after(&runtime, &recorded), ["coroutine:2"]);
+        Ok(())
+    }
+
+    #[test]
+    fn exec_all_runs_dependencies_before_their_dependents() -> anyhow::Result<()> {
+        let recorded = Arc::new(Mutex::new(Vec::new()));
+        let runtime = task_test_runtime_with(
+            recorded.clone(),
+            &[
+                (
+                    "app",
+                    &["lib"],
+                    r#"
+                        require('@lib')
+                        require('@test/tasks').record("app")
+                    "#,
+                ),
+                (
+                    "lib",
+                    &[],
+                    r#"
+                        local tasks = require('@test/tasks')
+                        tasks.record("lib")
+                        tasks.later(0.05, function()
+                            tasks.record("lib later")
+                        end)
+                        return {}
+                    "#,
+                ),
+            ],
+            &[],
+        )?;
+        assert!(runtime.exec_all().is_empty());
+        assert_eq!(
+            *recorded.lock().expect("recorded mutex poisoned"),
+            ["lib", "app"]
+        );
+
+        runtime.stop_plugin("lib")?;
+
+        assert_eq!(
+            recorded_after(&runtime, &recorded),
+            ["lib", "app"],
+            "stopping lib cancels the task its entrypoint spawned"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_stopped_plugin_s_cached_sources_are_not_served() -> anyhow::Result<()> {
+        let runtime = task_test_runtime_with(
+            Arc::new(Mutex::new(Vec::new())),
+            &[
+                ("lib", &[], "return { answer = 42 }"),
+                ("app", &["lib"], ""),
+            ],
+            &[],
+        )?;
+        assert!(runtime.exec_all().is_empty());
+        assert_eq!(
+            eval_as(&runtime, "app", b"return require('@lib').answer")?,
+            [luau::Value::Number(42.0)]
+        );
+
+        runtime.stop_plugin("lib")?;
+
+        let error = eval_as(&runtime, "app", b"return require('@lib').answer")
+            .expect_err("lib's run ended, so its cached exports aren't served");
+        assert!(
+            format!("{error:#}").contains("plugin 'lib' is not running"),
+            "{error:#}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_restarted_library_plugin_can_still_be_required() -> anyhow::Result<()> {
+        let mut loader = MemorySourceLoader::new();
+        loader.insert("plugin:lib/util", b"return 7".as_slice());
+        let mut library = manifest("lib", &[]);
+        library.entrypoint = None;
+        let mut app = manifest("app", &[]);
+        app.dependencies = vec![DependencyEntry::Id("lib".to_string())];
+        let plugins = [library, app].into_iter().map(loaded).collect();
+        loader.insert("plugin:app/init", b"".as_slice());
+        let runtime = task_test_runtime_from(Arc::new(Mutex::new(Vec::new())), loader, plugins)?;
+        assert!(runtime.exec_all().is_empty());
+
+        runtime.restart_plugin("lib")?;
+
+        assert_eq!(
+            eval_as(&runtime, "app", b"return require('@lib/util')")?,
+            [luau::Value::Number(7.0)]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn tasks_a_live_export_spawns_stop_when_its_plugin_restarts() -> anyhow::Result<()> {
+        let recorded = Arc::new(Mutex::new(Vec::new()));
+        let runtime = task_test_runtime_with(
+            recorded.clone(),
+            &[
+                ("lib", &[], &lib_exporting(&["later"])),
+                (
+                    "app",
+                    &["lib"],
+                    r#"
+                        local tasks = require('@test/tasks')
+                        require('@lib').later(0.05, function()
+                            tasks.record("through lib")
+                        end)
+                        tasks.later(0.05, function()
+                            tasks.record("app")
+                        end)
+                    "#,
+                ),
+            ],
+            &[],
+        )?;
+        assert!(runtime.exec_all().is_empty());
+
+        runtime.restart_plugin("lib")?;
+
+        assert_eq!(recorded_after(&runtime, &recorded), ["app"]);
+        Ok(())
+    }
+
+    #[test]
+    fn ending_either_plugin_cancels_an_async_call_between_them() -> anyhow::Result<()> {
+        // Stopping the callee, and restarting the caller while it awaits.
+        for (callee, ended) in [("forever", "lib"), ("soon", "app")] {
+            let recorded = Arc::new(Mutex::new(Vec::new()));
+            let app = format!(
+                r#"
+                    local tasks = require('@test/tasks')
+                    local lib = require('@lib')
+                    tasks.register(function()
+                        lib.{callee}()
+                        tasks.record("resumed")
+                    end)
+                "#
+            );
+            let runtime = task_test_runtime_with(
+                recorded.clone(),
+                &[
+                    ("lib", &[], &lib_exporting(&[callee])),
+                    ("app", &["lib"], &app),
+                ],
+                &[],
+            )?;
+            assert!(runtime.exec_all().is_empty());
+            let call = call_handler(&runtime, 0)?;
+            runtime.poll_background_tasks();
+            assert!(completion_result(&call).is_none(), "{ended}");
+
+            if ended == "lib" {
+                runtime.stop_plugin("lib")?;
+            } else {
+                runtime.restart_plugin("app")?;
+            }
+
+            let error = completion_result(&call)
+                .unwrap_or_else(|| panic!("the call must finish when {ended} ends"))
+                .expect_err("the call must fail");
+            assert!(error.contains("cancelled"), "{ended}: {error}");
+            assert!(recorded_after(&runtime, &recorded).is_empty(), "{ended}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_kept_wrapper_cannot_require_for_a_restarted_plugin() -> anyhow::Result<()> {
+        let recorded = Arc::new(Mutex::new(Vec::new()));
+        let runtime = task_test_runtime_with(
+            recorded.clone(),
+            &[
+                (
+                    "lib",
+                    &[],
+                    r#"
+                        return {
+                            lazy = function()
+                                return require('./late')
+                            end,
+                        }
+                    "#,
+                ),
+                (
+                    "app",
+                    &["lib"],
+                    r#"
+                        kept_lazy = require('@lib').lazy
+                    "#,
+                ),
+            ],
+            &[(
+                "plugin:lib/late",
+                r#"
+                    local tasks = require('@test/tasks')
+                    tasks.later(0.05, function()
+                        tasks.record("late")
+                    end)
+                    return { check = tasks.check() }
+                "#,
+            )],
+        )?;
+        assert!(runtime.exec_all().is_empty());
+
+        runtime.restart_plugin("lib")?;
+        let error = eval_as(&runtime, "app", b"return kept_lazy()")
+            .expect_err("a wrapper from lib's ended run must not load lib's modules");
+        assert!(
+            error.to_string().contains("run that has ended"),
+            "{error:#}"
+        );
+
+        assert_eq!(
+            eval_as(&runtime, "app", b"return require('@lib').lazy().check")?,
+            vec![luau::Value::Nil],
+            "the current run's wrapper loads modules that act for that run"
+        );
+        assert_eq!(recorded_after(&runtime, &recorded), ["late"]);
+        Ok(())
+    }
+
+    #[test]
+    fn app_code_run_on_another_plugin_s_thread_has_no_require_of_that_plugin() -> anyhow::Result<()>
+    {
+        let recorded = Arc::new(Mutex::new(Vec::new()));
+        let runtime = task_test_runtime_with(
+            recorded.clone(),
+            &[
+                (
+                    "lib",
+                    &[],
+                    r#"
+                        local tasks = require('@test/tasks')
+                        local kept
+                        tasks.register(function()
+                            return kept()
+                        end)
+                        return {
+                            keep = function(callback)
+                                kept = callback
+                            end,
+                        }
+                    "#,
+                ),
+                (
+                    "app",
+                    &["lib"],
+                    r#"
+                        local tasks = require('@test/tasks')
+                        require('@lib').keep(function()
+                            tasks.record("getfenv:" .. tostring(getfenv))
+                            tasks.record("capability:" .. tostring((pcall(require, "@test/secret"))))
+                        end)
+                    "#,
+                ),
+            ],
+            &[],
+        )?;
+        assert!(runtime.exec_all().is_empty());
+
+        let call = call_handler(&runtime, 0)?;
+        assert_eq!(
+            recorded_after(&runtime, &recorded),
+            ["getfenv:nil", "capability:false"]
+        );
+        assert!(matches!(completion_result(&call), Some(Ok(_))));
+        Ok(())
+    }
+
+    #[test]
+    fn a_stale_async_export_fails_its_caller_at_once() -> anyhow::Result<()> {
+        let recorded = Arc::new(Mutex::new(Vec::new()));
+        let runtime = task_test_runtime_with(
+            recorded.clone(),
+            &[
+                ("lib", &[], &lib_exporting(&["soon"])),
+                (
+                    "app",
+                    &["lib"],
+                    r#"
+                        local tasks = require('@test/tasks')
+                        local lib = require('@lib')
+                        tasks.register(function()
+                            lib.soon()
+                            tasks.record("resumed")
+                        end)
+                    "#,
+                ),
+            ],
+            &[],
+        )?;
+        assert!(runtime.exec_all().is_empty());
+        runtime.restart_plugin("lib")?;
+
+        let call = call_handler(&runtime, 0)?;
+        poll_for(&runtime, std::time::Duration::from_millis(20));
+        let error = completion_result(&call)
+            .expect("a call through a stale async export must finish")
+            .expect_err("a call through a stale async export must fail");
+        assert!(error.contains("run that has ended"), "{error}");
+        assert!(recorded_after(&runtime, &recorded).is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn async_calls_where_luau_cannot_yield_fail_and_schedule_nothing() -> anyhow::Result<()> {
+        // A `table.sort` comparator, and a module's top level during `require`.
+        let recorded = Arc::new(Mutex::new(Vec::new()));
+        let runtime = task_test_runtime_with(
+            recorded.clone(),
+            &[
+                ("lib", &[], &lib_exporting(&["eventually"])),
+                (
+                    "app",
+                    &["lib"],
+                    r#"
+                        local tasks = require('@test/tasks')
+                        local lib = require('@lib')
+                        tasks.record("require:" .. tostring((pcall(require, "./helper"))))
+                        tasks.register(function()
+                            local ok, error = pcall(function()
+                                table.sort({ 3, 1, 2 }, function(a, b)
+                                    lib.eventually("sorted")
+                                    return a < b
+                                end)
+                            end)
+                            tasks.record("sort:" .. tostring(ok))
+                            assert(string.find(error, "non-yieldable", 1, true), error)
+                            return "done"
+                        end)
+                    "#,
+                ),
+            ],
+            &[(
+                "plugin:app/helper",
+                r#"
+                    require('@lib').eventually("module")
+                    return 1
+                "#,
+            )],
+        )?;
+        assert!(runtime.exec_all().is_empty());
+        let call = call_handler(&runtime, 0)?;
+
+        assert_eq!(
+            recorded_after(&runtime, &recorded),
+            ["require:false", "sort:false"]
+        );
+        assert_eq!(
+            completion_result(&call).expect("the call finishes"),
+            Ok(vec![luau::Value::String(b"done".to_vec())])
+        );
+        assert!(leftover_tasks(&runtime)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn a_coroutine_keeps_its_context_across_scheduler_resumes() -> anyhow::Result<()> {
+        let recorded = Arc::new(Mutex::new(Vec::new()));
+        let runtime = task_test_runtime_with(
+            recorded.clone(),
+            &[
+                ("lib", &[], &lib_exporting(&["soon"])),
+                (
+                    "app",
+                    &["lib"],
+                    r#"
+                        local tasks = require('@test/tasks')
+                        local lib = require('@lib')
+                        local co = coroutine.create(function()
+                            tasks.record("before:" .. tostring(tasks.thread_plugin()))
+                            lib.soon()
+                            tasks.record("resumed:" .. tostring(tasks.thread_plugin()))
+                            tasks.record("getfenv:" .. tostring(getfenv))
+                            tasks.record("private:" .. tostring((pcall(require, "./secret"))))
+                            tasks.record("capability:" .. tostring((pcall(require, "@test/secret"))))
+                            coroutine.yield()
+                            tasks.record("manual:" .. tostring(tasks.thread_plugin()))
+                            lib.soon()
+                            tasks.record("again:" .. tostring(tasks.thread_plugin()))
+                        end)
+                        coroutine.resume(co)
+                        tasks.register(function()
+                            tasks.record("handler:" .. coroutine.status(co))
+                            coroutine.resume(co)
+                        end)
+                    "#,
+                ),
+            ],
+            &[("plugin:lib/secret", r#"return "lib secret""#)],
+        )?;
+        assert!(runtime.exec_all().is_empty());
+        poll_for(&runtime, std::time::Duration::from_millis(50));
+        assert!(
+            leftover_tasks(&runtime)?.is_empty(),
+            "a plain yield hands the coroutine back to the code that resumes it"
+        );
+        let call = call_handler(&runtime, 0)?;
+
+        assert_eq!(
+            recorded_after(&runtime, &recorded),
+            [
+                "before:app",
+                "resumed:app",
+                "getfenv:nil",
+                "private:false",
+                "capability:false",
+                "handler:suspended",
+                "manual:app",
+                "again:app"
+            ]
+        );
+        assert!(matches!(completion_result(&call), Some(Ok(_))));
+        assert!(leftover_tasks(&runtime)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn eval_sources_run_as_their_own_chunk() -> anyhow::Result<()> {
+        let runtime = task_test_runtime_with(
+            Arc::new(Mutex::new(Vec::new())),
+            &[("lib", &[], "return {}")],
+            &[],
+        )?;
+        assert!(runtime.exec_all().is_empty());
+
+        let escape = eval_as(
+            &runtime,
+            "lib",
+            b"end end and (function() error('escaped') end)() and function(require) return function(...) return 1",
+        )
+        .expect_err("source can't close a wrapper around it");
         assert!(!escape.to_string().contains("escaped"), "{escape:#}");
 
-        let error = runtime
-            .eval_source_with_context(&b"local x = 1\nerror('boom')"[..], context())
+        let error = eval_as(&runtime, "lib", b"local x = 1\nerror('boom')")
             .expect_err("the error propagates");
         assert!(error.to_string().contains(":2:"), "{error:#}");
+        Ok(())
+    }
+
+    #[test]
+    fn failed_entrypoint_ends_its_run() -> anyhow::Result<()> {
+        let recorded = Arc::new(Mutex::new(Vec::new()));
+        let runtime = task_test_runtime_with(
+            recorded.clone(),
+            &[(
+                "demo",
+                &[],
+                r#"
+                    local tasks = require('@test/tasks')
+                    tasks.later(0.05, function()
+                        tasks.record("demo")
+                    end)
+                    error("entrypoint failed")
+                "#,
+            )],
+            &[],
+        )?;
+
+        assert_eq!(runtime.exec_all(), ["demo"]);
+        assert!(recorded_after(&runtime, &recorded).is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn a_require_cannot_start_a_plugin_run() -> anyhow::Result<()> {
+        let recorded = Arc::new(Mutex::new(Vec::new()));
+        let runtime = task_test_runtime_with(
+            recorded.clone(),
+            &[
+                (
+                    "lib",
+                    &[],
+                    r#"
+                        require('@test/tasks').record("lib")
+                        error("entrypoint failed")
+                    "#,
+                ),
+                ("app", &["lib"], "require('@lib')"),
+            ],
+            &[(
+                "plugin:lib/extra",
+                r#"require('@test/tasks').record("extra")"#,
+            )],
+        )?;
+        let assert_not_running = |error: anyhow::Error| {
+            assert!(
+                format!("{error:#}").contains("plugin 'lib' is not running"),
+                "{error:#}"
+            );
+        };
+
+        assert_not_running(
+            eval_as(&runtime, "app", b"require('@lib')")
+                .expect_err("lib has no run until the host starts one"),
+        );
+        assert!(recorded_after(&runtime, &recorded).is_empty());
+
+        assert_eq!(runtime.exec_all(), ["lib", "app"]);
+        assert_not_running(
+            eval_as(&runtime, "app", b"require('@lib/extra')")
+                .expect_err("lib's run ended, so requiring its code fails"),
+        );
+        assert_eq!(recorded_after(&runtime, &recorded), ["lib"]);
+        Ok(())
+    }
+
+    #[test]
+    fn exports_left_by_a_restarted_plugin_cannot_act_for_it() -> anyhow::Result<()> {
+        let runtime = task_test_runtime_with(
+            Arc::new(Mutex::new(Vec::new())),
+            &[
+                (
+                    "lib",
+                    &[],
+                    r#"
+                        local tasks = require('@test/tasks')
+                        own_check = tasks.check()
+                        return { check = tasks.check }
+                    "#,
+                ),
+                (
+                    "app",
+                    &["lib"],
+                    r#"
+                        kept_check = require('@lib').check
+                    "#,
+                ),
+            ],
+            &[],
+        )?;
+        assert!(runtime.exec_all().is_empty());
+        assert_eq!(
+            eval_as(&runtime, "lib", b"return own_check")?,
+            vec![luau::Value::Nil]
+        );
+        assert_eq!(
+            eval_as(&runtime, "app", b"return kept_check()")?,
+            vec![luau::Value::Nil],
+            "a live export acts as its plugin's current run"
+        );
+
+        runtime.restart_plugin("lib")?;
+        let values = eval_as(&runtime, "app", b"return kept_check()")?;
+        let [luau::Value::String(error)] = values.as_slice() else {
+            panic!("a stale export must be refused, got {values:?}");
+        };
+        assert!(
+            String::from_utf8_lossy(error).contains("run that has ended"),
+            "{}",
+            String::from_utf8_lossy(error)
+        );
+        assert_eq!(
+            eval_as(&runtime, "lib", b"return own_check")?,
+            vec![luau::Value::Nil]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn restart_plugin_cancels_handler_calls_of_the_previous_run() -> anyhow::Result<()> {
+        let runtime = task_test_runtime(Arc::new(Mutex::new(Vec::new())))?;
+        assert!(runtime.exec_all().is_empty());
+        let demo_call = call_handler(&runtime, 0)?;
+        let other_call = call_handler(&runtime, 1)?;
+        poll_for(&runtime, std::time::Duration::from_millis(20));
+        assert!(completion_result(&demo_call).is_none());
+
+        runtime.restart_plugin("demo")?;
+
+        let error = completion_result(&demo_call)
+            .expect("in-flight call must finish when its plugin restarts")
+            .expect_err("in-flight call must fail");
+        assert!(error.contains("cancelled"), "{error}");
+        let late_call = call_handler(&runtime, 0)?;
+        poll_for(&runtime, std::time::Duration::from_millis(20));
+        let error = completion_result(&late_call)
+            .expect("a call into the previous run must finish")
+            .expect_err("a call into the previous run must fail");
+        assert!(error.contains("cancelled"), "{error}");
+        assert!(completion_result(&other_call).is_none());
         Ok(())
     }
 
@@ -1921,7 +2911,7 @@ mod tests {
         .module_specs(vec![module])
         .build()?;
 
-        runtime.exec_all()?;
+        assert!(runtime.exec_all().is_empty());
 
         assert_eq!(
             *order.lock().expect("order mutex poisoned"),
@@ -2079,7 +3069,7 @@ mod tests {
             .plugins(Arc::from(vec![library_plugin]))
             .build()?;
         // Library plugins have no entrypoint; exec_all must skip them.
-        runtime.exec_all()?;
+        assert!(runtime.exec_all().is_empty());
 
         let values = runtime.eval_source_with_context(
             Arc::<[u8]>::from(&b"return require('@lib').answer"[..]),
@@ -2141,7 +3131,7 @@ mod tests {
             .plugins(Arc::from(vec![dep_plugin]))
             .module_specs(vec![module])
             .build()?;
-        runtime.exec_all()?;
+        assert!(runtime.exec_all().is_empty());
 
         let values = runtime.eval_source_with_context(
             Arc::<[u8]>::from(&b"return require('@dep').answer"[..]),

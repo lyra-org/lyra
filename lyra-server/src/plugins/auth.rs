@@ -850,7 +850,9 @@ fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Auth",
         local_name: "auth",
-        description: None,
+        description: Some(
+            "Sessions, logins, and the principal a dispatch acts for. A coroutine acts with the auth of the call that created it, as does code a module runs when it is first required.",
+        ),
         fields: Vec::new(),
         functions: vec![
             ModuleFunctionDescriptor {

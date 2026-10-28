@@ -228,7 +228,7 @@ impl Mixer {
         vm: &luau::Vm,
         config: luau::Table,
     ) -> luau::runtime::Result<luau::ScheduledFuture> {
-        let plugin_id = self.current_plugin_id(context)?;
+        let plugin_id = self.current_plugin_id(vm, context)?;
         let option = parse_option_declaration(vm, &config)?;
         let id = self.id.clone();
         Ok(luau::ScheduledFuture::new(async move {
@@ -254,7 +254,7 @@ impl Mixer {
         seed_type: MixSeedType,
         function: luau::Function,
     ) -> luau::runtime::Result<luau::ScheduledFuture> {
-        let plugin_id = self.current_plugin_id(context)?;
+        let plugin_id = self.current_plugin_id(vm, context)?;
         let id = self.id.clone();
         let context = core_call_context(context);
         let vm = vm.clone();
@@ -276,11 +276,13 @@ impl Mixer {
     #[harmony(skip)]
     fn current_plugin_id(
         &self,
+        vm: &luau::Vm,
         context: &luau::CallContext,
     ) -> luau::runtime::Result<crate::services::plugin_scope::PluginId> {
         let plugin_id = context.origin.plugin.clone().ok_or_else(|| {
             crate::plugins::runtime_error("mix.Mixer methods must be called from plugin Luau code")
         })?;
+        harmony_core::ensure_current_plugin_run(vm, context)?;
         crate::services::plugin_scope::PluginId::new(plugin_id.to_string())
             .map_err(crate::plugins::runtime_error)
     }
@@ -334,6 +336,7 @@ fn mixer_new_callback(
     };
     let plugin_id = crate::services::plugin_scope::PluginId::new(plugin_id.to_string())
         .map_err(crate::plugins::runtime_error)?;
+    harmony_core::ensure_current_plugin_run(frame.vm, &frame.context)?;
     let vm = frame.vm.clone();
     let origin = frame.context.origin.clone();
     let db = db::get(frame.vm)?;

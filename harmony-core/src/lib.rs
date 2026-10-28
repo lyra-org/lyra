@@ -32,6 +32,7 @@ pub use modules::{
     SourceLoader,
     SourceRequest,
     UserDataSpec,
+    ensure_current_plugin_run,
 };
 pub use scheduler::{
     CallContext,

@@ -84,7 +84,9 @@ impl PluginExecutor {
         let plugins_dir = plugins_dir.into();
         let mut plugin_manager = PluginManager::new(plugins_dir.clone());
         let errors = plugin_manager.discover_plugins(&plugin_scope_ids())?;
-        let plugins = Arc::<[LoadedPlugin]>::from(plugin_manager.topological_order());
+        let mut plugins = plugin_manager.list_plugins().cloned().collect::<Vec<_>>();
+        plugins.sort_by(|left, right| left.manifest.id.cmp(&right.manifest.id));
+        let plugins = Arc::<[LoadedPlugin]>::from(plugins);
         let manifests = Arc::<[PluginManifest]>::from(
             plugins
                 .iter()
@@ -196,6 +198,10 @@ impl PluginExecutor {
         self.runtime.verify_plugin_manifest(plugin_id)
     }
 
+    pub(crate) fn stop_plugin(&self, plugin_id: &str) -> Result<()> {
+        self.runtime.stop_plugin(plugin_id)
+    }
+
     /// Re-runs the plugin's entrypoint with none of its old callbacks; a failed run keeps none of
     /// the callbacks it registered either.
     pub(crate) fn restart_plugin(&self, plugin_id: &str) -> Result<()> {
@@ -225,7 +231,8 @@ impl PluginExecutor {
         Ok(())
     }
 
-    pub(crate) fn exec_all(&self) -> Result<()> {
+    /// The ids of the plugins whose entrypoint failed.
+    pub(crate) fn exec_all(&self) -> Vec<String> {
         self.runtime.exec_all()
     }
 

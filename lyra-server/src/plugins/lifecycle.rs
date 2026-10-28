@@ -186,6 +186,15 @@ impl PluginRegistries {
             .manifests
             .replace(Arc::from(manifests));
 
+        // Stop the old run before teardown reopens registrations, so none of
+        // its tasks can register into the restarted plugin.
+        runtime
+            .stop_plugin(plugin_id.as_str())
+            .await
+            .map_err(|err| PluginRestartError::Failed {
+                plugin_id: plugin_id.clone(),
+                source: err.context("failed to stop plugin"),
+            })?;
         self.teardown_plugin(plugin_id, true).await;
 
         // Caches are dropped on the VM thread right before the entrypoint

@@ -526,6 +526,9 @@ pub enum ModuleLoadError {
     RequireCycle {
         cache_key: ModuleCacheKey,
     },
+    PluginNotRunning {
+        plugin_id: Arc<str>,
+    },
 }
 
 impl fmt::Display for ModuleLoadError {
@@ -556,6 +559,9 @@ impl fmt::Display for ModuleLoadError {
             }
             Self::RequireCycle { cache_key } => {
                 write!(f, "require cycle detected at '{}'", cache_key.0)
+            }
+            Self::PluginNotRunning { plugin_id } => {
+                write!(f, "plugin '{plugin_id}' is not running")
             }
         }
     }
@@ -778,12 +784,15 @@ impl ModuleRegistry {
         Ok(export)
     }
 
+    /// `task_group` is the run of the plugin `origin` belongs to; the
+    /// module's functions act in it when another plugin calls them.
     pub fn require_luau_module(
         &mut self,
         vm: &luau::Vm,
         origin: &ChunkOrigin,
         module_id: &ModuleId,
         policy: &dyn CapabilityPolicy,
+        task_group: crate::TaskGroupId,
     ) -> std::result::Result<Rc<luau::Table>, ModuleLoadError> {
         let module = self
             .modules
@@ -808,7 +817,7 @@ impl ModuleRegistry {
         }
 
         let export = Rc::new(
-            install_luau_module(vm, origin, module)
+            install_luau_module_in_group(vm, origin, module, task_group)
                 .map_err(|error| ModuleLoadError::InstallFailed(anyhow::Error::new(error)))?,
         );
         self.luau_cache.insert(cache_key, export.clone());
@@ -839,6 +848,9 @@ pub struct LuauRequireRuntime {
     /// invalidated while it evaluated must not land in `source_cache`.
     plugin_generations: std::cell::RefCell<HashMap<Arc<str>, u64>>,
     in_flight_sources: std::cell::RefCell<HashSet<Arc<str>>>,
+    /// The task group of each plugin's current run. Only the host starts a
+    /// run; a plugin's sources load only while it has one.
+    plugin_groups: std::cell::RefCell<HashMap<Arc<str>, crate::TaskGroupId>>,
     loader: Box<dyn SourceLoader>,
     policy: Box<dyn CapabilityPolicy>,
 }
@@ -854,6 +866,7 @@ impl LuauRequireRuntime {
             source_cache: std::cell::RefCell::new(LuauSourceCache::new()),
             plugin_generations: std::cell::RefCell::new(HashMap::new()),
             in_flight_sources: std::cell::RefCell::new(HashSet::new()),
+            plugin_groups: std::cell::RefCell::new(HashMap::new()),
             loader: Box::new(loader),
             policy: Box::new(policy),
         }
@@ -861,6 +874,29 @@ impl LuauRequireRuntime {
 
     pub fn register(&self, spec: ModuleSpec) -> std::result::Result<(), ModuleLoadError> {
         self.registry.borrow_mut().register(spec)
+    }
+
+    /// The task group of `plugin_id`'s current run, starting a run when it
+    /// has none. Only the host calls this; a require never starts a run.
+    pub fn plugin_group(
+        &self,
+        scheduler: &crate::LocalScheduler,
+        plugin_id: &str,
+    ) -> crate::TaskGroupId {
+        *self
+            .plugin_groups
+            .borrow_mut()
+            .entry(Arc::from(plugin_id))
+            .or_insert_with(|| scheduler.create_group())
+    }
+
+    /// Ends `plugin_id`'s current run, returning its task group.
+    pub fn end_plugin_run(&self, plugin_id: &str) -> Option<crate::TaskGroupId> {
+        self.plugin_groups.borrow_mut().remove(plugin_id)
+    }
+
+    fn current_plugin_group(&self, plugin_id: &str) -> Option<crate::TaskGroupId> {
+        self.plugin_groups.borrow().get(plugin_id).copied()
     }
 
     /// Forgets every evaluated source and installed module table owned by
@@ -883,13 +919,19 @@ impl LuauRequireRuntime {
 }
 
 /// The `require` plugin code gets, as a global of its chunk's own
-/// environment: it resolves from `origin`. There is no shared global
-/// `require`.
-fn bound_require(vm: &luau::Vm, origin: &ChunkOrigin) -> luau::runtime::Result<luau::Function> {
+/// environment: it resolves from `origin` and, like the source's other
+/// functions, acts for the run it was made for, even when another plugin
+/// calls it. There is no shared global `require`.
+fn bound_require(
+    vm: &luau::Vm,
+    origin: &ChunkOrigin,
+    task_group: crate::TaskGroupId,
+) -> luau::runtime::Result<luau::Function> {
     vm.create_function_with_options(
         luau::NativeFunctionOptions::new(luau_origin(origin))
             .function_name("require")
-            .argument_names([Arc::from("specifier")]),
+            .argument_names([Arc::from("specifier")])
+            .task_group(luau::TaskGroupId(task_group.0)),
         Arc::new(|mut frame| {
             let specifier: String = frame.args.read_named("specifier")?;
             let origin = core_origin(&frame.context.origin);
@@ -898,25 +940,52 @@ fn bound_require(vm: &luau::Vm, origin: &ChunkOrigin) -> luau::runtime::Result<l
     )
 }
 
+/// Fails for a call from a plugin run that has ended, such as one through
+/// an export a restarted plugin left behind in another plugin.
+pub fn ensure_current_plugin_run(
+    vm: &luau::Vm,
+    context: &luau::CallContext,
+) -> luau::runtime::Result<()> {
+    let Some(plugin_id) = context.origin.plugin.as_deref() else {
+        return Ok(());
+    };
+    let current = vm
+        .data()
+        .get::<LuauRequireRuntime>()?
+        .current_plugin_group(plugin_id);
+    if current.map(|group| group.0) == Some(context.task_group.0) {
+        return Ok(());
+    }
+    Err(luau::Error::Runtime(format!(
+        "plugin '{plugin_id}' code from a run that has ended can't act for its current run"
+    )))
+}
+
 /// Loads a chunk of `origin`'s code with its own `require`. All plugin code
-/// is loaded through here.
+/// is loaded through here. The `require` acts in `task_group`, so the caller
+/// runs the chunk in that group too.
 pub(crate) fn load_chunk_with_require(
     vm: &luau::Vm,
     source: impl Into<Arc<[u8]>>,
     origin: &ChunkOrigin,
+    task_group: crate::TaskGroupId,
 ) -> luau::runtime::Result<luau::Function> {
-    let require = luau::Value::Function(bound_require(vm, origin)?);
+    let require = luau::Value::Function(bound_require(vm, origin, task_group)?);
     vm.load_chunk_with_globals(
         &luau::Chunk::new(source, luau_origin(origin)),
         &[("require", &require)],
     )
 }
 
+/// A require acts for the run of the code that makes it, so code from a run
+/// that has ended can load nothing, the same rule its registrations follow.
+/// Past that check, a plugin origin's context group is its current run.
 fn require_from(
     mut frame: luau::CallFrame<'_>,
     specifier: &str,
     origin: ChunkOrigin,
 ) -> luau::runtime::Result<()> {
+    ensure_current_plugin_run(frame.vm, &frame.context)?;
     let runtime = frame.vm.data().get::<LuauRequireRuntime>()?;
 
     if let Some(module_id) = specifier
@@ -924,17 +993,27 @@ fn require_from(
         .map(|path| ModuleId(Arc::from(path)))
         .filter(|module_id| runtime.registry.borrow().contains(module_id))
     {
+        let task_group = match origin.plugin {
+            Some(_) => crate::TaskGroupId(frame.context.task_group.0),
+            None => crate::TaskGroupId::default(),
+        };
         let module = runtime
             .registry
             .borrow_mut()
-            .require_luau_module(frame.vm, &origin, &module_id, runtime.policy.as_ref())
+            .require_luau_module(
+                frame.vm,
+                &origin,
+                &module_id,
+                runtime.policy.as_ref(),
+                task_group,
+            )
             .map_err(module_load_runtime_error)?;
         frame.returns.write((*module).clone())?;
         return Ok(());
     }
 
     let values = runtime
-        .require_source(frame.vm, specifier, &origin)
+        .require_source(frame.vm, specifier, &origin, &frame.context)
         .map_err(module_load_runtime_error)?;
     for value in values.iter().cloned() {
         frame.returns.write(value)?;
@@ -943,26 +1022,44 @@ fn require_from(
 }
 
 impl LuauRequireRuntime {
+    /// Evaluates a source in its plugin's current run, with the requiring
+    /// call's caller data. A source outside any plugin is shared, so it runs
+    /// in the default group rather than its first requester's.
     fn require_source(
         &self,
         vm: &luau::Vm,
         specifier: &str,
         origin: &ChunkOrigin,
+        requester: &luau::CallContext,
     ) -> std::result::Result<Arc<[luau::Value]>, ModuleLoadError> {
-        self.load_source_cached(specifier, origin, |source| {
-            let function = load_chunk_with_require(vm, source.bytes.clone(), &source.origin)?;
-            function.call(vm, &[]).map_err(anyhow::Error::new)
+        self.load_source_cached(specifier, origin, |source, task_group| {
+            let function =
+                load_chunk_with_require(vm, source.bytes.clone(), &source.origin, task_group)?;
+            function
+                .call_with_context(
+                    vm,
+                    &[],
+                    luau::CallContext {
+                        origin: luau_origin(&source.origin),
+                        capability: None,
+                        caller: requester.caller.clone(),
+                        task_group: luau::TaskGroupId(task_group.0),
+                    },
+                )
+                .map_err(anyhow::Error::new)
         })
     }
 
     /// Resolves, gates, and caches a Luau source module; `eval` supplies the
     /// evaluation strategy (a direct call for require, a scheduler-driven
-    /// thread for plugin entrypoints) so both share one cache identity.
+    /// thread for plugin entrypoints) so both share one cache identity. A
+    /// plugin's source loads only during its current run, which `eval` gets
+    /// as the group to evaluate it in, cached or not.
     pub(crate) fn load_source_cached(
         &self,
         specifier: &str,
         origin: &ChunkOrigin,
-        eval: impl FnOnce(&ResolvedSource) -> anyhow::Result<Vec<luau::Value>>,
+        eval: impl FnOnce(&ResolvedSource, crate::TaskGroupId) -> anyhow::Result<Vec<luau::Value>>,
     ) -> std::result::Result<Arc<[luau::Value]>, ModuleLoadError> {
         // Registered module namespaces are reserved: `@<ns>/typo` must fail
         // as an unknown module instead of resolving to a plugin named `<ns>`.
@@ -990,6 +1087,15 @@ impl LuauRequireRuntime {
             });
         }
 
+        let task_group = match source.origin.plugin.as_deref() {
+            Some(plugin_id) => self.current_plugin_group(plugin_id).ok_or_else(|| {
+                ModuleLoadError::PluginNotRunning {
+                    plugin_id: Arc::from(plugin_id),
+                }
+            })?,
+            None => crate::TaskGroupId::default(),
+        };
+
         if let Some(values) = self.source_cache.borrow().get(&source.cache_key) {
             return Ok(values);
         }
@@ -1005,7 +1111,7 @@ impl LuauRequireRuntime {
         }
 
         let generation = self.plugin_generation(source.origin.plugin.as_deref());
-        let result = eval(&source);
+        let result = eval(&source, task_group);
         self.in_flight_sources
             .borrow_mut()
             .remove(&source.cache_key.0);
@@ -1039,6 +1145,15 @@ pub fn install_luau_module(
     vm: &luau::Vm,
     origin: &ChunkOrigin,
     module: &ModuleSpec,
+) -> luau::runtime::Result<luau::Table> {
+    install_luau_module_in_group(vm, origin, module, crate::TaskGroupId::default())
+}
+
+fn install_luau_module_in_group(
+    vm: &luau::Vm,
+    origin: &ChunkOrigin,
+    module: &ModuleSpec,
+    task_group: crate::TaskGroupId,
 ) -> luau::runtime::Result<luau::Table> {
     #[derive(Clone, Copy)]
     enum TableHandle {
@@ -1111,7 +1226,8 @@ pub fn install_luau_module(
 
         let mut options = luau::NativeFunctionOptions::new(function_origin(origin, &module.id))
             .function_name(spec.name.clone())
-            .argument_names(spec.arg_names.clone());
+            .argument_names(spec.arg_names.clone())
+            .task_group(luau::TaskGroupId(task_group.0));
         if let Some(capability_id) = &module.capability {
             options = options.capability(capability(capability_id));
         }
@@ -1147,9 +1263,16 @@ pub fn async_luau_callback(callback: luau::NativeAsyncFn) -> luau::NativeFn {
         let thread = frame.thread.clone();
         let context = core_call_context(&frame.context);
         let scheduler = frame.vm.data().get::<crate::LocalScheduler>()?;
+        // Refused before the thread parks: nothing would resume it.
+        if scheduler.is_group_cancelled(context.task_group) {
+            return Err(luau::Error::Runtime(
+                "this call acts for a plugin run that has ended".to_string(),
+            ));
+        }
         let mut returns = frame.returns.clone();
         let mut future = callback(frame.into_async())?;
         if let Some(delay) = future.take_start_delay() {
+            ensure_yieldable(&thread)?;
             returns.request_yield();
             scheduler.park_luau_thread(&thread);
             scheduler.schedule_luau_future_after(context, delay, vm, thread, future);
@@ -1159,6 +1282,7 @@ pub fn async_luau_callback(callback: luau::NativeAsyncFn) -> luau::NativeFn {
             Poll::Ready(Ok(values)) => values.write_to(&mut returns)?,
             Poll::Ready(Err(error)) => return Err(error),
             Poll::Pending => {
+                ensure_yieldable(&thread)?;
                 returns.request_yield();
                 scheduler.park_luau_thread(&thread);
                 scheduler.schedule_luau_future(context, vm, thread, future);
@@ -1166,6 +1290,17 @@ pub fn async_luau_callback(callback: luau::NativeAsyncFn) -> luau::NativeFn {
         }
         Ok(())
     })
+}
+
+/// A call that must wait fails here when its thread can't yield, before
+/// anything is parked or scheduled for it.
+fn ensure_yieldable(thread: &luau::Thread) -> luau::runtime::Result<()> {
+    if thread.is_yieldable() {
+        return Ok(());
+    }
+    Err(luau::Error::Runtime(
+        "attempt to yield from a non-yieldable Harmony callback".to_string(),
+    ))
 }
 
 fn poll_luau_future_once(
@@ -1176,7 +1311,7 @@ fn poll_luau_future_once(
     std::pin::Pin::new(future).poll(&mut cx)
 }
 
-fn core_call_context(context: &luau::CallContext) -> crate::CallContext {
+pub(crate) fn core_call_context(context: &luau::CallContext) -> crate::CallContext {
     let mut caller = crate::ContextBag::default();
     for (type_id, value) in context.caller.cloned_entries() {
         caller.insert_shared(type_id, value);
@@ -1512,6 +1647,7 @@ mod tests {
                 &PluginPolicy {
                     allowed_plugin: "allowed",
                 },
+                crate::TaskGroupId::default(),
             )
             .expect("allowed require");
         let second = registry
@@ -1522,6 +1658,7 @@ mod tests {
                 &PluginPolicy {
                     allowed_plugin: "allowed",
                 },
+                crate::TaskGroupId::default(),
             )
             .expect("cached require");
         assert!(Rc::ptr_eq(&first, &second));
@@ -1545,6 +1682,7 @@ mod tests {
             &PluginPolicy {
                 allowed_plugin: "allowed",
             },
+            crate::TaskGroupId::default(),
         );
         let Err(error) = denied else {
             panic!("capability denial must run before cached return");
@@ -1579,13 +1717,31 @@ mod tests {
         };
 
         let alpha_first = registry
-            .require_luau_module(&vm, &alpha_origin, &module_id, &AllowAllCapabilities)
+            .require_luau_module(
+                &vm,
+                &alpha_origin,
+                &module_id,
+                &AllowAllCapabilities,
+                crate::TaskGroupId::default(),
+            )
             .expect("alpha require");
         let alpha_second = registry
-            .require_luau_module(&vm, &alpha_origin, &module_id, &AllowAllCapabilities)
+            .require_luau_module(
+                &vm,
+                &alpha_origin,
+                &module_id,
+                &AllowAllCapabilities,
+                crate::TaskGroupId::default(),
+            )
             .expect("alpha cached require");
         let beta = registry
-            .require_luau_module(&vm, &beta_origin, &module_id, &AllowAllCapabilities)
+            .require_luau_module(
+                &vm,
+                &beta_origin,
+                &module_id,
+                &AllowAllCapabilities,
+                crate::TaskGroupId::default(),
+            )
             .expect("beta require");
 
         assert!(Rc::ptr_eq(&alpha_first, &alpha_second));
@@ -1619,9 +1775,12 @@ mod tests {
             path: Some(Arc::from("plugins/demo/init.luau")),
             ..ChunkOrigin::default()
         };
-        vm.data()
-            .insert(LuauRequireRuntime::new(loader, AllowAllCapabilities))?;
-        vm.set_global_function("require", &bound_require(&vm, &origin)?)?;
+        let runtime = LuauRequireRuntime::new(loader, AllowAllCapabilities);
+        let scheduler = crate::LocalScheduler::new();
+        let run = runtime.plugin_group(&scheduler, "demo");
+        vm.data().insert(runtime)?;
+        vm.data().insert(scheduler)?;
+        vm.set_global_function("require", &bound_require(&vm, &origin, run)?)?;
 
         let values = vm.eval(
             Arc::<[u8]>::from(
@@ -1671,10 +1830,13 @@ mod tests {
                     })),
             )
             .expect("register module");
+        let scheduler = crate::LocalScheduler::new();
+        let run = runtime.plugin_group(&scheduler, "demo");
         vm.data().insert(runtime)?;
-        vm.set_global_function("require", &bound_require(&vm, &origin)?)?;
+        vm.data().insert(scheduler)?;
+        vm.set_global_function("require", &bound_require(&vm, &origin, run)?)?;
 
-        let values = vm.eval(
+        let values = vm.eval_with_context(
             Arc::<[u8]>::from(
                 &br#"
                     local math = require("@harmony/math")
@@ -1683,6 +1845,11 @@ mod tests {
                 "#[..],
             ),
             luau::ChunkOrigin::default(),
+            luau::CallContext {
+                origin: luau_origin(&origin),
+                task_group: luau::TaskGroupId(run.0),
+                ..luau::CallContext::default()
+            },
         )?;
 
         assert_eq!(
@@ -1698,22 +1865,27 @@ mod tests {
         loader.insert("plugin:demo/lib", b"return 1".as_slice());
         loader.insert("plugin:other/lib", b"return 1".as_slice());
         let runtime = LuauRequireRuntime::new(loader, AllowAllCapabilities);
+        let scheduler = crate::LocalScheduler::new();
+        runtime.plugin_group(&scheduler, "demo");
+        runtime.plugin_group(&scheduler, "other");
         let origin = ChunkOrigin::default();
         let key = |plugin: &str| ModuleCacheKey(Arc::from(format!("plugin:{plugin}/lib")));
 
-        runtime.load_source_cached("@demo/lib", &origin, |_| {
+        runtime.load_source_cached("@demo/lib", &origin, |_, _| {
             runtime.invalidate_plugin("demo");
             Ok(vec![luau::Value::Number(1.0)])
         })?;
         assert!(runtime.source_cache.borrow().get(&key("demo")).is_none());
 
-        runtime.load_source_cached("@other/lib", &origin, |_| {
+        runtime.load_source_cached("@other/lib", &origin, |_, _| {
             runtime.invalidate_plugin("demo");
             Ok(vec![luau::Value::Number(1.0)])
         })?;
         assert!(runtime.source_cache.borrow().get(&key("other")).is_some());
 
-        runtime.load_source_cached("@demo/lib", &origin, |_| Ok(vec![luau::Value::Number(2.0)]))?;
+        runtime.load_source_cached("@demo/lib", &origin, |_, _| {
+            Ok(vec![luau::Value::Number(2.0)])
+        })?;
         assert_eq!(
             runtime.source_cache.borrow().get(&key("demo")).as_deref(),
             Some(&[luau::Value::Number(2.0)][..])

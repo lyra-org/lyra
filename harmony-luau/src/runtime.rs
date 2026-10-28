@@ -2886,10 +2886,17 @@ unsafe fn call_native_function(
             .as_ref()
             .map(|context| context.caller.clone())
             .unwrap_or_default();
-        let task_group = thread_context
-            .as_ref()
-            .map(|context| context.task_group)
-            .unwrap_or(slot.task_group);
+        // A function installed for another plugin acts in that plugin's run.
+        let task_group = match &thread_context {
+            Some(context)
+                if slot.use_thread_context_origin
+                    || slot.origin.plugin.is_none()
+                    || slot.origin.plugin == context.origin.plugin =>
+            {
+                context.task_group
+            }
+            _ => slot.task_group,
+        };
         let origin = if slot.use_thread_context_origin {
             thread_context
                 .as_ref()

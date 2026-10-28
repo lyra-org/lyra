@@ -140,6 +140,50 @@ fn admin_call_context(path: &str) -> Result<CallContext> {
     Ok(context)
 }
 
+/// A plugins directory holding plugin `id`, with `scopes` and `init` as its
+/// entrypoint source. Removed when dropped.
+struct TempPlugin {
+    dir: tempfile::TempDir,
+    id: String,
+}
+
+impl TempPlugin {
+    fn plugins_dir(&self) -> std::path::PathBuf {
+        self.dir.path().join("plugins")
+    }
+
+    fn plugin_dir(&self) -> std::path::PathBuf {
+        self.plugins_dir().join(&self.id)
+    }
+
+    fn write(&self, file: &str, contents: impl AsRef<[u8]>) -> Result<()> {
+        Ok(std::fs::write(self.plugin_dir().join(file), contents)?)
+    }
+}
+
+fn temp_plugin(id: &str, scopes: &[&str], init: impl AsRef<[u8]>) -> Result<TempPlugin> {
+    let plugin = TempPlugin {
+        dir: tempfile::tempdir()?,
+        id: id.to_string(),
+    };
+    std::fs::create_dir_all(plugin.plugin_dir())?;
+    plugin.write(
+        "plugin.json",
+        serde_json::json!({
+            "schema_version": 1,
+            "id": id,
+            "name": id,
+            "version": "1.0.0",
+            "description": "",
+            "entrypoint": "init.luau",
+            "scopes": scopes,
+        })
+        .to_string(),
+    )?;
+    plugin.write("init.luau", init)?;
+    Ok(plugin)
+}
+
 fn manifest(id: &str, scopes: &[&str]) -> PluginManifest {
     PluginManifest {
         schema_version: 1,
@@ -203,6 +247,85 @@ fn plugin_executor_preserves_typed_call_context_across_luau_yield() -> Result<()
         &b"return executor_context_username"[..],
     )?;
     assert_eq!(values, vec![luau::Value::String(b"raw-user".to_vec())]);
+    Ok(())
+}
+
+#[test]
+fn plugin_executor_keeps_dispatch_auth_inside_coroutines() -> Result<()> {
+    let runtime = runtime_with_scopes(&["test.context"])?;
+    let require = runtime.vm.data().get::<RequireRuntime>()?;
+    require.register(
+        ModuleSpec::new("test/context")
+            .capability("test.context")
+            .function(
+                harmony_core::FunctionSpec::sync_fn("username")
+                    .returns::<String>()
+                    .call(|mut frame| {
+                        let principal =
+                            crate::plugins::auth::require_dispatch_principal(&frame.context)?;
+                        frame.returns.write(principal.username.as_str())
+                    }),
+            )
+            .install(|_| Ok(harmony_core::ModuleExport::new(()))),
+    )?;
+    let mut context = CallContext {
+        origin: plugin_origin("demo", "init.luau"),
+        ..CallContext::default()
+    };
+    seed_caller_principal(
+        &mut context,
+        crate::services::auth::Principal::from_parts(
+            agdb::DbId(7),
+            "user-public-id".to_string(),
+            "raw-user".to_string(),
+            vec![lyra_db::Permission::Admin],
+            None,
+            std::collections::HashSet::new(),
+        ),
+    );
+
+    let values = runtime.eval_plugin_source_with_call_context(
+        br#"
+            local context = require("@test/context")
+            return coroutine.wrap(function()
+                return context.username()
+            end)()
+        "# as &[u8],
+        context,
+    )?;
+    assert_eq!(values, vec![luau::Value::String(b"raw-user".to_vec())]);
+    Ok(())
+}
+
+#[test]
+fn plugin_executor_refuses_registrations_from_an_ended_run() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+    crate::plugins::testing::init_default_test_state()?;
+    futures::executor::block_on(crate::plugins::api::initialize_registry(
+        std::collections::HashSet::new(),
+        None,
+    ));
+    let runtime = runtime_with_scopes(&["lyra.api"])?;
+    runtime.run_plugin_source("demo", "init.luau", &b""[..])?;
+    let error = runtime
+        .run_plugin_source_with_call_context(
+            br#"
+                local api = require("@lyra/api")
+                api.get("/ended", function()
+                    return api.response.empty(204)
+                end, "public")
+            "# as &[u8],
+            CallContext {
+                origin: plugin_origin("demo", "ended.luau"),
+                task_group: harmony_core::TaskGroupId(u64::MAX),
+                ..CallContext::default()
+            },
+        )
+        .expect_err("a registration from a run that has ended must be refused");
+    assert!(
+        format!("{error:#}").contains("run that has ended"),
+        "{error:#}"
+    );
     Ok(())
 }
 
@@ -1828,30 +1951,10 @@ fn plugin_executor_denies_undeclared_capability_before_cached_module_return() ->
 
 #[test]
 fn plugin_executor_discovers_and_executes_plugins_from_directory() -> Result<()> {
-    let test_dir = std::env::temp_dir().join(format!(
-        "lyra-raw-discover-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_nanos()
-    ));
-    let plugin_dir = test_dir.join("plugins").join("demo");
-    std::fs::create_dir_all(&plugin_dir)?;
-    std::fs::write(
-        plugin_dir.join("plugin.json"),
-        r#"{
-            "schema_version": 1,
-            "id": "demo",
-            "name": "Demo",
-            "version": "1.0.0",
-            "description": "Demo plugin",
-            "entrypoint": "init.luau",
-            "scopes": ["harmony.serde"]
-        }"#,
-    )?;
-    std::fs::write(
-        plugin_dir.join("init.luau"),
-        br#"
+    let plugin = temp_plugin(
+        "demo",
+        &["harmony.serde"],
+        r#"
             local serde = require("@harmony/serde")
             local json = serde.json
             executor_discovered_output = json.encode({ answer = 42 })
@@ -1859,12 +1962,12 @@ fn plugin_executor_discovers_and_executes_plugins_from_directory() -> Result<()>
     )?;
 
     let (runtime, errors) =
-        PluginExecutor::discover_from_plugins_dir(test_dir.join("plugins"), default_server_info())?;
+        PluginExecutor::discover_from_plugins_dir(plugin.plugins_dir(), default_server_info())?;
     assert!(errors.is_empty(), "{errors:?}");
     assert!(runtime.has_plugin("demo"));
     assert_eq!(runtime.plugin_manifests()[0].id, "demo");
 
-    runtime.exec_all()?;
+    assert!(runtime.exec_all().is_empty());
     let values = runtime.eval_plugin_source(
         "demo",
         "check.luau",
@@ -1874,8 +1977,6 @@ fn plugin_executor_discovers_and_executes_plugins_from_directory() -> Result<()>
         values,
         vec![luau::Value::String(br#"{"answer":42}"#.to_vec())]
     );
-
-    let _ = std::fs::remove_dir_all(test_dir);
     Ok(())
 }
 
@@ -1905,30 +2006,10 @@ fn plugin_executor_executes_checked_in_plugins_from_repo() -> Result<()> {
 
 #[test]
 fn plugin_executor_handle_discovers_and_executes_on_runtime_thread() -> Result<()> {
-    let test_dir = std::env::temp_dir().join(format!(
-        "lyra-raw-handle-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_nanos()
-    ));
-    let plugin_dir = test_dir.join("plugins").join("demo");
-    std::fs::create_dir_all(&plugin_dir)?;
-    std::fs::write(
-        plugin_dir.join("plugin.json"),
-        r#"{
-            "schema_version": 1,
-            "id": "demo",
-            "name": "Demo",
-            "version": "1.0.0",
-            "description": "Demo plugin",
-            "entrypoint": "init.luau",
-            "scopes": ["harmony.serde"]
-        }"#,
-    )?;
-    std::fs::write(
-        plugin_dir.join("init.luau"),
-        br#"
+    let plugin = temp_plugin(
+        "demo",
+        &["harmony.serde"],
+        r#"
             local serde = require("@harmony/serde")
             local json = serde.json
             executor_handle_output = json.encode({ answer = 42 })
@@ -1938,7 +2019,7 @@ fn plugin_executor_handle_discovers_and_executes_on_runtime_thread() -> Result<(
     let db = lyra_db::test_db::new_test_db()?;
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
     let (runtime, errors) = PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
-        test_dir.join("plugins"),
+        plugin.plugins_dir(),
         default_server_info(),
         default_auth_capabilities(),
         db,
@@ -1954,63 +2035,59 @@ fn plugin_executor_handle_discovers_and_executes_on_runtime_thread() -> Result<(
 
     futures::executor::block_on(runtime.exec_all())?;
     futures::executor::block_on(runtime.exec_plugin("demo"))?;
-
-    let _ = std::fs::remove_dir_all(test_dir);
     Ok(())
 }
 
 #[test]
 fn plugin_executor_restart_reloads_plugin_sources_from_disk() -> Result<()> {
-    let test_dir = std::env::temp_dir().join(format!(
-        "lyra-restart-reload-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_nanos()
-    ));
-    let plugin_dir = test_dir.join("plugins").join("demo");
-    std::fs::create_dir_all(&plugin_dir)?;
-    std::fs::write(
-        plugin_dir.join("plugin.json"),
-        r#"{
-            "schema_version": 1,
-            "id": "demo",
-            "name": "Demo",
-            "version": "1.0.0",
-            "description": "Demo plugin",
-            "entrypoint": "init.luau",
-            "scopes": []
-        }"#,
-    )?;
-    let write_sources = |answer: &str| -> Result<()> {
-        std::fs::write(
-            plugin_dir.join("lib.luau"),
-            format!("return {{ answer = {answer} }}"),
-        )?;
-        std::fs::write(
-            plugin_dir.join("init.luau"),
-            "restart_reload_output = require('./lib').answer",
-        )?;
-        Ok(())
-    };
-    write_sources("1")?;
+    let init = r#"
+        local task = require("@harmony/task")
+        local answer = require('./lib').answer
+        restart_reload_output = answer
+        task.delay(0.05, function()
+            delayed_runs = (delayed_runs or "") .. answer
+        end)
+    "#;
+    let plugin = temp_plugin("demo", &["harmony.task"], init)?;
+    let write_lib =
+        |answer: &str| plugin.write("lib.luau", format!("return {{ answer = {answer} }}"));
+    write_lib("1")?;
 
     let (runtime, errors) =
-        PluginExecutor::discover_from_plugins_dir(test_dir.join("plugins"), default_server_info())?;
+        PluginExecutor::discover_from_plugins_dir(plugin.plugins_dir(), default_server_info())?;
     assert!(errors.is_empty(), "{errors:?}");
-    let read_output = |runtime: &PluginExecutor| {
-        runtime.eval_plugin_source("demo", "check.luau", &b"return restart_reload_output"[..])
+    let read = |global: &'static str| {
+        runtime.eval_plugin_source(
+            "demo",
+            "check.luau",
+            format!("return {global}").into_bytes(),
+        )
     };
 
     runtime.exec_plugin("demo")?;
-    assert_eq!(read_output(&runtime)?, vec![luau::Value::Number(1.0)]);
+    assert_eq!(
+        read("restart_reload_output")?,
+        vec![luau::Value::Number(1.0)]
+    );
 
-    write_sources("2")?;
+    write_lib("2")?;
     runtime.verify_plugin_manifest("demo")?;
     runtime.restart_plugin("demo")?;
-    assert_eq!(read_output(&runtime)?, vec![luau::Value::Number(2.0)]);
+    assert_eq!(
+        read("restart_reload_output")?,
+        vec![luau::Value::Number(2.0)]
+    );
 
-    let _ = std::fs::remove_dir_all(test_dir);
+    let deadline = std::time::Instant::now() + Duration::from_millis(200);
+    while std::time::Instant::now() < deadline {
+        runtime.poll_background_tasks();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        read("delayed_runs")?,
+        vec![luau::Value::String(b"2".to_vec())],
+        "the previous run's delayed task never fires"
+    );
     Ok(())
 }
 
@@ -2150,33 +2227,12 @@ fn plugin_executor_failed_restart_keeps_no_update_handler() -> Result<()> {
 
 #[test]
 fn plugin_executor_handle_restart_runs_new_entrypoint_on_runtime_thread() -> Result<()> {
-    let test_dir = std::env::temp_dir().join(format!(
-        "lyra-handle-restart-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_nanos()
-    ));
-    let plugin_dir = test_dir.join("plugins").join("demo");
-    std::fs::create_dir_all(&plugin_dir)?;
-    std::fs::write(
-        plugin_dir.join("plugin.json"),
-        r#"{
-            "schema_version": 1,
-            "id": "demo",
-            "name": "Demo",
-            "version": "1.0.0",
-            "description": "Demo plugin",
-            "entrypoint": "init.luau",
-            "scopes": []
-        }"#,
-    )?;
-    std::fs::write(plugin_dir.join("init.luau"), "return nil")?;
+    let plugin = temp_plugin("demo", &[], "return nil")?;
 
     let db = lyra_db::test_db::new_test_db()?;
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
     let (runtime, errors) = PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
-        test_dir.join("plugins"),
+        plugin.plugins_dir(),
         default_server_info(),
         default_auth_capabilities(),
         db,
@@ -2186,7 +2242,7 @@ fn plugin_executor_handle_restart_runs_new_entrypoint_on_runtime_thread() -> Res
     assert!(errors.is_empty(), "{errors:?}");
     futures::executor::block_on(runtime.exec_all())?;
 
-    std::fs::write(plugin_dir.join("init.luau"), "error('second version ran')")?;
+    plugin.write("init.luau", "error('second version ran')")?;
     futures::executor::block_on(runtime.verify_plugin_manifest("demo"))?;
     let error = futures::executor::block_on(runtime.restart_plugin("demo"))
         .expect_err("restart must run the rewritten entrypoint");
@@ -2195,8 +2251,8 @@ fn plugin_executor_handle_restart_runs_new_entrypoint_on_runtime_thread() -> Res
         "{error:#}"
     );
 
-    std::fs::write(
-        plugin_dir.join("plugin.json"),
+    plugin.write(
+        "plugin.json",
         r#"{
             "schema_version": 1,
             "id": "demo",
@@ -2210,8 +2266,6 @@ fn plugin_executor_handle_restart_runs_new_entrypoint_on_runtime_thread() -> Res
     let error = futures::executor::block_on(runtime.verify_plugin_manifest("demo"))
         .expect_err("changed manifest must be rejected");
     assert!(format!("{error:#}").contains("reload plugins"), "{error:#}");
-
-    let _ = std::fs::remove_dir_all(test_dir);
     Ok(())
 }
 

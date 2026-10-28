@@ -182,6 +182,7 @@ fn register_route_callback(
     let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
         crate::plugins::runtime_error("lyra/api routes must be registered from plugin Luau code")
     })?;
+    harmony_core::ensure_current_plugin_run(frame.vm, &frame.context)?;
     let routes = frame.vm.data().get::<ApiRouteStore>()?;
     routes.register(ApiRouteRegistration {
         plugin_id,
@@ -237,6 +238,7 @@ fn websocket_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<(
             "lyra/api websocket routes must be registered from plugin Luau code",
         )
     })?;
+    harmony_core::ensure_current_plugin_run(frame.vm, &frame.context)?;
     let routes = frame.vm.data().get::<ApiRouteStore>()?;
     routes.register_websocket(
         plugin_id,

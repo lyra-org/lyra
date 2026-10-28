@@ -66,6 +66,7 @@ pub(crate) fn register<Payload: 'static>(
     })?;
     let validated_plugin_id =
         PluginId::new(plugin_id.to_string()).map_err(crate::plugins::runtime_error)?;
+    harmony_core::ensure_current_plugin_run(frame.vm, &frame.context)?;
     let vm = frame.vm.clone();
     let context = call_context_to_core(&frame.context);
     Ok(luau::ScheduledFuture::new(async move {

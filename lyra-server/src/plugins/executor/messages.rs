@@ -77,6 +77,10 @@ pub(super) enum PluginExecutorCommand {
         plugin_id: String,
         reply: tokio::sync::oneshot::Sender<Result<()>>,
     },
+    StopPlugin {
+        plugin_id: String,
+        reply: tokio::sync::oneshot::Sender<Result<()>>,
+    },
     RestartPlugin {
         plugin_id: String,
         reply: tokio::sync::oneshot::Sender<Result<()>>,
@@ -85,7 +89,7 @@ pub(super) enum PluginExecutorCommand {
         plugin_id: String,
         reply: tokio::sync::oneshot::Sender<Result<()>>,
     },
-    ExecAll(tokio::sync::oneshot::Sender<Result<()>>),
+    ExecAll(tokio::sync::oneshot::Sender<Result<Vec<String>>>),
     MixHandler {
         request: MixHandlerRequest,
         reply: tokio::sync::oneshot::Sender<Result<MixHandlerResult>>,
