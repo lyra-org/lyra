@@ -41,9 +41,6 @@ type SyncPlayParticipant = {
 	ready: boolean,
 	ignore_wait: boolean,
 	ping: number,
-	when: string?,
-	position_ticks: number?,
-	is_playing: boolean?,
 }
 
 type SyncPlayGroup = {
@@ -53,12 +50,15 @@ type SyncPlayGroup = {
 	participants: { [string]: SyncPlayParticipant },
 	queue: { SyncPlayQueueItem },
 	current_index: number,
+	-- The group's clock: the position playback last started or stopped at, and when, in unix
+	-- milliseconds. A start is scheduled ahead. Read the position with `syncplay_position_ticks`.
 	position_ticks: number,
+	last_activity_ms: number,
+	-- How long the current item runs, when known; a position a member asks for can't pass it.
+	run_time_ticks: number?,
 	repeat_mode: string,
 	shuffle_mode: string,
 	resume_playing: boolean,
-	-- When, in unix milliseconds, the group last started or stopped playing; a start is scheduled ahead.
-	last_activity_ms: number,
 	-- Gives up waiting for the members that haven't reported ready, while the group waits.
 	wait_timer: thread?,
 	last_updated_at: string,
@@ -93,13 +93,18 @@ module.group_wait_seconds = 30
 -- os.clock() at the latest offset the whole-second readings allow.
 local syncplay_clock_offset = -math.huge
 
-local function syncplay_now_ms(): number
+-- The wall clock in unix milliseconds, which tests may replace.
+function module.now_ms(): number
 	local clock = os.clock()
 	local earliest = os.time() - clock
 	if syncplay_clock_offset < earliest or syncplay_clock_offset >= earliest + 1 then
 		syncplay_clock_offset = earliest
 	end
 	return math.floor((clock + syncplay_clock_offset) * 1000)
+end
+
+local function syncplay_now_ms(): number
+	return module.now_ms()
 end
 
 local function syncplay_timestamp(unix_ms: number): string
@@ -423,7 +428,7 @@ local function syncplay_send_filter(
 		local should_send = filter == "all"
 			or (filter == "current" and session_id == from_session_id)
 			or (filter == "except" and session_id ~= from_session_id)
-			or (filter == "ready" and not participant.buffering and not participant.ignore_wait)
+			or (filter == "ready" and not participant.buffering)
 		if not should_send then
 			continue
 		end
@@ -463,13 +468,42 @@ local function syncplay_playlist_json(group: SyncPlayGroup): { JsonValue }
 	return result
 end
 
+-- Where the group's playback is: the clock's position, advanced while playing by the time played
+-- since it started. A start still scheduled ahead hasn't advanced it.
+local function syncplay_position_ticks(group: SyncPlayGroup, now_ms: number?): number
+	if group.state ~= "Playing" then
+		return group.position_ticks
+	end
+	local elapsed_ms = math.max((now_ms or syncplay_now_ms()) - group.last_activity_ms, 0)
+	return group.position_ticks + elapsed_ms * TICKS_PER_MILLISECOND
+end
+
+-- Stops the clock where playback is.
+local function syncplay_settle(group: SyncPlayGroup)
+	local now_ms = syncplay_now_ms()
+	group.position_ticks = syncplay_position_ticks(group, now_ms)
+	group.last_activity_ms = now_ms
+end
+
+-- Sets the clock to `position_ticks` from now.
+local function syncplay_set_position(group: SyncPlayGroup, position_ticks: number)
+	group.position_ticks = position_ticks
+	group.last_activity_ms = syncplay_now_ms()
+end
+
+-- A position a member asks for, within the current item. Without a known run time, as for an
+-- item Lyra hasn't read the length of, only the start bounds it.
+local function syncplay_sanitize_position(group: SyncPlayGroup, position_ticks: number?): number
+	return math.clamp(position_ticks or 0, 0, group.run_time_ticks or math.huge)
+end
+
 local function syncplay_play_queue_update(group: SyncPlayGroup, reason: string): JsonObject
 	return {
 		Reason = reason,
 		LastUpdate = group.last_queue_update,
 		Playlist = syncplay_playlist_json(group),
 		PlayingItemIndex = group.current_index,
-		StartPositionTicks = group.position_ticks,
+		StartPositionTicks = syncplay_position_ticks(group),
 		IsPlaying = group.state == "Playing",
 		ShuffleMode = group.shuffle_mode,
 		RepeatMode = group.repeat_mode,
@@ -499,20 +533,32 @@ local function syncplay_current_playlist_item_id(group: SyncPlayGroup): string
 	return if item then item.PlaylistItemId else SYNCPLAY_EMPTY_GUID
 end
 
-local function syncplay_command(
-	group: SyncPlayGroup,
-	command: string,
-	position_ticks: number?,
-	when_ms: number?
-): JsonObject
-	local emitted_at_ms = syncplay_now_ms()
+-- How long the current item runs, in ticks, when Lyra knows it.
+local function syncplay_current_run_time(group: SyncPlayGroup): number?
+	local item = syncplay_current_item(group)
+	local track = if item
+		then playback.resolve_track_for_playback(item_ids.decode_jellyfin_item_id(item.ItemId))
+		else nil
+	local duration_ms = if track then track.duration_ms else nil
+	return if duration_ms then duration_ms * TICKS_PER_MILLISECOND else nil
+end
+
+-- Starts the current item over, as a new current item does.
+local function syncplay_restart_item(group: SyncPlayGroup)
+	group.run_time_ticks = syncplay_current_run_time(group)
+	syncplay_set_position(group, 0)
+end
+
+-- As upstream, a command carries the clock itself: members play from its position at its time,
+-- unless `when_ms` schedules the command for another time.
+local function syncplay_command(group: SyncPlayGroup, command: string, when_ms: number?): JsonObject
 	return {
 		GroupId = group.id,
 		PlaylistItemId = syncplay_current_playlist_item_id(group),
-		When = syncplay_timestamp(when_ms or emitted_at_ms),
+		When = syncplay_timestamp(when_ms or group.last_activity_ms),
 		Command = command,
-		PositionTicks = position_ticks or group.position_ticks,
-		EmittedAt = syncplay_timestamp(emitted_at_ms),
+		PositionTicks = group.position_ticks,
+		EmittedAt = syncplay_timestamp(syncplay_now_ms()),
 	}
 end
 
@@ -520,17 +566,9 @@ local function syncplay_broadcast_command(
 	group: SyncPlayGroup,
 	from_session_id: string,
 	filter: string,
-	command: string,
-	position_ticks: number?,
-	when_ms: number?
+	command: string
 )
-	syncplay_send_filter(
-		group,
-		from_session_id,
-		filter,
-		"SyncPlayCommand",
-		syncplay_command(group, command, position_ticks, when_ms)
-	)
+	syncplay_send_filter(group, from_session_id, filter, "SyncPlayCommand", syncplay_command(group, command))
 end
 
 local function syncplay_broadcast_state(group: SyncPlayGroup, from_session_id: string, reason: string)
@@ -579,18 +617,19 @@ local function syncplay_resume_delay_ms(group: SyncPlayGroup): number
 end
 
 local function syncplay_unpause(group: SyncPlayGroup, from_session_id: string)
+	syncplay_settle(group)
 	syncplay_set_state(group, "Playing")
 	group.resume_playing = true
-	group.last_activity_ms = syncplay_now_ms() + syncplay_resume_delay_ms(group)
-	syncplay_broadcast_command(group, from_session_id, "all", "Unpause", group.position_ticks, group.last_activity_ms)
+	group.last_activity_ms += syncplay_resume_delay_ms(group)
+	syncplay_broadcast_command(group, from_session_id, "all", "Unpause")
 	syncplay_broadcast_state(group, from_session_id, "Unpause")
 end
 
 local function syncplay_pause(group: SyncPlayGroup, from_session_id: string)
+	syncplay_settle(group)
 	syncplay_set_state(group, "Paused")
 	group.resume_playing = false
-	group.last_activity_ms = syncplay_now_ms()
-	syncplay_broadcast_command(group, from_session_id, "all", "Pause", group.position_ticks, nil)
+	syncplay_broadcast_command(group, from_session_id, "all", "Pause")
 	syncplay_broadcast_state(group, from_session_id, "Pause")
 end
 
@@ -680,9 +719,6 @@ local function syncplay_add_participant(group: SyncPlayGroup, entry: SessionEntr
 		ready = true,
 		ignore_wait = false,
 		ping = SYNCPLAY_DEFAULT_PING,
-		when = nil,
-		position_ticks = nil,
-		is_playing = nil,
 	}
 	syncplay_session_to_group[entry.session_id] = group
 	syncplay_mark_updated(group)
@@ -751,8 +787,9 @@ local function syncplay_new_group(entry: SessionEntry, group_name: string?): Syn
 		position_ticks = 0,
 		repeat_mode = "RepeatNone",
 		shuffle_mode = "Sorted",
-		resume_playing = false,
 		last_activity_ms = syncplay_now_ms(),
+		run_time_ticks = nil,
+		resume_playing = false,
 		last_updated_at = now,
 		last_queue_update = now,
 	}
@@ -807,9 +844,9 @@ local function syncplay_transition_if_ready(
 	end
 
 	if is_playing ~= true and not group.resume_playing then
+		syncplay_settle(group)
 		syncplay_set_state(group, "Paused")
-		group.last_activity_ms = syncplay_now_ms()
-		syncplay_broadcast_command(group, from_session_id, "all", "Pause", group.position_ticks, nil)
+		syncplay_broadcast_command(group, from_session_id, "all", "Pause")
 		syncplay_broadcast_state(group, from_session_id, "Ready")
 		return
 	end
@@ -822,9 +859,10 @@ local function syncplay_transition_if_ready(
 			filter = "except"
 		end
 	end
+	syncplay_settle(group)
 	syncplay_set_state(group, "Playing")
-	group.last_activity_ms = syncplay_now_ms() + delay_ms
-	syncplay_broadcast_command(group, from_session_id, filter, "Unpause", group.position_ticks, group.last_activity_ms)
+	group.last_activity_ms += delay_ms
+	syncplay_broadcast_command(group, from_session_id, filter, "Unpause")
 	syncplay_broadcast_state(group, from_session_id, "Ready")
 end
 
@@ -968,17 +1006,9 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 				syncplay_play_queue_update(group, "NewPlaylist")
 			)
 			if group.state == "Playing" then
-				syncplay_send_entry(
-					entry :: SessionEntry,
-					"SyncPlayCommand",
-					syncplay_command(group, "Unpause", nil, group.last_activity_ms)
-				)
+				syncplay_send_entry(entry :: SessionEntry, "SyncPlayCommand", syncplay_command(group, "Unpause"))
 			elseif group.state == "Paused" then
-				syncplay_send_entry(
-					entry :: SessionEntry,
-					"SyncPlayCommand",
-					syncplay_command(group, "Pause", nil, nil)
-				)
+				syncplay_send_entry(entry :: SessionEntry, "SyncPlayCommand", syncplay_command(group, "Pause"))
 			end
 		end
 		return api.response.empty(204)
@@ -1015,7 +1045,8 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 		local group_value = group :: SyncPlayGroup
 		group_value.queue = queue
 		syncplay_set_current_index(group_value, playing_position)
-		group_value.position_ticks = start_ticks
+		group_value.run_time_ticks = syncplay_current_run_time(group_value)
+		syncplay_set_position(group_value, start_ticks)
 		group_value.resume_playing = true
 		syncplay_set_state(group_value, "Waiting")
 		syncplay_set_all_buffering(group_value, true)
@@ -1040,7 +1071,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 		if index then
 			local group_value = group :: SyncPlayGroup
 			group_value.current_index = index
-			group_value.position_ticks = 0
+			syncplay_restart_item(group_value)
 			group_value.resume_playing = true
 			syncplay_set_state(group_value, "Waiting")
 			syncplay_set_all_buffering(group_value, true)
@@ -1066,7 +1097,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 			if clear_playing_item or not current_item then
 				group_value.queue = {}
 				group_value.current_index = -1
-				group_value.position_ticks = 0
+				syncplay_restart_item(group_value)
 				syncplay_set_state(group_value, "Idle")
 			else
 				group_value.queue = { current_item }
@@ -1098,24 +1129,17 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 				if group_value.current_index < 0 then
 					group_value.current_index = 0
 				end
-				group_value.position_ticks = 0
+				syncplay_restart_item(group_value)
 			else
 				group_value.current_index = -1
-				group_value.position_ticks = 0
+				syncplay_restart_item(group_value)
 				syncplay_set_state(group_value, "Idle")
 			end
 		end
 
 		syncplay_broadcast_queue_update(group_value, (entry :: SessionEntry).session_id, "RemoveItems")
 		if group_value.state == "Idle" then
-			syncplay_broadcast_command(
-				group_value,
-				(entry :: SessionEntry).session_id,
-				"all",
-				"Stop",
-				group_value.position_ticks,
-				nil
-			)
+			syncplay_broadcast_command(group_value, (entry :: SessionEntry).session_id, "all", "Stop")
 			syncplay_broadcast_state(group_value, (entry :: SessionEntry).session_id, "Stop")
 		end
 		return api.response.empty(204)
@@ -1193,11 +1217,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 		local group_value = group :: SyncPlayGroup
 		if group_value.state == "Playing" then
 			-- As upstream, the group is already playing and the member only lost track of it.
-			syncplay_send_entry(
-				entry :: SessionEntry,
-				"SyncPlayCommand",
-				syncplay_command(group_value, "Unpause", nil, group_value.last_activity_ms)
-			)
+			syncplay_send_entry(entry :: SessionEntry, "SyncPlayCommand", syncplay_command(group_value, "Unpause"))
 		else
 			syncplay_unpause(group_value, (entry :: SessionEntry).session_id)
 		end
@@ -1223,15 +1243,8 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 		local group_value = group :: SyncPlayGroup
 		syncplay_set_state(group_value, "Idle")
 		group_value.resume_playing = false
-		group_value.position_ticks = 0
-		syncplay_broadcast_command(
-			group_value,
-			(entry :: SessionEntry).session_id,
-			"all",
-			"Stop",
-			group_value.position_ticks,
-			nil
-		)
+		syncplay_set_position(group_value, 0)
+		syncplay_broadcast_command(group_value, (entry :: SessionEntry).session_id, "all", "Stop")
 		syncplay_broadcast_state(group_value, (entry :: SessionEntry).session_id, "Stop")
 		return api.response.empty(204)
 	end)
@@ -1249,15 +1262,8 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 		end
 
 		local group_value = group :: SyncPlayGroup
-		group_value.position_ticks = syncplay_clamp_position(position_ticks)
-		syncplay_broadcast_command(
-			group_value,
-			(entry :: SessionEntry).session_id,
-			"all",
-			"Seek",
-			group_value.position_ticks,
-			nil
-		)
+		syncplay_set_position(group_value, syncplay_sanitize_position(group_value, position_ticks))
+		syncplay_broadcast_command(group_value, (entry :: SessionEntry).session_id, "all", "Seek")
 		syncplay_broadcast_state(group_value, (entry :: SessionEntry).session_id, "Seek")
 		return api.response.empty(204)
 	end)
@@ -1280,21 +1286,35 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 			)
 			return api.response.empty(204)
 		end
+		if group_value.state == "Idle" then
+			syncplay_send_entry(entry :: SessionEntry, "SyncPlayCommand", syncplay_command(group_value, "Stop"))
+			return api.response.empty(204)
+		end
 
-		local participant = group_value.participants[(entry :: SessionEntry).session_id]
+		-- As upstream, a playing group stops where it is and resumes once everyone is ready; a paused
+		-- one stays paused.
+		local previous_state = group_value.state
+		if previous_state == "Playing" then
+			syncplay_settle(group_value)
+			group_value.resume_playing = true
+		elseif previous_state == "Paused" then
+			group_value.resume_playing = false
+		end
+		syncplay_set_state(group_value, "Waiting")
+
+		local session_id = (entry :: SessionEntry).session_id
+		local participant = group_value.participants[session_id]
 		if participant then
 			participant.buffering = true
 			participant.ready = false
-			participant.when = if type(body.When) == "string" then body.When :: string else nil
-			participant.position_ticks = syncplay_number(body.PositionTicks, participant.position_ticks)
-			participant.is_playing = syncplay_bool(body.IsPlaying, participant.is_playing == true)
-			group_value.position_ticks =
-				syncplay_clamp_position(participant.position_ticks or group_value.position_ticks)
-			group_value.resume_playing = participant.is_playing == true
 		end
-		syncplay_set_state(group_value, "Waiting")
 		syncplay_update_wait(group_value, false)
-		syncplay_broadcast_state(group_value, (entry :: SessionEntry).session_id, "Buffer")
+		if previous_state == "Playing" then
+			syncplay_broadcast_command(group_value, session_id, "ready", "Pause")
+		elseif not group_value.resume_playing then
+			syncplay_send_entry(entry :: SessionEntry, "SyncPlayCommand", syncplay_command(group_value, "Pause"))
+		end
+		syncplay_broadcast_state(group_value, session_id, "Buffer")
 		return api.response.empty(204)
 	end)
 
@@ -1334,15 +1354,13 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 		if math.abs(elapsed_ms) > SYNCPLAY_TIME_SYNC_OFFSET then
 			elapsed_ms = 0
 		end
-		local client_ticks = syncplay_clamp_position(position_ticks or group_value.position_ticks)
-		local lag_ms = (group_value.position_ticks - client_ticks) / TICKS_PER_MILLISECOND - elapsed_ms
+		local group_ticks = syncplay_position_ticks(group_value)
+		local client_ticks = syncplay_sanitize_position(group_value, position_ticks or group_ticks)
+		local lag_ms = (group_ticks - client_ticks) / TICKS_PER_MILLISECOND - elapsed_ms
 
 		if participant then
 			participant.buffering = false
 			participant.ready = true
-			participant.when = if type(body.When) == "string" then body.When :: string else nil
-			participant.position_ticks = position_ticks or participant.position_ticks
-			participant.is_playing = is_playing
 		end
 		syncplay_update_wait(group_value, false)
 		syncplay_transition_if_ready(group_value, (entry :: SessionEntry).session_id, is_playing, lag_ms)
@@ -1393,7 +1411,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 				return api.response.empty(204)
 			end
 		end
-		group_value.position_ticks = 0
+		syncplay_restart_item(group_value)
 		syncplay_set_state(group_value, "Waiting")
 		group_value.resume_playing = true
 		syncplay_set_all_buffering(group_value, true)
@@ -1427,7 +1445,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 				return api.response.empty(204)
 			end
 		end
-		group_value.position_ticks = 0
+		syncplay_restart_item(group_value)
 		syncplay_set_state(group_value, "Waiting")
 		group_value.resume_playing = true
 		syncplay_set_all_buffering(group_value, true)

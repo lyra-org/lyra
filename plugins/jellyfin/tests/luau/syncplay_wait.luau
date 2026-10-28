@@ -85,12 +85,14 @@ check(received("a"), "Unpause,Playing/Unpause", "a resuming group unpauses after
 check(received("b"), "Unpause,Playing/Unpause", "the whole group hears it")
 
 -- A paused group stays paused where it waited.
+post("a", "Pause")
 post("b", "Buffering", { IsPlaying = false })
 received("a")
 task.wait(0.3)
 check(received("a"), "Pause,Paused/Pause", "a paused group pauses after the wait")
 
 -- Members buffering again don't push the deadline back.
+post("a", "Unpause")
 post("b", "Buffering", { IsPlaying = true })
 task.wait(0.12)
 post("b", "Buffering", { IsPlaying = true })
@@ -107,7 +109,7 @@ received("a")
 task.wait(0.14)
 check(received("a"), "", "the earlier wait doesn't fire")
 task.wait(0.1)
-check(received("a"), "Unpause,Playing/Unpause", "the new wait does")
+check(received("a"), "Pause,Paused/Pause", "the new wait does")
 
 -- A disbanded group never times out.
 post("b", "Buffering", { IsPlaying = true })
