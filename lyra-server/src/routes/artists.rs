@@ -44,6 +44,7 @@ use crate::{
             RelatedArtistResponse,
             RelationDirectionResponse,
             ReleaseResponse,
+            TrackChains,
         },
     },
     services::STATE,
@@ -352,7 +353,8 @@ fn artist_detail_to_response(
         releases,
         tracks: detail
             .tracks
-            .map(|v| v.into_iter().map(Into::into).collect()),
+            .map(|tracks| TrackChains::responses(db, tracks))
+            .transpose()?,
         relations,
         cover,
     })

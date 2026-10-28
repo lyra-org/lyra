@@ -48,6 +48,7 @@ use crate::{
         CoverResponse,
         PageResponse,
         ReleaseResponse,
+        TrackChains,
         TrackResponse,
     },
     routes::{
@@ -365,7 +366,7 @@ fn require_deletable_playlist(
 
 fn build_track_response_unchecked(
     db: &agdb::DbAny,
-    track: lyra_db::Track,
+    track: TrackResponse,
     track_db_id: DbId,
     entry_id: String,
     position: u64,
@@ -391,7 +392,7 @@ fn build_track_response_unchecked(
     };
     Ok(PlaylistTrackResponse {
         entry_id,
-        track: track.into(),
+        track,
         artists,
         release,
         position,
@@ -401,7 +402,7 @@ fn build_track_response_unchecked(
 fn build_track_response(
     db: &agdb::DbAny,
     principal: &Principal,
-    track: lyra_db::Track,
+    track: TrackResponse,
     track_db_id: DbId,
     entry_id: String,
     position: u64,
@@ -429,12 +430,17 @@ fn build_tracks(
     playlist_db_id: DbId,
     inc: PlaylistInc,
 ) -> anyhow::Result<Vec<PlaylistTrackResponse>> {
-    let playlist_tracks = playlists::get_tracks(db, QueryId::Id(playlist_db_id))?;
-    let mut items = Vec::with_capacity(playlist_tracks.len());
-    for playlist_track in playlist_tracks {
-        let Some(track) = lyra_db::tracks::get_by_id(db, playlist_track.track_db_id)? else {
-            continue;
-        };
+    let mut playlist_tracks = Vec::new();
+    let mut tracks = Vec::new();
+    for playlist_track in playlists::get_tracks(db, QueryId::Id(playlist_db_id))? {
+        if let Some(track) = lyra_db::tracks::get_by_id(db, playlist_track.track_db_id)? {
+            playlist_tracks.push(playlist_track);
+            tracks.push(track);
+        }
+    }
+    let responses = TrackChains::responses(db, tracks)?;
+    let mut items = Vec::with_capacity(responses.len());
+    for (playlist_track, track) in playlist_tracks.into_iter().zip(responses) {
         items.push(build_track_response(
             db,
             principal,
@@ -726,10 +732,16 @@ async fn add_playlist_tracks(
         }
     })?;
 
-    let mut added = Vec::with_capacity(results.len());
-    for playlist_track in results {
-        let track = lyra_db::tracks::get_by_id(&db, playlist_track.track_db_id)?
-            .ok_or_else(|| AppError::not_found("playlist track target missing"))?;
+    let mut tracks = Vec::with_capacity(results.len());
+    for playlist_track in &results {
+        tracks.push(
+            lyra_db::tracks::get_by_id(&db, playlist_track.track_db_id)?
+                .ok_or_else(|| AppError::not_found("playlist track target missing"))?,
+        );
+    }
+    let responses = TrackChains::responses(&*db, tracks)?;
+    let mut added = Vec::with_capacity(responses.len());
+    for (playlist_track, track) in results.into_iter().zip(responses) {
         added.push(build_track_response(
             &db,
             &principal,
@@ -774,16 +786,21 @@ async fn remove_playlist_entries(
             }
         })?;
 
-    let mut removed = Vec::new();
-    for playlist_track in removed_tracks {
-        let track =
+    let mut tracks = Vec::with_capacity(removed_tracks.len());
+    for playlist_track in &removed_tracks {
+        tracks.push(
             lyra_db::tracks::get_by_id(&db, playlist_track.track_db_id)?.ok_or_else(|| {
                 AppError::from(anyhow::anyhow!(
                     "removed playlist entry '{}' references missing track {}",
                     playlist_track.entry_id,
                     playlist_track.track_db_id.0
                 ))
-            })?;
+            })?,
+        );
+    }
+    let responses = TrackChains::responses(&*db, tracks)?;
+    let mut removed = Vec::with_capacity(responses.len());
+    for (playlist_track, track) in removed_tracks.into_iter().zip(responses) {
         removed.push(build_track_response(
             &db,
             &principal,
@@ -1402,10 +1419,11 @@ mod tests {
             db.transaction_mut(|t| lyra_db::playlists::add_track(t, playlist_db_id, track_db_id))?;
         let track = lyra_db::tracks::get_by_id(&db, track_db_id)?
             .ok_or_else(|| anyhow!("track missing after insert"))?;
+        let chains = TrackChains::of(&db, [&track])?;
 
         let response = build_track_response_unchecked(
             &db,
-            track,
+            chains.response(track),
             track_db_id,
             pt.entry_id,
             pt.position,

@@ -44,6 +44,7 @@ use crate::{
         responses::{
             PageResponse,
             ReleaseResponse,
+            TrackChains,
             TrackResponse,
         },
     },
@@ -220,6 +221,7 @@ pub(crate) fn track_detail_to_response(
     db: &impl lyra_db::DbAccess,
     detail: track_service::TrackDetails,
     includes: TrackRouteIncludes,
+    chains: &TrackChains,
 ) -> anyhow::Result<TrackResponse> {
     let artist_covers = match detail.artists.as_ref() {
         Some(artists) if includes.artist_covers => Some(lyra_db::covers::get_many(
@@ -238,6 +240,7 @@ pub(crate) fn track_detail_to_response(
         })
         .transpose()?;
     Ok(TrackResponse {
+        chain: chains.get(&detail.track),
         id: detail.track.id.clone(),
         title: detail.track.track_title,
         sort_title: detail.track.sort_title,
@@ -320,9 +323,10 @@ pub(crate) async fn list_track_responses(
     };
     let details = track_service::list_details_for_tracks(db, includes.service, tracks)?;
 
+    let chains = TrackChains::of(db, details.iter().map(|detail| &detail.track))?;
     let mut items = Vec::with_capacity(details.len());
     for detail in details {
-        items.push(track_detail_to_response(db, detail, includes)?);
+        items.push(track_detail_to_response(db, detail, includes, &chains)?);
     }
     Ok(PageResponse { items, next_cursor })
 }
@@ -342,7 +346,8 @@ pub(crate) async fn get_track_response(
     let detail = track_service::get_details(db, track_db_id, includes.service)?
         .ok_or_else(|| AppError::not_found(format!("Track not found: {}", id)))?;
 
-    Ok(track_detail_to_response(db, detail, includes)?)
+    let chains = TrackChains::of(db, [&detail.track])?;
+    Ok(track_detail_to_response(db, detail, includes, &chains)?)
 }
 
 fn build_media_url(path: String, token: &str, query: &PlaybackUrlQuery) -> String {
@@ -579,14 +584,14 @@ async fn get_track(
 #[cfg(feature = "docgen")]
 fn list_tracks_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List tracks").description(
-        "Returns tracks as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `release_id`, `sort_by`, `sort_order`, `min_rating`, `max_rating`, `limit`, `cursor`. `min_rating` and `max_rating` filter tracks by the authenticated user's inclusive personal rating range; either bound excludes unrated tracks. `library_id` scopes results to tracks belonging to that public library ID. `release_id` scopes results to one public release ID and defaults ordering to album order: disc, track, sort name, id. `sort_by` supports `name`, `sort_name`, `date_created`, `year`, `duration`, `disc`, `track`, `release_title` (the title of the track's release), `artist_name` (the first credited artist), `release_artist_name` (the first artist credited on the track's release), `listen_count`, `last_played_at`, `relevance` (with `query`), `random`, and `id`. `sort_order` supports `ascending` and `descending` and applies to every key. Tracks without a value for a key sort last in both directions, except missing disc and track numbers, which sort first. Ties fall back to sort name, name, then id. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against track titles and defaults ordering to relevance. Use `inc` to include releases and/or artists. When `inc=releases,release_covers`, nested release metadata includes a public cover image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
+        "Returns tracks as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `release_id`, `sort_by`, `sort_order`, `min_rating`, `max_rating`, `limit`, `cursor`. `min_rating` and `max_rating` filter tracks by the authenticated user's inclusive personal rating range; either bound excludes unrated tracks. `library_id` scopes results to tracks belonging to that public library ID. `release_id` scopes results to one public release ID and defaults ordering to album order: disc, track, sort name, id. `sort_by` supports `name`, `sort_name`, `date_created`, `year`, `duration`, `disc`, `track`, `release_title` (the title of the track's release), `artist_name` (the first credited artist), `release_artist_name` (the first artist credited on the track's release), `listen_count`, `last_played_at`, `relevance` (with `query`), `random`, and `id`. `random` moves the tracks of a chain as one, keeping them together and in chain order in either direction. `sort_order` supports `ascending` and `descending` and applies to every key. Tracks without a value for a key sort last in both directions, except missing disc and track numbers, which sort first. Ties fall back to sort name, name, then id. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against track titles and defaults ordering to relevance. A track in a chain carries `chain` with the chain's `id` and the track's 0-based `position` in it. Use `inc` to include releases and/or artists. When `inc=releases,release_covers`, nested release metadata includes a public cover image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
     )
 }
 
 #[cfg(feature = "docgen")]
 fn get_track_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get track by ID").description(
-        "Returns a single track. 404 if not found. Use `inc` to include releases and/or artists. When `inc=releases,release_covers`, nested release metadata includes a public cover image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
+        "Returns a single track. 404 if not found. A track in a chain carries `chain` with the chain's `id` and the track's 0-based `position` in it. Use `inc` to include releases and/or artists. When `inc=releases,release_covers`, nested release metadata includes a public cover image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
     )
 }
 

@@ -24,6 +24,7 @@ use crate::{
     routes::responses::{
         EntryResponse,
         ReleaseResponse,
+        TrackChains,
     },
     routes::{
         AppError,
@@ -73,14 +74,15 @@ fn parse_inc(inc: Option<Vec<String>>) -> Result<EntryIncludes, AppError> {
 }
 
 fn detail_to_entry_response(
-    _db: &impl lyra_db::DbAccess,
+    db: &impl lyra_db::DbAccess,
     detail: EntryDetails,
     include_full_path: bool,
 ) -> anyhow::Result<EntryResponse> {
     let mut response = EntryResponse::from_entry(detail.entry, include_full_path);
     response.tracks = detail
         .tracks
-        .map(|v| v.into_iter().map(Into::into).collect());
+        .map(|tracks| TrackChains::responses(db, tracks))
+        .transpose()?;
     response.releases = detail
         .releases
         .map(|v| v.into_iter().map(ReleaseResponse::from).collect());

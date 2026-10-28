@@ -22,7 +22,10 @@ use crate::{
     routes::{
         self,
         AppError,
-        responses::TrackResponse,
+        responses::{
+            TrackChains,
+            TrackResponse,
+        },
         tracks as route_tracks,
     },
     services::STATE,
@@ -109,9 +112,10 @@ async fn render_mix_response(
         let db = &*STATE.db.read().await;
         let tracks = filter_accessible_tracks(db, principal, tracks)?;
         let details = track_service::list_details_for_tracks(db, includes.service, tracks)?;
+        let chains = TrackChains::of(db, details.iter().map(|detail| &detail.track))?;
         details
             .into_iter()
-            .map(|detail| route_tracks::track_detail_to_response(db, detail, includes))
+            .map(|detail| route_tracks::track_detail_to_response(db, detail, includes, &chains))
             .collect::<anyhow::Result<Vec<_>>>()?
     };
     Ok(Json(responses))

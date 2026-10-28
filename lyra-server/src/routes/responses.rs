@@ -3,6 +3,9 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use std::collections::HashMap;
+
+use agdb::DbId;
 use serde::Serialize;
 
 use crate::services::entities::{
@@ -268,15 +271,77 @@ pub struct TrackResponse {
     pub track_total: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "The track's chain; omitted when the track is in none.")
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chain: Option<TrackChainResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub releases: Option<Vec<ReleaseResponse>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artists: Option<Vec<ArtistResponse>>,
 }
 
-impl From<lyra_db::Track> for TrackResponse {
-    fn from(track: lyra_db::Track) -> Self {
-        Self {
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Serialize)]
+pub struct TrackChainResponse {
+    pub id: String,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "The track's 0-based place in the chain.")
+    )]
+    pub position: u64,
+}
+
+/// The chain places of a batch of tracks, read in one lookup.
+pub(crate) struct TrackChains(HashMap<DbId, TrackChainResponse>);
+
+impl TrackChains {
+    pub(crate) fn of<'a>(
+        db: &impl lyra_db::DbAccess,
+        tracks: impl IntoIterator<Item = &'a lyra_db::Track>,
+    ) -> anyhow::Result<Self> {
+        let track_db_ids = tracks
+            .into_iter()
+            .filter_map(|track| track.db_id.clone().map(DbId::from))
+            .collect::<Vec<_>>();
+        Ok(Self(
+            lyra_db::chains::links_for_tracks(db, &track_db_ids)?
+                .into_iter()
+                .map(|(track_db_id, link)| {
+                    (
+                        track_db_id,
+                        TrackChainResponse {
+                            id: link.chain_id,
+                            position: link.position,
+                        },
+                    )
+                })
+                .collect(),
+        ))
+    }
+
+    pub(crate) fn get(&self, track: &lyra_db::Track) -> Option<TrackChainResponse> {
+        let track_db_id = track.db_id.clone().map(DbId::from)?;
+        self.0.get(&track_db_id).cloned()
+    }
+
+    /// The responses for `tracks`, in order, with their chains read in one lookup.
+    pub(crate) fn responses(
+        db: &impl lyra_db::DbAccess,
+        tracks: Vec<lyra_db::Track>,
+    ) -> anyhow::Result<Vec<TrackResponse>> {
+        let chains = Self::of(db, &tracks)?;
+        Ok(tracks
+            .into_iter()
+            .map(|track| chains.response(track))
+            .collect())
+    }
+
+    pub(crate) fn response(&self, track: lyra_db::Track) -> TrackResponse {
+        TrackResponse {
+            chain: self.get(&track),
             id: track.id,
             title: track.track_title,
             sort_title: track.sort_title,
@@ -304,6 +369,7 @@ impl TrackResponse {
             track: None,
             track_total: None,
             duration_ms: None,
+            chain: None,
             releases: None,
             artists: None,
         }

@@ -40,7 +40,7 @@ use crate::{
             EntryResponse,
             PageResponse,
             ReleaseResponse,
-            TrackResponse,
+            TrackChains,
         },
     },
     services::STATE,
@@ -274,23 +274,27 @@ pub(crate) fn detail_to_release_response(
         artists: detail
             .artists
             .map(|v| super::credited_artist_responses(v, artist_covers.as_ref())),
-        tracks: detail.tracks.map(|tracks| {
-            tracks
-                .into_iter()
-                .map(|track| {
-                    let artists = detail.track_artists.as_ref().and_then(|m| {
-                        let db_id = track.db_id.clone().map(DbId::from)?;
-                        Some(super::credited_artist_responses(
-                            m.get(&db_id)?.clone(),
-                            artist_covers.as_ref(),
-                        ))
-                    });
-                    let mut resp = TrackResponse::from(track);
-                    resp.artists = artists;
-                    resp
-                })
-                .collect()
-        }),
+        tracks: detail
+            .tracks
+            .map(|tracks| -> anyhow::Result<_> {
+                let chains = TrackChains::of(db, &tracks)?;
+                Ok(tracks
+                    .into_iter()
+                    .map(|track| {
+                        let artists = detail.track_artists.as_ref().and_then(|m| {
+                            let db_id = track.db_id.clone().map(DbId::from)?;
+                            Some(super::credited_artist_responses(
+                                m.get(&db_id)?.clone(),
+                                artist_covers.as_ref(),
+                            ))
+                        });
+                        let mut resp = chains.response(track);
+                        resp.artists = artists;
+                        resp
+                    })
+                    .collect())
+            })
+            .transpose()?,
         entries,
     })
 }
