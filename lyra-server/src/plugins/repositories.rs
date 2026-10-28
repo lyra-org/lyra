@@ -23,6 +23,7 @@ use harmony_repository::{
     InstallError,
     KnownTreeHashes,
     PluginCandidate,
+    RateLimited,
     RepoSpec,
     RepositoryListing,
     ResolveError,
@@ -120,15 +121,15 @@ fn map_resolve_error(error: ResolveError) -> PluginRepoError {
                 "The plugin repository could not be downloaded. Try again shortly.".into(),
             )
         }
-        ResolveError::Fetch(FetchError::RateLimited { retry_after, .. }) => {
-            tracing::warn!(error = %error, "plugin repository download rate limited");
+        ResolveError::Fetch(FetchError::RateLimited(RateLimited { retry_after, .. })) => {
+            tracing::warn!(error = %error, "plugin repository host rate limited the request");
             let wait = match retry_after.map(|wait| wait.as_secs()) {
                 Some(seconds) if seconds > 1 => format!("Try again in {seconds} seconds."),
                 Some(_) => "Try again in a moment.".to_string(),
                 None => "Try again later.".to_string(),
             };
             PluginRepoError::Unavailable {
-                message: format!("The plugin repository's host is rate limiting downloads. {wait}"),
+                message: format!("The plugin repository's host is rate limiting requests. {wait}"),
                 retry_after: *retry_after,
             }
         }
@@ -764,16 +765,15 @@ impl UpdateSource {
 /// every plugin counts as changed.
 async fn resolve_update_source(
     client: &reqwest::Client,
-    origin: &str,
-    git_ref: Option<&str>,
+    spec: &RepoSpec,
     installed: &[&(String, SourceRecord)],
     budget: &UnpackBudget,
-) -> Result<UpdateSource, PluginRepoError> {
-    let spec =
-        RepoSpec::parse(origin, git_ref).map_err(|e| PluginRepoError::BadRequest(e.to_string()))?;
-    let plan = plan_refs(client, &spec).await;
+) -> Result<UpdateSource, ResolveError> {
+    let plan = plan_refs(client, spec).await?;
     let tree_hashes = match plan.commit() {
-        Some(commit) => latest_tree_hashes(client, &spec, commit, installed).await,
+        Some(commit) => latest_tree_hashes(client, spec, commit, installed)
+            .await
+            .map_err(FetchError::from)?,
         None => HashMap::new(),
     };
     let changed: Vec<String> = installed
@@ -794,7 +794,7 @@ async fn resolve_update_source(
     }
     let repository = resolve_planned(
         client,
-        &spec,
+        spec,
         &plan,
         plan.commit().map(|commit| KnownTreeHashes {
             commit,
@@ -804,8 +804,7 @@ async fn resolve_update_source(
         &crate::plugins::module_scope_ids(),
         budget,
     )
-    .await
-    .map_err(map_resolve_error)?;
+    .await?;
     Ok(UpdateSource::Changed {
         repository: Box::new(repository),
         tree_hashes,
@@ -820,12 +819,12 @@ async fn latest_tree_hashes(
     spec: &RepoSpec,
     commit: &str,
     installed: &[&(String, SourceRecord)],
-) -> HashMap<String, String> {
+) -> Result<HashMap<String, String>, RateLimited> {
     if installed
         .iter()
         .all(|(_, record)| record.commit.as_deref() == Some(commit))
     {
-        return HashMap::new();
+        return Ok(HashMap::new());
     }
     let dirs: Vec<&str> = installed
         .iter()
@@ -944,11 +943,38 @@ async fn update_plugins_in(
     // Every changed origin's tree stays on disk until the installs finish.
     let budget = UnpackBudget::new();
     let mut resolved: HashMap<UpdateKey, Result<UpdateSource, String>> = HashMap::new();
+    // Hosts that rate-limited a request, with the error their later origins
+    // fail with unasked.
+    let mut limited_hosts: HashMap<String, String> = HashMap::new();
     for ((origin, git_ref), group) in &installed {
-        let result = resolve_update_source(&client, origin, git_ref.as_deref(), group, &budget)
+        let key = (origin.clone(), git_ref.clone());
+        let spec = match RepoSpec::parse(origin, git_ref.as_deref()) {
+            Ok(spec) => spec,
+            Err(error) => {
+                resolved.insert(key, Err(error.to_string()));
+                continue;
+            }
+        };
+        if let Some(error) = limited_hosts.get(&spec.host) {
+            resolved.insert(key, Err(error.clone()));
+            continue;
+        }
+        let result = resolve_update_source(&client, &spec, group, &budget)
             .await
-            .map_err(|error| error.to_string());
-        resolved.insert((origin.clone(), git_ref.clone()), result);
+            .map_err(|error| {
+                let limited_host = match &error {
+                    ResolveError::Fetch(FetchError::RateLimited(limited)) => {
+                        Some(limited.host.clone())
+                    }
+                    _ => None,
+                };
+                let message = map_resolve_error(error).to_string();
+                if let Some(host) = limited_host {
+                    limited_hosts.insert(host, message.clone());
+                }
+                message
+            });
+        resolved.insert(key, result);
     }
     if resolved.values().any(Result::is_ok) {
         let mut db = STATE.db.write().await;
@@ -1164,10 +1190,11 @@ mod tests {
     #[test]
     fn rate_limited_downloads_map_to_unavailable_with_the_forge_wait() {
         let rate_limited = |retry_after| {
-            map_resolve_error(ResolveError::Fetch(FetchError::RateLimited {
+            map_resolve_error(ResolveError::Fetch(FetchError::RateLimited(RateLimited {
+                host: "forge.example".to_string(),
                 url: "https://forge.example/archive.tar.gz".to_string(),
                 retry_after,
-            }))
+            })))
         };
 
         let error = rate_limited(Some(Duration::from_secs(42)));
@@ -1566,6 +1593,139 @@ mod tests {
             failed.error.contains("could not be downloaded"),
             "the changed plugin should fail at its archive download: {}",
             failed.error
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_checks_fail_rate_limited_tree_lookups_without_downloading() -> anyhow::Result<()>
+    {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        let commit = "c".repeat(40);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let origin = format!("http://{}/o/r", listener.local_addr()?);
+        let unrouted = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let reset = (SystemTime::now().duration_since(UNIX_EPOCH)? + Duration::from_secs(120))
+            .as_secs()
+            .to_string();
+        let router = axum::Router::new()
+            .route(
+                "/api/v1/repos/o/r",
+                axum::routing::get(|| async {
+                    axum::Json(serde_json::json!({ "default_branch": "main" }))
+                }),
+            )
+            .route(
+                "/api/v1/repos/o/r/git/commits/main",
+                axum::routing::get({
+                    let commit = commit.clone();
+                    move || async move { axum::Json(serde_json::json!({ "sha": commit })) }
+                }),
+            )
+            .route(
+                &format!("/api/v1/repos/o/r/git/trees/{commit}:plugins"),
+                axum::routing::get(move || async move {
+                    (
+                        axum::http::StatusCode::FORBIDDEN,
+                        [
+                            ("x-ratelimit-remaining", "0".to_string()),
+                            ("x-ratelimit-reset", reset),
+                        ],
+                    )
+                }),
+            )
+            .fallback({
+                let unrouted = unrouted.clone();
+                move |uri: axum::http::Uri| async move {
+                    unrouted.lock().unwrap().push(uri.path().to_string());
+                    axum::http::StatusCode::NOT_FOUND
+                }
+            });
+        tokio::spawn(async move { axum::serve(listener, router).await });
+
+        let plugins_dir = tempfile::TempDir::new()?;
+        let dir = plugins_dir.path().join("foo");
+        std::fs::create_dir_all(&dir)?;
+        let mut managed = record(Some("d".repeat(40)));
+        managed.origin = origin;
+        managed.forge = Forge::Gitea;
+        managed.subpath = Some("plugins/foo".into());
+        managed.tree_hash = Some("foo-tree".into());
+        managed.store(&dir)?;
+
+        let report = update_plugins_in(plugins_dir.path(), None).await?;
+
+        assert!(report.up_to_date.is_empty());
+        assert!(report.updated.is_empty());
+        let [failed] = &report.failed[..] else {
+            panic!("expected one failure: {:?}", report.failed);
+        };
+        assert_eq!(failed.id, "foo");
+        assert!(
+            failed.error.contains("rate limiting") && failed.error.contains("Try again in"),
+            "{}",
+            failed.error
+        );
+        let unrouted = unrouted.lock().unwrap().clone();
+        assert!(
+            !unrouted.iter().any(|path| path.contains("archive")),
+            "{unrouted:?}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_checks_send_nothing_more_to_a_rate_limited_host() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let base = format!("http://{}", listener.local_addr()?);
+        let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let router = axum::Router::new().fallback({
+            let requests = requests.clone();
+            move |uri: axum::http::Uri| async move {
+                requests.lock().unwrap().push(uri.path().to_string());
+                (
+                    axum::http::StatusCode::TOO_MANY_REQUESTS,
+                    [("retry-after", "30")],
+                )
+            }
+        });
+        tokio::spawn(async move { axum::serve(listener, router).await });
+
+        let plugins_dir = tempfile::TempDir::new()?;
+        for (id, repo) in [("first", "o/r"), ("second", "o/s")] {
+            let dir = plugins_dir.path().join(id);
+            std::fs::create_dir_all(&dir)?;
+            let mut managed = record(Some("d".repeat(40)));
+            managed.origin = format!("{base}/{repo}");
+            managed.forge = Forge::Gitea;
+            managed.store(&dir)?;
+        }
+
+        let report = update_plugins_in(plugins_dir.path(), None).await?;
+
+        let mut failed: Vec<_> = report
+            .failed
+            .iter()
+            .map(|failed| (failed.id.as_str(), failed.error.as_str()))
+            .collect();
+        failed.sort();
+        let wait = "rate limiting requests. Try again in 30 seconds.";
+        assert!(
+            matches!(
+                &failed[..],
+                [("first", first), ("second", second)]
+                    if first.ends_with(wait) && second.ends_with(wait)
+            ),
+            "{failed:?}"
+        );
+        assert_eq!(
+            requests.lock().unwrap().len(),
+            1,
+            "only the first origin's ref listing is sent: {:?}",
+            requests.lock().unwrap()
         );
         Ok(())
     }

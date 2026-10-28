@@ -97,6 +97,12 @@ such as `main~1` always go through the API. Full ref names such as
 `refs/heads/main` work too; only `refs/heads/` names track.
 When neither is reachable, Lyra tries `main`, `master`, and `trunk`
 instead and records no commit, so the plugin's update status is unknown.
+When the forge rate-limits any of these requests, or a download, the
+operation stops and reports how long the forge asked to wait; it never
+falls back to other requests. Update checks report the affected plugins
+as failed rather than as having an update. Once a host rate-limits an
+update check, plugins from its other repositories are reported as failed
+too, without being checked.
 A tag and a branch with the same name resolve to the tag's commit, but
 the ref tracks like a branch. A branch ref tracks new commits and is re-resolved on
 update; a tag or commit ref is pinned and never changes. When the forge

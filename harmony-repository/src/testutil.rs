@@ -86,6 +86,11 @@ impl CannedResponse {
         }
     }
 
+    pub(crate) fn with_status(mut self, status: u16) -> Self {
+        self.status = status;
+        self
+    }
+
     pub(crate) fn with_content_length(mut self, length: u64) -> Self {
         self.content_length_override = Some(length);
         self

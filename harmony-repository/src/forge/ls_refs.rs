@@ -13,6 +13,7 @@ use reqwest::{
 };
 
 use super::{
+    RateLimited,
     RepoSpec,
     is_object_id,
 };
@@ -52,14 +53,17 @@ impl AdvertisedRef {
 /// tags peeled and symbolic refs' targets. `None` when the forge gave no
 /// well-formed protocol v2 answer, so callers ask the forge API instead,
 /// and for prefixes that cannot be sent as-is; an empty list is a v2 answer
-/// in which no ref matched.
+/// in which no ref matched. A rate limit is an error: the API fallback
+/// would spend the forge's API quota instead.
 pub(crate) async fn ls_refs(
     client: &Client,
     spec: &RepoSpec,
     prefixes: &[&str],
-) -> Option<Vec<AdvertisedRef>> {
+) -> Result<Option<Vec<AdvertisedRef>>, RateLimited> {
     let url = spec.upload_pack_url();
-    let body = request_body(prefixes)?;
+    let Some(body) = request_body(prefixes) else {
+        return Ok(None);
+    };
 
     let response = client
         .post(&url)
@@ -72,13 +76,21 @@ pub(crate) async fn ls_refs(
         .body(body)
         .send()
         .await;
-    let mut response = match response {
+    let response = match response {
         Ok(response) => response,
         Err(err) => {
             tracing::debug!("ls-refs request {url} failed: {err}");
-            return None;
+            return Ok(None);
         }
     };
+    if let Some(limited) = RateLimited::from_response(spec, &url, &response) {
+        return Err(limited);
+    }
+    Ok(read_refs(&url, response).await)
+}
+
+/// The refs a successful v2 `ls-refs` response lists.
+async fn read_refs(url: &str, mut response: reqwest::Response) -> Option<Vec<AdvertisedRef>> {
     let is_result = response
         .headers()
         .get(header::CONTENT_TYPE)
@@ -272,7 +284,11 @@ mod tests {
         for repo in ["missing", "html"] {
             let url = format!("{}/owner/{repo}", server.url());
             let spec = RepoSpec::parse(&url, None).unwrap();
-            assert_eq!(ls_refs(&client(), &spec, &["HEAD"]).await, None, "{repo}");
+            assert_eq!(
+                ls_refs(&client(), &spec, &["HEAD"]).await,
+                Ok(None),
+                "{repo}"
+            );
         }
     }
 }

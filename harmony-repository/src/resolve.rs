@@ -174,7 +174,7 @@ pub async fn resolve_plugins(
     selected: Option<&[String]>,
     valid_scope_ids: &HashSet<Arc<str>>,
 ) -> Result<ResolvedRepository, ResolveError> {
-    let plan = plan_refs(client, spec).await;
+    let plan = plan_refs(client, spec).await?;
     let budget = UnpackBudget::new();
     resolve_planned(
         client,
@@ -352,7 +352,7 @@ pub async fn list_plugins(
     spec: &RepoSpec,
     valid_scope_ids: &HashSet<Arc<str>>,
 ) -> Result<RepositoryListing, ResolveError> {
-    let plan = plan_refs(client, spec).await;
+    let plan = plan_refs(client, spec).await?;
     let budget = UnpackBudget::new();
     let walk = walk(client, spec, plan, None, |spec, plan| {
         open_listed(client.clone(), spec, plan, budget.clone())
@@ -692,7 +692,7 @@ where
                         });
                     }
                     Probe::Remote(remote) => {
-                        let sub = open(remote.clone(), plan_refs(client, remote).await).await?;
+                        let sub = open(remote.clone(), plan_refs(client, remote).await?).await?;
                         let (nested, config) = sub.files.read_manifests("").await;
 
                         if nested?.is_some() {
@@ -734,7 +734,7 @@ where
         }
     }
 
-    record_tree_hashes(client, &sources, known, &mut entries).await;
+    record_tree_hashes(client, &sources, known, &mut entries).await?;
 
     Ok(Walk {
         git_ref,
@@ -773,13 +773,14 @@ struct TreeSource {
 /// Records each entry's directory tree hash, asking each tree's forge once
 /// per parent directory. `known` hashes answer for the origin, the first
 /// tree, when they were taken at its commit. Trees without a resolved
-/// commit have none.
+/// commit have none. A rate-limited lookup fails rather than leaving the
+/// hash unset, which update checks would read as changed content.
 async fn record_tree_hashes(
     client: &Client,
     sources: &[TreeSource],
     known: Option<KnownTreeHashes<'_>>,
     entries: &mut [FoundEntry],
-) {
+) -> Result<(), FetchError> {
     let empty = HashMap::new();
     for (tree, source) in sources.iter().enumerate() {
         let Some(commit) = source.commit.as_deref() else {
@@ -797,7 +798,7 @@ async fn record_tree_hashes(
         let fetched = if missing.is_empty() {
             HashMap::new()
         } else {
-            tree_hashes(client, &source.spec, commit, &missing).await
+            tree_hashes(client, &source.spec, commit, &missing).await?
         };
         for entry in entries.iter_mut().filter(|entry| entry.tree == tree) {
             entry.source.tree_hash = known
@@ -806,6 +807,7 @@ async fn record_tree_hashes(
                 .cloned();
         }
     }
+    Ok(())
 }
 
 fn source_record(
@@ -1213,6 +1215,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rate_limited_tree_lookups_fail_the_install() {
+        let sha = "a".repeat(40);
+        let index = index_json(r#"{ "path": "plugins/foo" }"#);
+        let mut routes = raw_repo_routes("owner/repo", &sha, &[]);
+        routes.extend([
+            (
+                format!("/owner/repo/archive/{sha}.tar.gz"),
+                CannedResponse::targz(targz(&[
+                    ("repo/repository.json", &index),
+                    ("repo/plugins/foo/plugin.json", &plugin_json("foo")),
+                    ("repo/plugins/foo/init.luau", "return {}"),
+                ])),
+            ),
+            (
+                format!("/api/v1/repos/owner/repo/git/trees/{sha}:plugins"),
+                CannedResponse::status(403).with_header("x-ratelimit-remaining", "0"),
+            ),
+        ]);
+        let server = TestServer::start(routes.into_iter().collect()).await;
+
+        let err = resolve(&server, "/owner/repo").await.unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                ResolveError::Fetch(FetchError::RateLimited(limited))
+                    if limited.url.ends_with(&format!("/git/trees/{sha}:plugins"))
+                        && server.url().ends_with(&limited.host)
+            ),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn rate_limited_remote_entry_plans_fail_the_listing() {
+        let sha = "a".repeat(40);
+        let server = TestServer::start_with(|base| {
+            let index = index_json(&format!(r#"{{ "url": "{base}/other/single" }}"#));
+            let mut routes = raw_repo_routes("owner/repo", &sha, &[("repository.json", &index)]);
+            routes.push((
+                "/api/v1/repos/other/single".to_string(),
+                CannedResponse::status(429).with_header("Retry-After", "30"),
+            ));
+            routes.into_iter().collect()
+        })
+        .await;
+
+        let err = list(&server, "/owner/repo").await.unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                ResolveError::Fetch(FetchError::RateLimited(limited))
+                    if limited.url.ends_with("/api/v1/repos/other/single")
+                        && limited.retry_after == Some(std::time::Duration::from_secs(30))
+            ),
+            "{err}"
+        );
+        assert!(
+            !server
+                .requests()
+                .iter()
+                .any(|path| path.starts_with("/other/single/")),
+            "no guessed raw files or archives: {:?}",
+            server.requests()
+        );
+    }
+
+    #[tokio::test]
     async fn listings_record_the_sources_an_install_would() {
         let (sha, other_sha) = ("a".repeat(40), "b".repeat(40));
         let server = TestServer::start_with(|base| {
@@ -1541,7 +1610,7 @@ mod tests {
         ));
         let server = TestServer::start(routes.into_iter().collect()).await;
         let spec = RepoSpec::parse(&format!("{}/owner/repo", server.url()), None).unwrap();
-        let plan = plan_refs(&client(), &spec).await;
+        let plan = plan_refs(&client(), &spec).await.unwrap();
         let hashes = HashMap::from([("plugins/foo".to_string(), "known-tree".to_string())]);
         let known = |commit| {
             Some(KnownTreeHashes {
@@ -1795,7 +1864,7 @@ mod tests {
         budget: &UnpackBudget,
     ) -> Result<ResolvedRepository, ResolveError> {
         let spec = RepoSpec::parse(&format!("{}{path}", server.url()), None).unwrap();
-        let plan = plan_refs(&client(), &spec).await;
+        let plan = plan_refs(&client(), &spec).await?;
         resolve_planned(&client(), &spec, &plan, None, None, &HashSet::new(), budget).await
     }
 
@@ -1902,7 +1971,7 @@ mod tests {
         let sha = "a".repeat(40);
         let server = gitlab_index(&sha, &["foo", "bar"]).await;
         let spec = gitlab_spec(&server);
-        let plan = plan_refs(&client(), &spec).await;
+        let plan = plan_refs(&client(), &spec).await.unwrap();
         let resolve_within = async |max_bytes| {
             let budget = UnpackBudget::with_limits(max_bytes, 100);
             resolve_planned(
@@ -1945,10 +2014,10 @@ mod tests {
         assert!(
             matches!(
                 err,
-                ResolveError::Fetch(FetchError::RateLimited {
+                ResolveError::Fetch(FetchError::RateLimited(crate::forge::RateLimited {
                     retry_after: Some(wait),
                     ..
-                }) if wait.as_secs() == 7
+                })) if wait.as_secs() == 7
             ),
             "{err}"
         );

@@ -13,14 +13,9 @@ use std::sync::{
     Mutex,
     PoisonError,
 };
-use std::time::Duration;
 
 use flate2::read::GzDecoder;
 use harmony_core::plugin::PLUGIN_CONFIG_MAX_BYTES;
-use reqwest::header::{
-    HeaderMap,
-    RETRY_AFTER,
-};
 use reqwest::{
     Client,
     StatusCode,
@@ -32,6 +27,8 @@ use tar::{
 use tempfile::TempDir;
 
 use crate::forge::{
+    AdvertisedRef,
+    RateLimited,
     RepoSpec,
     branch_exists,
     default_branch,
@@ -64,14 +61,8 @@ pub enum FetchError {
     },
     #[error("failed to fetch {url}: HTTP {status}")]
     Status { url: String, status: StatusCode },
-    #[error(
-        "failed to fetch {url}: rate limited by the forge{}",
-        retry_after.map(|wait| format!(", retry after {}s", wait.as_secs())).unwrap_or_default()
-    )]
-    RateLimited {
-        url: String,
-        retry_after: Option<Duration>,
-    },
+    #[error(transparent)]
+    RateLimited(#[from] RateLimited),
     #[error("archive at {url} exceeds the {limit} byte limit")]
     ArchiveTooLarge { url: String, limit: u64 },
     #[error("file at {location} exceeds the {limit} byte limit")]
@@ -311,7 +302,7 @@ pub(crate) async fn fetch_planned(
         let download_ref = plan.commit.as_deref().unwrap_or(candidate);
         let url = spec.archive_url(download_ref);
 
-        let bytes = match download(client, &url, MAX_ARCHIVE_BYTES, |url, limit| {
+        let bytes = match download(client, spec, &url, MAX_ARCHIVE_BYTES, |url, limit| {
             FetchError::ArchiveTooLarge { url, limit }
         })
         .await
@@ -358,7 +349,7 @@ pub(crate) async fn fetch_directory(
         .filter(|dir| !dir.is_empty())
         .and_then(|dir| spec.directory_archive_url(commit, dir))
         .unwrap_or_else(|| spec.archive_url(commit));
-    let bytes = download(client, &url, MAX_ARCHIVE_BYTES, |url, limit| {
+    let bytes = download(client, spec, &url, MAX_ARCHIVE_BYTES, |url, limit| {
         FetchError::ArchiveTooLarge { url, limit }
     })
     .await?;
@@ -402,73 +393,100 @@ async fn unpack(bytes: Vec<u8>, budget: &UnpackBudget) -> Result<(Extracted, Pat
 
 /// Resolves the ref `spec` names, or the default branch, without
 /// downloading anything: with one Git protocol v2 `ls-refs` request, or
-/// through the forge API when the forge does not answer in v2.
-pub async fn plan_refs(client: &Client, spec: &RepoSpec) -> RefPlan {
+/// through the forge API when the forge does not answer in v2. A rate limit
+/// fails the plan rather than falling back to requests that would add to it.
+pub async fn plan_refs(client: &Client, spec: &RepoSpec) -> Result<RefPlan, FetchError> {
     if let Some(explicit) = &spec.explicit_ref
         && is_object_id(explicit)
     {
-        return RefPlan {
+        return Ok(RefPlan {
             candidates: vec![explicit.clone()],
             commit: Some(explicit.to_ascii_lowercase()),
             pinned: true,
             authoritative: true,
-        };
+        });
     }
-    match plan_from_ls_refs(client, spec).await {
-        Some(plan) => plan,
-        None => plan_from_api(client, spec).await,
+    match plan_from_ls_refs(client, spec).await? {
+        Some(plan) => Ok(plan),
+        None => Ok(plan_from_api(client, spec).await?),
     }
 }
 
 /// Plans from the refs the forge advertises. `None` when it gave no v2
 /// answer or one without `HEAD`, when `HEAD` names no branch, for revision
 /// expressions, and for an explicit ref that matches nothing but could be an
-/// abbreviated commit: only the API resolves those. Like `git rev-parse`, a
-/// tag takes precedence over a branch of the same name for the commit, while
-/// the branch still makes the ref track. A full `refs/heads/` name tracks;
-/// other full names are pinned.
-async fn plan_from_ls_refs(client: &Client, spec: &RepoSpec) -> Option<RefPlan> {
+/// abbreviated commit: only the API resolves those.
+async fn plan_from_ls_refs(
+    client: &Client,
+    spec: &RepoSpec,
+) -> Result<Option<RefPlan>, RateLimited> {
     let explicit = spec.explicit_ref.as_deref();
     if explicit.is_none_or(|git_ref| git_ref == "HEAD") {
         let refs = ls_refs(client, spec, &["HEAD"]).await?;
-        let head = refs.iter().find(|advertised| advertised.name == "HEAD")?;
-        let git_ref = match explicit {
-            Some(explicit) => explicit.to_string(),
-            None => head
-                .symref_target
-                .as_deref()?
-                .strip_prefix("refs/heads/")?
-                .to_string(),
-        };
-        return Some(RefPlan {
-            candidates: vec![git_ref],
-            commit: Some(head.commit().to_string()),
-            pinned: false,
-            authoritative: true,
-        });
+        return Ok(refs.and_then(|refs| plan_head(explicit, &refs)));
     }
 
-    let git_ref = explicit.filter(|git_ref| is_plain_ref_name(git_ref))?;
-    let (branch_name, tag_name) = (
-        format!("refs/heads/{git_ref}"),
-        format!("refs/tags/{git_ref}"),
-    );
-    let full = git_ref.starts_with("refs/");
-    let prefixes: &[&str] = if full {
-        &["HEAD", git_ref]
-    } else {
-        &["HEAD", &branch_name, &tag_name]
+    let Some(git_ref) = explicit.filter(|git_ref| is_plain_ref_name(git_ref)) else {
+        return Ok(None);
+    };
+    let names = full_names(git_ref);
+    let prefixes: &[&str] = match &names {
+        Some(names) => &["HEAD", &names.branch, &names.tag],
+        None => &["HEAD", git_ref],
     };
     let refs = ls_refs(client, spec, prefixes).await?;
+    Ok(refs.and_then(|refs| plan_named(git_ref, names.as_ref(), &refs)))
+}
+
+/// The full names a short ref name may stand for.
+struct FullNames {
+    branch: String,
+    tag: String,
+}
+
+/// `None` for a ref that is a full `refs/...` name already.
+fn full_names(git_ref: &str) -> Option<FullNames> {
+    (!git_ref.starts_with("refs/")).then(|| FullNames {
+        branch: format!("refs/heads/{git_ref}"),
+        tag: format!("refs/tags/{git_ref}"),
+    })
+}
+
+/// Plans `HEAD`, or the default branch it points at, from advertised refs.
+fn plan_head(explicit: Option<&str>, refs: &[AdvertisedRef]) -> Option<RefPlan> {
+    let head = refs.iter().find(|advertised| advertised.name == "HEAD")?;
+    let git_ref = match explicit {
+        Some(explicit) => explicit.to_string(),
+        None => head
+            .symref_target
+            .as_deref()?
+            .strip_prefix("refs/heads/")?
+            .to_string(),
+    };
+    Some(RefPlan {
+        candidates: vec![git_ref],
+        commit: Some(head.commit().to_string()),
+        pinned: false,
+        authoritative: true,
+    })
+}
+
+/// Plans the plain ref name `git_ref` from advertised refs. Like
+/// `git rev-parse`, a tag takes precedence over a branch of the same name
+/// for the commit, while the branch still makes the ref track. A full
+/// `refs/heads/` name tracks; other full names are pinned. `names` are
+/// [`full_names`] of `git_ref`.
+fn plan_named(git_ref: &str, names: Option<&FullNames>, refs: &[AdvertisedRef]) -> Option<RefPlan> {
     let named = |name: &str| refs.iter().find(|advertised| advertised.name == name);
     // Every repository with commits has a HEAD; an answer without one did
     // not list what was asked for.
     named("HEAD")?;
-    let (found, branch) = if full {
-        (named(git_ref), None)
-    } else {
-        let branch = named(&branch_name);
-        (named(&tag_name).or(branch), branch)
+    let (found, branch) = match names {
+        Some(names) => {
+            let branch = named(&names.branch);
+            (named(&names.tag).or(branch), branch)
+        }
+        None => (named(git_ref), None),
     };
     let commit = found.map(|advertised| advertised.commit().to_string());
     if commit.is_none() && could_be_abbreviated_sha(git_ref) {
@@ -483,38 +501,39 @@ async fn plan_from_ls_refs(client: &Client, spec: &RepoSpec) -> Option<RefPlan> 
 }
 
 /// Plans through the forge API, which also expands abbreviated commits.
-async fn plan_from_api(client: &Client, spec: &RepoSpec) -> RefPlan {
+/// Branch names are guessed only when the API gave no answer.
+async fn plan_from_api(client: &Client, spec: &RepoSpec) -> Result<RefPlan, RateLimited> {
     if let Some(explicit) = &spec.explicit_ref {
-        let commit = resolve_commit(client, spec, explicit).await;
+        let commit = resolve_commit(client, spec, explicit).await?;
         let branch = if commit.is_none() || is_abbreviated_sha_of(explicit, commit.as_deref()) {
             None
         } else {
-            branch_exists(client, spec, explicit).await
+            branch_exists(client, spec, explicit).await?
         };
-        return RefPlan {
+        return Ok(RefPlan {
             pinned: ref_is_pinned(explicit, commit.as_deref(), branch),
             candidates: vec![explicit.clone()],
             commit,
             authoritative: true,
-        };
+        });
     }
 
-    if let Some(branch) = default_branch(client, spec).await {
-        let commit = resolve_commit(client, spec, &branch).await;
-        return RefPlan {
+    if let Some(branch) = default_branch(client, spec).await? {
+        let commit = resolve_commit(client, spec, &branch).await?;
+        return Ok(RefPlan {
             candidates: vec![branch],
             commit,
             pinned: false,
             authoritative: true,
-        };
+        });
     }
 
-    RefPlan {
+    Ok(RefPlan {
         candidates: FALLBACK_REFS.iter().map(|r| r.to_string()).collect(),
         commit: None,
         pinned: false,
         authoritative: false,
-    }
+    })
 }
 
 /// Downloads the file at `path` in `commit`; `None` when the forge has no
@@ -526,7 +545,7 @@ pub async fn fetch_file(
     path: &str,
 ) -> Result<Option<Vec<u8>>, FetchError> {
     let url = spec.raw_file_url(commit, path);
-    let downloaded = download(client, &url, MAX_FILE_BYTES, |url, limit| {
+    let downloaded = download(client, spec, &url, MAX_FILE_BYTES, |url, limit| {
         FetchError::FileTooLarge {
             location: url,
             limit,
@@ -540,8 +559,10 @@ pub async fn fetch_file(
     }
 }
 
+/// Downloads `url`, a request for `spec`, up to `limit` bytes.
 async fn download(
     client: &Client,
+    spec: &RepoSpec,
     url: &str,
     limit: u64,
     too_large: fn(String, u64) -> FetchError,
@@ -555,13 +576,10 @@ async fn download(
             source,
         })?;
 
-    let status = response.status();
-    if status == StatusCode::TOO_MANY_REQUESTS {
-        return Err(FetchError::RateLimited {
-            url: url.to_string(),
-            retry_after: retry_after(response.headers()),
-        });
+    if let Some(limited) = RateLimited::from_response(spec, url, &response) {
+        return Err(limited.into());
     }
+    let status = response.status();
     if !status.is_success() {
         return Err(FetchError::Status {
             url: url.to_string(),
@@ -589,19 +607,6 @@ async fn download(
     }
 
     Ok(bytes)
-}
-
-/// The wait a `Retry-After` header asks for, in its delta-seconds form, and
-/// at least a second: a zero wait still means the request was refused.
-fn retry_after(headers: &HeaderMap) -> Option<Duration> {
-    let seconds: u64 = headers
-        .get(RETRY_AFTER)?
-        .to_str()
-        .ok()?
-        .trim()
-        .parse()
-        .ok()?;
-    Some(Duration::from_secs(seconds.max(1)))
 }
 
 /// Extracts `bytes` into `dest`, taking what the files hold from
@@ -669,6 +674,7 @@ fn locate_root(extracted: &Path) -> Result<PathBuf, FetchError> {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::time::Duration;
 
     use super::*;
     use crate::testutil::{
@@ -708,7 +714,7 @@ mod tests {
     }
 
     async fn fetch_repo(client: &Client, spec: &RepoSpec) -> Result<FetchedRepo, FetchError> {
-        let plan = plan_refs(client, spec).await;
+        let plan = plan_refs(client, spec).await?;
         fetch_planned(client, spec, &plan, &UnpackBudget::new()).await
     }
 
@@ -835,7 +841,7 @@ mod tests {
         .await;
 
         let spec = RepoSpec::parse(&format!("{}/owner/repo", server.url()), None).unwrap();
-        let plan = plan_refs(&client(), &spec).await;
+        let plan = plan_refs(&client(), &spec).await.unwrap();
         assert_eq!(plan.commit(), Some(sha.as_str()));
 
         let err = fetch_planned(&client(), &spec, &plan, &UnpackBudget::new())
@@ -947,7 +953,7 @@ mod tests {
 
         let url = format!("{}/owner/repo", server.url());
         let spec = RepoSpec::parse(&url, Some("refs/heads/develop")).unwrap();
-        let plan = plan_refs(&client(), &spec).await;
+        let plan = plan_refs(&client(), &spec).await.unwrap();
 
         assert_eq!(plan.commit(), Some(sha.as_str()));
         assert!(!plan.pinned);
@@ -1099,11 +1105,75 @@ mod tests {
             assert!(
                 matches!(
                     &err,
-                    FetchError::RateLimited { url, retry_after }
+                    FetchError::RateLimited(RateLimited { url, retry_after, .. })
                         if url.ends_with("/owner/repo/archive/main.tar.gz")
                             && *retry_after == expected
                 ),
                 "{err}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn rate_limited_ls_refs_fail_the_plan_without_api_calls() {
+        let server = TestServer::start(HashMap::from([(
+            "/owner/repo.git/git-upload-pack".to_string(),
+            CannedResponse::status(429).with_header("Retry-After", "9"),
+        )]))
+        .await;
+
+        let spec = RepoSpec::parse(&format!("{}/owner/repo", server.url()), None).unwrap();
+        let err = fetch_repo(&client(), &spec).await.unwrap_err();
+
+        assert!(
+            matches!(
+                &err,
+                FetchError::RateLimited(RateLimited { retry_after, .. })
+                    if *retry_after == Some(Duration::from_secs(9))
+            ),
+            "{err}"
+        );
+        assert_eq!(server.requests(), ["/owner/repo.git/git-upload-pack"]);
+    }
+
+    #[tokio::test]
+    async fn rate_limited_api_plans_never_guess_branches() {
+        let commits = "/api/v1/repos/owner/repo/git/commits";
+        for (git_ref, routes) in [
+            (
+                None,
+                vec![
+                    (
+                        "/api/v1/repos/owner/repo".to_string(),
+                        CannedResponse::json(r#"{"default_branch":"develop"}"#),
+                    ),
+                    (format!("{commits}/develop"), CannedResponse::status(429)),
+                ],
+            ),
+            (
+                None,
+                vec![(
+                    "/api/v1/repos/owner/repo".to_string(),
+                    CannedResponse::status(429),
+                )],
+            ),
+            (
+                Some("v1"),
+                vec![(format!("{commits}/v1"), CannedResponse::status(429))],
+            ),
+        ] {
+            let server = TestServer::start(routes.into_iter().collect()).await;
+            let spec = RepoSpec::parse(&format!("{}/owner/repo", server.url()), git_ref).unwrap();
+            let err = fetch_repo(&client(), &spec).await.unwrap_err();
+
+            assert!(matches!(err, FetchError::RateLimited(_)), "{err}");
+            assert!(
+                !server
+                    .requests()
+                    .iter()
+                    .any(|path| path.contains("/archive/")),
+                "{git_ref:?}: {:?}",
+                server.requests()
             );
         }
     }
@@ -1130,7 +1200,7 @@ mod tests {
         let server = TestServer::start(routes.into_iter().collect()).await;
         let url = format!("{}/owner/repo", server.url());
         let spec = RepoSpec::parse(&url, git_ref).unwrap();
-        let plan = plan_refs(&client(), &spec).await;
+        let plan = plan_refs(&client(), &spec).await.unwrap();
         (plan, server)
     }
 

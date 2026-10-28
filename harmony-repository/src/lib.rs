@@ -26,6 +26,7 @@ pub use fetch::{
 };
 pub use forge::{
     Forge,
+    RateLimited,
     RepoSpec,
     RepoUrlError,
 };

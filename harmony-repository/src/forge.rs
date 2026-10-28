@@ -12,14 +12,21 @@ use std::collections::{
     BTreeSet,
     HashMap,
 };
+use std::time::{
+    Duration,
+    SystemTime,
+    UNIX_EPOCH,
+};
 
 use percent_encoding::{
     AsciiSet,
     NON_ALPHANUMERIC,
     utf8_percent_encode,
 };
+use reqwest::header::HeaderMap;
 use reqwest::{
     Client,
+    Response,
     StatusCode,
     header,
 };
@@ -31,7 +38,10 @@ use url::Url;
 
 mod ls_refs;
 
-pub(crate) use ls_refs::ls_refs;
+pub(crate) use ls_refs::{
+    AdvertisedRef,
+    ls_refs,
+};
 
 /// Percent-encode set for values embedded in a single URL path segment or
 /// query value. Keeps the unreserved characters and encodes everything else,
@@ -414,33 +424,131 @@ fn detect_forge(hostname: &str) -> Forge {
     Forge::Gitea
 }
 
+/// Longest wait a forge's rate limit is taken to ask for.
+const MAX_RATE_LIMIT_WAIT: Duration = Duration::from_secs(3600);
+
+/// Most bytes of a GitHub 403 read to tell a secondary rate limit apart.
+const MAX_FORBIDDEN_BODY_BYTES: usize = 4096;
+
+/// A forge refused a request for its rate limit; `retry_after` is the wait
+/// it asked for, when it said. A rate limit stops the operation instead of
+/// degrading into fallback requests.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "failed to fetch {url}: rate limited by the forge{}",
+    retry_after.map(|wait| format!(", retry after {}s", wait.as_secs())).unwrap_or_default()
+)]
+pub struct RateLimited {
+    /// The host of the repository the request was for, as [`RepoSpec::host`]
+    /// names it, which `url` may not share.
+    pub host: String,
+    pub url: String,
+    pub retry_after: Option<Duration>,
+}
+
+impl RateLimited {
+    /// The rate limit `response` reports: HTTP 429, GitHub's 403 with no
+    /// requests remaining, or a 403 carrying `Retry-After`, as GitHub's
+    /// secondary limits send. The wait is `Retry-After` in delta-seconds,
+    /// else the time until GitHub's `x-ratelimit-reset`; either is at most an
+    /// hour.
+    pub(crate) fn from_response(spec: &RepoSpec, url: &str, response: &Response) -> Option<Self> {
+        let headers = response.headers();
+        let exhausted = headers
+            .get("x-ratelimit-remaining")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.trim() == "0");
+        let limited = match response.status() {
+            StatusCode::TOO_MANY_REQUESTS => true,
+            StatusCode::FORBIDDEN => exhausted || headers.contains_key(header::RETRY_AFTER),
+            _ => false,
+        };
+        limited.then(|| Self::new(spec, url, retry_after(headers)))
+    }
+
+    /// A rate limit on `url`, a request for `spec`. Waits are at least a
+    /// second: a zero wait still means the request was refused.
+    fn new(spec: &RepoSpec, url: &str, retry_after: Option<Duration>) -> Self {
+        Self {
+            host: spec.host.clone(),
+            url: url.to_string(),
+            retry_after: retry_after.map(|wait| wait.max(Duration::from_secs(1))),
+        }
+    }
+}
+
+fn retry_after(headers: &HeaderMap) -> Option<Duration> {
+    let seconds = |name| headers.get(name)?.to_str().ok()?.trim().parse::<u64>().ok();
+    let wait = match seconds(header::RETRY_AFTER.as_str()) {
+        Some(delay) => delay,
+        None => {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or(Duration::ZERO);
+            seconds("x-ratelimit-reset")?.saturating_sub(now.as_secs())
+        }
+    };
+    Some(Duration::from_secs(wait).min(MAX_RATE_LIMIT_WAIT))
+}
+
+/// Whether a GitHub 403 is a secondary rate limit that only its message
+/// names, carrying neither `Retry-After` nor an exhausted quota.
+async fn mentions_rate_limit(mut response: Response) -> bool {
+    let mut body = Vec::new();
+    while body.len() < MAX_FORBIDDEN_BODY_BYTES {
+        match response.chunk().await {
+            Ok(Some(chunk)) => body.extend_from_slice(&chunk),
+            Ok(None) | Err(_) => break,
+        }
+    }
+    body.truncate(MAX_FORBIDDEN_BODY_BYTES);
+    String::from_utf8_lossy(&body)
+        .to_ascii_lowercase()
+        .contains("rate limit")
+}
+
+/// What the forge API answered: `Ok(None)` when it gave no usable answer
+/// (unsupported, missing, malformed, unreachable), so callers degrade.
+type ApiResult<T> = Result<Option<T>, RateLimited>;
+
 /// Resolves the repository's default branch through the forge API. All three
 /// supported forges expose it as `default_branch`.
-pub async fn default_branch(client: &Client, spec: &RepoSpec) -> Option<String> {
-    let value = api_get(client, &spec.repo_api_url()).await?;
-    let branch = value.get("default_branch")?.as_str()?;
-    (!branch.is_empty()).then(|| branch.to_string())
+pub async fn default_branch(client: &Client, spec: &RepoSpec) -> ApiResult<String> {
+    let Some(value) = api_get(client, spec, &spec.repo_api_url()).await? else {
+        return Ok(None);
+    };
+    Ok(value
+        .get("default_branch")
+        .and_then(|branch| branch.as_str())
+        .filter(|branch| !branch.is_empty())
+        .map(str::to_string))
 }
 
 /// Resolves a ref to a commit SHA through the forge API.
-pub async fn resolve_commit(client: &Client, spec: &RepoSpec, git_ref: &str) -> Option<String> {
-    let value = api_get(client, &spec.commit_api_url(git_ref)).await?;
+pub async fn resolve_commit(client: &Client, spec: &RepoSpec, git_ref: &str) -> ApiResult<String> {
+    let Some(value) = api_get(client, spec, &spec.commit_api_url(git_ref)).await? else {
+        return Ok(None);
+    };
     let key = match spec.forge {
         Forge::GitLab => "id",
         Forge::GitHub | Forge::Gitea => "sha",
     };
-    value.get(key)?.as_str().map(str::to_string)
+    Ok(value
+        .get(key)
+        .and_then(|sha| sha.as_str())
+        .map(str::to_string))
 }
 
-/// Asks the forge whether `git_ref` names a branch. `None` when the API
-/// gave no usable answer.
-pub async fn branch_exists(client: &Client, spec: &RepoSpec, git_ref: &str) -> Option<bool> {
-    let response = api_request(client, &spec.branch_api_url(git_ref)).await?;
-    match response.status() {
+/// Asks the forge whether `git_ref` names a branch.
+pub async fn branch_exists(client: &Client, spec: &RepoSpec, git_ref: &str) -> ApiResult<bool> {
+    let Some(response) = api_request(client, spec, &spec.branch_api_url(git_ref)).await? else {
+        return Ok(None);
+    };
+    Ok(match response.status() {
         status if status.is_success() => Some(true),
         StatusCode::NOT_FOUND => Some(false),
         _ => None,
-    }
+    })
 }
 
 /// The Git tree hash of the directory at `path` in `commit`, where `path` is
@@ -452,20 +560,20 @@ pub async fn tree_hash(
     spec: &RepoSpec,
     commit: &str,
     path: &str,
-) -> Option<String> {
+) -> ApiResult<String> {
     if path.is_empty() {
         return match spec.forge {
-            Forge::GitLab => None,
+            Forge::GitLab => Ok(None),
             Forge::GitHub | Forge::Gitea => {
-                let value = api_get(client, &spec.tree_api_url(commit, "")).await?;
-                value.get("sha")?.as_str().map(str::to_string)
+                let value = api_get(client, spec, &spec.tree_api_url(commit, "")).await?;
+                Ok(value.and_then(|value| value.get("sha")?.as_str().map(str::to_string)))
             }
         };
     }
     let (parent, name) = path.rsplit_once('/').unwrap_or(("", path));
-    child_tree_hashes(client, spec, commit, parent)
+    Ok(child_tree_hashes(client, spec, commit, parent)
         .await?
-        .remove(name)
+        .and_then(|mut children| children.remove(name)))
 }
 
 /// The Git tree hash at `commit` of each directory in `dirs` and of every
@@ -478,10 +586,10 @@ pub async fn tree_hashes(
     spec: &RepoSpec,
     commit: &str,
     dirs: &[&str],
-) -> HashMap<String, String> {
+) -> Result<HashMap<String, String>, RateLimited> {
     let mut hashes = HashMap::new();
     if dirs.contains(&"")
-        && let Some(hash) = tree_hash(client, spec, commit, "").await
+        && let Some(hash) = tree_hash(client, spec, commit, "").await?
     {
         hashes.insert(String::new(), hash);
     }
@@ -491,7 +599,7 @@ pub async fn tree_hashes(
         .map(|dir| dir.rsplit_once('/').map_or("", |(parent, _)| parent))
         .collect();
     for parent in parents {
-        let Some(children) = child_tree_hashes(client, spec, commit, parent).await else {
+        let Some(children) = child_tree_hashes(client, spec, commit, parent).await? else {
             continue;
         };
         hashes.extend(children.into_iter().map(|(name, hash)| {
@@ -502,7 +610,7 @@ pub async fn tree_hashes(
             (dir, hash)
         }));
     }
-    hashes
+    Ok(hashes)
 }
 
 /// The Git tree hash of each directory directly under `dir` at `commit`,
@@ -514,19 +622,30 @@ pub async fn child_tree_hashes(
     spec: &RepoSpec,
     commit: &str,
     dir: &str,
-) -> Option<HashMap<String, String>> {
+) -> ApiResult<HashMap<String, String>> {
     let url = spec.tree_api_url(commit, dir);
-    let response = api_request(client, &url).await?;
+    let Some(response) = api_request(client, spec, &url).await? else {
+        return Ok(None);
+    };
     if !response.status().is_success() {
-        return None;
+        return Ok(None);
     }
     let more_pages = response
         .headers()
         .get("x-next-page")
         .is_some_and(|page| !page.is_empty());
-    let value = api_json(&url, response).await?;
+    let Some(value) = api_json(&url, response).await else {
+        return Ok(None);
+    };
+    Ok(parse_child_trees(spec.forge, &value, more_pages))
+}
 
-    let (entries, name_key, hash_key) = match spec.forge {
+fn parse_child_trees(
+    forge: Forge,
+    value: &serde_json::Value,
+    more_pages: bool,
+) -> Option<HashMap<String, String>> {
+    let (entries, name_key, hash_key) = match forge {
         Forge::GitLab if more_pages => return None,
         Forge::GitLab => (value.as_array()?, "name", "id"),
         Forge::GitHub | Forge::Gitea => {
@@ -548,7 +667,10 @@ pub async fn child_tree_hashes(
         .collect()
 }
 
-async fn api_request(client: &Client, url: &str) -> Option<reqwest::Response> {
+/// A forge API request. GitHub's secondary rate limits may answer 403 with
+/// only a message to say so, so its body is read; any other GitHub 403 is no
+/// usable answer either way.
+async fn api_request(client: &Client, spec: &RepoSpec, url: &str) -> ApiResult<Response> {
     let response = client
         .get(url)
         .header(header::ACCEPT, "application/json")
@@ -557,30 +679,42 @@ async fn api_request(client: &Client, url: &str) -> Option<reqwest::Response> {
 
     match response {
         Ok(response) => {
+            if let Some(limited) = RateLimited::from_response(spec, url, &response) {
+                return Err(limited);
+            }
+            if spec.forge == Forge::GitHub && response.status() == StatusCode::FORBIDDEN {
+                if mentions_rate_limit(response).await {
+                    return Err(RateLimited::new(spec, url, None));
+                }
+                tracing::debug!("forge api request {url} returned HTTP 403");
+                return Ok(None);
+            }
             if !response.status().is_success() {
                 tracing::debug!(
                     "forge api request {url} returned HTTP {}",
                     response.status()
                 );
             }
-            Some(response)
+            Ok(Some(response))
         }
         Err(err) => {
             tracing::debug!("forge api request {url} failed: {err}");
-            None
+            Ok(None)
         }
     }
 }
 
-async fn api_get(client: &Client, url: &str) -> Option<serde_json::Value> {
-    let response = api_request(client, url).await?;
+async fn api_get(client: &Client, spec: &RepoSpec, url: &str) -> ApiResult<serde_json::Value> {
+    let Some(response) = api_request(client, spec, url).await? else {
+        return Ok(None);
+    };
     if !response.status().is_success() {
-        return None;
+        return Ok(None);
     }
-    api_json(url, response).await
+    Ok(api_json(url, response).await)
 }
 
-async fn api_json(url: &str, response: reqwest::Response) -> Option<serde_json::Value> {
+async fn api_json(url: &str, response: Response) -> Option<serde_json::Value> {
     match response.json().await {
         Ok(value) => Some(value),
         Err(err) => {
@@ -906,6 +1040,7 @@ mod tests {
         let spec = RepoSpec::parse(&format!("{}/owner/repo", server.url()), None).unwrap();
         let hashes = child_tree_hashes(&client(), &spec, "abc", "plugins")
             .await
+            .unwrap()
             .unwrap();
         assert_eq!(
             hashes,
@@ -916,11 +1051,15 @@ mod tests {
         );
 
         assert_eq!(
-            child_tree_hashes(&client(), &spec, "abc", "big").await,
+            child_tree_hashes(&client(), &spec, "abc", "big")
+                .await
+                .unwrap(),
             None
         );
         assert_eq!(
-            child_tree_hashes(&client(), &spec, "abc", "gone").await,
+            child_tree_hashes(&client(), &spec, "abc", "gone")
+                .await
+                .unwrap(),
             None
         );
     }
@@ -950,6 +1089,7 @@ mod tests {
         let spec = RepoSpec::parse(&url, None).unwrap();
         let hashes = child_tree_hashes(&client(), &spec, "abc", "plugins")
             .await
+            .unwrap()
             .unwrap();
         assert_eq!(
             hashes,
@@ -957,7 +1097,9 @@ mod tests {
         );
 
         assert_eq!(
-            child_tree_hashes(&client(), &spec, "abc", "big").await,
+            child_tree_hashes(&client(), &spec, "abc", "big")
+                .await
+                .unwrap(),
             None
         );
     }
@@ -988,15 +1130,27 @@ mod tests {
         let spec = RepoSpec::parse(&format!("{}/owner/repo", server.url()), None).unwrap();
         let client = client();
         assert_eq!(
-            tree_hash(&client, &spec, "abc", "").await.as_deref(),
+            tree_hash(&client, &spec, "abc", "")
+                .await
+                .unwrap()
+                .as_deref(),
             Some("root")
         );
         assert_eq!(
-            tree_hash(&client, &spec, "abc", "a/b/c").await.as_deref(),
+            tree_hash(&client, &spec, "abc", "a/b/c")
+                .await
+                .unwrap()
+                .as_deref(),
             Some("abc-hash")
         );
-        assert_eq!(tree_hash(&client, &spec, "abc", "a/b/d").await, None);
-        assert_eq!(tree_hash(&client, &spec, "abc", "a/b/e").await, None);
+        assert_eq!(
+            tree_hash(&client, &spec, "abc", "a/b/d").await.unwrap(),
+            None
+        );
+        assert_eq!(
+            tree_hash(&client, &spec, "abc", "a/b/e").await.unwrap(),
+            None
+        );
     }
 
     #[tokio::test]
@@ -1018,14 +1172,151 @@ mod tests {
 
         let url = format!("{}/owner/repo?forge=gitlab", server.url());
         let spec = RepoSpec::parse(&url, None).unwrap();
-        assert_eq!(tree_hash(&client(), &spec, "abc", "").await, None);
+        assert_eq!(tree_hash(&client(), &spec, "abc", "").await.unwrap(), None);
         assert_eq!(
-            tree_hash(&client(), &spec, "abc", "a").await.as_deref(),
+            tree_hash(&client(), &spec, "abc", "a")
+                .await
+                .unwrap()
+                .as_deref(),
             Some("t1")
         );
         assert_eq!(
-            tree_hash(&client(), &spec, "abc", "a/b/c").await.as_deref(),
+            tree_hash(&client(), &spec, "abc", "a/b/c")
+                .await
+                .unwrap()
+                .as_deref(),
             Some("abc-hash")
+        );
+    }
+
+    #[tokio::test]
+    async fn forge_responses_are_classified_as_rate_limited() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let commits = "/api/v1/repos/owner/repo/git/commits";
+        let server = TestServer::start(HashMap::from([
+            (
+                format!("{commits}/exhausted"),
+                CannedResponse::status(403)
+                    .with_header("x-ratelimit-remaining", "0")
+                    .with_header("x-ratelimit-reset", &(now + 120).to_string()),
+            ),
+            (
+                format!("{commits}/reset-passed"),
+                CannedResponse::status(403)
+                    .with_header("x-ratelimit-remaining", "0")
+                    .with_header("x-ratelimit-reset", &(now - 5).to_string()),
+            ),
+            (
+                format!("{commits}/secondary"),
+                CannedResponse::status(403)
+                    .with_header("retry-after", "60")
+                    .with_header("x-ratelimit-reset", &(now + 999).to_string()),
+            ),
+            (format!("{commits}/too-many"), CannedResponse::status(429)),
+            (
+                format!("{commits}/forbidden"),
+                CannedResponse::status(403).with_header("x-ratelimit-remaining", "12"),
+            ),
+            (format!("{commits}/broken"), CannedResponse::status(500)),
+            (
+                format!("{commits}/far-reset"),
+                CannedResponse::status(403)
+                    .with_header("x-ratelimit-remaining", "0")
+                    .with_header("x-ratelimit-reset", &(now + 86_400).to_string()),
+            ),
+            (
+                format!("{commits}/max-reset"),
+                CannedResponse::status(429).with_header("x-ratelimit-reset", &u64::MAX.to_string()),
+            ),
+            (
+                format!("{commits}/far-retry"),
+                CannedResponse::status(429).with_header("retry-after", &u64::MAX.to_string()),
+            ),
+            (
+                format!("{commits}/zero"),
+                CannedResponse::status(429).with_header("retry-after", "0"),
+            ),
+        ]))
+        .await;
+        let spec = RepoSpec::parse(&format!("{}/owner/repo", server.url()), None).unwrap();
+        let wait = async |git_ref| {
+            resolve_commit(&client(), &spec, git_ref)
+                .await
+                .map(|_| ())
+                .map_err(|limited| limited.retry_after)
+        };
+
+        let Err(Some(exhausted)) = wait("exhausted").await else {
+            panic!("an exhausted quota is a rate limit");
+        };
+        assert!((115..=120).contains(&exhausted.as_secs()), "{exhausted:?}");
+        assert_eq!(
+            wait("reset-passed").await,
+            Err(Some(Duration::from_secs(1)))
+        );
+        assert_eq!(wait("secondary").await, Err(Some(Duration::from_secs(60))));
+        assert_eq!(wait("too-many").await, Err(None));
+        assert_eq!(wait("forbidden").await, Ok(()));
+        assert_eq!(wait("broken").await, Ok(()));
+        assert_eq!(wait("far-reset").await, Err(Some(MAX_RATE_LIMIT_WAIT)));
+        assert_eq!(wait("max-reset").await, Err(Some(MAX_RATE_LIMIT_WAIT)));
+        assert_eq!(wait("far-retry").await, Err(Some(MAX_RATE_LIMIT_WAIT)));
+        assert_eq!(wait("zero").await, Err(Some(Duration::from_secs(1))));
+    }
+
+    #[tokio::test]
+    async fn github_secondary_limits_named_only_in_the_body_are_rate_limits() {
+        let commits = "/api/v3/repos/owner/repo/commits";
+        let message = |text: &str| {
+            CannedResponse::json(&format!(r#"{{"message":"{text}"}}"#)).with_status(403)
+        };
+        let server = TestServer::start(HashMap::from([
+            (
+                format!("{commits}/secondary"),
+                message("You have exceeded a secondary Rate Limit. Please wait."),
+            ),
+            (
+                format!("{commits}/forbidden"),
+                message("Resource not accessible by integration"),
+            ),
+            (
+                format!("{commits}/long"),
+                message(&format!(
+                    "{} rate limit",
+                    "x".repeat(MAX_FORBIDDEN_BODY_BYTES)
+                )),
+            ),
+            (
+                "/api/v1/repos/owner/repo/git/commits/secondary".to_string(),
+                message("rate limit"),
+            ),
+        ]))
+        .await;
+        let github = format!("{}/owner/repo?forge=github", server.url());
+        let github = RepoSpec::parse(&github, None).unwrap();
+        let gitea = RepoSpec::parse(&format!("{}/owner/repo", server.url()), None).unwrap();
+
+        let limited = resolve_commit(&client(), &github, "secondary")
+            .await
+            .unwrap_err();
+        assert_eq!(limited.retry_after, None);
+        assert_eq!(limited.host, github.host);
+        assert_eq!(
+            resolve_commit(&client(), &github, "forbidden").await,
+            Ok(None)
+        );
+        assert_eq!(
+            resolve_commit(&client(), &github, "long").await,
+            Ok(None),
+            "text past the body cap is not read"
+        );
+        assert_eq!(
+            resolve_commit(&client(), &gitea, "secondary").await,
+            Ok(None),
+            "only GitHub's 403 bodies are read"
         );
     }
 
@@ -1055,7 +1346,8 @@ mod tests {
             "abc",
             &["plugins/a", "plugins/gone", "", ""],
         )
-        .await;
+        .await
+        .unwrap();
 
         assert_eq!(
             hashes,
