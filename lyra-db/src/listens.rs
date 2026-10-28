@@ -19,34 +19,20 @@ use agdb::{
 pub struct Listen {
     pub db_id: Option<DbId>,
     pub id: String,
+    pub play_id: String,
     pub track_public_id: String,
-    pub position_ms: u64,
-    pub duration_ms: Option<u64>,
-    pub activity_ms: u64,
-    pub state: super::playback_sessions::PlaybackState,
-    pub listened_at_ms: u64,
+    pub started_at_ms: u64,
+    pub played_ms: u64,
     pub created_at_ms: u64,
 }
 
-pub fn create_and_mark_recorded(
-    db: &mut DbAny,
-    listen: &Listen,
-    track_db_id: DbId,
-    user_db_id: DbId,
-    playback_session: &super::playback_sessions::PlaybackSession,
-) -> anyhow::Result<()> {
-    db.transaction_mut(|t| {
-        insert_and_mark_recorded(t, listen, track_db_id, user_db_id, playback_session)
-    })
-}
-
-pub fn insert_and_mark_recorded(
+/// Inserts the user's listen of the track; the caller owns the transaction.
+pub fn insert(
     db: &mut impl super::DbAccess,
     listen: &Listen,
     track_db_id: DbId,
     user_db_id: DbId,
-    playback_session: &super::playback_sessions::PlaybackSession,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<DbId> {
     let listen_id = db
         .exec_mut(QueryBuilder::insert().element(listen).query())?
         .ids()[0];
@@ -72,15 +58,33 @@ pub fn insert_and_mark_recorded(
             .to(user_db_id)
             .query(),
     )?;
-    super::covers::display::record_genre_listen(
-        db,
-        track_db_id,
-        user_db_id,
-        listen.listened_at_ms,
-    )?;
-    db.exec_mut(QueryBuilder::insert().element(playback_session).query())?;
+    super::covers::display::record_genre_listen(db, track_db_id, user_db_id, listen.started_at_ms)?;
 
-    Ok(())
+    Ok(listen_id)
+}
+
+/// The user's listen of the play, if one was recorded.
+pub fn find_by_play_id(
+    db: &impl super::DbAccess,
+    user_db_id: DbId,
+    play_id: &str,
+) -> anyhow::Result<Option<DbId>> {
+    let listen_ids = db
+        .exec(
+            QueryBuilder::search()
+                .index("play_id")
+                .value(play_id)
+                .where_()
+                .element::<Listen>()
+                .query(),
+        )?
+        .ids();
+    for listen_id in listen_ids {
+        if super::graph::edge_exists(db, listen_id, user_db_id)? {
+            return Ok(Some(listen_id));
+        }
+    }
+    Ok(None)
 }
 
 fn get_listen_ids_for_target(db: &DbAny, target_id: DbId) -> anyhow::Result<Vec<DbId>> {
@@ -166,8 +170,8 @@ pub fn get_stats(
             last_played: None,
         });
         entry.count = entry.count.saturating_add(1);
-        if listen.listened_at_ms > entry.last_played.unwrap_or(0) {
-            entry.last_played = Some(listen.listened_at_ms);
+        if listen.started_at_ms > entry.last_played.unwrap_or(0) {
+            entry.last_played = Some(listen.started_at_ms);
         }
     }
 
@@ -370,8 +374,8 @@ pub fn list_summaries(
                 last_played: None,
             });
         entry.count = entry.count.saturating_add(1);
-        if listen.listened_at_ms > entry.last_played.unwrap_or(0) {
-            entry.last_played = Some(listen.listened_at_ms);
+        if listen.started_at_ms > entry.last_played.unwrap_or(0) {
+            entry.last_played = Some(listen.started_at_ms);
         }
     }
 
@@ -450,38 +454,24 @@ mod tests {
         Ok(track_db_id)
     }
 
-    fn record_listen(
+    fn insert_listen_with_snapshot(
         db: &mut DbAny,
         user_db_id: DbId,
         track_db_id: DbId,
         track_public_id: &str,
-        listened_at_ms: u64,
-    ) -> anyhow::Result<()> {
+        play_id: &str,
+        started_at_ms: u64,
+    ) -> anyhow::Result<DbId> {
         let listen = Listen {
             db_id: None,
             id: nanoid!(),
+            play_id: play_id.to_string(),
             track_public_id: track_public_id.to_string(),
-            position_ms: 0,
-            duration_ms: Some(180_000),
-            activity_ms: 180_000,
-            state: crate::PlaybackState::Completed,
-            listened_at_ms,
-            created_at_ms: listened_at_ms,
+            started_at_ms,
+            played_ms: 180_000,
+            created_at_ms: started_at_ms,
         };
-        let session = crate::PlaybackSession {
-            db_id: None,
-            id: nanoid!(),
-            client_name: None,
-            position_ms: 0,
-            duration_ms: Some(180_000),
-            activity_ms: Some(180_000),
-            last_position_ms: None,
-            state: crate::PlaybackState::Completed,
-            listen_recorded: Some(true),
-            updated_at_ms: listened_at_ms,
-            created_at_ms: listened_at_ms,
-        };
-        create_and_mark_recorded(db, &listen, track_db_id, user_db_id, &session)
+        db.transaction_mut(|t| insert(t, &listen, track_db_id, user_db_id))
     }
 
     #[test]
@@ -490,31 +480,7 @@ mod tests {
         let user = create_user(&mut db)?;
         let track_db_id = create_track(&mut db, "tr-original")?;
 
-        let listen = Listen {
-            db_id: None,
-            id: nanoid!(),
-            track_public_id: "tr-original".to_string(),
-            position_ms: 0,
-            duration_ms: Some(180_000),
-            activity_ms: 180_000,
-            state: crate::PlaybackState::Completed,
-            listened_at_ms: 1,
-            created_at_ms: 1,
-        };
-        let session = crate::PlaybackSession {
-            db_id: None,
-            id: nanoid!(),
-            client_name: None,
-            position_ms: 0,
-            duration_ms: Some(180_000),
-            activity_ms: Some(180_000),
-            last_position_ms: None,
-            state: crate::PlaybackState::Completed,
-            listen_recorded: Some(true),
-            updated_at_ms: 1,
-            created_at_ms: 1,
-        };
-        create_and_mark_recorded(&mut db, &listen, track_db_id, user, &session)?;
+        insert_listen_with_snapshot(&mut db, user, track_db_id, "tr-original", &nanoid!(), 1)?;
 
         let listens: Vec<Listen> = db
             .exec(
@@ -530,36 +496,42 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn find_by_play_id_matches_only_the_users_listen() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user = create_user(&mut db)?;
+        let other_user = create_user(&mut db)?;
+        let track = create_track(&mut db, "tr-one")?;
+
+        let listen =
+            insert_listen_with_snapshot(&mut db, user, track, "tr-one", "play-shared-0001", 1_000)?;
+        let other_listen = insert_listen_with_snapshot(
+            &mut db,
+            other_user,
+            track,
+            "tr-one",
+            "play-shared-0001",
+            2_000,
+        )?;
+
+        assert_eq!(
+            find_by_play_id(&db, user, "play-shared-0001")?,
+            Some(listen)
+        );
+        assert_eq!(
+            find_by_play_id(&db, other_user, "play-shared-0001")?,
+            Some(other_listen)
+        );
+        assert_eq!(find_by_play_id(&db, user, "play-unknown-0001")?, None);
+        Ok(())
+    }
+
     fn run_get_stats_with_listen_snapshot(snapshot: &str) -> anyhow::Result<ListenStats> {
         let mut db = new_test_db()?;
         let user = create_user(&mut db)?;
         let track_db_id = create_track(&mut db, "tr-current")?;
 
-        let listen = Listen {
-            db_id: None,
-            id: nanoid!(),
-            track_public_id: snapshot.to_string(),
-            position_ms: 0,
-            duration_ms: Some(180_000),
-            activity_ms: 180_000,
-            state: crate::PlaybackState::Completed,
-            listened_at_ms: 1,
-            created_at_ms: 1,
-        };
-        let session = crate::PlaybackSession {
-            db_id: None,
-            id: nanoid!(),
-            client_name: None,
-            position_ms: 0,
-            duration_ms: Some(180_000),
-            activity_ms: Some(180_000),
-            last_position_ms: None,
-            state: crate::PlaybackState::Completed,
-            listen_recorded: Some(true),
-            updated_at_ms: 1,
-            created_at_ms: 1,
-        };
-        create_and_mark_recorded(&mut db, &listen, track_db_id, user, &session)?;
+        insert_listen_with_snapshot(&mut db, user, track_db_id, snapshot, &nanoid!(), 1)?;
 
         let mut stats = get_stats(&db, &[track_db_id], user)?;
         anyhow::ensure!(stats.len() == 1, "expected exactly one stats row");
@@ -574,10 +546,10 @@ mod tests {
         let track_one = create_track(&mut db, "tr-one")?;
         let track_two = create_track(&mut db, "tr-two")?;
 
-        record_listen(&mut db, user, track_one, "tr-one", 1_000)?;
-        record_listen(&mut db, user, track_one, "tr-one", 3_000)?;
-        record_listen(&mut db, user, track_two, "tr-two", 2_000)?;
-        record_listen(&mut db, other_user, track_one, "tr-one", 9_000)?;
+        insert_listen_with_snapshot(&mut db, user, track_one, "tr-one", &nanoid!(), 1_000)?;
+        insert_listen_with_snapshot(&mut db, user, track_one, "tr-one", &nanoid!(), 3_000)?;
+        insert_listen_with_snapshot(&mut db, user, track_two, "tr-two", &nanoid!(), 2_000)?;
+        insert_listen_with_snapshot(&mut db, other_user, track_one, "tr-one", &nanoid!(), 9_000)?;
 
         let user_public_id = crate::users::get_by_id(&db, user)?
             .expect("user should exist")
@@ -611,10 +583,10 @@ mod tests {
         let track_one = create_track(&mut db, "tr-one")?;
         let track_two = create_track(&mut db, "tr-two")?;
 
-        record_listen(&mut db, user, track_one, "tr-one", 1_000)?;
-        record_listen(&mut db, user, track_one, "tr-one", 3_000)?;
-        record_listen(&mut db, other_user, track_one, "tr-one", 9_000)?;
-        record_listen(&mut db, other_user, track_two, "tr-two", 4_000)?;
+        insert_listen_with_snapshot(&mut db, user, track_one, "tr-one", &nanoid!(), 1_000)?;
+        insert_listen_with_snapshot(&mut db, user, track_one, "tr-one", &nanoid!(), 3_000)?;
+        insert_listen_with_snapshot(&mut db, other_user, track_one, "tr-one", &nanoid!(), 9_000)?;
+        insert_listen_with_snapshot(&mut db, other_user, track_two, "tr-two", &nanoid!(), 4_000)?;
 
         let user_public_id = crate::users::get_by_id(&db, user)?
             .expect("user should exist")
@@ -664,8 +636,8 @@ mod tests {
         let user = create_user(&mut db)?;
         let track = create_track(&mut db, "tr-current")?;
 
-        record_listen(&mut db, user, track, "tr-current", 1_000)?;
-        record_listen(&mut db, user, track, "tr-missing", 2_000)?;
+        insert_listen_with_snapshot(&mut db, user, track, "tr-current", &nanoid!(), 1_000)?;
+        insert_listen_with_snapshot(&mut db, user, track, "tr-missing", &nanoid!(), 2_000)?;
 
         let summaries = list_summaries_for_user(&db, user)?;
         assert_eq!(summaries.len(), 1);
@@ -693,10 +665,10 @@ mod tests {
         let track_one = create_track(&mut db, "tr-one")?;
         let track_two = create_track(&mut db, "tr-two")?;
 
-        record_listen(&mut db, user, track_one, "tr-one", 1_000)?;
-        record_listen(&mut db, user, track_one, "tr-one", 3_000)?;
-        record_listen(&mut db, user, track_two, "tr-old", 5_000)?;
-        record_listen(&mut db, other_user, track_two, "tr-two", 7_000)?;
+        insert_listen_with_snapshot(&mut db, user, track_one, "tr-one", &nanoid!(), 1_000)?;
+        insert_listen_with_snapshot(&mut db, user, track_one, "tr-one", &nanoid!(), 3_000)?;
+        insert_listen_with_snapshot(&mut db, user, track_two, "tr-old", &nanoid!(), 5_000)?;
+        insert_listen_with_snapshot(&mut db, other_user, track_two, "tr-two", &nanoid!(), 7_000)?;
 
         let stats = get_stats(&db, &[track_one, track_two, track_one], user)?;
         assert_eq!(stats.len(), 2);

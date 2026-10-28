@@ -108,6 +108,27 @@ pub fn insert_artist(db: &mut DbAny, name: &str) -> anyhow::Result<DbId> {
     Ok(artist_id)
 }
 
+/// A whole-track listen of the track by the user, started at `started_at_ms`.
+pub fn insert_listen(
+    db: &mut DbAny,
+    user_db_id: DbId,
+    track_db_id: DbId,
+    started_at_ms: u64,
+) -> anyhow::Result<DbId> {
+    let track_public_id = super::lookup::find_id_by_db_id(db, track_db_id)?
+        .ok_or_else(|| anyhow::anyhow!("track {track_db_id:?} has no public id"))?;
+    let listen = super::Listen {
+        db_id: None,
+        id: nanoid!(),
+        play_id: nanoid!(),
+        track_public_id,
+        started_at_ms,
+        played_ms: 180_000,
+        created_at_ms: started_at_ms,
+    };
+    db.transaction_mut(|t| super::listens::insert(t, &listen, track_db_id, user_db_id))
+}
+
 pub fn test_user(username: &str) -> anyhow::Result<super::users::User> {
     Ok(super::users::User {
         db_id: None,

@@ -337,44 +337,12 @@ fn plugin_executor_exposes_db_backed_lyra_listens_module() -> Result<()> {
     let user_db_id = lyra_db::users::create(&mut db, &user)?;
     let other_user_db_id = lyra_db::test_db::insert_user(&mut db, "other-listener")?;
     let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Listen Track")?;
-    let track_public_id = lyra_db::lookup::find_id_by_db_id(&db, track_db_id)?
-        .context("inserted track has public id")?;
-    for (listener_db_id, listened_at_ms) in [
+    for (listener_db_id, started_at_ms) in [
         (user_db_id, 1000_u64),
         (user_db_id, 2500),
         (other_user_db_id, 3000),
     ] {
-        let listen = lyra_db::listens::Listen {
-            db_id: None,
-            id: nanoid::nanoid!(),
-            track_public_id: track_public_id.clone(),
-            position_ms: 0,
-            duration_ms: Some(180_000),
-            activity_ms: 180_000,
-            state: lyra_db::PlaybackState::Completed,
-            listened_at_ms,
-            created_at_ms: listened_at_ms,
-        };
-        let session = crate::services::playback_sessions::PlaybackSession {
-            db_id: None,
-            id: nanoid::nanoid!(),
-            client_name: None,
-            position_ms: 0,
-            duration_ms: Some(180_000),
-            activity_ms: Some(180_000),
-            last_position_ms: None,
-            state: lyra_db::PlaybackState::Completed,
-            listen_recorded: Some(true),
-            updated_at_ms: listened_at_ms,
-            created_at_ms: listened_at_ms,
-        };
-        lyra_db::listens::create_and_mark_recorded(
-            &mut db,
-            &listen,
-            track_db_id,
-            listener_db_id,
-            &session,
-        )?;
+        lyra_db::fixtures::insert_listen(&mut db, listener_db_id, track_db_id, started_at_ms)?;
     }
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
 

@@ -809,41 +809,6 @@ mod tests {
         lyra_db::tracks::update(db, &track)
     }
 
-    fn record_listen(
-        db: &mut DbAny,
-        user_db_id: DbId,
-        track_db_id: DbId,
-        listened_at_ms: u64,
-    ) -> anyhow::Result<()> {
-        let track = lyra_db::tracks::get_by_id(db, track_db_id)?
-            .ok_or_else(|| anyhow::anyhow!("track missing"))?;
-        let listen = lyra_db::Listen {
-            db_id: None,
-            id: nanoid!(),
-            track_public_id: track.id,
-            position_ms: 0,
-            duration_ms: Some(180_000),
-            activity_ms: 180_000,
-            state: lyra_db::PlaybackState::Completed,
-            listened_at_ms,
-            created_at_ms: listened_at_ms,
-        };
-        let session = lyra_db::PlaybackSession {
-            db_id: None,
-            id: nanoid!(),
-            client_name: None,
-            position_ms: 0,
-            duration_ms: Some(180_000),
-            activity_ms: Some(180_000),
-            last_position_ms: None,
-            state: lyra_db::PlaybackState::Completed,
-            listen_recorded: Some(true),
-            updated_at_ms: listened_at_ms,
-            created_at_ms: listened_at_ms,
-        };
-        lyra_db::listens::create_and_mark_recorded(db, &listen, track_db_id, user_db_id, &session)
-    }
-
     fn insert_cover_for(db: &mut DbAny, owner_db_id: DbId) -> anyhow::Result<lyra_db::Cover> {
         db.transaction_mut(|t| {
             lyra_db::covers::upsert(
@@ -1519,8 +1484,8 @@ mod tests {
             let early = insert_track(&mut db, "Early")?;
             let late = insert_track(&mut db, "Late")?;
             insert_track(&mut db, "Never")?;
-            record_listen(&mut db, user_db_id, early, 1_000)?;
-            record_listen(&mut db, user_db_id, late, 2_000)?;
+            lyra_db::fixtures::insert_listen(&mut db, user_db_id, early, 1_000)?;
+            lyra_db::fixtures::insert_listen(&mut db, user_db_id, late, 2_000)?;
             Principal::for_user(
                 &*db,
                 user_db_id,
@@ -1550,9 +1515,9 @@ mod tests {
             let user_db_id = lyra_db::test_db::insert_user(&mut db, "track-sort-user")?;
             let one_listen = insert_track(&mut db, "One Listen")?;
             let two_listens = insert_track(&mut db, "Two Listens")?;
-            record_listen(&mut db, user_db_id, one_listen, 1_000)?;
-            record_listen(&mut db, user_db_id, two_listens, 2_000)?;
-            record_listen(&mut db, user_db_id, two_listens, 3_000)?;
+            lyra_db::fixtures::insert_listen(&mut db, user_db_id, one_listen, 1_000)?;
+            lyra_db::fixtures::insert_listen(&mut db, user_db_id, two_listens, 2_000)?;
+            lyra_db::fixtures::insert_listen(&mut db, user_db_id, two_listens, 3_000)?;
             Principal::for_user(
                 &*db,
                 user_db_id,
@@ -1856,38 +1821,6 @@ mod benches {
         viewer: catalog::Viewer,
     }
 
-    fn record_listen(db: &mut DbAny, user_db_id: DbId, track_db_id: DbId, listened_at_ms: u64) {
-        let track = lyra_db::tracks::get_by_id(db, track_db_id)
-            .unwrap()
-            .expect("track exists");
-        let listen = lyra_db::Listen {
-            db_id: None,
-            id: nanoid!(),
-            track_public_id: track.id,
-            position_ms: 0,
-            duration_ms: Some(180_000),
-            activity_ms: 180_000,
-            state: lyra_db::PlaybackState::Completed,
-            listened_at_ms,
-            created_at_ms: listened_at_ms,
-        };
-        let session = lyra_db::PlaybackSession {
-            db_id: None,
-            id: nanoid!(),
-            client_name: None,
-            position_ms: 0,
-            duration_ms: Some(180_000),
-            activity_ms: Some(180_000),
-            last_position_ms: None,
-            state: lyra_db::PlaybackState::Completed,
-            listen_recorded: Some(true),
-            updated_at_ms: listened_at_ms,
-            created_at_ms: listened_at_ms,
-        };
-        lyra_db::listens::create_and_mark_recorded(db, &listen, track_db_id, user_db_id, &session)
-            .unwrap();
-    }
-
     fn seed_track_sort_bench(track_count: usize, listens_per_track: usize) -> TrackSortBench {
         let mut db = new_test_db().unwrap();
         let user_db_id =
@@ -1895,12 +1828,13 @@ mod benches {
         for i in 0..track_count {
             let track_db_id = insert_track(&mut db, &format!("Track {i:04}")).unwrap();
             for listen_idx in 0..listens_per_track {
-                record_listen(
+                lyra_db::fixtures::insert_listen(
                     &mut db,
                     user_db_id,
                     track_db_id,
                     ((i * listens_per_track + listen_idx) as u64) * 1_000,
-                );
+                )
+                .unwrap();
             }
         }
 

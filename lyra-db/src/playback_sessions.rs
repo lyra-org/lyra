@@ -30,9 +30,6 @@ use super::tracks::get_by_id as get_track_by_id;
 use super::users::get_by_id as get_user_by_id;
 
 const STALE_TTL_MS: u64 = 5 * 60 * 1000;
-const MIN_ACTIVITY_MS: u64 = 30_000;
-const SHORT_TRACK_MS: u64 = 180_000;
-const SHORT_TRACK_ACTIVITY_PERCENT: u64 = 20;
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, DbTypeMarker)]
@@ -371,36 +368,11 @@ pub fn get(db: &DbAny) -> anyhow::Result<Vec<PlaybackSession>> {
     Ok(playback_sessions)
 }
 
-pub fn min_required_activity_ms(duration_ms: Option<u64>) -> u64 {
-    if let Some(duration_ms) = duration_ms
-        && duration_ms > 0
-        && duration_ms < SHORT_TRACK_MS
-    {
-        // Round up to avoid a zero threshold for very short tracks.
-        return duration_ms
-            .saturating_mul(SHORT_TRACK_ACTIVITY_PERCENT)
-            .saturating_add(99)
-            / 100;
-    }
-
-    MIN_ACTIVITY_MS
-}
-
-pub fn activity_meets_listen_threshold(activity_ms: u64, duration_ms: Option<u64>) -> bool {
-    activity_ms >= min_required_activity_ms(duration_ms)
-}
-
-pub(crate) fn playback_session_meets_listen_threshold(playback_session: &PlaybackSession) -> bool {
-    let activity_ms = playback_session
-        .activity_ms
-        .unwrap_or(playback_session.position_ms);
-    activity_meets_listen_threshold(activity_ms, playback_session.duration_ms)
-}
-
-pub fn evict_low_activity(
+/// Removes sessions untouched for longer than the stale TTL, except those `keep` holds for.
+pub fn evict_stale(
     db: &mut DbAny,
     now_ms: u64,
-    is_active: impl Fn(DbId) -> bool,
+    keep: impl Fn(DbId, &PlaybackSession) -> bool,
 ) -> anyhow::Result<Vec<EvictedPlayback>> {
     let cutoff_ms = now_ms.saturating_sub(STALE_TTL_MS);
     let mut evicted = Vec::new();
@@ -411,14 +383,10 @@ pub fn evict_low_activity(
             continue;
         }
 
-        if playback_session_meets_listen_threshold(&playback_session) {
-            continue;
-        }
-
         let Some(playback_session_id) = playback_session.db_id else {
             continue;
         };
-        if is_active(playback_session_id) {
+        if keep(playback_session_id, &playback_session) {
             continue;
         }
 
@@ -641,27 +609,6 @@ mod tests {
     }
 
     #[test]
-    fn activity_meets_listen_threshold_normal_track() {
-        // 30s is the threshold for tracks >= 3 minutes
-        assert!(!activity_meets_listen_threshold(29_999, Some(300_000)));
-        assert!(activity_meets_listen_threshold(30_000, Some(300_000)));
-    }
-
-    #[test]
-    fn activity_meets_listen_threshold_short_track() {
-        // For a 60s track, threshold is 20% = 12s
-        assert!(!activity_meets_listen_threshold(11_999, Some(60_000)));
-        assert!(activity_meets_listen_threshold(12_000, Some(60_000)));
-    }
-
-    #[test]
-    fn activity_meets_listen_threshold_none_duration() {
-        // No duration falls back to MIN_ACTIVITY_MS (30s)
-        assert!(!activity_meets_listen_threshold(29_999, None));
-        assert!(activity_meets_listen_threshold(30_000, None));
-    }
-
-    #[test]
     fn playback_state_is_terminal() {
         assert!(!PlaybackState::Playing.is_terminal());
         assert!(!PlaybackState::Paused.is_terminal());
@@ -671,7 +618,7 @@ mod tests {
     }
 
     #[test]
-    fn evict_low_activity_removes_stale_low_activity_sessions() -> anyhow::Result<()> {
+    fn evict_stale_removes_stale_sessions() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user_id = create_test_user(&mut db)?;
         let track_id = create_test_track(&mut db, "Track")?;
@@ -679,7 +626,6 @@ mod tests {
         let now_ms = 1_000_000;
         let stale_time = now_ms - STALE_TTL_MS - 1;
 
-        // Create a stale session with low activity
         let session = PlaybackSession {
             db_id: None,
             id: nanoid!(),
@@ -695,7 +641,7 @@ mod tests {
         };
         let session_id = create(&mut db, &session, track_id, user_id)?;
 
-        let evicted = evict_low_activity(&mut db, now_ms, |_| false)?;
+        let evicted = evict_stale(&mut db, now_ms, |_, _| false)?;
         assert_eq!(evicted.len(), 1);
         assert_eq!(evicted[0].track_db_id, track_id);
         assert_eq!(evicted[0].user_db_id, user_id);
@@ -706,14 +652,13 @@ mod tests {
     }
 
     #[test]
-    fn evict_low_activity_keeps_recent_sessions() -> anyhow::Result<()> {
+    fn evict_stale_keeps_recent_sessions() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user_id = create_test_user(&mut db)?;
         let track_id = create_test_track(&mut db, "Track")?;
 
         let now_ms = 1_000_000;
 
-        // Create a recent session with low activity (should not be evicted)
         let session = PlaybackSession {
             db_id: None,
             id: nanoid!(),
@@ -729,7 +674,7 @@ mod tests {
         };
         let session_id = create(&mut db, &session, track_id, user_id)?;
 
-        let evicted = evict_low_activity(&mut db, now_ms, |_| false)?;
+        let evicted = evict_stale(&mut db, now_ms, |_, _| false)?;
         assert!(evicted.is_empty());
 
         // Session should still exist
@@ -738,40 +683,7 @@ mod tests {
     }
 
     #[test]
-    fn evict_low_activity_keeps_sessions_meeting_threshold() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        let user_id = create_test_user(&mut db)?;
-        let track_id = create_test_track(&mut db, "Track")?;
-
-        let now_ms = 1_000_000;
-        let stale_time = now_ms - STALE_TTL_MS - 1;
-
-        // Create a stale session with enough activity (should not be evicted)
-        let session = PlaybackSession {
-            db_id: None,
-            id: nanoid!(),
-            client_name: None,
-            position_ms: 60_000,
-            duration_ms: Some(300_000),
-            activity_ms: Some(30_000),
-            last_position_ms: None,
-            state: PlaybackState::Playing,
-            listen_recorded: None,
-            updated_at_ms: stale_time,
-            created_at_ms: stale_time,
-        };
-        let session_id = create(&mut db, &session, track_id, user_id)?;
-
-        let evicted = evict_low_activity(&mut db, now_ms, |_| false)?;
-        assert!(evicted.is_empty());
-
-        // Session should still exist
-        assert!(get_by_id(&db, session_id)?.is_some());
-        Ok(())
-    }
-
-    #[test]
-    fn evict_low_activity_skips_active_sessions() -> anyhow::Result<()> {
+    fn evict_stale_skips_kept_sessions() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user_id = create_test_user(&mut db)?;
         let track_id = create_test_track(&mut db, "Track")?;
@@ -794,8 +706,7 @@ mod tests {
         };
         let session_id = create(&mut db, &session, track_id, user_id)?;
 
-        // Mark it as active via the callback
-        let evicted = evict_low_activity(&mut db, now_ms, |id| id == session_id)?;
+        let evicted = evict_stale(&mut db, now_ms, |id, _| id == session_id)?;
         assert!(evicted.is_empty());
 
         // Session should still exist

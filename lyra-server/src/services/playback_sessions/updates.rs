@@ -185,7 +185,7 @@ pub(crate) fn playback_to_payload(
         position_ms: playback.playback.position_ms,
         duration_ms: playback.playback.duration_ms,
         activity_ms,
-        qualifies_single_listen: lyra_db::playback_sessions::activity_meets_listen_threshold(
+        qualifies_single_listen: crate::services::listens::is_listen(
             activity_ms,
             playback.playback.duration_ms,
         ),

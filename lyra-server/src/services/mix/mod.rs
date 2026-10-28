@@ -742,7 +742,7 @@ fn recent_listen_track_ids(
         )?
         .try_into()?;
 
-    listens.sort_unstable_by_key(|listen| std::cmp::Reverse(listen.listened_at_ms));
+    listens.sort_unstable_by_key(|listen| std::cmp::Reverse(listen.started_at_ms));
     listens.truncate(RECENT_LISTEN_COUNT);
 
     // Resolve through the snapshot, not the listen→track edge.
@@ -1086,10 +1086,6 @@ mod tests {
         },
         genres,
         listens,
-        playback_sessions::{
-            PlaybackSession,
-            PlaybackState,
-        },
         test_db::{
             connect_artist,
             insert_library,
@@ -1605,66 +1601,23 @@ mod tests {
         Ok(user_id)
     }
 
-    fn record_listen(db: &mut DbAny, track_db_id: DbId, user_db_id: DbId) -> anyhow::Result<()> {
-        let track_public_id = lyra_db::lookup::find_id_by_db_id(db, track_db_id)?
-            .ok_or_else(|| anyhow::anyhow!("missing track public id for {track_db_id:?}"))?;
-        let listen = listens::Listen {
-            db_id: None,
-            id: nanoid::nanoid!(),
-            track_public_id,
-            position_ms: 0,
-            duration_ms: Some(180_000),
-            activity_ms: 180_000,
-            state: PlaybackState::Completed,
-            listened_at_ms: 1_000_000,
-            created_at_ms: 1_000_000,
-        };
-        let session = PlaybackSession {
-            db_id: None,
-            id: nanoid::nanoid!(),
-            client_name: None,
-            position_ms: 0,
-            duration_ms: Some(180_000),
-            activity_ms: Some(180_000),
-            last_position_ms: None,
-            state: PlaybackState::Completed,
-            listen_recorded: Some(true),
-            updated_at_ms: 1_000_000,
-            created_at_ms: 1_000_000,
-        };
-        listens::create_and_mark_recorded(db, &listen, track_db_id, user_db_id, &session)
-    }
-
-    fn record_listen_with_stale_snapshot(
+    fn insert_listen_with_snapshot(
         db: &mut DbAny,
         track_db_id: DbId,
         user_db_id: DbId,
+        track_public_id: String,
     ) -> anyhow::Result<()> {
         let listen = listens::Listen {
             db_id: None,
             id: nanoid::nanoid!(),
-            track_public_id: "tr-recycled-original".to_string(),
-            position_ms: 0,
-            duration_ms: Some(180_000),
-            activity_ms: 180_000,
-            state: PlaybackState::Completed,
-            listened_at_ms: 1_000_000,
+            play_id: nanoid::nanoid!(),
+            track_public_id,
+            started_at_ms: 1_000_000,
+            played_ms: 180_000,
             created_at_ms: 1_000_000,
         };
-        let session = PlaybackSession {
-            db_id: None,
-            id: nanoid::nanoid!(),
-            client_name: None,
-            position_ms: 0,
-            duration_ms: Some(180_000),
-            activity_ms: Some(180_000),
-            last_position_ms: None,
-            state: PlaybackState::Completed,
-            listen_recorded: Some(true),
-            updated_at_ms: 1_000_000,
-            created_at_ms: 1_000_000,
-        };
-        listens::create_and_mark_recorded(db, &listen, track_db_id, user_db_id, &session)
+        db.transaction_mut(|t| listens::insert(t, &listen, track_db_id, user_db_id))?;
+        Ok(())
     }
 
     #[test]
@@ -1673,7 +1626,7 @@ mod tests {
         let user_id = insert_user(&mut db)?;
         let track = insert_track(&mut db, "Recycled Track")?;
 
-        record_listen_with_stale_snapshot(&mut db, track, user_id)?;
+        insert_listen_with_snapshot(&mut db, track, user_id, "tr-recycled-original".to_string())?;
 
         let recents = recent_listen_track_ids(&db, user_id, None)?;
         assert!(
@@ -1693,31 +1646,7 @@ mod tests {
         let release_public_id = lyra_db::lookup::find_id_by_db_id(&db, release)?
             .ok_or_else(|| anyhow::anyhow!("release missing public id"))?;
 
-        let listen = listens::Listen {
-            db_id: None,
-            id: nanoid::nanoid!(),
-            track_public_id: release_public_id,
-            position_ms: 0,
-            duration_ms: Some(180_000),
-            activity_ms: 180_000,
-            state: PlaybackState::Completed,
-            listened_at_ms: 1_000_000,
-            created_at_ms: 1_000_000,
-        };
-        let session = PlaybackSession {
-            db_id: None,
-            id: nanoid::nanoid!(),
-            client_name: None,
-            position_ms: 0,
-            duration_ms: Some(180_000),
-            activity_ms: Some(180_000),
-            last_position_ms: None,
-            state: PlaybackState::Completed,
-            listen_recorded: Some(true),
-            updated_at_ms: 1_000_000,
-            created_at_ms: 1_000_000,
-        };
-        listens::create_and_mark_recorded(&mut db, &listen, track, user_id, &session)?;
+        insert_listen_with_snapshot(&mut db, track, user_id, release_public_id)?;
 
         let recents = recent_listen_track_ids(&db, user_id, None)?;
         assert!(
@@ -1736,7 +1665,7 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("library missing public id"))?;
         let track = insert_track(&mut db, "Visible Recent Track")?;
         connect(&mut db, library_id, track)?;
-        record_listen(&mut db, track, user_id)?;
+        lyra_db::fixtures::insert_listen(&mut db, user_id, track, 1_000_000)?;
 
         let hidden = recent_listen_track_ids(&db, user_id, Some(&HashSet::new()))?;
         assert!(
@@ -1764,7 +1693,7 @@ mod tests {
             genres::link_to_release(&mut db, rock_id, release)?;
             let track = insert_track(&mut db, &format!("Heard Track {i}"))?;
             connect(&mut db, release, track)?;
-            record_listen(&mut db, track, user_id)?;
+            lyra_db::fixtures::insert_listen(&mut db, user_id, track, 1_000_000)?;
             heard_track_ids.push(track);
         }
 
@@ -1880,7 +1809,7 @@ mod tests {
         genres::link_to_release(&mut db, rock_id, listened_release)?;
         let listened_track = insert_track(&mut db, "Listened Rock Track")?;
         connect(&mut db, listened_release, listened_track)?;
-        record_listen(&mut db, listened_track, user_id)?;
+        lyra_db::fixtures::insert_listen(&mut db, user_id, listened_track, 1_000_000)?;
 
         // Other Rock tracks in library (should appear in mix)
         let rock_release = insert_release(&mut db, "Other Rock Release")?;

@@ -43,6 +43,7 @@ pub(crate) mod entries;
 pub(crate) mod favorites;
 pub(crate) mod hls;
 pub(crate) mod libraries;
+pub(crate) mod listens;
 pub(crate) mod maintenance;
 pub(crate) mod metadata;
 pub(crate) mod mix;

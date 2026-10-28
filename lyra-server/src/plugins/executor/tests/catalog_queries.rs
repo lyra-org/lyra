@@ -220,38 +220,7 @@ fn catalog() -> Result<Catalog> {
         lyra_db::favorites::FavoriteKind::Track,
         1,
     )?;
-    let bravo_public_id = lyra_db::tracks::get_by_id(&db, tracks["Bravo"])?
-        .context("track exists")?
-        .id;
-    lyra_db::listens::create_and_mark_recorded(
-        &mut db,
-        &lyra_db::listens::Listen {
-            db_id: None,
-            id: nanoid::nanoid!(),
-            track_public_id: bravo_public_id,
-            position_ms: 0,
-            duration_ms: Some(180_000),
-            activity_ms: 180_000,
-            state: lyra_db::PlaybackState::Completed,
-            listened_at_ms: 1_000,
-            created_at_ms: 1_000,
-        },
-        tracks["Bravo"],
-        admin_db_id,
-        &crate::services::playback_sessions::PlaybackSession {
-            db_id: None,
-            id: nanoid::nanoid!(),
-            client_name: None,
-            position_ms: 0,
-            duration_ms: Some(180_000),
-            activity_ms: Some(180_000),
-            last_position_ms: None,
-            state: lyra_db::PlaybackState::Completed,
-            listen_recorded: Some(true),
-            updated_at_ms: 1_000,
-            created_at_ms: 1_000,
-        },
-    )?;
+    lyra_db::fixtures::insert_listen(&mut db, admin_db_id, tracks["Bravo"], 1_000)?;
     let admin = crate::services::auth::Principal::for_user(
         &db,
         admin_db_id,

@@ -415,7 +415,6 @@ mod tests {
         },
         response::IntoResponse,
     };
-    use nanoid::nanoid;
 
     use crate::{
         plugins::testing::init_library_test_state,
@@ -483,41 +482,6 @@ mod tests {
                 },
             )
         })
-    }
-
-    fn record_listen(
-        db: &mut DbAny,
-        user_db_id: DbId,
-        track_db_id: DbId,
-        listened_at_ms: u64,
-    ) -> anyhow::Result<()> {
-        let track = lyra_db::tracks::get_by_id(db, track_db_id)?
-            .ok_or_else(|| anyhow::anyhow!("track missing"))?;
-        let listen = lyra_db::Listen {
-            db_id: None,
-            id: nanoid!(),
-            track_public_id: track.id,
-            position_ms: 0,
-            duration_ms: Some(180_000),
-            activity_ms: 180_000,
-            state: lyra_db::PlaybackState::Completed,
-            listened_at_ms,
-            created_at_ms: listened_at_ms,
-        };
-        let session = lyra_db::PlaybackSession {
-            db_id: None,
-            id: nanoid!(),
-            client_name: None,
-            position_ms: 0,
-            duration_ms: Some(180_000),
-            activity_ms: Some(180_000),
-            last_position_ms: None,
-            state: lyra_db::PlaybackState::Completed,
-            listen_recorded: Some(true),
-            updated_at_ms: listened_at_ms,
-            created_at_ms: listened_at_ms,
-        };
-        lyra_db::listens::create_and_mark_recorded(db, &listen, track_db_id, user_db_id, &session)
     }
 
     #[test]
@@ -996,9 +960,9 @@ mod tests {
             insert_cover_for_release(&mut db, release_a, "genre-personal-a")?;
             let expected_cover_id =
                 insert_cover_for_release(&mut db, release_b, "genre-personal-b")?.id;
-            record_listen(&mut db, user_db_id, track_b, 1_000)?;
-            record_listen(&mut db, user_db_id, track_b, 2_000)?;
-            record_listen(&mut db, user_db_id, track_b, 3_000)?;
+            lyra_db::fixtures::insert_listen(&mut db, user_db_id, track_b, 1_000)?;
+            lyra_db::fixtures::insert_listen(&mut db, user_db_id, track_b, 2_000)?;
+            lyra_db::fixtures::insert_listen(&mut db, user_db_id, track_b, 3_000)?;
             (user_db_id, expected_cover_id)
         };
         let headers = create_headers_for_user(user_db_id).await?;
@@ -1064,7 +1028,7 @@ mod tests {
                     &lyra_db::fixtures::test_user(&format!("genre-instance-listener-{user_idx}"))?,
                 )?;
                 for listen_idx in 0..4 {
-                    record_listen(
+                    lyra_db::fixtures::insert_listen(
                         &mut db,
                         user_db_id,
                         track_b,
@@ -1187,38 +1151,6 @@ mod benches {
         viewer: catalog::Viewer,
     }
 
-    fn record_listen(db: &mut DbAny, user_db_id: DbId, track_db_id: DbId, listened_at_ms: u64) {
-        let track = lyra_db::tracks::get_by_id(db, track_db_id)
-            .unwrap()
-            .expect("track exists");
-        let listen = lyra_db::Listen {
-            db_id: None,
-            id: nanoid!(),
-            track_public_id: track.id,
-            position_ms: 0,
-            duration_ms: Some(180_000),
-            activity_ms: 180_000,
-            state: lyra_db::PlaybackState::Completed,
-            listened_at_ms,
-            created_at_ms: listened_at_ms,
-        };
-        let session = lyra_db::PlaybackSession {
-            db_id: None,
-            id: nanoid!(),
-            client_name: None,
-            position_ms: 0,
-            duration_ms: Some(180_000),
-            activity_ms: Some(180_000),
-            last_position_ms: None,
-            state: lyra_db::PlaybackState::Completed,
-            listen_recorded: Some(true),
-            updated_at_ms: listened_at_ms,
-            created_at_ms: listened_at_ms,
-        };
-        lyra_db::listens::create_and_mark_recorded(db, &listen, track_db_id, user_db_id, &session)
-            .unwrap();
-    }
-
     fn seed_genre_sort_bench(
         genre_count: usize,
         releases_per_genre: usize,
@@ -1251,7 +1183,7 @@ mod benches {
                     )
                     .unwrap();
                     for listen_idx in 0..listens_per_track {
-                        record_listen(
+                        lyra_db::fixtures::insert_listen(
                             &mut db,
                             user_db_id,
                             track_db_id,
@@ -1260,7 +1192,8 @@ mod benches {
                                 + track_idx
                                 + listen_idx) as u64
                                 * 1_000,
-                        );
+                        )
+                        .unwrap();
                     }
                     connect(&mut db, release_db_id, track_db_id).unwrap();
                 }

@@ -292,22 +292,17 @@ fn listen_for_playback(
     }
 
     let activity_ms = playback_activity_ms(&playback_record.playback);
-    if !lyra_db::playback_sessions::activity_meets_listen_threshold(
-        activity_ms,
-        playback_record.playback.duration_ms,
-    ) {
+    if !crate::services::listens::is_listen(activity_ms, playback_record.playback.duration_ms) {
         return None;
     }
 
     let listen = lyra_db::Listen {
         db_id: None,
         id: nanoid!(),
+        play_id: nanoid!(),
         track_public_id: playback_record.track_public_id.clone(),
-        position_ms: playback_record.playback.position_ms,
-        duration_ms: playback_record.playback.duration_ms,
-        activity_ms,
-        state: playback_record.playback.state,
-        listened_at_ms: now_ms,
+        started_at_ms: playback_record.playback.created_at_ms,
+        played_ms: activity_ms,
         created_at_ms: now_ms,
     };
     let mut playback_session = playback_record.playback.clone();
@@ -323,13 +318,9 @@ pub(crate) fn maybe_record_listen(
     let Some((listen, playback_session)) = listen_for_playback(playback_record, now_ms) else {
         return Ok(());
     };
-    map_internal(lyra_db::listens::create_and_mark_recorded(
-        db,
-        &listen,
-        playback_record.track_db_id,
-        playback_record.user_db_id,
-        &playback_session,
-    ))?;
+    map_internal(db.transaction_mut(|t| {
+        insert_listen_and_mark_recorded(t, playback_record, &listen, &playback_session)
+    }))?;
     playback_record.playback = playback_session;
 
     Ok(())
@@ -343,16 +334,30 @@ fn maybe_record_listen_in_transaction(
     let Some((listen, playback_session)) = listen_for_playback(playback_record, now_ms) else {
         return Ok(());
     };
-    map_internal(lyra_db::listens::insert_and_mark_recorded(
+    map_internal(insert_listen_and_mark_recorded(
         db,
+        playback_record,
         &listen,
-        playback_record.track_db_id,
-        playback_record.user_db_id,
         &playback_session,
     ))?;
     playback_record.playback = playback_session;
 
     Ok(())
+}
+
+fn insert_listen_and_mark_recorded(
+    db: &mut impl lyra_db::DbAccess,
+    playback_record: &PlaybackRecord,
+    listen: &lyra_db::Listen,
+    playback_session: &PlaybackSession,
+) -> anyhow::Result<()> {
+    lyra_db::listens::insert(
+        db,
+        listen,
+        playback_record.track_db_id,
+        playback_record.user_db_id,
+    )?;
+    lyra_db::playback_sessions::update(db, playback_session)
 }
 
 pub(crate) fn collect_unique_track_external_id_keys(
@@ -443,11 +448,17 @@ pub(crate) fn cleanup_evicted_playbacks(
 ) -> ServiceResult<Vec<EvictedPlaybackRecord>> {
     sessions::cleanup_stale_scopes(now_ms, ACTIVE_SESSION_TTL_MS);
     let active_session_cutoff_ms = now_ms.saturating_sub(ACTIVE_SESSION_TTL_MS);
-    let evicted_playbacks = map_internal(lyra_db::playback_sessions::evict_low_activity(
+    let evicted_playbacks = map_internal(lyra_db::playback_sessions::evict_stale(
         db,
         now_ms,
-        |playback_session_id| {
-            sessions::has_active_scope_for_playback(playback_session_id, active_session_cutoff_ms)
+        |playback_session_id, playback_session| {
+            crate::services::listens::is_listen(
+                playback_activity_ms(playback_session),
+                playback_session.duration_ms,
+            ) || sessions::has_active_scope_for_playback(
+                playback_session_id,
+                active_session_cutoff_ms,
+            )
         },
     ))?;
     clear_session_bindings_for_playbacks(&evicted_playbacks);
@@ -541,7 +552,7 @@ pub(crate) fn apply_playback_mutation(
     let mut last_position_ms = playback.last_position_ms.unwrap_or(playback.position_ms);
     let mut listen_recorded = playback.listen_recorded;
     if mutation.position_ms.is_some() {
-        let listen_threshold_ms = lyra_db::playback_sessions::min_required_activity_ms(duration_ms);
+        let listen_threshold_ms = crate::services::listens::min_played_ms(duration_ms);
         if listen_recorded.unwrap_or(false)
             && !state.is_terminal()
             && position_ms <= RESTART_POSITION_MS

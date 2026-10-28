@@ -135,6 +135,7 @@ const CORE_INDEXES: &[&str] = &[
     "token_hash",
     "identity",
     "id_value",
+    "play_id",
 ];
 
 pub fn open(kind: DbKind, db_path: &str) -> anyhow::Result<DbAny> {

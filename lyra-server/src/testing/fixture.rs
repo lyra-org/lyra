@@ -592,7 +592,7 @@ impl Fixture {
 
         for listen in &self.listens {
             let (track_db_id, _) = keys.entity(&listen.track)?;
-            record_listen(db, track_db_id, keys.user(&listen.user)?)?;
+            lyra_db::fixtures::insert_listen(db, keys.user(&listen.user)?, track_db_id, 1_000)?;
         }
 
         for favorite in &self.favorites {
@@ -658,43 +658,6 @@ fn supply_credits(
     for (credit_type, inputs) in by_role {
         layer.supply_credits(credit_type, inputs);
     }
-    Ok(())
-}
-
-/// A completed listen of the whole track.
-fn record_listen(db: &mut DbAny, track_db_id: DbId, user_db_id: DbId) -> anyhow::Result<()> {
-    let track_public_id = lyra_db::tracks::get_by_id(db, track_db_id)?
-        .context("track exists")?
-        .id;
-    lyra_db::listens::create_and_mark_recorded(
-        db,
-        &lyra_db::listens::Listen {
-            db_id: None,
-            id: nanoid::nanoid!(),
-            track_public_id,
-            position_ms: 0,
-            duration_ms: Some(180_000),
-            activity_ms: 180_000,
-            state: lyra_db::PlaybackState::Completed,
-            listened_at_ms: 1_000,
-            created_at_ms: 1_000,
-        },
-        track_db_id,
-        user_db_id,
-        &lyra_db::playback_sessions::PlaybackSession {
-            db_id: None,
-            id: nanoid::nanoid!(),
-            client_name: None,
-            position_ms: 0,
-            duration_ms: Some(180_000),
-            activity_ms: Some(180_000),
-            last_position_ms: None,
-            state: lyra_db::PlaybackState::Completed,
-            listen_recorded: Some(true),
-            updated_at_ms: 1_000,
-            created_at_ms: 1_000,
-        },
-    )?;
     Ok(())
 }
 
