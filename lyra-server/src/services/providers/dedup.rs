@@ -18,6 +18,7 @@ use agdb::{
 };
 
 use crate::services::metadata::id_links::{
+    DeclaredIds,
     LinkedIds,
     provider_ranks,
 };
@@ -165,11 +166,11 @@ fn collect_track_unique_ids(
 pub(super) fn deduplicate_releases_by_external_id(
     db: &mut DbAny,
     library_db_id: DbId,
-    unique_release_id_pairs: &HashSet<(String, String)>,
+    declared: &DeclaredIds,
     unique_track_id_pairs: &HashSet<(String, String)>,
     provider_scope: Option<&HashSet<String>>,
 ) -> anyhow::Result<u32> {
-    if unique_release_id_pairs.is_empty() {
+    if !declared.has_unique() {
         return Ok(0);
     }
 
@@ -180,22 +181,10 @@ pub(super) fn deduplicate_releases_by_external_id(
             continue;
         };
         for external_id in lyra_db::external_ids::get_for_entity(db, release_db_id)? {
-            if !unique_release_id_pairs
-                .contains(&(external_id.provider_id.clone(), external_id.id_type.clone()))
-            {
-                continue;
-            }
             // Every provider's IDs keep conflicting releases apart, in scope or not.
             let in_scope =
                 provider_scope.is_none_or(|scope| scope.contains(&external_id.provider_id));
-            linked.add(
-                release_db_id,
-                &external_id.provider_id,
-                &external_id.id_type,
-                &external_id.id_value,
-                external_id.source,
-                in_scope,
-            );
+            linked.add_external_id(release_db_id, &external_id, declared, in_scope);
         }
     }
 

@@ -9,6 +9,7 @@ use std::collections::{
     BTreeMap,
     BTreeSet,
     HashMap,
+    HashSet,
 };
 use std::fmt;
 
@@ -17,6 +18,7 @@ use agdb::{
     DbId,
 };
 use lyra_db::IdSource;
+use lyra_db::external_ids::ExternalId;
 
 use crate::services::providers::active_providers;
 
@@ -56,13 +58,65 @@ impl IdValues {
     }
 
     /// Whether these values and `other` name different entities, so the
-    /// entities holding them cannot be one. Differing manual values always
-    /// conflict; any others only when `blocks` says their provider may.
+    /// entities holding them cannot be one. Differing manual values, or a
+    /// manual value that is none of the other side's values, always
+    /// conflict; resolved values only when `blocks` says their provider may.
     fn conflicts_with(&self, other: &IdValues, blocks: bool) -> bool {
-        let manual_conflict = !self.manual.is_empty()
+        let overrules = |own: &IdValues, other: &IdValues| {
+            !own.manual.is_empty() && own.manual.is_disjoint(&other.values)
+        };
+        let manual_differs = !self.manual.is_empty()
             && !other.manual.is_empty()
             && self.manual.is_disjoint(&other.manual);
-        manual_conflict || (blocks && self.values.is_disjoint(&other.values))
+        manual_differs
+            || overrules(self, other)
+            || overrules(other, self)
+            || (blocks && self.values.is_disjoint(&other.values))
+    }
+}
+
+/// The `(provider_id, id_type)` pairs the loaded providers declare for one
+/// entity type.
+#[derive(Default)]
+pub(crate) struct DeclaredIds {
+    /// The pairs whose value names exactly one entity.
+    unique: HashSet<(String, String)>,
+    /// Every declared pair, unique or not.
+    all: HashSet<(String, String)>,
+}
+
+impl DeclaredIds {
+    pub(crate) fn new(unique: HashSet<(String, String)>, all: HashSet<(String, String)>) -> Self {
+        let all = all.union(&unique).cloned().collect();
+        Self { unique, all }
+    }
+
+    /// Only `pairs`, each declared unique.
+    #[cfg(test)]
+    pub(crate) fn unique<'a>(pairs: impl IntoIterator<Item = (&'a str, &'a str)>) -> Self {
+        let unique: HashSet<(String, String)> = pairs
+            .into_iter()
+            .map(|(provider_id, id_type)| (provider_id.to_string(), id_type.to_string()))
+            .collect();
+        Self::new(unique, HashSet::new())
+    }
+
+    /// These pairs and `pairs`, declared but not unique.
+    #[cfg(test)]
+    pub(crate) fn and_non_unique<'a>(
+        mut self,
+        pairs: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> Self {
+        self.all.extend(
+            pairs
+                .into_iter()
+                .map(|(provider_id, id_type)| (provider_id.to_string(), id_type.to_string())),
+        );
+        self
+    }
+
+    pub(crate) fn has_unique(&self) -> bool {
+        !self.unique.is_empty()
     }
 }
 
@@ -115,11 +169,38 @@ impl LinkedIds {
         }
     }
 
+    /// Records `external_id` when it tells which entity holds it: a value of a
+    /// unique pair, which links when `links` is set, or a manual value of a
+    /// pair no loaded provider declares. That provider may only be missing,
+    /// so its manual value keeps entities apart but links none.
+    pub(crate) fn add_external_id(
+        &mut self,
+        entity: DbId,
+        external_id: &ExternalId,
+        declared: &DeclaredIds,
+        links: bool,
+    ) {
+        let pair = (external_id.provider_id.clone(), external_id.id_type.clone());
+        let unique = declared.unique.contains(&pair);
+        if !unique && (external_id.source != IdSource::Manual || declared.all.contains(&pair)) {
+            return;
+        }
+        self.add(
+            entity,
+            &external_id.provider_id,
+            &external_id.id_type,
+            &external_id.id_value,
+            external_id.source,
+            unique && links,
+        );
+    }
+
     /// Joins the entities that share an ID into components, so each component
     /// picks one winner however its IDs are ordered. A join is skipped when
     /// the two sides share no value from a provider ranked at or above
-    /// the linking one, or hold differing manual values of any provider: a
-    /// merge cannot be undone, while a missed one leaves a visible duplicate.
+    /// the linking one, or when a manual value on one side is none of the
+    /// other's values of its type: a merge cannot be undone, while a missed
+    /// one leaves a visible duplicate.
     /// A lower-ranked provider's value gives way, as a merge's loser's IDs do.
     /// Single-member components are left out.
     pub(crate) fn components(&self, ranks: &ProviderRanks) -> Vec<LinkedComponent<'_>> {
@@ -312,12 +393,94 @@ mod tests {
             "differing manual values outrank the linking provider"
         );
         assert!(
-            joined(&pair(IdSource::Manual, IdSource::Resolved), &ranks),
-            "a manual value against a resolved one keeps the rank rules"
+            !joined(&pair(IdSource::Manual, IdSource::Resolved), &ranks),
+            "as does a manual value against a resolved one"
         );
         assert!(
             joined(&pair(IdSource::Resolved, IdSource::Resolved), &ranks),
-            "as do two resolved values"
+            "two resolved values keep the rank rules"
+        );
+    }
+
+    #[test]
+    fn differing_manual_values_block_components_that_gathered_both() {
+        let ranks = ProviderRanks::from([("top".to_string(), 0)]);
+        let mut links = LinkedIds::default();
+        for (entities, link, pinned) in [
+            ([DbId(1), DbId(2), DbId(3)], "first", "x"),
+            ([DbId(4), DbId(5), DbId(6)], "second", "y"),
+        ] {
+            for (entity, value, source) in [
+                (entities[0], "x", IdSource::Resolved),
+                (entities[1], "y", IdSource::Resolved),
+                (entities[2], pinned, IdSource::Manual),
+            ] {
+                links.add(entity, "low", "id", link, IdSource::Resolved, true);
+                links.add(entity, "pinned", "id", value, source, false);
+            }
+            links.add(entities[0], "top", "id", "shared", IdSource::Resolved, true);
+        }
+
+        let components = links.components(&ranks);
+        let ids: Vec<_> = components.iter().map(|c| c.ids.clone()).collect();
+        assert_eq!(
+            ids,
+            [
+                vec![DbId(1), DbId(2), DbId(3)],
+                vec![DbId(4), DbId(5), DbId(6)]
+            ]
+        );
+    }
+
+    #[test]
+    fn only_unique_ids_and_undeclared_manual_ones_are_recorded() {
+        let declared = DeclaredIds::unique([("link", "id")]).and_non_unique([("declared", "id")]);
+        let external_id = |provider_id: &str, value: &str, source| ExternalId {
+            db_id: None,
+            provider_id: provider_id.to_string(),
+            id_type: "id".to_string(),
+            id_value: value.to_string(),
+            source,
+            resolved_value: None,
+        };
+        let pair = |provider_id: &str, source| {
+            let mut links = LinkedIds::default();
+            for (entity, value) in [(DbId(1), "one"), (DbId(2), "two")] {
+                for id in [
+                    external_id("link", "shared", IdSource::Resolved),
+                    external_id(provider_id, value, source),
+                ] {
+                    links.add_external_id(entity, &id, &declared, true);
+                }
+            }
+            links
+        };
+        let ranks = ProviderRanks::new();
+
+        assert!(
+            !joined(&pair("undeclared", IdSource::Manual), &ranks),
+            "an undeclared provider's manual values keep entities apart"
+        );
+        assert!(
+            joined(&pair("undeclared", IdSource::Resolved), &ranks),
+            "its resolved ones say nothing"
+        );
+        assert!(
+            joined(&pair("declared", IdSource::Manual), &ranks),
+            "nor do a non-unique type's manual ones"
+        );
+        let mut undeclared_shared = LinkedIds::default();
+        for entity in [DbId(1), DbId(2)] {
+            undeclared_shared.add_external_id(
+                entity,
+                &external_id("undeclared", "shared", IdSource::Manual),
+                &declared,
+                true,
+            );
+        }
+        assert!(
+            !joined(&undeclared_shared, &ranks),
+            "an undeclared value never links"
         );
     }
 

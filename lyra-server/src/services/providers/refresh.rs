@@ -55,10 +55,10 @@ use crate::{
         providers::{
             ProviderCallStage,
             ProviderCallbackHandle,
+            declared_artist_ids,
             id_schemes,
             library_refresh_locks,
             provider_registry,
-            unique_artist_id_pairs,
             with_provider_call,
         },
     },
@@ -371,10 +371,9 @@ async fn refresh_release_metadata_inner_with_progress(
             }
         }
 
-        let unique_artist_id_pairs = unique_artist_id_pairs().await;
+        let declared_artist_ids = declared_artist_ids().await;
         let mut db_write = STATE.db.write().await;
-        if let Err(err) = deduplicate_artists_by_external_id(&mut db_write, &unique_artist_id_pairs)
-        {
+        if let Err(err) = deduplicate_artists_by_external_id(&mut db_write, &declared_artist_ids) {
             tracing::warn!(
                 provider_id,
                 release_db_id = release_id.0,
@@ -554,10 +553,9 @@ async fn refresh_library_metadata_inner_with_progress(
             continue;
         }
 
-        let unique_artist_id_pairs = unique_artist_id_pairs().await;
+        let declared_artist_ids = declared_artist_ids().await;
         let mut db_write = STATE.db.write().await;
-        if let Err(err) = deduplicate_artists_by_external_id(&mut db_write, &unique_artist_id_pairs)
-        {
+        if let Err(err) = deduplicate_artists_by_external_id(&mut db_write, &declared_artist_ids) {
             tracing::warn!(
                 provider_id,
                 error = %err,
@@ -904,20 +902,20 @@ fn deduplicate_release_scope_locked(
     library_db_id: DbId,
     provider_scope: &HashSet<String>,
 ) {
-    let (unique_release_id_pairs, unique_track_id_pairs) = {
+    let (declared_release_ids, unique_track_id_pairs) = {
         let registry = futures::executor::block_on(provider_registry().read_owned());
         (
-            registry.unique_id_pairs(EntityType::Release),
+            registry.declared_ids(EntityType::Release),
             registry.unique_track_id_pairs(),
         )
     };
-    if unique_release_id_pairs.is_empty() {
+    if !declared_release_ids.has_unique() {
         return;
     }
     if let Err(err) = deduplicate_releases_by_external_id(
         db_write,
         library_db_id,
-        &unique_release_id_pairs,
+        &declared_release_ids,
         &unique_track_id_pairs,
         Some(provider_scope),
     ) {

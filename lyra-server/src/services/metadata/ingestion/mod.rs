@@ -1656,7 +1656,10 @@ mod tests {
         assert_eq!(
             crate::services::metadata::cleanup::deduplicate_artists_by_external_id(
                 &mut db,
-                &HashSet::from([("musicbrainz".to_string(), "artist_id".to_string())]),
+                &crate::services::metadata::id_links::DeclaredIds::unique([(
+                    "musicbrainz",
+                    "artist_id"
+                )]),
             )?,
             1
         );
@@ -1713,7 +1716,10 @@ mod tests {
         }
         crate::services::metadata::cleanup::deduplicate_artists_by_external_id(
             &mut db,
-            &HashSet::from([("musicbrainz".to_string(), "artist_id".to_string())]),
+            &crate::services::metadata::id_links::DeclaredIds::unique([(
+                "musicbrainz",
+                "artist_id",
+            )]),
         )?;
 
         let local_name = |db: &DbAny| -> anyhow::Result<Option<Option<FieldValue>>> {

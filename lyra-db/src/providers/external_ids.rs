@@ -406,26 +406,33 @@ pub(crate) fn upsert_inside_tx(
 /// Merges `external_id`, a merged duplicate's, into `node_id`'s value of its
 /// type. `node_id`'s values win, except that a manual value takes effect over
 /// a resolved one, keeping it beneath, and a resolved value fills in where
-/// `node_id` has none. Empty values say nothing.
+/// `node_id` has none. Empty values say nothing, on either side.
 pub fn merge_inside_tx(
     db: &mut impl DbAccess,
     node_id: DbId,
     external_id: &ExternalId,
 ) -> anyhow::Result<()> {
-    if external_id.id_value.trim().is_empty() {
-        return Ok(());
+    fn present(value: &str) -> Option<&str> {
+        (!value.trim().is_empty()).then_some(value)
     }
+
     let ExternalId {
         provider_id,
         id_type,
         ..
     } = external_id;
     let existing = get_inside_tx(db, node_id, provider_id, id_type)?;
-
-    if existing
+    let existing_resolved = existing
         .as_ref()
-        .is_none_or(|existing| existing.resolved_value().is_none())
-        && let Some(resolved_value) = external_id.resolved_value()
+        .and_then(ExternalId::resolved_value)
+        .and_then(present);
+    let existing_manual = existing
+        .as_ref()
+        .filter(|existing| existing.source == IdSource::Manual)
+        .and_then(|existing| present(&existing.id_value));
+
+    if existing_resolved.is_none()
+        && let Some(resolved_value) = external_id.resolved_value().and_then(present)
     {
         upsert_inside_tx(
             db,
@@ -436,23 +443,23 @@ pub fn merge_inside_tx(
             IdSource::Resolved,
         )?;
     }
-    if external_id.source != IdSource::Manual {
+    if external_id.source != IdSource::Manual || present(&external_id.id_value).is_none() {
         return Ok(());
     }
-    match existing {
-        Some(existing) if existing.source == IdSource::Manual => {
-            if existing.id_value != external_id.id_value {
+    match existing_manual {
+        Some(kept) => {
+            if kept != external_id.id_value {
                 tracing::warn!(
                     node_id = node_id.0,
                     provider_id = %provider_id,
                     id_type = %id_type,
-                    kept = %existing.id_value,
+                    kept = %kept,
                     dropped = %external_id.id_value,
                     "dropping a merged duplicate's differing manual external id"
                 );
             }
         }
-        _ => {
+        None => {
             upsert_inside_tx(
                 db,
                 node_id,
@@ -894,7 +901,7 @@ mod tests {
             Value,
             Option<&'static str>,
         );
-        let cases: [Case; 5] = [
+        let cases: [Case; 8] = [
             (
                 &[("kept", IdSource::Resolved)],
                 &[("merged", IdSource::Resolved)],
@@ -930,6 +937,27 @@ mod tests {
                 &[("merged", IdSource::Manual)],
                 ("pinned", IdSource::Manual),
                 Some("kept"),
+            ),
+            (
+                &[("kept", IdSource::Resolved), (" ", IdSource::Manual)],
+                &[("merged", IdSource::Manual)],
+                ("merged", IdSource::Manual),
+                Some("kept"),
+            ),
+            (
+                &[(" ", IdSource::Resolved)],
+                &[("merged", IdSource::Resolved)],
+                ("merged", IdSource::Resolved),
+                Some("merged"),
+            ),
+            (
+                &[(" ", IdSource::Resolved)],
+                &[
+                    ("beneath", IdSource::Resolved),
+                    ("merged", IdSource::Manual),
+                ],
+                ("merged", IdSource::Manual),
+                Some("beneath"),
             ),
         ];
         for (into_values, merged_values, (effective, source), resolved) in cases {

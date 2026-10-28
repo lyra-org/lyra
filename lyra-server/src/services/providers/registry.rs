@@ -31,6 +31,7 @@ use super::links::{
 };
 use super::schemes::IdSchemes;
 use crate::services::EntityType;
+use crate::services::metadata::id_links::DeclaredIds;
 use crate::services::metadata::layers::{
     LOCAL_SOURCE_ID,
     MANUAL_SOURCE_ID,
@@ -81,11 +82,11 @@ pub(crate) async fn id_schemes() -> Arc<IdSchemes> {
     provider_registry().read().await.id_schemes()
 }
 
-pub(crate) async fn unique_artist_id_pairs() -> HashSet<(String, String)> {
+pub(crate) async fn declared_artist_ids() -> DeclaredIds {
     provider_registry()
         .read()
         .await
-        .unique_id_pairs(EntityType::Artist)
+        .declared_ids(EntityType::Artist)
 }
 
 pub(crate) fn sync_locks() -> Arc<tokio::sync::Mutex<HashSet<String>>> {
@@ -465,6 +466,10 @@ impl ProviderRegistry {
             }
         }
         pairs
+    }
+
+    pub(crate) fn declared_ids(&self, entity: EntityType) -> DeclaredIds {
+        DeclaredIds::new(self.unique_id_pairs(entity), self.id_pairs(entity))
     }
 
     pub(crate) fn id_pairs(&self, entity: EntityType) -> HashSet<(String, String)> {

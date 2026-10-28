@@ -18,6 +18,7 @@ use agdb::{
 };
 
 use super::id_links::{
+    DeclaredIds,
     LinkedIds,
     provider_ranks,
 };
@@ -278,9 +279,9 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
 /// `(provider_id, id_type)` pairs declared unique link or keep artists apart.
 pub(crate) fn deduplicate_artists_by_external_id(
     db: &mut DbAny,
-    unique_artist_id_pairs: &HashSet<(String, String)>,
+    declared: &DeclaredIds,
 ) -> anyhow::Result<u32> {
-    if unique_artist_id_pairs.is_empty() {
+    if !declared.has_unique() {
         return Ok(0);
     }
 
@@ -302,18 +303,7 @@ pub(crate) fn deduplicate_artists_by_external_id(
         };
         artist_lookup.insert(artist_db_id, artist.clone());
         for ext_id in lyra_db::external_ids::get_for_entity(db, artist_db_id)? {
-            if unique_artist_id_pairs
-                .contains(&(ext_id.provider_id.clone(), ext_id.id_type.clone()))
-            {
-                linked.add(
-                    artist_db_id,
-                    &ext_id.provider_id,
-                    &ext_id.id_type,
-                    &ext_id.id_value,
-                    ext_id.source,
-                    true,
-                );
-            }
+            linked.add_external_id(artist_db_id, &ext_id, declared, true);
         }
     }
 
@@ -565,11 +555,11 @@ mod tests {
     };
 
     /// Each test provider's `artist_id`, declared unique.
-    fn unique_artist_ids() -> HashSet<(String, String)> {
-        ["musicbrainz", "provider-a", "provider-b"]
-            .into_iter()
-            .map(|provider_id| (provider_id.to_string(), "artist_id".to_string()))
-            .collect()
+    fn unique_artist_ids() -> DeclaredIds {
+        DeclaredIds::unique(
+            ["musicbrainz", "provider-a", "provider-b"]
+                .map(|provider_id| (provider_id, "artist_id")),
+        )
     }
 
     /// Two artists of one name that share `provider_id`'s `id_type`, deduplicated
@@ -587,16 +577,27 @@ mod tests {
                 IdSource::Resolved,
             )?;
         }
-        let unique = HashSet::from([("strict".to_string(), "artist".to_string())]);
-        deduplicate_artists_by_external_id(&mut db, &unique)
+        deduplicate_artists_by_external_id(&mut db, &DeclaredIds::unique([("strict", "artist")]))
     }
 
     type HeldId = (&'static str, &'static str, IdSource);
+
+    /// MusicBrainz's and `provider-a`'s `artist_id`, both unique.
+    fn musicbrainz_unique() -> DeclaredIds {
+        DeclaredIds::unique([("musicbrainz", "artist_id"), ("provider-a", "artist_id")])
+    }
+
+    /// Only `provider-a`'s `artist_id`, unique, as when MusicBrainz's plugin is
+    /// not loaded.
+    fn musicbrainz_unloaded() -> DeclaredIds {
+        DeclaredIds::unique([("provider-a", "artist_id")])
+    }
 
     /// A credited winner and a loser that hold `artist_id`s, written in order,
     /// deduplicated with no provider ranked. Returns the winner and the number
     /// merged.
     fn dedup_artists_holding(
+        declared: &DeclaredIds,
         winner_ids: &[HeldId],
         loser_ids: &[HeldId],
     ) -> anyhow::Result<(DbAny, DbId, u32)> {
@@ -617,7 +618,7 @@ mod tests {
                 )?;
             }
         }
-        let merged = deduplicate_artists_by_external_id(&mut db, &unique_artist_ids())?;
+        let merged = deduplicate_artists_by_external_id(&mut db, declared)?;
         Ok((db, winner, merged))
     }
 
@@ -635,6 +636,7 @@ mod tests {
     #[test]
     fn a_losers_manual_id_stays_manual_on_the_winner() -> anyhow::Result<()> {
         let (db, winner, merged) = dedup_artists_holding(
+            &musicbrainz_unique(),
             &[("musicbrainz", "mbid-1", IdSource::Resolved)],
             &[
                 ("musicbrainz", "mbid-1", IdSource::Resolved),
@@ -650,30 +652,70 @@ mod tests {
     }
 
     #[test]
-    fn a_losers_manual_id_overrides_the_winners_resolved_one() -> anyhow::Result<()> {
-        let (db, winner, merged) = dedup_artists_holding(
-            &[
+    fn a_manual_id_keeps_artists_apart_from_a_differing_one() -> anyhow::Result<()> {
+        let mixed = (
+            [
                 ("musicbrainz", "mbid-1", IdSource::Resolved),
                 ("provider-a", "shared", IdSource::Resolved),
             ],
-            &[
-                ("musicbrainz", "mbid-1", IdSource::Resolved),
+            [
                 ("musicbrainz", "mbid-2", IdSource::Manual),
                 ("provider-a", "shared", IdSource::Resolved),
             ],
-        )?;
-        assert_eq!(merged, 1);
-        assert_eq!(
-            musicbrainz_id(&db, winner)?,
-            ("mbid-2".into(), IdSource::Manual, Some("mbid-1".into())),
-            "the winner's resolved value stays beneath"
         );
+        let manual = (
+            [
+                ("musicbrainz", "mbid-1", IdSource::Manual),
+                ("provider-a", "shared", IdSource::Resolved),
+            ],
+            mixed.1,
+        );
+        for (declared, (winner_ids, loser_ids)) in [
+            (musicbrainz_unique(), mixed),
+            (musicbrainz_unique(), manual),
+            (musicbrainz_unloaded(), manual),
+        ] {
+            let (_, _, merged) = dedup_artists_holding(&declared, &winner_ids, &loser_ids)?;
+            assert_eq!(merged, 0, "{winner_ids:?} / {loser_ids:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_losers_manual_id_of_a_non_unique_type_overrides_the_winners() -> anyhow::Result<()> {
+        let declared = musicbrainz_unloaded().and_non_unique([("musicbrainz", "artist_id")]);
+        for (winner_source, expected) in [
+            (
+                IdSource::Resolved,
+                ("mbid-2".into(), IdSource::Manual, Some("mbid-1".into())),
+            ),
+            (IdSource::Manual, ("mbid-1".into(), IdSource::Manual, None)),
+        ] {
+            let (db, winner, merged) = dedup_artists_holding(
+                &declared,
+                &[
+                    ("musicbrainz", "mbid-1", winner_source),
+                    ("provider-a", "shared", IdSource::Resolved),
+                ],
+                &[
+                    ("musicbrainz", "mbid-2", IdSource::Manual),
+                    ("provider-a", "shared", IdSource::Resolved),
+                ],
+            )?;
+            assert_eq!(merged, 1);
+            assert_eq!(
+                musicbrainz_id(&db, winner)?,
+                expected,
+                "only a resolved value gives way"
+            );
+        }
         Ok(())
     }
 
     #[test]
     fn a_losers_resolved_id_beneath_its_manual_one_carries_over() -> anyhow::Result<()> {
         let (db, winner, merged) = dedup_artists_holding(
+            &musicbrainz_unique(),
             &[("provider-a", "shared", IdSource::Resolved)],
             &[
                 ("musicbrainz", "mbid-1", IdSource::Resolved),
@@ -686,22 +728,6 @@ mod tests {
             musicbrainz_id(&db, winner)?,
             ("mbid-2".into(), IdSource::Manual, Some("mbid-1".into()))
         );
-        Ok(())
-    }
-
-    #[test]
-    fn differing_manual_ids_keep_artists_apart() -> anyhow::Result<()> {
-        let (_, _, merged) = dedup_artists_holding(
-            &[
-                ("musicbrainz", "mbid-1", IdSource::Manual),
-                ("provider-a", "shared", IdSource::Resolved),
-            ],
-            &[
-                ("musicbrainz", "mbid-2", IdSource::Manual),
-                ("provider-a", "shared", IdSource::Resolved),
-            ],
-        )?;
-        assert_eq!(merged, 0);
         Ok(())
     }
 

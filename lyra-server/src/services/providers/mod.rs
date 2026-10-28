@@ -143,13 +143,13 @@ pub(crate) use registry::{
     ProviderRegistries,
     ProviderRequireSpec,
     ProviderSimilarReleasesSpec,
+    declared_artist_ids,
     id_schemes,
     library_refresh_locks,
     lyrics_in_flight,
     provider_registry,
     sync_locks,
     teardown_plugin_providers,
-    unique_artist_id_pairs,
     with_provider_call,
 };
 pub(crate) use requirements::{
@@ -203,6 +203,7 @@ pub(crate) enum EntityRefreshMode {
 mod tests {
     use super::dedup::deduplicate_releases_by_external_id;
     use super::refresh::resolve_library_id_for_entity;
+    use crate::services::metadata::id_links::DeclaredIds;
     use agdb::{
         DbAny,
         DbId,
@@ -346,7 +347,7 @@ mod tests {
             IdSource::Resolved,
         )?;
 
-        let unique_pairs = HashSet::from([("musicbrainz".to_string(), "release_id".to_string())]);
+        let unique_pairs = DeclaredIds::unique([("musicbrainz", "release_id")]);
         let merged = deduplicate_releases_by_external_id(
             &mut db,
             library_db_id,
@@ -368,6 +369,7 @@ mod tests {
     /// deduplicated with no provider ranked. Returns the winner and the
     /// number merged.
     fn dedup_releases_holding(
+        declared: &DeclaredIds,
         winner_ids: &[(&str, &str, IdSource)],
         loser_ids: &[(&str, &str, IdSource)],
     ) -> anyhow::Result<(DbAny, DbId, u32)> {
@@ -382,13 +384,10 @@ mod tests {
             }
             releases.push(release);
         }
-        let unique_pairs = ["musicbrainz", "provider-a"]
-            .map(|provider_id| (provider_id.to_string(), "release_id".to_string()))
-            .into();
         let merged = deduplicate_releases_by_external_id(
             &mut db,
             library_db_id,
-            &unique_pairs,
+            declared,
             &HashSet::new(),
             None,
         )?;
@@ -396,14 +395,42 @@ mod tests {
     }
 
     #[test]
-    fn a_losing_releases_manual_id_overrides_the_winners_resolved_one() -> anyhow::Result<()> {
+    fn a_manual_id_keeps_releases_apart_from_a_differing_one() -> anyhow::Result<()> {
+        let unique = DeclaredIds::unique(
+            ["musicbrainz", "provider-a"].map(|provider_id| (provider_id, "release_id")),
+        );
+        let unloaded = DeclaredIds::unique([("provider-a", "release_id")]);
+        let loser_ids = [
+            ("musicbrainz", "mbid-2", IdSource::Manual),
+            ("provider-a", "shared", IdSource::Resolved),
+        ];
+        for (declared, winner_source) in [
+            (&unique, IdSource::Resolved),
+            (&unique, IdSource::Manual),
+            (&unloaded, IdSource::Manual),
+        ] {
+            let winner_ids = [
+                ("musicbrainz", "mbid-1", winner_source),
+                ("provider-a", "shared", IdSource::Resolved),
+            ];
+            let (_, _, merged) = dedup_releases_holding(declared, &winner_ids, &loser_ids)?;
+            assert_eq!(merged, 0, "{winner_ids:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_losing_releases_manual_id_of_a_non_unique_type_overrides_the_winners_resolved_one()
+    -> anyhow::Result<()> {
+        let declared = DeclaredIds::unique([("provider-a", "release_id")])
+            .and_non_unique([("musicbrainz", "release_id")]);
         let (db, winner, merged) = dedup_releases_holding(
+            &declared,
             &[
                 ("musicbrainz", "mbid-1", IdSource::Resolved),
                 ("provider-a", "shared", IdSource::Resolved),
             ],
             &[
-                ("musicbrainz", "mbid-1", IdSource::Resolved),
                 ("musicbrainz", "mbid-2", IdSource::Manual),
                 ("provider-a", "shared", IdSource::Resolved),
             ],
@@ -415,22 +442,6 @@ mod tests {
             (id.id_value.as_str(), id.source, id.resolved_value()),
             ("mbid-2", IdSource::Manual, Some("mbid-1"))
         );
-        Ok(())
-    }
-
-    #[test]
-    fn differing_manual_ids_keep_releases_apart() -> anyhow::Result<()> {
-        let (_, _, merged) = dedup_releases_holding(
-            &[
-                ("musicbrainz", "mbid-1", IdSource::Manual),
-                ("provider-a", "shared", IdSource::Resolved),
-            ],
-            &[
-                ("musicbrainz", "mbid-2", IdSource::Manual),
-                ("provider-a", "shared", IdSource::Resolved),
-            ],
-        )?;
-        assert_eq!(merged, 0);
         Ok(())
     }
 
@@ -460,7 +471,7 @@ mod tests {
             chains.push((release, chain));
         }
 
-        let unique_pairs = HashSet::from([("musicbrainz".to_string(), "release_id".to_string())]);
+        let unique_pairs = DeclaredIds::unique([("musicbrainz", "release_id")]);
         assert_eq!(
             deduplicate_releases_by_external_id(
                 &mut db,
@@ -524,7 +535,7 @@ mod tests {
             IdSource::Resolved,
         )?;
 
-        let unique_pairs = HashSet::from([("musicbrainz".to_string(), "release_id".to_string())]);
+        let unique_pairs = DeclaredIds::unique([("musicbrainz", "release_id")]);
         assert_eq!(
             deduplicate_releases_by_external_id(
                 &mut db,
@@ -605,7 +616,7 @@ mod tests {
             IdSource::Resolved,
         )?;
 
-        let release_pairs = HashSet::from([("musicbrainz".to_string(), "release_id".to_string())]);
+        let release_pairs = DeclaredIds::unique([("musicbrainz", "release_id")]);
         let track_pairs = HashSet::from([("musicbrainz".to_string(), "recording_id".to_string())]);
         let merged = deduplicate_releases_by_external_id(
             &mut db,
@@ -663,7 +674,7 @@ mod tests {
             IdSource::Resolved,
         )?;
 
-        let release_pairs = HashSet::from([("musicbrainz".to_string(), "release_id".to_string())]);
+        let release_pairs = DeclaredIds::unique([("musicbrainz", "release_id")]);
         let track_pairs = HashSet::from([("musicbrainz".to_string(), "recording_id".to_string())]);
         let merged = deduplicate_releases_by_external_id(
             &mut db,
@@ -745,10 +756,10 @@ mod tests {
     }
 
     fn deduplicate_bridged_releases(db: &mut DbAny, library_db_id: DbId) -> anyhow::Result<u32> {
-        let release_pairs = ["musicbrainz", "provider-a", "provider-b"]
-            .into_iter()
-            .map(|provider_id| (provider_id.to_string(), "release_id".to_string()))
-            .collect();
+        let release_pairs = DeclaredIds::unique(
+            ["musicbrainz", "provider-a", "provider-b"]
+                .map(|provider_id| (provider_id, "release_id")),
+        );
         let track_pairs = HashSet::from([("musicbrainz".to_string(), "recording_id".to_string())]);
         deduplicate_releases_by_external_id(db, library_db_id, &release_pairs, &track_pairs, None)
     }
@@ -936,10 +947,9 @@ mod tests {
                 }
                 releases.push(release);
             }
-            let release_pairs = ["musicbrainz", "provider"]
-                .into_iter()
-                .map(|provider_id| (provider_id.to_string(), "release_id".to_string()))
-                .collect();
+            let release_pairs = DeclaredIds::unique(
+                ["musicbrainz", "provider"].map(|provider_id| (provider_id, "release_id")),
+            );
             let scope = HashSet::from(["provider".to_string()]);
 
             let merged = deduplicate_releases_by_external_id(
