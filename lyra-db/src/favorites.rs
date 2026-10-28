@@ -779,7 +779,10 @@ mod tests {
 
         use super::*;
         use crate::test_db::new_test_db;
-        use agdb::DbAny;
+        use agdb::{
+            DbAny,
+            QueryId,
+        };
 
         fn insert_user(db: &mut DbAny) -> DbId {
             let id = db
@@ -863,6 +866,62 @@ mod tests {
                 let user = insert_user(&mut db);
                 add(&mut db, user, track, FavoriteKind::Track, i as i64).unwrap();
             }
+            b.iter(|| read_inbound_favorite_edges(&db, track).unwrap());
+        }
+
+        fn insert_listen(db: &mut DbAny, user: DbId, track: DbId) {
+            let listen = db
+                .exec_mut(QueryBuilder::insert().nodes().count(1).query())
+                .unwrap()
+                .ids()[0];
+            for (from, to) in [
+                (QueryId::from("listens"), listen),
+                (listen.into(), track),
+                (listen.into(), user),
+            ] {
+                db.exec_mut(QueryBuilder::insert().edges().from(from).to(to).query())
+                    .unwrap();
+            }
+        }
+
+        /// Ten users favorite the probed track. Each user listens to the probed
+        /// track `track_listens_per_user` times and to another track
+        /// `other_listens_per_user` times.
+        fn seed_favorites_with_listens(
+            track_listens_per_user: usize,
+            other_listens_per_user: usize,
+        ) -> (DbAny, DbId) {
+            let mut db = new_test_db().unwrap();
+            let track = insert_track(&mut db);
+            let other_track = insert_track(&mut db);
+            for i in 0..10 {
+                let user = insert_user(&mut db);
+                add(&mut db, user, track, FavoriteKind::Track, i as i64).unwrap();
+                for _ in 0..track_listens_per_user {
+                    insert_listen(&mut db, user, track);
+                }
+                for _ in 0..other_listens_per_user {
+                    insert_listen(&mut db, user, other_track);
+                }
+            }
+            (db, track)
+        }
+
+        #[bench]
+        fn read_inbound_edges_10_users_no_listens(b: &mut Bencher) {
+            let (db, track) = seed_favorites_with_listens(0, 0);
+            b.iter(|| read_inbound_favorite_edges(&db, track).unwrap());
+        }
+
+        #[bench]
+        fn read_inbound_edges_10_users_1000_listens_on_track(b: &mut Bencher) {
+            let (db, track) = seed_favorites_with_listens(100, 0);
+            b.iter(|| read_inbound_favorite_edges(&db, track).unwrap());
+        }
+
+        #[bench]
+        fn read_inbound_edges_10_users_10000_listens_elsewhere(b: &mut Bencher) {
+            let (db, track) = seed_favorites_with_listens(0, 1_000);
             b.iter(|| read_inbound_favorite_edges(&db, track).unwrap());
         }
     }
