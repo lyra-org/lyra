@@ -112,6 +112,19 @@ pub(crate) trait Catalog {
 
     /// The entities with these ids, in this order.
     fn hydrate(db: &DbAny, ids: &[DbId]) -> anyhow::Result<Vec<Self::Item>>;
+
+    /// The shuffle unit of each of `ids` that the random key moves with others. Every other id
+    /// shuffles alone.
+    fn shuffle_units(_db: &DbAny, _ids: &[DbId]) -> anyhow::Result<HashMap<DbId, ShuffleUnit>> {
+        Ok(HashMap::new())
+    }
+}
+
+/// What the random key moves an entry with, and the entry's place among the unit's entries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ShuffleUnit {
+    pub(crate) id: DbId,
+    pub(crate) place: u64,
 }
 
 /// Bounds on the lowercase sort name.
@@ -238,6 +251,7 @@ pub(crate) fn page<C: Catalog>(
 struct Entry {
     row: Row,
     lower_name: String,
+    unit: ShuffleUnit,
     score: u32,
     /// Whether the display name scored `score`, which ranks ahead of a sort name scoring the same.
     by_name: bool,
@@ -286,6 +300,10 @@ fn sorted<C: Catalog>(
         .filter(|row| query.names.contains(&row.sort_name))
         .map(|row| Entry {
             lower_name: row.name.to_lowercase(),
+            unit: ShuffleUnit {
+                id: row.id,
+                place: 0,
+            },
             row,
             score: 0,
             by_name: false,
@@ -304,6 +322,16 @@ fn sorted<C: Catalog>(
             entry.by_name = by_name == Some(best);
             true
         });
+    }
+
+    if sort.iter().any(|(key, _)| key.kind() == KeyKind::Random) {
+        let ids = entries.iter().map(|entry| entry.row.id).collect::<Vec<_>>();
+        let units = C::shuffle_units(db, &ids)?;
+        for entry in &mut entries {
+            if let Some(&unit) = units.get(&entry.row.id) {
+                entry.unit = unit;
+            }
+        }
     }
 
     let total = entries.len();
@@ -355,9 +383,14 @@ fn compare<K: SortKey>(
                     .cmp(&a.score)
                     .then_with(|| b.by_name.cmp(&a.by_name)),
             ),
-            (KeyKind::Random, _) => {
-                direction.apply(shuffle(seed, a.row.id).cmp(&shuffle(seed, b.row.id)))
-            }
+            // A unit keeps its place order whichever way the units run.
+            (KeyKind::Random, _) => direction
+                .apply(
+                    shuffle(seed, a.unit.id)
+                        .cmp(&shuffle(seed, b.unit.id))
+                        .then_with(|| a.unit.id.0.cmp(&b.unit.id.0)),
+                )
+                .then_with(|| a.unit.place.cmp(&b.unit.place)),
             (KeyKind::Id, _) => direction.apply(a.row.id.0.cmp(&b.row.id.0)),
             (KeyKind::Field, Some(column)) => compare_values(
                 &a.row.values[*column],
@@ -410,10 +443,18 @@ fn shuffle(seed: u64, id: DbId) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+
     use crate::services::catalog::{
         artists::Artists,
-        releases::Releases,
-        tracks::Tracks,
+        releases::{
+            ReleaseKey,
+            Releases,
+        },
+        tracks::{
+            TrackKey,
+            Tracks,
+        },
     };
     use lyra_db::{
         fixtures::{
@@ -525,6 +566,257 @@ mod tests {
             search::<Tracks>(&db, Default::default(), "tokyo"),
             vec![strong, weak]
         );
+        Ok(())
+    }
+
+    struct Book {
+        release: DbId,
+        /// Interlude "Awakening" → 祝福 → アイドル, then Interlude "Worship" → 夜に駆ける.
+        chain: Vec<DbId>,
+        pair: Vec<DbId>,
+        singles: Vec<DbId>,
+    }
+
+    fn book(db: &mut DbAny) -> anyhow::Result<Book> {
+        let release = insert_release(db, "THE BOOK 3")?;
+        let mut tracks = Vec::new();
+        for (number, title) in [
+            "Interlude \"Awakening\"",
+            "祝福",
+            "アイドル",
+            "Interlude \"Worship\"",
+            "夜に駆ける",
+            "勇者",
+            "セブンティーン",
+            "ハルカ",
+            "群青",
+            "怪物",
+            "優しい彗星",
+            "三原色",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let track_db_id = insert_track(db, title)?;
+            let mut track = lyra_db::tracks::get_by_id(db, track_db_id)?.expect("track exists");
+            track.track = Some(number as u32 + 1);
+            lyra_db::tracks::update(db, &track)?;
+            lyra_db::releases::link_track(db, release, track_db_id)?;
+            tracks.push(track_db_id);
+        }
+        let chain = tracks[0..3].to_vec();
+        let pair = tracks[3..5].to_vec();
+        lyra_db::chains::replace_for_release(db, release, &[chain.clone(), pair.clone()])??;
+        Ok(Book {
+            release,
+            chain,
+            pair,
+            singles: tracks[5..].to_vec(),
+        })
+    }
+
+    fn shuffled<C: Catalog>(
+        db: &DbAny,
+        filter: C::Filter,
+        sort: SortSpec<C::Key>,
+        seed: u64,
+    ) -> Vec<DbId> {
+        let mut query = Query::<C>::new(filter);
+        query.sort = sort;
+        query.seed = seed;
+        order(db, &Viewer::System, &query).expect("order runs")
+    }
+
+    fn random(direction: Direction) -> SortSpec<TrackKey> {
+        vec![(TrackKey::Random, direction)]
+    }
+
+    /// The order the `members` appear in, if they appear together.
+    fn run_of(order: &[DbId], members: &[DbId]) -> Option<Vec<DbId>> {
+        let start = order.iter().position(|id| members.contains(id))?;
+        let run = order[start..]
+            .iter()
+            .take_while(|id| members.contains(id))
+            .copied()
+            .collect::<Vec<_>>();
+        let found = order.iter().filter(|id| members.contains(id)).count();
+        (run.len() == found).then_some(run)
+    }
+
+    /// Each chain collapsed to its first member, leaving the units in order.
+    fn units(order: &[DbId], book: &Book) -> Vec<DbId> {
+        order
+            .iter()
+            .copied()
+            .filter(|id| !book.chain[1..].contains(id) && !book.pair[1..].contains(id))
+            .collect()
+    }
+
+    #[test]
+    fn random_tracks_keep_each_chain_together_and_in_order() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let book = book(&mut db)?;
+
+        let mut chain_starts = HashSet::new();
+        for seed in 0..32 {
+            let order =
+                shuffled::<Tracks>(&db, Default::default(), random(Direction::Ascending), seed);
+            assert_eq!(order.len(), 12);
+            assert_eq!(run_of(&order, &book.chain), Some(book.chain.clone()));
+            assert_eq!(run_of(&order, &book.pair), Some(book.pair.clone()));
+            assert_eq!(
+                order,
+                shuffled::<Tracks>(&db, Default::default(), random(Direction::Ascending), seed),
+            );
+            chain_starts.insert(order.iter().position(|id| *id == book.chain[0]));
+        }
+        assert!(chain_starts.len() > 1, "the chain moves with the seed");
+        Ok(())
+    }
+
+    #[test]
+    fn random_tracks_group_only_the_chain_members_that_match() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let book = book(&mut db)?;
+        let mut ids = book.singles.clone();
+        ids.extend([book.chain[0], book.chain[2]]);
+
+        for seed in 0..16 {
+            let order = shuffled::<Tracks>(
+                &db,
+                Tracks::id_filter(ids.clone()),
+                random(Direction::Ascending),
+                seed,
+            );
+            assert_eq!(order.len(), ids.len());
+            assert!(!order.contains(&book.chain[1]));
+            assert_eq!(
+                run_of(&order, &book.chain),
+                Some(vec![book.chain[0], book.chain[2]])
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn descending_random_reverses_the_units_but_not_the_chains() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let book = book(&mut db)?;
+
+        for seed in 0..16 {
+            let ascending =
+                shuffled::<Tracks>(&db, Default::default(), random(Direction::Ascending), seed);
+            let descending =
+                shuffled::<Tracks>(&db, Default::default(), random(Direction::Descending), seed);
+            assert_eq!(run_of(&descending, &book.chain), Some(book.chain.clone()));
+            assert_eq!(run_of(&descending, &book.pair), Some(book.pair.clone()));
+            let mut reversed = units(&ascending, &book);
+            reversed.reverse();
+            assert_eq!(units(&descending, &book), reversed);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn random_pages_count_tracks_and_may_split_a_chain() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let book = book(&mut db)?;
+        let mut query = Query::<Tracks>::new(Default::default());
+        query.sort = random(Direction::Ascending);
+
+        let mut split = false;
+        for seed in 0..32 {
+            query.seed = seed;
+            let order = order(&db, &Viewer::System, &query)?;
+            for limit in 1..=5 {
+                let mut paged = Vec::new();
+                for offset in (0..12).step_by(limit) {
+                    let page = page(
+                        &db,
+                        &Viewer::System,
+                        &query,
+                        offset as u64,
+                        Some(limit as u64),
+                    )?;
+                    assert_eq!(page.total, 12);
+                    assert!(page.items.len() <= limit);
+                    let ids = page
+                        .items
+                        .iter()
+                        .filter_map(|track| track.db_id.clone().map(DbId::from))
+                        .collect::<Vec<_>>();
+                    split |=
+                        limit == 2 && ids.contains(&book.chain[1]) && !ids.contains(&book.chain[0]);
+                    paged.extend(ids);
+                }
+                assert_eq!(paged, order);
+            }
+        }
+        assert!(split, "some page starts inside the chain");
+        Ok(())
+    }
+
+    #[test]
+    fn random_after_another_key_groups_chains_only_within_its_ties() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let book = book(&mut db)?;
+        for (track_db_id, year) in [(book.chain[0], 2023), (book.chain[1], 2024)] {
+            let mut track = lyra_db::tracks::get_by_id(&db, track_db_id)?.expect("track exists");
+            track.year = Some(year);
+            lyra_db::tracks::update(&mut db, &track)?;
+        }
+        for &track_db_id in book.chain[2..].iter().chain(&book.singles[..3]) {
+            let mut track = lyra_db::tracks::get_by_id(&db, track_db_id)?.expect("track exists");
+            track.year = Some(2024);
+            lyra_db::tracks::update(&mut db, &track)?;
+        }
+        let sort = vec![
+            (TrackKey::Year, Direction::Ascending),
+            (TrackKey::Random, Direction::Ascending),
+        ];
+
+        for seed in 0..16 {
+            let order = shuffled::<Tracks>(&db, Default::default(), sort.clone(), seed);
+            assert_eq!(order[0], book.chain[0], "2023 sorts first");
+            assert_eq!(
+                run_of(&order[1..6], &book.chain[1..]),
+                Some(book.chain[1..].to_vec())
+            );
+            assert_eq!(run_of(&order, &book.pair), Some(book.pair.clone()));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn random_releases_and_unchained_tracks_shuffle_by_their_own_ids() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let book = book(&mut db)?;
+        let mut releases = vec![book.release];
+        for title in ["Urn", "Portal of I", "Citadel"] {
+            releases.push(insert_release(&mut db, title)?);
+        }
+
+        for seed in 0..8 {
+            let mut expected = releases.clone();
+            expected.sort_by_key(|id| shuffle(seed, *id));
+            let order = shuffled::<Releases>(
+                &db,
+                Default::default(),
+                vec![(ReleaseKey::Random, Direction::Ascending)],
+                seed,
+            );
+            assert_eq!(order, expected);
+
+            let mut singles = book.singles.clone();
+            singles.sort_by_key(|id| shuffle(seed, *id));
+            let tracks = shuffled::<Tracks>(
+                &db,
+                Tracks::id_filter(book.singles.clone()),
+                random(Direction::Ascending),
+                seed,
+            );
+            assert_eq!(tracks, singles);
+        }
         Ok(())
     }
 }

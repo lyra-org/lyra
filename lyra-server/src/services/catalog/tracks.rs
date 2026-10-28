@@ -26,6 +26,7 @@ use super::{
         Catalog,
         KeyKind,
         Row,
+        ShuffleUnit,
         SortKey,
         SortValue,
     },
@@ -325,6 +326,22 @@ impl Catalog for Tracks {
     fn hydrate(db: &DbAny, ids: &[DbId]) -> anyhow::Result<Vec<Track>> {
         let mut tracks = lyra_db::tracks::get_by_ids(db, ids)?;
         Ok(ids.iter().filter_map(|id| tracks.remove(id)).collect())
+    }
+
+    /// A chain shuffles as one, its tracks in chain order.
+    fn shuffle_units(db: &DbAny, ids: &[DbId]) -> anyhow::Result<HashMap<DbId, ShuffleUnit>> {
+        Ok(lyra_db::chains::links_for_tracks(db, ids)?
+            .into_iter()
+            .map(|(track, link)| {
+                (
+                    track,
+                    ShuffleUnit {
+                        id: link.chain_db_id,
+                        place: link.position,
+                    },
+                )
+            })
+            .collect())
     }
 }
 
