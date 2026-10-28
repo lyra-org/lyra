@@ -359,6 +359,8 @@ fn read_inbound_favorite_edges(
             .to(target_db_id)
             .where_()
             .edge()
+            .and()
+            .distance(CountComparison::Equal(1))
             .end_where()
             .query(),
     )?;

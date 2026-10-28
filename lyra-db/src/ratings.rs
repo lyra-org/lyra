@@ -310,6 +310,8 @@ fn read_inbound_rating_edges(
             .to(target_db_id)
             .where_()
             .edge()
+            .and()
+            .distance(CountComparison::Equal(1))
             .end_where()
             .query(),
     )?;
