@@ -66,6 +66,16 @@ impl CannedResponse {
         }
     }
 
+    pub(crate) fn upload_pack(body: &str) -> Self {
+        Self {
+            status: 200,
+            content_type: "application/x-git-upload-pack-result",
+            body: body.as_bytes().to_vec(),
+            content_length_override: None,
+            headers: Vec::new(),
+        }
+    }
+
     pub(crate) fn status(status: u16) -> Self {
         Self {
             status,
@@ -160,7 +170,8 @@ impl TestServer {
 
                     let request = String::from_utf8_lossy(&buffer[..read]);
                     let path = request.split_whitespace().nth(1).unwrap_or("/");
-                    log.lock().unwrap().push(path.to_string());
+                    let head = request.split("\r\n\r\n").next().unwrap_or_default();
+                    log.lock().unwrap().push(head.to_string());
                     let response = match routes.get(path) {
                         Some(canned) => canned.render(),
                         None => CannedResponse {
@@ -187,6 +198,14 @@ impl TestServer {
 
     /// Request paths received so far, in arrival order.
     pub(crate) fn requests(&self) -> Vec<String> {
+        self.request_heads()
+            .iter()
+            .map(|head| head.split_whitespace().nth(1).unwrap_or("/").to_string())
+            .collect()
+    }
+
+    /// Request lines and headers received so far, in arrival order.
+    pub(crate) fn request_heads(&self) -> Vec<String> {
         self.requests.lock().unwrap().clone()
     }
 
@@ -359,4 +378,15 @@ pub(crate) fn gitlab_directory_archive(
         ),
         CannedResponse::targz(archive),
     )
+}
+
+/// `lines` as pkt-lines ended by a flush packet, the shape of an `ls-refs`
+/// response.
+pub(crate) fn pkt_lines(lines: &[&str]) -> String {
+    let mut body: String = lines
+        .iter()
+        .map(|line| format!("{:04x}{line}", line.len() + 4))
+        .collect();
+    body.push_str("0000");
+    body
 }

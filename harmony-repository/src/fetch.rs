@@ -14,7 +14,6 @@ use harmony_core::plugin::PLUGIN_CONFIG_MAX_BYTES;
 use reqwest::{
     Client,
     StatusCode,
-    header,
 };
 use tar::{
     Archive,
@@ -24,9 +23,10 @@ use tempfile::TempDir;
 
 use crate::forge::{
     RepoSpec,
-    USER_AGENT,
     branch_exists,
     default_branch,
+    is_object_id,
+    ls_refs,
     resolve_commit,
 };
 use crate::manifest::REPOSITORY_MANIFEST_MAX_BYTES;
@@ -65,16 +65,29 @@ pub enum FetchError {
     Io(#[from] std::io::Error),
 }
 
-fn is_commit_sha(value: &str) -> bool {
-    matches!(value.len(), 40 | 64) && value.chars().all(|c| c.is_ascii_hexdigit())
+/// Whether `git_ref` names a ref outright: a branch or tag name, or a full
+/// `refs/...` name, rather than a revision expression such as `main~1`.
+/// Only such names can be looked up by ref prefix.
+fn is_plain_ref_name(git_ref: &str) -> bool {
+    !git_ref.is_empty()
+        && !git_ref.contains("@{")
+        && !git_ref.chars().any(|c| {
+            c.is_whitespace()
+                || c.is_control()
+                || matches!(c, '~' | '^' | ':' | '?' | '*' | '[' | '\\')
+        })
+}
+
+/// Whether `git_ref` is shaped like an abbreviated commit SHA.
+fn could_be_abbreviated_sha(git_ref: &str) -> bool {
+    (7..40).contains(&git_ref.len()) && git_ref.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// Whether `git_ref` is an abbreviated SHA that the forge expanded to
 /// `commit`. Branches and tags can be named like hex strings, so the
 /// resolved commit has to confirm the interpretation.
 fn is_abbreviated_sha_of(git_ref: &str, commit: Option<&str>) -> bool {
-    (7..40).contains(&git_ref.len())
-        && git_ref.chars().all(|c| c.is_ascii_hexdigit())
+    could_be_abbreviated_sha(git_ref)
         && commit.is_some_and(|commit| {
             commit
                 .to_ascii_lowercase()
@@ -83,15 +96,16 @@ fn is_abbreviated_sha_of(git_ref: &str, commit: Option<&str>) -> bool {
 }
 
 /// Whether an explicit ref pins the install. Commit SHAs and tags are
-/// pinned; branches and `HEAD` track new commits. `commit` is what the
-/// forge resolved the ref to and `branch` its answer on whether the ref
-/// names a branch. Without a resolved commit the API is unreachable, so
-/// the branch answer is not trusted and the ref is assumed to track.
+/// pinned; branches, full `refs/heads/` names and `HEAD` track new commits.
+/// `commit` is what the forge resolved the ref to and `branch` its answer on
+/// whether the ref names a branch by its short name. Without a resolved
+/// commit the API is unreachable, so the branch answer is not trusted and
+/// the ref is assumed to track.
 fn ref_is_pinned(git_ref: &str, commit: Option<&str>, branch: Option<bool>) -> bool {
-    if git_ref == "HEAD" {
+    if git_ref == "HEAD" || git_ref.starts_with("refs/heads/") {
         return false;
     }
-    if is_commit_sha(git_ref) || is_abbreviated_sha_of(git_ref, commit) {
+    if is_object_id(git_ref) || is_abbreviated_sha_of(git_ref, commit) {
         return true;
     }
     commit.is_some() && branch.is_some_and(|branch| !branch)
@@ -263,17 +277,90 @@ async fn unpack(bytes: Vec<u8>) -> Result<(TempDir, PathBuf), FetchError> {
 }
 
 /// Resolves the ref `spec` names, or the default branch, without
-/// downloading anything.
+/// downloading anything: with one Git protocol v2 `ls-refs` request, or
+/// through the forge API when the forge does not answer in v2.
 pub async fn plan_refs(client: &Client, spec: &RepoSpec) -> RefPlan {
+    if let Some(explicit) = &spec.explicit_ref
+        && is_object_id(explicit)
+    {
+        return RefPlan {
+            candidates: vec![explicit.clone()],
+            commit: Some(explicit.to_ascii_lowercase()),
+            pinned: true,
+            authoritative: true,
+        };
+    }
+    match plan_from_ls_refs(client, spec).await {
+        Some(plan) => plan,
+        None => plan_from_api(client, spec).await,
+    }
+}
+
+/// Plans from the refs the forge advertises. `None` when it gave no v2
+/// answer or one without `HEAD`, when `HEAD` names no branch, for revision
+/// expressions, and for an explicit ref that matches nothing but could be an
+/// abbreviated commit: only the API resolves those. Like `git rev-parse`, a
+/// tag takes precedence over a branch of the same name for the commit, while
+/// the branch still makes the ref track. A full `refs/heads/` name tracks;
+/// other full names are pinned.
+async fn plan_from_ls_refs(client: &Client, spec: &RepoSpec) -> Option<RefPlan> {
+    let explicit = spec.explicit_ref.as_deref();
+    if explicit.is_none_or(|git_ref| git_ref == "HEAD") {
+        let refs = ls_refs(client, spec, &["HEAD"]).await?;
+        let head = refs.iter().find(|advertised| advertised.name == "HEAD")?;
+        let git_ref = match explicit {
+            Some(explicit) => explicit.to_string(),
+            None => head
+                .symref_target
+                .as_deref()?
+                .strip_prefix("refs/heads/")?
+                .to_string(),
+        };
+        return Some(RefPlan {
+            candidates: vec![git_ref],
+            commit: Some(head.commit().to_string()),
+            pinned: false,
+            authoritative: true,
+        });
+    }
+
+    let git_ref = explicit.filter(|git_ref| is_plain_ref_name(git_ref))?;
+    let (branch_name, tag_name) = (
+        format!("refs/heads/{git_ref}"),
+        format!("refs/tags/{git_ref}"),
+    );
+    let full = git_ref.starts_with("refs/");
+    let prefixes: &[&str] = if full {
+        &["HEAD", git_ref]
+    } else {
+        &["HEAD", &branch_name, &tag_name]
+    };
+    let refs = ls_refs(client, spec, prefixes).await?;
+    let named = |name: &str| refs.iter().find(|advertised| advertised.name == name);
+    // Every repository with commits has a HEAD; an answer without one did
+    // not list what was asked for.
+    named("HEAD")?;
+    let (found, branch) = if full {
+        (named(git_ref), None)
+    } else {
+        let branch = named(&branch_name);
+        (named(&tag_name).or(branch), branch)
+    };
+    let commit = found.map(|advertised| advertised.commit().to_string());
+    if commit.is_none() && could_be_abbreviated_sha(git_ref) {
+        return None;
+    }
+    Some(RefPlan {
+        pinned: ref_is_pinned(git_ref, commit.as_deref(), Some(branch.is_some())),
+        candidates: vec![git_ref.to_string()],
+        commit,
+        authoritative: true,
+    })
+}
+
+/// Plans through the forge API, which also expands abbreviated commits.
+async fn plan_from_api(client: &Client, spec: &RepoSpec) -> RefPlan {
     if let Some(explicit) = &spec.explicit_ref {
-        if is_commit_sha(explicit) {
-            return RefPlan {
-                candidates: vec![explicit.clone()],
-                commit: Some(explicit.to_ascii_lowercase()),
-                pinned: true,
-                authoritative: true,
-            };
-        }
         let commit = resolve_commit(client, spec, explicit).await;
         let branch = if commit.is_none() || is_abbreviated_sha_of(explicit, commit.as_deref()) {
             None
@@ -337,7 +424,6 @@ async fn download(
 ) -> Result<Vec<u8>, FetchError> {
     let mut response = client
         .get(url)
-        .header(header::USER_AGENT, USER_AGENT)
         .send()
         .await
         .map_err(|source| FetchError::Network {
@@ -451,6 +537,7 @@ mod tests {
         CannedResponse,
         TestServer,
         client,
+        pkt_lines,
         targz,
         targz_entries,
     };
@@ -468,15 +555,17 @@ mod tests {
         assert!(!ref_is_pinned("v1.2.0", None, Some(false)));
         assert!(!ref_is_pinned("v1.2.0", Some(&sha), None));
         assert!(!ref_is_pinned("HEAD", Some(&sha), Some(false)));
+        assert!(!ref_is_pinned("refs/heads/main", Some(&sha), Some(false)));
+        assert!(ref_is_pinned("refs/tags/v1", Some(&sha), Some(false)));
     }
 
     #[test]
     fn detects_commit_shas() {
-        assert!(is_commit_sha(&"a".repeat(40)));
-        assert!(is_commit_sha(&"F".repeat(64)));
-        assert!(!is_commit_sha("main"));
-        assert!(!is_commit_sha(&"a".repeat(39)));
-        assert!(!is_commit_sha(&"g".repeat(40)));
+        assert!(is_object_id(&"a".repeat(40)));
+        assert!(is_object_id(&"F".repeat(64)));
+        assert!(!is_object_id("main"));
+        assert!(!is_object_id(&"a".repeat(39)));
+        assert!(!is_object_id(&"g".repeat(40)));
     }
 
     #[test]
@@ -688,6 +777,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn full_branch_names_track_through_the_api() {
+        let sha = "c".repeat(40);
+        let server = TestServer::start(HashMap::from([(
+            "/api/v1/repos/owner/repo/git/commits/refs%2Fheads%2Fdevelop".to_string(),
+            CannedResponse::json(&format!(r#"{{"sha":"{sha}"}}"#)),
+        )]))
+        .await;
+
+        let url = format!("{}/owner/repo", server.url());
+        let spec = RepoSpec::parse(&url, Some("refs/heads/develop")).unwrap();
+        let plan = plan_refs(&client(), &spec).await;
+
+        assert_eq!(plan.commit(), Some(sha.as_str()));
+        assert!(!plan.pinned);
+        assert!(
+            server.requests().contains(
+                &"/api/v1/repos/owner/repo/git/commits/refs%2Fheads%2Fdevelop".to_string()
+            )
+        );
+    }
+
+    #[tokio::test]
     async fn sha_refs_download_without_api_lookups() {
         let sha = "b".repeat(40);
         let server = TestServer::start(HashMap::from([(
@@ -745,5 +856,199 @@ mod tests {
         let err = fetch_repo(&client(), &spec).await.unwrap_err();
 
         assert!(matches!(err, FetchError::ArchiveTooLarge { .. }), "{err}");
+    }
+
+    fn upload_pack_route(lines: &[&str]) -> (String, CannedResponse) {
+        (
+            "/owner/repo.git/git-upload-pack".to_string(),
+            CannedResponse::upload_pack(&pkt_lines(lines)),
+        )
+    }
+
+    async fn plan_at(
+        routes: Vec<(String, CannedResponse)>,
+        git_ref: Option<&str>,
+    ) -> (RefPlan, Vec<String>) {
+        let (plan, server) = plan_on(routes, git_ref).await;
+        (plan, server.requests())
+    }
+
+    async fn plan_on(
+        routes: Vec<(String, CannedResponse)>,
+        git_ref: Option<&str>,
+    ) -> (RefPlan, TestServer) {
+        let server = TestServer::start(routes.into_iter().collect()).await;
+        let url = format!("{}/owner/repo", server.url());
+        let spec = RepoSpec::parse(&url, git_ref).unwrap();
+        let plan = plan_refs(&client(), &spec).await;
+        (plan, server)
+    }
+
+    fn head_line() -> String {
+        format!("{} HEAD symref-target:refs/heads/main\n", "a".repeat(40))
+    }
+
+    #[tokio::test]
+    async fn plans_refs_from_one_ls_refs_request() {
+        let (head, branch, tag, peeled, light, other) = (
+            "a".repeat(40),
+            "b".repeat(40),
+            "c".repeat(40),
+            "d".repeat(40),
+            "f".repeat(40),
+            "e".repeat(40),
+        );
+        let refs = [
+            head_line(),
+            format!("{branch} refs/heads/master\n"),
+            format!("{other} refs/heads/master-foo\n"),
+            format!("{tag} refs/tags/v1 peeled:{peeled}\n"),
+            format!("{other} refs/tags/v1.1\n"),
+            format!("{light} refs/tags/light\n"),
+            format!("{tag} refs/tags/both peeled:{peeled}\n"),
+            format!("{branch} refs/heads/both\n"),
+            format!("{other} refs/pull/1/head\n"),
+        ];
+        let lines: Vec<&str> = refs.iter().map(String::as_str).collect();
+
+        for (git_ref, candidate, commit, pinned) in [
+            (None, "main", &head, false),
+            (Some("HEAD"), "HEAD", &head, false),
+            (Some("master"), "master", &branch, false),
+            (Some("v1"), "v1", &peeled, true),
+            (Some("light"), "light", &light, true),
+            (Some("both"), "both", &peeled, false),
+            (
+                Some("refs/heads/master"),
+                "refs/heads/master",
+                &branch,
+                false,
+            ),
+            (Some("refs/tags/v1"), "refs/tags/v1", &peeled, true),
+            (Some("refs/pull/1/head"), "refs/pull/1/head", &other, true),
+        ] {
+            let (plan, server) = plan_on(vec![upload_pack_route(&lines)], git_ref).await;
+            assert_eq!(plan.candidates, [candidate], "{git_ref:?}");
+            assert_eq!(plan.commit(), Some(commit.as_str()), "{git_ref:?}");
+            assert_eq!(plan.pinned, pinned, "{git_ref:?}");
+            assert_eq!(
+                server.requests(),
+                ["/owner/repo.git/git-upload-pack"],
+                "{git_ref:?}"
+            );
+            let head = server.request_heads()[0].to_ascii_lowercase();
+            assert!(head.starts_with("post "), "{head}");
+            assert!(head.contains("\r\ngit-protocol: version=2\r\n"), "{head}");
+            assert!(
+                head.contains("\r\nuser-agent: git/harmony-repository-"),
+                "{head}"
+            );
+            assert!(
+                head.contains("\r\ncontent-type: application/x-git-upload-pack-request\r\n"),
+                "{head}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn refs_ls_refs_does_not_list_are_not_found_without_api_calls() {
+        let master_foo = format!("{} refs/heads/master-foo\n", "e".repeat(40));
+        let head = head_line();
+
+        for lines in [
+            vec![head.as_str()],
+            vec![head.as_str(), master_foo.as_str()],
+        ] {
+            let (plan, requests) = plan_at(vec![upload_pack_route(&lines)], Some("master")).await;
+            assert_eq!(plan.commit(), None);
+            assert!(!plan.pinned);
+            assert!(plan.authoritative);
+            assert_eq!(requests, ["/owner/repo.git/git-upload-pack"]);
+        }
+    }
+
+    #[tokio::test]
+    async fn revisions_ls_refs_cannot_answer_are_resolved_by_the_api() {
+        let sha = "d".repeat(40);
+        let head = head_line();
+        for (git_ref, api_ref, upload_pack) in [
+            ("ddddddd", "ddddddd", true),
+            ("main~1", "main~1", false),
+            ("v1^{}", "v1%5E%7B%7D", false),
+            ("main\n0000", "main%0A0000", false),
+        ] {
+            let (plan, requests) = plan_at(
+                vec![
+                    upload_pack_route(&[&head]),
+                    (
+                        format!("/api/v1/repos/owner/repo/git/commits/{api_ref}"),
+                        CannedResponse::json(&format!(r#"{{"sha":"{sha}"}}"#)),
+                    ),
+                ],
+                Some(git_ref),
+            )
+            .await;
+            assert_eq!(plan.commit(), Some(sha.as_str()), "{git_ref:?}");
+            assert_eq!(
+                requests.contains(&"/owner/repo.git/git-upload-pack".to_string()),
+                upload_pack,
+                "{git_ref:?}: {requests:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn forges_without_a_v2_answer_are_planned_through_the_api() {
+        let sha = "b".repeat(40);
+        let api = || {
+            vec![
+                (
+                    "/api/v1/repos/owner/repo".to_string(),
+                    CannedResponse::json(r#"{"default_branch":"develop"}"#),
+                ),
+                (
+                    "/api/v1/repos/owner/repo/git/commits/develop".to_string(),
+                    CannedResponse::json(&format!(r#"{{"sha":"{sha}"}}"#)),
+                ),
+            ]
+        };
+        let malformed = || {
+            (
+                "/owner/repo.git/git-upload-pack".to_string(),
+                CannedResponse::upload_pack("0010garbage"),
+            )
+        };
+        let headless = || upload_pack_route(&[&format!("{sha} refs/heads/develop\n")]);
+        let detached = || upload_pack_route(&[&format!("{sha} HEAD\n")]);
+
+        for extra in [None, Some(malformed()), Some(headless()), Some(detached())] {
+            let mut routes = api();
+            routes.extend(extra);
+            let (plan, requests) = plan_at(routes, None).await;
+            assert_eq!(plan.candidates, ["develop"]);
+            assert_eq!(plan.commit(), Some(sha.as_str()));
+            assert_eq!(
+                requests,
+                [
+                    "/owner/repo.git/git-upload-pack",
+                    "/api/v1/repos/owner/repo",
+                    "/api/v1/repos/owner/repo/git/commits/develop",
+                ]
+            );
+        }
+
+        let mut routes = api();
+        routes.push(upload_pack_route(&[]));
+        routes.push((
+            "/api/v1/repos/owner/repo/git/commits/v1".to_string(),
+            CannedResponse::json(&format!(r#"{{"sha":"{sha}"}}"#)),
+        ));
+        let (plan, requests) = plan_at(routes, Some("v1")).await;
+        assert_eq!(
+            plan.commit(),
+            Some(sha.as_str()),
+            "an answer without HEAD is no authoritative not-found"
+        );
+        assert!(requests.contains(&"/api/v1/repos/owner/repo/git/commits/v1".to_string()));
     }
 }

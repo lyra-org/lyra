@@ -29,7 +29,9 @@ use serde::{
 };
 use url::Url;
 
-pub(crate) const USER_AGENT: &str = concat!("harmony-repository/", env!("CARGO_PKG_VERSION"));
+mod ls_refs;
+
+pub(crate) use ls_refs::ls_refs;
 
 /// Percent-encode set for values embedded in a single URL path segment or
 /// query value. Keeps the unreserved characters and encodes everything else,
@@ -276,6 +278,16 @@ impl RepoSpec {
         }
     }
 
+    /// The Git smart HTTP endpoint that answers protocol v2 commands.
+    pub fn upload_pack_url(&self) -> String {
+        format!(
+            "{}/{}/{}.git/git-upload-pack",
+            self.base_url(),
+            self.namespace,
+            self.repo_name
+        )
+    }
+
     /// Whether the forge serves tarballs of a single directory. GitLab alone
     /// does.
     pub fn has_directory_archives(&self) -> bool {
@@ -385,6 +397,11 @@ fn extract_ref_from_segments(segments: &mut Vec<String>) -> Option<String> {
     }
 
     None
+}
+
+/// Whether `value` is a full SHA-1 or SHA-256 object id.
+pub(crate) fn is_object_id(value: &str) -> bool {
+    matches!(value.len(), 40 | 64) && value.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 fn detect_forge(hostname: &str) -> Forge {
@@ -534,7 +551,6 @@ pub async fn child_tree_hashes(
 async fn api_request(client: &Client, url: &str) -> Option<reqwest::Response> {
     let response = client
         .get(url)
-        .header(header::USER_AGENT, USER_AGENT)
         .header(header::ACCEPT, "application/json")
         .send()
         .await;

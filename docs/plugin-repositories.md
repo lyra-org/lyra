@@ -85,9 +85,15 @@ Only `http`/`https` URLs are supported.
 ## Refs, Pinning, and Updates
 
 Without a ref, Lyra installs the repository's default branch at its
-current commit. When the forge API is unreachable, Lyra tries `main`,
-`master`, and `trunk` instead and records no commit, so the plugin's
-update status is unknown. A branch ref tracks new commits and is re-resolved on
+current commit. Lyra resolves refs with one Git protocol v2 ref listing
+from the repository's Git endpoint, and through the forge API when the
+forge does not answer it; abbreviated commits and revision expressions
+such as `main~1` always go through the API. Full ref names such as
+`refs/heads/main` work too; only `refs/heads/` names track.
+When neither is reachable, Lyra tries `main`, `master`, and `trunk`
+instead and records no commit, so the plugin's update status is unknown.
+A tag and a branch with the same name resolve to the tag's commit, but
+the ref tracks like a branch. A branch ref tracks new commits and is re-resolved on
 update; a tag or commit ref is pinned and never changes. When the forge
 cannot classify a ref, it is treated as a tracking branch.
 
