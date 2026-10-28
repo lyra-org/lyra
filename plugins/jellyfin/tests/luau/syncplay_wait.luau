@@ -213,3 +213,17 @@ post("a", "Leave")
 post("b", "Leave")
 received("a")
 received("b")
+
+-- A group paused while its first queue loads tells the members once everyone is ready.
+group_id = post("a", "New", { GroupName = "Party" }).body.GroupId
+post("b", "Join", { GroupId = group_id })
+post("a", "SetNewQueue", { PlayingQueue = { item_ids.encode_jellyfin_item_id(fixture.ids.song) } })
+post("a", "Pause")
+received("a")
+received("b")
+post("a", "Ready", { IsPlaying = false })
+post("b", "Ready", { IsPlaying = true })
+check(received("a"), "Pause,Paused/Ready", "the group is paused")
+check(received("b"), "Pause,Paused/Ready", "including the member that started playing")
+post("a", "Leave")
+post("b", "Leave")

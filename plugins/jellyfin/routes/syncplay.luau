@@ -888,9 +888,9 @@ local function syncplay_known_current_item(group: SyncPlayGroup, playlist_item_i
 	return playlist_item_id == syncplay_current_playlist_item_id(group)
 end
 
--- Ends the wait once every member is ready. As upstream, a group that won't resume returns to
--- being paused, telling the members when it was paused before the wait. One that resumes has the
--- others resume as the member that was waited for catches up when it is behind the group;
+-- Ends the wait once every member is ready. A group that won't resume is paused, and the members
+-- are told even when it was idle before the wait, where upstream says nothing. One that resumes
+-- has the others resume as the member that was waited for catches up when it is behind the group;
 -- otherwise everyone resumes together.
 local function syncplay_transition_if_ready(
 	group: SyncPlayGroup,
@@ -908,10 +908,8 @@ local function syncplay_transition_if_ready(
 			return
 		end
 		syncplay_set_state(group, "Paused")
-		if group.initial_state == "Paused" then
-			syncplay_broadcast_command(group, from_session_id, "all", "Pause")
-			syncplay_broadcast_state(group, from_session_id, "Ready")
-		end
+		syncplay_broadcast_command(group, from_session_id, "all", "Pause")
+		syncplay_broadcast_state(group, from_session_id, "Ready")
 		return
 	end
 
