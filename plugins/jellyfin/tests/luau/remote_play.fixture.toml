@@ -1,0 +1,76 @@
+run_as = "owner"
+
+# Amy's "Beta" (Rock) holds One (1-1), Two (1-2) and Three (2-1); her "Alpha" holds Zed (1-1).
+# The owner has "Mine" (Two, Zed, Two); another admin's "Secret" is private.
+
+[[users]]
+key = "owner"
+admin = true
+
+[[users]]
+key = "other"
+admin = true
+
+[[artists]]
+key = "amy"
+name = "Amy"
+
+[[genres]]
+key = "rock"
+name = "Rock"
+
+[[releases]]
+key = "beta"
+title = "Beta"
+artists = ["amy"]
+genres = ["rock"]
+
+[[releases]]
+key = "alpha"
+title = "Alpha"
+artists = ["amy"]
+
+[[tracks]]
+key = "two"
+title = "Two"
+release = "beta"
+disc = 1
+track = 2
+artists = ["amy"]
+
+[[tracks]]
+key = "three"
+title = "Three"
+release = "beta"
+disc = 2
+track = 1
+artists = ["amy"]
+
+[[tracks]]
+key = "one"
+title = "One"
+release = "beta"
+disc = 1
+track = 1
+artists = ["amy"]
+
+[[tracks]]
+key = "zed"
+title = "Zed"
+release = "alpha"
+disc = 1
+track = 1
+artists = ["amy"]
+
+[[playlists]]
+key = "mine"
+owner = "owner"
+name = "Mine"
+tracks = ["two", "zed", "two"]
+
+[[playlists]]
+key = "secret"
+owner = "other"
+name = "Secret"
+public = false
+tracks = ["one"]

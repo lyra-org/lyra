@@ -16,6 +16,7 @@ local tracks = require("@lyra/tracks")
 
 local catalog = require("./catalog")
 local constants = require("../../constants")
+local instant_mix = require("./instant_mix")
 local item_ids = require("./identifiers")
 local lookups = require("./lookups")
 local options_module = require("./options")
@@ -608,6 +609,83 @@ function module.list_views(options: ItemsQueryOptions): ({ ItemInfo }, number, n
 		return a_name < b_name
 	end)
 	return results.paginate_items(views, options.start_index, options.limit)
+end
+
+-- The tracks upstream plays for an item one client asks another to play: a track itself, and the
+-- tracks under an album, artist, genre, playlist or library, each once, in SortName order. None
+-- for an item the caller can't see.
+function module.playable_track_ids(item_id: string, user_id: string): { string }
+	local scope = lookups.scope(item_id)
+	local kind = if scope.db_id then lookups.visible_kind(scope.db_id, user_id) else nil
+	if kind == nil then
+		return {}
+	end
+	if kind == "Track" then
+		return { item_ids.encode_jellyfin_item_id(scope.db_id) :: string }
+	end
+
+	local options = options_module.for_user(options_module.parse(nil), user_id)
+	options.parent_id = item_id
+	options.include_item_types = { "Audio" }
+	options.recursive = true
+	options.sort_by = { "SortName" }
+	local built: tracks.TrackQuery?
+	if kind == "Playlist" then
+		local children = playlist_children(options, scope)
+		built = if children then query.tracks(children, lookups.scope(nil)) else nil
+	else
+		built = query.tracks(options, scope)
+	end
+	if not built then
+		return {}
+	end
+
+	local result: { string } = {}
+	for _, track in tracks.query(built).items do
+		local hex_id = item_ids.encode_jellyfin_item_id(track.id)
+		if hex_id then
+			table.insert(result, hex_id)
+		end
+	end
+	return result
+end
+
+-- What a remote play command plays, as upstream sends it on: each requested item's playable
+-- tracks, or its instant mix for `PlayInstantMix`, in request order. An instant mix and a shuffle
+-- play now, the shuffle in random order.
+function module.remote_play_queue(
+	requested_ids: { string },
+	play_command: string,
+	user_id: string
+): ({ string }, string)
+	local queue: { string } = {}
+	if play_command == "PlayInstantMix" then
+		local options = options_module.for_user(options_module.parse(nil), user_id)
+		for _, requested_id in requested_ids do
+			local mix_items =
+				instant_mix.list_instant_mix_audio(item_ids.decode_jellyfin_item_id(requested_id), options)
+			for _, item in mix_items do
+				if item.Id then
+					table.insert(queue, item.Id)
+				end
+			end
+		end
+		play_command = "PlayNow"
+	else
+		for _, requested_id in requested_ids do
+			local track_ids = module.playable_track_ids(requested_id, user_id)
+			table.move(track_ids, 1, #track_ids, #queue + 1, queue)
+		end
+	end
+
+	if play_command == "PlayShuffle" then
+		for index = #queue, 2, -1 do
+			local other = math.random(1, index)
+			queue[index], queue[other] = queue[other], queue[index]
+		end
+		play_command = "PlayNow"
+	end
+	return queue, play_command
 end
 
 local NAME_LOOKUP_LIMIT = 200

@@ -1958,11 +1958,11 @@ api.post(P .. "/Sessions/{sessionId}/Playing", function(ctx: ApiContext)
 		or (if type(body.PlayCommand) == "string" then body.PlayCommand :: string else "PlayNow")
 
 	local raw_item_ids: JsonValue = body.ItemIds
-	local item_ids: { JsonValue } = {}
+	local requested_ids: { string } = {}
 	if type(raw_item_ids) == "table" then
 		for _, value: JsonValue in raw_item_ids :: { JsonValue } do
 			if type(value) == "string" then
-				table.insert(item_ids, value)
+				table.insert(requested_ids, value)
 			end
 		end
 	else
@@ -1971,18 +1971,23 @@ api.post(P .. "/Sessions/{sessionId}/Playing", function(ctx: ApiContext)
 			for _, part in string.split(csv, ",") do
 				local trimmed = requests.trim(part)
 				if trimmed then
-					table.insert(item_ids, trimmed)
+					table.insert(requested_ids, trimmed)
 				end
 			end
 		end
 	end
-	if #item_ids == 0 then
+	if #requested_ids == 0 then
 		return responses.bad_request("missing ItemIds")
 	end
 
+	local queue, queue_command = listing.remote_play_queue(requested_ids, play_command, principal.user_id)
+	local queue_json: { JsonValue } = {}
+	for _, id in queue do
+		table.insert(queue_json, id)
+	end
 	local data: JsonObject = {
-		PlayCommand = play_command,
-		ItemIds = item_ids,
+		PlayCommand = queue_command,
+		ItemIds = queue_json,
 	}
 	local start_ticks = requests.parse_query_int(query, { "startPositionTicks", "StartPositionTicks" }, nil, 0, nil)
 		or (if type(body.StartPositionTicks) == "number" then body.StartPositionTicks :: number else nil)
