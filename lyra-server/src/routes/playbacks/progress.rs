@@ -19,6 +19,8 @@ pub(super) struct PlaybackProgressRequest {
         schemars(description = "Current track ID; when present it must match the queue item.")
     )]
     pub(super) track_id: Option<String>,
+    #[cfg_attr(feature = "docgen", schemars(description = PLAY_ID_DESCRIPTION))]
+    pub(super) play_id: String,
     pub(super) position_ms: Option<u64>,
     pub(super) duration_ms: Option<u64>,
     pub(super) state: Option<PlaybackState>,
@@ -38,6 +40,7 @@ pub(super) async fn report_progress(
     Json(request): Json<PlaybackProgressRequest>,
 ) -> Result<Json<PlaybackResponse>, AppError> {
     let auth = require_auth(bearer_credential(&headers)).await?;
+    require_play_id(&request.play_id)?;
     let principal = &auth.principal;
     let current_ms = now_ms()?;
     let connection_session_key =
@@ -124,6 +127,7 @@ pub(super) async fn report_progress(
         &mut db,
         playbacks::ReportProgressRequest {
             playback_db_id: record.playback_db_id,
+            play_id: request.play_id,
             user_db_id,
             client_name: auth.client_name,
             queue_revision: request.queue_revision,
@@ -178,6 +182,12 @@ pub(super) async fn report_progress(
         &[],
     );
     drop(db);
+    if let Some(displaced) = update
+        .displaced_session
+        .and_then(|displaced| displaced.update)
+    {
+        dispatch_playback_update(&displaced.playback, displaced.event);
+    }
     sessions::dispatch_evicted_updates(update.evicted_playbacks);
     if let Some(committed_progress) = committed_progress
         && !committed_progress.finish().await
@@ -191,6 +201,6 @@ pub(super) async fn report_progress(
 #[cfg(feature = "docgen")]
 pub(super) fn progress_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Report playback progress").description(
-        "Reports track-scoped state against an exact queue revision. A target handling handoff_queue completes the handoff by including its opaque handoff_token and connection_session_key here after applying the queue.",
-    ).response::<409, Json<QueueRevisionConflictResponse>>()
+        "Reports track-scoped state against an exact queue revision. A `play_id` other than the current track session's starts a new session and pauses the replaced one at its last reported position; a `play_id` whose session was replaced gets a `play_conflict` 409 for as long as the server keeps that session (a few minutes after it goes idle); a stale `queue_revision` gets a `queue_revision_conflict` 409. A target handling handoff_queue continues the command's `play_id` and completes the handoff by including its opaque handoff_token and connection_session_key here after applying the queue.",
+    ).response::<409, Json<ProgressConflictResponse>>()
 }

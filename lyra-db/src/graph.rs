@@ -384,6 +384,36 @@ fn select_typed_by_index(
         .elements)
 }
 
+/// The node of the expected `DbElement` discriminator type whose `index` key holds `value` and that
+/// links directly to `owner`.
+pub(crate) fn find_owned_by_index(
+    db: &impl DbAccess,
+    index: &str,
+    value: &str,
+    discriminator: &str,
+    owner: DbId,
+) -> anyhow::Result<Option<DbId>> {
+    let candidates = db
+        .exec(
+            QueryBuilder::search()
+                .index(index)
+                .value(value)
+                .where_()
+                .node()
+                .and()
+                .key("db_element_id")
+                .value(discriminator)
+                .query(),
+        )?
+        .ids();
+    for candidate in candidates {
+        if edge_exists(db, candidate, owner)? {
+            return Ok(Some(candidate));
+        }
+    }
+    Ok(None)
+}
+
 /// Fetch the first node of the expected `DbElement` discriminator type whose `index` key holds
 /// `value`, or `None` when no such node exists.
 pub(crate) fn fetch_typed_by_index<T: DbType<ValueType = T>>(

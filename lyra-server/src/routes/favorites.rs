@@ -147,7 +147,7 @@ async fn put_favorite(
     Path(target_id): Path<String>,
 ) -> Result<StatusCode, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
-    if !looks_like_public_id(&target_id) {
+    if !crate::services::opaque_ids::is_public_id(&target_id) {
         return Err(AppError::bad_request(format!(
             "malformed target id: {target_id}"
         )));
@@ -167,7 +167,7 @@ async fn delete_favorite(
     Path(target_id): Path<String>,
 ) -> Result<StatusCode, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
-    if !looks_like_public_id(&target_id) {
+    if !crate::services::opaque_ids::is_public_id(&target_id) {
         return Err(AppError::bad_request(format!(
             "malformed target id: {target_id}"
         )));
@@ -189,7 +189,7 @@ async fn get_favorite_state(
     Query(_): Query<FavoriteStateResponseQuery>,
 ) -> Result<Json<FavoriteStateResponse>, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
-    if !looks_like_public_id(&target_id) {
+    if !crate::services::opaque_ids::is_public_id(&target_id) {
         return Err(AppError::bad_request(format!(
             "malformed target id: {target_id}"
         )));
@@ -252,16 +252,6 @@ async fn list_favorites(
         .collect();
 
     Ok(Json(PageResponse { items, next_cursor }))
-}
-
-fn looks_like_public_id(candidate: &str) -> bool {
-    let len = candidate.len();
-    if !(6..=64).contains(&len) {
-        return false;
-    }
-    candidate
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
 #[cfg(feature = "docgen")]
@@ -360,21 +350,6 @@ mod tests {
         http::header::AUTHORIZATION,
         response::IntoResponse,
     };
-
-    #[test]
-    fn looks_like_public_id_accepts_nanoid_shape() {
-        assert!(looks_like_public_id("V1StGXR8_Z5jdHi6B-myT"));
-        assert!(looks_like_public_id("abc123"));
-    }
-
-    #[test]
-    fn looks_like_public_id_rejects_malformed() {
-        assert!(!looks_like_public_id(""));
-        assert!(!looks_like_public_id("abc"));
-        assert!(!looks_like_public_id("has spaces"));
-        assert!(!looks_like_public_id("has/slashes"));
-        assert!(!looks_like_public_id(&"x".repeat(100)));
-    }
 
     #[test]
     fn favorite_item_from_list_item_formats_fields() {

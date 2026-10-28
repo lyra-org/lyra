@@ -37,8 +37,18 @@ pub(crate) enum RecordOutcome {
     InvalidTime,
 }
 
+const PLAY_ID_LENGTHS: std::ops::RangeInclusive<usize> = 16..=64;
+
+/// The play id contract, for API and plugin documentation.
+pub(crate) const PLAY_ID_DESCRIPTION: &str = "Client-generated id for one play of a track: 16-64 characters of `[A-Za-z0-9_-]`, unique per user. Every play, including a repeat, gets a new id; a play continued elsewhere, such as on a handoff target, keeps its id. A play counts as at most one listen, however and wherever it is reported.";
+
+/// Whether `candidate` has the shape of a client-generated play id.
+pub(crate) fn is_play_id(candidate: &str) -> bool {
+    super::opaque_ids::is_well_formed(candidate, PLAY_ID_LENGTHS)
+}
+
 /// The playing time a play needs to count as a listen of a track with this catalog duration.
-pub(crate) fn min_played_ms(duration_ms: Option<u64>) -> u64 {
+fn min_played_ms(duration_ms: Option<u64>) -> u64 {
     if let Some(duration_ms) = duration_ms
         && duration_ms > 0
         && duration_ms < SHORT_TRACK_MS
@@ -54,18 +64,12 @@ pub(crate) fn min_played_ms(duration_ms: Option<u64>) -> u64 {
     MIN_PLAYED_MS
 }
 
-pub(crate) fn is_listen(played_ms: u64, duration_ms: Option<u64>) -> bool {
+fn is_listen(played_ms: u64, duration_ms: Option<u64>) -> bool {
     played_ms >= min_played_ms(duration_ms)
 }
 
-/// Records the play as the user's listen when it qualifies, inside the caller's transaction.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "playback and listen submission adopt `record` next"
-    )
-)]
+/// Records the play as the user's listen when it qualifies, inside the caller's transaction. A
+/// listen that already exists keeps the longest playing time reported for its play.
 pub(crate) fn record(
     db: &mut impl lyra_db::DbAccess,
     user_db_id: DbId,
@@ -78,7 +82,8 @@ pub(crate) fn record(
     {
         return Ok(RecordOutcome::InvalidTime);
     }
-    if lyra_db::listens::find_by_play_id(db, user_db_id, play.play_id)?.is_some() {
+    if let Some(listen_db_id) = lyra_db::listens::find_by_play_id(db, user_db_id, play.play_id)? {
+        lyra_db::listens::raise_played_ms(db, listen_db_id, play.played_ms)?;
         return Ok(RecordOutcome::Duplicate);
     }
     let track = lyra_db::tracks::get_by_id(db, play.track_db_id)?
@@ -226,6 +231,18 @@ mod tests {
         assert!(matches!(first, RecordOutcome::Recorded), "{first:?}");
         let retry = record_in_transaction(&mut db, user, play("play-repeat-0001", track, 90_000))?;
         assert!(matches!(retry, RecordOutcome::Duplicate), "{retry:?}");
+        let shorter =
+            record_in_transaction(&mut db, user, play("play-repeat-0001", track, 40_000))?;
+        assert!(matches!(shorter, RecordOutcome::Duplicate), "{shorter:?}");
+        let listen_db_id = lyra_db::listens::find_by_play_id(&db, user, "play-repeat-0001")?
+            .ok_or_else(|| anyhow::anyhow!("listen missing"))?;
+        let listen = lyra_db::graph::bulk_fetch_typed::<Listen>(&db, vec![listen_db_id], "Listen")?
+            .remove(&listen_db_id)
+            .ok_or_else(|| anyhow::anyhow!("listen missing"))?;
+        assert_eq!(
+            listen.played_ms, 90_000,
+            "a duplicate keeps the longest playing time"
+        );
         let other =
             record_in_transaction(&mut db, other_user, play("play-repeat-0001", track, 30_000))?;
         assert!(matches!(other, RecordOutcome::Recorded), "{other:?}");

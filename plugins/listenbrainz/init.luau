@@ -328,9 +328,7 @@ playbacks.on_update(function(update)
 			return
 		end
 
-		local qualifies_single_listen = update.qualifies_single_listen == true
-		local is_completed = update.event == "completed"
-		if not is_completed and not qualifies_single_listen then
+		if update.event ~= "completed" then
 			started_at_sec_by_playback_session_id[session_key] = nil
 			return
 		end

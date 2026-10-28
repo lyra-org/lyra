@@ -497,6 +497,25 @@ pub fn get_current_session_id(
     Ok(tagged_edge(db, playback_db_id, CURRENT_SESSION_EDGE_KEY)?.map(|(_, target)| target))
 }
 
+/// Whether a playback holds the session as its current session.
+pub fn is_current_session(
+    db: &impl DbAccess,
+    playback_session_db_id: DbId,
+) -> anyhow::Result<bool> {
+    let result = db.exec(
+        QueryBuilder::search()
+            .to(playback_session_db_id)
+            .where_()
+            .edge()
+            .and()
+            .distance(CountComparison::Equal(1))
+            .and()
+            .keys(CURRENT_SESSION_EDGE_KEY)
+            .query(),
+    )?;
+    Ok(!result.elements.is_empty())
+}
+
 pub fn link_current_session(
     db: &mut impl DbAccess,
     playback_db_id: DbId,
@@ -666,10 +685,12 @@ mod tests {
                 client_name: None,
                 position_ms: 0,
                 duration_ms: None,
-                activity_ms: Some(0),
-                last_position_ms: Some(0),
+                played_ms: 0,
+                last_position_ms: 0,
                 state: PlaybackState::Playing,
-                listen_recorded: None,
+                play_id: nanoid::nanoid!(),
+                latency_allowance_used_ms: 0,
+                last_position_at_ms: 1,
                 updated_at_ms: 1,
                 created_at_ms: 1,
             },
@@ -777,6 +798,25 @@ mod tests {
         assert!(get_by_id(&db, expired.db_id.unwrap())?.is_none());
         assert!(get_by_id(&db, live.db_id.unwrap())?.is_some());
         assert!(crate::playback_sessions::get_by_id(&db, session_id)?.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn eviction_keeps_a_playbacks_current_session_until_the_playback_goes() -> anyhow::Result<()> {
+        let (mut db, user_id, session_id) = setup()?;
+        let root_id = create(&mut db, &playback(), user_id, session_id)?;
+        let stale_now_ms = 24 * 60 * 60 * 1000;
+
+        assert!(is_current_session(&db, session_id)?);
+        assert!(
+            crate::playback_sessions::evict_stale(&mut db, stale_now_ms, |_| false)?.is_empty()
+        );
+
+        delete(&mut db, root_id)?;
+        assert!(!is_current_session(&db, session_id)?);
+        let evicted = crate::playback_sessions::evict_stale(&mut db, stale_now_ms, |_| false)?;
+        assert_eq!(evicted.len(), 1);
+        assert!(crate::playback_sessions::get_by_id(&db, session_id)?.is_none());
         Ok(())
     }
 

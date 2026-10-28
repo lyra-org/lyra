@@ -69,6 +69,8 @@ use crate::{
 use lyra_db::PlaybackState;
 
 const NATIVE_PLAYBACK_PLUGIN_ID: &str = "native";
+#[cfg(feature = "docgen")]
+use crate::services::listens::PLAY_ID_DESCRIPTION;
 #[cfg(test)]
 const ACTIVE_PLAYBACK_TIMEOUT_MS: u64 = sessions::ACTIVE_SESSION_TTL_MS;
 
@@ -77,6 +79,8 @@ const ACTIVE_PLAYBACK_TIMEOUT_MS: u64 = sessions::ACTIVE_SESSION_TTL_MS;
 struct PlaybackCreateRequest {
     #[serde(flatten)]
     queue: QueueSnapshot,
+    #[cfg_attr(feature = "docgen", schemars(description = PLAY_ID_DESCRIPTION))]
+    play_id: String,
     #[serde(default)]
     position_ms: Option<u64>,
     duration_ms: Option<u64>,
@@ -106,11 +110,12 @@ struct PlaybackDetailQuery {
 #[derive(Serialize)]
 struct CurrentPlaybackResponse {
     track_id: String,
+    play_id: String,
     client_name: Option<String>,
     position_ms: u64,
     duration_ms: Option<u64>,
     state: PlaybackState,
-    activity_ms: u64,
+    played_ms: u64,
     updated_at: String,
     effective_position_ms: u64,
 }
@@ -146,6 +151,25 @@ struct QueueRevisionConflictResponse {
     current_revision: u64,
 }
 
+/// The play already has a track session other than the current one, such as one a later play
+/// replaced.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct PlayConflictResponse {
+    code: String,
+    play_id: String,
+}
+
+/// The 409 bodies of a progress report, told apart by `code`.
+#[cfg(feature = "docgen")]
+#[derive(schemars::JsonSchema)]
+#[serde(untagged)]
+#[expect(dead_code, reason = "describes the response schema only")]
+enum ProgressConflictResponse {
+    QueueRevision(QueueRevisionConflictResponse),
+    Play(PlayConflictResponse),
+}
+
 #[derive(Clone, Copy, Default)]
 struct PlaybackInc {
     controller: bool,
@@ -168,6 +192,16 @@ fn parse_inc(inc: Option<Vec<String>>) -> Result<PlaybackInc, AppError> {
 
 fn now_ms() -> Result<u64, AppError> {
     Ok(sessions::now_ms()?)
+}
+
+fn require_play_id(play_id: &str) -> Result<(), AppError> {
+    if crate::services::listens::is_play_id(play_id) {
+        Ok(())
+    } else {
+        Err(AppError::bad_request(format!(
+            "malformed play_id: {play_id}"
+        )))
+    }
 }
 
 fn connection_session_key(value: Option<&str>) -> Option<&str> {
@@ -202,11 +236,12 @@ fn current_to_response(
     let playback = &current.playback;
     CurrentPlaybackResponse {
         track_id: current.track_public_id.clone(),
+        play_id: playback.play_id.clone(),
         client_name: playback.client_name.clone(),
         position_ms: playback.position_ms,
         duration_ms: playback.duration_ms,
         state: playback.state,
-        activity_ms: sessions::playback_activity_ms(playback),
+        played_ms: playback.played_ms,
         updated_at: crate::services::timestamps::unix_ms_to_rfc3339_u64(playback.updated_at_ms),
         effective_position_ms: extrapolated_position_ms(
             playback.position_ms,
@@ -309,6 +344,15 @@ fn map_playback_error(error: PlaybackError) -> AppError {
         } => revision_conflict(expected_revision, current_revision),
         PlaybackError::RevisionExhausted => AppError::conflict("queue revision exhausted"),
         PlaybackError::LimitReached => AppError::conflict("playback limit reached"),
+        PlaybackError::Session(sessions::PlaybackServiceError::PlayConflict(play_id)) => {
+            AppError::json_conflict(
+                serde_json::to_value(PlayConflictResponse {
+                    code: "play_conflict".to_string(),
+                    play_id,
+                })
+                .expect("play conflict response must serialize"),
+            )
+        }
         PlaybackError::Session(error) => error.into(),
         PlaybackError::Database(error) => anyhow::Error::from(error).into(),
         PlaybackError::Pagination(error) => error.into(),
@@ -456,6 +500,7 @@ async fn create_playback(
     Json(request): Json<PlaybackCreateRequest>,
 ) -> Result<(StatusCode, Json<PlaybackResponse>), AppError> {
     let auth = require_auth(bearer_credential(&headers)).await?;
+    require_play_id(&request.play_id)?;
     let current_ms = now_ms()?;
     let mut db = STATE.db.write().await;
     let user_db_id = auth.principal.require(&db)?;
@@ -465,6 +510,7 @@ async fn create_playback(
         &mut db,
         playbacks::CreatePlaybackRequest {
             id: nanoid!(),
+            play_id: request.play_id,
             user_db_id,
             client_name: auth.client_name,
             queue,
@@ -558,8 +604,9 @@ async fn delete_playback(
 #[cfg(feature = "docgen")]
 fn create_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Create playback").description(
-        "Creates a durable user-owned playback with the complete initial queue at revision 1.",
+        "Creates a durable user-owned playback with the complete initial queue at revision 1. A `play_id` that already has a track session gets a `play_conflict` 409.",
     )
+    .response::<409, Json<PlayConflictResponse>>()
 }
 
 #[cfg(feature = "docgen")]
@@ -577,7 +624,7 @@ fn detail_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn delete_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Delete playback").description(
-        "Deletes the durable playback aggregate. Track-scoped listen-accounting records are retained.",
+        "Deletes the durable playback aggregate. Listens recorded from its plays are kept.",
     )
 }
 

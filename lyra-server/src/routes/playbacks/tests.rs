@@ -29,6 +29,9 @@ use axum::{
 };
 use tokio::sync::oneshot;
 
+const TEST_PLAY_ID: &str = "route-test-play-0001";
+const NEXT_TEST_PLAY_ID: &str = "route-test-play-0002";
+
 struct RouteFixture {
     headers: HeaderMap,
     user_db_id: DbId,
@@ -54,6 +57,7 @@ async fn reported_reads_share_the_supplied_expiry_cutoff() -> anyhow::Result<()>
             user_db_id: fixture.user_db_id,
             session_key: "player",
             track_db_id,
+            play_id: None,
             client_name: None,
             mutation: PlaybackMutation {
                 state: Some(PlaybackState::Playing),
@@ -174,10 +178,12 @@ fn active_filter_requires_recent_non_terminal_current_session() {
             client_name: None,
             position_ms: 0,
             duration_ms: None,
-            activity_ms: Some(0),
-            last_position_ms: Some(0),
+            played_ms: 0,
+            last_position_ms: 0,
             state: PlaybackState::Playing,
-            listen_recorded: None,
+            play_id: nanoid::nanoid!(),
+            latency_allowance_used_ms: 0,
+            last_position_at_ms: current_ms,
             updated_at_ms: current_ms,
             created_at_ms: 1,
         },
@@ -255,6 +261,7 @@ async fn response_keeps_initiating_and_controlling_client_names_distinct() -> an
     let (_, Json(created)) = create_playback(
         fixture.headers.clone(),
         Json(PlaybackCreateRequest {
+            play_id: TEST_PLAY_ID.to_string(),
             queue: QueueSnapshot::single(fixture.first_track_id),
             position_ms: Some(0),
             duration_ms: Some(100_000),
@@ -301,6 +308,7 @@ async fn create_replace_queue_and_advance_current_track() -> anyhow::Result<()> 
     let (status, Json(created)) = create_playback(
         headers.clone(),
         Json(PlaybackCreateRequest {
+            play_id: TEST_PLAY_ID.to_string(),
             queue: QueueSnapshot {
                 track_ids: vec![first_track_id.clone(), second_track_id.clone()],
                 current_index: 0,
@@ -357,6 +365,7 @@ async fn create_replace_queue_and_advance_current_track() -> anyhow::Result<()> 
         headers,
         Path(created.id),
         Json(PlaybackProgressRequest {
+            play_id: NEXT_TEST_PLAY_ID.to_string(),
             queue_revision: 2,
             track_id: Some(second_track_id.clone()),
             position_ms: Some(500),
@@ -387,6 +396,7 @@ async fn same_track_handoff_completes_on_exact_tokened_progress() -> anyhow::Res
     let (status, Json(created)) = create_playback(
         fixture.headers.clone(),
         Json(PlaybackCreateRequest {
+            play_id: TEST_PLAY_ID.to_string(),
             queue: QueueSnapshot::single(fixture.first_track_id.clone()),
             position_ms: Some(0),
             duration_ms: Some(100_000),
@@ -418,10 +428,15 @@ async fn same_track_handoff_completes_on_exact_tokened_progress() -> anyhow::Res
     .await
     .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     let target_id = registered.connection_id;
-    {
+    let continued_play_id = {
         let db = STATE.db.read().await;
         playbacks::validate_handoff_queue(&db, fixture.user_db_id, &created.id, 2)?
     };
+    assert_eq!(
+        continued_play_id.as_deref(),
+        Some(TEST_PLAY_ID),
+        "the target continues the current play"
+    );
     let (handoff_token, completion_rx) = handoffs::begin(
         None,
         target_id,
@@ -435,6 +450,7 @@ async fn same_track_handoff_completes_on_exact_tokened_progress() -> anyhow::Res
         fixture.headers.clone(),
         Path(created.id.clone()),
         Json(PlaybackProgressRequest {
+            play_id: TEST_PLAY_ID.to_string(),
             queue_revision: 2,
             track_id: Some(fixture.first_track_id.clone()),
             position_ms: Some(100),
@@ -455,6 +471,7 @@ async fn same_track_handoff_completes_on_exact_tokened_progress() -> anyhow::Res
         fixture.headers,
         Path(created.id.clone()),
         Json(PlaybackProgressRequest {
+            play_id: TEST_PLAY_ID.to_string(),
             queue_revision: 2,
             track_id: Some(fixture.first_track_id),
             position_ms: Some(100),
@@ -479,6 +496,7 @@ async fn changed_track_handoff_progress_creates_session_and_completes() -> anyho
     let (_, Json(created)) = create_playback(
         fixture.headers.clone(),
         Json(PlaybackCreateRequest {
+            play_id: TEST_PLAY_ID.to_string(),
             queue: QueueSnapshot::single(fixture.first_track_id.clone()),
             position_ms: Some(0),
             duration_ms: Some(100_000),
@@ -527,6 +545,7 @@ async fn changed_track_handoff_progress_creates_session_and_completes() -> anyho
         fixture.headers,
         Path(created.id.clone()),
         Json(PlaybackProgressRequest {
+            play_id: NEXT_TEST_PLAY_ID.to_string(),
             queue_revision: 2,
             track_id: Some(fixture.second_track_id.clone()),
             position_ms: Some(0),
@@ -555,6 +574,7 @@ async fn queue_replacement_cannot_overtake_committed_handoff_finish() -> anyhow:
     let (_, Json(created)) = create_playback(
         fixture.headers.clone(),
         Json(PlaybackCreateRequest {
+            play_id: TEST_PLAY_ID.to_string(),
             queue: QueueSnapshot::single(fixture.first_track_id.clone()),
             position_ms: Some(0),
             duration_ms: Some(100_000),
@@ -603,6 +623,7 @@ async fn queue_replacement_cannot_overtake_committed_handoff_finish() -> anyhow:
         let update = playbacks::report_progress(
             &mut db,
             playbacks::ReportProgressRequest {
+                play_id: TEST_PLAY_ID.to_string(),
                 playback_db_id,
                 user_db_id: fixture.user_db_id,
                 client_name: Some("Target".to_string()),
@@ -684,6 +705,7 @@ async fn stale_revision_is_rejected_before_handoff_is_queued() -> anyhow::Result
     let (_, Json(created)) = create_playback(
         fixture.headers.clone(),
         Json(PlaybackCreateRequest {
+            play_id: TEST_PLAY_ID.to_string(),
             queue: QueueSnapshot::single(fixture.first_track_id.clone()),
             position_ms: Some(0),
             duration_ms: Some(100_000),
@@ -740,6 +762,7 @@ async fn reported_playback_shares_collection_and_rejects_queue_operations() -> a
     let (_, Json(native)) = create_playback(
         fixture.headers.clone(),
         Json(PlaybackCreateRequest {
+            play_id: TEST_PLAY_ID.to_string(),
             queue: QueueSnapshot::single(fixture.first_track_id.clone()),
             position_ms: Some(0),
             duration_ms: Some(100_000),
@@ -762,6 +785,7 @@ async fn reported_playback_shares_collection_and_rejects_queue_operations() -> a
                 user_db_id: fixture.user_db_id,
                 session_key: "reported-player",
                 track_db_id,
+                play_id: None,
                 client_name: Some("External player".into()),
                 mutation: PlaybackMutation {
                     position_ms: Some(1_200),
@@ -830,6 +854,7 @@ async fn reported_playback_shares_collection_and_rejects_queue_operations() -> a
         fixture.headers.clone(),
         Path(id.clone()),
         Json(PlaybackProgressRequest {
+            play_id: TEST_PLAY_ID.to_string(),
             queue_revision: 0,
             track_id: Some(fixture.second_track_id.clone()),
             position_ms: Some(2_000),
@@ -884,6 +909,7 @@ async fn reported_playback_shares_collection_and_rejects_queue_operations() -> a
                 user_db_id: fixture.user_db_id,
                 session_key: "reported-player",
                 track_db_id,
+                play_id: None,
                 client_name: None,
                 mutation: PlaybackMutation {
                     state: Some(PlaybackState::Stopped),
@@ -914,4 +940,129 @@ async fn reported_playback_shares_collection_and_rejects_queue_operations() -> a
     .map_err(|error| anyhow::anyhow!("{error:?}"))?;
     assert_eq!(stopped.current.unwrap().state, PlaybackState::Stopped);
     Ok(())
+}
+
+#[tokio::test]
+async fn malformed_play_ids_are_rejected() -> anyhow::Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    let fixture = setup_admin_with_tracks().await?;
+    for play_id in ["too-short", "has spaces in the id", &"x".repeat(65)] {
+        let error = create_playback(
+            fixture.headers.clone(),
+            Json(PlaybackCreateRequest {
+                play_id: play_id.to_string(),
+                queue: QueueSnapshot::single(fixture.first_track_id.clone()),
+                position_ms: Some(0),
+                duration_ms: Some(100_000),
+                state: Some(PlaybackState::Playing),
+                connection_session_key: None,
+            }),
+        )
+        .await
+        .err()
+        .expect("a malformed play_id is rejected");
+        assert_eq!(error.into_response().status(), StatusCode::BAD_REQUEST);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn progress_with_a_new_play_id_starts_a_new_track_session() -> anyhow::Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    let fixture = setup_admin_with_tracks().await?;
+    let (_, Json(created)) = create_playback(
+        fixture.headers.clone(),
+        Json(PlaybackCreateRequest {
+            play_id: TEST_PLAY_ID.to_string(),
+            queue: QueueSnapshot::single(fixture.first_track_id.clone()),
+            position_ms: Some(0),
+            duration_ms: Some(100_000),
+            state: Some(PlaybackState::Playing),
+            connection_session_key: None,
+        }),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    assert_eq!(created.current.as_ref().unwrap().play_id, TEST_PLAY_ID);
+    let first_session = current_session_id(&created.id).await?;
+
+    let progress = |play_id: &str| PlaybackProgressRequest {
+        play_id: play_id.to_string(),
+        queue_revision: 1,
+        track_id: Some(fixture.first_track_id.clone()),
+        position_ms: Some(1_000),
+        duration_ms: Some(100_000),
+        state: Some(PlaybackState::Playing),
+        connection_session_key: None,
+        handoff_token: None,
+    };
+    let Json(_) = report_progress(
+        fixture.headers.clone(),
+        Path(created.id.clone()),
+        Json(progress(TEST_PLAY_ID)),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    assert_eq!(current_session_id(&created.id).await?, first_session);
+
+    let Json(repeated) = report_progress(
+        fixture.headers.clone(),
+        Path(created.id.clone()),
+        Json(progress(NEXT_TEST_PLAY_ID)),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    assert_eq!(
+        repeated.current.as_ref().unwrap().play_id,
+        NEXT_TEST_PLAY_ID
+    );
+    let next_session = current_session_id(&created.id).await?;
+    assert_ne!(next_session, first_session);
+    {
+        let db = STATE.db.read().await;
+        let replaced = lyra_db::playback_sessions::get_by_id(&*db, first_session.unwrap())?
+            .expect("the replaced session is kept");
+        assert_eq!(replaced.state, PlaybackState::Paused);
+        assert_eq!(
+            replaced.position_ms, 1_000,
+            "paused at its last reported position"
+        );
+    }
+
+    let late = report_progress(
+        fixture.headers.clone(),
+        Path(created.id.clone()),
+        Json(progress(TEST_PLAY_ID)),
+    )
+    .await
+    .err()
+    .expect("a replaced play cannot come back");
+    let late = late.into_response();
+    assert_eq!(late.status(), StatusCode::CONFLICT);
+    let body = to_bytes(late.into_body(), 64 * 1024).await?;
+    let body: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(body["code"], "play_conflict");
+    assert_eq!(body["play_id"], TEST_PLAY_ID);
+    assert_eq!(current_session_id(&created.id).await?, next_session);
+
+    let error = report_progress(
+        fixture.headers,
+        Path(created.id),
+        Json(progress("bad play id")),
+    )
+    .await
+    .err()
+    .expect("a malformed play_id is rejected");
+    assert_eq!(error.into_response().status(), StatusCode::BAD_REQUEST);
+    Ok(())
+}
+
+async fn current_session_id(playback_public_id: &str) -> anyhow::Result<Option<DbId>> {
+    let db = STATE.db.read().await;
+    let playback_db_id = lyra_db::lookup::find_node_id_by_id(&*db, playback_public_id)?
+        .ok_or_else(|| anyhow::anyhow!("playback missing"))?;
+    Ok(lyra_db::playbacks::get_current_session_id(
+        &*db,
+        playback_db_id,
+    )?)
 }

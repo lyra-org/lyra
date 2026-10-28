@@ -102,13 +102,19 @@ impl TryFrom<DbValue> for PlaybackState {
 pub struct PlaybackSession {
     pub db_id: Option<DbId>,
     pub id: String,
+    /// The client's id for the play this session tracks; one play per session.
+    pub play_id: String,
     pub client_name: Option<String>,
     pub position_ms: u64,
     pub duration_ms: Option<u64>,
-    pub activity_ms: Option<u64>,
-    pub last_position_ms: Option<u64>,
+    /// Playing time credited to the play so far.
+    pub played_ms: u64,
+    /// The position and time of the latest report that carried a position.
+    pub last_position_ms: u64,
+    pub last_position_at_ms: u64,
+    /// Playing time credited beyond the server's elapsed time, for report latency.
+    pub latency_allowance_used_ms: u64,
     pub state: PlaybackState,
-    pub listen_recorded: Option<bool>,
     pub updated_at_ms: u64,
     pub created_at_ms: u64,
 }
@@ -203,6 +209,15 @@ pub fn insert(
     )?;
 
     Ok(playback_session_id)
+}
+
+/// The user's session for the play, if one was ever started.
+pub fn find_by_play_id(
+    db: &impl super::DbAccess,
+    user_db_id: DbId,
+    play_id: &str,
+) -> anyhow::Result<Option<DbId>> {
+    super::graph::find_owned_by_index(db, "play_id", play_id, "PlaybackSession", user_db_id)
 }
 
 pub fn get_by_id(
@@ -368,11 +383,12 @@ pub fn get(db: &DbAny) -> anyhow::Result<Vec<PlaybackSession>> {
     Ok(playback_sessions)
 }
 
-/// Removes sessions untouched for longer than the stale TTL, except those `keep` holds for.
+/// Removes sessions untouched for longer than the stale TTL, except a playback's current session
+/// and those `is_active` holds for.
 pub fn evict_stale(
     db: &mut DbAny,
     now_ms: u64,
-    keep: impl Fn(DbId, &PlaybackSession) -> bool,
+    is_active: impl Fn(DbId) -> bool,
 ) -> anyhow::Result<Vec<EvictedPlayback>> {
     let cutoff_ms = now_ms.saturating_sub(STALE_TTL_MS);
     let mut evicted = Vec::new();
@@ -386,7 +402,9 @@ pub fn evict_stale(
         let Some(playback_session_id) = playback_session.db_id else {
             continue;
         };
-        if keep(playback_session_id, &playback_session) {
+        if is_active(playback_session_id)
+            || super::playbacks::is_current_session(db, playback_session_id)?
+        {
             continue;
         }
 
@@ -486,13 +504,15 @@ mod tests {
         PlaybackSession {
             db_id: None,
             id: nanoid!(),
+            play_id: nanoid!(),
             client_name: None,
             position_ms: 0,
             duration_ms: Some(300_000),
-            activity_ms: Some(0),
-            last_position_ms: None,
+            played_ms: 0,
+            last_position_ms: 0,
             state: PlaybackState::Playing,
-            listen_recorded: None,
+            latency_allowance_used_ms: 0,
+            last_position_at_ms: now_ms,
             updated_at_ms: now_ms,
             created_at_ms: now_ms,
         }
@@ -595,6 +615,23 @@ mod tests {
     }
 
     #[test]
+    fn find_by_play_id_matches_only_the_users_session() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_id = create_test_user(&mut db)?;
+        let other_user_id = crate::users::create(&mut db, &crate::fixtures::test_user("other")?)?;
+        let track_id = create_test_track(&mut db, "Track")?;
+        let session = make_session(1000);
+        let session_id = create(&mut db, &session, track_id, user_id)?;
+
+        assert_eq!(
+            find_by_play_id(&db, user_id, &session.play_id)?,
+            Some(session_id)
+        );
+        assert_eq!(find_by_play_id(&db, other_user_id, &session.play_id)?, None);
+        Ok(())
+    }
+
+    #[test]
     fn get_user_id_resolves_linked_user() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user_id = create_test_user(&mut db)?;
@@ -629,19 +666,21 @@ mod tests {
         let session = PlaybackSession {
             db_id: None,
             id: nanoid!(),
+            play_id: nanoid!(),
             client_name: None,
             position_ms: 1000,
             duration_ms: Some(300_000),
-            activity_ms: Some(100),
-            last_position_ms: None,
+            played_ms: 100,
+            last_position_ms: 0,
             state: PlaybackState::Playing,
-            listen_recorded: None,
+            latency_allowance_used_ms: 0,
+            last_position_at_ms: stale_time,
             updated_at_ms: stale_time,
             created_at_ms: stale_time,
         };
         let session_id = create(&mut db, &session, track_id, user_id)?;
 
-        let evicted = evict_stale(&mut db, now_ms, |_, _| false)?;
+        let evicted = evict_stale(&mut db, now_ms, |_| false)?;
         assert_eq!(evicted.len(), 1);
         assert_eq!(evicted[0].track_db_id, track_id);
         assert_eq!(evicted[0].user_db_id, user_id);
@@ -662,19 +701,21 @@ mod tests {
         let session = PlaybackSession {
             db_id: None,
             id: nanoid!(),
+            play_id: nanoid!(),
             client_name: None,
             position_ms: 100,
             duration_ms: Some(300_000),
-            activity_ms: Some(100),
-            last_position_ms: None,
+            played_ms: 100,
+            last_position_ms: 0,
             state: PlaybackState::Playing,
-            listen_recorded: None,
+            latency_allowance_used_ms: 0,
+            last_position_at_ms: now_ms,
             updated_at_ms: now_ms,
             created_at_ms: now_ms,
         };
         let session_id = create(&mut db, &session, track_id, user_id)?;
 
-        let evicted = evict_stale(&mut db, now_ms, |_, _| false)?;
+        let evicted = evict_stale(&mut db, now_ms, |_| false)?;
         assert!(evicted.is_empty());
 
         // Session should still exist
@@ -683,7 +724,7 @@ mod tests {
     }
 
     #[test]
-    fn evict_stale_skips_kept_sessions() -> anyhow::Result<()> {
+    fn evict_stale_skips_active_sessions() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user_id = create_test_user(&mut db)?;
         let track_id = create_test_track(&mut db, "Track")?;
@@ -694,19 +735,21 @@ mod tests {
         let session = PlaybackSession {
             db_id: None,
             id: nanoid!(),
+            play_id: nanoid!(),
             client_name: None,
             position_ms: 100,
             duration_ms: Some(300_000),
-            activity_ms: Some(100),
-            last_position_ms: None,
+            played_ms: 100,
+            last_position_ms: 0,
             state: PlaybackState::Playing,
-            listen_recorded: None,
+            latency_allowance_used_ms: 0,
+            last_position_at_ms: stale_time,
             updated_at_ms: stale_time,
             created_at_ms: stale_time,
         };
         let session_id = create(&mut db, &session, track_id, user_id)?;
 
-        let evicted = evict_stale(&mut db, now_ms, |id, _| id == session_id)?;
+        let evicted = evict_stale(&mut db, now_ms, |id| id == session_id)?;
         assert!(evicted.is_empty());
 
         // Session should still exist

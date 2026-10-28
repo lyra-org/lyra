@@ -29,15 +29,13 @@ use super::sessions::{
 use super::{
     ACTIVE_SESSION_TTL_MS,
     ActiveEvent,
-    ActivityPolicy,
     EvictedPlaybackRecord,
     OptionalPlaybackUpdateResult,
-    POSITION_DELTA_GRACE_MS,
+    PLAY_LATENCY_ALLOWANCE_MS,
     PREVIOUS_PLAYBACK_GRACE_MS,
     PlaybackMutation,
     PlaybackRecord,
     PlaybackServiceError,
-    RESTART_POSITION_MS,
     ReportPlaybackRequest,
     ServiceResult,
     SessionPlaybackReportRequest,
@@ -233,19 +231,20 @@ fn update_session_bound_playback(
     mut bound: sessions::BoundPlayback,
     mutation: PlaybackMutation,
     now_ms: u64,
-    activity_policy: ActivityPolicy,
 ) -> ServiceResult<PlaybackRecord> {
-    apply_playback_mutation(&mut bound.playback, &mutation, now_ms, activity_policy)?;
+    apply_playback_mutation(&mut bound.playback, &mutation, now_ms)?;
     bound.playback.db_id = Some(bound.playback_session_id);
     map_internal(lyra_db::playback_sessions::update(db, &bound.playback))?;
 
-    require_playback_record(
+    let playback = require_playback_record(
         db,
         bound.playback_session_id,
         bound.track_db_id,
         user_db_id,
         bound.playback,
-    )
+    )?;
+    record_listen(db, &playback, now_ms)?;
+    Ok(playback)
 }
 
 fn map_internal<T>(result: anyhow::Result<T>) -> ServiceResult<T> {
@@ -266,98 +265,33 @@ pub(crate) fn ensure_position_within_duration(
     Ok(())
 }
 
-pub(crate) fn playback_activity_ms(playback: &PlaybackSession) -> u64 {
-    playback.activity_ms.unwrap_or(playback.position_ms)
-}
-
-fn effective_playback_position_ms(playback: &PlaybackSession, now_ms: u64) -> u64 {
-    let mut position_ms = playback.position_ms;
-    if playback.state == PlaybackState::Playing {
-        position_ms = position_ms.saturating_add(now_ms.saturating_sub(playback.updated_at_ms));
-    }
-
-    if let Some(duration_ms) = playback.duration_ms {
-        position_ms = position_ms.min(duration_ms);
-    }
-
-    position_ms
-}
-
-fn listen_for_playback(
-    playback_record: &PlaybackRecord,
-    now_ms: u64,
-) -> Option<(lyra_db::Listen, PlaybackSession)> {
-    if playback_record.playback.listen_recorded.unwrap_or(false) {
-        return None;
-    }
-
-    let activity_ms = playback_activity_ms(&playback_record.playback);
-    if !crate::services::listens::is_listen(activity_ms, playback_record.playback.duration_ms) {
-        return None;
-    }
-
-    let listen = lyra_db::Listen {
-        db_id: None,
-        id: nanoid!(),
-        play_id: nanoid!(),
-        track_public_id: playback_record.track_public_id.clone(),
-        started_at_ms: playback_record.playback.created_at_ms,
-        played_ms: activity_ms,
-        created_at_ms: now_ms,
-    };
-    let mut playback_session = playback_record.playback.clone();
-    playback_session.listen_recorded = Some(true);
-    Some((listen, playback_session))
-}
-
-pub(crate) fn maybe_record_listen(
-    db: &mut DbAny,
-    playback_record: &mut PlaybackRecord,
-    now_ms: u64,
-) -> ServiceResult<()> {
-    let Some((listen, playback_session)) = listen_for_playback(playback_record, now_ms) else {
-        return Ok(());
-    };
-    map_internal(db.transaction_mut(|t| {
-        insert_listen_and_mark_recorded(t, playback_record, &listen, &playback_session)
-    }))?;
-    playback_record.playback = playback_session;
-
-    Ok(())
-}
-
-fn maybe_record_listen_in_transaction(
-    db: &mut impl lyra_db::DbAccess,
-    playback_record: &mut PlaybackRecord,
-    now_ms: u64,
-) -> ServiceResult<()> {
-    let Some((listen, playback_session)) = listen_for_playback(playback_record, now_ms) else {
-        return Ok(());
-    };
-    map_internal(insert_listen_and_mark_recorded(
-        db,
-        playback_record,
-        &listen,
-        &playback_session,
-    ))?;
-    playback_record.playback = playback_session;
-
-    Ok(())
-}
-
-fn insert_listen_and_mark_recorded(
+/// Records the session's play as a listen once it qualifies.
+fn record_listen(
     db: &mut impl lyra_db::DbAccess,
     playback_record: &PlaybackRecord,
-    listen: &lyra_db::Listen,
-    playback_session: &PlaybackSession,
-) -> anyhow::Result<()> {
-    lyra_db::listens::insert(
+    now_ms: u64,
+) -> ServiceResult<()> {
+    let playback = &playback_record.playback;
+    let outcome = map_internal(crate::services::listens::record(
         db,
-        listen,
-        playback_record.track_db_id,
         playback_record.user_db_id,
-    )?;
-    lyra_db::playback_sessions::update(db, playback_session)
+        crate::services::listens::Play {
+            play_id: &playback.play_id,
+            track_db_id: playback_record.track_db_id,
+            started_at_ms: playback.created_at_ms,
+            played_ms: playback.played_ms,
+        },
+        now_ms,
+    ))?;
+    if outcome == crate::services::listens::RecordOutcome::InvalidTime {
+        tracing::warn!(
+            playback_session_id = playback_record.playback_session_id.0,
+            started_at_ms = playback.created_at_ms,
+            now_ms,
+            "live play not recorded: its times are implausible; check the server clock",
+        );
+    }
+    Ok(())
 }
 
 pub(crate) fn collect_unique_track_external_id_keys(
@@ -451,14 +385,8 @@ pub(crate) fn cleanup_evicted_playbacks(
     let evicted_playbacks = map_internal(lyra_db::playback_sessions::evict_stale(
         db,
         now_ms,
-        |playback_session_id, playback_session| {
-            crate::services::listens::is_listen(
-                playback_activity_ms(playback_session),
-                playback_session.duration_ms,
-            ) || sessions::has_active_scope_for_playback(
-                playback_session_id,
-                active_session_cutoff_ms,
-            )
+        |playback_session_id| {
+            sessions::has_active_scope_for_playback(playback_session_id, active_session_cutoff_ms)
         },
     ))?;
     clear_session_bindings_for_playbacks(&evicted_playbacks);
@@ -536,54 +464,42 @@ pub(crate) fn list_playbacks(db: &DbAny, user_db_id: DbId) -> ServiceResult<Vec<
         .collect())
 }
 
+/// Applies a report to the session, crediting playing time only for position advanced while the
+/// previous report was playing, and never more than the server's elapsed time plus what is left
+/// of the play's latency allowance.
 pub(crate) fn apply_playback_mutation(
     playback: &mut PlaybackSession,
     mutation: &PlaybackMutation,
     now_ms: u64,
-    activity_policy: ActivityPolicy,
 ) -> ServiceResult<()> {
-    let previous_state = playback.state;
-    let state = mutation.state.unwrap_or(previous_state);
+    let state = mutation.state.unwrap_or(playback.state);
     let position_ms = mutation.position_ms.unwrap_or(playback.position_ms);
     let duration_ms = mutation.duration_ms.or(playback.duration_ms);
     ensure_position_within_duration(position_ms, duration_ms)?;
 
-    let mut activity_ms = playback.activity_ms.unwrap_or(playback.position_ms);
-    let mut last_position_ms = playback.last_position_ms.unwrap_or(playback.position_ms);
-    let mut listen_recorded = playback.listen_recorded;
+    if playback.state != PlaybackState::Playing {
+        // Time spent not playing never counts, however the next report reaches a position.
+        playback.last_position_at_ms = now_ms;
+    }
     if mutation.position_ms.is_some() {
-        let listen_threshold_ms = crate::services::listens::min_played_ms(duration_ms);
-        if listen_recorded.unwrap_or(false)
-            && !state.is_terminal()
-            && position_ms <= RESTART_POSITION_MS
-            && position_ms < listen_threshold_ms
-            && last_position_ms > RESTART_POSITION_MS
-        {
-            // Same-session replay; clear via Some(false) since agdb omits
-            // None on upsert.
-            listen_recorded = Some(false);
-            activity_ms = position_ms;
-            last_position_ms = position_ms;
-        } else {
-            let delta_ms = position_ms.saturating_sub(last_position_ms);
-            let elapsed_since_last_update_ms = now_ms.saturating_sub(playback.updated_at_ms);
-            let expected_progress_window_ms =
-                elapsed_since_last_update_ms.saturating_add(POSITION_DELTA_GRACE_MS);
-            if delta_ms <= expected_progress_window_ms
-                && activity_policy.records_position_delta(previous_state, state)
-            {
-                activity_ms = activity_ms.saturating_add(delta_ms);
-            }
-            last_position_ms = position_ms;
+        if playback.state == PlaybackState::Playing {
+            let advanced_ms = position_ms.saturating_sub(playback.last_position_ms);
+            let elapsed_ms = now_ms.saturating_sub(playback.last_position_at_ms);
+            let remaining_allowance_ms =
+                PLAY_LATENCY_ALLOWANCE_MS.saturating_sub(playback.latency_allowance_used_ms);
+            let credited_ms = advanced_ms.min(elapsed_ms.saturating_add(remaining_allowance_ms));
+            playback.latency_allowance_used_ms = playback
+                .latency_allowance_used_ms
+                .saturating_add(credited_ms.saturating_sub(elapsed_ms));
+            playback.played_ms = playback.played_ms.saturating_add(credited_ms);
         }
+        playback.last_position_ms = position_ms;
+        playback.last_position_at_ms = now_ms;
     }
 
     playback.position_ms = position_ms;
     playback.duration_ms = duration_ms;
     playback.state = state;
-    playback.activity_ms = Some(activity_ms);
-    playback.last_position_ms = Some(last_position_ms);
-    playback.listen_recorded = listen_recorded;
     playback.updated_at_ms = now_ms;
 
     Ok(())
@@ -591,13 +507,10 @@ pub(crate) fn apply_playback_mutation(
 
 fn finalize_optional_playback_update(
     db: &mut DbAny,
-    mut playback: Option<PlaybackRecord>,
+    playback: Option<PlaybackRecord>,
     active_event: ActiveEvent,
     now_ms: u64,
 ) -> ServiceResult<OptionalPlaybackUpdateResult> {
-    if let Some(playback_record) = playback.as_mut() {
-        maybe_record_listen(db, playback_record, now_ms)?;
-    }
     let event = playback
         .as_ref()
         .map(|playback| event_for_state(playback.playback.state, active_event));
@@ -631,19 +544,18 @@ fn pause_bound_playback_on_disconnect(
     }
 
     let pause_at_ms = pause_at_ms.max(bound.playback.updated_at_ms); // Keep updated_at_ms monotonic.
-    let position_ms = effective_playback_position_ms(&bound.playback, pause_at_ms);
-    update_session_bound_playback(
-        db,
-        user_db_id,
-        bound,
-        PlaybackMutation {
-            position_ms: Some(position_ms),
-            duration_ms: None,
-            state: Some(PlaybackState::Paused),
-        },
-        pause_at_ms,
-        ActivityPolicy::AnyState,
-    )
+    db.transaction_mut(|t| {
+        update_session_bound_playback(
+            t,
+            user_db_id,
+            bound,
+            PlaybackMutation {
+                state: Some(PlaybackState::Paused),
+                ..PlaybackMutation::default()
+            },
+            pause_at_ms,
+        )
+    })
     .map(Some)
 }
 
@@ -691,9 +603,6 @@ pub(crate) fn pause_playing_scopes_on_disconnect(
         clear_playback_session_scope(&scope);
     }
 
-    for playback in &mut playbacks {
-        maybe_record_listen(db, playback, now_ms)?;
-    }
     let evicted_playbacks = cleanup_evicted_playbacks(db, now_ms)?;
 
     Ok((playbacks, evicted_playbacks))
@@ -704,6 +613,7 @@ pub(crate) fn start_playback_in_transaction(
     request: StartPlaybackRequest,
 ) -> ServiceResult<TransactionPlaybackUpdate> {
     let StartPlaybackRequest {
+        play_id,
         track_db_id,
         user_db_id,
         client_name,
@@ -724,7 +634,14 @@ pub(crate) fn start_playback_in_transaction(
         )));
     }
 
-    let playback = new_playback_session(client_name, mutation, now_ms)?;
+    if map_internal(lyra_db::playback_sessions::find_by_play_id(
+        db, user_db_id, &play_id,
+    ))?
+    .is_some()
+    {
+        return Err(PlaybackServiceError::PlayConflict(play_id));
+    }
+    let playback = new_playback_session(play_id, client_name, mutation, now_ms)?;
 
     let playback_session_id = map_internal(lyra_db::playback_sessions::insert(
         db,
@@ -733,7 +650,7 @@ pub(crate) fn start_playback_in_transaction(
         user_db_id,
     ))?;
 
-    let mut playback = require_playback_record(
+    let playback = require_playback_record(
         db,
         playback_session_id,
         track_db_id,
@@ -743,7 +660,7 @@ pub(crate) fn start_playback_in_transaction(
             ..playback
         },
     )?;
-    maybe_record_listen_in_transaction(db, &mut playback, now_ms)?;
+    record_listen(db, &playback, now_ms)?;
     Ok(TransactionPlaybackUpdate {
         event: event_for_state(playback.playback.state, active_event),
         playback,
@@ -751,6 +668,7 @@ pub(crate) fn start_playback_in_transaction(
 }
 
 fn new_playback_session(
+    play_id: String,
     client_name: Option<String>,
     mutation: PlaybackMutation,
     now_ms: u64,
@@ -762,13 +680,15 @@ fn new_playback_session(
     Ok(PlaybackSession {
         db_id: None,
         id: nanoid!(),
+        play_id,
         client_name,
         position_ms,
         duration_ms: mutation.duration_ms,
-        activity_ms: Some(0),
-        last_position_ms: Some(position_ms),
+        played_ms: 0,
+        last_position_ms: position_ms,
         state,
-        listen_recorded: None,
+        latency_allowance_used_ms: 0,
+        last_position_at_ms: now_ms,
         updated_at_ms: now_ms,
         created_at_ms: now_ms,
     })
@@ -777,9 +697,17 @@ fn new_playback_session(
 #[cfg(test)]
 pub(crate) fn report_playback(
     db: &mut DbAny,
+    playback_session_id: DbId,
     request: ReportPlaybackRequest,
 ) -> ServiceResult<PlaybackRecord> {
-    let update = db.transaction_mut(|t| report_playback_in_transaction(t, request))?;
+    let update = db.transaction_mut(|t| {
+        let playback = map_internal(lyra_db::playback_sessions::get_by_id(
+            t,
+            playback_session_id,
+        ))?
+        .ok_or_else(|| PlaybackServiceError::not_found("playback session not found"))?;
+        report_playback_in_transaction(t, request, playback)
+    })?;
     if update.playback.playback.state.is_terminal() {
         sessions::clear_session_bindings_for_playback(
             update.playback.playback_session_id,
@@ -789,27 +717,20 @@ pub(crate) fn report_playback(
     Ok(update.playback)
 }
 
+/// Applies the report to `playback`, a stored session.
 pub(crate) fn report_playback_in_transaction(
     db: &mut impl lyra_db::DbAccess,
     request: ReportPlaybackRequest,
+    mut playback: PlaybackSession,
 ) -> ServiceResult<TransactionPlaybackUpdate> {
     let ReportPlaybackRequest {
-        playback_session_id,
         user_db_id: expected_user_db_id,
         mutation,
         now_ms,
-        activity_policy,
         active_event,
     } = request;
-    let mut playback = map_internal(lyra_db::playback_sessions::get_by_id(
-        db,
-        playback_session_id,
-    ))?
-    .ok_or_else(|| {
-        PlaybackServiceError::not_found(format!(
-            "playback session not found: {}",
-            playback_session_id.0
-        ))
+    let playback_session_id = playback.db_id.ok_or_else(|| {
+        PlaybackServiceError::internal(anyhow::anyhow!("reported playback session is not stored"))
     })?;
     let playback_user_db_id = map_internal(lyra_db::playback_sessions::get_user_id(
         db,
@@ -822,8 +743,7 @@ pub(crate) fn report_playback_in_transaction(
         )));
     }
 
-    apply_playback_mutation(&mut playback, &mutation, now_ms, activity_policy)?;
-    playback.db_id = Some(playback_session_id);
+    apply_playback_mutation(&mut playback, &mutation, now_ms)?;
     map_internal(lyra_db::playback_sessions::update(db, &playback))?;
     let track_db_id = map_internal(lyra_db::playback_sessions::get_track_id(
         db,
@@ -835,58 +755,46 @@ pub(crate) fn report_playback_in_transaction(
             playback_session_id.0
         ))
     })?;
-    let mut playback = require_playback_record(
+    let playback = require_playback_record(
         db,
         playback_session_id,
         track_db_id,
         expected_user_db_id,
         playback,
     )?;
-    maybe_record_listen_in_transaction(db, &mut playback, now_ms)?;
+    record_listen(db, &playback, now_ms)?;
     Ok(TransactionPlaybackUpdate {
         event: event_for_state(playback.playback.state, active_event),
         playback,
     })
 }
 
+/// Pauses `playback`, a stored session, at its last reported position.
 pub(crate) fn pause_playback_in_transaction(
     db: &mut impl lyra_db::DbAccess,
-    playback_session_id: DbId,
+    playback: PlaybackSession,
     user_db_id: DbId,
     now_ms: u64,
 ) -> ServiceResult<Option<TransactionPlaybackUpdate>> {
-    let playback = map_internal(lyra_db::playback_sessions::get_by_id(
-        db,
-        playback_session_id,
-    ))?
-    .ok_or_else(|| {
-        PlaybackServiceError::not_found(format!(
-            "playback session not found: {}",
-            playback_session_id.0
-        ))
-    })?;
     if !matches!(
         playback.state,
         PlaybackState::Playing | PlaybackState::Buffering
     ) {
         return Ok(None);
     }
-    let pause_at_ms = now_ms.max(playback.updated_at_ms);
-    let position_ms = effective_playback_position_ms(&playback, pause_at_ms);
+    let now_ms = now_ms.max(playback.updated_at_ms);
     report_playback_in_transaction(
         db,
         ReportPlaybackRequest {
-            playback_session_id,
             user_db_id,
             mutation: PlaybackMutation {
-                position_ms: Some(position_ms),
-                duration_ms: None,
                 state: Some(PlaybackState::Paused),
+                ..PlaybackMutation::default()
             },
-            now_ms: pause_at_ms,
-            activity_policy: ActivityPolicy::AnyState,
+            now_ms,
             active_event: ActiveEvent::Progress,
         },
+        playback,
     )
     .map(Some)
 }
@@ -930,6 +838,7 @@ fn report_playback_session_in_transaction(
         user_db_id,
         session_key,
         track_db_id,
+        play_id,
         client_name,
         mutation,
         now_ms,
@@ -1032,14 +941,18 @@ fn report_playback_session_in_transaction(
         clear_previous_session_playback(&mut session_state);
     }
 
+    let is_reported_play = |bound: &sessions::BoundPlayback| {
+        bound.track_db_id == track_db_id
+            && play_id.is_none_or(|play_id| bound.playback.play_id == play_id)
+    };
     let mut target = if current_bound_playback
         .as_ref()
-        .is_some_and(|bound| bound.track_db_id == track_db_id)
+        .is_some_and(is_reported_play)
     {
         Some(SessionTrackTarget::Current)
     } else if previous_bound_playback
         .as_ref()
-        .is_some_and(|bound| bound.track_db_id == track_db_id)
+        .is_some_and(is_reported_play)
     {
         Some(SessionTrackTarget::Previous)
     } else {
@@ -1098,16 +1011,24 @@ fn report_playback_session_in_transaction(
                 if active_event == ActiveEvent::Started && mutation.state.is_none() {
                     state = PlaybackState::Playing;
                 }
-                target = None;
-            } else if active_event == ActiveEvent::Started {
-                let credited_listen = match target_slot {
+                // A named play resumes its own session; without a name, it reopens as a new play.
+                if play_id.is_none() {
+                    target = None;
+                }
+            } else if active_event == ActiveEvent::Started && play_id.is_none() {
+                let bound = match target_slot {
                     SessionTrackTarget::Current => current_bound_playback.as_ref(),
                     SessionTrackTarget::Previous => previous_bound_playback.as_ref(),
-                }
-                .is_some_and(|bound| bound.playback.listen_recorded.unwrap_or(false));
-                if credited_listen {
-                    // Restart after a credited listen: split so the replay
-                    // opens a fresh session.
+                };
+                if let Some(bound) = bound
+                    && map_internal(lyra_db::listens::find_by_play_id(
+                        db,
+                        user_db_id,
+                        &bound.playback.play_id,
+                    ))?
+                    .is_some()
+                {
+                    // Without a play id, a start after the play counted begins a new play.
                     target = None;
                 }
             }
@@ -1134,7 +1055,6 @@ fn report_playback_session_in_transaction(
                     state: Some(state),
                 },
                 now_ms,
-                ActivityPolicy::PlayingOnly,
             )?;
 
             set_current_session_playback(
@@ -1189,7 +1109,6 @@ fn report_playback_session_in_transaction(
                         state: Some(state),
                     },
                     now_ms,
-                    ActivityPolicy::PlayingOnly,
                 )?;
 
                 if promoted_to_current {
@@ -1208,9 +1127,10 @@ fn report_playback_session_in_transaction(
         }
         None => {
             if !state.is_terminal() {
-                let created = start_playback_in_transaction(
+                let started = start_playback_in_transaction(
                     db,
                     StartPlaybackRequest {
+                        play_id: play_id.map_or_else(|| nanoid!(), str::to_string),
                         track_db_id,
                         user_db_id,
                         client_name,
@@ -1222,8 +1142,18 @@ fn report_playback_session_in_transaction(
                         now_ms,
                         active_event,
                     },
-                )?
-                .playback;
+                );
+                let created = match started {
+                    Ok(started) => started.playback,
+                    // A report for a play whose session was replaced cannot bring it back.
+                    Err(PlaybackServiceError::PlayConflict(_)) => {
+                        let session = session.as_ref().and_then(|session| {
+                            updated_playback_session_state(session, &session_state)
+                        });
+                        return Ok((None, session, false));
+                    }
+                    Err(error) => return Err(error),
+                };
 
                 current_observed = true;
                 if current_bound_playback.is_some() {

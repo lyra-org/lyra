@@ -94,6 +94,7 @@ struct PlaybackUpdateHandler;
 struct PlaybackSessionReportRequest {
     session_key: String,
     track_id: i64,
+    play_id: Option<String>,
     event: Option<playbacks::PlaybackEvent>,
     position_ms: Option<u64>,
     duration_ms: Option<u64>,
@@ -244,6 +245,11 @@ fn report_session_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let session_key = require_non_empty_string(request.session_key, "session_key")?;
         let track_db_id = args::positive_id(request.track_id, "track_id")?;
+        if let Some(play_id) = request.play_id.as_deref()
+            && !crate::services::listens::is_play_id(play_id)
+        {
+            return Ok((None, Some(format!("malformed play_id: {play_id}"))));
+        }
         let active_event = playbacks::classify_active_event(request.event)
             .map_err(crate::plugins::runtime_error)?;
         let current_ms = playbacks::now_ms().map_err(crate::plugins::runtime_error)?;
@@ -264,6 +270,7 @@ fn report_session_callback(
                 user_db_id,
                 session_key: &session_key,
                 track_db_id,
+                play_id: request.play_id.as_deref(),
                 client_name: None,
                 mutation,
                 now_ms: current_ms,
@@ -634,7 +641,7 @@ impl DescribeInterface for PlaybackSessionReportRequest {
         let mut descriptor = InterfaceDescriptor::new(
             "PlaybackSessionReportRequest",
             Some(
-                "An observation keyed by the authenticated user, calling plugin, and external player session.",
+                "An observation keyed by the authenticated user, calling plugin, and external player session. A report with a new `play_id` starts a new track session; a report for a `play_id` whose session was replaced is ignored while the server keeps that session. Without a `play_id`, reports of one track belong to one play until a `started` event after that play counted.",
             ),
         );
         descriptor.fields.extend(playback_request_fields([
@@ -647,6 +654,11 @@ impl DescribeInterface for PlaybackSessionReportRequest {
                 name: "track_id",
                 ty: i64::luau_type(),
                 description: None,
+            },
+            FieldDescriptor {
+                name: "play_id",
+                ty: Option::<String>::luau_type(),
+                description: Some(crate::services::listens::PLAY_ID_DESCRIPTION),
             },
             FieldDescriptor {
                 name: "event",
@@ -810,8 +822,7 @@ const _: fn(&crate::services::playback_sessions::PlaybackUpdatePayload) = |value
         &value.library_public_id,
         &value.position_ms,
         &value.duration_ms,
-        &value.activity_ms,
-        &value.qualifies_single_listen,
+        &value.played_ms,
         &value.updated_at_ms,
     );
 };
@@ -860,8 +871,7 @@ impl DescribeInterface for LuauPlaybackUpdatePayload {
                 field("library_public_id", Option::<String>::luau_type()),
                 field("position_ms", u64::luau_type()),
                 field("duration_ms", Option::<u64>::luau_type()),
-                field("activity_ms", u64::luau_type()),
-                field("qualifies_single_listen", bool::luau_type()),
+                field("played_ms", u64::luau_type()),
                 field("updated_at_ms", u64::luau_type()),
             ],
         }

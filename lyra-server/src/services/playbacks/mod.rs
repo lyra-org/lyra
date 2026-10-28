@@ -143,12 +143,15 @@ pub(crate) enum PlaybackError {
 pub(crate) struct PlaybackUpdate {
     pub(crate) playback: lyra_db::playbacks::Playback,
     pub(crate) session: playback_sessions::PlaybackRecord,
+    /// The previous play's session, paused because a new play replaced it.
+    pub(crate) displaced_session: Option<DetachedSession>,
     pub(crate) event: String,
     pub(crate) evicted_playbacks: Vec<playback_sessions::EvictedPlaybackRecord>,
 }
 
 pub(crate) struct CreatePlaybackRequest {
     pub(crate) id: String,
+    pub(crate) play_id: String,
     pub(crate) user_db_id: DbId,
     pub(crate) client_name: Option<String>,
     pub(crate) queue: ValidatedQueue,
@@ -158,6 +161,7 @@ pub(crate) struct CreatePlaybackRequest {
 
 pub(crate) struct ReportProgressRequest {
     pub(crate) playback_db_id: DbId,
+    pub(crate) play_id: String,
     pub(crate) user_db_id: DbId,
     pub(crate) client_name: Option<String>,
     pub(crate) queue_revision: u64,
@@ -195,6 +199,7 @@ pub(crate) fn create_playback(
 ) -> Result<PlaybackUpdate, PlaybackError> {
     let CreatePlaybackRequest {
         id,
+        play_id,
         user_db_id,
         client_name,
         queue,
@@ -230,6 +235,7 @@ pub(crate) fn create_playback(
         let session = playback_sessions::start_playback_in_transaction(
             t,
             playback_sessions::StartPlaybackRequest {
+                play_id,
                 track_db_id: current_track_db_id,
                 user_db_id,
                 client_name,
@@ -254,6 +260,7 @@ pub(crate) fn create_playback(
         playback,
         event: session.event,
         session: session.playback,
+        displaced_session: None,
         evicted_playbacks,
     })
 }
@@ -264,6 +271,7 @@ pub(crate) fn report_progress(
 ) -> Result<PlaybackUpdate, PlaybackError> {
     let ReportProgressRequest {
         playback_db_id,
+        play_id,
         user_db_id,
         client_name,
         queue_revision,
@@ -273,7 +281,7 @@ pub(crate) fn report_progress(
         require_full_queue_access,
     } = request;
 
-    let (playback, session) = db.transaction_mut(|t| {
+    let (playback, session, displaced_session) = db.transaction_mut(|t| {
         if lyra_db::playbacks::get_owner_id(t, playback_db_id)? != Some(user_db_id) {
             return Err(PlaybackError::NotFound);
         }
@@ -303,66 +311,80 @@ pub(crate) fn report_progress(
             )));
         }
 
-        let session = if let Some(session_id) =
-            lyra_db::playbacks::get_current_session_id(t, playback_db_id)?
-        {
-            if lyra_db::playback_sessions::get_track_id(t, session_id)? != Some(current_track_db_id)
-                || lyra_db::playback_sessions::get_user_id(t, session_id)? != Some(user_db_id)
-            {
-                return Err(PlaybackError::Internal(anyhow::anyhow!(
-                    "playback {} current session does not match its queue and owner",
-                    playback.id
-                )));
-            }
-            let session = playback_sessions::report_playback_in_transaction(
-                t,
-                playback_sessions::ReportPlaybackRequest {
-                    playback_session_id: session_id,
-                    user_db_id,
-                    mutation,
-                    now_ms,
-                    activity_policy: playback_sessions::ActivityPolicy::AnyState,
-                    active_event: playback_sessions::ActiveEvent::Progress,
-                },
-            )?;
-            lyra_db::playbacks::touch(t, playback_db_id, now_ms)?;
-            session
-        } else {
-            if mutation
-                .state
-                .is_some_and(lyra_db::PlaybackState::is_terminal)
-            {
-                return Err(PlaybackError::Session(
-                    playback_sessions::PlaybackServiceError::BadRequest(
-                        "cannot create a current track session with terminal state".to_string(),
-                    ),
-                ));
-            }
-            let session = playback_sessions::start_playback_in_transaction(
-                t,
-                playback_sessions::StartPlaybackRequest {
-                    track_db_id: current_track_db_id,
-                    user_db_id,
-                    client_name,
-                    mutation: playback_sessions::PlaybackMutation {
-                        state: mutation.state.or(Some(lyra_db::PlaybackState::Playing)),
-                        ..mutation
+        let current = match lyra_db::playbacks::get_current_session_id(t, playback_db_id)? {
+            Some(session_id) => lyra_db::playback_sessions::get_by_id(t, session_id)?
+                .map(|session| (session_id, session)),
+            None => None,
+        };
+        let (session, displaced_session) = match current {
+            Some((_, current)) if current.play_id == play_id => {
+                let session = playback_sessions::report_playback_in_transaction(
+                    t,
+                    playback_sessions::ReportPlaybackRequest {
+                        user_db_id,
+                        mutation,
+                        now_ms,
+                        active_event: playback_sessions::ActiveEvent::Progress,
                     },
+                    current,
+                )?;
+                if session.playback.track_db_id != current_track_db_id {
+                    return Err(PlaybackError::Internal(anyhow::anyhow!(
+                        "playback {} current session does not match its queue",
+                        playback.id
+                    )));
+                }
+                lyra_db::playbacks::touch(t, playback_db_id, now_ms)?;
+                (session, None)
+            }
+            current => {
+                if mutation
+                    .state
+                    .is_some_and(lyra_db::PlaybackState::is_terminal)
+                {
+                    return Err(PlaybackError::Session(
+                        playback_sessions::PlaybackServiceError::BadRequest(
+                            "cannot create a current track session with terminal state".to_string(),
+                        ),
+                    ));
+                }
+                let displaced_session = match current {
+                    Some((session_id, current)) => Some(DetachedSession {
+                        playback_session_id: session_id,
+                        playback_session_public_id: current.id.clone(),
+                        update: playback_sessions::pause_playback_in_transaction(
+                            t, current, user_db_id, now_ms,
+                        )?,
+                    }),
+                    None => None,
+                };
+                let session = playback_sessions::start_playback_in_transaction(
+                    t,
+                    playback_sessions::StartPlaybackRequest {
+                        play_id,
+                        track_db_id: current_track_db_id,
+                        user_db_id,
+                        client_name,
+                        mutation: playback_sessions::PlaybackMutation {
+                            state: mutation.state.or(Some(lyra_db::PlaybackState::Playing)),
+                            ..mutation
+                        },
+                        now_ms,
+                        active_event: playback_sessions::ActiveEvent::Started,
+                    },
+                )?;
+                lyra_db::playbacks::link_current_session(
+                    t,
+                    playback_db_id,
+                    session.playback.playback_session_id,
                     now_ms,
-                    active_event: playback_sessions::ActiveEvent::Started,
-                },
-            )?;
-            lyra_db::playbacks::link_current_session(
-                t,
-                playback_db_id,
-                session.playback.playback_session_id,
-                now_ms,
-            )?;
-            session
+                )?;
+                (session, displaced_session)
+            }
         };
 
         playback.updated_at_ms = now_ms;
-        Ok::<_, PlaybackError>((playback, session))
+        Ok::<_, PlaybackError>((playback, session, displaced_session))
     })?;
 
     if session.playback.playback.state.is_terminal() {
@@ -371,11 +393,18 @@ pub(crate) fn report_progress(
             &session.playback.playback_session_public_id,
         );
     }
+    if let Some(displaced) = displaced_session.as_ref() {
+        playback_sessions::clear_session_bindings_for_playback(
+            displaced.playback_session_id,
+            &displaced.playback_session_public_id,
+        );
+    }
     let evicted_playbacks = cleanup_after_commit(db, now_ms);
     Ok(PlaybackUpdate {
         playback,
         event: session.event,
         session: session.playback,
+        displaced_session,
         evicted_playbacks,
     })
 }
@@ -421,9 +450,9 @@ pub(crate) fn compensate_failed_handoff_progress(
                 }
                 let Some(session) = playback_sessions::pause_playback_in_transaction(
                     t,
-                    playback_session_id,
+                    expected_session.clone(),
                     user_db_id,
-                    now_ms.max(expected_session.updated_at_ms),
+                    now_ms,
                 )?
                 else {
                     return Ok(None);
@@ -445,6 +474,7 @@ pub(crate) fn compensate_failed_handoff_progress(
         playback,
         event: session.event,
         session: session.playback,
+        displaced_session: None,
         evicted_playbacks,
     }))
 }
@@ -801,12 +831,14 @@ pub(crate) fn queue_visible_to_principal(
     }
 }
 
+/// Checks that the playback can be handed off at `expected_revision` and returns the id of its
+/// current play, which the target continues.
 pub(crate) fn validate_handoff_queue(
     db: &DbAny,
     user_db_id: DbId,
     playback_id: &str,
     expected_revision: u64,
-) -> Result<(), HandoffValidationError> {
+) -> Result<Option<String>, HandoffValidationError> {
     let playback_db_id = lyra_db::lookup::find_node_id_by_id(db, playback_id)?
         .ok_or(HandoffValidationError::NotFound)?;
     let Some(playback) = lyra_db::playbacks::get_by_id(db, playback_db_id)? else {
@@ -833,7 +865,13 @@ pub(crate) fn validate_handoff_queue(
     {
         return Err(HandoffValidationError::Inaccessible);
     }
-    Ok(())
+    let current_play_id = match lyra_db::playbacks::get_current_session_id(db, playback_db_id)? {
+        Some(session_id) => {
+            lyra_db::playback_sessions::get_by_id(db, session_id)?.map(|session| session.play_id)
+        }
+        None => None,
+    };
+    Ok(current_play_id)
 }
 
 #[derive(Clone, Debug)]
@@ -884,7 +922,10 @@ pub(crate) fn replace_queue(
                                 == Some(user_db_id)
                         {
                             playback_sessions::pause_playback_in_transaction(
-                                t, session_id, user_db_id, now_ms,
+                                t,
+                                session.clone(),
+                                user_db_id,
+                                now_ms,
                             )?
                         } else {
                             None
@@ -1064,6 +1105,7 @@ mod tests {
             &mut db,
             CreatePlaybackRequest {
                 id: nanoid::nanoid!(),
+                play_id: nanoid::nanoid!(),
                 user_db_id,
                 client_name: None,
                 queue: ValidatedQueue {
@@ -1078,8 +1120,11 @@ mod tests {
                 now_ms: 30_000,
             },
         )?;
-        assert_eq!(update.session.playback.activity_ms, Some(0));
-        assert_ne!(update.session.playback.listen_recorded, Some(true));
+        assert_eq!(update.session.playback.played_ms, 0);
+        assert!(
+            lyra_db::listens::find_by_play_id(&db, user_db_id, &update.session.playback.play_id)?
+                .is_none()
+        );
         Ok(())
     }
 
@@ -1099,6 +1144,7 @@ mod tests {
             &mut db,
             CreatePlaybackRequest {
                 id: nanoid::nanoid!(),
+                play_id: nanoid::nanoid!(),
                 user_db_id,
                 client_name: None,
                 queue: ValidatedQueue {
@@ -1141,7 +1187,7 @@ mod tests {
     }
 
     #[test]
-    fn replacing_queue_pauses_displaced_session_at_effective_position() -> anyhow::Result<()> {
+    fn replacing_queue_pauses_displaced_session_at_last_reported_position() -> anyhow::Result<()> {
         let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
         crate::services::testing::init_default_test_state()?;
         let (
@@ -1156,6 +1202,7 @@ mod tests {
             &mut db,
             CreatePlaybackRequest {
                 id: nanoid::nanoid!(),
+                play_id: nanoid::nanoid!(),
                 user_db_id,
                 client_name: None,
                 queue: ValidatedQueue {
@@ -1189,8 +1236,8 @@ mod tests {
             .playback
             .playback;
         assert_eq!(paused.state, lyra_db::PlaybackState::Paused);
-        assert_eq!(paused.position_ms, 6_000);
-        assert_eq!(paused.activity_ms, Some(5_000));
+        assert_eq!(paused.position_ms, 1_000);
+        assert_eq!(paused.played_ms, 0);
         Ok(())
     }
 }

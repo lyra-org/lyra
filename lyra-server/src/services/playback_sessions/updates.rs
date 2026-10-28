@@ -165,8 +165,7 @@ pub(crate) struct PlaybackUpdatePayload {
     pub library_public_id: Option<String>,
     pub position_ms: u64,
     pub duration_ms: Option<u64>,
-    pub activity_ms: u64,
-    pub qualifies_single_listen: bool,
+    pub played_ms: u64,
     pub updated_at_ms: u64,
 }
 
@@ -174,7 +173,6 @@ pub(crate) fn playback_to_payload(
     playback: &playbacks::PlaybackRecord,
     event: String,
 ) -> PlaybackUpdatePayload {
-    let activity_ms = playbacks::playback_activity_ms(&playback.playback);
     PlaybackUpdatePayload {
         event,
         state: playback.playback.state,
@@ -184,11 +182,7 @@ pub(crate) fn playback_to_payload(
         library_public_id: playback.library_public_id.clone(),
         position_ms: playback.playback.position_ms,
         duration_ms: playback.playback.duration_ms,
-        activity_ms,
-        qualifies_single_listen: crate::services::listens::is_listen(
-            activity_ms,
-            playback.playback.duration_ms,
-        ),
+        played_ms: playback.playback.played_ms,
         updated_at_ms: playback.playback.updated_at_ms,
     }
 }
@@ -288,8 +282,7 @@ mod tests {
             library_public_id: None,
             position_ms: 0,
             duration_ms: None,
-            activity_ms: 0,
-            qualifies_single_listen: false,
+            played_ms: 0,
             updated_at_ms: 0,
         }
     }

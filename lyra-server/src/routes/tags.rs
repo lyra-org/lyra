@@ -146,16 +146,6 @@ struct TargetStateResponse {
     tagged: bool,
 }
 
-fn looks_like_public_id(candidate: &str) -> bool {
-    let len = candidate.len();
-    if !(6..=64).contains(&len) {
-        return false;
-    }
-    candidate
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-}
-
 impl From<TagServiceError> for AppError {
     fn from(err: TagServiceError) -> Self {
         match err {
@@ -181,7 +171,7 @@ async fn create_tag(
     Json(request): Json<CreateTagRequest>,
 ) -> Result<StatusCode, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
-    if !looks_like_public_id(&request.target_id) {
+    if !crate::services::opaque_ids::is_public_id(&request.target_id) {
         return Err(AppError::bad_request(format!(
             "malformed target id: {}",
             request.target_id
@@ -239,7 +229,7 @@ async fn get_tag(
     Path(id): Path<String>,
 ) -> Result<Json<TagResponse>, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
-    if !looks_like_public_id(&id) {
+    if !crate::services::opaque_ids::is_public_id(&id) {
         return Err(AppError::bad_request(format!("malformed tag id: {id}")));
     }
 
@@ -255,7 +245,7 @@ async fn list_tag_targets(
     Query(query): Query<ListQuery>,
 ) -> Result<Json<PageResponse<String>>, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
-    if !looks_like_public_id(&id) {
+    if !crate::services::opaque_ids::is_public_id(&id) {
         return Err(AppError::bad_request(format!("malformed tag id: {id}")));
     }
     let page_request = query.page.resolve_snapshot();
@@ -292,10 +282,10 @@ async fn get_tag_target_state(
     Path((id, target_id)): Path<(String, String)>,
 ) -> Result<Json<TargetStateResponse>, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
-    if !looks_like_public_id(&id) {
+    if !crate::services::opaque_ids::is_public_id(&id) {
         return Err(AppError::bad_request(format!("malformed tag id: {id}")));
     }
-    if !looks_like_public_id(&target_id) {
+    if !crate::services::opaque_ids::is_public_id(&target_id) {
         return Err(AppError::bad_request(format!(
             "malformed target id: {target_id}"
         )));
@@ -314,7 +304,7 @@ async fn update_tag(
     Json(request): Json<UpdateTagRequest>,
 ) -> Result<Json<TagResponse>, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
-    if !looks_like_public_id(&id) {
+    if !crate::services::opaque_ids::is_public_id(&id) {
         return Err(AppError::bad_request(format!("malformed tag id: {id}")));
     }
 
@@ -333,7 +323,7 @@ async fn update_tag(
 
 async fn delete_tag(headers: HeaderMap, Path(id): Path<String>) -> Result<StatusCode, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
-    if !looks_like_public_id(&id) {
+    if !crate::services::opaque_ids::is_public_id(&id) {
         return Err(AppError::bad_request(format!("malformed tag id: {id}")));
     }
 
@@ -349,10 +339,10 @@ async fn delete_tag_target(
     Path((id, target_id)): Path<(String, String)>,
 ) -> Result<StatusCode, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
-    if !looks_like_public_id(&id) {
+    if !crate::services::opaque_ids::is_public_id(&id) {
         return Err(AppError::bad_request(format!("malformed tag id: {id}")));
     }
-    if !looks_like_public_id(&target_id) {
+    if !crate::services::opaque_ids::is_public_id(&target_id) {
         return Err(AppError::bad_request(format!(
             "malformed target id: {target_id}"
         )));

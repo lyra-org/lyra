@@ -566,7 +566,7 @@ pub(crate) async fn dispatch_and_wait(
         queue_revision,
     )
     .await?;
-    let reference_is_current = {
+    let current_play_id = {
         let db = STATE.db.read().await;
         match owner_db_id(&*db, &target.user_public_id) {
             Ok(Some(user_db_id)) => {
@@ -577,14 +577,18 @@ pub(crate) async fn dispatch_and_wait(
             Err(error) => Err(error.to_string()),
         }
     };
-    if let Err(message) = reference_is_current {
-        registry::fail_handoff(&handoff_token, message.clone()).await;
-        return Err(message);
-    }
+    let play_id = match current_play_id {
+        Ok(play_id) => play_id,
+        Err(message) => {
+            registry::fail_handoff(&handoff_token, message.clone()).await;
+            return Err(message);
+        }
+    };
     let command = OutgoingMessage::Command(ForwardedCommand::HandoffQueue {
         from: source_id,
         playback_id: playback_id.to_string(),
         queue_revision,
+        play_id,
         handoff_token: handoff_token.clone(),
     });
     if let Err(error) =
@@ -615,6 +619,7 @@ mod tests {
             &mut db,
             playbacks::CreatePlaybackRequest {
                 id: "playback".to_string(),
+                play_id: nanoid::nanoid!(),
                 user_db_id,
                 client_name: None,
                 queue: playbacks::ValidatedQueue {
@@ -658,10 +663,12 @@ mod tests {
                 client_name: None,
                 position_ms: 0,
                 duration_ms: None,
-                activity_ms: Some(0),
-                last_position_ms: Some(0),
+                played_ms: 0,
+                last_position_ms: 0,
                 state: lyra_db::PlaybackState::Playing,
-                listen_recorded: None,
+                play_id: nanoid::nanoid!(),
+                latency_allowance_used_ms: 0,
+                last_position_at_ms: 2,
                 updated_at_ms: 2,
                 created_at_ms: 1,
             },

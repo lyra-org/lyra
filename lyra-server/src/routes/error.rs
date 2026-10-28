@@ -317,6 +317,7 @@ impl From<PlaybackServiceError> for AppError {
         match err {
             PlaybackServiceError::BadRequest(message) => Self::bad_request(message),
             PlaybackServiceError::NotFound(message) => Self::not_found(message),
+            error @ PlaybackServiceError::PlayConflict(_) => Self::conflict(error.to_string()),
             PlaybackServiceError::Internal(err) => err.into(),
         }
     }

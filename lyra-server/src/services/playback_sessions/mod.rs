@@ -40,7 +40,6 @@ pub(crate) use self::workflow::{
     list_playbacks,
     pause_playback_in_transaction,
     pause_playing_scopes_on_disconnect,
-    playback_activity_ms,
     report_playback_in_transaction,
     report_playback_session_with_cleanup,
     resolve_merged_track_ids_for_play_count,
@@ -61,11 +60,9 @@ pub(crate) use updates::{
 };
 
 pub(crate) const ACTIVE_SESSION_TTL_MS: u64 = 5 * 60 * 1000;
-const POSITION_DELTA_GRACE_MS: u64 = 5_000;
 const PREVIOUS_PLAYBACK_GRACE_MS: u64 = 30_000;
-/// Backward-seek landing zone that counts as a same-session replay; anything
-/// further from zero is treated as ordinary scrubbing.
-const RESTART_POSITION_MS: u64 = 3_000;
+/// Playing time a play may be credited beyond the server's elapsed time, to absorb report latency.
+const PLAY_LATENCY_ALLOWANCE_MS: u64 = 5_000;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum PlaybackServiceError {
@@ -73,6 +70,9 @@ pub(crate) enum PlaybackServiceError {
     BadRequest(String),
     #[error("{0}")]
     NotFound(String),
+    /// The play already has a session that isn't the one being reported to.
+    #[error("play {0} already has a session")]
+    PlayConflict(String),
     #[error(transparent)]
     Internal(anyhow::Error),
 }
@@ -99,24 +99,6 @@ impl From<agdb::DbError> for PlaybackServiceError {
 
 pub(crate) type ServiceResult<T> = std::result::Result<T, PlaybackServiceError>;
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum ActivityPolicy {
-    AnyState,
-    PlayingOnly,
-}
-
-impl ActivityPolicy {
-    fn records_position_delta(self, previous_state: PlaybackState, state: PlaybackState) -> bool {
-        match self {
-            Self::AnyState => true,
-            Self::PlayingOnly => {
-                state == PlaybackState::Playing
-                    || (state.is_terminal() && previous_state == PlaybackState::Playing)
-            }
-        }
-    }
-}
-
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PlaybackMutation {
     pub(crate) position_ms: Option<u64>,
@@ -126,6 +108,7 @@ pub(crate) struct PlaybackMutation {
 
 #[derive(Clone, Debug)]
 pub(crate) struct StartPlaybackRequest {
+    pub(crate) play_id: String,
     pub(crate) track_db_id: DbId,
     pub(crate) user_db_id: DbId,
     pub(crate) client_name: Option<String>,
@@ -136,12 +119,10 @@ pub(crate) struct StartPlaybackRequest {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ReportPlaybackRequest {
-    pub(crate) playback_session_id: DbId,
     /// The playback's owner; reports against anyone else's playback are rejected.
     pub(crate) user_db_id: DbId,
     pub(crate) mutation: PlaybackMutation,
     pub(crate) now_ms: u64,
-    pub(crate) activity_policy: ActivityPolicy,
     pub(crate) active_event: ActiveEvent,
 }
 
@@ -151,6 +132,8 @@ pub(crate) struct SessionPlaybackReportRequest<'a> {
     pub(crate) user_db_id: DbId,
     pub(crate) session_key: &'a str,
     pub(crate) track_db_id: DbId,
+    /// The reporter's play id; without one, a play is told apart by its track and events.
+    pub(crate) play_id: Option<&'a str>,
     pub(crate) client_name: Option<String>,
     pub(crate) mutation: PlaybackMutation,
     pub(crate) now_ms: u64,
@@ -296,6 +279,9 @@ mod tests {
         resolve_previous_playback,
     };
 
+    /// A realistic server time; listens need starts after 2010.
+    const T0: u64 = 1_800_000_000_000;
+
     async fn new_scoped_test_db() -> anyhow::Result<(DbAny, RuntimeTestGuard)> {
         let guard = crate::services::testing::runtime_test_lock().await;
         crate::services::testing::init_default_test_state()?;
@@ -375,6 +361,7 @@ mod tests {
                 user_db_id,
                 session_key: "auth:1",
                 track_db_id,
+                play_id: None,
                 client_name: None,
                 mutation,
                 now_ms,
@@ -398,6 +385,7 @@ mod tests {
                 user_db_id,
                 session_key: "auth:1",
                 track_db_id,
+                play_id: None,
                 client_name: None,
                 mutation,
                 now_ms,
@@ -768,7 +756,7 @@ mod tests {
                 duration_ms: Some(200_000),
                 state: Some(PlaybackState::Playing),
             },
-            1_000,
+            T0 + 1_000,
         )?;
         let credited = report_test_playback_session_with_cleanup(
             &mut db,
@@ -780,19 +768,19 @@ mod tests {
                 state: Some(PlaybackState::Playing),
                 ..Default::default()
             },
-            111_000,
+            T0 + 111_000,
         )?
         .playback
         .unwrap();
-        assert!(credited.playback.listen_recorded.unwrap_or(false));
-        let root =
-            lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", 111_000)?.unwrap();
-        workflow::cleanup_evicted_playbacks(&mut db, 411_001)?;
         assert!(
-            lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", 411_001)?.is_none()
+            lyra_db::listens::find_by_play_id(&db, user, &credited.playback.play_id)?.is_some()
         );
+        let root = lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", T0 + 111_000)?
+            .unwrap();
+        workflow::cleanup_evicted_playbacks(&mut db, T0 + 411_001)?;
         assert!(
-            lyra_db::playback_sessions::get_by_id(&db, credited.playback_session_id)?.is_some()
+            lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", T0 + 411_001)?
+                .is_none()
         );
         report_test_playback_session(
             &mut db,
@@ -804,11 +792,19 @@ mod tests {
                 duration_ms: Some(200_000),
                 state: Some(PlaybackState::Playing),
             },
-            412_000,
+            T0 + 412_000,
         )?;
         let fresh =
-            lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", 412_000)?.unwrap();
+            lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", T0 + 412_000)?
+                .unwrap();
         assert_ne!(fresh.id, root.id);
+        workflow::cleanup_evicted_playbacks(&mut db, T0 + 900_000)?;
+        assert!(
+            lyra_db::playback_sessions::get_by_id(&db, credited.playback_session_id)?.is_none(),
+            "a counted play's session goes once nothing holds it"
+        );
+        let counts = lyra_db::listens::get_counts(&db, &[track], user)?;
+        assert_eq!(counts.get(&track).copied(), Some(1));
         Ok(())
     }
 
@@ -825,6 +821,7 @@ mod tests {
                 user_db_id,
                 session_key: "browser:1",
                 track_db_id,
+                play_id: None,
                 client_name: Some("Living Room".to_string()),
                 mutation: PlaybackMutation {
                     position_ms: Some(0),
@@ -844,8 +841,8 @@ mod tests {
 
         let updated = report_playback(
             &mut db,
+            started.playback_session_id,
             ReportPlaybackRequest {
-                playback_session_id: started.playback_session_id,
                 user_db_id,
                 mutation: PlaybackMutation {
                     position_ms: Some(1_000),
@@ -853,7 +850,6 @@ mod tests {
                     state: None,
                 },
                 now_ms: 2_000,
-                activity_policy: ActivityPolicy::AnyState,
                 active_event: ActiveEvent::Progress,
             },
         )?;
@@ -981,10 +977,12 @@ mod tests {
             client_name: None,
             position_ms: 0,
             duration_ms: Some(300_000),
-            activity_ms: Some(0),
-            last_position_ms: Some(0),
+            played_ms: 0,
+            last_position_ms: 0,
             state: PlaybackState::Playing,
-            listen_recorded: None,
+            play_id: nanoid::nanoid!(),
+            latency_allowance_used_ms: 0,
+            last_position_at_ms: 1_000,
             updated_at_ms: 1_000,
             created_at_ms: 0,
         };
@@ -997,25 +995,26 @@ mod tests {
                 state: Some(PlaybackState::Playing),
             },
             151_000,
-            ActivityPolicy::PlayingOnly,
         )
         .expect("mutation should succeed");
 
-        assert_eq!(playback.activity_ms, Some(150_000));
+        assert_eq!(playback.played_ms, 150_000);
     }
 
     #[test]
-    fn playback_mutation_ignores_large_seek_beyond_elapsed_window() {
+    fn playback_mutation_caps_a_forward_seek_at_elapsed_time_and_latency_allowance() {
         let mut playback = PlaybackSession {
             db_id: None,
             id: nanoid!(),
             client_name: None,
             position_ms: 0,
             duration_ms: Some(300_000),
-            activity_ms: Some(0),
-            last_position_ms: Some(0),
+            played_ms: 0,
+            last_position_ms: 0,
             state: PlaybackState::Playing,
-            listen_recorded: None,
+            play_id: nanoid::nanoid!(),
+            latency_allowance_used_ms: 0,
+            last_position_at_ms: 1_000,
             updated_at_ms: 1_000,
             created_at_ms: 0,
         };
@@ -1028,25 +1027,69 @@ mod tests {
                 state: Some(PlaybackState::Playing),
             },
             11_000,
-            ActivityPolicy::PlayingOnly,
         )
         .expect("mutation should succeed");
 
-        assert_eq!(playback.activity_ms, Some(0));
+        assert_eq!(playback.played_ms, 15_000);
+        assert_eq!(
+            playback.latency_allowance_used_ms,
+            PLAY_LATENCY_ALLOWANCE_MS
+        );
     }
 
     #[test]
-    fn playback_mutation_does_not_record_paused_activity_in_playing_only_policy() {
+    fn playback_mutation_spends_the_latency_allowance_once_per_play() {
+        let mut playback = PlaybackSession {
+            db_id: None,
+            id: nanoid!(),
+            play_id: nanoid!(),
+            client_name: None,
+            position_ms: 0,
+            duration_ms: Some(300_000),
+            played_ms: 0,
+            last_position_ms: 0,
+            latency_allowance_used_ms: 0,
+            state: PlaybackState::Playing,
+            last_position_at_ms: 1_000,
+            updated_at_ms: 1_000,
+            created_at_ms: 0,
+        };
+
+        // A burst of reports, each claiming 4 s of progress with no time passing.
+        for report in 1..=10 {
+            apply_playback_mutation(
+                &mut playback,
+                &PlaybackMutation {
+                    position_ms: Some(report * 4_000),
+                    duration_ms: None,
+                    state: Some(PlaybackState::Playing),
+                },
+                1_000,
+            )
+            .expect("mutation should succeed");
+        }
+
+        assert_eq!(playback.played_ms, PLAY_LATENCY_ALLOWANCE_MS);
+        assert_eq!(
+            playback.latency_allowance_used_ms,
+            PLAY_LATENCY_ALLOWANCE_MS
+        );
+    }
+
+    #[test]
+    fn playback_mutation_credits_progress_up_to_a_pause() {
         let mut playback = PlaybackSession {
             db_id: None,
             id: nanoid!(),
             client_name: None,
             position_ms: 0,
             duration_ms: Some(300_000),
-            activity_ms: Some(0),
-            last_position_ms: Some(0),
+            played_ms: 0,
+            last_position_ms: 0,
             state: PlaybackState::Playing,
-            listen_recorded: None,
+            play_id: nanoid::nanoid!(),
+            latency_allowance_used_ms: 0,
+            last_position_at_ms: 1_000,
             updated_at_ms: 1_000,
             created_at_ms: 0,
         };
@@ -1059,25 +1102,26 @@ mod tests {
                 state: Some(PlaybackState::Paused),
             },
             6_000,
-            ActivityPolicy::PlayingOnly,
         )
         .expect("mutation should succeed");
 
-        assert_eq!(playback.activity_ms, Some(0));
+        assert_eq!(playback.played_ms, 5_000);
     }
 
     #[test]
-    fn playback_mutation_records_terminal_delta_after_playing_state_in_playing_only_policy() {
+    fn playback_mutation_credits_the_final_report_after_playing() {
         let mut playback = PlaybackSession {
             db_id: None,
             id: nanoid!(),
             client_name: None,
             position_ms: 22_000,
             duration_ms: Some(200_000),
-            activity_ms: Some(22_000),
-            last_position_ms: Some(22_000),
+            played_ms: 22_000,
+            last_position_ms: 22_000,
             state: PlaybackState::Playing,
-            listen_recorded: None,
+            play_id: nanoid::nanoid!(),
+            latency_allowance_used_ms: 0,
+            last_position_at_ms: 22_000,
             updated_at_ms: 22_000,
             created_at_ms: 0,
         };
@@ -1090,26 +1134,26 @@ mod tests {
                 state: Some(PlaybackState::Stopped),
             },
             197_000,
-            ActivityPolicy::PlayingOnly,
         )
         .expect("mutation should succeed");
 
-        assert_eq!(playback.activity_ms, Some(196_000));
+        assert_eq!(playback.played_ms, 196_000);
     }
 
     #[test]
-    fn playback_mutation_does_not_record_terminal_delta_after_paused_state_in_playing_only_policy()
-    {
+    fn playback_mutation_does_not_credit_progress_reported_while_paused() {
         let mut playback = PlaybackSession {
             db_id: None,
             id: nanoid!(),
             client_name: None,
             position_ms: 22_000,
             duration_ms: Some(200_000),
-            activity_ms: Some(22_000),
-            last_position_ms: Some(22_000),
+            played_ms: 22_000,
+            last_position_ms: 22_000,
             state: PlaybackState::Paused,
-            listen_recorded: None,
+            play_id: nanoid::nanoid!(),
+            latency_allowance_used_ms: 0,
+            last_position_at_ms: 22_000,
             updated_at_ms: 22_000,
             created_at_ms: 0,
         };
@@ -1122,11 +1166,10 @@ mod tests {
                 state: Some(PlaybackState::Stopped),
             },
             197_000,
-            ActivityPolicy::PlayingOnly,
         )
         .expect("mutation should succeed");
 
-        assert_eq!(playback.activity_ms, Some(22_000));
+        assert_eq!(playback.played_ms, 22_000);
     }
 
     #[tokio::test]
@@ -1627,7 +1670,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn disconnect_pauses_playing_scopes_at_effective_position() -> anyhow::Result<()> {
+    async fn disconnect_pauses_playing_scopes_at_last_reported_position() -> anyhow::Result<()> {
         let (mut db, _guard) = new_scoped_test_db().await?;
         let user_db_id = insert_user(&mut db, "alice")?;
         let alice_public_id = user_public_id(&db, user_db_id);
@@ -1641,6 +1684,7 @@ mod tests {
                 user_db_id,
                 session_key: "device:1",
                 track_db_id,
+                play_id: None,
                 client_name: None,
                 mutation: PlaybackMutation {
                     position_ms: Some(10_000),
@@ -1659,6 +1703,7 @@ mod tests {
                 user_db_id,
                 session_key: "device:1",
                 track_db_id: native_track_db_id,
+                play_id: None,
                 client_name: None,
                 mutation: PlaybackMutation {
                     position_ms: Some(20_000),
@@ -1681,18 +1726,18 @@ mod tests {
             .iter()
             .find(|playback| playback.playback_session_id == demo_started.playback_session_id)
             .expect("demo playback paused");
-        assert_eq!(demo_paused.playback.position_ms, 13_000);
+        assert_eq!(demo_paused.playback.position_ms, 10_000);
         assert_eq!(demo_paused.playback.state, PlaybackState::Paused);
-        assert_eq!(demo_paused.playback.activity_ms, Some(3_000));
+        assert_eq!(demo_paused.playback.played_ms, 0);
         assert_eq!(demo_paused.playback.updated_at_ms, 4_000);
 
         let native_paused = paused_playbacks
             .iter()
             .find(|playback| playback.playback_session_id == native_started.playback_session_id)
             .expect("native playback paused");
-        assert_eq!(native_paused.playback.position_ms, 22_000);
+        assert_eq!(native_paused.playback.position_ms, 20_000);
         assert_eq!(native_paused.playback.state, PlaybackState::Paused);
-        assert_eq!(native_paused.playback.activity_ms, Some(2_000));
+        assert_eq!(native_paused.playback.played_ms, 0);
         assert_eq!(native_paused.playback.updated_at_ms, 4_000);
 
         let demo_scope = PlaybackScopeKey {
@@ -1712,19 +1757,19 @@ mod tests {
         let persisted =
             lyra_db::playback_sessions::get_by_id(&db, demo_started.playback_session_id)?
                 .expect("persisted playback");
-        assert_eq!(persisted.position_ms, 13_000);
+        assert_eq!(persisted.position_ms, 10_000);
         assert_eq!(persisted.state, PlaybackState::Paused);
 
         let persisted =
             lyra_db::playback_sessions::get_by_id(&db, native_started.playback_session_id)?
                 .expect("persisted native playback");
-        assert_eq!(persisted.position_ms, 22_000);
+        assert_eq!(persisted.position_ms, 20_000);
         assert_eq!(persisted.state, PlaybackState::Paused);
         Ok(())
     }
 
     #[tokio::test]
-    async fn disconnect_pauses_previous_scope_at_demotion_position() -> anyhow::Result<()> {
+    async fn disconnect_pauses_previous_scope_at_demotion_time() -> anyhow::Result<()> {
         let (mut db, _guard) = new_scoped_test_db().await?;
         let user_db_id = insert_user(&mut db, "alice")?;
         let alice_public_id = user_public_id(&db, user_db_id);
@@ -1738,6 +1783,7 @@ mod tests {
                 user_db_id,
                 session_key: "device:1",
                 track_db_id: track_a_id,
+                play_id: None,
                 client_name: None,
                 mutation: PlaybackMutation {
                     position_ms: Some(10_000),
@@ -1756,6 +1802,7 @@ mod tests {
                 user_db_id,
                 session_key: "device:1",
                 track_db_id: track_b_id,
+                play_id: None,
                 client_name: None,
                 mutation: PlaybackMutation {
                     position_ms: Some(20_000),
@@ -1778,18 +1825,18 @@ mod tests {
             .iter()
             .find(|playback| playback.playback_session_id == started_a.playback_session_id)
             .expect("previous playback paused");
-        assert_eq!(paused_a.playback.position_ms, 11_000);
+        assert_eq!(paused_a.playback.position_ms, 10_000);
         assert_eq!(paused_a.playback.state, PlaybackState::Paused);
-        assert_eq!(paused_a.playback.activity_ms, Some(1_000));
+        assert_eq!(paused_a.playback.played_ms, 0);
         assert_eq!(paused_a.playback.updated_at_ms, 2_000);
 
         let paused_b = paused_playbacks
             .iter()
             .find(|playback| playback.playback_session_id == started_b.playback_session_id)
             .expect("current playback paused");
-        assert_eq!(paused_b.playback.position_ms, 23_000);
+        assert_eq!(paused_b.playback.position_ms, 20_000);
         assert_eq!(paused_b.playback.state, PlaybackState::Paused);
-        assert_eq!(paused_b.playback.activity_ms, Some(3_000));
+        assert_eq!(paused_b.playback.played_ms, 0);
         assert_eq!(paused_b.playback.updated_at_ms, 5_000);
 
         let scope = PlaybackScopeKey {
@@ -1802,29 +1849,31 @@ mod tests {
         let persisted_a =
             lyra_db::playback_sessions::get_by_id(&db, started_a.playback_session_id)?
                 .expect("persisted previous playback");
-        assert_eq!(persisted_a.position_ms, 11_000);
+        assert_eq!(persisted_a.position_ms, 10_000);
         assert_eq!(persisted_a.state, PlaybackState::Paused);
 
         let persisted_b =
             lyra_db::playback_sessions::get_by_id(&db, started_b.playback_session_id)?
                 .expect("persisted current playback");
-        assert_eq!(persisted_b.position_ms, 23_000);
+        assert_eq!(persisted_b.position_ms, 20_000);
         assert_eq!(persisted_b.state, PlaybackState::Paused);
         Ok(())
     }
 
     #[test]
-    fn playback_mutation_resets_listen_marker_on_seek_to_start_after_listen() {
+    fn playback_mutation_keeps_played_time_after_seeking_back_to_the_start() {
         let mut playback = PlaybackSession {
             db_id: None,
             id: nanoid!(),
+            play_id: nanoid!(),
             client_name: None,
             position_ms: 150_000,
             duration_ms: Some(200_000),
-            activity_ms: Some(150_000),
-            last_position_ms: Some(150_000),
+            played_ms: 150_000,
+            last_position_ms: 150_000,
+            latency_allowance_used_ms: 0,
             state: PlaybackState::Playing,
-            listen_recorded: Some(true),
+            last_position_at_ms: 150_000,
             updated_at_ms: 150_000,
             created_at_ms: 0,
         };
@@ -1837,182 +1886,15 @@ mod tests {
                 state: Some(PlaybackState::Playing),
             },
             151_000,
-            ActivityPolicy::PlayingOnly,
         )
         .expect("mutation should succeed");
 
-        assert_eq!(playback.listen_recorded, Some(false));
-        assert_eq!(playback.activity_ms, Some(1_500));
-        assert_eq!(playback.last_position_ms, Some(1_500));
-        assert_eq!(playback.position_ms, 1_500);
-    }
-
-    #[test]
-    fn playback_mutation_does_not_reset_listen_marker_on_terminal_near_zero_report() {
-        let mut playback = PlaybackSession {
-            db_id: None,
-            id: nanoid!(),
-            client_name: None,
-            position_ms: 150_000,
-            duration_ms: Some(200_000),
-            activity_ms: Some(150_000),
-            last_position_ms: Some(150_000),
-            state: PlaybackState::Playing,
-            listen_recorded: Some(true),
-            updated_at_ms: 150_000,
-            created_at_ms: 0,
-        };
-
-        apply_playback_mutation(
-            &mut playback,
-            &PlaybackMutation {
-                position_ms: Some(0),
-                duration_ms: None,
-                state: Some(PlaybackState::Stopped),
-            },
-            151_000,
-            ActivityPolicy::PlayingOnly,
-        )
-        .expect("mutation should succeed");
-
-        // Terminal near zero is not a replay.
-        assert_eq!(playback.listen_recorded, Some(true));
-    }
-
-    #[test]
-    fn playback_mutation_resets_listen_marker_on_paused_seek_to_start_after_listen() {
-        // Players that pause-on-scrub before resuming still get replay credit.
-        let mut playback = PlaybackSession {
-            db_id: None,
-            id: nanoid!(),
-            client_name: None,
-            position_ms: 150_000,
-            duration_ms: Some(200_000),
-            activity_ms: Some(150_000),
-            last_position_ms: Some(150_000),
-            state: PlaybackState::Playing,
-            listen_recorded: Some(true),
-            updated_at_ms: 150_000,
-            created_at_ms: 0,
-        };
-
-        apply_playback_mutation(
-            &mut playback,
-            &PlaybackMutation {
-                position_ms: Some(1_500),
-                duration_ms: None,
-                state: Some(PlaybackState::Paused),
-            },
-            151_000,
-            ActivityPolicy::PlayingOnly,
-        )
-        .expect("mutation should succeed");
-
-        assert_eq!(playback.listen_recorded, Some(false));
-        assert_eq!(playback.activity_ms, Some(1_500));
-        assert_eq!(playback.last_position_ms, Some(1_500));
-    }
-
-    #[test]
-    fn playback_mutation_does_not_reset_listen_marker_when_position_meets_short_track_threshold() {
-        // 10s track → 2s listen threshold; landing at 2.5s would let
-        // maybe_record_listen credit a second listen immediately.
-        let mut playback = PlaybackSession {
-            db_id: None,
-            id: nanoid!(),
-            client_name: None,
-            position_ms: 8_000,
-            duration_ms: Some(10_000),
-            activity_ms: Some(8_000),
-            last_position_ms: Some(8_000),
-            state: PlaybackState::Playing,
-            listen_recorded: Some(true),
-            updated_at_ms: 8_000,
-            created_at_ms: 0,
-        };
-
-        apply_playback_mutation(
-            &mut playback,
-            &PlaybackMutation {
-                position_ms: Some(2_500),
-                duration_ms: None,
-                state: Some(PlaybackState::Playing),
-            },
-            9_000,
-            ActivityPolicy::PlayingOnly,
-        )
-        .expect("mutation should succeed");
-
-        assert_eq!(playback.listen_recorded, Some(true));
-        assert_eq!(playback.activity_ms, Some(8_000));
-    }
-
-    #[test]
-    fn playback_mutation_does_not_reset_listen_marker_on_short_backward_seek() {
-        let mut playback = PlaybackSession {
-            db_id: None,
-            id: nanoid!(),
-            client_name: None,
-            position_ms: 150_000,
-            duration_ms: Some(200_000),
-            activity_ms: Some(150_000),
-            last_position_ms: Some(150_000),
-            state: PlaybackState::Playing,
-            listen_recorded: Some(true),
-            updated_at_ms: 150_000,
-            created_at_ms: 0,
-        };
-
-        apply_playback_mutation(
-            &mut playback,
-            &PlaybackMutation {
-                position_ms: Some(120_000),
-                duration_ms: None,
-                state: Some(PlaybackState::Playing),
-            },
-            151_000,
-            ActivityPolicy::PlayingOnly,
-        )
-        .expect("mutation should succeed");
-
-        // Mid-track scrub, not a restart.
-        assert_eq!(playback.listen_recorded, Some(true));
-        assert_eq!(playback.activity_ms, Some(150_000));
-        assert_eq!(playback.last_position_ms, Some(120_000));
-    }
-
-    #[test]
-    fn playback_mutation_does_not_reset_listen_marker_when_no_listen_credited() {
-        let mut playback = PlaybackSession {
-            db_id: None,
-            id: nanoid!(),
-            client_name: None,
-            position_ms: 25_000,
-            duration_ms: Some(200_000),
-            activity_ms: Some(25_000),
-            last_position_ms: Some(25_000),
-            state: PlaybackState::Playing,
-            listen_recorded: None,
-            updated_at_ms: 25_000,
-            created_at_ms: 0,
-        };
-
-        apply_playback_mutation(
-            &mut playback,
-            &PlaybackMutation {
-                position_ms: Some(0),
-                duration_ms: None,
-                state: Some(PlaybackState::Playing),
-            },
-            26_000,
-            ActivityPolicy::PlayingOnly,
-        )
-        .expect("mutation should succeed");
-
-        // No credited listen → keep accumulated activity for the threshold.
-        assert_eq!(playback.listen_recorded, None);
-        assert_eq!(playback.activity_ms, Some(25_000));
-        assert_eq!(playback.last_position_ms, Some(0));
+        assert_eq!(playback.played_ms, 150_000);
+        assert_eq!(playback.last_position_ms, 1_500);
+        assert_eq!(
+            playback.created_at_ms, 0,
+            "a seek does not start a new play"
+        );
     }
 
     #[tokio::test]
@@ -2032,7 +1914,7 @@ mod tests {
                 duration_ms: Some(200_000),
                 state: Some(PlaybackState::Playing),
             },
-            1_000,
+            T0 + 1_000,
         )?;
         report_test_playback_session_with_cleanup(
             &mut db,
@@ -2044,7 +1926,7 @@ mod tests {
                 duration_ms: Some(200_000),
                 state: Some(PlaybackState::Playing),
             },
-            61_000,
+            T0 + 61_000,
         )?;
 
         let counts_after_first = lyra_db::listens::get_counts(&db, &[track_db_id], user_db_id)?;
@@ -2061,7 +1943,7 @@ mod tests {
                 duration_ms: Some(200_000),
                 state: Some(PlaybackState::Playing),
             },
-            62_000,
+            T0 + 62_000,
         )?;
         report_test_playback_session_with_cleanup(
             &mut db,
@@ -2073,7 +1955,7 @@ mod tests {
                 duration_ms: Some(200_000),
                 state: Some(PlaybackState::Playing),
             },
-            122_000,
+            T0 + 122_000,
         )?;
 
         let counts_after_replay = lyra_db::listens::get_counts(&db, &[track_db_id], user_db_id)?;
@@ -2085,8 +1967,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn report_playback_session_credits_two_listens_for_seek_to_start_replay()
-    -> anyhow::Result<()> {
+    async fn report_playback_session_counts_a_seek_to_start_replay_once() -> anyhow::Result<()> {
         let (mut db, _guard) = new_scoped_test_db().await?;
         let user_db_id = insert_user(&mut db, "alice")?;
         let track_db_id = insert_track(&mut db, "Track A", 200_000)?;
@@ -2101,7 +1982,7 @@ mod tests {
                 duration_ms: Some(200_000),
                 state: Some(PlaybackState::Playing),
             },
-            1_000,
+            T0 + 1_000,
         )?;
         report_test_playback_session_with_cleanup(
             &mut db,
@@ -2113,7 +1994,7 @@ mod tests {
                 duration_ms: Some(200_000),
                 state: Some(PlaybackState::Playing),
             },
-            61_000,
+            T0 + 61_000,
         )?;
 
         let counts_after_first = lyra_db::listens::get_counts(&db, &[track_db_id], user_db_id)?;
@@ -2130,7 +2011,7 @@ mod tests {
                 duration_ms: Some(200_000),
                 state: Some(PlaybackState::Playing),
             },
-            62_000,
+            T0 + 62_000,
         )?;
         report_test_playback_session_with_cleanup(
             &mut db,
@@ -2142,13 +2023,13 @@ mod tests {
                 duration_ms: Some(200_000),
                 state: Some(PlaybackState::Playing),
             },
-            122_000,
+            T0 + 122_000,
         )?;
 
+        // Without a started event or a new play id, it is the same play.
         let counts_after_replay = lyra_db::listens::get_counts(&db, &[track_db_id], user_db_id)?;
-        assert_eq!(counts_after_replay.get(&track_db_id).copied(), Some(2));
+        assert_eq!(counts_after_replay.get(&track_db_id).copied(), Some(1));
 
-        // Heuristic resets in place; no second session.
         let records = workflow::collect_playback_records(&db)?;
         assert_eq!(records.len(), 1);
         Ok(())
@@ -2172,7 +2053,7 @@ mod tests {
                 duration_ms: Some(200_000),
                 state: Some(PlaybackState::Playing),
             },
-            1_000,
+            T0 + 1_000,
         )?
         .playback
         .expect("track A should start");
@@ -2186,7 +2067,7 @@ mod tests {
                 duration_ms: Some(200_000),
                 state: Some(PlaybackState::Playing),
             },
-            61_000,
+            T0 + 61_000,
         )?;
 
         // Switch to B; A rotates to previous.
@@ -2200,7 +2081,7 @@ mod tests {
                 duration_ms: Some(200_000),
                 state: Some(PlaybackState::Playing),
             },
-            62_000,
+            T0 + 62_000,
         )?;
 
         // Started for A from the previous slot must open a fresh session.
@@ -2214,7 +2095,7 @@ mod tests {
                 duration_ms: Some(200_000),
                 state: Some(PlaybackState::Playing),
             },
-            80_000,
+            T0 + 80_000,
         )?
         .playback
         .expect("restart should produce a record");
@@ -2233,7 +2114,7 @@ mod tests {
                 duration_ms: Some(200_000),
                 state: Some(PlaybackState::Playing),
             },
-            140_000,
+            T0 + 140_000,
         )?;
 
         let counts = lyra_db::listens::get_counts(&db, &[track_a_id], user_db_id)?;
@@ -2294,6 +2175,403 @@ mod tests {
 
         let records = workflow::collect_playback_records(&db)?;
         assert_eq!(records.len(), 1);
+        Ok(())
+    }
+    fn report_play(
+        db: &mut DbAny,
+        user_db_id: DbId,
+        track_db_id: DbId,
+        play_id: &str,
+        position_ms: u64,
+        now_ms: u64,
+    ) -> anyhow::Result<PlaybackRecord> {
+        report_playback_session_with_cleanup(
+            db,
+            SessionPlaybackReportRequest {
+                plugin_id: "external",
+                user_db_id,
+                session_key: "auth:1",
+                track_db_id,
+                play_id: Some(play_id),
+                client_name: None,
+                mutation: PlaybackMutation {
+                    position_ms: Some(position_ms),
+                    duration_ms: Some(200_000),
+                    state: Some(PlaybackState::Playing),
+                },
+                now_ms,
+                active_event: ActiveEvent::Progress,
+            },
+        )?
+        .playback
+        .ok_or_else(|| anyhow::anyhow!("report should produce a playback"))
+    }
+
+    fn listen_for_play(
+        db: &DbAny,
+        user_db_id: DbId,
+        play_id: &str,
+    ) -> anyhow::Result<lyra_db::Listen> {
+        let listen_db_id = lyra_db::listens::find_by_play_id(db, user_db_id, play_id)?
+            .ok_or_else(|| anyhow::anyhow!("no listen for {play_id}"))?;
+        lyra_db::graph::bulk_fetch_typed::<lyra_db::Listen>(db, vec![listen_db_id], "Listen")?
+            .remove(&listen_db_id)
+            .ok_or_else(|| anyhow::anyhow!("listen {listen_db_id:?} missing"))
+    }
+
+    #[tokio::test]
+    async fn a_new_play_id_starts_a_new_session_for_the_same_track() -> anyhow::Result<()> {
+        let (mut db, _guard) = new_scoped_test_db().await?;
+        let user = insert_user(&mut db, "alice")?;
+        let track = insert_track(&mut db, "A", 200_000)?;
+
+        let first = report_play(&mut db, user, track, "first-play-000001", 0, T0)?;
+        let first_again = report_play(
+            &mut db,
+            user,
+            track,
+            "first-play-000001",
+            40_000,
+            T0 + 40_000,
+        )?;
+        assert_eq!(first_again.playback_session_id, first.playback_session_id);
+
+        let second = report_play(&mut db, user, track, "second-play-00001", 0, T0 + 50_000)?;
+        assert_ne!(second.playback_session_id, first.playback_session_id);
+        report_play(
+            &mut db,
+            user,
+            track,
+            "second-play-00001",
+            35_000,
+            T0 + 85_000,
+        )?;
+
+        let counts = lyra_db::listens::get_counts(&db, &[track], user)?;
+        assert_eq!(counts.get(&track).copied(), Some(2));
+        let first_listen = listen_for_play(&db, user, "first-play-000001")?;
+        assert_eq!(first_listen.started_at_ms, T0);
+        assert_eq!(first_listen.played_ms, 40_000);
+        let second_listen = listen_for_play(&db, user, "second-play-00001")?;
+        assert_eq!(second_listen.started_at_ms, T0 + 50_000);
+        assert_eq!(second_listen.played_ms, 35_000);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_live_play_judges_against_the_catalog_duration() -> anyhow::Result<()> {
+        let (mut db, _guard) = new_scoped_test_db().await?;
+        let user = insert_user(&mut db, "alice")?;
+        let track = insert_track(&mut db, "Short", 60_000)?;
+
+        // The client claims a 200 s duration; the 60 s catalog duration sets a 12 s threshold.
+        report_play(&mut db, user, track, "short-play-000001", 0, T0)?;
+        report_play(
+            &mut db,
+            user,
+            track,
+            "short-play-000001",
+            12_000,
+            T0 + 12_000,
+        )?;
+
+        assert_eq!(
+            listen_for_play(&db, user, "short-play-000001")?.played_ms,
+            12_000
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_play_reported_live_then_offline_counts_once() -> anyhow::Result<()> {
+        let (mut db, _guard) = new_scoped_test_db().await?;
+        let user = insert_user(&mut db, "alice")?;
+        let track = insert_track(&mut db, "A", 200_000)?;
+
+        report_play(&mut db, user, track, "shared-play-00001", 0, T0)?;
+        report_play(
+            &mut db,
+            user,
+            track,
+            "shared-play-00001",
+            60_000,
+            T0 + 60_000,
+        )?;
+        let offline = db.transaction_mut(|t| {
+            crate::services::listens::record(
+                t,
+                user,
+                crate::services::listens::Play {
+                    play_id: "shared-play-00001",
+                    track_db_id: track,
+                    started_at_ms: T0,
+                    played_ms: 200_000,
+                },
+                T0 + 300_000,
+            )
+        })?;
+
+        assert_eq!(offline, crate::services::listens::RecordOutcome::Duplicate);
+        let counts = lyra_db::listens::get_counts(&db, &[track], user)?;
+        assert_eq!(counts.get(&track).copied(), Some(1));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_play_reported_offline_then_live_counts_once() -> anyhow::Result<()> {
+        let (mut db, _guard) = new_scoped_test_db().await?;
+        let user = insert_user(&mut db, "alice")?;
+        let track = insert_track(&mut db, "A", 200_000)?;
+
+        let offline = db.transaction_mut(|t| {
+            crate::services::listens::record(
+                t,
+                user,
+                crate::services::listens::Play {
+                    play_id: "shared-play-00001",
+                    track_db_id: track,
+                    started_at_ms: T0,
+                    played_ms: 60_000,
+                },
+                T0 + 60_000,
+            )
+        })?;
+        assert_eq!(offline, crate::services::listens::RecordOutcome::Recorded);
+        report_play(
+            &mut db,
+            user,
+            track,
+            "shared-play-00001",
+            60_000,
+            T0 + 70_000,
+        )?;
+        report_play(
+            &mut db,
+            user,
+            track,
+            "shared-play-00001",
+            120_000,
+            T0 + 130_000,
+        )?;
+
+        let counts = lyra_db::listens::get_counts(&db, &[track], user)?;
+        assert_eq!(counts.get(&track).copied(), Some(1));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_burst_of_reports_cannot_make_a_play_count() -> anyhow::Result<()> {
+        let (mut db, _guard) = new_scoped_test_db().await?;
+        let user = insert_user(&mut db, "alice")?;
+        let track = insert_track(&mut db, "A", 200_000)?;
+
+        report_play(&mut db, user, track, "burst-play-000001", 0, T0)?;
+        for report in 1..=20 {
+            report_play(
+                &mut db,
+                user,
+                track,
+                "burst-play-000001",
+                report * 10_000,
+                T0 + report,
+            )?;
+        }
+
+        assert!(lyra_db::listens::find_by_play_id(&db, user, "burst-play-000001")?.is_none());
+        Ok(())
+    }
+    #[tokio::test]
+    async fn a_late_report_for_a_replaced_play_is_ignored() -> anyhow::Result<()> {
+        let (mut db, _guard) = new_scoped_test_db().await?;
+        let user = insert_user(&mut db, "alice")?;
+        let track = insert_track(&mut db, "A", 200_000)?;
+
+        let first = report_play(&mut db, user, track, "first-play-000001", 0, T0)?;
+        let second = report_play(&mut db, user, track, "second-play-00001", 0, T0 + 10_000)?;
+        let late = report_playback_session_with_cleanup(
+            &mut db,
+            SessionPlaybackReportRequest {
+                plugin_id: "external",
+                user_db_id: user,
+                session_key: "auth:1",
+                track_db_id: track,
+                play_id: Some("first-play-000001"),
+                client_name: None,
+                mutation: PlaybackMutation {
+                    position_ms: Some(5_000),
+                    duration_ms: Some(200_000),
+                    state: Some(PlaybackState::Playing),
+                },
+                // After the previous slot's grace, so the late report can't land there.
+                now_ms: T0 + 60_000,
+                active_event: ActiveEvent::Progress,
+            },
+        )?;
+        assert!(late.playback.is_none());
+
+        let continued = report_play(
+            &mut db,
+            user,
+            track,
+            "second-play-00001",
+            40_000,
+            T0 + 50_000,
+        )?;
+        assert_eq!(continued.playback_session_id, second.playback_session_id);
+        assert_ne!(continued.playback_session_id, first.playback_session_id);
+        assert_eq!(
+            listen_for_play(&db, user, "second-play-00001")?.started_at_ms,
+            T0 + 10_000
+        );
+        assert_eq!(workflow::collect_playback_records(&db)?.len(), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_live_listen_keeps_the_plays_full_playing_time() -> anyhow::Result<()> {
+        let (mut db, _guard) = new_scoped_test_db().await?;
+        let user = insert_user(&mut db, "alice")?;
+        let track = insert_track(&mut db, "A", 200_000)?;
+
+        report_play(&mut db, user, track, "long-play-0000001", 0, T0)?;
+        report_play(
+            &mut db,
+            user,
+            track,
+            "long-play-0000001",
+            30_000,
+            T0 + 30_000,
+        )?;
+        assert_eq!(
+            listen_for_play(&db, user, "long-play-0000001")?.played_ms,
+            30_000
+        );
+        report_play(
+            &mut db,
+            user,
+            track,
+            "long-play-0000001",
+            150_000,
+            T0 + 150_000,
+        )?;
+
+        assert_eq!(
+            listen_for_play(&db, user, "long-play-0000001")?.played_ms,
+            150_000
+        );
+        let counts = lyra_db::listens::get_counts(&db, &[track], user)?;
+        assert_eq!(counts.get(&track).copied(), Some(1));
+        Ok(())
+    }
+
+    #[test]
+    fn playback_mutation_measures_elapsed_time_from_the_last_reported_position() {
+        let mut playback = PlaybackSession {
+            db_id: None,
+            id: nanoid!(),
+            play_id: nanoid!(),
+            client_name: None,
+            position_ms: 0,
+            duration_ms: Some(300_000),
+            played_ms: 0,
+            last_position_ms: 0,
+            last_position_at_ms: 0,
+            latency_allowance_used_ms: 0,
+            state: PlaybackState::Playing,
+            updated_at_ms: 0,
+            created_at_ms: 0,
+        };
+
+        for (mutation, now_ms) in [
+            (
+                PlaybackMutation {
+                    state: Some(PlaybackState::Playing),
+                    ..PlaybackMutation::default()
+                },
+                14_000,
+            ),
+            (
+                PlaybackMutation {
+                    position_ms: Some(30_000),
+                    state: Some(PlaybackState::Playing),
+                    ..PlaybackMutation::default()
+                },
+                30_000,
+            ),
+        ] {
+            apply_playback_mutation(&mut playback, &mutation, now_ms)
+                .expect("mutation should succeed");
+        }
+
+        assert_eq!(playback.played_ms, 30_000);
+        assert_eq!(playback.latency_allowance_used_ms, 0);
+
+        // Paused without a position, resumed without one after 10 minutes, then a jump far
+        // ahead: only the time since the resume counts, plus the latency allowance.
+        let reports = [
+            (None, PlaybackState::Paused, 31_000),
+            (None, PlaybackState::Playing, 631_000),
+            (Some(205_000), PlaybackState::Playing, 636_000),
+        ];
+        for (position_ms, state, now_ms) in reports {
+            apply_playback_mutation(
+                &mut playback,
+                &PlaybackMutation {
+                    position_ms,
+                    state: Some(state),
+                    ..PlaybackMutation::default()
+                },
+                now_ms,
+            )
+            .expect("mutation should succeed");
+        }
+
+        assert_eq!(
+            playback.played_ms,
+            30_000 + 5_000 + PLAY_LATENCY_ALLOWANCE_MS
+        );
+    }
+    #[tokio::test]
+    async fn a_named_play_resumes_its_own_stopped_session() -> anyhow::Result<()> {
+        let (mut db, _guard) = new_scoped_test_db().await?;
+        let user = insert_user(&mut db, "alice")?;
+        let track = insert_track(&mut db, "A", 200_000)?;
+        let report = |db: &mut DbAny, position_ms: u64, state: PlaybackState, now_ms: u64| {
+            report_playback_session_with_cleanup(
+                db,
+                SessionPlaybackReportRequest {
+                    plugin_id: "external",
+                    user_db_id: user,
+                    session_key: "auth:1",
+                    track_db_id: track,
+                    play_id: Some("resumed-play-00001"),
+                    client_name: None,
+                    mutation: PlaybackMutation {
+                        position_ms: Some(position_ms),
+                        duration_ms: Some(200_000),
+                        state: Some(state),
+                    },
+                    now_ms,
+                    active_event: ActiveEvent::Progress,
+                },
+            )
+        };
+
+        let started = report(&mut db, 0, PlaybackState::Playing, T0)?
+            .playback
+            .expect("the play starts");
+        report(&mut db, 20_000, PlaybackState::Stopped, T0 + 20_000)?;
+        let resumed = report(&mut db, 20_000, PlaybackState::Playing, T0 + 60_000)?
+            .playback
+            .expect("the play resumes");
+        assert_eq!(resumed.playback_session_id, started.playback_session_id);
+        assert_eq!(resumed.playback.state, PlaybackState::Playing);
+        report(&mut db, 40_000, PlaybackState::Playing, T0 + 80_000)?;
+
+        assert_eq!(
+            listen_for_play(&db, user, "resumed-play-00001")?.played_ms,
+            40_000
+        );
         Ok(())
     }
 }

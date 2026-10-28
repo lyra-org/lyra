@@ -454,8 +454,7 @@ mod tests {
             library_public_id: library_public_id.map(str::to_string),
             position_ms: 0,
             duration_ms: Some(1_000),
-            activity_ms: 0,
-            qualifies_single_listen: false,
+            played_ms: 0,
             updated_at_ms: 0,
         }
     }
@@ -566,6 +565,7 @@ mod tests {
                     user_db_id: bob_db_id,
                     session_key: "device",
                     track_db_id,
+                    play_id: None,
                     client_name: None,
                     mutation: playbacks::PlaybackMutation {
                         position_ms: Some(0),

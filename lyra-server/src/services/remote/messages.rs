@@ -196,6 +196,9 @@ pub(crate) enum ForwardedCommand {
         from: Option<u64>,
         playback_id: String,
         queue_revision: u64,
+        /// The current track's play, which the target continues by reporting progress with it.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        play_id: Option<String>,
         /// Opaque correlation token whose exact progress report completes the handoff.
         handoff_token: String,
     },

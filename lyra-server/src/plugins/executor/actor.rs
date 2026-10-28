@@ -388,8 +388,7 @@ mod tests {
             library_public_id: None,
             position_ms: 42,
             duration_ms: Some(100),
-            activity_ms: 42,
-            qualifies_single_listen: false,
+            played_ms: 42,
             updated_at_ms: 10,
         }
     }
