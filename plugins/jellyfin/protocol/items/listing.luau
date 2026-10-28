@@ -21,6 +21,7 @@ local item_ids = require("./identifiers")
 local lookups = require("./lookups")
 local options_module = require("./options")
 local playlist_access = require("../playlist_access")
+local preferences = require("../preferences")
 local query = require("./query")
 local results = require("./results")
 
@@ -500,8 +501,9 @@ function module.list_items(options: ItemsQueryOptions): ({ ItemInfo }, number, n
 	return list(options, false)
 end
 
--- The newest albums by the date they were added; `IsPlayed` is ignored, as upstream. Audio
--- groups into its albums unless `GroupItems=false` asks for the newest tracks themselves.
+-- The newest albums by the date they were added. As upstream for music, `IsPlayed` and with it
+-- `HidePlayedInLatest` are ignored. Audio groups into its albums unless `GroupItems=false` asks
+-- for the newest tracks themselves.
 function module.list_latest_items(options: ItemsQueryOptions): { ItemInfo }
 	local latest = table.clone(options)
 	latest.is_played = nil
@@ -510,15 +512,50 @@ function module.list_latest_items(options: ItemsQueryOptions): { ItemInfo }
 	latest.sort_by = { "DateCreated", "SortName", "ProductionYear" }
 	latest.sort_order = "Descending"
 
-	local scope = lookups.scope(options.parent_id)
 	local wants_albums = options_module.wants_item_type(latest, "musicalbum")
 	local wants_audio = options_module.wants_item_type(latest, "audio")
-	local source: Source?
+	local source_for: ((ItemsQueryOptions, Scope) -> Source?)? = nil
 	if wants_audio and not wants_albums and not options.group_items then
-		source = track_source(latest, scope)
+		source_for = track_source
 	elseif wants_albums or wants_audio then
-		source = release_source(latest, scope)
+		source_for = release_source
 	end
+	if not source_for then
+		return {}
+	end
+
+	-- As upstream, without a parent the newest items come from the libraries the caller doesn't
+	-- exclude from its latest media: the newest of each library, then the newest of those.
+	local user_id = latest.user_id
+	if options.parent_id == nil and user_id then
+		local excluded = preferences.user_configuration_ids(user_id, "LatestItemsExcludes")
+		local libraries = catalog.to_music_view_items(false)
+		local kept: { ItemInfo } = {}
+		for _, library in libraries do
+			if not excluded[library.Id or ""] then
+				table.insert(kept, library)
+			end
+		end
+		if #kept < #libraries then
+			local candidates: { string } = {}
+			for _, library in kept do
+				local library_source = source_for(latest, lookups.scope(library.Id))
+				if library_source then
+					for _, stub in (library_source(0, latest.limit)) do
+						if stub.Id then
+							table.insert(candidates, stub.Id)
+						end
+					end
+				end
+			end
+			if #candidates == 0 then
+				return {}
+			end
+			latest.ids = candidates
+		end
+	end
+
+	local source = source_for(latest, lookups.scope(options.parent_id))
 	if not source then
 		return {}
 	end
@@ -582,9 +619,10 @@ function module.list_genre_items(options: ItemsQueryOptions): ({ ItemInfo }, num
 	return items, page.total, page.offset
 end
 
--- Library views answer searches by name and sort by name. As upstream, the playlists view shows
--- only while the caller can see a playlist.
-function module.list_views(options: ItemsQueryOptions): ({ ItemInfo }, number, number)
+-- Library views answer searches by name. As upstream, the playlists view shows only while the
+-- caller can see a playlist, the views the caller hid from its media show only when asked for,
+-- and the views come in the caller's order and then by name, unless `SortBy` asks otherwise.
+function module.list_views(options: ItemsQueryOptions, include_hidden: boolean?): ({ ItemInfo }, number, number)
 	local search = if options.search_term then string.lower(options.search_term) else nil
 	local candidates = catalog.to_music_view_items(options.include_child_count)
 	local visible_playlists = #playlist_access.list_visible()
@@ -594,20 +632,41 @@ function module.list_views(options: ItemsQueryOptions): ({ ItemInfo }, number, n
 			catalog.playlists_folder_item(if options.include_child_count then visible_playlists else nil)
 		)
 	end
+	local user_id = options.user_id
+	local hidden = if user_id and not include_hidden
+		then preferences.user_configuration_ids(user_id, "MyMediaExcludes")
+		else {}
 	local views: { ItemInfo } = {}
 	for _, view in candidates do
-		if search == nil or string.find(string.lower(view.Name or ""), search, 1, true) ~= nil then
+		if
+			not hidden[view.Id or ""]
+			and (search == nil or string.find(string.lower(view.Name or ""), search, 1, true) ~= nil)
+		then
 			table.insert(views, view)
 		end
 	end
-	local descending = query.direction(options.sort_order) == "descending"
-	table.sort(views, function(a: ItemInfo, b: ItemInfo): boolean
-		local a_name, b_name = string.lower(a.SortName or a.Name or ""), string.lower(b.SortName or b.Name or "")
-		if descending then
-			return a_name > b_name
-		end
-		return a_name < b_name
-	end)
+
+	local function name(view: ItemInfo): string
+		return string.lower(view.SortName or view.Name or "")
+	end
+	if #options.sort_by > 0 then
+		local descending = query.direction(options.sort_order) == "descending"
+		table.sort(views, function(a: ItemInfo, b: ItemInfo): boolean
+			if descending then
+				return name(a) > name(b)
+			end
+			return name(a) < name(b)
+		end)
+	else
+		local order = if user_id then preferences.user_configuration_ids(user_id, "OrderedViews") else {}
+		table.sort(views, function(a: ItemInfo, b: ItemInfo): boolean
+			local a_position, b_position = order[a.Id or ""] or math.huge, order[b.Id or ""] or math.huge
+			if a_position ~= b_position then
+				return a_position < b_position
+			end
+			return name(a) < name(b)
+		end)
+	end
 	return results.paginate_items(views, options.start_index, options.limit)
 end
 

@@ -754,10 +754,15 @@ api.get(P .. "/Users/Me", function(ctx: ApiContext)
 
 	return api.response.json(200, session.to_jellyfin_user(principal))
 end, "public", true)
-local function respond_with_user_views(ctx: ApiContext): ApiResponse
+local function respond_with_user_views(ctx: ApiContext, principal: session.Principal): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = items_options.parse(query)
-	local items, total_count, start_index = listing.list_views(options)
+	local options = items_options.for_user(items_options.parse(query), principal.user_id)
+	-- Upstream's views take no `SortBy`; they come in the caller's order.
+	options.sort_by = {}
+	local include_hidden = string.lower(
+		requests.parse_query_string(query, { "includeHidden", "IncludeHidden" }, nil) or ""
+	) == "true"
+	local items, total_count, start_index = listing.list_views(options, include_hidden)
 	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
 end
 
@@ -771,7 +776,7 @@ api.get(P .. "/Users/{id}/Views", function(ctx: ApiContext)
 		return session.unauthorized()
 	end
 
-	return respond_with_user_views(ctx)
+	return respond_with_user_views(ctx, principal)
 end, "public", true)
 api.get(P .. "/UserViews", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
@@ -783,7 +788,7 @@ api.get(P .. "/UserViews", function(ctx: ApiContext)
 		return session.unauthorized()
 	end
 
-	return respond_with_user_views(ctx)
+	return respond_with_user_views(ctx, principal)
 end, "public", true)
 api.get(P .. "/UserViews/GroupingOptions", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)

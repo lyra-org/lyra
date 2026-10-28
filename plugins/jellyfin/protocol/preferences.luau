@@ -357,6 +357,20 @@ function module.user_configuration(user_id: string): JsonObject
 	return configuration
 end
 
+-- The item ids a list in the user's configuration holds, each by its position in the list.
+function module.user_configuration_ids(user_id: string, field: string): { [string]: number }
+	local positions: { [string]: number } = {}
+	local ids = module.user_configuration(user_id)[field]
+	if type(ids) == "table" then
+		for index, id in ids :: { JsonValue } do
+			if type(id) == "string" and positions[id] == nil then
+				positions[id] = index
+			end
+		end
+	end
+	return positions
+end
+
 -- Replaces the user's configuration, as upstream's `POST /Users/Configuration` does.
 function module.user_configuration_set(ctx: ApiContext, user_id: string): ApiResponse
 	local request = if ctx then ctx.request else nil

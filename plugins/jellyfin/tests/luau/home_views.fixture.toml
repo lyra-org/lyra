@@ -1,0 +1,58 @@
+run_as = "admin"
+
+# Amy's "Amy Old" (added 100) and "Amy New" (added 300), and Bob's "Bob Mid" (added 200). The admin
+# owns the playlist "Mix", so the playlists view shows.
+
+[[users]]
+key = "admin"
+admin = true
+
+[[artists]]
+key = "amy"
+name = "Amy"
+
+[[artists]]
+key = "bob"
+name = "Bob"
+
+[[releases]]
+key = "amy_old"
+title = "Amy Old"
+added = 100
+artists = ["amy"]
+
+[[releases]]
+key = "amy_new"
+title = "Amy New"
+added = 300
+artists = ["amy"]
+
+[[releases]]
+key = "bob_mid"
+title = "Bob Mid"
+added = 200
+artists = ["bob"]
+
+[[tracks]]
+key = "old_song"
+title = "Old Song"
+release = "amy_old"
+artists = ["amy"]
+
+[[tracks]]
+key = "new_song"
+title = "New Song"
+release = "amy_new"
+artists = ["amy"]
+
+[[tracks]]
+key = "mid_song"
+title = "Mid Song"
+release = "bob_mid"
+artists = ["bob"]
+
+[[playlists]]
+key = "mix"
+owner = "admin"
+name = "Mix"
+tracks = ["old_song"]
