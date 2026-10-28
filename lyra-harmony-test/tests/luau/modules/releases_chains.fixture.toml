@@ -1,0 +1,55 @@
+run_as = "owner"
+
+[[users]]
+key = "owner"
+admin = true
+
+[[releases]]
+key = "book"
+title = "THE BOOK 3"
+
+[[releases]]
+key = "other"
+title = "Other"
+
+[[tracks]]
+key = "awakening"
+title = "Interlude \"Awakening\""
+release = "book"
+disc = 1
+track = 1
+
+[[tracks]]
+key = "blessing"
+title = "祝福"
+release = "book"
+disc = 1
+track = 2
+
+[[tracks]]
+key = "worship"
+title = "Interlude \"Worship\""
+release = "book"
+disc = 1
+track = 3
+
+[[tracks]]
+key = "idol"
+title = "アイドル"
+release = "book"
+disc = 1
+track = 4
+
+[[tracks]]
+key = "hero"
+title = "勇者"
+release = "book"
+disc = 1
+track = 5
+
+[[tracks]]
+key = "elsewhere"
+title = "Elsewhere"
+release = "other"
+disc = 1
+track = 1

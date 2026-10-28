@@ -20,6 +20,7 @@
     "lyra.playback_sources",
     "lyra.playlists",
     "lyra.plugins",
+    "lyra.releases",
     "lyra.tracks"
   ]
 }

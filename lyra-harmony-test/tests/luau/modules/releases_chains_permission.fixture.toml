@@ -1,0 +1,18 @@
+run_as = "listener"
+
+[[users]]
+key = "listener"
+
+[[releases]]
+key = "book"
+title = "THE BOOK 3"
+
+[[tracks]]
+key = "awakening"
+title = "Interlude \"Awakening\""
+release = "book"
+
+[[tracks]]
+key = "blessing"
+title = "祝福"
+release = "book"

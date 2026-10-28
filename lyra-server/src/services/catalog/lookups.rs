@@ -14,6 +14,7 @@ use agdb::{
     DbAny,
     DbId,
 };
+use serde::Serialize;
 
 use super::{
     CatalogError,
@@ -92,6 +93,67 @@ pub(crate) fn tracks_by_release(
         tracks.insert(release, Tracks::hydrate(db, &ids)?);
     }
     Ok(tracks)
+}
+
+/// A release's chain: its tracks in play order.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct ReleaseChain {
+    pub(crate) id: String,
+    pub(crate) track_ids: Vec<i64>,
+}
+
+impl From<lyra_db::chains::ReleaseChain> for ReleaseChain {
+    fn from(chain: lyra_db::chains::ReleaseChain) -> Self {
+        Self {
+            id: chain.id,
+            track_ids: chain.track_db_ids.into_iter().map(|id| id.0).collect(),
+        }
+    }
+}
+
+/// A track's chain and its 0-based place in it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct TrackChain {
+    pub(crate) id: String,
+    pub(crate) position: u64,
+}
+
+/// The chains on each visible release, ordered by where their first track sits.
+pub(crate) fn chains_by_release(
+    db: &DbAny,
+    viewer: &Viewer,
+    releases: &[DbId],
+) -> Result<HashMap<DbId, Vec<ReleaseChain>>, CatalogError> {
+    let mut chains = HashMap::new();
+    for release in visible_in_order::<Releases>(db, viewer, releases)? {
+        let release_chains = lyra_db::chains::get_for_release(db, release)?;
+        chains.insert(
+            release,
+            release_chains.into_iter().map(ReleaseChain::from).collect(),
+        );
+    }
+    Ok(chains)
+}
+
+/// The chain place of each visible track that is in a chain.
+pub(crate) fn chain_places(
+    db: &DbAny,
+    viewer: &Viewer,
+    tracks: &[DbId],
+) -> Result<HashMap<DbId, TrackChain>, CatalogError> {
+    let tracks = visible_in_order::<Tracks>(db, viewer, tracks)?;
+    Ok(lyra_db::chains::links_for_tracks(db, &tracks)?
+        .into_iter()
+        .map(|(track, link)| {
+            (
+                track,
+                TrackChain {
+                    id: link.chain_id,
+                    position: link.position,
+                },
+            )
+        })
+        .collect())
 }
 
 /// The visible releases holding each visible track.

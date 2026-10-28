@@ -54,6 +54,8 @@ pub(crate) fn module_spec() -> ModuleSpec {
         .function(by_track_spec())
         .function(by_genre_spec())
         .function(similar_spec())
+        .function(chains_spec())
+        .function(replace_chains_spec())
         .install(|_| Ok(ModuleExport::new(ReleasesModule)))
 }
 
@@ -104,6 +106,26 @@ fn similar_spec() -> FunctionSpec {
         .call_async(std::sync::Arc::new(similar_callback))
 }
 
+fn chains_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("chains")
+        .context::<crate::plugins::auth::DispatchAuth>()
+        .arg_name("release_ids")
+        .args::<Vec<u64>>()
+        .returns::<luau::Table>()
+        .call_async(std::sync::Arc::new(chains_callback))
+}
+
+fn replace_chains_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("replace_chains")
+        .context::<crate::plugins::auth::DispatchAuth>()
+        .arg_name("release_id")
+        .args::<i64>()
+        .arg_name("chains")
+        .args::<luau::Table>()
+        .returns::<luau::Table>()
+        .call_async(std::sync::Arc::new(replace_chains_callback))
+}
+
 fn get_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
@@ -120,6 +142,54 @@ fn by_genre_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     catalog::keyed_lookup(&mut frame, "genre_ids", lookups::releases_by_genre)
+}
+
+fn chains_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    catalog::keyed_lookup(&mut frame, "release_ids", lookups::chains_by_release)
+}
+
+fn replace_chains_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let release_db_id = args::positive_id(frame.args.read_named("release_id")?, "release_id")?;
+    let chains: luau::Table = frame.args.read_named("chains")?;
+    let chains = args::array_values(frame.vm, &chains)?
+        .into_iter()
+        .map(|(index, chain)| match chain {
+            luau::Value::Table(chain) => args::id_sequence(frame.vm, &chain),
+            _ => Err(crate::plugins::runtime_error(format!(
+                "chain {index} must be an array of track ids"
+            ))),
+        })
+        .collect::<luau::runtime::Result<Vec<_>>>()?;
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
+    let db = db::get(frame.vm)?;
+
+    Ok(luau::ScheduledFuture::new(async move {
+        crate::services::auth::require_permission(&principal, lyra_db::Permission::ManageMetadata)
+            .map_err(crate::plugins::runtime_error)?;
+        let chains = {
+            let mut db = db.write().await;
+            if !crate::services::auth::access::entity_accessible(&db, &principal, release_db_id)
+                .map_err(crate::plugins::runtime_error)?
+            {
+                return Err(crate::plugins::runtime_error(
+                    lyra_db::chains::ChainError::ReleaseNotFound,
+                ));
+            }
+            lyra_db::chains::replace_for_release(&mut db, release_db_id, &chains)
+                .map_err(crate::plugins::runtime_error)?
+                .map_err(crate::plugins::runtime_error)?
+        };
+        harmony_luau::serializable_to_luau_owned(
+            chains
+                .into_iter()
+                .map(lookups::ReleaseChain::from)
+                .collect::<Vec<_>>(),
+        )
+    }))
 }
 
 fn query_callback(
@@ -335,6 +405,20 @@ fn release_type_aliases() -> Vec<TypeAliasDescriptor> {
             None,
         ),
         TypeAliasDescriptor::new("Release", release_type(), None),
+        TypeAliasDescriptor::new(
+            "ReleaseChain",
+            LuauType::object(vec![
+                field("id", String::luau_type()),
+                described_field(
+                    "track_ids",
+                    Vec::<u64>::luau_type(),
+                    "The chain's tracks in play order.",
+                ),
+            ]),
+            Some(
+                "A chain contains tracks from one release that Lyra keeps together and in order when Lyra decides the play order.",
+            ),
+        ),
         catalog::credit_role_alias(),
     ]
     .into_iter()
@@ -428,6 +512,30 @@ fn module_descriptor() -> ModuleDescriptor {
                     u64::luau_type(),
                     LuauType::array(LuauType::named("Release")),
                 )],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["chains"],
+                description: Some(
+                    "The chains on each of these releases that the caller can see, ordered by where their first track sits, keyed by release id.",
+                ),
+                params: vec![param("release_ids", Vec::<u64>::luau_type())],
+                returns: vec![LuauType::map(
+                    u64::luau_type(),
+                    LuauType::array(LuauType::named("ReleaseChain")),
+                )],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["replace_chains"],
+                description: Some(
+                    "Replaces every chain on a release the caller can see with `chains`, each the release's track ids in play order, and returns the stored chains. An empty list clears them. Errors when a chain has fewer than two tracks, a track is listed more than once, a track is not on the release, or a track is already in a chain on another release. Chain ids may change on every call. Requires ManageMetadata.",
+                ),
+                params: vec![
+                    param("release_id", u64::luau_type()),
+                    param("chains", Vec::<Vec<u64>>::luau_type()),
+                ],
+                returns: vec![LuauType::array(LuauType::named("ReleaseChain"))],
                 yields: true,
             },
             ModuleFunctionDescriptor {

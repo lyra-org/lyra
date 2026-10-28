@@ -48,6 +48,7 @@ pub(crate) fn module_spec() -> ModuleSpec {
         .function(streamable_spec())
         .function(query_spec())
         .function(by_release_spec())
+        .function(chains_spec())
         .install(|_| Ok(ModuleExport::new(TracksModule)))
 }
 
@@ -77,6 +78,15 @@ fn by_release_spec() -> FunctionSpec {
         .call_async(std::sync::Arc::new(by_release_callback))
 }
 
+fn chains_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("chains")
+        .context::<crate::plugins::auth::DispatchAuth>()
+        .arg_name("track_ids")
+        .args::<Vec<u64>>()
+        .returns::<luau::Table>()
+        .call_async(std::sync::Arc::new(chains_callback))
+}
+
 fn query_spec() -> FunctionSpec {
     FunctionSpec::async_fn("query")
         .context::<crate::plugins::auth::DispatchAuth>()
@@ -102,6 +112,12 @@ fn by_release_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     catalog::keyed_lookup(&mut frame, "release_ids", lookups::tracks_by_release)
+}
+
+fn chains_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    catalog::keyed_lookup(&mut frame, "track_ids", lookups::chain_places)
 }
 
 fn query_callback(
@@ -181,6 +197,18 @@ fn track_type() -> LuauType {
 fn track_type_aliases() -> Vec<TypeAliasDescriptor> {
     vec![
         TypeAliasDescriptor::new("Track", track_type(), None),
+        TypeAliasDescriptor::new(
+            "TrackChain",
+            LuauType::object(vec![
+                field("id", String::luau_type()),
+                FieldDescriptor {
+                    name: "position",
+                    ty: u64::luau_type(),
+                    description: Some("The track's 0-based place in the chain."),
+                },
+            ]),
+            Some("The chain a track is in."),
+        ),
         catalog::credit_role_alias(),
     ]
     .into_iter()
@@ -256,6 +284,18 @@ fn module_descriptor() -> ModuleDescriptor {
                 returns: vec![LuauType::map(
                     u64::luau_type(),
                     LuauType::array(LuauType::named("Track")),
+                )],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["chains"],
+                description: Some(
+                    "The chain of each of these tracks that the caller can see and that is in one, keyed by track id.",
+                ),
+                params: vec![param("track_ids", Vec::<u64>::luau_type())],
+                returns: vec![LuauType::map(
+                    u64::luau_type(),
+                    LuauType::named("TrackChain"),
                 )],
                 yields: true,
             },
