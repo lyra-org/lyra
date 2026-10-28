@@ -318,7 +318,7 @@ fn list_favorites_docs(op: TransformOperation) -> TransformOperation {
     )
 }
 
-pub fn favorite_routes() -> Router {
+pub(super) fn me_favorite_routes() -> Router {
     Router::new()
         .route("/", get(list_favorites))
         .route("/check", post(check_favorites))
@@ -328,7 +328,7 @@ pub fn favorite_routes() -> Router {
 }
 
 #[cfg(feature = "docgen")]
-pub(crate) fn favorite_openapi_routes() -> aide::axum::ApiRouter {
+pub(super) fn me_favorite_openapi_routes() -> aide::axum::ApiRouter {
     use aide::axum::routing::{
         get_with,
         post_with,

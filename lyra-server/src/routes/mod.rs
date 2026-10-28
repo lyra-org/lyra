@@ -71,7 +71,6 @@ pub(crate) use error::{
     AppError,
     parse_catalog_sort,
 };
-pub use favorites::favorite_routes;
 pub use genres::genre_routes;
 pub use labels::label_routes;
 pub use libraries::library_routes;
@@ -84,14 +83,12 @@ pub(crate) use pagination::{
     load_snapshot_items,
     public_ids,
 };
-pub use playbacks::playback_routes;
 pub use playlists::playlist_routes;
 pub use plugins::plugin_routes;
 pub use providers::{
     entity_routes,
     provider_routes,
 };
-pub use ratings::rating_routes;
 pub use releases::release_routes;
 pub use roles::role_routes;
 pub use search::search_routes;
@@ -108,12 +105,8 @@ pub use serve::{
 };
 pub use server::server_routes;
 pub(crate) use sorting::parse_route_sort_specs;
-pub use tags::tag_routes;
 pub use tracks::track_routes;
-pub use users::{
-    me_routes,
-    user_routes,
-};
+pub use users::user_routes;
 pub(crate) use websocket::install as install_websocket;
 
 #[cfg(feature = "docgen")]

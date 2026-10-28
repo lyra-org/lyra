@@ -20,6 +20,7 @@ use anyhow::Result;
 use axum::{
     Router,
     extract::DefaultBodyLimit,
+    routing::get,
 };
 use tokio::{
     net::TcpListener,
@@ -44,7 +45,7 @@ pub(crate) fn build_core_api() -> Result<CoreApi> {
     let app = Router::new()
         .nest("/api/server", super::server_routes())
         .nest("/api/users", super::user_routes())
-        .nest("/api/me", super::me_routes())
+        .nest("/api/me", me_routes())
         .nest("/api/roles", super::role_routes())
         .nest("/api/libraries", super::library_routes())
         .nest("/api/covers", super::cover_routes())
@@ -53,11 +54,8 @@ pub(crate) fn build_core_api() -> Result<CoreApi> {
         .nest("/api/entries", super::entry_routes())
         .nest("/api/genres", super::genre_routes())
         .nest("/api/labels", super::label_routes())
-        .nest("/api/favorites", super::favorite_routes())
         .nest("/api/metadata", super::metadata_routes())
-        .nest("/api/tags", super::tag_routes())
         .nest("/api/tracks", super::track_routes())
-        .nest("/api/playbacks", super::playback_routes())
         .nest("/api/listens", super::listen_routes())
         .nest("/api/playlists", super::playlist_routes())
         .nest("/api/stream", super::stream_routes())
@@ -68,7 +66,6 @@ pub(crate) fn build_core_api() -> Result<CoreApi> {
             "/api/entities",
             super::entity_routes().merge(super::entity_metadata_routes()),
         )
-        .nest("/api/ratings", super::rating_routes())
         .nest("/api/plugins", super::plugin_routes())
         .nest("/api/sync", super::sync_routes())
         .nest("/api/search", super::search_routes());
@@ -91,7 +88,7 @@ pub(crate) fn build_openapi_spec() -> OpenApi {
     let _ = aide::axum::ApiRouter::new()
         .nest("/api/server", super::server::server_openapi_routes())
         .nest("/api/users", super::users::user_openapi_routes())
-        .nest("/api/me", super::users::me_openapi_routes())
+        .nest("/api/me", me_openapi_routes())
         .nest("/api/roles", super::roles::role_openapi_routes())
         .nest("/api/libraries", super::libraries::library_openapi_routes())
         .nest("/api/covers", super::covers::cover_openapi_routes())
@@ -100,17 +97,8 @@ pub(crate) fn build_openapi_spec() -> OpenApi {
         .nest("/api/entries", super::entries::entry_openapi_routes())
         .nest("/api/genres", super::genres::genre_openapi_routes())
         .nest("/api/labels", super::labels::label_openapi_routes())
-        .nest(
-            "/api/favorites",
-            super::favorites::favorite_openapi_routes(),
-        )
         .nest("/api/metadata", super::metadata::metadata_openapi_routes())
-        .nest("/api/tags", super::tags::tag_openapi_routes())
         .nest("/api/tracks", super::tracks::track_openapi_routes())
-        .nest(
-            "/api/playbacks",
-            super::playbacks::playback_openapi_routes(),
-        )
         .nest("/api/listens", super::listens::listen_openapi_routes())
         .nest(
             "/api/playlists",
@@ -128,7 +116,6 @@ pub(crate) fn build_openapi_spec() -> OpenApi {
             super::providers::entity_openapi_routes()
                 .merge(super::entity_metadata::entity_metadata_openapi_routes()),
         )
-        .nest("/api/ratings", super::ratings::rating_openapi_routes())
         .nest("/api/plugins", super::plugins::plugin_openapi_routes())
         .nest("/api/sync", super::sync::sync_openapi_routes())
         .nest("/api/search", super::search::search_openapi_routes())
@@ -136,6 +123,45 @@ pub(crate) fn build_openapi_spec() -> OpenApi {
 
     configure_rest_openapi(&mut api);
     api
+}
+
+fn me_routes() -> Router {
+    Router::new()
+        .merge(super::users::me_account_routes())
+        .route("/mix", get(super::mix::get_me_mix))
+        .route("/listens", get(super::listens::get_me_listens))
+        .nest("/favorites", super::favorites::me_favorite_routes())
+        .nest("/ratings", super::ratings::me_rating_routes())
+        .nest("/tags", super::tags::me_tag_routes())
+        .nest("/playbacks", super::playbacks::me_playback_routes())
+        .nest("/plugins", super::plugins::me_plugin_settings_routes())
+}
+
+#[cfg(feature = "docgen")]
+fn me_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::get_with;
+
+    aide::axum::ApiRouter::new()
+        .merge(super::users::me_account_openapi_routes())
+        .api_route(
+            "/mix",
+            get_with(super::mix::get_me_mix, super::mix::me_mix_docs),
+        )
+        .api_route(
+            "/listens",
+            get_with(
+                super::listens::get_me_listens,
+                super::listens::get_me_listens_docs,
+            ),
+        )
+        .nest("/favorites", super::favorites::me_favorite_openapi_routes())
+        .nest("/ratings", super::ratings::me_rating_openapi_routes())
+        .nest("/tags", super::tags::me_tag_openapi_routes())
+        .nest("/playbacks", super::playbacks::me_playback_openapi_routes())
+        .nest(
+            "/plugins",
+            super::plugins::me_plugin_settings_openapi_routes(),
+        )
 }
 
 // Sharply below axum's 2MB default to bound CPU/RAM amplification on auth'd POSTs.
@@ -324,6 +350,30 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("POST", "/api/me/api-keys"),
     ("DELETE", "/api/me/api-keys/{api_key_id}"),
     ("GET", "/api/me/listens"),
+    ("GET", "/api/me/favorites/"),
+    ("POST", "/api/me/favorites/check"),
+    ("GET", "/api/me/favorites/{target_id}"),
+    ("PUT", "/api/me/favorites/{target_id}"),
+    ("DELETE", "/api/me/favorites/{target_id}"),
+    ("POST", "/api/me/ratings/check"),
+    ("GET", "/api/me/ratings/{target_id}"),
+    ("PUT", "/api/me/ratings/{target_id}"),
+    ("DELETE", "/api/me/ratings/{target_id}"),
+    ("GET", "/api/me/tags/"),
+    ("POST", "/api/me/tags/"),
+    ("GET", "/api/me/tags/{id}"),
+    ("PATCH", "/api/me/tags/{id}"),
+    ("DELETE", "/api/me/tags/{id}"),
+    ("GET", "/api/me/tags/{id}/targets"),
+    ("GET", "/api/me/tags/{id}/targets/{target_id}"),
+    ("DELETE", "/api/me/tags/{id}/targets/{target_id}"),
+    ("GET", "/api/me/playbacks/"),
+    ("POST", "/api/me/playbacks/"),
+    ("GET", "/api/me/playbacks/{id}"),
+    ("DELETE", "/api/me/playbacks/{id}"),
+    ("GET", "/api/me/playbacks/{id}/queue"),
+    ("PUT", "/api/me/playbacks/{id}/queue"),
+    ("POST", "/api/me/playbacks/{id}/progress"),
     ("GET", "/api/me/plugins/settings"),
     ("GET", "/api/me/plugins/{plugin_id}/settings"),
     ("PATCH", "/api/me/plugins/{plugin_id}/settings"),
@@ -358,26 +408,9 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("GET", "/api/genres/{id}/mix"),
     ("GET", "/api/labels/"),
     ("GET", "/api/labels/{id}"),
-    ("GET", "/api/favorites/"),
-    ("POST", "/api/favorites/check"),
-    ("GET", "/api/favorites/{target_id}"),
-    ("PUT", "/api/favorites/{target_id}"),
-    ("DELETE", "/api/favorites/{target_id}"),
-    ("POST", "/api/ratings/check"),
-    ("GET", "/api/ratings/{target_id}"),
-    ("PUT", "/api/ratings/{target_id}"),
-    ("DELETE", "/api/ratings/{target_id}"),
     ("GET", "/api/metadata/mapping"),
     ("PUT", "/api/metadata/mapping"),
     ("POST", "/api/metadata/mapping/preview"),
-    ("GET", "/api/tags/"),
-    ("POST", "/api/tags/"),
-    ("GET", "/api/tags/{id}"),
-    ("PATCH", "/api/tags/{id}"),
-    ("DELETE", "/api/tags/{id}"),
-    ("GET", "/api/tags/{id}/targets"),
-    ("GET", "/api/tags/{id}/targets/{target_id}"),
-    ("DELETE", "/api/tags/{id}/targets/{target_id}"),
     ("GET", "/api/tracks/"),
     ("GET", "/api/tracks/{id}"),
     ("GET", "/api/tracks/{id}/mix"),
@@ -389,13 +422,6 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("PUT", "/api/tracks/{id}/lyrics/shared"),
     ("DELETE", "/api/tracks/{id}/lyrics/shared"),
     ("POST", "/api/tracks/{id}/lyrics/refresh"),
-    ("GET", "/api/playbacks/"),
-    ("POST", "/api/playbacks/"),
-    ("GET", "/api/playbacks/{id}"),
-    ("DELETE", "/api/playbacks/{id}"),
-    ("GET", "/api/playbacks/{id}/queue"),
-    ("PUT", "/api/playbacks/{id}/queue"),
-    ("POST", "/api/playbacks/{id}/progress"),
     ("GET", "/api/listens/"),
     ("GET", "/api/playlists/"),
     ("POST", "/api/playlists/"),
@@ -454,7 +480,7 @@ mod tests {
                 .contains(&RouteKey::new("GET", "/ws").expect("ws route key"))
         );
         assert!(core_api.reservations.contains(
-            &RouteKey::new("POST", "/api/ratings/check").expect("ratings check route key")
+            &RouteKey::new("POST", "/api/me/ratings/check").expect("ratings check route key")
         ));
         assert!(
             !core_api
@@ -475,7 +501,7 @@ mod tests {
         let paths = api.paths.as_ref().expect("OpenAPI paths");
         let path = paths
             .paths
-            .get("/api/ratings/check")
+            .get("/api/me/ratings/check")
             .expect("ratings check path");
         let ReferenceOr::Item(path) = path else {
             panic!("ratings check path should be inline");

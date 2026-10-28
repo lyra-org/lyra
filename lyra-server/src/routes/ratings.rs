@@ -272,7 +272,7 @@ fn check_ratings_docs(op: TransformOperation) -> TransformOperation {
     )
 }
 
-pub fn rating_routes() -> Router {
+pub(super) fn me_rating_routes() -> Router {
     Router::new()
         .route("/check", post(check_ratings))
         .route("/{target_id}", put(set_rating))
@@ -281,7 +281,7 @@ pub fn rating_routes() -> Router {
 }
 
 #[cfg(feature = "docgen")]
-pub(crate) fn rating_openapi_routes() -> aide::axum::ApiRouter {
+pub(super) fn me_rating_openapi_routes() -> aide::axum::ApiRouter {
     use aide::axum::routing::{
         delete_with,
         get_with,
@@ -442,7 +442,7 @@ mod tests {
         let session =
             crate::services::testing::create_session(user_db_id, Default::default()).await?;
         let authorization = format!("Bearer {}", session.token);
-        let routes = rating_routes();
+        let routes = me_rating_routes();
 
         let response = routes
             .clone()

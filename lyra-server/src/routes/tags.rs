@@ -436,7 +436,7 @@ fn delete_tag_target_docs(op: TransformOperation) -> TransformOperation {
         .response::<204, ()>()
 }
 
-pub fn tag_routes() -> Router {
+pub(super) fn me_tag_routes() -> Router {
     Router::new()
         .route("/", post(create_tag))
         .route("/", get(list_tags))
@@ -449,7 +449,7 @@ pub fn tag_routes() -> Router {
 }
 
 #[cfg(feature = "docgen")]
-pub(crate) fn tag_openapi_routes() -> aide::axum::ApiRouter {
+pub(super) fn me_tag_openapi_routes() -> aide::axum::ApiRouter {
     use aide::axum::routing::{
         delete_with,
         get_with,

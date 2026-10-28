@@ -581,7 +581,7 @@ fn delete_docs(op: TransformOperation) -> TransformOperation {
     )
 }
 
-pub fn playback_routes() -> Router {
+pub(super) fn me_playback_routes() -> Router {
     Router::new()
         .route("/", get(list_playbacks).post(create_playback))
         .route("/{id}", get(get_playback).delete(delete_playback))
@@ -593,7 +593,7 @@ pub fn playback_routes() -> Router {
 }
 
 #[cfg(feature = "docgen")]
-pub(crate) fn playback_openapi_routes() -> aide::axum::ApiRouter {
+pub(super) fn me_playback_openapi_routes() -> aide::axum::ApiRouter {
     use aide::axum::routing::{
         get_with,
         post_with,

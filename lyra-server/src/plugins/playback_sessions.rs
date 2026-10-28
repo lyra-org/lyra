@@ -578,7 +578,7 @@ fn module_descriptor() -> ModuleDescriptor {
             ModuleFunctionDescriptor {
                 path: vec!["report_session"],
                 description: Some(
-                    "Reports an observation for a plugin's player context. Returns (public /api/playbacks ID, nil) when accepted, (nil, nil) when ignored, or (nil, rejection reason) when admission is refused. Internal failures raise an error. Track changes retain the context ID; stopped contexts expire after five minutes without an accepted current observation.",
+                    "Reports an observation for a plugin's player context. Returns (public /api/me/playbacks ID, nil) when accepted, (nil, nil) when ignored, or (nil, rejection reason) when admission is refused. Internal failures raise an error. Track changes retain the context ID; stopped contexts expire after five minutes without an accepted current observation.",
                 ),
                 params: vec![param("request", PlaybackSessionReportRequest::luau_type())],
                 returns: vec![Option::<String>::luau_type(), Option::<String>::luau_type()],
