@@ -61,6 +61,7 @@ use crate::{
 };
 use lyra_db::Permission;
 
+mod chains;
 mod similarity;
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -485,6 +486,10 @@ pub fn release_routes() -> Router {
     Router::new()
         .route("/", get(get_releases))
         .route("/{id}", get(get_release))
+        .route(
+            "/{id}/chains",
+            get(chains::get_release_chains).put(chains::replace_release_chains),
+        )
         .route("/{id}/similar", get(similarity::get_similar_releases))
         .route("/{id}/mix", get(super::mix::get_release_mix))
         .route("/{id}/covers/search", post(search_release_covers))
@@ -500,6 +505,13 @@ pub(crate) fn release_openapi_routes() -> aide::axum::ApiRouter {
     aide::axum::ApiRouter::new()
         .api_route("/", get_with(get_releases, list_releases_docs))
         .api_route("/{id}", get_with(get_release, get_release_docs))
+        .api_route(
+            "/{id}/chains",
+            get_with(chains::get_release_chains, chains::get_release_chains_docs).put_with(
+                chains::replace_release_chains,
+                chains::replace_release_chains_docs,
+            ),
+        )
         .api_route(
             "/{id}/similar",
             get_with(
