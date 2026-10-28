@@ -116,7 +116,8 @@ pub async fn run(options: RunOptions<'_>) -> anyhow::Result<RunResult> {
         live_policy,
         plugin_id: plugin.id().to_string(),
     });
-    harmony_http::test_clear_rate_limits_for_plugin(plugin.id()).await;
+    harmony_http::mark_plugin_limits_stale(plugin.id()).await;
+    harmony_http::remove_stale_plugin_limits(plugin.id()).await;
     let started = Instant::now();
     let _plugin_sources = lyra_server::testing::exec_plugins(plugin, http_module).await?;
     fail_on_cache_misses(live_policy, &cache_misses).await?;

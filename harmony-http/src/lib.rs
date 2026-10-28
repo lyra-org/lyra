@@ -104,13 +104,83 @@ struct RateLimitConfig {
     initial_backoff: Duration,
 }
 
+/// The plugin that set a limit, or `None` for a chunk outside any plugin.
+type LimitOwner = Option<Arc<str>>;
+
+/// Each owner's limit for one host. A stale limit belongs to a plugin run
+/// that has ended: it still applies until it is swept, but no longer counts
+/// as the plugin's own.
+struct OwnedLimits<T> {
+    entries: BTreeMap<LimitOwner, (T, bool)>,
+}
+
+impl<T> Default for OwnedLimits<T> {
+    fn default() -> Self {
+        Self {
+            entries: BTreeMap::new(),
+        }
+    }
+}
+
+impl<T> OwnedLimits<T> {
+    fn set(&mut self, owner: LimitOwner, limit: T) {
+        self.entries.insert(owner, (limit, false));
+    }
+
+    fn mark_stale(&mut self, plugin_id: &str) {
+        for (owner, (_, stale)) in &mut self.entries {
+            if owner.as_deref() == Some(plugin_id) {
+                *stale = true;
+            }
+        }
+    }
+
+    /// True when it removed anything.
+    fn remove_stale(&mut self, plugin_id: &str) -> bool {
+        let before = self.entries.len();
+        self.entries
+            .retain(|owner, (_, stale)| !(*stale && owner.as_deref() == Some(plugin_id)));
+        self.entries.len() != before
+    }
+
+    fn has_any(&self, plugin_id: &str) -> bool {
+        self.entries
+            .keys()
+            .any(|owner| owner.as_deref() == Some(plugin_id))
+    }
+
+    fn has_live(&self, plugin_id: &str) -> bool {
+        self.entries
+            .iter()
+            .any(|(owner, (_, stale))| !stale && owner.as_deref() == Some(plugin_id))
+    }
+
+    fn limits(&self) -> impl Iterator<Item = &T> {
+        self.entries.values().map(|(limit, _)| limit)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+/// Outlives its configs, so a domain keeps the server's back-off when its
+/// limits are swept and set again.
 struct DomainState {
-    config: RateLimitConfig,
+    configs: OwnedLimits<RateLimitConfig>,
     next_allowed: Instant,
     server_remaining: Option<u32>,
     server_reset_at: Option<Instant>,
-    /// Drives `has_rate_limit_for_plugin`.
-    set_by: Option<Arc<str>>,
+}
+
+impl DomainState {
+    /// The strictest config, the one with the lowest `requests_per_second`,
+    /// paces the domain and brings its retry policy along.
+    fn config(&self) -> Option<&RateLimitConfig> {
+        self.configs
+            .limits()
+            .min_by(|a, b| a.requests_per_second.total_cmp(&b.requests_per_second))
+    }
 }
 
 struct ServerRateLimitInfo {
@@ -129,27 +199,39 @@ impl RateLimiter {
         }
     }
 
-    fn set_config(&mut self, domain: String, config: RateLimitConfig, set_by: Option<Arc<str>>) {
-        self.domains.insert(
-            domain,
-            DomainState {
-                config,
+    fn set_config(&mut self, domain: String, config: RateLimitConfig, owner: LimitOwner) {
+        self.domains
+            .entry(domain)
+            .or_insert_with(|| DomainState {
+                configs: OwnedLimits::default(),
                 next_allowed: Instant::now(),
                 server_remaining: None,
                 server_reset_at: None,
-                set_by,
-            },
-        );
+            })
+            .configs
+            .set(owner, config);
+    }
+
+    fn mark_plugin_stale(&mut self, plugin_id: &str) {
+        for state in self.domains.values_mut() {
+            state.configs.mark_stale(plugin_id);
+        }
+    }
+
+    fn remove_stale_plugin(&mut self, plugin_id: &str) {
+        for state in self.domains.values_mut() {
+            state.configs.remove_stale(plugin_id);
+        }
     }
 
     fn has_entry_for_plugin(&self, plugin_id: &str) -> bool {
         self.domains
             .values()
-            .any(|state| state.set_by.as_deref() == Some(plugin_id))
+            .any(|state| state.configs.has_live(plugin_id))
     }
 
     fn get_config(&self, domain: &str) -> Option<&RateLimitConfig> {
-        self.domains.get(domain).map(|s| &s.config)
+        self.domains.get(domain).and_then(DomainState::config)
     }
 
     fn update_from_response(&mut self, domain: &str, info: ServerRateLimitInfo) {
@@ -168,12 +250,12 @@ impl RateLimiter {
 
     fn acquire(&mut self, domain: &str) -> Option<Duration> {
         let state = self.domains.get_mut(domain)?;
-        if !state.config.requests_per_second.is_finite() || state.config.requests_per_second <= 0.0
-        {
+        let requests_per_second = state.config()?.requests_per_second;
+        if !requests_per_second.is_finite() || requests_per_second <= 0.0 {
             return None;
         }
 
-        let static_interval = Duration::from_secs_f64(1.0 / state.config.requests_per_second);
+        let static_interval = Duration::from_secs_f64(1.0 / requests_per_second);
         let now = Instant::now();
 
         let interval = match (state.server_remaining, state.server_reset_at) {
@@ -202,8 +284,28 @@ impl RateLimiter {
 }
 
 struct ConcurrencyEntry {
+    limits: OwnedLimits<usize>,
     semaphore: Arc<Semaphore>,
     max_in_flight: usize,
+}
+
+impl ConcurrencyEntry {
+    /// Applies the lowest cap. Loosening adds permits; tightening closes the
+    /// semaphore for a fresh one, and its waiters queue on that instead.
+    /// Permits live requests already hold stay valid.
+    fn apply_strictest(&mut self) {
+        let Some(&max_in_flight) = self.limits.limits().min() else {
+            return;
+        };
+        if max_in_flight > self.max_in_flight {
+            self.semaphore
+                .add_permits(max_in_flight - self.max_in_flight);
+        } else if max_in_flight < self.max_in_flight {
+            self.semaphore.close();
+            self.semaphore = Arc::new(Semaphore::new(max_in_flight));
+        }
+        self.max_in_flight = max_in_flight;
+    }
 }
 
 /// Process-wide host-keyed in-flight cap, complementary to [`RateLimiter`]
@@ -222,29 +324,39 @@ impl ConcurrencyLimiter {
         }
     }
 
-    /// Tighten-only: a registration is replaced only when the new cap is
-    /// strictly tighter. Last-write-wins would let any caller silently widen
-    /// another caller's cap for the same host; min-wins removes that footgun
-    /// without requiring per-plugin identity at this surface.
-    fn set_limit(&mut self, host: String, max_in_flight: usize) {
-        if let Some(existing) = self.entries.get(&host)
-            && max_in_flight >= existing.max_in_flight
-        {
-            tracing::trace!(
-                host = %host,
-                requested = max_in_flight,
-                effective = existing.max_in_flight,
-                "ignoring concurrency relaxation; tighter cap remains in force",
-            );
-            return;
-        }
-        self.entries.insert(
-            host,
-            ConcurrencyEntry {
+    fn set_limit(&mut self, host: String, max_in_flight: usize, owner: LimitOwner) {
+        let entry = self
+            .entries
+            .entry(host)
+            .or_insert_with(|| ConcurrencyEntry {
+                limits: OwnedLimits::default(),
                 semaphore: Arc::new(Semaphore::new(max_in_flight)),
                 max_in_flight,
-            },
-        );
+            });
+        entry.limits.set(owner, max_in_flight);
+        entry.apply_strictest();
+    }
+
+    fn mark_plugin_stale(&mut self, plugin_id: &str) {
+        for entry in self.entries.values_mut() {
+            entry.limits.mark_stale(plugin_id);
+        }
+    }
+
+    /// A host left without caps closes its semaphore and lets its waiters
+    /// through uncapped.
+    fn remove_stale_plugin(&mut self, plugin_id: &str) {
+        self.entries.retain(|_, entry| {
+            if !entry.limits.remove_stale(plugin_id) {
+                return true;
+            }
+            if entry.limits.is_empty() {
+                entry.semaphore.close();
+                return false;
+            }
+            entry.apply_strictest();
+            true
+        });
     }
 
     fn get(&self, host: &str) -> Option<Arc<Semaphore>> {
@@ -584,30 +696,29 @@ async fn execute_single_request(options: &HttpRequestOptions) -> HttpResponse {
 
 async fn acquire_concurrency_permit(domain: Option<&str>) -> Option<OwnedSemaphorePermit> {
     let host = domain?;
-    let semaphore = {
-        let limiter = CONCURRENCY_LIMITER.read().await;
-        match limiter.get(host) {
-            Some(s) => s,
-            None => {
-                // Trace level so unregistered hosts stay quiet at info but
-                // remain visible when diagnosing burst behaviour.
-                tracing::trace!(
-                    host = %host,
-                    "no concurrency cap registered; request will not be capped",
-                );
-                return None;
+    loop {
+        let semaphore = {
+            let limiter = CONCURRENCY_LIMITER.read().await;
+            match limiter.get(host) {
+                Some(s) => s,
+                None => {
+                    // Trace level so unregistered hosts stay quiet at info but
+                    // remain visible when diagnosing burst behaviour.
+                    tracing::trace!(
+                        host = %host,
+                        "no concurrency cap registered; request will not be capped",
+                    );
+                    return None;
+                }
             }
+        };
+        // Permit lives for the whole request — including retry-backoff sleep —
+        // so a sibling can't burst past a `Retry-After` cooldown.
+        // A closed semaphore was replaced or dropped; look the host up again.
+        if let Ok(permit) = semaphore.acquire_owned().await {
+            return Some(permit);
         }
-    };
-    // Permit lives for the whole request — including retry-backoff sleep —
-    // so a sibling can't burst past a `Retry-After` cooldown.
-    // The semaphore is never closed, so `acquire_owned` can only fail if it is.
-    Some(
-        semaphore
-            .acquire_owned()
-            .await
-            .expect("concurrency semaphore is never closed"),
-    )
+    }
 }
 
 /// Drives the rate-limit + retry + concurrency-cap loop. `request_fn` is
@@ -770,7 +881,10 @@ async fn configure_rate_limit(
     Ok(())
 }
 
-async fn configure_max_in_flight(options: HttpConcurrencyOptions) -> anyhow::Result<()> {
+async fn configure_max_in_flight(
+    plugin_id: Option<Arc<str>>,
+    options: HttpConcurrencyOptions,
+) -> anyhow::Result<()> {
     if options.max_in_flight == 0 {
         anyhow::bail!("max_in_flight must be at least 1");
     }
@@ -778,7 +892,7 @@ async fn configure_max_in_flight(options: HttpConcurrencyOptions) -> anyhow::Res
     let host = host_key(&options.host);
 
     let mut limiter = CONCURRENCY_LIMITER.write().await;
-    limiter.set_limit(host, options.max_in_flight as usize);
+    limiter.set_limit(host, options.max_in_flight as usize, plugin_id);
 
     Ok(())
 }
@@ -866,8 +980,9 @@ fn set_max_in_flight_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let table: luau::Table = frame.args.read_named("options")?;
     let options = concurrency_options_from_luau(frame.vm, &table)?;
+    let plugin_id = frame.context.origin.plugin.clone();
     let future = luau::ScheduledFuture::new(async move {
-        configure_max_in_flight(options)
+        configure_max_in_flight(plugin_id, options)
             .await
             .map_err(|error| luau::Error::Runtime(error.to_string()))?;
         Ok(())
@@ -1139,11 +1254,50 @@ impl HttpHeaderMap {
     }
 }
 
-/// True when at least one `set_rate_limit` entry was registered under
-/// `plugin_id`. Plugin surfaces gate on this before registering.
+/// True when `plugin_id` holds a `set_rate_limit` entry for at least one
+/// domain. Plugin surfaces gate on this before registering.
 pub async fn has_rate_limit_for_plugin(plugin_id: &str) -> bool {
     let limiter = RATE_LIMITER.read().await;
     limiter.has_entry_for_plugin(plugin_id)
+}
+
+/// Marks every limit `plugin_id` set as stale: each still applies, but no
+/// longer counts for [`has_rate_limit_for_plugin`] until the plugin sets it
+/// again.
+pub async fn mark_plugin_limits_stale(plugin_id: &str) {
+    RATE_LIMITER.write().await.mark_plugin_stale(plugin_id);
+    CONCURRENCY_LIMITER
+        .write()
+        .await
+        .mark_plugin_stale(plugin_id);
+}
+
+/// Drops the limits of `plugin_id` still stale. Each host falls back to the
+/// strictest limit its other owners hold.
+pub async fn remove_stale_plugin_limits(plugin_id: &str) {
+    RATE_LIMITER.write().await.remove_stale_plugin(plugin_id);
+    CONCURRENCY_LIMITER
+        .write()
+        .await
+        .remove_stale_plugin(plugin_id);
+}
+
+/// Whether `plugin_id` holds any limit, stale or live.
+#[doc(hidden)]
+pub async fn test_holds_any_limit(plugin_id: &str) -> bool {
+    let rate = RATE_LIMITER
+        .read()
+        .await
+        .domains
+        .values()
+        .any(|state| state.configs.has_any(plugin_id));
+    let concurrency = CONCURRENCY_LIMITER
+        .read()
+        .await
+        .entries
+        .values()
+        .any(|entry| entry.limits.has_any(plugin_id));
+    rate || concurrency
 }
 
 #[doc(hidden)]
@@ -1159,14 +1313,6 @@ pub async fn test_seed_rate_limit(domain: impl Into<String>, plugin_id: impl Int
         },
         Some(plugin_id.into()),
     );
-}
-
-#[doc(hidden)]
-pub async fn test_clear_rate_limits_for_plugin(plugin_id: &str) {
-    let mut limiter = RATE_LIMITER.write().await;
-    limiter
-        .domains
-        .retain(|_, state| state.set_by.as_deref() != Some(plugin_id));
 }
 
 fn http_module_descriptor() -> ModuleDescriptor {
@@ -1190,7 +1336,9 @@ fn http_module_descriptor() -> ModuleDescriptor {
             },
             ModuleFunctionDescriptor {
                 path: vec!["set_rate_limit"],
-                description: Some("Registers retry and pacing policy for a host or URL."),
+                description: Some(
+                    "Registers retry and pacing policy for a host or URL. A host follows the strictest policy any plugin sets for it, the one with the lowest `requests_per_second`; a plugin may loosen its own.",
+                ),
                 params: vec![ParameterDescriptor {
                     name: "options",
                     ty: HttpRateLimitOptions::luau_type(),
@@ -1203,7 +1351,7 @@ fn http_module_descriptor() -> ModuleDescriptor {
             ModuleFunctionDescriptor {
                 path: vec!["set_max_in_flight"],
                 description: Some(
-                    "Registers a maximum concurrent request count for a host or URL.",
+                    "Registers a maximum concurrent request count for a host or URL. A host follows the lowest count any plugin sets for it; a plugin may loosen its own.",
                 ),
                 params: vec![ParameterDescriptor {
                     name: "options",
@@ -1542,58 +1690,213 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn has_rate_limit_for_plugin_walks_set_by() {
-        use std::sync::Arc;
-        let plugin_id: Arc<str> = Arc::from("plugin-rl-walker");
-        let domain = "rate-limit-walker.example".to_string();
-        {
-            let mut limiter = super::RATE_LIMITER.write().await;
-            limiter.set_config(
-                domain.clone(),
-                super::RateLimitConfig {
-                    requests_per_second: 1.0,
-                    retry_status_codes: vec![429],
-                    max_retries: 0,
-                    initial_backoff: std::time::Duration::from_millis(10),
-                },
-                Some(plugin_id.clone()),
-            );
+    fn rate_limit_config(requests_per_second: f64) -> super::RateLimitConfig {
+        super::RateLimitConfig {
+            requests_per_second,
+            retry_status_codes: vec![429],
+            max_retries: 0,
+            initial_backoff: std::time::Duration::from_millis(10),
         }
-        assert!(super::has_rate_limit_for_plugin("plugin-rl-walker").await);
-        assert!(!super::has_rate_limit_for_plugin("plugin-rl-other").await);
+    }
 
-        // Overwrite without a plugin id; the predicate must report false.
-        {
-            let mut limiter = super::RATE_LIMITER.write().await;
-            limiter.set_config(
-                domain,
-                super::RateLimitConfig {
-                    requests_per_second: 1.0,
-                    retry_status_codes: vec![429],
-                    max_retries: 0,
-                    initial_backoff: std::time::Duration::from_millis(10),
-                },
-                None,
-            );
-        }
-        assert!(!super::has_rate_limit_for_plugin("plugin-rl-walker").await);
+    fn requests_per_second(limiter: &super::RateLimiter, domain: &str) -> Option<f64> {
+        limiter
+            .get_config(domain)
+            .map(|config| config.requests_per_second)
+    }
+
+    fn remove_plugin(limiter: &mut super::RateLimiter, plugin_id: &str) {
+        limiter.mark_plugin_stale(plugin_id);
+        limiter.remove_stale_plugin(plugin_id);
+    }
+
+    #[test]
+    fn rate_limit_follows_the_strictest_plugin() {
+        let mut limiter = super::RateLimiter::new();
+        let domain = "example.com";
+        limiter.set_config(
+            domain.to_string(),
+            rate_limit_config(5.0),
+            Some("loose".into()),
+        );
+        limiter.set_config(
+            domain.to_string(),
+            rate_limit_config(2.0),
+            Some("strict".into()),
+        );
+        // A limit set outside any plugin is its own entry; it replaces none.
+        limiter.set_config(domain.to_string(), rate_limit_config(10.0), None);
+        assert_eq!(requests_per_second(&limiter, domain), Some(2.0));
+        assert!(limiter.has_entry_for_plugin("strict"));
+        assert!(!limiter.has_entry_for_plugin("other"));
+
+        remove_plugin(&mut limiter, "strict");
+        assert_eq!(requests_per_second(&limiter, domain), Some(5.0));
+        assert!(limiter.has_entry_for_plugin("loose"));
+        assert!(!limiter.has_entry_for_plugin("strict"));
+
+        remove_plugin(&mut limiter, "loose");
+        assert_eq!(requests_per_second(&limiter, domain), Some(10.0));
+    }
+
+    #[test]
+    fn stale_rate_limits_apply_until_swept_without_counting_for_the_plugin() {
+        let mut limiter = super::RateLimiter::new();
+        let domain = "example.com";
+        let shared = "shared.example";
+        limiter.set_config(
+            domain.to_string(),
+            rate_limit_config(2.0),
+            Some("restarted".into()),
+        );
+        limiter.set_config(
+            shared.to_string(),
+            rate_limit_config(2.0),
+            Some("restarted".into()),
+        );
+        limiter.set_config(
+            shared.to_string(),
+            rate_limit_config(5.0),
+            Some("live".into()),
+        );
+
+        limiter.mark_plugin_stale("restarted");
+        assert!(!limiter.has_entry_for_plugin("restarted"));
+        assert!(limiter.has_entry_for_plugin("live"));
+        assert_eq!(requests_per_second(&limiter, domain), Some(2.0));
+        assert_eq!(requests_per_second(&limiter, shared), Some(2.0));
+
+        limiter.set_config(
+            domain.to_string(),
+            rate_limit_config(3.0),
+            Some("restarted".into()),
+        );
+        assert!(limiter.has_entry_for_plugin("restarted"));
+        limiter.remove_stale_plugin("restarted");
+        assert_eq!(requests_per_second(&limiter, domain), Some(3.0));
+        assert_eq!(
+            requests_per_second(&limiter, shared),
+            Some(5.0),
+            "the live plugin's limit remains once the stale one is swept",
+        );
+    }
+
+    #[test]
+    fn swept_domain_keeps_its_server_back_off() {
+        let mut limiter = super::RateLimiter::new();
+        let domain = "example.com";
+        limiter.set_config(
+            domain.to_string(),
+            rate_limit_config(100.0),
+            Some("demo".into()),
+        );
+        limiter.update_from_response(
+            domain,
+            super::ServerRateLimitInfo {
+                remaining: 0,
+                reset_at: std::time::Instant::now() + std::time::Duration::from_secs(60),
+            },
+        );
+        remove_plugin(&mut limiter, "demo");
+        assert_eq!(limiter.acquire(domain), None);
+
+        limiter.set_config(
+            domain.to_string(),
+            rate_limit_config(100.0),
+            Some("demo".into()),
+        );
+        let wait = limiter
+            .acquire(domain)
+            .expect("server back-off still applies");
+        assert!(wait > std::time::Duration::from_secs(30), "{wait:?}");
+    }
+
+    fn remove_concurrency_plugin(limiter: &mut super::ConcurrencyLimiter, plugin_id: &str) {
+        limiter.mark_plugin_stale(plugin_id);
+        limiter.remove_stale_plugin(plugin_id);
     }
 
     #[tokio::test]
-    async fn concurrency_limiter_tighten_only_rejects_relaxation() {
+    async fn concurrency_cap_follows_the_strictest_plugin() {
         let mut limiter = super::ConcurrencyLimiter::new();
-        limiter.set_limit("example.com".to_string(), 5);
-        assert_eq!(max_in_flight(&limiter, "example.com"), Some(5));
+        let host = "example.com";
+        limiter.set_limit(host.to_string(), 4, Some("loose".into()));
+        limiter.set_limit(host.to_string(), 2, Some("strict".into()));
+        assert_eq!(max_in_flight(&limiter, host), Some(2));
+        let sem = limiter.get(host).expect("cap registered above");
+        assert_eq!(sem.available_permits(), 2);
 
-        limiter.set_limit("example.com".to_string(), 10);
-        assert_eq!(max_in_flight(&limiter, "example.com"), Some(5));
+        limiter.set_limit(host.to_string(), 3, Some("strict".into()));
+        assert_eq!(max_in_flight(&limiter, host), Some(3));
+        assert_eq!(sem.available_permits(), 3);
 
-        limiter.set_limit("example.com".to_string(), 2);
-        assert_eq!(max_in_flight(&limiter, "example.com"), Some(2));
+        limiter.mark_plugin_stale("strict");
+        assert_eq!(
+            max_in_flight(&limiter, host),
+            Some(3),
+            "a stale cap still applies",
+        );
+        limiter.remove_stale_plugin("strict");
+        assert_eq!(max_in_flight(&limiter, host), Some(4));
+        assert_eq!(sem.available_permits(), 4);
 
-        limiter.set_limit("example.com".to_string(), 2);
-        assert_eq!(max_in_flight(&limiter, "example.com"), Some(2));
+        remove_concurrency_plugin(&mut limiter, "loose");
+        assert_eq!(max_in_flight(&limiter, host), None);
+        assert!(sem.is_closed());
+    }
+
+    #[tokio::test]
+    async fn concurrency_tightening_moves_waiters_to_the_tighter_cap() {
+        let host = "permit-tighten-test.example";
+        {
+            let mut limiter = super::CONCURRENCY_LIMITER.write().await;
+            limiter.set_limit(host.to_string(), 2, Some("loose".into()));
+        }
+        let first = super::acquire_concurrency_permit(Some(host)).await;
+        let _second = super::acquire_concurrency_permit(Some(host)).await;
+        let waiter = tokio::spawn(super::acquire_concurrency_permit(Some(host)));
+        tokio::task::yield_now().await;
+        assert!(!waiter.is_finished());
+
+        {
+            let mut limiter = super::CONCURRENCY_LIMITER.write().await;
+            limiter.set_limit(host.to_string(), 1, Some("strict".into()));
+        }
+        let permit = waiter.await.expect("waiter task");
+        assert!(
+            permit.is_some(),
+            "the waiter takes the fresh semaphore's permit"
+        );
+        let next = tokio::spawn(super::acquire_concurrency_permit(Some(host)));
+        tokio::task::yield_now().await;
+        assert!(
+            !next.is_finished(),
+            "the tighter cap holds new requests even while old permits are released",
+        );
+        drop(first);
+        tokio::task::yield_now().await;
+        assert!(!next.is_finished());
+        drop(permit);
+        assert!(next.await.expect("next task").is_some());
+    }
+
+    #[tokio::test]
+    async fn concurrency_waiters_go_uncapped_only_when_the_host_has_no_cap() {
+        let host = "permit-removed-test.example";
+        {
+            let mut limiter = super::CONCURRENCY_LIMITER.write().await;
+            limiter.set_limit(host.to_string(), 1, Some("demo".into()));
+        }
+        let _held = super::acquire_concurrency_permit(Some(host)).await;
+        let waiter = tokio::spawn(super::acquire_concurrency_permit(Some(host)));
+        tokio::task::yield_now().await;
+        assert!(!waiter.is_finished());
+
+        super::mark_plugin_limits_stale("demo").await;
+        tokio::task::yield_now().await;
+        assert!(!waiter.is_finished(), "a stale cap still holds waiters");
+        super::remove_stale_plugin_limits("demo").await;
+        assert!(waiter.await.expect("waiter task").is_none());
     }
 
     #[tokio::test]
@@ -1602,7 +1905,7 @@ mod tests {
         let host = "permit-shared-test.example".to_string();
         {
             let mut limiter = super::CONCURRENCY_LIMITER.write().await;
-            limiter.set_limit(host.clone(), 1);
+            limiter.set_limit(host.clone(), 1, None);
         }
 
         let sem = {
@@ -1653,7 +1956,7 @@ mod tests {
 
         {
             let mut limiter = super::CONCURRENCY_LIMITER.write().await;
-            limiter.set_limit(host.clone(), 1);
+            limiter.set_limit(host.clone(), 1, None);
         }
         {
             let mut limiter = super::RATE_LIMITER.write().await;

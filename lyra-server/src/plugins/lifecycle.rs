@@ -86,6 +86,12 @@ impl PluginRegistries {
         crate::services::providers::teardown_plugin_providers(plugin_id).await;
         crate::services::mix::teardown_plugin_mixers(plugin_id).await;
         crate::plugins::settings::teardown_plugin_settings(plugin_id).await;
+        // A plugin about to run again keeps its HTTP limits in force until
+        // that run has set its own; `sweep_stale_http_limits` drops the rest.
+        harmony_http::mark_plugin_limits_stale(plugin_id.as_str()).await;
+        if !reopen_registrations {
+            sweep_stale_http_limits(plugin_id).await;
+        }
 
         if reopen_registrations {
             crate::plugins::api::unfreeze_plugin_routes(plugin_id.clone()).await;
@@ -176,6 +182,9 @@ impl PluginRegistries {
         }
         for plugin_id in &old_ids {
             self.teardown_plugin(plugin_id, true).await;
+            if !new_ids.contains(plugin_id) {
+                sweep_stale_http_limits(plugin_id).await;
+            }
         }
         // Brand-new plugins were never frozen open; exempt them so their
         // first registrations are accepted.
@@ -196,6 +205,9 @@ impl PluginRegistries {
         }
         if let Ok(failed) = &exec_result {
             self.teardown_failed_plugins(failed).await;
+        }
+        for plugin_id in &old_ids {
+            sweep_stale_http_limits(plugin_id).await;
         }
 
         exec_result?;
@@ -294,6 +306,7 @@ impl PluginRegistries {
         match runtime.restart_plugin(plugin_id.as_str()).await {
             Ok(()) => {
                 refreeze_plugin_registration_exemptions(plugin_id).await;
+                sweep_stale_http_limits(plugin_id).await;
                 if let Err(err) = crate::plugins::api::rebuild_registered_routes().await {
                     if let Err(error) = runtime.stop_plugin(plugin_id.as_str()).await {
                         tracing::warn!(
@@ -321,6 +334,10 @@ impl PluginRegistries {
             }
         }
     }
+}
+
+async fn sweep_stale_http_limits(plugin_id: &PluginId) {
+    harmony_http::remove_stale_plugin_limits(plugin_id.as_str()).await;
 }
 
 async fn refreeze_plugin_registration_exemptions(plugin_id: &PluginId) {
@@ -640,6 +657,93 @@ mod tests {
             );
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn restart_counts_only_rate_limits_the_new_run_sets() -> anyhow::Result<()> {
+        let entrypoint = |rate_limit: &str| {
+            format!(
+                r#"
+                    local http = require("@harmony/http")
+                    local metadata = require("@lyra/metadata")
+                    {rate_limit}
+                    metadata.Provider.new("restart-rate-limit"):lyrics({{}}, function(_ctx)
+                        return nil
+                    end)
+                "#
+            )
+        };
+        let (_guard, source, _sources) = exec_test_plugin(
+            "restart-rate-limit",
+            &["harmony.http", "lyra.metadata"],
+            &entrypoint(r#"http.set_rate_limit({ domain = "restart-rate-limit.example" })"#),
+        )
+        .await?;
+        let write_entrypoint = |rate_limit: &str| {
+            std::fs::write(source.path().join("init.luau"), entrypoint(rate_limit))
+        };
+        assert!(harmony_http::has_rate_limit_for_plugin("restart-rate-limit").await);
+
+        let plugin_id = PluginId::new("restart-rate-limit")?;
+        let restart = || async {
+            crate::plugins::STATE
+                .generation()
+                .registries
+                .restart_plugin(&plugin_id)
+                .await
+        };
+
+        write_entrypoint(r#"http.set_rate_limit({ domain = "restart-rate-limit-2.example" })"#)?;
+        restart().await?;
+        assert!(harmony_http::has_rate_limit_for_plugin("restart-rate-limit").await);
+
+        write_entrypoint("")?;
+        let error = restart()
+            .await
+            .expect_err("lyrics registration needs a rate limit from the new run");
+
+        assert!(
+            error
+                .to_string()
+                .contains("provider:lyrics requires http.set_rate_limit"),
+            "{error}"
+        );
+        assert!(!harmony_http::has_rate_limit_for_plugin("restart-rate-limit").await);
+        assert!(
+            !harmony_http::test_holds_any_limit("restart-rate-limit").await,
+            "a failed restart sweeps the stale limits too"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reload_sweeps_the_limits_of_an_uninstalled_plugin() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        publish_startup_runtime().await?;
+        let mut gone = crate::plugins::STATE.generation().manifests.get().to_vec();
+        gone.push(harmony_core::plugin::PluginManifest {
+            schema_version: 1,
+            id: "uninstalled".to_string(),
+            name: "Uninstalled".to_string(),
+            version: "1.0.0".to_string(),
+            description: String::new(),
+            entrypoint: Some("init.luau".to_string()),
+            scopes: Vec::new(),
+            dependencies: Vec::new(),
+        });
+        crate::plugins::STATE
+            .generation()
+            .manifests
+            .replace(Arc::from(gone));
+        harmony_http::test_seed_rate_limit("uninstalled.example", "uninstalled").await;
+
+        crate::plugins::STATE
+            .generation()
+            .registries
+            .reload_all_plugins()
+            .await?;
+        assert!(!harmony_http::test_holds_any_limit("uninstalled").await);
         Ok(())
     }
 }
