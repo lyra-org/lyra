@@ -340,7 +340,7 @@ mod tests {
         let server =
             TestServer::start(HashMap::from([single_plugin_routes("owner/repo", "foo")])).await;
         let spec = RepoSpec::parse(&format!("{}/owner/repo", server.url()), None).unwrap();
-        let resolved = resolve_plugins(&client(), &spec, &HashSet::new())
+        let resolved = resolve_plugins(&client(), &spec, None, &HashSet::new())
             .await
             .unwrap();
         (server, resolved)

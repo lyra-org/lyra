@@ -315,3 +315,48 @@ pub(crate) fn raw_repo_routes(
     }));
     routes
 }
+
+/// Routes for a GitLab-style project `owner/repo` whose default branch
+/// `main` is at `sha`, serving `files` as raw files and no archives.
+pub(crate) fn gitlab_repo_routes(
+    sha: &str,
+    files: &[(&str, &str)],
+) -> Vec<(String, CannedResponse)> {
+    let project = "/api/v4/projects/owner%2Frepo";
+    let mut routes = vec![
+        (
+            project.to_string(),
+            CannedResponse::json(r#"{"default_branch":"main"}"#),
+        ),
+        (
+            format!("{project}/repository/commits/main"),
+            CannedResponse::json(&format!(r#"{{"id":"{sha}"}}"#)),
+        ),
+    ];
+    routes.extend(files.iter().map(|(path, content)| {
+        (
+            format!(
+                "{project}/repository/files/{}/raw?ref={sha}",
+                path.replace('/', "%2F")
+            ),
+            CannedResponse::json(content),
+        )
+    }));
+    routes
+}
+
+/// Route for GitLab's archive of `dir` alone at `sha`, its entries kept
+/// under their full path inside one top-level directory.
+pub(crate) fn gitlab_directory_archive(
+    sha: &str,
+    dir: &str,
+    archive: Vec<u8>,
+) -> (String, CannedResponse) {
+    (
+        format!(
+            "/api/v4/projects/owner%2Frepo/repository/archive.tar.gz?sha={sha}&path={}",
+            dir.replace('/', "%2F")
+        ),
+        CannedResponse::targz(archive),
+    )
+}

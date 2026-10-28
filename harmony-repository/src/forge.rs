@@ -276,18 +276,25 @@ impl RepoSpec {
         }
     }
 
-    /// A tarball of only `dir` at `commit`. GitLab alone serves one; GitHub
-    /// and Gitea answer `None` and callers download [`Self::archive_url`].
+    /// Whether the forge serves tarballs of a single directory. GitLab alone
+    /// does.
+    pub fn has_directory_archives(&self) -> bool {
+        self.forge == Forge::GitLab
+    }
+
+    /// A tarball of only `dir` at `commit`, with the directory's full path
+    /// kept under the archive's top-level directory. `None` unless
+    /// [`Self::has_directory_archives`]; callers then download
+    /// [`Self::archive_url`].
     pub fn directory_archive_url(&self, commit: &str, dir: &str) -> Option<String> {
-        match self.forge {
-            Forge::GitLab => Some(format!(
+        self.has_directory_archives().then(|| {
+            format!(
                 "{}/repository/archive.tar.gz?sha={}&path={}",
                 self.repo_api_url(),
                 utf8_percent_encode(commit, SEGMENT),
                 utf8_percent_encode(dir, SEGMENT)
-            )),
-            Forge::GitHub | Forge::Gitea => None,
-        }
+            )
+        })
     }
 
     /// The raw contents of the file at `path` in `commit`. GitHub Enterprise

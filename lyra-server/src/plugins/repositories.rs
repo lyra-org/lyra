@@ -231,6 +231,7 @@ pub(crate) struct RepositoryPreview {
 async fn resolve(
     url: &str,
     git_ref: Option<&str>,
+    plugin_ids: Option<&[String]>,
     build: &BuildInfo,
 ) -> Result<ResolvedRepository, PluginRepoError> {
     let spec =
@@ -238,6 +239,7 @@ async fn resolve(
     resolve_plugins(
         &http_client(build)?,
         &spec,
+        plugin_ids,
         &crate::plugins::module_scope_ids(),
     )
     .await
@@ -499,7 +501,7 @@ async fn resolve_selection(
             "no plugins selected to install".to_string(),
         ));
     }
-    let resolved = resolve(url, git_ref, build).await?;
+    let resolved = resolve(url, git_ref, plugin_ids, build).await?;
 
     if let Some(ids) = plugin_ids {
         for id in ids {
@@ -661,14 +663,19 @@ enum UpdateSource {
         commit: String,
         tree_hashes: HashMap<String, String>,
     },
-    Changed(Box<ResolvedRepository>),
+    /// The plugins in `changed` were downloaded; the others are current.
+    Changed {
+        repository: Box<ResolvedRepository>,
+        tree_hashes: HashMap<String, String>,
+        changed: Vec<String>,
+    },
 }
 
 impl UpdateSource {
     fn commit(&self) -> Option<String> {
         match self {
             Self::Current { commit, .. } => Some(commit.clone()),
-            Self::Changed(repository) => repository.commit.clone(),
+            Self::Changed { repository, .. } => repository.commit.clone(),
         }
     }
 
@@ -692,29 +699,51 @@ impl UpdateSource {
                     )
                 })
                 .collect(),
-            Self::Changed(repository) => repository
-                .candidates
-                .iter()
-                .filter(|candidate| candidate.source.via_repository.is_none())
-                .map(|candidate| {
-                    subscription_entry(
-                        candidate.id(),
-                        candidate.source.subpath.as_ref(),
-                        candidate.source.revision(),
-                    )
-                })
-                .collect(),
+            Self::Changed {
+                repository,
+                tree_hashes,
+                changed,
+            } => {
+                let mut entries: Vec<_> = repository
+                    .candidates
+                    .iter()
+                    .filter(|candidate| candidate.source.via_repository.is_none())
+                    .map(|candidate| {
+                        subscription_entry(
+                            candidate.id(),
+                            candidate.source.subpath.as_ref(),
+                            candidate.source.revision(),
+                        )
+                    })
+                    .collect();
+                if let Some(commit) = &repository.commit {
+                    entries.extend(
+                        installed
+                            .iter()
+                            .filter(|(id, _)| !changed.contains(id))
+                            .map(|(id, record)| {
+                                subscription_entry(
+                                    id,
+                                    record.subpath.as_ref(),
+                                    latest_revision(record, commit, tree_hashes),
+                                )
+                            }),
+                    );
+                }
+                entries
+            }
         }
     }
 }
 
-/// Resolves the ref first and downloads only when the content of some
-/// plugin in `installed` changed at the resolved commit.
+/// Resolves the ref first and downloads only the plugins in `installed`
+/// whose content changed at the resolved commit; without a resolved commit
+/// every plugin counts as changed.
 async fn resolve_update_source(
     client: &reqwest::Client,
     origin: &str,
     git_ref: Option<&str>,
-    installed: &[&SourceRecord],
+    installed: &[&(String, SourceRecord)],
 ) -> Result<UpdateSource, PluginRepoError> {
     let spec =
         RepoSpec::parse(origin, git_ref).map_err(|e| PluginRepoError::BadRequest(e.to_string()))?;
@@ -723,15 +752,23 @@ async fn resolve_update_source(
         Some(commit) => latest_tree_hashes(client, &spec, commit, installed).await,
         None => HashMap::new(),
     };
+    let changed: Vec<String> = installed
+        .iter()
+        .filter(|(_, record)| {
+            plan.commit()
+                .is_none_or(|commit| !is_current(record, commit, &tree_hashes))
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
     if let Some(commit) = plan.commit()
-        && all_current(installed, commit, &tree_hashes)
+        && changed.is_empty()
     {
         return Ok(UpdateSource::Current {
             commit: commit.to_string(),
             tree_hashes,
         });
     }
-    resolve_planned(
+    let repository = resolve_planned(
         client,
         &spec,
         &plan,
@@ -739,11 +776,16 @@ async fn resolve_update_source(
             commit,
             hashes: &tree_hashes,
         }),
+        Some(&changed),
         &crate::plugins::module_scope_ids(),
     )
     .await
-    .map(|repository| UpdateSource::Changed(Box::new(repository)))
-    .map_err(map_resolve_error)
+    .map_err(map_resolve_error)?;
+    Ok(UpdateSource::Changed {
+        repository: Box::new(repository),
+        tree_hashes,
+        changed,
+    })
 }
 
 /// Tree hashes of the plugin directories `installed` holds at `commit`,
@@ -752,29 +794,26 @@ async fn latest_tree_hashes(
     client: &reqwest::Client,
     spec: &RepoSpec,
     commit: &str,
-    installed: &[&SourceRecord],
+    installed: &[&(String, SourceRecord)],
 ) -> HashMap<String, String> {
     if installed
         .iter()
-        .all(|record| record.commit.as_deref() == Some(commit))
+        .all(|(_, record)| record.commit.as_deref() == Some(commit))
     {
         return HashMap::new();
     }
-    let dirs: Vec<&str> = installed.iter().map(|record| plugin_dir(record)).collect();
+    let dirs: Vec<&str> = installed
+        .iter()
+        .map(|(_, record)| plugin_dir(record))
+        .collect();
     tree_hashes(client, spec, commit, &dirs).await
 }
 
-fn all_current(
-    installed: &[&SourceRecord],
-    commit: &str,
-    tree_hashes: &HashMap<String, String>,
-) -> bool {
-    installed.iter().all(|record| {
-        record
-            .revision()
-            .same_content(latest_revision(record, commit, tree_hashes))
-            == Some(true)
-    })
+fn is_current(record: &SourceRecord, commit: &str, tree_hashes: &HashMap<String, String>) -> bool {
+    record
+        .revision()
+        .same_content(latest_revision(record, commit, tree_hashes))
+        == Some(true)
 }
 
 /// The revision `record`'s plugin has at `commit`, given the tree hashes
@@ -828,9 +867,9 @@ fn managed_plugin_ids(plugins_dir: &Path) -> Result<BTreeSet<String>, PluginRepo
 /// Updates the named plugins, or every repository-managed plugin when
 /// `plugin_ids` is `None`. An explicitly empty selection is rejected.
 /// Pinned plugins are up to date by construction and are not resolved.
-/// Each distinct origin and ref is resolved once and downloaded only when
-/// a plugin installed from it is behind its commit; per-plugin failures
-/// don't abort siblings. The runtime reloads once, and only when
+/// Each distinct origin and ref is resolved once, and only the plugins
+/// whose content changed are downloaded and reinstalled; per-plugin
+/// failures don't abort siblings. The runtime reloads once, and only when
 /// something was reinstalled.
 pub(crate) async fn update_plugins(
     plugin_ids: Option<&[String]>,
@@ -879,8 +918,7 @@ async fn update_plugins_in(
     }
     let mut resolved: HashMap<UpdateKey, Result<UpdateSource, String>> = HashMap::new();
     for ((origin, git_ref), group) in &installed {
-        let group: Vec<&SourceRecord> = group.iter().map(|(_, record)| record).collect();
-        let result = resolve_update_source(&client, origin, git_ref.as_deref(), &group)
+        let result = resolve_update_source(&client, origin, git_ref.as_deref(), group)
             .await
             .map_err(|error| error.to_string());
         resolved.insert((origin.clone(), git_ref.clone()), result);
@@ -909,7 +947,11 @@ async fn update_plugins_in(
                 report.up_to_date.push(id.clone());
                 continue;
             }
-            Ok(UpdateSource::Changed(repository)) => repository,
+            Ok(UpdateSource::Changed { changed, .. }) if !changed.contains(id) => {
+                report.up_to_date.push(id.clone());
+                continue;
+            }
+            Ok(UpdateSource::Changed { repository, .. }) => repository,
             Err(error) => {
                 report.failed.push(FailedInstall {
                     id: id.clone(),
@@ -1283,6 +1325,154 @@ mod tests {
         Ok(())
     }
 
+    /// A Gitea-style forge whose `o/r` index at `commit` lists
+    /// `plugins/same` and `plugins/changed` with the given tree hashes, and
+    /// serves its archive.
+    async fn catalog_forge(
+        commit: &str,
+        same_tree: &str,
+        changed_tree: &str,
+    ) -> anyhow::Result<String> {
+        let plugin = |id: &str| {
+            format!(
+                r#"{{"schema_version":1,"id":"{id}","name":"{id}","version":"2.0.0","description":"","entrypoint":"init.luau","scopes":[]}}"#
+            )
+        };
+        let mut archive = tar::Builder::new(flate2::write::GzEncoder::new(
+            Vec::new(),
+            flate2::Compression::default(),
+        ));
+        let files = [
+            (
+                "repo/repository.json".to_string(),
+                r#"{"schema_version":1,"name":"Catalog","plugins":[{"path":"plugins/same"},{"path":"plugins/changed"}]}"#
+                    .to_string(),
+            ),
+            ("repo/plugins/same/plugin.json".into(), plugin("same")),
+            ("repo/plugins/same/init.luau".into(), "return {}".into()),
+            ("repo/plugins/changed/plugin.json".into(), plugin("changed")),
+            ("repo/plugins/changed/init.luau".into(), "return {}".into()),
+        ];
+        for (path, content) in &files {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(content.len() as u64);
+            header.set_mode(0o644);
+            archive.append_data(&mut header, path, content.as_bytes())?;
+        }
+        let archive = archive.into_inner()?.finish()?;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let base = format!("http://{}", listener.local_addr()?);
+        let trees = serde_json::json!({
+            "sha": "plugins",
+            "truncated": false,
+            "tree": [
+                { "path": "same", "type": "tree", "sha": same_tree },
+                { "path": "changed", "type": "tree", "sha": changed_tree },
+            ],
+        });
+        let commit = commit.to_string();
+        let router = axum::Router::new()
+            .route(
+                "/api/v1/repos/o/r",
+                axum::routing::get(|| async {
+                    axum::Json(serde_json::json!({ "default_branch": "main" }))
+                }),
+            )
+            .route(
+                "/api/v1/repos/o/r/git/commits/main",
+                axum::routing::get({
+                    let commit = commit.clone();
+                    move || async move { axum::Json(serde_json::json!({ "sha": commit })) }
+                }),
+            )
+            .route(
+                &format!("/api/v1/repos/o/r/git/trees/{commit}:plugins"),
+                axum::routing::get(move || async move { axum::Json(trees) }),
+            )
+            .route(
+                &format!("/o/r/archive/{commit}.tar.gz"),
+                axum::routing::get(move || async move { archive }),
+            );
+        tokio::spawn(async move { axum::serve(listener, router).await });
+        Ok(format!("{base}/o/r"))
+    }
+
+    #[tokio::test]
+    async fn update_plugins_reinstalls_changed_plugins_and_stores_every_latest_revision()
+    -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        lyra_db::server::ensure(&mut *STATE.db.write().await)?;
+        let (old, new) = ("d".repeat(40), "c".repeat(40));
+        let origin = catalog_forge(&new, "same-tree", "new-tree").await?;
+        let plugins_dir = tempfile::TempDir::new()?;
+        for (id, tree_hash) in [("same", "same-tree"), ("changed", "old-tree")] {
+            let dir = plugins_dir.path().join(id);
+            std::fs::create_dir_all(&dir)?;
+            let mut managed = record(Some(old.clone()));
+            managed.origin = origin.clone();
+            managed.forge = Forge::Gitea;
+            managed.subpath = Some(format!("plugins/{id}"));
+            managed.tree_hash = Some(tree_hash.into());
+            managed.store(&dir)?;
+        }
+        let stale = |id: &str| {
+            subscription_entry(
+                id,
+                Some(&format!("plugins/{id}")),
+                Revision {
+                    commit: Some(&old),
+                    tree_hash: Some("stale-tree"),
+                },
+            )
+        };
+        let repository_db_id = repo_db::create(
+            &mut *STATE.db.write().await,
+            &repo_db::PluginRepository {
+                db_id: None,
+                id: "catalog".into(),
+                origin: origin.clone(),
+                name: "Catalog".into(),
+                description: String::new(),
+                git_ref: None,
+                commit: Some(old.clone()),
+                refreshed_at_ms: None,
+            },
+            &[stale("same"), stale("changed")],
+        )?;
+
+        let report = update_plugins_in(plugins_dir.path(), None).await?;
+
+        assert!(report.failed.is_empty(), "{:?}", report.failed);
+        assert_eq!(report.up_to_date, ["same"]);
+        let updated: Vec<_> = report.updated.iter().map(|u| u.id.as_str()).collect();
+        assert_eq!(updated, ["changed"]);
+        let installed = SourceRecord::load(&plugins_dir.path().join("changed"))?.expect("record");
+        assert_eq!(installed.tree_hash.as_deref(), Some("new-tree"));
+        assert_eq!(
+            SourceRecord::load(&plugins_dir.path().join("same"))?
+                .expect("record")
+                .commit,
+            Some(old.clone()),
+            "an unchanged plugin is not reinstalled"
+        );
+
+        let mut entries: Vec<_> = repo_db::entries(&*STATE.db.read().await, repository_db_id)?
+            .into_iter()
+            .map(|entry| (entry.plugin_id, entry.commit, entry.tree_hash))
+            .collect();
+        entries.sort();
+        assert_eq!(
+            entries,
+            [
+                ("changed".into(), Some(new.clone()), Some("new-tree".into())),
+                ("same".into(), Some(new.clone()), Some("same-tree".into())),
+            ]
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     async fn update_plugins_skips_the_download_when_plugin_trees_match() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
@@ -1320,27 +1510,32 @@ mod tests {
     fn plugins_are_current_when_their_content_is_unchanged() {
         let commit = "a".repeat(40);
         let moved = "b".repeat(40);
-        let at = |commit: &str, tree_hash: Option<&str>, subpath: Option<&str>| {
-            let mut record = record(Some(commit.to_string()));
+        let at = |tree_hash: Option<&str>, subpath: &str| {
+            let mut record = record(Some(commit.clone()));
             record.tree_hash = tree_hash.map(str::to_string);
-            record.subpath = subpath.map(str::to_string);
+            record.subpath = Some(subpath.to_string());
             record
         };
         let hashes = HashMap::from([("plugins/a".to_string(), "tree-a".to_string())]);
 
-        let unchanged = at(&commit, Some("tree-a"), Some("plugins/a"));
-        assert!(all_current(&[&unchanged], &moved, &hashes));
+        assert!(is_current(
+            &at(Some("tree-a"), "plugins/a"),
+            &moved,
+            &hashes
+        ));
+        assert!(!is_current(
+            &at(Some("tree-old"), "plugins/a"),
+            &moved,
+            &hashes
+        ));
 
-        let changed = at(&commit, Some("tree-old"), Some("plugins/a"));
-        assert!(!all_current(&[&unchanged, &changed], &moved, &hashes));
+        let unhashed = at(Some("tree-b"), "plugins/b");
+        assert!(!is_current(&unhashed, &moved, &hashes));
+        assert!(is_current(&unhashed, &commit, &hashes));
 
-        let unhashed = at(&commit, Some("tree-b"), Some("plugins/b"));
-        assert!(!all_current(&[&unhashed], &moved, &hashes));
-        assert!(all_current(&[&unhashed], &commit, &hashes));
-
-        let legacy = at(&commit, None, Some("plugins/a"));
-        assert!(!all_current(&[&legacy], &moved, &hashes));
-        assert!(all_current(&[&legacy], &commit, &HashMap::new()));
+        let legacy = at(None, "plugins/a");
+        assert!(!is_current(&legacy, &moved, &hashes));
+        assert!(is_current(&legacy, &commit, &HashMap::new()));
     }
 
     #[tokio::test]

@@ -116,6 +116,20 @@ impl FetchedRepo {
     }
 }
 
+/// One directory of a repository downloaded into a temporary directory,
+/// removed when this value is dropped.
+#[derive(Debug)]
+pub struct FetchedDirectory {
+    _tempdir: TempDir,
+    path: PathBuf,
+}
+
+impl FetchedDirectory {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
 /// What a repository's ref resolves to, worked out from the forge API
 /// alone. [`fetch_planned`] downloads it.
 #[derive(Debug, Clone)]
@@ -182,16 +196,9 @@ pub async fn fetch_planned(
             Err(err) => return Err(err),
         };
 
-        let tempdir = TempDir::new()?;
-        let dest = tempdir.path().to_path_buf();
-        tokio::task::spawn_blocking(move || extract_archive(&bytes, &dest))
-            .await
-            .map_err(|e| FetchError::InvalidArchive {
-                reason: format!("extraction task failed: {e}"),
-            })??;
-
+        let (tempdir, root) = unpack(bytes).await?;
         return Ok(FetchedRepo {
-            root: locate_root(tempdir.path())?,
+            root,
             _tempdir: tempdir,
             git_ref: candidate.clone(),
             commit: plan.commit.clone(),
@@ -205,6 +212,54 @@ pub async fn fetch_planned(
             .map(|e| e.to_string())
             .unwrap_or_else(|| "no candidate refs".into()),
     })
+}
+
+/// Downloads the directory `dir` at `commit` and extracts it: as a
+/// single-directory archive where the forge serves one, otherwise, and for
+/// the root, as the whole repository.
+pub async fn fetch_directory(
+    client: &Client,
+    spec: &RepoSpec,
+    commit: &str,
+    dir: &str,
+) -> Result<FetchedDirectory, FetchError> {
+    let url = Some(dir)
+        .filter(|dir| !dir.is_empty())
+        .and_then(|dir| spec.directory_archive_url(commit, dir))
+        .unwrap_or_else(|| spec.archive_url(commit));
+    let bytes = download(client, &url, MAX_ARCHIVE_BYTES, |url, limit| {
+        FetchError::ArchiveTooLarge { url, limit }
+    })
+    .await?;
+
+    let (tempdir, root) = unpack(bytes).await?;
+    let path = match dir {
+        "" => root,
+        dir => root.join(dir),
+    };
+    if !path.is_dir() {
+        return Err(FetchError::InvalidArchive {
+            reason: format!("archive from {url} has no directory '{dir}'"),
+        });
+    }
+    Ok(FetchedDirectory {
+        _tempdir: tempdir,
+        path,
+    })
+}
+
+/// Extracts a downloaded tarball into a new temporary directory and
+/// returns it with the archive's root.
+async fn unpack(bytes: Vec<u8>) -> Result<(TempDir, PathBuf), FetchError> {
+    let tempdir = TempDir::new()?;
+    let dest = tempdir.path().to_path_buf();
+    tokio::task::spawn_blocking(move || extract_archive(&bytes, &dest))
+        .await
+        .map_err(|e| FetchError::InvalidArchive {
+            reason: format!("extraction task failed: {e}"),
+        })??;
+    let root = locate_root(tempdir.path())?;
+    Ok((tempdir, root))
 }
 
 /// Resolves the ref `spec` names, or the default branch, without
