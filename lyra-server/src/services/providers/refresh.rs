@@ -58,6 +58,7 @@ use crate::{
             id_schemes,
             library_refresh_locks,
             provider_registry,
+            unique_artist_id_pairs,
             with_provider_call,
         },
     },
@@ -377,8 +378,10 @@ async fn refresh_release_metadata_inner_with_progress(
             }
         }
 
+        let unique_artist_id_pairs = unique_artist_id_pairs().await;
         let mut db_write = STATE.db.write().await;
-        if let Err(err) = deduplicate_artists_by_external_id(&mut db_write) {
+        if let Err(err) = deduplicate_artists_by_external_id(&mut db_write, &unique_artist_id_pairs)
+        {
             tracing::warn!(
                 provider_id,
                 release_db_id = release_id.0,
@@ -563,8 +566,10 @@ async fn refresh_library_metadata_inner_with_progress(
             continue;
         }
 
+        let unique_artist_id_pairs = unique_artist_id_pairs().await;
         let mut db_write = STATE.db.write().await;
-        if let Err(err) = deduplicate_artists_by_external_id(&mut db_write) {
+        if let Err(err) = deduplicate_artists_by_external_id(&mut db_write, &unique_artist_id_pairs)
+        {
             tracing::warn!(
                 provider_id,
                 error = %err,

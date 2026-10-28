@@ -275,8 +275,16 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
 }
 
 /// Merge artists that share the same external ID (e.g. MusicBrainz MBID) but were
-/// created as separate nodes due to different file tag spellings.
-pub(crate) fn deduplicate_artists_by_external_id(db: &mut DbAny) -> anyhow::Result<u32> {
+/// created as separate nodes due to different file tag spellings. Only the
+/// `(provider_id, id_type)` pairs declared unique link or keep artists apart.
+pub(crate) fn deduplicate_artists_by_external_id(
+    db: &mut DbAny,
+    unique_artist_id_pairs: &HashSet<(String, String)>,
+) -> anyhow::Result<u32> {
+    if unique_artist_id_pairs.is_empty() {
+        return Ok(0);
+    }
+
     let all_artists: Vec<Artist> = db
         .exec(
             QueryBuilder::select()
@@ -295,7 +303,9 @@ pub(crate) fn deduplicate_artists_by_external_id(db: &mut DbAny) -> anyhow::Resu
         };
         artist_lookup.insert(artist_db_id, artist.clone());
         for ext_id in lyra_db::external_ids::get_for_entity(db, artist_db_id)? {
-            if ext_id.id_type == "artist_id" {
+            if unique_artist_id_pairs
+                .contains(&(ext_id.provider_id.clone(), ext_id.id_type.clone()))
+            {
                 linked.add(
                     artist_db_id,
                     &ext_id.provider_id,
@@ -569,6 +579,45 @@ mod tests {
         test_db,
     };
 
+    /// Each test provider's `artist_id`, declared unique.
+    fn unique_artist_ids() -> HashSet<(String, String)> {
+        ["musicbrainz", "provider-a", "provider-b"]
+            .into_iter()
+            .map(|provider_id| (provider_id.to_string(), "artist_id".to_string()))
+            .collect()
+    }
+
+    /// Two artists of one name that share `provider_id`'s `id_type`, deduplicated
+    /// with only `strict:artist` declared unique.
+    fn dedup_artists_sharing(provider_id: &str, id_type: &str) -> anyhow::Result<u32> {
+        let mut db = test_db::new_test_db()?;
+        for _ in 0..2 {
+            let artist = lyra_db::fixtures::insert_artist(&mut db, "Radiohead")?;
+            lyra_db::external_ids::upsert(
+                &mut db,
+                artist,
+                provider_id,
+                id_type,
+                "shared",
+                IdSource::Resolved,
+            )?;
+        }
+        let unique = HashSet::from([("strict".to_string(), "artist".to_string())]);
+        deduplicate_artists_by_external_id(&mut db, &unique)
+    }
+
+    #[test]
+    fn artists_sharing_a_non_unique_artist_id_stay_apart() -> anyhow::Result<()> {
+        assert_eq!(dedup_artists_sharing("loose", "artist_id")?, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn artists_sharing_a_unique_id_of_any_name_merge() -> anyhow::Result<()> {
+        assert_eq!(dedup_artists_sharing("strict", "artist")?, 1);
+        Ok(())
+    }
+
     #[test]
     fn dedup_drops_loser_metadata_layers_instead_of_migrating() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
@@ -623,7 +672,7 @@ mod tests {
             ),
         )?;
 
-        let merged_count = deduplicate_artists_by_external_id(&mut db)?;
+        let merged_count = deduplicate_artists_by_external_id(&mut db, &unique_artist_ids())?;
         assert_eq!(merged_count, 1);
 
         let a_exists = lyra_db::artists::get_by_id(&db, artist_a)?.is_some();
@@ -693,7 +742,10 @@ mod tests {
             )
         })?;
 
-        assert_eq!(deduplicate_artists_by_external_id(&mut db)?, 1);
+        assert_eq!(
+            deduplicate_artists_by_external_id(&mut db, &unique_artist_ids())?,
+            1
+        );
 
         let (winner, loser) = (credited, layer_only);
         assert!(lyra_db::artists::get_by_id(&db, loser)?.is_none());
@@ -754,7 +806,10 @@ mod tests {
             )?;
         }
 
-        assert_eq!(deduplicate_artists_by_external_id(&mut db)?, 1);
+        assert_eq!(
+            deduplicate_artists_by_external_id(&mut db, &unique_artist_ids())?,
+            1
+        );
         let winner = if lyra_db::artists::get_by_id(&db, first)?.is_some() {
             first
         } else {
@@ -912,7 +967,7 @@ mod tests {
             IdSource::Resolved,
         )?;
 
-        let merged_count = deduplicate_artists_by_external_id(&mut db)?;
+        let merged_count = deduplicate_artists_by_external_id(&mut db, &unique_artist_ids())?;
         assert_eq!(merged_count, 1);
 
         let a_exists = lyra_db::artists::get_by_id(&db, artist_a)?.is_some();
@@ -1004,7 +1059,10 @@ mod tests {
                 ],
             )?;
 
-            assert_eq!(deduplicate_artists_by_external_id(&mut db)?, 2);
+            assert_eq!(
+                deduplicate_artists_by_external_id(&mut db, &unique_artist_ids())?,
+                2
+            );
             let remaining = remaining_artists(&db, artists)?;
             assert_eq!(remaining.len(), 1, "{first} first leaves {remaining:?}");
         }
@@ -1028,7 +1086,10 @@ mod tests {
                 ],
             )?;
 
-            assert_eq!(deduplicate_artists_by_external_id(&mut db)?, 2);
+            assert_eq!(
+                deduplicate_artists_by_external_id(&mut db, &unique_artist_ids())?,
+                2
+            );
             assert_eq!(
                 remaining_artists(&db, artists)?,
                 [artists[2]],
@@ -1052,7 +1113,10 @@ mod tests {
             ],
         )?;
 
-        assert_eq!(deduplicate_artists_by_external_id(&mut db)?, 0);
+        assert_eq!(
+            deduplicate_artists_by_external_id(&mut db, &unique_artist_ids())?,
+            0
+        );
         assert_eq!(remaining_artists(&db, artists)?, artists);
         Ok(())
     }
@@ -1072,7 +1136,10 @@ mod tests {
             ],
         )?;
 
-        assert_eq!(deduplicate_artists_by_external_id(&mut db)?, 1);
+        assert_eq!(
+            deduplicate_artists_by_external_id(&mut db, &unique_artist_ids())?,
+            1
+        );
         assert_eq!(remaining_artists(&db, artists)?, [artists[0], artists[2]]);
         let provider_a_ids = lyra_db::external_ids::get_for_entity(&db, artists[0])?
             .into_iter()
@@ -1104,7 +1171,11 @@ mod tests {
                 ],
             )?;
 
-            assert_eq!(deduplicate_artists_by_external_id(&mut db)?, 1, "{odd}");
+            assert_eq!(
+                deduplicate_artists_by_external_id(&mut db, &unique_artist_ids())?,
+                1,
+                "{odd}"
+            );
             let remaining = remaining_artists(&db, artists)?;
             assert_eq!(remaining.len(), 2, "{odd}");
             assert!(remaining.contains(&artists[odd]), "{odd}");
@@ -1131,7 +1202,7 @@ mod tests {
             )?;
 
             assert_eq!(
-                deduplicate_artists_by_external_id(&mut db)?,
+                deduplicate_artists_by_external_id(&mut db, &unique_artist_ids())?,
                 1,
                 "{first} first"
             );
@@ -1405,9 +1476,15 @@ mod tests {
         };
         let first = tag_artist(&mut db, "Mr.Children", false)?;
         tag_artist(&mut db, "Mr Children", false)?;
-        assert_eq!(deduplicate_artists_by_external_id(&mut db)?, 1);
+        assert_eq!(
+            deduplicate_artists_by_external_id(&mut db, &unique_artist_ids())?,
+            1
+        );
         let last = tag_artist(&mut db, "Mr.Children (JP)", true)?;
-        assert_eq!(deduplicate_artists_by_external_id(&mut db)?, 1);
+        assert_eq!(
+            deduplicate_artists_by_external_id(&mut db, &unique_artist_ids())?,
+            1
+        );
 
         assert!(lyra_db::artists::get_by_id(&db, first)?.is_none());
         let winner = lyra_db::artists::get_by_id(&db, last)?.expect("winner");

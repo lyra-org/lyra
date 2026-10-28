@@ -73,6 +73,13 @@ pub(crate) async fn id_schemes() -> Arc<IdSchemes> {
     provider_registry().read().await.id_schemes()
 }
 
+pub(crate) async fn unique_artist_id_pairs() -> HashSet<(String, String)> {
+    provider_registry()
+        .read()
+        .await
+        .unique_id_pairs(EntityType::Artist)
+}
+
 pub(crate) fn sync_locks() -> Arc<tokio::sync::Mutex<HashSet<String>>> {
     crate::services::STATE
         .generation()

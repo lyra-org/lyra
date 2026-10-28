@@ -1600,7 +1600,10 @@ mod tests {
             )?;
         }
         assert_eq!(
-            crate::services::metadata::cleanup::deduplicate_artists_by_external_id(&mut db)?,
+            crate::services::metadata::cleanup::deduplicate_artists_by_external_id(
+                &mut db,
+                &HashSet::from([("musicbrainz".to_string(), "artist_id".to_string())]),
+            )?,
             1
         );
 
@@ -1658,7 +1661,10 @@ mod tests {
                 IdSource::Resolved,
             )?;
         }
-        crate::services::metadata::cleanup::deduplicate_artists_by_external_id(&mut db)?;
+        crate::services::metadata::cleanup::deduplicate_artists_by_external_id(
+            &mut db,
+            &HashSet::from([("musicbrainz".to_string(), "artist_id".to_string())]),
+        )?;
 
         let local_name = |db: &DbAny| -> anyhow::Result<Option<Option<FieldValue>>> {
             Ok(lyra_db::metadata::layers::get_for_entity(db, winner)?

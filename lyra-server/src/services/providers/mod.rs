@@ -94,6 +94,7 @@ pub(crate) use registry::{
     provider_registry,
     sync_locks,
     teardown_plugin_providers,
+    unique_artist_id_pairs,
     with_provider_call,
 };
 pub(crate) use requirements::{

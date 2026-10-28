@@ -85,8 +85,11 @@ pub(crate) async fn teardown_loaded_plugins() {
 }
 
 async fn deduplicate_artists_after_plugin_init() {
+    let unique_artist_id_pairs = services::providers::unique_artist_id_pairs().await;
     let mut db_write = STATE.db.write().await;
-    if let Err(err) = services::deduplicate_artists_by_external_id(&mut db_write) {
+    if let Err(err) =
+        services::deduplicate_artists_by_external_id(&mut db_write, &unique_artist_id_pairs)
+    {
         tracing::warn!(error = %err, "artist deduplication failed after plugin init");
     }
 }
