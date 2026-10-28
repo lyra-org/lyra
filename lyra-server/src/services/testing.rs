@@ -29,6 +29,11 @@ use tokio::sync::{
 };
 
 #[cfg(test)]
+pub(crate) use self::fake_dispatch::{
+    FakePluginDispatch,
+    FakeResponse,
+};
+#[cfg(test)]
 pub(crate) use self::test_state::{
     create_session,
     for_each_db_gap,
@@ -383,5 +388,157 @@ mod test_state {
     pub(crate) async fn init_library_test_state(directory: PathBuf) -> anyhow::Result<()> {
         initialize_state(Some(library_config(directory, None, None)?))?;
         start_runtime().await
+    }
+}
+
+#[cfg(test)]
+mod fake_dispatch {
+    use std::{
+        collections::HashMap,
+        sync::{
+            Arc,
+            Mutex,
+        },
+    };
+
+    use anyhow::{
+        Result,
+        anyhow,
+        bail,
+    };
+    use futures::future::BoxFuture;
+    use tokio::sync::Semaphore;
+
+    use crate::services::{
+        STATE,
+        listens::ListenUpdatePayload,
+        playback_sessions::PlaybackUpdatePayload,
+        plugin_dispatch::{
+            MetadataRefreshRequest,
+            MetadataRefreshResult,
+            MixHandlerRequest,
+            MixHandlerResult,
+            PluginDispatch,
+            SimilarReleasesDispatchRequest,
+            SimilarReleasesDispatchResult,
+        },
+    };
+
+    #[derive(Clone)]
+    pub(crate) enum FakeResponse {
+        Value(serde_json::Value),
+        Error(String),
+        /// Answers with the inner response once the semaphore grants a permit.
+        Held(Arc<Semaphore>, Box<FakeResponse>),
+        /// Never answers, so the call ends only when its dispatch is dropped.
+        Stall,
+    }
+
+    /// A plugin runtime that answers metadata refresh dispatches with the
+    /// response added for each handler id, recording every call's context.
+    #[derive(Default)]
+    pub(crate) struct FakePluginDispatch {
+        handlers: Mutex<Vec<FakeResponse>>,
+        calls: Mutex<HashMap<u64, Vec<serde_json::Value>>>,
+    }
+
+    impl FakePluginDispatch {
+        /// A fake published as the current generation's plugin dispatch.
+        pub(crate) fn install() -> Arc<Self> {
+            let dispatch = Arc::new(Self::default());
+            STATE
+                .generation()
+                .plugin_dispatch
+                .replace(Some(dispatch.clone()));
+            dispatch
+        }
+
+        /// Adds a handler answering with `response`, returning its handler id.
+        pub(crate) fn add(&self, response: FakeResponse) -> u64 {
+            let mut handlers = self.handlers.lock().expect("fake handlers poisoned");
+            handlers.push(response);
+            handlers.len() as u64
+        }
+
+        /// The contexts dispatched to `handler_id`, in call order.
+        pub(crate) fn calls(&self, handler_id: u64) -> Vec<serde_json::Value> {
+            self.calls
+                .lock()
+                .expect("fake calls poisoned")
+                .get(&handler_id)
+                .cloned()
+                .unwrap_or_default()
+        }
+
+        fn response(&self, handler_id: u64) -> Option<FakeResponse> {
+            let index = usize::try_from(handler_id).ok()?.checked_sub(1)?;
+            self.handlers
+                .lock()
+                .expect("fake handlers poisoned")
+                .get(index)
+                .cloned()
+        }
+    }
+
+    async fn answer(mut response: FakeResponse) -> Result<serde_json::Value> {
+        loop {
+            match response {
+                FakeResponse::Value(value) => return Ok(value),
+                FakeResponse::Error(message) => bail!(message),
+                FakeResponse::Held(release, then) => {
+                    release.acquire().await?.forget();
+                    response = *then;
+                }
+                FakeResponse::Stall => std::future::pending::<()>().await,
+            }
+        }
+    }
+
+    impl PluginDispatch for FakePluginDispatch {
+        fn vm_id(&self) -> u64 {
+            0
+        }
+
+        fn dispatch_metadata_refresh(
+            &self,
+            request: MetadataRefreshRequest,
+        ) -> BoxFuture<'_, Result<MetadataRefreshResult>> {
+            Box::pin(async move {
+                let response = self
+                    .response(request.handler_id)
+                    .ok_or_else(|| anyhow!("metadata handler {} not found", request.handler_id))?;
+                self.calls
+                    .lock()
+                    .expect("fake calls poisoned")
+                    .entry(request.handler_id)
+                    .or_default()
+                    .push(request.context);
+                Ok(MetadataRefreshResult {
+                    values: vec![answer(response).await?],
+                })
+            })
+        }
+
+        fn dispatch_mix_handler(
+            &self,
+            _request: MixHandlerRequest,
+        ) -> BoxFuture<'_, Result<MixHandlerResult>> {
+            Box::pin(async { bail!("the fake plugin dispatch has no mix handlers") })
+        }
+
+        fn dispatch_similar_releases(
+            &self,
+            _request: SimilarReleasesDispatchRequest,
+        ) -> BoxFuture<'_, Result<SimilarReleasesDispatchResult>> {
+            Box::pin(async { bail!("the fake plugin dispatch has no similar releases handlers") })
+        }
+
+        fn dispatch_playback_update(&self, _payload: PlaybackUpdatePayload) -> Result<()> {
+            Ok(())
+        }
+
+        fn dispatch_listen_update(&self, _payload: ListenUpdatePayload) -> Result<()> {
+            Ok(())
+        }
     }
 }

@@ -8,13 +8,11 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::Context;
 use harmony_core::FunctionSpec;
 use harmony_luau as luau;
 
 use crate::plugins::args;
 use crate::plugins::db;
-use crate::services::plugin_dispatch::MetadataRefreshRequest;
 use crate::services::plugin_scope::PluginId;
 use crate::services::{
     EntityType,
@@ -433,38 +431,9 @@ fn lyrics_callback(
             handler,
             context,
         );
-        let provider_id = provider.provider_id.clone();
-        let provider_id_for_handler = provider_id.clone();
-        let handler_fn: lyrics_dispatcher::HandlerFn = Arc::new(move |context| {
-            let provider_id = provider_id_for_handler.clone();
-            Box::pin(async move {
-                let runtime = crate::services::STATE
-                    .generation()
-                    .plugin_dispatch
-                    .get()
-                    .context("plugin runtime is not initialized")?;
-                let context = lyrics_dispatcher::track_context_to_json(&context);
-                let result = runtime
-                    .dispatch_metadata_refresh(MetadataRefreshRequest {
-                        handler_id,
-                        context,
-                        deadline: std::time::Instant::now() + timeout,
-                    })
-                    .await
-                    .with_context(|| {
-                        format!("provider lyrics handler failed for '{provider_id}'")
-                    })?;
-                let value =
-                    result.values.into_iter().next().ok_or_else(|| {
-                        anyhow::anyhow!("provider lyrics handler returned no value")
-                    })?;
-                lyrics_dispatcher::parse_handler_result(value)
-            })
-        });
-
         lyrics_dispatcher::register_handler(
-            &provider_id,
-            ProviderLyricsSpec::new(timeout, require, handler_fn),
+            &provider.provider_id,
+            ProviderLyricsSpec::new(timeout, require, ProviderCallbackHandle { handler_id }),
         )
         .await;
         Ok(())

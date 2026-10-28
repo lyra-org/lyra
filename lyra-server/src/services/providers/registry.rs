@@ -36,10 +36,6 @@ use crate::services::metadata::layers::{
     LOCAL_SOURCE_ID,
     MANUAL_SOURCE_ID,
 };
-use crate::services::metadata::lyrics::providers::{
-    HandlerFn as LyricsHandlerFn,
-    InFlightKey as LyricsInFlightKey,
-};
 use crate::services::plugin_scope::{
     PluginId,
     PluginScopedInner,
@@ -49,6 +45,8 @@ use crate::services::plugin_scope::{
 pub(crate) const DEFAULT_SIMILAR_RELEASES_HANDLER_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const MAX_SIMILAR_RELEASES_HANDLER_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// A lyrics dispatch in flight: the track's db id and the provider id.
+pub(crate) type LyricsInFlightKey = (i64, Arc<str>);
 pub(crate) type LyricsInFlight = Arc<std::sync::Mutex<HashSet<LyricsInFlightKey>>>;
 
 /// Generation-owned provider state: the registry itself plus the in-flight
@@ -226,7 +224,7 @@ pub(crate) struct ProviderSimilarReleasesSpec {
 pub(crate) struct ProviderLyricsSpec {
     pub(crate) timeout: Duration,
     pub(crate) require: ProviderRequireSpec,
-    pub(crate) handler: LyricsHandlerFn,
+    pub(crate) handler: ProviderCallbackHandle,
     pub(crate) cancel: CancellationToken,
 }
 
@@ -234,7 +232,7 @@ impl ProviderLyricsSpec {
     pub(crate) fn new(
         timeout: Duration,
         require: ProviderRequireSpec,
-        handler: LyricsHandlerFn,
+        handler: ProviderCallbackHandle,
     ) -> Self {
         Self {
             timeout,

@@ -8,14 +8,13 @@
 
 use std::{
     collections::HashMap,
-    future::Future,
-    pin::Pin,
     sync::Arc,
     time::Duration,
 };
 
 use agdb::DbId;
 use anyhow::{
+    Context,
     Result,
     bail,
 };
@@ -37,9 +36,11 @@ use crate::{
         selection,
         upload,
     },
+    services::plugin_dispatch::MetadataRefreshRequest,
     services::providers::{
         IdentifiersByScheme,
         LyricsInFlight,
+        LyricsInFlightKey,
         ProviderCallStage,
         ProviderLyricsSpec,
         ProviderRequireSpec,
@@ -56,19 +57,19 @@ pub(crate) const DEFAULT_HANDLER_TIMEOUT: Duration = Duration::from_secs(15);
 pub(crate) const MAX_CONCURRENT_DISPATCHES: usize = 4;
 
 #[derive(Clone, Debug)]
-pub(crate) struct LyricsTrackContext {
-    pub(crate) track_db_id: i64,
-    pub(crate) track_name: String,
-    pub(crate) artist_name: String,
-    pub(crate) album_name: Option<String>,
-    pub(crate) duration_ms: Option<u64>,
-    pub(crate) external_ids: HashMap<String, HashMap<String, String>>,
-    pub(crate) identifiers: IdentifiersByScheme,
+struct LyricsTrackContext {
+    track_db_id: i64,
+    track_name: String,
+    artist_name: String,
+    album_name: Option<String>,
+    duration_ms: Option<u64>,
+    external_ids: HashMap<String, HashMap<String, String>>,
+    identifiers: IdentifiersByScheme,
     /// Skip Miss/Instrumental fast path; cooldown still applies.
-    pub(crate) force_refresh: bool,
+    force_refresh: bool,
 }
 
-pub(crate) fn track_context_to_json(context: &LyricsTrackContext) -> serde_json::Value {
+fn track_context_to_json(context: &LyricsTrackContext) -> serde_json::Value {
     serde_json::json!({
         "track_db_id": context.track_db_id,
         "track_name": context.track_name,
@@ -83,7 +84,7 @@ pub(crate) fn track_context_to_json(context: &LyricsTrackContext) -> serde_json:
 
 /// Closed kind set. Anything else surfaces as a Lua error.
 #[derive(Clone, Debug)]
-pub(crate) enum LyricsHandlerResult {
+enum LyricsHandlerResult {
     /// Up to 5 candidates; the dispatcher caps on read.
     Hit {
         candidates: Vec<LyricsHandlerCandidate>,
@@ -95,7 +96,7 @@ pub(crate) enum LyricsHandlerResult {
     },
 }
 
-pub(crate) fn parse_handler_result(value: serde_json::Value) -> Result<LyricsHandlerResult> {
+fn parse_handler_result(value: serde_json::Value) -> Result<LyricsHandlerResult> {
     let serde_json::Value::Object(mut object) = value else {
         bail!("provider:lyrics handler must return a table/object");
     };
@@ -144,15 +145,9 @@ pub(crate) fn parse_handler_result(value: serde_json::Value) -> Result<LyricsHan
     }
 }
 
-pub(crate) type HandlerFuture = Pin<Box<dyn Future<Output = Result<LyricsHandlerResult>> + Send>>;
-pub(crate) type HandlerFn =
-    Arc<dyn Fn(LyricsTrackContext) -> HandlerFuture + Send + Sync + 'static>;
-
-pub(crate) type InFlightKey = (i64, Arc<str>);
-
 struct InFlightGuard {
     in_flight: LyricsInFlight,
-    key: InFlightKey,
+    key: LyricsInFlightKey,
 }
 
 impl InFlightGuard {
@@ -189,8 +184,8 @@ pub(crate) async fn register_handler(provider_id: &str, spec: ProviderLyricsSpec
     };
 
     tokio::spawn(async move {
-        // Rescan dispatch closures resolve STATE.generation().plugin_dispatch at call time;
-        // plugin init can register handlers before the runtime is published.
+        // Dispatch resolves STATE.generation().plugin_dispatch at call time; plugin init can
+        // register handlers before the runtime is published.
         if !wait_for_plugin_dispatch(&cancel).await {
             return;
         }
@@ -321,8 +316,7 @@ async fn dispatch_one(
     } else {
         handler.timeout
     };
-    let context_owned = context.clone();
-    let handler_fn = handler.handler.clone();
+    let handler_id = handler.handler.handler_id;
     let call_result: Result<Option<LyricsHandlerResult>> =
         with_provider_call(provider_id, ProviderCallStage::Lyrics, || async {
             {
@@ -333,12 +327,27 @@ async fn dispatch_one(
                     return Ok(None);
                 }
             }
-            tokio::time::timeout(timeout, handler_fn(context_owned))
+            let runtime = STATE
+                .generation()
+                .plugin_dispatch
+                .get()
+                .context("plugin runtime is not initialized")?;
+            let request = MetadataRefreshRequest {
+                handler_id,
+                context: track_context_to_json(context),
+                deadline: std::time::Instant::now() + timeout,
+            };
+            let result = tokio::time::timeout(timeout, runtime.dispatch_metadata_refresh(request))
                 .await
                 .map_err(|_| {
                     anyhow::anyhow!("lyrics handler timed out after {} ms", timeout.as_millis())
-                })?
-                .map(Some)
+                })??;
+            let value = result
+                .values
+                .into_iter()
+                .next()
+                .context("lyrics handler returned no value")?;
+            parse_handler_result(value).map(Some)
         })
         .await;
 
@@ -616,12 +625,16 @@ mod tests {
         PluginLyricsInput,
     };
     use crate::services::plugin_scope::PluginId;
-    use crate::services::providers::teardown_plugin_providers;
-
-    use std::sync::atomic::{
-        AtomicUsize,
-        Ordering,
+    use crate::services::providers::{
+        ProviderCallbackHandle,
+        teardown_plugin_providers,
     };
+    use crate::services::testing::{
+        FakePluginDispatch,
+        FakeResponse,
+    };
+
+    use tokio::sync::Semaphore;
 
     #[test]
     fn require_paths_check_identifiers() {
@@ -661,14 +674,21 @@ mod tests {
         PluginId::new("test_plugin").expect("valid plugin id")
     }
 
-    fn match_candidate() -> LyricsHandlerCandidate {
-        LyricsHandlerCandidate {
-            lyrics: lyrics_payload("la la la"),
-            title: "A Long Song Title Here".to_string(),
-            artist: "An Artist Group Name".to_string(),
-            duration_ms: Some(180_000),
-            language: Some("eng".to_string()),
-        }
+    fn miss() -> FakeResponse {
+        FakeResponse::Value(serde_json::json!({ "kind": "miss" }))
+    }
+
+    fn match_hit() -> FakeResponse {
+        FakeResponse::Value(serde_json::json!({
+            "kind": "hit",
+            "candidates": [{
+                "lyrics": lyrics_payload("la la la"),
+                "title": "A Long Song Title Here",
+                "artist": "An Artist Group Name",
+                "duration_ms": 180_000,
+                "language": "eng",
+            }],
+        }))
     }
 
     async fn install_track_in_state_db(title: &str, artist: &str, duration_ms: u64) -> DbId {
@@ -685,23 +705,17 @@ mod tests {
         track_id
     }
 
-    async fn initialize_test_runtime() -> anyhow::Result<()> {
+    async fn initialize_test_runtime() -> anyhow::Result<Arc<FakePluginDispatch>> {
         crate::services::testing::init_library_test_state(std::path::PathBuf::from(".")).await?;
-        Ok(())
+        Ok(FakePluginDispatch::install())
     }
 
-    fn make_handler(handler_fn: HandlerFn) -> ProviderLyricsSpec {
+    fn handler(handler_id: u64) -> ProviderLyricsSpec {
         ProviderLyricsSpec::new(
             Duration::from_secs(5),
             ProviderRequireSpec::default(),
-            handler_fn,
+            ProviderCallbackHandle { handler_id },
         )
-    }
-
-    fn miss_handler() -> ProviderLyricsSpec {
-        make_handler(Arc::new(|_| {
-            Box::pin(async { Ok(LyricsHandlerResult::Miss) })
-        }))
     }
 
     async fn install_handler_for_test(
@@ -730,54 +744,44 @@ mod tests {
             .expect("lyrics handler stored")
     }
 
+    async fn wait_for_calls(dispatch: &FakePluginDispatch, handler_id: u64, calls: usize) {
+        for _ in 0..200 {
+            if dispatch.calls(handler_id).len() >= calls {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("handler {handler_id} was not called {calls} times");
+    }
+
     #[tokio::test]
     async fn disabled_providers_are_not_dispatched() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
-        initialize_test_runtime().await?;
+        let dispatch = initialize_test_runtime().await?;
         let track_id = install_track_in_state_db("Disabled Track", "Artist", 180_000).await;
-        let calls = Arc::new(AtomicUsize::new(0));
-        let observed = calls.clone();
-        install_handler_for_test(
-            "disabled",
-            make_handler(Arc::new(move |_| {
-                observed.fetch_add(1, Ordering::SeqCst);
-                Box::pin(async { bail!("upstream 503") })
-            })),
-        )
-        .await;
+        let handler_id = dispatch.add(FakeResponse::Error("upstream 503".to_string()));
+        install_handler_for_test("disabled", handler(handler_id)).await;
         lyra_db::providers::set_enabled(&mut *STATE.db.write().await, "disabled", false)?;
 
         dispatch_for_track(track_id, true).await?;
-        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(dispatch.calls(handler_id).is_empty());
         Ok(())
     }
 
     #[tokio::test]
     async fn failures_are_reported_without_skipping_other_providers() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
-        initialize_test_runtime().await?;
+        let dispatch = initialize_test_runtime().await?;
         let track_id = install_track_in_state_db("Failure Track", "Artist", 180_000).await;
-        let calls = Arc::new(AtomicUsize::new(0));
-        let observed = calls.clone();
-        for (provider, callback) in [
-            (
-                "a_error",
-                Arc::new(|_| Box::pin(async { bail!("upstream 503") }) as HandlerFuture)
-                    as HandlerFn,
-            ),
-            (
-                "b_timeout",
-                Arc::new(|_| Box::pin(std::future::pending()) as HandlerFuture) as HandlerFn,
-            ),
-            (
-                "c_success",
-                Arc::new(move |_| {
-                    observed.fetch_add(1, Ordering::SeqCst);
-                    Box::pin(async { Ok(LyricsHandlerResult::Miss) }) as HandlerFuture
-                }) as HandlerFn,
-            ),
+        let mut success_id = 0;
+        for (provider, response) in [
+            ("a_error", FakeResponse::Error("upstream 503".to_string())),
+            ("b_timeout", FakeResponse::Stall),
+            ("c_success", miss()),
         ] {
-            let mut handler = make_handler(callback);
+            let handler_id = dispatch.add(response);
+            success_id = handler_id;
+            let mut handler = handler(handler_id);
             handler.timeout = Duration::from_millis(5);
             install_handler_for_test(provider, handler).await;
         }
@@ -791,25 +795,17 @@ mod tests {
             error.contains("b_timeout: lyrics handler timed out"),
             "{error}"
         );
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(dispatch.calls(success_id).len(), 1);
         Ok(())
     }
 
     #[tokio::test]
     async fn snapshot_dispatch_skips_deleted_and_reused_track_ids() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
-        initialize_test_runtime().await?;
+        let dispatch = initialize_test_runtime().await?;
         let track_id = install_track_in_state_db("Original", "Artist", 180_000).await;
-        let calls = Arc::new(AtomicUsize::new(0));
-        let observed = calls.clone();
-        install_handler_for_test(
-            "snapshot",
-            make_handler(Arc::new(move |_| {
-                observed.fetch_add(1, Ordering::SeqCst);
-                Box::pin(async { Ok(LyricsHandlerResult::Miss) })
-            })),
-        )
-        .await;
+        let handler_id = dispatch.add(miss());
+        install_handler_for_test("snapshot", handler(handler_id)).await;
         let mut original = {
             let mut db = STATE.db.write().await;
             let track = lyra_db::tracks::get_by_id(&*db, track_id)?.unwrap();
@@ -829,44 +825,31 @@ mod tests {
             assert_eq!(replacement_id, track_id);
         }
         dispatch_for_track_identity(track_id, Some(&original_public_id), false).await?;
-        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(dispatch.calls(handler_id).is_empty());
         dispatch_for_track(track_id, false).await?;
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(dispatch.calls(handler_id).len(), 1);
         Ok(())
     }
 
     #[tokio::test]
     async fn hit_path_writes_lyrics_row_with_no_lock_held_during_handler() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
-        initialize_test_runtime().await?;
+        let dispatch = initialize_test_runtime().await?;
         let track_id =
             install_track_in_state_db("A Long Song Title Here", "An Artist Group Name", 180_000)
                 .await;
+        let release = Arc::new(Semaphore::new(0));
+        let handler_id = dispatch.add(FakeResponse::Held(release.clone(), Box::new(match_hit())));
+        install_handler_for_test("test_hit", handler(handler_id)).await;
 
-        let observed = Arc::new(AtomicUsize::new(0));
-        let observed_clone = observed.clone();
-        let handler: HandlerFn = Arc::new(move |_ctx| {
-            let observed = observed_clone.clone();
-            Box::pin(async move {
-                // try_write succeeds only when nobody holds the write lock.
-                let attempted = STATE.db.get();
-                if attempted.try_write().is_ok() {
-                    observed.fetch_add(1, Ordering::SeqCst);
-                }
-                Ok(LyricsHandlerResult::Hit {
-                    candidates: vec![match_candidate()],
-                })
-            })
-        });
-        install_handler_for_test("test_hit", make_handler(handler)).await;
-
-        dispatch_for_track(track_id, false).await?;
-
-        assert_eq!(
-            observed.load(Ordering::SeqCst),
-            1,
-            "handler must run with no write lock held"
+        let running = tokio::spawn(async move { dispatch_for_track(track_id, false).await });
+        wait_for_calls(&dispatch, handler_id, 1).await;
+        assert!(
+            STATE.db.get().try_write().is_ok(),
+            "handler must run with no database lock held"
         );
+        release.add_permits(1);
+        running.await??;
 
         let db = STATE.db.read().await;
         let lyrics = lyra_db::lyrics::get_visible_for_track(&*db, track_id, None)?;
@@ -882,41 +865,35 @@ mod tests {
     #[tokio::test]
     async fn hit_is_dropped_when_track_db_id_is_reused_during_handler() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
-        initialize_test_runtime().await?;
+        let dispatch = initialize_test_runtime().await?;
         let track_id =
             install_track_in_state_db("A Long Song Title Here", "An Artist Group Name", 180_000)
                 .await;
+        let release = Arc::new(Semaphore::new(0));
+        let handler_id = dispatch.add(FakeResponse::Held(release.clone(), Box::new(match_hit())));
+        install_handler_for_test("test_recycled_track", handler(handler_id)).await;
 
-        let replacement = {
-            let db = STATE.db.read().await;
-            let mut track = lyra_db::tracks::get_by_id(&*db, track_id)?
+        let running = tokio::spawn(async move { dispatch_for_track(track_id, false).await });
+        wait_for_calls(&dispatch, handler_id, 1).await;
+        let replacement_public_id = {
+            let mut db = STATE.db.write().await;
+            let mut replacement = lyra_db::tracks::get_by_id(&*db, track_id)?
                 .ok_or_else(|| anyhow::anyhow!("original track missing"))?;
-            track.db_id = None;
-            track.id = "replacement-track-public-id".to_string();
-            track.track_title = "Replacement Track".to_string();
-            track
+            replacement.db_id = None;
+            replacement.id = "replacement-track-public-id".to_string();
+            replacement.track_title = "Replacement Track".to_string();
+            db.exec_mut(agdb::QueryBuilder::remove().ids(track_id).query())?;
+            let replacement_id = db
+                .exec_mut(agdb::QueryBuilder::insert().element(&replacement).query())?
+                .ids()[0];
+            assert_eq!(
+                replacement_id, track_id,
+                "test requires agdb to reuse the deleted track's numeric ID"
+            );
+            replacement.id
         };
-        let replacement_public_id = replacement.id.clone();
-        let handler: HandlerFn = Arc::new(move |_ctx| {
-            let replacement = replacement.clone();
-            Box::pin(async move {
-                let mut db = STATE.db.write().await;
-                db.exec_mut(agdb::QueryBuilder::remove().ids(track_id).query())?;
-                let replacement_id = db
-                    .exec_mut(agdb::QueryBuilder::insert().element(&replacement).query())?
-                    .ids()[0];
-                assert_eq!(
-                    replacement_id, track_id,
-                    "test requires agdb to reuse the deleted track's numeric ID"
-                );
-                Ok(LyricsHandlerResult::Hit {
-                    candidates: vec![match_candidate()],
-                })
-            })
-        });
-        install_handler_for_test("test_recycled_track", make_handler(handler)).await;
-
-        dispatch_for_track(track_id, false).await?;
+        release.add_permits(1);
+        running.await??;
 
         let db = STATE.db.read().await;
         let current = lyra_db::tracks::get_by_id(&*db, track_id)?
@@ -932,27 +909,18 @@ mod tests {
     #[tokio::test]
     async fn force_refresh_threads_through_to_handler() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
-        initialize_test_runtime().await?;
+        let dispatch = initialize_test_runtime().await?;
         let track_id =
             install_track_in_state_db("Title For Force", "Artist For Force", 200_000).await;
-
-        let saw_force = Arc::new(AtomicUsize::new(0));
-        let saw_force_clone = saw_force.clone();
-        let handler: HandlerFn = Arc::new(move |ctx| {
-            let saw_force = saw_force_clone.clone();
-            Box::pin(async move {
-                if ctx.force_refresh {
-                    saw_force.fetch_add(1, Ordering::SeqCst);
-                }
-                Ok(LyricsHandlerResult::Miss)
-            })
-        });
-        install_handler_for_test("test_force", make_handler(handler)).await;
+        let handler_id = dispatch.add(miss());
+        install_handler_for_test("test_force", handler(handler_id)).await;
 
         dispatch_for_track(track_id, true).await?;
+        let calls = dispatch.calls(handler_id);
+        assert_eq!(calls.len(), 1);
         assert_eq!(
-            saw_force.load(Ordering::SeqCst),
-            1,
+            calls[0]["force_refresh"],
+            serde_json::Value::Bool(true),
             "handler must observe force_refresh = true"
         );
         Ok(())
@@ -961,41 +929,23 @@ mod tests {
     #[tokio::test]
     async fn in_flight_dedupe_skips_concurrent_call_for_same_key() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
-        initialize_test_runtime().await?;
+        let dispatch = initialize_test_runtime().await?;
         let track_id =
             install_track_in_state_db("Title For Dedupe", "Artist For Dedupe", 200_000).await;
-
-        let calls = Arc::new(AtomicUsize::new(0));
-        let calls_clone = calls.clone();
-        let release = Arc::new(tokio::sync::Notify::new());
-        let release_for_handler = release.clone();
-        let handler: HandlerFn = Arc::new(move |_ctx| {
-            let calls = calls_clone.clone();
-            let release = release_for_handler.clone();
-            Box::pin(async move {
-                calls.fetch_add(1, Ordering::SeqCst);
-                release.notified().await;
-                Ok(LyricsHandlerResult::Miss)
-            })
-        });
-        install_handler_for_test("test_dedupe", make_handler(handler)).await;
+        let release = Arc::new(Semaphore::new(0));
+        let handler_id = dispatch.add(FakeResponse::Held(release.clone(), Box::new(miss())));
+        install_handler_for_test("test_dedupe", handler(handler_id)).await;
 
         let first = tokio::spawn(async move { dispatch_for_track(track_id, false).await });
-        // Wait until the first call has claimed the in-flight slot.
-        for _ in 0..50 {
-            if calls.load(Ordering::SeqCst) == 1 {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
+        wait_for_calls(&dispatch, handler_id, 1).await;
         dispatch_for_track(track_id, false).await?;
         assert_eq!(
-            calls.load(Ordering::SeqCst),
+            dispatch.calls(handler_id).len(),
             1,
             "second concurrent dispatch must dedupe (handler called exactly once)"
         );
 
-        release.notify_waiters();
+        release.add_permits(1);
         first.await.expect("join first")?;
         Ok(())
     }
@@ -1003,48 +953,30 @@ mod tests {
     #[tokio::test]
     async fn cancellation_aborts_parked_dispatches() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
-        initialize_test_runtime().await?;
+        let dispatch = initialize_test_runtime().await?;
 
-        let mut track_ids = Vec::with_capacity(100);
         for i in 0..100 {
-            let track_id = install_track_in_state_db(
+            install_track_in_state_db(
                 &format!("Cancel Title {i}"),
                 &format!("Cancel Artist {i}"),
                 180_000,
             )
             .await;
-            track_ids.push(track_id);
         }
 
-        let started = Arc::new(AtomicUsize::new(0));
-        let started_clone = started.clone();
-        let plugin = test_plugin_id();
-        let handler: HandlerFn = Arc::new(move |_ctx| {
-            let started = started_clone.clone();
-            Box::pin(async move {
-                started.fetch_add(1, Ordering::SeqCst);
-                // Park until the dispatch's cancel race drops this future —
-                // keeps the handler from burning through before the test can
-                // observe how many actually started.
-                tokio::time::sleep(Duration::from_secs(60)).await;
-                Ok(LyricsHandlerResult::Miss)
-            })
-        });
-        let cancel = install_handler_for_test("test_cancel", make_handler(handler)).await;
+        let handler_id = dispatch.add(FakeResponse::Stall);
+        let mut spec = handler(handler_id);
+        spec.timeout = Duration::from_secs(60);
+        let cancel = install_handler_for_test("test_cancel", spec).await;
 
         let handle = tokio::spawn(async move { rescan(false, cancel).await });
-        // Wait for the bound's worth of handlers to start.
-        for _ in 0..200 {
-            if started.load(Ordering::SeqCst) >= MAX_CONCURRENT_DISPATCHES {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-        let started_at_cancel = started.load(Ordering::SeqCst);
-        teardown_plugin_providers(&plugin).await;
+        // Calls to one provider are serialized, so one handler call parks the rest.
+        wait_for_calls(&dispatch, handler_id, 1).await;
+        let started_at_cancel = dispatch.calls(handler_id).len();
+        teardown_plugin_providers(&test_plugin_id()).await;
 
         handle.await.expect("rescan join")?;
-        let final_started = started.load(Ordering::SeqCst);
+        let final_started = dispatch.calls(handler_id).len();
         assert!(
             final_started <= started_at_cancel + MAX_CONCURRENT_DISPATCHES,
             "after unregister at most N more handler calls may execute (started_at_cancel={started_at_cancel}, final={final_started}, N={MAX_CONCURRENT_DISPATCHES})"
@@ -1055,12 +987,13 @@ mod tests {
     #[tokio::test]
     async fn teardown_removes_and_cancels_only_the_plugin_handlers() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
-        initialize_test_runtime().await?;
-        let torn_down_cancel = install_handler_for_test("test_torn_down", miss_handler()).await;
+        let dispatch = initialize_test_runtime().await?;
+        let torn_down_cancel =
+            install_handler_for_test("test_torn_down", handler(dispatch.add(miss()))).await;
         let kept_cancel = install_plugin_handler_for_test(
             PluginId::new("other_plugin")?,
             "test_kept",
-            miss_handler(),
+            handler(dispatch.add(miss())),
         )
         .await;
 
@@ -1077,8 +1010,8 @@ mod tests {
     #[tokio::test]
     async fn reset_leaves_no_handlers_or_in_flight_dispatches() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
-        initialize_test_runtime().await?;
-        let cancel = install_handler_for_test("test_reset", miss_handler()).await;
+        let dispatch = initialize_test_runtime().await?;
+        let cancel = install_handler_for_test("test_reset", handler(dispatch.add(miss()))).await;
         let provider_id: Arc<str> = Arc::from("test_reset");
         let stale = InFlightGuard::try_acquire(DbId(1), &provider_id).expect("in-flight slot");
 

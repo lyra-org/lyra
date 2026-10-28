@@ -130,6 +130,7 @@ pub(crate) use registry::tests as registry_tests;
 pub(crate) use registry::{
     DEFAULT_SIMILAR_RELEASES_HANDLER_TIMEOUT,
     LyricsInFlight,
+    LyricsInFlightKey,
     MAX_SIMILAR_RELEASES_HANDLER_TIMEOUT,
     ProviderCallStage,
     ProviderCallbackHandle,
