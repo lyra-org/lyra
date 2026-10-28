@@ -63,6 +63,16 @@ use crate::{
     },
 };
 
+/// A request's optional provider filter, rejected unless it is a valid provider id.
+pub(super) fn parse_provider_filter(provider: Option<&str>) -> Result<Option<&str>, AppError> {
+    let Some(provider_id) = provider else {
+        return Ok(None);
+    };
+    lyra_db::providers::validate_provider_id(provider_id)
+        .map_err(|error| AppError::bad_request(error.to_string()))?;
+    Ok(Some(provider_id))
+}
+
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
 #[non_exhaustive]
@@ -848,6 +858,24 @@ mod tests {
         insert_artist,
         insert_release,
     };
+
+    #[test]
+    fn parse_provider_filter_accepts_only_valid_provider_ids() {
+        assert_eq!(parse_provider_filter(None).ok(), Some(None));
+        assert_eq!(
+            parse_provider_filter(Some("musicbrainz")).ok(),
+            Some(Some("musicbrainz"))
+        );
+        for provider in ["", " musicbrainz", "music brainz"] {
+            let error = parse_provider_filter(Some(provider))
+                .err()
+                .unwrap_or_else(|| panic!("provider {provider:?} must be rejected"));
+            assert_eq!(
+                axum::response::IntoResponse::into_response(error).status(),
+                axum::http::StatusCode::BAD_REQUEST
+            );
+        }
+    }
     use lyra_db::test_db::{
         insert_library,
         new_test_db,

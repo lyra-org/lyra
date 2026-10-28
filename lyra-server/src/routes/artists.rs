@@ -493,6 +493,7 @@ async fn search_artist_covers(
     Json(query): Json<route_covers::CoverSearchQuery>,
 ) -> Result<Json<ArtistCoverSearchResponse>, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
+    let provider_filter = query.provider_filter()?;
 
     {
         let db = STATE.db.read().await;
@@ -506,7 +507,6 @@ async fn search_artist_covers(
         }
     }
 
-    let provider_filter = query.provider.as_deref();
     let found =
         covers::search_artist_cover_candidates(&id, provider_filter, query.force_refresh).await?;
     let results = route_covers::map_provider_cover_search_results(found);
@@ -534,7 +534,7 @@ fn get_artist_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn search_artist_covers_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Search artist cover candidates").description(
-        "Returns provider cover candidates for an artist. Request body (JSON): `{ provider?, force_refresh? }`; \
+        "Returns provider cover candidates for an artist. Request body (JSON): `{ provider?, force_refresh? }`; an invalid `provider` id is rejected with 400; \
         `force_refresh=true` bypasses cached provider cover resolution. Providers may return \
         width, height, and selected_index for automatic selection.",
     )

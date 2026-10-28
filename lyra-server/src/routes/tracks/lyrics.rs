@@ -123,10 +123,8 @@ async fn get_track_lyrics(
     let track = lyra_db::tracks::get_by_id(db, track_db_id)?.ok_or_else(not_found)?;
 
     let format = parse_lyrics_format(query.format.as_deref())?;
-    if let Some(provider_id) = query.provider.as_deref() {
-        lyra_db::providers::validate_provider_id(provider_id)
-            .map_err(|error| AppError::bad_request(error.to_string()))?;
-    }
+    let provider_filter =
+        crate::routes::providers::parse_provider_filter(query.provider.as_deref())?;
     let require_synced = format == "lrc";
     let candidates = lyrics_service::visible_for_track(db, track_db_id, Some(&principal))?;
     let providers = crate::services::providers::active_providers(db)?;
@@ -136,7 +134,7 @@ async fn get_track_lyrics(
     let winner = lyrics_service::pick_preferred(
         &candidates,
         &providers,
-        query.provider.as_deref(),
+        provider_filter,
         language_hint.as_deref(),
         track.duration_ms,
         require_synced,
@@ -146,7 +144,7 @@ async fn get_track_lyrics(
             && lyrics_service::pick_preferred(
                 &candidates,
                 &providers,
-                query.provider.as_deref(),
+                provider_filter,
                 language_hint.as_deref(),
                 track.duration_ms,
                 false,

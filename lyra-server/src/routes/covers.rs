@@ -91,7 +91,9 @@ pub(crate) struct CoverQuery {
 pub(crate) struct CoverSearchQuery {
     #[cfg_attr(
         feature = "docgen",
-        schemars(description = "Optional provider ID to limit cover search results.")
+        schemars(
+            description = "Optional provider ID to limit cover search results. Must be a valid provider ID: non-empty ASCII with no whitespace."
+        )
     )]
     pub(crate) provider: Option<String>,
     #[serde(default)]
@@ -100,6 +102,12 @@ pub(crate) struct CoverSearchQuery {
         schemars(description = "Bypass cached provider cover resolution and refresh it.")
     )]
     pub(crate) force_refresh: bool,
+}
+
+impl CoverSearchQuery {
+    pub(crate) fn provider_filter(&self) -> Result<Option<&str>, AppError> {
+        super::providers::parse_provider_filter(self.provider.as_deref())
+    }
 }
 
 pub(crate) fn parse_cover_transform_options(

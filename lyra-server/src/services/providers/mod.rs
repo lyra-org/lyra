@@ -22,9 +22,6 @@ impl ActiveProviders {
     /// The active providers narrowed to `provider_filter` when set. The result
     /// is a plain list so a subset never ranks or merges as the active set.
     pub(crate) fn only(self, provider_filter: Option<&str>) -> Vec<lyra_db::ProviderConfig> {
-        let provider_filter = provider_filter
-            .map(str::trim)
-            .filter(|value| !value.is_empty());
         self.0
             .into_iter()
             .filter(|provider| provider_filter.is_none_or(|id| provider.provider_id == id))
@@ -250,7 +247,8 @@ mod tests {
                 .collect())
         };
         assert_eq!(ids(None)?, ["second", "first"]);
-        assert_eq!(ids(Some(" first "))?, ["first"]);
+        assert_eq!(ids(Some("first"))?, ["first"]);
+        assert!(ids(Some(" first "))?.is_empty());
         assert!(ids(Some("off"))?.is_empty());
         Ok(())
     }
