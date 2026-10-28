@@ -1,0 +1,18 @@
+run_as = "admin"
+
+[[users]]
+key = "admin"
+admin = true
+
+[[api_keys]]
+key = "phone"
+user = "admin"
+
+[[releases]]
+key = "album"
+title = "Album"
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
