@@ -69,6 +69,11 @@ user = "owner"
 client_name = "Lyra Web"  # optional
 seen = 300                # optional last_seen_at, in unix seconds
 
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["manager"]  # users granted the library; admins see every library
+
 [[artists]]
 key = "amy"
 name = "Amy"
@@ -82,6 +87,7 @@ name = "Rock"
 [[releases]]
 key = "solo"
 title = "Solo"
+library = "music"    # optional; the release and its tracks belong to the library
 added = 400          # ctime
 artists = ["amy"]
 genres = ["rock"]
@@ -120,6 +126,7 @@ target = "mix"       # any artist, release, track or playlist key
 ```luau
 local fixture = ...
 fixture.users.owner     -- the user's public id
+fixture.libraries.music -- the library's public id
 fixture.api_keys.phone  -- an API key's secret
 fixture.sessions.laptop -- a session's token
 fixture.ids.s1          -- an entity's database id, by fixture key

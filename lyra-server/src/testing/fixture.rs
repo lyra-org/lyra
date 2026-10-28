@@ -50,6 +50,8 @@ pub struct Fixture {
     #[serde(default)]
     genres: Vec<Genre>,
     #[serde(default)]
+    libraries: Vec<Library>,
+    #[serde(default)]
     releases: Vec<Release>,
     #[serde(default)]
     tracks: Vec<Track>,
@@ -110,11 +112,24 @@ struct Genre {
     name: String,
 }
 
+/// A library without folders, holding the releases that name it.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Library {
+    key: String,
+    name: String,
+    /// The users granted the library. Admins see every library without a grant.
+    #[serde(default)]
+    users: Vec<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Release {
     key: String,
     title: String,
+    /// The library the release, and so its tracks, belongs to.
+    library: Option<String>,
     added: Option<u64>,
     #[serde(default)]
     artists: Vec<String>,
@@ -184,11 +199,12 @@ struct Favorite {
     target: String,
 }
 
-/// What the test receives as its chunk's `...`: user ids, API key secrets, session tokens and
-/// entity ids by fixture key, and each playlist's entry ids in order.
+/// What the test receives as its chunk's `...`: user and library ids, API key secrets, session
+/// tokens and entity ids by fixture key, and each playlist's entry ids in order.
 #[derive(Debug, Default, Serialize)]
 pub(crate) struct Seeded {
     users: BTreeMap<String, String>,
+    libraries: BTreeMap<String, String>,
     api_keys: BTreeMap<String, String>,
     sessions: BTreeMap<String, String>,
     ids: BTreeMap<String, i64>,
@@ -199,6 +215,7 @@ struct Keys {
     users: BTreeMap<String, (DbId, String)>,
     api_keys: BTreeSet<String>,
     sessions: BTreeSet<String>,
+    libraries: BTreeMap<String, DbId>,
     entities: BTreeMap<String, (DbId, lyra_db::favorites::FavoriteKind)>,
     genres: BTreeMap<String, String>,
 }
@@ -209,6 +226,13 @@ impl Keys {
             .get(key)
             .map(|(db_id, _)| *db_id)
             .with_context(|| format!("fixture has no user `{key}`"))
+    }
+
+    fn library(&self, key: &str) -> anyhow::Result<DbId> {
+        self.libraries
+            .get(key)
+            .copied()
+            .with_context(|| format!("fixture has no library `{key}`"))
     }
 
     fn entity(&self, key: &str) -> anyhow::Result<(DbId, lyra_db::favorites::FavoriteKind)> {
@@ -223,6 +247,7 @@ impl Keys {
             !self.users.contains_key(key)
                 && !self.api_keys.contains(key)
                 && !self.sessions.contains(key)
+                && !self.libraries.contains_key(key)
                 && !self.entities.contains_key(key)
                 && !self.genres.contains_key(key),
             "fixture key `{key}` is used twice"
@@ -244,6 +269,7 @@ impl Fixture {
             users: BTreeMap::new(),
             api_keys: BTreeSet::new(),
             sessions: BTreeSet::new(),
+            libraries: BTreeMap::new(),
             entities: BTreeMap::new(),
             genres: BTreeMap::new(),
         };
@@ -324,6 +350,33 @@ impl Fixture {
             keys.genres.insert(genre.key.clone(), genre.name.clone());
         }
 
+        for library in &self.libraries {
+            keys.claim(&library.key)?;
+            let path = PathBuf::from("/libraries").join(&library.key);
+            let created = lyra_db::libraries::create_system(
+                db,
+                lyra_db::libraries::LibraryInsert {
+                    id: nanoid::nanoid!(),
+                    name: library.name.clone(),
+                    path_key: lyra_db::libraries::path_key_for(&path),
+                    path,
+                    language: None,
+                    country: None,
+                },
+            )?;
+            let library_db_id = created.db_id.context("library has a db_id")?;
+            for user in &library.users {
+                lyra_db::libraries::grant_access(
+                    db,
+                    keys.user(user)?,
+                    library_db_id,
+                    lyra_db::libraries::AccessKind::ReadWrite,
+                )?;
+            }
+            seeded.libraries.insert(library.key.clone(), created.id);
+            keys.libraries.insert(library.key.clone(), library_db_id);
+        }
+
         for artist in &self.artists {
             keys.claim(&artist.key)?;
             let artist_db_id = fixtures::insert_artist(db, &artist.name)?;
@@ -367,6 +420,9 @@ impl Fixture {
                     lyra_db::releases::get_by_id(db, release_db_id)?.context("release exists")?;
                 stored.ctime = release.added;
                 db.transaction_mut(|t| lyra_db::releases::update_in_transaction(t, &stored))?;
+            }
+            if let Some(library) = &release.library {
+                lyra_db::graph::ensure_owned_edge(db, keys.library(library)?, release_db_id)?;
             }
             let genre_names = release
                 .genres
@@ -425,7 +481,7 @@ impl Fixture {
             }
             if let Some(release) = &track.release {
                 let (release_db_id, _) = keys.entity(release)?;
-                fixtures::connect(db, release_db_id, track_db_id)?;
+                lyra_db::releases::replace_track_release(db, release_db_id, track_db_id)?;
             }
             let mut layer = LocalLayer::default();
             layer.supply(MetadataField::TrackTitle, Some(track.title.as_str()));
@@ -532,6 +588,9 @@ impl Fixture {
         for (key, (db_id, _)) in &keys.entities {
             seeded.ids.insert(key.clone(), db_id.0);
         }
+        for (key, db_id) in &keys.libraries {
+            seeded.ids.insert(key.clone(), db_id.0);
+        }
         for (key, name) in &keys.genres {
             let genre_db_id = lyra_db::genres::find_by_name(db, name)?
                 .with_context(|| format!("fixture genre `{key}` is on no release"))?;
@@ -610,4 +669,62 @@ fn record_listen(db: &mut DbAny, track_db_id: DbId, user_db_id: DbId) -> anyhow:
         },
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn libraries_hold_their_releases_for_the_users_granted_them() -> anyhow::Result<()> {
+        let mut db = lyra_db::test_db::new_test_db()?;
+        let fixture: Fixture = serde_json::from_value(serde_json::json!({
+            "run_as": "viewer",
+            "users": [{ "key": "viewer" }],
+            "libraries": [
+                { "key": "shared", "name": "Shared", "users": ["viewer"] },
+                { "key": "private", "name": "Private" },
+            ],
+            "releases": [
+                { "key": "open", "title": "Open", "library": "shared" },
+                { "key": "closed", "title": "Closed", "library": "private" },
+            ],
+            "tracks": [
+                { "key": "open_song", "title": "Open Song", "release": "open" },
+                { "key": "closed_song", "title": "Closed Song", "release": "closed" },
+            ],
+        }))?;
+        let (seeded, viewer) = fixture.seed(&mut db)?;
+
+        let id = |key: &str| DbId(seeded.ids[key]);
+        for (library, release, track) in [
+            ("shared", "open", "open_song"),
+            ("private", "closed", "closed_song"),
+        ] {
+            let stored = lyra_db::libraries::get_by_id(&db, id(library))?.context("library")?;
+            assert_eq!(stored.id, seeded.libraries[library]);
+            assert!(lyra_db::graph::edge_exists(&db, id(library), id(release))?);
+            assert!(lyra_db::graph::edge_exists(&db, id(release), id(track))?);
+            let owners = lyra_db::libraries::get_for_entity(&db, id(track))?;
+            assert_eq!(
+                owners.iter().map(|owner| owner.db_id).collect::<Vec<_>>(),
+                vec![Some(id(library))]
+            );
+        }
+
+        let principal = services::auth::Principal::load(&db, viewer)?.context("viewer exists")?;
+        assert_eq!(
+            principal.accessible_library_ids,
+            [seeded.libraries["shared"].clone()].into_iter().collect()
+        );
+        assert_eq!(
+            lyra_db::libraries::accessible_track_ids(
+                &db,
+                viewer,
+                &[id("open_song"), id("closed_song")]
+            )?,
+            [id("open_song")].into_iter().collect()
+        );
+        Ok(())
+    }
 }
