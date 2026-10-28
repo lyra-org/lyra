@@ -239,7 +239,6 @@ struct VmInner {
     state: NonNull<sys::lua_State>,
     control: NonNull<VmControl>,
     data: VmData,
-    thread_contexts: RwLock<HashMap<usize, CallContext>>,
     userdata_tags: RwLock<HashMap<i32, TypeId>>,
     started_at: Instant,
 }
@@ -272,6 +271,7 @@ impl Vm {
         let control = NonNull::new(control).expect("Box::into_raw never returns null");
         unsafe {
             sys::lua_set_callback_userdata(state.as_ptr(), control.as_ptr().cast());
+            (*sys::lua_callbacks(state.as_ptr())).userthread = Some(userthread);
         }
         Ok(Self {
             inner: Rc::new(VmInner {
@@ -279,7 +279,6 @@ impl Vm {
                 state,
                 control,
                 data: VmData::default(),
-                thread_contexts: RwLock::new(HashMap::new()),
                 userdata_tags: RwLock::new(HashMap::new()),
                 started_at: Instant::now(),
             }),
@@ -467,11 +466,7 @@ impl Vm {
                 actual_vm: self.inner.id,
             });
         }
-        self.inner
-            .thread_contexts
-            .write()
-            .map_err(|_| Error::VmDataPoisoned)
-            .map(|mut contexts| contexts.insert(thread.state_id(), context))
+        self.replace_state_context(thread.state(), Some(context))
     }
 
     pub fn clear_thread_call_context(&self, thread: &Thread) -> Result<Option<CallContext>> {
@@ -481,11 +476,36 @@ impl Vm {
                 actual_vm: self.inner.id,
             });
         }
-        self.inner
+        self.replace_state_context(thread.state(), None)
+    }
+
+    /// Runs `source` as [`Vm::eval`] does, as a call made in `context`.
+    pub fn eval_with_context(
+        &self,
+        source: impl Into<Arc<[u8]>>,
+        origin: ChunkOrigin,
+        context: CallContext,
+    ) -> Result<Vec<Value>> {
+        let function = self.load_chunk(&Chunk::new(source, origin))?;
+        function.call_with_context(self, &[], context)
+    }
+
+    fn replace_state_context(
+        &self,
+        state: NonNull<sys::lua_State>,
+        context: Option<CallContext>,
+    ) -> Result<Option<CallContext>> {
+        let mut contexts = self
+            .inner
+            .control()
             .thread_contexts
             .write()
-            .map_err(|_| Error::VmDataPoisoned)
-            .map(|mut contexts| contexts.remove(&thread.state_id()))
+            .map_err(|_| Error::VmDataPoisoned)?;
+        let key = state.as_ptr() as usize;
+        Ok(match context {
+            Some(context) => contexts.insert(key, context),
+            None => contexts.remove(&key),
+        })
     }
 
     fn call_context_for_state(
@@ -493,6 +513,7 @@ impl Vm {
         state: NonNull<sys::lua_State>,
     ) -> Result<Option<CallContext>> {
         self.inner
+            .control()
             .thread_contexts
             .read()
             .map_err(|_| Error::VmDataPoisoned)
@@ -856,6 +877,9 @@ struct VmControl {
     allocated: AtomicUsize,
     memory_limit: AtomicUsize,
     interrupt_deadline_millis: AtomicU64,
+    /// Keyed by `lua_State` address; [`userthread`] keeps it in step with
+    /// the threads Luau creates and frees.
+    thread_contexts: RwLock<HashMap<usize, CallContext>>,
 }
 
 impl VmControl {
@@ -864,6 +888,7 @@ impl VmControl {
             allocated: AtomicUsize::new(0),
             memory_limit: AtomicUsize::new(options.memory_limit.unwrap_or(0)),
             interrupt_deadline_millis: AtomicU64::new(0),
+            thread_contexts: RwLock::new(HashMap::new()),
         }
     }
 }
@@ -1063,6 +1088,21 @@ impl Function {
             values.push(vm.read_value(StackIndex::absolute(guard.top + 1 + offset))?);
         }
         Ok(values)
+    }
+
+    /// Calls the function as [`Function::call`] does, with `context` as the
+    /// call context of the native functions it reaches and the coroutines it
+    /// creates.
+    pub fn call_with_context(
+        &self,
+        vm: &Vm,
+        args: &[Value],
+        context: CallContext,
+    ) -> Result<Vec<Value>> {
+        let previous = vm.replace_state_context(vm.inner.state, Some(context))?;
+        let result = self.call(vm, args);
+        vm.replace_state_context(vm.inner.state, previous)?;
+        result
     }
 }
 
@@ -2883,6 +2923,27 @@ fn format_os_date(format: &str, timestamp: i64) -> Result<String> {
     ))
 }
 
+/// A new thread, such as a coroutine, starts with its creator's call context;
+/// a freed thread's context goes with it.
+unsafe extern "C-unwind" fn userthread(parent: *mut sys::lua_State, thread: *mut sys::lua_State) {
+    let control = unsafe {
+        sys::lua_callback_userdata(thread)
+            .cast::<VmControl>()
+            .as_ref()
+    };
+    let Some(control) = control else {
+        return;
+    };
+    let Ok(mut contexts) = control.thread_contexts.write() else {
+        return;
+    };
+    if parent.is_null() {
+        contexts.remove(&(thread as usize));
+    } else if let Some(context) = contexts.get(&(parent as usize)).cloned() {
+        contexts.insert(thread as usize, context);
+    }
+}
+
 unsafe extern "C-unwind" fn interrupt(state: *mut sys::lua_State, gc: c_int) {
     if state.is_null() || gc >= 0 {
         return;
@@ -3522,6 +3583,147 @@ mod tests {
             ThreadStatus::Completed(vec![Value::Number(42.0)])
         );
         assert_eq!(stack_top(&vm), 0);
+        Ok(())
+    }
+
+    fn task_group_probe(vm: &Vm) -> Result<()> {
+        let probe: NativeFn = Arc::new(|mut frame| {
+            frame.returns.write(frame.context.task_group.0 as f64)?;
+            Ok(())
+        });
+        let probe = vm.create_function_with_options(
+            NativeFunctionOptions::new(ChunkOrigin::default()).function_name("probe"),
+            probe,
+        )?;
+        vm.set_global_function("probe", &probe)
+    }
+
+    fn context_in_group(group: u64) -> CallContext {
+        CallContext {
+            task_group: TaskGroupId(group),
+            ..CallContext::default()
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn coroutines_inherit_their_creators_call_context() -> Result<()> {
+        let vm = Vm::new()?;
+        vm.open_standard_libraries(StandardLibraries {
+            coroutine: true,
+            ..StandardLibraries::none()
+        })?;
+        task_group_probe(&vm)?;
+        let function = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(
+                &br#"
+                    local created = coroutine.create(function()
+                        return probe()
+                    end)
+                    local _, from_created = coroutine.resume(created)
+                    local from_wrapped = coroutine.wrap(function()
+                        return coroutine.wrap(function()
+                            return probe()
+                        end)()
+                    end)()
+                    later = coroutine.create(function()
+                        return probe()
+                    end)
+                    return from_created, from_wrapped
+                "#[..],
+            ),
+            ChunkOrigin::default(),
+        ))?;
+        let thread = vm.create_thread(&function)?;
+        vm.set_thread_call_context(&thread, context_in_group(7))?;
+
+        assert_eq!(
+            thread.resume(&vm, &[])?,
+            ThreadStatus::Completed(vec![Value::Number(7.0), Value::Number(7.0)])
+        );
+        vm.clear_thread_call_context(&thread)?;
+        let values = vm.eval(
+            Arc::<[u8]>::from(&b"local _, group = coroutine.resume(later); return group"[..]),
+            ChunkOrigin::default(),
+        )?;
+        assert_eq!(
+            values,
+            vec![Value::Number(7.0)],
+            "a coroutine keeps the context it was created with"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn freed_threads_drop_their_call_context() -> Result<()> {
+        let vm = Vm::new()?;
+        vm.open_standard_libraries(StandardLibraries {
+            coroutine: true,
+            ..StandardLibraries::none()
+        })?;
+        let function = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(&b"for _ = 1, 10 do coroutine.create(function() end) end"[..]),
+            ChunkOrigin::default(),
+        ))?;
+        let thread = vm.create_thread(&function)?;
+        vm.set_thread_call_context(&thread, context_in_group(3))?;
+        thread.resume(&vm, &[])?;
+        vm.clear_thread_call_context(&thread)?;
+        drop(thread);
+        drop(function);
+        unsafe {
+            sys::lua_gc(vm.inner.state.as_ptr(), sys::LUA_GCCOLLECT, 0);
+        }
+
+        let contexts = vm.inner.control().thread_contexts.read().expect("contexts");
+        assert!(contexts.is_empty(), "{} contexts left", contexts.len());
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn calls_with_a_context_restore_the_previous_one() -> Result<()> {
+        let vm = Vm::new()?;
+        vm.open_standard_libraries(StandardLibraries {
+            coroutine: true,
+            ..StandardLibraries::none()
+        })?;
+        task_group_probe(&vm)?;
+        let nested = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(&b"return probe()"[..]),
+            ChunkOrigin::default(),
+        ))?;
+        vm.data().insert(nested)?;
+        let inner: NativeFn = Arc::new(|mut frame| {
+            let nested = frame.vm.data().get::<Function>()?;
+            let values = nested.call_with_context(frame.vm, &[], context_in_group(5))?;
+            for value in values {
+                frame.returns.write(value)?;
+            }
+            Ok(())
+        });
+        let inner = vm.create_function(ChunkOrigin::default(), inner)?;
+        vm.set_global_function("inner", &inner)?;
+
+        let values = vm.eval_with_context(
+            Arc::<[u8]>::from(
+                &b"local nested = inner(); local wrapped = coroutine.wrap(probe)(); return probe(), nested, wrapped"[..],
+            ),
+            ChunkOrigin::default(),
+            context_in_group(4),
+        )?;
+        assert_eq!(
+            values,
+            vec![Value::Number(4.0), Value::Number(5.0), Value::Number(4.0)]
+        );
+        assert_eq!(
+            vm.eval(
+                Arc::<[u8]>::from(&b"return probe()"[..]),
+                ChunkOrigin::default()
+            )?,
+            vec![Value::Number(0.0)]
+        );
         Ok(())
     }
 
