@@ -61,6 +61,8 @@ type SyncPlayGroup = {
 	resume_playing: boolean,
 	-- Whether the group's position jumped since it began waiting, which its members must apply.
 	position_jumped: boolean,
+	-- Whether a playing group that started without waiting for everyone ignores members buffering.
+	ignore_buffering: boolean,
 	-- Gives up waiting for the members that haven't reported ready, while the group waits.
 	wait_timer: thread?,
 	last_updated_at: string,
@@ -607,6 +609,7 @@ local function syncplay_set_state(group: SyncPlayGroup, state: string)
 		group.position_jumped = false
 	end
 	group.state = state
+	group.ignore_buffering = false
 	if state ~= "Waiting" then
 		syncplay_cancel_wait(group)
 	end
@@ -643,6 +646,15 @@ local function syncplay_pause(group: SyncPlayGroup, from_session_id: string)
 end
 
 local syncplay_wait_timed_out: (group: SyncPlayGroup) -> ()
+local syncplay_set_all_buffering: (group: SyncPlayGroup, buffering: boolean) -> ()
+
+-- As upstream, a waiting group told to resume starts without the members that aren't ready, and
+-- ignores members buffering until its state next changes.
+local function syncplay_start_without_waiting(group: SyncPlayGroup, from_session_id: string)
+	syncplay_set_all_buffering(group, false)
+	syncplay_unpause(group, from_session_id)
+	group.ignore_buffering = true
+end
 
 -- Keeps the wait timer running while the group waits for a member. A running timer covers the
 -- whole waiting period, so members reporting buffering again don't push it back; only resetting
@@ -666,7 +678,7 @@ local function syncplay_update_wait(group: SyncPlayGroup, new_period: boolean)
 	group.wait_timer = timer
 end
 
-local function syncplay_set_all_buffering(group: SyncPlayGroup, buffering: boolean)
+function syncplay_set_all_buffering(group: SyncPlayGroup, buffering: boolean)
 	for _, participant in group.participants do
 		participant.buffering = buffering
 		participant.ready = not buffering
@@ -690,10 +702,10 @@ function syncplay_wait_timed_out(group: SyncPlayGroup)
 	if not blocking then
 		return
 	end
-	syncplay_set_all_buffering(group, false)
 	if group.resume_playing then
-		syncplay_unpause(group, blocking)
+		syncplay_start_without_waiting(group, blocking)
 	else
+		syncplay_set_all_buffering(group, false)
 		syncplay_pause(group, blocking)
 	end
 end
@@ -800,6 +812,7 @@ local function syncplay_new_group(entry: SessionEntry, group_name: string?): Syn
 		run_time_ticks = nil,
 		resume_playing = false,
 		position_jumped = false,
+		ignore_buffering = false,
 		last_updated_at = now,
 		last_queue_update = now,
 	}
@@ -1226,11 +1239,30 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 		end
 
 		local group_value = group :: SyncPlayGroup
+		local session_id = (entry :: SessionEntry).session_id
 		if group_value.state == "Playing" then
 			-- As upstream, the group is already playing and the member only lost track of it.
 			syncplay_send_entry(entry :: SessionEntry, "SyncPlayCommand", syncplay_command(group_value, "Unpause"))
+		elseif group_value.state == "Idle" then
+			-- As upstream, a stopped group plays its current item again from the start, once everyone
+			-- is ready.
+			syncplay_restart_item(group_value)
+			group_value.resume_playing = true
+			syncplay_set_state(group_value, "Waiting")
+			group_value.position_jumped = true
+			syncplay_set_all_buffering(group_value, true)
+			syncplay_broadcast_queue_update(group_value, session_id, "NewPlaylist")
+		elseif group_value.state == "Waiting" then
+			-- As upstream, a group already resuming starts now; otherwise it resumes once everyone is
+			-- ready.
+			if group_value.resume_playing then
+				syncplay_start_without_waiting(group_value, session_id)
+			else
+				group_value.resume_playing = true
+				syncplay_broadcast_state(group_value, session_id, "Unpause")
+			end
 		else
-			syncplay_unpause(group_value, (entry :: SessionEntry).session_id)
+			syncplay_unpause(group_value, session_id)
 		end
 		return api.response.empty(204)
 	end)
@@ -1287,6 +1319,9 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 
 		local body = syncplay_body(ctx)
 		local group_value = group :: SyncPlayGroup
+		if group_value.state == "Playing" and group_value.ignore_buffering then
+			return api.response.empty(204)
+		end
 		local playlist_item_id = syncplay_normalize_guid(body.PlaylistItemId)
 		if not syncplay_known_current_item(group_value, playlist_item_id) then
 			syncplay_send_group_update_entry(

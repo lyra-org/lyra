@@ -111,6 +111,42 @@ check(received("a"), "", "the earlier wait doesn't fire")
 task.wait(0.1)
 check(received("a"), "Pause,Paused/Pause", "the new wait does")
 
+-- A paused group told to resume while it waits resumes once everyone is ready.
+post("a", "Pause")
+post("b", "Buffering", { IsPlaying = false })
+received("a")
+post("a", "Unpause")
+check(received("a"), "Waiting/Unpause", "the group keeps waiting")
+post("b", "Ready", { IsPlaying = false })
+check(received("a"), "Unpause,Playing/Ready", "and resumes with the member")
+
+-- A group told to resume while it already means to starts at once, without the member it waits
+-- for, whose buffering it then ignores.
+post("b", "Buffering", { IsPlaying = true })
+received("a")
+post("a", "Unpause")
+check(received("a"), "Unpause,Playing/Unpause", "the group starts at once")
+post("b", "Buffering", { IsPlaying = true })
+check(received("a"), "", "a member buffering doesn't stop it")
+post("a", "Pause")
+post("a", "Unpause")
+post("b", "Buffering", { IsPlaying = true })
+check(received("a"), "Pause,Paused/Pause,Unpause,Playing/Unpause,Pause,Waiting/Buffer", "until its state changes")
+post("b", "Ready", { IsPlaying = true })
+received("a")
+received("b")
+
+-- A stopped group plays its item again from the start once everyone is ready.
+post("a", "Stop")
+received("a")
+received("b")
+post("a", "Unpause")
+check(received("a"), "", "the group waits for everyone")
+post("a", "Ready", { IsPlaying = false, PositionTicks = 0 })
+post("b", "Ready", { IsPlaying = false, PositionTicks = 0 })
+check(received("b"), "Unpause,Playing/Ready", "then plays")
+received("a")
+
 -- A disbanded group never times out.
 post("b", "Buffering", { IsPlaying = true })
 post("a", "Leave")
