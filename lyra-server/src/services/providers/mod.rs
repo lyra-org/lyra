@@ -288,6 +288,68 @@ mod tests {
     }
 
     #[test]
+    fn merging_releases_moves_the_losers_chains_to_the_winner() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let library_db_id = insert_library(&mut db, "Music", "/music")?;
+        let mut chains = Vec::new();
+        for title in ["Urn", "Urn (Disc 2)"] {
+            let release = insert_release(&mut db, title)?;
+            connect(&mut db, library_db_id, release)?;
+            let mut chain = Vec::new();
+            for part in ["Part I", "Part II"] {
+                let track = insert_track(&mut db, &format!("{title} {part}"))?;
+                connect(&mut db, release, track)?;
+                chain.push(track);
+            }
+            lyra_db::chains::replace_for_release(&mut db, release, std::slice::from_ref(&chain))??;
+            external_ids::upsert(
+                &mut db,
+                release,
+                "musicbrainz",
+                "release_id",
+                "same-release",
+                IdSource::Resolved,
+            )?;
+            chains.push((release, chain));
+        }
+
+        let unique_pairs = HashSet::from([("musicbrainz".to_string(), "release_id".to_string())]);
+        assert_eq!(
+            deduplicate_releases_by_external_id(
+                &mut db,
+                library_db_id,
+                &unique_pairs,
+                &HashSet::new(),
+                None,
+            )?,
+            1
+        );
+
+        let releases = release_ids_for_library(&db, library_db_id)?;
+        assert_eq!(releases.len(), 1);
+        let mut stored = lyra_db::chains::get_for_release(&db, releases[0])?
+            .into_iter()
+            .map(|chain| chain.track_db_ids)
+            .collect::<Vec<_>>();
+        stored.sort();
+        let mut expected = chains
+            .iter()
+            .map(|(_, chain)| chain.clone())
+            .collect::<Vec<_>>();
+        expected.sort();
+        assert_eq!(
+            stored, expected,
+            "both chains, members in order, on the winner"
+        );
+        assert_eq!(
+            lyra_db::graph::neighbor_ids(&db, "chains", "Chain")?.len(),
+            2,
+            "no chain node is left behind"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn deduplicate_releases_by_external_id_does_not_merge_across_libraries() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let library_a = insert_library(&mut db, "A", "/a")?;

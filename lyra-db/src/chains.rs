@@ -262,6 +262,20 @@ fn validate(
     Ok(Ok(()))
 }
 
+/// Hand every chain the `from` release owns to the `to` release, members and places unchanged,
+/// for a merge that moves all of `from`'s tracks to `to`.
+pub fn move_release_chains(
+    db: &mut impl DbAccess,
+    from_release_db_id: DbId,
+    to_release_db_id: DbId,
+) -> anyhow::Result<()> {
+    for chain_db_id in super::graph::neighbor_ids(db, from_release_db_id, "Chain")? {
+        super::graph::remove_edges_between(db, from_release_db_id, chain_db_id)?;
+        super::graph::ensure_owned_edge(db, to_release_db_id, chain_db_id)?;
+    }
+    Ok(())
+}
+
 /// Remove the chains the track belongs to on the release it is leaving.
 pub(crate) fn remove_for_departing_track(
     db: &mut impl DbAccess,
@@ -502,6 +516,35 @@ mod tests {
         crate::releases::link_track(&mut db, urn.release, t[1])?;
 
         assert_eq!(get_for_release(&db, urn.release)?, stored);
+        Ok(())
+    }
+
+    #[test]
+    fn moved_chains_keep_their_members_and_places_on_the_new_release() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let disc_two = release_with_tracks(&mut db, "Urn (Disc 2)", 3)?;
+        let urn = release_with_tracks(&mut db, "Urn", 2)?;
+        let t = &disc_two.tracks;
+        let own = replace_for_release(&mut db, urn.release, std::slice::from_ref(&urn.tracks))??;
+        let moving = replace_for_release(&mut db, disc_two.release, &[vec![t[2], t[0]]])??;
+
+        for &track in t {
+            crate::releases::link_track(&mut db, urn.release, track)?;
+        }
+        move_release_chains(&mut db, disc_two.release, urn.release)?;
+        for &track in t {
+            crate::releases::unlink_track(&mut db, disc_two.release, track)?;
+        }
+
+        assert!(get_for_release(&db, disc_two.release)?.is_empty());
+        let stored = get_for_release(&db, urn.release)?;
+        assert_eq!(stored.len(), 2);
+        assert!(stored.contains(&own[0]));
+        assert!(stored.contains(&moving[0]));
+        assert_eq!(chain_count(&db)?, 2);
+        let links = links_for_tracks(&db, t)?;
+        assert_eq!(links[&t[2]].position, 0);
+        assert_eq!(links[&t[0]].position, 1);
         Ok(())
     }
 

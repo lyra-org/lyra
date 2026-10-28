@@ -86,6 +86,8 @@ fn merge_release_into_inside_tx(
         lyra_db::graph::ensure_owned_edge(db, library_db_id, winner)?;
     }
 
+    // Every loser track moves to the winner, so its chains stay whole there.
+    lyra_db::chains::move_release_chains(db, loser, winner)?;
     for track in lyra_db::tracks::get_direct(db, loser)? {
         let Some(track_db_id) = track.db_id.map(Into::into) else {
             continue;
