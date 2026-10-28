@@ -292,32 +292,10 @@ pub(crate) fn save_provider_layer(
     }
 
     let is_artist_entity = artist.is_some();
-    let artist_is_verified = artist.as_ref().is_some_and(|a| a.verified);
     let mut should_recompute_artist_verification = false;
 
     for (id_type, id_value) in external_ids {
         let existing_id = lyra_db::external_ids::get(db, node_id, provider_id, id_type)?;
-
-        if is_artist_entity && id_type == "artist_id" {
-            let incoming_artist_id = id_value.trim();
-            if !incoming_artist_id.is_empty()
-                && artist_is_verified
-                && let Some(existing_artist_id) =
-                    existing_id.as_ref().and_then(|e| e.resolved_value())
-            {
-                let existing_artist_id = existing_artist_id.trim();
-                if !existing_artist_id.is_empty() && existing_artist_id != incoming_artist_id {
-                    tracing::warn!(
-                        node_id = node_id.0,
-                        provider_id,
-                        existing_artist_id = %existing_artist_id,
-                        incoming_artist_id = %incoming_artist_id,
-                        "skipping conflicting artist_id update for verified artist"
-                    );
-                    continue;
-                }
-            }
-        }
 
         let external_id_changed = existing_id
             .as_ref()
