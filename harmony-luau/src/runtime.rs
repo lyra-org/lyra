@@ -994,6 +994,14 @@ impl VmData {
         let values = self.values.read().map_err(|_| Error::VmDataPoisoned)?;
         values.get::<T>()
     }
+
+    /// Drops every value. Values that hold Luau references keep their VM
+    /// alive, so a host clears them before letting the VM go.
+    pub fn clear(&self) -> Result<()> {
+        let values = std::mem::take(&mut *self.values.write().map_err(|_| Error::VmDataPoisoned)?);
+        drop(values);
+        Ok(())
+    }
 }
 
 struct StackGuard<'vm> {
@@ -3566,6 +3574,46 @@ mod tests {
             vec![Value::Number(42.0)]
         );
         assert_eq!(stack_top(&vm), 0);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn clearing_vm_data_frees_a_vm_its_values_reference() -> Result<()> {
+        struct DropFlag(Arc<std::sync::atomic::AtomicBool>);
+        impl Drop for DropFlag {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        struct Holder(#[allow(dead_code)] Function);
+
+        let run = |clear: bool| -> Result<bool> {
+            let freed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let vm = Vm::new()?;
+            let userdata = vm.create_userdata(UserDataTag::new(1)?, DropFlag(freed.clone()))?;
+            let function = vm.load_chunk(&Chunk::new(
+                Arc::<[u8]>::from(&b"local held = ...; return function() return held end"[..]),
+                ChunkOrigin::default(),
+            ))?;
+            let Some(Value::Function(closure)) = function
+                .call(&vm, &[Value::UserData(userdata)])?
+                .into_iter()
+                .next()
+            else {
+                panic!("the chunk returns a closure");
+            };
+            vm.data().insert(Holder(closure))?;
+            if clear {
+                vm.data().clear()?;
+            }
+            drop(function);
+            drop(vm);
+            Ok(freed.load(Ordering::SeqCst))
+        };
+
+        assert!(!run(false)?, "a VM its own data references stays alive");
+        assert!(run(true)?, "clearing the data lets the VM close");
         Ok(())
     }
 
