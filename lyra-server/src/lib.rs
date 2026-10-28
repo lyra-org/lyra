@@ -47,8 +47,7 @@ pub async fn run_server(build: BuildInfo, capture: Option<CaptureArgs>) -> Resul
     let loaded = config::load()?;
     // Validate the file before touching the port, directories, or database.
     let library = configured_library(&loaded.file)?;
-    let file_settings =
-        server_settings::normalize_file(&loaded.file.settings, &loaded.boot.data_dir)?;
+    let file_settings = server_settings::normalize_file(&loaded.file.settings)?;
     // Bind first: a port collision with a running server must fail fast
     // instead of blocking on that server's DB process lock.
     let listener = bind_configured_listener(loaded.boot.port).await?;

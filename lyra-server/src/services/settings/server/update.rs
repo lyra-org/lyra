@@ -9,7 +9,6 @@
 
 use std::{
     collections::HashMap,
-    path::Path,
     sync::Arc,
 };
 
@@ -49,7 +48,6 @@ pub(crate) enum UpdateError {
 /// a file or stored value is.
 pub(crate) fn validate_updates(
     current: &ResolvedSettings,
-    data_dir: &Path,
     values: &HashMap<String, Value>,
 ) -> Result<Vec<Change>, UpdateError> {
     let registry = registry();
@@ -86,13 +84,14 @@ pub(crate) fn validate_updates(
             if value.is_null() {
                 return Ok(Change::Remove { key });
             }
-            let value = definition
-                .kind
-                .normalize(value, data_dir)
-                .map_err(|source| UpdateError::Invalid {
-                    key: key.to_string(),
-                    source,
-                })?;
+            let value =
+                definition
+                    .kind
+                    .normalize(value)
+                    .map_err(|source| UpdateError::Invalid {
+                        key: key.to_string(),
+                        source,
+                    })?;
             Ok(Change::Upsert { key, value })
         })
         .collect()
@@ -184,10 +183,9 @@ mod tests {
     fn normalizes_values_and_maps_null_to_removal() {
         let changes = validate_updates(
             &resolved(&[]),
-            &data_dir(),
             &values(&[
                 ("published_url", json!(" http://LOCALHOST:8080/ ")),
-                ("covers_path", json!("covers")),
+                ("covers_path", json!(" ./covers/ ")),
                 ("sync.interval_secs", json!(null)),
             ]),
         )
@@ -198,7 +196,7 @@ mod tests {
             vec![
                 Change::Upsert {
                     key: "covers_path",
-                    value: json!("/srv/lyra/covers"),
+                    value: json!("covers"),
                 },
                 Change::Upsert {
                     key: "published_url",
@@ -215,7 +213,6 @@ mod tests {
     fn rejects_undeclared_keys() {
         let error = validate_updates(
             &resolved(&[]),
-            &data_dir(),
             &values(&[("auth.enabled", json!(false)), ("nope", json!(1))]),
         )
         .expect_err("undeclared key should fail");
@@ -227,7 +224,6 @@ mod tests {
     fn rejects_invalid_values_with_key() {
         let error = validate_updates(
             &resolved(&[]),
-            &data_dir(),
             &values(&[("rate_limit.login_burst", json!("many"))]),
         )
         .expect_err("invalid value should fail");
@@ -249,7 +245,6 @@ mod tests {
         ]);
         let error = validate_updates(
             &current,
-            &data_dir(),
             &values(&[
                 ("published_url", json!("https://example.com")),
                 ("auth.enabled", json!("not even a bool")),

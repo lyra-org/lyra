@@ -3,7 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    path::Path,
+};
 
 #[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
@@ -40,6 +43,7 @@ use crate::{
             Kind,
             SettingSource,
             UpdateError,
+            resolve_path,
         },
     },
 };
@@ -103,6 +107,10 @@ enum SettingFieldResponse {
         props: SettingPropsResponse,
         value: Option<String>,
         default: Option<String>,
+        /// For a path setting, the directory `value` points at: relative
+        /// values sit under the data directory.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        resolved: Option<String>,
     },
     /// Integers travel as JSON integers so large values round-trip exactly.
     #[serde(rename = "number")]
@@ -196,14 +204,11 @@ fn string_list_of(value: &serde_json::Value) -> Option<Vec<String>> {
     })
 }
 
-fn field_response(
-    setting: &EffectiveSetting,
-    data_dir: &std::path::Path,
-) -> anyhow::Result<SettingFieldResponse> {
+fn field_response(setting: &EffectiveSetting, data_dir: &Path) -> SettingFieldResponse {
     let definition = setting.definition;
     let kind = definition.kind;
     let key = definition.key.to_string();
-    let default = kind.default(data_dir)?;
+    let default = kind.default();
     let value = &setting.value;
     let props = |required: bool| SettingPropsResponse {
         label: definition.label.to_string(),
@@ -214,7 +219,7 @@ fn field_response(
         restart_required: definition.apply == ApplyMode::RestartRequired,
     };
 
-    Ok(match kind {
+    match kind {
         Kind::Bool { .. } => SettingFieldResponse::Bool {
             key,
             props: props(true),
@@ -229,9 +234,21 @@ fn field_response(
             value: value.as_u64(),
             default: default.as_u64(),
         },
-        Kind::NullableOrigin | Kind::Path { .. } => SettingFieldResponse::String {
+        Kind::NullableOrigin => SettingFieldResponse::String {
             key,
-            props: props(!matches!(kind, Kind::NullableOrigin)),
+            props: props(false),
+            value: string_of(value),
+            default: string_of(&default),
+            resolved: None,
+        },
+        Kind::Path { .. } => SettingFieldResponse::String {
+            key,
+            props: props(true),
+            resolved: value.as_str().map(|path| {
+                resolve_path(data_dir, Path::new(path))
+                    .display()
+                    .to_string()
+            }),
             value: string_of(value),
             default: string_of(&default),
         },
@@ -241,7 +258,7 @@ fn field_response(
             value: string_list_of(value),
             default: string_list_of(&default),
         },
-    })
+    }
 }
 
 /// One snapshot of `STATE.settings` feeds the whole body, so values,
@@ -254,7 +271,7 @@ fn settings_response() -> Result<ServerSettingsResponse, AppError> {
     let mut groups: Vec<SettingGroupResponse> = Vec::new();
     for setting in &current.effective {
         let group = setting.definition.group;
-        let field = field_response(setting, &boot.data_dir)?;
+        let field = field_response(setting, &boot.data_dir);
         match groups.iter_mut().find(|existing| existing.id == group.id) {
             Some(existing) => existing.fields.push(field),
             None => groups.push(SettingGroupResponse {
@@ -345,12 +362,11 @@ async fn update_server_settings(
     Json(request): Json<UpdateServerSettingsRequest>,
 ) -> Result<Json<ServerSettingsResponse>, AppError> {
     require_manage_server_session(&headers).await?;
-    let boot = STATE.boot.get();
     {
         let mut db = STATE.db.write().await;
         // Read under the write lock so lock flags reflect the latest republish.
         let current = STATE.settings.get();
-        let changes = server_settings::validate_updates(&current, &boot.data_dir, &request.values)
+        let changes = server_settings::validate_updates(&current, &request.values)
             .map_err(map_update_error)?;
         server_settings::apply_updates(&mut db, &changes)?;
         server_settings::republish(&mut db)?;
@@ -819,6 +835,28 @@ mod tests {
             field(&body, "published_url")["value"],
             json!("http://localhost:8080")
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn path_settings_store_the_written_value_and_report_the_resolved_one()
+    -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        initialize_test_state(&[]).await?;
+        let headers = manage_server_headers().await?;
+
+        let body = body(
+            update_server_settings(headers, request(&[("covers_path", json!("./art/covers"))]))
+                .await,
+        );
+
+        let expected = STATE.boot.get().data_dir.join("art/covers");
+        assert_eq!(STATE.config().covers_path, expected);
+        let covers = field(&body, "covers_path");
+        assert_eq!(covers["value"], json!("art/covers"));
+        assert_eq!(covers["default"], json!("covers"));
+        assert_eq!(covers["resolved"], json!(expected.display().to_string()));
+        assert!(field(&body, "published_url").get("resolved").is_none());
         Ok(())
     }
 

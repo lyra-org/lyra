@@ -34,7 +34,10 @@ pub(crate) use config::{
     Config,
     RateLimitConfig,
 };
-pub(crate) use kind::Kind;
+pub(crate) use kind::{
+    Kind,
+    resolve_path,
+};
 pub(crate) use update::{
     UpdateError,
     apply_live,
@@ -158,7 +161,7 @@ impl Lookup<'_> {
 
 /// Rejects undeclared keys and invalid values before the server binds or
 /// opens anything. Returns the canonical file values.
-pub(crate) fn normalize_file(file: &FileSettings, data_dir: &Path) -> Result<FileSettings> {
+pub(crate) fn normalize_file(file: &FileSettings) -> Result<FileSettings> {
     let registry = registry();
     let mut normalized = FileSettings::new();
     for (key, value) in file {
@@ -167,7 +170,7 @@ pub(crate) fn normalize_file(file: &FileSettings, data_dir: &Path) -> Result<Fil
         };
         let value = definition
             .kind
-            .normalize(value, data_dir)
+            .normalize(value)
             .with_context(|| format!("invalid config {key}"))?;
         normalized.insert(key.clone(), value);
     }
@@ -235,12 +238,11 @@ pub(crate) fn resolve(
     for definition in registry.definitions() {
         let key = definition.key;
         let kind = definition.kind;
-        let default = kind.default(data_dir)?;
-        let (mut value, mut source) = (default, SettingSource::Default);
+        let (mut value, mut source) = (kind.default(), SettingSource::Default);
 
         if let Some(entry) = stored.iter().find(|entry| entry.key == key) {
             value = kind
-                .normalize(&entry.value, data_dir)
+                .normalize(&entry.value)
                 .map_err(|err| anyhow!("stored server setting '{key}' is invalid: {err}"))?;
             source = SettingSource::Database;
         }
@@ -248,7 +250,7 @@ pub(crate) fn resolve(
         let locked = file.contains_key(key);
         if let Some(file_value) = file.get(key) {
             value = kind
-                .normalize(file_value, data_dir)
+                .normalize(file_value)
                 .with_context(|| format!("invalid config {key}"))?;
             source = SettingSource::File;
         }
@@ -266,6 +268,7 @@ pub(crate) fn resolve(
             effective: &effective,
         },
         library,
+        data_dir,
     );
     Ok(ResolvedSettings {
         config: Arc::new(config),
@@ -420,25 +423,22 @@ mod tests {
 
     #[test]
     fn normalize_file_rejects_unknown_leaf() {
-        let error = normalize_file(
-            &file(&[("hls.signed_url_ttl_seconds", json!(1))]),
-            &data_dir(),
-        )
-        .expect_err("unknown key should fail");
+        let error = normalize_file(&file(&[("hls.signed_url_ttl_seconds", json!(1))]))
+            .expect_err("unknown key should fail");
         assert!(
             error
                 .to_string()
                 .contains("unknown config key 'hls.signed_url_ttl_seconds'")
         );
 
-        let error = normalize_file(&file(&[("prot", json!(5000))]), &data_dir())
-            .expect_err("unknown key should fail");
+        let error =
+            normalize_file(&file(&[("prot", json!(5000))])).expect_err("unknown key should fail");
         assert!(error.to_string().contains("'prot'"));
     }
 
     #[test]
     fn normalize_file_rejects_empty_object_leaves() {
-        let error = normalize_file(&file(&[("rate_limit", json!({}))]), &data_dir())
+        let error = normalize_file(&file(&[("rate_limit", json!({}))]))
             .expect_err("empty group should fail");
         assert!(
             error
@@ -446,7 +446,7 @@ mod tests {
                 .contains("unknown config key 'rate_limit'")
         );
 
-        let error = normalize_file(&file(&[("cors.allowed_origins", json!({}))]), &data_dir())
+        let error = normalize_file(&file(&[("cors.allowed_origins", json!({}))]))
             .expect_err("empty object value should fail");
         assert!(
             error
@@ -457,16 +457,14 @@ mod tests {
 
     #[test]
     fn normalize_file_canonicalizes_and_names_invalid_keys() -> anyhow::Result<()> {
-        let normalized = normalize_file(
-            &file(&[("published_url", json!("http://LOCALHOST:8080/"))]),
-            &data_dir(),
-        )?;
+        let normalized =
+            normalize_file(&file(&[("published_url", json!("http://LOCALHOST:8080/"))]))?;
         assert_eq!(normalized["published_url"], json!("http://localhost:8080"));
 
-        let error = normalize_file(
-            &file(&[("published_url", json!("https://example.com/app"))]),
-            &data_dir(),
-        )
+        let error = normalize_file(&file(&[(
+            "published_url",
+            json!("https://example.com/app"),
+        )]))
         .expect_err("path should be rejected");
         assert!(error.to_string().contains("invalid config published_url"));
         Ok(())
@@ -475,7 +473,7 @@ mod tests {
     #[test]
     fn file_null_locks_nullable_settings_and_rejects_others() -> anyhow::Result<()> {
         let stored = stored(&[("published_url", json!("https://stored.example"))]);
-        let file = normalize_file(&file(&[("published_url", json!(null))]), &data_dir())?;
+        let file = normalize_file(&file(&[("published_url", json!(null))]))?;
 
         let resolved = resolve(&data_dir(), None, file, &stored)?;
         assert!(resolved.config.published_url.is_none());
@@ -483,7 +481,7 @@ mod tests {
         assert!(setting.locked);
         assert_eq!(setting.source, SettingSource::File);
 
-        let error = normalize_file(&self::file(&[("auth.enabled", json!(null))]), &data_dir())
+        let error = normalize_file(&self::file(&[("auth.enabled", json!(null))]))
             .expect_err("null for a required setting should fail");
         let message = format!("{error:#}");
         assert!(message.contains("invalid config auth.enabled"));

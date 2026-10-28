@@ -6,6 +6,7 @@
 use std::{
     net::IpAddr,
     path::{
+        Component,
         Path,
         PathBuf,
     },
@@ -36,9 +37,10 @@ pub(crate) enum Kind {
     },
     NullableU64,
     NullableOrigin,
-    /// Relative values resolve under the data directory.
+    /// Stored as written; relative values resolve under the data directory
+    /// when read, through [`resolve_path`].
     Path {
-        default: fn(&Path) -> PathBuf,
+        default: &'static str,
     },
     OriginList {
         default: &'static [&'static str],
@@ -49,20 +51,20 @@ pub(crate) enum Kind {
 }
 
 impl Kind {
-    pub(crate) fn default(self, data_dir: &Path) -> Result<Value> {
-        Ok(match self {
+    pub(crate) fn default(self) -> Value {
+        match self {
             Self::Bool { default } => json!(default),
             Self::U32 { default } => json!(default),
             Self::U64 { default } => json!(default),
             Self::NullableU64 | Self::NullableOrigin => Value::Null,
-            Self::Path { default } => path_value(default(data_dir))?,
+            Self::Path { default } => json!(default),
             Self::OriginList { default } | Self::IpList { default } => json!(default),
-        })
+        }
     }
 
     /// Validates and canonicalizes a candidate from any source. Null is only
     /// a value for nullable kinds.
-    pub(crate) fn normalize(self, value: &Value, data_dir: &Path) -> Result<Value> {
+    pub(crate) fn normalize(self, value: &Value) -> Result<Value> {
         match self {
             Self::Bool { .. } => match value {
                 Value::Bool(_) => Ok(value.clone()),
@@ -83,10 +85,11 @@ impl Kind {
                 let Some(raw) = value.as_str() else {
                     bail!("must be a string");
                 };
-                if raw.trim().is_empty() {
-                    bail!("must not be empty");
+                let path = without_current_dir(Path::new(raw.trim()));
+                if path.as_os_str().is_empty() {
+                    bail!("must name a directory");
                 }
-                path_value(data_dir.join(raw.trim()))
+                Ok(json!(path.to_string_lossy()))
             }
             Self::OriginList { .. } => {
                 let origins = strings_of(value)?
@@ -114,12 +117,18 @@ impl Kind {
     }
 }
 
-/// Paths travel as JSON strings; a non-UTF-8 path cannot be stored or
-/// compared, so it is an error rather than a lossy conversion.
-fn path_value(path: PathBuf) -> Result<Value> {
-    path.to_str()
-        .map(|path| json!(path))
-        .ok_or_else(|| anyhow!("path '{}' is not valid UTF-8", path.display()))
+/// Where a `Path` setting points: relative values sit under `data_dir`.
+pub(crate) fn resolve_path(data_dir: &Path, value: &Path) -> PathBuf {
+    without_current_dir(&data_dir.join(value))
+}
+
+/// Drops `.` segments, which `Path::components` keeps at the start of a
+/// path. `..` stays: collapsing it lexically can change the target through
+/// a symlink.
+fn without_current_dir(path: &Path) -> PathBuf {
+    path.components()
+        .filter(|component| *component != Component::CurDir)
+        .collect()
 }
 
 /// Accepts integral floats too: JSON clients round-trip large integers
@@ -191,12 +200,8 @@ pub(crate) fn normalize_cors_origin(raw: &str) -> Result<String> {
 mod tests {
     use super::*;
 
-    fn data_dir() -> PathBuf {
-        PathBuf::from("/srv/lyra")
-    }
-
     fn normalize(kind: Kind, value: Value) -> Result<Value> {
-        kind.normalize(&value, &data_dir())
+        kind.normalize(&value)
     }
 
     #[test]
@@ -327,43 +332,41 @@ mod tests {
     }
 
     #[test]
-    fn paths_resolve_relative_values_under_the_data_dir() {
-        let kind = Kind::Path {
-            default: super::super::definitions::default_covers_path,
-        };
+    fn paths_keep_the_written_form_without_current_dir_segments() {
+        let kind = Kind::Path { default: "covers" };
+        assert_eq!(normalize(kind, json!("./covers")).unwrap(), json!("covers"));
         assert_eq!(
-            normalize(kind, json!("./covers")).unwrap(),
-            json!("/srv/lyra/./covers")
+            normalize(kind, json!(" covers/ ")).unwrap(),
+            json!("covers")
         );
         assert_eq!(
-            normalize(kind, json!("/srv/covers")).unwrap(),
+            normalize(kind, json!("art/./covers")).unwrap(),
+            json!("art/covers")
+        );
+        assert_eq!(
+            normalize(kind, json!("../covers")).unwrap(),
+            json!("../covers")
+        );
+        assert_eq!(
+            normalize(kind, json!("/srv/./covers")).unwrap(),
             json!("/srv/covers")
         );
-        assert_eq!(
-            normalize(kind, json!(" covers")).unwrap(),
-            json!("/srv/lyra/covers")
-        );
-        assert_eq!(
-            kind.default(&data_dir()).unwrap(),
-            json!("/srv/lyra/covers")
-        );
+        assert_eq!(kind.default(), json!("covers"));
         assert!(normalize(kind, json!("  ")).is_err());
+        assert!(normalize(kind, json!("./")).is_err());
         assert!(normalize(kind, json!(null)).is_err());
     }
 
-    #[cfg(unix)]
     #[test]
-    fn non_utf8_paths_are_rejected() {
-        use std::{
-            ffi::OsStr,
-            os::unix::ffi::OsStrExt,
-        };
-
-        let kind = Kind::Path {
-            default: super::super::definitions::default_covers_path,
-        };
-        let data_dir = PathBuf::from(OsStr::from_bytes(b"/srv/\xff"));
-        assert!(kind.default(&data_dir).is_err());
-        assert!(kind.normalize(&json!("covers"), &data_dir).is_err());
+    fn paths_resolve_relative_values_under_the_data_dir() {
+        let data_dir = Path::new("/srv/./lyra");
+        assert_eq!(
+            resolve_path(data_dir, Path::new("covers")),
+            PathBuf::from("/srv/lyra/covers")
+        );
+        assert_eq!(
+            resolve_path(data_dir, Path::new("/srv/covers")),
+            PathBuf::from("/srv/covers")
+        );
     }
 }

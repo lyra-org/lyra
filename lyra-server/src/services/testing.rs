@@ -131,7 +131,7 @@ pub(crate) fn open_memory_state(
         matches!(boot.db.kind, DbKind::Memory),
         "test state must use a memory database"
     );
-    let file_settings = server_settings::normalize_file(&settings, &boot.data_dir)?;
+    let file_settings = server_settings::normalize_file(&settings)?;
     let mut created = lyra_db::create(&boot.db)?;
     let resolved = resolve_settings(&mut created, &boot.data_dir, library, file_settings)?;
     Ok((boot, created, resolved))

@@ -5,12 +5,18 @@
 
 use std::{
     net::IpAddr,
-    path::PathBuf,
+    path::{
+        Path,
+        PathBuf,
+    },
 };
 
 #[cfg(test)]
 use super::FileSettings;
-use super::Lookup;
+use super::{
+    Lookup,
+    resolve_path,
+};
 use crate::services::libraries::LibraryConfig;
 
 /// Runtime configuration. Every field except `library` is a declared server
@@ -33,7 +39,11 @@ impl Config {
     /// Builds the typed config from resolved settings. Every field reads its
     /// declared key here, so a missing or mistyped key fails the defaults
     /// test rather than silently keeping a placeholder.
-    pub(crate) fn from_settings(settings: &Lookup<'_>, library: Option<LibraryConfig>) -> Self {
+    pub(crate) fn from_settings(
+        settings: &Lookup<'_>,
+        library: Option<LibraryConfig>,
+        data_dir: &Path,
+    ) -> Self {
         Self {
             published_url: settings.value("published_url"),
             cors: CorsConfig {
@@ -50,7 +60,7 @@ impl Config {
                 login_burst: settings.value("rate_limit.login_burst"),
             },
             library,
-            covers_path: settings.value("covers_path"),
+            covers_path: resolve_path(data_dir, &settings.value::<PathBuf>("covers_path")),
             auth: AuthConfig {
                 enabled: settings.value("auth.enabled"),
                 allow_default_login_when_disabled: settings
