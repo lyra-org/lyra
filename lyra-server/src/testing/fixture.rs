@@ -61,6 +61,8 @@ pub struct Fixture {
     listens: Vec<Listen>,
     #[serde(default)]
     favorites: Vec<Favorite>,
+    #[serde(default)]
+    tags: Vec<Tag>,
     /// The directory fixture paths resolve against.
     #[serde(skip)]
     directory: PathBuf,
@@ -197,6 +199,16 @@ struct Listen {
 struct Favorite {
     user: String,
     target: String,
+}
+
+/// A user's tag, written without the check that the user can see its target, as one the user
+/// placed before losing access to it.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Tag {
+    user: String,
+    target: String,
+    name: String,
 }
 
 /// What the test receives as its chunk's `...`: user and library ids, API key secrets, session
@@ -585,6 +597,18 @@ impl Fixture {
             lyra_db::favorites::add(db, keys.user(&favorite.user)?, target_db_id, kind, 1)?;
         }
 
+        for tag in &self.tags {
+            let (target_db_id, _) = keys.entity(&tag.target)?;
+            lyra_db::tags::create(
+                db,
+                keys.user(&tag.user)?,
+                target_db_id,
+                &lyra_db::tags::normalize_tag_name(&tag.name)?,
+                "#808080",
+                0,
+            )?;
+        }
+
         for (key, (db_id, _)) in &keys.entities {
             seeded.ids.insert(key.clone(), db_id.0);
         }
@@ -724,6 +748,30 @@ mod tests {
                 &[id("open_song"), id("closed_song")]
             )?,
             [id("open_song")].into_iter().collect()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn tags_reach_targets_their_user_cannot_see() -> anyhow::Result<()> {
+        let mut db = lyra_db::test_db::new_test_db()?;
+        let fixture: Fixture = serde_json::from_value(serde_json::json!({
+            "run_as": "viewer",
+            "users": [{ "key": "viewer" }],
+            "libraries": [{ "key": "private", "name": "Private" }],
+            "releases": [{ "key": "closed", "title": "Closed", "library": "private" }],
+            "tags": [{ "user": "viewer", "target": "closed", "name": "Vinyl" }],
+        }))?;
+        let (seeded, viewer) = fixture.seed(&mut db)?;
+
+        let closed = DbId(seeded.ids["closed"]);
+        let tags = lyra_db::tags::get_for_targets_many(&db, viewer, &[closed])?;
+        assert_eq!(
+            tags[&closed]
+                .iter()
+                .map(|tag| tag.tag.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Vinyl"]
         );
         Ok(())
     }

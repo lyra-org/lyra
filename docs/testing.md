@@ -121,6 +121,11 @@ track = "s1"
 [[favorites]]
 user = "owner"
 target = "mix"       # any artist, release, track or playlist key
+
+[[tags]]
+user = "owner"
+target = "solo"      # any artist, release, track or playlist key, seen by the user or not
+name = "Vinyl"
 ```
 
 ```luau
