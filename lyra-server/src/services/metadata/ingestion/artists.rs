@@ -7,21 +7,10 @@ use std::collections::{
     BTreeMap,
     HashSet,
 };
-use std::time::{
-    SystemTime,
-    UNIX_EPOCH,
-};
 
-use agdb::{
-    DbId,
-    QueryBuilder,
-};
-use nanoid::nanoid;
+use agdb::DbId;
 
-use lyra_db::{
-    Artist,
-    DbAccess,
-};
+use lyra_db::DbAccess;
 
 pub(crate) fn resolve_artist_ids(
     db: &mut impl DbAccess,
@@ -39,42 +28,9 @@ pub(crate) fn resolve_artist_ids(
             continue;
         }
 
-        let id = if let Some(existing_id) = lyra_db::artists::find_id_by_scan_name(db, name)? {
-            existing_id
-        } else {
-            let artist = Artist {
-                db_id: None,
-                id: nanoid!(),
-                artist_name: name.clone(),
-                scan_name: name.clone(),
-                scan_aliases: Vec::new(),
-                sort_name: None,
-                artist_type: None,
-                description: None,
-                verified: false,
-                credited: false,
-                locked: None,
-                created_at: Some(
-                    SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs(),
-                ),
-            };
-            let insert_result = db.exec_mut(QueryBuilder::insert().element(&artist).query())?;
-            let id = insert_result
-                .elements
-                .first()
-                .map(|element| element.id)
-                .ok_or_else(|| anyhow::anyhow!("artist insert missing id"))?;
-            db.exec_mut(
-                QueryBuilder::insert()
-                    .edges()
-                    .from("artists")
-                    .to(id)
-                    .query(),
-            )?;
-            id
+        let id = match lyra_db::artists::find_id_by_scan_name(db, name)? {
+            Some(existing_id) => existing_id,
+            None => lyra_db::artists::create(db, name, None)?,
         };
 
         cache.insert(name.clone(), id);

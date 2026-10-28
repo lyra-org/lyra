@@ -7,6 +7,10 @@ pub mod relations;
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::time::{
+    SystemTime,
+    UNIX_EPOCH,
+};
 
 use agdb::{
     DbAny,
@@ -20,6 +24,7 @@ use agdb::{
     QueryId,
 };
 use anyhow::anyhow;
+use nanoid::nanoid;
 use serde::{
     Deserialize,
     Serialize,
@@ -500,6 +505,47 @@ pub fn absorb_scan_names(
             .query(),
     )?;
     Ok(())
+}
+
+/// Creates an unverified artist whose scan name is `artist_name`.
+pub fn create(
+    db: &mut impl super::DbAccess,
+    artist_name: &str,
+    artist_type: Option<ArtistType>,
+) -> anyhow::Result<DbId> {
+    let artist = Artist {
+        db_id: None,
+        id: nanoid!(),
+        artist_name: artist_name.to_string(),
+        scan_name: artist_name.to_string(),
+        scan_aliases: Vec::new(),
+        sort_name: None,
+        artist_type,
+        description: None,
+        verified: false,
+        credited: false,
+        locked: None,
+        created_at: Some(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        ),
+    };
+    let artist_db_id = db
+        .exec_mut(QueryBuilder::insert().element(&artist).query())?
+        .ids()
+        .first()
+        .copied()
+        .ok_or_else(|| anyhow!("artist insert returned no id"))?;
+    db.exec_mut(
+        QueryBuilder::insert()
+            .edges()
+            .from("artists")
+            .to(artist_db_id)
+            .query(),
+    )?;
+    Ok(artist_db_id)
 }
 
 /// Atomically aligns the stored row to `artist`.
