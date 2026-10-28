@@ -15,7 +15,6 @@ pub(crate) mod mapping;
 pub(crate) mod mapping_admin;
 pub(crate) mod merging;
 mod model;
-pub(crate) mod verification;
 
 use std::collections::{
     HashMap,

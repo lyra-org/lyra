@@ -258,7 +258,6 @@ describe_record!(
         sort_name: Option<String> as "sort_name",
         artist_type: Option<LuauArtistType> as "artist_type",
         description: Option<String> as "description",
-        verified: bool as "verified",
         locked: Option<bool> as "locked",
         created_at: Option<u64> as "created_at",
     }

@@ -385,7 +385,6 @@ pub struct ArtistResponse {
     pub sort_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    pub verified: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub credit: Option<ArtistCreditResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -462,7 +461,6 @@ impl From<lyra_db::Artist> for ArtistResponse {
             name: artist.artist_name,
             sort_name: artist.sort_name,
             description: artist.description,
-            verified: artist.verified,
             credit: None,
             releases: None,
             tracks: None,
@@ -491,7 +489,6 @@ impl ArtistResponse {
             name: "unavailable".to_string(),
             sort_name: None,
             description: None,
-            verified: false,
             credit: None,
             releases: None,
             tracks: None,

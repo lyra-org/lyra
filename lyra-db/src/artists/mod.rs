@@ -116,7 +116,6 @@ pub struct Artist {
     pub sort_name: Option<String>,
     pub artist_type: Option<ArtistType>,
     pub description: Option<String>,
-    pub verified: bool,
     /// Whether a release or track credits the artist; only credited artists are browsed.
     #[serde(skip)]
     pub credited: bool,
@@ -138,10 +137,6 @@ impl Artist {
     #[cfg(any(test, feature = "testing"))]
     pub fn set_artist_type(&mut self, artist_type: ArtistType) {
         self.artist_type = Some(artist_type);
-    }
-
-    pub fn set_verified(&mut self, verified: bool) {
-        self.verified = verified;
     }
 }
 
@@ -507,7 +502,7 @@ pub fn absorb_scan_names(
     Ok(())
 }
 
-/// Creates an unverified artist whose scan name is `artist_name`.
+/// Creates an artist whose scan name is `artist_name`.
 pub fn create(
     db: &mut impl super::DbAccess,
     artist_name: &str,
@@ -522,7 +517,6 @@ pub fn create(
         sort_name: None,
         artist_type,
         description: None,
-        verified: false,
         credited: false,
         locked: None,
         created_at: Some(
@@ -768,7 +762,6 @@ mod tests {
                 sort_name: Some("Guard, Drift".to_string()),
                 artist_type: Some(ArtistType::Group),
                 description: Some("A band".to_string()),
-                verified: true,
                 credited: false,
                 locked: Some(true),
                 created_at: Some(1),
@@ -786,7 +779,6 @@ mod tests {
                 sort_name: None,
                 artist_type: None,
                 description: None,
-                verified: true,
                 credited: false,
                 locked: None,
                 created_at: None,
@@ -802,7 +794,6 @@ mod tests {
                 "artist_name",
                 "scan_name",
                 "scan_aliases",
-                "verified",
                 "credited"
             ]
             .into_iter()
@@ -1075,7 +1066,6 @@ mod tests {
         let artist = get_by_id(&db, artist_id)?.expect("artist should exist");
         assert_eq!(artist.artist_name, "Test Artist");
         assert_eq!(artist.scan_name, "test artist");
-        assert!(!artist.verified);
         Ok(())
     }
 
@@ -1177,12 +1167,10 @@ mod tests {
 
         let mut artist = get_by_id(&db, artist_id)?.expect("artist should exist");
         artist.artist_name = "Updated".to_string();
-        artist.verified = true;
         update(&mut db, &artist)?;
 
         let updated = get_by_id(&db, artist_id)?.expect("artist should exist");
         assert_eq!(updated.artist_name, "Updated");
-        assert!(updated.verified);
         Ok(())
     }
 }

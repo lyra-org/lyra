@@ -22,7 +22,6 @@ use super::id_links::{
     provider_ranks,
 };
 use super::layers::MANUAL_SOURCE_ID;
-use super::verification::recompute_artist_verified;
 use lyra_db::{
     Artist,
     CueSheet,
@@ -334,7 +333,6 @@ pub(crate) fn deduplicate_artists_by_external_id(
             })?;
             merged_count += 1;
         }
-        let _ = recompute_artist_verified(db, winner);
     }
 
     if merged_count > 0 {
@@ -362,13 +360,6 @@ fn select_merge_winner(
         let a_artist = artist_lookup.get(a);
         let b_artist = artist_lookup.get(b);
 
-        let a_verified = a_artist.is_some_and(|artist| artist.verified);
-        let b_verified = b_artist.is_some_and(|artist| artist.verified);
-        match b_verified.cmp(&a_verified) {
-            Ordering::Equal => {}
-            ord => return ord,
-        }
-
         let a_edges = edge_counts.get(a).copied().unwrap_or(0);
         let b_edges = edge_counts.get(b).copied().unwrap_or(0);
         match b_edges.cmp(&a_edges) {
@@ -394,7 +385,6 @@ fn select_merge_winner(
     let winner_artist = artist_lookup.get(&winner);
     tracing::debug!(
         winner = winner.0,
-        winner_verified = winner_artist.is_some_and(|artist| artist.verified),
         winner_created_at = winner_artist.and_then(|artist| artist.created_at),
         winner_edges = edge_counts.get(&winner).copied().unwrap_or(0),
         "selected artist merge winner"
@@ -1459,11 +1449,12 @@ mod tests {
     #[test]
     fn chained_merges_carry_scan_aliases() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
-        let tag_artist = |db: &mut DbAny, name: &str, verified: bool| -> anyhow::Result<DbId> {
+        let tag_artist = |db: &mut DbAny, name: &str, credited: bool| -> anyhow::Result<DbId> {
             let artist_id = lyra_db::fixtures::insert_artist(db, name)?;
-            let mut artist = lyra_db::artists::get_by_id(db, artist_id)?.expect("artist");
-            artist.set_verified(verified);
-            lyra_db::artists::update(db, &artist)?;
+            if credited {
+                let release = lyra_db::fixtures::insert_release(db, "Release")?;
+                test_db::connect_artist(db, release, artist_id)?;
+            }
             lyra_db::external_ids::upsert(
                 db,
                 artist_id,

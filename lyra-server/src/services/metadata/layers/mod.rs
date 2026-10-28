@@ -248,8 +248,7 @@ pub(crate) fn save_provider_layer(
     custom_fields: &CustomFieldChanges,
 ) -> anyhow::Result<()> {
     ensure_supported(db, node_id, &values.fields)?;
-    let artist = lyra_db::artists::get_by_id(db, node_id)?;
-    let artist_type_conflict = artist.is_some()
+    let artist_type_conflict = lyra_db::artists::get_by_id(db, node_id)?.is_some()
         && artist_type_conflicts_with_layer(db, node_id, &values.fields, provider_id)?;
 
     let has_content = !values.relations.is_empty()
@@ -287,16 +286,8 @@ pub(crate) fn save_provider_layer(
         return Ok(());
     }
 
-    if external_ids.is_empty() {
-        return Ok(());
-    }
-
-    let is_artist_entity = artist.is_some();
-    let mut should_recompute_artist_verification = false;
-
     for (id_type, id_value) in external_ids {
         let existing_id = lyra_db::external_ids::get(db, node_id, provider_id, id_type)?;
-
         let external_id_changed = existing_id
             .as_ref()
             .is_none_or(|existing| existing.resolved_value() != Some(id_value.as_str()));
@@ -312,14 +303,6 @@ pub(crate) fn save_provider_layer(
             id_value,
             IdSource::Resolved,
         )?;
-
-        if is_artist_entity && id_type == "artist_db_id" {
-            should_recompute_artist_verification = true;
-        }
-    }
-
-    if is_artist_entity && should_recompute_artist_verification {
-        super::verification::recompute_artist_verified(db, node_id)?;
     }
 
     Ok(())

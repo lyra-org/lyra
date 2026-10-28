@@ -349,7 +349,6 @@ mod tests {
             sort_name: None,
             artist_type: None,
             description: None,
-            verified: false,
             credited: false,
             locked: Some(false),
             created_at: None,
@@ -1644,10 +1643,6 @@ mod tests {
         }
         let winner = artist_named(&db, "Mr.Children")?.ok_or_else(|| anyhow!("winner"))?;
         let loser = artist_named(&db, "Mr Children")?.ok_or_else(|| anyhow!("loser"))?;
-        let mut verified =
-            lyra_db::artists::get_by_id(&db, winner)?.ok_or_else(|| anyhow!("winner"))?;
-        verified.set_verified(true);
-        lyra_db::artists::update(&mut db, &verified)?;
         for artist in [winner, loser] {
             lyra_db::external_ids::upsert(
                 &mut db,
@@ -1706,10 +1701,6 @@ mod tests {
         }
         let winner = artist_named(&db, "Mr Children")?.ok_or_else(|| anyhow!("winner"))?;
         let loser = artist_named(&db, "Mr.Children")?.ok_or_else(|| anyhow!("loser"))?;
-        let mut verified =
-            lyra_db::artists::get_by_id(&db, winner)?.ok_or_else(|| anyhow!("winner"))?;
-        verified.set_verified(true);
-        lyra_db::artists::update(&mut db, &verified)?;
         for artist in [winner, loser] {
             lyra_db::external_ids::upsert(
                 &mut db,

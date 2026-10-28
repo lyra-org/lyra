@@ -589,7 +589,6 @@ fn artist_type() -> LuauType {
             LuauType::optional(LuauType::named("ArtistType")),
         ),
         field("description", Option::<String>::luau_type()),
-        field("verified", bool::luau_type()),
         field("locked", Option::<bool>::luau_type()),
         field("created_at", Option::<u64>::luau_type()),
     ])

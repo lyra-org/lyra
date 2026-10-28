@@ -91,7 +91,6 @@ pub fn insert_artist(db: &mut DbAny, name: &str) -> anyhow::Result<DbId> {
         sort_name: None,
         artist_type: None,
         description: None,
-        verified: false,
         credited: false,
         locked: None,
         created_at: None,

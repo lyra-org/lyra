@@ -348,7 +348,6 @@ fn artist_detail_to_response(
         name: detail.artist.artist_name,
         sort_name: detail.artist.sort_name,
         description: detail.artist.description,
-        verified: detail.artist.verified,
         credit: None,
         releases,
         tracks: detail

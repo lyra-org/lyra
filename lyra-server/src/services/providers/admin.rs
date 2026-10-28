@@ -131,15 +131,6 @@ pub(crate) async fn set_entity_external_id(
         IdSource::Manual,
     )?;
 
-    if request.id_type == "artist_db_id"
-        && lyra_db::artists::get_by_id(&db, entity_db_id)?.is_some()
-    {
-        let _ = crate::services::metadata::verification::recompute_artist_verified(
-            &mut db,
-            entity_db_id,
-        );
-    }
-
     lyra_db::external_ids::get(&db, entity_db_id, &request.provider_id, &request.id_type)?
         .map(Into::into)
         .ok_or_else(|| anyhow::anyhow!("external id missing after it was set").into())
@@ -158,13 +149,6 @@ pub(crate) async fn inherit_entity_external_id(
         return Err(ProviderAdminError::ManualIdNotFound(format!(
             "{provider_id}/{id_type}"
         )));
-    }
-
-    if id_type == "artist_db_id" && lyra_db::artists::get_by_id(&db, entity_db_id)?.is_some() {
-        let _ = crate::services::metadata::verification::recompute_artist_verified(
-            &mut db,
-            entity_db_id,
-        );
     }
 
     Ok(())
