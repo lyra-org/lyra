@@ -23,9 +23,7 @@ use super::{
 impl PluginExecutor {
     pub(crate) fn start_websocket(&self, request: WebSocketStartRequest) -> Result<()> {
         let routes = self.vm.data().get::<crate::plugins::api::ApiRouteStore>()?;
-        let handler = routes
-            .get(request.handler_id)
-            .ok_or_else(|| anyhow::anyhow!("websocket handler {} not found", request.handler_id))?;
+        let handler = routes.get(request.handler)?;
         let origin = super::luau_origin(&handler.context.origin);
         let reader = ApiWebSocketReader::_harmony_userdata_class().create_value(
             &self.vm,
@@ -44,7 +42,7 @@ impl PluginExecutor {
             },
         )?;
         let ctx = api_context_value(&ApiHandlerRequest {
-            handler_id: request.handler_id,
+            handler: request.handler,
             plugin_id: request.plugin_id,
             method: request.method,
             path: request.path,

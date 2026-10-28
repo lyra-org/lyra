@@ -316,7 +316,7 @@ async fn dispatch_one(
     } else {
         handler.timeout
     };
-    let handler_id = handler.handler.handler_id;
+    let callback = handler.handler;
     let call_result: Result<Option<LyricsHandlerResult>> =
         with_provider_call(provider_id, ProviderCallStage::Lyrics, || async {
             {
@@ -333,7 +333,7 @@ async fn dispatch_one(
                 .get()
                 .context("plugin runtime is not initialized")?;
             let request = MetadataRefreshRequest {
-                handler_id,
+                handler: callback,
                 context: track_context_to_json(context),
                 deadline: std::time::Instant::now() + timeout,
             };
@@ -624,11 +624,9 @@ mod tests {
         PluginLyricLineInput,
         PluginLyricsInput,
     };
+    use crate::services::plugin_dispatch::PluginCallbackHandle;
     use crate::services::plugin_scope::PluginId;
-    use crate::services::providers::{
-        ProviderCallbackHandle,
-        teardown_plugin_providers,
-    };
+    use crate::services::providers::teardown_plugin_providers;
     use crate::services::testing::{
         FakePluginDispatch,
         FakeResponse,
@@ -710,11 +708,11 @@ mod tests {
         Ok(FakePluginDispatch::install())
     }
 
-    fn handler(handler_id: u64) -> ProviderLyricsSpec {
+    fn handler(callback: PluginCallbackHandle) -> ProviderLyricsSpec {
         ProviderLyricsSpec::new(
             Duration::from_secs(5),
             ProviderRequireSpec::default(),
-            ProviderCallbackHandle { handler_id },
+            callback,
         )
     }
 
@@ -744,14 +742,21 @@ mod tests {
             .expect("lyrics handler stored")
     }
 
-    async fn wait_for_calls(dispatch: &FakePluginDispatch, handler_id: u64, calls: usize) {
+    async fn wait_for_calls(
+        dispatch: &FakePluginDispatch,
+        callback: PluginCallbackHandle,
+        calls: usize,
+    ) {
         for _ in 0..200 {
-            if dispatch.calls(handler_id).len() >= calls {
+            if dispatch.calls(callback).len() >= calls {
                 return;
             }
             tokio::task::yield_now().await;
         }
-        panic!("handler {handler_id} was not called {calls} times");
+        panic!(
+            "handler {} was not called {calls} times",
+            callback.handler_id
+        );
     }
 
     #[tokio::test]
@@ -759,12 +764,12 @@ mod tests {
         let _guard = crate::services::testing::runtime_test_lock().await;
         let dispatch = initialize_test_runtime().await?;
         let track_id = install_track_in_state_db("Disabled Track", "Artist", 180_000).await;
-        let handler_id = dispatch.add(FakeResponse::Error("upstream 503".to_string()));
-        install_handler_for_test("disabled", handler(handler_id)).await;
+        let callback = dispatch.add(FakeResponse::Error("upstream 503".to_string()));
+        install_handler_for_test("disabled", handler(callback)).await;
         lyra_db::providers::set_enabled(&mut *STATE.db.write().await, "disabled", false)?;
 
         dispatch_for_track(track_id, true).await?;
-        assert!(dispatch.calls(handler_id).is_empty());
+        assert!(dispatch.calls(callback).is_empty());
         Ok(())
     }
 
@@ -773,15 +778,15 @@ mod tests {
         let _guard = crate::services::testing::runtime_test_lock().await;
         let dispatch = initialize_test_runtime().await?;
         let track_id = install_track_in_state_db("Failure Track", "Artist", 180_000).await;
-        let mut success_id = 0;
+        let mut success_id = None;
         for (provider, response) in [
             ("a_error", FakeResponse::Error("upstream 503".to_string())),
             ("b_timeout", FakeResponse::Stall),
             ("c_success", miss()),
         ] {
-            let handler_id = dispatch.add(response);
-            success_id = handler_id;
-            let mut handler = handler(handler_id);
+            let callback = dispatch.add(response);
+            success_id = Some(callback);
+            let mut handler = handler(callback);
             handler.timeout = Duration::from_millis(5);
             install_handler_for_test(provider, handler).await;
         }
@@ -795,7 +800,10 @@ mod tests {
             error.contains("b_timeout: lyrics handler timed out"),
             "{error}"
         );
-        assert_eq!(dispatch.calls(success_id).len(), 1);
+        assert_eq!(
+            dispatch.calls(success_id.expect("success handler")).len(),
+            1
+        );
         Ok(())
     }
 
@@ -804,8 +812,8 @@ mod tests {
         let _guard = crate::services::testing::runtime_test_lock().await;
         let dispatch = initialize_test_runtime().await?;
         let track_id = install_track_in_state_db("Original", "Artist", 180_000).await;
-        let handler_id = dispatch.add(miss());
-        install_handler_for_test("snapshot", handler(handler_id)).await;
+        let callback = dispatch.add(miss());
+        install_handler_for_test("snapshot", handler(callback)).await;
         let mut original = {
             let mut db = STATE.db.write().await;
             let track = lyra_db::tracks::get_by_id(&*db, track_id)?.unwrap();
@@ -825,9 +833,9 @@ mod tests {
             assert_eq!(replacement_id, track_id);
         }
         dispatch_for_track_identity(track_id, Some(&original_public_id), false).await?;
-        assert!(dispatch.calls(handler_id).is_empty());
+        assert!(dispatch.calls(callback).is_empty());
         dispatch_for_track(track_id, false).await?;
-        assert_eq!(dispatch.calls(handler_id).len(), 1);
+        assert_eq!(dispatch.calls(callback).len(), 1);
         Ok(())
     }
 
@@ -839,11 +847,11 @@ mod tests {
             install_track_in_state_db("A Long Song Title Here", "An Artist Group Name", 180_000)
                 .await;
         let release = Arc::new(Semaphore::new(0));
-        let handler_id = dispatch.add(FakeResponse::Held(release.clone(), Box::new(match_hit())));
-        install_handler_for_test("test_hit", handler(handler_id)).await;
+        let callback = dispatch.add(FakeResponse::Held(release.clone(), Box::new(match_hit())));
+        install_handler_for_test("test_hit", handler(callback)).await;
 
         let running = tokio::spawn(async move { dispatch_for_track(track_id, false).await });
-        wait_for_calls(&dispatch, handler_id, 1).await;
+        wait_for_calls(&dispatch, callback, 1).await;
         assert!(
             STATE.db.get().try_write().is_ok(),
             "handler must run with no database lock held"
@@ -870,11 +878,11 @@ mod tests {
             install_track_in_state_db("A Long Song Title Here", "An Artist Group Name", 180_000)
                 .await;
         let release = Arc::new(Semaphore::new(0));
-        let handler_id = dispatch.add(FakeResponse::Held(release.clone(), Box::new(match_hit())));
-        install_handler_for_test("test_recycled_track", handler(handler_id)).await;
+        let callback = dispatch.add(FakeResponse::Held(release.clone(), Box::new(match_hit())));
+        install_handler_for_test("test_recycled_track", handler(callback)).await;
 
         let running = tokio::spawn(async move { dispatch_for_track(track_id, false).await });
-        wait_for_calls(&dispatch, handler_id, 1).await;
+        wait_for_calls(&dispatch, callback, 1).await;
         let replacement_public_id = {
             let mut db = STATE.db.write().await;
             let mut replacement = lyra_db::tracks::get_by_id(&*db, track_id)?
@@ -912,11 +920,11 @@ mod tests {
         let dispatch = initialize_test_runtime().await?;
         let track_id =
             install_track_in_state_db("Title For Force", "Artist For Force", 200_000).await;
-        let handler_id = dispatch.add(miss());
-        install_handler_for_test("test_force", handler(handler_id)).await;
+        let callback = dispatch.add(miss());
+        install_handler_for_test("test_force", handler(callback)).await;
 
         dispatch_for_track(track_id, true).await?;
-        let calls = dispatch.calls(handler_id);
+        let calls = dispatch.calls(callback);
         assert_eq!(calls.len(), 1);
         assert_eq!(
             calls[0]["force_refresh"],
@@ -933,14 +941,14 @@ mod tests {
         let track_id =
             install_track_in_state_db("Title For Dedupe", "Artist For Dedupe", 200_000).await;
         let release = Arc::new(Semaphore::new(0));
-        let handler_id = dispatch.add(FakeResponse::Held(release.clone(), Box::new(miss())));
-        install_handler_for_test("test_dedupe", handler(handler_id)).await;
+        let callback = dispatch.add(FakeResponse::Held(release.clone(), Box::new(miss())));
+        install_handler_for_test("test_dedupe", handler(callback)).await;
 
         let first = tokio::spawn(async move { dispatch_for_track(track_id, false).await });
-        wait_for_calls(&dispatch, handler_id, 1).await;
+        wait_for_calls(&dispatch, callback, 1).await;
         dispatch_for_track(track_id, false).await?;
         assert_eq!(
-            dispatch.calls(handler_id).len(),
+            dispatch.calls(callback).len(),
             1,
             "second concurrent dispatch must dedupe (handler called exactly once)"
         );
@@ -964,19 +972,19 @@ mod tests {
             .await;
         }
 
-        let handler_id = dispatch.add(FakeResponse::Stall);
-        let mut spec = handler(handler_id);
+        let callback = dispatch.add(FakeResponse::Stall);
+        let mut spec = handler(callback);
         spec.timeout = Duration::from_secs(60);
         let cancel = install_handler_for_test("test_cancel", spec).await;
 
         let handle = tokio::spawn(async move { rescan(false, cancel).await });
         // Calls to one provider are serialized, so one handler call parks the rest.
-        wait_for_calls(&dispatch, handler_id, 1).await;
-        let started_at_cancel = dispatch.calls(handler_id).len();
+        wait_for_calls(&dispatch, callback, 1).await;
+        let started_at_cancel = dispatch.calls(callback).len();
         teardown_plugin_providers(&test_plugin_id()).await;
 
         handle.await.expect("rescan join")?;
-        let final_started = dispatch.calls(handler_id).len();
+        let final_started = dispatch.calls(callback).len();
         assert!(
             final_started <= started_at_cancel + MAX_CONCURRENT_DISPATCHES,
             "after unregister at most N more handler calls may execute (started_at_cancel={started_at_cancel}, final={final_started}, N={MAX_CONCURRENT_DISPATCHES})"

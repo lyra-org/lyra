@@ -569,7 +569,7 @@ async fn dispatch_registered_route(request: RegisteredRouteRequest) -> Response 
 
     let request_headers = headers.clone();
     let request = crate::plugins::executor::ApiHandlerRequest {
-        handler_id: route.handler_id,
+        handler: route.handler,
         plugin_id: route.plugin_id.to_string(),
         method: method.as_str().to_string(),
         path: uri.path().to_string(),

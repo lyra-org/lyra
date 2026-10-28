@@ -25,9 +25,7 @@ impl PluginExecutor {
                 .vm
                 .data()
                 .get::<crate::plugins::mix::MixCallbackRegistry>()?;
-            let handler = handlers
-                .get(request.handler_id)
-                .ok_or_else(|| anyhow::anyhow!("mix handler {} not found", request.handler_id))?;
+            let handler = handlers.get(request.handler)?;
             let argument = mix_context_value(&request)?;
             let thread = self.vm.create_thread(&handler.function)?;
             Ok::<_, anyhow::Error>((handler, thread, argument))

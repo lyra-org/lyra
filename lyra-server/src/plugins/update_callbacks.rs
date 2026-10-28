@@ -5,11 +5,7 @@
 
 //! Callbacks plugins register with an `on_update` function, kept per VM and per kind of update.
 
-use std::{
-    cell::RefCell,
-    marker::PhantomData,
-    sync::Arc,
-};
+use std::marker::PhantomData;
 
 use harmony_core::{
     CallContext,
@@ -19,37 +15,52 @@ use harmony_core::{
 };
 use harmony_luau as luau;
 
-use crate::services::plugin_scope::PluginId;
+use crate::{
+    plugins::callback_table::{
+        CallbackTable,
+        PluginCallback,
+    },
+    services::plugin_scope::PluginId,
+};
 
 #[derive(Clone)]
 pub(crate) struct RegisteredUpdateCallback {
-    pub(crate) plugin_id: Arc<str>,
     pub(crate) context: CallContext,
     pub(crate) function: luau::Function,
 }
 
+impl PluginCallback for RegisteredUpdateCallback {
+    fn context(&self) -> &CallContext {
+        &self.context
+    }
+}
+
 /// The callbacks registered for updates carrying `Payload`.
 pub(crate) struct UpdateCallbackStore<Payload> {
-    handlers: RefCell<Vec<RegisteredUpdateCallback>>,
+    handlers: CallbackTable<RegisteredUpdateCallback>,
     payload: PhantomData<fn(Payload)>,
 }
 
 impl<Payload> UpdateCallbackStore<Payload> {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(vm_id: u64) -> Self {
         Self {
-            handlers: RefCell::new(Vec::new()),
+            handlers: CallbackTable::new(vm_id),
             payload: PhantomData,
         }
     }
 
+    /// Every handler, in registration order.
     pub(crate) fn snapshot(&self) -> Vec<RegisteredUpdateCallback> {
-        self.handlers.borrow().clone()
+        self.handlers.values()
     }
 
     pub(crate) fn remove_plugin(&self, plugin_id: &str) {
-        self.handlers
-            .borrow_mut()
-            .retain(|handler| &*handler.plugin_id != plugin_id);
+        self.handlers.remove_plugin(plugin_id);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.handlers.len()
     }
 }
 
@@ -79,12 +90,7 @@ pub(crate) fn register<Payload: 'static>(
         let callbacks = vm.data().get::<UpdateCallbackStore<Payload>>()?;
         callbacks
             .handlers
-            .borrow_mut()
-            .push(RegisteredUpdateCallback {
-                plugin_id,
-                context,
-                function,
-            });
+            .insert(RegisteredUpdateCallback { context, function });
         Ok(())
     }))
 }

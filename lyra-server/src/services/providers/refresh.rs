@@ -23,7 +23,10 @@ use anyhow::Context;
 
 use crate::{
     services::STATE,
-    services::plugin_dispatch::MetadataRefreshRequest,
+    services::plugin_dispatch::{
+        MetadataRefreshRequest,
+        PluginCallbackHandle,
+    },
     services::{
         EntityType,
         covers::{
@@ -54,7 +57,6 @@ use crate::{
         options::provider_options,
         providers::{
             ProviderCallStage,
-            ProviderCallbackHandle,
             declared_artist_ids,
             id_schemes,
             library_refresh_locks,
@@ -140,7 +142,7 @@ pub(crate) async fn refresh_entity_metadata(
     let mut providers_called = Vec::new();
     for (provider_id, handler, _) in handlers {
         let context = context_with_options(context.clone(), &provider_id, &passed_options).await;
-        dispatch_refresh_callback(&provider_id, handler.handler_id, context).await?;
+        dispatch_refresh_callback(&provider_id, handler, context).await?;
         providers_called.push(provider_id);
     }
 
@@ -314,9 +316,7 @@ async fn refresh_release_metadata_inner_with_progress(
         };
         let context = context_with_options(context.clone(), provider_id, &HashMap::new()).await;
         let should_run = if let Some(filter) = filter {
-            match dispatch_sync_filter_callback(provider_id, filter.handler_id, context.clone())
-                .await
-            {
+            match dispatch_sync_filter_callback(provider_id, *filter, context.clone()).await {
                 Ok(value) => value,
                 Err(err) => {
                     tracing::warn!(
@@ -340,7 +340,7 @@ async fn refresh_release_metadata_inner_with_progress(
             continue;
         }
 
-        match dispatch_refresh_callback(provider_id, handler.handler_id, context).await {
+        match dispatch_refresh_callback(provider_id, *handler, context).await {
             Ok(()) => {
                 providers_called.push(provider_id.clone());
                 dirty = true;
@@ -491,9 +491,7 @@ async fn refresh_library_metadata_inner_with_progress(
             let context = context_with_options(context.clone(), provider_id, &HashMap::new()).await;
 
             let should_run = if let Some(filter) = filter {
-                match dispatch_sync_filter_callback(provider_id, filter.handler_id, context.clone())
-                    .await
-                {
+                match dispatch_sync_filter_callback(provider_id, *filter, context.clone()).await {
                     Ok(value) => value,
                     Err(err) => {
                         tracing::warn!(
@@ -517,7 +515,7 @@ async fn refresh_library_metadata_inner_with_progress(
                 continue;
             }
 
-            match dispatch_refresh_callback(provider_id, handler.handler_id, context).await {
+            match dispatch_refresh_callback(provider_id, *handler, context).await {
                 Ok(()) => {
                     refreshed_releases.insert(node_id);
                     dirty_releases.insert(node_id);
@@ -765,22 +763,16 @@ async fn refresh_callbacks_for(
     providers: impl IntoIterator<Item = &ProviderConfig>,
     entity_type: EntityType,
     include_sync_filters: bool,
-) -> Vec<(
-    String,
-    ProviderCallbackHandle,
-    Option<ProviderCallbackHandle>,
-)> {
+) -> Vec<(String, PluginCallbackHandle, Option<PluginCallbackHandle>)> {
     let registry = provider_registry().read_owned().await;
     providers
         .into_iter()
         .filter_map(|provider| {
-            let handler = registry
-                .get_refresh_callback(&provider.provider_id, entity_type)?
-                .clone();
+            let handler = *registry.get_refresh_callback(&provider.provider_id, entity_type)?;
             let filter = if include_sync_filters {
                 registry
                     .get_sync_filter_callback(&provider.provider_id, entity_type)
-                    .cloned()
+                    .copied()
             } else {
                 None
             };
@@ -817,7 +809,7 @@ async fn context_with_options(
 
 async fn dispatch_refresh_callback(
     provider_id: &str,
-    handler_id: u64,
+    handler: PluginCallbackHandle,
     context: serde_json::Value,
 ) -> Result<(), ProviderServiceError> {
     with_provider_call(
@@ -833,7 +825,7 @@ async fn dispatch_refresh_callback(
             tokio::time::timeout(
                 DEFAULT_METADATA_REFRESH_TIMEOUT,
                 runtime.dispatch_metadata_refresh(MetadataRefreshRequest {
-                    handler_id,
+                    handler,
                     context,
                     deadline: std::time::Instant::now() + DEFAULT_METADATA_REFRESH_TIMEOUT,
                 }),
@@ -854,7 +846,7 @@ async fn dispatch_refresh_callback(
 
 async fn dispatch_sync_filter_callback(
     provider_id: &str,
-    handler_id: u64,
+    handler: PluginCallbackHandle,
     context: serde_json::Value,
 ) -> anyhow::Result<bool> {
     with_provider_call(
@@ -869,7 +861,7 @@ async fn dispatch_sync_filter_callback(
             let result = tokio::time::timeout(
                 DEFAULT_METADATA_REFRESH_TIMEOUT,
                 runtime.dispatch_metadata_refresh(MetadataRefreshRequest {
-                    handler_id,
+                    handler,
                     context,
                     deadline: std::time::Instant::now() + DEFAULT_METADATA_REFRESH_TIMEOUT,
                 }),

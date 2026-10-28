@@ -33,6 +33,7 @@ use super::{
 use crate::services::plugin_dispatch::{
     MetadataRefreshRequest,
     MetadataRefreshResult,
+    PluginCallbackHandle,
     SimilarReleaseCandidate,
     SimilarReleaseExternalRef,
     SimilarReleasesDispatchRequest,
@@ -63,11 +64,7 @@ impl PluginExecutor {
             .data()
             .get::<crate::plugins::metadata::MetadataCallbackRegistry>()
             .map_err(anyhow::Error::new)
-            .and_then(|handlers| {
-                handlers.get(request.handler_id).ok_or_else(|| {
-                    anyhow::anyhow!("metadata handler {} not found", request.handler_id)
-                })
-            });
+            .and_then(|handlers| handlers.get(request.handler));
         self.start_metadata_task(
             handler,
             request.context,
@@ -83,7 +80,7 @@ impl PluginExecutor {
         reply: tokio::sync::oneshot::Sender<Result<SimilarReleasesDispatchResult>>,
         permit: tokio::sync::OwnedSemaphorePermit,
     ) {
-        let handler = similar_releases_handler(&self.vm, request.handler_id, &request.provider_id);
+        let handler = similar_releases_handler(&self.vm, request.handler, &request.provider_id);
         self.start_metadata_task(
             handler,
             request.context,
@@ -108,6 +105,14 @@ impl PluginExecutor {
         self.start_callback(deadline, reply, permit, |timeout, completion| {
             schedule_metadata_handler(&self.vm, handler?, context, timeout, completion)
         });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn dispatch_metadata_refresh(
+        &self,
+        request: MetadataRefreshRequest,
+    ) -> Result<MetadataRefreshResult> {
+        self.drive_callback(|reply, permit| self.start_metadata_refresh(request, reply, permit))
     }
 
     #[cfg(test)]
@@ -194,7 +199,7 @@ pub(crate) async fn dispatch_similar_releases_in_vm(
     if request.cancellation.is_cancelled() {
         bail!("metadata handler dispatch was cancelled");
     }
-    let handler = similar_releases_handler(&vm, request.handler_id, &request.provider_id)?;
+    let handler = similar_releases_handler(&vm, request.handler, &request.provider_id)?;
     let argument = harmony_serde::json_to_luau_owned(request.context, 0)?;
     let values = run_handler(
         &vm,
@@ -221,9 +226,6 @@ pub(crate) async fn dispatch_id_links_in_vm(
     provider_id: String,
     calls: Vec<IdLinkCall>,
 ) -> Result<Vec<IdLinkCallResult>> {
-    if calls.iter().any(|call| call.vm_id != vm.id()) {
-        bail!("id link generators of provider '{provider_id}' belong to another plugin runtime");
-    }
     let handlers = vm
         .data()
         .get::<crate::plugins::metadata::MetadataCallbackRegistry>()?;
@@ -233,13 +235,13 @@ pub(crate) async fn dispatch_id_links_in_vm(
     for call in &calls {
         let budget = id_link_call_budget(deadline.saturating_duration_since(Instant::now()));
         let result = match budget {
-            Some(budget) if !timed_out.contains(&call.handler_id) => {
+            Some(budget) if !timed_out.contains(&call.handler) => {
                 run_id_link(&vm, &handlers, &provider_id, call, budget, deadline).await
             }
             _ => Err(IdLinkCallError::NotRun),
         };
         if result == Err(IdLinkCallError::TimedOut) {
-            timed_out.insert(call.handler_id);
+            timed_out.insert(call.handler);
         }
         results.push(result);
     }
@@ -262,8 +264,8 @@ async fn run_id_link(
 ) -> IdLinkCallResult {
     let failed = |error: String| IdLinkCallError::Failed(error);
     let handler = handlers
-        .get_for_provider(call.handler_id, provider_id, call.entity)
-        .ok_or_else(|| failed(format!("id link generator {} not found", call.handler_id)))?;
+        .get_for_provider(call.handler, provider_id, call.entity)
+        .map_err(|error| failed(format!("{error:#}")))?;
     let ctx = id_link_context(vm, &handler, call).map_err(|error| failed(format!("{error:#}")))?;
     let id = harmony_luau::Value::String(call.id.clone().into_bytes());
     let outcome = run_handler(
@@ -356,21 +358,12 @@ fn decode_id_link(value: Option<harmony_luau::Value>) -> IdLinkCallResult {
 
 fn similar_releases_handler(
     vm: &harmony_luau::Vm,
-    handler_id: u64,
+    handler: PluginCallbackHandle,
     provider_id: &str,
 ) -> Result<crate::plugins::metadata::MetadataCallback> {
     vm.data()
         .get::<crate::plugins::metadata::MetadataCallbackRegistry>()?
-        .get_for_provider(
-            handler_id,
-            provider_id,
-            crate::services::EntityType::Release,
-        )
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "similar releases handler {handler_id} not found for provider '{provider_id}'"
-            )
-        })
+        .get_for_provider(handler, provider_id, crate::services::EntityType::Release)
 }
 
 struct ScheduledThreadGuard {

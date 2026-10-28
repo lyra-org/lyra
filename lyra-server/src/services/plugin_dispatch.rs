@@ -14,7 +14,10 @@ use std::{
     time::Duration,
 };
 
-use anyhow::Result;
+use anyhow::{
+    Result,
+    ensure,
+};
 use futures::future::BoxFuture;
 
 use crate::services::{
@@ -22,13 +25,33 @@ use crate::services::{
     playback_sessions::PlaybackUpdatePayload,
 };
 
+/// A handler a plugin registered, as services hold it: the runtime that
+/// registered it and its id there. Every runtime numbers its handlers from 1,
+/// so the runtime id keeps a handle from reaching another runtime's handler.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct PluginCallbackHandle {
+    pub(crate) vm_id: u64,
+    pub(crate) handler_id: u64,
+}
+
+impl PluginCallbackHandle {
+    /// The handler's id in the runtime `vm_id`; fails for a handle another
+    /// runtime issued.
+    pub(crate) fn handler_id_in(self, vm_id: u64) -> Result<u64> {
+        ensure!(
+            self.vm_id == vm_id,
+            "plugin handler {} belongs to plugin runtime {}, not to runtime {vm_id}",
+            self.handler_id,
+            self.vm_id
+        );
+        Ok(self.handler_id)
+    }
+}
+
 /// The loaded plugin runtime as services reach it: dispatch to the handlers
 /// plugins registered with service registries. The plugin executor
 /// implements it and publishes it per generation.
 pub(crate) trait PluginDispatch: Send + Sync {
-    /// Identifies the runtime instance, so callers can detect a swap.
-    fn vm_id(&self) -> u64;
-
     fn dispatch_metadata_refresh(
         &self,
         request: MetadataRefreshRequest,
@@ -53,7 +76,7 @@ pub(crate) trait PluginDispatch: Send + Sync {
 
 #[derive(Clone, Debug)]
 pub(crate) struct MixHandlerRequest {
-    pub(crate) handler_id: u64,
+    pub(crate) handler: PluginCallbackHandle,
     pub(crate) seed_id: Option<i64>,
     pub(crate) limit: Option<usize>,
     pub(crate) recent_track_ids: Vec<i64>,
@@ -82,7 +105,7 @@ impl DispatchCancellation {
 
 #[derive(Clone, Debug)]
 pub(crate) struct MetadataRefreshRequest {
-    pub(crate) handler_id: u64,
+    pub(crate) handler: PluginCallbackHandle,
     pub(crate) context: serde_json::Value,
     pub(crate) deadline: std::time::Instant,
 }
@@ -111,7 +134,7 @@ pub(crate) enum SimilarReleaseCandidate {
 #[derive(Clone, Debug)]
 pub(crate) struct SimilarReleasesDispatchRequest {
     pub(crate) provider_id: String,
-    pub(crate) handler_id: u64,
+    pub(crate) handler: PluginCallbackHandle,
     pub(crate) context: serde_json::Value,
     pub(crate) timeout: Duration,
     pub(crate) cancellation: DispatchCancellation,

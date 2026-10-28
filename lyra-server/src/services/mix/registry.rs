@@ -15,6 +15,7 @@ use anyhow::{
 use tokio::sync::RwLock;
 
 use super::super::options::OptionDeclaration;
+use crate::services::plugin_dispatch::PluginCallbackHandle;
 use crate::services::plugin_scope::{
     PluginId,
     PluginScopedInner,
@@ -52,7 +53,7 @@ pub(crate) struct MixRegistry {
 
 #[derive(Default)]
 struct MixerState {
-    handlers: HashMap<MixSeedType, u64>,
+    handlers: HashMap<MixSeedType, PluginCallbackHandle>,
     options: Vec<OptionDeclaration>,
 }
 
@@ -84,14 +85,18 @@ impl MixRegistry {
         &mut self,
         mixer_id: &str,
         seed_type: MixSeedType,
-        handler_id: u64,
+        handler: PluginCallbackHandle,
     ) {
         if let Some(mixer) = self.state_mut(mixer_id) {
-            mixer.handlers.insert(seed_type, handler_id);
+            mixer.handlers.insert(seed_type, handler);
         }
     }
 
-    pub(crate) fn get_seed_callback(&self, mixer_id: &str, seed_type: MixSeedType) -> Option<u64> {
+    pub(crate) fn get_seed_callback(
+        &self,
+        mixer_id: &str,
+        seed_type: MixSeedType,
+    ) -> Option<PluginCallbackHandle> {
         self.state(mixer_id)
             .and_then(|p| p.handlers.get(&seed_type))
             .copied()

@@ -25,7 +25,6 @@ use crate::services::{
         lyrics::providers as lyrics_dispatcher,
     },
     providers::{
-        ProviderCallbackHandle,
         ProviderCoverSpec,
         ProviderIdUrlGenerator,
         ProviderLyricsSpec,
@@ -249,7 +248,6 @@ fn provider_id_callback(
     };
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
     let context = core_call_context(context);
-    let vm_id = vm.id();
     let provider = provider.clone();
     Ok(luau::ScheduledFuture::new(async move {
         let generation = crate::plugins::STATE.generation();
@@ -264,27 +262,14 @@ fn provider_id_callback(
             .set_id_registration(&provider.provider_id, id_spec, || {
                 generator.map(|generator| match generator {
                     IdGenerator::Template(template) => ProviderIdUrlGenerator::Template(template),
-                    IdGenerator::Function(function) => ProviderIdUrlGenerator::Function {
-                        handler: ProviderCallbackHandle {
-                            handler_id: handlers.register(
-                                provider.provider_id.clone(),
-                                entity,
-                                function,
-                                context,
-                            ),
-                        },
-                        vm_id,
-                    },
+                    IdGenerator::Function(function) => ProviderIdUrlGenerator::Function(
+                        handlers.register(provider.provider_id.clone(), entity, function, context),
+                    ),
                 })
             })
             .map_err(|err| crate::plugins::runtime_error(format!("provider:id: {err}")))?;
-        if let Some(ProviderIdUrlGenerator::Function {
-            handler,
-            vm_id: replaced_vm_id,
-        }) = replaced
-            && replaced_vm_id == vm_id
-        {
-            handlers.remove(handler.handler_id);
+        if let Some(ProviderIdUrlGenerator::Function(handler)) = replaced {
+            handlers.remove(handler);
         }
         Ok(())
     }))
@@ -339,14 +324,10 @@ fn search_callback(
             .await
             .map_err(crate::plugins::runtime_error)?;
         let mut registry = provider_registry().write_owned().await;
-        let handler_id =
+        let handler =
             handlers.register(provider.provider_id.clone(), entity_type, handler, context);
 
-        registry.set_search_callback(
-            &provider.provider_id,
-            entity_type,
-            ProviderCallbackHandle { handler_id },
-        );
+        registry.set_search_callback(&provider.provider_id, entity_type, handler);
         Ok(())
     }))
 }
@@ -384,7 +365,7 @@ fn cover_callback(
             )));
         }
         let mut registry = provider_registry().write_owned().await;
-        let handler_id =
+        let handler =
             handlers.register(provider.provider_id.clone(), entity_type, handler, context);
 
         registry.set_cover_handler(
@@ -393,7 +374,7 @@ fn cover_callback(
             ProviderCoverSpec {
                 timeout,
                 require,
-                handler: ProviderCallbackHandle { handler_id },
+                handler,
             },
         );
         Ok(())
@@ -426,7 +407,7 @@ fn lyrics_callback(
                 provider.plugin_id
             )));
         }
-        let handler_id = handlers.register(
+        let handler = handlers.register(
             provider.provider_id.clone(),
             EntityType::Track,
             handler,
@@ -434,7 +415,7 @@ fn lyrics_callback(
         );
         lyrics_dispatcher::register_handler(
             &provider.provider_id,
-            ProviderLyricsSpec::new(timeout, require, ProviderCallbackHandle { handler_id }),
+            ProviderLyricsSpec::new(timeout, require, handler),
         )
         .await;
         Ok(())
@@ -461,7 +442,7 @@ fn similar_releases_callback(
             .await
             .map_err(crate::plugins::runtime_error)?;
         let mut registry = provider_registry().write_owned().await;
-        let handler_id = handlers.register(
+        let handler = handlers.register(
             provider.provider_id.clone(),
             EntityType::Release,
             handler,
@@ -473,7 +454,7 @@ fn similar_releases_callback(
             ProviderSimilarReleasesSpec {
                 timeout,
                 require,
-                handler: ProviderCallbackHandle { handler_id },
+                handler,
             },
         );
         Ok(())
@@ -500,27 +481,19 @@ fn refresh_callback(
             .await
             .map_err(crate::plugins::runtime_error)?;
         let mut registry = provider_registry().write_owned().await;
-        let handler_id = handlers.register(
+        let handler = handlers.register(
             provider.provider_id.clone(),
             entity_type,
             handler,
             context.clone(),
         );
-        let filter_id = filter.map(|filter| {
+        let filter = filter.map(|filter| {
             handlers.register(provider.provider_id.clone(), entity_type, filter, context)
         });
 
-        registry.set_refresh_callback(
-            &provider.provider_id,
-            entity_type,
-            ProviderCallbackHandle { handler_id },
-        );
-        if let Some(handler_id) = filter_id {
-            registry.set_sync_filter_callback(
-                &provider.provider_id,
-                entity_type,
-                ProviderCallbackHandle { handler_id },
-            );
+        registry.set_refresh_callback(&provider.provider_id, entity_type, handler);
+        if let Some(filter) = filter {
+            registry.set_sync_filter_callback(&provider.provider_id, entity_type, filter);
         }
         Ok(())
     }))

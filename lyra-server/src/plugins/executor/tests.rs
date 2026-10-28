@@ -171,10 +171,29 @@ fn init_api_test_state() -> Result<()> {
     Ok(())
 }
 
+/// An unauthenticated `GET` to `path` with no query, params or body.
+fn api_request(
+    handler: crate::services::plugin_dispatch::PluginCallbackHandle,
+    path: &str,
+) -> ApiHandlerRequest {
+    ApiHandlerRequest {
+        handler,
+        plugin_id: "demo".to_string(),
+        method: "GET".to_string(),
+        path: path.to_string(),
+        headers: Vec::new(),
+        query: HashMap::new(),
+        params: HashMap::new(),
+        body: Vec::new(),
+        auth: None,
+        client: Default::default(),
+    }
+}
+
 /// An unauthenticated websocket start for `path` and the ends of its
 /// inbound and outbound channels.
 fn websocket_request(
-    handler_id: u64,
+    handler: crate::services::plugin_dispatch::PluginCallbackHandle,
     path: &str,
 ) -> (
     WebSocketStartRequest,
@@ -184,7 +203,7 @@ fn websocket_request(
     let (inbound_tx, inbound_rx) = tokio::sync::mpsc::channel(4);
     let (outbound_tx, outbound_rx) = tokio::sync::mpsc::channel(4);
     let request = WebSocketStartRequest {
-        handler_id,
+        handler,
         plugin_id: "demo".to_string(),
         method: "GET".to_string(),
         path: path.to_string(),
@@ -850,7 +869,7 @@ fn plugin_executor_bounds_similar_release_result_before_json_conversion() -> Res
             end)
         "#[..],
     )?;
-    let handler_id = {
+    let handler = {
         let registry = futures::executor::block_on(
             crate::services::providers::provider_registry().read_owned(),
         );
@@ -858,12 +877,11 @@ fn plugin_executor_bounds_similar_release_result_before_json_conversion() -> Res
             .get_similar_releases_handler("bounded-similar-provider")
             .context("similar releases handler")?
             .handler
-            .handler_id
     };
 
     let result = runtime.dispatch_similar_releases(SimilarReleasesDispatchRequest {
         provider_id: "bounded-similar-provider".to_string(),
-        handler_id,
+        handler,
         context: serde_json::json!({}),
         timeout: std::time::Duration::from_secs(1),
         cancellation: DispatchCancellation::default(),
@@ -1280,6 +1298,165 @@ fn plugin_executor_exposes_lyra_listens_on_update() -> Result<()> {
 }
 
 #[test]
+fn plugin_executor_rejects_handles_from_another_runtime() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+    init_api_test_state()?;
+    struct Handlers {
+        refresh: crate::services::plugin_dispatch::PluginCallbackHandle,
+        route: crate::services::plugin_dispatch::PluginCallbackHandle,
+        websocket: crate::services::plugin_dispatch::PluginCallbackHandle,
+        mix: crate::services::plugin_dispatch::PluginCallbackHandle,
+        id_link: crate::services::plugin_dispatch::PluginCallbackHandle,
+    }
+    let register = |name: &str| -> Result<_> {
+        let runtime = PluginExecutor::with_database(
+            Arc::from(vec![manifest(
+                "demo",
+                &["lyra.metadata", "lyra.api", "lyra.mix"],
+            )]),
+            default_server_info(),
+            crate::services::STATE.db.get(),
+        )?;
+        runtime.run_plugin_source(
+            "demo",
+            "init.luau",
+            format!(
+                r#"
+                    local metadata = require("@lyra/metadata")
+                    local api = require("@lyra/api")
+                    local mix = require("@lyra/mix")
+                    local provider = metadata.Provider.new("{name}")
+                    provider:refresh(metadata.EntityType.Release, function()
+                        return "{name}"
+                    end)
+                    provider:id({{ id_type = "thing_id", entity = metadata.EntityType.Release }}, function()
+                        return "https://example.com/{name}"
+                    end)
+                    api.get("/{name}", function()
+                        return api.response.json(200, {{}})
+                    end, "public")
+                    api.websocket("/{name}/socket", function(_reader, sender)
+                        sender:close()
+                    end, "public")
+                    mix.Mixer.new("{name}"):from_track(function()
+                        return {{ tracks = {{}} }}
+                    end)
+                "#
+            )
+            .into_bytes(),
+        )?;
+        let (refresh, id_link) = futures::executor::block_on(async {
+            let registry = crate::services::providers::provider_registry()
+                .read_owned()
+                .await;
+            let refresh = registry
+                .get_refresh_callback(name, crate::services::EntityType::Release)
+                .copied();
+            let id_link = registry
+                .id_link_generators()
+                .get(name, crate::services::EntityType::Release, "thing_id")
+                .and_then(|generator| match generator.generator {
+                    crate::services::providers::ProviderIdUrlGenerator::Function(handler) => {
+                        Some(handler)
+                    }
+                    crate::services::providers::ProviderIdUrlGenerator::Template(_) => None,
+                });
+            (refresh, id_link)
+        });
+        let handlers = Handlers {
+            refresh: refresh.context("registered refresh callback")?,
+            route: futures::executor::block_on(crate::plugins::api::tests::registered_handler(
+                "GET",
+                &format!("/{name}"),
+            ))
+            .context("registered API handler")?,
+            websocket: futures::executor::block_on(crate::plugins::api::tests::registered_handler(
+                "GET",
+                &format!("/{name}/socket"),
+            ))
+            .context("registered websocket handler")?,
+            mix: futures::executor::block_on(async {
+                crate::services::mix::mix_registry()
+                    .read_owned()
+                    .await
+                    .get_seed_callback(name, crate::services::mix::MixSeedType::Track)
+            })
+            .context("registered mix callback")?,
+            id_link: id_link.context("registered id link generator")?,
+        };
+        Ok((runtime, handlers))
+    };
+    let (_stale_runtime, stale) = register("stale-a")?;
+    let (runtime, own) = register("stale-b")?;
+    assert_eq!(stale.refresh.handler_id, own.refresh.handler_id);
+    let assert_stale = |error: anyhow::Error| {
+        assert!(
+            format!("{error:#}").contains("belongs to plugin runtime"),
+            "{error:#}"
+        );
+    };
+    let refresh_request = |handler| MetadataRefreshRequest {
+        handler,
+        context: serde_json::json!({}),
+        deadline: std::time::Instant::now() + Duration::from_secs(5),
+    };
+
+    let result = runtime.dispatch_metadata_refresh(refresh_request(own.refresh))?;
+    assert_eq!(result.values, vec![serde_json::json!("stale-b")]);
+    assert_stale(
+        runtime
+            .dispatch_metadata_refresh(refresh_request(stale.refresh))
+            .expect_err("a provider handle from another runtime must be rejected"),
+    );
+    assert_stale(
+        runtime
+            .dispatch_api_handler(api_request(stale.route, "/stale-a"))
+            .expect_err("an API route handle from another runtime must be rejected"),
+    );
+    let (websocket, _inbound_tx, _outbound_rx) =
+        websocket_request(stale.websocket, "/stale-a/socket");
+    assert_stale(
+        runtime
+            .start_websocket(websocket)
+            .expect_err("a websocket handle from another runtime must be rejected"),
+    );
+    assert_stale(
+        runtime
+            .dispatch_mix_handler(MixHandlerRequest {
+                handler: stale.mix,
+                seed_id: Some(1),
+                limit: Some(1),
+                recent_track_ids: Vec::new(),
+                options: serde_json::Map::new(),
+            })
+            .expect_err("a mix handle from another runtime must be rejected"),
+    );
+    let id_link_call = |handler| crate::services::providers::IdLinkCall {
+        handler,
+        entity: crate::services::EntityType::Release,
+        id_type: "thing_id".to_string(),
+        id: "1".to_string(),
+        library: Default::default(),
+        external_ids: Default::default(),
+    };
+    let tokio_runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let results = tokio_runtime.block_on(super::dispatch_id_links_in_vm(
+        runtime.vm.clone(),
+        "stale-b".to_string(),
+        vec![id_link_call(stale.id_link)],
+    ))?;
+    match &results[0] {
+        Err(crate::services::providers::IdLinkCallError::Failed(error)) => {
+            assert!(error.contains("belongs to plugin runtime"), "{error}");
+        }
+        other => panic!("a stale id link handle must fail, got {other:?}"),
+    }
+    Ok(())
+}
+
+#[test]
 fn plugin_executor_dispatches_registered_api_handler() -> Result<()> {
     // api::install resets the shared API route registry; serialize with the
     // other global-registry mutators.
@@ -1306,22 +1483,18 @@ fn plugin_executor_dispatches_registered_api_handler() -> Result<()> {
         "#[..],
     )?;
 
-    let handler_id = futures::executor::block_on(crate::plugins::api::tests::registered_handler(
+    let handler = futures::executor::block_on(crate::plugins::api::tests::registered_handler(
         "POST",
         "/demo/{id}",
     ))
     .context("registered API handler")?;
     let result = runtime.dispatch_api_handler(ApiHandlerRequest {
-        handler_id,
-        plugin_id: "demo".to_string(),
         method: "POST".to_string(),
-        path: "/demo/abc".to_string(),
         headers: vec![("content-type".to_string(), "application/json".to_string())],
         query: HashMap::from([("flag".to_string(), vec!["yes".to_string()])]),
         params: HashMap::from([("id".to_string(), "abc".to_string())]),
         body: br#"{"name":"raw"}"#.to_vec(),
-        auth: None,
-        client: Default::default(),
+        ..api_request(handler, "/demo/abc")
     })?;
 
     assert_eq!(result.kind, ApiResponseKind::Json);
@@ -1390,23 +1563,10 @@ async fn plugin_executor_binds_host_resolved_principal_to_api_responses() -> Res
         .into_bytes(),
     )?;
 
-    let request = |handler_id: u64, path: &str| ApiHandlerRequest {
-        handler_id,
-        plugin_id: "demo".to_string(),
-        method: "GET".to_string(),
-        path: path.to_string(),
-        headers: Vec::new(),
-        query: HashMap::new(),
-        params: HashMap::new(),
-        body: Vec::new(),
-        auth: None,
-        client: Default::default(),
-    };
-
     let whoami_handler = crate::plugins::api::tests::registered_handler("GET", "/whoami")
         .await
         .context("registered /whoami handler")?;
-    let response = runtime.dispatch_api_handler(request(whoami_handler, "/whoami"))?;
+    let response = runtime.dispatch_api_handler(api_request(whoami_handler, "/whoami"))?;
     let principal = response
         .principal
         .context("resolve_auth during dispatch should bind the principal to the response")?;
@@ -1415,7 +1575,7 @@ async fn plugin_executor_binds_host_resolved_principal_to_api_responses() -> Res
     let anon_handler = crate::plugins::api::tests::registered_handler("GET", "/anon")
         .await
         .context("registered /anon handler")?;
-    let response = runtime.dispatch_api_handler(request(anon_handler, "/anon"))?;
+    let response = runtime.dispatch_api_handler(api_request(anon_handler, "/anon"))?;
     assert!(
         response.principal.is_none(),
         "dispatches that never resolve auth must not carry a principal"
@@ -1424,7 +1584,7 @@ async fn plugin_executor_binds_host_resolved_principal_to_api_responses() -> Res
     let boundary_auth = crate::services::auth::resolve_auth_from_bearer(Some(&token))
         .await?
         .context("bearer token should resolve at the boundary")?;
-    let mut seeded = request(anon_handler, "/anon");
+    let mut seeded = api_request(anon_handler, "/anon");
     seeded.auth = Some(boundary_auth);
     let response = runtime.dispatch_api_handler(seeded)?;
     let principal = response
@@ -1480,20 +1640,12 @@ async fn plugin_executor_treats_expired_session_as_unauthenticated() -> Result<(
             end, "public")
         "#[..],
     )?;
-    let handler_id = crate::plugins::api::tests::registered_handler("GET", "/protected")
+    let handler = crate::plugins::api::tests::registered_handler("GET", "/protected")
         .await
         .context("registered protected handler")?;
     let request = || ApiHandlerRequest {
-        handler_id,
-        plugin_id: "demo".to_string(),
-        method: "GET".to_string(),
-        path: "/protected".to_string(),
-        headers: Vec::new(),
         query: HashMap::from([("api_key".to_string(), vec![token.clone()])]),
-        params: HashMap::new(),
-        body: Vec::new(),
-        auth: None,
-        client: Default::default(),
+        ..api_request(handler, "/protected")
     };
     let response = runtime.dispatch_api_handler(request())?;
     assert_eq!(response.status, 204);
@@ -1542,12 +1694,12 @@ fn plugin_executor_dispatches_registered_websocket_handler() -> Result<()> {
         "#[..],
     )?;
 
-    let handler_id = futures::executor::block_on(crate::plugins::api::tests::registered_handler(
+    let handler = futures::executor::block_on(crate::plugins::api::tests::registered_handler(
         "GET",
         "/socket/{id}",
     ))
     .context("registered websocket handler")?;
-    let (mut request, inbound_tx, mut outbound_rx) = websocket_request(handler_id, "/socket/abc");
+    let (mut request, inbound_tx, mut outbound_rx) = websocket_request(handler, "/socket/abc");
     request.params = HashMap::from([("id".to_string(), "abc".to_string())]);
     inbound_tx.try_send("hello".to_string())?;
 
@@ -1605,32 +1757,21 @@ fn foreground_dispatch_does_not_hide_finished_websocket_cleanup() -> Result<()> 
         "#[..],
     )?;
 
-    let websocket_handler_id = futures::executor::block_on(
+    let websocket_handler = futures::executor::block_on(
         crate::plugins::api::tests::registered_handler("GET", "/socket"),
     )
     .context("registered websocket handler")?;
-    let api_handler_id = futures::executor::block_on(
-        crate::plugins::api::tests::registered_handler("GET", "/ping"),
-    )
+    let api_handler = futures::executor::block_on(crate::plugins::api::tests::registered_handler(
+        "GET", "/ping",
+    ))
     .context("registered API handler")?;
-    let (request, inbound_tx, _outbound_rx) = websocket_request(websocket_handler_id, "/socket");
+    let (request, inbound_tx, _outbound_rx) = websocket_request(websocket_handler, "/socket");
     inbound_tx.try_send("done".to_string())?;
 
     runtime.start_websocket(request)?;
     assert_eq!(runtime.websocket_tasks.borrow().len(), 1);
 
-    let response = runtime.dispatch_api_handler(ApiHandlerRequest {
-        handler_id: api_handler_id,
-        plugin_id: "demo".to_string(),
-        method: "GET".to_string(),
-        path: "/ping".to_string(),
-        headers: Vec::new(),
-        query: HashMap::new(),
-        params: HashMap::new(),
-        body: Vec::new(),
-        auth: None,
-        client: Default::default(),
-    })?;
+    let response = runtime.dispatch_api_handler(api_request(api_handler, "/ping"))?;
     assert_eq!(response.kind, ApiResponseKind::Empty);
 
     for _ in 0..100 {
@@ -1706,10 +1847,10 @@ async fn websocket_spawned_work_acts_as_the_verified_socket_principal() -> Resul
             end, "public")
         "#[..],
     )?;
-    let handler_id = crate::plugins::api::tests::registered_handler("GET", "/socket")
+    let handler = crate::plugins::api::tests::registered_handler("GET", "/socket")
         .await
         .context("registered websocket handler")?;
-    let (mut request, inbound_tx, mut outbound_rx) = websocket_request(handler_id, "/socket");
+    let (mut request, inbound_tx, mut outbound_rx) = websocket_request(handler, "/socket");
     request.auth = Some(crate::services::auth::ResolvedAuth {
         principal: principal.clone(),
         credential: crate::services::auth::AuthCredential::Default,
@@ -1768,7 +1909,7 @@ fn plugin_executor_dispatches_registered_mix_handler() -> Result<()> {
         "#[..],
     )?;
 
-    let handler_id = futures::executor::block_on(async {
+    let handler = futures::executor::block_on(async {
         crate::services::mix::mix_registry()
             .read_owned()
             .await
@@ -1776,7 +1917,7 @@ fn plugin_executor_dispatches_registered_mix_handler() -> Result<()> {
     })
     .context("registered mix callback")?;
     let result = runtime.dispatch_mix_handler(MixHandlerRequest {
-        handler_id,
+        handler,
         seed_id: Some(40),
         limit: Some(10),
         recent_track_ids: Vec::new(),
@@ -2204,6 +2345,70 @@ fn plugin_executor_failed_restart_keeps_no_update_handler() -> Result<()> {
 }
 
 #[test]
+fn plugin_executor_stop_drops_the_plugins_callbacks() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+    init_api_test_state()?;
+    let plugin = temp_plugin(
+        "demo",
+        &[
+            "lyra.metadata",
+            "lyra.api",
+            "lyra.mix",
+            "lyra.playback_sessions",
+            "lyra.listens",
+        ],
+        r#"
+            local metadata = require("@lyra/metadata")
+            local api = require("@lyra/api")
+            local mix = require("@lyra/mix")
+            local playbacks = require("@lyra/playback_sessions")
+            local listens = require("@lyra/listens")
+            metadata.Provider.new("stopped-provider"):refresh(metadata.EntityType.Release, function()
+                return nil
+            end)
+            api.get("/stopped", function()
+                return api.response.json(200, {})
+            end, "public")
+            mix.Mixer.new("stopped-mixer"):from_track(function()
+                return { tracks = {} }
+            end)
+            playbacks.on_update(function() end)
+            listens.on_update(function() end)
+        "#,
+    )?;
+    let (runtime, errors) = PluginExecutor::discover_from_plugins_dir_with_db(
+        plugin.plugins_dir(),
+        default_server_info(),
+        crate::services::STATE.db.get(),
+    )?;
+    assert!(errors.is_empty(), "{errors:?}");
+    runtime.exec_plugin("demo")?;
+    let data = runtime.vm.data();
+    let lens = || -> Result<[usize; 5]> {
+        Ok([
+            data.get::<crate::plugins::metadata::MetadataCallbackRegistry>()?
+                .len(),
+            data.get::<crate::plugins::api::ApiRouteStore>()?.len(),
+            data.get::<crate::plugins::mix::MixCallbackRegistry>()?
+                .len(),
+            data.get::<crate::plugins::update_callbacks::UpdateCallbackStore<
+                crate::services::playback_sessions::PlaybackUpdatePayload,
+            >>()?
+            .len(),
+            data.get::<crate::plugins::update_callbacks::UpdateCallbackStore<
+                crate::services::listens::ListenUpdatePayload,
+            >>()?
+            .len(),
+        ])
+    };
+    assert_eq!(lens()?, [1, 1, 1, 1, 1]);
+
+    runtime.stop_plugin("demo")?;
+    assert_eq!(lens()?, [0, 0, 0, 0, 0]);
+    Ok(())
+}
+
+#[test]
 fn plugin_executor_handle_shutdown_stops_lua_and_the_executor_thread() -> Result<()> {
     let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
     init_api_test_state()?;
@@ -2551,25 +2756,17 @@ fn cover_artwork_bindings_serve_anonymous_public_routes() -> Result<()> {
         "#[..],
     )?;
 
-    let handler_id = futures::executor::block_on(crate::plugins::api::tests::registered_handler(
+    let handler = futures::executor::block_on(crate::plugins::api::tests::registered_handler(
         "GET",
         "/artwork/{release}/{playlist}",
     ))
     .context("registered API handler")?;
     let result = runtime.dispatch_api_handler(ApiHandlerRequest {
-        handler_id,
-        plugin_id: "demo".to_string(),
-        method: "GET".to_string(),
-        path: format!("/artwork/{}/{}", release.0, playlist.0),
-        headers: Vec::new(),
-        query: HashMap::new(),
         params: HashMap::from([
             ("release".to_string(), release.0.to_string()),
             ("playlist".to_string(), playlist.0.to_string()),
         ]),
-        body: Vec::new(),
-        auth: None,
-        client: Default::default(),
+        ..api_request(handler, &format!("/artwork/{}/{}", release.0, playlist.0))
     })?;
 
     assert_eq!(result.status, 200);
@@ -2668,25 +2865,17 @@ fn streamable_bindings_serve_anonymous_public_routes() -> Result<()> {
         "#[..],
     )?;
 
-    let handler_id = futures::executor::block_on(crate::plugins::api::tests::registered_handler(
+    let handler = futures::executor::block_on(crate::plugins::api::tests::registered_handler(
         "GET",
         "/stream/{track}/{release}",
     ))
     .context("registered API handler")?;
     let result = runtime.dispatch_api_handler(ApiHandlerRequest {
-        handler_id,
-        plugin_id: "demo".to_string(),
-        method: "GET".to_string(),
-        path: format!("/stream/{}/{}", track.0, release.0),
-        headers: Vec::new(),
-        query: HashMap::new(),
         params: HashMap::from([
             ("track".to_string(), track.0.to_string()),
             ("release".to_string(), release.0.to_string()),
         ]),
-        body: Vec::new(),
-        auth: None,
-        client: Default::default(),
+        ..api_request(handler, &format!("/stream/{}/{}", track.0, release.0))
     })?;
 
     assert_eq!(result.status, 200);

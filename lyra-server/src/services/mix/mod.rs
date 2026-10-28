@@ -454,16 +454,16 @@ async fn dispatch_mixer(
             break;
         }
         let handler_timeout = (deadline - now).min(MIXER_HANDLER_TIMEOUT);
-        let handler_id = {
+        let handler = {
             let registry = mix_registry().read_owned().await;
             registry.get_seed_callback(mixer_id, seed_type)
         };
-        let Some(handler_id) = handler_id else {
+        let Some(handler) = handler else {
             continue;
         };
 
         match run_callback_with_timeout(
-            handler_id,
+            handler,
             seed.plugin_seed_id(),
             recent_track_ids.clone(),
             options,
@@ -492,7 +492,7 @@ async fn dispatch_mixer(
 
 /// Coerces `extra` via declared types into `ctx.options`.
 async fn run_callback_with_timeout(
-    handler_id: u64,
+    handler: crate::services::plugin_dispatch::PluginCallbackHandle,
     seed_id: Option<DbId>,
     recent_track_ids: Vec<DbId>,
     options: &MixOptions,
@@ -503,7 +503,7 @@ async fn run_callback_with_timeout(
         return Ok(HandlerOutcome::FellThrough);
     };
     let request = crate::services::plugin_dispatch::MixHandlerRequest {
-        handler_id,
+        handler,
         seed_id: seed_id.map(|id| id.0),
         limit: options.limit,
         recent_track_ids: recent_track_ids.into_iter().map(|id| id.0).collect(),

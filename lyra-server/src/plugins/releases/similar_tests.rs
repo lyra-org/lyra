@@ -25,7 +25,6 @@ use crate::{
     services::{
         STATE,
         plugin_dispatch::{
-            PluginDispatch,
             SimilarReleaseCandidate,
             SimilarReleasesDispatchResult,
         },
@@ -279,7 +278,6 @@ async fn dispatcher_queue_delay_does_not_consume_handler_timeout() -> Result<()>
             accessible_library_ids: None,
             viewer: None,
         },
-        None,
         move |_runtime, request| {
             let candidate_public_id = candidate_public_id.clone();
             async move {
@@ -326,7 +324,7 @@ async fn in_vm_dispatch_is_not_wrapped_in_provider_call_lock() -> Result<()> {
             end)
         "#,
     )?;
-    let runtime = publish_test_runtime(&plugin).await?;
+    publish_test_runtime(&plugin).await?;
 
     let releases = similar_with_dispatch(
         seed,
@@ -335,7 +333,6 @@ async fn in_vm_dispatch_is_not_wrapped_in_provider_call_lock() -> Result<()> {
             accessible_library_ids: None,
             viewer: None,
         },
-        Some(runtime.vm_id()),
         move |_runtime, request| {
             let candidate_public_id = candidate_public_id.clone();
             async move {

@@ -6,6 +6,13 @@
 use futures::future::BoxFuture;
 
 use super::*;
+use crate::{
+    plugins::callback_table::{
+        CallbackTable,
+        PluginCallback,
+    },
+    services::plugin_dispatch::PluginCallbackHandle,
+};
 
 /// Serves the registered plugin routes over HTTP. Rebuilt whenever the
 /// registered set changes, so a failed rebuild surfaces to whoever changed it.
@@ -13,10 +20,8 @@ pub(crate) trait RouteHost: Send + Sync {
     fn rebuild(&self) -> BoxFuture<'_, Result<()>>;
 }
 
-#[derive(Default)]
 pub(crate) struct ApiRouteStore {
-    next_handler_id: Cell<u64>,
-    handlers: RefCell<HashMap<u64, ApiHandlerRegistration>>,
+    handlers: CallbackTable<ApiHandlerRegistration>,
 }
 
 pub(super) struct ApiRouteRegistration {
@@ -30,10 +35,9 @@ pub(super) struct ApiRouteRegistration {
 }
 
 impl ApiRouteStore {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(vm_id: u64) -> Self {
         Self {
-            next_handler_id: Cell::new(1),
-            handlers: RefCell::new(HashMap::new()),
+            handlers: CallbackTable::new(vm_id),
         }
     }
 
@@ -57,11 +61,9 @@ impl ApiRouteStore {
         let plugin = crate::services::plugin_scope::PluginId::new(plugin_id.to_string())
             .map_err(crate::plugins::runtime_error)?;
 
-        let handler_id = self.next_handler_id.get();
-        self.next_handler_id.set(handler_id.saturating_add(1));
-        self.handlers
-            .borrow_mut()
-            .insert(handler_id, ApiHandlerRegistration { handler, context });
+        let handler = self
+            .handlers
+            .insert(ApiHandlerRegistration { handler, context });
         futures::executor::block_on(async {
             api_route_registry()
                 .write_owned()
@@ -71,7 +73,7 @@ impl ApiRouteStore {
                     plugin_id: plugin,
                     auth_mode,
                     case_insensitive,
-                    handler_id,
+                    handler,
                     kind: RouteKind::Http,
                 })
                 .map_err(crate::plugins::runtime_error)
@@ -92,11 +94,9 @@ impl ApiRouteStore {
         let plugin = crate::services::plugin_scope::PluginId::new(plugin_id.to_string())
             .map_err(crate::plugins::runtime_error)?;
 
-        let handler_id = self.next_handler_id.get();
-        self.next_handler_id.set(handler_id.saturating_add(1));
-        self.handlers
-            .borrow_mut()
-            .insert(handler_id, ApiHandlerRegistration { handler, context });
+        let handler = self
+            .handlers
+            .insert(ApiHandlerRegistration { handler, context });
         futures::executor::block_on(async {
             api_route_registry()
                 .write_owned()
@@ -106,7 +106,7 @@ impl ApiRouteStore {
                     plugin_id: plugin,
                     auth_mode,
                     case_insensitive: false,
-                    handler_id,
+                    handler,
                     kind: RouteKind::WebSocket,
                 })
                 .map_err(crate::plugins::runtime_error)
@@ -114,8 +114,17 @@ impl ApiRouteStore {
         Ok(())
     }
 
-    pub(crate) fn get(&self, id: u64) -> Option<ApiHandlerRegistration> {
-        self.handlers.borrow().get(&id).cloned()
+    pub(crate) fn get(&self, handle: PluginCallbackHandle) -> Result<ApiHandlerRegistration> {
+        self.handlers.get(handle)
+    }
+
+    pub(crate) fn remove_plugin(&self, plugin_id: &str) {
+        self.handlers.remove_plugin(plugin_id);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.handlers.len()
     }
 }
 
@@ -123,6 +132,12 @@ impl ApiRouteStore {
 pub(crate) struct ApiHandlerRegistration {
     pub(crate) handler: luau::Function,
     pub(crate) context: harmony_core::CallContext,
+}
+
+impl PluginCallback for ApiHandlerRegistration {
+    fn context(&self) -> &harmony_core::CallContext {
+        &self.context
+    }
 }
 
 /// Generation-owned plugin API routes: the registered routes, their freeze state, and the host
@@ -154,7 +169,7 @@ pub(crate) struct RegisteredRoute {
     pub(crate) plugin_id: crate::services::plugin_scope::PluginId,
     pub(crate) auth_mode: RouteAuthMode,
     pub(crate) case_insensitive: bool,
-    pub(crate) handler_id: u64,
+    pub(crate) handler: PluginCallbackHandle,
     pub(crate) kind: RouteKind,
 }
 

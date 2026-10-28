@@ -293,13 +293,13 @@ fn normalize_provider_search_result(
 pub(crate) async fn search_provider(
     request: ProviderSearchRequest<'_>,
 ) -> std::result::Result<Vec<NormalizedProviderSearchResult>, ProviderSearchError> {
-    let handler_id = {
+    let handler = {
         let registry = provider_registry().read_owned().await;
         registry
             .get_search_callback(request.provider_id, request.entity_type)
-            .map(|handler| handler.handler_id)
+            .copied()
     };
-    let Some(handler_id) = handler_id else {
+    let Some(handler) = handler else {
         return Err(ProviderSearchError::NoSearchHandler {
             provider_id: request.provider_id.to_string(),
             entity_type: request.entity_type.as_str(),
@@ -325,7 +325,7 @@ pub(crate) async fn search_provider(
                     .context("plugin runtime is not initialized")?;
                 runtime
                     .dispatch_metadata_refresh(MetadataRefreshRequest {
-                        handler_id,
+                        handler,
                         context: serde_json::Value::String(query),
                         deadline: std::time::Instant::now() + Duration::from_secs(300),
                     })
@@ -731,7 +731,7 @@ async fn search_provider_cover(
     }
 
     let provider_id_owned = provider_id.to_string();
-    let handler_id = spec.handler.handler_id;
+    let handler = spec.handler;
     let timeout = spec.timeout;
     let handler_context = cover_handler_context(context, force_refresh);
     let dispatch = with_provider_call(
@@ -748,7 +748,7 @@ async fn search_provider_cover(
                 tokio::time::timeout(timeout, async move {
                     runtime
                         .dispatch_metadata_refresh(MetadataRefreshRequest {
-                            handler_id,
+                            handler,
                             context: handler_context,
                             deadline: std::time::Instant::now() + timeout,
                         })

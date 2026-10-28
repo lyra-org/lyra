@@ -216,10 +216,6 @@ mod test_state {
     }
 
     impl crate::services::plugin_dispatch::PluginDispatch for RecordingDispatch {
-        fn vm_id(&self) -> u64 {
-            0
-        }
-
         fn dispatch_metadata_refresh(
             &self,
             _request: crate::services::plugin_dispatch::MetadataRefreshRequest,
@@ -418,6 +414,7 @@ mod fake_dispatch {
             MetadataRefreshResult,
             MixHandlerRequest,
             MixHandlerResult,
+            PluginCallbackHandle,
             PluginDispatch,
             SimilarReleasesDispatchRequest,
             SimilarReleasesDispatchResult,
@@ -435,12 +432,15 @@ mod fake_dispatch {
     }
 
     /// A plugin runtime that answers metadata refresh dispatches with the
-    /// response added for each handler id, recording every call's context.
+    /// response added for each handler, recording every call's context.
     #[derive(Default)]
     pub(crate) struct FakePluginDispatch {
         handlers: Mutex<Vec<FakeResponse>>,
         calls: Mutex<HashMap<u64, Vec<serde_json::Value>>>,
     }
+
+    /// The runtime id of every [`FakePluginDispatch`] handle.
+    const FAKE_VM_ID: u64 = u64::MAX;
 
     impl FakePluginDispatch {
         /// A fake published as the current generation's plugin dispatch.
@@ -453,19 +453,22 @@ mod fake_dispatch {
             dispatch
         }
 
-        /// Adds a handler answering with `response`, returning its handler id.
-        pub(crate) fn add(&self, response: FakeResponse) -> u64 {
+        /// Adds a handler answering with `response`, returning its handle.
+        pub(crate) fn add(&self, response: FakeResponse) -> PluginCallbackHandle {
             let mut handlers = self.handlers.lock().expect("fake handlers poisoned");
             handlers.push(response);
-            handlers.len() as u64
+            PluginCallbackHandle {
+                vm_id: FAKE_VM_ID,
+                handler_id: handlers.len() as u64,
+            }
         }
 
-        /// The contexts dispatched to `handler_id`, in call order.
-        pub(crate) fn calls(&self, handler_id: u64) -> Vec<serde_json::Value> {
+        /// The contexts dispatched to `handler`, in call order.
+        pub(crate) fn calls(&self, handler: PluginCallbackHandle) -> Vec<serde_json::Value> {
             self.calls
                 .lock()
                 .expect("fake calls poisoned")
-                .get(&handler_id)
+                .get(&handler.handler_id)
                 .cloned()
                 .unwrap_or_default()
         }
@@ -495,22 +498,19 @@ mod fake_dispatch {
     }
 
     impl PluginDispatch for FakePluginDispatch {
-        fn vm_id(&self) -> u64 {
-            0
-        }
-
         fn dispatch_metadata_refresh(
             &self,
             request: MetadataRefreshRequest,
         ) -> BoxFuture<'_, Result<MetadataRefreshResult>> {
             Box::pin(async move {
+                let handler_id = request.handler.handler_id_in(FAKE_VM_ID)?;
                 let response = self
-                    .response(request.handler_id)
-                    .ok_or_else(|| anyhow!("metadata handler {} not found", request.handler_id))?;
+                    .response(handler_id)
+                    .ok_or_else(|| anyhow!("metadata handler {handler_id} not found"))?;
                 self.calls
                     .lock()
                     .expect("fake calls poisoned")
-                    .entry(request.handler_id)
+                    .entry(handler_id)
                     .or_default()
                     .push(request.context);
                 Ok(MetadataRefreshResult {

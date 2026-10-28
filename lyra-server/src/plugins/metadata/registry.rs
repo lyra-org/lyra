@@ -3,30 +3,28 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::{
-    cell::{
-        Cell,
-        RefCell,
-    },
-    collections::HashMap,
-};
-
 use harmony_core::CallContext;
 use harmony_luau as luau;
 
-use crate::services::EntityType;
+use crate::{
+    plugins::callback_table::{
+        CallbackTable,
+        PluginCallback,
+    },
+    services::{
+        EntityType,
+        plugin_dispatch::PluginCallbackHandle,
+    },
+};
 
-#[derive(Default)]
 pub(crate) struct MetadataCallbackRegistry {
-    next_handler_id: Cell<u64>,
-    handlers: RefCell<HashMap<u64, MetadataCallback>>,
+    handlers: CallbackTable<MetadataCallback>,
 }
 
 impl MetadataCallbackRegistry {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(vm_id: u64) -> Self {
         Self {
-            next_handler_id: Cell::new(1),
-            handlers: RefCell::new(HashMap::new()),
+            handlers: CallbackTable::new(vm_id),
         }
     }
 
@@ -36,51 +34,46 @@ impl MetadataCallbackRegistry {
         entity_type: EntityType,
         function: luau::Function,
         context: CallContext,
-    ) -> u64 {
-        let id = self.next_handler_id.get();
-        self.next_handler_id.set(id.saturating_add(1));
-        self.handlers.borrow_mut().insert(
-            id,
-            MetadataCallback {
-                provider_id,
-                entity_type,
-                function,
-                context,
-            },
-        );
-        id
+    ) -> PluginCallbackHandle {
+        self.handlers.insert(MetadataCallback {
+            provider_id,
+            entity_type,
+            function,
+            context,
+        })
     }
 
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
-        self.handlers.borrow().len()
+        self.handlers.len()
     }
 
-    pub(crate) fn remove(&self, id: u64) {
-        self.handlers.borrow_mut().remove(&id);
+    /// Ignores a handle another runtime issued.
+    pub(crate) fn remove(&self, handle: PluginCallbackHandle) {
+        self.handlers.remove(handle);
     }
 
-    /// Drops the plugin's callbacks so a restart can't dispatch into them.
     pub(crate) fn remove_plugin(&self, plugin_id: &str) {
-        self.handlers
-            .borrow_mut()
-            .retain(|_, handler| handler.context.origin.plugin.as_deref() != Some(plugin_id));
+        self.handlers.remove_plugin(plugin_id);
     }
 
-    pub(crate) fn get(&self, id: u64) -> Option<MetadataCallback> {
-        self.handlers.borrow().get(&id).cloned()
+    pub(crate) fn get(&self, handle: PluginCallbackHandle) -> anyhow::Result<MetadataCallback> {
+        self.handlers.get(handle)
     }
 
     pub(crate) fn get_for_provider(
         &self,
-        id: u64,
+        handle: PluginCallbackHandle,
         provider_id: &str,
         entity_type: EntityType,
-    ) -> Option<MetadataCallback> {
-        self.handlers.borrow().get(&id).and_then(|handler| {
-            (handler.provider_id == provider_id && handler.entity_type == entity_type)
-                .then(|| handler.clone())
-        })
+    ) -> anyhow::Result<MetadataCallback> {
+        let handler = self.handlers.get(handle)?;
+        anyhow::ensure!(
+            handler.provider_id == provider_id && handler.entity_type == entity_type,
+            "handler {} is not provider '{provider_id}''s {entity_type:?} handler",
+            handle.handler_id
+        );
+        Ok(handler)
     }
 }
 
@@ -90,4 +83,10 @@ pub(crate) struct MetadataCallback {
     entity_type: EntityType,
     pub(crate) function: luau::Function,
     pub(crate) context: CallContext,
+}
+
+impl PluginCallback for MetadataCallback {
+    fn context(&self) -> &CallContext {
+        &self.context
+    }
 }

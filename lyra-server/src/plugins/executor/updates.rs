@@ -79,7 +79,10 @@ impl PluginExecutor {
                 &thread,
                 ThreadDriveOptions::default(),
             ) {
-                on_error(&handler.plugin_id, &error);
+                on_error(
+                    handler.context.origin.plugin.as_deref().unwrap_or_default(),
+                    &error,
+                );
             }
         }
         Ok(())

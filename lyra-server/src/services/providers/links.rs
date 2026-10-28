@@ -30,6 +30,7 @@ use serde::Serialize;
 
 use super::registry::ProviderIdUrlGenerator;
 use crate::services::EntityType;
+use crate::services::plugin_dispatch::PluginCallbackHandle;
 use lyra_db::{
     Library,
     external_ids::ExternalId,
@@ -164,8 +165,7 @@ pub(crate) struct IdLinkTarget {
 /// One generator function call; the executor builds `IdLinkContext` from it.
 #[derive(Clone, Debug)]
 pub(crate) struct IdLinkCall {
-    pub(crate) handler_id: u64,
-    pub(crate) vm_id: u64,
+    pub(crate) handler: PluginCallbackHandle,
     pub(crate) entity: EntityType,
     pub(crate) id_type: String,
     pub(crate) id: String,
@@ -207,9 +207,9 @@ pub(crate) struct IdLink {
     pub(crate) url: String,
 }
 
-/// A generator function's identity: its VM and handler id. Both change
-/// whenever the plugin reloads, so cached results never outlive it.
-type GeneratorId = (u64, u64);
+/// A generator function's identity, which changes whenever the plugin
+/// reloads, so cached results never outlive it.
+type GeneratorId = PluginCallbackHandle;
 
 /// Everything a generator call sees, so cached results are never served for
 /// a different `IdLinkContext`.
@@ -225,8 +225,7 @@ impl IdLinkCacheKey {
     fn of(call: &IdLinkCall) -> Self {
         // Exhaustive, so a new call field must be added to the key too.
         let IdLinkCall {
-            handler_id,
-            vm_id,
+            handler,
             // Fixed per generator.
             entity: _,
             id_type: _,
@@ -235,7 +234,7 @@ impl IdLinkCacheKey {
             external_ids,
         } = call;
         Self {
-            generator: (*vm_id, *handler_id),
+            generator: *handler,
             id: id.clone(),
             library: library.clone(),
             external_ids: external_ids.clone(),
@@ -365,13 +364,10 @@ where
                         }
                         continue;
                     }
-                    ProviderIdUrlGenerator::Function { handler, vm_id } => {
-                        (*vm_id, handler.handler_id)
-                    }
+                    ProviderIdUrlGenerator::Function(handler) => *handler,
                 };
                 let call = IdLinkCall {
-                    handler_id: generator_id.1,
-                    vm_id: generator_id.0,
+                    handler: generator_id,
                     entity: target.entity,
                     id_type: row.id_type.clone(),
                     id,
@@ -500,7 +496,6 @@ mod tests {
     };
 
     use super::*;
-    use crate::services::providers::ProviderCallbackHandle;
     use lyra_db::IdSource;
 
     fn row(provider_id: &str, id_type: &str, id_value: &str) -> ExternalId {
@@ -538,10 +533,10 @@ mod tests {
         IdLinkGenerator {
             scheme: None,
             label: "Alpha".to_string(),
-            generator: ProviderIdUrlGenerator::Function {
-                handler: ProviderCallbackHandle { handler_id },
+            generator: ProviderIdUrlGenerator::Function(PluginCallbackHandle {
                 vm_id: 1,
-            },
+                handler_id,
+            }),
         }
     }
 

@@ -24,7 +24,6 @@ use agdb::{
 use anyhow::{
     Context,
     Result,
-    anyhow,
 };
 use serde_json::Value;
 
@@ -126,7 +125,7 @@ pub(crate) async fn similar(
     seed_db_id: DbId,
     options: &SimilarReleaseOptions,
 ) -> Result<Option<Vec<Release>>> {
-    similar_with_dispatch(seed_db_id, options, None, |runtime, request| async move {
+    similar_with_dispatch(seed_db_id, options, |runtime, request| async move {
         runtime
             .context("plugin runtime is not initialized")?
             .dispatch_similar_releases(request)
@@ -135,12 +134,9 @@ pub(crate) async fn similar(
     .await
 }
 
-/// `expected_vm_id` pins the dispatch to the runtime whose VM is calling in;
-/// a swapped runtime fails the call instead of dispatching to the new one.
 pub(crate) async fn similar_with_dispatch<F, Fut>(
     seed_db_id: DbId,
     options: &SimilarReleaseOptions,
-    expected_vm_id: Option<u64>,
     dispatch_provider: F,
 ) -> Result<Option<Vec<Release>>>
 where
@@ -154,13 +150,6 @@ where
 
     let generation = STATE.generation();
     let snapshot = provider_snapshot(&generation).await?;
-    if let (Some(expected_vm_id), Some(runtime)) = (expected_vm_id, &snapshot.runtime)
-        && expected_vm_id != runtime.vm_id()
-    {
-        return Err(anyhow!(
-            "plugin runtime changed while starting similar releases dispatch"
-        ));
-    }
     let runtime = snapshot.runtime;
     let handlers = snapshot.handlers;
     let seed = {
@@ -203,7 +192,7 @@ where
         debug_assert!(handler.spec.timeout <= MAX_SIMILAR_RELEASES_HANDLER_TIMEOUT);
         let handler_timeout = handler.spec.timeout;
         let provider_id = handler.provider_id.clone();
-        let handler_id = handler.spec.handler.handler_id;
+        let callback = handler.spec.handler;
         let context = context.clone();
         let cancellation = DispatchCancellation::default();
         let cancellation_for_call = cancellation.clone();
@@ -212,7 +201,7 @@ where
         let dispatch_provider = dispatch_provider.clone();
         let request = SimilarReleasesDispatchRequest {
             provider_id: provider_id_for_call,
-            handler_id,
+            handler: callback,
             context,
             timeout: handler_timeout,
             cancellation: cancellation_for_call,
@@ -311,48 +300,26 @@ async fn provider_snapshot(
         active_providers(&db)?
     };
 
-    for _ in 0..3 {
-        let before = generation.plugin_dispatch.get();
-        let (handlers, release_id_pairs, unique_release_id_pairs, id_schemes) = {
-            let registry = generation.providers.registry().read_owned().await;
-            let handlers = configs
-                .iter()
-                .filter_map(|config| {
-                    registry
-                        .get_similar_releases_handler(&config.provider_id)
-                        .cloned()
-                        .map(|spec| ProviderHandler {
-                            provider_id: config.provider_id.clone(),
-                            spec,
-                        })
+    let registry = generation.providers.registry().read_owned().await;
+    let handlers = configs
+        .iter()
+        .filter_map(|config| {
+            registry
+                .get_similar_releases_handler(&config.provider_id)
+                .cloned()
+                .map(|spec| ProviderHandler {
+                    provider_id: config.provider_id.clone(),
+                    spec,
                 })
-                .collect();
-            (
-                handlers,
-                registry.id_pairs(EntityType::Release),
-                registry.unique_id_pairs(EntityType::Release),
-                registry.id_schemes(),
-            )
-        };
-        let after = generation.plugin_dispatch.get();
-        let stable = match (&before, &after) {
-            (Some(before), Some(after)) => before.vm_id() == after.vm_id(),
-            (None, None) => true,
-            _ => false,
-        };
-        if stable {
-            return Ok(ProviderSnapshot {
-                runtime: before,
-                handlers,
-                release_id_pairs,
-                unique_release_id_pairs,
-                id_schemes,
-            });
-        }
-    }
-    Err(anyhow!(
-        "plugin runtime changed repeatedly while snapshotting similar releases providers"
-    ))
+        })
+        .collect();
+    Ok(ProviderSnapshot {
+        runtime: generation.plugin_dispatch.get(),
+        handlers,
+        release_id_pairs: registry.id_pairs(EntityType::Release),
+        unique_release_id_pairs: registry.unique_id_pairs(EntityType::Release),
+        id_schemes: registry.id_schemes(),
+    })
 }
 
 fn build_seed_context(
@@ -621,6 +588,7 @@ fn release_identity_is_current(db: &DbAny, db_id: DbId, public_id: &str) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::anyhow;
     use lyra_db::fixtures::{
         connect,
         insert_release,

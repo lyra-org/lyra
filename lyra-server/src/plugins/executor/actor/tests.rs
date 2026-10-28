@@ -1,6 +1,8 @@
 use super::*;
 use std::time::Instant;
 
+use crate::services::plugin_dispatch::PluginCallbackHandle;
+
 use harmony_core::{
     FunctionSpec,
     ModuleExport,
@@ -22,9 +24,9 @@ impl Drop for PendingCall {
 
 struct TestExecutor {
     handle: PluginExecutorHandle,
-    slow: u64,
-    fast: u64,
-    api: u64,
+    slow: PluginCallbackHandle,
+    fast: PluginCallbackHandle,
+    api: PluginCallbackHandle,
     started: async_mpsc::UnboundedReceiver<()>,
     dropped: async_mpsc::UnboundedReceiver<()>,
     release: Arc<Notify>,
@@ -95,12 +97,12 @@ fn test_executor() -> Result<TestExecutor> {
             );
             let slow = registry
                 .get_refresh_callback("dispatch-slow", crate::services::EntityType::Release)
-                .context("slow callback")?
-                .handler_id;
+                .copied()
+                .context("slow callback")?;
             let fast = registry
                 .get_refresh_callback("dispatch-fast", crate::services::EntityType::Release)
-                .context("fast callback")?
-                .handler_id;
+                .copied()
+                .context("fast callback")?;
             let api = futures::executor::block_on(crate::plugins::api::tests::registered_handler(
                 "GET",
                 "/dispatch-wait",
@@ -110,10 +112,7 @@ fn test_executor() -> Result<TestExecutor> {
         })();
         match setup {
             Ok((runtime, slow, fast, api)) => {
-                if ready_tx
-                    .send(Ok((runtime.vm.id(), slow, fast, api)))
-                    .is_ok()
-                {
+                if ready_tx.send(Ok((slow, fast, api))).is_ok() {
                     run_plugin_executor_thread(runtime, rx);
                 }
             }
@@ -122,9 +121,9 @@ fn test_executor() -> Result<TestExecutor> {
             }
         }
     });
-    let (id, slow, fast, api) = ready_rx.recv()??;
+    let (slow, fast, api) = ready_rx.recv()??;
     Ok(TestExecutor {
-        handle: PluginExecutorHandle { id, tx },
+        handle: PluginExecutorHandle { tx },
         slow,
         fast,
         api,
@@ -134,9 +133,9 @@ fn test_executor() -> Result<TestExecutor> {
     })
 }
 
-fn request(handler_id: u64, timeout: Duration) -> MetadataRefreshRequest {
+fn request(handler: PluginCallbackHandle, timeout: Duration) -> MetadataRefreshRequest {
     MetadataRefreshRequest {
-        handler_id,
+        handler,
         context: serde_json::json!({ "value": 42 }),
         deadline: Instant::now() + timeout,
     }
@@ -269,11 +268,11 @@ async fn waiting_api_callback_does_not_delay_metadata_deadlines() -> Result<()> 
     let mut executor = test_executor()?;
     let api = tokio::spawn({
         let handle = executor.handle.clone();
-        let handler_id = executor.api;
+        let handler = executor.api;
         async move {
             handle
                 .dispatch_api_handler(ApiHandlerRequest {
-                    handler_id,
+                    handler,
                     plugin_id: "dispatch-test".into(),
                     method: "GET".into(),
                     path: "/dispatch-wait".into(),

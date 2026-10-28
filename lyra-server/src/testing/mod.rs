@@ -722,12 +722,12 @@ mod tests {
         .await?;
         let plugin = PluginUnderTest::locate(source.path())?;
         let _plugin_sources = exec_plugins(&plugin, harmony_http::module_spec()).await?;
-        let handler_id = services::providers::provider_registry()
+        let handler = services::providers::provider_registry()
             .read()
             .await
             .get_refresh_callback("source-lifetime", services::EntityType::Release)
-            .context("refresh callback")?
-            .handler_id;
+            .copied()
+            .context("refresh callback")?;
         let runtime = STATE
             .generation()
             .plugin_dispatch
@@ -735,7 +735,7 @@ mod tests {
             .context("plugin runtime")?;
         let result = runtime
             .dispatch_metadata_refresh(MetadataRefreshRequest {
-                handler_id,
+                handler,
                 context: serde_json::json!({}),
                 deadline: std::time::Instant::now() + std::time::Duration::from_secs(5),
             })

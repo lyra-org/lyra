@@ -32,9 +32,7 @@ impl PluginExecutor {
         }
         let prepare = || {
             let routes = self.vm.data().get::<crate::plugins::api::ApiRouteStore>()?;
-            let handler = routes
-                .get(request.handler_id)
-                .ok_or_else(|| anyhow::anyhow!("API handler {} not found", request.handler_id))?;
+            let handler = routes.get(request.handler)?;
             let ctx = api_context_value(&request)?;
             let thread = self.vm.create_thread(&handler.handler)?;
             let mut context = handler.context.clone();
@@ -170,7 +168,7 @@ pub(super) fn parse_api_response(
     let luau::Value::Table(table) = value else {
         anyhow::bail!(
             "raw API handler {} returned {}, expected response table",
-            request.handler_id,
+            request.handler.handler_id,
             value.type_name()
         );
     };

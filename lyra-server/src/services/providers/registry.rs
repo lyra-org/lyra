@@ -36,6 +36,7 @@ use crate::services::metadata::layers::{
     LOCAL_SOURCE_ID,
     MANUAL_SOURCE_ID,
 };
+use crate::services::plugin_dispatch::PluginCallbackHandle;
 use crate::services::plugin_scope::{
     PluginId,
     PluginScopedInner,
@@ -186,15 +187,7 @@ pub(crate) enum ProviderIdUrlGenerator {
     /// Absolute http(s) URL with a single `{id}` placeholder.
     Template(String),
     /// Plugin function called as `(id, ctx)` on the VM that registered it.
-    Function {
-        handler: ProviderCallbackHandle,
-        vm_id: u64,
-    },
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct ProviderCallbackHandle {
-    pub(crate) handler_id: u64,
+    Function(PluginCallbackHandle),
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -208,14 +201,14 @@ pub(crate) struct ProviderCoverSpec {
     /// Per-call handler timeout, defaulted while parsing provider config.
     pub(crate) timeout: Duration,
     pub(crate) require: ProviderRequireSpec,
-    pub(crate) handler: ProviderCallbackHandle,
+    pub(crate) handler: PluginCallbackHandle,
 }
 
 #[derive(Clone)]
 pub(crate) struct ProviderSimilarReleasesSpec {
     pub(crate) timeout: Duration,
     pub(crate) require: ProviderRequireSpec,
-    pub(crate) handler: ProviderCallbackHandle,
+    pub(crate) handler: PluginCallbackHandle,
 }
 
 /// `cancel` is cancelled once the handler leaves the registry: replaced,
@@ -224,7 +217,7 @@ pub(crate) struct ProviderSimilarReleasesSpec {
 pub(crate) struct ProviderLyricsSpec {
     pub(crate) timeout: Duration,
     pub(crate) require: ProviderRequireSpec,
-    pub(crate) handler: ProviderCallbackHandle,
+    pub(crate) handler: PluginCallbackHandle,
     pub(crate) cancel: CancellationToken,
 }
 
@@ -232,7 +225,7 @@ impl ProviderLyricsSpec {
     pub(crate) fn new(
         timeout: Duration,
         require: ProviderRequireSpec,
-        handler: ProviderCallbackHandle,
+        handler: PluginCallbackHandle,
     ) -> Self {
         Self {
             timeout,
@@ -331,7 +324,7 @@ impl ProviderRegistry {
         &mut self,
         provider_id: &str,
         entity_type: EntityType,
-        handler: ProviderCallbackHandle,
+        handler: PluginCallbackHandle,
     ) {
         if let Some(provider) = self.state_mut(provider_id) {
             provider.refresh_callbacks.insert(entity_type, handler);
@@ -342,7 +335,7 @@ impl ProviderRegistry {
         &self,
         provider_id: &str,
         entity_type: EntityType,
-    ) -> Option<&ProviderCallbackHandle> {
+    ) -> Option<&PluginCallbackHandle> {
         self.state(provider_id)
             .and_then(|provider| provider.refresh_callbacks.get(&entity_type))
     }
@@ -361,7 +354,7 @@ impl ProviderRegistry {
         &mut self,
         provider_id: &str,
         entity_type: EntityType,
-        filter: ProviderCallbackHandle,
+        filter: PluginCallbackHandle,
     ) {
         if let Some(provider) = self.state_mut(provider_id) {
             provider.sync_filter_callbacks.insert(entity_type, filter);
@@ -372,7 +365,7 @@ impl ProviderRegistry {
         &mut self,
         provider_id: &str,
         entity_type: EntityType,
-        handler: ProviderCallbackHandle,
+        handler: PluginCallbackHandle,
     ) {
         if let Some(provider) = self.state_mut(provider_id) {
             provider.search_callbacks.insert(entity_type, handler);
@@ -383,7 +376,7 @@ impl ProviderRegistry {
         &self,
         provider_id: &str,
         entity_type: EntityType,
-    ) -> Option<&ProviderCallbackHandle> {
+    ) -> Option<&PluginCallbackHandle> {
         self.state(provider_id)
             .and_then(|provider| provider.search_callbacks.get(&entity_type))
     }
@@ -450,7 +443,7 @@ impl ProviderRegistry {
         &self,
         provider_id: &str,
         entity_type: EntityType,
-    ) -> Option<&ProviderCallbackHandle> {
+    ) -> Option<&PluginCallbackHandle> {
         self.state(provider_id)
             .and_then(|provider| provider.sync_filter_callbacks.get(&entity_type))
     }
@@ -921,9 +914,9 @@ struct ProviderState {
     display_name: Option<String>,
     id_generators: HashMap<(EntityType, String), ProviderIdUrlGenerator>,
     id_specs: HashMap<(EntityType, String), ProviderIdSpec>,
-    search_callbacks: HashMap<EntityType, ProviderCallbackHandle>,
-    refresh_callbacks: HashMap<EntityType, ProviderCallbackHandle>,
-    sync_filter_callbacks: HashMap<EntityType, ProviderCallbackHandle>,
+    search_callbacks: HashMap<EntityType, PluginCallbackHandle>,
+    refresh_callbacks: HashMap<EntityType, PluginCallbackHandle>,
+    sync_filter_callbacks: HashMap<EntityType, PluginCallbackHandle>,
     cover_handlers: HashMap<EntityType, ProviderCoverSpec>,
     similar_releases_handler: Option<ProviderSimilarReleasesSpec>,
     lyrics_handler: Option<ProviderLyricsSpec>,

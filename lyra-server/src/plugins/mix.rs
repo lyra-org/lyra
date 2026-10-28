@@ -4,10 +4,6 @@
 // www.meshiplaw.com/lyra.
 
 use std::{
-    cell::{
-        Cell,
-        RefCell,
-    },
     collections::HashMap,
     sync::Arc,
 };
@@ -52,6 +48,7 @@ use crate::{
         OptionDeclaration,
         OptionType,
     },
+    services::plugin_dispatch::PluginCallbackHandle,
 };
 use lyra_db::Track;
 
@@ -59,17 +56,14 @@ struct MixHandler;
 struct MixRecentListensHandler;
 struct MixModule;
 
-#[derive(Default)]
 pub(crate) struct MixCallbackRegistry {
-    next_handler_id: Cell<u64>,
-    handlers: RefCell<HashMap<u64, MixCallback>>,
+    handlers: crate::plugins::callback_table::CallbackTable<MixCallback>,
 }
 
 impl MixCallbackRegistry {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(vm_id: u64) -> Self {
         Self {
-            next_handler_id: Cell::new(1),
-            handlers: RefCell::new(HashMap::new()),
+            handlers: crate::plugins::callback_table::CallbackTable::new(vm_id),
         }
     }
 
@@ -79,22 +73,25 @@ impl MixCallbackRegistry {
         _seed_type: MixSeedType,
         function: luau::Function,
         context: harmony_core::CallContext,
-    ) -> u64 {
-        let id = self.next_handler_id.get();
-        self.next_handler_id.set(id.saturating_add(1));
-        self.handlers.borrow_mut().insert(
-            id,
-            MixCallback {
-                mixer_id,
-                function,
-                context,
-            },
-        );
-        id
+    ) -> PluginCallbackHandle {
+        self.handlers.insert(MixCallback {
+            mixer_id,
+            function,
+            context,
+        })
     }
 
-    pub(crate) fn get(&self, id: u64) -> Option<MixCallback> {
-        self.handlers.borrow().get(&id).cloned()
+    pub(crate) fn get(&self, handle: PluginCallbackHandle) -> anyhow::Result<MixCallback> {
+        self.handlers.get(handle)
+    }
+
+    pub(crate) fn remove_plugin(&self, plugin_id: &str) {
+        self.handlers.remove_plugin(plugin_id);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.handlers.len()
     }
 }
 
@@ -103,6 +100,12 @@ pub(crate) struct MixCallback {
     pub(crate) mixer_id: String,
     pub(crate) function: luau::Function,
     pub(crate) context: harmony_core::CallContext,
+}
+
+impl crate::plugins::callback_table::PluginCallback for MixCallback {
+    fn context(&self) -> &harmony_core::CallContext {
+        &self.context
+    }
 }
 
 impl LuauTypeInfo for MixHandler {
@@ -267,8 +270,8 @@ impl Mixer {
                 .map_err(crate::plugins::runtime_error)?;
             let mut registry = mix_service::mix_registry().write_owned().await;
             let handlers = vm.data().get::<MixCallbackRegistry>()?;
-            let handler_id = handlers.register(id.clone(), seed_type, function, context);
-            registry.set_seed_callback(&id, seed_type, handler_id);
+            let handler = handlers.register(id.clone(), seed_type, function, context);
+            registry.set_seed_callback(&id, seed_type, handler);
             Ok(())
         }))
     }

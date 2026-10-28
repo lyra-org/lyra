@@ -53,10 +53,6 @@ use self::types::{
 };
 
 use std::{
-    cell::{
-        Cell,
-        RefCell,
-    },
     collections::{
         HashMap,
         HashSet,
@@ -1323,12 +1319,15 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
 pub(crate) mod tests {
     use super::*;
 
-    pub(crate) async fn registered_handler(method: &str, path: &str) -> Option<u64> {
+    pub(crate) async fn registered_handler(
+        method: &str,
+        path: &str,
+    ) -> Option<crate::services::plugin_dispatch::PluginCallbackHandle> {
         let registry = api_route_registry().read_owned().await;
         registry
             .snapshot()
             .into_iter()
             .find(|route| route.key.method.as_ref() == method && route.key.path.as_ref() == path)
-            .map(|route| route.handler_id)
+            .map(|route| route.handler)
     }
 }

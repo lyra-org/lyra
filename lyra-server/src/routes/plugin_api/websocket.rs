@@ -161,7 +161,7 @@ async fn run_plugin_websocket(socket: WebSocket, context: PluginWebSocketContext
     let state = crate::plugins::executor::WebSocketState::new();
     let (dispatch_auth, reauth) = socket_auth(&route.auth_mode, auth.as_ref(), &headers);
     let request = crate::plugins::executor::WebSocketStartRequest {
-        handler_id: route.handler_id,
+        handler: route.handler,
         plugin_id: route.plugin_id.to_string(),
         method: "GET".to_string(),
         path: uri.path().to_string(),

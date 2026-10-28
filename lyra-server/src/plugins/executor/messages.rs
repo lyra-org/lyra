@@ -85,10 +85,6 @@ pub(super) enum PluginExecutorCommand {
         plugin_id: String,
         reply: tokio::sync::oneshot::Sender<Result<()>>,
     },
-    ClearPluginCallbacks {
-        plugin_id: String,
-        reply: tokio::sync::oneshot::Sender<Result<()>>,
-    },
     ExecAll(tokio::sync::oneshot::Sender<Result<Vec<String>>>),
     Shutdown(tokio::sync::oneshot::Sender<Result<()>>),
     MixHandler {
@@ -124,7 +120,7 @@ pub(crate) struct IdLinkDispatchContext;
 
 #[derive(Clone, Debug)]
 pub(crate) struct ApiHandlerRequest {
-    pub(crate) handler_id: u64,
+    pub(crate) handler: crate::services::plugin_dispatch::PluginCallbackHandle,
     pub(crate) plugin_id: String,
     pub(crate) method: String,
     pub(crate) path: String,
@@ -210,7 +206,7 @@ pub(crate) struct ApiHandlerResponse {
 }
 
 pub(crate) struct WebSocketStartRequest {
-    pub(crate) handler_id: u64,
+    pub(crate) handler: crate::services::plugin_dispatch::PluginCallbackHandle,
     pub(crate) plugin_id: String,
     pub(crate) method: String,
     pub(crate) path: String,

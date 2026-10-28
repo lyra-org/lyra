@@ -252,19 +252,12 @@ async fn similar_in_vm(
     options: &release_service::SimilarReleaseOptions,
     provider_vm: luau::Vm,
 ) -> anyhow::Result<Option<Vec<lyra_db::Release>>> {
-    let expected_vm_id = provider_vm.id();
-    release_service::similar_with_dispatch(
-        seed_db_id,
-        options,
-        Some(expected_vm_id),
-        move |_runtime, request| {
-            let provider_vm = provider_vm.clone();
-            async move {
-                crate::plugins::executor::dispatch_similar_releases_in_vm(provider_vm, request)
-                    .await
-            }
-        },
-    )
+    release_service::similar_with_dispatch(seed_db_id, options, move |_runtime, request| {
+        let provider_vm = provider_vm.clone();
+        async move {
+            crate::plugins::executor::dispatch_similar_releases_in_vm(provider_vm, request).await
+        }
+    })
     .await
 }
 

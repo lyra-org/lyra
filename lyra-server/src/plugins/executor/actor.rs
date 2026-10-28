@@ -120,7 +120,6 @@ impl QueuedPluginExecutorCommand {
 
 #[derive(Clone)]
 pub(crate) struct PluginExecutorHandle {
-    id: u64,
     tx: PluginExecutorSender,
 }
 
@@ -150,8 +149,7 @@ impl PluginExecutorHandle {
                     module_overrides,
                 ) {
                     Ok((runtime, errors)) => {
-                        let vm_id = runtime.vm.id();
-                        if ready_tx.send(Ok((errors, vm_id))).is_err() {
+                        if ready_tx.send(Ok(errors)).is_err() {
                             return;
                         }
                         run_plugin_executor_thread(runtime, rx);
@@ -163,10 +161,10 @@ impl PluginExecutorHandle {
             })
             .context("spawn plugin executor thread")?;
 
-        let (errors, id) = ready_rx
+        let errors = ready_rx
             .recv()
             .context("plugin executor thread exited during startup")??;
-        Ok((Self { id, tx }, errors))
+        Ok((Self { tx }, errors))
     }
 
     pub(crate) async fn plugin_manifests(&self) -> Result<Vec<PluginManifest>> {
@@ -209,14 +207,6 @@ impl PluginExecutorHandle {
 
     pub(crate) async fn restart_plugin(&self, plugin_id: &str) -> Result<()> {
         self.request_control(|reply| PluginExecutorCommand::RestartPlugin {
-            plugin_id: plugin_id.to_string(),
-            reply,
-        })
-        .await
-    }
-
-    pub(crate) async fn clear_plugin_callbacks(&self, plugin_id: &str) -> Result<()> {
-        self.request_async(|reply| PluginExecutorCommand::ClearPluginCallbacks {
             plugin_id: plugin_id.to_string(),
             reply,
         })
@@ -275,10 +265,6 @@ impl PluginExecutorHandle {
 }
 
 impl PluginDispatch for PluginExecutorHandle {
-    fn vm_id(&self) -> u64 {
-        self.id
-    }
-
     fn dispatch_metadata_refresh(
         &self,
         request: MetadataRefreshRequest,
@@ -389,9 +375,6 @@ fn handle_plugin_executor_command(
         PluginExecutorCommand::RestartPlugin { plugin_id, reply } => {
             reply_if_open(reply, || runtime.restart_plugin(&plugin_id));
         }
-        PluginExecutorCommand::ClearPluginCallbacks { plugin_id, reply } => {
-            reply_if_open(reply, || runtime.clear_plugin_callbacks(&plugin_id));
-        }
         PluginExecutorCommand::ExecAll(reply) => {
             reply_if_open(reply, || Ok(runtime.exec_all()));
         }
@@ -458,7 +441,7 @@ mod tests {
         mpsc::Receiver<QueuedPluginExecutorCommand>,
     ) {
         let (tx, rx) = plugin_executor_channel(capacity);
-        (PluginExecutorHandle { id: 1, tx }, rx)
+        (PluginExecutorHandle { tx }, rx)
     }
 
     fn playback_update() -> crate::services::playback_sessions::PlaybackUpdatePayload {
@@ -478,7 +461,10 @@ mod tests {
 
     fn mix_request() -> MixHandlerRequest {
         MixHandlerRequest {
-            handler_id: 1,
+            handler: crate::services::plugin_dispatch::PluginCallbackHandle {
+                vm_id: 1,
+                handler_id: 1,
+            },
             seed_id: None,
             limit: None,
             recent_track_ids: Vec::new(),

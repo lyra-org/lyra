@@ -133,7 +133,6 @@ pub(crate) use registry::{
     LyricsInFlightKey,
     MAX_SIMILAR_RELEASES_HANDLER_TIMEOUT,
     ProviderCallStage,
-    ProviderCallbackHandle,
     ProviderCoverSpec,
     ProviderIdSpec,
     ProviderIdUrlGenerator,

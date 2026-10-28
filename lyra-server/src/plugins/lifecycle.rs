@@ -302,14 +302,6 @@ impl PluginRegistries {
                             "failed to stop plugin after its routes failed to rebuild"
                         );
                     }
-                    if let Err(clear_err) = runtime.clear_plugin_callbacks(plugin_id.as_str()).await
-                    {
-                        tracing::error!(
-                            plugin_id = %plugin_id,
-                            error = %clear_err,
-                            "failed to drop the callbacks of a plugin whose restart failed"
-                        );
-                    }
                     self.teardown_plugin(plugin_id, false).await;
                     return Err(PluginRestartError::Failed {
                         plugin_id: plugin_id.clone(),
