@@ -46,6 +46,8 @@ export type SessionEntry = {
 	last_sessions_push_s: number?,
 	last_activity: string,
 	last_playback_event_s: number?,
+	-- os.clock() of the socket's last KeepAlive.
+	last_keep_alive_s: number,
 }
 
 -- Per-listing state: every source's client playback, and the NowPlayingItem tables whose track

@@ -134,9 +134,6 @@ local sessions = active_sessions.entries
 
 local JELLYFIN_WS_REAUTH_INTERVAL_SECONDS = 60
 local JELLYFIN_WS_REAUTH_MAX_ERRORS = 5
--- Jellyfin's ForceKeepAlive Data is the interval (seconds) after which the
--- server considers a client dead; clients echo KeepAlive at half that rate.
-local JELLYFIN_WS_KEEPALIVE_SECONDS = 60
 -- Rate-limit inbound PlaybackProgress so a misbehaving client can't flood the
 -- DB. Start / Stopped go through unthrottled. Mirrors Jellyfin's own ~10s
 -- progress cadence.
@@ -194,6 +191,7 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 		last_sessions_push_s = nil,
 		last_activity = iso_now,
 		last_playback_event_s = nil,
+		last_keep_alive_s = os.clock(),
 	}
 
 	local existing = sessions[session_id]
@@ -219,8 +217,9 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 	sessions[session_id] = entry
 
 	pcall(function()
-		sender:send(websocket.encode("ForceKeepAlive", JELLYFIN_WS_KEEPALIVE_SECONDS, nil))
+		sender:send(websocket.encode("ForceKeepAlive", websocket.lost_seconds, nil))
 	end)
+	local keep_alive_thread = websocket.watch_keep_alive(sender, entry)
 
 	-- The driver only re-auths auth-required WS routes; public routes like
 	-- this one own their re-auth. Outer xpcall ensures a throw can't silently
@@ -290,8 +289,9 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 			entry.last_activity = session.current_iso_timestamp()
 			local mt = envelope.MessageType
 			if mt == "KeepAlive" then
+				entry.last_keep_alive_s = os.clock()
 				pcall(function()
-					sender:send(websocket.encode("KeepAlive", JELLYFIN_WS_KEEPALIVE_SECONDS, envelope.MessageId))
+					sender:send(websocket.encode("KeepAlive", websocket.lost_seconds, envelope.MessageId))
 				end)
 			elseif mt == "SessionsStart" then
 				-- Only a new subscription gets an immediate list, and no sooner than the push interval.
@@ -345,6 +345,7 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 
 	task.cancel(reauth_thread)
 	task.cancel(sessions_thread)
+	task.cancel(keep_alive_thread)
 
 	-- A concurrent reconnect may have replaced our slot; only clear it if
 	-- it still points at our sender.
