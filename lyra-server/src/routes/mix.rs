@@ -248,13 +248,13 @@ fn sanitize_extra(mut extra: HashMap<String, String>) -> HashMap<String, String>
 }
 
 #[cfg(feature = "docgen")]
-const MIX_DESCRIPTION: &str = "Returns a shuffled list of tracks similar to the seed. Use `inc` to hydrate nested data: `releases`, `artists`, `release_covers` (covers require `releases`), and `artist_covers` (covers require `artists`).";
+const MIX_DESCRIPTION: &str = "Returns a shuffled list of tracks similar to the seed. Tracks of one chain stay together and in chain order. Use `inc` to hydrate nested data: `releases`, `artists`, `release_covers` (covers require `releases`), and `artist_covers` (covers require `artists`).";
 
 #[cfg(feature = "docgen")]
-const TRACK_MIX_DESCRIPTION: &str = "Returns a shuffled list of tracks similar to the seed. Use `inc` to hydrate nested data: `releases`, `artists`, `release_covers` (covers require `releases`), and `artist_covers` (covers require `artists`). Defaults to instant mode (`instant=true`): the seed track is pinned at index 0, then similar tracks follow; pass `instant=false` for a fully shuffled unpinned mix.";
+const TRACK_MIX_DESCRIPTION: &str = "Returns a shuffled list of tracks similar to the seed. Use `inc` to hydrate nested data: `releases`, `artists`, `release_covers` (covers require `releases`), and `artist_covers` (covers require `artists`). Defaults to instant mode (`instant=true`): the seed track is pinned at index 0, then similar tracks follow. When the seed is in a chain, the chain's later tracks in the mix follow it directly and its earlier ones are left out. Pass `instant=false` for a fully shuffled unpinned mix.";
 
 #[cfg(feature = "docgen")]
-const ME_MIX_DESCRIPTION: &str = "Returns a shuffled list of tracks similar to the seed. Use `inc` to hydrate nested data: `releases`, `artists`, `release_covers` (covers require `releases`), and `artist_covers` (covers require `artists`). Seeds from the authenticated user's recent listen history.";
+const ME_MIX_DESCRIPTION: &str = "Returns a shuffled list of tracks similar to the seed. Tracks of one chain stay together and in chain order. Use `inc` to hydrate nested data: `releases`, `artists`, `release_covers` (covers require `releases`), and `artist_covers` (covers require `artists`). Seeds from the authenticated user's recent listen history.";
 
 #[cfg(feature = "docgen")]
 pub(crate) fn track_mix_docs(op: TransformOperation) -> TransformOperation {

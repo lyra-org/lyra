@@ -23,6 +23,7 @@ use crate::services::auth::{
 use lyra_db::{
     Permission,
     Track,
+    chains::ChainLink,
 };
 
 mod admin;
@@ -225,10 +226,12 @@ pub(crate) async fn from_seed(
         Some(tracks) => filter_existing_tracks(&db, tracks)?,
         None => builtin_from_seed(&db, &seed, options)?,
     };
-    Ok(Some(tracks))
+    let links = chain_links(&db, &tracks, None)?;
+    Ok(Some(keep_chains_together(tracks, &links)))
 }
 
-/// Drops missing or wrong-type tracks while preserving provider order.
+/// Drops missing or wrong-type tracks, keeping the rest in provider order for the chain
+/// regrouping that follows.
 fn filter_existing_tracks(db: &DbAny, tracks: Vec<Track>) -> anyhow::Result<Vec<Track>> {
     if tracks.is_empty() {
         return Ok(tracks);
@@ -294,34 +297,99 @@ pub(crate) async fn instant_mix_from_audio(
         Some(tracks) => filter_existing_tracks(&db, tracks)?,
         None => builtin_from_track(&db, track_db_id, options)?,
     };
+    let links = chain_links(&db, &mix_tracks, Some(track_db_id))?;
+    let mix_tracks = keep_chains_together(mix_tracks, &links);
 
     let effective_limit = options.limit.unwrap_or(DEFAULT_LIMIT);
     Ok(Some(pin_seed_and_truncate(
         seed,
         mix_tracks,
+        &links,
         effective_limit,
     )))
 }
 
-/// Pins `seed` at index 0 (moves if already in `tracks`), then truncates.
-fn pin_seed_and_truncate(seed: Track, mut tracks: Vec<Track>, limit: usize) -> Vec<Track> {
-    let seed_db_id_opt = seed.db_id.clone().map(DbId::from);
-    let existing_pos = seed_db_id_opt.and_then(|seed_id| {
-        tracks
-            .iter()
-            .position(|t| t.db_id.clone().map(DbId::from) == Some(seed_id))
-    });
-    match existing_pos {
-        Some(pos) => {
-            let s = tracks.remove(pos);
-            tracks.insert(0, s);
+/// The chain place of each chained track among `tracks` and `extra`.
+fn chain_links(
+    db: &DbAny,
+    tracks: &[Track],
+    extra: Option<DbId>,
+) -> anyhow::Result<HashMap<DbId, ChainLink>> {
+    let track_ids = tracks
+        .iter()
+        .filter_map(|track| track.db_id.clone().map(DbId::from))
+        .chain(extra)
+        .collect::<Vec<_>>();
+    lyra_db::chains::links_for_tracks(db, &track_ids)
+}
+
+/// Gathers the chained tracks of `tracks` where their chain's first one sits, in chain order.
+/// Members the mix left out stay out.
+fn keep_chains_together(tracks: Vec<Track>, links: &HashMap<DbId, ChainLink>) -> Vec<Track> {
+    if links.is_empty() {
+        return tracks;
+    }
+
+    let mut chain_starts = HashMap::new();
+    let mut keyed = tracks
+        .into_iter()
+        .enumerate()
+        .map(|(index, track)| {
+            let link = track
+                .db_id
+                .clone()
+                .map(DbId::from)
+                .and_then(|track_db_id| links.get(&track_db_id));
+            let key = match link {
+                Some(link) => (
+                    *chain_starts.entry(link.chain_db_id).or_insert(index),
+                    link.position,
+                ),
+                None => (index, 0),
+            };
+            (key, track)
+        })
+        .collect::<Vec<_>>();
+    keyed.sort_by_key(|(key, _)| *key);
+    keyed.into_iter().map(|(_, track)| track).collect()
+}
+
+/// Pins `seed` at index 0 (moves if already in `tracks`), then truncates. The seed's later chain
+/// members in `tracks` follow it in chain order; its earlier ones are dropped, as playing them
+/// after the seed would reverse the chain.
+fn pin_seed_and_truncate(
+    seed: Track,
+    tracks: Vec<Track>,
+    links: &HashMap<DbId, ChainLink>,
+    limit: usize,
+) -> Vec<Track> {
+    let seed_db_id = seed.db_id.clone().map(DbId::from);
+    let seed_link = seed_db_id.and_then(|seed_db_id| links.get(&seed_db_id));
+    let mut followers = Vec::new();
+    let mut rest = Vec::with_capacity(tracks.len());
+    for track in tracks {
+        let track_db_id = track.db_id.clone().map(DbId::from);
+        if track_db_id.is_some() && track_db_id == seed_db_id {
+            continue;
         }
-        None => {
-            tracks.insert(0, seed);
+        let link = track_db_id.and_then(|track_db_id| links.get(&track_db_id));
+        match (seed_link, link) {
+            (Some(seed_link), Some(link)) if link.chain_db_id == seed_link.chain_db_id => {
+                if link.position > seed_link.position {
+                    followers.push((link.position, track));
+                }
+            }
+            _ => rest.push(track),
         }
     }
-    tracks.truncate(limit);
-    tracks
+    followers.sort_by_key(|(position, _)| *position);
+
+    let mut pinned = Vec::with_capacity(1 + followers.len() + rest.len());
+    pinned.push(seed);
+    pinned.extend(followers.into_iter().map(|(_, track)| track));
+    pinned.extend(rest);
+    pinned.truncate(limit);
+    pinned
 }
 
 /// Mixer IDs with a handler for `seed_type`, highest priority first.
@@ -2097,7 +2165,7 @@ mod tests {
             vec!["Hidden A", "Hidden B"],
         );
 
-        let instant = pin_seed_and_truncate(seed, restricted, 2);
+        let instant = pin_seed_and_truncate(seed, restricted, &HashMap::new(), 2);
         assert_eq!(
             instant
                 .iter()
@@ -2105,6 +2173,165 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["Visible Seed", "Visible B"],
         );
+        Ok(())
+    }
+
+    /// Urn: "Libera (Part I) – Saturnine Spheres" → "Libera (Part II) – Ascent of Burning Moths"
+    /// → "Eyrie", among songs from another release.
+    fn urn_with_others(db: &mut DbAny) -> anyhow::Result<(DbId, Vec<DbId>, Vec<DbId>)> {
+        let metal = genres::resolve_by_name(db, "Metal")?;
+        let urn = insert_release(db, "Urn")?;
+        let portal = insert_release(db, "Portal of I")?;
+        genres::link_to_release(db, metal, urn)?;
+        genres::link_to_release(db, metal, portal)?;
+        let mut chain = Vec::new();
+        for title in [
+            "Libera (Part I) – Saturnine Spheres",
+            "Libera (Part II) – Ascent of Burning Moths",
+            "Eyrie",
+        ] {
+            let track = insert_track(db, title)?;
+            connect(db, urn, track)?;
+            chain.push(track);
+        }
+        let mut others = Vec::new();
+        for number in 0..8 {
+            let track = insert_track(db, &format!("Portal {number}"))?;
+            connect(db, portal, track)?;
+            others.push(track);
+        }
+        lyra_db::chains::replace_for_release(db, urn, std::slice::from_ref(&chain))??;
+        Ok((metal, chain, others))
+    }
+
+    fn ids_of(tracks: &[Track]) -> Vec<DbId> {
+        tracks
+            .iter()
+            .filter_map(|track| track.db_id.clone().map(DbId::from))
+            .collect()
+    }
+
+    #[test]
+    fn chained_tracks_gather_at_the_first_in_chain_order() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (_, chain, others) = urn_with_others(&mut db)?;
+        let tracks = lyra_db::tracks::get_by_ids(&db, &[chain[0], chain[2]])?;
+        let others_by_id = lyra_db::tracks::get_by_ids(&db, &others)?;
+        let mix = vec![
+            others_by_id[&others[0]].clone(),
+            tracks[&chain[2]].clone(),
+            others_by_id[&others[1]].clone(),
+            tracks[&chain[0]].clone(),
+            others_by_id[&others[2]].clone(),
+        ];
+
+        let links = chain_links(&db, &mix, None)?;
+        let kept = keep_chains_together(mix, &links);
+
+        assert_eq!(
+            ids_of(&kept),
+            vec![others[0], chain[0], chain[2], others[1], others[2]]
+        );
+        Ok(())
+    }
+
+    /// An instant mix of `mix` pinned on `seed`, as `instant_mix_from_audio` orders it.
+    fn instant(db: &DbAny, seed: DbId, mix: &[DbId]) -> anyhow::Result<Vec<DbId>> {
+        let mut by_id = lyra_db::tracks::get_by_ids(db, mix)?;
+        let seed_track = lyra_db::tracks::get_by_id(db, seed)?.expect("seed exists");
+        let mix = mix
+            .iter()
+            .map(|id| by_id.remove(id).expect("mix track exists"))
+            .collect::<Vec<_>>();
+        let links = chain_links(db, &mix, Some(seed))?;
+        let mix = keep_chains_together(mix, &links);
+        Ok(ids_of(&pin_seed_and_truncate(seed_track, mix, &links, 100)))
+    }
+
+    #[test]
+    fn a_first_member_seed_brings_its_chain_up_behind_it() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (_, chain, o) = urn_with_others(&mut db)?;
+        assert_eq!(
+            instant(&db, chain[0], &[o[0], chain[0], chain[1]])?,
+            vec![chain[0], chain[1], o[0]]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_interior_seed_drops_earlier_members_and_leads_later_ones() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (_, chain, o) = urn_with_others(&mut db)?;
+        assert_eq!(
+            instant(&db, chain[1], &[o[0], chain[0], chain[1], chain[2], o[1]])?,
+            vec![chain[1], chain[2], o[0], o[1]]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_last_member_seed_drops_the_rest_of_its_chain() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (_, chain, o) = urn_with_others(&mut db)?;
+        assert_eq!(
+            instant(&db, chain[2], &[o[0], chain[0], chain[1], chain[2]])?,
+            vec![chain[2], o[0]]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_inserted_seed_brings_up_its_later_member() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (_, chain, o) = urn_with_others(&mut db)?;
+        assert_eq!(
+            instant(&db, chain[0], &[o[0], chain[1], o[1]])?,
+            vec![chain[0], chain[1], o[0], o[1]]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_unchained_seed_is_pinned_before_the_kept_chains() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (_, chain, o) = urn_with_others(&mut db)?;
+        assert_eq!(
+            instant(&db, o[0], &[o[1], chain[1], o[0], chain[0], o[2]])?,
+            vec![o[0], o[1], chain[0], chain[1], o[2]]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn mixes_play_a_chain_together_and_in_order() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (viewer, genre, chain) = {
+            let mut db = STATE.db.write().await;
+            let viewer_id = lyra_db::test_db::insert_user(&mut db, "mix-chain-viewer")?;
+            let (metal, chain, _) = urn_with_others(&mut db)?;
+            let genre = lyra_db::lookup::find_id_by_db_id(&*db, metal)?.expect("genre public id");
+            (
+                Principal::for_user(&*db, viewer_id, vec![Permission::Admin], HashSet::new()),
+                genre,
+                chain,
+            )
+        };
+        let options = MixOptions::for_principal(&viewer, None, HashMap::new());
+
+        for _ in 0..16 {
+            let mix = from_seed(MixSeedId::Genre(genre.clone()), &options)
+                .await?
+                .expect("genre mix");
+            let ids = ids_of(&mix);
+            assert_eq!(ids.len(), 11);
+            let start = ids
+                .iter()
+                .position(|id| *id == chain[0])
+                .expect("chain in mix");
+            assert_eq!(ids[start..start + 3], chain[..]);
+        }
         Ok(())
     }
 
@@ -2120,7 +2347,8 @@ mod tests {
         let other_a = track_with_id(&mut db, "A")?;
         let other_b = track_with_id(&mut db, "B")?;
 
-        let result = pin_seed_and_truncate(seed.clone(), vec![other_a, other_b], 10);
+        let result =
+            pin_seed_and_truncate(seed.clone(), vec![other_a, other_b], &HashMap::new(), 10);
         assert_eq!(result.len(), 3);
         assert_eq!(result[0].track_title, "Seed");
         assert_eq!(result[1].track_title, "A");
@@ -2136,7 +2364,12 @@ mod tests {
         let other_b = track_with_id(&mut db, "B")?;
 
         // Engine output already contains the seed at index 1 — move, don't dup.
-        let result = pin_seed_and_truncate(seed.clone(), vec![other_a, seed.clone(), other_b], 10);
+        let result = pin_seed_and_truncate(
+            seed.clone(),
+            vec![other_a, seed.clone(), other_b],
+            &HashMap::new(),
+            10,
+        );
         assert_eq!(result.len(), 3, "no duplication: count unchanged");
         assert_eq!(result[0].track_title, "Seed");
         let seed_count = result.iter().filter(|t| t.track_title == "Seed").count();
@@ -2153,7 +2386,7 @@ mod tests {
         let c = track_with_id(&mut db, "C")?;
 
         // [Seed, A, B, C] truncated to 2 — seed kept, tail dropped.
-        let result = pin_seed_and_truncate(seed.clone(), vec![a, b, c], 2);
+        let result = pin_seed_and_truncate(seed.clone(), vec![a, b, c], &HashMap::new(), 2);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].track_title, "Seed");
         assert_eq!(result[1].track_title, "A");
@@ -2167,7 +2400,7 @@ mod tests {
         let a = track_with_id(&mut db, "A")?;
 
         // limit=1: seed wins the only slot.
-        let result = pin_seed_and_truncate(seed.clone(), vec![a], 1);
+        let result = pin_seed_and_truncate(seed.clone(), vec![a], &HashMap::new(), 1);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].track_title, "Seed");
         Ok(())
@@ -2179,7 +2412,7 @@ mod tests {
         let seed = track_with_id(&mut db, "Seed")?;
 
         // Genre-less seed: engine returns nothing, caller still gets the seed.
-        let result = pin_seed_and_truncate(seed.clone(), vec![], 200);
+        let result = pin_seed_and_truncate(seed.clone(), vec![], &HashMap::new(), 200);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].track_title, "Seed");
         Ok(())
