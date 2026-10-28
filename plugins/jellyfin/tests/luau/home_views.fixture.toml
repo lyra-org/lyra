@@ -1,11 +1,20 @@
 run_as = "admin"
 
-# Amy's "Amy Old" (added 100) and "Amy New" (added 300), and Bob's "Bob Mid" (added 200). The admin
-# owns the playlist "Mix", so the playlists view shows.
+# The library "Zed Library" holds Amy's "Amy Old" (added 100) and "Amy New" (added 300), and
+# "Alpha Library" holds Bob's "Bob Mid" (added 200). The admin owns the playlist "Mix", so the
+# playlists view shows.
 
 [[users]]
 key = "admin"
 admin = true
+
+[[libraries]]
+key = "zed"
+name = "Zed Library"
+
+[[libraries]]
+key = "alpha"
+name = "Alpha Library"
 
 [[artists]]
 key = "amy"
@@ -18,18 +27,21 @@ name = "Bob"
 [[releases]]
 key = "amy_old"
 title = "Amy Old"
+library = "zed"
 added = 100
 artists = ["amy"]
 
 [[releases]]
 key = "amy_new"
 title = "Amy New"
+library = "zed"
 added = 300
 artists = ["amy"]
 
 [[releases]]
 key = "bob_mid"
 title = "Bob Mid"
+library = "alpha"
 added = 200
 artists = ["bob"]
 

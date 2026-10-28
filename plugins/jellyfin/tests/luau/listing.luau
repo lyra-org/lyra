@@ -135,6 +135,8 @@ do
 	check(under(ids.aaron), "Mix:Playlist (1)", "a track's artist holds the playlists it is on")
 	check(under(ids.various_artists), "Mix:Playlist (1)", "so does its album's artist")
 	check(under(ids.rock), " (0)", "a genre holds no tracks")
+	check(under(ids.compilations), "Mix:Playlist (1)", "a library holds the playlists its tracks are on")
+	check(under(ids.albums), "Mix:Playlist,Played:Playlist,Shared:Playlist (3)")
 	check(
 		under(ids.solo, { SortOrder = "Descending", StartIndex = "1", Limit = "1", IsFavorite = "false" }),
 		"Played:Playlist (3)",
@@ -207,7 +209,11 @@ do
 	constants.configure_root_item_id(string.rep("1", 32))
 	local folder = constants.PLAYLISTS_FOLDER_ID
 	local view = "Playlists:ManualPlaylistsFolder (1)"
-	check(list(listing.list_views, {}), view, "the view shows while the caller sees a playlist")
+	check(
+		list(listing.list_views, {}),
+		"Albums:CollectionFolder,Compilations:CollectionFolder,Playlists:ManualPlaylistsFolder (3)",
+		"the view shows beside the libraries while the caller sees a playlist"
+	)
 	check(items({ IncludeItemTypes = "ManualPlaylistsFolder", ExcludeItemTypes = "CollectionFolder" }), view)
 	check(items({ Ids = folder }), view)
 	local all = "Liked:Playlist,Mix:Playlist,Played:Playlist,Shared:Playlist (4)"

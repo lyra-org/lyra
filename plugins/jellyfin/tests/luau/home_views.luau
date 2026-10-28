@@ -1,5 +1,4 @@
 local fixture = ...
-local catalog = require("../../protocol/items/catalog")
 local constants = require("../../constants")
 local item_ids = require("../../protocol/items/identifiers")
 local listing = require("../../protocol/items/listing")
@@ -8,18 +7,8 @@ local preferences = require("../../protocol/preferences")
 
 local user_id = fixture.users.admin
 
-local function hex(key: string): string
-	return item_ids.encode_jellyfin_item_id(fixture.ids[key]) :: string
-end
-
--- Fixtures hold no libraries, so artists stand in for two: they scope a listing as a library does.
-local amy_library, bob_library = hex("amy"), hex("bob")
-catalog.to_music_view_items = function(): any
-	return {
-		{ Id = amy_library, Name = "Zed Library", SortName = "Zed Library", Type = "CollectionFolder" },
-		{ Id = bob_library, Name = "Alpha Library", SortName = "Alpha Library", Type = "CollectionFolder" },
-	}
-end
+local zed_library = item_ids.nanoid_to_hex(fixture.libraries.zed) :: string
+local alpha_library = item_ids.nanoid_to_hex(fixture.libraries.alpha) :: string
 constants.configure_root_item_id(string.rep("1", 32))
 local playlists = constants.PLAYLISTS_FOLDER_ID
 
@@ -59,34 +48,34 @@ end
 check(views(), "Alpha Library,Playlists,Zed Library", "views sort by name by default")
 check(latest(), "Amy New,Bob Mid,Amy Old", "the newest albums of every library")
 
-configure({ OrderedViews = { amy_library, playlists } })
+configure({ OrderedViews = { zed_library, playlists } })
 check(views(), "Zed Library,Playlists,Alpha Library", "the caller's order comes first, then the name")
 check(
 	views(nil, { SortBy = "SortName", SortOrder = "Descending" }),
 	"Zed Library,Playlists,Alpha Library",
 	"a listing's SortBy replaces the caller's order"
 )
-configure({ OrderedViews = { bob_library } })
+configure({ OrderedViews = { alpha_library } })
 check(
 	views(nil, { SortBy = "SortName", SortOrder = "Descending" }),
 	"Zed Library,Playlists,Alpha Library",
 	"whatever the caller's order"
 )
 
-configure({ MyMediaExcludes = { playlists, bob_library } })
+configure({ MyMediaExcludes = { playlists, alpha_library } })
 check(views(), "Zed Library", "views hidden from the caller's media don't show")
 check(views(true), "Alpha Library,Playlists,Zed Library", "unless hidden views are asked for")
 check(latest(), "Amy New,Bob Mid,Amy Old", "hiding a view keeps its latest items")
 
-configure({ LatestItemsExcludes = { amy_library } })
+configure({ LatestItemsExcludes = { zed_library } })
 check(latest(), "Bob Mid", "a library excluded from latest media drops out")
 check(views(), "Alpha Library,Playlists,Zed Library", "and still shows as a view")
-check(latest({ ParentId = amy_library }), "Amy New,Amy Old", "a parent's latest items ignore the excludes")
+check(latest({ ParentId = zed_library }), "Amy New,Amy Old", "a parent's latest items ignore the excludes")
 
-configure({ LatestItemsExcludes = { bob_library } })
+configure({ LatestItemsExcludes = { alpha_library } })
 check(latest({ Limit = "1" }), "Amy New", "the newest of the kept libraries")
 
-configure({ LatestItemsExcludes = { amy_library, bob_library } })
+configure({ LatestItemsExcludes = { zed_library, alpha_library } })
 check(latest(), "", "with every library excluded nothing is latest")
 
 configure({ HidePlayedInLatest = false })
