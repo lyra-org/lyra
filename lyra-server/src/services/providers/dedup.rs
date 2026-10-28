@@ -46,8 +46,8 @@ pub(super) fn select_release_merge_winner(
 
         let ordering = lyra_db::compare_option(&candidate_min_disc, &winner_min_disc)
             .then_with(|| winner_track_count.cmp(&candidate_track_count))
-            .then_with(|| winner_created_at.cmp(&candidate_created_at))
-            .then_with(|| winner.0.cmp(&candidate.0));
+            .then_with(|| candidate_created_at.cmp(&winner_created_at))
+            .then_with(|| candidate.0.cmp(&winner.0));
 
         if ordering == Ordering::Less {
             winner = candidate;
@@ -465,6 +465,30 @@ mod tests {
         assert_eq!(
             roles,
             [lyra_db::CreditType::Artist, lyra_db::CreditType::Producer]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn tied_releases_merge_into_the_older_then_the_lower_id() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let mut insert = |created_at: Option<u64>| -> anyhow::Result<DbId> {
+            let release_id = insert_release(&mut db, "Release")?;
+            let mut release = lyra_db::releases::get_by_id(&db, release_id)?.expect("release");
+            release.created_at = created_at;
+            lyra_db::releases::update(&mut db, &release)?;
+            Ok(release_id)
+        };
+        let undated = insert(None)?;
+        let newer = insert(Some(200))?;
+        let older = insert(Some(100))?;
+        let also_older = insert(Some(100))?;
+
+        assert_eq!(select_release_merge_winner(&db, &[newer, older])?, older);
+        assert_eq!(select_release_merge_winner(&db, &[undated, newer])?, newer);
+        assert_eq!(
+            select_release_merge_winner(&db, &[also_older, older])?,
+            older
         );
         Ok(())
     }
