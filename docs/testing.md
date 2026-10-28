@@ -101,6 +101,7 @@ disc = 1
 track = 1
 year = 2001
 added = 50
+duration_ms = 180000 # optional, as a scan reads it from the audio
 artists = ["amy"]    # artist credits, in order
 credits = [{ artist = "amy", type = "instrumentalist", detail = "piano" }]  # any credit type, after `artists`
 file = "song.opus"   # an audio file, relative to the fixture, as the primary source

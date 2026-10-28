@@ -153,6 +153,8 @@ struct Track {
     track: Option<u32>,
     year: Option<u32>,
     added: Option<u64>,
+    /// How long the track runs, as a scan reads it from the audio.
+    duration_ms: Option<u64>,
     #[serde(default)]
     artists: Vec<String>,
     #[serde(default)]
@@ -485,10 +487,11 @@ impl Fixture {
         for track in &self.tracks {
             keys.claim(&track.key)?;
             let track_db_id = fixtures::insert_track(db, &track.title)?;
-            if track.added.is_some() {
+            if track.added.is_some() || track.duration_ms.is_some() {
                 let mut stored =
                     lyra_db::tracks::get_by_id(db, track_db_id)?.context("track exists")?;
                 stored.ctime = track.added;
+                stored.duration_ms = track.duration_ms;
                 db.transaction_mut(|t| lyra_db::tracks::update_in_transaction(t, &stored))?;
             }
             if let Some(release) = &track.release {
@@ -773,6 +776,21 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["Vinyl"]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn tracks_run_as_long_as_their_duration() -> anyhow::Result<()> {
+        let mut db = lyra_db::test_db::new_test_db()?;
+        let fixture: Fixture = serde_json::from_value(serde_json::json!({
+            "run_as": "viewer",
+            "users": [{ "key": "viewer" }],
+            "tracks": [{ "key": "song", "title": "Song", "duration_ms": 180_000 }],
+        }))?;
+        let (seeded, _) = fixture.seed(&mut db)?;
+
+        let song = lyra_db::tracks::get_by_id(&db, DbId(seeded.ids["song"]))?.context("song")?;
+        assert_eq!(song.duration_ms, Some(180_000));
         Ok(())
     }
 }
