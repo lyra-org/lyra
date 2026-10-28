@@ -95,7 +95,9 @@ local function check(actual: string, expected: string, why: string)
 end
 
 local group_id = post("a", "New", { GroupName = "Party" }).body.GroupId
+check(commands("a"), "Stop+0", "a new group has nothing to play")
 post("b", "Join", { GroupId = group_id })
+check(commands("b"), "Stop+0", "nor for a member that joins it")
 post("a", "SetNewQueue", { PlayingQueue = { item_ids.encode_jellyfin_item_id(fixture.ids.song) } })
 post("a", "Ready", { IsPlaying = false, PositionTicks = 0 })
 check(commands("a", true), "Pause@0+0", "a ready member pauses until the others are")
@@ -230,16 +232,27 @@ do
 	commands("d")
 
 	post("e", "Join", { GroupId = clock_group })
-	check(queue_start("e"), "5", "a member joining before the start hears the position it starts from")
+	check(queue_start("e"), "5", "a member joining before the start hears where the group starts")
+	check(commands("c", true), "Pause@5+0", "and the group waits for it")
+	commands("d")
 	commands("e")
-	now += 1000 + 3000
-	post("e", "Leave")
-	post("e", "Join", { GroupId = clock_group })
-	check(queue_start("e"), "8", "a late member hears where playback is")
-	check(commands("e", true), "Unpause@5-3000", "and when the group started, from where")
-	post("e", "Leave")
+	post("e", "Ready", { IsPlaying = false, PositionTicks = 5 * SECOND })
+	check(commands("c", true), "Unpause@5+1000", "then resumes")
+	commands("d")
+	commands("e")
 
-	now += 2000
+	now += 1000 + 3000
+	post("f", "Join", { GroupId = clock_group })
+	check(queue_start("f"), "8", "a late member hears where playback is")
+	check(commands("c", true), "Pause@8+0", "and the group pauses there for it")
+	commands("d")
+	commands("e")
+	post("f", "Leave")
+	check(commands("c", true), "Unpause@8+1000", "a member leaving before it is ready lets the group resume")
+	commands("d")
+	commands("e")
+
+	now += 1000 + 2000
 	post("d", "Buffering", { IsPlaying = true, PositionTicks = 10 * SECOND })
 	check(commands("c", true), "Pause@10+0", "a member buffering stops the clock where playback is")
 
@@ -249,6 +262,7 @@ do
 	check(commands("c", true), "Seek@0+0", "and at its start")
 	post("c", "Leave")
 	post("d", "Leave")
+	post("e", "Leave")
 end
 
 -- Client times parse with or without a fraction or an offset.

@@ -781,6 +781,18 @@ local function syncplay_leave_entry(entry: SessionEntry, notify: boolean)
 	end
 
 	local participant = group.participants[entry.session_id]
+	-- As upstream, a group left by the only member it waited for stops waiting.
+	if participant and group.state == "Waiting" then
+		participant.buffering = false
+		participant.ready = true
+		if syncplay_group_ready(group) then
+			if group.resume_playing then
+				syncplay_unpause(group, entry.session_id)
+			else
+				syncplay_set_state(group, "Paused")
+			end
+		end
+	end
 	local username = if participant then participant.username else tostring(entry.info.UserName or entry.user_id)
 	if notify then
 		syncplay_send_group_update_entry(entry, group.id, "GroupLeft", group.id)
@@ -789,6 +801,31 @@ local function syncplay_leave_entry(entry: SessionEntry, notify: boolean)
 	if notify and syncplay_groups[group.id] ~= nil then
 		syncplay_broadcast_group_update(group, entry.session_id, "except", "UserLeft", username)
 	end
+end
+
+-- As upstream, a member joining a stopped group is told to stop. Any other group pauses where
+-- playback is until the member has loaded the queue, then resumes if it was playing.
+local function syncplay_session_joined(group: SyncPlayGroup, entry: SessionEntry)
+	if group.state == "Idle" then
+		syncplay_send_entry(entry, "SyncPlayCommand", syncplay_command(group, "Stop"))
+		return
+	end
+	if group.state == "Playing" then
+		syncplay_settle(group)
+		syncplay_set_state(group, "Waiting")
+		group.resume_playing = true
+	elseif group.state == "Paused" then
+		syncplay_set_state(group, "Waiting")
+		group.resume_playing = false
+	end
+	syncplay_send_group_update_entry(entry, group.id, "PlayQueue", syncplay_play_queue_update(group, "NewPlaylist"))
+	local participant = group.participants[entry.session_id]
+	if participant then
+		participant.buffering = true
+		participant.ready = false
+	end
+	syncplay_update_wait(group, false)
+	syncplay_broadcast_command(group, entry.session_id, "ready", "Pause")
 end
 
 local function syncplay_new_group(entry: SessionEntry, group_name: string?): SyncPlayGroup
@@ -819,6 +856,7 @@ local function syncplay_new_group(entry: SessionEntry, group_name: string?): Syn
 	syncplay_groups[id] = group
 	syncplay_add_participant(group, entry)
 	syncplay_send_group_update_entry(entry, group.id, "GroupJoined", syncplay_group_info(group))
+	syncplay_session_joined(group, entry)
 	return group
 end
 
@@ -1020,19 +1058,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 			"UserJoined",
 			tostring((entry :: SessionEntry).info.UserName or "")
 		)
-		if #group.queue > 0 then
-			syncplay_send_group_update_entry(
-				entry :: SessionEntry,
-				group.id,
-				"PlayQueue",
-				syncplay_play_queue_update(group, "NewPlaylist")
-			)
-			if group.state == "Playing" then
-				syncplay_send_entry(entry :: SessionEntry, "SyncPlayCommand", syncplay_command(group, "Unpause"))
-			elseif group.state == "Paused" then
-				syncplay_send_entry(entry :: SessionEntry, "SyncPlayCommand", syncplay_command(group, "Pause"))
-			end
-		end
+		syncplay_session_joined(group, entry :: SessionEntry)
 		return api.response.empty(204)
 	end)
 
