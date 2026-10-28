@@ -129,7 +129,10 @@ fn me_routes() -> Router {
     Router::new()
         .merge(super::users::me_account_routes())
         .route("/mix", get(super::mix::get_me_mix))
-        .route("/listens", get(super::listens::get_me_listens))
+        .route(
+            "/listens",
+            get(super::listens::get_me_listens).post(super::listens::submit_me_listens),
+        )
         .nest("/favorites", super::favorites::me_favorite_routes())
         .nest("/ratings", super::ratings::me_rating_routes())
         .nest("/tags", super::tags::me_tag_routes())
@@ -152,6 +155,10 @@ fn me_openapi_routes() -> aide::axum::ApiRouter {
             get_with(
                 super::listens::get_me_listens,
                 super::listens::get_me_listens_docs,
+            )
+            .post_with(
+                super::listens::submit_me_listens,
+                super::listens::submit_me_listens_docs,
             ),
         )
         .nest("/favorites", super::favorites::me_favorite_openapi_routes())
@@ -350,6 +357,7 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("POST", "/api/me/api-keys"),
     ("DELETE", "/api/me/api-keys/{api_key_id}"),
     ("GET", "/api/me/listens"),
+    ("POST", "/api/me/listens"),
     ("GET", "/api/me/favorites/"),
     ("POST", "/api/me/favorites/check"),
     ("GET", "/api/me/favorites/{target_id}"),

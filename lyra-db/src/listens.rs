@@ -72,33 +72,29 @@ pub fn find_by_play_id(
     super::graph::find_owned_by_index(db, "play_id", play_id, "Listen", user_db_id)
 }
 
-/// Raises the listen's playing time to `played_ms` when the play went on after it counted.
-pub fn raise_played_ms(
+/// The user's listen of the play, with its stored values.
+pub fn get_by_play_id(
+    db: &impl super::DbAccess,
+    user_db_id: DbId,
+    play_id: &str,
+) -> anyhow::Result<Option<Listen>> {
+    let Some(listen_db_id) = find_by_play_id(db, user_db_id, play_id)? else {
+        return Ok(None);
+    };
+    super::graph::fetch_typed_by_id(db, listen_db_id, "Listen")
+}
+
+pub fn set_played_ms(
     db: &mut impl super::DbAccess,
     listen_db_id: DbId,
     played_ms: u64,
 ) -> anyhow::Result<()> {
-    let stored = db
-        .exec(
-            QueryBuilder::select()
-                .values(["played_ms"])
-                .ids(listen_db_id)
-                .query(),
-        )?
-        .elements
-        .first()
-        .and_then(|element| element.values.first())
-        .map(|value| value.value.to_u64())
-        .transpose()?
-        .unwrap_or(0);
-    if played_ms > stored {
-        db.exec_mut(
-            QueryBuilder::insert()
-                .values_uniform([("played_ms", played_ms).into()])
-                .ids(listen_db_id)
-                .query(),
-        )?;
-    }
+    db.exec_mut(
+        QueryBuilder::insert()
+            .values_uniform([("played_ms", played_ms).into()])
+            .ids(listen_db_id)
+            .query(),
+    )?;
     Ok(())
 }
 
@@ -542,25 +538,20 @@ mod tests {
     }
 
     #[test]
-    fn raise_played_ms_only_raises() -> anyhow::Result<()> {
+    fn get_by_play_id_reads_the_stored_listen() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user = create_user(&mut db)?;
         let track = create_track(&mut db, "tr-one")?;
         let listen =
-            insert_listen_with_snapshot(&mut db, user, track, "tr-one", "play-raise-00001", 1)?;
-        let played = |db: &DbAny| -> anyhow::Result<u64> {
-            Ok(
-                crate::graph::bulk_fetch_typed::<Listen>(db, vec![listen], "Listen")?
-                    .remove(&listen)
-                    .expect("listen exists")
-                    .played_ms,
-            )
-        };
+            insert_listen_with_snapshot(&mut db, user, track, "tr-one", "play-stored-00001", 7)?;
 
-        raise_played_ms(&mut db, listen, 200_000)?;
-        assert_eq!(played(&db)?, 200_000);
-        raise_played_ms(&mut db, listen, 50_000)?;
-        assert_eq!(played(&db)?, 200_000);
+        set_played_ms(&mut db, listen, 200_000)?;
+
+        let stored = get_by_play_id(&db, user, "play-stored-00001")?.expect("listen exists");
+        assert_eq!(stored.db_id, Some(listen));
+        assert_eq!(stored.started_at_ms, 7);
+        assert_eq!(stored.played_ms, 200_000);
+        assert!(get_by_play_id(&db, user, "play-unknown-0001")?.is_none());
         Ok(())
     }
 

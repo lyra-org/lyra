@@ -22,6 +22,7 @@ use serde::{
 use std::{
     cmp::Ordering,
     collections::{
+        BTreeMap,
         HashMap,
         HashSet,
     },
@@ -41,6 +42,12 @@ use crate::{
             Principal,
             require_permission,
             require_principal,
+        },
+        listens::{
+            self as listen_service,
+            RecordOutcome,
+            SubmissionOutcome,
+            SubmittedPlay,
         },
         pagination::SnapshotKey,
         playback_sessions as playback_service,
@@ -613,6 +620,135 @@ async fn hydrate_listen_rows(
     Ok(hydrated)
 }
 
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+pub(super) struct ListenSubmissionRequest {
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "The plays to judge, at most 500.")
+    )]
+    plays: Vec<SubmittedPlayRequest>,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+struct SubmittedPlayRequest {
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = listen_service::PLAY_ID_DESCRIPTION)
+    )]
+    play_id: String,
+    track_id: String,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "When the play started, as an RFC 3339 timestamp.")
+    )]
+    started_at: String,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Time the track actually played, excluding pauses and skipped spans."
+        )
+    )]
+    played_ms: u64,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+pub(super) struct ListenSubmissionResponse {
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Each submitted play's outcome, keyed by `play_id`.")
+    )]
+    outcomes: BTreeMap<String, PlayOutcome>,
+}
+
+/// What the server made of one submitted play. Every outcome is final.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum PlayOutcome {
+    /// The play counted as a listen.
+    Recorded,
+    /// The play already counted, live or in an earlier submission.
+    Duplicate,
+    /// The play was too short to count.
+    NotListened,
+    /// The track doesn't exist or isn't visible to the caller.
+    TrackNotFound,
+    /// The play starts before 2010 or ends after the server's current time.
+    InvalidTime,
+}
+
+impl From<SubmissionOutcome> for PlayOutcome {
+    fn from(outcome: SubmissionOutcome) -> Self {
+        match outcome {
+            SubmissionOutcome::Judged(RecordOutcome::Recorded) => Self::Recorded,
+            SubmissionOutcome::Judged(RecordOutcome::Duplicate) => Self::Duplicate,
+            SubmissionOutcome::Judged(RecordOutcome::NotListened) => Self::NotListened,
+            SubmissionOutcome::Judged(RecordOutcome::InvalidTime) => Self::InvalidTime,
+            SubmissionOutcome::TrackNotFound => Self::TrackNotFound,
+        }
+    }
+}
+
+/// The most plays one submission may carry.
+const MAX_SUBMITTED_PLAYS: usize = 500;
+
+fn submitted_play(request: SubmittedPlayRequest) -> Result<SubmittedPlay, AppError> {
+    if !listen_service::is_play_id(&request.play_id) {
+        return Err(AppError::bad_request(format!(
+            "malformed play_id: {}",
+            request.play_id
+        )));
+    }
+    let started_at_ms = crate::services::timestamps::rfc3339_to_unix_ms_u64(&request.started_at)
+        .ok_or_else(|| {
+            AppError::bad_request(format!(
+                "started_at is not an RFC 3339 timestamp: {}",
+                request.started_at
+            ))
+        })?;
+    Ok(SubmittedPlay {
+        play_id: request.play_id,
+        track_public_id: request.track_id,
+        started_at_ms,
+        played_ms: request.played_ms,
+    })
+}
+
+pub(super) async fn submit_me_listens(
+    headers: HeaderMap,
+    Json(request): Json<ListenSubmissionRequest>,
+) -> Result<Json<ListenSubmissionResponse>, AppError> {
+    let principal = require_principal(bearer_credential(&headers)).await?;
+    if request.plays.len() > MAX_SUBMITTED_PLAYS {
+        return Err(AppError::bad_request(format!(
+            "plays cap exceeded: {} > {MAX_SUBMITTED_PLAYS}",
+            request.plays.len()
+        )));
+    }
+    let plays = request
+        .plays
+        .into_iter()
+        .map(submitted_play)
+        .collect::<Result<Vec<_>, _>>()?;
+    let now_ms = playback_service::now_ms()?;
+
+    let mut db = STATE.db.write().await;
+    let user_db_id = principal.require(&db)?;
+    let outcomes =
+        listen_service::record_submitted(&mut db, &principal, user_db_id, plays, now_ms)?;
+    drop(db);
+
+    Ok(Json(ListenSubmissionResponse {
+        outcomes: outcomes
+            .into_iter()
+            .map(|(play_id, outcome)| (play_id, outcome.into()))
+            .collect(),
+    }))
+}
+
 pub(super) async fn get_me_listens(
     headers: HeaderMap,
     Query(query): Query<MeListenQuery>,
@@ -697,6 +833,13 @@ async fn get_listens(
 pub(super) fn get_me_listens_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List my listen summaries").description(
         "Returns authenticated user-scoped per-track listen summaries as `{ items, next_cursor }`. Defaults to listen_count descending, then last_played_at descending. The first page creates a bounded snapshot of row identities and summary values.",
+    )
+}
+
+#[cfg(feature = "docgen")]
+pub(super) fn submit_me_listens_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Submit plays").description(
+        "Submits up to 500 plays the client recorded without reporting them live, such as while offline. The server judges each one with the same rule as live playback: a play counts when it played at least 30 seconds, or 20% of a track under 3 minutes, measured against the catalog duration. A `play_id` counts at most once, so retrying a submission, or submitting a play that was also reported live, is safe. Each play gets an outcome keyed by its `play_id`; a `play_id` repeated in one submission is judged by its first occurrence. Every outcome is final: the client deletes the play once it has any outcome. A 400, 413, 415 or 422 means the submission itself is malformed, for example more than 500 plays, a malformed `play_id` or `started_at`, or a missing field; it judges nothing and fails again if resent unchanged, so the client fixes or drops the offending plays. Any other failure, such as a transport error, 401, 429 or 5xx, judges nothing either: the client keeps the plays and retries, after signing in again for a 401 and after waiting for a 429.",
     )
 }
 
@@ -812,5 +955,263 @@ mod tests {
 
         let ids = rows.into_iter().map(|row| row.user_id).collect::<Vec<_>>();
         assert_eq!(ids, vec!["user-a", "user-b"]);
+    }
+    mod submission {
+        use axum::{
+            http::{
+                StatusCode,
+                header::AUTHORIZATION,
+            },
+            response::IntoResponse,
+        };
+        use nanoid::nanoid;
+
+        use super::*;
+
+        const STARTED_AT: &str = "2026-10-01T12:00:00Z";
+
+        struct Fixture {
+            headers: HeaderMap,
+            user_db_id: DbId,
+            long_track_id: String,
+            long_track_db_id: DbId,
+        }
+
+        async fn headers_for(user_db_id: DbId) -> anyhow::Result<HeaderMap> {
+            let session =
+                crate::services::testing::create_session(user_db_id, Default::default()).await?;
+            let mut headers = HeaderMap::new();
+            headers.insert(AUTHORIZATION, format!("Bearer {}", session.token).parse()?);
+            Ok(headers)
+        }
+
+        fn insert_track(db: &mut agdb::DbAny, duration_ms: u64) -> anyhow::Result<(DbId, String)> {
+            let track_db_id = lyra_db::fixtures::insert_track(db, "Track")?;
+            let mut track = lyra_db::tracks::get_by_id(db, track_db_id)?
+                .ok_or_else(|| anyhow::anyhow!("track missing"))?;
+            track.duration_ms = Some(duration_ms);
+            lyra_db::tracks::update(db, &track)?;
+            Ok((track_db_id, track.id))
+        }
+
+        async fn setup(admin: bool) -> anyhow::Result<Fixture> {
+            crate::plugins::testing::init_library_test_state(std::path::PathBuf::from(".")).await?;
+            let (user_db_id, long) = {
+                let mut db = STATE.db.write().await;
+                lyra_db::roles::ensure_builtin_roles(&mut db)?;
+                let user = lyra_db::fixtures::test_user(&format!("listener-{}", nanoid!()))?;
+                let user_db_id = lyra_db::users::create(&mut db, &user)?;
+                if admin {
+                    lyra_db::roles::ensure_user_has_role(
+                        &mut db,
+                        user_db_id,
+                        lyra_db::roles::BUILTIN_ADMIN_ROLE,
+                    )?;
+                }
+                (user_db_id, insert_track(&mut db, 300_000)?)
+            };
+            Ok(Fixture {
+                headers: headers_for(user_db_id).await?,
+                user_db_id,
+                long_track_db_id: long.0,
+                long_track_id: long.1,
+            })
+        }
+
+        fn play(
+            play_id: &str,
+            track_id: &str,
+            started_at: &str,
+            played_ms: u64,
+        ) -> SubmittedPlayRequest {
+            SubmittedPlayRequest {
+                play_id: play_id.to_string(),
+                track_id: track_id.to_string(),
+                started_at: started_at.to_string(),
+                played_ms,
+            }
+        }
+
+        async fn submit(
+            headers: &HeaderMap,
+            plays: Vec<SubmittedPlayRequest>,
+        ) -> Result<BTreeMap<String, PlayOutcome>, AppError> {
+            let Json(response) =
+                submit_me_listens(headers.clone(), Json(ListenSubmissionRequest { plays })).await?;
+            Ok(response.outcomes)
+        }
+
+        async fn listen_count(fixture: &Fixture) -> anyhow::Result<u64> {
+            let db = STATE.db.read().await;
+            Ok(
+                lyra_db::listens::get_counts(&db, &[fixture.long_track_db_id], fixture.user_db_id)?
+                    .get(&fixture.long_track_db_id)
+                    .copied()
+                    .unwrap_or(0),
+            )
+        }
+
+        fn outcomes(pairs: &[(&str, PlayOutcome)]) -> BTreeMap<String, PlayOutcome> {
+            pairs
+                .iter()
+                .map(|(play_id, outcome)| (play_id.to_string(), *outcome))
+                .collect()
+        }
+
+        #[tokio::test]
+        async fn every_play_gets_its_outcome() -> anyhow::Result<()> {
+            let _guard = crate::services::testing::runtime_test_lock().await;
+            let fixture = setup(true).await?;
+            let long = fixture.long_track_id.as_str();
+            let user_public_id = {
+                let db = STATE.db.read().await;
+                lyra_db::users::get_by_id(&db, fixture.user_db_id)?
+                    .expect("user exists")
+                    .id
+            };
+
+            let result = submit(
+                &fixture.headers,
+                vec![
+                    play("recorded-play-0001", long, STARTED_AT, 60_000),
+                    play("not-listened-00001", long, STARTED_AT, 29_999),
+                    play("recorded-play-0001", long, STARTED_AT, 90_000),
+                    play("missing-track-0001", "missing-track-id", STARTED_AT, 60_000),
+                    play("not-a-track-000001", &user_public_id, STARTED_AT, 60_000),
+                    play("reset-clock-000001", long, "2009-12-31T23:59:59Z", 60_000),
+                    play("future-play-000001", long, "2999-01-01T00:00:00Z", 60_000),
+                ],
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+
+            assert_eq!(
+                result,
+                outcomes(&[
+                    ("recorded-play-0001", PlayOutcome::Recorded),
+                    ("not-listened-00001", PlayOutcome::NotListened),
+                    ("missing-track-0001", PlayOutcome::TrackNotFound),
+                    ("not-a-track-000001", PlayOutcome::TrackNotFound),
+                    ("reset-clock-000001", PlayOutcome::InvalidTime),
+                    ("future-play-000001", PlayOutcome::InvalidTime),
+                ])
+            );
+            assert_eq!(listen_count(&fixture).await?, 1);
+            let db = STATE.db.read().await;
+            let listen_db_id =
+                lyra_db::listens::find_by_play_id(&db, fixture.user_db_id, "recorded-play-0001")?
+                    .expect("recorded listen");
+            let listen = lyra_db::graph::bulk_fetch_typed::<lyra_db::Listen>(
+                &db,
+                vec![listen_db_id],
+                "Listen",
+            )?
+            .remove(&listen_db_id)
+            .expect("listen exists");
+            assert_eq!(
+                Some(listen.started_at_ms),
+                crate::services::timestamps::rfc3339_to_unix_ms_u64(STARTED_AT)
+            );
+            assert_eq!(
+                listen.played_ms, 60_000,
+                "a repeat in the batch changes nothing"
+            );
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn a_retried_submission_counts_each_play_once() -> anyhow::Result<()> {
+            let _guard = crate::services::testing::runtime_test_lock().await;
+            let fixture = setup(true).await?;
+            let plays = || {
+                vec![
+                    play(
+                        "retried-play-00001",
+                        &fixture.long_track_id,
+                        STARTED_AT,
+                        60_000,
+                    ),
+                    play(
+                        "retried-short-0001",
+                        &fixture.long_track_id,
+                        STARTED_AT,
+                        5_000,
+                    ),
+                ]
+            };
+
+            let first = submit(&fixture.headers, plays())
+                .await
+                .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+            let retry = submit(&fixture.headers, plays())
+                .await
+                .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+
+            assert_eq!(first["retried-play-00001"], PlayOutcome::Recorded);
+            assert_eq!(retry["retried-play-00001"], PlayOutcome::Duplicate);
+            assert_eq!(retry["retried-short-0001"], PlayOutcome::NotListened);
+            assert_eq!(listen_count(&fixture).await?, 1);
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn an_inaccessible_track_reads_as_missing() -> anyhow::Result<()> {
+            let _guard = crate::services::testing::runtime_test_lock().await;
+            let fixture = setup(false).await?;
+
+            let result = submit(
+                &fixture.headers,
+                vec![play(
+                    "hidden-track-00001",
+                    &fixture.long_track_id,
+                    STARTED_AT,
+                    60_000,
+                )],
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+
+            assert_eq!(
+                result,
+                outcomes(&[("hidden-track-00001", PlayOutcome::TrackNotFound)])
+            );
+            assert_eq!(listen_count(&fixture).await?, 0);
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn malformed_submissions_judge_nothing() -> anyhow::Result<()> {
+            let _guard = crate::services::testing::runtime_test_lock().await;
+            let fixture = setup(true).await?;
+            let long = fixture.long_track_id.as_str();
+            let valid = || play("valid-play-0000001", long, STARTED_AT, 60_000);
+
+            let too_many = (0..=MAX_SUBMITTED_PLAYS)
+                .map(|index| play(&format!("capped-play-{index:06}"), long, STARTED_AT, 60_000))
+                .collect();
+            for plays in [
+                too_many,
+                vec![valid(), play("short", long, STARTED_AT, 60_000)],
+                vec![
+                    valid(),
+                    play("bad-timestamp-0001", long, "yesterday", 60_000),
+                ],
+            ] {
+                let error = submit(&fixture.headers, plays)
+                    .await
+                    .expect_err("a malformed submission is rejected");
+                assert_eq!(error.into_response().status(), StatusCode::BAD_REQUEST);
+            }
+            assert_eq!(listen_count(&fixture).await?, 0);
+
+            let at_cap = (0..MAX_SUBMITTED_PLAYS)
+                .map(|index| play(&format!("capped-play-{index:06}"), long, STARTED_AT, 60_000))
+                .collect();
+            let result = submit(&fixture.headers, at_cap)
+                .await
+                .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+            assert_eq!(result.len(), MAX_SUBMITTED_PLAYS);
+            Ok(())
+        }
     }
 }

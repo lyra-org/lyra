@@ -5,9 +5,16 @@
 
 //! What counts as a listen, for live playback and submitted plays alike.
 
-use agdb::DbId;
+use std::collections::HashMap;
+
+use agdb::{
+    DbAny,
+    DbId,
+};
 use lyra_db::Listen;
 use nanoid::nanoid;
+
+use super::auth::Principal;
 
 const MIN_PLAYED_MS: u64 = 30_000;
 const SHORT_TRACK_MS: u64 = 180_000;
@@ -76,18 +83,38 @@ pub(crate) fn record(
     play: Play<'_>,
     now_ms: u64,
 ) -> anyhow::Result<RecordOutcome> {
+    let track = lyra_db::tracks::get_by_id(db, play.track_db_id)?
+        .ok_or_else(|| anyhow::anyhow!("track {:?} not found", play.track_db_id))?;
+    record_for_track(db, user_db_id, play, &track, now_ms)
+}
+
+/// [`record`] for a play of `track`, already loaded from `play.track_db_id`.
+fn record_for_track(
+    db: &mut impl lyra_db::DbAccess,
+    user_db_id: DbId,
+    play: Play<'_>,
+    track: &lyra_db::Track,
+    now_ms: u64,
+) -> anyhow::Result<RecordOutcome> {
+    let latest_end_ms = now_ms.saturating_add(FUTURE_END_ALLOWANCE_MS);
+    if let Some(listen) = lyra_db::listens::get_by_play_id(db, user_db_id, play.play_id)? {
+        // Never beyond what fits between the counted start and now.
+        let played_ms = play
+            .played_ms
+            .min(latest_end_ms.saturating_sub(listen.started_at_ms));
+        if listen.track_public_id == track.id
+            && played_ms > listen.played_ms
+            && let Some(listen_db_id) = listen.db_id
+        {
+            lyra_db::listens::set_played_ms(db, listen_db_id, played_ms)?;
+        }
+        return Ok(RecordOutcome::Duplicate);
+    }
     if play.started_at_ms < EARLIEST_STARTED_AT_MS
-        || play.started_at_ms.saturating_add(play.played_ms)
-            > now_ms.saturating_add(FUTURE_END_ALLOWANCE_MS)
+        || play.started_at_ms.saturating_add(play.played_ms) > latest_end_ms
     {
         return Ok(RecordOutcome::InvalidTime);
     }
-    if let Some(listen_db_id) = lyra_db::listens::find_by_play_id(db, user_db_id, play.play_id)? {
-        lyra_db::listens::raise_played_ms(db, listen_db_id, play.played_ms)?;
-        return Ok(RecordOutcome::Duplicate);
-    }
-    let track = lyra_db::tracks::get_by_id(db, play.track_db_id)?
-        .ok_or_else(|| anyhow::anyhow!("track {:?} not found", play.track_db_id))?;
     if !is_listen(play.played_ms, track.duration_ms) {
         return Ok(RecordOutcome::NotListened);
     }
@@ -96,13 +123,92 @@ pub(crate) fn record(
         db_id: None,
         id: nanoid!(),
         play_id: play.play_id.to_string(),
-        track_public_id: track.id,
+        track_public_id: track.id.clone(),
         started_at_ms: play.started_at_ms,
         played_ms: play.played_ms,
         created_at_ms: now_ms,
     };
     lyra_db::listens::insert(db, &listen, play.track_db_id, user_db_id)?;
     Ok(RecordOutcome::Recorded)
+}
+
+/// A play a client recorded while it couldn't report live, naming its track by public id.
+#[derive(Clone, Debug)]
+pub(crate) struct SubmittedPlay {
+    pub(crate) play_id: String,
+    pub(crate) track_public_id: String,
+    pub(crate) started_at_ms: u64,
+    pub(crate) played_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SubmissionOutcome {
+    Judged(RecordOutcome),
+    /// The track doesn't exist or the user can't see it.
+    TrackNotFound,
+}
+
+/// Judges the submitted plays in one transaction, keyed by play id. A play id repeated in the batch
+/// is judged by its first occurrence.
+pub(crate) fn record_submitted(
+    db: &mut DbAny,
+    principal: &Principal,
+    user_db_id: DbId,
+    plays: Vec<SubmittedPlay>,
+    now_ms: u64,
+) -> anyhow::Result<HashMap<String, SubmissionOutcome>> {
+    db.transaction_mut(|t| {
+        let mut tracks = HashMap::<String, Option<(DbId, lyra_db::Track)>>::new();
+        let mut outcomes = HashMap::with_capacity(plays.len());
+        for submitted in plays {
+            if outcomes.contains_key(&submitted.play_id) {
+                continue;
+            }
+            let track = match tracks.get(&submitted.track_public_id) {
+                Some(track) => track,
+                None => {
+                    let track = accessible_track(t, principal, &submitted.track_public_id)?;
+                    tracks
+                        .entry(submitted.track_public_id.clone())
+                        .or_insert(track)
+                }
+            };
+            let outcome = match track {
+                Some((track_db_id, track)) => SubmissionOutcome::Judged(record_for_track(
+                    t,
+                    user_db_id,
+                    Play {
+                        play_id: &submitted.play_id,
+                        track_db_id: *track_db_id,
+                        started_at_ms: submitted.started_at_ms,
+                        played_ms: submitted.played_ms,
+                    },
+                    track,
+                    now_ms,
+                )?),
+                None => SubmissionOutcome::TrackNotFound,
+            };
+            outcomes.insert(submitted.play_id, outcome);
+        }
+        Ok(outcomes)
+    })
+}
+
+fn accessible_track(
+    db: &impl lyra_db::DbAccess,
+    principal: &Principal,
+    track_public_id: &str,
+) -> anyhow::Result<Option<(DbId, lyra_db::Track)>> {
+    let Some(db_id) = lyra_db::lookup::find_node_id_by_id(db, track_public_id)? else {
+        return Ok(None);
+    };
+    let Some(track) = lyra_db::tracks::get_by_id(db, db_id)? else {
+        return Ok(None);
+    };
+    if !super::auth::access::entity_accessible(db, principal, db_id)? {
+        return Ok(None);
+    }
+    Ok(Some((db_id, track)))
 }
 
 #[cfg(test)]
@@ -318,6 +424,54 @@ mod tests {
         assert_eq!(
             lyra_db::listens::find_by_play_id(&db, user, "play-rolled-0001")?,
             None
+        );
+        Ok(())
+    }
+    fn stored_listen(db: &DbAny, user: DbId, play_id: &str) -> anyhow::Result<Listen> {
+        lyra_db::listens::get_by_play_id(db, user, play_id)?
+            .ok_or_else(|| anyhow::anyhow!("no listen for {play_id}"))
+    }
+
+    #[test]
+    fn a_duplicate_raises_playing_time_only_as_far_as_the_counted_play_allows() -> anyhow::Result<()>
+    {
+        let mut db = new_test_db()?;
+        let user = lyra_db::test_db::insert_user(&mut db, "listener")?;
+        let track = insert_track(&mut db, None)?;
+        let other_track = insert_track(&mut db, None)?;
+        let started_at_ms = NOW_MS - 600_000;
+        record_in_transaction(&mut db, user, play("play-bounded-0001", track, 30_000))?;
+
+        let other = record_in_transaction(
+            &mut db,
+            user,
+            Play {
+                track_db_id: other_track,
+                ..play("play-bounded-0001", track, 200_000)
+            },
+        )?;
+        assert_eq!(other, RecordOutcome::Duplicate);
+        assert_eq!(
+            stored_listen(&db, user, "play-bounded-0001")?.played_ms,
+            30_000
+        );
+
+        let fabricated = record_in_transaction(
+            &mut db,
+            user,
+            Play {
+                started_at_ms: EARLIEST_STARTED_AT_MS - 1,
+                ..play("play-bounded-0001", track, u64::MAX)
+            },
+        )?;
+        assert_eq!(
+            fabricated,
+            RecordOutcome::Duplicate,
+            "a counted play stays a duplicate"
+        );
+        assert_eq!(
+            stored_listen(&db, user, "play-bounded-0001")?.played_ms,
+            NOW_MS + FUTURE_END_ALLOWANCE_MS - started_at_ms
         );
         Ok(())
     }

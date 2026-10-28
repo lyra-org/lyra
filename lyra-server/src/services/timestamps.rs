@@ -3,7 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-//! RFC 3339 rendering of stored Unix timestamps.
+//! RFC 3339 rendering and parsing of Unix timestamps.
 
 use time::{
     OffsetDateTime,
@@ -28,6 +28,13 @@ pub(crate) fn unix_ms_to_rfc3339_u64(milliseconds: u64) -> String {
 
 pub(crate) fn unix_ms_to_rfc3339_i64(milliseconds: i64) -> String {
     unix_ms_to_rfc3339_i128(i128::from(milliseconds))
+}
+
+/// Unix milliseconds of an RFC 3339 timestamp, or `None` when it doesn't parse. Times before the
+/// Unix epoch saturate to 0, which every plausibility bound rejects anyway.
+pub(crate) fn rfc3339_to_unix_ms_u64(value: &str) -> Option<u64> {
+    let timestamp = OffsetDateTime::parse(value, &Rfc3339).ok()?;
+    Some(u64::try_from(timestamp.unix_timestamp_nanos() / 1_000_000).unwrap_or(0))
 }
 
 fn unix_ms_to_rfc3339_i128(milliseconds: i128) -> String {
