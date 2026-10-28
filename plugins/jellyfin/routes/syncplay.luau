@@ -849,7 +849,6 @@ local function syncplay_transition_if_ready(
 	lag_ms: number?
 )
 	if not syncplay_group_ready(group) then
-		syncplay_broadcast_state(group, from_session_id, "Ready")
 		return
 	end
 
@@ -1406,6 +1405,16 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 			participant.ready = true
 		end
 		syncplay_update_wait(group_value, false)
+		if group_value.resume_playing and not syncplay_group_ready(group_value) then
+			-- As upstream, the member pauses once it reaches the group's position, until the others
+			-- are ready too.
+			syncplay_send_entry(
+				entry :: SessionEntry,
+				"SyncPlayCommand",
+				syncplay_command(group_value, "Pause", syncplay_now_ms() + lag_ms)
+			)
+			return api.response.empty(204)
+		end
 		syncplay_transition_if_ready(group_value, (entry :: SessionEntry).session_id, is_playing, lag_ms)
 		return api.response.empty(204)
 	end)
