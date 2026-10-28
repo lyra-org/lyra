@@ -21,6 +21,7 @@ use anyhow::{
     bail,
 };
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 
 use super::super::options::OptionDeclaration;
 use super::links::{
@@ -34,7 +35,10 @@ use crate::services::metadata::layers::{
     LOCAL_SOURCE_ID,
     MANUAL_SOURCE_ID,
 };
-use crate::services::metadata::lyrics::providers::unregister_handlers_for_plugin as unregister_lyrics_handlers_for_plugin;
+use crate::services::metadata::lyrics::providers::{
+    HandlerFn as LyricsHandlerFn,
+    InFlightKey as LyricsInFlightKey,
+};
 use crate::services::plugin_scope::{
     PluginId,
     PluginScopedInner,
@@ -44,8 +48,11 @@ use crate::services::plugin_scope::{
 pub(crate) const DEFAULT_SIMILAR_RELEASES_HANDLER_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const MAX_SIMILAR_RELEASES_HANDLER_TIMEOUT: Duration = Duration::from_secs(10);
 
+pub(crate) type LyricsInFlight = Arc<std::sync::Mutex<HashSet<LyricsInFlightKey>>>;
+
 /// Generation-owned provider state: the registry itself plus the in-flight
-/// sync/refresh/call locks keyed by provider and library ids.
+/// sync/refresh/call locks keyed by provider and library ids, and the
+/// in-flight lyrics dispatches keyed by track and provider.
 #[derive(Default)]
 pub(crate) struct ProviderRegistries {
     registry: Arc<RwLock<ProviderRegistry>>,
@@ -53,6 +60,7 @@ pub(crate) struct ProviderRegistries {
     library_refresh_locks: Arc<tokio::sync::Mutex<HashSet<agdb::DbId>>>,
     call_locks: Arc<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     id_links: Arc<std::sync::Mutex<IdLinkCache>>,
+    lyrics_in_flight: LyricsInFlight,
 }
 
 impl ProviderRegistries {
@@ -93,6 +101,14 @@ pub(crate) fn library_refresh_locks() -> Arc<tokio::sync::Mutex<HashSet<agdb::Db
         .generation()
         .providers
         .library_refresh_locks
+        .clone()
+}
+
+pub(crate) fn lyrics_in_flight() -> LyricsInFlight {
+    crate::services::STATE
+        .generation()
+        .providers
+        .lyrics_in_flight
         .clone()
 }
 
@@ -201,6 +217,31 @@ pub(crate) struct ProviderSimilarReleasesSpec {
     pub(crate) timeout: Duration,
     pub(crate) require: ProviderRequireSpec,
     pub(crate) handler: ProviderCallbackHandle,
+}
+
+/// `cancel` is cancelled once the handler leaves the registry: replaced,
+/// torn down with its plugin, or dropped with its generation.
+#[derive(Clone)]
+pub(crate) struct ProviderLyricsSpec {
+    pub(crate) timeout: Duration,
+    pub(crate) require: ProviderRequireSpec,
+    pub(crate) handler: LyricsHandlerFn,
+    pub(crate) cancel: CancellationToken,
+}
+
+impl ProviderLyricsSpec {
+    pub(crate) fn new(
+        timeout: Duration,
+        require: ProviderRequireSpec,
+        handler: LyricsHandlerFn,
+    ) -> Self {
+        Self {
+            timeout,
+            require,
+            handler,
+            cancel: CancellationToken::new(),
+        }
+    }
 }
 
 impl ProviderRegistry {
@@ -383,6 +424,26 @@ impl ProviderRegistry {
     ) -> Option<&ProviderSimilarReleasesSpec> {
         self.state(provider_id)
             .and_then(|provider| provider.similar_releases_handler.as_ref())
+    }
+
+    /// The stored handler's cancel token, or `None` when the provider is not
+    /// registered and nothing was stored.
+    pub(crate) fn set_lyrics_handler(
+        &mut self,
+        provider_id: &str,
+        spec: ProviderLyricsSpec,
+    ) -> Option<CancellationToken> {
+        let provider = self.state_mut(provider_id)?;
+        let cancel = spec.cancel.clone();
+        if let Some(replaced) = provider.lyrics_handler.replace(spec) {
+            replaced.cancel.cancel();
+        }
+        Some(cancel)
+    }
+
+    pub(crate) fn get_lyrics_handler(&self, provider_id: &str) -> Option<&ProviderLyricsSpec> {
+        self.state(provider_id)
+            .and_then(|provider| provider.lyrics_handler.as_ref())
     }
 
     pub(crate) fn get_sync_filter_callback(
@@ -812,7 +873,11 @@ pub(crate) mod tests {
 
 impl PluginScopedInner for ProviderRegistry {
     fn clear_bucket(&mut self, plugin_id: &PluginId) {
-        self.providers.remove(plugin_id);
+        if let Some(bucket) = self.providers.remove(plugin_id) {
+            bucket
+                .values()
+                .for_each(ProviderState::cancel_lyrics_handler);
+        }
     }
 
     fn rebuild_derived(&mut self) {
@@ -837,7 +902,23 @@ struct ProviderState {
     sync_filter_callbacks: HashMap<EntityType, ProviderCallbackHandle>,
     cover_handlers: HashMap<EntityType, ProviderCoverSpec>,
     similar_releases_handler: Option<ProviderSimilarReleasesSpec>,
+    lyrics_handler: Option<ProviderLyricsSpec>,
     options: Vec<OptionDeclaration>,
+}
+
+impl ProviderState {
+    fn cancel_lyrics_handler(&self) {
+        if let Some(spec) = &self.lyrics_handler {
+            spec.cancel.cancel();
+        }
+    }
+}
+
+impl Drop for ProviderRegistry {
+    fn drop(&mut self) {
+        self.iter_states()
+            .for_each(|(_, state)| state.cancel_lyrics_handler());
+    }
 }
 
 pub(crate) async fn teardown_plugin_providers(plugin_id: &PluginId) {
@@ -864,10 +945,6 @@ pub(crate) async fn teardown_plugin_providers(plugin_id: &PluginId) {
     ScopedRegistry::from_shared(providers.registry.clone())
         .teardown(plugin_id)
         .await;
-
-    // Lyrics handlers have their own registry; without this purge a reload
-    // would leave handles backed by a torn-down Lua function.
-    unregister_lyrics_handlers_for_plugin(plugin_id).await;
 
     if !owned_provider_ids.is_empty() {
         let mut locks = providers.sync_locks.lock().await;

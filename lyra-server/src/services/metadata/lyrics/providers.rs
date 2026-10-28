@@ -7,17 +7,10 @@
 //! / known-instrumental without awaiting HTTP — they run sequentially.
 
 use std::{
-    collections::{
-        HashMap,
-        HashSet,
-    },
+    collections::HashMap,
     future::Future,
     pin::Pin,
-    sync::{
-        Arc,
-        LazyLock,
-        Mutex,
-    },
+    sync::Arc,
     time::Duration,
 };
 
@@ -30,7 +23,6 @@ use futures::stream::{
     self,
     StreamExt,
 };
-use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -45,13 +37,16 @@ use crate::{
         selection,
         upload,
     },
-    services::plugin_scope::PluginId,
     services::providers::{
         IdentifiersByScheme,
+        LyricsInFlight,
         ProviderCallStage,
+        ProviderLyricsSpec,
         ProviderRequireSpec,
         active_providers,
         id_schemes,
+        lyrics_in_flight,
+        provider_registry,
         requirements_match_with,
         with_provider_call,
     },
@@ -153,87 +148,45 @@ pub(crate) type HandlerFuture = Pin<Box<dyn Future<Output = Result<LyricsHandler
 pub(crate) type HandlerFn =
     Arc<dyn Fn(LyricsTrackContext) -> HandlerFuture + Send + Sync + 'static>;
 
-#[derive(Clone)]
-pub(crate) struct RegisteredHandler {
-    pub(crate) provider_id: Arc<str>,
-    pub(crate) plugin_id: PluginId,
-    pub(crate) timeout: Duration,
-    pub(crate) require: ProviderRequireSpec,
-    pub(crate) handler: HandlerFn,
-    pub(crate) cancel: CancellationToken,
-}
-
-#[derive(Default)]
-pub(crate) struct LyricsProviderRegistry {
-    handlers: HashMap<String, RegisteredHandler>,
-    plugin_cancels: HashMap<PluginId, CancellationToken>,
-}
-
-impl LyricsProviderRegistry {
-    fn ensure_plugin_token(&mut self, plugin_id: &PluginId) -> CancellationToken {
-        self.plugin_cancels
-            .entry(plugin_id.clone())
-            .or_default()
-            .clone()
-    }
-
-    pub(crate) fn insert(&mut self, handler: RegisteredHandler) {
-        self.handlers
-            .insert(handler.provider_id.as_ref().to_string(), handler);
-    }
-
-    pub(crate) fn remove_for_plugin(&mut self, plugin_id: &PluginId) {
-        if let Some(parent) = self.plugin_cancels.remove(plugin_id) {
-            parent.cancel();
-        }
-        self.handlers
-            .retain(|_, handler| &handler.plugin_id != plugin_id);
-    }
-
-    pub(crate) fn get(&self, provider_id: &str) -> Option<&RegisteredHandler> {
-        self.handlers.get(provider_id)
-    }
-}
-
-pub(crate) static LYRICS_PROVIDER_REGISTRY: LazyLock<RwLock<LyricsProviderRegistry>> =
-    LazyLock::new(|| RwLock::new(LyricsProviderRegistry::default()));
-
-type InFlightKey = (i64, Arc<str>);
-
-static IN_FLIGHT: LazyLock<Mutex<HashSet<InFlightKey>>> =
-    LazyLock::new(|| Mutex::new(HashSet::new()));
+pub(crate) type InFlightKey = (i64, Arc<str>);
 
 struct InFlightGuard {
+    in_flight: LyricsInFlight,
     key: InFlightKey,
 }
 
 impl InFlightGuard {
     fn try_acquire(track_db_id: DbId, provider_id: &Arc<str>) -> Option<Self> {
-        let mut set = IN_FLIGHT.lock().expect("in-flight mutex poisoned");
+        let in_flight = lyrics_in_flight();
         let key = (track_db_id.0, provider_id.clone());
-        if set.contains(&key) {
+        if !in_flight
+            .lock()
+            .expect("in-flight mutex poisoned")
+            .insert(key.clone())
+        {
             return None;
         }
-        set.insert(key.clone());
-        Some(Self { key })
+        Some(Self { in_flight, key })
     }
 }
 
 impl Drop for InFlightGuard {
     fn drop(&mut self) {
-        if let Ok(mut set) = IN_FLIGHT.lock() {
+        if let Ok(mut set) = self.in_flight.lock() {
             set.remove(&self.key);
         }
     }
 }
 
 /// Spawns a startup rescan sharing the handler's cancel token.
-pub(crate) async fn register_handler(handler: RegisteredHandler) {
-    let cancel = handler.cancel.clone();
-    {
-        let mut registry = LYRICS_PROVIDER_REGISTRY.write().await;
-        registry.insert(handler);
-    }
+pub(crate) async fn register_handler(provider_id: &str, spec: ProviderLyricsSpec) {
+    let Some(cancel) = provider_registry()
+        .write()
+        .await
+        .set_lyrics_handler(provider_id, spec)
+    else {
+        return;
+    };
 
     tokio::spawn(async move {
         // Rescan dispatch closures resolve STATE.generation().plugin_dispatch at call time;
@@ -264,18 +217,6 @@ async fn wait_for_plugin_dispatch(cancel: &CancellationToken) -> bool {
     }
 }
 
-/// Multiple registrations from one plugin tear down together.
-pub(crate) async fn make_plugin_cancellation_child(plugin_id: &PluginId) -> CancellationToken {
-    let mut registry = LYRICS_PROVIDER_REGISTRY.write().await;
-    let parent = registry.ensure_plugin_token(plugin_id);
-    parent.child_token()
-}
-
-pub(crate) async fn unregister_handlers_for_plugin(plugin_id: &PluginId) {
-    let mut registry = LYRICS_PROVIDER_REGISTRY.write().await;
-    registry.remove_for_plugin(plugin_id);
-}
-
 /// Run every matching handler of an active provider in provider order. Not
 /// stop-on-first-hit — each gate-passing `Hit` writes a row; `selection.rs`
 /// picks the winner.
@@ -300,16 +241,19 @@ pub(crate) async fn dispatch_for_track_identity(
     }
 
     let providers = active_providers(&*STATE.db.read().await)?;
-    let registry_snapshot: Vec<RegisteredHandler> = {
-        let registry = LYRICS_PROVIDER_REGISTRY.read().await;
+    let registry_snapshot: Vec<(Arc<str>, ProviderLyricsSpec)> = {
+        let registry = provider_registry().read_owned().await;
         providers
             .iter()
-            .filter_map(|provider| registry.get(&provider.provider_id).cloned())
+            .filter_map(|provider| {
+                let spec = registry.get_lyrics_handler(&provider.provider_id)?;
+                Some((Arc::from(provider.provider_id.as_str()), spec.clone()))
+            })
             .collect()
     };
 
     let mut failures = Vec::new();
-    for handler in registry_snapshot {
+    for (provider_id, handler) in registry_snapshot {
         if !require_matches(&context, &handler.require) {
             continue;
         }
@@ -317,11 +261,11 @@ pub(crate) async fn dispatch_for_track_identity(
             continue;
         }
 
-        let guard = match InFlightGuard::try_acquire(track_db_id, &handler.provider_id) {
+        let guard = match InFlightGuard::try_acquire(track_db_id, &provider_id) {
             Some(guard) => guard,
             None => {
                 tracing::debug!(
-                    provider = handler.provider_id.as_ref(),
+                    provider = provider_id.as_ref(),
                     track_db_id = track_db_id.0,
                     "lyrics dispatch deduped: another caller has this (track, provider) in flight"
                 );
@@ -331,6 +275,7 @@ pub(crate) async fn dispatch_for_track_identity(
 
         let cancel = handler.cancel.clone();
         let dispatch_fut = dispatch_one(
+            &provider_id,
             &handler,
             &context,
             &preferred_languages,
@@ -339,16 +284,17 @@ pub(crate) async fn dispatch_for_track_identity(
             &track_public_id,
         );
         tokio::select! {
+            biased;
             _ = cancel.cancelled() => {
                 tracing::debug!(
-                    provider = handler.provider_id.as_ref(),
+                    provider = provider_id.as_ref(),
                     track_db_id = track_db_id.0,
                     "lyrics dispatch cancelled before completion"
                 );
             }
             res = dispatch_fut => {
                 if let Err(err) = res {
-                    failures.push(format!("{}: {err:#}", handler.provider_id));
+                    failures.push(format!("{provider_id}: {err:#}"));
                 }
             }
         }
@@ -362,15 +308,14 @@ pub(crate) async fn dispatch_for_track_identity(
 }
 
 async fn dispatch_one(
-    handler: &RegisteredHandler,
+    provider_id: &str,
+    handler: &ProviderLyricsSpec,
     context: &LyricsTrackContext,
     preferred_languages: &[String],
     local: &LocalTrackContext,
     track_db_id: DbId,
     track_public_id: &str,
 ) -> Result<()> {
-    let provider_id = handler.provider_id.as_ref();
-
     let timeout = if handler.timeout.is_zero() {
         DEFAULT_HANDLER_TIMEOUT
     } else {
@@ -670,6 +615,8 @@ mod tests {
         PluginLyricLineInput,
         PluginLyricsInput,
     };
+    use crate::services::plugin_scope::PluginId;
+    use crate::services::providers::teardown_plugin_providers;
 
     use std::sync::atomic::{
         AtomicUsize,
@@ -724,19 +671,6 @@ mod tests {
         }
     }
 
-    async fn reset_registry() {
-        let mut registry = LYRICS_PROVIDER_REGISTRY.write().await;
-        for token in registry.plugin_cancels.values() {
-            token.cancel();
-        }
-        registry.plugin_cancels.clear();
-        registry.handlers.clear();
-        drop(registry);
-        if let Ok(mut set) = IN_FLIGHT.lock() {
-            set.clear();
-        }
-    }
-
     async fn install_track_in_state_db(title: &str, artist: &str, duration_ms: u64) -> DbId {
         let mut db = STATE.db.write().await;
         let track_id = lyra_db::fixtures::insert_track(&mut db, title).expect("insert track");
@@ -753,33 +687,47 @@ mod tests {
 
     async fn initialize_test_runtime() -> anyhow::Result<()> {
         crate::services::testing::init_library_test_state(std::path::PathBuf::from(".")).await?;
-        reset_registry().await;
         Ok(())
     }
 
-    fn make_handler(
+    fn make_handler(handler_fn: HandlerFn) -> ProviderLyricsSpec {
+        ProviderLyricsSpec::new(
+            Duration::from_secs(5),
+            ProviderRequireSpec::default(),
+            handler_fn,
+        )
+    }
+
+    fn miss_handler() -> ProviderLyricsSpec {
+        make_handler(Arc::new(|_| {
+            Box::pin(async { Ok(LyricsHandlerResult::Miss) })
+        }))
+    }
+
+    async fn install_handler_for_test(
         provider_id: &str,
-        plugin_id: PluginId,
-        cancel: CancellationToken,
-        handler_fn: HandlerFn,
-    ) -> RegisteredHandler {
-        RegisteredHandler {
-            provider_id: Arc::from(provider_id),
-            plugin_id,
-            timeout: Duration::from_secs(5),
-            require: ProviderRequireSpec::default(),
-            handler: handler_fn,
-            cancel,
-        }
+        handler: ProviderLyricsSpec,
+    ) -> CancellationToken {
+        install_plugin_handler_for_test(test_plugin_id(), provider_id, handler).await
     }
 
     /// Declares the handler's provider and skips `register_handler`'s startup
     /// rescan to keep tests deterministic.
-    async fn install_handler_for_test(handler: RegisteredHandler) {
-        lyra_db::providers::register(&mut *STATE.db.write().await, &handler.provider_id)
+    async fn install_plugin_handler_for_test(
+        plugin_id: PluginId,
+        provider_id: &str,
+        handler: ProviderLyricsSpec,
+    ) -> CancellationToken {
+        lyra_db::providers::register(&mut *STATE.db.write().await, provider_id)
             .expect("register provider");
-        let mut registry = LYRICS_PROVIDER_REGISTRY.write().await;
-        registry.insert(handler);
+        let registry = provider_registry();
+        let mut registry = registry.write().await;
+        registry
+            .register(plugin_id, provider_id.to_string(), None)
+            .expect("register provider");
+        registry
+            .set_lyrics_handler(provider_id, handler)
+            .expect("lyrics handler stored")
     }
 
     #[tokio::test]
@@ -789,15 +737,13 @@ mod tests {
         let track_id = install_track_in_state_db("Disabled Track", "Artist", 180_000).await;
         let calls = Arc::new(AtomicUsize::new(0));
         let observed = calls.clone();
-        install_handler_for_test(make_handler(
+        install_handler_for_test(
             "disabled",
-            test_plugin_id(),
-            CancellationToken::new(),
-            Arc::new(move |_| {
+            make_handler(Arc::new(move |_| {
                 observed.fetch_add(1, Ordering::SeqCst);
                 Box::pin(async { bail!("upstream 503") })
-            }),
-        ))
+            })),
+        )
         .await;
         lyra_db::providers::set_enabled(&mut *STATE.db.write().await, "disabled", false)?;
 
@@ -831,14 +777,9 @@ mod tests {
                 }) as HandlerFn,
             ),
         ] {
-            let mut handler = make_handler(
-                provider,
-                test_plugin_id(),
-                CancellationToken::new(),
-                callback,
-            );
+            let mut handler = make_handler(callback);
             handler.timeout = Duration::from_millis(5);
-            install_handler_for_test(handler).await;
+            install_handler_for_test(provider, handler).await;
         }
 
         let error = dispatch_for_track(track_id, false)
@@ -861,15 +802,13 @@ mod tests {
         let track_id = install_track_in_state_db("Original", "Artist", 180_000).await;
         let calls = Arc::new(AtomicUsize::new(0));
         let observed = calls.clone();
-        install_handler_for_test(make_handler(
+        install_handler_for_test(
             "snapshot",
-            test_plugin_id(),
-            CancellationToken::new(),
-            Arc::new(move |_| {
+            make_handler(Arc::new(move |_| {
                 observed.fetch_add(1, Ordering::SeqCst);
                 Box::pin(async { Ok(LyricsHandlerResult::Miss) })
-            }),
-        ))
+            })),
+        )
         .await;
         let mut original = {
             let mut db = STATE.db.write().await;
@@ -919,8 +858,7 @@ mod tests {
                 })
             })
         });
-        let cancel = make_plugin_cancellation_child(&test_plugin_id()).await;
-        install_handler_for_test(make_handler("test_hit", test_plugin_id(), cancel, handler)).await;
+        install_handler_for_test("test_hit", make_handler(handler)).await;
 
         dispatch_for_track(track_id, false).await?;
 
@@ -976,14 +914,7 @@ mod tests {
                 })
             })
         });
-        let cancel = make_plugin_cancellation_child(&test_plugin_id()).await;
-        install_handler_for_test(make_handler(
-            "test_recycled_track",
-            test_plugin_id(),
-            cancel,
-            handler,
-        ))
-        .await;
+        install_handler_for_test("test_recycled_track", make_handler(handler)).await;
 
         dispatch_for_track(track_id, false).await?;
 
@@ -1016,14 +947,7 @@ mod tests {
                 Ok(LyricsHandlerResult::Miss)
             })
         });
-        let cancel = make_plugin_cancellation_child(&test_plugin_id()).await;
-        install_handler_for_test(make_handler(
-            "test_force",
-            test_plugin_id(),
-            cancel,
-            handler,
-        ))
-        .await;
+        install_handler_for_test("test_force", make_handler(handler)).await;
 
         dispatch_for_track(track_id, true).await?;
         assert_eq!(
@@ -1054,14 +978,7 @@ mod tests {
                 Ok(LyricsHandlerResult::Miss)
             })
         });
-        let cancel = make_plugin_cancellation_child(&test_plugin_id()).await;
-        install_handler_for_test(make_handler(
-            "test_dedupe",
-            test_plugin_id(),
-            cancel,
-            handler,
-        ))
-        .await;
+        install_handler_for_test("test_dedupe", make_handler(handler)).await;
 
         let first = tokio::spawn(async move { dispatch_for_track(track_id, false).await });
         // Wait until the first call has claimed the in-flight slot.
@@ -1102,32 +1019,20 @@ mod tests {
         let started = Arc::new(AtomicUsize::new(0));
         let started_clone = started.clone();
         let plugin = test_plugin_id();
-        let cancel = make_plugin_cancellation_child(&plugin).await;
-        let cancel_for_handler = cancel.clone();
         let handler: HandlerFn = Arc::new(move |_ctx| {
             let started = started_clone.clone();
-            let cancel = cancel_for_handler.clone();
             Box::pin(async move {
                 started.fetch_add(1, Ordering::SeqCst);
-                // Park until cancel — keeps the handler from burning through
-                // before the test can observe how many actually started.
-                tokio::select! {
-                    _ = cancel.cancelled() => {}
-                    _ = tokio::time::sleep(Duration::from_secs(60)) => {}
-                }
+                // Park until the dispatch's cancel race drops this future —
+                // keeps the handler from burning through before the test can
+                // observe how many actually started.
+                tokio::time::sleep(Duration::from_secs(60)).await;
                 Ok(LyricsHandlerResult::Miss)
             })
         });
-        install_handler_for_test(make_handler(
-            "test_cancel",
-            plugin.clone(),
-            cancel.clone(),
-            handler,
-        ))
-        .await;
+        let cancel = install_handler_for_test("test_cancel", make_handler(handler)).await;
 
-        let rescan_cancel = cancel.clone();
-        let handle = tokio::spawn(async move { rescan(false, rescan_cancel).await });
+        let handle = tokio::spawn(async move { rescan(false, cancel).await });
         // Wait for the bound's worth of handlers to start.
         for _ in 0..200 {
             if started.load(Ordering::SeqCst) >= MAX_CONCURRENT_DISPATCHES {
@@ -1136,7 +1041,7 @@ mod tests {
             tokio::task::yield_now().await;
         }
         let started_at_cancel = started.load(Ordering::SeqCst);
-        unregister_handlers_for_plugin(&plugin).await;
+        teardown_plugin_providers(&plugin).await;
 
         handle.await.expect("rescan join")?;
         let final_started = started.load(Ordering::SeqCst);
@@ -1144,6 +1049,52 @@ mod tests {
             final_started <= started_at_cancel + MAX_CONCURRENT_DISPATCHES,
             "after unregister at most N more handler calls may execute (started_at_cancel={started_at_cancel}, final={final_started}, N={MAX_CONCURRENT_DISPATCHES})"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn teardown_removes_and_cancels_only_the_plugin_handlers() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        initialize_test_runtime().await?;
+        let torn_down_cancel = install_handler_for_test("test_torn_down", miss_handler()).await;
+        let kept_cancel = install_plugin_handler_for_test(
+            PluginId::new("other_plugin")?,
+            "test_kept",
+            miss_handler(),
+        )
+        .await;
+
+        teardown_plugin_providers(&test_plugin_id()).await;
+
+        let registry = provider_registry().read_owned().await;
+        assert!(registry.get_lyrics_handler("test_torn_down").is_none());
+        assert!(torn_down_cancel.is_cancelled());
+        assert!(registry.get_lyrics_handler("test_kept").is_some());
+        assert!(!kept_cancel.is_cancelled());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reset_leaves_no_handlers_or_in_flight_dispatches() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        initialize_test_runtime().await?;
+        let cancel = install_handler_for_test("test_reset", miss_handler()).await;
+        let provider_id: Arc<str> = Arc::from("test_reset");
+        let stale = InFlightGuard::try_acquire(DbId(1), &provider_id).expect("in-flight slot");
+
+        initialize_test_runtime().await?;
+
+        assert!(
+            provider_registry()
+                .read()
+                .await
+                .get_lyrics_handler("test_reset")
+                .is_none()
+        );
+        assert!(cancel.is_cancelled());
+        assert!(lyrics_in_flight().lock().expect("in-flight").is_empty());
+        drop(stale);
+        assert!(InFlightGuard::try_acquire(DbId(1), &provider_id).is_some());
         Ok(())
     }
 }

@@ -24,15 +24,13 @@ use crate::services::{
             ProviderArtist,
             ensure_provider_artist,
         },
-        lyrics::{
-            providers as lyrics_dispatcher,
-            providers::RegisteredHandler,
-        },
+        lyrics::providers as lyrics_dispatcher,
     },
     providers::{
         ProviderCallbackHandle,
         ProviderCoverSpec,
         ProviderIdUrlGenerator,
+        ProviderLyricsSpec,
         ProviderSimilarReleasesSpec,
         provider_registry,
     },
@@ -438,7 +436,6 @@ fn lyrics_callback(
         );
         let provider_id = provider.provider_id.clone();
         let provider_id_for_handler = provider_id.clone();
-        let plugin_id = provider.plugin_id.clone();
         let handler_fn: lyrics_dispatcher::HandlerFn = Arc::new(move |context| {
             let provider_id = provider_id_for_handler.clone();
             Box::pin(async move {
@@ -466,15 +463,10 @@ fn lyrics_callback(
             })
         });
 
-        let cancel = lyrics_dispatcher::make_plugin_cancellation_child(&plugin_id).await;
-        lyrics_dispatcher::register_handler(RegisteredHandler {
-            provider_id: Arc::from(provider_id.as_str()),
-            plugin_id,
-            timeout,
-            require,
-            handler: handler_fn,
-            cancel,
-        })
+        lyrics_dispatcher::register_handler(
+            &provider_id,
+            ProviderLyricsSpec::new(timeout, require, handler_fn),
+        )
         .await;
         Ok(())
     }))
