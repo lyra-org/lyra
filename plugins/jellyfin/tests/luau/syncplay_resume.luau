@@ -118,6 +118,20 @@ post("b", "Unpause")
 check(commands("a"), "", "the rest of the group isn't rescheduled")
 check(commands("b"), "Unpause+1000", "the member hears the scheduled start")
 
+-- Outside a wait, a member reporting ready only hears the group's state.
+post("b", "Ready", { IsPlaying = false, PositionTicks = 0 })
+check(commands("a"), "", "a playing group doesn't wait")
+check(commands("b"), "Unpause+1000", "the member hears the scheduled start")
+post("a", "Pause")
+commands("a")
+commands("b")
+post("b", "Ready", { IsPlaying = true, PositionTicks = 0 })
+check(commands("a"), "", "a paused group stays paused")
+check(commands("b"), "Pause+0", "the member hears it is paused")
+post("a", "Unpause")
+commands("a")
+commands("b")
+
 -- The highest ping sets the delay.
 post("b", "Ping", { Ping = 3000 })
 post("a", "Pause")

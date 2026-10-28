@@ -1326,6 +1326,15 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 
 		local body = syncplay_body(ctx)
 		local group_value = group :: SyncPlayGroup
+		-- As upstream, a group that isn't waiting only reminds the member of its state.
+		if group_value.state ~= "Waiting" then
+			local command = if group_value.state == "Playing"
+				then "Unpause"
+				elseif group_value.state == "Paused" then "Pause"
+				else "Stop"
+			syncplay_send_entry(entry :: SessionEntry, "SyncPlayCommand", syncplay_command(group_value, command))
+			return api.response.empty(204)
+		end
 		local playlist_item_id = syncplay_normalize_guid(body.PlaylistItemId)
 		if not syncplay_known_current_item(group_value, playlist_item_id) then
 			syncplay_send_group_update_entry(
