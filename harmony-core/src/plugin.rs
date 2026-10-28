@@ -104,6 +104,17 @@ pub struct NormalizedDependency {
     pub required: bool,
 }
 
+/// A `plugin.json` that passed every check its contents alone can answer.
+/// [`PluginManager::load_manifest`] produces it without a plugin directory.
+#[derive(Debug, Clone)]
+pub struct LoadedManifest {
+    pub manifest: PluginManifest,
+    /// Deduplicated, validated copy of `manifest.scopes` kept as `Arc<str>`
+    /// so the runtime gate can share allocations across lookups.
+    pub declared_scopes: HashSet<Arc<str>>,
+    pub dependencies: Vec<NormalizedDependency>,
+}
+
 #[derive(Debug, Clone)]
 pub struct LoadedPlugin {
     pub manifest: PluginManifest,
@@ -759,18 +770,16 @@ impl PluginManager {
     }
 }
 
-fn read_manifest(dir: &Path) -> Result<PluginManifest, PluginLoadError> {
-    let config_path = dir.join(PLUGIN_CONFIG_FILENAME);
-
+fn read_manifest_bytes(config_path: &Path) -> Result<Vec<u8>, PluginLoadError> {
     if !config_path.exists() {
-        return Err(PluginLoadError::ConfigNotFound(config_path));
+        return Err(PluginLoadError::ConfigNotFound(config_path.to_path_buf()));
     }
 
     // DoS cap — check size before reading the whole file into memory.
-    match std::fs::metadata(&config_path) {
+    match std::fs::metadata(config_path) {
         Ok(meta) if meta.len() > PLUGIN_CONFIG_MAX_BYTES => {
             return Err(PluginLoadError::ConfigTooLarge {
-                path: config_path,
+                path: config_path.to_path_buf(),
                 bytes: meta.len(),
                 max: PLUGIN_CONFIG_MAX_BYTES,
             });
@@ -778,20 +787,34 @@ fn read_manifest(dir: &Path) -> Result<PluginManifest, PluginLoadError> {
         Ok(_) => {}
         Err(e) => {
             return Err(PluginLoadError::ConfigParseError {
-                path: config_path,
+                path: config_path.to_path_buf(),
                 error: e.to_string(),
             });
         }
     }
 
-    let config_str =
-        std::fs::read_to_string(&config_path).map_err(|e| PluginLoadError::ConfigParseError {
-            path: config_path.clone(),
-            error: e.to_string(),
-        })?;
+    std::fs::read(config_path).map_err(|e| PluginLoadError::ConfigParseError {
+        path: config_path.to_path_buf(),
+        error: e.to_string(),
+    })
+}
 
-    serde_json::from_str(&config_str).map_err(|e| PluginLoadError::ConfigParseError {
-        path: config_path,
+fn parse_manifest(path: &Path, bytes: &[u8]) -> Result<PluginManifest, PluginLoadError> {
+    if bytes.len() as u64 > PLUGIN_CONFIG_MAX_BYTES {
+        return Err(PluginLoadError::ConfigTooLarge {
+            path: path.to_path_buf(),
+            bytes: bytes.len() as u64,
+            max: PLUGIN_CONFIG_MAX_BYTES,
+        });
+    }
+
+    // Same message `std::fs::read_to_string` gives for invalid UTF-8.
+    let text = std::str::from_utf8(bytes).map_err(|_| PluginLoadError::ConfigParseError {
+        path: path.to_path_buf(),
+        error: "stream did not contain valid UTF-8".into(),
+    })?;
+    serde_json::from_str(text).map_err(|e| PluginLoadError::ConfigParseError {
+        path: path.to_path_buf(),
         error: e.to_string(),
     })
 }
@@ -824,12 +847,48 @@ impl PluginManager {
 
     /// Parses and validates a plugin directory without binding it to its
     /// installed location, so install tooling can vet staged candidates
-    /// before they land under `plugins_dir`.
+    /// before they land under `plugins_dir`. Runs [`Self::load_manifest`],
+    /// then the checks that need the directory's files.
     pub fn load_plugin_dir(
         dir: &Path,
         valid_scope_ids: &HashSet<Arc<str>>,
     ) -> Result<LoadedPlugin, PluginLoadError> {
-        let manifest = read_manifest(dir)?;
+        let config_path = dir.join(PLUGIN_CONFIG_FILENAME);
+        let bytes = read_manifest_bytes(&config_path)?;
+        let LoadedManifest {
+            manifest,
+            declared_scopes,
+            dependencies,
+        } = Self::load_manifest(&config_path, &bytes, valid_scope_ids)?;
+
+        if let Some(entrypoint) = manifest.entrypoint.as_deref() {
+            let path = dir.join(entrypoint);
+            if !path.exists() {
+                return Err(PluginLoadError::EntrypointNotFound {
+                    plugin_id: manifest.id,
+                    path,
+                });
+            }
+        }
+
+        Ok(LoadedPlugin {
+            manifest,
+            directory: dir.to_path_buf(),
+            declared_scopes,
+            dependencies,
+        })
+    }
+
+    /// Parses and validates `plugin.json` contents on their own, so a plugin
+    /// can be vetted before any of its files are downloaded. `path` labels
+    /// where the bytes came from, such as a file path or a repository URL
+    /// path, and appears in errors; it is never read.
+    pub fn load_manifest(
+        path: &Path,
+        bytes: &[u8],
+        valid_scope_ids: &HashSet<Arc<str>>,
+    ) -> Result<LoadedManifest, PluginLoadError> {
+        let manifest = parse_manifest(path, bytes)?;
 
         if manifest.schema_version != PLUGIN_SCHEMA_VERSION {
             return Err(PluginLoadError::InvalidSchemaVersion {
@@ -843,16 +902,6 @@ impl PluginManager {
                 plugin_id: manifest.id,
                 reason,
             });
-        }
-
-        if let Some(entrypoint) = manifest.entrypoint.as_deref() {
-            let path = dir.join(entrypoint);
-            if !path.exists() {
-                return Err(PluginLoadError::EntrypointNotFound {
-                    plugin_id: manifest.id,
-                    path,
-                });
-            }
         }
 
         if manifest.scopes.len() > PLUGIN_CONFIG_MAX_SCOPES {
@@ -886,9 +935,8 @@ impl PluginManager {
 
         let dependencies = normalize_dependencies(&manifest.id, &manifest.dependencies)?;
 
-        Ok(LoadedPlugin {
+        Ok(LoadedManifest {
             manifest,
-            directory: dir.to_path_buf(),
             declared_scopes,
             dependencies,
         })
@@ -1071,7 +1119,9 @@ impl Runtime {
     /// built, so manifest changes need a full reload rather than a restart.
     pub fn verify_plugin_manifest(&self, plugin_id: &str) -> anyhow::Result<()> {
         let plugin = self.loaded_plugin(plugin_id)?;
-        let on_disk = read_manifest(&plugin.directory)
+        let config_path = plugin.directory.join(PLUGIN_CONFIG_FILENAME);
+        let on_disk = read_manifest_bytes(&config_path)
+            .and_then(|bytes| parse_manifest(&config_path, &bytes))
             .map_err(|error| anyhow::anyhow!("{error}"))
             .with_context(|| format!("read plugin '{plugin_id}' manifest"))?;
         if on_disk != plugin.manifest {
@@ -1238,6 +1288,7 @@ mod tests {
     use super::{
         DependencyEntry,
         DependencyGroup,
+        LoadedManifest,
         LoadedPlugin,
         NormalizedDependency,
         PluginLoadError,
@@ -1867,6 +1918,129 @@ mod tests {
             vec!["alpha".to_string(), "beta".to_string()]
         );
         Ok(())
+    }
+
+    fn manifest_json(id: &str, extra: &str) -> String {
+        format!(
+            r#"{{"schema_version":1,"id":"{id}","name":"Demo","version":"1.0.0","description":"d","entrypoint":"init.luau","scopes":["net"]{extra}}}"#
+        )
+    }
+
+    fn load_manifest(bytes: &[u8]) -> Result<LoadedManifest, PluginLoadError> {
+        let scopes = HashSet::from([Arc::<str>::from("net")]);
+        PluginManager::load_manifest(std::path::Path::new("plugin.json"), bytes, &scopes)
+    }
+
+    #[test]
+    fn load_manifest_accepts_valid_manifests_without_a_directory() {
+        let json = manifest_json("demo", r#","dependencies":["other"]"#);
+        let loaded = load_manifest(json.as_bytes()).unwrap();
+
+        assert_eq!(loaded.manifest.id, "demo");
+        assert_eq!(loaded.manifest.name, "Demo");
+        assert_eq!(loaded.manifest.version, "1.0.0");
+        assert_eq!(loaded.manifest.description, "d");
+        assert_eq!(loaded.manifest.scopes, vec!["net"]);
+        assert!(loaded.declared_scopes.contains("net"));
+        assert_eq!(loaded.dependencies[0].alternatives, vec!["other"]);
+    }
+
+    #[test]
+    fn load_manifest_rejects_manifest_level_errors() {
+        let too_many_scopes = format!(
+            r#"{{"schema_version":1,"id":"demo","name":"d","version":"1","description":"","scopes":[{}]}}"#,
+            vec![r#""net""#; super::PLUGIN_CONFIG_MAX_SCOPES + 1].join(",")
+        );
+        let long_scope = format!(
+            r#"{{"schema_version":1,"id":"demo","name":"d","version":"1","description":"","scopes":["{}"]}}"#,
+            "s".repeat(super::PLUGIN_CONFIG_MAX_SCOPE_LEN + 1)
+        );
+        let err = |bytes: &[u8]| load_manifest(bytes).unwrap_err();
+
+        assert!(matches!(
+            err(&vec![b' '; super::PLUGIN_CONFIG_MAX_BYTES as usize + 1]),
+            PluginLoadError::ConfigTooLarge { .. }
+        ));
+        assert!(matches!(
+            err(&[0xff, 0xfe]),
+            PluginLoadError::ConfigParseError { error, .. }
+                if error == "stream did not contain valid UTF-8"
+        ));
+        assert!(matches!(
+            err(b"{"),
+            PluginLoadError::ConfigParseError { .. }
+        ));
+        assert!(matches!(
+            err(manifest_json("demo", "")
+                .replace(r#""schema_version":1"#, r#""schema_version":2"#)
+                .as_bytes()),
+            PluginLoadError::InvalidSchemaVersion { version: 2, .. }
+        ));
+        assert!(matches!(
+            err(manifest_json("not/valid", "").as_bytes()),
+            PluginLoadError::InvalidPluginId { .. }
+        ));
+        assert!(matches!(
+            err(too_many_scopes.as_bytes()),
+            PluginLoadError::TooManyScopes { .. }
+        ));
+        assert!(matches!(
+            err(long_scope.as_bytes()),
+            PluginLoadError::ScopeEntryTooLong { .. }
+        ));
+        assert!(matches!(
+            err(manifest_json("demo", "").replace(r#"["net"]"#, r#"["fs"]"#).as_bytes()),
+            PluginLoadError::UnknownScope { scope, .. } if scope == "fs"
+        ));
+        assert!(matches!(
+            err(manifest_json("demo", r#","dependencies":["demo"]"#).as_bytes()),
+            PluginLoadError::SelfDependency { .. }
+        ));
+    }
+
+    #[test]
+    fn missing_entrypoint_passes_the_manifest_but_fails_the_directory() {
+        let dir = temp_plugin_dir("missing-entrypoint");
+        let json = manifest_json("demo", "");
+        std::fs::write(dir.join(super::PLUGIN_CONFIG_FILENAME), &json).unwrap();
+        let scopes = HashSet::from([Arc::<str>::from("net")]);
+
+        assert!(load_manifest(json.as_bytes()).is_ok());
+        let err = PluginManager::load_plugin_dir(&dir, &scopes).unwrap_err();
+        assert!(
+            matches!(&err, PluginLoadError::EntrypointNotFound { path, .. } if *path == dir.join("init.luau")),
+            "{err}"
+        );
+
+        std::fs::write(dir.join("init.luau"), "").unwrap();
+        let loaded = PluginManager::load_plugin_dir(&dir, &scopes).unwrap();
+        assert_eq!(loaded.directory, dir);
+        assert!(loaded.declared_scopes.contains("net"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_plugin_dir_reports_config_errors_against_the_config_path() {
+        let scopes = HashSet::new();
+        let dir = temp_plugin_dir("config-errors");
+        let config = dir.join(super::PLUGIN_CONFIG_FILENAME);
+
+        let err = PluginManager::load_plugin_dir(&dir, &scopes).unwrap_err();
+        assert!(
+            matches!(&err, PluginLoadError::ConfigNotFound(path) if *path == config),
+            "{err}"
+        );
+
+        std::fs::write(&config, [0xff, 0xfe]).unwrap();
+        let err = PluginManager::load_plugin_dir(&dir, &scopes).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "failed to parse {}: stream did not contain valid UTF-8",
+                config.display()
+            )
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
