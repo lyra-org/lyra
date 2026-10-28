@@ -678,7 +678,7 @@ fn get_external_ids_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn set_external_id_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Set entity external ID").description(
-        "Sets the manual value of one external ID on an entity, keyed by `provider_id` and `id_type` in the path. It takes effect over the resolved value, which is kept and returns when the ID is inherited again. Requires ManageMetadata permission.",
+        "Sets the manual value of one external ID on an entity, keyed by `provider_id` and `id_type` in the path. It takes effect over the resolved value, which is kept and returns when the ID is inherited again. Returns 400 when the value is blank. Requires ManageMetadata permission.",
     )
 }
 

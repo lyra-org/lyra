@@ -337,6 +337,7 @@ impl From<ProviderAdminError> for AppError {
             ProviderAdminError::ProviderNotFound(message) => Self::not_found(message),
             ProviderAdminError::EntityNotFound(message) => Self::not_found(message),
             ProviderAdminError::ManualIdNotFound(message) => Self::not_found(message),
+            ProviderAdminError::BlankIdValue(message) => Self::bad_request(message),
             ProviderAdminError::Internal(err) => err.into(),
         }
     }

@@ -24,6 +24,8 @@ pub(crate) enum ProviderAdminError {
     EntityNotFound(String),
     #[error("No manual external ID: {0}")]
     ManualIdNotFound(String),
+    #[error("External ID value is blank: {0}")]
+    BlankIdValue(String),
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -115,6 +117,12 @@ pub(crate) async fn set_entity_external_id(
     entity_id: &str,
     request: SetEntityExternalIdRequest,
 ) -> Result<EntityExternalIdRecord, ProviderAdminError> {
+    if request.id_value.trim().is_empty() {
+        return Err(ProviderAdminError::BlankIdValue(format!(
+            "{}/{}",
+            request.provider_id, request.id_type
+        )));
+    }
     let mut db = STATE.db.write().await;
     let entity_db_id = lyra_db::lookup::find_node_id_by_id(&db, entity_id)?
         .ok_or_else(|| ProviderAdminError::EntityNotFound(entity_id.to_string()))?;
@@ -197,6 +205,32 @@ mod tests {
 
     use super::*;
     use lyra_db::fixtures::insert_track;
+
+    #[tokio::test]
+    async fn a_blank_manual_external_id_is_rejected() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+
+        let track_id = {
+            let mut db = STATE.db.write().await;
+            let track_db_id = insert_track(&mut db, "Track")?;
+            lyra_db::tracks::get_by_id(&db, track_db_id)?
+                .ok_or_else(|| anyhow::anyhow!("track missing"))?
+                .id
+        };
+
+        let result = set_entity_external_id(
+            &track_id,
+            SetEntityExternalIdRequest {
+                provider_id: "musicbrainz".to_string(),
+                id_type: "recording_id".to_string(),
+                id_value: " ".to_string(),
+            },
+        )
+        .await;
+        assert!(matches!(result, Err(ProviderAdminError::BlankIdValue(_))));
+        Ok(())
+    }
 
     #[tokio::test]
     async fn unlocking_applies_layers_recorded_while_locked() -> anyhow::Result<()> {
