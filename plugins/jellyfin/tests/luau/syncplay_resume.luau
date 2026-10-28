@@ -101,6 +101,11 @@ post("a", "Ready", { IsPlaying = false, PositionTicks = 0 })
 commands("a")
 commands("b")
 
+-- A member reporting ready far from the group's position is sent back to it.
+post("b", "Ready", { IsPlaying = false, PositionTicks = 2 * SECOND })
+check(commands("b", true), "Seek@0+0", "the member seeks to where the group is")
+check(commands("a"), "", "the group keeps waiting")
+
 -- Without reported pings, the group starts twice the default ping ahead.
 post("b", "Ready", { IsPlaying = false, PositionTicks = 0 })
 check(commands("a"), "Unpause+1000", "the group starts once everyone is ready")
@@ -162,14 +167,31 @@ post("b", "Ready", { IsPlaying = true, PositionTicks = 7 * SECOND })
 check(commands("a"), "Unpause+3000", "the others wait for it to catch up")
 check(commands("b"), "", "the recovering member keeps playing")
 
--- Paused, it resumes with the rest.
+-- Paused, it can't catch up, so it is sent back to the group's position first.
 post("b", "Buffering", { IsPlaying = true, PositionTicks = 10 * SECOND })
 commands("a")
 post("b", "Ready", { IsPlaying = false, PositionTicks = 7 * SECOND })
-check(commands("a"), "Unpause+3000", "the group resumes ahead")
-check(commands("b"), "Unpause+3000", "with the recovered member")
+check(commands("b", true), "Seek@10+0", "the paused member seeks to the group")
+check(commands("a"), "", "the group keeps waiting for it")
+post("b", "Ready", { IsPlaying = false, PositionTicks = 10 * SECOND - 4000000 })
+check(commands("a"), "Unpause+1000", "the group resumes ahead")
+check(commands("b"), "Unpause+1000", "with the recovered member")
 
--- A member just behind resumes with the others after the usual delay.
+-- A member still playing through a jump it hasn't applied is sent to the new position.
+post("a", "SetRepeatMode", { Mode = "RepeatOne" })
+post("a", "NextItem")
+commands("a")
+commands("b")
+post("a", "Ready", { IsPlaying = false, PositionTicks = 0 })
+post("b", "Ready", { IsPlaying = true, PositionTicks = 10 * SECOND })
+check(commands("b", true), "Seek@0+0", "the member seeks to the restarted song")
+post("b", "Ready", { IsPlaying = false, PositionTicks = 0 })
+commands("a")
+commands("b")
+
+-- A member just behind resumes with the others after the usual delay. The group restarted the
+-- song a second ahead and has played 10 seconds since.
+now += 11000
 post("b", "Buffering", { IsPlaying = true, PositionTicks = 10 * SECOND })
 commands("a")
 post("b", "Ready", { IsPlaying = true, PositionTicks = 10 * SECOND - 5000000 })

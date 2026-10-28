@@ -59,6 +59,8 @@ type SyncPlayGroup = {
 	repeat_mode: string,
 	shuffle_mode: string,
 	resume_playing: boolean,
+	-- Whether the group's position jumped since it began waiting, which its members must apply.
+	position_jumped: boolean,
 	-- Gives up waiting for the members that haven't reported ready, while the group waits.
 	wait_timer: thread?,
 	last_updated_at: string,
@@ -82,6 +84,10 @@ local SYNCPLAY_DEFAULT_PING = 500
 local SYNCPLAY_MAX_PING = 10000
 -- How far, in milliseconds, a client's reported time may be off before it is ignored.
 local SYNCPLAY_TIME_SYNC_OFFSET = 2000
+-- How far, in milliseconds, a member reporting ready may be from the group's position.
+local SYNCPLAY_MAX_PLAYBACK_OFFSET = 500
+-- How far, in milliseconds, a member still playing after buffering may lag while it catches up.
+local SYNCPLAY_MAX_CATCH_UP_OFFSET = 60000
 local TICKS_PER_MILLISECOND = 10000
 
 local module = {}
@@ -597,6 +603,9 @@ local function syncplay_cancel_wait(group: SyncPlayGroup)
 end
 
 local function syncplay_set_state(group: SyncPlayGroup, state: string)
+	if state == "Waiting" and group.state ~= "Waiting" then
+		group.position_jumped = false
+	end
 	group.state = state
 	if state ~= "Waiting" then
 		syncplay_cancel_wait(group)
@@ -790,6 +799,7 @@ local function syncplay_new_group(entry: SessionEntry, group_name: string?): Syn
 		last_activity_ms = syncplay_now_ms(),
 		run_time_ticks = nil,
 		resume_playing = false,
+		position_jumped = false,
 		last_updated_at = now,
 		last_queue_update = now,
 	}
@@ -1049,6 +1059,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 		syncplay_set_position(group_value, start_ticks)
 		group_value.resume_playing = true
 		syncplay_set_state(group_value, "Waiting")
+		group_value.position_jumped = true
 		syncplay_set_all_buffering(group_value, true)
 		syncplay_broadcast_queue_update(group_value, (entry :: SessionEntry).session_id, "NewPlaylist")
 		syncplay_broadcast_state(group_value, (entry :: SessionEntry).session_id, "Play")
@@ -1074,6 +1085,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 			syncplay_restart_item(group_value)
 			group_value.resume_playing = true
 			syncplay_set_state(group_value, "Waiting")
+			group_value.position_jumped = true
 			syncplay_set_all_buffering(group_value, true)
 			syncplay_broadcast_queue_update(group_value, (entry :: SessionEntry).session_id, "SetCurrentItem")
 			syncplay_broadcast_state(group_value, (entry :: SessionEntry).session_id, "SetPlaylistItem")
@@ -1367,6 +1379,28 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 		local client_ticks = syncplay_sanitize_position(group_value, position_ticks or group_ticks)
 		local lag_ms = (group_ticks - client_ticks) / TICKS_PER_MILLISECOND - elapsed_ms
 
+		-- As upstream, a member too far from the group's position is sent back to it and waited for.
+		-- A member that played on through buffering may lag while it catches up, unless the group's
+		-- position jumped since, which the member hasn't applied.
+		local offset_ms = if group_value.resume_playing
+			then lag_ms
+			else (group_ticks - client_ticks) / TICKS_PER_MILLISECOND
+		local max_offset_ms = if group_value.resume_playing
+				and is_playing
+				and not group_value.position_jumped
+			then SYNCPLAY_MAX_CATCH_UP_OFFSET
+			else SYNCPLAY_MAX_PLAYBACK_OFFSET
+		if math.abs(offset_ms) > max_offset_ms then
+			if participant then
+				participant.buffering = true
+				participant.ready = false
+			end
+			syncplay_update_wait(group_value, false)
+			syncplay_send_entry(entry :: SessionEntry, "SyncPlayCommand", syncplay_command(group_value, "Seek"))
+			syncplay_broadcast_state(group_value, (entry :: SessionEntry).session_id, "Ready")
+			return api.response.empty(204)
+		end
+
 		if participant then
 			participant.buffering = false
 			participant.ready = true
@@ -1422,6 +1456,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 		end
 		syncplay_restart_item(group_value)
 		syncplay_set_state(group_value, "Waiting")
+		group_value.position_jumped = true
 		group_value.resume_playing = true
 		syncplay_set_all_buffering(group_value, true)
 		syncplay_broadcast_queue_update(group_value, (entry :: SessionEntry).session_id, "NextItem")
@@ -1456,6 +1491,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 		end
 		syncplay_restart_item(group_value)
 		syncplay_set_state(group_value, "Waiting")
+		group_value.position_jumped = true
 		group_value.resume_playing = true
 		syncplay_set_all_buffering(group_value, true)
 		syncplay_broadcast_queue_update(group_value, (entry :: SessionEntry).session_id, "PreviousItem")
