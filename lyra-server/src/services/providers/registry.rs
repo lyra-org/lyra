@@ -252,6 +252,7 @@ impl ProviderRegistry {
         id: String,
         display_name: Option<String>,
     ) -> Result<()> {
+        lyra_db::providers::validate_provider_id(&id)?;
         if id == LOCAL_SOURCE_ID || id == MANUAL_SOURCE_ID {
             bail!(
                 "provider id '{id}' is a reserved metadata source and cannot be registered by a plugin"
@@ -631,6 +632,26 @@ pub(crate) mod tests {
                 .register(plugin_id.clone(), reserved.to_string(), None)
                 .expect_err("reserved source id must be rejected");
             assert!(err.to_string().contains(reserved));
+        }
+    }
+
+    #[test]
+    fn register_applies_the_database_provider_id_rules() {
+        let mut registry = ProviderRegistry::default();
+        let plugin_id = PluginId::new("demo").expect("valid plugin id");
+
+        for provider_id in ["lrclib", "provider-with-punctuation_1"] {
+            registry
+                .register(plugin_id.clone(), provider_id.to_string(), None)
+                .unwrap_or_else(|err| panic!("expected {provider_id:?} to be accepted: {err}"));
+        }
+        for provider_id in ["", "two words", " leading", "trailing\t", "métadata"] {
+            assert!(
+                registry
+                    .register(plugin_id.clone(), provider_id.to_string(), None)
+                    .is_err(),
+                "expected {provider_id:?} to be rejected"
+            );
         }
     }
 

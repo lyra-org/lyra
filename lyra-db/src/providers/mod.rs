@@ -26,6 +26,17 @@ pub struct ProviderConfig {
     pub enabled: bool,
 }
 
+/// The one rule for provider ids: non-empty ASCII with no whitespace.
+pub fn validate_provider_id(provider_id: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !provider_id.is_empty()
+            && provider_id.is_ascii()
+            && !provider_id.chars().any(|c| c.is_whitespace()),
+        "provider_id must be a non-empty ASCII string with no whitespace; got {provider_id:?}"
+    );
+    Ok(())
+}
+
 pub fn get(db: &impl super::DbAccess) -> anyhow::Result<Vec<ProviderConfig>> {
     let mut providers: Vec<ProviderConfig> = db
         .exec(

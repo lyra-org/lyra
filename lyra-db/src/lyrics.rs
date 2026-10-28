@@ -50,16 +50,6 @@ fn normalize_language(raw: &str) -> anyhow::Result<String> {
     lyra_metadata::locale::validate_language(trimmed).map_err(Into::into)
 }
 
-pub fn validate_provider_id(provider_id: &str) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        !provider_id.is_empty()
-            && provider_id.is_ascii()
-            && !provider_id.chars().any(|c| c.is_whitespace()),
-        "provider_id must be a non-empty ASCII string with no whitespace; got {provider_id:?}"
-    );
-    Ok(())
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, DbTypeMarker)]
 #[serde(rename_all = "snake_case")]
 pub enum LyricsKind {
@@ -597,7 +587,7 @@ pub fn upsert_from_plugin(
     max_ts_ms: Option<u64>,
 ) -> anyhow::Result<DbId> {
     anyhow::ensure!(!lyrics_id.trim().is_empty(), "lyrics id cannot be empty");
-    validate_provider_id(provider_id)?;
+    crate::providers::validate_provider_id(provider_id)?;
     db.transaction_mut(|t| -> anyhow::Result<DbId> {
         upsert_inner(
             t,

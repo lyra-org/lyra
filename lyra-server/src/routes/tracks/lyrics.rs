@@ -124,7 +124,7 @@ async fn get_track_lyrics(
 
     let format = parse_lyrics_format(query.format.as_deref())?;
     if let Some(provider_id) = query.provider.as_deref() {
-        lyra_db::lyrics::validate_provider_id(provider_id)
+        lyra_db::providers::validate_provider_id(provider_id)
             .map_err(|error| AppError::bad_request(error.to_string()))?;
     }
     let require_synced = format == "lrc";

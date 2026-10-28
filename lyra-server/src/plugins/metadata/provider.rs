@@ -409,7 +409,6 @@ fn lyrics_callback(
     handler: luau::Function,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
-    validate_lyrics_provider_id(&provider.provider_id)?;
 
     let (timeout, require) = parse_lyrics_spec(vm, &config)?;
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
@@ -509,10 +508,6 @@ fn similar_releases_callback(
         );
         Ok(())
     }))
-}
-
-fn validate_lyrics_provider_id(provider_id: &str) -> luau::runtime::Result<()> {
-    lyra_db::lyrics::validate_provider_id(provider_id).map_err(crate::plugins::runtime_error)
 }
 
 fn refresh_callback(
@@ -705,7 +700,6 @@ mod tests {
         UNIX_EPOCH,
     };
 
-    use super::validate_lyrics_provider_id;
     use crate::services::EntityType;
     use crate::services::STATE;
     use crate::services::covers::providers::{
@@ -813,21 +807,5 @@ mod tests {
 
         crate::plugins::STATE.clear_runtime();
         Ok(())
-    }
-
-    #[test]
-    fn lyrics_registration_uses_database_provider_id_rules() {
-        for provider_id in ["lrclib", "manual", "provider-with-punctuation_1"] {
-            assert!(
-                validate_lyrics_provider_id(provider_id).is_ok(),
-                "expected {provider_id:?} to be accepted"
-            );
-        }
-        for provider_id in ["", "two words", " leading", "trailing\t", "métadata"] {
-            assert!(
-                validate_lyrics_provider_id(provider_id).is_err(),
-                "expected {provider_id:?} to be rejected"
-            );
-        }
     }
 }
