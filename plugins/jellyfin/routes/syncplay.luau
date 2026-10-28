@@ -1331,9 +1331,24 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 		end
 
 		local group_value = group :: SyncPlayGroup
+		local session_id = (entry :: SessionEntry).session_id
+		if group_value.state == "Idle" then
+			syncplay_send_entry(entry :: SessionEntry, "SyncPlayCommand", syncplay_command(group_value, "Stop"))
+			return api.response.empty(204)
+		end
+		-- As upstream, the group waits for every member to reach the new position, then plays on if
+		-- it was playing.
+		if group_value.state == "Playing" then
+			group_value.resume_playing = true
+		elseif group_value.state == "Paused" then
+			group_value.resume_playing = false
+		end
+		syncplay_set_state(group_value, "Waiting")
 		syncplay_set_position(group_value, syncplay_sanitize_position(group_value, position_ticks))
-		syncplay_broadcast_command(group_value, (entry :: SessionEntry).session_id, "all", "Seek")
-		syncplay_broadcast_state(group_value, (entry :: SessionEntry).session_id, "Seek")
+		group_value.position_jumped = true
+		syncplay_broadcast_command(group_value, session_id, "all", "Seek")
+		syncplay_set_all_buffering(group_value, true)
+		syncplay_broadcast_state(group_value, session_id, "Seek")
 		return api.response.empty(204)
 	end)
 

@@ -260,6 +260,18 @@ do
 	check(commands("c", true), "Seek@60+0", "a seek stops at the end of the song")
 	post("c", "Seek", { PositionTicks = -SECOND })
 	check(commands("c", true), "Seek@0+0", "and at its start")
+
+	-- After a seek, the group waits for everyone to reach the new position and plays on.
+	post("c", "Seek", { PositionTicks = 20 * SECOND })
+	commands("c")
+	commands("d")
+	commands("e")
+	post("c", "Ready", { IsPlaying = false, PositionTicks = 20 * SECOND })
+	post("e", "Ready", { IsPlaying = false, PositionTicks = 20 * SECOND })
+	post("d", "Ready", { IsPlaying = true, PositionTicks = 10 * SECOND })
+	check(commands("d", true), "Seek@20+0", "a member that missed the seek is sent to it")
+	post("d", "Ready", { IsPlaying = false, PositionTicks = 20 * SECOND })
+	check(commands("c", true), "Pause@20+0,Unpause@20+1000", "the group plays on from the new position")
 	post("c", "Leave")
 	post("d", "Leave")
 	post("e", "Leave")
