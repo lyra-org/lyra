@@ -16,6 +16,7 @@ use agdb::{
     DbAny,
     DbId,
 };
+use lyra_db::IdSource;
 
 use crate::services::providers::active_providers;
 
@@ -40,36 +41,68 @@ pub(crate) struct LinkedComponent<'a> {
     pub(crate) keys: Vec<&'a IdKey>,
 }
 
+/// The values entities hold for one ID type that names exactly one entity.
+#[derive(Clone, Debug, Default)]
+struct IdValues {
+    values: BTreeSet<String>,
+    /// The values a user set, which outrank every provider.
+    manual: BTreeSet<String>,
+}
+
+impl IdValues {
+    fn extend(&mut self, other: IdValues) {
+        self.values.extend(other.values);
+        self.manual.extend(other.manual);
+    }
+
+    /// Whether these values and `other` name different entities, so the
+    /// entities holding them cannot be one. Differing manual values always
+    /// conflict; any others only when `blocks` says their provider may.
+    fn conflicts_with(&self, other: &IdValues, blocks: bool) -> bool {
+        let manual_conflict = !self.manual.is_empty()
+            && !other.manual.is_empty()
+            && self.manual.is_disjoint(&other.manual);
+        manual_conflict || (blocks && self.values.is_disjoint(&other.values))
+    }
+}
+
 /// The external IDs of the entities a dedup run considers.
 #[derive(Default)]
 pub(crate) struct LinkedIds {
     groups: BTreeMap<IdKey, Vec<DbId>>,
     /// Each entity's values for the ID types that name exactly one entity.
-    identities: HashMap<DbId, BTreeMap<(String, String), BTreeSet<String>>>,
+    identities: HashMap<DbId, BTreeMap<(String, String), IdValues>>,
 }
 
 impl LinkedIds {
-    /// Records an ID that names exactly one entity. Entities holding the same
-    /// value link when `links` is set; different values can keep them apart.
-    /// Empty values say nothing.
+    /// Records an ID that names exactly one entity, by its effective value:
+    /// a resolved value beneath a manual one is what the user overrode, so it
+    /// neither links nor conflicts. Entities holding the same value link when
+    /// `links` is set; different values can keep them apart. Empty values say
+    /// nothing.
     pub(crate) fn add(
         &mut self,
         entity: DbId,
         provider_id: &str,
         id_type: &str,
         value: &str,
+        source: IdSource,
         links: bool,
     ) {
         let value = value.trim();
         if value.is_empty() {
             return;
         }
-        self.identities
+        let values = self
+            .identities
             .entry(entity)
             .or_default()
             .entry((provider_id.to_string(), id_type.to_string()))
-            .or_default()
-            .insert(value.to_string());
+            .or_default();
+        values.values.insert(value.to_string());
+        if source == IdSource::Manual {
+            values.manual.insert(value.to_string());
+        }
         if links {
             self.groups
                 .entry(IdKey {
@@ -85,9 +118,10 @@ impl LinkedIds {
     /// Joins the entities that share an ID into components, so each component
     /// picks one winner however its IDs are ordered. A join is skipped when
     /// the two sides share no value from a provider ranked at or above
-    /// the linking one: a merge cannot be undone, while a missed one leaves a
-    /// visible duplicate. A lower-ranked provider's value gives way, as a
-    /// merge's loser's IDs do. Single-member components are left out.
+    /// the linking one, or hold differing manual values of any provider: a
+    /// merge cannot be undone, while a missed one leaves a visible duplicate.
+    /// A lower-ranked provider's value gives way, as a merge's loser's IDs do.
+    /// Single-member components are left out.
     pub(crate) fn components(&self, ranks: &ProviderRanks) -> Vec<LinkedComponent<'_>> {
         fn root(parents: &HashMap<DbId, DbId>, mut id: DbId) -> DbId {
             while let Some(&parent) = parents.get(&id) {
@@ -117,17 +151,17 @@ impl LinkedIds {
                 if first_root == id_root {
                     continue;
                 }
-                let conflict =
-                    root_identities.get(&first_root).and_then(|first_ids| {
-                        root_identities
-                            .get(&id_root)?
-                            .iter()
-                            .find_map(|(id_type, values)| {
-                                let first_values = first_ids.get(id_type)?;
-                                (first_values.is_disjoint(values) && blocks(&id_type.0))
-                                    .then_some((id_type, first_values, values))
-                            })
-                    });
+                let conflict = root_identities.get(&first_root).and_then(|first_ids| {
+                    root_identities
+                        .get(&id_root)?
+                        .iter()
+                        .find_map(|(id_type, values)| {
+                            let first_values = first_ids.get(id_type)?;
+                            first_values
+                                .conflicts_with(values, blocks(&id_type.0))
+                                .then_some((id_type, first_values, values))
+                        })
+                });
                 if let Some(((provider_id, id_type), first_values, values)) = conflict {
                     tracing::warn!(
                         external_id = ?key,
@@ -197,8 +231,8 @@ mod tests {
         let pair = |link: &str, conflict: &str| {
             let mut links = LinkedIds::default();
             for (entity, value) in [(DbId(1), "one"), (DbId(2), "two")] {
-                links.add(entity, link, "id", "shared", true);
-                links.add(entity, conflict, "id", value, false);
+                links.add(entity, link, "id", "shared", IdSource::Resolved, true);
+                links.add(entity, conflict, "id", value, IdSource::Resolved, false);
             }
             links
         };
@@ -231,7 +265,7 @@ mod tests {
             (DbId(2), "provider-a", "y"),
             (DbId(3), "provider-a", "x"),
         ] {
-            links.add(entity, provider_id, "id", value, true);
+            links.add(entity, provider_id, "id", value, IdSource::Resolved, true);
         }
 
         let components = links.components(&ranks);
@@ -245,12 +279,61 @@ mod tests {
             ProviderRanks::from([("musicbrainz".to_string(), 0), ("provider".to_string(), 1)]);
         let mut links = LinkedIds::default();
         for (entity, value) in [(DbId(1), "one"), (DbId(2), "two"), (DbId(3), "two")] {
-            links.add(entity, "provider", "id", "shared", true);
-            links.add(entity, "musicbrainz", "id", value, false);
+            links.add(entity, "provider", "id", "shared", IdSource::Resolved, true);
+            links.add(
+                entity,
+                "musicbrainz",
+                "id",
+                value,
+                IdSource::Resolved,
+                false,
+            );
         }
 
         let components = links.components(&ranks);
         assert_eq!(components.len(), 1);
         assert_eq!(components[0].ids, [DbId(2), DbId(3)]);
+    }
+
+    #[test]
+    fn differing_manual_values_block_whatever_the_ranks() {
+        let ranks = ProviderRanks::from([("link".to_string(), 0), ("pinned".to_string(), 1)]);
+        let pair = |first: IdSource, second: IdSource| {
+            let mut links = LinkedIds::default();
+            for (entity, value, source) in [(DbId(1), "one", first), (DbId(2), "two", second)] {
+                links.add(entity, "link", "id", "shared", IdSource::Resolved, true);
+                links.add(entity, "pinned", "id", value, source, false);
+            }
+            links
+        };
+
+        assert!(
+            !joined(&pair(IdSource::Manual, IdSource::Manual), &ranks),
+            "differing manual values outrank the linking provider"
+        );
+        assert!(
+            joined(&pair(IdSource::Manual, IdSource::Resolved), &ranks),
+            "a manual value against a resolved one keeps the rank rules"
+        );
+        assert!(
+            joined(&pair(IdSource::Resolved, IdSource::Resolved), &ranks),
+            "as do two resolved values"
+        );
+    }
+
+    #[test]
+    fn a_shared_manual_value_links_like_a_resolved_one() {
+        let mut links = LinkedIds::default();
+        links.add(DbId(1), "provider", "id", "shared", IdSource::Manual, true);
+        links.add(
+            DbId(2),
+            "provider",
+            "id",
+            "shared",
+            IdSource::Resolved,
+            true,
+        );
+
+        assert!(joined(&links, &ProviderRanks::new()));
     }
 }

@@ -97,10 +97,7 @@ fn merge_release_into_inside_tx(
     }
 
     for external_id in lyra_db::external_ids::get_for_entity_inside_tx(db, loser)? {
-        if external_id.id_value.trim().is_empty() {
-            continue;
-        }
-        lyra_db::external_ids::copy_inside_tx(db, winner, &external_id)?;
+        lyra_db::external_ids::merge_inside_tx(db, winner, &external_id)?;
     }
 
     let mut winner_layers_by_source = HashMap::new();
@@ -196,6 +193,7 @@ pub(super) fn deduplicate_releases_by_external_id(
                 &external_id.provider_id,
                 &external_id.id_type,
                 &external_id.id_value,
+                external_id.source,
                 in_scope,
             );
         }

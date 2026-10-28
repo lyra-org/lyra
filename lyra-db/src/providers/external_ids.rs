@@ -403,32 +403,65 @@ pub(crate) fn upsert_inside_tx(
     Ok(id_db_id)
 }
 
-/// Copies both layers of `external_id` onto `node_id`, the way a plugin write
-/// and then a user write would land.
-pub fn copy_inside_tx(
+/// Merges `external_id`, a merged duplicate's, into `node_id`'s value of its
+/// type. `node_id`'s values win, except that a manual value takes effect over
+/// a resolved one, keeping it beneath, and a resolved value fills in where
+/// `node_id` has none. Empty values say nothing.
+pub fn merge_inside_tx(
     db: &mut impl DbAccess,
     node_id: DbId,
     external_id: &ExternalId,
 ) -> anyhow::Result<()> {
-    if let Some(resolved_value) = external_id.resolved_value() {
+    if external_id.id_value.trim().is_empty() {
+        return Ok(());
+    }
+    let ExternalId {
+        provider_id,
+        id_type,
+        ..
+    } = external_id;
+    let existing = get_inside_tx(db, node_id, provider_id, id_type)?;
+
+    if existing
+        .as_ref()
+        .is_none_or(|existing| existing.resolved_value().is_none())
+        && let Some(resolved_value) = external_id.resolved_value()
+    {
         upsert_inside_tx(
             db,
             node_id,
-            &external_id.provider_id,
-            &external_id.id_type,
+            provider_id,
+            id_type,
             resolved_value,
             IdSource::Resolved,
         )?;
     }
-    if external_id.source == IdSource::Manual {
-        upsert_inside_tx(
-            db,
-            node_id,
-            &external_id.provider_id,
-            &external_id.id_type,
-            &external_id.id_value,
-            IdSource::Manual,
-        )?;
+    if external_id.source != IdSource::Manual {
+        return Ok(());
+    }
+    match existing {
+        Some(existing) if existing.source == IdSource::Manual => {
+            if existing.id_value != external_id.id_value {
+                tracing::warn!(
+                    node_id = node_id.0,
+                    provider_id = %provider_id,
+                    id_type = %id_type,
+                    kept = %existing.id_value,
+                    dropped = %external_id.id_value,
+                    "dropping a merged duplicate's differing manual external id"
+                );
+            }
+        }
+        _ => {
+            upsert_inside_tx(
+                db,
+                node_id,
+                provider_id,
+                id_type,
+                &external_id.id_value,
+                IdSource::Manual,
+            )?;
+        }
     }
     Ok(())
 }
@@ -819,7 +852,7 @@ mod tests {
     }
 
     #[test]
-    fn copy_carries_manual_and_resolved_values() -> anyhow::Result<()> {
+    fn merge_into_an_entity_without_the_id_carries_both_values() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let from = insert_entity(&mut db)?;
         let to = insert_entity(&mut db)?;
@@ -841,12 +874,92 @@ mod tests {
             IdSource::Manual,
         )?;
         let source = get_release_id(&db, from)?;
-        db.transaction_mut(|t| copy_inside_tx(t, to, &source))?;
+        db.transaction_mut(|t| merge_inside_tx(t, to, &source))?;
 
         let copied = get_release_id(&db, to)?;
         assert_eq!(copied.id_value, "user");
         assert_eq!(copied.source, IdSource::Manual);
         assert_eq!(copied.resolved_value(), Some("plugin"));
+        Ok(())
+    }
+
+    #[test]
+    fn merge_keeps_the_entitys_values_but_lets_a_manual_value_take_effect() -> anyhow::Result<()> {
+        type Value = (&'static str, IdSource);
+        // Into's values, then the merged values, then the expected effective
+        // and resolved values.
+        type Case = (
+            &'static [Value],
+            &'static [Value],
+            Value,
+            Option<&'static str>,
+        );
+        let cases: [Case; 5] = [
+            (
+                &[("kept", IdSource::Resolved)],
+                &[("merged", IdSource::Resolved)],
+                ("kept", IdSource::Resolved),
+                Some("kept"),
+            ),
+            (
+                &[("kept", IdSource::Resolved)],
+                &[("merged", IdSource::Manual)],
+                ("merged", IdSource::Manual),
+                Some("kept"),
+            ),
+            (
+                &[("kept", IdSource::Resolved)],
+                &[
+                    ("beneath", IdSource::Resolved),
+                    ("merged", IdSource::Manual),
+                ],
+                ("merged", IdSource::Manual),
+                Some("kept"),
+            ),
+            (
+                &[("kept", IdSource::Manual)],
+                &[
+                    ("beneath", IdSource::Resolved),
+                    ("merged", IdSource::Manual),
+                ],
+                ("kept", IdSource::Manual),
+                Some("beneath"),
+            ),
+            (
+                &[("kept", IdSource::Resolved), ("pinned", IdSource::Manual)],
+                &[("merged", IdSource::Manual)],
+                ("pinned", IdSource::Manual),
+                Some("kept"),
+            ),
+        ];
+        for (into_values, merged_values, (effective, source), resolved) in cases {
+            let mut db = new_test_db()?;
+            let into = insert_entity(&mut db)?;
+            let merged = insert_entity(&mut db)?;
+            for (node_id, values) in [(into, into_values), (merged, merged_values)] {
+                for &(value, value_source) in values.iter() {
+                    upsert(
+                        &mut db,
+                        node_id,
+                        "musicbrainz",
+                        "release_id",
+                        value,
+                        value_source,
+                    )?;
+                }
+            }
+            let source_id = get_release_id(&db, merged)?;
+            db.transaction_mut(|t| merge_inside_tx(t, into, &source_id))?;
+
+            let result = get_release_id(&db, into)?;
+            let case = format!("{into_values:?} <- {merged_values:?}");
+            assert_eq!(
+                (result.id_value.as_str(), result.source),
+                (effective, source),
+                "{case}"
+            );
+            assert_eq!(result.resolved_value(), resolved, "{case}");
+        }
         Ok(())
     }
 

@@ -364,6 +364,76 @@ mod tests {
         Ok(())
     }
 
+    /// Two releases of one library that hold `release_id`s, written in order,
+    /// deduplicated with no provider ranked. Returns the winner and the
+    /// number merged.
+    fn dedup_releases_holding(
+        winner_ids: &[(&str, &str, IdSource)],
+        loser_ids: &[(&str, &str, IdSource)],
+    ) -> anyhow::Result<(DbAny, DbId, u32)> {
+        let mut db = new_test_db()?;
+        let library_db_id = insert_library(&mut db, "Music", "/music")?;
+        let mut releases = Vec::new();
+        for ids in [winner_ids, loser_ids] {
+            let release = insert_release(&mut db, "Release")?;
+            connect(&mut db, library_db_id, release)?;
+            for &(provider_id, value, source) in ids {
+                external_ids::upsert(&mut db, release, provider_id, "release_id", value, source)?;
+            }
+            releases.push(release);
+        }
+        let unique_pairs = ["musicbrainz", "provider-a"]
+            .map(|provider_id| (provider_id.to_string(), "release_id".to_string()))
+            .into();
+        let merged = deduplicate_releases_by_external_id(
+            &mut db,
+            library_db_id,
+            &unique_pairs,
+            &HashSet::new(),
+            None,
+        )?;
+        Ok((db, releases[0], merged))
+    }
+
+    #[test]
+    fn a_losing_releases_manual_id_overrides_the_winners_resolved_one() -> anyhow::Result<()> {
+        let (db, winner, merged) = dedup_releases_holding(
+            &[
+                ("musicbrainz", "mbid-1", IdSource::Resolved),
+                ("provider-a", "shared", IdSource::Resolved),
+            ],
+            &[
+                ("musicbrainz", "mbid-1", IdSource::Resolved),
+                ("musicbrainz", "mbid-2", IdSource::Manual),
+                ("provider-a", "shared", IdSource::Resolved),
+            ],
+        )?;
+        assert_eq!(merged, 1);
+        let id =
+            external_ids::get(&db, winner, "musicbrainz", "release_id")?.expect("musicbrainz id");
+        assert_eq!(
+            (id.id_value.as_str(), id.source, id.resolved_value()),
+            ("mbid-2", IdSource::Manual, Some("mbid-1"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn differing_manual_ids_keep_releases_apart() -> anyhow::Result<()> {
+        let (_, _, merged) = dedup_releases_holding(
+            &[
+                ("musicbrainz", "mbid-1", IdSource::Manual),
+                ("provider-a", "shared", IdSource::Resolved),
+            ],
+            &[
+                ("musicbrainz", "mbid-2", IdSource::Manual),
+                ("provider-a", "shared", IdSource::Resolved),
+            ],
+        )?;
+        assert_eq!(merged, 0);
+        Ok(())
+    }
+
     #[test]
     fn merging_releases_moves_the_losers_chains_to_the_winner() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
