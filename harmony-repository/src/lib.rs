@@ -37,9 +37,11 @@ pub use manifest::{
     ManifestError,
     RepositoryEntry,
     RepositoryManifest,
+    Revision,
     SourceRecord,
 };
 pub use resolve::{
+    KnownTreeHashes,
     ListedPlugin,
     PluginCandidate,
     RepositoryListing,

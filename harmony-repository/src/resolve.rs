@@ -3,7 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashSet;
+use std::collections::{
+    HashMap,
+    HashSet,
+};
 use std::path::{
     Path,
     PathBuf,
@@ -32,7 +35,10 @@ use crate::fetch::{
     fetch_planned,
     plan_refs,
 };
-use crate::forge::RepoSpec;
+use crate::forge::{
+    RepoSpec,
+    tree_hashes,
+};
 use crate::manifest::{
     ManifestError,
     REPOSITORY_MANIFEST_FILENAME,
@@ -151,17 +157,28 @@ pub async fn resolve_plugins(
     valid_scope_ids: &HashSet<Arc<str>>,
 ) -> Result<ResolvedRepository, ResolveError> {
     let plan = plan_refs(client, spec).await;
-    resolve_planned(client, spec, &plan, valid_scope_ids).await
+    resolve_planned(client, spec, &plan, None, valid_scope_ids).await
+}
+
+/// Tree hashes a caller already holds for a repository at `commit`, keyed
+/// by directory as [`tree_hashes`] returns them.
+#[derive(Debug, Clone, Copy)]
+pub struct KnownTreeHashes<'a> {
+    pub commit: &'a str,
+    pub hashes: &'a HashMap<String, String>,
 }
 
 /// Like [`resolve_plugins`], starting from a ref `plan` already resolved.
+/// `known` hashes are used for the repository's own plugins when the plan
+/// resolves to their commit; directories missing from them are looked up.
 pub async fn resolve_planned(
     client: &Client,
     spec: &RepoSpec,
     plan: &RefPlan,
+    known: Option<KnownTreeHashes<'_>>,
     valid_scope_ids: &HashSet<Arc<str>>,
 ) -> Result<ResolvedRepository, ResolveError> {
-    let walk = walk(client, spec, plan.clone(), |spec, plan| {
+    let walk = walk(client, spec, plan.clone(), known, |spec, plan| {
         open_archive(client.clone(), spec, plan)
     })
     .await?;
@@ -212,7 +229,7 @@ pub async fn list_plugins(
     valid_scope_ids: &HashSet<Arc<str>>,
 ) -> Result<RepositoryListing, ResolveError> {
     let plan = plan_refs(client, spec).await;
-    let walk = walk(client, spec, plan, |spec, plan| {
+    let walk = walk(client, spec, plan, None, |spec, plan| {
         open_listed(client.clone(), spec, plan)
     })
     .await?;
@@ -411,11 +428,12 @@ async fn probe<'a>(files: &Files, entry: &'a RepositoryEntry) -> Probe<'a> {
 /// The repository rules shared by installs and listings: a root holds
 /// exactly one of `plugin.json` and `repository.json`, and index entries
 /// hold a plugin, never another index. `open` opens the origin and each
-/// remote entry's repository.
+/// remote entry's repository; `known` hashes apply to the origin.
 async fn walk<T, Fut>(
     client: &Client,
     spec: &RepoSpec,
     plan: RefPlan,
+    known: Option<KnownTreeHashes<'_>>,
     open: impl Fn(RepoSpec, RefPlan) -> Fut,
 ) -> Result<Walk<T>, ResolveError>
 where
@@ -434,6 +452,10 @@ where
     let origin_source = |subpath| source_record(spec, &commit, pinned, subpath, None);
     let mut entries = Vec::new();
     let mut trees = vec![tree];
+    let mut sources = vec![TreeSource {
+        spec: spec.clone(),
+        commit: commit.clone(),
+    }];
     let mut index = None;
 
     match (config, index_file) {
@@ -522,6 +544,10 @@ where
                             Some(spec.canonical_url()),
                         );
                         trees.push(sub.tree);
+                        sources.push(TreeSource {
+                            spec: remote.clone(),
+                            commit: sub.commit.clone(),
+                        });
                         entries.push(FoundEntry {
                             tree: trees.len() - 1,
                             dir: String::new(),
@@ -537,6 +563,8 @@ where
             index = Some(manifest);
         }
     }
+
+    record_tree_hashes(client, &sources, known, &mut entries).await;
 
     Ok(Walk {
         git_ref,
@@ -566,6 +594,50 @@ fn reject_duplicate_ids<'a>(
     Ok(())
 }
 
+/// The repository and commit an opened tree was read at.
+struct TreeSource {
+    spec: RepoSpec,
+    commit: Option<String>,
+}
+
+/// Records each entry's directory tree hash, asking each tree's forge once
+/// per parent directory. `known` hashes answer for the origin, the first
+/// tree, when they were taken at its commit. Trees without a resolved
+/// commit have none.
+async fn record_tree_hashes(
+    client: &Client,
+    sources: &[TreeSource],
+    known: Option<KnownTreeHashes<'_>>,
+    entries: &mut [FoundEntry],
+) {
+    let empty = HashMap::new();
+    for (tree, source) in sources.iter().enumerate() {
+        let Some(commit) = source.commit.as_deref() else {
+            continue;
+        };
+        let known = match known {
+            Some(known) if tree == 0 && known.commit == commit => known.hashes,
+            _ => &empty,
+        };
+        let missing: Vec<&str> = entries
+            .iter()
+            .filter(|entry| entry.tree == tree && !known.contains_key(&entry.dir))
+            .map(|entry| entry.dir.as_str())
+            .collect();
+        let fetched = if missing.is_empty() {
+            HashMap::new()
+        } else {
+            tree_hashes(client, &source.spec, commit, &missing).await
+        };
+        for entry in entries.iter_mut().filter(|entry| entry.tree == tree) {
+            entry.source.tree_hash = known
+                .get(&entry.dir)
+                .or_else(|| fetched.get(&entry.dir))
+                .cloned();
+        }
+    }
+}
+
 fn source_record(
     spec: &RepoSpec,
     commit: &Option<String>,
@@ -579,6 +651,7 @@ fn source_record(
         forge: spec.forge,
         git_ref: spec.explicit_ref.clone(),
         commit: commit.clone(),
+        tree_hash: None,
         pinned,
         subpath,
         via_repository,
@@ -992,6 +1065,19 @@ mod tests {
             ));
             routes.extend([
                 (
+                    format!("/api/v1/repos/owner/repo/git/trees/{sha}:plugins"),
+                    CannedResponse::json(
+                        r#"{"sha":"p","truncated":false,"tree":[
+                            {"path":"foo","type":"tree","sha":"foo-tree"},
+                            {"path":"other","type":"tree","sha":"other-tree"}
+                        ]}"#,
+                    ),
+                ),
+                (
+                    format!("/api/v1/repos/other/single/git/trees/{other_sha}"),
+                    CannedResponse::json(r#"{"sha":"bar-tree","truncated":false,"tree":[]}"#),
+                ),
+                (
                     "/api/v1/repos/other/single/git/commits/v1".to_string(),
                     CannedResponse::json(&format!(r#"{{"sha":"{other_sha}"}}"#)),
                 ),
@@ -1028,6 +1114,14 @@ mod tests {
             .collect();
         assert_eq!(listed, installed);
         assert!(listing.plugins[1].source.pinned);
+        assert_eq!(
+            listing.plugins[0].source.tree_hash.as_deref(),
+            Some("foo-tree")
+        );
+        assert_eq!(
+            listing.plugins[1].source.tree_hash.as_deref(),
+            Some("bar-tree")
+        );
     }
 
     #[tokio::test]
@@ -1251,6 +1345,59 @@ mod tests {
         assert!(
             matches!(err, ResolveError::Manifest(ManifestError::Parse { .. })),
             "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolving_reuses_known_tree_hashes() {
+        let sha = "a".repeat(40);
+        let index = index_json(r#"{ "path": "plugins/foo" }"#);
+        let mut routes = raw_repo_routes("owner/repo", &sha, &[]);
+        routes.push((
+            format!("/owner/repo/archive/{sha}.tar.gz"),
+            CannedResponse::targz(targz(&[
+                ("repo/repository.json", &index),
+                ("repo/plugins/foo/plugin.json", &plugin_json("foo")),
+                ("repo/plugins/foo/init.luau", "return {}"),
+            ])),
+        ));
+        let server = TestServer::start(routes.into_iter().collect()).await;
+        let spec = RepoSpec::parse(&format!("{}/owner/repo", server.url()), None).unwrap();
+        let plan = plan_refs(&client(), &spec).await;
+        let hashes = HashMap::from([("plugins/foo".to_string(), "known-tree".to_string())]);
+        let known = |commit| {
+            Some(KnownTreeHashes {
+                commit,
+                hashes: &hashes,
+            })
+        };
+
+        let stale = resolve_planned(&client(), &spec, &plan, known("b"), &HashSet::new())
+            .await
+            .unwrap();
+        assert_eq!(stale.candidates[0].source.tree_hash, None);
+        assert!(
+            server
+                .requests()
+                .iter()
+                .any(|path| path.contains("/git/trees/"))
+        );
+
+        let seen = server.requests().len();
+        let resolved = resolve_planned(&client(), &spec, &plan, known(&sha), &HashSet::new())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            resolved.candidates[0].source.tree_hash.as_deref(),
+            Some("known-tree")
+        );
+        assert!(
+            !server.requests()[seen..]
+                .iter()
+                .any(|path| path.contains("/git/trees/")),
+            "{:?}",
+            server.requests()
         );
     }
 }

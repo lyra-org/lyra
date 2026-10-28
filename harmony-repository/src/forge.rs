@@ -8,7 +8,10 @@
 //! answers are parsed here; byte downloads (archives, raw files) are URLs
 //! that `fetch` downloads under its size limits.
 
-use std::collections::HashMap;
+use std::collections::{
+    BTreeSet,
+    HashMap,
+};
 
 use percent_encoding::{
     AsciiSet,
@@ -439,6 +442,43 @@ pub async fn tree_hash(
     child_tree_hashes(client, spec, commit, parent)
         .await?
         .remove(name)
+}
+
+/// The Git tree hash at `commit` of each directory in `dirs` and of every
+/// sibling directory, keyed by path, asking once per parent directory. The
+/// result covers whole parents, so it answers later lookups of other
+/// directories under them. Directories the forge reports no hash for are
+/// left out.
+pub async fn tree_hashes(
+    client: &Client,
+    spec: &RepoSpec,
+    commit: &str,
+    dirs: &[&str],
+) -> HashMap<String, String> {
+    let mut hashes = HashMap::new();
+    if dirs.contains(&"")
+        && let Some(hash) = tree_hash(client, spec, commit, "").await
+    {
+        hashes.insert(String::new(), hash);
+    }
+    let parents: BTreeSet<&str> = dirs
+        .iter()
+        .filter(|dir| !dir.is_empty())
+        .map(|dir| dir.rsplit_once('/').map_or("", |(parent, _)| parent))
+        .collect();
+    for parent in parents {
+        let Some(children) = child_tree_hashes(client, spec, commit, parent).await else {
+            continue;
+        };
+        hashes.extend(children.into_iter().map(|(name, hash)| {
+            let dir = match parent {
+                "" => name,
+                parent => format!("{parent}/{name}"),
+            };
+            (dir, hash)
+        }));
+    }
+    hashes
 }
 
 /// The Git tree hash of each directory directly under `dir` at `commit`,
@@ -963,6 +1003,53 @@ mod tests {
         assert_eq!(
             tree_hash(&client(), &spec, "abc", "a/b/c").await.as_deref(),
             Some("abc-hash")
+        );
+    }
+
+    #[tokio::test]
+    async fn tree_hashes_ask_once_per_parent_and_cover_its_siblings() {
+        let server = TestServer::start(HashMap::from([
+            (
+                "/api/v1/repos/owner/repo/git/trees/abc".to_string(),
+                CannedResponse::json(r#"{"sha":"root","truncated":false,"tree":[]}"#),
+            ),
+            (
+                "/api/v1/repos/owner/repo/git/trees/abc:plugins".to_string(),
+                CannedResponse::json(
+                    r#"{"sha":"p","truncated":false,"tree":[
+                        {"path":"a","type":"tree","sha":"a-hash"},
+                        {"path":"b","type":"tree","sha":"b-hash"}
+                    ]}"#,
+                ),
+            ),
+        ]))
+        .await;
+
+        let spec = RepoSpec::parse(&format!("{}/owner/repo", server.url()), None).unwrap();
+        let hashes = tree_hashes(
+            &client(),
+            &spec,
+            "abc",
+            &["plugins/a", "plugins/gone", "", ""],
+        )
+        .await;
+
+        assert_eq!(
+            hashes,
+            HashMap::from([
+                ("plugins/a".to_string(), "a-hash".to_string()),
+                ("plugins/b".to_string(), "b-hash".to_string()),
+                (String::new(), "root".to_string()),
+            ])
+        );
+        let mut requests = server.requests();
+        requests.sort();
+        assert_eq!(
+            requests,
+            [
+                "/api/v1/repos/owner/repo/git/trees/abc",
+                "/api/v1/repos/owner/repo/git/trees/abc:plugins",
+            ]
         );
     }
 }

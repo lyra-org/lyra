@@ -5,7 +5,10 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    Mutex,
+};
 
 use flate2::Compression;
 use flate2::write::GzEncoder;
@@ -112,6 +115,7 @@ impl CannedResponse {
 pub(crate) struct TestServer {
     addr: SocketAddr,
     handle: tokio::task::JoinHandle<()>,
+    requests: Arc<Mutex<Vec<String>>>,
 }
 
 impl TestServer {
@@ -129,6 +133,8 @@ impl TestServer {
             .expect("bind test server");
         let addr = listener.local_addr().expect("test server addr");
         let routes = Arc::new(routes(&format!("http://{addr}")));
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let log = requests.clone();
 
         let handle = tokio::spawn(async move {
             loop {
@@ -136,6 +142,7 @@ impl TestServer {
                     break;
                 };
                 let routes = routes.clone();
+                let log = log.clone();
                 tokio::spawn(async move {
                     let mut buffer = vec![0u8; 16 * 1024];
                     let mut read = 0;
@@ -153,6 +160,7 @@ impl TestServer {
 
                     let request = String::from_utf8_lossy(&buffer[..read]);
                     let path = request.split_whitespace().nth(1).unwrap_or("/");
+                    log.lock().unwrap().push(path.to_string());
                     let response = match routes.get(path) {
                         Some(canned) => canned.render(),
                         None => CannedResponse {
@@ -170,7 +178,16 @@ impl TestServer {
             }
         });
 
-        Self { addr, handle }
+        Self {
+            addr,
+            handle,
+            requests,
+        }
+    }
+
+    /// Request paths received so far, in arrival order.
+    pub(crate) fn requests(&self) -> Vec<String> {
+        self.requests.lock().unwrap().clone()
     }
 
     pub(crate) fn url(&self) -> String {

@@ -4,6 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 use agdb::{
+    CountComparison,
     DbAny,
     DbAnyTransactionMut,
     DbElement,
@@ -26,6 +27,18 @@ pub struct PluginRepository {
     pub refreshed_at_ms: Option<u64>,
 }
 
+/// The latest known revision of one plugin a subscribed repository offers,
+/// as of its last refresh or update check. Linked from its repository.
+#[derive(DbElement, Clone, Debug, PartialEq, Eq)]
+pub struct PluginRepositoryEntry {
+    pub db_id: Option<DbId>,
+    pub plugin_id: String,
+    /// Directory within the repository; unset for a root-level plugin.
+    pub subpath: Option<String>,
+    pub commit: Option<String>,
+    pub tree_hash: Option<String>,
+}
+
 const DEFAULT_SEEDED_KEY: &str = "default_repository_seeded";
 
 /// Subscribes `default` once per database, unless its origin is already
@@ -41,7 +54,7 @@ pub fn seed_default(db: &mut DbAny, default: &PluginRepository) -> anyhow::Resul
             return Ok(());
         }
         if get_by_origin(t, &default.origin)?.is_none() {
-            create(t, default)?;
+            create(t, default, &[])?;
         }
         t.exec_mut(
             QueryBuilder::insert()
@@ -53,7 +66,13 @@ pub fn seed_default(db: &mut DbAny, default: &PluginRepository) -> anyhow::Resul
     })
 }
 
-pub fn create(db: &mut impl super::DbAccess, record: &PluginRepository) -> anyhow::Result<DbId> {
+/// Stores a new subscription with its plugin entries. Atomic when `db` is
+/// a transaction.
+pub fn create(
+    db: &mut impl super::DbAccess,
+    record: &PluginRepository,
+    entries: &[PluginRepositoryEntry],
+) -> anyhow::Result<DbId> {
     if get_by_origin(db, &record.origin)?.is_some() {
         anyhow::bail!("repository already added: {}", record.origin);
     }
@@ -71,12 +90,88 @@ pub fn create(db: &mut impl super::DbAccess, record: &PluginRepository) -> anyho
             .to(repo_db_id)
             .query(),
     )?;
+    insert_entries(db, repo_db_id, entries)?;
     Ok(repo_db_id)
 }
 
-/// Atomically aligns the stored row to `record`.
-pub fn update(db: &mut DbAny, record: &PluginRepository) -> anyhow::Result<()> {
-    db.transaction_mut(|t| update_in_transaction(t, record))
+/// Atomically aligns the stored row to `record` and replaces its plugin
+/// entries with `entries`.
+pub fn update(
+    db: &mut DbAny,
+    record: &PluginRepository,
+    entries: &[PluginRepositoryEntry],
+) -> anyhow::Result<()> {
+    let repo_db_id = record
+        .db_id
+        .ok_or_else(|| anyhow::anyhow!("cannot update plugin repository without db_id"))?;
+    db.transaction_mut(|t| {
+        update_in_transaction(t, record)?;
+        remove_entries(t, repo_db_id)?;
+        insert_entries(t, repo_db_id, entries)
+    })
+}
+
+/// The plugin entries stored on a subscription, in no particular order.
+pub fn entries(
+    db: &impl super::DbAccess,
+    repo_db_id: DbId,
+) -> anyhow::Result<Vec<PluginRepositoryEntry>> {
+    Ok(db
+        .exec(
+            QueryBuilder::select()
+                .elements::<PluginRepositoryEntry>()
+                .search()
+                .from(repo_db_id)
+                .where_()
+                .distance(CountComparison::Equal(2))
+                .end_where()
+                .query(),
+        )?
+        .try_into()?)
+}
+
+fn insert_entries(
+    db: &mut impl super::DbAccess,
+    repo_db_id: DbId,
+    entries: &[PluginRepositoryEntry],
+) -> anyhow::Result<()> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let entries: Vec<PluginRepositoryEntry> = entries
+        .iter()
+        .map(|entry| PluginRepositoryEntry {
+            db_id: None,
+            ..entry.clone()
+        })
+        .collect();
+    let entry_ids = db
+        .exec_mut(QueryBuilder::insert().elements(&entries).query())?
+        .ids();
+    db.exec_mut(
+        QueryBuilder::insert()
+            .edges()
+            .from(repo_db_id)
+            .to(entry_ids)
+            .query(),
+    )?;
+    Ok(())
+}
+
+fn remove_entries(db: &mut impl super::DbAccess, repo_db_id: DbId) -> anyhow::Result<()> {
+    db.exec_mut(
+        QueryBuilder::remove()
+            .search()
+            .from(repo_db_id)
+            .where_()
+            .distance(CountComparison::Equal(2))
+            .and()
+            .key("db_element_id")
+            .value("PluginRepositoryEntry")
+            .end_where()
+            .query(),
+    )?;
+    Ok(())
 }
 
 pub(crate) fn update_in_transaction(
@@ -149,9 +244,13 @@ pub fn get_by_origin(
     Ok(repositories.into_iter().next())
 }
 
-pub fn remove(db: &mut impl super::DbAccess, db_id: DbId) -> anyhow::Result<()> {
-    db.exec_mut(QueryBuilder::remove().ids(db_id).query())?;
-    Ok(())
+/// Removes a subscription and its plugin entries.
+pub fn remove(db: &mut DbAny, db_id: DbId) -> anyhow::Result<()> {
+    db.transaction_mut(|t| {
+        remove_entries(t, db_id)?;
+        t.exec_mut(QueryBuilder::remove().ids(db_id).query())?;
+        Ok(())
+    })
 }
 
 #[cfg(test)]
@@ -191,7 +290,7 @@ mod tests {
         let default = repository("https://example.com/plugins");
         let mut existing = repository(&default.origin);
         existing.git_ref = Some("custom-branch".into());
-        create(&mut db, &existing)?;
+        create(&mut db, &existing, &[])?;
         seed_default(&mut db, &default)?;
         let rows = list(&db)?;
         assert_eq!(rows.len(), 1);
@@ -217,13 +316,13 @@ mod tests {
         let mut db = new_test_db()?;
 
         let mut record = repository("https://github.com/lyra/plugins");
-        let db_id = create(&mut db, &record)?;
+        let db_id = create(&mut db, &record, &[])?;
         record.db_id = Some(db_id);
 
         record.name = "Renamed".to_string();
         record.commit = Some("a".repeat(40));
         record.refreshed_at_ms = Some(42);
-        update(&mut db, &record)?;
+        update(&mut db, &record, &[])?;
 
         let listed = list(&db)?;
         assert_eq!(listed.len(), 1);
@@ -245,13 +344,13 @@ mod tests {
         let mut db = new_test_db()?;
 
         let mut record = repository("https://github.com/lyra/plugins");
-        record.db_id = Some(create(&mut db, &record)?);
+        record.db_id = Some(create(&mut db, &record, &[])?);
         record.commit = Some("a".repeat(40));
-        update(&mut db, &record)?;
+        update(&mut db, &record, &[])?;
 
         // A later refresh where the forge commit API call failed.
         record.commit = None;
-        update(&mut db, &record)?;
+        update(&mut db, &record, &[])?;
 
         let fetched = get_by_id(&db, &record.id)?.expect("repository exists");
         assert_eq!(
@@ -265,10 +364,74 @@ mod tests {
     fn create_rejects_duplicate_origins() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
 
-        create(&mut db, &repository("https://github.com/lyra/plugins"))?;
-        let err = create(&mut db, &repository("https://github.com/lyra/plugins")).unwrap_err();
+        create(&mut db, &repository("https://github.com/lyra/plugins"), &[])?;
+        let err = create(&mut db, &repository("https://github.com/lyra/plugins"), &[]).unwrap_err();
 
         assert!(err.to_string().contains("already added"), "{err}");
+        Ok(())
+    }
+
+    fn entry(plugin_id: &str, tree_hash: &str) -> PluginRepositoryEntry {
+        PluginRepositoryEntry {
+            db_id: None,
+            plugin_id: plugin_id.to_string(),
+            subpath: Some(format!("plugins/{plugin_id}")),
+            commit: Some("a".repeat(40)),
+            tree_hash: Some(tree_hash.to_string()),
+        }
+    }
+
+    fn sorted_entries(db: &DbAny, repo_db_id: DbId) -> anyhow::Result<Vec<(String, String)>> {
+        let mut listed: Vec<_> = entries(db, repo_db_id)?
+            .into_iter()
+            .map(|entry| (entry.plugin_id, entry.tree_hash.unwrap_or_default()))
+            .collect();
+        listed.sort();
+        Ok(listed)
+    }
+
+    #[test]
+    fn entries_are_stored_replaced_and_removed_with_their_repository() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let mut first = repository("https://github.com/lyra/plugins");
+        first.db_id = Some(create(
+            &mut db,
+            &first,
+            &[entry("a", "t1"), entry("b", "t2")],
+        )?);
+        let mut second = repository("https://github.com/lyra/other");
+        second.db_id = Some(create(&mut db, &second, &[entry("c", "t3")])?);
+
+        assert_eq!(
+            sorted_entries(&db, first.db_id.unwrap())?,
+            [("a".into(), "t1".into()), ("b".into(), "t2".into())]
+        );
+
+        update(&mut db, &first, &[entry("a", "t4")])?;
+        assert_eq!(
+            sorted_entries(&db, first.db_id.unwrap())?,
+            [("a".into(), "t4".into())]
+        );
+        assert_eq!(
+            sorted_entries(&db, second.db_id.unwrap())?,
+            [("c".into(), "t3".into())]
+        );
+
+        let entry_count = |db: &DbAny| -> anyhow::Result<usize> {
+            Ok(db
+                .exec(
+                    QueryBuilder::select()
+                        .elements::<PluginRepositoryEntry>()
+                        .search()
+                        .elements()
+                        .query(),
+                )?
+                .elements
+                .len())
+        };
+        assert_eq!(entry_count(&db)?, 2);
+        remove(&mut db, first.db_id.unwrap())?;
+        assert_eq!(entry_count(&db)?, 1);
         Ok(())
     }
 }

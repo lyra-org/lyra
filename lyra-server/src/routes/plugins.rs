@@ -125,7 +125,8 @@ enum PluginSourceResponse {
         /// plugin. Branch installs track new commits.
         pinned: bool,
         /// Compared against the subscribed repository with the same origin
-        /// and ref, from stored commits only.
+        /// and ref, from the plugin revisions it stored at its last refresh
+        /// or update check.
         status: UpdateStatusResponse,
         #[serde(skip_serializing_if = "Option::is_none")]
         installed_at: Option<String>,
@@ -270,9 +271,11 @@ struct UpdatePluginsRequest {
     plugins: Option<Vec<String>>,
 }
 
-/// Whether an installed plugin is at the latest known commit. `unknown`
-/// means no subscription matches its origin and ref, or no commit is
-/// recorded on one side. Pinned plugins are always `up_to_date`.
+/// Whether an installed plugin has the latest known content, compared by
+/// the plugin directory's Git tree hash when both sides have one, else by
+/// commit. `unknown` means no subscription for its origin and ref lists
+/// the plugin, or neither is recorded on both sides. Pinned plugins are
+/// always `up_to_date`.
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -283,9 +286,11 @@ enum UpdateStatusResponse {
 }
 
 /// Where a catalogue plugin stands relative to the plugins directory.
-/// `unknown` means it was installed from a repository but no commit is
-/// recorded on one side; `local` means it was installed without a source
-/// record and repository tooling leaves it alone.
+/// Installed content is compared by the plugin directory's Git tree hash
+/// when both sides have one, else by commit. `unknown` means it was
+/// installed from a repository but neither is known on both sides; `local`
+/// means it was installed without a source record and repository tooling
+/// leaves it alone.
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -478,15 +483,17 @@ fn repository_response(
 }
 
 fn source_response(
+    plugin_id: &str,
     record: Option<SourceRecord>,
-    repositories: &[lyra_db::plugin_repositories::PluginRepository],
+    subscriptions: &[repositories_service::Subscription],
 ) -> PluginSourceResponse {
     match record {
         None => PluginSourceResponse::Local,
         Some(record) => PluginSourceResponse::Repository {
             status: update_status_response(repositories_service::update_status(
+                plugin_id,
                 &record,
-                repositories,
+                subscriptions,
             )),
             origin: record.origin,
             git_ref: record.git_ref,
@@ -500,7 +507,7 @@ fn source_response(
 fn manifest_responses(
     manifests: &[harmony_core::plugin::PluginManifest],
     plugins_dir: &std::path::Path,
-    repositories: &[lyra_db::plugin_repositories::PluginRepository],
+    subscriptions: &[repositories_service::Subscription],
 ) -> Vec<PluginManifestResponse> {
     manifests
         .iter()
@@ -510,7 +517,7 @@ fn manifest_responses(
             version: manifest.version.clone(),
             description: manifest.description.clone(),
             source: match SourceRecord::load(&plugins_dir.join(&manifest.id)) {
-                Ok(record) => source_response(record, repositories),
+                Ok(record) => source_response(&manifest.id, record, subscriptions),
                 Err(error) => PluginSourceResponse::Invalid {
                     error: error.to_string(),
                 },
@@ -736,13 +743,13 @@ async fn list_plugins(headers: HeaderMap) -> Result<Json<Vec<PluginManifestRespo
     let _principal = require_manage_plugins(bearer_credential(&headers)).await?;
     let manifests = crate::plugins::STATE.generation().manifests.get();
     let plugins_dir = STATE.boot.get().plugins_dir.clone();
-    let repositories = repositories_service::list_repositories()
+    let subscriptions = repositories_service::list_subscriptions()
         .await
         .map_err(map_repository_error)?;
     Ok(Json(manifest_responses(
         manifests.as_ref(),
         &plugins_dir,
-        &repositories,
+        &subscriptions,
     )))
 }
 
@@ -1087,7 +1094,7 @@ fn get_settings_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn list_plugins_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List plugins").description(
-        "Returns the loaded plugin manifests along with where each plugin was installed from: a `source` of kind `repository` (origin, ref, commit, pinned, status, installed_at), `local`, or `invalid` (error) when the source record could not be read and the plugin should be uninstalled or reinstalled. `pinned` is true for tag and commit installs, which updates never move. `status` compares the installed commit with the one stored for the subscribed repository of the same origin and ref (`up_to_date`, `update_available`, or `unknown`) without contacting the forge; refreshing the repository or updating plugins stores the latest commit.",
+        "Returns the loaded plugin manifests along with where each plugin was installed from: a `source` of kind `repository` (origin, ref, commit, pinned, status, installed_at), `local`, or `invalid` (error) when the source record could not be read and the plugin should be uninstalled or reinstalled. `pinned` is true for tag and commit installs, which updates never move. `status` compares the installed content with the latest revision of the plugin stored for the subscribed repository of the same origin and ref, by the plugin directory's Git tree hash when both sides have one, else by commit (`up_to_date`, `update_available`, or `unknown`), without contacting the forge; refreshing the repository or updating plugins stores the latest revisions.",
     )
 }
 
@@ -1129,7 +1136,7 @@ fn install_repository_plugins_docs(op: TransformOperation) -> TransformOperation
 #[cfg(feature = "docgen")]
 fn update_installed_plugins_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Update installed plugins").description(
-        "Re-resolves the recorded origin of the selected plugins (or every repository-managed plugin when `plugins` is omitted) and reinstalls those whose resolved commit differs. Pinned plugins are reported `up_to_date` without a forge call. Each origin is resolved once and the plugin runtime reloads once. Returns per-plugin results.",
+        "Re-resolves the recorded origin of the selected plugins (or every repository-managed plugin when `plugins` is omitted) and reinstalls those whose content changed at the resolved commit, compared by the plugin directory's Git tree hash when both sides have one, else by commit. Pinned plugins are reported `up_to_date` without a forge call. Each origin is resolved once and downloaded only when one of its plugins changed, and the plugin runtime reloads once. Returns per-plugin results.",
     )
 }
 
@@ -1430,6 +1437,7 @@ mod tests {
             forge: harmony_repository::Forge::GitHub,
             git_ref: Some("v2".into()),
             commit: Some("a".repeat(40)),
+            tree_hash: None,
             pinned: true,
             subpath: None,
             via_repository: None,
