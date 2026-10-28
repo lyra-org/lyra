@@ -161,6 +161,45 @@ impl TempPlugin {
     }
 }
 
+/// Default test state with an empty plugin API route registry.
+fn init_api_test_state() -> Result<()> {
+    crate::plugins::testing::init_default_test_state()?;
+    futures::executor::block_on(crate::plugins::api::initialize_registry(
+        std::collections::HashSet::new(),
+        None,
+    ));
+    Ok(())
+}
+
+/// An unauthenticated websocket start for `path` and the ends of its
+/// inbound and outbound channels.
+fn websocket_request(
+    handler_id: u64,
+    path: &str,
+) -> (
+    WebSocketStartRequest,
+    tokio::sync::mpsc::Sender<String>,
+    tokio::sync::mpsc::Receiver<String>,
+) {
+    let (inbound_tx, inbound_rx) = tokio::sync::mpsc::channel(4);
+    let (outbound_tx, outbound_rx) = tokio::sync::mpsc::channel(4);
+    let request = WebSocketStartRequest {
+        handler_id,
+        plugin_id: "demo".to_string(),
+        method: "GET".to_string(),
+        path: path.to_string(),
+        headers: Vec::new(),
+        query: HashMap::new(),
+        params: HashMap::new(),
+        auth: None,
+        dispatch_auth: crate::plugins::auth::DispatchAuth::default(),
+        inbound: Arc::new(tokio::sync::Mutex::new(inbound_rx)),
+        outbound: outbound_tx,
+        state: WebSocketState::new(),
+    };
+    (request, inbound_tx, outbound_rx)
+}
+
 fn temp_plugin(id: &str, scopes: &[&str], init: impl AsRef<[u8]>) -> Result<TempPlugin> {
     let plugin = TempPlugin {
         dir: tempfile::tempdir()?,
@@ -300,11 +339,7 @@ fn plugin_executor_keeps_dispatch_auth_inside_coroutines() -> Result<()> {
 #[test]
 fn plugin_executor_refuses_registrations_from_an_ended_run() -> Result<()> {
     let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
-    crate::plugins::testing::init_default_test_state()?;
-    futures::executor::block_on(crate::plugins::api::initialize_registry(
-        std::collections::HashSet::new(),
-        None,
-    ));
+    init_api_test_state()?;
     let runtime = runtime_with_scopes(&["lyra.api"])?;
     runtime.run_plugin_source("demo", "init.luau", &b""[..])?;
     let error = runtime
@@ -1249,11 +1284,7 @@ fn plugin_executor_dispatches_registered_api_handler() -> Result<()> {
     // api::install resets the shared API route registry; serialize with the
     // other global-registry mutators.
     let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
-    crate::plugins::testing::init_default_test_state()?;
-    futures::executor::block_on(crate::plugins::api::initialize_registry(
-        std::collections::HashSet::new(),
-        None,
-    ));
+    init_api_test_state()?;
     let runtime = runtime_with_scopes(&["lyra.api", "harmony.task"])?;
     runtime.run_plugin_source(
         "demo",
@@ -1495,11 +1526,7 @@ fn plugin_executor_dispatches_registered_websocket_handler() -> Result<()> {
     // api::install resets the shared API route registry; serialize with the
     // other global-registry mutators.
     let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
-    crate::plugins::testing::init_default_test_state()?;
-    futures::executor::block_on(crate::plugins::api::initialize_registry(
-        std::collections::HashSet::new(),
-        None,
-    ));
+    init_api_test_state()?;
     let runtime = runtime_with_scopes(&["lyra.api"])?;
     runtime.run_plugin_source(
         "demo",
@@ -1520,25 +1547,11 @@ fn plugin_executor_dispatches_registered_websocket_handler() -> Result<()> {
         "/socket/{id}",
     ))
     .context("registered websocket handler")?;
-    let (inbound_tx, inbound_rx) = tokio::sync::mpsc::channel(4);
-    let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel(4);
+    let (mut request, inbound_tx, mut outbound_rx) = websocket_request(handler_id, "/socket/abc");
+    request.params = HashMap::from([("id".to_string(), "abc".to_string())]);
     inbound_tx.try_send("hello".to_string())?;
-    let state = WebSocketState::new();
 
-    runtime.start_websocket(WebSocketStartRequest {
-        handler_id,
-        plugin_id: "demo".to_string(),
-        method: "GET".to_string(),
-        path: "/socket/abc".to_string(),
-        headers: Vec::new(),
-        query: HashMap::new(),
-        params: HashMap::from([("id".to_string(), "abc".to_string())]),
-        auth: None,
-        dispatch_auth: crate::plugins::auth::DispatchAuth::default(),
-        inbound: Arc::new(tokio::sync::Mutex::new(inbound_rx)),
-        outbound: outbound_tx,
-        state,
-    })?;
+    runtime.start_websocket(request)?;
 
     let mut outbound = None;
     for _ in 0..100 {
@@ -1572,11 +1585,7 @@ fn foreground_dispatch_does_not_hide_finished_websocket_cleanup() -> Result<()> 
     // api::install resets the shared API route registry; serialize with the
     // other global-registry mutators.
     let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
-    crate::plugins::testing::init_default_test_state()?;
-    futures::executor::block_on(crate::plugins::api::initialize_registry(
-        std::collections::HashSet::new(),
-        None,
-    ));
+    init_api_test_state()?;
     let runtime = runtime_with_scopes(&["lyra.api"])?;
     runtime.run_plugin_source(
         "demo",
@@ -1604,25 +1613,10 @@ fn foreground_dispatch_does_not_hide_finished_websocket_cleanup() -> Result<()> 
         crate::plugins::api::tests::registered_handler("GET", "/ping"),
     )
     .context("registered API handler")?;
-    let (inbound_tx, inbound_rx) = tokio::sync::mpsc::channel(4);
-    let (outbound_tx, _outbound_rx) = tokio::sync::mpsc::channel(4);
+    let (request, inbound_tx, _outbound_rx) = websocket_request(websocket_handler_id, "/socket");
     inbound_tx.try_send("done".to_string())?;
-    let state = WebSocketState::new();
 
-    runtime.start_websocket(WebSocketStartRequest {
-        handler_id: websocket_handler_id,
-        plugin_id: "demo".to_string(),
-        method: "GET".to_string(),
-        path: "/socket".to_string(),
-        headers: Vec::new(),
-        query: HashMap::new(),
-        params: HashMap::new(),
-        auth: None,
-        dispatch_auth: crate::plugins::auth::DispatchAuth::default(),
-        inbound: Arc::new(tokio::sync::Mutex::new(inbound_rx)),
-        outbound: outbound_tx,
-        state,
-    })?;
+    runtime.start_websocket(request)?;
     assert_eq!(runtime.websocket_tasks.borrow().len(), 1);
 
     let response = runtime.dispatch_api_handler(ApiHandlerRequest {
@@ -1715,31 +1709,15 @@ async fn websocket_spawned_work_acts_as_the_verified_socket_principal() -> Resul
     let handler_id = crate::plugins::api::tests::registered_handler("GET", "/socket")
         .await
         .context("registered websocket handler")?;
-    let (inbound_tx, inbound_rx) = tokio::sync::mpsc::channel(4);
-    let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel(4);
-    let state = WebSocketState::new();
-    runtime.start_websocket(WebSocketStartRequest {
-        handler_id,
-        plugin_id: "demo".to_string(),
-        method: "GET".to_string(),
-        path: "/socket".to_string(),
-        headers: Vec::new(),
-        query: HashMap::new(),
-        params: HashMap::new(),
-        auth: Some(crate::services::auth::ResolvedAuth {
-            principal: principal.clone(),
-            credential: crate::services::auth::AuthCredential::Default,
-            client_name: None,
-        }),
-        dispatch_auth: {
-            let dispatch_auth = crate::plugins::auth::DispatchAuth::default();
-            dispatch_auth.record(principal);
-            dispatch_auth
-        },
-        inbound: Arc::new(tokio::sync::Mutex::new(inbound_rx)),
-        outbound: outbound_tx,
-        state: state.clone(),
-    })?;
+    let (mut request, inbound_tx, mut outbound_rx) = websocket_request(handler_id, "/socket");
+    request.auth = Some(crate::services::auth::ResolvedAuth {
+        principal: principal.clone(),
+        credential: crate::services::auth::AuthCredential::Default,
+        client_name: None,
+    });
+    request.dispatch_auth.record(principal);
+    let state = request.state.clone();
+    runtime.start_websocket(request)?;
 
     inbound_tx.send("probe".to_string()).await?;
     let allowed = next_websocket_frame(&runtime, &mut outbound_rx).await;
@@ -2222,6 +2200,87 @@ fn plugin_executor_failed_restart_keeps_no_update_handler() -> Result<()> {
     let values = runtime.eval_plugin_source("demo", "check.luau", &b"return listen_calls"[..])?;
     assert_eq!(values, vec![luau::Value::Number(0.0)]);
     let _ = std::fs::remove_dir_all(test_dir);
+    Ok(())
+}
+
+#[test]
+fn plugin_executor_handle_shutdown_stops_lua_and_the_executor_thread() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+    init_api_test_state()?;
+    let plugin = temp_plugin(
+        "demo",
+        &["harmony.task", "lyra.api"],
+        r#"
+            local task = require("@harmony/task")
+            local api = require("@lyra/api")
+            local ticks = require("@test/ticks")
+            task.spawn(function()
+                while true do
+                    ticks.tick()
+                    task.wait(0.005)
+                end
+            end)
+            api.websocket("/socket", function(reader, sender)
+                kept_sender = sender
+                reader:recv()
+            end, "public")
+        "#,
+    )?;
+    let ticks = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let module_ticks = ticks.clone();
+    let ticks_module = ModuleSpec::new("test/ticks")
+        .function(
+            harmony_core::FunctionSpec::sync_fn("tick").call(move |_frame| {
+                module_ticks.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            }),
+        )
+        .install(|_| Ok(harmony_core::ModuleExport::new(())));
+
+    let (runtime, errors) = PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
+        plugin.plugins_dir(),
+        default_server_info(),
+        default_auth_capabilities(),
+        crate::services::STATE.db.get(),
+        vec![ticks_module],
+        None,
+    )?;
+    assert!(errors.is_empty(), "{errors:?}");
+    futures::executor::block_on(runtime.exec_all())?;
+    let handler = futures::executor::block_on(crate::plugins::api::tests::registered_handler(
+        "GET", "/socket",
+    ))
+    .context("registered websocket handler")?;
+    let (request, _inbound_tx, mut outbound_rx) = websocket_request(handler, "/socket");
+    futures::executor::block_on(runtime.start_websocket(request))?;
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(ticks.load(std::sync::atomic::Ordering::SeqCst) > 0);
+    assert!(matches!(
+        outbound_rx.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+    ));
+
+    let stale = runtime.clone();
+    futures::executor::block_on(runtime.shutdown())?;
+    let stopped_at = ticks.load(std::sync::atomic::Ordering::SeqCst);
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(ticks.load(std::sync::atomic::Ordering::SeqCst), stopped_at);
+    assert_eq!(
+        std::sync::Arc::strong_count(&ticks),
+        1,
+        "the executor thread drops its runtime and the VM's native callbacks",
+    );
+    while let Ok(_message) = outbound_rx.try_recv() {}
+    assert!(
+        matches!(
+            outbound_rx.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
+        ),
+        "every websocket sender, even one a plugin kept, is dropped",
+    );
+    let error = futures::executor::block_on(stale.has_plugin("demo"))
+        .expect_err("a stopped executor must not serve requests");
+    assert!(format!("{error:#}").contains("unavailable"), "{error:#}");
     Ok(())
 }
 

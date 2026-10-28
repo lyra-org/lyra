@@ -44,6 +44,9 @@ use crate::services::playback_sessions::PlaybackUpdatePayload;
 use crate::services::plugin_dispatch::PluginDispatch;
 
 const EXECUTOR_QUEUE_CAPACITY: usize = 256;
+/// Slots for lifecycle commands, apart from the ones dispatched handlers hold
+/// for their whole run, so a saturated runtime can still be stopped.
+const EXECUTOR_CONTROL_CAPACITY: usize = 16;
 
 #[cfg(test)]
 #[path = "actor/tests.rs"]
@@ -53,12 +56,24 @@ mod dispatch_tests;
 struct PluginExecutorSender {
     tx: mpsc::SyncSender<QueuedPluginExecutorCommand>,
     slots: Arc<tokio::sync::Semaphore>,
+    control_slots: Arc<tokio::sync::Semaphore>,
 }
 
 impl PluginExecutorSender {
     async fn send(&self, command: PluginExecutorCommand) -> Result<()> {
-        let permit = self
-            .slots
+        self.send_in(&self.slots, command).await
+    }
+
+    async fn send_control(&self, command: PluginExecutorCommand) -> Result<()> {
+        self.send_in(&self.control_slots, command).await
+    }
+
+    async fn send_in(
+        &self,
+        slots: &Arc<tokio::sync::Semaphore>,
+        command: PluginExecutorCommand,
+    ) -> Result<()> {
+        let permit = slots
             .clone()
             .acquire_owned()
             .await
@@ -155,12 +170,12 @@ impl PluginExecutorHandle {
     }
 
     pub(crate) async fn plugin_manifests(&self) -> Result<Vec<PluginManifest>> {
-        self.request_async(PluginExecutorCommand::PluginManifests)
+        self.request_control(PluginExecutorCommand::PluginManifests)
             .await
     }
 
     pub(crate) async fn has_plugin(&self, plugin_id: &str) -> Result<bool> {
-        self.request_async(|reply| PluginExecutorCommand::HasPlugin {
+        self.request_control(|reply| PluginExecutorCommand::HasPlugin {
             plugin_id: plugin_id.to_string(),
             reply,
         })
@@ -169,7 +184,7 @@ impl PluginExecutorHandle {
 
     #[cfg(test)]
     pub(crate) async fn exec_plugin(&self, plugin_id: &str) -> Result<()> {
-        self.request_async(|reply| PluginExecutorCommand::ExecPlugin {
+        self.request_control(|reply| PluginExecutorCommand::ExecPlugin {
             plugin_id: plugin_id.to_string(),
             reply,
         })
@@ -177,7 +192,7 @@ impl PluginExecutorHandle {
     }
 
     pub(crate) async fn verify_plugin_manifest(&self, plugin_id: &str) -> Result<()> {
-        self.request_async(|reply| PluginExecutorCommand::VerifyPluginManifest {
+        self.request_control(|reply| PluginExecutorCommand::VerifyPluginManifest {
             plugin_id: plugin_id.to_string(),
             reply,
         })
@@ -185,7 +200,7 @@ impl PluginExecutorHandle {
     }
 
     pub(crate) async fn stop_plugin(&self, plugin_id: &str) -> Result<()> {
-        self.request_async(|reply| PluginExecutorCommand::StopPlugin {
+        self.request_control(|reply| PluginExecutorCommand::StopPlugin {
             plugin_id: plugin_id.to_string(),
             reply,
         })
@@ -193,7 +208,7 @@ impl PluginExecutorHandle {
     }
 
     pub(crate) async fn restart_plugin(&self, plugin_id: &str) -> Result<()> {
-        self.request_async(|reply| PluginExecutorCommand::RestartPlugin {
+        self.request_control(|reply| PluginExecutorCommand::RestartPlugin {
             plugin_id: plugin_id.to_string(),
             reply,
         })
@@ -210,7 +225,13 @@ impl PluginExecutorHandle {
 
     /// The ids of the plugins whose entrypoint failed.
     pub(crate) async fn exec_all(&self) -> Result<Vec<String>> {
-        self.request_async(PluginExecutorCommand::ExecAll).await
+        self.request_control(PluginExecutorCommand::ExecAll).await
+    }
+
+    /// Cancels every plugin's tasks and stops the executor thread. Replies once
+    /// the runtime is dropped; later requests through any clone fail.
+    pub(crate) async fn shutdown(&self) -> Result<()> {
+        self.request_control(PluginExecutorCommand::Shutdown).await
     }
 
     pub(crate) async fn dispatch_api_handler(
@@ -235,6 +256,19 @@ impl PluginExecutorHandle {
     {
         let (reply, rx) = tokio::sync::oneshot::channel();
         self.tx.send(build(reply)).await?;
+        rx.await
+            .context("plugin executor thread dropped response")?
+    }
+
+    async fn request_control<T>(
+        &self,
+        build: impl FnOnce(tokio::sync::oneshot::Sender<Result<T>>) -> PluginExecutorCommand,
+    ) -> Result<T>
+    where
+        T: Send + 'static,
+    {
+        let (reply, rx) = tokio::sync::oneshot::channel();
+        self.tx.send_control(build(reply)).await?;
         rx.await
             .context("plugin executor thread dropped response")?
     }
@@ -290,11 +324,12 @@ fn plugin_executor_channel(
     PluginExecutorSender,
     mpsc::Receiver<QueuedPluginExecutorCommand>,
 ) {
-    let (tx, rx) = mpsc::sync_channel(capacity);
+    let (tx, rx) = mpsc::sync_channel(capacity + EXECUTOR_CONTROL_CAPACITY);
     (
         PluginExecutorSender {
             tx,
             slots: Arc::new(tokio::sync::Semaphore::new(capacity)),
+            control_slots: Arc::new(tokio::sync::Semaphore::new(EXECUTOR_CONTROL_CAPACITY)),
         },
         rx,
     )
@@ -304,19 +339,28 @@ fn run_plugin_executor_thread(
     runtime: PluginExecutor,
     rx: mpsc::Receiver<QueuedPluginExecutorCommand>,
 ) {
-    loop {
+    let shutdown_reply = loop {
         runtime.poll_background_tasks();
         let wait = runtime
             .next_scheduler_delay()
             .unwrap_or_else(|| Duration::from_millis(100))
             .min(Duration::from_millis(25));
         match rx.recv_timeout(wait) {
+            Ok(QueuedPluginExecutorCommand {
+                command: PluginExecutorCommand::Shutdown(reply),
+                ..
+            }) => break Some(reply),
             Ok(QueuedPluginExecutorCommand { command, _permit }) => {
                 handle_plugin_executor_command(&runtime, command, _permit)
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break None,
         }
+    };
+    let result = runtime.shutdown();
+    drop(rx);
+    if let Some(reply) = shutdown_reply {
+        let _ = reply.send(result);
     }
 }
 
@@ -350,6 +394,9 @@ fn handle_plugin_executor_command(
         }
         PluginExecutorCommand::ExecAll(reply) => {
             reply_if_open(reply, || Ok(runtime.exec_all()));
+        }
+        PluginExecutorCommand::Shutdown(_) => {
+            unreachable!("the executor loop handles shutdown")
         }
         PluginExecutorCommand::MixHandler { request, reply } => {
             runtime.start_mix_handler(request, reply, permit);
@@ -429,17 +476,24 @@ mod tests {
         }
     }
 
+    fn mix_request() -> MixHandlerRequest {
+        MixHandlerRequest {
+            handler_id: 1,
+            seed_id: None,
+            limit: None,
+            recent_track_ids: Vec::new(),
+            options: serde_json::Map::new(),
+        }
+    }
+
     #[tokio::test]
-    async fn request_waits_for_queue_capacity() -> Result<()> {
+    async fn dispatch_waits_for_queue_capacity() -> Result<()> {
         let (handle, rx) = handle_with_capacity(1);
-        let (occupied_reply, _occupied_rx) = tokio::sync::oneshot::channel();
-        handle
-            .tx
-            .try_send(PluginExecutorCommand::PluginManifests(occupied_reply))?;
+        handle.dispatch_playback_update(playback_update())?;
 
         let request = tokio::spawn({
             let handle = handle.clone();
-            async move { handle.plugin_manifests().await }
+            async move { handle.dispatch_mix_handler(mix_request()).await }
         });
         tokio::task::yield_now().await;
         assert!(!request.is_finished());
@@ -447,12 +501,37 @@ mod tests {
         drop(rx.recv()?.into_command());
         let queued =
             tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_secs(1))).await??;
-        let PluginExecutorCommand::PluginManifests(reply) = queued.into_command() else {
-            panic!("expected queued plugin manifests request");
+        let PluginExecutorCommand::MixHandler { reply, .. } = queued.into_command() else {
+            panic!("expected queued mix handler request");
         };
-        let _ = reply.send(Ok(Vec::new()));
+        let _ = reply.send(Ok(MixHandlerResult {
+            track_ids: Vec::new(),
+        }));
 
-        assert!(request.await??.is_empty());
+        assert!(request.await??.track_ids.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn control_commands_skip_slots_held_by_dispatches() -> Result<()> {
+        let (handle, rx) = handle_with_capacity(1);
+        handle.dispatch_playback_update(playback_update())?;
+        // The dispatch keeps its slot for as long as its handler would run.
+        let running_dispatch = rx.recv()?;
+
+        let stop = tokio::spawn({
+            let handle = handle.clone();
+            async move { handle.stop_plugin("demo").await }
+        });
+        let queued =
+            tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_secs(1))).await??;
+        let PluginExecutorCommand::StopPlugin { plugin_id, reply } = queued.into_command() else {
+            panic!("expected queued stop request");
+        };
+        assert_eq!(plugin_id, "demo");
+        let _ = reply.send(Ok(()));
+        stop.await??;
+        drop(running_dispatch);
         Ok(())
     }
 

@@ -90,6 +90,7 @@ pub(super) enum PluginExecutorCommand {
         reply: tokio::sync::oneshot::Sender<Result<()>>,
     },
     ExecAll(tokio::sync::oneshot::Sender<Result<Vec<String>>>),
+    Shutdown(tokio::sync::oneshot::Sender<Result<()>>),
     MixHandler {
         request: MixHandlerRequest,
         reply: tokio::sync::oneshot::Sender<Result<MixHandlerResult>>,

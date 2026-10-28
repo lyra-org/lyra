@@ -159,14 +159,17 @@ async fn serve(capture: Option<CaptureArgs>, listener: TcpListener) -> Result<()
     let shutdown_bg = shutdown.clone();
     let config_for_bg = config.clone();
     let bg_handle = tokio::spawn(async move {
-        if let Err(err) = plugin_runtime.exec_all().await {
+        // Publishing must precede finalize_startup (activates plugin routes) and the
+        // library sync (dispatches handlers through the published runtime).
+        if let Err(err) = crate::plugins::STATE
+            .generation()
+            .registries
+            .start_plugins(plugin_runtime)
+            .await
+        {
             tracing::error!(error = %err, "plugin initialization failed");
             return;
         }
-
-        // Must precede finalize_startup (activates plugin routes) and the library sync
-        // (dispatches handlers through the published runtime).
-        crate::plugins::STATE.publish_runtime(plugin_runtime.clone());
 
         if let Err(err) = plugin_bootstrap::finalize_startup().await {
             tracing::error!(error = %err, "failed to finalize plugin startup");

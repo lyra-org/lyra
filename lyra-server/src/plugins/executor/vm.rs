@@ -236,6 +236,20 @@ impl PluginExecutor {
         self.runtime.exec_all()
     }
 
+    /// Cancels every plugin's tasks, polls once so cancelled websocket
+    /// handlers close their sockets, then releases the VM's data: its values
+    /// hold Luau references, and through them the VM itself.
+    pub(crate) fn shutdown(self) -> Result<()> {
+        let stopped = self
+            .runtime
+            .plugins
+            .iter()
+            .try_for_each(|plugin| self.runtime.stop_plugin(&plugin.manifest.id));
+        self.poll_background_tasks();
+        let released = self.vm.data().clear().map_err(anyhow::Error::new);
+        stopped.and(released)
+    }
+
     #[cfg(test)]
     pub(crate) fn run_plugin_source(
         &self,

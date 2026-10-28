@@ -94,6 +94,7 @@ fn map_plugin_restart_error(error: PluginRestartError) -> AppError {
         PluginRestartError::NotFound(plugin_id) => {
             AppError::not_found(format!("plugin not found: {plugin_id}"))
         }
+        PluginRestartError::RuntimeNotReady => AppError::service_unavailable(error.to_string()),
         PluginRestartError::Failed { .. } => AppError::conflict(error.to_string()),
     }
 }
@@ -819,16 +820,11 @@ async fn restart_plugin(
     let _principal = require_manage_plugins(bearer_credential(&headers)).await?;
     let plugin_id = PluginId::new(plugin_id)
         .map_err(|err| AppError::bad_request(format!("invalid plugin id: {err}")))?;
-    let harmony = crate::plugins::STATE
-        .generation()
-        .runtime
-        .get()
-        .ok_or_else(|| AppError::service_unavailable("plugin runtime is not ready"))?;
 
     crate::plugins::STATE
         .generation()
         .registries
-        .restart_plugin(&plugin_id, harmony)
+        .restart_plugin(&plugin_id)
         .await
         .map_err(map_plugin_restart_error)?;
 

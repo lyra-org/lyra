@@ -41,7 +41,10 @@ use harmony_repository::{
     uninstall_plugin,
 };
 use nanoid::nanoid;
-use tokio::sync::Mutex;
+use tokio::sync::{
+    Mutex,
+    MutexGuard,
+};
 
 use crate::services::STATE;
 use crate::services::boot::BuildInfo;
@@ -604,10 +607,10 @@ pub(crate) async fn install(
     plugin_ids: Option<&[String]>,
 ) -> Result<InstallReport, PluginRepoError> {
     let resolved = resolve_selection(url, git_ref, plugin_ids, &server_build()).await?;
-    let _guard = MUTATION_LOCK.lock().await;
+    let guard = MUTATION_LOCK.lock().await;
     let report = install_selected(&resolved, plugin_ids, &STATE.boot.get().plugins_dir);
     if !report.installed.is_empty() {
-        reload_runtime().await?;
+        reload_runtime(guard).await?;
     }
     Ok(report)
 }
@@ -1023,7 +1026,7 @@ async fn update_plugins_in(
         }
     }
 
-    let _guard = MUTATION_LOCK.lock().await;
+    let guard = MUTATION_LOCK.lock().await;
     for (id, candidate) in pending {
         if load_managed_record(plugins_dir, id).is_err() {
             report.failed.push(FailedInstall {
@@ -1045,7 +1048,7 @@ async fn update_plugins_in(
         }
     }
     if !report.updated.is_empty() {
-        reload_runtime().await?;
+        reload_runtime(guard).await?;
     }
 
     Ok(report)
@@ -1053,30 +1056,37 @@ async fn update_plugins_in(
 
 /// Uninstalls a repository-managed plugin and reloads the runtime.
 pub(crate) async fn uninstall(plugin_id: &str) -> Result<(), PluginRepoError> {
-    let _guard = MUTATION_LOCK.lock().await;
+    let guard = MUTATION_LOCK.lock().await;
     uninstall_plugin(&STATE.boot.get().plugins_dir, plugin_id).map_err(map_install_error)?;
-    reload_runtime().await
+    reload_runtime(guard).await
 }
 
 /// Reloads the plugin runtime from disk; the recovery step after a failed
 /// reload and the way CLI installs go live without a restart.
 pub(crate) async fn reload_plugins() -> Result<(), PluginRepoError> {
-    let _guard = MUTATION_LOCK.lock().await;
-    reload_runtime().await
+    reload_runtime(MUTATION_LOCK.lock().await).await
 }
 
-/// Reloads the runtime from `plugins_dir`. The caller holds `MUTATION_LOCK`.
-async fn reload_runtime() -> Result<(), PluginRepoError> {
-    crate::plugins::STATE
-        .generation()
-        .registries
-        .reload_all_plugins()
-        .await
-        .map_err(|error| {
-            PluginRepoError::Conflict(format!(
-                "plugins changed on disk but the runtime reload failed: {error:#}"
-            ))
-        })
+/// Reloads the runtime from `plugins_dir`. The reload holds `guard` to its
+/// end, even when the caller is dropped, so no other mutation can change
+/// `plugins_dir` while it reads it.
+async fn reload_runtime(guard: MutexGuard<'static, ()>) -> Result<(), PluginRepoError> {
+    tokio::spawn(async move {
+        let _guard = guard;
+        crate::plugins::STATE
+            .generation()
+            .registries
+            .reload_all_plugins()
+            .await
+    })
+    .await
+    .map_err(anyhow::Error::new)
+    .and_then(|result| result)
+    .map_err(|error| {
+        PluginRepoError::Conflict(format!(
+            "plugins changed on disk but the runtime reload failed: {error:#}"
+        ))
+    })
 }
 
 pub(crate) async fn add_repository(
