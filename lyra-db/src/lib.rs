@@ -9,6 +9,7 @@
 pub mod api_keys;
 pub mod artists;
 pub mod bootstrap;
+pub mod chains;
 pub mod covers;
 pub mod credits;
 pub mod cue;

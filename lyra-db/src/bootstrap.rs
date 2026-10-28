@@ -86,6 +86,7 @@ pub const ROOT_COLLECTION_ALIASES: &[&str] = &[
     "libraries",
     "entries",
     "releases",
+    "chains",
     "covers",
     "tracks",
     "track_sources",

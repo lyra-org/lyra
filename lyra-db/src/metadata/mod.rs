@@ -111,6 +111,8 @@ fn cascade_remove_entities_pre_favorites(
         // agdb cascades the Release's label edges, but a Label left without
         // releases must be collected.
         super::labels::unlink_release(db, id)?;
+        // A chain goes whole with its release or any of its tracks.
+        super::chains::remove_for_entity(db, id)?;
         // Lyrics + their LyricLine/LyricWord children sit at distance ≥ 2 from
         // the track; agdb's direct-edge cascade misses them. No-op for non-tracks.
         super::lyrics::delete_for_track_in_txn(db, id)?;

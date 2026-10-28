@@ -272,6 +272,7 @@ pub fn unlink_track(
     release_db_id: DbId,
     track_db_id: DbId,
 ) -> anyhow::Result<()> {
+    super::chains::remove_for_departing_track(db, release_db_id, track_db_id)?;
     if super::graph::remove_edges_between(db, release_db_id, track_db_id)? {
         super::covers::display::resync_playlists_with_track(db, track_db_id)?;
     }
@@ -301,6 +302,7 @@ pub fn replace_track_release(
         if current_release_db_id == release_db_id || !seen.insert(current_release_db_id) {
             continue;
         }
+        super::chains::remove_for_departing_track(db, current_release_db_id, track_db_id)?;
         removed_other |=
             super::graph::remove_edges_between(db, current_release_db_id, track_db_id)?;
     }
