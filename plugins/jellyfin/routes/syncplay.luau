@@ -59,6 +59,8 @@ type SyncPlayGroup = {
 	repeat_mode: string,
 	shuffle_mode: string,
 	resume_playing: boolean,
+	-- While waiting, the state the group was in when the wait began.
+	initial_state: string,
 	-- Whether the group's position jumped since it began waiting, which its members must apply.
 	position_jumped: boolean,
 	-- Whether a playing group that started without waiting for everyone ignores members buffering.
@@ -606,6 +608,7 @@ end
 
 local function syncplay_set_state(group: SyncPlayGroup, state: string)
 	if state == "Waiting" and group.state ~= "Waiting" then
+		group.initial_state = group.state
 		group.position_jumped = false
 	end
 	group.state = state
@@ -848,6 +851,7 @@ local function syncplay_new_group(entry: SessionEntry, group_name: string?): Syn
 		last_activity_ms = syncplay_now_ms(),
 		run_time_ticks = nil,
 		resume_playing = false,
+		initial_state = "Idle",
 		position_jumped = false,
 		ignore_buffering = false,
 		last_updated_at = now,
@@ -891,29 +895,36 @@ local function syncplay_known_current_item(group: SyncPlayGroup, playlist_item_i
 	return playlist_item_id == syncplay_current_playlist_item_id(group)
 end
 
--- Ends the wait once every member is ready. As upstream, when the member that was waited for
--- is behind the group, the others resume as it catches up; otherwise everyone resumes together.
+-- Ends the wait once every member is ready. As upstream, a group that won't resume returns to
+-- being paused, telling the members when it was paused before the wait. One that resumes has the
+-- others resume as the member that was waited for catches up when it is behind the group;
+-- otherwise everyone resumes together.
 local function syncplay_transition_if_ready(
 	group: SyncPlayGroup,
 	from_session_id: string,
-	is_playing: boolean?,
-	lag_ms: number?
+	is_playing: boolean,
+	lag_ms: number
 )
 	if not syncplay_group_ready(group) then
 		return
 	end
 
-	if is_playing ~= true and not group.resume_playing then
-		syncplay_settle(group)
+	if not group.resume_playing then
+		if group.initial_state == "Playing" then
+			syncplay_pause(group, from_session_id)
+			return
+		end
 		syncplay_set_state(group, "Paused")
-		syncplay_broadcast_command(group, from_session_id, "all", "Pause")
-		syncplay_broadcast_state(group, from_session_id, "Ready")
+		if group.initial_state == "Paused" then
+			syncplay_broadcast_command(group, from_session_id, "all", "Pause")
+			syncplay_broadcast_state(group, from_session_id, "Ready")
+		end
 		return
 	end
 
 	local delay_ms = syncplay_resume_delay_ms(group)
 	local filter = "all"
-	if lag_ms and lag_ms > syncplay_highest_ping(group) * 2 then
+	if lag_ms > syncplay_highest_ping(group) * 2 then
 		delay_ms = lag_ms
 		if is_playing then
 			filter = "except"
@@ -1299,7 +1310,17 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 			return group_err
 		end
 
-		syncplay_pause(group :: SyncPlayGroup, (entry :: SessionEntry).session_id)
+		local group_value = group :: SyncPlayGroup
+		if group_value.state == "Playing" then
+			syncplay_pause(group_value, (entry :: SessionEntry).session_id)
+		elseif group_value.state == "Waiting" then
+			-- As upstream, a waiting group is paused once everyone is ready.
+			group_value.resume_playing = false
+			syncplay_broadcast_state(group_value, (entry :: SessionEntry).session_id, "Pause")
+		else
+			local command = if group_value.state == "Paused" then "Pause" else "Stop"
+			syncplay_send_entry(entry :: SessionEntry, "SyncPlayCommand", syncplay_command(group_value, command))
+		end
 		return api.response.empty(204)
 	end)
 
@@ -1508,8 +1529,14 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 			participant.ignore_wait = syncplay_bool(body.IgnoreWait, false)
 		end
 		syncplay_update_wait(group_value, false)
-		if group_value.state == "Waiting" then
-			syncplay_transition_if_ready(group_value, (entry :: SessionEntry).session_id, nil, nil)
+		-- As upstream, a group no longer waiting for anyone resumes if it means to, and is paused
+		-- otherwise.
+		if group_value.state == "Waiting" and syncplay_group_ready(group_value) then
+			if group_value.resume_playing then
+				syncplay_unpause(group_value, (entry :: SessionEntry).session_id)
+			else
+				syncplay_set_state(group_value, "Paused")
+			end
 		end
 		return api.response.empty(204)
 	end)

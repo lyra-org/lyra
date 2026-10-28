@@ -101,8 +101,11 @@ task.wait(0.14)
 check(received("a"), "Unpause,Playing/Unpause", "the wait runs from when it started")
 
 -- Leaving the waiting state cancels the wait, so the next one runs in full.
+post("a", "Pause")
+post("a", "Unpause")
 post("b", "Buffering", { IsPlaying = true })
 task.wait(0.12)
+post("b", "Ready", { IsPlaying = true })
 post("a", "Pause")
 post("b", "Buffering", { IsPlaying = true })
 received("a")
@@ -146,6 +149,42 @@ post("a", "Ready", { IsPlaying = false, PositionTicks = 0 })
 post("b", "Ready", { IsPlaying = false, PositionTicks = 0 })
 check(received("b"), "Unpause,Playing/Ready", "then plays")
 received("a")
+
+-- A group paused while it waits is paused once everyone is ready.
+post("a", "Unpause")
+post("b", "Buffering", { IsPlaying = true })
+received("a")
+post("a", "Pause")
+check(received("a"), "Waiting/Pause", "the group keeps waiting")
+post("b", "Ready", { IsPlaying = false })
+check(received("a"), "Pause,Paused/Pause", "then pauses")
+
+-- A group that was paused before the wait returns to being paused.
+post("b", "Buffering", { IsPlaying = false })
+received("a")
+post("b", "Ready", { IsPlaying = false })
+check(received("a"), "Pause,Paused/Ready", "the group is paused again")
+
+-- A group that no longer waits for anyone resumes if it means to.
+post("a", "Unpause")
+post("b", "Buffering", { IsPlaying = true })
+received("a")
+post("b", "SetIgnoreWait", { IgnoreWait = true })
+check(received("a"), "Unpause,Playing/Unpause", "the group resumes without the member")
+post("b", "SetIgnoreWait", { IgnoreWait = false })
+
+-- Outside playback, a pause only reminds the member of the group's state.
+post("a", "Pause")
+received("a")
+received("b")
+post("b", "Pause")
+check(received("a"), "", "a paused group is left alone")
+check(received("b"), "Pause", "the member hears it is paused")
+post("a", "Stop")
+received("a")
+received("b")
+post("b", "Pause")
+check(received("b"), "Stop", "a stopped group tells the member to stop")
 
 -- A disbanded group never times out.
 post("b", "Buffering", { IsPlaying = true })
