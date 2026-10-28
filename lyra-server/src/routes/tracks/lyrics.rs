@@ -129,7 +129,7 @@ async fn get_track_lyrics(
     }
     let require_synced = format == "lrc";
     let candidates = lyrics_service::visible_for_track(db, track_db_id, Some(&principal))?;
-    let providers = crate::services::providers::active_providers(db, None)?;
+    let providers = crate::services::providers::active_providers(db)?;
     let language_hint = lyrics_service::normalize_language_hint(query.language.as_deref())
         .map_err(|error| AppError::bad_request(error.to_string()))?;
 
@@ -195,7 +195,7 @@ async fn get_track_lyrics_candidates(
     let format = parse_lyrics_format(query.format.as_deref())?;
     let require_synced = format == "lrc";
     let candidates = lyrics_service::visible_for_track(db, track_db_id, Some(&principal))?;
-    let providers = crate::services::providers::active_providers(db, None)?;
+    let providers = crate::services::providers::active_providers(db)?;
     let mut items: Vec<_> = lyrics_service::eligible_candidates(
         &candidates,
         &providers,

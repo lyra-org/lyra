@@ -308,7 +308,7 @@ async fn provider_snapshot(
 ) -> Result<ProviderSnapshot> {
     let configs = {
         let db = STATE.db.read().await;
-        active_providers(&db, None)?
+        active_providers(&db)?
     };
 
     for _ in 0..3 {

@@ -13,7 +13,10 @@ use crate::services::{
         LOCAL_SOURCE_ID,
         MANUAL_SOURCE_ID,
     },
-    providers::active_providers,
+    providers::{
+        ActiveProviders,
+        active_providers,
+    },
 };
 use agdb::{
     DbAny,
@@ -27,7 +30,6 @@ use lyra_db::{
     DbAccess,
     MetadataField,
     MetadataLayer,
-    ProviderConfig,
     Release,
     Track,
     labels::LabelLinkInput,
@@ -130,22 +132,17 @@ fn assign<T: PartialEq + FieldType>(
     Ok(true)
 }
 
-/// `providers` are the [`active_providers`]; layers from any other provider are dropped.
+/// Layers from providers outside `providers` are dropped.
 pub(crate) fn merge_layers(
     layers: Vec<MetadataLayer>,
-    providers: &[ProviderConfig],
+    providers: &ActiveProviders,
 ) -> MergedMetadata {
-    let position_map: HashMap<&str, u32> = providers
-        .iter()
-        .map(|provider| (provider.provider_id.as_str(), provider.position))
-        .collect();
-
     // Manual ranks above every provider, and local below the last one.
     let layer_rank = |layer: &MetadataLayer| -> (u8, u32) {
         match layer.source_id.as_str() {
             MANUAL_SOURCE_ID => (0, 0),
             LOCAL_SOURCE_ID => (2, 0),
-            source_id => (1, position_map.get(source_id).copied().unwrap_or_default()),
+            source_id => (1, providers.position(source_id).unwrap_or_default()),
         }
     };
 
@@ -153,7 +150,7 @@ pub(crate) fn merge_layers(
         .into_iter()
         .filter(|layer| {
             matches!(layer.source_id.as_str(), LOCAL_SOURCE_ID | MANUAL_SOURCE_ID)
-                || position_map.contains_key(layer.source_id.as_str())
+                || providers.contains(&layer.source_id)
         })
         .collect();
     sorted_layers.sort_by(|a, b| {
@@ -197,7 +194,7 @@ pub(crate) fn resolve_without(
         .into_iter()
         .filter(|layer| layer.source_id != excluded_source)
         .collect();
-    Ok(merge_layers(layers, &active_providers(db, None)?))
+    Ok(merge_layers(layers, &active_providers(db)?))
 }
 
 pub(crate) fn apply_merged_metadata_to_entity(db: &mut DbAny, node_id: DbId) -> anyhow::Result<()> {
@@ -229,7 +226,7 @@ pub(crate) fn apply_through_lock(
         .map(LayerKeys::supplied_by)
         .unwrap_or_default();
     unlocked.extend(released);
-    let providers = active_providers(db, None)?;
+    let providers = active_providers(db)?;
     let merged = merge_layers(layers, &providers);
 
     if let Some(mut release) = lyra_db::releases::get_by_id(db, node_id)? {
@@ -494,8 +491,8 @@ mod tests {
         field_value(&merged.fields, field).expect("resolved text")
     }
 
-    fn make_provider(provider_id: &str, position: u32, enabled: bool) -> ProviderConfig {
-        ProviderConfig {
+    fn make_provider(provider_id: &str, position: u32, enabled: bool) -> lyra_db::ProviderConfig {
+        lyra_db::ProviderConfig {
             db_id: None,
             provider_id: provider_id.to_string(),
             position,
@@ -509,10 +506,10 @@ mod tests {
             make_layer("low", r#"{"track_title": "Low Priority Title"}"#, 1000),
             make_layer("high", r#"{"track_title": "High Priority Title"}"#, 1000),
         ];
-        let providers = vec![
+        let providers = ActiveProviders::from_configs(vec![
             make_provider("low", 1, true),
             make_provider("high", 0, true),
-        ];
+        ]);
 
         let merged = merge_layers(layers, &providers);
 
@@ -532,10 +529,10 @@ mod tests {
                 1000,
             ),
         ];
-        let providers = vec![
+        let providers = ActiveProviders::from_configs(vec![
             make_provider("high", 0, true),
             make_provider("low", 1, true),
-        ];
+        ]);
 
         let merged = merge_layers(layers, &providers);
 
@@ -563,7 +560,7 @@ mod tests {
         };
         let merged = merge_layers(
             vec![make_layer("provider", r#"{"release_title": "Layer"}"#, 1)],
-            &[make_provider("provider", 0, true)],
+            &ActiveProviders::from_configs(vec![make_provider("provider", 0, true)]),
         );
 
         assert!(apply_to_release(&mut release, &merged, &Scope::All)?);
@@ -590,11 +587,27 @@ mod tests {
             created_at: None,
             ctime: None,
         };
-        let merged = merge_layers(Vec::new(), &[]);
+        let merged = merge_layers(Vec::new(), &ActiveProviders::from_configs(Vec::new()));
 
         assert!(!apply_to_release(&mut release, &merged, &Scope::All)?);
         assert_eq!(release.release_title, "Stored Title");
         Ok(())
+    }
+
+    #[test]
+    fn merge_layers_unlisted_provider_is_excluded() {
+        let layers = vec![
+            make_layer("off", r#"{"track_title": "Unlisted Title"}"#, 2000),
+            make_layer("live", r#"{"track_title": "Listed Title"}"#, 1000),
+        ];
+        let providers = ActiveProviders::from_configs(vec![make_provider("live", 1, true)]);
+
+        let merged = merge_layers(layers, &providers);
+
+        assert_eq!(
+            text(&merged, MetadataField::TrackTitle).as_deref(),
+            Some("Listed Title")
+        );
     }
 
     #[test]
@@ -605,7 +618,7 @@ mod tests {
             1000,
         )];
 
-        let merged = merge_layers(layers, &[]);
+        let merged = merge_layers(layers, &ActiveProviders::from_configs(Vec::new()));
 
         assert_eq!(
             text(&merged, MetadataField::TrackTitle).as_deref(),
@@ -619,7 +632,7 @@ mod tests {
             make_layer(LOCAL_SOURCE_ID, r#"{"track_title": "Tagged Title"}"#, 2000),
             make_layer("provider", r#"{"track_title": "Provider Title"}"#, 1000),
         ];
-        let providers = vec![make_provider("provider", 0, true)];
+        let providers = ActiveProviders::from_configs(vec![make_provider("provider", 0, true)]);
 
         let merged = merge_layers(layers, &providers);
 

@@ -63,9 +63,11 @@ use crate::{
         },
     },
 };
+
 use lyra_db::ProviderConfig;
 
 use super::{
+    ActiveProviders,
     EntityRefreshMode,
     EntityRefreshResult,
     ProviderServiceError,
@@ -134,7 +136,7 @@ pub(crate) async fn refresh_entity_metadata(
     };
 
     let providers = read_active_providers().await?;
-    let handlers = refresh_callbacks_for(&providers, entity_type, None, false).await;
+    let handlers = refresh_callbacks_for(&providers, entity_type, false).await;
     let mut providers_called = Vec::new();
     for (provider_id, handler, _) in handlers {
         let context = context_with_options(context.clone(), &provider_id, &passed_options).await;
@@ -209,17 +211,13 @@ pub(crate) async fn release_refresh_provider_ids(
     provider_filter: Option<&str>,
     include_sync_filters: bool,
 ) -> Result<Vec<String>, ProviderServiceError> {
-    let providers = read_active_providers().await?;
-    Ok(refresh_callbacks_for(
-        &providers,
-        EntityType::Release,
-        provider_filter,
-        include_sync_filters,
-    )
-    .await
-    .into_iter()
-    .map(|(provider_id, _, _)| provider_id)
-    .collect())
+    let providers = read_active_providers().await?.only(provider_filter);
+    let handlers =
+        refresh_callbacks_for(&providers, EntityType::Release, include_sync_filters).await;
+    Ok(handlers
+        .into_iter()
+        .map(|(provider_id, _, _)| provider_id)
+        .collect())
 }
 
 pub(crate) async fn refresh_release_metadata_for_scan_with_progress(
@@ -258,14 +256,9 @@ async fn refresh_release_metadata_inner_with_progress(
         }
     }
 
-    let providers = read_active_providers().await?;
-    let handlers = refresh_callbacks_for(
-        &providers,
-        EntityType::Release,
-        options.provider_id,
-        options.apply_sync_filters,
-    )
-    .await;
+    let providers = read_active_providers().await?.only(options.provider_id);
+    let handlers =
+        refresh_callbacks_for(&providers, EntityType::Release, options.apply_sync_filters).await;
     let schemes = id_schemes().await;
     let mut providers_called = Vec::new();
     let mut context: Option<serde_json::Value> = None;
@@ -418,14 +411,9 @@ async fn refresh_library_metadata_inner_with_progress(
         lyra_db::releases::get(&db, library_db_id)?
     };
 
-    let providers = read_active_providers().await?;
-    let handlers = refresh_callbacks_for(
-        &providers,
-        EntityType::Release,
-        options.provider_id,
-        options.apply_sync_filters,
-    )
-    .await;
+    let providers = read_active_providers().await?.only(options.provider_id);
+    let handlers =
+        refresh_callbacks_for(&providers, EntityType::Release, options.apply_sync_filters).await;
     let schemes = id_schemes().await;
     let release_count = releases
         .iter()
@@ -770,15 +758,14 @@ async fn sync_library_covers_after_refresh(
     Ok(release_count + artist_count)
 }
 
-async fn read_active_providers() -> anyhow::Result<Vec<ProviderConfig>> {
+async fn read_active_providers() -> anyhow::Result<ActiveProviders> {
     let db = STATE.db.read().await;
-    super::active_providers(&db, None)
+    super::active_providers(&db)
 }
 
 async fn refresh_callbacks_for(
-    providers: &[ProviderConfig],
+    providers: impl IntoIterator<Item = &ProviderConfig>,
     entity_type: EntityType,
-    provider_filter: Option<&str>,
     include_sync_filters: bool,
 ) -> Vec<(
     String,
@@ -787,8 +774,7 @@ async fn refresh_callbacks_for(
 )> {
     let registry = provider_registry().read_owned().await;
     providers
-        .iter()
-        .filter(|provider| provider_filter.is_none_or(|id| provider.provider_id == id))
+        .into_iter()
         .filter_map(|provider| {
             let handler = registry
                 .get_refresh_callback(&provider.provider_id, entity_type)?

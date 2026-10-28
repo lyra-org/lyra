@@ -3,30 +3,23 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashMap;
-
 use agdb::{
     DbAny,
     DbId,
 };
 
-use crate::services::auth::Principal;
+use crate::services::{
+    auth::Principal,
+    providers::ActiveProviders,
+};
 use lyra_db::{
     Lyrics,
-    ProviderConfig,
     lyrics::LyricsDetail,
     lyrics::LyricsKind,
 };
 
 /// Coverage threshold for the selector's synced tier.
 const MEANINGFUL_SYNCED_COVERAGE: f64 = 0.5;
-
-fn position_map(providers: &[ProviderConfig]) -> HashMap<&str, u32> {
-    providers
-        .iter()
-        .map(|p| (p.provider_id.as_str(), p.position))
-        .collect()
-}
 
 /// Minimum non-zero-ts lines for the selector's synced tier.
 const MIN_SYNCED_LINES: u32 = 2;
@@ -59,12 +52,12 @@ pub(crate) fn visible_for_track(
     lyra_db::lyrics::get_visible_for_track(db, track_db_id, owner)
 }
 
-fn is_eligible(lyrics: &Lyrics, positions: &HashMap<&str, u32>) -> bool {
+fn is_eligible(lyrics: &Lyrics, providers: &ActiveProviders) -> bool {
     lyrics.kind != LyricsKind::Provider
         || lyrics
             .provider_id
             .as_deref()
-            .is_some_and(|provider_id| positions.contains_key(provider_id))
+            .is_some_and(|provider_id| providers.contains(provider_id))
 }
 
 pub(crate) fn normalize_language_hint(raw: Option<&str>) -> anyhow::Result<Option<String>> {
@@ -80,14 +73,13 @@ pub(crate) fn normalize_language_hint(raw: Option<&str>) -> anyhow::Result<Optio
 
 pub(crate) fn eligible_candidates<'a>(
     candidates: &'a [Lyrics],
-    providers: &[ProviderConfig],
+    providers: &ActiveProviders,
     require_synced: bool,
     duration_ms: Option<u64>,
 ) -> Vec<&'a Lyrics> {
-    let positions = position_map(providers);
     candidates
         .iter()
-        .filter(|lyrics| is_eligible(lyrics, &positions))
+        .filter(|lyrics| is_eligible(lyrics, providers))
         .filter(|lyrics| !require_synced || has_meaningful_synced(lyrics, duration_ms))
         .collect()
 }
@@ -99,21 +91,18 @@ pub(crate) fn eligible_candidates<'a>(
 ///
 /// `require_synced = true` filters plain candidates pre-rank for `format=lrc`.
 ///
-/// `candidates` must already be visibility-filtered, e.g. by [`visible_for_track`], and
-/// `providers` are the [`active_providers`](crate::services::providers::active_providers).
+/// `candidates` must already be visibility-filtered, e.g. by [`visible_for_track`].
 pub(crate) fn pick_preferred<'a>(
     candidates: &'a [Lyrics],
-    providers: &[ProviderConfig],
+    providers: &ActiveProviders,
     provider_id: Option<&str>,
     language_hint: Option<&str>,
     duration_ms: Option<u64>,
     require_synced: bool,
 ) -> Option<&'a Lyrics> {
-    let positions = position_map(providers);
-
     candidates
         .iter()
-        .filter(|lyrics| is_eligible(lyrics, &positions))
+        .filter(|lyrics| is_eligible(lyrics, providers))
         .filter(|lyrics| {
             provider_id.is_none_or(|provider_id| {
                 lyrics.kind == LyricsKind::Provider
@@ -139,14 +128,12 @@ pub(crate) fn pick_preferred<'a>(
             let a_position = a
                 .provider_id
                 .as_deref()
-                .and_then(|provider_id| positions.get(provider_id))
-                .copied()
+                .and_then(|provider_id| providers.position(provider_id))
                 .unwrap_or(u32::MAX);
             let b_position = b
                 .provider_id
                 .as_deref()
-                .and_then(|provider_id| positions.get(provider_id))
-                .copied()
+                .and_then(|provider_id| providers.position(provider_id))
                 .unwrap_or(u32::MAX);
 
             a_tier
@@ -173,7 +160,7 @@ pub(crate) fn get_preferred_detail(
         return Ok(None);
     };
     let candidates = visible_for_track(db, track_db_id, viewer)?;
-    let providers = crate::services::providers::active_providers(db, None)?;
+    let providers = crate::services::providers::active_providers(db)?;
     let language_hint = normalize_language_hint(language_hint)?;
 
     let Some(winner) = pick_preferred(
@@ -231,8 +218,8 @@ mod tests {
         }
     }
 
-    fn provider(provider_id: &str, position: u32) -> ProviderConfig {
-        ProviderConfig {
+    fn provider(provider_id: &str, position: u32) -> lyra_db::ProviderConfig {
+        lyra_db::ProviderConfig {
             db_id: None,
             provider_id: provider_id.to_string(),
             position,
@@ -242,7 +229,7 @@ mod tests {
 
     fn pick_preferred<'a>(
         candidates: &'a [Lyrics],
-        providers: &[ProviderConfig],
+        providers: &ActiveProviders,
         language_hint: Option<&str>,
         duration_ms: Option<u64>,
         require_synced: bool,
@@ -263,7 +250,7 @@ mod tests {
             lyrics("p1", "plug", "eng", Provider, 100, 180_000, 2000),
             lyrics("u1", "user", "eng", Personal, 0, 0, 1000),
         ];
-        let providers = vec![provider("plug", 0)];
+        let providers = ActiveProviders::from_configs(vec![provider("plug", 0)]);
         let winner = pick_preferred(&cands, &providers, Some("eng"), Some(200_000), false);
         assert_eq!(winner.map(|w| w.id.as_str()), Some("u1"));
     }
@@ -274,7 +261,8 @@ mod tests {
             lyrics("p1", "plug", "fra", Provider, 50, 120_000, 2000),
             lyrics("p2", "other", "eng", Provider, 0, 0, 1000),
         ];
-        let providers = vec![provider("plug", 0), provider("other", 1)];
+        let providers =
+            ActiveProviders::from_configs(vec![provider("plug", 0), provider("other", 1)]);
         let winner = pick_preferred(&cands, &providers, Some("eng"), Some(200_000), false);
         assert_eq!(winner.map(|w| w.id.as_str()), Some("p2"));
     }
@@ -285,7 +273,8 @@ mod tests {
             lyrics("p1", "plug", "fra", Provider, 0, 0, 2000),
             lyrics("p2", "other", "ENG", Provider, 0, 0, 1000),
         ];
-        let providers = vec![provider("plug", 0), provider("other", 1)];
+        let providers =
+            ActiveProviders::from_configs(vec![provider("plug", 0), provider("other", 1)]);
         let winner = pick_preferred(&cands, &providers, Some("eng"), None, false);
         assert_eq!(winner.map(|w| w.id.as_str()), Some("p2"));
     }
@@ -296,7 +285,8 @@ mod tests {
             lyrics("p1", "high", "eng", Provider, 0, 0, 2000),
             lyrics("p2", "low", "eng", Provider, 80, 120_000, 1000),
         ];
-        let providers = vec![provider("high", 0), provider("low", 1)];
+        let providers =
+            ActiveProviders::from_configs(vec![provider("high", 0), provider("low", 1)]);
         let winner = pick_preferred(&cands, &providers, Some("eng"), Some(200_000), false);
         assert_eq!(winner.map(|w| w.id.as_str()), Some("p2"));
     }
@@ -308,7 +298,7 @@ mod tests {
             lyrics("thin", "plug", "eng", Provider, 2, 20_000, 2000),
             lyrics("plain", "plug", "eng", Provider, 0, 0, 3000),
         ];
-        let providers = vec![provider("plug", 0)];
+        let providers = ActiveProviders::from_configs(vec![provider("plug", 0)]);
         let winner = pick_preferred(&cands, &providers, Some("eng"), Some(200_000), false);
         assert_eq!(winner.map(|w| w.id.as_str()), Some("plain"));
     }
@@ -333,7 +323,7 @@ mod tests {
         };
         let honest_plain = lyrics("plain", "plug", "eng", Provider, 0, 0, 1000);
         let cands = vec![forged, honest_plain];
-        let providers = vec![provider("plug", 0)];
+        let providers = ActiveProviders::from_configs(vec![provider("plug", 0)]);
         let winner = pick_preferred(&cands, &providers, None, Some(200_000), false);
         assert_eq!(
             winner.map(|w| w.id.as_str()),
@@ -353,7 +343,7 @@ mod tests {
             lyrics("zeros", "plug", "eng", Provider, 50, 0, 2000),
             lyrics("plain", "plug", "eng", Provider, 0, 0, 1000),
         ];
-        let providers = vec![provider("plug", 0)];
+        let providers = ActiveProviders::from_configs(vec![provider("plug", 0)]);
         let winner = pick_preferred(&cands, &providers, None, Some(200_000), false);
         assert_eq!(winner.map(|w| w.id.as_str()), Some("zeros"));
         let synced_only = pick_preferred(&cands, &providers, None, Some(200_000), true);
@@ -367,7 +357,7 @@ mod tests {
             lyrics("u1", "user", "eng", Personal, 0, 0, 5000),
             lyrics("syn", "plug", "eng", Provider, 80, 120_000, 1000),
         ];
-        let providers = vec![provider("plug", 0)];
+        let providers = ActiveProviders::from_configs(vec![provider("plug", 0)]);
         let winner = pick_preferred(&cands, &providers, Some("eng"), Some(200_000), true);
         assert_eq!(
             winner.map(|w| w.id.as_str()),
@@ -379,7 +369,7 @@ mod tests {
     #[test]
     fn require_synced_returns_none_when_no_synced_candidate_exists() {
         let cands = vec![lyrics("plain", "plug", "eng", Provider, 0, 0, 1000)];
-        let providers = vec![provider("plug", 0)];
+        let providers = ActiveProviders::from_configs(vec![provider("plug", 0)]);
         let winner = pick_preferred(&cands, &providers, None, Some(200_000), true);
         assert!(winner.is_none());
     }
@@ -392,7 +382,11 @@ mod tests {
             lyrics("c", "cc", "eng", Provider, 0, 0, 2000),
         ];
         // Newer pair ties; lex-smaller provider_id breaks it.
-        let providers = vec![provider("aa", 0), provider("bb", 0), provider("cc", 0)];
+        let providers = ActiveProviders::from_configs(vec![
+            provider("aa", 0),
+            provider("bb", 0),
+            provider("cc", 0),
+        ]);
         let winner = pick_preferred(&cands, &providers, None, None, false);
         assert_eq!(winner.map(|w| w.id.as_str()), Some("b"));
     }
@@ -403,7 +397,7 @@ mod tests {
             lyrics("off", "off", "eng", Provider, 100, 180_000, 5000),
             lyrics("on", "live", "eng", Provider, 0, 0, 1000),
         ];
-        let providers = vec![provider("live", 1)];
+        let providers = ActiveProviders::from_configs(vec![provider("live", 1)]);
         let winner = pick_preferred(&cands, &providers, None, Some(200_000), false);
         assert_eq!(winner.map(|w| w.id.as_str()), Some("on"));
         let eligible = eligible_candidates(&cands, &providers, false, Some(200_000));
@@ -414,7 +408,7 @@ mod tests {
     #[test]
     fn personal_lyrics_are_eligible_without_provider_configuration() {
         let cands = vec![lyrics("u1", "user", "eng", Personal, 0, 0, 1000)];
-        let providers = vec![];
+        let providers = ActiveProviders::from_configs(vec![]);
         let winner = pick_preferred(&cands, &providers, None, None, false);
         assert_eq!(winner.map(|w| w.id.as_str()), Some("u1"));
     }
@@ -422,7 +416,7 @@ mod tests {
     #[test]
     fn empty_candidates_returns_none() {
         let cands: Vec<Lyrics> = vec![];
-        let providers = vec![];
+        let providers = ActiveProviders::from_configs(vec![]);
         assert!(pick_preferred(&cands, &providers, None, None, false).is_none());
     }
 
@@ -432,7 +426,7 @@ mod tests {
             lyrics("thin", "plug", "eng", Provider, 2, 20_000, 2000),
             lyrics("plain", "plug", "eng", Provider, 0, 0, 3000),
         ];
-        let providers = vec![provider("plug", 0)];
+        let providers = ActiveProviders::from_configs(vec![provider("plug", 0)]);
         let winner = pick_preferred(&cands, &providers, None, None, false);
         assert_eq!(winner.map(|w| w.id.as_str()), Some("thin"));
     }
@@ -442,7 +436,7 @@ mod tests {
         let personal = lyrics("personal", "manual", "fra", Personal, 0, 0, 1000);
         let provider_lyrics = lyrics("provider", "plug", "eng", Provider, 0, 0, 3000);
         let candidates = vec![personal, provider_lyrics];
-        let providers = vec![provider("plug", 0)];
+        let providers = ActiveProviders::from_configs(vec![provider("plug", 0)]);
 
         let winner = pick_preferred(&candidates, &providers, Some("eng"), None, false);
         assert_eq!(winner.map(|lyrics| lyrics.id.as_str()), Some("personal"));
@@ -453,7 +447,7 @@ mod tests {
         let personal = lyrics("personal", "manual", "eng", Personal, 0, 0, 3000);
         let provider_lyrics = lyrics("provider", "plug", "eng", Provider, 0, 0, 1000);
         let candidates = vec![personal, provider_lyrics];
-        let providers = vec![provider("plug", 0)];
+        let providers = ActiveProviders::from_configs(vec![provider("plug", 0)]);
 
         let winner =
             super::pick_preferred(&candidates, &providers, Some("plug"), None, None, false);
@@ -465,7 +459,7 @@ mod tests {
         let shared = lyrics("shared", "manual", "eng", Shared, 0, 0, 3000);
         let personal = lyrics("personal", "manual", "fra", Personal, 0, 0, 1000);
         let provider_lyrics = lyrics("provider", "plug", "eng", Provider, 0, 0, 5000);
-        let providers = vec![provider("plug", 0)];
+        let providers = ActiveProviders::from_configs(vec![provider("plug", 0)]);
 
         let candidates = vec![shared.clone(), personal, provider_lyrics.clone()];
         let winner = pick_preferred(&candidates, &providers, Some("eng"), None, false);

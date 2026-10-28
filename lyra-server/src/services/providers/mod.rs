@@ -5,19 +5,73 @@
 
 use super::EntityType;
 
-/// Enabled providers in position order, narrowed to `provider_filter` when set.
-pub(crate) fn active_providers(
-    db: &impl lyra_db::DbAccess,
-    provider_filter: Option<&str>,
-) -> anyhow::Result<Vec<lyra_db::ProviderConfig>> {
-    let provider_filter = provider_filter
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    Ok(lyra_db::providers::get(db)?
-        .into_iter()
-        .filter(|provider| provider.enabled)
-        .filter(|provider| provider_filter.is_none_or(|id| provider.provider_id == id))
-        .collect())
+/// Enabled providers in position order, built only by [`active_providers`].
+#[derive(Debug)]
+pub(crate) struct ActiveProviders(Vec<lyra_db::ProviderConfig>);
+
+impl ActiveProviders {
+    #[cfg(test)]
+    pub(crate) fn from_configs(configs: Vec<lyra_db::ProviderConfig>) -> Self {
+        Self(configs)
+    }
+
+    pub(crate) fn iter(&self) -> std::slice::Iter<'_, lyra_db::ProviderConfig> {
+        self.0.iter()
+    }
+
+    /// The active providers narrowed to `provider_filter` when set. The result
+    /// is a plain list so a subset never ranks or merges as the active set.
+    pub(crate) fn only(self, provider_filter: Option<&str>) -> Vec<lyra_db::ProviderConfig> {
+        let provider_filter = provider_filter
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        self.0
+            .into_iter()
+            .filter(|provider| provider_filter.is_none_or(|id| provider.provider_id == id))
+            .collect()
+    }
+
+    pub(crate) fn contains(&self, provider_id: &str) -> bool {
+        self.0
+            .iter()
+            .any(|provider| provider.provider_id == provider_id)
+    }
+
+    /// The stored position of `provider_id`, or `None` when it is not active.
+    pub(crate) fn position(&self, provider_id: &str) -> Option<u32> {
+        self.0
+            .iter()
+            .find(|provider| provider.provider_id == provider_id)
+            .map(|provider| provider.position)
+    }
+}
+
+impl IntoIterator for ActiveProviders {
+    type Item = lyra_db::ProviderConfig;
+    type IntoIter = std::vec::IntoIter<lyra_db::ProviderConfig>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a ActiveProviders {
+    type Item = &'a lyra_db::ProviderConfig;
+    type IntoIter = std::slice::Iter<'a, lyra_db::ProviderConfig>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+/// Enabled providers in position order.
+pub(crate) fn active_providers(db: &impl lyra_db::DbAccess) -> anyhow::Result<ActiveProviders> {
+    Ok(ActiveProviders(
+        lyra_db::providers::get(db)?
+            .into_iter()
+            .filter(|provider| provider.enabled)
+            .collect(),
+    ))
 }
 
 mod admin;
@@ -185,7 +239,8 @@ mod tests {
         lyra_db::providers::set_enabled(&mut db, "off", false)?;
 
         let ids = |filter| -> anyhow::Result<Vec<String>> {
-            Ok(super::active_providers(&db, filter)?
+            Ok(super::active_providers(&db)?
+                .only(filter)
                 .into_iter()
                 .map(|provider| provider.provider_id)
                 .collect())

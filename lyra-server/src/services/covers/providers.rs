@@ -832,7 +832,7 @@ pub(crate) async fn search_release_cover_candidates(
         let artists = lyra_db::artists::get(&db, release_id)?;
         let library = library_for_release(&db, release_id)?;
 
-        let providers = active_providers(&db, provider_filter)?;
+        let providers = active_providers(&db)?.only(provider_filter);
         let mut provider_contexts = Vec::new();
         for provider in providers {
             let provider_id = provider.provider_id;
@@ -871,7 +871,7 @@ pub(crate) async fn search_artist_cover_candidates(
             lyra_db::lookup::find_node_id_by_id(&*db, artist_public_id)?.ok_or_else(not_found)?;
         let artist = lyra_db::artists::get_by_id(&db, artist_id)?.ok_or_else(not_found)?;
 
-        let providers = active_providers(&db, provider_filter)?;
+        let providers = active_providers(&db)?.only(provider_filter);
         let mut provider_contexts = Vec::new();
         for provider in providers {
             let provider_id = provider.provider_id;

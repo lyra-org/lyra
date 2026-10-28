@@ -299,7 +299,7 @@ pub(crate) async fn dispatch_for_track_identity(
         return Ok(());
     }
 
-    let providers = active_providers(&*STATE.db.read().await, None)?;
+    let providers = active_providers(&*STATE.db.read().await)?;
     let registry_snapshot: Vec<RegisteredHandler> = {
         let registry = LYRICS_PROVIDER_REGISTRY.read().await;
         providers

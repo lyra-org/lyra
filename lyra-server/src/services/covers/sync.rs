@@ -189,7 +189,7 @@ pub(crate) async fn sync_release_cover_for_tracks(
 
     let (existing_cover, provider_contexts) = {
         let db_read = db.read().await;
-        let sorted_providers = active_providers(&db_read, None)?;
+        let sorted_providers = active_providers(&db_read)?;
         let library = library_for_release(&db_read, release_id)?;
         let existing_cover = resolve_cover_for_release(&db_read, release_id, tracks, paths)?;
 
@@ -307,7 +307,7 @@ pub(crate) async fn sync_artist_cover(
 
     let (existing_cover, provider_contexts) = {
         let db_read = db.read().await;
-        let sorted_providers = active_providers(&db_read, provider_filter)?;
+        let sorted_providers = active_providers(&db_read)?.only(provider_filter);
         let existing_cover = resolve_cover_for_artist_id(&db_read, artist_id, paths)?;
 
         let mut provider_contexts = Vec::new();
@@ -567,7 +567,7 @@ pub(crate) async fn sync_release_covers_for_library(
         let db_read = db.read().await;
         let releases = lyra_db::releases::get(&db_read, library_id)?;
 
-        let sorted_providers = active_providers(&db_read, provider_filter)?;
+        let sorted_providers = active_providers(&db_read)?.only(provider_filter);
         if sorted_providers.is_empty() {
             return Ok(0);
         }

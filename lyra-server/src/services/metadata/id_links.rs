@@ -17,6 +17,8 @@ use agdb::{
     DbId,
 };
 
+use crate::services::providers::active_providers;
+
 /// One external ID value, as a provider names it.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct IdKey {
@@ -171,13 +173,12 @@ impl LinkedIds {
     }
 }
 
-/// Enabled providers' positions, the admin-set trust order; 0 ranks highest.
+/// Active providers' positions, the admin-set trust order; 0 ranks highest.
 pub(crate) type ProviderRanks = HashMap<String, u32>;
 
 pub(crate) fn provider_ranks(db: &DbAny) -> anyhow::Result<ProviderRanks> {
-    Ok(lyra_db::providers::get(db)?
+    Ok(active_providers(db)?
         .into_iter()
-        .filter(|provider| provider.enabled)
         .map(|provider| (provider.provider_id, provider.position))
         .collect())
 }
