@@ -248,6 +248,7 @@ mod tests {
     fn new_test_db() -> anyhow::Result<DbAny> {
         Ok(TestDb::with_root_aliases(&[
             "releases",
+            "chains",
             "tracks",
             "artists",
             "providers",
@@ -1410,6 +1411,64 @@ mod tests {
             release_artists(&db)?,
             vec!["Main"],
             "one rescanned track cannot outvote the rest of the release"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rescans_and_cleanup_keep_a_releases_chains() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let library =
+            test_db::insert_test_library_node(&mut db, "Urn", PathBuf::from("/music/urn"))?;
+        let library_id = library.db_id.unwrap();
+        let mut tracks = Vec::new();
+        for number in 1..=4 {
+            let entry = insert_entry(&mut db, &format!("/music/urn/{number:02}.flac"))?;
+            connect(&mut db, library_id, entry)?;
+            tracks.push(track_metadata(
+                entry.0,
+                "Urn",
+                "Ne Obliviscaris",
+                Some(2017),
+                Some(1),
+                number,
+            ));
+        }
+        apply_metadata(&mut db, library_id, tracks.clone())?;
+        let release_id: DbId = select_releases(&db)?[0].db_id.clone().unwrap().into();
+        let mut track_ids = lyra_db::tracks::get_direct(&db, release_id)?;
+        track_ids.sort_by_key(|track| track.track);
+        let track_ids = track_ids
+            .into_iter()
+            .map(|track| DbId::from(track.db_id.unwrap()))
+            .collect::<Vec<_>>();
+        let chains = lyra_db::chains::replace_for_release(
+            &mut db,
+            release_id,
+            &[track_ids[1..3].to_vec()],
+        )??;
+
+        for (track, title) in tracks.iter_mut().zip([
+            "Intra Venus",
+            "Libera (Part I) – Saturnine Spheres",
+            "Libera (Part II) – Ascent of Burning Moths",
+            "Urn (Part I) – And Within the Void We Are Breathless",
+        ]) {
+            track.title = Some(title.to_string());
+            track.album = Some("Urn (Remastered)".to_string());
+            track.year = Some(2018);
+        }
+        apply_metadata(&mut db, library_id, tracks.clone())?;
+        apply_metadata(&mut db, library_id, vec![tracks[2].clone()])?;
+        cleanup_orphaned_metadata(&mut db)?;
+
+        let releases = select_releases(&db)?;
+        assert_eq!(releases.len(), 1);
+        assert_eq!(DbId::from(releases[0].db_id.clone().unwrap()), release_id);
+        assert_eq!(
+            lyra_db::chains::get_for_release(&db, release_id)?,
+            chains,
+            "rescans keep the tracks and their release, so the chain stays"
         );
         Ok(())
     }
