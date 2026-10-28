@@ -604,7 +604,7 @@ fn merged_provider_fields(
         return Ok(BTreeMap::new());
     }
 
-    let providers = lyra_db::providers::get(db)?;
+    let providers = crate::services::providers::active_providers(db, None)?;
     let merged = crate::services::metadata::merging::merge_layers(layers, &providers);
     merged
         .fields

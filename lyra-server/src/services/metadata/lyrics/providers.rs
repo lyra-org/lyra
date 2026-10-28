@@ -50,6 +50,7 @@ use crate::{
         IdentifiersByScheme,
         ProviderCallStage,
         ProviderRequireSpec,
+        active_providers,
         id_schemes,
         requirements_match_with,
         with_provider_call,
@@ -189,21 +190,8 @@ impl LyricsProviderRegistry {
             .retain(|_, handler| &handler.plugin_id != plugin_id);
     }
 
-    /// Handlers in `providers` order; handlers without a stored provider go
-    /// last, by provider_id.
-    pub(crate) fn list_in_order(
-        &self,
-        providers: &[lyra_db::ProviderConfig],
-    ) -> Vec<RegisteredHandler> {
-        let mut all: Vec<RegisteredHandler> = self.handlers.values().cloned().collect();
-        all.sort_by_cached_key(|handler| {
-            let rank = providers
-                .iter()
-                .position(|provider| provider.provider_id == handler.provider_id.as_ref())
-                .unwrap_or(usize::MAX);
-            (rank, handler.provider_id.clone())
-        });
-        all
+    pub(crate) fn get(&self, provider_id: &str) -> Option<&RegisteredHandler> {
+        self.handlers.get(provider_id)
     }
 }
 
@@ -288,8 +276,9 @@ pub(crate) async fn unregister_handlers_for_plugin(plugin_id: &PluginId) {
     registry.remove_for_plugin(plugin_id);
 }
 
-/// Run every matching handler in provider order. Not stop-on-first-hit —
-/// each gate-passing `Hit` writes a row; `selection.rs` picks the winner.
+/// Run every matching handler of an active provider in provider order. Not
+/// stop-on-first-hit — each gate-passing `Hit` writes a row; `selection.rs`
+/// picks the winner.
 pub(crate) async fn dispatch_for_track(track_db_id: DbId, force_refresh: bool) -> Result<()> {
     dispatch_for_track_identity(track_db_id, None, force_refresh).await
 }
@@ -310,10 +299,13 @@ pub(crate) async fn dispatch_for_track_identity(
         return Ok(());
     }
 
-    let providers = lyra_db::providers::get(&*STATE.db.read().await)?;
-    let registry_snapshot = {
+    let providers = active_providers(&*STATE.db.read().await, None)?;
+    let registry_snapshot: Vec<RegisteredHandler> = {
         let registry = LYRICS_PROVIDER_REGISTRY.read().await;
-        registry.list_in_order(&providers)
+        providers
+            .iter()
+            .filter_map(|provider| registry.get(&provider.provider_id).cloned())
+            .collect()
     };
 
     let mut failures = Vec::new();
@@ -781,10 +773,37 @@ mod tests {
         }
     }
 
-    /// Skips `register_handler`'s startup rescan to keep tests deterministic.
+    /// Declares the handler's provider and skips `register_handler`'s startup
+    /// rescan to keep tests deterministic.
     async fn install_handler_for_test(handler: RegisteredHandler) {
+        lyra_db::providers::register(&mut *STATE.db.write().await, &handler.provider_id)
+            .expect("register provider");
         let mut registry = LYRICS_PROVIDER_REGISTRY.write().await;
         registry.insert(handler);
+    }
+
+    #[tokio::test]
+    async fn disabled_providers_are_not_dispatched() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        initialize_test_runtime().await?;
+        let track_id = install_track_in_state_db("Disabled Track", "Artist", 180_000).await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        install_handler_for_test(make_handler(
+            "disabled",
+            test_plugin_id(),
+            CancellationToken::new(),
+            Arc::new(move |_| {
+                observed.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async { bail!("upstream 503") })
+            }),
+        ))
+        .await;
+        lyra_db::providers::set_enabled(&mut *STATE.db.write().await, "disabled", false)?;
+
+        dispatch_for_track(track_id, true).await?;
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        Ok(())
     }
 
     #[tokio::test]
@@ -840,12 +859,6 @@ mod tests {
         let _guard = crate::services::testing::runtime_test_lock().await;
         initialize_test_runtime().await?;
         let track_id = install_track_in_state_db("Original", "Artist", 180_000).await;
-        let mut original = {
-            let mut db = STATE.db.write().await;
-            let track = lyra_db::tracks::get_by_id(&*db, track_id)?.unwrap();
-            db.exec_mut(agdb::QueryBuilder::remove().ids(track_id).query())?;
-            track
-        };
         let calls = Arc::new(AtomicUsize::new(0));
         let observed = calls.clone();
         install_handler_for_test(make_handler(
@@ -858,6 +871,12 @@ mod tests {
             }),
         ))
         .await;
+        let mut original = {
+            let mut db = STATE.db.write().await;
+            let track = lyra_db::tracks::get_by_id(&*db, track_id)?.unwrap();
+            db.exec_mut(agdb::QueryBuilder::remove().ids(track_id).query())?;
+            track
+        };
 
         dispatch_for_track_identity(track_id, Some(&original.id), false).await?;
         let original_public_id = original.id.clone();

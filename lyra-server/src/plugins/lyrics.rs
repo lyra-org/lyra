@@ -487,7 +487,8 @@ fn has_many_callback(
     let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        let providers = lyra_db::providers::get(&db).map_err(crate::plugins::runtime_error)?;
+        let providers = crate::services::providers::active_providers(&*db, None)
+            .map_err(crate::plugins::runtime_error)?;
         let owner = Some(crate::plugins::auth::require_user_db_id(&principal, &db)?);
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, track_ids.len());
 

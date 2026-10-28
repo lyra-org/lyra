@@ -45,7 +45,7 @@ use crate::{
             IdSchemes,
             MAX_SIMILAR_RELEASES_HANDLER_TIMEOUT,
             ProviderSimilarReleasesSpec,
-            enabled_provider_configs_by_priority,
+            active_providers,
             requirements_match,
         },
     },
@@ -308,7 +308,7 @@ async fn provider_snapshot(
 ) -> Result<ProviderSnapshot> {
     let configs = {
         let db = STATE.db.read().await;
-        enabled_provider_configs_by_priority(&db, None)?
+        active_providers(&db, None)?
     };
 
     for _ in 0..3 {

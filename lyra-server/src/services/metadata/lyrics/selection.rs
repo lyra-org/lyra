@@ -24,7 +24,6 @@ const MEANINGFUL_SYNCED_COVERAGE: f64 = 0.5;
 fn position_map(providers: &[ProviderConfig]) -> HashMap<&str, u32> {
     providers
         .iter()
-        .filter(|p| p.enabled)
         .map(|p| (p.provider_id.as_str(), p.position))
         .collect()
 }
@@ -100,7 +99,8 @@ pub(crate) fn eligible_candidates<'a>(
 ///
 /// `require_synced = true` filters plain candidates pre-rank for `format=lrc`.
 ///
-/// `candidates` must already be visibility-filtered, e.g. by [`visible_for_track`].
+/// `candidates` must already be visibility-filtered, e.g. by [`visible_for_track`], and
+/// `providers` are the [`active_providers`](crate::services::providers::active_providers).
 pub(crate) fn pick_preferred<'a>(
     candidates: &'a [Lyrics],
     providers: &[ProviderConfig],
@@ -173,7 +173,7 @@ pub(crate) fn get_preferred_detail(
         return Ok(None);
     };
     let candidates = visible_for_track(db, track_db_id, viewer)?;
-    let providers = lyra_db::providers::get(db)?;
+    let providers = crate::services::providers::active_providers(db, None)?;
     let language_hint = normalize_language_hint(language_hint)?;
 
     let Some(winner) = pick_preferred(
@@ -237,15 +237,6 @@ mod tests {
             provider_id: provider_id.to_string(),
             position,
             enabled: true,
-        }
-    }
-
-    fn disabled(provider_id: &str, position: u32) -> ProviderConfig {
-        ProviderConfig {
-            db_id: None,
-            provider_id: provider_id.to_string(),
-            position,
-            enabled: false,
         }
     }
 
@@ -407,12 +398,12 @@ mod tests {
     }
 
     #[test]
-    fn disabled_provider_is_excluded() {
+    fn unlisted_provider_is_excluded() {
         let cands = vec![
-            lyrics("dis", "off", "eng", Provider, 100, 180_000, 5000),
+            lyrics("off", "off", "eng", Provider, 100, 180_000, 5000),
             lyrics("on", "live", "eng", Provider, 0, 0, 1000),
         ];
-        let providers = vec![disabled("off", 0), provider("live", 1)];
+        let providers = vec![provider("live", 1)];
         let winner = pick_preferred(&cands, &providers, None, Some(200_000), false);
         assert_eq!(winner.map(|w| w.id.as_str()), Some("on"));
         let eligible = eligible_candidates(&cands, &providers, false, Some(200_000));

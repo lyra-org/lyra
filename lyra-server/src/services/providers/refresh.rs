@@ -133,7 +133,7 @@ pub(crate) async fn refresh_entity_metadata(
         (entity_type, context, library_db_id)
     };
 
-    let providers = enabled_providers().await?;
+    let providers = read_active_providers().await?;
     let handlers = refresh_callbacks_for(&providers, entity_type, None, false).await;
     let mut providers_called = Vec::new();
     for (provider_id, handler, _) in handlers {
@@ -209,7 +209,7 @@ pub(crate) async fn release_refresh_provider_ids(
     provider_filter: Option<&str>,
     include_sync_filters: bool,
 ) -> Result<Vec<String>, ProviderServiceError> {
-    let providers = enabled_providers().await?;
+    let providers = read_active_providers().await?;
     Ok(refresh_callbacks_for(
         &providers,
         EntityType::Release,
@@ -258,7 +258,7 @@ async fn refresh_release_metadata_inner_with_progress(
         }
     }
 
-    let providers = enabled_providers().await?;
+    let providers = read_active_providers().await?;
     let handlers = refresh_callbacks_for(
         &providers,
         EntityType::Release,
@@ -418,7 +418,7 @@ async fn refresh_library_metadata_inner_with_progress(
         lyra_db::releases::get(&db, library_db_id)?
     };
 
-    let providers = enabled_providers().await?;
+    let providers = read_active_providers().await?;
     let handlers = refresh_callbacks_for(
         &providers,
         EntityType::Release,
@@ -770,9 +770,9 @@ async fn sync_library_covers_after_refresh(
     Ok(release_count + artist_count)
 }
 
-async fn enabled_providers() -> anyhow::Result<Vec<ProviderConfig>> {
+async fn read_active_providers() -> anyhow::Result<Vec<ProviderConfig>> {
     let db = STATE.db.read().await;
-    super::enabled_provider_configs_by_priority(&db, None)
+    super::active_providers(&db, None)
 }
 
 async fn refresh_callbacks_for(

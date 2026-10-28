@@ -8,9 +8,12 @@ use std::collections::{
     HashSet,
 };
 
-use crate::services::metadata::layers::{
-    LOCAL_SOURCE_ID,
-    MANUAL_SOURCE_ID,
+use crate::services::{
+    metadata::layers::{
+        LOCAL_SOURCE_ID,
+        MANUAL_SOURCE_ID,
+    },
+    providers::active_providers,
 };
 use agdb::{
     DbAny,
@@ -127,14 +130,15 @@ fn assign<T: PartialEq + FieldType>(
     Ok(true)
 }
 
+/// `providers` are the [`active_providers`]; layers from any other provider are dropped.
 pub(crate) fn merge_layers(
     layers: Vec<MetadataLayer>,
     providers: &[ProviderConfig],
 ) -> MergedMetadata {
-    let mut position_map: HashMap<&str, u32> = HashMap::new();
-    for provider in providers.iter().filter(|provider| provider.enabled) {
-        position_map.insert(&provider.provider_id, provider.position);
-    }
+    let position_map: HashMap<&str, u32> = providers
+        .iter()
+        .map(|provider| (provider.provider_id.as_str(), provider.position))
+        .collect();
 
     // Manual ranks above every provider, and local below the last one.
     let layer_rank = |layer: &MetadataLayer| -> (u8, u32) {
@@ -193,7 +197,7 @@ pub(crate) fn resolve_without(
         .into_iter()
         .filter(|layer| layer.source_id != excluded_source)
         .collect();
-    Ok(merge_layers(layers, &lyra_db::providers::get(db)?))
+    Ok(merge_layers(layers, &active_providers(db, None)?))
 }
 
 pub(crate) fn apply_merged_metadata_to_entity(db: &mut DbAny, node_id: DbId) -> anyhow::Result<()> {
@@ -225,7 +229,7 @@ pub(crate) fn apply_through_lock(
         .map(LayerKeys::supplied_by)
         .unwrap_or_default();
     unlocked.extend(released);
-    let providers = lyra_db::providers::get(db)?;
+    let providers = active_providers(db, None)?;
     let merged = merge_layers(layers, &providers);
 
     if let Some(mut release) = lyra_db::releases::get_by_id(db, node_id)? {
@@ -625,24 +629,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn merge_layers_disabled_provider_is_excluded() {
-        let layers = vec![
-            make_layer("active", r#"{"track_title": "Active Title"}"#, 1000),
-            make_layer("disabled", r#"{"track_title": "Disabled Title"}"#, 1000),
-        ];
-        let providers = vec![
-            make_provider("active", 1, true),
-            make_provider("disabled", 0, false),
-        ];
-
-        let merged = merge_layers(layers, &providers);
-
-        assert_eq!(
-            text(&merged, MetadataField::TrackTitle).as_deref(),
-            Some("Active Title")
-        );
-    }
     mod snapshot {
         use std::collections::BTreeMap;
 

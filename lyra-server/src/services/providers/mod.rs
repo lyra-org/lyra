@@ -5,21 +5,19 @@
 
 use super::EntityType;
 
-pub(crate) fn enabled_provider_configs_by_priority(
-    db: &agdb::DbAny,
+/// Enabled providers in position order, narrowed to `provider_filter` when set.
+pub(crate) fn active_providers(
+    db: &impl lyra_db::DbAccess,
     provider_filter: Option<&str>,
 ) -> anyhow::Result<Vec<lyra_db::ProviderConfig>> {
-    let mut providers = lyra_db::providers::get(db)?
+    let provider_filter = provider_filter
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    Ok(lyra_db::providers::get(db)?
         .into_iter()
         .filter(|provider| provider.enabled)
-        .collect::<Vec<_>>();
-    if let Some(provider_filter) = provider_filter
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        providers.retain(|provider| provider.provider_id == provider_filter);
-    }
-    Ok(providers)
+        .filter(|provider| provider_filter.is_none_or(|id| provider.provider_id == id))
+        .collect())
 }
 
 mod admin;
@@ -175,6 +173,27 @@ mod tests {
             .into_iter()
             .filter_map(|release| release.db_id.map(Into::into))
             .collect())
+    }
+
+    #[test]
+    fn active_providers_are_enabled_and_in_position_order() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        for provider_id in ["first", "off", "second"] {
+            lyra_db::providers::register(&mut db, provider_id)?;
+        }
+        lyra_db::providers::move_to(&mut db, "second", 0)?;
+        lyra_db::providers::set_enabled(&mut db, "off", false)?;
+
+        let ids = |filter| -> anyhow::Result<Vec<String>> {
+            Ok(super::active_providers(&db, filter)?
+                .into_iter()
+                .map(|provider| provider.provider_id)
+                .collect())
+        };
+        assert_eq!(ids(None)?, ["second", "first"]);
+        assert_eq!(ids(Some(" first "))?, ["first"]);
+        assert!(ids(Some("off"))?.is_empty());
+        Ok(())
     }
 
     #[test]
