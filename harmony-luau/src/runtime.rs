@@ -8,7 +8,6 @@ use std::{
     cell::Cell,
     collections::HashMap,
     ffi::{
-        CStr,
         CString,
         c_int,
         c_void,
@@ -31,6 +30,7 @@ use std::{
     },
     sync::{
         Arc,
+        Once,
         RwLock,
         atomic::{
             AtomicU64,
@@ -49,9 +49,12 @@ use std::{
 use harmony_luau_sys as sys;
 use time::OffsetDateTime;
 
+mod gateway;
+
 pub type Result<T> = std::result::Result<T, Error>;
 
 static NEXT_VM_ID: AtomicU64 = AtomicU64::new(1);
+static LUAU_FLAGS: Once = Once::new();
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -65,6 +68,11 @@ pub enum Error {
     Load(String),
     #[error("Luau runtime failed: {0}")]
     Runtime(String),
+    /// The VM's allocator failed, or an error value was exactly Luau's out-of-memory message, as
+    /// when a native callback ran out of memory. Failing to grow the stack is a `Runtime` error,
+    /// which Luau reports as "stack overflow".
+    #[error("{}", gateway::MEMORY_ERROR)]
+    OutOfMemory,
     #[error("registry reference belongs to VM {reference_vm}, not VM {actual_vm}")]
     VmMismatch { reference_vm: u64, actual_vm: u64 },
     #[error("argument `{name}` expected {expected}, got {actual}")]
@@ -91,8 +99,6 @@ pub enum Error {
     VmDataPoisoned,
     #[error("thread data lock is poisoned")]
     ThreadDataPoisoned,
-    #[error("Luau stack cannot reserve {needed} slots")]
-    StackCapacity { needed: i32 },
     #[error("userdata tag {tag} is outside Luau's supported tag range")]
     InvalidUserDataTag { tag: i32 },
     #[error("userdata tag {tag} is already registered for another Rust type")]
@@ -244,6 +250,14 @@ impl Vm {
     }
 
     pub fn with_options(options: VmOptions) -> Result<Self> {
+        LUAU_FLAGS.call_once(|| {
+            // Keeps tables intact when growing or freezing them runs out of memory.
+            let set = unsafe { sys::harmony_luau_setfflag(c"LuauTableRobustOom".as_ptr(), 1) };
+            assert!(
+                set != 0,
+                "Luau no longer defines the LuauTableRobustOom flag"
+            );
+        });
         let control = Box::into_raw(Box::new(VmControl::new(options)));
         let state = unsafe { sys::lua_newstate(Some(alloc), control.cast()) };
         let state = match NonNull::new(state) {
@@ -304,26 +318,16 @@ impl Vm {
     }
 
     pub fn open_standard_libraries(&self, libraries: StandardLibraries) -> Result<()> {
-        let _guard = self.stack_guard();
-        unsafe {
-            if libraries.base {
-                self.open_library(b"\0", sys::luaopen_base);
-            }
-            if libraries.coroutine {
-                self.open_library(b"coroutine\0", sys::luaopen_coroutine);
-            }
-            if libraries.table {
-                self.open_library(b"table\0", sys::luaopen_table);
-            }
-            if libraries.string {
-                self.open_library(b"string\0", sys::luaopen_string);
-            }
-            if libraries.math {
-                self.open_library(b"math\0", sys::luaopen_math);
-            }
-            if libraries.bit32 {
-                self.open_library(b"bit32\0", sys::luaopen_bit32);
-            }
+        let opened = [
+            (libraries.base, c""),
+            (libraries.coroutine, c"coroutine"),
+            (libraries.table, c"table"),
+            (libraries.string, c"string"),
+            (libraries.math, c"math"),
+            (libraries.bit32, c"bit32"),
+        ];
+        for (_, name) in opened.into_iter().filter(|(open, _)| *open) {
+            unsafe { gateway::open_library(self.inner.state.as_ptr(), name)? };
         }
         if libraries.os {
             self.install_safe_os()?;
@@ -331,10 +335,8 @@ impl Vm {
         Ok(())
     }
 
-    pub fn sandbox(&self) {
-        unsafe {
-            sandbox_state(self.inner.state);
-        }
+    pub fn sandbox(&self) -> Result<()> {
+        unsafe { gateway::sandbox(self.inner.state.as_ptr()) }
     }
 
     pub fn sandbox_thread(&self, thread: &Thread) -> Result<()> {
@@ -344,28 +346,19 @@ impl Vm {
                 actual_vm: self.inner.id,
             });
         }
-        unsafe {
-            sandbox_thread_state(thread.state());
-        }
-        Ok(())
+        unsafe { gateway::sandbox_thread(thread.state().as_ptr()) }
     }
 
     pub fn load_chunk(&self, chunk: &Chunk) -> Result<Function> {
         let bytecode = compile(&chunk.source.0, chunk.compile)?;
         let guard = self.stack_guard();
-        let status = unsafe {
-            sys::luau_load(
+        unsafe {
+            gateway::load(
                 self.inner.state.as_ptr(),
-                chunk.chunk_name().as_ptr(),
-                bytecode.as_ptr().cast(),
-                bytecode.len(),
-                0,
-            )
+                &chunk.chunk_name(),
+                bytecode.as_bytes(),
+            )?
         };
-        if status != sys::LUA_OK {
-            let message = self.error_message(StackIndex::TOP);
-            return Err(Error::Load(message));
-        }
         let reference = self.ref_top()?;
         drop(guard);
         Ok(Function {
@@ -385,10 +378,7 @@ impl Vm {
 
     pub fn create_table_with_capacity(&self, array: i32, records: i32) -> Result<Table> {
         let guard = self.stack_guard();
-        self.ensure_stack(1)?;
-        unsafe {
-            sys::lua_createtable(self.inner.state.as_ptr(), array, records);
-        }
+        unsafe { gateway::create_table(self.inner.state.as_ptr(), array, records)? };
         let reference = self.ref_top()?;
         drop(guard);
         Ok(Table { reference })
@@ -396,11 +386,7 @@ impl Vm {
 
     pub fn create_buffer(&self, bytes: &[u8]) -> Result<Buffer> {
         let guard = self.stack_guard();
-        self.ensure_stack(1)?;
-        unsafe {
-            let ptr = sys::lua_newbuffer(self.inner.state.as_ptr(), bytes.len());
-            ptr::copy_nonoverlapping(bytes.as_ptr(), ptr.cast(), bytes.len());
-        }
+        unsafe { gateway::new_buffer(self.inner.state.as_ptr(), bytes)? };
         let reference = self.ref_top()?;
         drop(guard);
         Ok(Buffer { reference })
@@ -412,10 +398,12 @@ impl Vm {
     {
         self.register_userdata_tag::<T>(tag)?;
         let guard = self.stack_guard();
-        self.ensure_stack(1)?;
         unsafe {
-            let ptr =
-                sys::lua_newuserdatatagged(self.inner.state.as_ptr(), mem::size_of::<T>(), tag.0);
+            let ptr = gateway::new_userdata_tagged(
+                self.inner.state.as_ptr(),
+                mem::size_of::<T>(),
+                tag.0,
+            )?;
             ptr::write(ptr.cast::<T>(), value);
         }
         let reference = self.ref_top()?;
@@ -452,13 +440,11 @@ impl Vm {
 
     pub fn create_thread(&self, function: &Function) -> Result<Thread> {
         let guard = self.stack_guard();
-        let state = unsafe { sys::lua_newthread(self.inner.state.as_ptr()) };
+        let state = unsafe { gateway::new_thread(self.inner.state.as_ptr())? };
         let state = NonNull::new(state).ok_or(Error::VmCreate)?;
         let reference = self.ref_top()?;
         self.push_registry(&function.reference)?;
-        unsafe {
-            sys::lua_xmove(self.inner.state.as_ptr(), state.as_ptr(), 1);
-        }
+        unsafe { gateway::xmove(self.inner.state.as_ptr(), state.as_ptr(), 1)? };
         drop(guard);
         Ok(Thread::new(
             Some(reference),
@@ -517,52 +503,22 @@ impl Vm {
         let name = CString::new(name)?;
         let _guard = self.stack_guard();
         self.push_registry(&table.reference)?;
-        unsafe {
-            sys::lua_setglobal(self.inner.state.as_ptr(), name.as_ptr());
-        }
-        Ok(())
+        unsafe { gateway::set_global(self.inner.state.as_ptr(), &name) }
     }
 
     pub fn set_global_function(&self, name: &str, function: &Function) -> Result<()> {
         let name = CString::new(name)?;
         let _guard = self.stack_guard();
         self.push_registry(&function.reference)?;
-        unsafe {
-            sys::lua_setglobal(self.inner.state.as_ptr(), name.as_ptr());
-        }
-        Ok(())
+        unsafe { gateway::set_global(self.inner.state.as_ptr(), &name) }
     }
 
     fn top(&self) -> i32 {
         unsafe { sys::lua_gettop(self.inner.state.as_ptr()) }
     }
 
-    fn set_top(&self, top: i32) {
-        unsafe {
-            sys::lua_settop(self.inner.state.as_ptr(), top);
-        }
-    }
-
     fn stack_guard(&self) -> StackGuard<'_> {
-        StackGuard {
-            vm: self,
-            top: self.top(),
-        }
-    }
-
-    fn ensure_stack(&self, needed: i32) -> Result<()> {
-        self.ensure_stack_to(self.inner.state, needed)
-    }
-
-    fn ensure_stack_to(&self, state: NonNull<sys::lua_State>, needed: i32) -> Result<()> {
-        if needed <= 0 {
-            return Ok(());
-        }
-        let ok = unsafe { sys::lua_checkstack(state.as_ptr(), needed) };
-        if ok == 0 {
-            return Err(Error::StackCapacity { needed });
-        }
-        Ok(())
+        StackGuard::new(self.inner.state)
     }
 
     fn set_interrupt_deadline_millis(&self, deadline: u64) -> u64 {
@@ -632,19 +588,6 @@ impl Vm {
         Ok(UserDataTag(tag))
     }
 
-    unsafe fn open_library(
-        &self,
-        name: &'static [u8],
-        opener: unsafe extern "C-unwind" fn(*mut sys::lua_State) -> c_int,
-    ) {
-        let name = CStr::from_bytes_with_nul(name).expect("library name must be nul-terminated");
-        unsafe {
-            sys::lua_pushcfunction(self.inner.state.as_ptr(), Some(opener), ptr::null());
-            sys::lua_pushstring(self.inner.state.as_ptr(), name.as_ptr());
-            sys::lua_call(self.inner.state.as_ptr(), 1, 0);
-        }
-    }
-
     fn install_safe_os(&self) -> Result<()> {
         let table = self.create_table()?;
         let origin = ChunkOrigin {
@@ -699,39 +642,27 @@ impl Vm {
     }
 
     fn ref_top(&self) -> Result<RegistryRef> {
-        self.ensure_stack(1)?;
-        let reference = unsafe { sys::lua_ref(self.inner.state.as_ptr(), -1) };
-        Ok(RegistryRef {
-            vm: self.clone(),
-            reference,
-        })
+        self.ref_value_from(self.inner.state, StackIndex::TOP)
     }
 
-    fn ref_value_from(&self, state: NonNull<sys::lua_State>, index: StackIndex) -> RegistryRef {
-        let reference = unsafe {
-            let index = AbsStackIndex::from_stack(state, index);
-            sys::lua_pushvalue(state.as_ptr(), index.raw());
-            let reference = sys::lua_ref(state.as_ptr(), -1);
-            sys::lua_pop(state.as_ptr(), 1);
-            reference
-        };
-        RegistryRef {
-            vm: self.clone(),
-            reference,
-        }
+    fn ref_value_from(
+        &self,
+        state: NonNull<sys::lua_State>,
+        index: StackIndex,
+    ) -> Result<RegistryRef> {
+        let reference = unsafe { gateway::reference(state.as_ptr(), index.raw())? };
+        Ok(RegistryRef::new(self.clone(), reference))
     }
 
-    fn ref_current_thread_from(&self, state: NonNull<sys::lua_State>) -> RegistryRef {
+    fn ref_current_thread_from(&self, state: NonNull<sys::lua_State>) -> Result<RegistryRef> {
+        let state = state.as_ptr();
         let reference = unsafe {
-            sys::lua_pushthread(state.as_ptr());
-            let reference = sys::lua_ref(state.as_ptr(), -1);
-            sys::lua_pop(state.as_ptr(), 1);
-            reference
+            gateway::push_thread(state)?;
+            let reference = gateway::reference(state, -1);
+            sys::lua_pop(state, 1);
+            reference?
         };
-        RegistryRef {
-            vm: self.clone(),
-            reference,
-        }
+        Ok(RegistryRef::new(self.clone(), reference))
     }
 
     fn push_registry(&self, reference: &RegistryRef) -> Result<()> {
@@ -743,17 +674,20 @@ impl Vm {
         state: NonNull<sys::lua_State>,
         reference: &RegistryRef,
     ) -> Result<()> {
-        if reference.vm.id() != self.inner.id {
+        if reference.vm().id() != self.inner.id {
             return Err(Error::VmMismatch {
-                reference_vm: reference.vm.id(),
+                reference_vm: reference.vm().id(),
                 actual_vm: self.inner.id,
             });
         }
-        self.ensure_stack_to(state, 1)?;
-        unsafe {
-            sys::lua_getref(state.as_ptr(), reference.reference);
+        unsafe { gateway::get_ref(state.as_ptr(), reference.raw()) }
+    }
+
+    fn push_metatable(&self, metatable: Option<&Table>) -> Result<()> {
+        match metatable {
+            Some(metatable) => self.push_registry(&metatable.reference),
+            None => unsafe { gateway::push_nil(self.inner.state.as_ptr()) },
         }
-        Ok(())
     }
 
     fn push_value(&self, value: &Value) -> Result<()> {
@@ -761,31 +695,25 @@ impl Vm {
     }
 
     fn push_value_to(&self, state: NonNull<sys::lua_State>, value: &Value) -> Result<()> {
-        self.ensure_stack_to(state, 1)?;
+        let state_ptr = state.as_ptr();
         unsafe {
             match value {
-                Value::Nil => sys::lua_pushnil(state.as_ptr()),
-                Value::Boolean(value) => sys::lua_pushboolean(state.as_ptr(), i32::from(*value)),
-                Value::Integer(value) => sys::lua_pushinteger64(state.as_ptr(), *value),
-                Value::Number(value) => sys::lua_pushnumber(state.as_ptr(), *value),
-                Value::String(value) => {
-                    sys::lua_pushlstring(state.as_ptr(), value.as_ptr().cast(), value.len());
-                }
-                Value::Buffer(value) => {
-                    let ptr = sys::lua_newbuffer(state.as_ptr(), value.len());
-                    ptr::copy_nonoverlapping(value.as_ptr(), ptr.cast(), value.len());
-                }
-                Value::TableData(value) => value.push_to(self, state)?,
+                Value::Nil => gateway::push_nil(state_ptr),
+                Value::Boolean(value) => gateway::push_boolean(state_ptr, *value),
+                Value::Integer(value) => gateway::push_integer(state_ptr, *value),
+                Value::Number(value) => gateway::push_number(state_ptr, *value),
+                Value::String(value) => gateway::push_bytes(state_ptr, value),
+                Value::Buffer(value) => gateway::new_buffer(state_ptr, value),
+                Value::TableData(value) => value.push_to(self, state),
                 Value::NativeFunction(value) => {
-                    self.push_native_function_to(state, &value.options, value.callback.clone())?;
+                    self.push_native_function_to(state, &value.options, value.callback.clone())
                 }
-                Value::Table(value) => self.push_registry_to(state, &value.reference)?,
-                Value::Function(value) => self.push_registry_to(state, &value.reference)?,
-                Value::Thread(value) => self.push_thread_to(state, value)?,
-                Value::UserData(value) => self.push_registry_to(state, &value.reference)?,
+                Value::Table(value) => self.push_registry_to(state, &value.reference),
+                Value::Function(value) => self.push_registry_to(state, &value.reference),
+                Value::Thread(value) => self.push_thread_to(state, value),
+                Value::UserData(value) => self.push_registry_to(state, &value.reference),
             }
         }
-        Ok(())
     }
 
     fn push_native_function_to(
@@ -794,14 +722,12 @@ impl Vm {
         options: &NativeFunctionOptions,
         callback: NativeFn,
     ) -> Result<()> {
-        let debug_name = CString::new("harmony_native_callback")?;
-        self.ensure_stack_to(state, 2)?;
         unsafe {
-            let slot = sys::lua_newuserdatadtor(
+            let slot = gateway::new_userdata_dtor(
                 state.as_ptr(),
                 std::mem::size_of::<CallbackSlot>(),
                 Some(drop_callback_slot),
-            )
+            )?
             .cast::<CallbackSlot>();
             ptr::write(
                 slot,
@@ -817,14 +743,13 @@ impl Vm {
                     use_thread_context_origin: options.use_thread_context_origin,
                 },
             );
-            sys::lua_pushcclosure(
+            gateway::push_cclosure(
                 state.as_ptr(),
                 Some(native_callback),
-                debug_name.as_ptr(),
+                c"harmony_native_callback",
                 1,
-            );
+            )
         }
-        Ok(())
     }
 
     fn push_thread_to(&self, state: NonNull<sys::lua_State>, thread: &Thread) -> Result<()> {
@@ -841,11 +766,7 @@ impl Vm {
         }
 
         if thread.state() == state {
-            self.ensure_stack_to(state, 1)?;
-            unsafe {
-                sys::lua_pushthread(state.as_ptr());
-            }
-            return Ok(());
+            return unsafe { gateway::push_thread(state.as_ptr()) };
         }
 
         Err(Error::Runtime(
@@ -853,14 +774,14 @@ impl Vm {
         ))
     }
 
-    fn read_value(&self, index: StackIndex) -> Value {
+    fn read_value(&self, index: StackIndex) -> Result<Value> {
         self.read_value_from(self.inner.state, index)
     }
 
-    fn read_value_from(&self, state: NonNull<sys::lua_State>, index: StackIndex) -> Value {
+    fn read_value_from(&self, state: NonNull<sys::lua_State>, index: StackIndex) -> Result<Value> {
         let state_ptr = state.as_ptr();
         let raw_index = index.raw();
-        unsafe {
+        let value = unsafe {
             match sys::lua_type(state_ptr, raw_index) {
                 sys::LUA_TNIL | sys::LUA_TNONE => Value::Nil,
                 sys::LUA_TBOOLEAN => Value::Boolean(sys::lua_toboolean(state_ptr, raw_index) != 0),
@@ -872,28 +793,28 @@ impl Vm {
                     let mut is_number = 0;
                     Value::Number(sys::lua_tonumberx(state_ptr, raw_index, &mut is_number))
                 }
-                sys::LUA_TSTRING => {
-                    let mut len = 0usize;
-                    let ptr = sys::lua_tolstring(state_ptr, raw_index, &mut len);
-                    Value::String(std::slice::from_raw_parts(ptr.cast(), len).to_vec())
-                }
+                sys::LUA_TSTRING => Value::String(
+                    gateway::string_bytes(state_ptr, raw_index)
+                        .expect("string value has bytes")
+                        .to_vec(),
+                ),
                 sys::LUA_TBUFFER => {
                     let mut len = 0usize;
                     let ptr = sys::lua_tobuffer(state_ptr, raw_index, &mut len);
                     Value::Buffer(std::slice::from_raw_parts(ptr.cast(), len).to_vec())
                 }
                 sys::LUA_TTABLE => Value::Table(Table {
-                    reference: self.ref_value_from(state, index),
+                    reference: self.ref_value_from(state, index)?,
                 }),
                 sys::LUA_TFUNCTION => Value::Function(Function {
-                    reference: self.ref_value_from(state, index),
+                    reference: self.ref_value_from(state, index)?,
                     origin: ChunkOrigin::default(),
                 }),
                 sys::LUA_TTHREAD => {
                     let thread_state = sys::lua_tothread(state_ptr, raw_index);
                     let thread_state =
                         NonNull::new(thread_state).expect("thread value is non-null");
-                    let reference = self.ref_value_from(state, index);
+                    let reference = self.ref_value_from(state, index)?;
                     let status = sys::lua_status(thread_state.as_ptr());
                     let top = sys::lua_gettop(thread_state.as_ptr());
                     Value::Thread(Thread::new(
@@ -906,27 +827,13 @@ impl Vm {
                     ))
                 }
                 sys::LUA_TUSERDATA => Value::UserData(UserData {
-                    reference: self.ref_value_from(state, index),
+                    reference: self.ref_value_from(state, index)?,
                     tag: UserDataTag(sys::lua_userdatatag(state_ptr, raw_index)),
                 }),
                 _ => Value::Nil,
             }
-        }
-    }
-
-    fn error_message(&self, index: StackIndex) -> String {
-        Self::error_message_from(self.inner.state, index)
-    }
-
-    fn error_message_from(state: NonNull<sys::lua_State>, index: StackIndex) -> String {
-        let state = state.as_ptr();
-        unsafe {
-            let ptr = sys::lua_tostring(state, index.raw());
-            if ptr.is_null() {
-                return "unknown Luau error".to_string();
-            }
-            CStr::from_ptr(ptr).to_string_lossy().into_owned()
-        }
+        };
+        Ok(value)
     }
 }
 
@@ -998,13 +905,24 @@ impl VmData {
 }
 
 struct StackGuard<'vm> {
-    vm: &'vm Vm,
+    state: NonNull<sys::lua_State>,
     top: i32,
+    _vm: PhantomData<&'vm Vm>,
+}
+
+impl StackGuard<'_> {
+    fn new(state: NonNull<sys::lua_State>) -> Self {
+        Self {
+            state,
+            top: unsafe { sys::lua_gettop(state.as_ptr()) },
+            _vm: PhantomData,
+        }
+    }
 }
 
 impl Drop for StackGuard<'_> {
     fn drop(&mut self) {
-        self.vm.set_top(self.top);
+        unsafe { gateway::truncate(self.state.as_ptr(), self.top) };
     }
 }
 
@@ -1056,50 +974,64 @@ impl AbsStackIndex {
     }
 }
 
+/// A Luau value pinned in the registry. Clones share the pin, which the last one releases.
+#[derive(Clone)]
 pub struct RegistryRef {
-    vm: Vm,
-    reference: i32,
+    slot: Rc<RegistrySlot>,
 }
 
-impl Clone for RegistryRef {
-    fn clone(&self) -> Self {
-        let _guard = self.vm.stack_guard();
-        unsafe {
-            sys::lua_getref(self.vm.inner.state.as_ptr(), self.reference);
-        }
-        let reference = unsafe { sys::lua_ref(self.vm.inner.state.as_ptr(), -1) };
+struct RegistrySlot {
+    vm: Vm,
+    reference: c_int,
+}
+
+impl RegistryRef {
+    fn new(vm: Vm, reference: c_int) -> Self {
         Self {
-            vm: self.vm.clone(),
-            reference,
+            slot: Rc::new(RegistrySlot { vm, reference }),
         }
+    }
+
+    fn vm(&self) -> &Vm {
+        &self.slot.vm
+    }
+
+    fn raw(&self) -> c_int {
+        self.slot.reference
     }
 }
 
 impl fmt::Debug for RegistryRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RegistryRef")
-            .field("vm_id", &self.vm.id())
-            .field("reference", &self.reference)
+            .field("vm_id", &self.vm().id())
+            .field("reference", &self.raw())
             .finish()
     }
 }
 
 impl PartialEq for RegistryRef {
     fn eq(&self, other: &Self) -> bool {
-        if self.vm.id() != other.vm.id() {
+        if Rc::ptr_eq(&self.slot, &other.slot) {
+            return true;
+        }
+        if self.vm().id() != other.vm().id() {
             return false;
         }
 
-        let _guard = self.vm.stack_guard();
+        let vm = self.vm();
+        let _guard = vm.stack_guard();
+        let state = vm.inner.state.as_ptr();
+        // A stack too full to hold both values cannot show them equal.
         unsafe {
-            sys::lua_getref(self.vm.inner.state.as_ptr(), self.reference);
-            sys::lua_getref(self.vm.inner.state.as_ptr(), other.reference);
-            sys::lua_rawequal(self.vm.inner.state.as_ptr(), -1, -2) != 0
+            gateway::get_ref(state, self.raw()).is_ok()
+                && gateway::get_ref(state, other.raw()).is_ok()
+                && sys::lua_rawequal(state, -1, -2) != 0
         }
     }
 }
 
-impl Drop for RegistryRef {
+impl Drop for RegistrySlot {
     fn drop(&mut self) {
         unsafe {
             sys::lua_unref(self.vm.inner.state.as_ptr(), self.reference);
@@ -1115,7 +1047,7 @@ pub struct Function {
 
 impl Function {
     pub fn vm_id(&self) -> u64 {
-        self.reference.vm.id()
+        self.reference.vm().id()
     }
 
     pub fn call(&self, vm: &Vm, args: &[Value]) -> Result<Vec<Value>> {
@@ -1124,22 +1056,11 @@ impl Function {
         for arg in args {
             vm.push_value(arg)?;
         }
-        let status = unsafe {
-            sys::lua_pcall(
-                vm.inner.state.as_ptr(),
-                args.len() as i32,
-                sys::LUA_MULTRET,
-                0,
-            )
-        };
-        if status != sys::LUA_OK {
-            let message = vm.error_message(StackIndex::TOP);
-            return Err(Error::Runtime(message));
-        }
+        unsafe { gateway::pcall(vm.inner.state.as_ptr(), args.len() as i32)? };
         let returned = vm.top() - guard.top;
         let mut values = Vec::with_capacity(returned.max(0) as usize);
         for offset in 0..returned {
-            values.push(vm.read_value(StackIndex::absolute(guard.top + 1 + offset)));
+            values.push(vm.read_value(StackIndex::absolute(guard.top + 1 + offset))?);
         }
         Ok(values)
     }
@@ -1228,47 +1149,36 @@ impl Thread {
             return Err(Error::Runtime("thread already completed".to_string()));
         }
 
-        let started = self.is_started();
-        unsafe {
-            sys::lua_settop(self.inner.state.as_ptr(), if started { 0 } else { 1 });
+        // A thread that has not started holds just its function, which stays below the args.
+        let state = self.inner.state.as_ptr();
+        if self.is_started() {
+            unsafe { gateway::truncate(state, 0) };
         }
+        let base = unsafe { sys::lua_gettop(state) };
         for arg in args {
-            vm.push_value_to(self.inner.state, arg)?;
+            if let Err(error) = vm.push_value_to(self.inner.state, arg) {
+                // Leaves an unstarted thread with just its function, so it still reads as unstarted.
+                unsafe { gateway::truncate(state, base) };
+                return Err(error);
+            }
         }
         self.inner.started.set(true);
 
-        let status = unsafe {
-            sys::lua_resume(
-                self.inner.state.as_ptr(),
-                vm.inner.state.as_ptr(),
-                args.len() as i32,
-            )
-        };
-        match status {
-            sys::LUA_OK | sys::LUA_YIELD => {
-                let top = unsafe { sys::lua_gettop(self.inner.state.as_ptr()) };
-                let mut values = Vec::with_capacity(top.max(0) as usize);
-                for index in 1..=top {
-                    values.push(vm.read_value_from(self.inner.state, StackIndex::absolute(index)));
-                }
-                unsafe {
-                    sys::lua_settop(self.inner.state.as_ptr(), 0);
-                }
-                if status == sys::LUA_YIELD {
-                    Ok(ThreadStatus::Yielded(values))
-                } else {
-                    self.inner.finished.set(true);
-                    Ok(ThreadStatus::Completed(values))
-                }
+        let resumed = unsafe { gateway::resume(vm.inner.state.as_ptr(), state, args.len() as i32) };
+        let result = resumed.and_then(|yielded| {
+            let top = unsafe { sys::lua_gettop(state) };
+            let values = (1..=top)
+                .map(|index| vm.read_value_from(self.inner.state, StackIndex::absolute(index)))
+                .collect::<Result<Vec<_>>>()?;
+            if yielded {
+                Ok(ThreadStatus::Yielded(values))
+            } else {
+                self.inner.finished.set(true);
+                Ok(ThreadStatus::Completed(values))
             }
-            _ => {
-                let message = Vm::error_message_from(self.inner.state, StackIndex::TOP);
-                unsafe {
-                    sys::lua_settop(self.inner.state.as_ptr(), 0);
-                }
-                Err(Error::Runtime(message))
-            }
-        }
+        });
+        unsafe { gateway::truncate(state, 0) };
+        result
     }
 }
 
@@ -1325,7 +1235,7 @@ pub struct Table {
 
 impl Table {
     pub fn vm_id(&self) -> u64 {
-        self.reference.vm.id()
+        self.reference.vm().id()
     }
 
     // `raw` table APIs intentionally mirror Lua raw access: they bypass
@@ -1335,20 +1245,14 @@ impl Table {
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
         vm.push_value(&value)?;
-        unsafe {
-            sys::lua_rawsetfield(vm.inner.state.as_ptr(), -2, key.as_ptr());
-        }
-        Ok(())
+        unsafe { gateway::raw_set_field(vm.inner.state.as_ptr(), -2, &key) }
     }
 
     pub fn set_integer_raw(&self, vm: &Vm, key: i32, value: Value) -> Result<()> {
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
         vm.push_value(&value)?;
-        unsafe {
-            sys::lua_rawseti(vm.inner.state.as_ptr(), -2, key);
-        }
-        Ok(())
+        unsafe { gateway::raw_set_index(vm.inner.state.as_ptr(), -2, key) }
     }
 
     pub fn set_key_raw(&self, vm: &Vm, key: Value, value: Value) -> Result<()> {
@@ -1356,10 +1260,7 @@ impl Table {
         vm.push_registry(&self.reference)?;
         vm.push_value(&key)?;
         vm.push_value(&value)?;
-        unsafe {
-            sys::lua_rawset(vm.inner.state.as_ptr(), -3);
-        }
-        Ok(())
+        unsafe { gateway::raw_set(vm.inner.state.as_ptr(), -3) }
     }
 
     pub fn set_function_raw(&self, vm: &Vm, key: &str, function: &Function) -> Result<()> {
@@ -1367,10 +1268,7 @@ impl Table {
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
         vm.push_registry(&function.reference)?;
-        unsafe {
-            sys::lua_rawsetfield(vm.inner.state.as_ptr(), -2, key.as_ptr());
-        }
-        Ok(())
+        unsafe { gateway::raw_set_field(vm.inner.state.as_ptr(), -2, &key) }
     }
 
     pub fn set_table_raw(&self, vm: &Vm, key: &str, table: &Table) -> Result<()> {
@@ -1378,29 +1276,22 @@ impl Table {
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
         vm.push_registry(&table.reference)?;
-        unsafe {
-            sys::lua_rawsetfield(vm.inner.state.as_ptr(), -2, key.as_ptr());
-        }
-        Ok(())
+        unsafe { gateway::raw_set_field(vm.inner.state.as_ptr(), -2, &key) }
     }
 
     pub fn get_raw(&self, vm: &Vm, key: &str) -> Result<Value> {
         let key = CString::new(key)?;
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
-        unsafe {
-            sys::lua_rawgetfield(vm.inner.state.as_ptr(), -1, key.as_ptr());
-        }
-        Ok(vm.read_value(StackIndex::TOP))
+        unsafe { gateway::raw_get_field(vm.inner.state.as_ptr(), -1, &key)? };
+        vm.read_value(StackIndex::TOP)
     }
 
     pub fn get_integer_raw(&self, vm: &Vm, key: i32) -> Result<Value> {
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
-        unsafe {
-            sys::lua_rawgeti(vm.inner.state.as_ptr(), -1, key);
-        }
-        Ok(vm.read_value(StackIndex::TOP))
+        unsafe { gateway::raw_get_index(vm.inner.state.as_ptr(), -1, key)? };
+        vm.read_value(StackIndex::TOP)
     }
 
     pub fn raw_len(&self, vm: &Vm) -> Result<usize> {
@@ -1410,17 +1301,15 @@ impl Table {
 
     pub fn array_values_raw(&self, vm: &Vm) -> Result<Vec<Value>> {
         let _guard = vm.stack_guard();
-        vm.ensure_stack(2)?;
         vm.push_registry(&self.reference)?;
 
+        let state = vm.inner.state.as_ptr();
         let mut values = Vec::new();
         for index in 1..=i32::MAX {
+            unsafe { gateway::raw_get_index(state, -1, index)? };
+            let value = vm.read_value(StackIndex::TOP)?;
             unsafe {
-                sys::lua_rawgeti(vm.inner.state.as_ptr(), -1, index);
-            }
-            let value = vm.read_value(StackIndex::TOP);
-            unsafe {
-                sys::lua_pop(vm.inner.state.as_ptr(), 1);
+                sys::lua_pop(state, 1);
             }
             if value == Value::Nil {
                 return Ok(values);
@@ -1437,13 +1326,14 @@ impl Table {
         let _guard = vm.stack_guard();
         let mut pairs = Vec::new();
         vm.push_registry(&self.reference)?;
+        let state = vm.inner.state.as_ptr();
         unsafe {
-            sys::lua_pushnil(vm.inner.state.as_ptr());
-            while sys::lua_next(vm.inner.state.as_ptr(), -2) != 0 {
-                let key = vm.read_value(StackIndex::relative(-2));
-                let value = vm.read_value(StackIndex::TOP);
+            gateway::push_nil(state)?;
+            while gateway::next(state, -2)? {
+                let key = vm.read_value(StackIndex::relative(-2))?;
+                let value = vm.read_value(StackIndex::TOP)?;
                 pairs.push((key, value));
-                sys::lua_pop(vm.inner.state.as_ptr(), 1);
+                sys::lua_pop(state, 1);
             }
         }
         Ok(pairs)
@@ -1464,23 +1354,14 @@ impl Table {
     pub fn set_metatable_raw(&self, vm: &Vm, metatable: Option<&Table>) -> Result<()> {
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
-        if let Some(metatable) = metatable {
-            vm.push_registry(&metatable.reference)?;
-        } else {
-            unsafe {
-                sys::lua_pushnil(vm.inner.state.as_ptr());
-            }
-        }
-        unsafe {
-            sys::lua_setmetatable(vm.inner.state.as_ptr(), -2);
-        }
-        Ok(())
+        vm.push_metatable(metatable)?;
+        unsafe { gateway::set_metatable(vm.inner.state.as_ptr(), -2) }
     }
 
     pub fn metatable_raw(&self, vm: &Vm) -> Result<Option<Table>> {
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
-        let has_metatable = unsafe { sys::lua_getmetatable(vm.inner.state.as_ptr(), -1) != 0 };
+        let has_metatable = unsafe { gateway::get_metatable(vm.inner.state.as_ptr(), -1)? };
         if !has_metatable {
             return Ok(None);
         }
@@ -1491,10 +1372,7 @@ impl Table {
     pub fn set_readonly(&self, vm: &Vm, readonly: bool) -> Result<()> {
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
-        unsafe {
-            sys::lua_setreadonly(vm.inner.state.as_ptr(), -1, i32::from(readonly));
-        }
-        Ok(())
+        unsafe { gateway::set_readonly(vm.inner.state.as_ptr(), -1, readonly) }
     }
 }
 
@@ -1514,18 +1392,12 @@ impl TableReader<'_> {
 
     pub fn get_raw(&self, key: &str) -> Result<Value> {
         let key = CString::new(key)?;
-        self.vm.ensure_stack_to(self.state, 1)?;
-        unsafe {
-            sys::lua_rawgetfield(self.state.as_ptr(), self.table_index.raw(), key.as_ptr());
-        }
+        unsafe { gateway::raw_get_field(self.state.as_ptr(), self.table_index.raw(), &key)? };
         self.pop_value()
     }
 
     pub fn get_integer_raw(&self, key: i32) -> Result<Value> {
-        self.vm.ensure_stack_to(self.state, 1)?;
-        unsafe {
-            sys::lua_rawgeti(self.state.as_ptr(), self.table_index.raw(), key);
-        }
+        unsafe { gateway::raw_get_index(self.state.as_ptr(), self.table_index.raw(), key)? };
         self.pop_value()
     }
 
@@ -1557,7 +1429,7 @@ impl TableReader<'_> {
         unsafe {
             sys::lua_pop(self.state.as_ptr(), 1);
         }
-        Ok(value)
+        value
     }
 }
 
@@ -1568,13 +1440,13 @@ pub struct Buffer {
 
 impl Buffer {
     pub fn vm_id(&self) -> u64 {
-        self.reference.vm.id()
+        self.reference.vm().id()
     }
 
     pub fn to_vec(&self, vm: &Vm) -> Result<Vec<u8>> {
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
-        match vm.read_value(StackIndex::TOP) {
+        match vm.read_value(StackIndex::TOP)? {
             Value::Buffer(bytes) => Ok(bytes),
             other => Err(Error::ArgumentType {
                 name: Arc::from("buffer"),
@@ -1593,7 +1465,7 @@ pub struct UserData {
 
 impl UserData {
     pub fn vm_id(&self) -> u64 {
-        self.reference.vm.id()
+        self.reference.vm().id()
     }
 
     pub fn tag(&self) -> UserDataTag {
@@ -1603,17 +1475,8 @@ impl UserData {
     pub fn set_metatable_raw(&self, vm: &Vm, metatable: Option<&Table>) -> Result<()> {
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
-        if let Some(metatable) = metatable {
-            vm.push_registry(&metatable.reference)?;
-        } else {
-            unsafe {
-                sys::lua_pushnil(vm.inner.state.as_ptr());
-            }
-        }
-        unsafe {
-            sys::lua_setmetatable(vm.inner.state.as_ptr(), -2);
-        }
-        Ok(())
+        vm.push_metatable(metatable)?;
+        unsafe { gateway::set_metatable(vm.inner.state.as_ptr(), -2) }
     }
 
     pub fn borrow<T>(&self, vm: &Vm, tag: UserDataTag) -> Result<UserDataRef<'_, T>>
@@ -1764,32 +1627,27 @@ impl OwnedTable {
     }
 
     fn push_to(&self, vm: &Vm, state: NonNull<sys::lua_State>) -> Result<()> {
+        let state_ptr = state.as_ptr();
         unsafe {
-            sys::lua_createtable(
-                state.as_ptr(),
+            gateway::create_table(
+                state_ptr,
                 self.array.len() as i32,
                 (self.fields.len() + self.entries.len()) as i32,
-            );
+            )?;
         }
         for (index, value) in self.array.iter().enumerate() {
             vm.push_value_to(state, value)?;
-            unsafe {
-                sys::lua_rawseti(state.as_ptr(), -2, index as i32 + 1);
-            }
+            unsafe { gateway::raw_set_index(state_ptr, -2, index as i32 + 1)? };
         }
         for (key, value) in &self.fields {
             let key = CString::new(key.as_str())?;
             vm.push_value_to(state, value)?;
-            unsafe {
-                sys::lua_rawsetfield(state.as_ptr(), -2, key.as_ptr());
-            }
+            unsafe { gateway::raw_set_field(state_ptr, -2, &key)? };
         }
         for (key, value) in &self.entries {
             vm.push_value_to(state, key)?;
             vm.push_value_to(state, value)?;
-            unsafe {
-                sys::lua_rawset(state.as_ptr(), -3);
-            }
+            unsafe { gateway::raw_set(state_ptr, -3)? };
         }
         Ok(())
     }
@@ -1894,7 +1752,7 @@ impl<'vm> ArgReader<'vm> {
         self.read_named(name).map(Some)
     }
 
-    pub fn drain_remaining(&mut self) -> Vec<Value> {
+    pub fn drain_remaining(&mut self) -> Result<Vec<Value>> {
         let remaining = self.cursor.drain_remaining();
         remaining.map(|index| self.value_at(index)).collect()
     }
@@ -2022,7 +1880,7 @@ impl<'vm> ArgReader<'vm> {
                 actual,
             });
         }
-        let value = self.value_at(self.cursor.index());
+        let value = self.value_at(self.cursor.index())?;
         self.cursor.advance();
         Ok((name, value))
     }
@@ -2059,20 +1917,20 @@ impl<'vm> ArgReader<'vm> {
         self.type_name_at(index) == "nil"
     }
 
-    fn value_at(&self, index: usize) -> Value {
+    fn value_at(&self, index: usize) -> Result<Value> {
         self.vm
             .read_value_from(self.state, StackIndex::argument(index))
     }
 
     fn bytes_at(&self, index: usize, expected: &'static str) -> &[u8] {
+        let state = self.state.as_ptr();
+        let index = StackIndex::argument(index).raw();
+        if expected != "buffer" {
+            return unsafe { gateway::string_bytes(state, index) }.unwrap_or_default();
+        }
         unsafe {
-            let index = StackIndex::argument(index).raw();
             let mut len = 0usize;
-            let ptr = if expected == "buffer" {
-                sys::lua_tobuffer(self.state.as_ptr(), index, &mut len).cast::<u8>()
-            } else {
-                sys::lua_tolstring(self.state.as_ptr(), index, &mut len).cast::<u8>()
-            };
+            let ptr = sys::lua_tobuffer(state, index, &mut len).cast::<u8>();
             if ptr.is_null() {
                 &[]
             } else {
@@ -2847,45 +2705,70 @@ pub struct AsyncCallFrame<'vm> {
     pub args: ArgReader<'vm>,
 }
 
-unsafe extern "C-unwind" fn drop_callback_slot(userdata: *mut c_void) {
-    unsafe {
-        ptr::drop_in_place(userdata.cast::<CallbackSlot>());
-    }
+/// Runs Rust code that Luau called. A panic aborts instead of unwinding into Luau's C++ frames,
+/// which would leave the VM's protected-call state pointing at frames that no longer exist.
+fn abort_on_panic<T>(callback: impl FnOnce() -> T) -> T {
+    catch_unwind(AssertUnwindSafe(callback)).unwrap_or_else(|_| std::process::abort())
+}
+
+unsafe extern "C-unwind" fn drop_callback_slot(_: *mut sys::lua_State, userdata: *mut c_void) {
+    abort_on_panic(|| unsafe { ptr::drop_in_place(userdata.cast::<CallbackSlot>()) });
 }
 
 unsafe extern "C-unwind" fn drop_userdata<T>(_: *mut sys::lua_State, userdata: *mut c_void) {
-    unsafe {
-        ptr::drop_in_place(userdata.cast::<T>());
+    abort_on_panic(|| unsafe { ptr::drop_in_place(userdata.cast::<T>()) });
+}
+
+enum CallbackExit {
+    Return(c_int),
+    Yield(c_int),
+    Raise,
+}
+
+/// Luau's entry into a native function. Everything with a destructor lives in
+/// [`call_native_function`], so this frame holds nothing a raise would skip.
+unsafe extern "C-unwind" fn native_callback(state: *mut sys::lua_State) -> c_int {
+    let exit = abort_on_panic(|| match unsafe { call_native_function(state) } {
+        Ok(exit) => exit,
+        Err(message) => {
+            unsafe { gateway::push_error(state, &message) };
+            CallbackExit::Raise
+        }
+    });
+    match exit {
+        CallbackExit::Return(count) => count,
+        CallbackExit::Yield(count) => unsafe { gateway::yield_results(state, count) },
+        CallbackExit::Raise => unsafe { gateway::raise(state) },
     }
 }
 
-unsafe extern "C-unwind" fn native_callback(state: *mut sys::lua_State) -> i32 {
+/// Runs a native function and leaves its results on top of the stack, or returns the message to
+/// raise.
+unsafe fn call_native_function(
+    state_ptr: *mut sys::lua_State,
+) -> std::result::Result<CallbackExit, String> {
     let slot = unsafe {
-        sys::lua_touserdata(state, sys::lua_upvalueindex(1))
+        sys::lua_touserdata(state_ptr, sys::lua_upvalueindex(1))
             .cast::<CallbackSlot>()
             .as_ref()
-    };
-    let Some(slot) = slot else {
-        return lua_error(state, "missing Harmony callback slot");
-    };
-    let Some(inner) = slot.vm.upgrade() else {
-        return lua_error(state, "Harmony VM is no longer available");
-    };
-
-    let state = match NonNull::new(state) {
-        Some(state) => state,
-        None => return lua_error(ptr::null_mut(), "missing Luau state"),
-    };
+    }
+    .ok_or("missing Harmony callback slot")?;
+    let inner = slot
+        .vm
+        .upgrade()
+        .ok_or("Harmony VM is no longer available")?;
+    let state = NonNull::new(state_ptr).ok_or("missing Luau state")?;
     let vm = Vm { inner };
-    let thread_context = match vm.call_context_for_state(state) {
-        Ok(context) => context,
-        Err(error) => return lua_error(state.as_ptr(), &error.to_string()),
-    };
+    let thread_context = vm
+        .call_context_for_state(state)
+        .map_err(|error| error.to_string())?;
+    let thread_reference = vm
+        .ref_current_thread_from(state)
+        .map_err(|error| error.to_string())?;
     let mut return_state = ReturnState::default();
     let result = {
         let returns = ReturnWriter::borrowed(&mut return_state);
-        let argc = unsafe { sys::lua_gettop(state.as_ptr()) };
-        let thread_reference = vm.ref_current_thread_from(state);
+        let argc = unsafe { sys::lua_gettop(state_ptr) };
         let caller = thread_context
             .as_ref()
             .map(|context| context.caller.clone())
@@ -2925,29 +2808,30 @@ unsafe extern "C-unwind" fn native_callback(state: *mut sys::lua_State) -> i32 {
         catch_unwind(AssertUnwindSafe(|| (slot.callback)(frame)))
     };
     match result {
-        Ok(Ok(())) => {
-            for value in &return_state.values {
-                if let Err(error) = vm.push_value_to(state, value) {
-                    return lua_error(state.as_ptr(), &error.to_string());
-                }
-            }
-            if return_state.yield_requested {
-                if unsafe { sys::lua_isyieldable(state.as_ptr()) } == 0 {
-                    return lua_error(
-                        state.as_ptr(),
-                        "attempt to yield from a non-yieldable Harmony callback",
-                    );
-                }
-                return unsafe { sys::lua_yield(state.as_ptr(), return_state.values.len() as i32) };
-            }
-            return_state.values.len() as i32
-        }
-        Ok(Err(error)) => lua_error(state.as_ptr(), &format_callback_error(slot, &error)),
-        Err(_) => lua_error(state.as_ptr(), "Harmony callback panicked"),
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => return Err(format_callback_error(slot, &error)),
+        Err(_) => return Err("Harmony callback panicked".to_string()),
     }
+    for value in &return_state.values {
+        vm.push_value_to(state, value)
+            .map_err(|error| error.to_string())?;
+    }
+    let count = return_state.values.len() as c_int;
+    if !return_state.yield_requested {
+        return Ok(CallbackExit::Return(count));
+    }
+    if unsafe { sys::lua_isyieldable(state_ptr) } == 0 {
+        return Err("attempt to yield from a non-yieldable Harmony callback".to_string());
+    }
+    Ok(CallbackExit::Yield(count))
 }
 
+/// Prefixes a callback's error with where it came from, except running out of memory, which keeps
+/// Luau's own message so callers further out still see [`Error::OutOfMemory`].
 fn format_callback_error(slot: &CallbackSlot, error: &Error) -> String {
+    if matches!(error, Error::OutOfMemory) {
+        return error.to_string();
+    }
     let module = slot
         .origin
         .module
@@ -2999,81 +2883,26 @@ fn format_os_date(format: &str, timestamp: i64) -> Result<String> {
     ))
 }
 
-fn lua_error(state: *mut sys::lua_State, message: &str) -> i32 {
-    if state.is_null() {
-        return 0;
-    }
-    unsafe {
-        sys::lua_pushlstring(state, message.as_ptr().cast(), message.len());
-        sys::lua_error(state);
-    }
-}
-
 unsafe extern "C-unwind" fn interrupt(state: *mut sys::lua_State, gc: c_int) {
     if state.is_null() || gc >= 0 {
         return;
     }
-
-    let control = unsafe {
-        sys::lua_callback_userdata(state)
-            .cast::<VmControl>()
-            .as_ref()
-    };
-    let Some(control) = control else {
-        return;
-    };
-
-    let deadline = control.interrupt_deadline_millis.load(Ordering::Acquire);
-    if deadline != 0 && current_unix_millis() >= deadline {
+    let expired = abort_on_panic(|| {
+        let control = unsafe {
+            sys::lua_callback_userdata(state)
+                .cast::<VmControl>()
+                .as_ref()
+        };
+        control.is_some_and(|control| {
+            let deadline = control.interrupt_deadline_millis.load(Ordering::Acquire);
+            deadline != 0 && current_unix_millis() >= deadline
+        })
+    });
+    if expired {
         unsafe {
-            sys::lua_checkstack(state, 1);
-            sys::lua_pushlstring(
-                state,
-                INTERRUPTED_ERROR.as_ptr().cast(),
-                INTERRUPTED_ERROR.len(),
-            );
-            sys::lua_error(state);
+            gateway::push_error(state, INTERRUPTED_ERROR);
+            gateway::raise(state);
         }
-    }
-}
-
-unsafe fn sandbox_state(state: NonNull<sys::lua_State>) {
-    let state = state.as_ptr();
-    unsafe {
-        sys::lua_pushnil(state);
-        while sys::lua_next(state, sys::LUA_GLOBALSINDEX) != 0 {
-            if sys::lua_type(state, -1) == sys::LUA_TTABLE {
-                sys::lua_setreadonly(state, -1, 1);
-            }
-            sys::lua_pop(state, 1);
-        }
-
-        sys::lua_pushlstring(state, c"".as_ptr(), 0);
-        if sys::lua_getmetatable(state, -1) != 0 {
-            sys::lua_setreadonly(state, -1, 1);
-            sys::lua_pop(state, 2);
-        } else {
-            sys::lua_pop(state, 1);
-        }
-
-        sys::lua_setreadonly(state, sys::LUA_GLOBALSINDEX, 1);
-        sys::lua_setsafeenv(state, sys::LUA_GLOBALSINDEX, 1);
-    }
-}
-
-unsafe fn sandbox_thread_state(state: NonNull<sys::lua_State>) {
-    let state = state.as_ptr();
-    unsafe {
-        sys::lua_newtable(state);
-
-        sys::lua_newtable(state);
-        sys::lua_pushvalue(state, sys::LUA_GLOBALSINDEX);
-        sys::lua_setfield(state, -2, c"__index".as_ptr());
-        sys::lua_setreadonly(state, -1, 1);
-
-        sys::lua_setmetatable(state, -2);
-        sys::lua_replace(state, sys::LUA_GLOBALSINDEX);
-        sys::lua_setsafeenv(state, sys::LUA_GLOBALSINDEX, 1);
     }
 }
 
@@ -3104,12 +2933,8 @@ struct CompiledBytecode {
 }
 
 impl CompiledBytecode {
-    fn as_ptr(&self) -> *const std::ffi::c_char {
-        self.ptr.as_ptr()
-    }
-
-    fn len(&self) -> usize {
-        self.len
+    fn as_bytes(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr().cast(), self.len) }
     }
 }
 
@@ -3125,6 +2950,15 @@ impl Drop for CompiledBytecode {
 const LUAU_ALIGN: usize = 16;
 
 unsafe extern "C-unwind" fn alloc(
+    ud: *mut c_void,
+    ptr: *mut c_void,
+    osize: usize,
+    nsize: usize,
+) -> *mut c_void {
+    abort_on_panic(|| unsafe { alloc_within_limit(ud, ptr, osize, nsize) })
+}
+
+unsafe fn alloc_within_limit(
     ud: *mut c_void,
     ptr: *mut c_void,
     osize: usize,
@@ -3397,7 +3231,7 @@ mod tests {
     fn sandbox_freezes_opened_standard_libraries_and_globals() -> Result<()> {
         let vm = Vm::new()?;
         vm.open_standard_libraries(StandardLibraries::all_supported())?;
-        vm.sandbox();
+        vm.sandbox()?;
 
         assert!(matches!(
             vm.eval(
@@ -3886,6 +3720,387 @@ mod tests {
 
         assert!(error.to_string().contains("track_id"));
         assert!(error.to_string().contains("expected integer"));
+        assert_eq!(stack_top(&vm), 0);
+        Ok(())
+    }
+
+    struct DropCounter(Arc<AtomicUsize>);
+
+    impl Drop for DropCounter {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn set_memory_limit(vm: &Vm, bytes: usize) {
+        vm.inner
+            .control()
+            .memory_limit
+            .store(bytes, Ordering::Relaxed);
+    }
+
+    fn limited_vm(bytes: usize) -> Result<Vm> {
+        let vm = Vm::with_options(VmOptions::default().memory_limit(bytes))?;
+        vm.open_standard_libraries(StandardLibraries {
+            base: true,
+            table: true,
+            ..StandardLibraries::none()
+        })?;
+        Ok(vm)
+    }
+
+    fn set_gc_running(vm: &Vm, running: bool) {
+        let what = if running {
+            sys::LUA_GCRESTART
+        } else {
+            sys::LUA_GCSTOP
+        };
+        unsafe { sys::lua_gc(vm.inner.state.as_ptr(), what, 0) };
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn value_creation_reports_out_of_memory_and_vm_recovers() -> Result<()> {
+        type Attempt<'a> = Box<dyn Fn(&Vm, usize) -> Result<()> + 'a>;
+
+        let vm = limited_vm(1 << 20)?;
+        let table = vm.create_table()?;
+        let function = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(&b"return ..."[..]),
+            ChunkOrigin::default(),
+        ))?;
+        let allocate = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(&b"return table.create(...)"[..]),
+            ChunkOrigin::default(),
+        ))?;
+        let dropped = Arc::new(AtomicUsize::new(0));
+        let attempts: Vec<(&str, Attempt<'_>)> = vec![
+            (
+                "create_table",
+                Box::new(|vm, _| vm.create_table().map(drop)),
+            ),
+            (
+                "create_table_with_capacity",
+                Box::new(|vm, _| vm.create_table_with_capacity(8, 8).map(drop)),
+            ),
+            (
+                "create_buffer",
+                Box::new(|vm, _| vm.create_buffer(b"bytes").map(drop)),
+            ),
+            (
+                "create_userdata",
+                Box::new(|vm, _| {
+                    vm.create_userdata_auto(DropCounter(dropped.clone()))
+                        .map(drop)
+                }),
+            ),
+            (
+                "create_function",
+                Box::new(|vm, _| {
+                    vm.create_function(ChunkOrigin::default(), Arc::new(|_| Ok(())))
+                        .map(drop)
+                }),
+            ),
+            (
+                "create_thread",
+                Box::new(|vm, _| vm.create_thread(&function).map(drop)),
+            ),
+            (
+                "load_chunk",
+                Box::new(|vm, i| {
+                    vm.load_chunk(&Chunk::new(
+                        format!("return {i}").into_bytes(),
+                        ChunkOrigin::default(),
+                    ))
+                    .map(drop)
+                }),
+            ),
+            (
+                "eval",
+                Box::new(|vm, i| {
+                    vm.eval(
+                        format!("return table.create({})", 1 + i % 64).into_bytes(),
+                        ChunkOrigin::default(),
+                    )
+                    .map(drop)
+                }),
+            ),
+            (
+                "Function::call allocating in Luau",
+                Box::new(|vm, _| allocate.call(vm, &[Value::Number(64.0)]).map(drop)),
+            ),
+            (
+                "set_global_table",
+                Box::new(|vm, i| vm.set_global_table(&format!("global{i}"), &table)),
+            ),
+            (
+                "Table::set_raw",
+                Box::new(|vm, i| table.set_raw(vm, &format!("key{i}"), Value::Boolean(true))),
+            ),
+            (
+                "Table::set_integer_raw",
+                Box::new(|vm, i| table.set_integer_raw(vm, i as i32 + 1, Value::Boolean(true))),
+            ),
+            (
+                "Table::set_key_raw",
+                Box::new(|vm, i| {
+                    table.set_key_raw(vm, Value::Number(i as f64 + 0.5), Value::Integer(1))
+                }),
+            ),
+            (
+                "Function::call with a string",
+                Box::new(|vm, i| {
+                    function
+                        .call(vm, &[Value::String(format!("argument{i}").into_bytes())])
+                        .map(drop)
+                }),
+            ),
+            (
+                "Function::call with table data",
+                Box::new(|vm, i| {
+                    let mut data = OwnedTable::new();
+                    data.set_field(format!("field{i}"), Value::Integer(1));
+                    function.call(vm, &[Value::TableData(data)]).map(drop)
+                }),
+            ),
+        ];
+
+        vm.eval(
+            Arc::<[u8]>::from(
+                &b"hold = {}
+                local size = 4096
+                while size > 0 do
+                    local ok, value = pcall(table.create, size)
+                    if not (ok and pcall(table.insert, hold, value)) then
+                        size //= 2
+                    end
+                end"[..],
+            ),
+            ChunkOrigin::default(),
+        )?;
+        // Nothing is freed while the attempts run, so each repeats until memory runs out.
+        set_gc_running(&vm, false);
+        for (name, attempt) in &attempts {
+            let error = (0..1_000_000)
+                .find_map(|i| attempt(&vm, i).err())
+                .unwrap_or_else(|| panic!("{name} never ran out of memory"));
+            assert!(
+                matches!(error, Error::OutOfMemory),
+                "{name} failed with {error}"
+            );
+            assert_eq!(stack_top(&vm), 0, "{name} left values on the stack");
+        }
+        assert_eq!(dropped.load(Ordering::SeqCst), 1);
+
+        set_memory_limit(&vm, 0);
+        set_gc_running(&vm, true);
+        for (name, attempt) in &attempts {
+            attempt(&vm, 1_000_000)
+                .unwrap_or_else(|error| panic!("{name} failed after recovery: {error}"));
+        }
+        assert_eq!(stack_top(&vm), 0);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn callbacks_out_of_memory_raise_catchable_errors_after_dropping_rust_values() -> Result<()> {
+        let vm = limited_vm(1 << 20)?;
+        let dropped = Arc::new(AtomicUsize::new(0));
+
+        let held = dropped.clone();
+        let allocate = vm.create_function(
+            ChunkOrigin::default(),
+            Arc::new(move |frame| {
+                let _held = DropCounter(held.clone());
+                frame.vm.create_buffer(&vec![0; 2 << 20])?;
+                Ok(())
+            }),
+        )?;
+        let returned = dropped.clone();
+        let oversized = vm.create_function(
+            ChunkOrigin::default(),
+            Arc::new(move |mut frame| {
+                let held = DropCounter(returned.clone());
+                frame.returns.write(Value::Buffer(vec![0; 2 << 20]))?;
+                frame.returns.write(NativeFunctionValue::new(
+                    NativeFunctionOptions::new(ChunkOrigin::default()),
+                    Arc::new(move |_| {
+                        let _ = &held;
+                        Ok(())
+                    }),
+                ))?;
+                Ok(())
+            }),
+        )?;
+        let probe = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(
+                &b"local allocate, oversized = ...
+                local allocated, allocate_error = pcall(allocate)
+                local returned, return_error = pcall(oversized)
+                return allocated, allocate_error, returned, return_error"[..],
+            ),
+            ChunkOrigin::default(),
+        ))?;
+
+        let values = probe.call(
+            &vm,
+            &[Value::Function(allocate), Value::Function(oversized)],
+        )?;
+        drop(probe);
+        let [
+            Value::Boolean(false),
+            Value::String(allocate_error),
+            Value::Boolean(false),
+            Value::String(return_error),
+        ] = values.as_slice()
+        else {
+            panic!("expected both callbacks to fail, got {values:?}");
+        };
+        assert_eq!(allocate_error.as_slice(), gateway::MEMORY_ERROR.as_bytes());
+        assert_eq!(return_error.as_slice(), gateway::MEMORY_ERROR.as_bytes());
+        assert_eq!(dropped.load(Ordering::SeqCst), 2);
+        assert_eq!(Rc::strong_count(&vm.inner), 1);
+        assert_eq!(stack_top(&vm), 0);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn callback_errors_reach_luau_after_dropping_rust_values() -> Result<()> {
+        let vm = limited_vm(16 << 20)?;
+        let dropped = Arc::new(AtomicUsize::new(0));
+
+        let held = dropped.clone();
+        let failing = vm.create_function(
+            ChunkOrigin::default(),
+            Arc::new(move |mut frame| {
+                let pending = DropCounter(held.clone());
+                frame.returns.write(NativeFunctionValue::new(
+                    NativeFunctionOptions::new(ChunkOrigin::default()),
+                    Arc::new(move |_| {
+                        let _ = &pending;
+                        Ok(())
+                    }),
+                ))?;
+                Err(Error::Runtime("callback failed".to_string()))
+            }),
+        )?;
+        let probe = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(&b"return pcall(...)"[..]),
+            ChunkOrigin::default(),
+        ))?;
+
+        let values = probe.call(&vm, &[Value::Function(failing)])?;
+        drop(probe);
+        let [Value::Boolean(false), Value::String(message)] = values.as_slice() else {
+            panic!("expected the callback to fail, got {values:?}");
+        };
+        assert!(String::from_utf8_lossy(message).contains("callback failed"));
+        assert_eq!(dropped.load(Ordering::SeqCst), 1);
+        assert_eq!(Rc::strong_count(&vm.inner), 1);
+        assert_eq!(stack_top(&vm), 0);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn callback_out_of_memory_reaches_outer_callers_as_out_of_memory() -> Result<()> {
+        let vm = limited_vm(1 << 20)?;
+        let allocate = vm.create_function(
+            ChunkOrigin::default(),
+            Arc::new(|frame| {
+                frame.vm.create_buffer(&vec![0; 2 << 20])?;
+                Ok(())
+            }),
+        )?;
+        let through_luau = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(&b"local allocate = ... return allocate()"[..]),
+            ChunkOrigin::default(),
+        ))?;
+
+        let direct = allocate.call(&vm, &[]);
+        assert!(matches!(direct, Err(Error::OutOfMemory)), "{direct:?}");
+        let called = through_luau.call(&vm, &[Value::Function(allocate.clone())]);
+        assert!(matches!(called, Err(Error::OutOfMemory)), "{called:?}");
+
+        let thread = vm.create_thread(&through_luau)?;
+        let resumed = thread.resume(&vm, &[Value::Function(allocate)]);
+        assert!(matches!(resumed, Err(Error::OutOfMemory)), "{resumed:?}");
+        assert_eq!(stack_top(&vm), 0);
+        Ok(())
+    }
+
+    const PANICKING_DESTRUCTOR_CHILD: &str = "HARMONY_LUAU_PANICKING_DESTRUCTOR_CHILD";
+
+    /// Runs itself again in a child process, where the destructor's panic must abort the process
+    /// rather than unwind through `lua_close`.
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn panicking_destructor_aborts_instead_of_unwinding_into_luau() -> Result<()> {
+        struct PanicsOnDrop;
+
+        impl Drop for PanicsOnDrop {
+            fn drop(&mut self) {
+                panic!("userdata destructor panicked");
+            }
+        }
+
+        if std::env::var_os(PANICKING_DESTRUCTOR_CHILD).is_some() {
+            let vm = Vm::new()?;
+            vm.create_userdata_auto(PanicsOnDrop)?;
+            drop(vm);
+            return Ok(());
+        }
+
+        let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([
+                "--exact",
+                "runtime::tests::panicking_destructor_aborts_instead_of_unwinding_into_luau",
+                "--nocapture",
+            ])
+            .env(PANICKING_DESTRUCTOR_CHILD, "1")
+            .output()
+            .expect("test binary runs");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("userdata destructor panicked"),
+            "child stderr: {stderr}"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            assert_eq!(
+                output.status.signal(),
+                Some(6),
+                "child exited with {}",
+                output.status
+            );
+        }
+        #[cfg(not(unix))]
+        assert!(!output.status.success());
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn failed_resume_arguments_leave_an_unstarted_thread_resumable() -> Result<()> {
+        let vm = limited_vm(1 << 20)?;
+        let function = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(&b"local count, data = ... return count, type(data)"[..]),
+            ChunkOrigin::default(),
+        ))?;
+        let thread = vm.create_thread(&function)?;
+
+        let failed = thread.resume(&vm, &[Value::Number(1.0), Value::Buffer(vec![0; 2 << 20])]);
+        assert!(matches!(failed, Err(Error::OutOfMemory)), "{failed:?}");
+        assert!(!thread.is_started());
+
+        set_memory_limit(&vm, 0);
+        assert_eq!(
+            thread.resume(&vm, &[Value::Number(2.0), Value::Buffer(vec![0; 2 << 20])])?,
+            ThreadStatus::Completed(vec![Value::Number(2.0), Value::String(b"buffer".to_vec())])
+        );
         assert_eq!(stack_top(&vm), 0);
         Ok(())
     }

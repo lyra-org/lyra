@@ -920,6 +920,7 @@ dependencies = [
 name = "harmony-luau"
 version = "0.0.1"
 dependencies = [
+ "cc",
  "harmony-luau-sys",
  "serde",
  "thiserror 2.0.18",
@@ -929,7 +930,7 @@ dependencies = [
 [[package]]
 name = "harmony-luau-sys"
 version = "0.0.1"
-source = "git+https://github.com/lyra-org/harmony-luau-sys#f9a33e951cbd40c7e4a10cf02c9909028c589628"
+source = "git+https://github.com/lyra-org/harmony-luau-sys#7062e83874c60412921e55e74c2fda02452dd434"
 dependencies = [
  "cc",
  "libc",

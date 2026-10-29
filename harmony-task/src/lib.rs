@@ -127,7 +127,7 @@ fn schedule_task(
     delay: Option<Duration>,
 ) -> luau::runtime::Result<()> {
     let task: TaskTarget = frame.args.read_named("task")?;
-    let args = frame.args.drain_remaining();
+    let args = frame.args.drain_remaining()?;
     let scheduler = frame.vm.data().get::<harmony_core::LocalScheduler>()?;
     let thread = match task {
         TaskTarget::Function(function) => frame.vm.create_thread(&function)?,

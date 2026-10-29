@@ -55,7 +55,7 @@ fn log_function_spec(name: &'static str, level: Level) -> FunctionSpec {
 }
 
 fn emit_callback(level: Level, mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let joined = join_log_values(&frame.args.drain_remaining());
+    let joined = join_log_values(&frame.args.drain_remaining()?);
     let sanitized = sanitize_message(&joined);
     let final_msg = truncate_to_byte_cap(&sanitized, MAX_LINE_BYTES);
 

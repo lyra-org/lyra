@@ -13,3 +13,6 @@ harmony-luau-sys = { workspace = true }
 serde = { workspace = true, optional = true }
 thiserror = { workspace = true }
 time = { workspace = true }
+
+[build-dependencies]
+cc = { workspace = true }
