@@ -29,9 +29,9 @@ flate2 = "1"
 json5 = { git = "https://github.com/StayBlue/json5-rs.git", rev = "3bf73f7937c9e4db7c19564e22fa8168404c75c0" }
 harmony-luau-sys = { git = "https://github.com/lyra-org/harmony-luau-sys" }
 harmony-luau = { path = "harmony-luau" }
-libc = "0.2"
 percent-encoding = "2"
 reqwest = { version = "0.13", default-features = false, features = ["charset", "http2", "json", "rustls-no-provider", "system-proxy"] }
+rustix = { version = "1.1", default-features = false, features = ["fs", "process", "std"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 quick-xml = { version = "0.40.1", default-features = false, features = ["serialize"] }
 serde = { version = "1", features = ["derive"] }

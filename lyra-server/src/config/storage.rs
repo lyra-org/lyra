@@ -37,8 +37,8 @@ pub(crate) fn write_error(operation: &str, path: &Path, error: io::Error) -> any
     match error.kind() {
         #[cfg(unix)]
         io::ErrorKind::PermissionDenied => {
-            // These calls read process identity and have no preconditions.
-            let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
+            let uid = rustix::process::geteuid().as_raw();
+            let gid = rustix::process::getegid().as_raw();
             context.push_str(&format!(
                 ": Lyra runs as user {uid} (group {gid}), which cannot write to this folder. \
                  Make that user the owner of the folder and its files, \
@@ -96,8 +96,8 @@ mod tests {
             assert_eq!(
                 message.contains(&format!(
                     "runs as user {} (group {})",
-                    unsafe { libc::geteuid() },
-                    unsafe { libc::getegid() }
+                    rustix::process::geteuid().as_raw(),
+                    rustix::process::getegid().as_raw()
                 )),
                 kind == io::ErrorKind::PermissionDenied
             );

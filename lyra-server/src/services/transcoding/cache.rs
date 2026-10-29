@@ -262,18 +262,8 @@ pub(crate) struct TranscodeUnavailable(&'static str);
 /// The bytes free for unprivileged use on the filesystem holding `dir`.
 #[cfg(unix)]
 fn free_bytes(dir: &Path) -> io::Result<u64> {
-    use std::os::unix::ffi::OsStrExt;
-
-    let path = std::ffi::CString::new(dir.as_os_str().as_bytes())?;
-    let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
-    // SAFETY: `path` is NUL-terminated and `stat` is valid for writes of a `statvfs`.
-    if unsafe { libc::statvfs(path.as_ptr(), stat.as_mut_ptr()) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: statvfs succeeded, so it filled `stat`.
-    let stat = unsafe { stat.assume_init() };
-    #[allow(clippy::unnecessary_cast)]
-    Ok((stat.f_bavail as u64).saturating_mul(stat.f_frsize as u64))
+    let stat = rustix::fs::statvfs(dir)?;
+    Ok(stat.f_bavail.saturating_mul(stat.f_frsize))
 }
 
 #[cfg(not(unix))]
@@ -303,7 +293,7 @@ impl TranscodeCache {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix, not(target_vendor = "apple")))]
     fn with_stalled_timeout(stalled_timeout: Duration) -> Self {
         Self {
             budget: Some(Budget {
@@ -1333,16 +1323,17 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_vendor = "apple")))]
     #[tokio::test(flavor = "multi_thread")]
     async fn a_stalled_encode_is_stopped() -> anyhow::Result<()> {
-        use std::os::unix::ffi::OsStrExt;
+        use rustix::fs::{
+            CWD,
+            Mode,
+        };
 
         let dir = tempfile::tempdir()?;
         let fifo = dir.path().join("stalled.wav");
-        let fifo_c = std::ffi::CString::new(fifo.as_os_str().as_bytes())?;
-        // SAFETY: a valid NUL-terminated path; mkfifo has no other preconditions.
-        assert_eq!(unsafe { libc::mkfifo(fifo_c.as_ptr(), 0o600) }, 0);
+        rustix::fs::mkfifoat(CWD, &fifo, Mode::RUSR | Mode::WUSR)?;
         let cache = Arc::new(TranscodeCache::with_stalled_timeout(Duration::from_millis(
             200,
         )));
