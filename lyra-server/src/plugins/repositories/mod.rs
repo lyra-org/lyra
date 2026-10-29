@@ -1695,7 +1695,7 @@ mod tests {
         if path.is_file() {
             harmony_repository::ReleaseIndex::parse(
                 &std::fs::read(&path)?,
-                &crate::plugins::surfaces::plugin_host(),
+                &crate::plugins::plugin_host(),
             )?;
         }
         Ok(())

@@ -8,6 +8,7 @@ mod luaurc;
 mod modules;
 pub mod plugin;
 mod scheduler;
+pub mod scopes;
 mod tokio_runtime;
 mod userdata;
 
@@ -18,6 +19,7 @@ pub use modules::{
     FilesystemSourceLoader,
     FunctionCallback,
     FunctionSpec,
+    GatedModule,
     GlobalSpec,
     MemorySourceLoader,
     ModuleCacheKey,

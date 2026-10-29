@@ -30,9 +30,11 @@ struct TaskLike;
 struct TaskThread;
 struct TaskArg;
 
+/// The capability hosts conventionally gate this module behind.
+pub const SCOPE: &str = "harmony.task";
+
 pub fn module_spec() -> ModuleSpec {
     ModuleSpec::new("harmony/task")
-        .capability("harmony.task")
         .function(defer_spec())
         .function(delay_spec())
         .function(wait_spec())

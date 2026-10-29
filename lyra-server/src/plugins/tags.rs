@@ -62,7 +62,6 @@ fn tag_to_info(tag: lyra_db::Tag) -> TagInfo {
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/tags")
-        .capability("lyra.tags")
         .function(add_spec())
         .function(remove_spec())
         .function(has_spec())

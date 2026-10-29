@@ -24,7 +24,6 @@ struct EditionsModule;
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/editions")
-        .capability("lyra.editions")
         .function(media_formats_spec())
         .function(media_formats_match_spec())
         .function(barcode_spec())

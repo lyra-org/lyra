@@ -30,7 +30,6 @@ pub(crate) use self::registry::{
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/metadata")
-        .capability("lyra.metadata")
         .function(provider_new_spec())
         .userdata(crate::plugins::types::LuauEntityType::_harmony_userdata_spec())
         .userdata(crate::plugins::types::LuauArtistType::_harmony_userdata_spec())

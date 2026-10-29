@@ -1226,7 +1226,6 @@ fn track_serve_option_fields(include_format: bool) -> Vec<FieldDescriptor> {
 
 pub(crate) fn module_spec() -> harmony_core::ModuleSpec {
     ModuleSpec::new("lyra/api")
-        .capability("lyra.api")
         .function(route_spec("route", true, route_callback))
         .function(route_spec("get", false, get_callback))
         .function(route_spec("post", false, post_callback))

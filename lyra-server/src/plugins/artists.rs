@@ -66,7 +66,6 @@ struct ArtistsModule;
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/artists")
-        .capability("lyra.artists")
         .function(get_spec())
         .function(query_spec())
         .function(by_release_spec())

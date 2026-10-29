@@ -47,7 +47,6 @@ struct LabelForReleaseInfo;
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/labels")
-        .capability("lyra.labels")
         .function(resolve_spec())
         .function(get_by_id_spec())
         .function(get_for_release_spec())

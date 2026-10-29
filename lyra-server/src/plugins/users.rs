@@ -38,7 +38,6 @@ struct UsersModule;
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/users")
-        .capability("lyra.users")
         .function(list_spec())
         .install(|_| Ok(ModuleExport::new(UsersModule)))
 }

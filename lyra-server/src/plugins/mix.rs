@@ -293,7 +293,6 @@ impl Mixer {
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/mix")
-        .capability("lyra.mix")
         .function(
             FunctionSpec::async_fn("Mixer.new")
                 .arg_name("id")

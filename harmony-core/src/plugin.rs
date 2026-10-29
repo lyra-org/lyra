@@ -36,10 +36,10 @@ use harmony_luau as luau;
 
 use crate::{
     CallContext,
+    GatedModule,
     GlobalSpec,
     LocalScheduler,
     ModuleId,
-    ModuleSpec,
     SourceLoader,
     TokioRuntimeContext,
     luau::{
@@ -1226,7 +1226,7 @@ pub struct RuntimeBuilder<L> {
     loader: L,
     manifests: Arc<[PluginManifest]>,
     plugins: Arc<[LoadedPlugin]>,
-    module_specs: Vec<ModuleSpec>,
+    modules: Vec<GatedModule>,
     global_specs: Vec<GlobalSpec>,
     memory_limit: usize,
     luau_resume_budget: Option<Duration>,
@@ -1243,7 +1243,7 @@ where
             loader,
             manifests,
             plugins: Arc::from(Vec::<LoadedPlugin>::new()),
-            module_specs: Vec::new(),
+            modules: Vec::new(),
             global_specs: Vec::new(),
             memory_limit: 256 * 1024 * 1024,
             luau_resume_budget: Some(Duration::from_secs(300)),
@@ -1257,8 +1257,8 @@ where
         self
     }
 
-    pub fn module_specs(mut self, specs: Vec<ModuleSpec>) -> Self {
-        self.module_specs = specs;
+    pub fn modules(mut self, modules: Vec<GatedModule>) -> Self {
+        self.modules = modules;
         self
     }
 
@@ -1312,8 +1312,8 @@ where
             self.loader,
             ManifestCapabilityPolicy::from_manifests(self.manifests),
         );
-        for spec in self.module_specs {
-            require.register(spec)?;
+        for module in self.modules {
+            require.register(module)?;
         }
         vm.data().insert(require)?;
 
@@ -1599,6 +1599,7 @@ mod tests {
         CallContext,
         ChunkOrigin,
         FunctionSpec,
+        GatedModule,
         GlobalSpec,
         MemorySourceLoader,
         ModuleExport,
@@ -2076,7 +2077,6 @@ mod tests {
             ..CallContext::default()
         };
         ModuleSpec::new("test/tasks")
-            .capability("test.tasks")
             .function(FunctionSpec::sync_fn("later").call(move |mut frame| {
                 let seconds: f64 = frame.args.read()?;
                 let function = read_function(&mut frame)?;
@@ -2173,7 +2173,6 @@ mod tests {
     /// A capability only `lib` holds in the task test runtimes.
     fn secret_module() -> ModuleSpec {
         ModuleSpec::new("test/secret")
-            .capability("test.secret")
             .function(FunctionSpec::sync_fn("get").call(|mut frame| {
                 frame.returns.write("secret")?;
                 Ok(())
@@ -2246,7 +2245,10 @@ mod tests {
             ),
         )
         .plugins(Arc::from(plugins))
-        .module_specs(vec![task_test_module(recorded), secret_module()])
+        .modules(vec![
+            GatedModule::new("test.tasks", task_test_module(recorded)),
+            GatedModule::new("test.secret", secret_module()),
+        ])
         .configure_vm(|vm| {
             vm.data().insert(TestHandlers::default())?;
             Ok(())
@@ -2994,14 +2996,15 @@ mod tests {
             MemorySourceLoader::new(),
             manifest_arc(vec![manifest("demo", &[])]),
         )
-        .module_specs(vec![
-            ModuleSpec::new("demo/secret")
-                .capability("demo.secret")
-                .function(FunctionSpec::sync_fn("value").call(|mut frame| {
+        .modules(vec![GatedModule::new(
+            "demo.secret",
+            ModuleSpec::new("demo/secret").function(FunctionSpec::sync_fn("value").call(
+                |mut frame| {
                     frame.returns.write("secret")?;
                     Ok(())
-                })),
-        ])
+                },
+            )),
+        )])
         .build()?;
 
         let error = runtime
@@ -3027,14 +3030,15 @@ mod tests {
             MemorySourceLoader::new(),
             manifest_arc(vec![manifest("demo", &["demo.math"])]),
         )
-        .module_specs(vec![
-            ModuleSpec::new("demo/math")
-                .capability("demo.math")
-                .function(FunctionSpec::sync_fn("answer").call(|mut frame| {
+        .modules(vec![GatedModule::new(
+            "demo.math",
+            ModuleSpec::new("demo/math").function(FunctionSpec::sync_fn("answer").call(
+                |mut frame| {
                     frame.returns.write(42_i64)?;
                     Ok(())
-                })),
-        ])
+                },
+            )),
+        )])
         .build()?;
 
         let values = runtime.eval_source_with_context(
@@ -3062,15 +3066,16 @@ mod tests {
             vm.data().insert(TestStore("configured"))?;
             Ok(())
         })
-        .module_specs(vec![
-            ModuleSpec::new("demo/store")
-                .capability("demo.store")
-                .function(FunctionSpec::sync_fn("value").call(|mut frame| {
+        .modules(vec![GatedModule::new(
+            "demo.store",
+            ModuleSpec::new("demo/store").function(FunctionSpec::sync_fn("value").call(
+                |mut frame| {
                     let store = frame.vm.data().get::<TestStore>()?;
                     frame.returns.write(store.0)?;
                     Ok(())
-                })),
-        ])
+                },
+            )),
+        )])
         .build()?;
 
         let values = runtime.eval_source_with_context(
@@ -3115,7 +3120,6 @@ mod tests {
         let order = Arc::new(Mutex::new(Vec::<String>::new()));
         let order_for_module = order.clone();
         let module = ModuleSpec::new("test/order")
-            .capability("test.order")
             .function(FunctionSpec::sync_fn("record").call(move |mut frame| {
                 let id: String = frame.args.read_named("id")?;
                 order_for_module
@@ -3151,7 +3155,7 @@ mod tests {
             manifest_arc(vec![alpha.manifest.clone(), beta.manifest.clone()]),
         )
         .plugins(Arc::from(vec![alpha, beta]))
-        .module_specs(vec![module])
+        .modules(vec![GatedModule::new("test.order", module)])
         .build()?;
 
         assert!(runtime.exec_all().is_empty());
@@ -3585,7 +3589,6 @@ mod tests {
         let runs = Arc::new(Mutex::new(0usize));
         let runs_for_module = runs.clone();
         let module = ModuleSpec::new("test/order")
-            .capability("test.order")
             .function(FunctionSpec::sync_fn("record").call(move |_frame| {
                 *runs_for_module.lock().expect("runs mutex poisoned") += 1;
                 Ok(())
@@ -3609,7 +3612,7 @@ mod tests {
         };
         let runtime = RuntimeBuilder::new(loader, manifest_arc(vec![dep, consumer]))
             .plugins(Arc::from(vec![dep_plugin]))
-            .module_specs(vec![module])
+            .modules(vec![GatedModule::new("test.order", module)])
             .build()?;
         assert!(runtime.exec_all().is_empty());
 
@@ -3636,9 +3639,10 @@ mod tests {
         // Even a plugin named like a registered namespace must not resolve.
         loader.insert("plugin:test/x", b"return 1".as_slice());
         let runtime = RuntimeBuilder::new(loader, manifest_arc(Vec::new()))
-            .module_specs(vec![
+            .modules(vec![GatedModule::new(
+                "test.order",
                 ModuleSpec::new("test/order").install(|_| Ok(ModuleExport::new(()))),
-            ])
+            )])
             .build()?;
 
         let error = runtime

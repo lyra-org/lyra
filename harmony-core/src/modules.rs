@@ -288,9 +288,24 @@ impl ModuleExport {
     }
 }
 
+/// A module and the capability a plugin's manifest must declare to `require`
+/// it. The host decides the capability; the module only describes itself.
+pub struct GatedModule {
+    pub capability: CapabilityId,
+    pub spec: ModuleSpec,
+}
+
+impl GatedModule {
+    pub fn new(capability: impl Into<Arc<str>>, spec: ModuleSpec) -> Self {
+        Self {
+            capability: CapabilityId(capability.into()),
+            spec,
+        }
+    }
+}
+
 pub struct ModuleSpec {
     pub id: ModuleId,
-    pub capability: Option<CapabilityId>,
     pub functions: Vec<FunctionSpec>,
     pub userdata: Vec<UserDataSpec>,
     pub install: Option<NativeModuleInstaller>,
@@ -301,17 +316,11 @@ impl ModuleSpec {
     pub fn new(id: impl Into<Arc<str>>) -> Self {
         Self {
             id: ModuleId(id.into()),
-            capability: None,
             functions: Vec::new(),
             userdata: Vec::new(),
             install: None,
             initializer: None,
         }
-    }
-
-    pub fn capability(mut self, capability: impl Into<Arc<str>>) -> Self {
-        self.capability = Some(CapabilityId(capability.into()));
-        self
     }
 
     pub fn function(mut self, function: FunctionSpec) -> Self {
@@ -658,7 +667,7 @@ impl std::error::Error for ModuleCapabilityDenied {}
 
 #[derive(Default)]
 pub struct ModuleRegistry {
-    modules: HashMap<ModuleId, ModuleSpec>,
+    modules: HashMap<ModuleId, GatedModule>,
     cache: HashMap<ModuleId, Arc<ModuleExport>>,
     luau_cache: HashMap<LuauModuleCacheKey, Rc<luau::Table>>,
 }
@@ -731,14 +740,14 @@ impl ModuleRegistry {
         })
     }
 
-    pub fn register(&mut self, spec: ModuleSpec) -> std::result::Result<(), ModuleLoadError> {
-        if self.modules.contains_key(&spec.id) {
+    pub fn register(&mut self, module: GatedModule) -> std::result::Result<(), ModuleLoadError> {
+        if self.modules.contains_key(&module.spec.id) {
             return Err(ModuleLoadError::DuplicateModule {
-                module_id: spec.id.clone(),
+                module_id: module.spec.id.clone(),
             });
         }
 
-        self.modules.insert(spec.id.clone(), spec);
+        self.modules.insert(module.spec.id.clone(), module);
         Ok(())
     }
 
@@ -755,13 +764,11 @@ impl ModuleRegistry {
                 module_id: module_id.clone(),
             })?;
 
-        if let Some(capability) = &module.capability
-            && !policy.is_allowed(origin, capability)
-        {
+        if !policy.is_allowed(origin, &module.capability) {
             return Err(ModuleLoadError::CapabilityDenied(ModuleCapabilityDenied {
                 origin: origin.clone(),
                 module_id: module_id.clone(),
-                capability: capability.clone(),
+                capability: module.capability.clone(),
             }));
         }
 
@@ -771,14 +778,18 @@ impl ModuleRegistry {
 
         let installer =
             module
+                .spec
                 .install
                 .as_ref()
                 .ok_or_else(|| ModuleLoadError::MissingInstaller {
                     module_id: module_id.clone(),
                 })?;
         let export = Arc::new(
-            installer(ModuleLoadContext { origin, module })
-                .map_err(ModuleLoadError::InstallFailed)?,
+            installer(ModuleLoadContext {
+                origin,
+                module: &module.spec,
+            })
+            .map_err(ModuleLoadError::InstallFailed)?,
         );
         self.cache.insert(module_id.clone(), export.clone());
         Ok(export)
@@ -801,13 +812,11 @@ impl ModuleRegistry {
                 module_id: module_id.clone(),
             })?;
 
-        if let Some(capability) = &module.capability
-            && !policy.is_allowed(origin, capability)
-        {
+        if !policy.is_allowed(origin, &module.capability) {
             return Err(ModuleLoadError::CapabilityDenied(ModuleCapabilityDenied {
                 origin: origin.clone(),
                 module_id: module_id.clone(),
-                capability: capability.clone(),
+                capability: module.capability.clone(),
             }));
         }
 
@@ -817,8 +826,14 @@ impl ModuleRegistry {
         }
 
         let export = Rc::new(
-            install_luau_module_in_group(vm, origin, module, task_group)
-                .map_err(|error| ModuleLoadError::InstallFailed(anyhow::Error::new(error)))?,
+            install_gated_luau_module(
+                vm,
+                origin,
+                &module.spec,
+                Some(&module.capability),
+                task_group,
+            )
+            .map_err(|error| ModuleLoadError::InstallFailed(anyhow::Error::new(error)))?,
         );
         self.luau_cache.insert(cache_key, export.clone());
         Ok(export)
@@ -872,8 +887,8 @@ impl LuauRequireRuntime {
         }
     }
 
-    pub fn register(&self, spec: ModuleSpec) -> std::result::Result<(), ModuleLoadError> {
-        self.registry.borrow_mut().register(spec)
+    pub fn register(&self, module: GatedModule) -> std::result::Result<(), ModuleLoadError> {
+        self.registry.borrow_mut().register(module)
     }
 
     /// The task group of `plugin_id`'s current run, starting a run when it
@@ -1141,18 +1156,21 @@ fn core_origin(origin: &luau::ChunkOrigin) -> ChunkOrigin {
     }
 }
 
+/// Installs `module` directly, outside any registry, so its functions carry
+/// no capability.
 pub fn install_luau_module(
     vm: &luau::Vm,
     origin: &ChunkOrigin,
     module: &ModuleSpec,
 ) -> luau::runtime::Result<luau::Table> {
-    install_luau_module_in_group(vm, origin, module, crate::TaskGroupId::default())
+    install_gated_luau_module(vm, origin, module, None, crate::TaskGroupId::default())
 }
 
-fn install_luau_module_in_group(
+fn install_gated_luau_module(
     vm: &luau::Vm,
     origin: &ChunkOrigin,
     module: &ModuleSpec,
+    capability_id: Option<&CapabilityId>,
     task_group: crate::TaskGroupId,
 ) -> luau::runtime::Result<luau::Table> {
     #[derive(Clone, Copy)]
@@ -1228,7 +1246,7 @@ fn install_luau_module_in_group(
             .function_name(spec.name.clone())
             .argument_names(spec.arg_names.clone())
             .task_group(luau::TaskGroupId(task_group.0));
-        if let Some(capability_id) = &module.capability {
+        if let Some(capability_id) = capability_id {
             options = options.capability(capability(capability_id));
         }
         let callback = match callback {
@@ -1400,11 +1418,10 @@ mod tests {
         let module_id = ModuleId(Arc::from("harmony/serde"));
         let mut registry = ModuleRegistry::new();
         registry
-            .register(
-                ModuleSpec::new(module_id.0.clone())
-                    .capability("harmony.serde")
-                    .install(|_| Ok(ModuleExport::new(42_u64))),
-            )
+            .register(GatedModule::new(
+                "harmony.serde",
+                ModuleSpec::new(module_id.0.clone()).install(|_| Ok(ModuleExport::new(42_u64))),
+            ))
             .expect("register module");
 
         let origin = ChunkOrigin {
@@ -1433,7 +1450,6 @@ mod tests {
             ..ChunkOrigin::default()
         };
         let module = ModuleSpec::new("demo/math")
-            .capability("demo.math")
             .function(
                 FunctionSpec::sync_fn("add")
                     .arg_name("lhs")
@@ -1463,7 +1479,14 @@ mod tests {
                         Ok(())
                     }),
             );
-        let table = install_luau_module(&vm, &origin, &module)?;
+        let capability = CapabilityId(Arc::from("demo.math"));
+        let table = install_gated_luau_module(
+            &vm,
+            &origin,
+            &module,
+            Some(&capability),
+            crate::TaskGroupId::default(),
+        )?;
         vm.set_global_table("module", &table)?;
 
         let values = vm.eval(
@@ -1625,14 +1648,15 @@ mod tests {
         let vm = luau::Vm::new()?;
         let mut registry = ModuleRegistry::new();
         registry
-            .register(
-                ModuleSpec::new(module_id.0.clone())
-                    .capability("demo.math")
-                    .function(FunctionSpec::sync_fn("answer").call(|mut frame| {
+            .register(GatedModule::new(
+                "demo.math",
+                ModuleSpec::new(module_id.0.clone()).function(
+                    FunctionSpec::sync_fn("answer").call(|mut frame| {
                         frame.returns.write(42_i64)?;
                         Ok(())
-                    })),
-            )
+                    }),
+                ),
+            ))
             .expect("register module");
 
         let allowed_origin = ChunkOrigin {
@@ -1698,12 +1722,15 @@ mod tests {
         let vm = luau::Vm::new()?;
         let mut registry = ModuleRegistry::new();
         registry
-            .register(ModuleSpec::new(module_id.0.clone()).function(
-                FunctionSpec::sync_fn("plugin_id").call(|mut frame| {
-                    let plugin_id = frame.context.origin.plugin.as_deref().unwrap_or("");
-                    frame.returns.write(plugin_id)?;
-                    Ok(())
-                }),
+            .register(GatedModule::new(
+                "lyra.plugins",
+                ModuleSpec::new(module_id.0.clone()).function(
+                    FunctionSpec::sync_fn("plugin_id").call(|mut frame| {
+                        let plugin_id = frame.context.origin.plugin.as_deref().unwrap_or("");
+                        frame.returns.write(plugin_id)?;
+                        Ok(())
+                    }),
+                ),
             ))
             .expect("register module");
 
@@ -1821,14 +1848,15 @@ mod tests {
         };
         let runtime = LuauRequireRuntime::new(loader, AllowAllCapabilities);
         runtime
-            .register(
-                ModuleSpec::new("harmony/math")
-                    .capability("harmony.math")
-                    .function(FunctionSpec::sync_fn("answer").call(|mut frame| {
+            .register(GatedModule::new(
+                "harmony.math",
+                ModuleSpec::new("harmony/math").function(FunctionSpec::sync_fn("answer").call(
+                    |mut frame| {
                         frame.returns.write(42_i64)?;
                         Ok(())
-                    })),
-            )
+                    },
+                )),
+            ))
             .expect("register module");
         let scheduler = crate::LocalScheduler::new();
         let run = runtime.plugin_group(&scheduler, "demo");
@@ -1898,11 +1926,10 @@ mod tests {
         let module_id = ModuleId(Arc::from("lyra/datastore"));
         let mut registry = ModuleRegistry::new();
         registry
-            .register(
-                ModuleSpec::new(module_id.0.clone())
-                    .capability("lyra.datastore")
-                    .install(|_| Ok(ModuleExport::new("cached"))),
-            )
+            .register(GatedModule::new(
+                "lyra.datastore",
+                ModuleSpec::new(module_id.0.clone()).install(|_| Ok(ModuleExport::new("cached"))),
+            ))
             .expect("register module");
 
         let allowed_origin = ChunkOrigin {

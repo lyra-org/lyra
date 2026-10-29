@@ -27,9 +27,11 @@ const EMPTY_OBJECT_MARKER: &str = "__harmony_serde_empty_object";
 struct SerdeModuleDocs;
 struct SerdeModule;
 
+/// The capability hosts conventionally gate this module behind.
+pub const SCOPE: &str = "harmony.serde";
+
 pub fn module_spec() -> ModuleSpec {
     ModuleSpec::new("harmony/serde")
-        .capability("harmony.serde")
         .function(json_encode_spec())
         .function(json_decode_spec())
         .function(yaml_encode_spec())

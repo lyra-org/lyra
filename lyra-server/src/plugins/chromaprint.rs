@@ -36,7 +36,6 @@ struct ChromaprintResult;
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/chromaprint")
-        .capability("lyra.chromaprint")
         .function(compute_spec())
         .install(|_| Ok(ModuleExport::new(ChromaprintModule)))
 }

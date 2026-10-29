@@ -135,9 +135,11 @@ const UDP_MAX_DATAGRAM: usize = 65535;
 
 struct NetModule;
 
+/// The capability hosts conventionally gate this module behind.
+pub const SCOPE: &str = "harmony.net";
+
 pub fn module_spec() -> ModuleSpec {
     ModuleSpec::new("harmony/net")
-        .capability("harmony.net")
         .function(udp_bind_spec())
         .function(tcp_connect_spec())
         .function(tcp_bind_spec())

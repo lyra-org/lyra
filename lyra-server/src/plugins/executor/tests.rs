@@ -261,9 +261,9 @@ fn manifest(id: &str, scopes: &[&str]) -> PluginManifest {
 fn plugin_executor_preserves_typed_call_context_across_luau_yield() -> Result<()> {
     let runtime = runtime_with_scopes(&["harmony.task", "test.context"])?;
     let require = runtime.vm.data().get::<RequireRuntime>()?;
-    require.register(
+    require.register(harmony_core::GatedModule::new(
+        "test.context",
         ModuleSpec::new("test/context")
-            .capability("test.context")
             .function(
                 harmony_core::FunctionSpec::sync_fn("username")
                     .returns::<String>()
@@ -274,7 +274,7 @@ fn plugin_executor_preserves_typed_call_context_across_luau_yield() -> Result<()
                     }),
             )
             .install(|_| Ok(harmony_core::ModuleExport::new(()))),
-    )?;
+    ))?;
 
     let mut context = CallContext {
         origin: plugin_origin("demo", "init.luau"),
@@ -314,9 +314,9 @@ fn plugin_executor_preserves_typed_call_context_across_luau_yield() -> Result<()
 fn plugin_executor_keeps_dispatch_auth_inside_coroutines() -> Result<()> {
     let runtime = runtime_with_scopes(&["test.context"])?;
     let require = runtime.vm.data().get::<RequireRuntime>()?;
-    require.register(
+    require.register(harmony_core::GatedModule::new(
+        "test.context",
         ModuleSpec::new("test/context")
-            .capability("test.context")
             .function(
                 harmony_core::FunctionSpec::sync_fn("username")
                     .returns::<String>()
@@ -327,7 +327,7 @@ fn plugin_executor_keeps_dispatch_auth_inside_coroutines() -> Result<()> {
                     }),
             )
             .install(|_| Ok(harmony_core::ModuleExport::new(()))),
-    )?;
+    ))?;
     let mut context = CallContext {
         origin: plugin_origin("demo", "init.luau"),
         ..CallContext::default()
@@ -2420,11 +2420,11 @@ fn plugin_executor_handle_shutdown_stops_lua_and_the_executor_thread() -> Result
     init_api_test_state()?;
     let plugin = temp_plugin(
         "demo",
-        &["harmony.task", "lyra.api"],
+        &["harmony.task", "lyra.api", "harmony.crypt"],
         r#"
             local task = require("@harmony/task")
             local api = require("@lyra/api")
-            local ticks = require("@test/ticks")
+            local ticks = require("@harmony/crypt")
             task.spawn(function()
                 while true do
                     ticks.tick()
@@ -2439,7 +2439,9 @@ fn plugin_executor_handle_shutdown_stops_lua_and_the_executor_thread() -> Result
     )?;
     let ticks = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let module_ticks = ticks.clone();
-    let ticks_module = ModuleSpec::new("test/ticks")
+    // Overrides replace a module, so the counter stands in for one this
+    // plugin does not otherwise use.
+    let ticks_module = ModuleSpec::new("harmony/crypt")
         .function(
             harmony_core::FunctionSpec::sync_fn("tick").call(move |_frame| {
                 module_ticks.fetch_add(1, std::sync::atomic::Ordering::SeqCst);

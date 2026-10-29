@@ -47,7 +47,6 @@ struct ServerModule;
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/server")
-        .capability("lyra.server")
         .function(server_info_spec())
         .install(|_| Ok(ModuleExport::new(ServerModule)))
 }

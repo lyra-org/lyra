@@ -3,13 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-#[cfg(feature = "docgen")]
 use anyhow::Result;
-use harmony_core::{
-    ModuleSpec,
-    plugin::PluginHost,
-};
-use semver::Version;
 
 use crate::plugins::{
     api,
@@ -45,35 +39,26 @@ use crate::plugins::{
     users,
 };
 
-#[cfg(feature = "docgen")]
 type RenderDocsFn = fn() -> Result<String>;
 
-#[cfg(feature = "docgen")]
 struct Surface {
-    #[cfg(feature = "docgen")]
     id: &'static str,
-    #[cfg(feature = "docgen")]
     render_docs: RenderDocsFn,
 }
 
-#[cfg(feature = "docgen")]
 macro_rules! surface {
     ($id:literal, $module:path, $render:path) => {
         Surface {
-            #[cfg(feature = "docgen")]
             id: $id,
-            #[cfg(feature = "docgen")]
             render_docs: || $render().map_err(anyhow::Error::from),
         }
     };
 }
 
-#[cfg(feature = "docgen")]
 pub(crate) fn lyra_doc_source_ids() -> impl Iterator<Item = &'static str> {
     surfaces().iter().map(|surface| surface.id)
 }
 
-#[cfg(feature = "docgen")]
 pub(crate) fn render_lyra_doc_source(id: &str) -> Result<Option<String>> {
     surfaces()
         .iter()
@@ -83,60 +68,6 @@ pub(crate) fn render_lyra_doc_source(id: &str) -> Result<Option<String>> {
         .map(Option::flatten)
 }
 
-pub(crate) fn module_specs() -> Vec<ModuleSpec> {
-    vec![
-        api::module_spec(),
-        artists::module_spec(),
-        auth::module_spec(),
-        chromaprint::module_spec(),
-        covers::module_spec(),
-        harmony_crypt::module_spec(),
-        datastore::module_spec(),
-        editions::module_spec(),
-        entities::module_spec(),
-        entries::module_spec(),
-        favorites::module_spec(),
-        genres::module_spec(),
-        harmony_http::module_spec(),
-        ids::module_spec(),
-        images::module_spec(),
-        labels::module_spec(),
-        libraries::module_spec(),
-        listens::module_spec(),
-        locale::module_spec(),
-        harmony_serde::module_spec(),
-        lyrics::module_spec(),
-        metadata::module_spec(),
-        mix::module_spec(),
-        harmony_net::module_spec(),
-        playback_sessions::module_spec(),
-        playback_sources::module_spec(),
-        playlists::module_spec(),
-        ratings::module_spec(),
-        releases::module_spec(),
-        server::module_spec(),
-        harmony_task::module_spec(),
-        tags::module_spec(),
-        track_sources::module_spec(),
-        tracks::module_spec(),
-        users::module_spec(),
-        manifests::module_spec(),
-    ]
-}
-
-pub(crate) fn plugin_host() -> PluginHost {
-    PluginHost::new(
-        "lyra",
-        Version::parse(env!("CARGO_PKG_VERSION")).expect("package version is semver"),
-        module_specs()
-            .into_iter()
-            .filter_map(|spec| spec.capability.map(|capability| capability.0))
-            .collect(),
-    )
-    .expect("lyra is not a fixed manifest field")
-}
-
-#[cfg(feature = "docgen")]
 fn surfaces() -> &'static [Surface] {
     &[
         surface!(

@@ -124,7 +124,6 @@ impl DataStoreHandle {
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/datastore")
-        .capability("lyra.datastore")
         .function(get_or_create_spec())
         .userdata(DataStoreHandle::_harmony_userdata_spec())
         .install(|_| Ok(ModuleExport::new(DataStoreModule)))

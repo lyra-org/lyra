@@ -34,7 +34,6 @@ struct EntriesModule;
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/entries")
-        .capability("lyra.entries")
         .function(get_spec())
         .install(|_| Ok(ModuleExport::new(EntriesModule)))
 }

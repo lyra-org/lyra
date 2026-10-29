@@ -33,7 +33,6 @@ struct FavoritesModule;
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/favorites")
-        .capability("lyra.favorites")
         .function(add_spec())
         .function(remove_spec())
         .function(has_spec())

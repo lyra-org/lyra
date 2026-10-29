@@ -233,7 +233,6 @@ pub(crate) fn module_spec(state: CachedHttpState) -> ModuleSpec {
     let rate_limit_plugin_id = state.plugin_id.clone();
 
     ModuleSpec::new("harmony/http")
-        .capability("harmony.http")
         .function(
             FunctionSpec::async_fn("request")
                 .arg_name("options")

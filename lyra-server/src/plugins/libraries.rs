@@ -46,7 +46,6 @@ struct LibrariesModule;
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/libraries")
-        .capability("lyra.libraries")
         .function(list_spec())
         .function(get_for_entity_spec())
         .function(get_for_entities_spec())

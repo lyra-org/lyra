@@ -54,7 +54,6 @@ struct EntitiesModule;
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/entities")
-        .capability("lyra.entities")
         .function(query_spec("query", ProjectionKind::Any))
         .function(query_spec("query_release", ProjectionKind::Release))
         .function(query_spec("query_track", ProjectionKind::Track))

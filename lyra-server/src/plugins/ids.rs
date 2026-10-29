@@ -32,7 +32,6 @@ struct IdsModule;
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/ids")
-        .capability("lyra.ids")
         .function(get_id_spec())
         .function(get_ids_spec())
         .function(get_db_id_spec())

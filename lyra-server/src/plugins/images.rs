@@ -345,7 +345,6 @@ impl ComposeResult {
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/images")
-        .capability("lyra.images")
         .function(compose_spec())
         .install(|_| Ok(ModuleExport::new(ImagesModule)))
 }

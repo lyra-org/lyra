@@ -32,9 +32,11 @@ use sha2::{
 
 struct CryptModule;
 
+/// The capability hosts conventionally gate this module behind.
+pub const SCOPE: &str = "harmony.crypt";
+
 pub fn module_spec() -> ModuleSpec {
     ModuleSpec::new("harmony/crypt")
-        .capability("harmony.crypt")
         .function(hash_spec())
         .function(base64_encode_spec())
         .function(base64_decode_spec())

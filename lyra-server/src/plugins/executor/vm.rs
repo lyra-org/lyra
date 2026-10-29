@@ -38,7 +38,7 @@ use super::{
     PluginExecutor,
     WebSocketState,
     messages::TaskIdKey,
-    modules::generic_module_specs,
+    modules::generic_modules,
     stores::PluginModuleStores,
 };
 
@@ -143,7 +143,7 @@ impl PluginExecutor {
     {
         let runtime = RuntimeBuilder::new(loader, manifests.clone())
             .plugins(plugins)
-            .module_specs(generic_module_specs(module_overrides))
+            .modules(generic_modules(module_overrides)?)
             .global_specs(harmony_globals::plugin_log_global_specs())
             .configure_vm(move |vm| {
                 vm.data()

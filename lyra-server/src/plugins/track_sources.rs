@@ -27,7 +27,6 @@ struct TrackSourcesModule;
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/track_sources")
-        .capability("lyra.track_sources")
         .function(get_primary_source_key_spec())
         .install(|_| Ok(ModuleExport::new(TrackSourcesModule)))
 }

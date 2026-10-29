@@ -60,23 +60,27 @@ fn test_executor() -> Result<TestExecutor> {
                 ],
                 dependencies: Default::default(),
             }]))?;
-            runtime.vm.data().get::<RequireRuntime>()?.register(
-                ModuleSpec::new("test/gate")
-                    .capability("test.gate")
-                    .function(FunctionSpec::async_fn("wait").returns::<bool>().call_async(
-                        Arc::new(move |_| {
-                            let _ = started_tx.send(());
-                            let guard = PendingCall(dropped_tx.clone());
-                            let release = release_for_thread.clone();
-                            Ok(harmony_luau::ScheduledFuture::new(async move {
-                                let _guard = guard;
-                                release.notified().await;
-                                Ok(true)
-                            }))
-                        }),
-                    ))
-                    .install(|_| Ok(ModuleExport::new(()))),
-            )?;
+            runtime
+                .vm
+                .data()
+                .get::<RequireRuntime>()?
+                .register(harmony_core::GatedModule::new(
+                    "test.gate",
+                    ModuleSpec::new("test/gate")
+                        .function(FunctionSpec::async_fn("wait").returns::<bool>().call_async(
+                            Arc::new(move |_| {
+                                let _ = started_tx.send(());
+                                let guard = PendingCall(dropped_tx.clone());
+                                let release = release_for_thread.clone();
+                                Ok(harmony_luau::ScheduledFuture::new(async move {
+                                    let _guard = guard;
+                                    release.notified().await;
+                                    Ok(true)
+                                }))
+                            }),
+                        ))
+                        .install(|_| Ok(ModuleExport::new(()))),
+                ))?;
             runtime.eval_plugin_source("dispatch-test", "init.luau", &br#"
                 local metadata = require("@lyra/metadata")
                 local gate = require("@test/gate")

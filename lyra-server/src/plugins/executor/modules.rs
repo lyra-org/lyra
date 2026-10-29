@@ -3,16 +3,27 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use harmony_core::ModuleSpec;
+use anyhow::{
+    Result,
+    bail,
+};
+use harmony_core::{
+    GatedModule,
+    ModuleSpec,
+};
 
-pub(super) fn generic_module_specs(module_overrides: Vec<ModuleSpec>) -> Vec<ModuleSpec> {
-    let mut specs = crate::plugins::module_specs();
+/// Every gated module, with each override replacing the module of the same
+/// id while keeping its scope.
+pub(super) fn generic_modules(module_overrides: Vec<ModuleSpec>) -> Result<Vec<GatedModule>> {
+    let mut modules = crate::plugins::scopes::gated_modules();
     for override_spec in module_overrides {
-        if let Some(existing) = specs.iter_mut().find(|spec| spec.id == override_spec.id) {
-            *existing = override_spec;
-        } else {
-            specs.push(override_spec);
-        }
+        let Some(existing) = modules
+            .iter_mut()
+            .find(|module| module.spec.id == override_spec.id)
+        else {
+            bail!("module override {} replaces no module", override_spec.id.0);
+        };
+        existing.spec = override_spec;
     }
-    specs
+    Ok(modules)
 }

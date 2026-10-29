@@ -125,7 +125,6 @@ impl DescribeTypeAlias for PlaybackUpdateHandler {
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/playback_sessions")
-        .capability("lyra.playback_sessions")
         .function(on_update_spec())
         .function(report_session_spec())
         .function(list_connections_spec())

@@ -38,7 +38,6 @@ struct RatingsModule;
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/ratings")
-        .capability("lyra.ratings")
         .function(set_spec())
         .function(remove_spec())
         .function(get_spec())

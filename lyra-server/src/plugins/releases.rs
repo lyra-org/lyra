@@ -48,7 +48,6 @@ struct ReleasesModule;
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/releases")
-        .capability("lyra.releases")
         .function(get_spec())
         .function(query_spec())
         .function(by_track_spec())

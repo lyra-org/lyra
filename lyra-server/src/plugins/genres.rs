@@ -53,7 +53,6 @@ struct GenresModule;
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/genres")
-        .capability("lyra.genres")
         .function(query_spec())
         .function(resolve_spec())
         .function(add_parent_spec())

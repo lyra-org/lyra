@@ -216,7 +216,6 @@ struct AuthModule;
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/auth")
-        .capability("lyra.auth")
         .function(auth_capabilities_spec())
         .function(resolve_auth_spec())
         .function(login_spec())

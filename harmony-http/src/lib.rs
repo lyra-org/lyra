@@ -897,9 +897,11 @@ async fn configure_max_in_flight(
     Ok(())
 }
 
+/// The capability hosts conventionally gate this module behind.
+pub const SCOPE: &str = "harmony.http";
+
 pub fn module_spec() -> ModuleSpec {
     ModuleSpec::new("harmony/http")
-        .capability("harmony.http")
         .function(request_spec())
         .function(set_rate_limit_spec())
         .function(set_max_in_flight_spec())

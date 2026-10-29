@@ -83,7 +83,6 @@ pub(super) fn module_export() -> ModuleExport {
 
 pub(crate) fn module_spec() -> ModuleSpec {
     let spec = ModuleSpec::new("lyra/plugins")
-        .capability("lyra.plugins")
         .function(plugin_id_spec())
         .function(plugin_manifest_spec())
         .function(plugin_list_spec())

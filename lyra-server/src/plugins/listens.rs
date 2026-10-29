@@ -92,7 +92,6 @@ struct ResolvedStats {
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/listens")
-        .capability("lyra.listens")
         .function(get_stats_spec())
         .function(submit_spec())
         .function(on_update_spec())

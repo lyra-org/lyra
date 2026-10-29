@@ -143,7 +143,6 @@ struct PlaylistReplaceRequest {
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/playlists")
-        .capability("lyra.playlists")
         .function(list_spec())
         .function(get_by_id_spec())
         .function(list_owned_spec())

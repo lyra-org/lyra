@@ -45,9 +45,11 @@ pub(crate) mod playlists;
 pub(crate) mod ratings;
 pub(crate) mod releases;
 pub(crate) mod repositories;
+pub(crate) mod scopes;
 pub(crate) mod server;
 pub(crate) mod settings;
 pub(crate) mod state;
+#[cfg(feature = "docgen")]
 mod surfaces;
 pub(crate) mod tags;
 pub(crate) mod testing;
@@ -56,15 +58,12 @@ pub(crate) mod tracks;
 pub(crate) mod types;
 pub(crate) mod update_callbacks;
 pub(crate) mod users;
+pub(crate) use scopes::plugin_host;
 pub(crate) use state::STATE;
 #[cfg(feature = "docgen")]
 pub(crate) use surfaces::{
     lyra_doc_source_ids,
     render_lyra_doc_source,
-};
-pub(crate) use surfaces::{
-    module_specs,
-    plugin_host,
 };
 
 pub(crate) fn runtime_error(error: impl std::fmt::Display) -> harmony_luau::Error {

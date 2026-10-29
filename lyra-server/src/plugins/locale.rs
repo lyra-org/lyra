@@ -33,7 +33,6 @@ struct LocaleModule;
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/locale")
-        .capability("lyra.locale")
         .function(language_spec())
         .function(country_spec())
         .function(parse_spec())

@@ -55,7 +55,6 @@ struct CoverInfo;
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/covers")
-        .capability("lyra.covers")
         .function(get_spec())
         .function(get_many_spec())
         .function(get_playlist_sources_spec())

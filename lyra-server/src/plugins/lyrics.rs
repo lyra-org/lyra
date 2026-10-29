@@ -239,7 +239,6 @@ fn parse_lrc_input(text: String, language: Option<String>) -> anyhow::Result<Par
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/lyrics")
-        .capability("lyra.lyrics")
         .function(get_spec())
         .function(parse_lrc_spec())
         .function(upsert_personal_spec())

@@ -60,7 +60,6 @@ struct SourceDescription;
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/playback_sources")
-        .capability("lyra.playback_sources")
         .function(get_spec())
         .function(get_many_spec())
         .function(streamable_spec())
