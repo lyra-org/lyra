@@ -26,11 +26,9 @@ use crate::{
 
 pub use crate::modules::{
     LuauRequireRuntime as RequireRuntime,
-    LuauSourceCache as SourceCache,
     async_luau_callback as async_callback,
     install_luau_globals as install_globals,
     install_luau_module as install_module,
-    install_luau_require as install_require,
 };
 
 #[derive(Clone, Debug)]

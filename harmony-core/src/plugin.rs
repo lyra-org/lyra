@@ -33,11 +33,10 @@ use crate::{
         ThreadDriveOptions,
         drive_thread,
         install_globals,
-        install_require,
     },
     modules::{
         CapabilityPolicy,
-        source_with_bound_require,
+        load_chunk_with_require,
     },
     scheduler::{
         CapabilityId,
@@ -1065,7 +1064,6 @@ where
         for globals in self.global_specs {
             install_globals(&vm, &ChunkOrigin::default(), &globals)?;
         }
-        install_require(&vm, &ChunkOrigin::default())?;
 
         Ok(Runtime {
             vm,
@@ -1165,11 +1163,9 @@ impl Runtime {
         // of re-running its side effects; evaluation still happens on a
         // scheduler-driven thread so entrypoints may yield.
         require
-            .load_source_cached(&self.vm, &specifier, &ChunkOrigin::default(), |source| {
-                let function = self.vm.load_chunk(&luau::Chunk::new(
-                    source_with_bound_require(source.bytes.as_ref(), &source.cache_key.0),
-                    luau_origin(&source.origin),
-                ))?;
+            .load_source_cached(&specifier, &ChunkOrigin::default(), |source| {
+                let function =
+                    load_chunk_with_require(&self.vm, source.bytes.clone(), &source.origin)?;
                 let thread = self.vm.create_thread(&function)?;
                 self.vm.sandbox_thread(&thread)?;
                 let scheduler = self.vm.data().get::<LocalScheduler>()?;
@@ -1227,9 +1223,7 @@ impl Runtime {
         args: Vec<luau::Value>,
     ) -> anyhow::Result<Vec<luau::Value>> {
         let origin = context.origin.clone();
-        let function = self
-            .vm
-            .load_chunk(&luau::Chunk::new(source, luau_origin(&origin)))?;
+        let function = load_chunk_with_require(&self.vm, source, &origin)?;
         let thread = self.vm.create_thread(&function)?;
         self.vm.sandbox_thread(&thread)?;
         let scheduler = self.vm.data().get::<LocalScheduler>()?;
@@ -1269,17 +1263,6 @@ fn plugin_origin(plugin_id: impl Into<Arc<str>>, path: impl Into<Arc<str>>) -> C
         module: Some(ModuleId(Arc::from(format!("plugins/{plugin}/{path}")))),
         plugin: Some(plugin.clone()),
         path: Some(Arc::from(format!("plugins/{plugin}/{path}"))),
-    }
-}
-
-fn luau_origin(origin: &ChunkOrigin) -> luau::ChunkOrigin {
-    luau::ChunkOrigin {
-        module: origin
-            .module
-            .as_ref()
-            .map(|module| luau::ModuleId(module.0.clone())),
-        plugin: origin.plugin.clone(),
-        path: origin.path.clone(),
     }
 }
 
@@ -1740,6 +1723,33 @@ mod tests {
         assert!(format!("{error:#}").contains("exceeds cap"), "{error:#}");
 
         let _ = std::fs::remove_dir_all(plugins_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn eval_sources_run_as_their_own_chunk() -> anyhow::Result<()> {
+        let runtime = RuntimeBuilder::new(
+            MemorySourceLoader::new(),
+            manifest_arc(vec![manifest("lib", &[])]),
+        )
+        .build()?;
+        let context = || CallContext {
+            origin: super::plugin_origin("lib", "eval.luau"),
+            ..CallContext::default()
+        };
+
+        let escape = runtime
+            .eval_source_with_context(
+                &b"end end and (function() error('escaped') end)() and function(require) return function(...) return 1"[..],
+                context(),
+            )
+            .expect_err("source can't close a wrapper around it");
+        assert!(!escape.to_string().contains("escaped"), "{escape:#}");
+
+        let error = runtime
+            .eval_source_with_context(&b"local x = 1\nerror('boom')"[..], context())
+            .expect_err("the error propagates");
+        assert!(error.to_string().contains(":2:"), "{error:#}");
         Ok(())
     }
 

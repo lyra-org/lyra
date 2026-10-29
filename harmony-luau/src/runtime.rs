@@ -328,6 +328,17 @@ impl Vm {
         for (_, name) in opened.into_iter().filter(|(open, _)| *open) {
             unsafe { gateway::open_library(self.inner.state.as_ptr(), name)? };
         }
+        if libraries.base {
+            let _guard = self.stack_guard();
+            // Environment access would reach any function's globals,
+            // including the `require` a host gives a chunk.
+            for name in [c"getfenv", c"setfenv"] {
+                unsafe {
+                    gateway::push_nil(self.inner.state.as_ptr())?;
+                    gateway::set_global(self.inner.state.as_ptr(), name)?;
+                }
+            }
+        }
         if libraries.os {
             self.install_safe_os()?;
         }
@@ -3665,6 +3676,24 @@ mod tests {
             task_group: TaskGroupId(group),
             ..CallContext::default()
         }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn base_library_leaves_out_environment_access() -> Result<()> {
+        let vm = Vm::new()?;
+        vm.open_standard_libraries(StandardLibraries {
+            base: true,
+            ..StandardLibraries::none()
+        })?;
+        assert_eq!(
+            vm.eval(
+                Arc::<[u8]>::from(&b"return getfenv, setfenv"[..]),
+                ChunkOrigin::default()
+            )?,
+            vec![Value::Nil, Value::Nil]
+        );
+        Ok(())
     }
 
     #[test]

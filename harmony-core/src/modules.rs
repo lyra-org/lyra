@@ -673,7 +673,7 @@ impl LuauModuleCacheKey {
 }
 
 #[derive(Default)]
-pub struct LuauSourceCache {
+struct LuauSourceCache {
     cache: HashMap<ModuleCacheKey, Arc<[luau::Value]>>,
 }
 
@@ -692,30 +692,6 @@ impl LuauSourceCache {
         values: Arc<[luau::Value]>,
     ) -> Option<Arc<[luau::Value]>> {
         self.cache.insert(cache_key, values)
-    }
-
-    pub fn require(
-        &mut self,
-        vm: &luau::Vm,
-        loader: &dyn SourceLoader,
-        specifier: &str,
-        origin: &ChunkOrigin,
-    ) -> std::result::Result<Arc<[luau::Value]>, ModuleLoadError> {
-        let source = loader.resolve(SourceRequest { specifier, origin })?;
-        if let Some(values) = self.cache.get(&source.cache_key) {
-            return Ok(values.clone());
-        }
-
-        let values = vm
-            .eval(source.bytes.clone(), luau_origin(&source.origin))
-            .map_err(|error| ModuleLoadError::SourceLoadFailed(anyhow::Error::new(error)))?;
-        let values = Arc::<[luau::Value]>::from(values.into_boxed_slice());
-        self.cache.insert(source.cache_key, values.clone());
-        Ok(values)
-    }
-
-    pub fn invalidate(&mut self, cache_key: &ModuleCacheKey) -> bool {
-        self.cache.remove(cache_key).is_some()
     }
 
     /// Drops every cached source under `plugin:<plugin_id>/`.
@@ -862,8 +838,6 @@ pub struct LuauRequireRuntime {
     /// Bumped per plugin by `invalidate_plugin`; a source whose plugin was
     /// invalidated while it evaluated must not land in `source_cache`.
     plugin_generations: std::cell::RefCell<HashMap<Arc<str>, u64>>,
-    active_origins: std::cell::RefCell<HashMap<usize, Vec<ChunkOrigin>>>,
-    source_origins: std::cell::RefCell<HashMap<Arc<str>, ChunkOrigin>>,
     in_flight_sources: std::cell::RefCell<HashSet<Arc<str>>>,
     loader: Box<dyn SourceLoader>,
     policy: Box<dyn CapabilityPolicy>,
@@ -879,8 +853,6 @@ impl LuauRequireRuntime {
             registry: std::cell::RefCell::new(ModuleRegistry::new()),
             source_cache: std::cell::RefCell::new(LuauSourceCache::new()),
             plugin_generations: std::cell::RefCell::new(HashMap::new()),
-            active_origins: std::cell::RefCell::new(HashMap::new()),
-            source_origins: std::cell::RefCell::new(HashMap::new()),
             in_flight_sources: std::cell::RefCell::new(HashSet::new()),
             loader: Box::new(loader),
             policy: Box::new(policy),
@@ -910,30 +882,42 @@ impl LuauRequireRuntime {
     }
 }
 
-pub fn install_luau_require(vm: &luau::Vm, origin: &ChunkOrigin) -> luau::runtime::Result<()> {
-    let function = vm.create_function_with_options(
-        luau::NativeFunctionOptions::new(luau::ChunkOrigin {
-            module: Some(luau::ModuleId(Arc::from("harmony/require"))),
-            plugin: origin.plugin.clone(),
-            path: origin.path.clone(),
-        })
-        .function_name("require")
-        .argument_names([Arc::from("specifier"), Arc::from("source_key")])
-        .use_thread_context_origin(true),
-        Arc::new(require_luau_callback),
-    )?;
-    vm.set_global_function("require", &function)
+/// The `require` plugin code gets, as a global of its chunk's own
+/// environment: it resolves from `origin`. There is no shared global
+/// `require`.
+fn bound_require(vm: &luau::Vm, origin: &ChunkOrigin) -> luau::runtime::Result<luau::Function> {
+    vm.create_function_with_options(
+        luau::NativeFunctionOptions::new(luau_origin(origin))
+            .function_name("require")
+            .argument_names([Arc::from("specifier")]),
+        Arc::new(|mut frame| {
+            let specifier: String = frame.args.read_named("specifier")?;
+            let origin = core_origin(&frame.context.origin);
+            require_from(frame, &specifier, origin)
+        }),
+    )
 }
 
-fn require_luau_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let specifier: String = frame.args.read_named("specifier")?;
-    let source_key = frame.args.read_optional_named::<String>("source_key")?;
+/// Loads a chunk of `origin`'s code with its own `require`. All plugin code
+/// is loaded through here.
+pub(crate) fn load_chunk_with_require(
+    vm: &luau::Vm,
+    source: impl Into<Arc<[u8]>>,
+    origin: &ChunkOrigin,
+) -> luau::runtime::Result<luau::Function> {
+    let require = luau::Value::Function(bound_require(vm, origin)?);
+    vm.load_chunk_with_globals(
+        &luau::Chunk::new(source, luau_origin(origin)),
+        &[("require", &require)],
+    )
+}
+
+fn require_from(
+    mut frame: luau::CallFrame<'_>,
+    specifier: &str,
+    origin: ChunkOrigin,
+) -> luau::runtime::Result<()> {
     let runtime = frame.vm.data().get::<LuauRequireRuntime>()?;
-    let origin = source_key
-        .as_deref()
-        .and_then(|source_key| runtime.source_origin(source_key))
-        .or_else(|| runtime.active_origin(frame.thread.state_id()))
-        .unwrap_or_else(|| core_origin(&frame.context.origin));
 
     if let Some(module_id) = specifier
         .strip_prefix('@')
@@ -950,7 +934,7 @@ fn require_luau_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Resul
     }
 
     let values = runtime
-        .require_source(frame.vm, &specifier, &origin)
+        .require_source(frame.vm, specifier, &origin)
         .map_err(module_load_runtime_error)?;
     for value in values.iter().cloned() {
         frame.returns.write(value)?;
@@ -965,21 +949,17 @@ impl LuauRequireRuntime {
         specifier: &str,
         origin: &ChunkOrigin,
     ) -> std::result::Result<Arc<[luau::Value]>, ModuleLoadError> {
-        self.load_source_cached(vm, specifier, origin, |source| {
-            vm.eval(
-                source_with_bound_require(source.bytes.as_ref(), &source.cache_key.0),
-                luau_origin(&source.origin),
-            )
-            .map_err(anyhow::Error::new)
+        self.load_source_cached(specifier, origin, |source| {
+            let function = load_chunk_with_require(vm, source.bytes.clone(), &source.origin)?;
+            function.call(vm, &[]).map_err(anyhow::Error::new)
         })
     }
 
     /// Resolves, gates, and caches a Luau source module; `eval` supplies the
-    /// evaluation strategy (plain `vm.eval` for require, a scheduler-driven
+    /// evaluation strategy (a direct call for require, a scheduler-driven
     /// thread for plugin entrypoints) so both share one cache identity.
     pub(crate) fn load_source_cached(
         &self,
-        vm: &luau::Vm,
         specifier: &str,
         origin: &ChunkOrigin,
         eval: impl FnOnce(&ResolvedSource) -> anyhow::Result<Vec<luau::Value>>,
@@ -1024,10 +1004,6 @@ impl LuauRequireRuntime {
             });
         }
 
-        self.source_origins
-            .borrow_mut()
-            .insert(source.cache_key.0.clone(), source.origin.clone());
-        let _active_origin = self.push_active_origin(vm.state_id(), source.origin.clone());
         let generation = self.plugin_generation(source.origin.plugin.as_deref());
         let result = eval(&source);
         self.in_flight_sources
@@ -1042,78 +1018,6 @@ impl LuauRequireRuntime {
         }
         Ok(values)
     }
-
-    fn active_origin(&self, state_id: usize) -> Option<ChunkOrigin> {
-        self.active_origins
-            .borrow()
-            .get(&state_id)
-            .and_then(|origins| origins.last().cloned())
-    }
-
-    fn source_origin(&self, source_key: &str) -> Option<ChunkOrigin> {
-        self.source_origins.borrow().get(source_key).cloned()
-    }
-
-    fn push_active_origin(&self, state_id: usize, origin: ChunkOrigin) -> ActiveOriginGuard<'_> {
-        self.active_origins
-            .borrow_mut()
-            .entry(state_id)
-            .or_default()
-            .push(origin);
-        ActiveOriginGuard {
-            runtime: self,
-            state_id,
-        }
-    }
-
-    fn pop_active_origin(&self, state_id: usize) {
-        let mut active_origins = self.active_origins.borrow_mut();
-        if let Some(origins) = active_origins.get_mut(&state_id) {
-            origins.pop();
-            if origins.is_empty() {
-                active_origins.remove(&state_id);
-            }
-        }
-    }
-}
-
-struct ActiveOriginGuard<'a> {
-    runtime: &'a LuauRequireRuntime,
-    state_id: usize,
-}
-
-impl Drop for ActiveOriginGuard<'_> {
-    fn drop(&mut self) {
-        self.runtime.pop_active_origin(self.state_id);
-    }
-}
-
-pub(crate) fn source_with_bound_require(source: &[u8], source_key: &str) -> Arc<[u8]> {
-    let source_key = luau_string_literal(source_key);
-    let prefix = format!(
-        "local __harmony_global_require = require\nlocal __harmony_require_source = {source_key}\nlocal require = function(specifier)\n\treturn __harmony_global_require(specifier, __harmony_require_source)\nend\n"
-    );
-    let mut wrapped = Vec::with_capacity(prefix.len() + source.len());
-    wrapped.extend_from_slice(prefix.as_bytes());
-    wrapped.extend_from_slice(source);
-    Arc::from(wrapped)
-}
-
-fn luau_string_literal(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len() + 2);
-    escaped.push('"');
-    for ch in value.chars() {
-        match ch {
-            '\\' => escaped.push_str("\\\\"),
-            '"' => escaped.push_str("\\\""),
-            '\n' => escaped.push_str("\\n"),
-            '\r' => escaped.push_str("\\r"),
-            '\t' => escaped.push_str("\\t"),
-            ch => escaped.push(ch),
-        }
-    }
-    escaped.push('"');
-    escaped
 }
 
 fn module_load_runtime_error(error: ModuleLoadError) -> luau::Error {
@@ -1703,39 +1607,7 @@ mod tests {
     }
 
     #[test]
-    fn source_cache_executes_resolved_luau_source_by_typed_cache_key() -> luau::runtime::Result<()>
-    {
-        let vm = luau::Vm::new()?;
-        let mut loader = MemorySourceLoader::new();
-        loader.insert("plugin:demo/lib/util", b"return 40 + 2".as_slice());
-        let origin = ChunkOrigin {
-            plugin: Some(Arc::from("demo")),
-            path: Some(Arc::from("plugins/demo/init.luau")),
-            ..ChunkOrigin::default()
-        };
-        let mut cache = LuauSourceCache::new();
-
-        let first = cache
-            .require(&vm, &loader, "@self/lib/util.luau", &origin)
-            .expect("first require");
-        assert_eq!(first.as_ref(), [luau::Value::Number(42.0)]);
-
-        loader.insert("plugin:demo/lib/util", b"return 99".as_slice());
-        let second = cache
-            .require(&vm, &loader, "@self/lib/util.luau", &origin)
-            .expect("cached require");
-        assert!(Arc::ptr_eq(&first, &second));
-
-        assert!(cache.invalidate(&ModuleCacheKey(Arc::from("plugin:demo/lib/util"))));
-        let reloaded = cache
-            .require(&vm, &loader, "@self/lib/util.luau", &origin)
-            .expect("reloaded require");
-        assert_eq!(reloaded.as_ref(), [luau::Value::Number(99.0)]);
-        Ok(())
-    }
-
-    #[test]
-    fn source_cache_preserves_module_table_exports() -> luau::runtime::Result<()> {
+    fn required_sources_evaluate_once_and_keep_their_table_exports() -> luau::runtime::Result<()> {
         let vm = luau::Vm::new()?;
         let mut loader = MemorySourceLoader::new();
         loader.insert(
@@ -1747,19 +1619,29 @@ mod tests {
             path: Some(Arc::from("plugins/demo/init.luau")),
             ..ChunkOrigin::default()
         };
-        let mut cache = LuauSourceCache::new();
+        vm.data()
+            .insert(LuauRequireRuntime::new(loader, AllowAllCapabilities))?;
+        vm.set_global_function("require", &bound_require(&vm, &origin)?)?;
 
-        let values = cache
-            .require(&vm, &loader, "@self/lib/module.luau", &origin)
-            .expect("module require");
-        let [luau::Value::Table(module)] = values.as_ref() else {
-            panic!("module source should return its table export");
-        };
-        assert_eq!(module.get_raw(&vm, "answer")?, luau::Value::Number(42.0));
-        let luau::Value::Function(get) = module.get_raw(&vm, "get")? else {
-            panic!("module table should preserve function exports");
-        };
-        assert_eq!(get.call(&vm, &[])?, vec![luau::Value::Number(7.0)]);
+        let values = vm.eval(
+            Arc::<[u8]>::from(
+                &br#"
+                    local first = require("@self/lib/module.luau")
+                    local second = require("@self/lib/module.luau")
+                    return first == second, first.answer, first.get()
+                "#[..],
+            ),
+            luau::ChunkOrigin::default(),
+        )?;
+
+        assert_eq!(
+            values,
+            vec![
+                luau::Value::Boolean(true),
+                luau::Value::Number(42.0),
+                luau::Value::Number(7.0)
+            ]
+        );
         Ok(())
     }
 
@@ -1790,7 +1672,7 @@ mod tests {
             )
             .expect("register module");
         vm.data().insert(runtime)?;
-        install_luau_require(&vm, &origin)?;
+        vm.set_global_function("require", &bound_require(&vm, &origin)?)?;
 
         let values = vm.eval(
             Arc::<[u8]>::from(
@@ -1812,7 +1694,6 @@ mod tests {
 
     #[test]
     fn invalidation_during_evaluation_keeps_stale_source_out_of_cache() -> anyhow::Result<()> {
-        let vm = luau::Vm::new()?;
         let mut loader = MemorySourceLoader::new();
         loader.insert("plugin:demo/lib", b"return 1".as_slice());
         loader.insert("plugin:other/lib", b"return 1".as_slice());
@@ -1820,21 +1701,19 @@ mod tests {
         let origin = ChunkOrigin::default();
         let key = |plugin: &str| ModuleCacheKey(Arc::from(format!("plugin:{plugin}/lib")));
 
-        runtime.load_source_cached(&vm, "@demo/lib", &origin, |_| {
+        runtime.load_source_cached("@demo/lib", &origin, |_| {
             runtime.invalidate_plugin("demo");
             Ok(vec![luau::Value::Number(1.0)])
         })?;
         assert!(runtime.source_cache.borrow().get(&key("demo")).is_none());
 
-        runtime.load_source_cached(&vm, "@other/lib", &origin, |_| {
+        runtime.load_source_cached("@other/lib", &origin, |_| {
             runtime.invalidate_plugin("demo");
             Ok(vec![luau::Value::Number(1.0)])
         })?;
         assert!(runtime.source_cache.borrow().get(&key("other")).is_some());
 
-        runtime.load_source_cached(&vm, "@demo/lib", &origin, |_| {
-            Ok(vec![luau::Value::Number(2.0)])
-        })?;
+        runtime.load_source_cached("@demo/lib", &origin, |_| Ok(vec![luau::Value::Number(2.0)]))?;
         assert_eq!(
             runtime.source_cache.borrow().get(&key("demo")).as_deref(),
             Some(&[luau::Value::Number(2.0)][..])
@@ -1936,8 +1815,7 @@ mod tests {
     }
 
     #[test]
-    fn filesystem_source_loader_reads_plugin_sources_by_typed_cache_key()
-    -> luau::runtime::Result<()> {
+    fn filesystem_source_loader_reads_plugin_sources_by_typed_cache_key() {
         let test_dir = std::env::temp_dir().join(format!(
             "harmony-core-fs-loader-{}-{}",
             std::process::id(),
@@ -1957,16 +1835,17 @@ mod tests {
             path: Some(Arc::from("plugins/demo/init.luau")),
             ..ChunkOrigin::default()
         };
-        let vm = luau::Vm::new()?;
-        let mut cache = LuauSourceCache::new();
 
-        let values = cache
-            .require(&vm, &loader, "@self/lib/util.luau", &origin)
+        let source = loader
+            .resolve(SourceRequest {
+                specifier: "@self/lib/util.luau",
+                origin: &origin,
+            })
             .expect("load plugin source from filesystem");
 
-        assert_eq!(values.as_ref(), [luau::Value::Number(42.0)]);
+        assert_eq!(source.cache_key.0.as_ref(), "plugin:demo/lib/util");
+        assert_eq!(source.bytes.as_ref(), b"return 40 + 2");
         let _ = std::fs::remove_dir_all(test_dir);
-        Ok(())
     }
 
     #[test]
