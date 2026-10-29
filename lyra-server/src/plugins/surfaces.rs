@@ -3,14 +3,13 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::{
-    collections::HashSet,
-    sync::Arc,
-};
-
 #[cfg(feature = "docgen")]
 use anyhow::Result;
-use harmony_core::ModuleSpec;
+use harmony_core::{
+    ModuleSpec,
+    plugin::PluginHost,
+};
+use semver::Version;
 
 use crate::plugins::{
     api,
@@ -125,11 +124,14 @@ pub(crate) fn module_specs() -> Vec<ModuleSpec> {
     ]
 }
 
-pub(crate) fn module_scope_ids() -> HashSet<Arc<str>> {
-    module_specs()
-        .into_iter()
-        .filter_map(|spec| spec.capability.map(|capability| capability.0))
-        .collect()
+pub(crate) fn plugin_host() -> PluginHost {
+    PluginHost {
+        version: Version::parse(env!("CARGO_PKG_VERSION")).expect("package version is semver"),
+        scope_ids: module_specs()
+            .into_iter()
+            .filter_map(|spec| spec.capability.map(|capability| capability.0))
+            .collect(),
+    }
 }
 
 #[cfg(feature = "docgen")]

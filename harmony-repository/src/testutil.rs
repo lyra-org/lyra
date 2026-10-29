@@ -3,7 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashMap;
+use std::collections::{
+    HashMap,
+    HashSet,
+};
 use std::net::SocketAddr;
 use std::sync::{
     Arc,
@@ -12,6 +15,7 @@ use std::sync::{
 
 use flate2::Compression;
 use flate2::write::GzEncoder;
+use harmony_core::plugin::PluginHost;
 use tar::{
     EntryType,
     Header,
@@ -21,6 +25,13 @@ use tokio::io::{
     AsyncWriteExt,
 };
 use tokio::net::TcpListener;
+
+pub(crate) fn host() -> PluginHost {
+    PluginHost {
+        version: semver::Version::new(0, 0, 1),
+        scope_ids: HashSet::new(),
+    }
+}
 
 pub(crate) fn client() -> reqwest::Client {
     let _ = rustls::crypto::ring::default_provider().install_default();
@@ -295,6 +306,7 @@ pub(crate) fn plugin_json(id: &str) -> String {
             "id": "{id}",
             "name": "{id}",
             "version": "0.0.1",
+            "lyra": "0.0.1",
             "description": "test plugin",
             "entrypoint": "init.luau",
             "scopes": []

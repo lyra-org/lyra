@@ -3,8 +3,22 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use serde::Deserialize;
+use semver::{
+    Version,
+    VersionReq,
+};
+use serde::de::{
+    self,
+    DeserializeSeed,
+    MapAccess,
+    Visitor,
+};
+use serde::{
+    Deserialize,
+    Deserializer,
+};
 use std::collections::{
+    BTreeMap,
     BTreeSet,
     HashMap,
     HashSet,
@@ -54,14 +68,26 @@ pub const PLUGIN_CONFIG_MAX_BYTES: u64 = 64 * 1024;
 pub(crate) const PLUGIN_CONFIG_MAX_SCOPES: usize = 32;
 pub(crate) const PLUGIN_CONFIG_MAX_SCOPE_LEN: usize = 128;
 pub(crate) const PLUGIN_CONFIG_MAX_DEPENDENCIES: usize = 32;
-pub(crate) const PLUGIN_CONFIG_MAX_DEPENDENCY_ALTERNATIVES: usize = 16;
+
+/// What manifests are checked against: the running host's version, which
+/// each manifest's `lyra` requirement must match, and the scope ids its
+/// modules register.
+#[derive(Debug, Clone)]
+pub struct PluginHost {
+    pub version: Version,
+    pub scope_ids: HashSet<Arc<str>>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct PluginManifest {
     pub schema_version: u32,
     pub id: String,
     pub name: String,
-    pub version: String,
+    #[serde(deserialize_with = "deserialize_version")]
+    pub version: Version,
+    /// Host versions the plugin runs on.
+    #[serde(deserialize_with = "deserialize_host_requirement")]
+    pub lyra: VersionReq,
     pub description: String,
     /// Library-only plugins omit the entrypoint: nothing runs at startup and
     /// their modules load lazily via `require("@<plugin-id>/...")`.
@@ -70,38 +96,111 @@ pub struct PluginManifest {
     /// the plugin `require`s must have its scope id listed here.
     /// Required on `schema_version: 1`.
     pub scopes: Vec<String>,
-    #[serde(default)]
-    pub dependencies: Vec<DependencyEntry>,
+    /// Keyed by plugin id.
+    #[serde(default, deserialize_with = "deserialize_dependencies")]
+    pub dependencies: BTreeMap<String, Dependency>,
 }
 
-/// Bare-string variant is shorthand for a single-alternative required
-/// dependency; the group form expresses alternatives and/or `required: false`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(untagged)]
-pub enum DependencyEntry {
-    Id(String),
-    Group(DependencyGroup),
+/// Written as a bare version requirement, or as
+/// `{ "version": "<requirement>", "optional": true }`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Dependency {
+    pub version: VersionReq,
+    /// A missing optional dependency doesn't block load; an installed one
+    /// must still match `version`, and loads first.
+    pub optional: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DependencyGroup {
-    pub any_of: Vec<String>,
-    /// When `false`, missing alternatives don't block load — but any
-    /// installed alternative still constrains load order.
-    #[serde(default = "default_required")]
-    pub required: bool,
+fn deserialize_dependencies<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<BTreeMap<String, Dependency>, D::Error> {
+    struct DependenciesVisitor;
+
+    impl<'de> Visitor<'de> for DependenciesVisitor {
+        type Value = BTreeMap<String, Dependency>;
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("an object mapping plugin ids to dependencies")
+        }
+
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+            let mut dependencies = BTreeMap::new();
+            while let Some(id) = map.next_key::<String>()? {
+                if dependencies.contains_key(&id) {
+                    return Err(de::Error::custom(format!(
+                        "dependency '{id}' is listed more than once"
+                    )));
+                }
+                let dependency = map.next_value_seed(DependencySeed(&id))?;
+                dependencies.insert(id, dependency);
+            }
+            Ok(dependencies)
+        }
+    }
+
+    deserializer.deserialize_map(DependenciesVisitor)
 }
 
-fn default_required() -> bool {
-    true
+/// Deserializes the dependency on plugin `.0`, naming it in errors.
+struct DependencySeed<'a>(&'a str);
+
+impl<'de> DeserializeSeed<'de> for DependencySeed<'_> {
+    type Value = Dependency;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Dependency, D::Error> {
+        deserializer.deserialize_any(self)
+    }
 }
 
-/// Validated, uniform form of a `DependencyEntry` built at load time.
-#[derive(Debug, Clone)]
-pub struct NormalizedDependency {
-    pub alternatives: Vec<String>,
-    pub required: bool,
+impl<'de> Visitor<'de> for DependencySeed<'_> {
+    type Value = Dependency;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a version requirement or an object with `version` and `optional`")
+    }
+
+    fn visit_str<E: de::Error>(self, value: &str) -> Result<Dependency, E> {
+        Ok(Dependency {
+            version: parse_requirement(&format!("dependency '{}'", self.0), value)?,
+            optional: false,
+        })
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Dependency, A::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Table {
+            version: String,
+            #[serde(default)]
+            optional: bool,
+        }
+
+        let table = Table::deserialize(de::value::MapAccessDeserializer::new(map))?;
+        Ok(Dependency {
+            version: parse_requirement(&format!("dependency '{}'", self.0), &table.version)?,
+            optional: table.optional,
+        })
+    }
+}
+
+fn deserialize_version<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Version, D::Error> {
+    let value = String::deserialize(deserializer)?;
+    Version::parse(&value)
+        .map_err(|error| de::Error::custom(format!("invalid version {value:?}: {error}")))
+}
+
+fn deserialize_host_requirement<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<VersionReq, D::Error> {
+    parse_requirement("lyra", &String::deserialize(deserializer)?)
+}
+
+fn parse_requirement<E: de::Error>(field: &str, value: &str) -> Result<VersionReq, E> {
+    VersionReq::parse(value).map_err(|error| {
+        E::custom(format!(
+            "invalid {field} version requirement {value:?}: {error}"
+        ))
+    })
 }
 
 /// A `plugin.json` that passed every check its contents alone can answer.
@@ -112,7 +211,6 @@ pub struct LoadedManifest {
     /// Deduplicated, validated copy of `manifest.scopes` kept as `Arc<str>`
     /// so the runtime gate can share allocations across lookups.
     pub declared_scopes: HashSet<Arc<str>>,
-    pub dependencies: Vec<NormalizedDependency>,
 }
 
 #[derive(Debug, Clone)]
@@ -122,7 +220,6 @@ pub struct LoadedPlugin {
     /// Deduplicated, validated copy of `manifest.scopes` kept as `Arc<str>`
     /// so the runtime gate can share allocations across lookups.
     pub declared_scopes: HashSet<Arc<str>>,
-    pub dependencies: Vec<NormalizedDependency>,
 }
 
 pub struct ManifestCapabilityPolicy {
@@ -131,7 +228,14 @@ pub struct ManifestCapabilityPolicy {
 }
 
 impl ManifestCapabilityPolicy {
+    /// `manifests` are the loaded plugins: a declared dependency outside
+    /// them, such as an optional one that failed to load, is not requirable
+    /// even when its files are on disk.
     pub fn from_manifests(manifests: Arc<[PluginManifest]>) -> Self {
+        let loaded: HashSet<&str> = manifests
+            .iter()
+            .map(|manifest| manifest.id.as_str())
+            .collect();
         let mut scopes_by_plugin = HashMap::new();
         let mut dependencies_by_plugin = HashMap::new();
         for manifest in manifests.iter() {
@@ -141,19 +245,12 @@ impl ManifestCapabilityPolicy {
                 .iter()
                 .map(|scope| Arc::<str>::from(scope.as_str()))
                 .collect::<HashSet<_>>();
-            let mut dependencies = HashSet::new();
-            for entry in &manifest.dependencies {
-                match entry {
-                    DependencyEntry::Id(dependency) => {
-                        dependencies.insert(Arc::<str>::from(dependency.as_str()));
-                    }
-                    DependencyEntry::Group(group) => {
-                        for dependency in &group.any_of {
-                            dependencies.insert(Arc::<str>::from(dependency.as_str()));
-                        }
-                    }
-                }
-            }
+            let dependencies = manifest
+                .dependencies
+                .keys()
+                .filter(|dependency| loaded.contains(dependency.as_str()))
+                .map(|dependency| Arc::<str>::from(dependency.as_str()))
+                .collect::<HashSet<_>>();
             scopes_by_plugin.insert(id.clone(), scopes);
             dependencies_by_plugin.insert(id, dependencies);
         }
@@ -207,6 +304,11 @@ pub enum PluginLoadError {
         plugin_id: String,
         reason: String,
     },
+    IncompatibleHost {
+        plugin_id: String,
+        requirement: VersionReq,
+        host_version: Version,
+    },
     DirectoryIdMismatch {
         plugin_id: String,
         directory: String,
@@ -230,16 +332,6 @@ pub enum PluginLoadError {
         count: usize,
         max: usize,
     },
-    TooManyDependencyAlternatives {
-        plugin_id: String,
-        group_index: usize,
-        count: usize,
-        max: usize,
-    },
-    EmptyDependencyGroup {
-        plugin_id: String,
-        group_index: usize,
-    },
     InvalidDependencyId {
         plugin_id: String,
         dep_id: String,
@@ -248,14 +340,16 @@ pub enum PluginLoadError {
     SelfDependency {
         plugin_id: String,
     },
-    DuplicateDependencyAlternative {
+    MissingDependency {
         plugin_id: String,
-        group_index: usize,
-        alternative: String,
+        dependency: String,
+        requirement: VersionReq,
     },
-    UnsatisfiedRequiredDependency {
+    IncompatibleDependency {
         plugin_id: String,
-        alternatives: Vec<String>,
+        dependency: String,
+        requirement: VersionReq,
+        installed: Version,
     },
     DependencyCycle {
         plugins: Vec<String>,
@@ -301,6 +395,14 @@ impl fmt::Display for PluginLoadError {
             PluginLoadError::InvalidPluginId { plugin_id, reason } => {
                 write!(f, "invalid plugin id '{}': {}", plugin_id, reason)
             }
+            PluginLoadError::IncompatibleHost {
+                plugin_id,
+                requirement,
+                host_version,
+            } => write!(
+                f,
+                "plugin '{plugin_id}' requires lyra {requirement}, but this is lyra {host_version}"
+            ),
             PluginLoadError::DirectoryIdMismatch {
                 plugin_id,
                 directory,
@@ -342,26 +444,8 @@ impl fmt::Display for PluginLoadError {
                 max,
             } => write!(
                 f,
-                "plugin '{}' declares {} dependency entries, exceeds cap of {}",
+                "plugin '{}' declares {} dependencies, exceeds cap of {}",
                 plugin_id, count, max
-            ),
-            PluginLoadError::TooManyDependencyAlternatives {
-                plugin_id,
-                group_index,
-                count,
-                max,
-            } => write!(
-                f,
-                "plugin '{}' dependency entry #{} declares {} alternatives, exceeds cap of {}",
-                plugin_id, group_index, count, max
-            ),
-            PluginLoadError::EmptyDependencyGroup {
-                plugin_id,
-                group_index,
-            } => write!(
-                f,
-                "plugin '{}' dependency entry #{} has an empty any_of list",
-                plugin_id, group_index
             ),
             PluginLoadError::InvalidDependencyId {
                 plugin_id,
@@ -375,27 +459,29 @@ impl fmt::Display for PluginLoadError {
             PluginLoadError::SelfDependency { plugin_id } => {
                 write!(f, "plugin '{}' lists itself as a dependency", plugin_id)
             }
-            PluginLoadError::DuplicateDependencyAlternative {
+            PluginLoadError::MissingDependency {
                 plugin_id,
-                group_index,
-                alternative,
+                dependency,
+                requirement,
             } => write!(
                 f,
-                "plugin '{}' dependency entry #{} lists '{}' more than once",
-                plugin_id, group_index, alternative
+                "plugin '{plugin_id}' requires plugin '{dependency}' {requirement}, but it is not \
+                 installed or failed to load"
             ),
-            PluginLoadError::UnsatisfiedRequiredDependency {
+            PluginLoadError::IncompatibleDependency {
                 plugin_id,
-                alternatives,
+                dependency,
+                requirement,
+                installed,
             } => write!(
                 f,
-                "plugin '{}' requires any of {:?} but none are installed",
-                plugin_id, alternatives
+                "plugin '{plugin_id}' requires plugin '{dependency}' {requirement}, but \
+                 {installed} is installed"
             ),
             PluginLoadError::DependencyCycle { plugins } => write!(
                 f,
-                "dependency cycle detected; the following plugins are in or downstream of a \
-                 cycle and were skipped: {:?}",
+                "dependency cycle detected; the following plugins are in a cycle and were \
+                 skipped: {:?}",
                 plugins
             ),
         }
@@ -416,72 +502,59 @@ fn truncate_for_error(s: &str) -> String {
     }
 }
 
-// Cross-plugin resolution (required deps satisfied, no cycles) lives
+// Cross-plugin resolution (dependencies satisfied, no cycles) lives
 // in `resolve_dependencies` after all manifests are loaded.
-fn normalize_dependencies(
-    manifest_id: &str,
-    raw: &[DependencyEntry],
-) -> Result<Vec<NormalizedDependency>, PluginLoadError> {
-    if raw.len() > PLUGIN_CONFIG_MAX_DEPENDENCIES {
+fn validate_dependencies(manifest: &PluginManifest) -> Result<(), PluginLoadError> {
+    if manifest.dependencies.len() > PLUGIN_CONFIG_MAX_DEPENDENCIES {
         return Err(PluginLoadError::TooManyDependencies {
-            plugin_id: manifest_id.to_string(),
-            count: raw.len(),
+            plugin_id: manifest.id.clone(),
+            count: manifest.dependencies.len(),
             max: PLUGIN_CONFIG_MAX_DEPENDENCIES,
         });
     }
 
-    let mut result = Vec::with_capacity(raw.len());
-    for (index, entry) in raw.iter().enumerate() {
-        let (alternatives, required) = match entry {
-            DependencyEntry::Id(id) => (vec![id.clone()], true),
-            DependencyEntry::Group(group) => (group.any_of.clone(), group.required),
-        };
-
-        if alternatives.is_empty() {
-            return Err(PluginLoadError::EmptyDependencyGroup {
-                plugin_id: manifest_id.to_string(),
-                group_index: index,
+    for dep_id in manifest.dependencies.keys() {
+        if let Err(reason) = validate_plugin_id(dep_id) {
+            return Err(PluginLoadError::InvalidDependencyId {
+                plugin_id: manifest.id.clone(),
+                dep_id: dep_id.clone(),
+                reason,
             });
         }
-
-        if alternatives.len() > PLUGIN_CONFIG_MAX_DEPENDENCY_ALTERNATIVES {
-            return Err(PluginLoadError::TooManyDependencyAlternatives {
-                plugin_id: manifest_id.to_string(),
-                group_index: index,
-                count: alternatives.len(),
-                max: PLUGIN_CONFIG_MAX_DEPENDENCY_ALTERNATIVES,
+        if *dep_id == manifest.id {
+            return Err(PluginLoadError::SelfDependency {
+                plugin_id: manifest.id.clone(),
             });
         }
-
-        let mut seen: HashSet<&str> = HashSet::with_capacity(alternatives.len());
-        for dep_id in &alternatives {
-            if let Err(reason) = validate_plugin_id(dep_id) {
-                return Err(PluginLoadError::InvalidDependencyId {
-                    plugin_id: manifest_id.to_string(),
-                    dep_id: dep_id.clone(),
-                    reason,
-                });
-            }
-            if dep_id == manifest_id {
-                return Err(PluginLoadError::SelfDependency {
-                    plugin_id: manifest_id.to_string(),
-                });
-            }
-            if !seen.insert(dep_id.as_str()) {
-                return Err(PluginLoadError::DuplicateDependencyAlternative {
-                    plugin_id: manifest_id.to_string(),
-                    group_index: index,
-                    alternative: dep_id.clone(),
-                });
-            }
-        }
-
-        result.push(NormalizedDependency {
-            alternatives,
-            required,
-        });
     }
-    Ok(result)
+    Ok(())
+}
+
+/// The first dependency of `plugin` that `installed` leaves unmet: a
+/// required one that is missing, or any whose installed version is outside
+/// its requirement.
+fn unmet_dependency<'a>(
+    plugin: &PluginManifest,
+    installed: impl Fn(&str) -> Option<&'a Version>,
+) -> Option<PluginLoadError> {
+    plugin
+        .dependencies
+        .iter()
+        .find_map(|(dep_id, dependency)| match installed(dep_id) {
+            None if dependency.optional => None,
+            None => Some(PluginLoadError::MissingDependency {
+                plugin_id: plugin.id.clone(),
+                dependency: dep_id.clone(),
+                requirement: dependency.version.clone(),
+            }),
+            Some(version) if dependency.version.matches(version) => None,
+            Some(version) => Some(PluginLoadError::IncompatibleDependency {
+                plugin_id: plugin.id.clone(),
+                dependency: dep_id.clone(),
+                requirement: dependency.version.clone(),
+                installed: version.clone(),
+            }),
+        })
 }
 
 pub(crate) fn validate_plugin_id(id: &str) -> Result<(), String> {
@@ -521,13 +594,12 @@ impl PluginManager {
         }
     }
 
-    /// `valid_scope_ids` is the set of scope ids the running workspace
-    /// actually registers (derived from `Module.scope.id`). A manifest
-    /// naming a scope outside this set fails load — the plugin is asking
-    /// for something the runtime cannot grant.
+    /// A manifest naming a scope outside `host.scope_ids` fails load — the
+    /// plugin is asking for something the runtime cannot grant — as does one
+    /// whose `lyra` requirement excludes `host.version`.
     pub fn discover_plugins(
         &mut self,
-        valid_scope_ids: &HashSet<Arc<str>>,
+        host: &PluginHost,
     ) -> Result<Vec<PluginLoadError>, std::io::Error> {
         let mut errors = Vec::new();
 
@@ -549,7 +621,7 @@ impl PluginManager {
                 continue;
             }
 
-            match self.load_plugin(&path, valid_scope_ids) {
+            match self.load_plugin(&path, host) {
                 Ok(plugin) => {
                     if self.plugins.contains_key(&plugin.manifest.id) {
                         errors.push(PluginLoadError::DuplicateId(plugin.manifest.id));
@@ -579,50 +651,35 @@ impl PluginManager {
     fn resolve_dependencies(&mut self) -> Vec<PluginLoadError> {
         let mut errors = Vec::new();
 
-        // Cascading prunes: dropping A can unsatisfy B's required dep
-        // on A.
+        // Cascading prunes: dropping A can unsatisfy B's dependency on A,
+        // whether A had an unmet dependency itself or sat in a cycle.
         loop {
-            let mut to_remove: Vec<(String, Vec<String>)> = Vec::new();
             let mut ids: Vec<&String> = self.plugins.keys().collect();
             ids.sort();
-            for id in ids {
-                let plugin = &self.plugins[id];
-                for dep in &plugin.dependencies {
-                    if !dep.required {
-                        continue;
-                    }
-                    let satisfied = dep
-                        .alternatives
-                        .iter()
-                        .any(|alt| self.plugins.contains_key(alt));
-                    if !satisfied {
-                        to_remove.push((plugin.manifest.id.clone(), dep.alternatives.clone()));
-                        break;
-                    }
+            let unmet: Vec<(String, PluginLoadError)> = ids
+                .into_iter()
+                .filter_map(|id| {
+                    unmet_dependency(&self.plugins[id].manifest, |dep_id| {
+                        self.installed_version(dep_id)
+                    })
+                    .map(|error| (id.clone(), error))
+                })
+                .collect();
+
+            if !unmet.is_empty() {
+                for (id, error) in unmet {
+                    self.remove_plugin(&id);
+                    errors.push(error);
                 }
+                continue;
             }
 
-            if to_remove.is_empty() {
+            let cycle_members = self.cycle_members();
+            if cycle_members.is_empty() {
                 break;
             }
-
-            for (id, alternatives) in to_remove {
-                if let Some(removed) = self.plugins.remove(&id) {
-                    self.by_root.remove(&removed.directory);
-                    errors.push(PluginLoadError::UnsatisfiedRequiredDependency {
-                        plugin_id: id,
-                        alternatives,
-                    });
-                }
-            }
-        }
-
-        let (_, cycle_members) = kahn_visit(&self.plugins);
-        if !cycle_members.is_empty() {
             for plugin_id in &cycle_members {
-                if let Some(removed) = self.plugins.remove(plugin_id) {
-                    self.by_root.remove(&removed.directory);
-                }
+                self.remove_plugin(plugin_id);
             }
             errors.push(PluginLoadError::DependencyCycle {
                 plugins: cycle_members,
@@ -632,10 +689,42 @@ impl PluginManager {
         errors
     }
 
+    fn remove_plugin(&mut self, plugin_id: &str) {
+        if let Some(removed) = self.plugins.remove(plugin_id) {
+            self.by_root.remove(&removed.directory);
+        }
+    }
+
+    /// Plugins that reach themselves through installed dependencies, sorted.
+    /// Plugins only downstream of a cycle are left out.
+    fn cycle_members(&self) -> Vec<String> {
+        let (_, unscheduled) = kahn_visit(&self.plugins);
+        unscheduled
+            .into_iter()
+            .filter(|id| self.reaches_itself(id))
+            .collect()
+    }
+
+    fn reaches_itself(&self, plugin_id: &str) -> bool {
+        let mut stack = vec![plugin_id];
+        let mut seen = HashSet::new();
+        while let Some(current) = stack.pop() {
+            for dep_id in self.plugins[current].manifest.dependencies.keys() {
+                if dep_id == plugin_id {
+                    return true;
+                }
+                if self.plugins.contains_key(dep_id) && seen.insert(dep_id.as_str()) {
+                    stack.push(dep_id);
+                }
+            }
+        }
+        false
+    }
+
     pub fn reload_plugin(
         &mut self,
         plugin_id: &str,
-        valid_scope_ids: &HashSet<Arc<str>>,
+        host: &PluginHost,
     ) -> Result<(), PluginLoadError> {
         if let Err(reason) = validate_plugin_id(plugin_id) {
             return Err(PluginLoadError::InvalidPluginId {
@@ -645,24 +734,37 @@ impl PluginManager {
         }
 
         let plugin_dir = self.plugins_dir.join(plugin_id);
-        let plugin = self.load_plugin(&plugin_dir, valid_scope_ids)?;
+        let plugin = self.load_plugin(&plugin_dir, host)?;
 
         // Check deps before mutating — a failing reload must leave the
-        // previous version intact.
-        for dep in &plugin.dependencies {
-            if !dep.required {
-                continue;
+        // previous version intact, and so must one whose new version a
+        // loaded dependent no longer accepts.
+        let installed = |dep_id: &str| {
+            if dep_id == plugin.manifest.id {
+                Some(&plugin.manifest.version)
+            } else {
+                self.installed_version(dep_id)
             }
-            let satisfied = dep
-                .alternatives
-                .iter()
-                .any(|alt| self.plugins.contains_key(alt));
-            if !satisfied {
-                return Err(PluginLoadError::UnsatisfiedRequiredDependency {
-                    plugin_id: plugin.manifest.id.clone(),
-                    alternatives: dep.alternatives.clone(),
-                });
-            }
+        };
+        if let Some(error) = unmet_dependency(&plugin.manifest, installed) {
+            return Err(error);
+        }
+        let mut dependents: Vec<&LoadedPlugin> = self
+            .plugins
+            .values()
+            .filter(|other| {
+                other
+                    .manifest
+                    .dependencies
+                    .contains_key(&plugin.manifest.id)
+            })
+            .collect();
+        dependents.sort_by(|left, right| left.manifest.id.cmp(&right.manifest.id));
+        if let Some(error) = dependents
+            .into_iter()
+            .find_map(|dependent| unmet_dependency(&dependent.manifest, installed))
+        {
+            return Err(error);
         }
 
         let previous = self
@@ -754,12 +856,14 @@ fn parse_manifest(path: &Path, bytes: &[u8]) -> Result<PluginManifest, PluginLoa
 }
 
 impl PluginManager {
-    fn load_plugin(
-        &self,
-        dir: &Path,
-        valid_scope_ids: &HashSet<Arc<str>>,
-    ) -> Result<LoadedPlugin, PluginLoadError> {
-        let plugin = Self::load_plugin_dir(dir, valid_scope_ids)?;
+    fn installed_version(&self, plugin_id: &str) -> Option<&Version> {
+        self.plugins
+            .get(plugin_id)
+            .map(|plugin| &plugin.manifest.version)
+    }
+
+    fn load_plugin(&self, dir: &Path, host: &PluginHost) -> Result<LoadedPlugin, PluginLoadError> {
+        let plugin = Self::load_plugin_dir(dir, host)?;
 
         // Runtime identity for required modules comes from the directory
         // basename (see `parse_plugin_id` in lyra-server). Entrypoint
@@ -783,17 +887,13 @@ impl PluginManager {
     /// installed location, so install tooling can vet staged candidates
     /// before they land under `plugins_dir`. Runs [`Self::load_manifest`],
     /// then the checks that need the directory's files.
-    pub fn load_plugin_dir(
-        dir: &Path,
-        valid_scope_ids: &HashSet<Arc<str>>,
-    ) -> Result<LoadedPlugin, PluginLoadError> {
+    pub fn load_plugin_dir(dir: &Path, host: &PluginHost) -> Result<LoadedPlugin, PluginLoadError> {
         let config_path = dir.join(PLUGIN_CONFIG_FILENAME);
         let bytes = read_manifest_bytes(&config_path)?;
         let LoadedManifest {
             manifest,
             declared_scopes,
-            dependencies,
-        } = Self::load_manifest(&config_path, &bytes, valid_scope_ids)?;
+        } = Self::load_manifest(&config_path, &bytes, host)?;
 
         if let Some(entrypoint) = manifest.entrypoint.as_deref() {
             let path = dir.join(entrypoint);
@@ -809,7 +909,6 @@ impl PluginManager {
             manifest,
             directory: dir.to_path_buf(),
             declared_scopes,
-            dependencies,
         })
     }
 
@@ -820,7 +919,7 @@ impl PluginManager {
     pub fn load_manifest(
         path: &Path,
         bytes: &[u8],
-        valid_scope_ids: &HashSet<Arc<str>>,
+        host: &PluginHost,
     ) -> Result<LoadedManifest, PluginLoadError> {
         let manifest = parse_manifest(path, bytes)?;
 
@@ -835,6 +934,14 @@ impl PluginManager {
             return Err(PluginLoadError::InvalidPluginId {
                 plugin_id: manifest.id,
                 reason,
+            });
+        }
+
+        if !manifest.lyra.matches(&host.version) {
+            return Err(PluginLoadError::IncompatibleHost {
+                plugin_id: manifest.id,
+                requirement: manifest.lyra,
+                host_version: host.version.clone(),
             });
         }
 
@@ -855,10 +962,10 @@ impl PluginManager {
                     max: PLUGIN_CONFIG_MAX_SCOPE_LEN,
                 });
             }
-            // Intern via valid_scope_ids so declared_scopes entries share
+            // Intern via host.scope_ids so declared_scopes entries share
             // allocations with the module registry — clones in the runtime
             // gate are ref-count bumps, not string copies.
-            let Some(interned) = valid_scope_ids.get(scope.as_str()) else {
+            let Some(interned) = host.scope_ids.get(scope.as_str()) else {
                 return Err(PluginLoadError::UnknownScope {
                     plugin_id: manifest.id.clone(),
                     scope: scope.clone(),
@@ -867,12 +974,11 @@ impl PluginManager {
             declared_scopes.insert(interned.clone());
         }
 
-        let dependencies = normalize_dependencies(&manifest.id, &manifest.dependencies)?;
+        validate_dependencies(&manifest)?;
 
         Ok(LoadedManifest {
             manifest,
             declared_scopes,
-            dependencies,
         })
     }
 
@@ -925,8 +1031,7 @@ fn kahn_visit(plugins: &HashMap<String, LoadedPlugin>) -> (Vec<String>, Vec<Stri
     (scheduled, unscheduled)
 }
 
-// Edges fan out to every installed alternative — required or not,
-// once a dep is present the dependent runs after it.
+// Required or not, once a dep is present the dependent runs after it.
 fn build_dependency_graph(
     plugins: &HashMap<String, LoadedPlugin>,
 ) -> (HashMap<String, usize>, HashMap<String, Vec<String>>) {
@@ -935,22 +1040,16 @@ fn build_dependency_graph(
 
     for plugin in plugins.values() {
         let dependent = &plugin.manifest.id;
-        let mut already_edged: HashSet<&str> = HashSet::new();
-        for dep in &plugin.dependencies {
-            for alt in &dep.alternatives {
-                if !plugins.contains_key(alt) {
-                    continue;
-                }
-                if !already_edged.insert(alt.as_str()) {
-                    continue;
-                }
-                adjacency
-                    .entry(alt.clone())
-                    .or_default()
-                    .push(dependent.clone());
-                if let Some(deg) = in_degree.get_mut(dependent) {
-                    *deg += 1;
-                }
+        for dep_id in plugin.manifest.dependencies.keys() {
+            if !plugins.contains_key(dep_id) {
+                continue;
+            }
+            adjacency
+                .entry(dep_id.clone())
+                .or_default()
+                .push(dependent.clone());
+            if let Some(deg) = in_degree.get_mut(dependent) {
+                *deg += 1;
             }
         }
     }
@@ -1344,17 +1443,15 @@ fn plugin_origin(plugin_id: impl Into<Arc<str>>, path: impl Into<Arc<str>>) -> C
 #[cfg(test)]
 mod tests {
     use super::{
-        DependencyEntry,
-        DependencyGroup,
+        Dependency,
         LoadedManifest,
         LoadedPlugin,
-        NormalizedDependency,
+        PluginHost,
         PluginLoadError,
         PluginManager,
         PluginManifest,
         RuntimeBuilder,
         execution_order,
-        normalize_dependencies,
         plugin_origin,
         validate_plugin_id,
     };
@@ -1368,7 +1465,14 @@ mod tests {
         ModuleSpec,
     };
     use harmony_luau as luau;
-    use std::collections::HashSet;
+    use semver::{
+        Version,
+        VersionReq,
+    };
+    use std::collections::{
+        BTreeMap,
+        HashSet,
+    };
     use std::path::PathBuf;
     use std::sync::{
         Arc,
@@ -1383,12 +1487,34 @@ mod tests {
             schema_version: super::PLUGIN_SCHEMA_VERSION,
             id: id.to_string(),
             name: id.to_string(),
-            version: "1.0.0".to_string(),
+            version: Version::new(1, 0, 0),
+            lyra: VersionReq::STAR,
             description: String::new(),
             entrypoint: Some("init.luau".to_string()),
             scopes: scopes.iter().map(|scope| scope.to_string()).collect(),
-            dependencies: Vec::new(),
+            dependencies: BTreeMap::new(),
         }
+    }
+
+    fn dependency(requirement: &str) -> Dependency {
+        Dependency {
+            version: VersionReq::parse(requirement).unwrap(),
+            optional: false,
+        }
+    }
+
+    fn optional(requirement: &str) -> Dependency {
+        Dependency {
+            optional: true,
+            ..dependency(requirement)
+        }
+    }
+
+    fn dependencies(entries: &[(&str, Dependency)]) -> BTreeMap<String, Dependency> {
+        entries
+            .iter()
+            .map(|(id, dependency)| (id.to_string(), dependency.clone()))
+            .collect()
     }
 
     fn manifest_arc(manifests: Vec<PluginManifest>) -> Arc<[PluginManifest]> {
@@ -1398,8 +1524,6 @@ mod tests {
     /// `manifest` as discovery would load it from `plugins/<id>`.
     fn loaded(manifest: PluginManifest) -> LoadedPlugin {
         LoadedPlugin {
-            dependencies: normalize_dependencies(&manifest.id, &manifest.dependencies)
-                .expect("valid test dependencies"),
             directory: PathBuf::from(format!("plugins/{}", manifest.id)),
             manifest,
             declared_scopes: HashSet::new(),
@@ -1432,104 +1556,64 @@ mod tests {
         }
     }
 
-    #[test]
-    fn parses_string_shorthand_as_required_single_alternative() {
-        let json = r#"["musicbrainz", "lrclib"]"#;
-        let entries: Vec<DependencyEntry> = serde_json::from_str(json).unwrap();
-        let normalized = normalize_dependencies("dependent", &entries).unwrap();
-        assert_eq!(normalized.len(), 2);
-        assert_eq!(normalized[0].alternatives, vec!["musicbrainz"]);
-        assert!(normalized[0].required);
-        assert_eq!(normalized[1].alternatives, vec!["lrclib"]);
-        assert!(normalized[1].required);
+    fn parse_dependencies(json: &str) -> serde_json::Result<BTreeMap<String, Dependency>> {
+        super::deserialize_dependencies(&mut serde_json::Deserializer::from_str(json))
     }
 
     #[test]
-    fn parses_group_with_required_default_true() {
-        let json = r#"[{"any_of": ["musicbrainz", "discogs"]}]"#;
-        let entries: Vec<DependencyEntry> = serde_json::from_str(json).unwrap();
-        let normalized = normalize_dependencies("dependent", &entries).unwrap();
-        assert_eq!(normalized.len(), 1);
-        assert_eq!(normalized[0].alternatives, vec!["musicbrainz", "discogs"]);
-        assert!(normalized[0].required);
+    fn parses_dependency_short_and_long_forms() {
+        let json = r#"{"a": "0.2", "b": {"version": "^1.4"}, "c": {"version": "=0.0.3", "optional": true}}"#;
+        assert_eq!(
+            parse_dependencies(json).unwrap(),
+            dependencies(&[
+                ("a", dependency("0.2")),
+                ("b", dependency("^1.4")),
+                ("c", optional("=0.0.3")),
+            ])
+        );
     }
 
     #[test]
-    fn parses_group_with_required_false() {
-        let json = r#"[{"any_of": ["theaudiodb"], "required": false}]"#;
-        let entries: Vec<DependencyEntry> = serde_json::from_str(json).unwrap();
-        let normalized = normalize_dependencies("dependent", &entries).unwrap();
-        assert_eq!(normalized.len(), 1);
-        assert_eq!(normalized[0].alternatives, vec!["theaudiodb"]);
-        assert!(!normalized[0].required);
+    fn rejects_malformed_dependencies() {
+        for (json, expected) in [
+            (
+                r#"{"a": "nope"}"#,
+                "invalid dependency 'a' version requirement \"nope\"",
+            ),
+            (
+                r#"{"a": "1", "b": {"version": "nope"}}"#,
+                "invalid dependency 'b' version requirement \"nope\"",
+            ),
+            (
+                r#"{"a": "1", "b": "1", "a": {"version": "2"}}"#,
+                "dependency 'a' is listed more than once",
+            ),
+            (r#"{"a": {"optional": true}}"#, "missing field `version`"),
+            (
+                r#"{"a": {"version": "1", "required": false}}"#,
+                "unknown field `required`",
+            ),
+            (r#"{"a": ["b"]}"#, "a version requirement or an object"),
+            (r#"["a"]"#, "an object mapping plugin ids to dependencies"),
+        ] {
+            let error = parse_dependencies(json).unwrap_err();
+            assert!(error.to_string().contains(expected), "{json}: {error}");
+        }
     }
 
-    #[test]
-    fn rejects_empty_any_of() {
-        let entries = vec![DependencyEntry::Group(DependencyGroup {
-            any_of: vec![],
-            required: true,
-        })];
-        let err = normalize_dependencies("dependent", &entries).unwrap_err();
-        assert!(matches!(err, PluginLoadError::EmptyDependencyGroup { .. }));
-    }
-
-    #[test]
-    fn rejects_self_dependency() {
-        let entries = vec![DependencyEntry::Id("dependent".to_string())];
-        let err = normalize_dependencies("dependent", &entries).unwrap_err();
-        assert!(matches!(err, PluginLoadError::SelfDependency { .. }));
-    }
-
-    #[test]
-    fn rejects_duplicate_alternative_within_group() {
-        let entries = vec![DependencyEntry::Group(DependencyGroup {
-            any_of: vec!["musicbrainz".to_string(), "musicbrainz".to_string()],
-            required: true,
-        })];
-        let err = normalize_dependencies("dependent", &entries).unwrap_err();
-        assert!(matches!(
-            err,
-            PluginLoadError::DuplicateDependencyAlternative { .. }
-        ));
-    }
-
-    #[test]
-    fn rejects_invalid_dependency_id() {
-        let entries = vec![DependencyEntry::Id("not/valid".to_string())];
-        let err = normalize_dependencies("dependent", &entries).unwrap_err();
-        assert!(matches!(err, PluginLoadError::InvalidDependencyId { .. }));
-    }
-
-    #[test]
-    fn rejects_too_many_dependency_entries() {
-        let entries: Vec<DependencyEntry> = (0..super::PLUGIN_CONFIG_MAX_DEPENDENCIES + 1)
-            .map(|i| DependencyEntry::Id(format!("dep{i}")))
-            .collect();
-        let err = normalize_dependencies("dependent", &entries).unwrap_err();
-        assert!(matches!(err, PluginLoadError::TooManyDependencies { .. }));
-    }
-
-    #[test]
-    fn rejects_too_many_dependency_alternatives() {
-        let alts: Vec<String> = (0..super::PLUGIN_CONFIG_MAX_DEPENDENCY_ALTERNATIVES + 1)
-            .map(|i| format!("alt{i}"))
-            .collect();
-        let entries = vec![DependencyEntry::Group(DependencyGroup {
-            any_of: alts,
-            required: true,
-        })];
-        let err = normalize_dependencies("dependent", &entries).unwrap_err();
-        assert!(matches!(
-            err,
-            PluginLoadError::TooManyDependencyAlternatives { .. }
-        ));
-    }
-
-    fn loaded_plugin(id: &str, deps: Vec<NormalizedDependency>) -> LoadedPlugin {
+    fn loaded_plugin(
+        id: &str,
+        version: &str,
+        dependencies: BTreeMap<String, Dependency>,
+    ) -> LoadedPlugin {
         LoadedPlugin {
-            dependencies: deps,
-            ..loaded(manifest(id, &[]))
+            manifest: PluginManifest {
+                version: Version::parse(version).unwrap(),
+                dependencies,
+                ..manifest(id, &[])
+            },
+            directory: PathBuf::from(format!("plugins/{id}")),
+            declared_scopes: HashSet::new(),
         }
     }
 
@@ -1543,18 +1627,8 @@ mod tests {
         mgr
     }
 
-    fn required(alts: &[&str]) -> NormalizedDependency {
-        NormalizedDependency {
-            alternatives: alts.iter().map(|s| s.to_string()).collect(),
-            required: true,
-        }
-    }
-
-    fn optional(alts: &[&str]) -> NormalizedDependency {
-        NormalizedDependency {
-            alternatives: alts.iter().map(|s| s.to_string()).collect(),
-            required: false,
-        }
+    fn order(mgr: &PluginManager) -> Vec<String> {
+        execution_order_ids(mgr.list_plugins().cloned().collect())
     }
 
     fn execution_order_ids(plugins: Vec<LoadedPlugin>) -> Vec<String> {
@@ -1566,43 +1640,34 @@ mod tests {
     }
 
     #[test]
-    fn execution_order_orders_after_every_installed_alternative() {
+    fn execution_order_orders_after_every_installed_dependency() {
         let order = execution_order_ids(vec![
-            loaded_plugin("consumer", vec![required(&["a", "b"])]),
-            loaded_plugin("a", vec![]),
-            loaded_plugin("b", vec![]),
+            loaded_plugin(
+                "consumer",
+                "1.0.0",
+                dependencies(&[("a", dependency("1")), ("b", optional("1"))]),
+            ),
+            loaded_plugin("b", "1.0.0", BTreeMap::new()),
+            loaded_plugin("a", "1.0.0", BTreeMap::new()),
         ]);
-        let consumer_pos = order.iter().position(|id| id == "consumer").unwrap();
-        let a_pos = order.iter().position(|id| id == "a").unwrap();
-        let b_pos = order.iter().position(|id| id == "b").unwrap();
-        assert!(a_pos < consumer_pos);
-        assert!(b_pos < consumer_pos);
+        assert_eq!(order, vec!["a", "b", "consumer"]);
     }
 
     #[test]
     fn execution_order_is_stable_via_id_sort() {
         let order = execution_order_ids(vec![
-            loaded_plugin("zeta", vec![]),
-            loaded_plugin("alpha", vec![]),
-            loaded_plugin("mu", vec![]),
+            loaded_plugin("zeta", "1.0.0", BTreeMap::new()),
+            loaded_plugin("alpha", "1.0.0", BTreeMap::new()),
+            loaded_plugin("mu", "1.0.0", BTreeMap::new()),
         ]);
         assert_eq!(order, vec!["alpha", "mu", "zeta"]);
     }
 
     #[test]
-    fn execution_order_respects_optional_edges_when_provider_installed() {
-        let order = execution_order_ids(vec![
-            loaded_plugin("consumer", vec![optional(&["provider"])]),
-            loaded_plugin("provider", vec![]),
-        ]);
-        assert_eq!(order, vec!["provider", "consumer"]);
-    }
-
-    #[test]
     fn execution_order_rejects_cycles() {
         let error = execution_order(vec![
-            loaded_plugin("a", vec![required(&["b"])]),
-            loaded_plugin("b", vec![required(&["a"])]),
+            loaded_plugin("a", "1.0.0", dependencies(&[("b", dependency("1"))])),
+            loaded_plugin("b", "1.0.0", dependencies(&[("a", dependency("1"))])),
         ])
         .expect_err("a cycle has no execution order");
         assert!(error.to_string().contains("cycle"), "{error}");
@@ -1612,33 +1677,25 @@ mod tests {
     fn resolve_prunes_plugins_with_missing_required_dep() {
         let mut mgr = manager_with(vec![loaded_plugin(
             "consumer",
-            vec![required(&["missing"])],
+            "1.0.0",
+            dependencies(&[("missing", dependency("1"))]),
         )]);
         let errors = mgr.resolve_dependencies();
         assert_eq!(errors.len(), 1);
-        assert!(matches!(
-            errors[0],
-            PluginLoadError::UnsatisfiedRequiredDependency { .. }
-        ));
+        assert_eq!(
+            errors[0].to_string(),
+            "plugin 'consumer' requires plugin 'missing' ^1, but it is not installed or failed \
+             to load"
+        );
         assert!(mgr.get_plugin("consumer").is_none());
-    }
-
-    #[test]
-    fn resolve_keeps_plugins_with_satisfied_or_group() {
-        let mut mgr = manager_with(vec![
-            loaded_plugin("consumer", vec![required(&["missing", "provider"])]),
-            loaded_plugin("provider", vec![]),
-        ]);
-        let errors = mgr.resolve_dependencies();
-        assert!(errors.is_empty());
-        assert!(mgr.get_plugin("consumer").is_some());
     }
 
     #[test]
     fn resolve_keeps_plugins_with_missing_optional_dep() {
         let mut mgr = manager_with(vec![loaded_plugin(
             "consumer",
-            vec![optional(&["missing"])],
+            "1.0.0",
+            dependencies(&[("missing", optional("1"))]),
         )]);
         let errors = mgr.resolve_dependencies();
         assert!(errors.is_empty());
@@ -1646,11 +1703,56 @@ mod tests {
     }
 
     #[test]
-    fn resolve_cascades_pruning_through_chain() {
-        // c → b → a; a missing → b dropped → c dropped.
+    fn resolve_checks_installed_dependency_versions() {
         let mut mgr = manager_with(vec![
-            loaded_plugin("c", vec![required(&["b"])]),
-            loaded_plugin("b", vec![required(&["a"])]),
+            loaded_plugin("lib", "0.2.5", BTreeMap::new()),
+            loaded_plugin("extra", "0.0.4", BTreeMap::new()),
+            loaded_plugin(
+                "matching",
+                "1.0.0",
+                dependencies(&[("lib", dependency("0.2")), ("extra", optional("0.0.4"))]),
+            ),
+            loaded_plugin(
+                "too_old",
+                "1.0.0",
+                dependencies(&[("lib", dependency("0.3"))]),
+            ),
+            loaded_plugin(
+                "optional_mismatch",
+                "1.0.0",
+                dependencies(&[("extra", optional("0.0.3"))]),
+            ),
+        ]);
+        let errors = mgr.resolve_dependencies();
+        let messages: Vec<String> = errors.iter().map(ToString::to_string).collect();
+        assert_eq!(
+            messages,
+            vec![
+                "plugin 'optional_mismatch' requires plugin 'extra' ^0.0.3, but 0.0.4 is installed",
+                "plugin 'too_old' requires plugin 'lib' ^0.3, but 0.2.5 is installed",
+            ]
+        );
+        assert!(mgr.get_plugin("matching").is_some());
+        assert!(mgr.get_plugin("too_old").is_none());
+        assert!(mgr.get_plugin("optional_mismatch").is_none());
+    }
+
+    #[test]
+    fn resolve_cascades_pruning_through_chain() {
+        // c → b → a with a missing: b is dropped, and c only when it
+        // requires b.
+        let mut mgr = manager_with(vec![
+            loaded_plugin("c", "1.0.0", dependencies(&[("b", optional("1"))])),
+            loaded_plugin("b", "1.0.0", dependencies(&[("a", dependency("1"))])),
+        ]);
+        let errors = mgr.resolve_dependencies();
+        assert_eq!(errors.len(), 1);
+        assert!(mgr.get_plugin("b").is_none());
+        assert!(mgr.get_plugin("c").is_some());
+
+        let mut mgr = manager_with(vec![
+            loaded_plugin("c", "1.0.0", dependencies(&[("b", dependency("1"))])),
+            loaded_plugin("b", "1.0.0", dependencies(&[("a", dependency("1"))])),
         ]);
         let errors = mgr.resolve_dependencies();
         assert_eq!(errors.len(), 2);
@@ -1659,27 +1761,31 @@ mod tests {
     }
 
     #[test]
-    fn resolve_detects_and_prunes_cycle() {
+    fn resolve_prunes_cycles_and_rechecks_what_depends_on_them() {
         let mut mgr = manager_with(vec![
-            loaded_plugin("a", vec![required(&["b"])]),
-            loaded_plugin("b", vec![required(&["a"])]),
+            loaded_plugin("a", "1.0.0", dependencies(&[("b", dependency("1"))])),
+            loaded_plugin("b", "1.0.0", dependencies(&[("a", optional("1"))])),
+            loaded_plugin("optional", "1.0.0", dependencies(&[("a", optional("1"))])),
+            loaded_plugin("required", "1.0.0", dependencies(&[("a", dependency("1"))])),
         ]);
         let errors = mgr.resolve_dependencies();
-        assert!(
-            errors
-                .iter()
-                .any(|e| matches!(e, PluginLoadError::DependencyCycle { .. })),
-            "expected DependencyCycle error, got {errors:?}",
+        let messages: Vec<String> = errors.iter().map(ToString::to_string).collect();
+        assert_eq!(
+            messages,
+            vec![
+                r#"dependency cycle detected; the following plugins are in a cycle and were skipped: ["a", "b"]"#,
+                "plugin 'required' requires plugin 'a' ^1, but it is not installed or failed to \
+                 load",
+            ]
         );
-        assert!(mgr.get_plugin("a").is_none());
-        assert!(mgr.get_plugin("b").is_none());
+        assert_eq!(order(&mgr), vec!["optional"]);
     }
 
     #[test]
     fn runtime_builder_installs_require_and_loads_memory_sources() -> anyhow::Result<()> {
         let mut loader = MemorySourceLoader::new();
         loader.insert("plugin:demo/util", b"return { answer = 42 }".as_slice());
-        let mut demo = loaded_plugin("demo", Vec::new());
+        let mut demo = loaded_plugin("demo", "1.0.0", BTreeMap::new());
         demo.manifest.entrypoint = None;
         let runtime = RuntimeBuilder::new(loader, manifest_arc(vec![demo.manifest.clone()]))
             .plugins(Arc::from(vec![demo]))
@@ -1749,7 +1855,7 @@ mod tests {
         std::fs::create_dir_all(&plugin_dir)?;
         std::fs::write(
             plugin_dir.join(super::PLUGIN_CONFIG_FILENAME),
-            r#"{"schema_version":1,"id":"demo","name":"demo","version":"1.0.0","description":"","entrypoint":"init.luau","scopes":[]}"#,
+            r#"{"schema_version":1,"id":"demo","name":"demo","version":"1.0.0","lyra":"*","description":"","entrypoint":"init.luau","scopes":[]}"#,
         )?;
         write_demo_plugin(&plugin_dir, "1");
 
@@ -1758,7 +1864,6 @@ mod tests {
             manifest: manifest.clone(),
             directory: plugin_dir.clone(),
             declared_scopes: HashSet::new(),
-            dependencies: Vec::new(),
         };
         let runtime = RuntimeBuilder::new(
             crate::FilesystemSourceLoader::new(&plugins_dir, &plugins_dir),
@@ -1790,7 +1895,7 @@ mod tests {
 
         std::fs::write(
             plugin_dir.join(super::PLUGIN_CONFIG_FILENAME),
-            r#"{"schema_version":1,"id":"demo","name":"demo","version":"1.1.0","description":"","entrypoint":"init.luau","scopes":[]}"#,
+            r#"{"schema_version":1,"id":"demo","name":"demo","version":"1.1.0","lyra":"*","description":"","entrypoint":"init.luau","scopes":[]}"#,
         )?;
         let error = runtime
             .verify_plugin_manifest("demo")
@@ -1979,7 +2084,7 @@ mod tests {
             let mut plugin_manifest = manifest(id, scopes);
             plugin_manifest.dependencies = dependencies
                 .iter()
-                .map(|dependency| DependencyEntry::Id(dependency.to_string()))
+                .map(|dependency| (dependency.to_string(), self::dependency("1")))
                 .collect();
             plugins.push(loaded(plugin_manifest));
         }
@@ -2236,7 +2341,7 @@ mod tests {
         let mut library = manifest("lib", &[]);
         library.entrypoint = None;
         let mut app = manifest("app", &[]);
-        app.dependencies = vec![DependencyEntry::Id("lib".to_string())];
+        app.dependencies = dependencies(&[("lib", dependency("1"))]);
         let plugins = [library, app].into_iter().map(loaded).collect();
         loader.insert("plugin:app/init", b"".as_slice());
         let runtime = task_test_runtime_from(Arc::new(Mutex::new(Vec::new())), loader, plugins)?;
@@ -2895,13 +3000,11 @@ mod tests {
             manifest: manifest("alpha", &["test.order"]),
             directory: PathBuf::from("plugins/alpha"),
             declared_scopes: HashSet::new(),
-            dependencies: Vec::new(),
         };
         let beta = LoadedPlugin {
             manifest: manifest("beta", &["test.order"]),
             directory: PathBuf::from("plugins/beta"),
             declared_scopes: HashSet::new(),
-            dependencies: Vec::new(),
         };
         let runtime = RuntimeBuilder::new(
             loader,
@@ -2922,37 +3025,50 @@ mod tests {
 
     fn manifest_json(id: &str, extra: &str) -> String {
         format!(
-            r#"{{"schema_version":1,"id":"{id}","name":"Demo","version":"1.0.0","description":"d","entrypoint":"init.luau","scopes":["net"]{extra}}}"#
+            r#"{{"schema_version":1,"id":"{id}","name":"Demo","version":"1.0.0","lyra":"0.0.1","description":"d","entrypoint":"init.luau","scopes":["net"]{extra}}}"#
         )
     }
 
+    fn host() -> PluginHost {
+        PluginHost {
+            version: Version::new(0, 0, 1),
+            scope_ids: HashSet::from([Arc::<str>::from("net")]),
+        }
+    }
+
     fn load_manifest(bytes: &[u8]) -> Result<LoadedManifest, PluginLoadError> {
-        let scopes = HashSet::from([Arc::<str>::from("net")]);
-        PluginManager::load_manifest(std::path::Path::new("plugin.json"), bytes, &scopes)
+        PluginManager::load_manifest(std::path::Path::new("plugin.json"), bytes, &host())
     }
 
     #[test]
     fn load_manifest_accepts_valid_manifests_without_a_directory() {
-        let json = manifest_json("demo", r#","dependencies":["other"]"#);
+        let json = manifest_json(
+            "demo",
+            r#","dependencies":{"other":"0.2","extra":{"version":"1","optional":true}},"unknown":1"#,
+        );
         let loaded = load_manifest(json.as_bytes()).unwrap();
 
         assert_eq!(loaded.manifest.id, "demo");
         assert_eq!(loaded.manifest.name, "Demo");
-        assert_eq!(loaded.manifest.version, "1.0.0");
+        assert_eq!(loaded.manifest.version, Version::new(1, 0, 0));
+        assert_eq!(loaded.manifest.lyra, VersionReq::parse("0.0.1").unwrap());
         assert_eq!(loaded.manifest.description, "d");
         assert_eq!(loaded.manifest.scopes, vec!["net"]);
         assert!(loaded.declared_scopes.contains("net"));
-        assert_eq!(loaded.dependencies[0].alternatives, vec!["other"]);
+        assert_eq!(
+            loaded.manifest.dependencies,
+            dependencies(&[("other", dependency("0.2")), ("extra", optional("1"))])
+        );
     }
 
     #[test]
     fn load_manifest_rejects_manifest_level_errors() {
         let too_many_scopes = format!(
-            r#"{{"schema_version":1,"id":"demo","name":"d","version":"1","description":"","scopes":[{}]}}"#,
+            r#"{{"schema_version":1,"id":"demo","name":"d","version":"1.0.0","lyra":"*","description":"","scopes":[{}]}}"#,
             vec![r#""net""#; super::PLUGIN_CONFIG_MAX_SCOPES + 1].join(",")
         );
         let long_scope = format!(
-            r#"{{"schema_version":1,"id":"demo","name":"d","version":"1","description":"","scopes":["{}"]}}"#,
+            r#"{{"schema_version":1,"id":"demo","name":"d","version":"1.0.0","lyra":"*","description":"","scopes":["{}"]}}"#,
             "s".repeat(super::PLUGIN_CONFIG_MAX_SCOPE_LEN + 1)
         );
         let err = |bytes: &[u8]| load_manifest(bytes).unwrap_err();
@@ -2993,9 +3109,59 @@ mod tests {
             PluginLoadError::UnknownScope { scope, .. } if scope == "fs"
         ));
         assert!(matches!(
-            err(manifest_json("demo", r#","dependencies":["demo"]"#).as_bytes()),
+            err(manifest_json("demo", r#","dependencies":{"other":"1","other":"2"}"#).as_bytes()),
+            PluginLoadError::ConfigParseError { error, .. }
+                if error.starts_with("dependency 'other' is listed more than once")
+        ));
+        assert!(matches!(
+            err(manifest_json("demo", r#","dependencies":{"demo":"1"}"#).as_bytes()),
             PluginLoadError::SelfDependency { .. }
         ));
+        assert!(matches!(
+            err(manifest_json("demo", r#","dependencies":{"not/valid":"1"}"#).as_bytes()),
+            PluginLoadError::InvalidDependencyId { .. }
+        ));
+        let too_many = (0..=super::PLUGIN_CONFIG_MAX_DEPENDENCIES)
+            .map(|i| format!(r#""dep{i}":"1""#))
+            .collect::<Vec<_>>()
+            .join(",");
+        assert!(matches!(
+            err(manifest_json("demo", &format!(r#","dependencies":{{{too_many}}}"#)).as_bytes()),
+            PluginLoadError::TooManyDependencies { .. }
+        ));
+    }
+
+    #[test]
+    fn load_manifest_parses_versions_and_checks_the_host() {
+        let err = |json: String| load_manifest(json.as_bytes()).unwrap_err().to_string();
+
+        for (from, to, expected) in [
+            (
+                r#""version":"1.0.0""#,
+                r#""version":"1""#,
+                r#"invalid version "1""#,
+            ),
+            (r#""version":"1.0.0","#, "", "missing field `version`"),
+            (
+                r#""lyra":"0.0.1""#,
+                r#""lyra":"latest""#,
+                r#"invalid lyra version requirement "latest""#,
+            ),
+            (r#""lyra":"0.0.1","#, "", "missing field `lyra`"),
+        ] {
+            let message = err(manifest_json("demo", "").replace(from, to));
+            assert!(message.contains(expected), "{message}");
+        }
+
+        assert_eq!(
+            err(manifest_json("demo", "").replace(r#""lyra":"0.0.1""#, r#""lyra":"0.0.2""#)),
+            "plugin 'demo' requires lyra ^0.0.2, but this is lyra 0.0.1"
+        );
+        for requirement in ["0.0", ">=0.0.1, <0.1.0", "*"] {
+            let json = manifest_json("demo", "")
+                .replace(r#""lyra":"0.0.1""#, &format!(r#""lyra":"{requirement}""#));
+            assert!(load_manifest(json.as_bytes()).is_ok(), "{requirement}");
+        }
     }
 
     #[test]
@@ -3003,17 +3169,15 @@ mod tests {
         let dir = temp_plugin_dir("missing-entrypoint");
         let json = manifest_json("demo", "");
         std::fs::write(dir.join(super::PLUGIN_CONFIG_FILENAME), &json).unwrap();
-        let scopes = HashSet::from([Arc::<str>::from("net")]);
-
         assert!(load_manifest(json.as_bytes()).is_ok());
-        let err = PluginManager::load_plugin_dir(&dir, &scopes).unwrap_err();
+        let err = PluginManager::load_plugin_dir(&dir, &host()).unwrap_err();
         assert!(
             matches!(&err, PluginLoadError::EntrypointNotFound { path, .. } if *path == dir.join("init.luau")),
             "{err}"
         );
 
         std::fs::write(dir.join("init.luau"), "").unwrap();
-        let loaded = PluginManager::load_plugin_dir(&dir, &scopes).unwrap();
+        let loaded = PluginManager::load_plugin_dir(&dir, &host()).unwrap();
         assert_eq!(loaded.directory, dir);
         assert!(loaded.declared_scopes.contains("net"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -3021,18 +3185,17 @@ mod tests {
 
     #[test]
     fn load_plugin_dir_reports_config_errors_against_the_config_path() {
-        let scopes = HashSet::new();
         let dir = temp_plugin_dir("config-errors");
         let config = dir.join(super::PLUGIN_CONFIG_FILENAME);
 
-        let err = PluginManager::load_plugin_dir(&dir, &scopes).unwrap_err();
+        let err = PluginManager::load_plugin_dir(&dir, &host()).unwrap_err();
         assert!(
             matches!(&err, PluginLoadError::ConfigNotFound(path) if *path == config),
             "{err}"
         );
 
         std::fs::write(&config, [0xff, 0xfe]).unwrap();
-        let err = PluginManager::load_plugin_dir(&dir, &scopes).unwrap_err();
+        let err = PluginManager::load_plugin_dir(&dir, &host()).unwrap_err();
         assert_eq!(
             err.to_string(),
             format!(
@@ -3041,6 +3204,128 @@ mod tests {
             )
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn discover_and_reload_check_host_and_dependency_versions() {
+        let plugins_dir = temp_plugin_dir("versions");
+        let write = |id: &str, version: &str, extra: &str| {
+            let dir = plugins_dir.join(id);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("init.luau"), "").unwrap();
+            std::fs::write(
+                dir.join(super::PLUGIN_CONFIG_FILENAME),
+                manifest_json(id, extra).replace("1.0.0", version),
+            )
+            .unwrap();
+        };
+        write("lib", "0.1.2", "");
+        write("consumer", "1.0.0", r#","dependencies":{"lib":"0.1"}"#);
+        write("future", "1.0.0", "");
+        std::fs::write(
+            plugins_dir
+                .join("future")
+                .join(super::PLUGIN_CONFIG_FILENAME),
+            manifest_json("future", "").replace(r#""lyra":"0.0.1""#, r#""lyra":"0.1""#),
+        )
+        .unwrap();
+
+        let mut mgr = PluginManager::new(plugins_dir.clone());
+        let errors = mgr.discover_plugins(&host()).unwrap();
+        let messages: Vec<String> = errors.iter().map(ToString::to_string).collect();
+        assert_eq!(
+            messages,
+            vec!["plugin 'future' requires lyra ^0.1, but this is lyra 0.0.1"]
+        );
+        assert_eq!(order(&mgr), vec!["lib", "consumer"]);
+
+        write("lib", "0.2.0", "");
+        let err = mgr.reload_plugin("lib", &host()).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "plugin 'consumer' requires plugin 'lib' ^0.1, but 0.2.0 is installed"
+        );
+        assert_eq!(
+            mgr.get_plugin("lib").unwrap().manifest.version,
+            Version::new(0, 1, 2)
+        );
+
+        write("lib", "0.1.3", "");
+        mgr.reload_plugin("lib", &host()).unwrap();
+        assert_eq!(
+            mgr.get_plugin("lib").unwrap().manifest.version,
+            Version::new(0, 1, 3)
+        );
+        let _ = std::fs::remove_dir_all(&plugins_dir);
+    }
+
+    #[test]
+    fn optional_dependency_that_failed_to_load_cannot_be_required() -> anyhow::Result<()> {
+        let plugins_dir = temp_plugin_dir("failed-optional");
+        for (id, extra) in [
+            (
+                "consumer",
+                r#","dependencies":{"helper":{"version":"1","optional":true}}"#,
+            ),
+            ("helper", ""),
+        ] {
+            let dir = plugins_dir.join(id);
+            std::fs::create_dir_all(&dir)?;
+            std::fs::write(dir.join("init.luau"), "")?;
+            std::fs::write(
+                dir.join(super::PLUGIN_CONFIG_FILENAME),
+                manifest_json(id, extra),
+            )?;
+        }
+        std::fs::write(
+            plugins_dir.join("helper").join("lib.luau"),
+            "helper_ran = true\nreturn {}",
+        )?;
+        std::fs::write(
+            plugins_dir
+                .join("helper")
+                .join(super::PLUGIN_CONFIG_FILENAME),
+            manifest_json("helper", "").replace(r#""lyra":"0.0.1""#, r#""lyra":"0.1""#),
+        )?;
+
+        let mut mgr = PluginManager::new(plugins_dir.clone());
+        let errors = mgr.discover_plugins(&host())?;
+        assert!(
+            matches!(errors[..], [PluginLoadError::IncompatibleHost { .. }]),
+            "{errors:?}"
+        );
+        let plugins: Vec<_> = mgr.list_plugins().cloned().collect();
+        let manifests = plugins
+            .iter()
+            .map(|plugin| plugin.manifest.clone())
+            .collect();
+        let runtime = RuntimeBuilder::new(
+            crate::FilesystemSourceLoader::new(&plugins_dir, &plugins_dir),
+            manifest_arc(manifests),
+        )
+        .plugins(Arc::from(plugins))
+        .build()?;
+
+        let error = runtime
+            .eval_source_with_context(
+                Arc::<[u8]>::from(&b"return require('@helper/lib')"[..]),
+                CallContext {
+                    origin: plugin_origin("consumer", "init.luau"),
+                    ..CallContext::default()
+                },
+            )
+            .expect_err("a dependency that failed to load must not be requirable");
+        assert!(
+            error.to_string().contains("which is not a loaded plugin"),
+            "{error}"
+        );
+        let ran = runtime.eval_source_with_context(
+            Arc::<[u8]>::from(&b"return helper_ran"[..]),
+            CallContext::default(),
+        )?;
+        assert_eq!(ran, vec![luau::Value::Nil]);
+        let _ = std::fs::remove_dir_all(&plugins_dir);
+        Ok(())
     }
 
     #[test]
@@ -3056,14 +3341,13 @@ mod tests {
         let mut lib = manifest("lib", &[]);
         lib.entrypoint = None;
         let mut consumer = manifest("consumer", &[]);
-        consumer.dependencies = vec![DependencyEntry::Id("lib".to_string())];
+        consumer.dependencies = dependencies(&[("lib", dependency("1"))]);
         let outsider = manifest("outsider", &[]);
 
         let library_plugin = LoadedPlugin {
             manifest: lib.clone(),
             directory: PathBuf::from("plugins/lib"),
             declared_scopes: HashSet::new(),
-            dependencies: Vec::new(),
         };
         let runtime = RuntimeBuilder::new(loader, manifest_arc(vec![lib, consumer, outsider]))
             .plugins(Arc::from(vec![library_plugin]))
@@ -3092,7 +3376,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("does not declare it as a dependency"),
+                .contains("which is not a loaded plugin it declares as a dependency"),
             "unexpected error: {error}"
         );
         Ok(())
@@ -3119,13 +3403,12 @@ mod tests {
 
         let dep = manifest("dep", &["test.order"]);
         let mut consumer = manifest("consumer", &[]);
-        consumer.dependencies = vec![DependencyEntry::Id("dep".to_string())];
+        consumer.dependencies = dependencies(&[("dep", dependency("1"))]);
 
         let dep_plugin = LoadedPlugin {
             manifest: dep.clone(),
             directory: PathBuf::from("plugins/dep"),
             declared_scopes: HashSet::new(),
-            dependencies: Vec::new(),
         };
         let runtime = RuntimeBuilder::new(loader, manifest_arc(vec![dep, consumer]))
             .plugins(Arc::from(vec![dep_plugin]))

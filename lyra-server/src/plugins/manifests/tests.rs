@@ -10,11 +10,12 @@ fn manifest(id: &str, scopes: &[&str]) -> harmony_core::plugin::PluginManifest {
         schema_version: 1,
         id: id.to_string(),
         name: format!("{id} Plugin"),
-        version: "1.0.0".to_string(),
+        version: semver::Version::new(1, 0, 0),
+        lyra: semver::VersionReq::STAR,
         description: "Test manifest".to_string(),
         entrypoint: Some("init.luau".to_string()),
         scopes: scopes.iter().map(|scope| scope.to_string()).collect(),
-        dependencies: Vec::new(),
+        dependencies: Default::default(),
     }
 }
 
@@ -26,11 +27,12 @@ fn plugins_manifest_access_reads_vm_context_store() -> Result<()> {
             schema_version: 1,
             id: "other".to_string(),
             name: "Other Plugin".to_string(),
-            version: "2.0.0".to_string(),
+            version: semver::Version::new(2, 0, 0),
+            lyra: semver::VersionReq::STAR,
             description: "Other manifest".to_string(),
             entrypoint: Some("main.luau".to_string()),
             scopes: Vec::new(),
-            dependencies: Vec::new(),
+            dependencies: Default::default(),
         },
     ]))?;
     let values = runtime.eval_plugin_source(

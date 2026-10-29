@@ -63,8 +63,8 @@ pub(crate) use surfaces::{
     render_lyra_doc_source,
 };
 pub(crate) use surfaces::{
-    module_scope_ids,
     module_specs,
+    plugin_host,
 };
 
 pub(crate) fn runtime_error(error: impl std::fmt::Display) -> harmony_luau::Error {

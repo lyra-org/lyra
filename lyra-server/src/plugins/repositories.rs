@@ -267,7 +267,7 @@ async fn resolve(
         &http_client(build)?,
         &spec,
         plugin_ids,
-        &crate::plugins::module_scope_ids(),
+        &crate::plugins::plugin_host(),
     )
     .await
     .map_err(map_resolve_error)
@@ -281,13 +281,9 @@ async fn list(
 ) -> Result<RepositoryListing, PluginRepoError> {
     let spec =
         RepoSpec::parse(url, git_ref).map_err(|e| PluginRepoError::BadRequest(e.to_string()))?;
-    list_plugins(
-        &http_client(build)?,
-        &spec,
-        &crate::plugins::module_scope_ids(),
-    )
-    .await
-    .map_err(map_resolve_error)
+    list_plugins(&http_client(build)?, &spec, &crate::plugins::plugin_host())
+        .await
+        .map_err(map_resolve_error)
 }
 
 fn catalog_status(installed_dir: &Path, available: Revision<'_>) -> CatalogStatus {
@@ -455,7 +451,7 @@ fn build_preview(listing: &RepositoryListing, plugins_dir: &Path) -> RepositoryP
             PluginPreview {
                 id: manifest.id.clone(),
                 name: manifest.name.clone(),
-                version: manifest.version.clone(),
+                version: manifest.version.to_string(),
                 description: manifest.description.clone(),
                 scopes: manifest.scopes.clone(),
                 commit: source.commit.clone(),
@@ -573,7 +569,7 @@ fn install_selected(
         match install_candidate(candidate, plugins_dir, Some(now_rfc3339())) {
             Ok(record) => report.installed.push(InstalledPlugin {
                 id: candidate.id().to_string(),
-                version: candidate.plugin.manifest.version.clone(),
+                version: candidate.plugin.manifest.version.to_string(),
                 commit: record.commit,
             }),
             Err(error) => report.failed.push(FailedInstall {
@@ -804,7 +800,7 @@ async fn resolve_update_source(
             hashes: &tree_hashes,
         }),
         Some(&changed),
-        &crate::plugins::module_scope_ids(),
+        &crate::plugins::plugin_host(),
         budget,
     )
     .await?;
@@ -1038,7 +1034,7 @@ async fn update_plugins_in(
         match install_candidate(candidate, plugins_dir, Some(now_rfc3339())) {
             Ok(record) => report.updated.push(UpdatedPlugin {
                 id: id.clone(),
-                version: candidate.plugin.manifest.version.clone(),
+                version: candidate.plugin.manifest.version.to_string(),
                 commit: record.commit,
             }),
             Err(error) => report.failed.push(FailedInstall {
@@ -1436,7 +1432,7 @@ mod tests {
     ) -> anyhow::Result<String> {
         let plugin = |id: &str| {
             format!(
-                r#"{{"schema_version":1,"id":"{id}","name":"{id}","version":"2.0.0","description":"","entrypoint":"init.luau","scopes":[]}}"#
+                r#"{{"schema_version":1,"id":"{id}","name":"{id}","version":"2.0.0","lyra":"*","description":"","entrypoint":"init.luau","scopes":[]}}"#
             )
         };
         let mut archive = tar::Builder::new(flate2::write::GzEncoder::new(

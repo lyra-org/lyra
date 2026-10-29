@@ -553,8 +553,8 @@ impl fmt::Display for ModuleLoadError {
             Self::PluginDependencyDenied { requester, target } => {
                 write!(
                     f,
-                    "plugin '{requester}' requires plugin '{target}' but does not declare it \
-                     as a dependency in plugin.json"
+                    "plugin '{requester}' requires plugin '{target}', which is not a loaded \
+                     plugin it declares as a dependency in plugin.json"
                 )
             }
             Self::RequireCycle { cache_key } => {

@@ -3,6 +3,7 @@
   "id": "test",
   "name": "Harness Module Tests",
   "version": "1.0.0",
+  "lyra": "0.0.1",
   "description": "Luau tests for server-provided plugin modules",
   "scopes": [
     "harmony.crypt",

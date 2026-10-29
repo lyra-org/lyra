@@ -38,10 +38,7 @@ use super::{
     PluginExecutor,
     WebSocketState,
     messages::TaskIdKey,
-    modules::{
-        generic_module_specs,
-        plugin_scope_ids,
-    },
+    modules::generic_module_specs,
     stores::PluginModuleStores,
 };
 
@@ -89,7 +86,7 @@ impl PluginExecutor {
     ) -> Result<(Self, Vec<PluginLoadError>)> {
         let plugins_dir = plugins_dir.into();
         let mut plugin_manager = PluginManager::new(plugins_dir.clone());
-        let errors = plugin_manager.discover_plugins(&plugin_scope_ids())?;
+        let errors = plugin_manager.discover_plugins(&crate::plugins::plugin_host())?;
         let mut plugins = plugin_manager.list_plugins().cloned().collect::<Vec<_>>();
         plugins.sort_by(|left, right| left.manifest.id.cmp(&right.manifest.id));
         let plugins = Arc::<[LoadedPlugin]>::from(plugins);

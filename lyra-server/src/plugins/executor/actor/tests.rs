@@ -49,7 +49,8 @@ fn test_executor() -> Result<TestExecutor> {
                 schema_version: 1,
                 id: "dispatch-test".into(),
                 name: "Dispatch test".into(),
-                version: "1.0.0".into(),
+                version: semver::Version::new(1, 0, 0),
+                lyra: semver::VersionReq::STAR,
                 description: String::new(),
                 entrypoint: Some("init.luau".into()),
                 scopes: vec![
@@ -57,7 +58,7 @@ fn test_executor() -> Result<TestExecutor> {
                     "lyra.api".into(),
                     "test.gate".into(),
                 ],
-                dependencies: Vec::new(),
+                dependencies: Default::default(),
             }]))?;
             runtime.vm.data().get::<RequireRuntime>()?.register(
                 ModuleSpec::new("test/gate")

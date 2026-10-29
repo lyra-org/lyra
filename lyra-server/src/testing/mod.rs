@@ -240,7 +240,7 @@ impl PluginUnderTest {
             })?;
         let loaded = harmony_core::plugin::PluginManager::load_plugin_dir(
             directory,
-            &crate::plugins::module_scope_ids(),
+            &crate::plugins::plugin_host(),
         )
         .map_err(|error| anyhow::anyhow!("{error}"))?;
 
@@ -699,6 +699,7 @@ mod tests {
                 "id": "source-lifetime",
                 "name": "Source lifetime test",
                 "version": "1.0.0",
+                "lyra": "*",
                 "description": "",
                 "entrypoint": "init.luau",
                 "scopes": ["lyra.metadata"]

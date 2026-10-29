@@ -520,7 +520,7 @@ fn manifest_responses(
         .map(|manifest| PluginManifestResponse {
             id: manifest.id.clone(),
             name: manifest.name.clone(),
-            version: manifest.version.clone(),
+            version: manifest.version.to_string(),
             description: manifest.description.clone(),
             source: match SourceRecord::load(&plugins_dir.join(&manifest.id)) {
                 Ok(record) => source_response(&manifest.id, record, subscriptions),
@@ -792,7 +792,7 @@ async fn collect_settings_entries(
             (!matches!(status, PluginSettingsStatus::NotDeclared)).then(|| PluginSettingsEntry {
                 plugin_id: manifest.id.clone(),
                 name: manifest.name.clone(),
-                version: manifest.version.clone(),
+                version: manifest.version.to_string(),
                 status,
             })
         })
@@ -1430,11 +1430,12 @@ mod tests {
             schema_version: 1,
             id: id.to_string(),
             name: id.to_string(),
-            version: "1.0.0".to_string(),
+            version: semver::Version::new(1, 0, 0),
+            lyra: semver::VersionReq::STAR,
             description: String::new(),
             entrypoint: None,
             scopes: Vec::new(),
-            dependencies: Vec::new(),
+            dependencies: Default::default(),
         }
     }
 

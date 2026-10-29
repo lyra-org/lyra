@@ -148,7 +148,7 @@ fn manifest_table(manifest: &harmony_core::plugin::PluginManifest) -> luau::Owne
     );
     table.set_field(
         "version",
-        luau::Value::String(manifest.version.clone().into_bytes()),
+        luau::Value::String(manifest.version.to_string().into_bytes()),
     );
     table.set_field(
         "description",

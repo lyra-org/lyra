@@ -3,16 +3,12 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use std::collections::HashMap;
 use std::collections::hash_map::Entry;
-use std::collections::{
-    HashMap,
-    HashSet,
-};
 use std::path::{
     Path,
     PathBuf,
 };
-use std::sync::Arc;
 
 use futures_util::stream::{
     self,
@@ -22,6 +18,7 @@ use harmony_core::plugin::{
     LoadedManifest,
     LoadedPlugin,
     PLUGIN_CONFIG_FILENAME,
+    PluginHost,
     PluginLoadError,
     PluginManager,
 };
@@ -89,7 +86,7 @@ pub enum ResolveError {
     Plugin {
         location: String,
         #[source]
-        source: PluginLoadError,
+        source: Box<PluginLoadError>,
     },
     #[error("entries '{first}' and '{second}' resolve to the same plugin id")]
     DuplicatePluginId { first: String, second: String },
@@ -172,20 +169,11 @@ pub async fn resolve_plugins(
     client: &Client,
     spec: &RepoSpec,
     selected: Option<&[String]>,
-    valid_scope_ids: &HashSet<Arc<str>>,
+    host: &PluginHost,
 ) -> Result<ResolvedRepository, ResolveError> {
     let plan = plan_refs(client, spec).await?;
     let budget = UnpackBudget::new();
-    resolve_planned(
-        client,
-        spec,
-        &plan,
-        None,
-        selected,
-        valid_scope_ids,
-        &budget,
-    )
-    .await
+    resolve_planned(client, spec, &plan, None, selected, host, &budget).await
 }
 
 /// Tree hashes a caller already holds for a repository at `commit`, keyed
@@ -207,7 +195,7 @@ pub async fn resolve_planned(
     plan: &RefPlan,
     known: Option<KnownTreeHashes<'_>>,
     selected: Option<&[String]>,
-    valid_scope_ids: &HashSet<Arc<str>>,
+    host: &PluginHost,
     budget: &UnpackBudget,
 ) -> Result<ResolvedRepository, ResolveError> {
     let walk = walk(client, spec, plan.clone(), known, |spec, plan| {
@@ -218,7 +206,7 @@ pub async fn resolve_planned(
     let manifests = walk
         .entries
         .iter()
-        .map(|entry| load_entry_manifest(entry, valid_scope_ids))
+        .map(|entry| load_entry_manifest(entry, host))
         .collect::<Result<Vec<_>, _>>()?;
     reject_duplicate_ids(
         manifests
@@ -240,13 +228,12 @@ pub async fn resolve_planned(
         let source_dir = downloads
             .source_dir(client, &walk.trees, &entry, budget)
             .await?;
-        let plugin =
-            PluginManager::load_plugin_dir(&source_dir, valid_scope_ids).map_err(|source| {
-                ResolveError::Plugin {
-                    location: entry.location,
-                    source,
-                }
-            })?;
+        let plugin = PluginManager::load_plugin_dir(&source_dir, host).map_err(|source| {
+            ResolveError::Plugin {
+                location: entry.location,
+                source: Box::new(source),
+            }
+        })?;
         candidates.push(PluginCandidate {
             plugin,
             source: entry.source,
@@ -328,13 +315,13 @@ fn tree_dir(root: &Path, dir: &str) -> PathBuf {
 /// Validates a found entry's `plugin.json` on its own.
 fn load_entry_manifest(
     entry: &FoundEntry,
-    valid_scope_ids: &HashSet<Arc<str>>,
+    host: &PluginHost,
 ) -> Result<LoadedManifest, ResolveError> {
     let label = PathBuf::from(format!("{}/{PLUGIN_CONFIG_FILENAME}", entry.location));
-    PluginManager::load_manifest(&label, &entry.config, valid_scope_ids).map_err(|source| {
+    PluginManager::load_manifest(&label, &entry.config, host).map_err(|source| {
         ResolveError::Plugin {
             location: entry.location.clone(),
-            source,
+            source: Box::new(source),
         }
     })
 }
@@ -350,7 +337,7 @@ fn load_entry_manifest(
 pub async fn list_plugins(
     client: &Client,
     spec: &RepoSpec,
-    valid_scope_ids: &HashSet<Arc<str>>,
+    host: &PluginHost,
 ) -> Result<RepositoryListing, ResolveError> {
     let plan = plan_refs(client, spec).await?;
     let budget = UnpackBudget::new();
@@ -361,7 +348,7 @@ pub async fn list_plugins(
 
     let mut plugins = Vec::with_capacity(walk.entries.len());
     for entry in walk.entries {
-        let loaded = load_entry_manifest(&entry, valid_scope_ids)?;
+        let loaded = load_entry_manifest(&entry, host)?;
         plugins.push(ListedPlugin {
             loaded,
             source: entry.source,
@@ -842,6 +829,7 @@ mod tests {
         client,
         gitlab_directory_archive,
         gitlab_repo_routes,
+        host,
         plugin_json,
         raw_repo_routes,
         single_plugin_routes,
@@ -851,7 +839,7 @@ mod tests {
 
     async fn resolve(server: &TestServer, path: &str) -> Result<ResolvedRepository, ResolveError> {
         let spec = RepoSpec::parse(&format!("{}{path}", server.url()), None).unwrap();
-        resolve_plugins(&client(), &spec, None, &HashSet::new()).await
+        resolve_plugins(&client(), &spec, None, &host()).await
     }
 
     #[tokio::test]
@@ -906,11 +894,9 @@ mod tests {
             if linked_entrypoint {
                 assert!(
                     matches!(
-                        result,
-                        Err(ResolveError::Plugin {
-                            source: PluginLoadError::EntrypointNotFound { .. },
-                            ..
-                        })
+                        &result,
+                        Err(ResolveError::Plugin { source, .. })
+                            if matches!(**source, PluginLoadError::EntrypointNotFound { .. })
                     ),
                     "{result:?}"
                 );
@@ -1113,6 +1099,7 @@ mod tests {
             "id": "foo",
             "name": "Foo",
             "version": "0.0.1",
+            "lyra": "0.0.1",
             "description": "d",
             "entrypoint": "init.luau",
             "scopes": ["no.such.scope"]
@@ -1130,9 +1117,32 @@ mod tests {
         assert!(matches!(err, ResolveError::Plugin { .. }), "{err}");
     }
 
+    #[tokio::test]
+    async fn rejects_plugins_requiring_another_lyra() {
+        let manifest = plugin_json("foo").replace(r#""lyra": "0.0.1""#, r#""lyra": "0.1""#);
+        let server = TestServer::start(HashMap::from([(
+            "/owner/repo/archive/main.tar.gz".to_string(),
+            CannedResponse::targz(targz(&[
+                ("repo/plugin.json", &manifest),
+                ("repo/init.luau", "return {}"),
+            ])),
+        )]))
+        .await;
+
+        let err = resolve(&server, "/owner/repo").await.unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                ResolveError::Plugin { source, .. }
+                    if matches!(**source, PluginLoadError::IncompatibleHost { .. })
+            ),
+            "{err}"
+        );
+    }
+
     async fn list(server: &TestServer, path: &str) -> Result<RepositoryListing, ResolveError> {
         let spec = RepoSpec::parse(&format!("{}{path}", server.url()), None).unwrap();
-        list_plugins(&client(), &spec, &HashSet::new()).await
+        list_plugins(&client(), &spec, &host()).await
     }
 
     async fn list_routes(
@@ -1164,7 +1174,7 @@ mod tests {
         assert_eq!(listing.plugins.len(), 1);
         let plugin = &listing.plugins[0];
         assert_eq!(plugin.id(), "foo");
-        assert_eq!(plugin.loaded.manifest.version, "0.0.1");
+        assert_eq!(plugin.loaded.manifest.version.to_string(), "0.0.1");
         assert_eq!(plugin.source.origin, format!("{}/owner/repo", server.url()));
         assert_eq!(plugin.source.commit.as_deref(), Some(sha.as_str()));
         assert_eq!(plugin.source.subpath, None);
@@ -1499,11 +1509,9 @@ mod tests {
         .unwrap_err();
         assert!(
             matches!(
-                err,
-                ResolveError::Plugin {
-                    source: PluginLoadError::UnknownScope { .. },
-                    ..
-                }
+                &err,
+                ResolveError::Plugin { source, .. }
+                    if matches!(**source, PluginLoadError::UnknownScope { .. })
             ),
             "{err}"
         );
@@ -1620,17 +1628,9 @@ mod tests {
         };
 
         let budget = UnpackBudget::new();
-        let stale = resolve_planned(
-            &client(),
-            &spec,
-            &plan,
-            known("b"),
-            None,
-            &HashSet::new(),
-            &budget,
-        )
-        .await
-        .unwrap();
+        let stale = resolve_planned(&client(), &spec, &plan, known("b"), None, &host(), &budget)
+            .await
+            .unwrap();
         assert_eq!(stale.candidates[0].source.tree_hash, None);
         assert!(
             server
@@ -1640,17 +1640,10 @@ mod tests {
         );
 
         let seen = server.requests().len();
-        let resolved = resolve_planned(
-            &client(),
-            &spec,
-            &plan,
-            known(&sha),
-            None,
-            &HashSet::new(),
-            &budget,
-        )
-        .await
-        .unwrap();
+        let resolved =
+            resolve_planned(&client(), &spec, &plan, known(&sha), None, &host(), &budget)
+                .await
+                .unwrap();
 
         assert_eq!(
             resolved.candidates[0].source.tree_hash.as_deref(),
@@ -1749,7 +1742,7 @@ mod tests {
         let spec = gitlab_spec(&server);
 
         let selected = ["foo".to_string()];
-        let resolved = resolve_plugins(&client(), &spec, Some(&selected), &HashSet::new())
+        let resolved = resolve_plugins(&client(), &spec, Some(&selected), &host())
             .await
             .unwrap();
 
@@ -1776,10 +1769,8 @@ mod tests {
         let server = gitlab_index(&sha, &["foo", "bar"]).await;
         let spec = gitlab_spec(&server);
 
-        let listing = list_plugins(&client(), &spec, &HashSet::new())
-            .await
-            .unwrap();
-        let resolved = resolve_plugins(&client(), &spec, None, &HashSet::new())
+        let listing = list_plugins(&client(), &spec, &host()).await.unwrap();
+        let resolved = resolve_plugins(&client(), &spec, None, &host())
             .await
             .unwrap();
 
@@ -1820,7 +1811,7 @@ mod tests {
             .iter()
             .map(|id| id.to_string())
             .collect();
-        let resolved = resolve_plugins(&client(), &spec, Some(&within), &HashSet::new())
+        let resolved = resolve_plugins(&client(), &spec, Some(&within), &host())
             .await
             .unwrap();
         assert_eq!(resolved.candidates.len(), MAX_DIRECTORY_ARCHIVES);
@@ -1828,7 +1819,7 @@ mod tests {
         assert_eq!(archive_requests(&server), expected);
 
         let seen = archive_requests(&server).len();
-        let resolved = resolve_plugins(&client(), &spec, None, &HashSet::new())
+        let resolved = resolve_plugins(&client(), &spec, None, &host())
             .await
             .unwrap();
         assert_eq!(
@@ -1865,7 +1856,7 @@ mod tests {
     ) -> Result<ResolvedRepository, ResolveError> {
         let spec = RepoSpec::parse(&format!("{}{path}", server.url()), None).unwrap();
         let plan = plan_refs(&client(), &spec).await?;
-        resolve_planned(&client(), &spec, &plan, None, None, &HashSet::new(), budget).await
+        resolve_planned(&client(), &spec, &plan, None, None, &host(), budget).await
     }
 
     #[tokio::test]
@@ -1937,11 +1928,9 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(
-                err,
-                ResolveError::Plugin {
-                    source: PluginLoadError::EntrypointNotFound { .. },
-                    ..
-                }
+                &err,
+                ResolveError::Plugin { source, .. }
+                    if matches!(**source, PluginLoadError::EntrypointNotFound { .. })
             ),
             "{err}"
         );
@@ -1974,16 +1963,7 @@ mod tests {
         let plan = plan_refs(&client(), &spec).await.unwrap();
         let resolve_within = async |max_bytes| {
             let budget = UnpackBudget::with_limits(max_bytes, 100);
-            resolve_planned(
-                &client(),
-                &spec,
-                &plan,
-                None,
-                None,
-                &HashSet::new(),
-                &budget,
-            )
-            .await
+            resolve_planned(&client(), &spec, &plan, None, None, &host(), &budget).await
         };
         let directory_bytes = (plugin_json("foo").len() + "return {}".len()) as u64;
 
@@ -2042,7 +2022,7 @@ mod tests {
             hostile.finish(),
         ));
         let server = TestServer::start(routes.into_iter().collect()).await;
-        let err = resolve_plugins(&client(), &gitlab_spec(&server), None, &HashSet::new())
+        let err = resolve_plugins(&client(), &gitlab_spec(&server), None, &host())
             .await
             .unwrap_err();
         assert!(
@@ -2060,7 +2040,7 @@ mod tests {
             targz(&[("top/plugins/other/plugin.json", &plugin_json("foo"))]),
         ));
         let server = TestServer::start(routes.into_iter().collect()).await;
-        let err = resolve_plugins(&client(), &gitlab_spec(&server), None, &HashSet::new())
+        let err = resolve_plugins(&client(), &gitlab_spec(&server), None, &host())
             .await
             .unwrap_err();
         assert!(
@@ -2088,7 +2068,7 @@ mod tests {
             let server = TestServer::start(routes.into_iter().collect()).await;
             let spec = RepoSpec::parse(&format!("{}/owner/repo", server.url()), None).unwrap();
             let selected = ["foo".to_string()];
-            resolve_plugins(&client(), &spec, Some(&selected), &HashSet::new()).await
+            resolve_plugins(&client(), &spec, Some(&selected), &host()).await
         };
 
         let resolved = resolve_foo(&plugin_json("bar")).await.unwrap();
@@ -2103,10 +2083,9 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                ResolveError::Plugin {
-                    location,
-                    source: PluginLoadError::UnknownScope { .. },
-                } if location.ends_with("plugins/bar")
+                ResolveError::Plugin { location, source }
+                    if location.ends_with("plugins/bar")
+                        && matches!(**source, PluginLoadError::UnknownScope { .. })
             ),
             "{err}"
         );

@@ -93,6 +93,7 @@ impl TempSimilarPluginDir {
                 "id": "similartest",
                 "name": "Similar Test",
                 "version": "1.0.0",
+                "lyra": "*",
                 "description": "Similar releases contract test",
                 "entrypoint": "init.luau",
                 "scopes": scopes,

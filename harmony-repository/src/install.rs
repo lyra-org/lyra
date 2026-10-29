@@ -318,7 +318,6 @@ fn copy_dir(from: &Path, to: &Path) -> Result<(), InstallError> {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::collections::HashSet;
 
     use tempfile::TempDir;
 
@@ -332,6 +331,7 @@ mod tests {
     use crate::testutil::{
         TestServer,
         client,
+        host,
         plugin_json,
         single_plugin_routes,
     };
@@ -340,7 +340,7 @@ mod tests {
         let server =
             TestServer::start(HashMap::from([single_plugin_routes("owner/repo", "foo")])).await;
         let spec = RepoSpec::parse(&format!("{}/owner/repo", server.url()), None).unwrap();
-        let resolved = resolve_plugins(&client(), &spec, None, &HashSet::new())
+        let resolved = resolve_plugins(&client(), &spec, None, &host())
             .await
             .unwrap();
         (server, resolved)

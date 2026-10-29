@@ -422,6 +422,7 @@ mod tests {
                 "id": id,
                 "name": id,
                 "version": "1.0.0",
+                "lyra": "*",
                 "description": "",
                 "entrypoint": "init.luau",
                 "scopes": scopes,
@@ -726,11 +727,12 @@ mod tests {
             schema_version: 1,
             id: "uninstalled".to_string(),
             name: "Uninstalled".to_string(),
-            version: "1.0.0".to_string(),
+            version: semver::Version::new(1, 0, 0),
+            lyra: semver::VersionReq::STAR,
             description: String::new(),
             entrypoint: Some("init.luau".to_string()),
             scopes: Vec::new(),
-            dependencies: Vec::new(),
+            dependencies: Default::default(),
         });
         crate::plugins::STATE
             .generation()

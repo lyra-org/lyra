@@ -3,6 +3,7 @@
   "id": "jellyfin",
   "name": "Jellyfin Compatibility",
   "version": "0.0.1",
+  "lyra": "0.0.1",
   "description": "Plugin for creating Jellyfin-compatible routes",
   "entrypoint": "init.luau",
   "scopes": [

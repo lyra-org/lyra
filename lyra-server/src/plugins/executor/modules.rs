@@ -3,11 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::{
-    collections::HashSet,
-    sync::Arc,
-};
-
 use harmony_core::ModuleSpec;
 
 pub(super) fn generic_module_specs(module_overrides: Vec<ModuleSpec>) -> Vec<ModuleSpec> {
@@ -20,8 +15,4 @@ pub(super) fn generic_module_specs(module_overrides: Vec<ModuleSpec>) -> Vec<Mod
         }
     }
     specs
-}
-
-pub(super) fn plugin_scope_ids() -> HashSet<Arc<str>> {
-    crate::plugins::module_scope_ids()
 }

@@ -671,6 +671,7 @@ mod tests {
                     "id": "searchtest",
                     "name": "Search Test",
                     "version": "1.0.0",
+                    "lyra": "*",
                     "description": "Search callback contract test",
                     "entrypoint": "init.luau",
                     "scopes": ["lyra.metadata"]
