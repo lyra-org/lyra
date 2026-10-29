@@ -38,6 +38,10 @@ pub struct PluginRepositoryEntry {
     /// The plugin's version at the release the server would install;
     /// unset when there is none.
     pub version: Option<String>,
+    /// That release's commit.
+    pub commit: Option<String>,
+    /// The scopes the plugin declares at that release.
+    pub scopes: Option<Vec<String>>,
     /// The server requirement that excludes the server, when no release
     /// runs on it.
     pub requires: Option<String>,
@@ -381,6 +385,8 @@ mod tests {
             plugin_id: plugin_id.to_string(),
             subpath: Some(format!("plugins/{plugin_id}")),
             version: Some(version.to_string()),
+            commit: None,
+            scopes: None,
             requires: None,
         }
     }

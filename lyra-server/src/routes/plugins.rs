@@ -127,24 +127,67 @@ enum PluginSourceResponse {
     /// pinned plugins; `update_available`; `incompatible`, with the
     /// `requires` that excludes this server, when no release runs on it; or
     /// `unknown` when no such subscription lists the plugin, or its
-    /// repository has no offer for it for another reason.
-    Repository {
-        origin: String,
-        /// The ref whose `versions.json` the release was chosen from.
-        #[serde(rename = "ref", skip_serializing_if = "Option::is_none")]
-        git_ref: Option<String>,
-        /// The installed release.
-        version: String,
-        /// The commit the installed release came from.
-        commit: String,
-        /// True when `ref` is a tag or commit, so updates never move the
-        /// plugin. Branch installs track new releases.
-        pinned: bool,
-        #[serde(flatten)]
-        status: UpdateStatusResponse,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        installed_at: Option<String>,
-    },
+    /// repository has no offer for it for another reason. `offered` is the
+    /// release on offer, and `hold` why an available update to it waits for
+    /// an admin.
+    Repository(Box<RepositorySourceResponse>),
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct RepositorySourceResponse {
+    origin: String,
+    /// The ref whose `versions.json` the release was chosen from.
+    #[serde(rename = "ref", skip_serializing_if = "Option::is_none")]
+    git_ref: Option<String>,
+    /// The installed release.
+    version: String,
+    /// The commit the installed release came from.
+    commit: String,
+    /// True when `ref` is a tag or commit, so updates never move the
+    /// plugin. Branch installs track new releases.
+    pinned: bool,
+    #[serde(flatten)]
+    status: UpdateStatusResponse,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    offered: Option<OfferedReleaseResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hold: Option<HoldResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    installed_at: Option<String>,
+}
+
+/// A release a repository offers a plugin on this server.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct OfferedReleaseResponse {
+    /// The plugin's version at the release.
+    version: String,
+    /// The release commit an update request names to approve it.
+    commit: String,
+    /// The scopes the plugin declares at the release.
+    scopes: Vec<String>,
+}
+
+/// Why an update waits for an admin. `adds_scopes`: the release declares
+/// `scopes` the installed plugin does not, and an update request naming the
+/// release grants them. `breaks_dependents`: installed `dependents` require
+/// versions of this plugin outside the release's, and no update applies
+/// until they change.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+#[serde(tag = "reason", rename_all = "snake_case")]
+enum HoldResponse {
+    AddsScopes { scopes: Vec<String> },
+    BreaksDependents { dependents: Vec<DependentResponse> },
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct DependentResponse {
+    id: String,
+    /// Its requirement on the held plugin.
+    requires: String,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -294,10 +337,12 @@ struct RepositoryInstallRequest {
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
 struct UpdatePluginsRequest {
-    /// Plugin ids to update; omitted updates every repository-managed
-    /// plugin. An empty list is rejected.
+    /// Plugins to update, each to the release `commit` its status offered,
+    /// granting the scopes that release adds. Omitted updates every
+    /// repository-managed plugin whose update is not held. An empty list is
+    /// rejected.
     #[serde(default)]
-    plugins: Option<Vec<String>>,
+    plugins: Option<Vec<PreviewedPluginRequest>>,
 }
 
 /// Where an installed plugin stands against its subscribed repository.
@@ -428,7 +473,22 @@ struct UpdatePluginsResponse {
     /// Plugins no release of their repository runs on this server; nothing
     /// was downloaded for them.
     incompatible: Vec<IncompatiblePluginResponse>,
+    /// Plugins whose newer release waits for an admin; nothing was
+    /// downloaded for them.
+    held: Vec<HeldPluginResponse>,
     failed: Vec<FailedInstallResponse>,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct HeldPluginResponse {
+    id: String,
+    /// The plugin's version at the held release.
+    version: String,
+    /// The held release's commit, which an update request names to approve
+    /// it.
+    commit: String,
+    hold: HoldResponse,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -537,26 +597,54 @@ fn repository_response(
     }
 }
 
+fn hold_response(hold: repositories_service::Hold) -> HoldResponse {
+    match hold {
+        repositories_service::Hold::AddsScopes { scopes } => HoldResponse::AddsScopes { scopes },
+        repositories_service::Hold::BreaksDependents { dependents } => {
+            HoldResponse::BreaksDependents {
+                dependents: dependents
+                    .into_iter()
+                    .map(|dependent| DependentResponse {
+                        id: dependent.id,
+                        requires: dependent.requires,
+                    })
+                    .collect(),
+            }
+        }
+    }
+}
+
 fn source_response(
     plugin_id: &str,
     record: Option<SourceRecord>,
     subscriptions: &[repositories_service::Subscription],
+    installed: &[harmony_core::plugin::PluginManifest],
 ) -> PluginSourceResponse {
     match record {
         None => PluginSourceResponse::Local,
-        Some(record) => PluginSourceResponse::Repository {
-            status: update_status_response(repositories_service::update_status(
+        Some(record) => {
+            let status = repositories_service::installed_status(
                 plugin_id,
                 &record,
                 subscriptions,
-            )),
-            origin: record.origin,
-            git_ref: record.git_ref,
-            version: record.version.to_string(),
-            commit: record.commit,
-            pinned: record.pinned,
-            installed_at: record.installed_at,
-        },
+                installed,
+            );
+            PluginSourceResponse::Repository(Box::new(RepositorySourceResponse {
+                status: update_status_response(status.status),
+                offered: status.offered.map(|offered| OfferedReleaseResponse {
+                    version: offered.version.to_string(),
+                    commit: offered.commit,
+                    scopes: offered.scopes,
+                }),
+                hold: status.hold.map(hold_response),
+                origin: record.origin,
+                git_ref: record.git_ref,
+                version: record.version.to_string(),
+                commit: record.commit,
+                pinned: record.pinned,
+                installed_at: record.installed_at,
+            }))
+        }
     }
 }
 
@@ -565,6 +653,7 @@ fn manifest_responses(
     plugins_dir: &std::path::Path,
     subscriptions: &[repositories_service::Subscription],
 ) -> Vec<PluginManifestResponse> {
+    let installed = repositories_service::installed_manifests(plugins_dir);
     manifests
         .iter()
         .map(|manifest| PluginManifestResponse {
@@ -573,7 +662,7 @@ fn manifest_responses(
             version: manifest.version.to_string(),
             description: manifest.description.clone(),
             source: match SourceRecord::load(&plugins_dir.join(&manifest.id)) {
-                Ok(record) => source_response(&manifest.id, record, subscriptions),
+                Ok(record) => source_response(&manifest.id, record, subscriptions, &installed),
                 Err(error) => PluginSourceResponse::Invalid {
                     error: error.to_string(),
                 },
@@ -952,7 +1041,17 @@ async fn update_installed_plugins(
     Json(request): Json<UpdatePluginsRequest>,
 ) -> Result<Json<UpdatePluginsResponse>, AppError> {
     let _principal = require_manage_plugins(bearer_credential(&headers)).await?;
-    let report = repositories_service::update_plugins(request.plugins.as_deref())
+    let approved: Option<Vec<_>> = request.plugins.map(|plugins| {
+        plugins
+            .into_iter()
+            .map(PreviewedPluginRequest::into_previewed)
+            .collect()
+    });
+    let selection = match &approved {
+        Some(plugins) => repositories_service::UpdateSelection::Approved(plugins),
+        None => repositories_service::UpdateSelection::All,
+    };
+    let report = repositories_service::update_plugins(selection)
         .await
         .map_err(map_repository_error)?;
     Ok(Json(update_report_response(report)))
@@ -976,6 +1075,16 @@ fn update_report_response(report: repositories_service::UpdateReport) -> UpdateP
             .map(|plugin| IncompatiblePluginResponse {
                 id: plugin.id,
                 requires: plugin.requires,
+            })
+            .collect(),
+        held: report
+            .held
+            .into_iter()
+            .map(|plugin| HeldPluginResponse {
+                id: plugin.id,
+                version: plugin.release.version.to_string(),
+                commit: plugin.release.commit,
+                hold: hold_response(plugin.hold),
             })
             .collect(),
         failed: report
@@ -1158,7 +1267,7 @@ fn get_settings_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn list_plugins_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List plugins").description(
-        "Returns the loaded plugin manifests along with where each plugin was installed from: a `source` of kind `repository` (origin, ref, version, commit, pinned, status, installed_at), `local`, or `invalid` (error) when the source record could not be read and the plugin should be uninstalled or reinstalled. `pinned` is true for tag and commit installs, which updates never move. `status` compares the installed version with the release that the subscribed repository of the same origin and ref last offered this server (`up_to_date`, `update_available`, `incompatible` with the `requires` that excludes this server, or `unknown` when it offered nothing for another reason or no such subscription lists the plugin), without contacting the forge; refreshing the repository or updating plugins stores the offered releases.",
+        "Returns the loaded plugin manifests along with where each plugin was installed from: a `source` of kind `repository` (origin, ref, version, commit, pinned, status, offered, hold, installed_at), `local`, or `invalid` (error) when the source record could not be read and the plugin should be uninstalled or reinstalled. `pinned` is true for tag and commit installs, which updates never move. `status` compares the installed version with the release that the subscribed repository of the same origin and ref last offered this server (`up_to_date`, `update_available`, `incompatible` with the `requires` that excludes this server, or `unknown` when it offered nothing for another reason or no such subscription lists the plugin), without contacting the forge; refreshing the repository or updating plugins stores the offered releases. `offered` is the release on offer (version, commit, scopes) and `hold` why an available update to it waits for an admin: `adds_scopes` with the scopes it adds, or `breaks_dependents` with each installed dependent's id and requirement.",
     )
 }
 
@@ -1200,7 +1309,7 @@ fn install_repository_plugins_docs(op: TransformOperation) -> TransformOperation
 #[cfg(feature = "docgen")]
 fn update_installed_plugins_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Update installed plugins").description(
-        "Re-lists the recorded origin and ref of the selected plugins (or every repository-managed plugin when `plugins` is omitted) and reinstalls those it offers a newer release of that runs on this server. Pinned plugins are reported `up_to_date` without a forge call. Plugins no release of their repository runs on this server are reported `incompatible`, with the `requires` that excludes it, and nothing is downloaded for them. Each origin is listed once, only newer releases are downloaded, and the plugin runtime reloads once. Returns per-plugin results.",
+        "Re-lists the recorded origin and ref of the selected plugins (or every repository-managed plugin when `plugins` is omitted) and reinstalls those it offers a newer release of that runs on this server. Each selected plugin names the release `commit` its status offered; one offered at another commit now fails on its own. A newer release declaring scopes the installed plugin lacks is `held` (`adds_scopes`) unless the request names it, which grants them; one outside an installed dependent's requirement is always `held` (`breaks_dependents`). Pinned plugins are reported `up_to_date` without a forge call. Plugins no release of their repository runs on this server are reported `incompatible`, with the `requires` that excludes it, and nothing is downloaded for them. Each origin is listed once, only newer releases are downloaded, and the plugin runtime reloads once. Returns per-plugin results.",
     )
 }
 
@@ -1828,7 +1937,10 @@ mod tests {
         let Json(response) = update_installed_plugins(
             headers,
             Json(UpdatePluginsRequest {
-                plugins: Some(vec!["bad id".to_string()]),
+                plugins: Some(vec![PreviewedPluginRequest {
+                    id: "bad id".to_string(),
+                    commit: "a".repeat(40),
+                }]),
             }),
         )
         .await
