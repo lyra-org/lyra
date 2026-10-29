@@ -11,7 +11,7 @@ fn manifest(id: &str, scopes: &[&str]) -> harmony_core::plugin::PluginManifest {
         id: id.to_string(),
         name: format!("{id} Plugin"),
         version: semver::Version::new(1, 0, 0),
-        lyra: semver::VersionReq::STAR,
+        host_requirement: semver::VersionReq::STAR,
         description: "Test manifest".to_string(),
         entrypoint: Some("init.luau".to_string()),
         scopes: scopes.iter().map(|scope| scope.to_string()).collect(),

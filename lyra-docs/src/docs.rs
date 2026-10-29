@@ -317,6 +317,12 @@ fn merge_setup_aliases(project_root: &Path, luaurc: &mut LuaurcConfig) -> Result
     merge_plugin_aliases(project_root, luaurc)
 }
 
+/// The part of a `plugin.json` an alias needs.
+#[derive(serde::Deserialize)]
+struct PluginId {
+    id: String,
+}
+
 /// Aliases every installed plugin id to its directory so `luau-lsp` resolves
 /// cross-plugin requires (`require("@<plugin-id>/...")`) against real source.
 fn merge_plugin_aliases(project_root: &Path, luaurc: &mut LuaurcConfig) -> Result<()> {
@@ -336,7 +342,7 @@ fn merge_plugin_aliases(project_root: &Path, luaurc: &mut LuaurcConfig) -> Resul
         }
         let manifest = fs::read_to_string(&manifest_path)
             .with_context(|| format!("read plugin manifest {}", manifest_path.display()))?;
-        let manifest: harmony_core::plugin::PluginManifest = serde_json::from_str(&manifest)
+        let manifest: PluginId = serde_json::from_str(&manifest)
             .with_context(|| format!("parse plugin manifest {}", manifest_path.display()))?;
         let dir_name = entry.file_name();
         let dir_name = dir_name.to_string_lossy();

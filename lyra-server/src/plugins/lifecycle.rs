@@ -728,7 +728,7 @@ mod tests {
             id: "uninstalled".to_string(),
             name: "Uninstalled".to_string(),
             version: semver::Version::new(1, 0, 0),
-            lyra: semver::VersionReq::STAR,
+            host_requirement: semver::VersionReq::STAR,
             description: String::new(),
             entrypoint: Some("init.luau".to_string()),
             scopes: Vec::new(),

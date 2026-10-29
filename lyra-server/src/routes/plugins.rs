@@ -1639,7 +1639,7 @@ mod tests {
             id: id.to_string(),
             name: id.to_string(),
             version: semver::Version::new(1, 0, 0),
-            lyra: semver::VersionReq::STAR,
+            host_requirement: semver::VersionReq::STAR,
             description: String::new(),
             entrypoint: None,
             scopes: Vec::new(),

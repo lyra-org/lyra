@@ -187,7 +187,8 @@ impl PluginExecutor {
     }
 
     pub(crate) fn verify_plugin_manifest(&self, plugin_id: &str) -> Result<()> {
-        self.runtime.verify_plugin_manifest(plugin_id)
+        self.runtime
+            .verify_plugin_manifest(plugin_id, &crate::plugins::plugin_host())
     }
 
     pub(crate) fn stop_plugin(&self, plugin_id: &str) -> Result<()> {

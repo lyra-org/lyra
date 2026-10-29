@@ -69,25 +69,88 @@ pub(crate) const PLUGIN_CONFIG_MAX_SCOPES: usize = 32;
 pub(crate) const PLUGIN_CONFIG_MAX_SCOPE_LEN: usize = 128;
 pub(crate) const PLUGIN_CONFIG_MAX_DEPENDENCIES: usize = 32;
 
-/// What manifests are checked against: the running host's version, which
-/// each manifest's `lyra` requirement must match, and the scope ids its
-/// modules register.
+/// The fixed top-level fields of `plugin.json` and of the release entries
+/// a repository's `versions.json` lists, which a host's name must not
+/// shadow.
+pub const RESERVED_HOST_NAMES: &[&str] = &[
+    "schema_version",
+    "id",
+    "name",
+    "version",
+    "description",
+    "entrypoint",
+    "scopes",
+    "dependencies",
+    "commit",
+];
+
+/// What manifests are checked against: the running host's name, which is
+/// the top-level key holding each manifest's requirement on the host, the
+/// host's version, which that requirement must match, and the scope ids
+/// its modules register.
 #[derive(Debug, Clone)]
 pub struct PluginHost {
-    pub version: Version,
-    pub scope_ids: HashSet<Arc<str>>,
+    name: String,
+    version: Version,
+    scope_ids: HashSet<Arc<str>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+impl PluginHost {
+    /// Fails when `name` is empty or one of [`RESERVED_HOST_NAMES`].
+    pub fn new(
+        name: impl Into<String>,
+        version: Version,
+        scope_ids: HashSet<Arc<str>>,
+    ) -> Result<Self, InvalidHostName> {
+        let name = name.into();
+        if name.is_empty() || RESERVED_HOST_NAMES.contains(&name.as_str()) {
+            return Err(InvalidHostName(name));
+        }
+        Ok(Self {
+            name,
+            version,
+            scope_ids,
+        })
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn version(&self) -> &Version {
+        &self.version
+    }
+}
+
+/// A host name that is empty or shadows a fixed manifest or release field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidHostName(pub String);
+
+impl fmt::Display for InvalidHostName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0.is_empty() {
+            f.write_str("the host name is empty")
+        } else {
+            write!(
+                f,
+                "host name `{}` is a fixed {PLUGIN_CONFIG_FILENAME} or versions.json field",
+                self.0
+            )
+        }
+    }
+}
+
+impl std::error::Error for InvalidHostName {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginManifest {
     pub schema_version: u32,
     pub id: String,
     pub name: String,
-    #[serde(deserialize_with = "deserialize_version")]
     pub version: Version,
-    /// Host versions the plugin runs on.
-    #[serde(deserialize_with = "deserialize_host_requirement")]
-    pub lyra: VersionReq,
+    /// Host versions the plugin runs on, read from the top-level key the
+    /// host names.
+    pub host_requirement: VersionReq,
     pub description: String,
     /// Library-only plugins omit the entrypoint: nothing runs at startup and
     /// their modules load lazily via `require("@<plugin-id>/...")`.
@@ -97,8 +160,83 @@ pub struct PluginManifest {
     /// Required on `schema_version: 1`.
     pub scopes: Vec<String>,
     /// Keyed by plugin id.
-    #[serde(default, deserialize_with = "deserialize_dependencies")]
     pub dependencies: BTreeMap<String, Dependency>,
+}
+
+impl PluginManifest {
+    /// Parses `plugin.json` contents, reading the requirement on `host`
+    /// from the top-level key [`PluginHost::name`] names.
+    pub fn from_json(json: &str, host: &PluginHost) -> Result<Self, serde_json::Error> {
+        #[derive(Deserialize)]
+        struct Fields {
+            schema_version: u32,
+            id: String,
+            name: String,
+            #[serde(deserialize_with = "deserialize_version")]
+            version: Version,
+            description: String,
+            entrypoint: Option<String>,
+            scopes: Vec<String>,
+            #[serde(default, deserialize_with = "deserialize_dependencies")]
+            dependencies: BTreeMap<String, Dependency>,
+            #[serde(flatten, deserialize_with = "deserialize_other_fields")]
+            other: serde_json::Map<String, serde_json::Value>,
+        }
+
+        let mut fields: Fields = serde_json::from_str(json)?;
+        let host_requirement = match fields.other.remove(host.name()) {
+            Some(requirement) => {
+                parse_requirement(host.name(), &String::deserialize(requirement)?)?
+            }
+            None => {
+                return Err(de::Error::custom(format!(
+                    "missing field `{}`",
+                    host.name()
+                )));
+            }
+        };
+        Ok(Self {
+            schema_version: fields.schema_version,
+            id: fields.id,
+            name: fields.name,
+            version: fields.version,
+            host_requirement,
+            description: fields.description,
+            entrypoint: fields.entrypoint,
+            scopes: fields.scopes,
+            dependencies: fields.dependencies,
+        })
+    }
+}
+
+/// The fields a manifest has beyond the fixed ones, among them the host's
+/// requirement. One named twice is rejected rather than read as either.
+fn deserialize_other_fields<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<serde_json::Map<String, serde_json::Value>, D::Error> {
+    struct OtherFieldsVisitor;
+
+    impl<'de> Visitor<'de> for OtherFieldsVisitor {
+        type Value = serde_json::Map<String, serde_json::Value>;
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("manifest fields")
+        }
+
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+            let mut fields = serde_json::Map::new();
+            while let Some(name) = map.next_key::<String>()? {
+                if fields.contains_key(&name) {
+                    return Err(de::Error::custom(format!("duplicate field `{name}`")));
+                }
+                let value = map.next_value()?;
+                fields.insert(name, value);
+            }
+            Ok(fields)
+        }
+    }
+
+    deserializer.deserialize_map(OtherFieldsVisitor)
 }
 
 /// Written as a bare version requirement, or as
@@ -187,12 +325,6 @@ fn deserialize_version<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Ver
     let value = String::deserialize(deserializer)?;
     Version::parse(&value)
         .map_err(|error| de::Error::custom(format!("invalid version {value:?}: {error}")))
-}
-
-fn deserialize_host_requirement<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<VersionReq, D::Error> {
-    parse_requirement("lyra", &String::deserialize(deserializer)?)
 }
 
 fn parse_requirement<E: de::Error>(field: &str, value: &str) -> Result<VersionReq, E> {
@@ -307,6 +439,7 @@ pub enum PluginLoadError {
     IncompatibleHost {
         plugin_id: String,
         requirement: VersionReq,
+        host: String,
         host_version: Version,
     },
     DirectoryIdMismatch {
@@ -398,10 +531,12 @@ impl fmt::Display for PluginLoadError {
             PluginLoadError::IncompatibleHost {
                 plugin_id,
                 requirement,
+                host,
                 host_version,
             } => write!(
                 f,
-                "plugin '{plugin_id}' requires lyra {requirement}, but this is lyra {host_version}"
+                "plugin '{plugin_id}' requires {host} {requirement}, but this is {host} \
+                 {host_version}"
             ),
             PluginLoadError::DirectoryIdMismatch {
                 plugin_id,
@@ -596,7 +731,7 @@ impl PluginManager {
 
     /// A manifest naming a scope outside `host.scope_ids` fails load — the
     /// plugin is asking for something the runtime cannot grant — as does one
-    /// whose `lyra` requirement excludes `host.version`.
+    /// whose requirement on the host excludes `host.version`.
     pub fn discover_plugins(
         &mut self,
         host: &PluginHost,
@@ -835,7 +970,11 @@ fn read_manifest_bytes(config_path: &Path) -> Result<Vec<u8>, PluginLoadError> {
     })
 }
 
-fn parse_manifest(path: &Path, bytes: &[u8]) -> Result<PluginManifest, PluginLoadError> {
+fn parse_manifest(
+    path: &Path,
+    bytes: &[u8],
+    host: &PluginHost,
+) -> Result<PluginManifest, PluginLoadError> {
     if bytes.len() as u64 > PLUGIN_CONFIG_MAX_BYTES {
         return Err(PluginLoadError::ConfigTooLarge {
             path: path.to_path_buf(),
@@ -849,7 +988,7 @@ fn parse_manifest(path: &Path, bytes: &[u8]) -> Result<PluginManifest, PluginLoa
         path: path.to_path_buf(),
         error: "stream did not contain valid UTF-8".into(),
     })?;
-    serde_json::from_str(text).map_err(|e| PluginLoadError::ConfigParseError {
+    PluginManifest::from_json(text, host).map_err(|e| PluginLoadError::ConfigParseError {
         path: path.to_path_buf(),
         error: e.to_string(),
     })
@@ -921,7 +1060,7 @@ impl PluginManager {
         bytes: &[u8],
         host: &PluginHost,
     ) -> Result<LoadedManifest, PluginLoadError> {
-        let manifest = parse_manifest(path, bytes)?;
+        let manifest = parse_manifest(path, bytes, host)?;
 
         if manifest.schema_version != PLUGIN_SCHEMA_VERSION {
             return Err(PluginLoadError::InvalidSchemaVersion {
@@ -937,10 +1076,11 @@ impl PluginManager {
             });
         }
 
-        if !manifest.lyra.matches(&host.version) {
+        if !manifest.host_requirement.matches(&host.version) {
             return Err(PluginLoadError::IncompatibleHost {
                 plugin_id: manifest.id,
-                requirement: manifest.lyra,
+                requirement: manifest.host_requirement,
+                host: host.name.clone(),
                 host_version: host.version.clone(),
             });
         }
@@ -1234,11 +1374,11 @@ impl Runtime {
     /// Fails when `plugin.json` on disk no longer matches the loaded
     /// manifest. Scopes and dependencies are fixed when the runtime is
     /// built, so manifest changes need a full reload rather than a restart.
-    pub fn verify_plugin_manifest(&self, plugin_id: &str) -> anyhow::Result<()> {
+    pub fn verify_plugin_manifest(&self, plugin_id: &str, host: &PluginHost) -> anyhow::Result<()> {
         let plugin = self.loaded_plugin(plugin_id)?;
         let config_path = plugin.directory.join(PLUGIN_CONFIG_FILENAME);
         let on_disk = read_manifest_bytes(&config_path)
-            .and_then(|bytes| parse_manifest(&config_path, &bytes))
+            .and_then(|bytes| parse_manifest(&config_path, &bytes, host))
             .map_err(|error| anyhow::anyhow!("{error}"))
             .with_context(|| format!("read plugin '{plugin_id}' manifest"))?;
         if on_disk != plugin.manifest {
@@ -1488,7 +1628,7 @@ mod tests {
             id: id.to_string(),
             name: id.to_string(),
             version: Version::new(1, 0, 0),
-            lyra: VersionReq::STAR,
+            host_requirement: VersionReq::STAR,
             description: String::new(),
             entrypoint: Some("init.luau".to_string()),
             scopes: scopes.iter().map(|scope| scope.to_string()).collect(),
@@ -1855,7 +1995,7 @@ mod tests {
         std::fs::create_dir_all(&plugin_dir)?;
         std::fs::write(
             plugin_dir.join(super::PLUGIN_CONFIG_FILENAME),
-            r#"{"schema_version":1,"id":"demo","name":"demo","version":"1.0.0","lyra":"*","description":"","entrypoint":"init.luau","scopes":[]}"#,
+            r#"{"schema_version":1,"id":"demo","name":"demo","version":"1.0.0","host":"*","description":"","entrypoint":"init.luau","scopes":[]}"#,
         )?;
         write_demo_plugin(&plugin_dir, "1");
 
@@ -1889,16 +2029,16 @@ mod tests {
             "exec without invalidation serves the cached entrypoint"
         );
 
-        runtime.verify_plugin_manifest("demo")?;
+        runtime.verify_plugin_manifest("demo", &host())?;
         runtime.restart_plugin("demo")?;
         assert_eq!(read_answer(&runtime)?, vec![luau::Value::Number(2.0)]);
 
         std::fs::write(
             plugin_dir.join(super::PLUGIN_CONFIG_FILENAME),
-            r#"{"schema_version":1,"id":"demo","name":"demo","version":"1.1.0","lyra":"*","description":"","entrypoint":"init.luau","scopes":[]}"#,
+            r#"{"schema_version":1,"id":"demo","name":"demo","version":"1.1.0","host":"*","description":"","entrypoint":"init.luau","scopes":[]}"#,
         )?;
         let error = runtime
-            .verify_plugin_manifest("demo")
+            .verify_plugin_manifest("demo", &host())
             .expect_err("changed manifest must be rejected");
         assert!(error.to_string().contains("reload plugins"), "{error}");
 
@@ -1907,7 +2047,7 @@ mod tests {
             "0".repeat(super::PLUGIN_CONFIG_MAX_BYTES as usize + 1),
         )?;
         let error = runtime
-            .verify_plugin_manifest("demo")
+            .verify_plugin_manifest("demo", &host())
             .expect_err("oversized manifest must be rejected");
         assert!(format!("{error:#}").contains("exceeds cap"), "{error:#}");
 
@@ -3025,15 +3165,17 @@ mod tests {
 
     fn manifest_json(id: &str, extra: &str) -> String {
         format!(
-            r#"{{"schema_version":1,"id":"{id}","name":"Demo","version":"1.0.0","lyra":"0.0.1","description":"d","entrypoint":"init.luau","scopes":["net"]{extra}}}"#
+            r#"{{"schema_version":1,"id":"{id}","name":"Demo","version":"1.0.0","host":"0.0.1","description":"d","entrypoint":"init.luau","scopes":["net"]{extra}}}"#
         )
     }
 
     fn host() -> PluginHost {
-        PluginHost {
-            version: Version::new(0, 0, 1),
-            scope_ids: HashSet::from([Arc::<str>::from("net")]),
-        }
+        PluginHost::new(
+            "host",
+            Version::new(0, 0, 1),
+            HashSet::from([Arc::<str>::from("net")]),
+        )
+        .unwrap()
     }
 
     fn load_manifest(bytes: &[u8]) -> Result<LoadedManifest, PluginLoadError> {
@@ -3051,7 +3193,10 @@ mod tests {
         assert_eq!(loaded.manifest.id, "demo");
         assert_eq!(loaded.manifest.name, "Demo");
         assert_eq!(loaded.manifest.version, Version::new(1, 0, 0));
-        assert_eq!(loaded.manifest.lyra, VersionReq::parse("0.0.1").unwrap());
+        assert_eq!(
+            loaded.manifest.host_requirement,
+            VersionReq::parse("0.0.1").unwrap()
+        );
         assert_eq!(loaded.manifest.description, "d");
         assert_eq!(loaded.manifest.scopes, vec!["net"]);
         assert!(loaded.declared_scopes.contains("net"));
@@ -3064,11 +3209,11 @@ mod tests {
     #[test]
     fn load_manifest_rejects_manifest_level_errors() {
         let too_many_scopes = format!(
-            r#"{{"schema_version":1,"id":"demo","name":"d","version":"1.0.0","lyra":"*","description":"","scopes":[{}]}}"#,
+            r#"{{"schema_version":1,"id":"demo","name":"d","version":"1.0.0","host":"*","description":"","scopes":[{}]}}"#,
             vec![r#""net""#; super::PLUGIN_CONFIG_MAX_SCOPES + 1].join(",")
         );
         let long_scope = format!(
-            r#"{{"schema_version":1,"id":"demo","name":"d","version":"1.0.0","lyra":"*","description":"","scopes":["{}"]}}"#,
+            r#"{{"schema_version":1,"id":"demo","name":"d","version":"1.0.0","host":"*","description":"","scopes":["{}"]}}"#,
             "s".repeat(super::PLUGIN_CONFIG_MAX_SCOPE_LEN + 1)
         );
         let err = |bytes: &[u8]| load_manifest(bytes).unwrap_err();
@@ -3143,24 +3288,76 @@ mod tests {
             ),
             (r#""version":"1.0.0","#, "", "missing field `version`"),
             (
-                r#""lyra":"0.0.1""#,
-                r#""lyra":"latest""#,
-                r#"invalid lyra version requirement "latest""#,
+                r#""host":"0.0.1""#,
+                r#""host":"latest""#,
+                r#"invalid host version requirement "latest""#,
             ),
-            (r#""lyra":"0.0.1","#, "", "missing field `lyra`"),
+            (r#""host":"0.0.1","#, "", "missing field `host`"),
         ] {
             let message = err(manifest_json("demo", "").replace(from, to));
             assert!(message.contains(expected), "{message}");
         }
 
         assert_eq!(
-            err(manifest_json("demo", "").replace(r#""lyra":"0.0.1""#, r#""lyra":"0.0.2""#)),
-            "plugin 'demo' requires lyra ^0.0.2, but this is lyra 0.0.1"
+            err(manifest_json("demo", "").replace(r#""host":"0.0.1""#, r#""host":"0.0.2""#)),
+            "plugin 'demo' requires host ^0.0.2, but this is host 0.0.1"
         );
         for requirement in ["0.0", ">=0.0.1, <0.1.0", "*"] {
             let json = manifest_json("demo", "")
-                .replace(r#""lyra":"0.0.1""#, &format!(r#""lyra":"{requirement}""#));
+                .replace(r#""host":"0.0.1""#, &format!(r#""host":"{requirement}""#));
             assert!(load_manifest(json.as_bytes()).is_ok(), "{requirement}");
+        }
+    }
+
+    #[test]
+    fn load_manifest_reads_the_requirement_under_the_host_name() {
+        let other = PluginHost::new(
+            "other",
+            Version::new(2, 0, 0),
+            HashSet::from([Arc::<str>::from("net")]),
+        )
+        .unwrap();
+        let load = |json: String| {
+            PluginManager::load_manifest(
+                std::path::Path::new("plugin.json"),
+                json.as_bytes(),
+                &other,
+            )
+        };
+        let named =
+            |requirement: &str| manifest_json("demo", &format!(r#","other":"{requirement}""#));
+
+        let loaded = load(named("2")).unwrap();
+        assert_eq!(
+            loaded.manifest.host_requirement,
+            VersionReq::parse("2").unwrap()
+        );
+        assert_eq!(
+            load(named("1")).unwrap_err().to_string(),
+            "plugin 'demo' requires other ^1, but this is other 2.0.0"
+        );
+        let message = load(manifest_json("demo", "")).unwrap_err().to_string();
+        assert!(message.contains("missing field `other`"), "{message}");
+    }
+
+    #[test]
+    fn load_manifest_rejects_a_host_requirement_named_twice() {
+        let json = manifest_json("demo", "")
+            .replace(r#""host":"0.0.1""#, r#""host":"0.0.1","host":"0.0.2""#);
+
+        let message = load_manifest(json.as_bytes()).unwrap_err().to_string();
+
+        assert!(message.contains("duplicate field `host`"), "{message}");
+    }
+
+    #[test]
+    fn host_names_must_not_shadow_fixed_fields() {
+        for name in ["", "id", "version", "dependencies", "commit"] {
+            assert_eq!(
+                PluginHost::new(name, Version::new(0, 0, 1), HashSet::new()).unwrap_err(),
+                super::InvalidHostName(name.to_string()),
+                "{name:?}"
+            );
         }
     }
 
@@ -3226,7 +3423,7 @@ mod tests {
             plugins_dir
                 .join("future")
                 .join(super::PLUGIN_CONFIG_FILENAME),
-            manifest_json("future", "").replace(r#""lyra":"0.0.1""#, r#""lyra":"0.1""#),
+            manifest_json("future", "").replace(r#""host":"0.0.1""#, r#""host":"0.1""#),
         )
         .unwrap();
 
@@ -3235,7 +3432,7 @@ mod tests {
         let messages: Vec<String> = errors.iter().map(ToString::to_string).collect();
         assert_eq!(
             messages,
-            vec!["plugin 'future' requires lyra ^0.1, but this is lyra 0.0.1"]
+            vec!["plugin 'future' requires host ^0.1, but this is host 0.0.1"]
         );
         assert_eq!(order(&mgr), vec!["lib", "consumer"]);
 
@@ -3285,7 +3482,7 @@ mod tests {
             plugins_dir
                 .join("helper")
                 .join(super::PLUGIN_CONFIG_FILENAME),
-            manifest_json("helper", "").replace(r#""lyra":"0.0.1""#, r#""lyra":"0.1""#),
+            manifest_json("helper", "").replace(r#""host":"0.0.1""#, r#""host":"0.1""#),
         )?;
 
         let mut mgr = PluginManager::new(plugins_dir.clone());

@@ -27,10 +27,7 @@ use tokio::io::{
 use tokio::net::TcpListener;
 
 pub(crate) fn host() -> PluginHost {
-    PluginHost {
-        version: semver::Version::new(0, 0, 1),
-        scope_ids: HashSet::new(),
-    }
+    PluginHost::new("host", semver::Version::new(0, 0, 1), HashSet::new()).unwrap()
 }
 
 pub(crate) fn client() -> reqwest::Client {
@@ -306,7 +303,7 @@ pub(crate) fn plugin_json(id: &str) -> String {
             "id": "{id}",
             "name": "{id}",
             "version": "0.0.1",
-            "lyra": "0.0.1",
+            "host": "0.0.1",
             "description": "test plugin",
             "entrypoint": "init.luau",
             "scopes": []
@@ -314,11 +311,14 @@ pub(crate) fn plugin_json(id: &str) -> String {
     )
 }
 
-/// A `versions.json` listing each `(commit, lyra)` release, newest first.
+/// A `versions.json` listing each `(commit, requirement)` release, newest
+/// first.
 pub(crate) fn versions_json(releases: &[(&str, &str)]) -> String {
     let entries: Vec<String> = releases
         .iter()
-        .map(|(commit, lyra)| format!(r#"{{ "commit": "{commit}", "lyra": "{lyra}" }}"#))
+        .map(|(commit, requirement)| {
+            format!(r#"{{ "commit": "{commit}", "host": "{requirement}" }}"#)
+        })
         .collect();
     format!("[{}]", entries.join(", "))
 }
@@ -328,7 +328,7 @@ pub(crate) fn release_commit() -> String {
     "c".repeat(40)
 }
 
-/// A `versions.json` releasing [`release_commit`] to lyra 0.0.1.
+/// A `versions.json` releasing [`release_commit`] to host 0.0.1.
 pub(crate) fn released() -> String {
     versions_json(&[(&release_commit(), "0.0.1")])
 }

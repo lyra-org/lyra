@@ -337,12 +337,13 @@ pub(crate) fn installed_manifests(plugins_dir: &Path) -> Vec<PluginManifest> {
     let Ok(entries) = std::fs::read_dir(plugins_dir) else {
         return Vec::new();
     };
+    let host = crate::plugins::plugin_host();
     entries
         .filter_map(Result::ok)
         .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
         .filter_map(|entry| {
-            let config = std::fs::read(entry.path().join(PLUGIN_CONFIG_FILENAME)).ok()?;
-            serde_json::from_slice(&config).ok()
+            let config = std::fs::read_to_string(entry.path().join(PLUGIN_CONFIG_FILENAME)).ok()?;
+            PluginManifest::from_json(&config, &host).ok()
         })
         .collect()
 }
@@ -450,7 +451,7 @@ mod tests {
             id: id.into(),
             name: id.into(),
             version: Version::parse(version).expect("version"),
-            lyra: VersionReq::STAR,
+            host_requirement: VersionReq::STAR,
             description: String::new(),
             entrypoint: None,
             scopes: Vec::new(),

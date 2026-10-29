@@ -53,7 +53,7 @@ pub enum InstallError {
 pub enum InstalledBy {
     /// A person: an API request or the command line.
     Request,
-    /// The server's automatic update check.
+    /// The host's automatic update check.
     AutomaticUpdate,
 }
 

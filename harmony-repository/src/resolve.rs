@@ -119,9 +119,9 @@ pub enum PluginError {
 }
 
 impl PluginError {
-    /// The server requirement that excludes this host, when that is why
-    /// the plugin has no offer: the newest release's `lyra` when none
-    /// matches, or the release `plugin.json`'s own.
+    /// The requirement that excludes this host, when that is why the
+    /// plugin has no offer: the newest release's when none matches, or the
+    /// release `plugin.json`'s own.
     pub fn required_host(&self) -> Option<&VersionReq> {
         match self {
             PluginError::Release(ReleaseError::Incompatible { requirement, .. })
@@ -246,7 +246,7 @@ pub struct ResolvedRepository {
 }
 
 /// A selected plugin without an installable release, such as one whose
-/// repository's releases all require another server version.
+/// repository's releases all require another host version.
 #[derive(Debug)]
 pub struct RejectedPlugin {
     pub id: String,
@@ -516,8 +516,8 @@ async fn open(
     } = open_tip(client, spec, plan, budget).await?;
     let release = match tip.read(RELEASE_INDEX_FILENAME).await? {
         None => Err(ReleaseError::Missing),
-        Some(releases) => ReleaseIndex::parse(&releases)
-            .and_then(|index| Ok(index.select(&host.version)?.commit.clone())),
+        Some(releases) => ReleaseIndex::parse(&releases, host)
+            .and_then(|index| Ok(index.select(host)?.commit.clone())),
     };
     if let Ok(release_commit) = &release {
         let files = Files::Raw {
@@ -1105,7 +1105,7 @@ mod tests {
         ];
         let tip: Vec<(&str, String)> = tip.iter().map(|(p, c)| (*p, c.to_string())).collect();
         let tip: Vec<(&str, &str)> = tip.iter().map(|(p, c)| (*p, c.as_str())).collect();
-        let broken = r#"[{ "commit": "abc", "lyra": "*" }]"#;
+        let broken = r#"[{ "commit": "abc", "host": "*" }]"#;
         let future = versions_json(&[(&"e".repeat(40), ">=0.2"), (&"d".repeat(40), "0.1")]);
         for (versions, expected) in [
             (
@@ -1124,7 +1124,7 @@ mod tests {
             ),
             (
                 Some(future.as_str()),
-                "no release runs on lyra 0.0.1; the newest needs lyra >=0.2".to_string(),
+                "no release runs on host 0.0.1; the newest needs host >=0.2".to_string(),
             ),
         ] {
             let server = TestServer::start(
@@ -1159,7 +1159,7 @@ mod tests {
             r#"{ "path": "widened" }, { "path": "scoped" }, { "path": "unparsable" },
                { "path": "ok" }"#,
         );
-        let widened = plugin_json("widened").replace(r#""lyra": "0.0.1""#, r#""lyra": "0.1""#);
+        let widened = plugin_json("widened").replace(r#""host": "0.0.1""#, r#""host": "0.1""#);
         let scoped =
             plugin_json("scoped").replace(r#""scopes": []"#, r#""scopes": ["no.such.scope"]"#);
         let unparsable =
@@ -2172,7 +2172,7 @@ mod tests {
     #[tokio::test]
     async fn selected_plugins_resolve_past_siblings_that_fail() {
         let index = index_json(r#"{ "path": "plugins/foo" }, { "path": "plugins/bar" }"#);
-        let incompatible = plugin_json("bar").replace(r#""lyra": "0.0.1""#, r#""lyra": "0.1""#);
+        let incompatible = plugin_json("bar").replace(r#""host": "0.0.1""#, r#""host": "0.1""#);
         let release = [
             vec![("repository.json".to_string(), index)],
             plugin_files("plugins/foo", &plugin_json("foo")),

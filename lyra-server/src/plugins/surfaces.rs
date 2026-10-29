@@ -125,13 +125,15 @@ pub(crate) fn module_specs() -> Vec<ModuleSpec> {
 }
 
 pub(crate) fn plugin_host() -> PluginHost {
-    PluginHost {
-        version: Version::parse(env!("CARGO_PKG_VERSION")).expect("package version is semver"),
-        scope_ids: module_specs()
+    PluginHost::new(
+        "lyra",
+        Version::parse(env!("CARGO_PKG_VERSION")).expect("package version is semver"),
+        module_specs()
             .into_iter()
             .filter_map(|spec| spec.capability.map(|capability| capability.0))
             .collect(),
-    }
+    )
+    .expect("lyra is not a fixed manifest field")
 }
 
 #[cfg(feature = "docgen")]

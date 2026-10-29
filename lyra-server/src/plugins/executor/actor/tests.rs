@@ -50,7 +50,7 @@ fn test_executor() -> Result<TestExecutor> {
                 id: "dispatch-test".into(),
                 name: "Dispatch test".into(),
                 version: semver::Version::new(1, 0, 0),
-                lyra: semver::VersionReq::STAR,
+                host_requirement: semver::VersionReq::STAR,
                 description: String::new(),
                 entrypoint: Some("init.luau".into()),
                 scopes: vec![
