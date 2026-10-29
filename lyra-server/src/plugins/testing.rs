@@ -37,7 +37,6 @@ pub(crate) fn initialize_state(
         created
             .unshared_mut()
             .ok_or_else(|| anyhow::anyhow!("database was shared before it was seeded"))?,
-        boot.build.release_tag.as_deref(),
     )?;
     services::STATE.initialize(boot, created, resolved)
 }

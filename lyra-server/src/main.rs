@@ -55,10 +55,8 @@ async fn main() -> Result<()> {
 
 /// This build's identity, resolved by `build.rs`.
 fn build_info() -> BuildInfo {
-    let release_tag = env!("LYRA_RELEASE_TAG");
     BuildInfo {
         commit_hash: env!("LYRA_GIT_HASH").to_string(),
-        release_tag: (!release_tag.is_empty()).then(|| release_tag.to_string()),
     }
 }
 

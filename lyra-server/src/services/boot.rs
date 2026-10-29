@@ -32,9 +32,6 @@ pub(crate) struct Boot {
 pub struct BuildInfo {
     /// Short commit hash, or `unknown` when the build could not resolve one.
     pub commit_hash: String,
-    /// The release this build was cut from; pins the default plugin
-    /// repository to the matching ref.
-    pub release_tag: Option<String>,
 }
 
 impl BuildInfo {

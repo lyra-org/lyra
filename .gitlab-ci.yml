@@ -52,7 +52,6 @@ clippy:
         --skip-unused-stages=true \
         --no-push \
         --build-arg LYRA_GIT_HASH=$CI_COMMIT_SHA \
-        --build-arg "LYRA_RELEASE_TAG=$CI_COMMIT_TAG" \
         --cache=true \
         --cache-repo=$BUILDCACHE \
         --insecure-registry=$INTERNAL_REGISTRY
@@ -87,7 +86,6 @@ docker:
         --skip-unused-stages=true \
         --build-arg LYRA_GIT_HASH=$CI_COMMIT_SHA \
         --build-arg "LYRA_WEB_GIT_HASH=$LYRA_WEB_GIT_HASH" \
-        --build-arg "LYRA_RELEASE_TAG=$CI_COMMIT_TAG" \
         --cache=true \
         --cache-repo=$BUILDCACHE \
         --insecure-registry=$INTERNAL_REGISTRY

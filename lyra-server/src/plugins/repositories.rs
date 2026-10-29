@@ -73,9 +73,9 @@ fn server_build() -> BuildInfo {
 /// Repository resolution (network) always happens before the guard.
 static MUTATION_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
-/// Subscribes the official repository once per database, pinned to
-/// `release_tag` when the build has one.
-pub(crate) fn seed_default(db: &mut DbAny, release_tag: Option<&str>) -> anyhow::Result<()> {
+/// Subscribes the official repository once per database, on its default
+/// branch.
+pub(crate) fn seed_default(db: &mut DbAny) -> anyhow::Result<()> {
     let manifest = harmony_repository::RepositoryManifest::parse(
         include_str!("../../../repository.json"),
         None,
@@ -88,7 +88,7 @@ pub(crate) fn seed_default(db: &mut DbAny, release_tag: Option<&str>) -> anyhow:
             origin: DEFAULT_ORIGIN.to_string(),
             name: manifest.name,
             description: manifest.description,
-            git_ref: release_tag.map(str::to_string),
+            git_ref: None,
             commit: None,
             refreshed_at_ms: None,
         },
@@ -1208,14 +1208,14 @@ mod tests {
     }
 
     #[test]
-    fn seeds_official_repository_at_release_tag() -> anyhow::Result<()> {
+    fn seeds_official_repository_on_its_default_branch() -> anyhow::Result<()> {
         let mut db = lyra_db::test_db::new_test_db()?;
-        seed_default(&mut db, Some("v1.2.3"))?;
+        seed_default(&mut db)?;
         let repositories = repo_db::list(&db)?;
         assert_eq!(repositories.len(), 1);
         let record = &repositories[0];
         assert_eq!(record.origin, DEFAULT_ORIGIN);
-        assert_eq!(record.git_ref.as_deref(), Some("v1.2.3"));
+        assert_eq!(record.git_ref, None);
         assert_eq!(record.commit, None);
         assert_eq!(record.refreshed_at_ms, None);
         Ok(())

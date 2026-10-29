@@ -63,7 +63,6 @@ pub async fn run_server(build: BuildInfo, capture: Option<CaptureArgs>) -> Resul
         created
             .unshared_mut()
             .ok_or_else(|| anyhow::anyhow!("database was shared before it was seeded"))?,
-        build.release_tag.as_deref(),
     )?;
     let resolved = services::state::resolve_settings(
         &mut created,

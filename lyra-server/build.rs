@@ -3,9 +3,9 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-//! Embeds the build's identity: `LYRA_GIT_HASH` and `LYRA_RELEASE_TAG`, taken
-//! from the environment when set, else resolved from the checkout's git state.
-//! Reruns only when the overrides or the checked-out commit change.
+//! Embeds the build's identity: `LYRA_GIT_HASH`, taken from the environment
+//! when set, else resolved from the checkout's git state. Reruns only when the
+//! override or the checked-out commit change.
 
 use std::{
     env,
@@ -18,15 +18,6 @@ use std::{
 
 fn main() {
     println!("cargo:rerun-if-env-changed=LYRA_GIT_HASH");
-    println!("cargo:rerun-if-env-changed=LYRA_RELEASE_TAG");
-
-    let release_tag = env::var("LYRA_RELEASE_TAG").unwrap_or_default();
-    let release_tag = release_tag.trim();
-    assert!(
-        !release_tag.contains(['\n', '\r']),
-        "invalid LYRA_RELEASE_TAG"
-    );
-    println!("cargo:rustc-env=LYRA_RELEASE_TAG={release_tag}");
 
     let hash = match env::var("LYRA_GIT_HASH")
         .ok()
