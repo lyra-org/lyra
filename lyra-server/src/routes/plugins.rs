@@ -3,7 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashMap;
+use std::collections::{
+    BTreeMap,
+    HashMap,
+};
 
 use agdb::{
     DbAny,
@@ -39,6 +42,12 @@ use crate::{
     plugins::{
         lifecycle::PluginRestartError,
         repositories as repositories_service,
+        scopes::{
+            Effect,
+            PluginEffect,
+            Risk,
+            ScopeGain,
+        },
         settings::{
             self as plugin_settings_registry,
             FieldDefinition,
@@ -172,9 +181,10 @@ struct OfferedReleaseResponse {
     scopes: Vec<String>,
 }
 
-/// Why an update waits for an admin. `adds_scopes`: the release declares
-/// `scopes` the installed plugin does not, and an update request naming the
-/// release grants them. `breaks_dependents`: `dependents` require versions
+/// Why an update waits for an admin. `adds_scopes`: the release lets the
+/// plugin, or installed plugins depending on it, reach scopes they could
+/// not before, through their own scopes or their dependencies', listed in
+/// `gains`; an update request naming the release grants them. `breaks_dependents`: `dependents` require versions
 /// of this plugin outside the release's. `unmet_dependencies`: the release
 /// requires `dependencies` that would be missing or at other versions.
 /// `dependency_cycle`: the release would leave `plugins` depending on each
@@ -186,7 +196,7 @@ struct OfferedReleaseResponse {
 #[serde(tag = "reason", rename_all = "snake_case")]
 enum HoldResponse {
     AddsScopes {
-        scopes: Vec<String>,
+        gains: Vec<ScopeGainResponse>,
     },
     BreaksDependents {
         dependents: Vec<RequirementResponse>,
@@ -197,6 +207,22 @@ enum HoldResponse {
     DependencyCycle {
         plugins: Vec<String>,
     },
+}
+
+/// What one plugin would newly reach.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct ScopeGainResponse {
+    plugin: String,
+    /// The plugin's risk once it reaches them, from everything it reaches
+    /// then.
+    risk: RiskResponse,
+    /// What the newly reached scopes let the plugin do.
+    effects: Vec<EffectResponse>,
+    /// Scopes the plugin would newly reach.
+    scopes: Vec<String>,
+    /// Dependencies the plugin would newly reach whose scopes are unknown.
+    unresolved_dependencies: Vec<String>,
 }
 
 /// One plugin's requirement on another: the dependent's on the held
@@ -356,9 +382,9 @@ struct RepositoryInstallRequest {
 #[derive(Deserialize)]
 struct UpdatePluginsRequest {
     /// Plugins to update, each to the release `commit` its status offered,
-    /// granting the scopes that release adds. Omitted updates every
-    /// repository-managed plugin whose update is not held. An empty list is
-    /// rejected.
+    /// granting the scopes that release lets plugins reach. Omitted updates
+    /// every repository-managed plugin whose update is not held. An empty
+    /// list is rejected.
     #[serde(default)]
     plugins: Option<Vec<PreviewedPluginRequest>>,
 }
@@ -415,6 +441,9 @@ struct PluginPreviewResponse {
     /// Capability scopes the chosen release declares, which installing it
     /// grants.
     scopes: Vec<String>,
+    /// What the chosen release could do installed; absent with `error`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    access: Option<PluginAccessResponse>,
     /// The commit of the release an install would choose.
     #[serde(skip_serializing_if = "Option::is_none")]
     commit: Option<String>,
@@ -428,6 +457,131 @@ struct PluginPreviewResponse {
     /// repository's others.
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+}
+
+/// What a plugin can do once installed: through its own scopes, and
+/// through every plugin it depends on, since it can use what they
+/// `require`.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct PluginAccessResponse {
+    risk: RiskResponse,
+    effects: Vec<EffectResponse>,
+    /// Each scope reached, with the plugins declaring it.
+    scopes: Vec<ReachedScopeResponse>,
+    /// Dependencies, direct or not, neither installed nor in the
+    /// repository, so what they can do is unknown.
+    unresolved_dependencies: Vec<String>,
+    /// Installed plugins that depend on this one and would reach more once
+    /// it is installed.
+    widens: Vec<ScopeGainResponse>,
+}
+
+/// How much care letting a plugin run calls for: `high` when it adds
+/// endpoints or handles credentials, `elevated` when it can send data off
+/// the server and touch personal or library data, else `standard`.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum RiskResponse {
+    Standard,
+    Elevated,
+    High,
+}
+
+impl From<Risk> for RiskResponse {
+    fn from(risk: Risk) -> Self {
+        match risk {
+            Risk::Standard => Self::Standard,
+            Risk::Elevated => Self::Elevated,
+            Risk::High => Self::High,
+        }
+    }
+}
+
+/// `egress`: sends data off the server. `exposes`: adds endpoints to the
+/// server. `authority`: handles credentials and sign-in sessions.
+/// `reads_personal` and `writes_personal`: reads or changes the `data` of
+/// the users it acts for. `writes_library`: changes the shared library's
+/// `data`.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum EffectKind {
+    Egress,
+    Exposes,
+    Authority,
+    ReadsPersonal,
+    WritesPersonal,
+    WritesLibrary,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct EffectResponse {
+    kind: EffectKind,
+    /// The data the effect concerns, for the kinds that name one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data: Option<String>,
+    /// The plugins whose scopes give the effect: the plugin itself or its
+    /// dependencies.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    via: Vec<String>,
+}
+
+impl From<PluginEffect> for EffectResponse {
+    fn from(effect: PluginEffect) -> Self {
+        let (kind, data) = match effect.effect {
+            Effect::Egress => (EffectKind::Egress, None),
+            Effect::Exposes => (EffectKind::Exposes, None),
+            Effect::Authority => (EffectKind::Authority, None),
+            Effect::ReadsPersonal(data) => (EffectKind::ReadsPersonal, Some(data)),
+            Effect::WritesPersonal(data) => (EffectKind::WritesPersonal, Some(data)),
+            Effect::WritesLibrary(data) => (EffectKind::WritesLibrary, Some(data)),
+        };
+        Self {
+            kind,
+            data: data.map(ToString::to_string),
+            via: effect.via.into_iter().collect(),
+        }
+    }
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct ReachedScopeResponse {
+    scope: String,
+    via: Vec<String>,
+}
+
+fn plugin_access_response(access: repositories_service::PluginAccess) -> PluginAccessResponse {
+    PluginAccessResponse {
+        risk: access.risk.into(),
+        effects: access.effects.into_iter().map(Into::into).collect(),
+        scopes: access
+            .scopes
+            .into_iter()
+            .map(|(scope, via)| ReachedScopeResponse {
+                scope,
+                via: via.into_iter().collect(),
+            })
+            .collect(),
+        unresolved_dependencies: access.unresolved.into_iter().collect(),
+        widens: scope_gain_responses(access.widens),
+    }
+}
+
+fn scope_gain_responses(gains: BTreeMap<String, ScopeGain>) -> Vec<ScopeGainResponse> {
+    gains
+        .into_iter()
+        .map(|(plugin, gain)| ScopeGainResponse {
+            plugin,
+            risk: gain.risk.into(),
+            effects: gain.effects.into_iter().map(Into::into).collect(),
+            scopes: gain.growth.scopes.into_iter().collect(),
+            unresolved_dependencies: gain.growth.unresolved.into_iter().collect(),
+        })
+        .collect()
 }
 
 /// A resolved repository and the plugins it provides. `id` is present only
@@ -588,6 +742,7 @@ fn resolved_repository_response(
                 version: plugin.version,
                 description: plugin.description,
                 scopes: plugin.scopes,
+                access: plugin.access.map(plugin_access_response),
                 commit: plugin.commit,
                 status: catalog_status_response(plugin.status),
                 source: plugin
@@ -637,7 +792,9 @@ fn hold_response(hold: repositories_service::Hold) -> HoldResponse {
             .collect()
     };
     match hold {
-        Hold::AddsScopes { scopes } => HoldResponse::AddsScopes { scopes },
+        Hold::AddsScopes { gains } => HoldResponse::AddsScopes {
+            gains: scope_gain_responses(gains),
+        },
         Hold::BreaksDependents { dependents } => HoldResponse::BreaksDependents {
             dependents: requirements(dependents),
         },
@@ -1303,7 +1460,7 @@ fn get_settings_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn list_plugins_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List plugins").description(
-        "Returns the loaded plugin manifests along with where each plugin was installed from: a `source` of kind `repository` (origin, ref, version, commit, pinned, status, offered, hold, installed_at, installed_automatically), `local`, or `invalid` (error) when the source record could not be read and the plugin should be uninstalled or reinstalled. `pinned` is true for tag and commit installs, which updates never move. `status` compares the installed version with the release that the subscribed repository of the same origin and ref last offered this server (`up_to_date`, `update_available`, `incompatible` with the `requires` that excludes this server, or `unknown` when it offered nothing for another reason or no such subscription lists the plugin), without contacting the forge; refreshing the repository or updating plugins stores the offered releases. `offered` is the release on offer (version, commit, scopes) and `hold` why an available update to it waits for an admin: `adds_scopes` with the scopes it adds, `breaks_dependents` with each dependent's id and requirement, `unmet_dependencies` with each dependency the release requires that would be missing or at another version, or `dependency_cycle` with the `plugins` it would leave depending on each other in a cycle. Dependencies are judged as if every available update were installed together. `installed_automatically` is true when the daily update check, not a request, installed the release at `installed_at`.",
+        "Returns the loaded plugin manifests along with where each plugin was installed from: a `source` of kind `repository` (origin, ref, version, commit, pinned, status, offered, hold, installed_at, installed_automatically), `local`, or `invalid` (error) when the source record could not be read and the plugin should be uninstalled or reinstalled. `pinned` is true for tag and commit installs, which updates never move. `status` compares the installed version with the release that the subscribed repository of the same origin and ref last offered this server (`up_to_date`, `update_available`, `incompatible` with the `requires` that excludes this server, or `unknown` when it offered nothing for another reason or no such subscription lists the plugin), without contacting the forge; refreshing the repository or updating plugins stores the offered releases. `offered` is the release on offer (version, commit, scopes) and `hold` why an available update to it waits for an admin: `adds_scopes` with the `gains` of each plugin it would let reach new scopes, through its own or its dependencies', with what they let it do and its risk then, `breaks_dependents` with each dependent's id and requirement, `unmet_dependencies` with each dependency the release requires that would be missing or at another version, or `dependency_cycle` with the `plugins` it would leave depending on each other in a cycle. Dependencies are judged as if every available update were installed together. `installed_automatically` is true when the daily update check, not a request, installed the release at `installed_at`.",
     )
 }
 
@@ -1345,7 +1502,7 @@ fn install_repository_plugins_docs(op: TransformOperation) -> TransformOperation
 #[cfg(feature = "docgen")]
 fn update_installed_plugins_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Update installed plugins").description(
-        "Re-lists the recorded origin and ref of the selected plugins (or every repository-managed plugin when `plugins` is omitted) and reinstalls those it offers a newer release of that runs on this server. Each selected plugin names the release `commit` its status offered; one offered at another commit now fails on its own. A newer release declaring scopes the installed plugin lacks is `held` (`adds_scopes`) unless the request names it, which grants them; one outside a dependent's requirement is always `held` (`breaks_dependents`), as is one requiring a plugin that would be missing or at another version (`unmet_dependencies`) or one that would leave plugins depending on each other in a cycle (`dependency_cycle`). Dependencies are judged against the plugins as they would be after the update, and again after downloading, against the releases that downloaded: one needing a release that failed is `held` then. The updates are written to disk together: when one cannot be, none is. Pinned plugins are reported `up_to_date` without a forge call. Plugins no release of their repository runs on this server are reported `incompatible`, with the `requires` that excludes it, and nothing is downloaded for them. Each origin is listed once, only newer releases are downloaded, and the plugin runtime reloads once. Returns per-plugin results.",
+        "Re-lists the recorded origin and ref of the selected plugins (or every repository-managed plugin when `plugins` is omitted) and reinstalls those it offers a newer release of that runs on this server. Each selected plugin names the release `commit` its status offered; one offered at another commit now fails on its own. A newer release that would let the plugin, or an installed plugin depending on it, reach scopes or unknown dependencies it could not before is `held` (`adds_scopes`, with those `gains`) unless the request names it, which grants them; one outside a dependent's requirement is always `held` (`breaks_dependents`), as is one requiring a plugin that would be missing or at another version (`unmet_dependencies`) or one that would leave plugins depending on each other in a cycle (`dependency_cycle`). Holds are judged against the plugins as they would be after the update, and again after downloading, against the releases that downloaded: one needing a release that failed is `held` then. The updates are written to disk together: when one cannot be, none is. Pinned plugins are reported `up_to_date` without a forge call. Plugins no release of their repository runs on this server are reported `incompatible`, with the `requires` that excludes it, and nothing is downloaded for them. Each origin is listed once, only newer releases are downloaded, and the plugin runtime reloads once. Returns per-plugin results.",
     )
 }
 
@@ -1789,7 +1946,20 @@ mod tests {
         let scoped = &json[1]["source"];
         assert_eq!(
             scoped["hold"],
-            serde_json::json!({ "reason": "adds_scopes", "scopes": ["lyra.metadata"] })
+            serde_json::json!({
+                "reason": "adds_scopes",
+                "gains": [{
+                    "plugin": "scoped",
+                    "risk": "standard",
+                    "effects": [{
+                        "kind": "writes_library",
+                        "data": "metadata",
+                        "via": ["scoped"],
+                    }],
+                    "scopes": ["lyra.metadata"],
+                    "unresolved_dependencies": [],
+                }],
+            })
         );
         assert_eq!(scoped["installed_automatically"], false);
         Ok(())
@@ -1818,6 +1988,7 @@ mod tests {
                     version: "1.0.0".into(),
                     description: String::new(),
                     scopes: vec!["metadata".into()],
+                    access: None,
                     commit: Some("a".repeat(40)),
                     status: CatalogStatus::Installed(UpdateStatus::UpdateAvailable),
                     source_origin: None,
@@ -1829,6 +2000,7 @@ mod tests {
                     version: "2.0.0".into(),
                     description: String::new(),
                     scopes: Vec::new(),
+                    access: None,
                     commit: None,
                     status: CatalogStatus::Available,
                     source_origin: Some("https://github.com/o/other".into()),
@@ -1840,6 +2012,7 @@ mod tests {
                     version: String::new(),
                     description: String::new(),
                     scopes: Vec::new(),
+                    access: None,
                     commit: None,
                     status: CatalogStatus::Installed(UpdateStatus::Incompatible {
                         requires: "^0.0.7".into(),

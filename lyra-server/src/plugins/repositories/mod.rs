@@ -5,6 +5,7 @@
 
 use std::{
     collections::{
+        BTreeMap,
         BTreeSet,
         HashMap,
     },
@@ -21,7 +22,10 @@ use std::{
 };
 
 use agdb::DbAny;
-use harmony_core::plugin::PluginManifest;
+use harmony_core::{
+    plugin::PluginManifest,
+    scopes::EffectiveScopes,
+};
 use harmony_repository::{
     FetchError,
     InstallError,
@@ -48,6 +52,13 @@ use tokio::sync::{
     MutexGuard,
 };
 
+use crate::plugins::scopes::{
+    PluginEffect,
+    Risk,
+    ScopeGain,
+    effects_of,
+    scope_gains,
+};
 use crate::services::STATE;
 use crate::services::boot::BuildInfo;
 
@@ -243,6 +254,9 @@ pub(crate) struct PluginPreview {
     pub(crate) version: String,
     pub(crate) description: String,
     pub(crate) scopes: Vec<String>,
+    /// What installing the release would let plugins do; `None` without a
+    /// release.
+    pub(crate) access: Option<PluginAccess>,
     /// The commit of the release an install would choose.
     pub(crate) commit: Option<String>,
     pub(crate) status: CatalogStatus,
@@ -252,6 +266,59 @@ pub(crate) struct PluginPreview {
     /// Why the plugin has no installable release, such as all of them
     /// requiring another server version. The other fields are then empty.
     pub(crate) error: Option<String>,
+}
+
+/// What a plugin can do once installed, through its own scopes and its
+/// dependencies'.
+#[derive(Debug, Clone)]
+pub(crate) struct PluginAccess {
+    /// Each scope it reaches, with the plugins that declare it.
+    pub(crate) scopes: BTreeMap<String, BTreeSet<String>>,
+    pub(crate) effects: Vec<PluginEffect>,
+    pub(crate) risk: Risk,
+    /// Dependencies, direct or not, that are neither installed nor in the
+    /// repository, so what they can do is unknown.
+    pub(crate) unresolved: BTreeSet<String>,
+    /// Installed plugins depending on it, with what installing it would
+    /// let each newly reach.
+    pub(crate) widens: BTreeMap<String, ScopeGain>,
+}
+
+/// What `manifest` could do installed among `installed`. A dependency is
+/// counted both as installed and as `listing` offers it, since installing
+/// several plugins together may replace the installed one.
+fn plugin_access(
+    manifest: &PluginManifest,
+    installed: &[PluginManifest],
+    listing: &RepositoryListing,
+) -> PluginAccess {
+    let offered = listing
+        .plugins
+        .iter()
+        .filter_map(|plugin| plugin.offer.as_ref().ok())
+        .map(|offer| &offer.manifest);
+    let effective = EffectiveScopes::of_any(manifest, |id| {
+        installed
+            .iter()
+            .chain(offered.clone())
+            .filter(|candidate| candidate.id == id)
+            .collect()
+    });
+    let effects = effects_of(
+        effective
+            .scopes
+            .iter()
+            .map(|(scope, via)| (scope.as_str(), via)),
+    );
+    let mut widens = scope_gains(installed, manifest);
+    widens.remove(&manifest.id);
+    PluginAccess {
+        risk: Risk::of(effects.iter().map(|effect| &effect.effect)),
+        effects,
+        scopes: effective.scopes,
+        unresolved: effective.unresolved,
+        widens,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -420,6 +487,7 @@ fn ensure_not_subscribed(
 }
 
 fn build_preview(listing: &RepositoryListing, plugins_dir: &Path) -> RepositoryPreview {
+    let installed = installed_manifests(plugins_dir);
     let plugins = listing
         .plugins
         .iter()
@@ -432,6 +500,7 @@ fn build_preview(listing: &RepositoryListing, plugins_dir: &Path) -> RepositoryP
                 version: String::new(),
                 description: String::new(),
                 scopes: Vec::new(),
+                access: None,
                 commit: offer.map(|offer| offer.commit.clone()),
                 status: catalog_status(&plugins_dir.join(&plugin.id), &listed_offer(plugin)),
                 source_origin: source
@@ -447,6 +516,7 @@ fn build_preview(listing: &RepositoryListing, plugins_dir: &Path) -> RepositoryP
                     preview.version = offer.manifest.version.to_string();
                     preview.description = manifest.description.clone();
                     preview.scopes = manifest.scopes.clone();
+                    preview.access = Some(plugin_access(manifest, &installed, listing));
                 }
                 Err(error) => preview.error = Some(error.to_string()),
             }
@@ -947,10 +1017,10 @@ pub(crate) struct UpdateReport {
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum UpdateSelection<'a> {
     /// Every repository-managed plugin, to newer releases that need no
-    /// approval: one adding scopes is held.
+    /// approval: one letting plugins reach new scopes is held.
     All,
     /// The named plugins, each only to the release its status showed,
-    /// granting the scopes that release adds.
+    /// granting the scopes that release lets plugins reach.
     Approved(&'a [PreviewedPlugin]),
 }
 
@@ -1776,15 +1846,26 @@ mod tests {
         install_records(plugins_dir.path(), &forge.origin, &[("changed", "1.0.0")])?;
         subscribe(&forge.origin, &[]).await?;
         let r2 = "2".repeat(40);
-        let adds = Hold::AddsScopes {
-            scopes: vec!["lyra.metadata".into()],
+        let reached = |hold: &Hold| match hold {
+            Hold::AddsScopes { gains } => gains
+                .iter()
+                .map(|(id, gain)| (id.clone(), gain.growth.scopes.clone()))
+                .collect::<Vec<_>>(),
+            hold => panic!("held for its scopes: {hold:?}"),
         };
+        let adds = vec![(
+            "changed".to_string(),
+            BTreeSet::from(["lyra.metadata".to_string()]),
+        )];
 
         let report = update_plugins_in(plugins_dir.path(), UpdateSelection::All).await?;
         let [held] = &report.held[..] else {
             panic!("expected one held plugin: {report:?}");
         };
-        assert_eq!((held.id.as_str(), &held.hold), ("changed", &adds));
+        assert_eq!(
+            (held.id.as_str(), reached(&held.hold)),
+            ("changed", adds.clone())
+        );
         assert_eq!(held.release.commit, r2);
         assert!(report.updated.is_empty() && forge.downloads().is_empty());
         let record = load_managed_record(plugins_dir.path(), "changed")?;
@@ -1795,7 +1876,7 @@ mod tests {
             &installed_manifests(plugins_dir.path()),
         );
         assert_eq!(status.status, UpdateStatus::UpdateAvailable);
-        assert_eq!(status.hold, Some(adds));
+        assert_eq!(status.hold.as_ref().map(reached), Some(adds));
         assert_eq!(
             status.offered.map(|offered| offered.commit),
             Some(r2.clone())
@@ -1868,6 +1949,41 @@ mod tests {
             &[("changed", requires)],
         )?;
         std::fs::write(dir.join(PLUGIN_CONFIG_FILENAME), manifest)?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn updates_are_held_for_scopes_they_would_let_installed_dependents_reach()
+    -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        lyra_db::server::ensure(&mut *STATE.db.write().await)?;
+        let mut scoped: serde_json::Value = serde_json::from_str(&changed_at(HOST_REQUIREMENT))?;
+        scoped["scopes"] = serde_json::json!(["lyra.metadata"]);
+        let forge = catalog_forge(HOST_REQUIREMENT, HOST_REQUIREMENT, scoped.to_string()).await?;
+        let plugins_dir = tempfile::TempDir::new()?;
+        install_records(plugins_dir.path(), &forge.origin, &[("changed", "1.0.0")])?;
+        install_dependent(plugins_dir.path(), "*")?;
+        subscribe(&forge.origin, &[]).await?;
+
+        let report = update_plugins_in(plugins_dir.path(), UpdateSelection::All).await?;
+
+        let [held] = &report.held[..] else {
+            panic!("expected one held plugin: {report:?}");
+        };
+        let Hold::AddsScopes { gains } = &held.hold else {
+            panic!("held for its scopes: {held:?}");
+        };
+        let reached: Vec<_> = gains
+            .iter()
+            .map(|(id, gain)| (id.as_str(), gain.growth.scopes.clone()))
+            .collect();
+        let metadata = BTreeSet::from(["lyra.metadata".to_string()]);
+        assert_eq!(
+            reached,
+            [("changed", metadata.clone()), ("dependent", metadata)]
+        );
+        assert!(report.updated.is_empty() && forge.downloads().is_empty());
         Ok(())
     }
 
@@ -2359,6 +2475,114 @@ mod tests {
                 ("changed".into(), Some("2.0.0".into())),
                 ("same".into(), Some("1.0.0".into())),
             ]
+        );
+        Ok(())
+    }
+
+    /// `changed` 2.0.0, which newly declares `harmony.http`.
+    fn changed_with_http() -> String {
+        let mut manifest: serde_json::Value =
+            serde_json::from_str(&changed_at(HOST_REQUIREMENT)).expect("manifest");
+        manifest["scopes"] = serde_json::json!(["harmony.http"]);
+        manifest.to_string()
+    }
+
+    fn write_manifest(plugins_dir: &Path, id: &str, manifest: &serde_json::Value) {
+        let dir = plugins_dir.join(id);
+        std::fs::create_dir_all(&dir).expect("plugin dir");
+        std::fs::write(dir.join("plugin.json"), manifest.to_string()).expect("plugin.json");
+        std::fs::write(dir.join("init.luau"), "return {}").expect("init.luau");
+    }
+
+    #[tokio::test]
+    async fn previews_describe_what_plugins_could_do_and_whom_they_widen() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        let forge = catalog_forge(HOST_REQUIREMENT, HOST_REQUIREMENT, changed_with_http()).await?;
+        let plugins_dir = tempfile::TempDir::new()?;
+        let mut dependent: serde_json::Value =
+            serde_json::from_str(&manifest_json("dependent", "1.0.0", HOST_REQUIREMENT))?;
+        dependent["scopes"] = serde_json::json!(["lyra.listens"]);
+        dependent["dependencies"] =
+            serde_json::json!({ "changed": { "version": "*", "optional": true } });
+        write_manifest(plugins_dir.path(), "dependent", &dependent);
+
+        let preview = build_preview(
+            &list(&forge.origin, None, &BuildInfo::default()).await?,
+            plugins_dir.path(),
+        );
+
+        let access = |id: &str| {
+            preview
+                .plugins
+                .iter()
+                .find(|plugin| plugin.id == id)
+                .and_then(|plugin| plugin.access.clone())
+                .expect("previewed with access")
+        };
+        let changed = access("changed");
+        assert_eq!(
+            changed
+                .effects
+                .iter()
+                .map(|effect| (effect.effect, effect.via.clone()))
+                .collect::<Vec<_>>(),
+            [(
+                crate::plugins::scopes::Effect::Egress,
+                BTreeSet::from(["changed".to_string()])
+            )]
+        );
+        assert_eq!(changed.risk, Risk::Standard);
+        assert_eq!(
+            changed
+                .widens
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["dependent"],
+            "installing it lets the installed dependent reach its scopes"
+        );
+        assert_eq!(
+            changed.widens["dependent"].growth.scopes,
+            BTreeSet::from(["harmony.http".to_string()])
+        );
+        assert!(access("same").effects.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn previews_count_offered_dependencies_that_replace_installed_ones() -> anyhow::Result<()>
+    {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        let mut same: serde_json::Value =
+            serde_json::from_str(&manifest_json("same", "1.0.0", HOST_REQUIREMENT))?;
+        same["scopes"] = serde_json::json!(["lyra.listens"]);
+        same["dependencies"] = serde_json::json!({ "changed": "*" });
+        let forge = catalog_forge_with_same(same.to_string(), changed_with_http()).await?;
+        let plugins_dir = tempfile::TempDir::new()?;
+        write_manifest(
+            plugins_dir.path(),
+            "changed",
+            &serde_json::from_str(&manifest_json("changed", "1.0.0", HOST_REQUIREMENT))?,
+        );
+
+        let preview = build_preview(
+            &list(&forge.origin, None, &BuildInfo::default()).await?,
+            plugins_dir.path(),
+        );
+
+        let same = preview
+            .plugins
+            .iter()
+            .find(|plugin| plugin.id == "same")
+            .and_then(|plugin| plugin.access.clone())
+            .expect("previewed with access");
+        assert_eq!(
+            same.risk,
+            Risk::Elevated,
+            "installing both gives the offered dependency's HTTP access: {:?}",
+            same.effects
         );
         Ok(())
     }

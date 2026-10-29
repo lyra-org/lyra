@@ -242,7 +242,7 @@ pub(super) static ALL: &[SettingDefinition] = &[
         "plugins.auto_update",
         PLUGINS,
         "Install plugin updates automatically",
-        "Install newer plugin releases found by the daily check unless they add scopes or break an installed plugin; when off, updates are only reported.",
+        "Install newer plugin releases found by the daily check unless they let plugins reach new scopes or break an installed plugin; when off, updates are only reported.",
         Live,
         Kind::Bool { default: true },
     ),

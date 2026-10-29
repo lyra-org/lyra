@@ -208,12 +208,20 @@ has no offer for it for another reason, such as a missing `versions.json`;
 updating it then fails with the reason. Pinned plugins are always up to
 date.
 
-An update is held, and waits for an admin, when the newer release
-declares scopes the installed plugin does not, or when an installed
-plugin's dependency on it excludes the new version. An update request
-names each plugin with the release commit its status offered; naming a
-release grants the scopes it adds, while one that breaks a dependent is
-not applied until the dependent changes.
+A plugin can use what its dependencies `require`, so it reaches its own
+scopes and those of every plugin it depends on, directly or not, optional
+dependencies included. An update is held, and waits for an admin, when the
+newer release would let the updated plugin, or an installed plugin
+depending on it, reach a scope it could not before, or a dependency whose
+scopes are unknown because it is not installed. It is also held when an
+installed plugin's dependency on it excludes the new version, or when the
+release needs a plugin that would be missing or at another version. Holds
+are judged against the plugins as they would be with the other available
+updates installed. An update request names each plugin with the release
+commit its status offered; naming a release grants the scopes it lets
+plugins reach, while one with a dependency problem is not applied until
+the plugins involved change. Approving one release grants nothing another
+release would reach through it.
 
 ### Automatic Updates
 
@@ -241,6 +249,19 @@ document, which `cargo run -p lyra-docs -- print openapi` prints. An
 install names each plugin with the release commit its preview showed, so
 the scopes approved are the scopes granted: a plugin whose offered release
 has changed since fails to install.
+
+Previews, and updates held for the scopes they reach, describe what the
+scopes reached let a plugin do, and which plugins' scopes each effect
+comes through: send data off the server, add endpoints, handle
+credentials, read or change the personal data of the users it acts for, or
+change the shared library. A risk level summarises them: `high` for
+plugins that add endpoints or handle credentials, `elevated` for plugins
+that can send data off the server and touch personal or library data, and
+`standard` otherwise. A preview counts a dependency both as installed and
+as the repository offers it, since installing them together replaces the
+installed one. A preview also lists installed plugins that depend on the
+plugin, optionally or not, and what installing it would let them newly
+reach.
 
 From the command line:
 

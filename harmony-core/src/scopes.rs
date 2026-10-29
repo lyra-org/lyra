@@ -57,6 +57,13 @@ impl EffectiveScopes {
     /// Walks `plugin` and its dependencies, finding each dependency with
     /// `lookup`.
     pub fn of<'a, P: ScopedPlugin>(plugin: &'a P, lookup: impl Fn(&str) -> Option<&'a P>) -> Self {
+        Self::of_any(plugin, |id| lookup(id).into_iter().collect())
+    }
+
+    /// Like [`Self::of`], when a dependency may end up as any of several
+    /// plugins, such as an installed version and an offered one: every one
+    /// of them is followed, so the result covers whichever is present.
+    pub fn of_any<'a, P: ScopedPlugin>(plugin: &'a P, lookup: impl Fn(&str) -> Vec<&'a P>) -> Self {
         let mut effective = Self::default();
         let mut visited = BTreeSet::from([plugin.id()]);
         let mut pending = vec![plugin];
@@ -72,12 +79,11 @@ impl EffectiveScopes {
                 if !visited.insert(dependency) {
                     continue;
                 }
-                match lookup(dependency) {
-                    Some(dependency) => pending.push(dependency),
-                    None => {
-                        effective.unresolved.insert(dependency.to_string());
-                    }
+                let candidates = lookup(dependency);
+                if candidates.is_empty() {
+                    effective.unresolved.insert(dependency.to_string());
                 }
+                pending.extend(candidates);
             }
         }
         effective
@@ -237,6 +243,25 @@ mod tests {
 
         assert!(effective.scopes.is_empty());
         assert_eq!(effective.unresolved, set(&["missing"]));
+    }
+
+    #[test]
+    fn effective_scopes_follow_every_candidate_of_a_dependency() {
+        let installed = manifest("helper", &[], &[]);
+        let offered = manifest("helper", &["net"], &[("extra", false)]);
+        let extra = manifest("extra", &["fs"], &[]);
+        let plugin = manifest("plugin", &["listens"], &[("helper", false)]);
+
+        let effective = EffectiveScopes::of_any(&plugin, |id| match id {
+            "helper" => vec![&installed, &offered],
+            "extra" => vec![&extra],
+            _ => Vec::new(),
+        });
+
+        assert_eq!(
+            effective.scopes.keys().cloned().collect::<BTreeSet<_>>(),
+            set(&["fs", "listens", "net"])
+        );
     }
 
     #[test]

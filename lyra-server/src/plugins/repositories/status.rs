@@ -15,16 +15,24 @@ use std::{
     path::Path,
 };
 
-use harmony_core::plugin::{
-    Dependency,
-    PLUGIN_CONFIG_FILENAME,
-    PluginManifest,
+use harmony_core::{
+    plugin::{
+        Dependency,
+        PLUGIN_CONFIG_FILENAME,
+        PluginManifest,
+    },
+    scopes::ScopedPlugin,
 };
 use harmony_repository::{
     ListedPlugin,
     SourceRecord,
 };
 use lyra_db::plugin_repositories as repo_db;
+
+use crate::plugins::scopes::{
+    ScopeGain,
+    scope_gains,
+};
 use semver::{
     Version,
     VersionReq,
@@ -136,9 +144,10 @@ pub(super) fn stored_dependencies(offered: &OfferedRelease) -> Vec<repo_db::Plug
 /// Why an update to a newer release waits for an admin.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Hold {
-    /// The release declares scopes the installed plugin does not; an
-    /// update that names the release grants them.
-    AddsScopes { scopes: Vec<String> },
+    /// The release lets plugins reach scopes they could not before: the
+    /// updated plugin, or installed plugins depending on it, keyed by id.
+    /// An update that names the release grants them.
+    AddsScopes { gains: BTreeMap<String, ScopeGain> },
     /// Plugins depend on this one at versions outside the release's; no
     /// update applies until they change.
     BreaksDependents { dependents: Vec<Requirement> },
@@ -162,7 +171,22 @@ impl std::fmt::Display for Hold {
                 .join(", ")
         };
         match self {
-            Self::AddsScopes { scopes } => write!(f, "adds scopes {}", scopes.join(", ")),
+            Self::AddsScopes { gains } => {
+                let reaches = gains
+                    .iter()
+                    .map(|(id, ScopeGain { growth, .. })| {
+                        let unknown = growth
+                            .unresolved
+                            .iter()
+                            .map(|dependency| format!("unknown dependency {dependency}"));
+                        let reached: Vec<_> =
+                            growth.scopes.iter().cloned().chain(unknown).collect();
+                        format!("{id} ({})", reached.join(", "))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "lets plugins reach new scopes: {reaches}")
+            }
             Self::BreaksDependents { dependents } => {
                 write!(f, "breaks dependents {}", requirements(dependents))
             }
@@ -189,44 +213,68 @@ pub(crate) struct Requirement {
 pub(super) struct Candidate<'a> {
     pub(super) id: &'a str,
     pub(super) release: &'a OfferedRelease,
-    /// Whether the request named the release, granting the scopes it adds.
+    /// Whether the request named the release, granting the scopes it lets
+    /// plugins reach.
     pub(super) approved: bool,
 }
 
-/// The scopes `release` declares that the installed `plugin_id` does not;
-/// all of them when it is not installed.
-pub(super) fn added_scopes(
-    plugin_id: &str,
-    release: &OfferedRelease,
-    installed: &[PluginManifest],
-) -> Vec<String> {
-    let current = installed.iter().find(|manifest| manifest.id == plugin_id);
-    release
-        .scopes
-        .iter()
-        .filter(|scope| current.is_none_or(|manifest| !manifest.scopes.contains(scope)))
-        .cloned()
-        .collect()
+/// A plugin as [`holds`] weighs what it reaches: installed, or at a
+/// candidate's release.
+#[derive(Clone, Copy)]
+enum Reach<'a> {
+    Installed(&'a PluginManifest),
+    Release(&'a str, &'a OfferedRelease),
+}
+
+impl ScopedPlugin for Reach<'_> {
+    fn id(&self) -> &str {
+        match self {
+            Self::Installed(manifest) => &manifest.id,
+            Self::Release(id, _) => id,
+        }
+    }
+
+    fn scopes(&self) -> &[String] {
+        match self {
+            Self::Installed(manifest) => &manifest.scopes,
+            Self::Release(_, release) => &release.scopes,
+        }
+    }
+
+    fn dependency_ids(&self) -> impl Iterator<Item = &str> {
+        let dependencies = match self {
+            Self::Installed(manifest) => &manifest.dependencies,
+            Self::Release(_, release) => &release.dependencies,
+        };
+        dependencies.keys().map(String::as_str)
+    }
+}
+
+/// What installing `candidate` over `plugins` lets each plugin newly reach,
+/// as a hold when anything.
+fn scope_hold(plugins: &[Reach<'_>], candidate: &Candidate<'_>) -> Option<Hold> {
+    let gains = scope_gains(plugins, &Reach::Release(candidate.id, candidate.release));
+    (!gains.is_empty()).then_some(Hold::AddsScopes { gains })
 }
 
 /// Which of `candidates`, installed together over the `installed`
-/// plugins, wait, and why. Every candidate is judged against the plugins
-/// as they would be afterwards, cycles among them included: the installed
-/// ones with each candidate not held replaced by its release. Holding one
-/// can break another, so this repeats until no further candidate is held.
-/// A dependency problem takes precedence over added scopes, which approval
-/// cannot resolve.
+/// plugins, wait, and why. A candidate not approved waits when it lets a
+/// plugin reach new scopes, against the installed plugins or against the
+/// plugins as they would be afterwards: the installed ones with each other
+/// candidate not held replaced by its release. Dependencies are judged
+/// against the latter, cycles among them included. Holding one can change
+/// what another reaches or break it, so this repeats until no further
+/// candidate is held. A dependency problem takes precedence over added
+/// scopes, which approval cannot resolve.
 pub(super) fn holds(
     installed: &[PluginManifest],
     candidates: &[Candidate<'_>],
 ) -> HashMap<String, Hold> {
+    let current: Vec<Reach<'_>> = installed.iter().map(Reach::Installed).collect();
     let mut held: HashMap<String, Hold> = candidates
         .iter()
         .filter(|candidate| !candidate.approved)
-        .filter_map(|candidate| {
-            let scopes = added_scopes(candidate.id, candidate.release, installed);
-            (!scopes.is_empty()).then(|| (candidate.id.to_string(), Hold::AddsScopes { scopes }))
-        })
+        .filter_map(|candidate| Some((candidate.id.to_string(), scope_hold(&current, candidate)?)))
         .collect();
     loop {
         let mut after: BTreeMap<&str, (&Version, &BTreeMap<String, Dependency>)> = installed
@@ -250,6 +298,14 @@ pub(super) fn holds(
                 && let Some(hold) = dependency_hold(candidate, &after)
             {
                 changed.push((candidate.id.to_string(), hold));
+            } else if !candidate.approved
+                && !held.contains_key(candidate.id)
+                && let Some(hold) = scope_hold(
+                    &others_after(&current, candidates, &held, candidate),
+                    candidate,
+                )
+            {
+                changed.push((candidate.id.to_string(), hold));
             }
         }
         if changed.is_empty() {
@@ -257,6 +313,25 @@ pub(super) fn holds(
         }
         held.extend(changed);
     }
+}
+
+/// The `current` plugins with every candidate but `candidate` that is not
+/// `held` replaced by its release.
+fn others_after<'a>(
+    current: &[Reach<'a>],
+    candidates: &[Candidate<'a>],
+    held: &HashMap<String, Hold>,
+    candidate: &Candidate<'_>,
+) -> Vec<Reach<'a>> {
+    let mut plugins = current.to_vec();
+    for other in candidates {
+        if other.id == candidate.id || held.contains_key(other.id) {
+            continue;
+        }
+        plugins.retain(|plugin| plugin.id() != other.id);
+        plugins.push(Reach::Release(other.id, other.release));
+    }
+    plugins
 }
 
 /// Why installing `candidate` would leave `after` with a plugin that
@@ -427,7 +502,14 @@ fn offered_status(
 
 #[cfg(test)]
 mod tests {
+    use harmony_core::scopes::ScopeGrowth;
+
     use super::*;
+    use crate::plugins::scopes::{
+        Effect,
+        PluginEffect,
+        Risk,
+    };
 
     fn dependencies(requirements: &[(&str, &str)]) -> BTreeMap<String, Dependency> {
         requirements
@@ -480,15 +562,67 @@ mod tests {
         installed: &[PluginManifest],
         releases: &[(&str, &OfferedRelease)],
     ) -> BTreeMap<String, Hold> {
+        held_approving(installed, releases, &[])
+    }
+
+    /// [`held`], with the `approved` releases named by the request. Gains
+    /// are reduced to what is reached, as [`gain`] builds them.
+    fn held_approving(
+        installed: &[PluginManifest],
+        releases: &[(&str, &OfferedRelease)],
+        approved: &[&str],
+    ) -> BTreeMap<String, Hold> {
         let candidates: Vec<_> = releases
             .iter()
             .map(|(id, release)| Candidate {
                 id,
                 release,
-                approved: false,
+                approved: approved.contains(id),
             })
             .collect();
-        holds(installed, &candidates).into_iter().collect()
+        holds(installed, &candidates)
+            .into_iter()
+            .map(|(id, hold)| match hold {
+                Hold::AddsScopes { gains } => {
+                    let gains = gains
+                        .into_iter()
+                        .map(|(id, gained)| (id, gain(gained.growth)))
+                        .collect();
+                    (id, Hold::AddsScopes { gains })
+                }
+                hold => (id, hold),
+            })
+            .collect()
+    }
+
+    fn gain(growth: ScopeGrowth) -> ScopeGain {
+        ScopeGain {
+            growth,
+            effects: Vec::new(),
+            risk: Risk::Standard,
+        }
+    }
+
+    /// An [`Hold::AddsScopes`] letting each plugin reach its scopes.
+    fn adds(gains: &[(&str, &[&str])]) -> Hold {
+        Hold::AddsScopes {
+            gains: gains
+                .iter()
+                .map(|(id, scopes)| {
+                    let scopes = scopes.iter().map(ToString::to_string).collect();
+                    let growth = ScopeGrowth {
+                        scopes,
+                        ..ScopeGrowth::default()
+                    };
+                    (id.to_string(), gain(growth))
+                })
+                .collect(),
+        }
+    }
+
+    fn with_scopes(mut manifest: PluginManifest, scopes: &[&str]) -> PluginManifest {
+        manifest.scopes = scopes.iter().map(ToString::to_string).collect();
+        manifest
     }
 
     #[test]
@@ -607,7 +741,7 @@ mod tests {
     }
 
     #[test]
-    fn releases_needing_a_missing_plugin_are_held_unless_it_is_optional() {
+    fn releases_needing_a_missing_plugin_wait_for_it_unless_it_is_optional() {
         let installed = [manifest("a", "1.0.0", &[])];
         let needs = release("2.0.0", &[("missing", "^1")]);
         let mut optional = needs.clone();
@@ -626,7 +760,28 @@ mod tests {
             )]
             .into()
         );
-        assert!(held(&installed, &[("a", &optional)]).is_empty());
+        assert!(
+            held_approving(&installed, &[("a", &optional)], &["a"]).is_empty(),
+            "a missing optional dependency is no dependency problem"
+        );
+        assert_eq!(
+            held(&installed, &[("a", &optional)]),
+            [(
+                "a".into(),
+                Hold::AddsScopes {
+                    gains: [(
+                        "a".into(),
+                        gain(ScopeGrowth {
+                            unresolved: ["missing".into()].into(),
+                            ..ScopeGrowth::default()
+                        })
+                    )]
+                    .into(),
+                }
+            )]
+            .into(),
+            "what it reaches once installed is unknown"
+        );
     }
 
     #[test]
@@ -652,13 +807,90 @@ mod tests {
         alone.pop();
         assert_eq!(
             held(&alone, &[("a", &a)]),
+            [("a".into(), adds(&[("a", &["lyra.metadata"])]))].into()
+        );
+    }
+
+    #[test]
+    fn releases_are_held_for_scopes_their_dependents_would_reach() {
+        let installed = [
+            with_scopes(manifest("a", "1.0.0", &[]), &["lyra.metadata"]),
+            with_scopes(manifest("b", "1.0.0", &[("a", "^1")]), &["lyra.listens"]),
+        ];
+        let mut a = release("1.1.0", &[]);
+        a.scopes = vec!["lyra.metadata".into(), "harmony.http".into()];
+
+        assert_eq!(
+            held(&installed, &[("a", &a)]),
             [(
                 "a".into(),
-                Hold::AddsScopes {
-                    scopes: vec!["lyra.metadata".into()],
-                }
+                adds(&[("a", &["harmony.http"]), ("b", &["harmony.http"])])
             )]
             .into()
+        );
+        assert!(held_approving(&installed, &[("a", &a)], &["a"]).is_empty());
+    }
+
+    #[test]
+    fn releases_are_held_for_scopes_they_would_reach_through_new_dependencies() {
+        let installed = [
+            manifest("a", "1.0.0", &[]),
+            with_scopes(manifest("http", "1.0.0", &[]), &["harmony.http"]),
+        ];
+        let a = release("1.1.0", &[("http", "^1")]);
+
+        assert_eq!(
+            held(&installed, &[("a", &a)]),
+            [("a".into(), adds(&[("a", &["harmony.http"])]))].into()
+        );
+    }
+
+    #[test]
+    fn approving_one_release_does_not_approve_what_another_reaches_through_it() {
+        let installed = [manifest("a", "1.0.0", &[]), manifest("b", "1.0.0", &[])];
+        let a = release("1.1.0", &[("b", "^1")]);
+        let mut b = release("1.1.0", &[]);
+        b.scopes = vec!["harmony.http".into()];
+
+        assert!(
+            held(&installed, &[("a", &a)]).is_empty(),
+            "a reaches nothing new through the installed b"
+        );
+        assert_eq!(
+            held_approving(&installed, &[("a", &a), ("b", &b)], &["b"]),
+            [("a".into(), adds(&[("a", &["harmony.http"])]))].into()
+        );
+    }
+
+    #[test]
+    fn held_releases_describe_what_each_plugin_newly_reaches_and_its_risk() {
+        let installed = [
+            manifest("a", "1.0.0", &[]),
+            with_scopes(manifest("b", "1.0.0", &[("a", "^1")]), &["lyra.listens"]),
+        ];
+        let mut a = release("1.1.0", &[]);
+        a.scopes = vec!["harmony.http".into()];
+        let candidates = [Candidate {
+            id: "a",
+            release: &a,
+            approved: false,
+        }];
+
+        let Some(Hold::AddsScopes { gains }) = holds(&installed, &candidates).remove("a") else {
+            panic!("a is held for its scopes");
+        };
+        let egress = vec![PluginEffect {
+            effect: Effect::Egress,
+            via: ["a".to_string()].into(),
+        }];
+        assert_eq!(
+            (&gains["a"].effects, gains["a"].risk),
+            (&egress, Risk::Standard)
+        );
+        assert_eq!(
+            (&gains["b"].effects, gains["b"].risk),
+            (&egress, Risk::Elevated),
+            "b sends data off the server through a, and touches its listens"
         );
     }
 }
