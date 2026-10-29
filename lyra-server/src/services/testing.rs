@@ -55,12 +55,30 @@ use crate::services::{
 
 static RUNTIME_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
-pub(crate) async fn runtime_test_lock() -> MutexGuard<'static, ()> {
-    RUNTIME_TEST_LOCK.lock().await
+/// Held for the whole test; removes the data directory of the state initialized under it before
+/// releasing the lock.
+#[must_use]
+pub struct RuntimeTestGuard {
+    _lock: MutexGuard<'static, ()>,
 }
 
-/// The data directory of the current test state. Replacing it removes the previous state's; the
-/// last one is removed when the process exits.
+impl Drop for RuntimeTestGuard {
+    fn drop(&mut self) {
+        DATA_DIR
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+    }
+}
+
+pub(crate) async fn runtime_test_lock() -> RuntimeTestGuard {
+    RuntimeTestGuard {
+        _lock: RUNTIME_TEST_LOCK.lock().await,
+    }
+}
+
+/// The data directory of the current test state, removed when the [`RuntimeTestGuard`] it was
+/// created under drops or the next test state replaces it.
 static DATA_DIR: StdMutex<Option<TempDir>> = StdMutex::new(None);
 
 /// A fresh data directory for the next test state, in place of the current one.
@@ -74,26 +92,8 @@ fn replace_data_dir() -> anyhow::Result<PathBuf> {
         .unwrap_or_else(PoisonError::into_inner)
         .replace(data_dir);
     drop(previous);
-    remove_data_dir_at_exit();
     Ok(path)
 }
-
-#[cfg(unix)]
-fn remove_data_dir_at_exit() {
-    extern "C" fn remove_data_dir() {
-        if let Ok(mut data_dir) = DATA_DIR.try_lock() {
-            data_dir.take();
-        }
-    }
-    static REGISTERED: std::sync::Once = std::sync::Once::new();
-    REGISTERED.call_once(|| {
-        // SAFETY: `remove_data_dir` is a plain function that never unwinds.
-        unsafe { libc::atexit(remove_data_dir) };
-    });
-}
-
-#[cfg(not(unix))]
-fn remove_data_dir_at_exit() {}
 
 /// Boot values backed by a uniquely named in-memory DB and a data directory
 /// the test state owns, so tests never touch the server's data or any on-disk

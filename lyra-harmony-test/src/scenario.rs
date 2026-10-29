@@ -98,7 +98,7 @@ pub async fn run(options: RunOptions<'_>) -> anyhow::Result<RunResult> {
     };
 
     let started = Instant::now();
-    lyra_server::testing::initialize_runtime(&library).await?;
+    let _guard = lyra_server::testing::initialize_runtime(&library).await?;
     log_timing(debug_timing, test_name, "initialize_runtime", started);
     let started = Instant::now();
     let prepared =

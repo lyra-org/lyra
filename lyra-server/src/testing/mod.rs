@@ -7,6 +7,8 @@ mod fixture;
 
 pub use fixture::Fixture;
 
+pub use crate::services::testing::RuntimeTestGuard;
+
 use std::collections::{
     BTreeMap,
     BTreeSet,
@@ -79,7 +81,12 @@ pub struct FixtureSnapshot {
     pub tracks: Vec<EntitySnapshot>,
 }
 
-pub async fn initialize_runtime(library: &LibraryFixtureConfig) -> anyhow::Result<()> {
+/// Initializes the test state and plugin runtime for `library`. Hold the guard for as long as the
+/// state is in use.
+pub async fn initialize_runtime(
+    library: &LibraryFixtureConfig,
+) -> anyhow::Result<RuntimeTestGuard> {
+    let guard = runtime_test_lock().await;
     crate::plugins::testing::initialize_state(
         Some(services::testing::library_config(
             library.directory.clone(),
@@ -88,7 +95,8 @@ pub async fn initialize_runtime(library: &LibraryFixtureConfig) -> anyhow::Resul
         )?),
         Default::default(),
     )?;
-    crate::plugins::testing::start_runtime().await
+    crate::plugins::testing::start_runtime().await?;
+    Ok(guard)
 }
 
 pub async fn prepare_fixture(
@@ -305,8 +313,7 @@ pub async fn run_luau_plugin_test_file(
     test_path: &Path,
     fixture: Option<&Fixture>,
 ) -> anyhow::Result<()> {
-    let _guard = runtime_test_lock().await;
-    initialize_runtime(&LibraryFixtureConfig {
+    let _guard = initialize_runtime(&LibraryFixtureConfig {
         directory: plugin.directory.clone(),
         language: None,
         country: None,
@@ -684,7 +691,6 @@ mod tests {
 
     #[tokio::test]
     async fn plugin_sources_remain_available_to_refresh_callbacks() -> anyhow::Result<()> {
-        let _guard = runtime_test_lock().await;
         let source = tempfile::tempdir()?;
         std::fs::write(
             source.path().join("plugin.json"),
@@ -708,7 +714,7 @@ mod tests {
             "#,
         )?;
         std::fs::write(source.path().join("value.luau"), "return 42")?;
-        initialize_runtime(&LibraryFixtureConfig {
+        let _guard = initialize_runtime(&LibraryFixtureConfig {
             directory: source.path().to_path_buf(),
             language: None,
             country: None,
@@ -767,14 +773,13 @@ mod tests {
 
     #[tokio::test]
     async fn fixtures_ingest_tags_the_way_a_scan_does() -> anyhow::Result<()> {
-        let _guard = runtime_test_lock().await;
         let library = tempfile::tempdir()?;
         let config = LibraryFixtureConfig {
             directory: library.path().to_path_buf(),
             language: None,
             country: None,
         };
-        initialize_runtime(&config).await?;
+        let _guard = initialize_runtime(&config).await?;
 
         // Track 2 comes first and spells Beta decomposed; a scan normalizes the
         // spelling and orders tracks before inferring the release's artists.

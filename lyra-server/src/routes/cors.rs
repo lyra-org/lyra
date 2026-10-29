@@ -52,11 +52,11 @@ mod tests {
         },
         routing::get,
     };
-    use tokio::sync::MutexGuard;
     use tower::ServiceExt;
 
     use crate::services::settings::server::Config;
     use crate::services::testing::{
+        RuntimeTestGuard,
         init_default_test_state,
         publish_config,
         runtime_test_lock,
@@ -64,7 +64,7 @@ mod tests {
 
     /// Publishes `origins` as the live CORS list; hold the guard for the
     /// rest of the test.
-    async fn publish_origins(origins: &[&str]) -> anyhow::Result<MutexGuard<'static, ()>> {
+    async fn publish_origins(origins: &[&str]) -> anyhow::Result<RuntimeTestGuard> {
         let guard = runtime_test_lock().await;
         init_default_test_state()?;
         publish_config(config_with_origins(origins));

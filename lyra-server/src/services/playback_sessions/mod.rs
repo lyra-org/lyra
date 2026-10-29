@@ -286,7 +286,8 @@ mod tests {
     use nanoid::nanoid;
     use std::collections::HashSet;
     use std::iter::FromIterator;
-    use tokio::sync::MutexGuard;
+
+    use crate::services::testing::RuntimeTestGuard;
 
     use super::sessions::{
         PlaybackScopeKey,
@@ -295,7 +296,7 @@ mod tests {
         resolve_previous_playback,
     };
 
-    async fn new_scoped_test_db() -> anyhow::Result<(DbAny, MutexGuard<'static, ()>)> {
+    async fn new_scoped_test_db() -> anyhow::Result<(DbAny, RuntimeTestGuard)> {
         let guard = crate::services::testing::runtime_test_lock().await;
         crate::services::testing::init_default_test_state()?;
         Ok((new_test_db()?, guard))
