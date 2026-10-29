@@ -366,6 +366,51 @@ impl Vm {
         })
     }
 
+    /// Loads `chunk` with an environment of its own holding `globals`. Every
+    /// other global falls through to the shared table, and writes go there,
+    /// so only the named globals differ from a [`Vm::load_chunk`] chunk.
+    /// Functions the chunk creates share its environment.
+    pub fn load_chunk_with_globals(
+        &self,
+        chunk: &Chunk,
+        globals: &[(&str, &Value)],
+    ) -> Result<Function> {
+        let bytecode = compile(&chunk.source.0, chunk.compile)?;
+        let names = globals
+            .iter()
+            .map(|(name, _)| CString::new(*name))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let guard = self.stack_guard();
+        let main = self.inner.state;
+        // Luau gives a loaded chunk the environment of the state loading it.
+        let loader =
+            NonNull::new(unsafe { gateway::new_thread(main.as_ptr())? }).ok_or(Error::VmCreate)?;
+        unsafe { gateway::create_table(loader.as_ptr(), 0, globals.len() as c_int)? };
+        for ((_, value), name) in globals.iter().zip(&names) {
+            self.push_value_to(loader, value)?;
+            unsafe { gateway::raw_set_field(loader.as_ptr(), -2, name)? };
+        }
+        unsafe {
+            let loader = loader.as_ptr();
+            gateway::create_table(loader, 0, 2)?;
+            gateway::push_value(loader, sys::LUA_GLOBALSINDEX)?;
+            gateway::raw_set_field(loader, -2, c"__index")?;
+            gateway::push_value(loader, sys::LUA_GLOBALSINDEX)?;
+            gateway::raw_set_field(loader, -2, c"__newindex")?;
+            gateway::set_readonly(loader, -1, true)?;
+            gateway::set_metatable(loader, -2)?;
+            sys::lua_replace(loader, sys::LUA_GLOBALSINDEX);
+            gateway::load(loader, &chunk.chunk_name(), bytecode.as_bytes())?;
+            gateway::xmove(loader, main.as_ptr(), 1)?;
+        }
+        let reference = self.ref_top()?;
+        drop(guard);
+        Ok(Function {
+            reference,
+            origin: chunk.origin.clone(),
+        })
+    }
+
     pub fn eval(&self, source: impl Into<Arc<[u8]>>, origin: ChunkOrigin) -> Result<Vec<Value>> {
         let function = self.load_chunk(&Chunk::new(source, origin))?;
         function.call(self, &[])
@@ -477,6 +522,17 @@ impl Vm {
             });
         }
         self.replace_state_context(thread.state(), None)
+    }
+
+    /// The call context native calls on `thread` see.
+    pub fn thread_call_context(&self, thread: &Thread) -> Result<Option<CallContext>> {
+        if thread.vm_id() != self.inner.id {
+            return Err(Error::VmMismatch {
+                reference_vm: thread.vm_id(),
+                actual_vm: self.inner.id,
+            });
+        }
+        self.call_context_for_state(thread.state())
     }
 
     /// Runs `source` as [`Vm::eval`] does, as a call made in `context`.
@@ -1122,6 +1178,12 @@ struct ThreadInner {
 }
 
 impl Thread {
+    /// Whether code running on this thread may yield here; it can't inside
+    /// a metamethod, a `table.sort` comparator, or a host `pcall`.
+    pub fn is_yieldable(&self) -> bool {
+        unsafe { sys::lua_isyieldable(self.inner.state.as_ptr()) != 0 }
+    }
+
     fn new(
         reference: Option<RegistryRef>,
         state: NonNull<sys::lua_State>,
@@ -3603,6 +3665,42 @@ mod tests {
             task_group: TaskGroupId(group),
             ..CallContext::default()
         }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn chunks_loaded_with_globals_keep_their_own_and_share_the_rest() -> Result<()> {
+        let vm = Vm::new()?;
+        vm.open_standard_libraries(StandardLibraries {
+            base: true,
+            ..StandardLibraries::none()
+        })?;
+        let function = vm.load_chunk_with_globals(
+            &Chunk::new(
+                Arc::<[u8]>::from(
+                    &b"--!strict\nshared = own\nlocal function read() return own end\nreturn read(), select('#', ...), ..."[..],
+                ),
+                ChunkOrigin::default(),
+            ),
+            &[("own", &Value::Number(7.0))],
+        )?;
+        assert_eq!(
+            function.call(&vm, &[Value::Number(1.0), Value::Number(2.0)])?,
+            vec![
+                Value::Number(7.0),
+                Value::Number(2.0),
+                Value::Number(1.0),
+                Value::Number(2.0)
+            ]
+        );
+        assert_eq!(
+            vm.eval(
+                Arc::<[u8]>::from(&b"return shared, own"[..]),
+                ChunkOrigin::default()
+            )?,
+            vec![Value::Number(7.0), Value::Nil]
+        );
+        Ok(())
     }
 
     #[test]

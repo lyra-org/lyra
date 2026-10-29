@@ -62,6 +62,7 @@ unsafe extern "C-unwind" {
     fn harmony_luau_gateway_pushnumber(L: *mut lua_State, n: sys::lua_Number) -> c_int;
     fn harmony_luau_gateway_pushinteger64(L: *mut lua_State, n: i64) -> c_int;
     fn harmony_luau_gateway_pushthread(L: *mut lua_State) -> c_int;
+    fn harmony_luau_gateway_pushvalue(L: *mut lua_State, idx: c_int) -> c_int;
     fn harmony_luau_gateway_rawgeti(L: *mut lua_State, idx: c_int, n: c_int) -> c_int;
     fn harmony_luau_gateway_rawgetfield(L: *mut lua_State, idx: c_int, k: *const c_char) -> c_int;
     fn harmony_luau_gateway_getmetatable(L: *mut lua_State, idx: c_int, found: *mut c_int)
@@ -234,6 +235,11 @@ pub(super) unsafe fn push_integer(state: *mut lua_State, value: i64) -> Result<(
 
 pub(super) unsafe fn push_thread(state: *mut lua_State) -> Result<()> {
     unsafe { check(state, harmony_luau_gateway_pushthread(state)) }
+}
+
+/// Pushes a copy of the value at `index`.
+pub(super) unsafe fn push_value(state: *mut lua_State, index: c_int) -> Result<()> {
+    unsafe { check(state, harmony_luau_gateway_pushvalue(state, index)) }
 }
 
 pub(super) unsafe fn raw_get_index(state: *mut lua_State, index: c_int, key: c_int) -> Result<()> {

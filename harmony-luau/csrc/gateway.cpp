@@ -102,6 +102,11 @@ int harmony_luau_gateway_pushthread(lua_State* L)
     return protect(L, [&](lua_State* L) { lua_pushthread(L); });
 }
 
+int harmony_luau_gateway_pushvalue(lua_State* L, int idx)
+{
+    return protect(L, [&](lua_State* L) { lua_pushvalue(L, idx); });
+}
+
 int harmony_luau_gateway_rawgeti(lua_State* L, int idx, int n)
 {
     return protect(L, [&](lua_State* L) { lua_rawgeti(L, idx, n); });
