@@ -45,6 +45,7 @@ use crate::{
         },
         listens::{
             self as listen_service,
+            MAX_SUBMITTED_PLAYS,
             RecordOutcome,
             SubmissionOutcome,
             SubmittedPlay,
@@ -54,7 +55,10 @@ use crate::{
         providers::provider_registry,
     },
 };
-use lyra_db::Permission;
+use lyra_db::{
+    Permission,
+    ResolveId,
+};
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
@@ -692,9 +696,6 @@ impl From<SubmissionOutcome> for PlayOutcome {
     }
 }
 
-/// The most plays one submission may carry.
-const MAX_SUBMITTED_PLAYS: usize = 500;
-
 fn submitted_play(request: SubmittedPlayRequest) -> Result<SubmittedPlay, AppError> {
     if !listen_service::is_play_id(&request.play_id) {
         return Err(AppError::bad_request(format!(
@@ -711,7 +712,7 @@ fn submitted_play(request: SubmittedPlayRequest) -> Result<SubmittedPlay, AppErr
         })?;
     Ok(SubmittedPlay {
         play_id: request.play_id,
-        track_public_id: request.track_id,
+        track: ResolveId::Nanoid(request.track_id),
         started_at_ms,
         played_ms: request.played_ms,
     })

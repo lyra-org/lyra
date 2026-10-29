@@ -5,13 +5,19 @@
 
 //! What counts as a listen, for live playback and submitted plays alike.
 
-use std::collections::HashMap;
+use std::collections::{
+    HashMap,
+    hash_map::Entry,
+};
 
 use agdb::{
     DbAny,
     DbId,
 };
-use lyra_db::Listen;
+use lyra_db::{
+    Listen,
+    ResolveId,
+};
 use nanoid::nanoid;
 
 use serde::{
@@ -192,11 +198,14 @@ pub(crate) fn dispatch_recorded(user_public_id: &str, listens: impl IntoIterator
     }
 }
 
-/// A play a client recorded while it couldn't report live, naming its track by public id.
+/// The most plays one submission may carry.
+pub(crate) const MAX_SUBMITTED_PLAYS: usize = 500;
+
+/// A play a client recorded while it couldn't report live.
 #[derive(Clone, Debug)]
 pub(crate) struct SubmittedPlay {
     pub(crate) play_id: String,
-    pub(crate) track_public_id: String,
+    pub(crate) track: ResolveId,
     pub(crate) started_at_ms: u64,
     pub(crate) played_ms: u64,
 }
@@ -218,21 +227,25 @@ pub(crate) fn record_submitted(
     now_ms: u64,
 ) -> anyhow::Result<HashMap<String, SubmissionOutcome>> {
     let (outcomes, recorded) = db.transaction_mut(|t| {
-        let mut tracks = HashMap::<String, Option<(DbId, lyra_db::Track)>>::new();
+        let mut public_ids = HashMap::new();
+        let mut tracks = HashMap::<DbId, Option<lyra_db::Track>>::new();
         let mut outcomes = HashMap::with_capacity(plays.len());
         let mut recorded = Vec::new();
         for submitted in plays {
             if outcomes.contains_key(&submitted.play_id) {
                 continue;
             }
-            let track = match tracks.get(&submitted.track_public_id) {
-                Some(track) => track,
-                None => {
-                    let track = accessible_track(t, principal, &submitted.track_public_id)?;
-                    tracks
-                        .entry(submitted.track_public_id.clone())
-                        .or_insert(track)
+            let track = match submitted_track_db_id(t, &submitted.track, &mut public_ids)? {
+                Some(track_db_id) => {
+                    let track = match tracks.entry(track_db_id) {
+                        Entry::Occupied(entry) => entry.into_mut(),
+                        Entry::Vacant(entry) => {
+                            entry.insert(accessible_track(t, principal, track_db_id)?)
+                        }
+                    };
+                    track.as_ref().map(|track| (track_db_id, track))
                 }
+                None => None,
             };
             let outcome = match track {
                 Some((track_db_id, track)) => SubmissionOutcome::Judged(record_for_track(
@@ -240,7 +253,7 @@ pub(crate) fn record_submitted(
                     user_db_id,
                     Play {
                         play_id: &submitted.play_id,
-                        track_db_id: *track_db_id,
+                        track_db_id,
                         started_at_ms: submitted.started_at_ms,
                         played_ms: submitted.played_ms,
                     },
@@ -260,21 +273,38 @@ pub(crate) fn record_submitted(
     Ok(outcomes)
 }
 
+fn submitted_track_db_id(
+    db: &impl lyra_db::DbAccess,
+    track: &ResolveId,
+    public_ids: &mut HashMap<String, Option<DbId>>,
+) -> anyhow::Result<Option<DbId>> {
+    match track {
+        ResolveId::DbId(db_id) => Ok(Some(*db_id)),
+        ResolveId::Nanoid(public_id) => match public_ids.get(public_id) {
+            Some(db_id) => Ok(*db_id),
+            None => {
+                let db_id = lyra_db::lookup::find_node_id_by_id(db, public_id)?;
+                public_ids.insert(public_id.clone(), db_id);
+                Ok(db_id)
+            }
+        },
+        // Aliases name root collections, never tracks.
+        ResolveId::Alias(_) => Ok(None),
+    }
+}
+
 fn accessible_track(
     db: &impl lyra_db::DbAccess,
     principal: &Principal,
-    track_public_id: &str,
-) -> anyhow::Result<Option<(DbId, lyra_db::Track)>> {
-    let Some(db_id) = lyra_db::lookup::find_node_id_by_id(db, track_public_id)? else {
+    track_db_id: DbId,
+) -> anyhow::Result<Option<lyra_db::Track>> {
+    let Some(track) = lyra_db::tracks::get_by_id(db, track_db_id)? else {
         return Ok(None);
     };
-    let Some(track) = lyra_db::tracks::get_by_id(db, db_id)? else {
-        return Ok(None);
-    };
-    if !super::auth::access::entity_accessible(db, principal, db_id)? {
+    if !super::auth::access::entity_accessible(db, principal, track_db_id)? {
         return Ok(None);
     }
-    Ok(Some((db_id, track)))
+    Ok(Some(track))
 }
 
 #[cfg(test)]
