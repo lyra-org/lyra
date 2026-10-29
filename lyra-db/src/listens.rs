@@ -15,7 +15,7 @@ use agdb::{
     QueryBuilder,
 };
 
-#[derive(DbElement, Clone, Debug)]
+#[derive(DbElement, Clone, Debug, PartialEq, Eq)]
 pub struct Listen {
     pub db_id: Option<DbId>,
     pub id: String,

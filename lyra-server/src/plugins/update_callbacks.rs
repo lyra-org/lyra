@@ -1,0 +1,114 @@
+// This Source Code Form is subject to the terms of the Lyra Public License,
+// v1.0. If a copy of the Lyra Public License was not distributed with this file,
+// You can obtain one here:
+// www.meshiplaw.com/lyra.
+
+//! Callbacks plugins register with an `on_update` function, kept per VM and per kind of update.
+
+use std::{
+    cell::RefCell,
+    marker::PhantomData,
+    sync::Arc,
+};
+
+use harmony_core::{
+    CallContext,
+    CapabilityId,
+    ChunkOrigin,
+    ModuleId,
+};
+use harmony_luau as luau;
+
+use crate::services::plugin_scope::PluginId;
+
+#[derive(Clone)]
+pub(crate) struct RegisteredUpdateCallback {
+    pub(crate) plugin_id: Arc<str>,
+    pub(crate) context: CallContext,
+    pub(crate) function: luau::Function,
+}
+
+/// The callbacks registered for updates carrying `Payload`.
+pub(crate) struct UpdateCallbackStore<Payload> {
+    handlers: RefCell<Vec<RegisteredUpdateCallback>>,
+    payload: PhantomData<fn(Payload)>,
+}
+
+impl<Payload> UpdateCallbackStore<Payload> {
+    pub(crate) fn new() -> Self {
+        Self {
+            handlers: RefCell::new(Vec::new()),
+            payload: PhantomData,
+        }
+    }
+
+    pub(crate) fn snapshot(&self) -> Vec<RegisteredUpdateCallback> {
+        self.handlers.borrow().clone()
+    }
+
+    pub(crate) fn remove_plugin(&self, plugin_id: &str) {
+        self.handlers
+            .borrow_mut()
+            .retain(|handler| &*handler.plugin_id != plugin_id);
+    }
+}
+
+/// Registers the frame's `handler` argument in the VM's store for `Payload` updates.
+pub(crate) fn register<Payload: 'static>(
+    mut frame: luau::AsyncCallFrame<'_>,
+    function_name: &str,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let function: luau::Function = frame.args.read_named("handler")?;
+    let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
+        luau::Error::Runtime(format!(
+            "{function_name} must be called from plugin Luau code"
+        ))
+    })?;
+    let validated_plugin_id =
+        PluginId::new(plugin_id.to_string()).map_err(crate::plugins::runtime_error)?;
+    let vm = frame.vm.clone();
+    let context = call_context_to_core(&frame.context);
+    Ok(luau::ScheduledFuture::new(async move {
+        let generation = crate::plugins::STATE.generation();
+        let _registration = generation
+            .registries
+            .ensure_registrations_open(&validated_plugin_id)
+            .await
+            .map_err(crate::plugins::runtime_error)?;
+        let callbacks = vm.data().get::<UpdateCallbackStore<Payload>>()?;
+        callbacks
+            .handlers
+            .borrow_mut()
+            .push(RegisteredUpdateCallback {
+                plugin_id,
+                context,
+                function,
+            });
+        Ok(())
+    }))
+}
+
+fn call_context_to_core(context: &luau::CallContext) -> CallContext {
+    let mut caller = harmony_core::ContextBag::default();
+    for (type_id, value) in context.caller.cloned_entries() {
+        caller.insert_shared(type_id, value);
+    }
+
+    CallContext {
+        origin: ChunkOrigin {
+            module: context
+                .origin
+                .module
+                .as_ref()
+                .map(|module| ModuleId(module.0.clone())),
+            plugin: context.origin.plugin.clone(),
+            path: context.origin.path.clone(),
+        },
+        capability: context
+            .capability
+            .as_ref()
+            .map(|capability| CapabilityId(capability.0.clone())),
+        caller,
+        task_group: harmony_core::TaskGroupId(context.task_group.0),
+    }
+}

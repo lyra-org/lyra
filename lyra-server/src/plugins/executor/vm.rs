@@ -26,6 +26,8 @@ use harmony_core::{
 };
 use harmony_luau as luau;
 
+use crate::plugins::update_callbacks::UpdateCallbackStore;
+
 use super::{
     PluginExecutor,
     WebSocketState,
@@ -158,9 +160,12 @@ impl PluginExecutor {
                     .insert(crate::plugins::metadata::MetadataCallbackRegistry::new())?;
                 vm.data()
                     .insert(crate::plugins::mix::MixCallbackRegistry::new())?;
-                vm.data().insert(
-                    crate::plugins::playback_sessions::PlaybackUpdateCallbackStore::new(),
-                )?;
+                vm.data().insert(UpdateCallbackStore::<
+                    crate::services::playback_sessions::PlaybackUpdatePayload,
+                >::new())?;
+                vm.data().insert(UpdateCallbackStore::<
+                    crate::services::listens::ListenUpdatePayload,
+                >::new())?;
                 vm.data()
                     .insert(crate::plugins::api::ApiRouteStore::new())?;
                 Ok(())
@@ -191,12 +196,33 @@ impl PluginExecutor {
         self.runtime.verify_plugin_manifest(plugin_id)
     }
 
+    /// Re-runs the plugin's entrypoint with none of its old callbacks; a failed run keeps none of
+    /// the callbacks it registered either.
     pub(crate) fn restart_plugin(&self, plugin_id: &str) -> Result<()> {
+        self.clear_plugin_callbacks(plugin_id)?;
+        let restarted = self.runtime.restart_plugin(plugin_id);
+        if restarted.is_err() {
+            self.clear_plugin_callbacks(plugin_id)?;
+        }
+        restarted
+    }
+
+    /// Drops the callbacks the plugin registered in this VM.
+    pub(crate) fn clear_plugin_callbacks(&self, plugin_id: &str) -> Result<()> {
         self.vm
             .data()
             .get::<crate::plugins::metadata::MetadataCallbackRegistry>()?
             .remove_plugin(plugin_id);
-        self.runtime.restart_plugin(plugin_id)
+        self.vm
+            .data()
+            .get::<UpdateCallbackStore<crate::services::playback_sessions::PlaybackUpdatePayload>>(
+            )?
+            .remove_plugin(plugin_id);
+        self.vm
+            .data()
+            .get::<UpdateCallbackStore<crate::services::listens::ListenUpdatePayload>>()?
+            .remove_plugin(plugin_id);
+        Ok(())
     }
 
     pub(crate) fn exec_all(&self) -> Result<()> {

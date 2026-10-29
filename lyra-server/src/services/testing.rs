@@ -35,6 +35,7 @@ pub(crate) use self::test_state::{
     init_default_test_state,
     init_library_test_state,
     publish_config,
+    record_plugin_dispatch,
     run_with_recycle_at,
     user_principal,
 };
@@ -163,7 +164,11 @@ pub(crate) async fn start_runtime() -> anyhow::Result<()> {
 mod test_state {
     use std::{
         path::PathBuf,
-        sync::Arc,
+        sync::{
+            Arc,
+            Mutex as StdMutex,
+            PoisonError,
+        },
     };
 
     use agdb::{
@@ -188,6 +193,85 @@ mod test_state {
     /// [`runtime_test_lock`].
     pub(crate) fn init_default_test_state() -> anyhow::Result<()> {
         initialize_state(None)
+    }
+
+    /// A plugin runtime stand-in that keeps the listen updates services hand it.
+    #[derive(Default)]
+    pub(crate) struct RecordingDispatch {
+        listen_updates: StdMutex<Vec<crate::services::listens::ListenUpdatePayload>>,
+    }
+
+    impl RecordingDispatch {
+        pub(crate) fn listen_updates(&self) -> Vec<crate::services::listens::ListenUpdatePayload> {
+            self.listen_updates
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
+        }
+    }
+
+    impl crate::services::plugin_dispatch::PluginDispatch for RecordingDispatch {
+        fn vm_id(&self) -> u64 {
+            0
+        }
+
+        fn dispatch_metadata_refresh(
+            &self,
+            _request: crate::services::plugin_dispatch::MetadataRefreshRequest,
+        ) -> futures::future::BoxFuture<
+            '_,
+            anyhow::Result<crate::services::plugin_dispatch::MetadataRefreshResult>,
+        > {
+            Box::pin(async { anyhow::bail!("the recording dispatch runs no plugins") })
+        }
+
+        fn dispatch_mix_handler(
+            &self,
+            _request: crate::services::plugin_dispatch::MixHandlerRequest,
+        ) -> futures::future::BoxFuture<
+            '_,
+            anyhow::Result<crate::services::plugin_dispatch::MixHandlerResult>,
+        > {
+            Box::pin(async { anyhow::bail!("the recording dispatch runs no plugins") })
+        }
+
+        fn dispatch_similar_releases(
+            &self,
+            _request: crate::services::plugin_dispatch::SimilarReleasesDispatchRequest,
+        ) -> futures::future::BoxFuture<
+            '_,
+            anyhow::Result<crate::services::plugin_dispatch::SimilarReleasesDispatchResult>,
+        > {
+            Box::pin(async { anyhow::bail!("the recording dispatch runs no plugins") })
+        }
+
+        fn dispatch_playback_update(
+            &self,
+            _payload: crate::services::playback_sessions::PlaybackUpdatePayload,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn dispatch_listen_update(
+            &self,
+            payload: crate::services::listens::ListenUpdatePayload,
+        ) -> anyhow::Result<()> {
+            self.listen_updates
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(payload);
+            Ok(())
+        }
+    }
+
+    /// Installs a [`RecordingDispatch`] as this generation's plugin runtime.
+    pub(crate) fn record_plugin_dispatch() -> Arc<RecordingDispatch> {
+        let dispatch = Arc::new(RecordingDispatch::default());
+        STATE
+            .generation()
+            .plugin_dispatch
+            .replace(Some(dispatch.clone()));
+        dispatch
     }
 
     /// Principal for an existing user, built the way request auth builds one.

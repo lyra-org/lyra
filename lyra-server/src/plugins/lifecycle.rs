@@ -82,7 +82,6 @@ impl PluginRegistries {
         crate::plugins::api::teardown_plugin_routes(plugin_id).await;
         crate::services::providers::teardown_plugin_providers(plugin_id).await;
         crate::services::mix::teardown_plugin_mixers(plugin_id).await;
-        crate::services::playback_sessions::teardown_plugin_callbacks(plugin_id).await;
         crate::plugins::settings::teardown_plugin_settings(plugin_id).await;
 
         if reopen_registrations {
@@ -195,6 +194,14 @@ impl PluginRegistries {
             Ok(()) => {
                 refreeze_plugin_registration_exemptions(plugin_id).await;
                 if let Err(err) = crate::plugins::api::rebuild_registered_routes().await {
+                    if let Err(clear_err) = runtime.clear_plugin_callbacks(plugin_id.as_str()).await
+                    {
+                        tracing::error!(
+                            plugin_id = %plugin_id,
+                            error = %clear_err,
+                            "failed to drop the callbacks of a plugin whose restart failed"
+                        );
+                    }
                     self.teardown_plugin(plugin_id, false).await;
                     return Err(PluginRestartError::Failed {
                         plugin_id: plugin_id.clone(),

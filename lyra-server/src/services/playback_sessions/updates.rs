@@ -5,10 +5,7 @@
 
 use std::{
     collections::HashMap,
-    sync::{
-        Arc,
-        Mutex,
-    },
+    sync::Mutex,
     time::Instant,
 };
 
@@ -16,17 +13,9 @@ use serde::{
     Deserialize,
     Serialize,
 };
-use tokio::sync::{
-    RwLock,
-    broadcast,
-};
+use tokio::sync::broadcast;
 
 use crate::services::playback_sessions as playbacks;
-use crate::services::plugin_scope::{
-    PluginId,
-    PluginScopedInner,
-    ScopedRegistry,
-};
 use lyra_db::PlaybackState;
 
 /// Broadcast channel capacity for playback state events pushed to WS clients.
@@ -37,7 +26,6 @@ const DEFAULT_DISPATCH_CALLER: &str = "route";
 
 /// Generation-owned playback update state.
 pub(crate) struct PlaybackUpdateRegistries {
-    callbacks: Arc<RwLock<PlaybackCallbackRegistry>>,
     event_broadcasts: Mutex<HashMap<String, broadcast::Sender<PlaybackUpdatePayload>>>,
     dispatch_buckets: Mutex<HashMap<String, DispatchBucket>>,
 }
@@ -45,19 +33,10 @@ pub(crate) struct PlaybackUpdateRegistries {
 impl Default for PlaybackUpdateRegistries {
     fn default() -> Self {
         Self {
-            callbacks: Arc::default(),
             event_broadcasts: Mutex::new(HashMap::new()),
             dispatch_buckets: Mutex::new(HashMap::new()),
         }
     }
-}
-
-fn playback_callbacks() -> Arc<RwLock<PlaybackCallbackRegistry>> {
-    crate::services::STATE
-        .generation()
-        .playback_updates
-        .callbacks
-        .clone()
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -131,28 +110,6 @@ fn broadcast_playback_event(payload: PlaybackUpdatePayload) {
     if remove_idle {
         broadcasts.remove(&user_public_id);
     }
-}
-
-/// Callbacks registered via `lyra.playback_sessions.on_update`, bucketed per
-/// plugin. `BTreeMap` for stable dispatch order — don't let hash order become
-/// an implicit API.
-#[derive(Default)]
-pub(crate) struct PlaybackCallbackRegistry;
-
-impl PluginScopedInner for PlaybackCallbackRegistry {
-    fn clear_bucket(&mut self, plugin_id: &PluginId) {
-        let _ = plugin_id;
-    }
-
-    fn rebuild_derived(&mut self) {
-        // No side-car state: snapshot_handlers rebuilds on every call.
-    }
-}
-
-pub(crate) async fn teardown_plugin_callbacks(plugin_id: &PluginId) {
-    ScopedRegistry::from_shared(playback_callbacks())
-        .teardown(plugin_id)
-        .await;
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -4,8 +4,10 @@
 -- You can obtain one here:
 -- www.meshiplaw.com/lyra.
 
+local documents = require("@self/documents")
 local entities = require("@lyra/entities")
 local http = require("@harmony/http")
+local listens = require("@lyra/listens")
 local serde = require("@harmony/serde")
 local json = serde.json
 local playbacks = require("@lyra/playback_sessions")
@@ -22,6 +24,7 @@ end)
 local LISTENBRAINZ_SUBMIT_URL = "https://api.listenbrainz.org/1/submit-listens"
 
 type PlaybackUpdatePayload = playbacks.PlaybackUpdatePayload
+type ListenUpdatePayload = listens.ListenUpdatePayload
 type JsonValue = serde.JsonValue
 type HttpRequestOptions = http.HttpRequestOptions
 type TrackProjection = entities.Track
@@ -34,33 +37,10 @@ type TrackProjectionIncludes = entities.TrackProjectionIncludes
 type EntityQueryRequest = entities.EntityQueryRequest
 type IdentifiersByScheme = { [string]: string }
 
-type AdditionalInfo = {
-	submission_client: string,
-	submission_client_version: string,
-	duration_ms: number?,
-	tracknumber: string?,
-	discnumber: string?,
-	recording_mbid: string?,
-	release_mbid: string?,
-	release_group_mbid: string?,
-	artist_mbids: { string }?,
-}
-
-type TrackMetadata = {
-	artist_name: string,
-	track_name: string,
-	release_name: string?,
-	additional_info: AdditionalInfo,
-}
+type AdditionalInfo = documents.AdditionalInfo
+type TrackMetadata = documents.TrackMetadata
 
 http.set_rate_limit({ domain = "api.listenbrainz.org" })
-
-local started_at_sec_by_playback_session_id: { [string]: number } = {}
-local single_submitted_by_playback_session_id: { [string]: boolean } = {}
-
-local function unix_seconds_from_ms(ms: number?): number
-	return math.floor((ms or 0) / 1000)
-end
 
 local function is_non_empty_string(value: string?): boolean
 	return type(value) == "string" and value:match("%S") ~= nil
@@ -203,8 +183,8 @@ local function build_additional_info(
 	return additional_info
 end
 
-local function build_track_metadata(update: PlaybackUpdatePayload): TrackMetadata?
-	local track, includes = query_track_projection(update.track_public_id)
+local function build_track_metadata(track_public_id: string): TrackMetadata?
+	local track, includes = query_track_projection(track_public_id)
 	local artists_list = if includes then includes.artists else nil
 	local releases_list = if includes then includes.releases else nil
 	local identifiers = if includes then includes.identifiers else nil
@@ -229,7 +209,7 @@ local function build_track_metadata(update: PlaybackUpdatePayload): TrackMetadat
 	return metadata
 end
 
-local function submit_listens(token: string, document: JsonValue): boolean
+local function submit_listens(token: string, document: JsonValue)
 	local request: HttpRequestOptions = {
 		url = LISTENBRAINZ_SUBMIT_URL,
 		method = http.HttpMethod.Post,
@@ -248,94 +228,59 @@ local function submit_listens(token: string, document: JsonValue): boolean
 		if response.body and response.body ~= "" then
 			warn(`response body from ListenBrainz: {response.body}`)
 		end
-
-		return false
 	end
-
-	return true
 end
 
-local function submit_playing_now(token: string, update: PlaybackUpdatePayload): boolean
-	local track_metadata = build_track_metadata(update)
+local function user_token(user_public_id: string): string?
+	local ok, settings = pcall(user_config.get, user_config, user_public_id)
+	if not ok then
+		return nil
+	end
+	return require_non_empty_string(settings.token :: string?)
+end
+
+playbacks.on_update(function(update: PlaybackUpdatePayload)
+	if update.event ~= "started" then
+		return
+	end
+	local token = user_token(update.user_public_id)
+	if not token then
+		return
+	end
+	local track_metadata = build_track_metadata(update.track_public_id)
 	if not track_metadata then
 		warn(
 			`skipping ListenBrainz playing_now for track_public_id={update.track_public_id}: missing artist_name or track_name`
 		)
-		return false
-	end
-
-	return submit_listens(token, {
-		listen_type = "playing_now",
-		payload = {
-			{
-				track_metadata = track_metadata,
-			},
-		},
-	})
-end
-
-local function submit_single_listen(token: string, update: PlaybackUpdatePayload): boolean
-	local track_metadata = build_track_metadata(update)
-	if not track_metadata then
-		warn(
-			`skipping ListenBrainz single for track_public_id={update.track_public_id}: missing artist_name or track_name`
-		)
-		return false
-	end
-
-	local listened_at = started_at_sec_by_playback_session_id[update.playback_session_public_id]
-	if not listened_at then
-		listened_at = unix_seconds_from_ms(update.updated_at_ms)
-	end
-
-	return submit_listens(token, {
-		listen_type = "single",
-		payload = {
-			{
-				listened_at = listened_at,
-				track_metadata = track_metadata,
-			},
-		},
-	})
-end
-
-playbacks.on_update(function(update)
-	local ok, settings = pcall(user_config.get, user_config, update.user_public_id)
-	if not ok then
 		return
 	end
-	local token = settings.token :: string?
-	if not token or token == "" then
+	submit_listens(token, documents.playing_now(track_metadata))
+end)
+
+listens.on_update(function(update: ListenUpdatePayload)
+	if update.event ~= "recorded" then
 		return
 	end
-
-	local session_key = update.playback_session_public_id
-	if update.event == "started" then
-		started_at_sec_by_playback_session_id[session_key] = unix_seconds_from_ms(update.updated_at_ms)
-		single_submitted_by_playback_session_id[session_key] = nil
-		submit_playing_now(token, update)
+	local token = user_token(update.user_id)
+	if not token then
 		return
 	end
-
-	if update.event == "evicted" then
-		started_at_sec_by_playback_session_id[session_key] = nil
-		single_submitted_by_playback_session_id[session_key] = nil
-		return
-	end
-
-	if update.event == "stopped" or update.event == "completed" then
-		if single_submitted_by_playback_session_id[session_key] then
-			return
+	local metadata_by_track: { [string]: TrackMetadata | false } = {}
+	local submissions: { documents.Submission } = {}
+	for _, listen in update.listens do
+		local track_metadata = metadata_by_track[listen.track_id]
+		if track_metadata == nil then
+			track_metadata = build_track_metadata(listen.track_id) or false
+			metadata_by_track[listen.track_id] = track_metadata
+			if not track_metadata then
+				warn(`skipping ListenBrainz listens of track_id={listen.track_id}: missing artist_name or track_name`)
+			end
 		end
-
-		if update.event ~= "completed" then
-			started_at_sec_by_playback_session_id[session_key] = nil
-			return
+		if track_metadata then
+			table.insert(submissions, { listen = listen, track_metadata = track_metadata })
 		end
-
-		if submit_single_listen(token, update) then
-			single_submitted_by_playback_session_id[session_key] = true
-			started_at_sec_by_playback_session_id[session_key] = nil
-		end
+	end
+	for _, document in documents.listens(submissions) do
+		submit_listens(token, document)
 	end
 end)

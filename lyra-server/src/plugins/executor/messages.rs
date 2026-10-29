@@ -81,6 +81,10 @@ pub(super) enum PluginExecutorCommand {
         plugin_id: String,
         reply: tokio::sync::oneshot::Sender<Result<()>>,
     },
+    ClearPluginCallbacks {
+        plugin_id: String,
+        reply: tokio::sync::oneshot::Sender<Result<()>>,
+    },
     ExecAll(tokio::sync::oneshot::Sender<Result<()>>),
     MixHandler {
         request: MixHandlerRequest,
@@ -103,6 +107,7 @@ pub(super) enum PluginExecutorCommand {
         reply: tokio::sync::oneshot::Sender<Result<()>>,
     },
     PlaybackUpdate(PlaybackUpdatePayload),
+    ListenUpdate(crate::services::listens::ListenUpdatePayload),
 }
 
 #[derive(Clone, Debug)]

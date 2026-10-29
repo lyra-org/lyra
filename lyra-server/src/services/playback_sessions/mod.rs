@@ -36,6 +36,7 @@ pub(crate) use self::sessions::{
     with_no_current_binding_for_playback,
 };
 pub(crate) use self::workflow::{
+    cleanup_after_commit,
     cleanup_evicted_playbacks,
     list_playbacks,
     pause_playback_in_transaction,
@@ -55,7 +56,6 @@ pub(crate) use updates::{
     dispatch_playback_update,
     dispatch_playback_update_for_caller,
     subscribe_playback_events,
-    teardown_plugin_callbacks,
     unsubscribe_playback_events,
 };
 
@@ -156,6 +156,18 @@ pub(crate) struct PlaybackRecord {
 pub(crate) struct TransactionPlaybackUpdate {
     pub(crate) playback: PlaybackRecord,
     pub(crate) event: String,
+    /// The listen the report recorded, for the transaction's owner to announce after commit.
+    pub(crate) recorded_listen: Option<lyra_db::Listen>,
+}
+
+impl TransactionPlaybackUpdate {
+    /// Announces the recorded listen, if any; call right after the transaction commits.
+    pub(crate) fn announce_recorded_listen(&self) {
+        crate::services::listens::dispatch_recorded(
+            &self.playback.user_public_id,
+            self.recorded_listen.clone(),
+        );
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -2336,7 +2348,13 @@ mod tests {
                 T0 + 60_000,
             )
         })?;
-        assert_eq!(offline, crate::services::listens::RecordOutcome::Recorded);
+        assert!(
+            matches!(
+                offline,
+                crate::services::listens::RecordOutcome::Recorded(_)
+            ),
+            "{offline:?}"
+        );
         report_play(
             &mut db,
             user,
@@ -2571,6 +2589,51 @@ mod tests {
         assert_eq!(
             listen_for_play(&db, user, "resumed-play-00001")?.played_ms,
             40_000
+        );
+        Ok(())
+    }
+    #[tokio::test]
+    async fn a_live_listen_is_announced_once_when_it_counts() -> anyhow::Result<()> {
+        let (mut db, _guard) = new_scoped_test_db().await?;
+        let dispatch = crate::services::testing::record_plugin_dispatch();
+        let user = insert_user(&mut db, "alice")?;
+        let track = insert_track(&mut db, "A", 200_000)?;
+        let track_public_id = lyra_db::lookup::find_id_by_db_id(&db, track)?.expect("track id");
+
+        report_play(&mut db, user, track, "announced-play-001", 0, T0)?;
+        assert!(dispatch.listen_updates().is_empty());
+        report_play(
+            &mut db,
+            user,
+            track,
+            "announced-play-001",
+            30_000,
+            T0 + 30_000,
+        )?;
+        // Later reports only raise the stored playing time.
+        report_play(
+            &mut db,
+            user,
+            track,
+            "announced-play-001",
+            60_000,
+            T0 + 60_000,
+        )?;
+
+        let listen = listen_for_play(&db, user, "announced-play-001")?;
+        assert_eq!(listen.played_ms, 60_000);
+        assert_eq!(
+            dispatch.listen_updates(),
+            vec![crate::services::listens::ListenUpdatePayload {
+                event: "recorded".to_string(),
+                user_id: user_public_id(&db, user),
+                listens: vec![crate::services::listens::ListenPayload {
+                    listen_id: listen.id,
+                    track_id: track_public_id,
+                    started_at_ms: T0,
+                    played_ms: 30_000,
+                }],
+            }]
         );
         Ok(())
     }

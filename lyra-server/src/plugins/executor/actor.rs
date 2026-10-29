@@ -192,6 +192,14 @@ impl PluginExecutorHandle {
         .await
     }
 
+    pub(crate) async fn clear_plugin_callbacks(&self, plugin_id: &str) -> Result<()> {
+        self.request_async(|reply| PluginExecutorCommand::ClearPluginCallbacks {
+            plugin_id: plugin_id.to_string(),
+            reply,
+        })
+        .await
+    }
+
     pub(crate) async fn exec_all(&self) -> Result<()> {
         self.request_async(PluginExecutorCommand::ExecAll).await
     }
@@ -257,6 +265,14 @@ impl PluginDispatch for PluginExecutorHandle {
         self.tx
             .try_send(PluginExecutorCommand::PlaybackUpdate(payload))
     }
+
+    fn dispatch_listen_update(
+        &self,
+        payload: crate::services::listens::ListenUpdatePayload,
+    ) -> Result<()> {
+        self.tx
+            .try_send(PluginExecutorCommand::ListenUpdate(payload))
+    }
 }
 
 fn plugin_executor_channel(
@@ -317,6 +333,9 @@ fn handle_plugin_executor_command(
         PluginExecutorCommand::RestartPlugin { plugin_id, reply } => {
             reply_if_open(reply, || runtime.restart_plugin(&plugin_id));
         }
+        PluginExecutorCommand::ClearPluginCallbacks { plugin_id, reply } => {
+            reply_if_open(reply, || runtime.clear_plugin_callbacks(&plugin_id));
+        }
         PluginExecutorCommand::ExecAll(reply) => {
             reply_if_open(reply, || runtime.exec_all());
         }
@@ -342,6 +361,11 @@ fn handle_plugin_executor_command(
         PluginExecutorCommand::PlaybackUpdate(payload) => {
             if let Err(error) = runtime.dispatch_playback_update(payload) {
                 tracing::warn!(error = %error, "plugin playback on_update dispatch failed");
+            }
+        }
+        PluginExecutorCommand::ListenUpdate(payload) => {
+            if let Err(error) = runtime.dispatch_listen_update(payload) {
+                tracing::warn!(error = %error, "plugin listen on_update dispatch failed");
             }
         }
     }

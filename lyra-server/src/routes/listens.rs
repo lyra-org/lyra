@@ -683,7 +683,7 @@ enum PlayOutcome {
 impl From<SubmissionOutcome> for PlayOutcome {
     fn from(outcome: SubmissionOutcome) -> Self {
         match outcome {
-            SubmissionOutcome::Judged(RecordOutcome::Recorded) => Self::Recorded,
+            SubmissionOutcome::Judged(RecordOutcome::Recorded(_)) => Self::Recorded,
             SubmissionOutcome::Judged(RecordOutcome::Duplicate) => Self::Duplicate,
             SubmissionOutcome::Judged(RecordOutcome::NotListened) => Self::NotListened,
             SubmissionOutcome::Judged(RecordOutcome::InvalidTime) => Self::InvalidTime,
@@ -1151,6 +1151,48 @@ mod tests {
             assert_eq!(retry["retried-play-00001"], PlayOutcome::Duplicate);
             assert_eq!(retry["retried-short-0001"], PlayOutcome::NotListened);
             assert_eq!(listen_count(&fixture).await?, 1);
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn a_submission_announces_its_listens_as_one_update() -> anyhow::Result<()> {
+            let _guard = crate::services::testing::runtime_test_lock().await;
+            let fixture = setup(true).await?;
+            let dispatch = crate::services::testing::record_plugin_dispatch();
+            let long = fixture.long_track_id.as_str();
+            let plays = || {
+                vec![
+                    play("announced-one-0001", long, STARTED_AT, 60_000),
+                    play("announced-two-0001", long, STARTED_AT, 90_000),
+                    play("announced-short-01", long, STARTED_AT, 5_000),
+                ]
+            };
+
+            submit(&fixture.headers, plays())
+                .await
+                .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+            submit(&fixture.headers, plays())
+                .await
+                .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+
+            let updates = dispatch.listen_updates();
+            assert_eq!(updates.len(), 1, "a retry announces nothing: {updates:?}");
+            let played = updates[0]
+                .listens
+                .iter()
+                .map(|listen| listen.played_ms)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                played,
+                vec![60_000, 90_000],
+                "listens keep submission order"
+            );
+            assert!(
+                updates[0]
+                    .listens
+                    .iter()
+                    .all(|listen| listen.track_id == long)
+            );
             Ok(())
         }
 

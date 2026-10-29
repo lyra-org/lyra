@@ -1071,6 +1071,57 @@ fn plugin_executor_exposes_lyra_playback_sessions_on_update() -> Result<()> {
 }
 
 #[test]
+fn plugin_executor_exposes_lyra_listens_on_update() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+    crate::plugins::testing::init_default_test_state()?;
+    let runtime = runtime_with_scopes(&["lyra.listens", "harmony.task"])?;
+    runtime.run_plugin_source(
+        "demo",
+        "init.luau",
+        &br#"
+            local task = require("@harmony/task")
+            local listens = require("@lyra/listens")
+
+            executor_listen_updates = {}
+            listens.on_update(function(update)
+                task.wait()
+                for _, listen in update.listens do
+                    table.insert(
+                        executor_listen_updates,
+                        `{update.event}:{update.user_id}:{listen.listen_id}:{listen.track_id}:{listen.started_at_ms}:{listen.played_ms}`
+                    )
+                end
+            end)
+        "#[..],
+    )?;
+
+    let listen = |listen_id: &str| crate::services::listens::ListenPayload {
+        listen_id: listen_id.to_string(),
+        track_id: "track-public".to_string(),
+        started_at_ms: 1_000,
+        played_ms: 42_000,
+    };
+    runtime.dispatch_listen_update(crate::services::listens::ListenUpdatePayload {
+        event: "recorded".to_string(),
+        user_id: "user-public".to_string(),
+        listens: vec![listen("listen-a"), listen("listen-b")],
+    })?;
+
+    let values = runtime.eval_plugin_source(
+        "demo",
+        "check.luau",
+        &b"return table.concat(executor_listen_updates, ',')"[..],
+    )?;
+    assert_eq!(
+        values,
+        vec![luau::Value::String(
+            b"recorded:user-public:listen-a:track-public:1000:42000,recorded:user-public:listen-b:track-public:1000:42000".to_vec()
+        )]
+    );
+    Ok(())
+}
+
+#[test]
 fn plugin_executor_dispatches_registered_api_handler() -> Result<()> {
     // api::install resets the shared API route registry; serialize with the
     // other global-registry mutators.
@@ -1959,6 +2010,140 @@ fn plugin_executor_restart_reloads_plugin_sources_from_disk() -> Result<()> {
     runtime.restart_plugin("demo")?;
     assert_eq!(read_output(&runtime)?, vec![luau::Value::Number(2.0)]);
 
+    let _ = std::fs::remove_dir_all(test_dir);
+    Ok(())
+}
+
+#[test]
+fn plugin_executor_restart_keeps_one_registration_of_each_update_handler() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+    crate::plugins::testing::init_default_test_state()?;
+    let test_dir = std::env::temp_dir().join(format!(
+        "lyra-restart-handlers-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos()
+    ));
+    let plugin_dir = test_dir.join("plugins").join("demo");
+    std::fs::create_dir_all(&plugin_dir)?;
+    std::fs::write(
+        plugin_dir.join("plugin.json"),
+        r#"{
+            "schema_version": 1,
+            "id": "demo",
+            "name": "Demo",
+            "version": "1.0.0",
+            "description": "Demo plugin",
+            "entrypoint": "init.luau",
+            "scopes": ["lyra.listens", "lyra.playback_sessions"]
+        }"#,
+    )?;
+    std::fs::write(
+        plugin_dir.join("init.luau"),
+        r#"
+            local listens = require("@lyra/listens")
+            local playbacks = require("@lyra/playback_sessions")
+            listen_calls = 0
+            playback_calls = 0
+            listens.on_update(function() listen_calls += 1 end)
+            playbacks.on_update(function() playback_calls += 1 end)
+        "#,
+    )?;
+    let (runtime, errors) =
+        PluginExecutor::discover_from_plugins_dir(test_dir.join("plugins"), default_server_info())?;
+    assert!(errors.is_empty(), "{errors:?}");
+
+    runtime.exec_plugin("demo")?;
+    runtime.restart_plugin("demo")?;
+    runtime.restart_plugin("demo")?;
+    runtime.dispatch_listen_update(crate::services::listens::ListenUpdatePayload {
+        event: "recorded".to_string(),
+        user_id: "user-public".to_string(),
+        listens: Vec::new(),
+    })?;
+    runtime.dispatch_playback_update(
+        crate::services::playback_sessions::PlaybackUpdatePayload {
+            event: "progress".to_string(),
+            state: lyra_db::PlaybackState::Playing,
+            playback_session_public_id: "playback-public".to_string(),
+            track_public_id: "track-public".to_string(),
+            user_public_id: "user-public".to_string(),
+            library_public_id: None,
+            position_ms: 0,
+            duration_ms: None,
+            played_ms: 0,
+            updated_at_ms: 0,
+        },
+    )?;
+
+    let values = runtime.eval_plugin_source(
+        "demo",
+        "check.luau",
+        &b"return listen_calls, playback_calls"[..],
+    )?;
+    assert_eq!(
+        values,
+        vec![luau::Value::Number(1.0), luau::Value::Number(1.0)]
+    );
+    let _ = std::fs::remove_dir_all(test_dir);
+    Ok(())
+}
+
+#[test]
+fn plugin_executor_failed_restart_keeps_no_update_handler() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+    crate::plugins::testing::init_default_test_state()?;
+    let test_dir = std::env::temp_dir().join(format!(
+        "lyra-failed-restart-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos()
+    ));
+    let plugin_dir = test_dir.join("plugins").join("demo");
+    std::fs::create_dir_all(&plugin_dir)?;
+    std::fs::write(
+        plugin_dir.join("plugin.json"),
+        r#"{
+            "schema_version": 1,
+            "id": "demo",
+            "name": "Demo",
+            "version": "1.0.0",
+            "description": "Demo plugin",
+            "entrypoint": "init.luau",
+            "scopes": ["lyra.listens"]
+        }"#,
+    )?;
+    let write_entrypoint = |fail: bool| {
+        std::fs::write(
+            plugin_dir.join("init.luau"),
+            format!(
+                r#"
+                    local listens = require("@lyra/listens")
+                    listen_calls = 0
+                    listens.on_update(function() listen_calls += 1 end)
+                    if {fail} then error("entrypoint fails after registering") end
+                "#
+            ),
+        )
+    };
+    write_entrypoint(false)?;
+    let (runtime, errors) =
+        PluginExecutor::discover_from_plugins_dir(test_dir.join("plugins"), default_server_info())?;
+    assert!(errors.is_empty(), "{errors:?}");
+    runtime.exec_plugin("demo")?;
+
+    write_entrypoint(true)?;
+    assert!(runtime.restart_plugin("demo").is_err());
+    runtime.dispatch_listen_update(crate::services::listens::ListenUpdatePayload {
+        event: "recorded".to_string(),
+        user_id: "user-public".to_string(),
+        listens: Vec::new(),
+    })?;
+
+    let values = runtime.eval_plugin_source("demo", "check.luau", &b"return listen_calls"[..])?;
+    assert_eq!(values, vec![luau::Value::Number(0.0)]);
     let _ = std::fs::remove_dir_all(test_dir);
     Ok(())
 }

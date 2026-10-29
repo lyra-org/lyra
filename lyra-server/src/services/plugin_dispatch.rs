@@ -17,7 +17,10 @@ use std::{
 use anyhow::Result;
 use futures::future::BoxFuture;
 
-use crate::services::playback_sessions::PlaybackUpdatePayload;
+use crate::services::{
+    listens::ListenUpdatePayload,
+    playback_sessions::PlaybackUpdatePayload,
+};
 
 /// The loaded plugin runtime as services reach it: dispatch to the handlers
 /// plugins registered with service registries. The plugin executor
@@ -43,6 +46,9 @@ pub(crate) trait PluginDispatch: Send + Sync {
 
     /// Lossy: fails instead of waiting when the runtime is saturated.
     fn dispatch_playback_update(&self, payload: PlaybackUpdatePayload) -> Result<()>;
+
+    /// Lossy like [`Self::dispatch_playback_update`].
+    fn dispatch_listen_update(&self, payload: ListenUpdatePayload) -> Result<()>;
 }
 
 #[derive(Clone, Debug)]

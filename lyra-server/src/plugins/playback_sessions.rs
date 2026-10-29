@@ -3,18 +3,11 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::{
-    cell::RefCell,
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use harmony_core::{
-    CallContext,
-    CapabilityId,
-    ChunkOrigin,
     FunctionSpec,
     ModuleExport,
-    ModuleId,
     ModuleSpec,
 };
 use harmony_luau as luau;
@@ -44,7 +37,6 @@ use serde::{
 use crate::plugins::args;
 use crate::{
     plugins::db,
-    services::plugin_scope::PluginId,
     services::{
         playback_sessions::{
             self as playbacks,
@@ -60,32 +52,6 @@ use crate::{
         },
     },
 };
-
-#[derive(Clone)]
-pub(crate) struct RegisteredPlaybackUpdateCallback {
-    pub(crate) plugin_id: Arc<str>,
-    pub(crate) context: CallContext,
-    pub(crate) function: luau::Function,
-}
-
-#[derive(Default)]
-pub(crate) struct PlaybackUpdateCallbackStore {
-    handlers: RefCell<Vec<RegisteredPlaybackUpdateCallback>>,
-}
-
-impl PlaybackUpdateCallbackStore {
-    pub(crate) fn new() -> Self {
-        Self::default()
-    }
-
-    fn add(&self, handler: RegisteredPlaybackUpdateCallback) {
-        self.handlers.borrow_mut().push(handler);
-    }
-
-    pub(crate) fn snapshot(&self) -> Vec<RegisteredPlaybackUpdateCallback> {
-        self.handlers.borrow().clone()
-    }
-}
 
 struct PlaybackSessionsModule;
 struct PlaybackUpdateHandler;
@@ -200,33 +166,12 @@ fn send_command_spec() -> FunctionSpec {
 }
 
 fn on_update_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
+    frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let function: luau::Function = frame.args.read_named("handler")?;
-    let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
-        luau::Error::Runtime(
-            "playback_sessions.on_update must be called from plugin Luau code".into(),
-        )
-    })?;
-    let validated_plugin_id =
-        PluginId::new(plugin_id.to_string()).map_err(crate::plugins::runtime_error)?;
-    let vm = frame.vm.clone();
-    let context = call_context_to_core(&frame.context);
-    Ok(luau::ScheduledFuture::new(async move {
-        let generation = crate::plugins::STATE.generation();
-        let _registration = generation
-            .registries
-            .ensure_registrations_open(&validated_plugin_id)
-            .await
-            .map_err(crate::plugins::runtime_error)?;
-        let callbacks = vm.data().get::<PlaybackUpdateCallbackStore>()?;
-        callbacks.add(RegisteredPlaybackUpdateCallback {
-            plugin_id,
-            context,
-            function,
-        });
-        Ok(())
-    }))
+    crate::plugins::update_callbacks::register::<playbacks::PlaybackUpdatePayload>(
+        frame,
+        "playback_sessions.on_update",
+    )
 }
 
 fn report_session_callback(
@@ -484,31 +429,6 @@ fn send_command_callback(
 
         Ok(())
     }))
-}
-
-fn call_context_to_core(context: &luau::CallContext) -> CallContext {
-    let mut caller = harmony_core::ContextBag::default();
-    for (type_id, value) in context.caller.cloned_entries() {
-        caller.insert_shared(type_id, value);
-    }
-
-    CallContext {
-        origin: ChunkOrigin {
-            module: context
-                .origin
-                .module
-                .as_ref()
-                .map(|module| ModuleId(module.0.clone())),
-            plugin: context.origin.plugin.clone(),
-            path: context.origin.path.clone(),
-        },
-        capability: context
-            .capability
-            .as_ref()
-            .map(|capability| CapabilityId(capability.0.clone())),
-        caller,
-        task_group: harmony_core::TaskGroupId(context.task_group.0),
-    }
 }
 
 fn from_luau_json<T>(vm: &luau::Vm, value: &luau::Value) -> luau::runtime::Result<T>

@@ -180,19 +180,6 @@ pub(crate) struct CompensateProgressRequest {
     pub(crate) now_ms: u64,
 }
 
-fn cleanup_after_commit(
-    db: &mut DbAny,
-    now_ms: u64,
-) -> Vec<playback_sessions::EvictedPlaybackRecord> {
-    match playback_sessions::cleanup_evicted_playbacks(db, now_ms) {
-        Ok(evicted) => evicted,
-        Err(error) => {
-            tracing::error!(%error, "playback cleanup failed after durable mutation committed");
-            Vec::new()
-        }
-    }
-}
-
 pub(crate) fn create_playback(
     db: &mut DbAny,
     request: CreatePlaybackRequest,
@@ -254,7 +241,8 @@ pub(crate) fn create_playback(
         playback.db_id = Some(playback_db_id);
         Ok::<_, PlaybackError>((playback, session))
     })?;
-    let evicted_playbacks = cleanup_after_commit(db, now_ms);
+    session.announce_recorded_listen();
+    let evicted_playbacks = playback_sessions::cleanup_after_commit(db, now_ms);
 
     Ok(PlaybackUpdate {
         playback,
@@ -386,6 +374,10 @@ pub(crate) fn report_progress(
         playback.updated_at_ms = now_ms;
         Ok::<_, PlaybackError>((playback, session, displaced_session))
     })?;
+    session.announce_recorded_listen();
+    if let Some(displaced) = &displaced_session {
+        displaced.announce_recorded_listen();
+    }
 
     if session.playback.playback.state.is_terminal() {
         playback_sessions::clear_session_bindings_for_playback(
@@ -399,7 +391,7 @@ pub(crate) fn report_progress(
             &displaced.playback_session_public_id,
         );
     }
-    let evicted_playbacks = cleanup_after_commit(db, now_ms);
+    let evicted_playbacks = playback_sessions::cleanup_after_commit(db, now_ms);
     Ok(PlaybackUpdate {
         playback,
         event: session.event,
@@ -469,7 +461,8 @@ pub(crate) fn compensate_failed_handoff_progress(
     let Some((playback, session)) = compensated else {
         return Ok(None);
     };
-    let evicted_playbacks = cleanup_after_commit(db, now_ms);
+    session.announce_recorded_listen();
+    let evicted_playbacks = playback_sessions::cleanup_after_commit(db, now_ms);
     Ok(Some(PlaybackUpdate {
         playback,
         event: session.event,
@@ -881,6 +874,15 @@ pub(crate) struct DetachedSession {
     pub(crate) update: Option<playback_sessions::TransactionPlaybackUpdate>,
 }
 
+impl DetachedSession {
+    /// Announces the listen pausing the session recorded, if any; call right after commit.
+    pub(crate) fn announce_recorded_listen(&self) {
+        if let Some(update) = &self.update {
+            update.announce_recorded_listen();
+        }
+    }
+}
+
 pub(crate) struct ReplaceQueueUpdate {
     pub(crate) playback: lyra_db::playbacks::Playback,
     pub(crate) queue: QueueSnapshot,
@@ -980,6 +982,9 @@ pub(crate) fn replace_queue(
         })?;
         Ok::<_, PlaybackError>((playback, detached_session))
     })?;
+    if let Some(detached) = &detached_session {
+        detached.announce_recorded_listen();
+    }
     Ok(ReplaceQueueUpdate {
         playback,
         queue: snapshot,

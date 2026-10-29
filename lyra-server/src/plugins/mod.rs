@@ -52,6 +52,7 @@ pub(crate) mod testing;
 pub(crate) mod track_sources;
 pub(crate) mod tracks;
 pub(crate) mod types;
+pub(crate) mod update_callbacks;
 pub(crate) mod users;
 pub(crate) use state::STATE;
 #[cfg(feature = "docgen")]

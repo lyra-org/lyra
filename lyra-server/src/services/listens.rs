@@ -14,6 +14,11 @@ use agdb::{
 use lyra_db::Listen;
 use nanoid::nanoid;
 
+use serde::{
+    Deserialize,
+    Serialize,
+};
+
 use super::auth::Principal;
 
 const MIN_PLAYED_MS: u64 = 30_000;
@@ -33,9 +38,37 @@ pub(crate) struct Play<'a> {
     pub(crate) played_ms: u64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// One user's listens recorded by one commit, as plugins see them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ListenUpdatePayload {
+    pub event: String,
+    pub user_id: String,
+    pub listens: Vec<ListenPayload>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ListenPayload {
+    pub listen_id: String,
+    pub track_id: String,
+    pub started_at_ms: u64,
+    pub played_ms: u64,
+}
+
+impl From<Listen> for ListenPayload {
+    fn from(listen: Listen) -> Self {
+        Self {
+            listen_id: listen.id,
+            track_id: listen.track_public_id,
+            started_at_ms: listen.started_at_ms,
+            played_ms: listen.played_ms,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RecordOutcome {
-    Recorded,
+    /// The play counted; the new listen is announced once its transaction commits.
+    Recorded(Listen),
     /// The user already has a listen for this play.
     Duplicate,
     /// The play was too short to count.
@@ -128,8 +161,35 @@ fn record_for_track(
         played_ms: play.played_ms,
         created_at_ms: now_ms,
     };
-    lyra_db::listens::insert(db, &listen, play.track_db_id, user_db_id)?;
-    Ok(RecordOutcome::Recorded)
+    let db_id = lyra_db::listens::insert(db, &listen, play.track_db_id, user_db_id)?;
+    Ok(RecordOutcome::Recorded(Listen {
+        db_id: Some(db_id),
+        ..listen
+    }))
+}
+
+/// Tells plugins about one user's listens from one commit, as a single update, right after the
+/// commit. Listens skip the playback updates' rate limit: each is announced once, so a limited one
+/// would be lost for good. Best effort otherwise: a saturated plugin runtime drops the update.
+pub(crate) fn dispatch_recorded(user_public_id: &str, listens: impl IntoIterator<Item = Listen>) {
+    let listens = listens
+        .into_iter()
+        .map(ListenPayload::from)
+        .collect::<Vec<_>>();
+    if listens.is_empty() {
+        return;
+    }
+    let Some(runtime) = super::STATE.generation().plugin_dispatch.get() else {
+        return;
+    };
+    let payload = ListenUpdatePayload {
+        event: "recorded".to_string(),
+        user_id: user_public_id.to_string(),
+        listens,
+    };
+    if let Err(error) = runtime.dispatch_listen_update(payload) {
+        tracing::warn!(error = %error, "failed to enqueue plugin listen on_update dispatch");
+    }
 }
 
 /// A play a client recorded while it couldn't report live, naming its track by public id.
@@ -141,15 +201,15 @@ pub(crate) struct SubmittedPlay {
     pub(crate) played_ms: u64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SubmissionOutcome {
     Judged(RecordOutcome),
     /// The track doesn't exist or the user can't see it.
     TrackNotFound,
 }
 
-/// Judges the submitted plays in one transaction, keyed by play id. A play id repeated in the batch
-/// is judged by its first occurrence.
+/// Judges the submitted plays in one transaction, keyed by play id, and announces the listens it
+/// recorded. A play id repeated in the batch is judged by its first occurrence.
 pub(crate) fn record_submitted(
     db: &mut DbAny,
     principal: &Principal,
@@ -157,9 +217,10 @@ pub(crate) fn record_submitted(
     plays: Vec<SubmittedPlay>,
     now_ms: u64,
 ) -> anyhow::Result<HashMap<String, SubmissionOutcome>> {
-    db.transaction_mut(|t| {
+    let (outcomes, recorded) = db.transaction_mut(|t| {
         let mut tracks = HashMap::<String, Option<(DbId, lyra_db::Track)>>::new();
         let mut outcomes = HashMap::with_capacity(plays.len());
+        let mut recorded = Vec::new();
         for submitted in plays {
             if outcomes.contains_key(&submitted.play_id) {
                 continue;
@@ -188,10 +249,15 @@ pub(crate) fn record_submitted(
                 )?),
                 None => SubmissionOutcome::TrackNotFound,
             };
+            if let SubmissionOutcome::Judged(RecordOutcome::Recorded(listen)) = &outcome {
+                recorded.push(listen.clone());
+            }
             outcomes.insert(submitted.play_id, outcome);
         }
-        Ok(outcomes)
-    })
+        Ok::<_, anyhow::Error>((outcomes, recorded))
+    })?;
+    dispatch_recorded(&principal.user_public_id, recorded);
+    Ok(outcomes)
 }
 
 fn accessible_track(
@@ -283,7 +349,7 @@ mod tests {
         ] {
             let outcome = record_in_transaction(&mut db, user, play(play_id, track, played_ms))?;
             assert_eq!(
-                matches!(outcome, RecordOutcome::Recorded),
+                matches!(outcome, RecordOutcome::Recorded(_)),
                 recorded,
                 "{play_id}: {outcome:?}"
             );
@@ -308,7 +374,7 @@ mod tests {
 
         let outcome =
             record_in_transaction(&mut db, user, play("play-stored-0001", track, 45_000))?;
-        assert_eq!(outcome, RecordOutcome::Recorded);
+        assert!(matches!(outcome, RecordOutcome::Recorded(_)), "{outcome:?}");
         let listen_db_id = lyra_db::listens::find_by_play_id(&db, user, "play-stored-0001")?
             .ok_or_else(|| anyhow::anyhow!("listen missing"))?;
         let listen = lyra_db::graph::bulk_fetch_typed::<Listen>(&db, vec![listen_db_id], "Listen")?
@@ -334,7 +400,7 @@ mod tests {
         let track = insert_track(&mut db, None)?;
 
         let first = record_in_transaction(&mut db, user, play("play-repeat-0001", track, 30_000))?;
-        assert!(matches!(first, RecordOutcome::Recorded), "{first:?}");
+        assert!(matches!(first, RecordOutcome::Recorded(_)), "{first:?}");
         let retry = record_in_transaction(&mut db, user, play("play-repeat-0001", track, 90_000))?;
         assert!(matches!(retry, RecordOutcome::Duplicate), "{retry:?}");
         let shorter =
@@ -351,7 +417,7 @@ mod tests {
         );
         let other =
             record_in_transaction(&mut db, other_user, play("play-repeat-0001", track, 30_000))?;
-        assert!(matches!(other, RecordOutcome::Recorded), "{other:?}");
+        assert!(matches!(other, RecordOutcome::Recorded(_)), "{other:?}");
 
         let stats = lyra_db::listens::get_stats(&db, &[track], user)?;
         assert_eq!(stats[0].count, 1);
@@ -367,7 +433,7 @@ mod tests {
         let early = record_in_transaction(&mut db, user, play("play-growing-0001", track, 10_000))?;
         assert!(matches!(early, RecordOutcome::NotListened), "{early:?}");
         let later = record_in_transaction(&mut db, user, play("play-growing-0001", track, 30_000))?;
-        assert!(matches!(later, RecordOutcome::Recorded), "{later:?}");
+        assert!(matches!(later, RecordOutcome::Recorded(_)), "{later:?}");
         Ok(())
     }
 
@@ -417,7 +483,7 @@ mod tests {
 
         let result = db.transaction_mut(|t| -> anyhow::Result<()> {
             let outcome = record(t, user, play("play-rolled-0001", track, 30_000), NOW_MS)?;
-            anyhow::ensure!(matches!(outcome, RecordOutcome::Recorded));
+            anyhow::ensure!(matches!(outcome, RecordOutcome::Recorded(_)));
             anyhow::bail!("caller fails after recording")
         });
         assert!(result.is_err());

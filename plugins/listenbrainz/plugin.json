@@ -9,6 +9,7 @@
     "harmony.http",
     "harmony.serde",
     "lyra.entities",
+    "lyra.listens",
     "lyra.playback_sessions",
     "lyra.plugins"
   ]

@@ -231,7 +231,7 @@ fn update_session_bound_playback(
     mut bound: sessions::BoundPlayback,
     mutation: PlaybackMutation,
     now_ms: u64,
-) -> ServiceResult<PlaybackRecord> {
+) -> ServiceResult<(PlaybackRecord, Option<lyra_db::Listen>)> {
     apply_playback_mutation(&mut bound.playback, &mutation, now_ms)?;
     bound.playback.db_id = Some(bound.playback_session_id);
     map_internal(lyra_db::playback_sessions::update(db, &bound.playback))?;
@@ -243,8 +243,8 @@ fn update_session_bound_playback(
         user_db_id,
         bound.playback,
     )?;
-    record_listen(db, &playback, now_ms)?;
-    Ok(playback)
+    let recorded_listen = record_listen(db, &playback, now_ms)?;
+    Ok((playback, recorded_listen))
 }
 
 fn map_internal<T>(result: anyhow::Result<T>) -> ServiceResult<T> {
@@ -265,12 +265,13 @@ pub(crate) fn ensure_position_within_duration(
     Ok(())
 }
 
-/// Records the session's play as a listen once it qualifies.
+/// Records the session's play as a listen once it qualifies, returning the new listen for the
+/// transaction's owner to announce after commit.
 fn record_listen(
     db: &mut impl lyra_db::DbAccess,
     playback_record: &PlaybackRecord,
     now_ms: u64,
-) -> ServiceResult<()> {
+) -> ServiceResult<Option<lyra_db::Listen>> {
     let playback = &playback_record.playback;
     let outcome = map_internal(crate::services::listens::record(
         db,
@@ -283,15 +284,19 @@ fn record_listen(
         },
         now_ms,
     ))?;
-    if outcome == crate::services::listens::RecordOutcome::InvalidTime {
-        tracing::warn!(
-            playback_session_id = playback_record.playback_session_id.0,
-            started_at_ms = playback.created_at_ms,
-            now_ms,
-            "live play not recorded: its times are implausible; check the server clock",
-        );
+    match outcome {
+        crate::services::listens::RecordOutcome::Recorded(listen) => return Ok(Some(listen)),
+        crate::services::listens::RecordOutcome::InvalidTime => {
+            tracing::warn!(
+                playback_session_id = playback_record.playback_session_id.0,
+                started_at_ms = playback_record.playback.created_at_ms,
+                now_ms,
+                "live play not recorded: its times are implausible; check the server clock",
+            );
+        }
+        _ => {}
     }
-    Ok(())
+    Ok(None)
 }
 
 pub(crate) fn collect_unique_track_external_id_keys(
@@ -419,6 +424,15 @@ pub(crate) fn cleanup_evicted_playbacks(
     Ok(records)
 }
 
+/// [`cleanup_evicted_playbacks`] after a mutation already committed: a failure is logged and only
+/// delays eviction to the next cleanup, rather than failing the committed mutation.
+pub(crate) fn cleanup_after_commit(db: &mut DbAny, now_ms: u64) -> Vec<EvictedPlaybackRecord> {
+    cleanup_evicted_playbacks(db, now_ms).unwrap_or_else(|error| {
+        tracing::error!(%error, "playback cleanup failed after durable mutation committed");
+        Vec::new()
+    })
+}
+
 pub(super) fn collect_playback_records(db: &DbAny) -> ServiceResult<Vec<PlaybackRecord>> {
     let playbacks = map_internal(lyra_db::playback_sessions::get(db))?;
     let mut records = Vec::new();
@@ -514,7 +528,7 @@ fn finalize_optional_playback_update(
     let event = playback
         .as_ref()
         .map(|playback| event_for_state(playback.playback.state, active_event));
-    let evicted_playbacks = cleanup_evicted_playbacks(db, now_ms)?;
+    let evicted_playbacks = cleanup_after_commit(db, now_ms);
 
     Ok(OptionalPlaybackUpdateResult {
         playback,
@@ -544,7 +558,7 @@ fn pause_bound_playback_on_disconnect(
     }
 
     let pause_at_ms = pause_at_ms.max(bound.playback.updated_at_ms); // Keep updated_at_ms monotonic.
-    db.transaction_mut(|t| {
+    let (playback, recorded_listen) = db.transaction_mut(|t| {
         update_session_bound_playback(
             t,
             user_db_id,
@@ -555,8 +569,9 @@ fn pause_bound_playback_on_disconnect(
             },
             pause_at_ms,
         )
-    })
-    .map(Some)
+    })?;
+    crate::services::listens::dispatch_recorded(&playback.user_public_id, recorded_listen);
+    Ok(Some(playback))
 }
 
 /// Pauses the user's playing scopes for a disconnected session. Does nothing once the user is
@@ -603,7 +618,7 @@ pub(crate) fn pause_playing_scopes_on_disconnect(
         clear_playback_session_scope(&scope);
     }
 
-    let evicted_playbacks = cleanup_evicted_playbacks(db, now_ms)?;
+    let evicted_playbacks = cleanup_after_commit(db, now_ms);
 
     Ok((playbacks, evicted_playbacks))
 }
@@ -660,10 +675,11 @@ pub(crate) fn start_playback_in_transaction(
             ..playback
         },
     )?;
-    record_listen(db, &playback, now_ms)?;
+    let recorded_listen = record_listen(db, &playback, now_ms)?;
     Ok(TransactionPlaybackUpdate {
         event: event_for_state(playback.playback.state, active_event),
         playback,
+        recorded_listen,
     })
 }
 
@@ -762,10 +778,11 @@ pub(crate) fn report_playback_in_transaction(
         expected_user_db_id,
         playback,
     )?;
-    record_listen(db, &playback, now_ms)?;
+    let recorded_listen = record_listen(db, &playback, now_ms)?;
     Ok(TransactionPlaybackUpdate {
         event: event_for_state(playback.playback.state, active_event),
         playback,
+        recorded_listen,
     })
 }
 
@@ -813,20 +830,39 @@ pub(crate) fn report_playback_session(
         session_key: request.session_key,
     };
     sessions::cleanup_stale_scopes(request.now_ms, ACTIVE_SESSION_TTL_MS);
-    let (playback, session, current_observed) =
-        db.transaction_mut(|db| report_playback_session_in_transaction(db, request))?;
-    if let Some(session) = session {
-        sessions::apply_reported_scope(&scope, session, current_observed);
+    let report = db.transaction_mut(|db| report_playback_session_in_transaction(db, request))?;
+    crate::services::listens::dispatch_recorded(&user.id, report.recorded_listen);
+    if let Some(session) = report.scope {
+        sessions::apply_reported_scope(&scope, session, report.current_observed);
     } else {
         clear_playback_session_scope(&scope);
     }
-    Ok(playback)
+    Ok(report.playback)
+}
+
+/// What a session report changed, for its caller to apply after commit.
+struct SessionReport {
+    playback: Option<PlaybackRecord>,
+    scope: Option<PlaybackSessionScope>,
+    current_observed: bool,
+    recorded_listen: Option<lyra_db::Listen>,
+}
+
+impl SessionReport {
+    fn ignored(scope: Option<PlaybackSessionScope>) -> Self {
+        Self {
+            playback: None,
+            scope,
+            current_observed: false,
+            recorded_listen: None,
+        }
+    }
 }
 
 fn report_playback_session_in_transaction(
     db: &mut impl lyra_db::DbAccess,
     request: SessionPlaybackReportRequest<'_>,
-) -> ServiceResult<(Option<PlaybackRecord>, Option<PlaybackSessionScope>, bool)> {
+) -> ServiceResult<SessionReport> {
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     enum SessionTrackTarget {
         Current,
@@ -1006,7 +1042,7 @@ fn report_playback_session_in_transaction(
                     let session = session.as_ref().and_then(|session| {
                         updated_playback_session_state(session, &session_state)
                     });
-                    return Ok((None, session, false));
+                    return Ok(SessionReport::ignored(session));
                 }
                 if active_event == ActiveEvent::Started && mutation.state.is_none() {
                     state = PlaybackState::Playing;
@@ -1036,6 +1072,7 @@ fn report_playback_session_in_transaction(
     }
 
     let mut playback = None;
+    let mut recorded_listen = None;
     let mut current_observed = false;
     match target {
         Some(SessionTrackTarget::Current) => {
@@ -1045,7 +1082,7 @@ fn report_playback_session_in_transaction(
                 )));
             };
 
-            let updated = update_session_bound_playback(
+            let (updated, listen) = update_session_bound_playback(
                 db,
                 user_db_id,
                 bound,
@@ -1056,6 +1093,7 @@ fn report_playback_session_in_transaction(
                 },
                 now_ms,
             )?;
+            recorded_listen = listen;
 
             set_current_session_playback(
                 &mut session_state,
@@ -1099,7 +1137,7 @@ fn report_playback_session_in_transaction(
                     )));
                 };
 
-                let updated = update_session_bound_playback(
+                let (updated, listen) = update_session_bound_playback(
                     db,
                     user_db_id,
                     bound,
@@ -1110,6 +1148,7 @@ fn report_playback_session_in_transaction(
                     },
                     now_ms,
                 )?;
+                recorded_listen = listen;
 
                 if promoted_to_current {
                     set_current_session_playback(
@@ -1144,13 +1183,16 @@ fn report_playback_session_in_transaction(
                     },
                 );
                 let created = match started {
-                    Ok(started) => started.playback,
+                    Ok(started) => {
+                        recorded_listen = started.recorded_listen;
+                        started.playback
+                    }
                     // A report for a play whose session was replaced cannot bring it back.
                     Err(PlaybackServiceError::PlayConflict(_)) => {
                         let session = session.as_ref().and_then(|session| {
                             updated_playback_session_state(session, &session_state)
                         });
-                        return Ok((None, session, false));
+                        return Ok(SessionReport::ignored(session));
                     }
                     Err(error) => return Err(error),
                 };
@@ -1246,5 +1288,10 @@ fn report_playback_session_in_transaction(
     let session = session
         .as_ref()
         .and_then(|session| updated_playback_session_state(session, &session_state));
-    Ok((playback, session, current_observed))
+    Ok(SessionReport {
+        playback,
+        scope: session,
+        current_observed,
+        recorded_listen,
+    })
 }

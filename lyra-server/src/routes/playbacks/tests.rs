@@ -699,6 +699,113 @@ async fn queue_replacement_cannot_overtake_committed_handoff_finish() -> anyhow:
 }
 
 #[tokio::test]
+async fn a_listen_is_announced_even_when_its_handoff_then_fails() -> anyhow::Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    let fixture = setup_admin_with_tracks().await?;
+    let dispatch = crate::services::testing::record_plugin_dispatch();
+    {
+        // A 10 s track counts after 2 s, within the latency allowance of a single report.
+        let mut db = STATE.db.write().await;
+        let track_db_id = lyra_db::lookup::find_node_id_by_id(&*db, &fixture.first_track_id)?
+            .expect("track exists");
+        let mut track = lyra_db::tracks::get_by_id(&*db, track_db_id)?.expect("track exists");
+        track.duration_ms = Some(10_000);
+        lyra_db::tracks::update(&mut db, &track)?;
+    }
+    let (_, Json(created)) = create_playback(
+        fixture.headers.clone(),
+        Json(PlaybackCreateRequest {
+            play_id: TEST_PLAY_ID.to_string(),
+            queue: QueueSnapshot::single(fixture.first_track_id.clone()),
+            position_ms: Some(0),
+            duration_ms: Some(10_000),
+            state: Some(PlaybackState::Playing),
+            connection_session_key: None,
+        }),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    let registered = remote_registry::register(
+        fixture.user_public_id.clone(),
+        Some("Target".to_string()),
+        "target-session".to_string(),
+        tokio::sync::watch::channel(None).0,
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let (handoff_token, completion_rx) = handoffs::begin(
+        None,
+        registered.connection_id,
+        fixture.user_public_id.clone(),
+        created.id.clone(),
+        1,
+    )
+    .await
+    .map_err(anyhow::Error::msg)?;
+
+    // The progress route's steps: claim, report, commit, then finish once the DB is released.
+    let committed = {
+        let current_ms = now_ms().map_err(|error| anyhow::anyhow!("{error:?}"))?;
+        let mut db = STATE.db.write().await;
+        let playback_db_id =
+            lyra_db::lookup::find_node_id_by_id(&*db, &created.id)?.expect("playback exists");
+        let current_track_db_id =
+            lyra_db::lookup::find_node_id_by_id(&*db, &fixture.first_track_id)?
+                .expect("track exists");
+        let claim = handoffs::claim_progress(
+            &handoff_token,
+            &fixture.user_public_id,
+            "target-session",
+            &created.id,
+            1,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        let update = playbacks::report_progress(
+            &mut db,
+            playbacks::ReportProgressRequest {
+                play_id: TEST_PLAY_ID.to_string(),
+                playback_db_id,
+                user_db_id: fixture.user_db_id,
+                client_name: Some("Target".to_string()),
+                queue_revision: 1,
+                current_track_db_id,
+                mutation: PlaybackMutation {
+                    position_ms: Some(5_000),
+                    duration_ms: Some(10_000),
+                    state: Some(PlaybackState::Playing),
+                },
+                now_ms: current_ms,
+                require_full_queue_access: true,
+            },
+        )?;
+        claim.commit(handoffs::AppliedProgress {
+            user_public_id: fixture.user_public_id.clone(),
+            playback_db_id,
+            playback_public_id: created.id.clone(),
+            queue_revision: 1,
+            expected_session: update.session.playback.clone(),
+        })
+    };
+    assert_eq!(
+        dispatch.listen_updates().len(),
+        1,
+        "the listen is announced when its report commits"
+    );
+
+    handoffs::fail_for_playback(&created.id).await;
+    assert!(
+        !committed.finish().await,
+        "the failed handoff fails the finish"
+    );
+    assert!(completion_rx.await?.is_err());
+    assert_eq!(dispatch.listen_updates().len(), 1);
+    remote_registry::unregister(registered.connection_id).await;
+    drop(registered.command_rx);
+    Ok(())
+}
+
+#[tokio::test]
 async fn stale_revision_is_rejected_before_handoff_is_queued() -> anyhow::Result<()> {
     let _guard = crate::services::testing::runtime_test_lock().await;
     let fixture = setup_admin_with_tracks().await?;
