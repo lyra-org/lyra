@@ -4,7 +4,10 @@
 // www.meshiplaw.com/lyra.
 
 use std::fs::File;
-use std::path::Path;
+use std::path::{
+    Path,
+    PathBuf,
+};
 
 use crate::manifest::{
     SOURCE_RECORD_FILENAME,
@@ -45,6 +48,15 @@ pub enum InstallError {
     },
 }
 
+/// Who an install was made for, recorded on its source record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstalledBy {
+    /// A person: an API request or the command line.
+    Request,
+    /// The server's automatic update check.
+    AutomaticUpdate,
+}
+
 /// Copies a resolved candidate into `plugins_dir/<id>`, replacing a
 /// previous install from the same origin. The candidate is staged next to
 /// the target and promoted by rename, so a failed install never leaves a
@@ -55,7 +67,54 @@ pub fn install_candidate(
     candidate: &PluginCandidate,
     plugins_dir: &Path,
     installed_at: Option<String>,
+    installed_by: InstalledBy,
 ) -> Result<SourceRecord, InstallError> {
+    let staged = stage_candidate(candidate, plugins_dir, installed_at, installed_by)?;
+    let mut records = promote_together(vec![staged])?;
+    Ok(records.remove(0))
+}
+
+/// A candidate copied into the staging area of `plugins_dir`, checked to
+/// be able to replace what is installed under its id, and waiting for
+/// [`promote_together`]. Dropping it removes the staged copy.
+pub struct StagedInstall {
+    id: String,
+    plugins_dir: PathBuf,
+    staged: PathBuf,
+    record: SourceRecord,
+}
+
+impl StagedInstall {
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn staging_root(&self) -> PathBuf {
+        self.plugins_dir.join(STAGING_DIRNAME)
+    }
+}
+
+impl Drop for StagedInstall {
+    fn drop(&mut self) {
+        if self.staged.exists()
+            && let Err(error) = std::fs::remove_dir_all(&self.staged)
+        {
+            tracing::warn!(path = %self.staged.display(), %error, "could not remove staged plugin");
+        }
+        if let Err(error) = std::fs::remove_dir(self.staging_root()) {
+            tracing::debug!(path = %self.staging_root().display(), %error, "could not remove staging directory");
+        }
+    }
+}
+
+/// Stages `candidate` for installing into `plugins_dir`, as
+/// [`install_candidate`] does before it promotes it.
+pub fn stage_candidate(
+    candidate: &PluginCandidate,
+    plugins_dir: &Path,
+    installed_at: Option<String>,
+    installed_by: InstalledBy,
+) -> Result<StagedInstall, InstallError> {
     let id = candidate.id();
     ensure_valid_id(id)?;
     std::fs::create_dir_all(plugins_dir).map_err(|source| InstallError::Io {
@@ -108,10 +167,11 @@ pub fn install_candidate(
 
     let mut record = candidate.source.clone();
     record.installed_at = installed_at;
+    record.installed_automatically = installed_by == InstalledBy::AutomaticUpdate;
 
     let staging_root = plugins_dir.join(STAGING_DIRNAME);
     let staged = staging_root.join(id);
-    let displaced = staging_root.join(format!("{id}.previous"));
+    let displaced = displaced_path(plugins_dir, id);
     if path_exists(&staged)? {
         std::fs::remove_dir_all(&staged).map_err(|source| InstallError::Io {
             context: format!("Could not remove directory `{}`", staged.display()),
@@ -134,6 +194,83 @@ pub fn install_candidate(
         source,
     })?;
 
+    Ok(StagedInstall {
+        id: id.to_string(),
+        plugins_dir: plugins_dir.to_path_buf(),
+        staged,
+        record,
+    })
+}
+
+/// Where the install a promotion replaces waits until the promotion
+/// succeeds.
+fn displaced_path(plugins_dir: &Path, id: &str) -> PathBuf {
+    plugins_dir
+        .join(STAGING_DIRNAME)
+        .join(format!("{id}.previous"))
+}
+
+/// Moves every `staged` install into its plugins directory, replacing what
+/// is installed under its id, all or none: when one cannot be promoted,
+/// those promoted before it are put back as they were.
+///
+/// Returns the source records written into the installed directories, in
+/// the order of `staged`.
+pub fn promote_together(staged: Vec<StagedInstall>) -> Result<Vec<SourceRecord>, InstallError> {
+    let mut promoted = Vec::new();
+    for install in &staged {
+        match promote(install) {
+            Ok(done) => promoted.push(done),
+            Err(error) => {
+                for done in promoted.into_iter().rev() {
+                    done.restore();
+                }
+                return Err(error);
+            }
+        }
+    }
+    for done in promoted {
+        done.finish();
+    }
+    Ok(staged
+        .iter()
+        .map(|install| install.record.clone())
+        .collect())
+}
+
+/// A staged install moved into place, with the install it replaced.
+struct Promoted {
+    target: PathBuf,
+    displaced: Option<PathBuf>,
+}
+
+impl Promoted {
+    /// Puts back what was installed before the promotion.
+    fn restore(self) {
+        if let Err(error) = std::fs::remove_dir_all(&self.target) {
+            tracing::warn!(path = %self.target.display(), %error, "could not remove promoted plugin");
+        }
+        if let Some(displaced) = &self.displaced
+            && let Err(error) = std::fs::rename(displaced, &self.target)
+        {
+            tracing::warn!(from = %displaced.display(), to = %self.target.display(), %error, "could not restore previous plugin installation");
+        }
+    }
+
+    /// Removes the replaced install once every promotion succeeded.
+    fn finish(self) {
+        if let Some(displaced) = &self.displaced
+            && let Err(error) = std::fs::remove_dir_all(displaced)
+        {
+            tracing::warn!(path = %displaced.display(), %error, "could not remove previous plugin installation");
+        }
+    }
+}
+
+fn promote(install: &StagedInstall) -> Result<Promoted, InstallError> {
+    let target = install.plugins_dir.join(&install.id);
+    let staged = &install.staged;
+    let displaced = displaced_path(&install.plugins_dir, &install.id);
     let had_previous = path_exists(&target)?;
     if had_previous {
         std::fs::rename(&target, &displaced).map_err(|source| InstallError::Io {
@@ -145,7 +282,7 @@ pub fn install_candidate(
             source,
         })?;
     }
-    if let Err(promote) = std::fs::rename(&staged, &target) {
+    if let Err(promote) = std::fs::rename(staged, &target) {
         if had_previous {
             // Best-effort restore; the promotion error is the one worth
             // surfacing.
@@ -162,17 +299,10 @@ pub fn install_candidate(
             source: promote,
         });
     }
-    if had_previous {
-        std::fs::remove_dir_all(&displaced).map_err(|source| InstallError::Io {
-            context: format!("Could not remove directory `{}`", displaced.display()),
-            source,
-        })?;
-    }
-    if let Err(error) = std::fs::remove_dir(&staging_root) {
-        tracing::debug!(path = %staging_root.display(), %error, "could not remove staging directory");
-    }
-
-    Ok(record)
+    Ok(Promoted {
+        target,
+        displaced: had_previous.then_some(displaced),
+    })
 }
 
 /// Removes a repository-managed plugin. Local plugins (no source record)
@@ -357,6 +487,7 @@ mod tests {
             &resolved.candidates[0],
             plugins_dir.path(),
             Some("2026-06-09T12:00:00Z".into()),
+            InstalledBy::Request,
         )
         .unwrap();
 
@@ -374,14 +505,77 @@ mod tests {
         let (_server, resolved) = resolved_foo().await;
         let plugins_dir = TempDir::new().unwrap();
 
-        install_candidate(&resolved.candidates[0], plugins_dir.path(), None).unwrap();
+        install_candidate(
+            &resolved.candidates[0],
+            plugins_dir.path(),
+            None,
+            InstalledBy::Request,
+        )
+        .unwrap();
         std::fs::write(plugins_dir.path().join("foo/extra.txt"), "stale").unwrap();
 
-        install_candidate(&resolved.candidates[0], plugins_dir.path(), None).unwrap();
+        install_candidate(
+            &resolved.candidates[0],
+            plugins_dir.path(),
+            None,
+            InstalledBy::Request,
+        )
+        .unwrap();
 
         // The replacement is the candidate tree, not a merge.
         assert!(!plugins_dir.path().join("foo/extra.txt").exists());
         assert!(plugins_dir.path().join("foo/init.luau").is_file());
+    }
+
+    #[tokio::test]
+    async fn promotions_together_put_back_every_install_when_one_fails() {
+        let (_foo_server, foo) = resolved_foo().await;
+        let bar_server = TestServer::start(
+            single_plugin_routes("owner/repo", "bar")
+                .into_iter()
+                .collect(),
+        )
+        .await;
+        let spec = RepoSpec::parse(&format!("{}/owner/repo", bar_server.url()), None).unwrap();
+        let bar = resolve_plugins(&client(), &spec, None, &host())
+            .await
+            .unwrap();
+        let plugins_dir = TempDir::new().unwrap();
+        let candidates = [&foo.candidates[0], &bar.candidates[0]];
+        for candidate in candidates {
+            install_candidate(candidate, plugins_dir.path(), None, InstalledBy::Request).unwrap();
+        }
+        std::fs::write(plugins_dir.path().join("foo/previous.txt"), "kept").unwrap();
+
+        let staged: Vec<_> = candidates
+            .into_iter()
+            .map(|candidate| {
+                stage_candidate(candidate, plugins_dir.path(), None, InstalledBy::Request).unwrap()
+            })
+            .collect();
+        let blocker = displaced_path(plugins_dir.path(), "bar").join("blocker");
+        std::fs::create_dir_all(&blocker).unwrap();
+
+        promote_together(staged).unwrap_err();
+        assert!(
+            plugins_dir.path().join("foo/previous.txt").is_file(),
+            "foo, promoted before bar failed, is put back"
+        );
+        assert!(plugins_dir.path().join("bar/init.luau").is_file());
+        assert!(
+            !plugins_dir
+                .path()
+                .join(STAGING_DIRNAME)
+                .join("foo")
+                .exists()
+        );
+        assert!(
+            !plugins_dir
+                .path()
+                .join(STAGING_DIRNAME)
+                .join("bar")
+                .exists()
+        );
     }
 
     #[tokio::test]
@@ -392,7 +586,13 @@ mod tests {
         std::fs::create_dir_all(&local).unwrap();
         std::fs::write(local.join("plugin.json"), plugin_json("foo")).unwrap();
 
-        let err = install_candidate(&resolved.candidates[0], plugins_dir.path(), None).unwrap_err();
+        let err = install_candidate(
+            &resolved.candidates[0],
+            plugins_dir.path(),
+            None,
+            InstalledBy::Request,
+        )
+        .unwrap_err();
         assert!(matches!(err, InstallError::NotManaged { .. }), "{err}");
     }
 
@@ -401,12 +601,23 @@ mod tests {
         let (_server, resolved) = resolved_foo().await;
         let plugins_dir = TempDir::new().unwrap();
 
-        let mut record =
-            install_candidate(&resolved.candidates[0], plugins_dir.path(), None).unwrap();
+        let mut record = install_candidate(
+            &resolved.candidates[0],
+            plugins_dir.path(),
+            None,
+            InstalledBy::Request,
+        )
+        .unwrap();
         record.origin = "https://github.com/somewhere/else".into();
         record.store(&plugins_dir.path().join("foo")).unwrap();
 
-        let err = install_candidate(&resolved.candidates[0], plugins_dir.path(), None).unwrap_err();
+        let err = install_candidate(
+            &resolved.candidates[0],
+            plugins_dir.path(),
+            None,
+            InstalledBy::Request,
+        )
+        .unwrap_err();
         assert!(matches!(err, InstallError::OriginMismatch { .. }), "{err}");
     }
 
@@ -416,7 +627,13 @@ mod tests {
         let plugins_dir = TempDir::new().unwrap();
         std::fs::create_dir_all(plugins_dir.path().join("Foo")).unwrap();
 
-        let err = install_candidate(&resolved.candidates[0], plugins_dir.path(), None).unwrap_err();
+        let err = install_candidate(
+            &resolved.candidates[0],
+            plugins_dir.path(),
+            None,
+            InstalledBy::Request,
+        )
+        .unwrap_err();
         assert!(matches!(err, InstallError::CaseCollision { .. }), "{err}");
     }
 
@@ -424,7 +641,13 @@ mod tests {
     async fn uninstalls_managed_plugins() {
         let (_server, resolved) = resolved_foo().await;
         let plugins_dir = TempDir::new().unwrap();
-        install_candidate(&resolved.candidates[0], plugins_dir.path(), None).unwrap();
+        install_candidate(
+            &resolved.candidates[0],
+            plugins_dir.path(),
+            None,
+            InstalledBy::Request,
+        )
+        .unwrap();
 
         let record = uninstall_plugin(plugins_dir.path(), "foo")
             .unwrap()
@@ -444,7 +667,13 @@ mod tests {
         };
 
         broken(r#"{"schema_version": 1}"#);
-        install_candidate(&resolved.candidates[0], plugins_dir.path(), None).unwrap();
+        install_candidate(
+            &resolved.candidates[0],
+            plugins_dir.path(),
+            None,
+            InstalledBy::Request,
+        )
+        .unwrap();
         assert!(SourceRecord::load(&installed).unwrap().is_some());
 
         broken("{");

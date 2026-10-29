@@ -33,6 +33,7 @@ pub(crate) struct Config {
     pub(crate) sync: SyncConfig,
     pub(crate) hls: HlsConfig,
     pub(crate) transcoding: TranscodingConfig,
+    pub(crate) plugins: PluginsConfig,
 }
 
 impl Config {
@@ -79,6 +80,9 @@ impl Config {
                 max_concurrent_per_user: settings.value("transcoding.max_concurrent_per_user"),
                 cache_max_bytes: settings.value("transcoding.cache_max_bytes"),
                 cache_ttl_seconds: settings.value("transcoding.cache_ttl_seconds"),
+            },
+            plugins: PluginsConfig {
+                auto_update: settings.value("plugins.auto_update"),
             },
         }
     }
@@ -144,4 +148,10 @@ pub(crate) struct TranscodingConfig {
     pub(crate) max_concurrent_per_user: u32,
     pub(crate) cache_max_bytes: u64,
     pub(crate) cache_ttl_seconds: u64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PluginsConfig {
+    /// Install updates the daily check finds that need no approval.
+    pub(crate) auto_update: bool,
 }

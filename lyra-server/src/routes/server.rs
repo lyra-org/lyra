@@ -698,7 +698,8 @@ mod tests {
                 "auth",
                 "sync",
                 "hls",
-                "transcoding"
+                "transcoding",
+                "plugins"
             ]
         );
         assert_eq!(body["groups"][3]["label"], json!("Authentication"));

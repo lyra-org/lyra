@@ -42,6 +42,10 @@ const TRANSCODING: SettingGroup = SettingGroup {
     id: "transcoding",
     label: "Transcoding",
 };
+const PLUGINS: SettingGroup = SettingGroup {
+    id: "plugins",
+    label: "Plugins",
+};
 
 const fn setting(
     key: &'static str,
@@ -233,5 +237,13 @@ pub(super) static ALL: &[SettingDefinition] = &[
         "Finished transcodes not requested for this long are removed.",
         Live,
         Kind::U64 { default: 3_600 },
+    ),
+    setting(
+        "plugins.auto_update",
+        PLUGINS,
+        "Install plugin updates automatically",
+        "Install newer plugin releases found by the daily check unless they add scopes or break an installed plugin; when off, updates are only reported.",
+        Live,
+        Kind::Bool { default: true },
     ),
 ];

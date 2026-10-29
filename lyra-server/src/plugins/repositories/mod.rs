@@ -9,7 +9,10 @@ use std::{
         HashMap,
     },
     path::Path,
-    sync::LazyLock,
+    sync::{
+        LazyLock,
+        atomic::Ordering,
+    },
     time::{
         Duration,
         SystemTime,
@@ -18,14 +21,11 @@ use std::{
 };
 
 use agdb::DbAny;
-use harmony_core::plugin::{
-    PLUGIN_CONFIG_FILENAME,
-    PluginManifest,
-};
+use harmony_core::plugin::PluginManifest;
 use harmony_repository::{
     FetchError,
     InstallError,
-    ListedPlugin,
+    InstalledBy,
     PluginCandidate,
     RateLimited,
     RejectedPlugin,
@@ -35,14 +35,14 @@ use harmony_repository::{
     ResolvedRepository,
     SourceRecord,
     UnpackBudget,
-    install_candidate,
     list_plugins,
     manifest::SOURCE_RECORD_FILENAME,
+    promote_together,
     resolve_listed,
+    stage_candidate,
     uninstall_plugin,
 };
 use nanoid::nanoid;
-use semver::Version;
 use tokio::sync::{
     Mutex,
     MutexGuard,
@@ -50,7 +50,28 @@ use tokio::sync::{
 
 use crate::services::STATE;
 use crate::services::boot::BuildInfo;
+
+mod auto_update;
+mod status;
+
+pub(crate) use auto_update::run_update_checks;
 use lyra_db::plugin_repositories as repo_db;
+use status::{
+    Candidate,
+    Offered,
+    holds,
+    listed_offer,
+    stored_dependencies,
+};
+pub(crate) use status::{
+    Hold,
+    InstalledStatus,
+    OfferedRelease,
+    Requirement,
+    UpdateStatus,
+    installed_manifests,
+    installed_statuses,
+};
 
 const DEFAULT_ORIGIN: &str = "https://git.lyra.pub/lyra/lyra?forge=gitlab";
 
@@ -77,11 +98,16 @@ fn server_build() -> BuildInfo {
 /// Repository resolution (network) always happens before the guard.
 static MUTATION_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
+/// Held by every install and update check, manual or automatic, from its
+/// listing through its installs, so none decides from plugins another is
+/// replacing and two checks never overlap. Taken before `MUTATION_LOCK`.
+static CHECK_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
 /// Subscribes the official repository once per database, on its default
 /// branch.
 pub(crate) fn seed_default(db: &mut DbAny) -> anyhow::Result<()> {
     let manifest = harmony_repository::RepositoryManifest::parse(
-        include_str!("../../../repository.json"),
+        include_str!("../../../../repository.json"),
         None,
     )?;
     repo_db::seed_default(
@@ -198,137 +224,6 @@ fn ensure_plugin_path_id(plugin_id: &str) -> Result<(), PluginRepoError> {
     Ok(())
 }
 
-/// Whether a repository-managed plugin has a newer release to install.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum UpdateStatus {
-    /// No release newer than the installed one runs on this server, or
-    /// pinned.
-    UpToDate,
-    /// A newer release runs on this server.
-    UpdateAvailable,
-    /// No release the repository offers the plugin runs on this server;
-    /// `requires` is the server requirement that excludes it.
-    Incompatible { requires: String },
-    /// The releases on offer are unknown.
-    Unknown,
-}
-
-impl UpdateStatus {
-    fn compare(installed: &Version, offered: &Offered) -> Self {
-        match offered {
-            Ok(offered) if offered.version > *installed => Self::UpdateAvailable,
-            Ok(_) => Self::UpToDate,
-            Err(Some(requires)) => Self::Incompatible {
-                requires: requires.clone(),
-            },
-            Err(None) => Self::Unknown,
-        }
-    }
-}
-
-/// The release a repository offers one plugin on this server.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct OfferedRelease {
-    /// The plugin's version at the release.
-    pub(crate) version: Version,
-    pub(crate) commit: String,
-    /// The scopes the plugin declares at the release.
-    pub(crate) scopes: Vec<String>,
-}
-
-/// What a repository offers one plugin on this server: the release an
-/// install would choose, or, without one, the server requirement that
-/// excludes this server when that is the reason.
-type Offered = Result<OfferedRelease, Option<String>>;
-
-fn listed_offer(plugin: &ListedPlugin) -> Offered {
-    match &plugin.offer {
-        Ok(offer) => Ok(OfferedRelease {
-            version: offer.manifest.version.clone(),
-            commit: offer.commit.clone(),
-            scopes: offer.manifest.scopes.clone(),
-        }),
-        Err(error) => Err(error.required_host().map(ToString::to_string)),
-    }
-}
-
-fn stored_offer(entry: &repo_db::PluginRepositoryEntry) -> Offered {
-    match (&entry.version, &entry.commit, &entry.requires) {
-        (Some(version), Some(commit), _) => Version::parse(version)
-            .map(|version| OfferedRelease {
-                version,
-                commit: commit.clone(),
-                scopes: entry.scopes.clone().unwrap_or_default(),
-            })
-            .map_err(|_| None),
-        (None, _, requires) => Err(requires.clone()),
-        (Some(_), None, _) => Err(None),
-    }
-}
-
-/// Why an update to a newer release waits for an admin.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Hold {
-    /// The release declares scopes the installed plugin does not; an
-    /// update that names the release grants them.
-    AddsScopes { scopes: Vec<String> },
-    /// Installed plugins depend on this one at versions outside the
-    /// release's; no update applies until they change.
-    BreaksDependents { dependents: Vec<Dependent> },
-}
-
-/// An installed plugin whose dependency requirement excludes a release.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Dependent {
-    pub(crate) id: String,
-    pub(crate) requires: String,
-}
-
-impl Hold {
-    /// Why updating `plugin_id` to `offered` waits, given the `installed`
-    /// plugins' manifests.
-    fn of(plugin_id: &str, offered: &OfferedRelease, installed: &[PluginManifest]) -> Option<Self> {
-        let dependents: Vec<Dependent> = installed
-            .iter()
-            .filter(|manifest| manifest.id != plugin_id)
-            .filter_map(|manifest| {
-                let dependency = manifest.dependencies.get(plugin_id)?;
-                (!dependency.version.matches(&offered.version)).then(|| Dependent {
-                    id: manifest.id.clone(),
-                    requires: dependency.version.to_string(),
-                })
-            })
-            .collect();
-        if !dependents.is_empty() {
-            return Some(Self::BreaksDependents { dependents });
-        }
-        let current = installed.iter().find(|manifest| manifest.id == plugin_id);
-        let scopes: Vec<String> = offered
-            .scopes
-            .iter()
-            .filter(|scope| current.is_none_or(|manifest| !manifest.scopes.contains(scope)))
-            .cloned()
-            .collect();
-        (!scopes.is_empty()).then_some(Self::AddsScopes { scopes })
-    }
-}
-
-/// The manifests of the plugins in `plugins_dir`, as installed on disk;
-/// unreadable ones are left out.
-pub(crate) fn installed_manifests(plugins_dir: &Path) -> Vec<PluginManifest> {
-    let Ok(entries) = std::fs::read_dir(plugins_dir) else {
-        return Vec::new();
-    };
-    entries
-        .filter_map(Result::ok)
-        .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
-        .filter_map(|entry| {
-            let config = std::fs::read(entry.path().join(PLUGIN_CONFIG_FILENAME)).ok()?;
-            serde_json::from_slice(&config).ok()
-        })
-        .collect()
-}
-
 /// Where a catalogue plugin stands relative to the plugins directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CatalogStatus {
@@ -426,62 +321,6 @@ pub(crate) async fn list_subscriptions() -> Result<Vec<Subscription>, PluginRepo
     load_subscriptions(&*db).map_err(PluginRepoError::Internal)
 }
 
-/// Where an installed plugin stands against its subscribed repository.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct InstalledStatus {
-    pub(crate) status: UpdateStatus,
-    /// The release the repository offers, when it offers one.
-    pub(crate) offered: Option<OfferedRelease>,
-    /// Why an available update waits for an admin.
-    pub(crate) hold: Option<Hold>,
-}
-
-/// Where the installed plugin `plugin_id` stands relative to the
-/// subscribed repository it was installed from, using only the releases it
-/// stored and the `installed` manifests: no forge call is made. Pinned
-/// plugins are always up to date. Without a subscription for the same
-/// origin and ref that lists the plugin, the answer is `Unknown`.
-pub(crate) fn installed_status(
-    plugin_id: &str,
-    record: &SourceRecord,
-    subscriptions: &[Subscription],
-    installed: &[PluginManifest],
-) -> InstalledStatus {
-    let unknown = InstalledStatus {
-        status: UpdateStatus::Unknown,
-        offered: None,
-        hold: None,
-    };
-    if record.pinned {
-        return InstalledStatus {
-            status: UpdateStatus::UpToDate,
-            ..unknown
-        };
-    }
-    let Some(entry) = find_subscription(subscriptions, &record.origin, record.git_ref.as_deref())
-        .and_then(|subscription| {
-            subscription
-                .entries
-                .iter()
-                .find(|entry| entry.plugin_id == plugin_id && entry.subpath == record.subpath)
-        })
-    else {
-        return unknown;
-    };
-    let offered = stored_offer(entry);
-    let status = UpdateStatus::compare(&record.version, &offered);
-    let offered = offered.ok();
-    let hold = offered
-        .as_ref()
-        .filter(|_| status == UpdateStatus::UpdateAvailable)
-        .and_then(|offered| Hold::of(plugin_id, offered, installed));
-    InstalledStatus {
-        status,
-        offered,
-        hold,
-    }
-}
-
 /// The entries a listing stores on its subscription: the repository's own
 /// plugins, not those its index references elsewhere.
 fn listing_entries(listing: &RepositoryListing) -> Vec<repo_db::PluginRepositoryEntry> {
@@ -500,6 +339,7 @@ fn listing_entries(listing: &RepositoryListing) -> Vec<repo_db::PluginRepository
                 subpath: plugin.source.subpath.clone(),
                 version: offered.as_ref().map(|offered| offered.version.to_string()),
                 commit: offered.as_ref().map(|offered| offered.commit.clone()),
+                dependencies: offered.as_ref().map(stored_dependencies),
                 scopes: offered.map(|offered| offered.scopes),
                 requires,
             }
@@ -540,11 +380,43 @@ fn record_listed(
     let Some(subscription) = find_subscription(&subscriptions, origin, git_ref) else {
         return Ok(());
     };
-    let mut repository = subscription.repository.clone();
+    store_listed(db, subscription.repository.clone(), commit, entries)
+}
+
+/// Stores a fresh listing's commit and entries on the subscription
+/// `repository`, by its id, as refreshed now.
+fn store_listed(
+    db: &mut DbAny,
+    mut repository: repo_db::PluginRepository,
+    commit: Option<String>,
+    entries: &[repo_db::PluginRepositoryEntry],
+) -> Result<(), PluginRepoError> {
     repository.commit = commit;
     repository.refreshed_at_ms = Some(now_ms());
     repo_db::update(db, &repository, entries)?;
     Ok(())
+}
+
+/// Rejects subscribing the repository `spec` names when a subscription of
+/// the same repository, as [`RepoSpec::is_same_repo`] sees it, exists at
+/// any ref.
+fn ensure_not_subscribed(
+    db: &impl lyra_db::DbAccess,
+    spec: &RepoSpec,
+) -> Result<(), PluginRepoError> {
+    let subscribed = repo_db::list(db)?.into_iter().find(|repository| {
+        RepoSpec::parse(&repository.origin, None).map_or_else(
+            |_| repository.origin == spec.canonical_url(),
+            |subscribed| subscribed.is_same_repo(spec),
+        )
+    });
+    match subscribed {
+        Some(repository) => Err(PluginRepoError::Conflict(format!(
+            "repository already added: {}",
+            repository.origin
+        ))),
+        None => Ok(()),
+    }
 }
 
 fn build_preview(listing: &RepositoryListing, plugins_dir: &Path) -> RepositoryPreview {
@@ -626,6 +498,9 @@ pub(crate) struct FailedInstall {
 #[derive(Debug, Clone)]
 pub(crate) struct InstallReport {
     pub(crate) installed: Vec<InstalledPlugin>,
+    /// Installed plugins whose reinstall would leave a plugin unable to
+    /// load; nothing was downloaded for them.
+    pub(crate) held: Vec<HeldPlugin>,
     pub(crate) failed: Vec<FailedInstall>,
 }
 
@@ -646,17 +521,28 @@ pub(crate) enum Selection<'a> {
     Previewed(&'a [PreviewedPlugin]),
 }
 
+/// The selected plugins a repository offers, downloaded at their releases.
+struct ResolvedSelection {
+    repository: ResolvedRepository,
+    /// Previewed plugins whose offered release changed or went since the
+    /// preview.
+    changed: Vec<FailedInstall>,
+    held: Vec<HeldPlugin>,
+}
+
 /// Lists a repository URL and downloads the selected plugins' releases. A
 /// previewed plugin whose offered release changed since its preview, or
-/// that is no longer listed, fails on its own, returned with the resolved
-/// repository. An empty selection is rejected, as is one the repository
-/// lists none of, and a repository that offers nothing to install.
+/// that is no longer listed, fails on its own, and a reinstall that
+/// [`reinstall_holds`] holds is left out. An empty selection is rejected,
+/// as is one the repository lists none of, and a repository that offers
+/// nothing to install.
 async fn resolve_selection(
     url: &str,
     git_ref: Option<&str>,
     selection: Selection<'_>,
     build: &BuildInfo,
-) -> Result<(ResolvedRepository, Vec<FailedInstall>), PluginRepoError> {
+    plugins_dir: &Path,
+) -> Result<ResolvedSelection, PluginRepoError> {
     if matches!(selection, Selection::Previewed(plugins) if plugins.is_empty()) {
         return Err(PluginRepoError::BadRequest(
             "no plugins selected to install".to_string(),
@@ -710,7 +596,25 @@ async fn resolve_selection(
             Some(ids)
         }
     };
-    let resolved = resolve_listed(
+    let held = reinstall_holds(&listing, ids.as_deref(), plugins_dir);
+    let ids = if held.is_empty() {
+        ids
+    } else {
+        let selected = ids.unwrap_or_else(|| {
+            listing
+                .plugins
+                .iter()
+                .map(|plugin| plugin.id.clone())
+                .collect()
+        });
+        Some(
+            selected
+                .into_iter()
+                .filter(|id| !held.iter().any(|plugin| plugin.id == *id))
+                .collect(),
+        )
+    };
+    let repository = resolve_listed(
         &client,
         listing,
         ids.as_deref(),
@@ -719,43 +623,214 @@ async fn resolve_selection(
     )
     .await
     .map_err(map_resolve_error)?;
-    if resolved.candidates.is_empty() && resolved.rejected.is_empty() && changed.is_empty() {
+    if repository.candidates.is_empty()
+        && repository.rejected.is_empty()
+        && changed.is_empty()
+        && held.is_empty()
+    {
         return Err(PluginRepoError::BadRequest(
             "repository provides no plugins to install".to_string(),
         ));
     }
-    Ok((resolved, changed))
+    Ok(ResolvedSelection {
+        repository,
+        changed,
+        held,
+    })
 }
 
-/// Writes the resolved candidates into `plugins_dir`, after the plugins
-/// that already `failed`. Per-plugin failures don't abort siblings. The
-/// caller holds `MUTATION_LOCK`.
-fn install_selected(
-    resolved: &ResolvedRepository,
-    failed: Vec<FailedInstall>,
+/// The selected plugins, `ids` or every listed one, that are installed
+/// already and whose reinstall would leave a plugin unable to load, by
+/// [`holds`] over the plugins as they would be with every selected release
+/// installed. The preview binding the release already granted its scopes.
+fn reinstall_holds(
+    listing: &RepositoryListing,
+    ids: Option<&[String]>,
     plugins_dir: &Path,
-) -> InstallReport {
+) -> Vec<HeldPlugin> {
+    let mut manifests = installed_manifests(plugins_dir);
+    let mut reinstalls = Vec::new();
+    for plugin in &listing.plugins {
+        if ids.is_some_and(|ids| !ids.contains(&plugin.id)) {
+            continue;
+        }
+        let Ok(release) = listed_offer(plugin) else {
+            continue;
+        };
+        if plugins_dir.join(&plugin.id).is_dir() {
+            reinstalls.push((plugin.id.as_str(), release));
+        } else if let Ok(offer) = &plugin.offer {
+            manifests.push(offer.manifest.clone());
+        }
+    }
+    let candidates: Vec<Candidate<'_>> = reinstalls
+        .iter()
+        .map(|(id, release)| Candidate {
+            id,
+            release,
+            approved: true,
+        })
+        .collect();
+    let mut held = holds(&manifests, &candidates);
+    reinstalls
+        .into_iter()
+        .filter_map(|(id, release)| {
+            Some(HeldPlugin {
+                id: id.to_string(),
+                hold: held.remove(id)?,
+                release,
+            })
+        })
+        .collect()
+}
+
+/// Writes the resolved candidates into `plugins_dir` together, by
+/// [`install_together`], after the plugins that changed since the preview.
+/// The caller holds `MUTATION_LOCK`.
+fn install_selected(selection: ResolvedSelection, plugins_dir: &Path) -> InstallReport {
+    let resolved = &selection.repository;
     let mut report = InstallReport {
         installed: Vec::new(),
-        failed,
+        held: selection.held,
+        failed: selection.changed,
     };
     report.failed.extend(rejected_failures(resolved));
-    for candidate in &resolved.candidates {
-        let manifest = &candidate.plugin.manifest;
-        match install_candidate(candidate, plugins_dir, Some(now_rfc3339())) {
-            Ok(record) => report.installed.push(InstalledPlugin {
+    let pending = resolved
+        .candidates
+        .iter()
+        .map(|candidate| PendingInstall {
+            candidate,
+            approved: true,
+        })
+        .collect();
+    let outcome = install_together(pending, plugins_dir, InstalledBy::Request);
+    report.held.extend(outcome.held);
+    report.failed.extend(outcome.failed);
+    report.installed = outcome
+        .installed
+        .into_iter()
+        .map(|(candidate, record)| {
+            let manifest = &candidate.plugin.manifest;
+            InstalledPlugin {
                 id: candidate.id().to_string(),
                 version: manifest.version.to_string(),
                 commit: record.commit,
                 scopes: manifest.scopes.clone(),
-            }),
-            Err(error) => report.failed.push(FailedInstall {
+            }
+        })
+        .collect();
+    report
+}
+
+/// A downloaded release to install, `approved` when the request granted
+/// the scopes it lets plugins reach.
+struct PendingInstall<'a> {
+    candidate: &'a PluginCandidate,
+    approved: bool,
+}
+
+/// What [`install_together`] did with each plugin.
+#[derive(Default)]
+struct TogetherOutcome<'a> {
+    installed: Vec<(&'a PluginCandidate, SourceRecord)>,
+    held: Vec<HeldPlugin>,
+    failed: Vec<FailedInstall>,
+}
+
+/// Stages `pending` in `plugins_dir`, recording who they were
+/// `installed_by`, then judges again, by [`holds`] over the installed
+/// plugins and the new ones that staged, the reinstalls that staged: one
+/// counting on a release that failed to download, resolve or stage waits
+/// now. The rest are promoted together, so a failure among them leaves
+/// every plugin as it was. The caller holds `MUTATION_LOCK`.
+fn install_together<'a>(
+    pending: Vec<PendingInstall<'a>>,
+    plugins_dir: &Path,
+    installed_by: InstalledBy,
+) -> TogetherOutcome<'a> {
+    let mut outcome = TogetherOutcome::default();
+    let installed_at = now_rfc3339();
+    let mut staged = Vec::new();
+    for PendingInstall {
+        candidate,
+        approved,
+    } in pending
+    {
+        match stage_candidate(
+            candidate,
+            plugins_dir,
+            Some(installed_at.clone()),
+            installed_by,
+        ) {
+            Ok(install) => staged.push((candidate, approved, install)),
+            Err(error) => outcome.failed.push(FailedInstall {
                 id: candidate.id().to_string(),
                 error: error.to_string(),
             }),
         }
     }
-    report
+
+    let mut manifests = installed_manifests(plugins_dir);
+    let mut reinstalls = Vec::new();
+    for (candidate, approved, _) in &staged {
+        if manifests
+            .iter()
+            .any(|manifest| manifest.id == candidate.id())
+        {
+            reinstalls.push((candidate.id(), candidate_release(candidate), *approved));
+        } else {
+            manifests.push(candidate.plugin.manifest.clone());
+        }
+    }
+    let candidates: Vec<Candidate<'_>> = reinstalls
+        .iter()
+        .map(|(id, release, approved)| Candidate {
+            id,
+            release,
+            approved: *approved,
+        })
+        .collect();
+    let mut held = holds(&manifests, &candidates);
+
+    let mut promoting = Vec::new();
+    let mut promote = Vec::new();
+    for (candidate, _, install) in staged {
+        match held.remove(candidate.id()) {
+            Some(hold) => outcome.held.push(HeldPlugin {
+                id: candidate.id().to_string(),
+                release: candidate_release(candidate),
+                hold,
+            }),
+            None => {
+                promoting.push(candidate);
+                promote.push(install);
+            }
+        }
+    }
+    match promote_together(promote) {
+        Ok(records) => outcome.installed = promoting.into_iter().zip(records).collect(),
+        Err(error) => {
+            let error = error.to_string();
+            outcome
+                .failed
+                .extend(promoting.into_iter().map(|candidate| FailedInstall {
+                    id: candidate.id().to_string(),
+                    error: error.clone(),
+                }));
+        }
+    }
+    outcome
+}
+
+/// The release `candidate` was downloaded at.
+fn candidate_release(candidate: &PluginCandidate) -> OfferedRelease {
+    let manifest = &candidate.plugin.manifest;
+    OfferedRelease {
+        version: manifest.version.clone(),
+        commit: candidate.source.commit.clone(),
+        scopes: manifest.scopes.clone(),
+        dependencies: manifest.dependencies.clone(),
+    }
 }
 
 /// Selected plugins without an installable release, each failing on its
@@ -788,9 +863,9 @@ pub(crate) async fn install_to_disk(
     build: &BuildInfo,
     plugins_dir: &Path,
 ) -> Result<InstallReport, PluginRepoError> {
-    let (resolved, changed) = resolve_selection(url, git_ref, selection, build).await?;
+    let selection = resolve_selection(url, git_ref, selection, build, plugins_dir).await?;
     let _guard = MUTATION_LOCK.lock().await;
-    Ok(install_selected(&resolved, changed, plugins_dir))
+    Ok(install_selected(selection, plugins_dir))
 }
 
 /// Installs previewed plugins and then reloads the plugin runtime so the new
@@ -800,10 +875,18 @@ pub(crate) async fn install(
     git_ref: Option<&str>,
     plugins: &[PreviewedPlugin],
 ) -> Result<InstallReport, PluginRepoError> {
-    let (resolved, changed) =
-        resolve_selection(url, git_ref, Selection::Previewed(plugins), &server_build()).await?;
+    let _check = CHECK_LOCK.lock().await;
+    let plugins_dir = &STATE.boot.get().plugins_dir;
+    let selection = resolve_selection(
+        url,
+        git_ref,
+        Selection::Previewed(plugins),
+        &server_build(),
+        plugins_dir,
+    )
+    .await?;
     let guard = MUTATION_LOCK.lock().await;
-    let report = install_selected(&resolved, changed, &STATE.boot.get().plugins_dir);
+    let report = install_selected(selection, plugins_dir);
     if !report.installed.is_empty() {
         reload_runtime(guard).await?;
     }
@@ -841,12 +924,22 @@ pub(crate) struct HeldPlugin {
     pub(crate) hold: Hold,
 }
 
+/// An installed plugin with a newer release that was found but not
+/// installed.
+#[derive(Debug, Clone)]
+pub(crate) struct AvailableUpdate {
+    pub(crate) id: String,
+    pub(crate) release: OfferedRelease,
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct UpdateReport {
     pub(crate) updated: Vec<UpdatedPlugin>,
     pub(crate) up_to_date: Vec<String>,
     pub(crate) incompatible: Vec<IncompatiblePlugin>,
     pub(crate) held: Vec<HeldPlugin>,
+    /// Newer releases left uninstalled because automatic installs are off.
+    pub(crate) available: Vec<AvailableUpdate>,
     pub(crate) failed: Vec<FailedInstall>,
 }
 
@@ -913,36 +1006,48 @@ enum UpdateOutcome {
     Incompatible {
         requires: String,
     },
+    /// A newer release, before [`settle_updates`] judges its holds;
+    /// `approved` when the request named it.
+    Newer {
+        release: OfferedRelease,
+        approved: bool,
+    },
     Held {
         release: OfferedRelease,
         hold: Hold,
     },
+    /// Not listed, or what it is offered is unknown.
+    Unknown,
     Failed(String),
     /// Downloaded at its newer release, or attempted so that it fails with
-    /// the reason.
-    Changed,
+    /// the reason; `approved` as it was when [`UpdateOutcome::Newer`].
+    Changed {
+        approved: bool,
+    },
 }
 
-/// What one origin and ref offered the plugins installed from it.
-struct UpdateSource {
-    /// The listing's commit and entries, for its subscription.
-    commit: Option<String>,
-    entries: Vec<repo_db::PluginRepositoryEntry>,
+/// What one origin and ref lists for the plugins installed from it.
+struct ListedSource {
+    listing: RepositoryListing,
     /// By installed plugin id.
     outcomes: HashMap<String, UpdateOutcome>,
-    /// The changed plugins, downloaded at their releases.
+}
+
+/// The plugins of one origin and ref, with the changed ones downloaded at
+/// their releases.
+struct UpdateSource {
+    /// By installed plugin id.
+    outcomes: HashMap<String, UpdateOutcome>,
     repository: ResolvedRepository,
 }
 
 /// What updating the plugin `id`, installed at `record`, comes to when its
-/// repository offers `offered`, under `selection`, by
-/// [`UpdateStatus::compare`] and [`Hold::of`] over the `manifests` on disk.
+/// repository offers `offered`, under `selection`, before holds.
 fn update_outcome(
     id: &str,
     record: &SourceRecord,
     offered: Offered,
     selection: UpdateSelection<'_>,
-    manifests: &[PluginManifest],
 ) -> UpdateOutcome {
     let release = match (UpdateStatus::compare(&record.version, &offered), offered) {
         (UpdateStatus::UpToDate, _) => return UpdateOutcome::UpToDate,
@@ -950,7 +1055,7 @@ fn update_outcome(
             return UpdateOutcome::Incompatible { requires };
         }
         (UpdateStatus::UpdateAvailable, Ok(release)) => release,
-        _ => return UpdateOutcome::Changed,
+        _ => return UpdateOutcome::Unknown,
     };
     let approved = match selection {
         UpdateSelection::All => None,
@@ -965,28 +1070,22 @@ fn update_outcome(
             approved.commit, release.version, release.commit
         ));
     }
-    match Hold::of(id, &release, manifests) {
-        Some(Hold::AddsScopes { .. }) if approved.is_some() => UpdateOutcome::Changed,
-        Some(hold) => UpdateOutcome::Held { release, hold },
-        None => UpdateOutcome::Changed,
+    UpdateOutcome::Newer {
+        release,
+        approved: approved.is_some(),
     }
 }
 
-/// Lists the repository and downloads the plugins in `installed` that it
-/// offers a newer release of, by [`update_outcome`]. Plugins it does not
-/// list, or whose offer is unknown, are attempted too, so their update
-/// fails with the reason.
-async fn resolve_update_source(
+/// Lists the repository and decides, by [`update_outcome`], what updating
+/// each plugin in `installed` comes to.
+async fn list_update_source(
     client: &reqwest::Client,
     spec: &RepoSpec,
     installed: &[&(String, SourceRecord)],
     selection: UpdateSelection<'_>,
-    manifests: &[PluginManifest],
-    budget: &UnpackBudget,
-) -> Result<UpdateSource, ResolveError> {
-    let host = crate::plugins::plugin_host();
-    let listing = list_plugins(client, spec, &host).await?;
-    let outcomes: HashMap<String, UpdateOutcome> = installed
+) -> Result<ListedSource, ResolveError> {
+    let listing = list_plugins(client, spec, &crate::plugins::plugin_host()).await?;
+    let outcomes = installed
         .iter()
         .map(|(id, record)| {
             let outcome = match listing
@@ -994,28 +1093,87 @@ async fn resolve_update_source(
                 .iter()
                 .find(|plugin| plugin.id == *id && plugin.source.subpath == record.subpath)
             {
-                Some(plugin) => {
-                    update_outcome(id, record, listed_offer(plugin), selection, manifests)
-                }
-                None => UpdateOutcome::Changed,
+                Some(plugin) => update_outcome(id, record, listed_offer(plugin), selection),
+                None => UpdateOutcome::Unknown,
             };
             (id.clone(), outcome)
         })
         .collect();
-    let changed: Vec<String> = outcomes
+    Ok(ListedSource { listing, outcomes })
+}
+
+/// Judges the newer releases `sources` list together, by [`holds`] over
+/// the `manifests` on disk: each is held or to be downloaded. Plugins
+/// whose offer is unknown are attempted, so they fail with the reason,
+/// when `attempt_unknown` is set, and otherwise left alone.
+fn settle_updates<'a>(
+    sources: impl IntoIterator<Item = &'a mut ListedSource>,
+    manifests: &[PluginManifest],
+    attempt_unknown: bool,
+) {
+    let mut sources: Vec<&mut ListedSource> = sources.into_iter().collect();
+    let held = {
+        let candidates: Vec<Candidate<'_>> = sources
+            .iter()
+            .flat_map(|source| &source.outcomes)
+            .filter_map(|(id, outcome)| match outcome {
+                UpdateOutcome::Newer { release, approved } => Some(Candidate {
+                    id,
+                    release,
+                    approved: *approved,
+                }),
+                _ => None,
+            })
+            .collect();
+        holds(manifests, &candidates)
+    };
+    for (id, outcome) in sources.iter_mut().flat_map(|source| &mut source.outcomes) {
+        *outcome = match std::mem::replace(outcome, UpdateOutcome::Unknown) {
+            UpdateOutcome::Newer { release, approved } => match held.get(id) {
+                Some(hold) => UpdateOutcome::Held {
+                    release,
+                    hold: hold.clone(),
+                },
+                None => UpdateOutcome::Changed { approved },
+            },
+            UpdateOutcome::Unknown if attempt_unknown => UpdateOutcome::Changed { approved: false },
+            outcome => outcome,
+        };
+    }
+}
+
+/// Downloads the plugins `listed` settled as changed.
+async fn resolve_update_source(
+    client: &reqwest::Client,
+    listed: ListedSource,
+    budget: &UnpackBudget,
+) -> Result<UpdateSource, ResolveError> {
+    let changed: Vec<String> = listed
+        .outcomes
         .iter()
-        .filter(|(_, outcome)| matches!(outcome, UpdateOutcome::Changed))
+        .filter(|(_, outcome)| matches!(outcome, UpdateOutcome::Changed { .. }))
         .map(|(id, _)| id.clone())
         .collect();
-    let commit = listing.commit.clone();
-    let entries = listing_entries(&listing);
-    let repository = resolve_listed(client, listing, Some(&changed), &host, budget).await?;
+    let host = crate::plugins::plugin_host();
+    let repository = resolve_listed(client, listed.listing, Some(&changed), &host, budget).await?;
     Ok(UpdateSource {
-        commit,
-        entries,
-        outcomes,
+        outcomes: listed.outcomes,
         repository,
     })
+}
+
+/// The message plugins report when listing or downloading their releases
+/// failed, remembering a host that rate-limited it in `limited_hosts`.
+fn update_failure(error: ResolveError, limited_hosts: &mut HashMap<String, String>) -> String {
+    let limited_host = match &error {
+        ResolveError::Fetch(FetchError::RateLimited(limited)) => Some(limited.host.clone()),
+        _ => None,
+    };
+    let message = map_resolve_error(error).to_string();
+    if let Some(host) = limited_host {
+        limited_hosts.insert(host, message.clone());
+    }
+    message
 }
 
 /// Ids of installed plugins that carry a source record file. Unreadable
@@ -1046,8 +1204,9 @@ fn managed_plugin_ids(plugins_dir: &Path) -> Result<BTreeSet<String>, PluginRepo
 /// selection is rejected. Pinned plugins are up to date by construction and
 /// are not resolved. Each distinct origin and ref is listed once, and only
 /// the plugins it offers a newer release of are downloaded and reinstalled,
-/// unless that release is held; per-plugin failures don't abort siblings.
-/// The runtime reloads once, and only when something was reinstalled.
+/// unless that release is held. A plugin failing holds only the releases
+/// that need it, and the rest install together. The runtime reloads once,
+/// and only when something was reinstalled.
 pub(crate) async fn update_plugins(
     selection: UpdateSelection<'_>,
 ) -> Result<UpdateReport, PluginRepoError> {
@@ -1073,6 +1232,7 @@ async fn update_plugins_in(
         }
     };
 
+    let _check = CHECK_LOCK.lock().await;
     let mut report = UpdateReport::default();
     let mut records = Vec::new();
     for id in ids {
@@ -1096,122 +1256,160 @@ async fn update_plugins_in(
             .push(plugin);
     }
     let manifests = installed_manifests(plugins_dir);
-    // Every downloaded release stays on disk until the installs finish.
-    let budget = UnpackBudget::new();
-    let mut resolved: HashMap<UpdateKey, Result<UpdateSource, String>> = HashMap::new();
     // Hosts that rate-limited a request, with the error their later origins
     // fail with unasked.
     let mut limited_hosts: HashMap<String, String> = HashMap::new();
+    let mut listed: HashMap<UpdateKey, Result<ListedSource, String>> = HashMap::new();
     for ((origin, git_ref), group) in &installed {
         let key = (origin.clone(), git_ref.clone());
         let spec = match RepoSpec::parse(origin, git_ref.as_deref()) {
             Ok(spec) => spec,
             Err(error) => {
-                resolved.insert(key, Err(error.to_string()));
+                listed.insert(key, Err(error.to_string()));
                 continue;
             }
         };
         if let Some(error) = limited_hosts.get(&spec.host) {
-            resolved.insert(key, Err(error.clone()));
+            listed.insert(key, Err(error.clone()));
             continue;
         }
-        let result = resolve_update_source(&client, &spec, group, selection, &manifests, &budget)
+        let result = list_update_source(&client, &spec, group, selection)
             .await
-            .map_err(|error| {
-                let limited_host = match &error {
-                    ResolveError::Fetch(FetchError::RateLimited(limited)) => {
-                        Some(limited.host.clone())
-                    }
-                    _ => None,
-                };
-                let message = map_resolve_error(error).to_string();
-                if let Some(host) = limited_host {
-                    limited_hosts.insert(host, message.clone());
-                }
-                message
-            });
-        resolved.insert(key, result);
+            .map_err(|error| update_failure(error, &mut limited_hosts));
+        listed.insert(key, result);
     }
-    if resolved.values().any(Result::is_ok) {
+    if listed.values().any(Result::is_ok) {
         let mut db = STATE.db.write().await;
-        for ((origin, git_ref), source) in &resolved {
+        for ((origin, git_ref), source) in &listed {
             if let Ok(source) = source {
                 record_listed(
                     &mut db,
                     origin,
                     git_ref.as_deref(),
-                    source.commit.clone(),
-                    &source.entries,
+                    source.listing.commit.clone(),
+                    &listing_entries(&source.listing),
                 )?;
             }
         }
     }
+    settle_updates(
+        listed
+            .values_mut()
+            .filter_map(|source| source.as_mut().ok()),
+        &manifests,
+        true,
+    );
+
+    // Every downloaded release stays on disk until the installs finish.
+    let budget = UnpackBudget::new();
+    let mut resolved: HashMap<UpdateKey, Result<UpdateSource, String>> = HashMap::new();
+    for (key, source) in listed {
+        let result = match source {
+            Ok(source) => match limited_hosts.get(&source.listing.spec.host) {
+                Some(error) => Err(error.clone()),
+                None => resolve_update_source(&client, source, &budget)
+                    .await
+                    .map_err(|error| update_failure(error, &mut limited_hosts)),
+            },
+            Err(error) => Err(error),
+        };
+        resolved.insert(key, result);
+    }
 
     let mut pending = Vec::new();
     for (id, record) in &records {
-        let source = match &resolved[&(record.origin.clone(), record.git_ref.clone())] {
-            Ok(source) => source,
-            Err(error) => {
-                report.failed.push(FailedInstall {
-                    id: id.clone(),
-                    error: error.clone(),
-                });
-                continue;
-            }
-        };
-        match &source.outcomes[id] {
-            UpdateOutcome::UpToDate => report.up_to_date.push(id.clone()),
-            UpdateOutcome::Incompatible { requires } => {
-                report.incompatible.push(IncompatiblePlugin {
-                    id: id.clone(),
-                    requires: requires.clone(),
-                })
-            }
-            UpdateOutcome::Held { release, hold } => report.held.push(HeldPlugin {
-                id: id.clone(),
-                release: release.clone(),
-                hold: hold.clone(),
-            }),
-            UpdateOutcome::Failed(error) => report.failed.push(FailedInstall {
+        match &resolved[&(record.origin.clone(), record.git_ref.clone())] {
+            Ok(source) => take_outcome(source, id, record, &mut report, &mut pending),
+            Err(error) => report.failed.push(FailedInstall {
                 id: id.clone(),
                 error: error.clone(),
             }),
-            UpdateOutcome::Changed => match find_update(&source.repository, id, record) {
-                Ok(candidate) => pending.push((id, candidate)),
-                Err(error) => report.failed.push(FailedInstall {
-                    id: id.clone(),
-                    error: error.to_string(),
-                }),
-            },
         }
     }
 
     let guard = MUTATION_LOCK.lock().await;
-    for (id, candidate) in pending {
-        if load_managed_record(plugins_dir, id).is_err() {
-            report.failed.push(FailedInstall {
-                id: id.clone(),
-                error: format!("plugin '{id}' was removed during update"),
-            });
-            continue;
-        }
-        match install_candidate(candidate, plugins_dir, Some(now_rfc3339())) {
-            Ok(record) => report.updated.push(UpdatedPlugin {
-                id: id.clone(),
-                version: candidate.plugin.manifest.version.to_string(),
-                commit: record.commit,
-            }),
-            Err(error) => report.failed.push(FailedInstall {
-                id: id.clone(),
-                error: error.to_string(),
-            }),
-        }
-    }
+    install_updates(pending, plugins_dir, InstalledBy::Request, &mut report);
     if !report.updated.is_empty() {
         reload_runtime(guard).await?;
     }
 
     Ok(report)
+}
+
+/// Reports what `source` decided for the installed plugin `id`, queueing
+/// it in `pending` when it is to be reinstalled.
+fn take_outcome<'a>(
+    source: &'a UpdateSource,
+    id: &'a String,
+    record: &SourceRecord,
+    report: &mut UpdateReport,
+    pending: &mut Vec<PendingInstall<'a>>,
+) {
+    match &source.outcomes[id] {
+        UpdateOutcome::UpToDate => report.up_to_date.push(id.clone()),
+        UpdateOutcome::Incompatible { requires } => report.incompatible.push(IncompatiblePlugin {
+            id: id.clone(),
+            requires: requires.clone(),
+        }),
+        UpdateOutcome::Held { release, hold } => report.held.push(HeldPlugin {
+            id: id.clone(),
+            release: release.clone(),
+            hold: hold.clone(),
+        }),
+        UpdateOutcome::Failed(error) => report.failed.push(FailedInstall {
+            id: id.clone(),
+            error: error.clone(),
+        }),
+        UpdateOutcome::Unknown => {}
+        UpdateOutcome::Newer { approved, .. } | UpdateOutcome::Changed { approved } => {
+            match find_update(&source.repository, id, record) {
+                Ok(candidate) => pending.push(PendingInstall {
+                    candidate,
+                    approved: *approved,
+                }),
+                Err(error) => report.failed.push(FailedInstall {
+                    id: id.clone(),
+                    error: error.to_string(),
+                }),
+            }
+        }
+    }
+}
+
+/// Reinstalls the `pending` plugins into `plugins_dir` together, by
+/// [`install_together`], recording who they were `installed_by`. The
+/// caller holds `MUTATION_LOCK`.
+fn install_updates(
+    pending: Vec<PendingInstall<'_>>,
+    plugins_dir: &Path,
+    installed_by: InstalledBy,
+    report: &mut UpdateReport,
+) {
+    let mut present = Vec::new();
+    for update in pending {
+        let id = update.candidate.id();
+        if load_managed_record(plugins_dir, id).is_ok() {
+            present.push(update);
+        } else {
+            report.failed.push(FailedInstall {
+                id: id.to_string(),
+                error: format!("plugin '{id}' was removed during update"),
+            });
+        }
+    }
+    let outcome = install_together(present, plugins_dir, installed_by);
+    report.held.extend(outcome.held);
+    report.failed.extend(outcome.failed);
+    report.updated.extend(
+        outcome
+            .installed
+            .into_iter()
+            .map(|(candidate, record)| UpdatedPlugin {
+                id: candidate.id().to_string(),
+                version: candidate.plugin.manifest.version.to_string(),
+                commit: record.commit,
+            }),
+    );
 }
 
 /// Uninstalls a repository-managed plugin and reloads the runtime.
@@ -1227,9 +1425,10 @@ pub(crate) async fn reload_plugins() -> Result<(), PluginRepoError> {
     reload_runtime(MUTATION_LOCK.lock().await).await
 }
 
-/// Reloads the runtime from `plugins_dir`. The reload holds `guard` to its
-/// end, even when the caller is dropped, so no other mutation can change
-/// `plugins_dir` while it reads it.
+/// Reloads the runtime from `plugins_dir`, applying any automatic updates
+/// waiting for it. The reload holds `guard` to its end, even when the
+/// caller is dropped, so no other mutation can change `plugins_dir` while
+/// it reads it.
 async fn reload_runtime(guard: MutexGuard<'static, ()>) -> Result<(), PluginRepoError> {
     tokio::spawn(async move {
         let _guard = guard;
@@ -1237,7 +1436,9 @@ async fn reload_runtime(guard: MutexGuard<'static, ()>) -> Result<(), PluginRepo
             .generation()
             .registries
             .reload_all_plugins()
-            .await
+            .await?;
+        auto_update::RELOAD_PENDING.store(false, Ordering::Release);
+        anyhow::Ok(())
     })
     .await
     .map_err(anyhow::Error::new)
@@ -1253,6 +1454,9 @@ pub(crate) async fn add_repository(
     url: &str,
     git_ref: Option<&str>,
 ) -> Result<(repo_db::PluginRepository, RepositoryPreview), PluginRepoError> {
+    let spec =
+        RepoSpec::parse(url, git_ref).map_err(|e| PluginRepoError::BadRequest(e.to_string()))?;
+    ensure_not_subscribed(&*STATE.db.read().await, &spec)?;
     let listing = list(url, git_ref, &server_build()).await?;
     let preview = build_preview(&listing, &STATE.boot.get().plugins_dir);
 
@@ -1269,14 +1473,7 @@ pub(crate) async fn add_repository(
     };
 
     let mut db = STATE.db.write().await;
-    if repo_db::get_by_origin(&*db, &origin)
-        .map_err(PluginRepoError::Internal)?
-        .is_some()
-    {
-        return Err(PluginRepoError::Conflict(format!(
-            "repository already added: {origin}"
-        )));
-    }
+    ensure_not_subscribed(&*db, &listing.spec)?;
     let entries = listing_entries(&listing);
     let db_id = db
         .transaction_mut(|t| repo_db::create(t, &record, &entries))
@@ -1305,6 +1502,7 @@ pub(crate) async fn refresh_repository(
 ) -> Result<(repo_db::PluginRepository, RepositoryPreview), PluginRepoError> {
     let mut record = load_repository(repository_id).await?;
 
+    let _check = CHECK_LOCK.lock().await;
     let listing = list(&record.origin, record.git_ref.as_deref(), &server_build()).await?;
     let preview = build_preview(&listing, &STATE.boot.get().plugins_dir);
 
@@ -1353,14 +1551,25 @@ mod tests {
     use std::sync::{
         Arc,
         Mutex,
+        atomic::AtomicBool,
     };
 
+    use axum::response::IntoResponse;
+
+    use harmony_core::plugin::PLUGIN_CONFIG_FILENAME;
     use harmony_repository::{
         Forge,
         manifest::SOURCE_RECORD_SCHEMA_VERSION,
     };
+    use semver::Version;
 
-    use super::*;
+    use super::{
+        status::{
+            InstalledStatus,
+            Requirement,
+        },
+        *,
+    };
     use crate::plugins::testing::HOST_REQUIREMENT;
 
     #[test]
@@ -1422,7 +1631,7 @@ mod tests {
             .parent()
             .unwrap();
         let catalog = harmony_repository::RepositoryManifest::parse(
-            include_str!("../../../repository.json"),
+            include_str!("../../../../repository.json"),
             None,
         )?;
         let listed = catalog
@@ -1453,6 +1662,23 @@ mod tests {
         Ok(())
     }
 
+    /// The status of `plugin_id` alone, as [`installed_statuses`] reports
+    /// it.
+    pub(super) fn installed_status(
+        plugin_id: &str,
+        record: &SourceRecord,
+        subscriptions: &[Subscription],
+        installed: &[PluginManifest],
+    ) -> InstalledStatus {
+        installed_statuses(
+            &[(plugin_id.to_string(), record.clone())],
+            subscriptions,
+            installed,
+        )
+        .remove(plugin_id)
+        .expect("a status per record")
+    }
+
     fn record(version: &str) -> SourceRecord {
         SourceRecord {
             schema_version: SOURCE_RECORD_SCHEMA_VERSION,
@@ -1465,6 +1691,7 @@ mod tests {
             subpath: None,
             via_repository: None,
             installed_at: None,
+            installed_automatically: false,
         }
     }
 
@@ -1569,14 +1796,9 @@ mod tests {
         .await?;
         let plugins_dir = tempfile::TempDir::new()?;
         install_records(plugins_dir.path(), &forge.origin, &[("changed", "1.0.0")])?;
-        let dependent = plugins_dir.path().join("dependent");
-        std::fs::create_dir_all(&dependent)?;
-        let mut manifest: serde_json::Value =
-            serde_json::from_str(&manifest_json("dependent", "1.0.0", HOST_REQUIREMENT))?;
-        manifest["dependencies"] = serde_json::json!({ "changed": "1" });
-        std::fs::write(dependent.join(PLUGIN_CONFIG_FILENAME), manifest.to_string())?;
+        install_dependent(plugins_dir.path(), "1")?;
         let breaks = Hold::BreaksDependents {
-            dependents: vec![Dependent {
+            dependents: vec![Requirement {
                 id: "dependent".into(),
                 requires: "^1".into(),
             }],
@@ -1594,6 +1816,155 @@ mod tests {
             assert!(report.updated.is_empty(), "{report:?}");
         }
         assert!(forge.downloads().is_empty(), "{:?}", forge.downloads());
+        Ok(())
+    }
+
+    /// Installs the local plugin `dependent`, which depends on `changed`
+    /// at `requires`.
+    pub(super) fn install_dependent(plugins_dir: &Path, requires: &str) -> anyhow::Result<()> {
+        let dir = plugins_dir.join("dependent");
+        std::fs::create_dir_all(&dir)?;
+        let manifest = with_dependencies(
+            &manifest_json("dependent", "1.0.0", HOST_REQUIREMENT),
+            &[("changed", requires)],
+        )?;
+        std::fs::write(dir.join(PLUGIN_CONFIG_FILENAME), manifest)?;
+        Ok(())
+    }
+
+    /// The `plugin.json` `manifest`, depending on each `(id, requirement)`.
+    fn with_dependencies(manifest: &str, dependencies: &[(&str, &str)]) -> anyhow::Result<String> {
+        let mut manifest: serde_json::Value = serde_json::from_str(manifest)?;
+        manifest["dependencies"] = dependencies
+            .iter()
+            .map(|(id, requires)| (id.to_string(), serde_json::json!(requires)))
+            .collect();
+        Ok(manifest.to_string())
+    }
+
+    #[tokio::test]
+    async fn updates_needing_a_plugin_that_is_not_installed_are_held() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        lyra_db::server::ensure(&mut *STATE.db.write().await)?;
+        let needs = with_dependencies(&changed_at(HOST_REQUIREMENT), &[("missing", "1")])?;
+        let forge = catalog_forge(HOST_REQUIREMENT, HOST_REQUIREMENT, needs).await?;
+        let plugins_dir = tempfile::TempDir::new()?;
+        install_records(plugins_dir.path(), &forge.origin, &[("changed", "1.0.0")])?;
+        subscribe(&forge.origin, &[]).await?;
+
+        let report = update_plugins_in(plugins_dir.path(), UpdateSelection::All).await?;
+
+        let held: Vec<_> = report
+            .held
+            .iter()
+            .map(|plugin| (plugin.id.as_str(), &plugin.hold))
+            .collect();
+        let unmet = Hold::UnmetDependencies {
+            dependencies: vec![Requirement {
+                id: "missing".into(),
+                requires: "^1".into(),
+            }],
+        };
+        assert_eq!(held, [("changed", &unmet)]);
+        assert!(forge.downloads().is_empty(), "{:?}", forge.downloads());
+        let record = load_managed_record(plugins_dir.path(), "changed")?;
+        let status = installed_status(
+            "changed",
+            &record,
+            &list_subscriptions().await?,
+            &installed_manifests(plugins_dir.path()),
+        );
+        assert_eq!(status.hold, Some(unmet));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn updates_needing_a_release_that_failed_to_download_are_held() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        lyra_db::server::ensure(&mut *STATE.db.write().await)?;
+        let needs = with_dependencies(&changed_at(HOST_REQUIREMENT), &[("same", "^2")])?;
+        let needing = catalog_forge(HOST_REQUIREMENT, HOST_REQUIREMENT, needs).await?;
+        let needed = catalog_forge_with_same(
+            manifest_json("same", "2.0.0", HOST_REQUIREMENT),
+            manifest_json("changed", "1.0.0", HOST_REQUIREMENT),
+        )
+        .await?;
+        needed.fail_downloads();
+        let plugins_dir = tempfile::TempDir::new()?;
+        install_records(plugins_dir.path(), &needing.origin, &[("changed", "1.0.0")])?;
+        install_records(plugins_dir.path(), &needed.origin, &[("same", "1.0.0")])?;
+
+        let report = update_plugins_in(plugins_dir.path(), UpdateSelection::All).await?;
+
+        let failed: Vec<_> = report
+            .failed
+            .iter()
+            .map(|plugin| plugin.id.as_str())
+            .collect();
+        assert_eq!(failed, ["same"], "{report:?}");
+        let held: Vec<_> = report
+            .held
+            .iter()
+            .map(|plugin| (plugin.id.as_str(), &plugin.hold))
+            .collect();
+        let unmet = Hold::UnmetDependencies {
+            dependencies: vec![Requirement {
+                id: "same".into(),
+                requires: "^2".into(),
+            }],
+        };
+        assert_eq!(held, [("changed", &unmet)], "{report:?}");
+        assert!(report.updated.is_empty(), "{report:?}");
+        assert_eq!(
+            load_managed_record(plugins_dir.path(), "changed")?.version,
+            Version::new(1, 0, 0)
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reinstalls_breaking_an_installed_dependent_are_held() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        let forge = catalog_forge(
+            HOST_REQUIREMENT,
+            HOST_REQUIREMENT,
+            changed_at(HOST_REQUIREMENT),
+        )
+        .await?;
+        let plugins_dir = tempfile::TempDir::new()?;
+        install_records(plugins_dir.path(), &forge.origin, &[("changed", "1.0.0")])?;
+        install_dependent(plugins_dir.path(), "1")?;
+
+        let report = install_to_disk(
+            &forge.origin,
+            None,
+            Selection::Previewed(&[previewed("changed", "2"), previewed("same", "2")]),
+            &server_build(),
+            plugins_dir.path(),
+        )
+        .await?;
+
+        let installed: Vec<_> = report
+            .installed
+            .iter()
+            .map(|plugin| plugin.id.as_str())
+            .collect();
+        assert_eq!(installed, ["same"], "{report:?}");
+        let [held] = &report.held[..] else {
+            panic!("expected one held plugin: {report:?}");
+        };
+        assert_eq!(held.id, "changed");
+        assert!(
+            matches!(&held.hold, Hold::BreaksDependents { dependents } if dependents[0].id == "dependent"),
+            "{held:?}"
+        );
+        assert_eq!(
+            load_managed_record(plugins_dir.path(), "changed")?.version,
+            Version::new(1, 0, 0)
+        );
         Ok(())
     }
 
@@ -1634,7 +2005,7 @@ mod tests {
         "f".repeat(40)
     }
 
-    fn manifest_json(id: &str, version: &str, lyra: &str) -> String {
+    pub(super) fn manifest_json(id: &str, version: &str, lyra: &str) -> String {
         serde_json::json!({
             "schema_version": 1,
             "id": id,
@@ -1672,12 +2043,17 @@ mod tests {
         Ok(archive.into_inner()?.finish()?)
     }
 
+    /// The requests a [`TestForge`] recorded, and whether it fails
+    /// downloads.
+    type ForgeState = (Arc<Mutex<Vec<String>>>, Arc<AtomicBool>);
+
     /// A Gitea-style forge whose `o/r` default branch `main` is at [`tip`],
     /// serving `files` there as raw files and each `(commit, files)` release
     /// as raw files and an archive. Every request is recorded.
-    struct TestForge {
-        origin: String,
+    pub(super) struct TestForge {
+        pub(super) origin: String,
         requests: Arc<Mutex<Vec<String>>>,
+        failing_downloads: Arc<AtomicBool>,
     }
 
     impl TestForge {
@@ -1688,6 +2064,7 @@ mod tests {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
             let origin = format!("http://{}/o/r", listener.local_addr()?);
             let requests = Arc::new(Mutex::new(Vec::new()));
+            let failing_downloads = Arc::new(AtomicBool::new(false));
             let mut router = axum::Router::new()
                 .route(
                     "/api/v1/repos/o/r",
@@ -1721,25 +2098,36 @@ mod tests {
                 );
             }
             let router = router.layer(axum::middleware::from_fn_with_state(
-                requests.clone(),
-                async |axum::extract::State(requests): axum::extract::State<
-                    Arc<Mutex<Vec<String>>>,
+                (requests.clone(), failing_downloads.clone()),
+                async |axum::extract::State((requests, failing_downloads)): axum::extract::State<
+                    ForgeState,
                 >,
                        request: axum::extract::Request,
                        next: axum::middleware::Next| {
-                    requests
-                        .lock()
-                        .unwrap()
-                        .push(request.uri().path().to_string());
+                    let path = request.uri().path().to_string();
+                    let fails = path.contains("archive") && failing_downloads.load(Ordering::Relaxed);
+                    requests.lock().unwrap().push(path);
+                    if fails {
+                        return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                    }
                     next.run(request).await
                 },
             ));
             tokio::spawn(async move { axum::serve(listener, router).await });
-            Ok(Self { origin, requests })
+            Ok(Self {
+                origin,
+                requests,
+                failing_downloads,
+            })
+        }
+
+        /// Fails every archive download from now on.
+        fn fail_downloads(&self) {
+            self.failing_downloads.store(true, Ordering::Relaxed);
         }
 
         /// Every archive requested.
-        fn downloads(&self) -> Vec<String> {
+        pub(super) fn downloads(&self) -> Vec<String> {
             self.requests
                 .lock()
                 .unwrap()
@@ -1754,9 +2142,25 @@ mod tests {
     /// at `r2`, which `main` matches, to servers matching `newest_to`, then
     /// at `r1` to those matching `older_to`. `same` is at 1.0.0 in both; `changed` is at
     /// 1.0.0 in `r1`, and in `r2` has the `plugin.json` `changed`.
-    async fn catalog_forge(
+    pub(super) async fn catalog_forge(
         newest_to: &str,
         older_to: &str,
+        changed: String,
+    ) -> anyhow::Result<TestForge> {
+        let same = manifest_json("same", "1.0.0", HOST_REQUIREMENT);
+        catalog_forge_releasing(newest_to, older_to, same, changed).await
+    }
+
+    /// [`catalog_forge`] released to this server, with `same` at the
+    /// `plugin.json` `same` in both releases.
+    async fn catalog_forge_with_same(same: String, changed: String) -> anyhow::Result<TestForge> {
+        catalog_forge_releasing(HOST_REQUIREMENT, HOST_REQUIREMENT, same, changed).await
+    }
+
+    async fn catalog_forge_releasing(
+        newest_to: &str,
+        older_to: &str,
+        same: String,
         changed: String,
     ) -> anyhow::Result<TestForge> {
         let (r1, r2) = ("1".repeat(40), "2".repeat(40));
@@ -1772,10 +2176,7 @@ mod tests {
                 r#"{"schema_version":1,"name":"Catalog","plugins":[{"path":"plugins/same"},{"path":"plugins/changed"}]}"#
                     .to_string(),
             )];
-            files.extend(plugin(
-                "same",
-                manifest_json("same", "1.0.0", HOST_REQUIREMENT),
-            ));
+            files.extend(plugin("same", same.clone()));
             files.extend(plugin("changed", changed));
             files
         };
@@ -1799,12 +2200,12 @@ mod tests {
     }
 
     /// The `plugin.json` of `changed` 2.0.0, requiring `lyra`.
-    fn changed_at(lyra: &str) -> String {
+    pub(super) fn changed_at(lyra: &str) -> String {
         manifest_json("changed", "2.0.0", lyra)
     }
 
     /// Installs `(id, version)` records from `origin` as path entries.
-    fn install_records(
+    pub(super) fn install_records(
         plugins_dir: &Path,
         origin: &str,
         installed: &[(&str, &str)],
@@ -1825,7 +2226,10 @@ mod tests {
         Ok(())
     }
 
-    async fn subscribe(origin: &str, entries: &[(&str, &str)]) -> anyhow::Result<agdb::DbId> {
+    pub(super) async fn subscribe(
+        origin: &str,
+        entries: &[(&str, &str)],
+    ) -> anyhow::Result<agdb::DbId> {
         let entries: Vec<_> = entries
             .iter()
             .map(|(id, version)| repo_db::PluginRepositoryEntry {
@@ -1835,6 +2239,7 @@ mod tests {
                 version: Some(version.to_string()),
                 commit: Some("1".repeat(40)),
                 scopes: Some(Vec::new()),
+                dependencies: None,
                 requires: None,
             })
             .collect();
@@ -2391,6 +2796,7 @@ mod tests {
                 version: Version::parse(version).unwrap(),
                 commit: "1".repeat(40),
                 scopes: Vec::new(),
+                dependencies: Default::default(),
             })
         };
         let status =
@@ -2435,6 +2841,7 @@ mod tests {
             version: version.map(str::to_string),
             commit: version.map(|_| "1".repeat(40)),
             scopes: version.map(|_| Vec::new()),
+            dependencies: None,
             requires: None,
         };
         repo_db::create(
@@ -2523,6 +2930,7 @@ mod tests {
             version: Some(version.to_string()),
             commit: Some("1".repeat(40)),
             scopes: Some(Vec::new()),
+            dependencies: None,
             requires: None,
         };
         repo_db::create(
@@ -2567,6 +2975,25 @@ mod tests {
             .map(|entry| (entry.plugin_id, entry.version))
             .collect();
         assert_eq!(entries, [("moved".to_string(), Some("1.1.0".to_string()))]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn subscribing_a_subscribed_repository_again_is_rejected() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        subscribe("http://127.0.0.1:9/o/r", &[]).await?;
+
+        for (url, git_ref) in [
+            ("http://127.0.0.1:9/O/R", None),
+            ("http://127.0.0.1:9/o/r", Some("dev")),
+        ] {
+            let error = add_repository(url, git_ref).await.unwrap_err();
+            assert!(
+                matches!(error, PluginRepoError::Conflict(_)),
+                "{url}: {error:?}"
+            );
+        }
         Ok(())
     }
 

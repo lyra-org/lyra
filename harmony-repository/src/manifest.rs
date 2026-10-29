@@ -258,7 +258,7 @@ fn reject_nested_paths(entries: &[RepositoryEntry]) -> Result<(), ManifestError>
 }
 
 pub const SOURCE_RECORD_FILENAME: &str = ".harmony-source.json";
-pub const SOURCE_RECORD_SCHEMA_VERSION: u32 = 3;
+pub const SOURCE_RECORD_SCHEMA_VERSION: u32 = 4;
 
 /// Provenance of an installed plugin, written next to its `plugin.json`.
 /// Plugins without a record are local (bundled or hand-copied) and are
@@ -288,6 +288,8 @@ pub struct SourceRecord {
     pub via_repository: Option<String>,
     /// RFC 3339 timestamp supplied by the host.
     pub installed_at: Option<String>,
+    /// Whether an automatic update, rather than a person, installed it.
+    pub installed_automatically: bool,
 }
 
 #[derive(Deserialize)]
@@ -580,6 +582,7 @@ mod tests {
             subpath: Some("musicbrainz".into()),
             via_repository: Some("https://github.com/lyra/plugins".into()),
             installed_at: Some("2026-06-09T12:00:00Z".into()),
+            installed_automatically: true,
         };
 
         record.store(dir.path()).unwrap();

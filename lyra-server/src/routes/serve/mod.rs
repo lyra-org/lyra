@@ -20,7 +20,10 @@ use ranged_file::{
 use axum::Router;
 
 use axum::{
-    body::Body,
+    body::{
+        Body,
+        HttpBody as _,
+    },
     http::{
         HeaderMap,
         Method,
@@ -29,6 +32,7 @@ use axum::{
         header,
     },
 };
+use futures::StreamExt as _;
 use std::path::Path as FsPath;
 
 use crate::routes::request::bearer_credential;
@@ -50,6 +54,7 @@ use crate::{
             ServeTrackOptions,
             TrackAccess,
             ValidatedTrackSource,
+            activity,
             authorize_track_purpose,
             resolve_track_delivery,
         },
@@ -116,11 +121,26 @@ pub(crate) async fn track_response(
     target: DeliveryTarget,
 ) -> Result<Response<Body>, AppError> {
     let (source, delivery) = resolve_track_delivery(track_id, access, options, target).await?;
-    if delivery.direct_passthrough {
-        return source_file_response(&source, delivery.content_type, headers).await;
+    let response = if delivery.direct_passthrough {
+        source_file_response(&source, delivery.content_type, headers).await?
+    } else {
+        transcoded::transcoded_response(method, headers, access.caller(), source, delivery, target)
+            .await?
+    };
+    Ok(response.map(counted_as_playing))
+}
+
+/// `body`, counted as playing while it is sent. An empty body is left as
+/// it is, so its known length still reaches the response headers.
+fn counted_as_playing(body: Body) -> Body {
+    if body.is_end_stream() {
+        return body;
     }
-    transcoded::transcoded_response(method, headers, access.caller(), source, delivery, target)
-        .await
+    let playing = activity::begin_stream();
+    Body::from_stream(body.into_data_stream().map(move |frame| {
+        let _playing = &playing;
+        frame
+    }))
 }
 
 /// The body of a `HEAD` response whose `GET` body has no known length. Its size is unknown
@@ -1334,6 +1354,69 @@ mod tests {
         )
         .await?;
         assert_eq!(status, StatusCode::OK, "the start offset stays per request");
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn track_responses_keep_their_length_headers_over_http() -> anyhow::Result<()> {
+        use axum::http::header::{
+            CONTENT_LENGTH,
+            RANGE,
+            TRANSFER_ENCODING,
+        };
+
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let headers = create_user_with_permissions("http-listener", vec![]).await?;
+        let token_query = playback_url_query(&track_id, &headers, "stream_url", "").await?;
+        let mp3_query = playback_url_query(
+            &track_id,
+            &headers,
+            "stream_url",
+            "format=mp3&bitrate_bps=96000",
+        )
+        .await?;
+        let (_, _, file) = send(Method::GET, format!("/{track_id}?{token_query}")).await?;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let base = format!("http://{}/{track_id}", listener.local_addr()?);
+        tokio::spawn(async move { axum::serve(listener, super::stream_routes()).await });
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = reqwest::Client::new();
+        let direct = format!("{base}?{token_query}");
+        let length = |response: &reqwest::Response| {
+            response
+                .headers()
+                .get(CONTENT_LENGTH)
+                .map(|value| value.to_str().unwrap_or_default().to_string())
+        };
+
+        let full = client.get(&direct).send().await?;
+        assert_eq!(length(&full), Some(file.len().to_string()));
+        assert!(full.headers().get(TRANSFER_ENCODING).is_none());
+        assert_eq!(full.bytes().await?, file);
+        let ranged = client
+            .get(&direct)
+            .header(RANGE, "bytes=0-9")
+            .send()
+            .await?;
+        assert_eq!(ranged.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(length(&ranged), Some("10".to_string()));
+        let head = client.head(&direct).send().await?;
+        assert_eq!(length(&head), Some(file.len().to_string()));
+        let beyond = format!("bytes={}-", file.len() + 10);
+        let unsatisfiable = client.get(&direct).header(RANGE, beyond).send().await?;
+        assert_eq!(unsatisfiable.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(length(&unsatisfiable), Some("0".to_string()));
+        let transcode_head = client.head(format!("{base}?{mp3_query}")).send().await?;
+        assert_eq!(transcode_head.status(), StatusCode::OK);
+        assert_eq!(
+            length(&transcode_head),
+            None,
+            "a transcode's length is unknown"
+        );
 
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())

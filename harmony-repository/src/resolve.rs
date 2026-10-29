@@ -171,6 +171,7 @@ impl PluginSource {
             subpath: self.subpath.clone(),
             via_repository: self.via_repository.clone(),
             installed_at: None,
+            installed_automatically: false,
         }
     }
 }
@@ -216,7 +217,9 @@ pub struct RepositoryListing {
 #[derive(Debug)]
 pub struct PluginCandidate {
     pub plugin: LoadedPlugin,
-    /// Provenance to record at install time; `installed_at` is unset.
+    /// Provenance to record at install time; `installed_at` and
+    /// `installed_automatically`
+    /// are unset.
     pub source: SourceRecord,
     source_dir: PathBuf,
 }

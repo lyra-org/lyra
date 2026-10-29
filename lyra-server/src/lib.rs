@@ -174,12 +174,16 @@ async fn serve(capture: Option<CaptureArgs>, listener: TcpListener) -> Result<()
             tracing::error!(error = %err, "failed to finalize plugin startup");
             return;
         }
+        let update_checks = tokio::spawn(plugins::repositories::run_update_checks(
+            services::shutdown::token(),
+        ));
 
         if let Err(err) = services::libraries::prepare_configured_library(&config_for_bg).await {
             tracing::error!(error = %err, "configured library preparation failed");
         }
 
         services::providers::run_provider_sync_loop(shutdown_bg).await;
+        let _ = update_checks.await;
     });
 
     routes::serve_app(app, config.as_ref(), listener, shutdown_token).await?;
@@ -288,11 +292,15 @@ pub async fn run_plugins_add(build: BuildInfo, url: &str, git_ref: Option<&str>)
             println!("  scopes: {}", plugin.scopes.join(", "));
         }
     }
+    for held in &report.held {
+        eprintln!("held {} v{}: {}", held.id, held.release.version, held.hold);
+    }
     for failure in &report.failed {
         eprintln!("failed to install {}: {}", failure.id, failure.error);
     }
-    if !report.failed.is_empty() {
-        anyhow::bail!("{} plugin(s) failed to install", report.failed.len());
+    let unmet = report.held.len() + report.failed.len();
+    if unmet > 0 {
+        anyhow::bail!("{unmet} plugin(s) were not installed");
     }
 
     println!("restart the server (or POST /api/plugins/reload) to load them");

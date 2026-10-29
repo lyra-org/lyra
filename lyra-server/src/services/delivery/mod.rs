@@ -7,6 +7,7 @@
 //! and whether that file is served as it is or transcoded, and how.
 
 mod access;
+pub(crate) mod activity;
 pub(crate) mod decision;
 mod hls;
 mod options;

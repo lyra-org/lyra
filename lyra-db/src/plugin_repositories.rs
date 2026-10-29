@@ -9,6 +9,9 @@ use agdb::{
     DbAnyTransactionMut,
     DbElement,
     DbId,
+    DbSerialize,
+    DbTypeMarker,
+    DbValue,
     QueryBuilder,
 };
 
@@ -45,6 +48,18 @@ pub struct PluginRepositoryEntry {
     /// The server requirement that excludes the server, when no release
     /// runs on it.
     pub requires: Option<String>,
+    /// The plugins the plugin depends on at that release.
+    pub dependencies: Option<Vec<PluginDependency>>,
+}
+
+/// A plugin a release depends on, as its `plugin.json` declares it.
+#[derive(DbTypeMarker, DbSerialize, DbValue, Clone, Debug, PartialEq, Eq)]
+pub struct PluginDependency {
+    pub plugin_id: String,
+    /// The version requirement on it.
+    pub version: String,
+    /// Whether the plugin loads without it.
+    pub optional: bool,
 }
 
 const DEFAULT_SEEDED_KEY: &str = "default_repository_seeded";
@@ -387,6 +402,7 @@ mod tests {
             version: Some(version.to_string()),
             commit: None,
             scopes: None,
+            dependencies: None,
             requires: None,
         }
     }
@@ -442,6 +458,44 @@ mod tests {
         assert_eq!(entry_count(&db)?, 2);
         remove(&mut db, first.db_id.unwrap())?;
         assert_eq!(entry_count(&db)?, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn entries_keep_their_release_dependencies() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let dependencies = vec![
+            PluginDependency {
+                plugin_id: "shared".into(),
+                version: "^0.2".into(),
+                optional: false,
+            },
+            PluginDependency {
+                plugin_id: "fanart".into(),
+                version: ">=0.1, <0.3".into(),
+                optional: true,
+            },
+        ];
+        let stored = PluginRepositoryEntry {
+            dependencies: Some(dependencies),
+            ..entry("a", "t1")
+        };
+        let db_id = create(
+            &mut db,
+            &repository("https://github.com/lyra/plugins"),
+            std::slice::from_ref(&stored),
+        )?;
+
+        let [loaded] = &entries(&db, db_id)?[..] else {
+            panic!("expected one entry");
+        };
+        assert_eq!(
+            PluginRepositoryEntry {
+                db_id: None,
+                ..loaded.clone()
+            },
+            stored
+        );
         Ok(())
     }
 }

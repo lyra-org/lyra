@@ -33,7 +33,11 @@ pub use forge::{
 };
 pub use install::{
     InstallError,
+    InstalledBy,
+    StagedInstall,
     install_candidate,
+    promote_together,
+    stage_candidate,
     uninstall_plugin,
 };
 pub use manifest::{

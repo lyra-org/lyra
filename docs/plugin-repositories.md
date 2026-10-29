@@ -207,6 +207,24 @@ has no offer for it for another reason, such as a missing `versions.json`;
 updating it then fails with the reason. Pinned plugins are always up to
 date.
 
+An update is held, and waits for an admin, when the newer release
+declares scopes the installed plugin does not, or when an installed
+plugin's dependency on it excludes the new version. An update request
+names each plugin with the release commit its status offered; naming a
+release grants the scopes it adds, while one that breaks a dependent is
+not applied until the dependent changes.
+
+### Automatic Updates
+
+The server checks each subscription about once a day, spread over a few
+hours and one at a time, and stores what it offers as a refresh would.
+With the `plugins.auto_update` setting on, the default, it then installs
+the newer releases that are not held; pinned, incompatible, and unknown
+plugins are never updated. The runtime reloads to apply them once nothing
+is playing: no audio is being streamed, no HLS session is open, and no
+playback session reported playing in the last five minutes. With the
+setting off, updates are only reported.
+
 Plugins without a repository source are local: bundled or hand-copied.
 Repository installs, updates, and uninstalls never touch them. A plugin
 whose source record cannot be read is reported as invalid; reinstalling

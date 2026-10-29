@@ -295,6 +295,7 @@ mod tests {
         config::{
             CorsConfig,
             HlsConfig,
+            PluginsConfig,
             SyncConfig,
             TranscodingConfig,
         },
@@ -370,6 +371,7 @@ mod tests {
                 cache_max_bytes: 1_073_741_824,
                 cache_ttl_seconds: 3_600,
             },
+            plugins: PluginsConfig { auto_update: true },
         };
         assert_eq!(*resolved.config, expected);
         assert_eq!(resolved.effective.len(), registry().definitions().len());
