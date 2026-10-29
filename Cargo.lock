@@ -921,7 +921,6 @@ name = "harmony-luau"
 version = "0.0.1"
 dependencies = [
  "harmony-luau-sys",
- "libc",
  "serde",
  "thiserror 2.0.18",
  "time",

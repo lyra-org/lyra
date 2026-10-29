@@ -10,7 +10,6 @@ serde = ["dep:serde"]
 
 [dependencies]
 harmony-luau-sys = { workspace = true }
-libc = { workspace = true }
 serde = { workspace = true, optional = true }
 thiserror = { workspace = true }
 time = { workspace = true }

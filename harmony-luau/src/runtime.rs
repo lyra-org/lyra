@@ -1,4 +1,5 @@
 use std::{
+    alloc::Layout,
     any::{
         Any,
         TypeId,
@@ -3120,6 +3121,9 @@ impl Drop for CompiledBytecode {
     }
 }
 
+/// Luau keeps 16-byte-aligned data at the start of its blocks (`lua_Page::data`, `LG`).
+const LUAU_ALIGN: usize = 16;
+
 unsafe extern "C-unwind" fn alloc(
     ud: *mut c_void,
     ptr: *mut c_void,
@@ -3128,9 +3132,7 @@ unsafe extern "C-unwind" fn alloc(
 ) -> *mut c_void {
     let control = unsafe { ud.cast::<VmControl>().as_ref() };
     if nsize == 0 {
-        unsafe {
-            libc::free(ptr);
-        }
+        unsafe { reallocate(ptr, osize, 0) };
         if let Some(control) = control {
             let allocated = control.allocated.load(Ordering::Relaxed);
             control
@@ -3149,14 +3151,43 @@ unsafe extern "C-unwind" fn alloc(
             if limit != 0 && next_allocated > limit {
                 return ptr::null_mut();
             }
-            let result = unsafe { libc::realloc(ptr, nsize) };
+            let result = unsafe { reallocate(ptr, osize, nsize) };
             if !result.is_null() {
                 control.allocated.store(next_allocated, Ordering::Relaxed);
             }
             result
         } else {
-            unsafe { libc::realloc(ptr, nsize) }
+            unsafe { reallocate(ptr, osize, nsize) }
         }
+    }
+}
+
+/// Frees `ptr` when `nsize` is zero, allocates when `ptr` is null, and reallocates otherwise.
+/// Returns null when freeing or on failure.
+///
+/// # Safety
+///
+/// A non-null `ptr` is a live block from this function of `osize` bytes, which Luau guarantees.
+unsafe fn reallocate(ptr: *mut c_void, osize: usize, nsize: usize) -> *mut c_void {
+    // SAFETY: a live block was allocated with a valid layout of `osize` bytes and `LUAU_ALIGN`.
+    let old =
+        (!ptr.is_null()).then(|| unsafe { Layout::from_size_align_unchecked(osize, LUAU_ALIGN) });
+    if nsize == 0 {
+        if let Some(old) = old {
+            // SAFETY: `ptr` is live with layout `old`.
+            unsafe { std::alloc::dealloc(ptr.cast(), old) };
+        }
+        return ptr::null_mut();
+    }
+    let Ok(layout) = Layout::from_size_align(nsize, LUAU_ALIGN) else {
+        return ptr::null_mut();
+    };
+    match old {
+        // SAFETY: `layout` has a nonzero size.
+        None => unsafe { std::alloc::alloc(layout).cast() },
+        // SAFETY: `ptr` is live with layout `old`, and `layout` proves the new size is nonzero
+        // and does not overflow `isize` once rounded up to the alignment.
+        Some(old) => unsafe { std::alloc::realloc(ptr.cast(), old, layout.size()).cast() },
     }
 }
 
