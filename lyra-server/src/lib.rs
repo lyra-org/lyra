@@ -270,18 +270,24 @@ pub fn asyncapi_spec() -> impl serde::Serialize {
 /// Disk-only: the next server start (or a runtime reload through the API)
 /// loads them, so this works whether or not the server is running.
 pub async fn run_plugins_add(build: BuildInfo, url: &str, git_ref: Option<&str>) -> Result<()> {
-    let report =
-        plugins::repositories::install_to_disk(url, git_ref, None, &build, &config::plugins_dir())
-            .await
-            .map_err(|err| anyhow::anyhow!("{err}"))?;
+    let report = plugins::repositories::install_to_disk(
+        url,
+        git_ref,
+        plugins::repositories::Selection::All,
+        &build,
+        &config::plugins_dir(),
+    )
+    .await
+    .map_err(|err| anyhow::anyhow!("{err}"))?;
 
     for plugin in &report.installed {
-        let commit = plugin
-            .commit
-            .as_deref()
-            .map(|commit| format!(" ({commit})"))
-            .unwrap_or_default();
-        println!("installed {} v{}{commit}", plugin.id, plugin.version);
+        println!(
+            "installed {} v{} ({})",
+            plugin.id, plugin.version, plugin.commit
+        );
+        if !plugin.scopes.is_empty() {
+            println!("  scopes: {}", plugin.scopes.join(", "));
+        }
     }
     for failure in &report.failed {
         eprintln!("failed to install {}: {}", failure.id, failure.error);

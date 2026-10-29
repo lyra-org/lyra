@@ -314,16 +314,51 @@ pub(crate) fn plugin_json(id: &str) -> String {
     )
 }
 
-/// Tarball route for a repository holding a single valid plugin at its
-/// root, downloadable at the `main` ref.
-pub(crate) fn single_plugin_routes(owner_repo: &str, id: &str) -> (String, CannedResponse) {
-    (
-        format!("/{owner_repo}/archive/main.tar.gz"),
-        CannedResponse::targz(targz(&[
-            ("repo/plugin.json", &plugin_json(id)),
-            ("repo/init.luau", "return {}"),
-        ])),
-    )
+/// A `versions.json` listing each `(commit, lyra)` release, newest first.
+pub(crate) fn versions_json(releases: &[(&str, &str)]) -> String {
+    let entries: Vec<String> = releases
+        .iter()
+        .map(|(commit, lyra)| format!(r#"{{ "commit": "{commit}", "lyra": "{lyra}" }}"#))
+        .collect();
+    format!("[{}]", entries.join(", "))
+}
+
+/// The commit test repositories release at.
+pub(crate) fn release_commit() -> String {
+    "c".repeat(40)
+}
+
+/// A `versions.json` releasing [`release_commit`] to lyra 0.0.1.
+pub(crate) fn released() -> String {
+    versions_json(&[(&release_commit(), "0.0.1")])
+}
+
+/// Routes for a repository holding the single valid plugin `id` at its
+/// root: its `main` archive, which the forge API cannot resolve, and its
+/// release's raw `plugin.json` and archive.
+pub(crate) fn single_plugin_routes(owner_repo: &str, id: &str) -> Vec<(String, CannedResponse)> {
+    vec![
+        raw_file(
+            owner_repo,
+            &release_commit(),
+            "plugin.json",
+            &plugin_json(id),
+        ),
+        (
+            format!("/{owner_repo}/archive/main.tar.gz"),
+            CannedResponse::targz(targz(&[
+                ("repo/plugin.json", &plugin_json(id)),
+                ("repo/versions.json", &released()),
+            ])),
+        ),
+        (
+            format!("/{owner_repo}/archive/{}.tar.gz", release_commit()),
+            CannedResponse::targz(targz(&[
+                ("repo/plugin.json", &plugin_json(id)),
+                ("repo/init.luau", "return {}"),
+            ])),
+        ),
+    ]
 }
 
 /// Routes for a Gitea-style repository whose default branch `main` is at
@@ -343,13 +378,25 @@ pub(crate) fn raw_repo_routes(
             CannedResponse::json(&format!(r#"{{"sha":"{sha}"}}"#)),
         ),
     ];
-    routes.extend(files.iter().map(|(path, content)| {
-        (
-            format!("/{owner_repo}/raw/commit/{sha}/{path}"),
-            CannedResponse::json(content),
-        )
-    }));
+    routes.extend(
+        files
+            .iter()
+            .map(|(path, content)| raw_file(owner_repo, sha, path, content)),
+    );
     routes
+}
+
+/// Route for a Gitea-style raw file of `owner_repo` at `commit`.
+pub(crate) fn raw_file(
+    owner_repo: &str,
+    commit: &str,
+    path: &str,
+    content: &str,
+) -> (String, CannedResponse) {
+    (
+        format!("/{owner_repo}/raw/commit/{commit}/{path}"),
+        CannedResponse::json(content),
+    )
 }
 
 /// Routes for a GitLab-style project `owner/repo` whose default branch
@@ -369,16 +416,24 @@ pub(crate) fn gitlab_repo_routes(
             CannedResponse::json(&format!(r#"{{"id":"{sha}"}}"#)),
         ),
     ];
-    routes.extend(files.iter().map(|(path, content)| {
-        (
-            format!(
-                "{project}/repository/files/{}/raw?ref={sha}",
-                path.replace('/', "%2F")
-            ),
-            CannedResponse::json(content),
-        )
-    }));
+    routes.extend(
+        files
+            .iter()
+            .map(|(path, content)| gitlab_raw_file(sha, path, content)),
+    );
     routes
+}
+
+/// Route for a raw file of the GitLab-style project `owner/repo` at
+/// `commit`.
+pub(crate) fn gitlab_raw_file(commit: &str, path: &str, content: &str) -> (String, CannedResponse) {
+    (
+        format!(
+            "/api/v4/projects/owner%2Frepo/repository/files/{}/raw?ref={commit}",
+            path.replace('/', "%2F")
+        ),
+        CannedResponse::json(content),
+    )
 }
 
 /// Route for GitLab's archive of `dir` alone at `sha`, its entries kept

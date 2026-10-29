@@ -317,8 +317,6 @@ fn copy_dir(from: &Path, to: &Path) -> Result<(), InstallError> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use tempfile::TempDir;
 
     use super::*;
@@ -337,8 +335,12 @@ mod tests {
     };
 
     async fn resolved_foo() -> (TestServer, ResolvedRepository) {
-        let server =
-            TestServer::start(HashMap::from([single_plugin_routes("owner/repo", "foo")])).await;
+        let server = TestServer::start(
+            single_plugin_routes("owner/repo", "foo")
+                .into_iter()
+                .collect(),
+        )
+        .await;
         let spec = RepoSpec::parse(&format!("{}/owner/repo", server.url()), None).unwrap();
         let resolved = resolve_plugins(&client(), &spec, None, &host())
             .await

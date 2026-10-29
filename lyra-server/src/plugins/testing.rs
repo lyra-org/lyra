@@ -20,6 +20,11 @@ use crate::{
     },
 };
 
+/// A `lyra` requirement for test manifests that matches the running server
+/// alone, including a pre-release, which `*` would not match.
+#[cfg(test)]
+pub(crate) const HOST_REQUIREMENT: &str = concat!("=", env!("CARGO_PKG_VERSION"));
+
 /// Opens a memory database seeded with `library` and the `settings` file layer
 /// the way the server opens its own and publishes it to every layer. Call while
 /// holding [`services::testing::runtime_test_lock`].

@@ -15,14 +15,23 @@ use futures_util::stream::{
     StreamExt,
 };
 use harmony_core::plugin::{
-    LoadedManifest,
     LoadedPlugin,
     PLUGIN_CONFIG_FILENAME,
     PluginHost,
     PluginLoadError,
     PluginManager,
+    PluginManifest,
+    validate_plugin_id,
 };
-use reqwest::Client;
+use reqwest::{
+    Client,
+    StatusCode,
+};
+use semver::{
+    Version,
+    VersionReq,
+};
+use serde::Deserialize;
 
 use crate::fetch::{
     FetchError,
@@ -37,8 +46,8 @@ use crate::fetch::{
     plan_refs,
 };
 use crate::forge::{
+    Forge,
     RepoSpec,
-    tree_hashes,
 };
 use crate::manifest::{
     ManifestError,
@@ -48,12 +57,17 @@ use crate::manifest::{
     SOURCE_RECORD_SCHEMA_VERSION,
     SourceRecord,
 };
+use crate::releases::{
+    RELEASE_INDEX_FILENAME,
+    ReleaseError,
+    ReleaseIndex,
+};
 
 /// Path entries whose manifests are read at once, to stay polite to forges.
 const MAX_CONCURRENT_ENTRIES: usize = 4;
 
-/// Most plugins an install downloads from one tree as single-directory
-/// archives; past it the tree's whole archive is downloaded once instead.
+/// Most plugins an install downloads from one commit as single-directory
+/// archives; past it the commit's whole archive is downloaded once instead.
 /// GitLab rate-limits archive requests per project (anonymous clients share
 /// one allowance, believed to be a few a minute), and every archive costs a
 /// request and an archive build on the forge.
@@ -88,14 +102,117 @@ pub enum ResolveError {
         #[source]
         source: Box<PluginLoadError>,
     },
-    #[error("entries '{first}' and '{second}' resolve to the same plugin id")]
-    DuplicatePluginId { first: String, second: String },
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
 
-/// An installable plugin discovered by [`resolve_plugins`]. The source
-/// tree lives in the owning [`ResolvedRepository`]'s temporary storage.
+/// Why one plugin cannot be installed. It fails on its own; the
+/// repository's other plugins still resolve.
+#[derive(Debug, thiserror::Error)]
+pub enum PluginError {
+    #[error(transparent)]
+    Load(#[from] PluginLoadError),
+    #[error(transparent)]
+    Release(#[from] ReleaseError),
+    #[error("the plugin at {other} has the same id")]
+    DuplicateId { other: String },
+}
+
+impl PluginError {
+    /// The server requirement that excludes this host, when that is why
+    /// the plugin has no offer: the newest release's `lyra` when none
+    /// matches, or the release `plugin.json`'s own.
+    pub fn required_host(&self) -> Option<&VersionReq> {
+        match self {
+            PluginError::Release(ReleaseError::Incompatible { requirement, .. })
+            | PluginError::Load(PluginLoadError::IncompatibleHost { requirement, .. }) => {
+                Some(requirement)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Where a listed plugin comes from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginSource {
+    /// Canonical URL of the repository holding the plugin.
+    pub origin: String,
+    pub forge: Forge,
+    /// The ref its `versions.json` was read at; `None` for the default
+    /// branch.
+    pub git_ref: Option<String>,
+    /// Whether `git_ref` is a tag or commit and so never moves.
+    pub pinned: bool,
+    /// Directory within `origin` for a repository index's path entry.
+    pub subpath: Option<String>,
+    /// Canonical URL of the repository whose index referenced the plugin,
+    /// when it differs from `origin`.
+    pub via_repository: Option<String>,
+    /// Index into [`RepositoryListing::trees`].
+    tree: usize,
+}
+
+impl PluginSource {
+    /// The plugin's directory within its origin; empty for the root.
+    fn dir(&self) -> &str {
+        self.subpath.as_deref().unwrap_or("")
+    }
+
+    fn record(&self, version: &Version, commit: &str) -> SourceRecord {
+        SourceRecord {
+            schema_version: SOURCE_RECORD_SCHEMA_VERSION,
+            origin: self.origin.clone(),
+            forge: self.forge,
+            git_ref: self.git_ref.clone(),
+            version: version.clone(),
+            commit: commit.to_string(),
+            pinned: self.pinned,
+            subpath: self.subpath.clone(),
+            via_repository: self.via_repository.clone(),
+            installed_at: None,
+        }
+    }
+}
+
+/// The release of a listed plugin this host would install.
+#[derive(Debug, Clone)]
+pub struct Offer {
+    /// The `plugin.json` at `commit`, checked against the host. Its
+    /// version is the release's.
+    pub manifest: PluginManifest,
+    pub commit: String,
+}
+
+/// A plugin offered by a repository, known from the repository's
+/// `versions.json` at the listed ref and its `plugin.json` at the release
+/// commit that chose.
+#[derive(Debug)]
+pub struct ListedPlugin {
+    pub id: String,
+    /// Where the plugin is, as errors name it.
+    pub location: String,
+    pub source: PluginSource,
+    /// The release to install, or why there is none.
+    pub offer: Result<Offer, PluginError>,
+}
+
+/// Every plugin reachable from one repository URL, as [`list_plugins`]
+/// read it from the manifests.
+#[derive(Debug)]
+pub struct RepositoryListing {
+    pub spec: RepoSpec,
+    pub git_ref: String,
+    pub commit: Option<String>,
+    /// Present when the root carried a `repository.json`.
+    pub index: Option<RepositoryManifest>,
+    pub plugins: Vec<ListedPlugin>,
+    /// Every repository read, the origin first.
+    trees: Vec<RepoSpec>,
+}
+
+/// An installable plugin discovered by [`resolve_listed`]. The source tree
+/// lives in the owning [`ResolvedRepository`]'s temporary storage.
 #[derive(Debug)]
 pub struct PluginCandidate {
     pub plugin: LoadedPlugin,
@@ -114,193 +231,208 @@ impl PluginCandidate {
     }
 }
 
-/// Every plugin reachable from one repository URL, with the fetched trees
-/// kept alive until this value drops.
+/// The selected plugins of one listing, downloaded at their releases and
+/// kept on disk until this value drops.
 #[derive(Debug)]
 pub struct ResolvedRepository {
-    pub spec: RepoSpec,
-    pub git_ref: String,
-    pub commit: Option<String>,
-    /// Present when the root carried a `repository.json`.
-    pub index: Option<RepositoryManifest>,
-    /// The selected plugins only, in index order.
+    /// In listing order.
     pub candidates: Vec<PluginCandidate>,
-    _trees: Vec<InstallTree>,
+    /// Selected plugins without an installable release.
+    pub rejected: Vec<RejectedPlugin>,
     _downloads: Downloads,
 }
 
-/// A plugin offered by a repository, known from its `plugin.json` alone.
+/// A selected plugin without an installable release, such as one whose
+/// repository's releases all require another server version.
 #[derive(Debug)]
-pub struct ListedPlugin {
-    pub loaded: LoadedManifest,
-    /// Provenance an install from the same commit would record.
-    pub source: SourceRecord,
+pub struct RejectedPlugin {
+    pub id: String,
+    pub location: String,
+    pub error: PluginError,
+    pub source: PluginSource,
 }
 
-impl ListedPlugin {
-    pub fn id(&self) -> &str {
-        &self.loaded.manifest.id
-    }
-}
-
-/// Every plugin reachable from one repository URL, as [`list_plugins`]
-/// read it from the manifests.
-#[derive(Debug)]
-pub struct RepositoryListing {
-    pub spec: RepoSpec,
-    pub git_ref: String,
-    pub commit: Option<String>,
-    /// Present when the root carried a `repository.json`.
-    pub index: Option<RepositoryManifest>,
-    pub plugins: Vec<ListedPlugin>,
-}
-
-/// Fetches a repository URL and resolves it to installable plugins.
-///
-/// A root `plugin.json` resolves to that single plugin. A root
-/// `repository.json` resolves each entry: path entries from the same tree,
-/// remote entries by fetching the referenced repository, which must be a
-/// single plugin — never another index.
-///
-/// Every plugin's manifest is validated, but only the plugins `selected`
-/// names (all of them when `None`) are downloaded, validated as a
-/// directory, and returned as candidates.
+/// Lists a repository URL and downloads its plugins' releases; see
+/// [`list_plugins`] and [`resolve_listed`].
 pub async fn resolve_plugins(
     client: &Client,
     spec: &RepoSpec,
     selected: Option<&[String]>,
     host: &PluginHost,
 ) -> Result<ResolvedRepository, ResolveError> {
-    let plan = plan_refs(client, spec).await?;
-    let budget = UnpackBudget::new();
-    resolve_planned(client, spec, &plan, None, selected, host, &budget).await
+    let listing = list_plugins(client, spec, host).await?;
+    resolve_listed(client, listing, selected, host, &UnpackBudget::new()).await
 }
 
-/// Tree hashes a caller already holds for a repository at `commit`, keyed
-/// by directory as [`tree_hashes`] returns them.
-#[derive(Debug, Clone, Copy)]
-pub struct KnownTreeHashes<'a> {
-    pub commit: &'a str,
-    pub hashes: &'a HashMap<String, String>,
-}
-
-/// Like [`resolve_plugins`], starting from a ref `plan` already resolved.
-/// `known` hashes are used for the repository's own plugins when the plan
-/// resolves to their commit; directories missing from them are looked up.
-/// Every archive extracted shares `budget`, which callers keeping several
-/// resolved repositories alive at once can share between them.
-pub async fn resolve_planned(
+/// Lists every plugin a repository URL offers, with the release this host
+/// would install, by reading only manifest files: the root `versions.json`
+/// at the resolved commit, then `repository.json` and `plugin.json` files
+/// at the release commit it selects.
+///
+/// A root `plugin.json` is a single plugin. A root `repository.json` is an
+/// index: path entries list plugins in the same tree, remote entries in the
+/// referenced repository, which must be a single plugin — never another
+/// index — with a `versions.json` of its own.
+///
+/// A plugin's `plugin.json` at the release commit must load on this host;
+/// a plugin failing that, or whose repository has no release for it, is
+/// listed with the error instead of failing the repository. When the forge
+/// API cannot resolve a commit, raw file URLs would have to guess at branch
+/// names, so that repository's `versions.json` is read from its archive;
+/// releases are always read at their commit.
+pub async fn list_plugins(
     client: &Client,
     spec: &RepoSpec,
-    plan: &RefPlan,
-    known: Option<KnownTreeHashes<'_>>,
+    host: &PluginHost,
+) -> Result<RepositoryListing, ResolveError> {
+    let plan = plan_refs(client, spec).await?;
+    let mut walk = walk(client, spec, plan, host, &UnpackBudget::new()).await?;
+    reject_duplicate_ids(&mut walk.plugins);
+
+    Ok(RepositoryListing {
+        spec: spec.clone(),
+        git_ref: walk.git_ref,
+        commit: walk.commit,
+        index: walk.index,
+        plugins: walk.plugins,
+        trees: walk.trees,
+    })
+}
+
+/// Downloads the plugins `selected` names (all of them when `None`) at their
+/// repositories' release commits, within `budget`, and validates them as
+/// plugin directories. A plugin failing that, or without a release, is
+/// returned as rejected instead of failing the repository. A release whose
+/// commit or directory the forge does not have is rejected the same way.
+pub async fn resolve_listed(
+    client: &Client,
+    listing: RepositoryListing,
     selected: Option<&[String]>,
     host: &PluginHost,
     budget: &UnpackBudget,
 ) -> Result<ResolvedRepository, ResolveError> {
-    let walk = walk(client, spec, plan.clone(), known, |spec, plan| {
-        open_install(client.clone(), spec, plan, budget.clone())
-    })
-    .await?;
+    let mut rejected = Vec::new();
+    let mut offered = Vec::new();
+    for plugin in listing.plugins {
+        if selected.is_some_and(|ids| !ids.contains(&plugin.id)) {
+            continue;
+        }
+        let ListedPlugin {
+            id,
+            location,
+            source,
+            offer,
+        } = plugin;
+        match offer {
+            Ok(offer) => offered.push((id, location, source, offer)),
+            Err(error) => rejected.push(RejectedPlugin {
+                id,
+                location,
+                error,
+                source,
+            }),
+        }
+    }
 
-    let manifests = walk
-        .entries
-        .iter()
-        .map(|entry| load_entry_manifest(entry, host))
-        .collect::<Result<Vec<_>, _>>()?;
-    reject_duplicate_ids(
-        manifests
-            .iter()
-            .zip(&walk.entries)
-            .map(|(loaded, entry)| (loaded.manifest.id.as_str(), &entry.source)),
-    )?;
-
-    let entries: Vec<FoundEntry> = walk
-        .entries
-        .into_iter()
-        .zip(manifests)
-        .filter(|(_, loaded)| selected.is_none_or(|ids| ids.contains(&loaded.manifest.id)))
-        .map(|(entry, _)| entry)
-        .collect();
-    let mut downloads = Downloads::new(&entries);
+    let mut downloads = Downloads::new(offered.iter().map(|(_, _, source, _)| source.tree));
     let mut candidates = Vec::new();
-    for entry in entries {
-        let source_dir = downloads
-            .source_dir(client, &walk.trees, &entry, budget)
-            .await?;
-        let plugin = PluginManager::load_plugin_dir(&source_dir, host).map_err(|source| {
-            ResolveError::Plugin {
-                location: entry.location,
-                source: Box::new(source),
+    for (id, location, source, Offer { manifest, commit }) in offered {
+        let version = manifest.version;
+        let reject = |error: PluginError| RejectedPlugin {
+            id: id.clone(),
+            location: location.clone(),
+            error,
+            source: source.clone(),
+        };
+        let Some(source_dir) = downloads
+            .source_dir(client, &listing.trees, &source, &commit, budget)
+            .await?
+        else {
+            rejected.push(reject(ReleaseError::Unavailable { commit }.into()));
+            continue;
+        };
+        let loaded = match PluginManager::load_plugin_dir(&source_dir, host) {
+            Ok(loaded) => loaded,
+            Err(error) => {
+                rejected.push(reject(error.into()));
+                continue;
             }
-        })?;
+        };
         candidates.push(PluginCandidate {
-            plugin,
-            source: entry.source,
+            plugin: loaded,
+            source: source.record(&version, &commit),
             source_dir,
         });
     }
 
     Ok(ResolvedRepository {
-        spec: spec.clone(),
-        git_ref: walk.git_ref,
-        commit: walk.commit,
-        index: walk.index,
         candidates,
-        _trees: walk.trees,
+        rejected,
         _downloads: downloads,
     })
 }
 
-/// What an install downloads from deferred trees once plugins are
-/// selected, each archive at most once: a plugin's own directory while its
-/// tree has at most [`MAX_DIRECTORY_ARCHIVES`] selected plugins, otherwise
-/// the tree's whole archive, which its selected plugins share.
+/// What an install downloads, each archive at most once: a plugin's own
+/// directory at its repository's release commit while at most
+/// [`MAX_DIRECTORY_ARCHIVES`] plugins are selected from that repository,
+/// otherwise the commit's whole archive, which they share. Forges without
+/// single-directory archives always download the whole archive.
 #[derive(Debug)]
 struct Downloads {
-    selected_per_tree: HashMap<usize, usize>,
-    /// Keyed by tree and the directory downloaded, empty for the whole tree.
-    fetched: HashMap<(usize, String), FetchedDirectory>,
+    /// Selected plugins per tree.
+    selected: HashMap<usize, usize>,
+    /// Keyed by tree and the directory downloaded, empty for the whole
+    /// tree; `None` when the forge has no such commit or directory.
+    fetched: HashMap<(usize, String), Option<FetchedDirectory>>,
 }
 
 impl Downloads {
-    fn new(selected: &[FoundEntry]) -> Self {
-        let mut selected_per_tree = HashMap::new();
-        for entry in selected {
-            *selected_per_tree.entry(entry.tree).or_default() += 1;
+    fn new(selected: impl Iterator<Item = usize>) -> Self {
+        let mut counts = HashMap::new();
+        for tree in selected {
+            *counts.entry(tree).or_default() += 1;
         }
         Self {
-            selected_per_tree,
+            selected: counts,
             fetched: HashMap::new(),
         }
     }
 
-    /// Where `entry`'s plugin directory is on disk, downloading it first
-    /// from a deferred tree.
+    /// Where the plugin directory of `source` at `commit` is on disk,
+    /// downloading it first; `None` when the forge does not have it.
     async fn source_dir(
         &mut self,
         client: &Client,
-        trees: &[InstallTree],
-        entry: &FoundEntry,
+        trees: &[RepoSpec],
+        source: &PluginSource,
+        commit: &str,
         budget: &UnpackBudget,
-    ) -> Result<PathBuf, FetchError> {
-        let (spec, commit) = match &trees[entry.tree] {
-            InstallTree::Archive(fetched) => return Ok(tree_dir(fetched.root(), &entry.dir)),
-            InstallTree::Deferred { spec, commit } => (spec, commit),
-        };
-        let whole = self.selected_per_tree[&entry.tree] > MAX_DIRECTORY_ARCHIVES;
-        let dir = if whole { "" } else { entry.dir.as_str() };
-        let fetched = match self.fetched.entry((entry.tree, dir.to_string())) {
+    ) -> Result<Option<PathBuf>, FetchError> {
+        let spec = &trees[source.tree];
+        let whole =
+            !spec.has_directory_archives() || self.selected[&source.tree] > MAX_DIRECTORY_ARCHIVES;
+        let dir = if whole { "" } else { source.dir() };
+        let fetched = match self.fetched.entry((source.tree, dir.to_string())) {
             Entry::Occupied(slot) => slot.into_mut(),
             Entry::Vacant(slot) => {
-                slot.insert(fetch_directory(client, spec, commit, dir, budget).await?)
+                let fetched = match fetch_directory(client, spec, commit, dir, budget).await {
+                    Ok(fetched) => Some(fetched),
+                    Err(FetchError::Status { status, .. }) if status == StatusCode::NOT_FOUND => {
+                        None
+                    }
+                    Err(FetchError::DirectoryMissing { .. }) => None,
+                    Err(error) => return Err(error),
+                };
+                slot.insert(fetched)
             }
         };
-        Ok(if whole {
-            tree_dir(fetched.path(), &entry.dir)
-        } else {
-            fetched.path().to_path_buf()
-        })
+        Ok(fetched.as_ref().map(|fetched| {
+            if whole {
+                tree_dir(fetched.path(), source.dir())
+            } else {
+                fetched.path().to_path_buf()
+            }
+        }))
     }
 }
 
@@ -312,157 +444,156 @@ fn tree_dir(root: &Path, dir: &str) -> PathBuf {
     }
 }
 
-/// Validates a found entry's `plugin.json` on its own.
-fn load_entry_manifest(
-    entry: &FoundEntry,
+/// A plugin's id with its offer, or why it has none.
+type Described = (String, Result<Offer, PluginError>);
+
+/// Names the plugin a `plugin.json` describes and makes its offer at the
+/// repository's `release` commit, checked against `host`. Without a
+/// release, the `plugin.json` was read at the listed ref and only names
+/// the plugin. A plugin without a readable, valid id cannot be addressed,
+/// and the whole repository fails.
+fn describe(
+    config: &[u8],
+    release: &Result<String, ReleaseError>,
+    location: &str,
     host: &PluginHost,
-) -> Result<LoadedManifest, ResolveError> {
-    let label = PathBuf::from(format!("{}/{PLUGIN_CONFIG_FILENAME}", entry.location));
-    PluginManager::load_manifest(&label, &entry.config, host).map_err(|source| {
-        ResolveError::Plugin {
-            location: entry.location.clone(),
+) -> Result<Described, ResolveError> {
+    let label = PathBuf::from(format!("{location}/{PLUGIN_CONFIG_FILENAME}"));
+    let loaded = PluginManager::load_manifest(&label, config, host);
+    let Some(id) = plugin_id(config) else {
+        let Err(source) = loaded else {
+            unreachable!("a plugin.json that loads has a valid id");
+        };
+        return Err(ResolveError::Plugin {
+            location: location.to_string(),
             source: Box::new(source),
-        }
-    })
+        });
+    };
+    let offer = match release {
+        Err(error) => Err(error.clone().into()),
+        Ok(commit) => loaded
+            .map(|loaded| Offer {
+                manifest: loaded.manifest,
+                commit: commit.clone(),
+            })
+            .map_err(PluginError::from),
+    };
+    Ok((id, offer))
 }
 
-/// Lists the plugins [`resolve_plugins`] would offer, under the same rules,
-/// by reading only `repository.json` and `plugin.json` files at the
-/// resolved commit. Manifests are validated on their own, so a missing
-/// entrypoint only fails at install. When the forge API cannot resolve a
-/// commit, raw file URLs would have to guess at branch names, so that
-/// repository is downloaded as an archive instead. Archive extraction
-/// skips symlinks while raw endpoints may serve or follow them, so a
-/// symlinked manifest can list here and still be missing at install.
-pub async fn list_plugins(
+/// The id a `plugin.json` names, when it reads as a valid one, even if the
+/// rest does not parse.
+fn plugin_id(config: &[u8]) -> Option<String> {
+    #[derive(Deserialize)]
+    struct Identity {
+        id: String,
+    }
+
+    let Identity { id } = serde_json::from_slice(config).ok()?;
+    validate_plugin_id(&id).is_ok().then_some(id)
+}
+
+/// Opens a repository at its listed ref, reads its `versions.json` there,
+/// and reads its root manifests at the release that selects for `host`.
+/// Without a release, or when the release commit holds no plugin root, the
+/// root manifests are read at the listed ref instead, to name the plugins
+/// that fail with the reason.
+async fn open(
     client: &Client,
     spec: &RepoSpec,
+    plan: RefPlan,
     host: &PluginHost,
-) -> Result<RepositoryListing, ResolveError> {
-    let plan = plan_refs(client, spec).await?;
-    let budget = UnpackBudget::new();
-    let walk = walk(client, spec, plan, None, |spec, plan| {
-        open_listed(client.clone(), spec, plan, budget.clone())
-    })
-    .await?;
-
-    let mut plugins = Vec::with_capacity(walk.entries.len());
-    for entry in walk.entries {
-        let loaded = load_entry_manifest(&entry, host)?;
-        plugins.push(ListedPlugin {
-            loaded,
-            source: entry.source,
-        });
+    budget: &UnpackBudget,
+) -> Result<Opened, ResolveError> {
+    let Tip {
+        files: tip,
+        git_ref,
+        commit,
+        pinned,
+    } = open_tip(client, spec, plan, budget).await?;
+    let release = match tip.read(RELEASE_INDEX_FILENAME).await? {
+        None => Err(ReleaseError::Missing),
+        Some(releases) => ReleaseIndex::parse(&releases)
+            .and_then(|index| Ok(index.select(&host.version)?.commit.clone())),
+    };
+    if let Ok(release_commit) = &release {
+        let files = Files::Raw {
+            client: client.clone(),
+            spec: spec.clone(),
+            commit: release_commit.clone(),
+        };
+        let (index, config) = files.read_manifests("").await;
+        let (index, config) = (index?, config?);
+        if index.is_some() || config.is_some() {
+            return Ok(Opened {
+                files,
+                release,
+                index,
+                config,
+                git_ref,
+                commit,
+                pinned,
+            });
+        }
     }
-    reject_duplicate_ids(plugins.iter().map(|p| (p.id(), &p.source)))?;
-
-    Ok(RepositoryListing {
-        spec: spec.clone(),
-        git_ref: walk.git_ref,
-        commit: walk.commit,
-        index: walk.index,
-        plugins,
-    })
-}
-
-/// Opens a repository as the extracted archive installs copy from.
-async fn open_archive(
-    client: Client,
-    spec: RepoSpec,
-    plan: RefPlan,
-    budget: UnpackBudget,
-) -> Result<Opened<FetchedRepo>, ResolveError> {
-    let fetched = fetch_planned(&client, &spec, &plan, &budget).await?;
+    let release = release.and_then(|commit| Err(ReleaseError::Unavailable { commit }));
+    let (index, config) = tip.read_manifests("").await;
     Ok(Opened {
-        files: Files::Archive {
-            root: fetched.root().to_path_buf(),
-            repo: spec.human_id(),
-        },
-        git_ref: fetched.git_ref.clone(),
-        commit: fetched.commit.clone(),
-        pinned: fetched.pinned,
-        tree: fetched,
+        files: tip,
+        release,
+        index: index?,
+        config: config?,
+        git_ref,
+        commit,
+        pinned,
     })
 }
 
-/// What an install reads plugin directories from.
-#[derive(Debug)]
-enum InstallTree {
-    Archive(FetchedRepo),
-    /// Nothing is downloaded until the plugins are selected: then each
-    /// selected plugin's directory at `commit`, or the whole archive once
-    /// past [`MAX_DIRECTORY_ARCHIVES`].
-    Deferred {
-        spec: RepoSpec,
-        commit: String,
-    },
+/// A repository at its listed ref.
+struct Tip {
+    files: Files,
+    git_ref: String,
+    commit: Option<String>,
+    pinned: bool,
 }
 
-/// Opens a repository for installing. Where the forge serves
-/// single-directory archives and resolved a commit, manifests are read as
-/// raw files and the download waits for the selection; plugin directories
-/// never overlap, so together they are never larger than the whole archive.
-/// Otherwise the whole archive is downloaded now.
-async fn open_install(
-    client: Client,
-    spec: RepoSpec,
+/// Opens a repository at its listed ref: raw files when the forge API
+/// resolved a commit, otherwise the archive.
+async fn open_tip(
+    client: &Client,
+    spec: &RepoSpec,
     plan: RefPlan,
-    budget: UnpackBudget,
-) -> Result<Opened<InstallTree>, ResolveError> {
-    if let Some((git_ref, commit)) = plan.resolved()
-        && spec.has_directory_archives()
-    {
-        return Ok(Opened {
-            git_ref: git_ref.to_string(),
-            commit: Some(commit.to_string()),
-            pinned: plan.pinned(),
-            tree: InstallTree::Deferred {
+    budget: &UnpackBudget,
+) -> Result<Tip, ResolveError> {
+    if let Some((git_ref, commit)) = plan.resolved() {
+        return Ok(Tip {
+            files: Files::Raw {
+                client: client.clone(),
                 spec: spec.clone(),
                 commit: commit.to_string(),
             },
-            files: Files::Raw {
-                commit: commit.to_string(),
-                client,
-                spec,
-            },
+            git_ref: git_ref.to_string(),
+            commit: Some(commit.to_string()),
+            pinned: plan.pinned(),
         });
     }
-    Ok(open_archive(client, spec, plan, budget)
-        .await?
-        .map_tree(InstallTree::Archive))
-}
-
-/// Opens a repository for listing: raw files when the forge API resolved
-/// a commit, otherwise the archive.
-async fn open_listed(
-    client: Client,
-    spec: RepoSpec,
-    plan: RefPlan,
-    budget: UnpackBudget,
-) -> Result<Opened<Option<FetchedRepo>>, ResolveError> {
-    let Some((git_ref, commit)) = plan.resolved() else {
-        return Ok(open_archive(client, spec, plan, budget)
-            .await?
-            .map_tree(Some));
-    };
-    Ok(Opened {
-        git_ref: git_ref.to_string(),
-        commit: Some(commit.to_string()),
-        pinned: plan.pinned(),
-        files: Files::Raw {
-            commit: commit.to_string(),
-            client,
-            spec,
+    let fetched = fetch_planned(client, spec, &plan, budget).await?;
+    Ok(Tip {
+        git_ref: fetched.git_ref.clone(),
+        commit: fetched.commit.clone(),
+        pinned: fetched.pinned,
+        files: Files::Archive {
+            repo: spec.human_id(),
+            tree: fetched,
         },
-        tree: None,
     })
 }
 
 /// Where a walk reads one repository's files from.
 enum Files {
     /// An extracted archive; `repo` names it in errors.
-    Archive { root: PathBuf, repo: String },
-    /// Raw files at a commit the forge API resolved.
+    Archive { tree: FetchedRepo, repo: String },
+    /// Raw files at a commit.
     Raw {
         client: Client,
         spec: RepoSpec,
@@ -472,10 +603,10 @@ enum Files {
 
 impl Files {
     /// The file at `path`, relative to the repository root, if present.
-    async fn read(&self, path: &str) -> Result<Option<Vec<u8>>, ResolveError> {
+    async fn read(&self, path: &str) -> FileRead {
         match self {
-            Files::Archive { root, repo } => {
-                let file = root.join(path);
+            Files::Archive { tree, repo } => {
+                let file = tree.root().join(path);
                 if !file.is_file() {
                     return Ok(None);
                 }
@@ -498,62 +629,45 @@ impl Files {
 
     /// Reads a directory's `repository.json` and `plugin.json` together.
     async fn read_manifests(&self, dir: &str) -> (FileRead, FileRead) {
-        let (index, config) = match dir {
-            "" => (
-                REPOSITORY_MANIFEST_FILENAME.to_string(),
-                PLUGIN_CONFIG_FILENAME.to_string(),
-            ),
-            dir => (
-                format!("{dir}/{REPOSITORY_MANIFEST_FILENAME}"),
-                format!("{dir}/{PLUGIN_CONFIG_FILENAME}"),
-            ),
-        };
+        let (index, config) = (
+            dir_file(dir, REPOSITORY_MANIFEST_FILENAME),
+            dir_file(dir, PLUGIN_CONFIG_FILENAME),
+        );
         futures_util::join!(self.read(&index), self.read(&config))
+    }
+}
+
+/// The path of `file` in the directory `dir`; empty names the root.
+fn dir_file(dir: &str, file: &str) -> String {
+    match dir {
+        "" => file.to_string(),
+        dir => format!("{dir}/{file}"),
     }
 }
 
 type FileRead = Result<Option<Vec<u8>>, ResolveError>;
 
-/// A repository opened for a walk: `tree` is whatever the caller keeps
-/// alive, `files` where its manifests are read.
-struct Opened<T> {
-    tree: T,
+/// A repository opened for a walk, with its root manifests read.
+struct Opened {
+    /// At the release commit, or at the listed ref without a release.
     files: Files,
+    /// The release commit, or why there is none.
+    release: Result<String, ReleaseError>,
+    index: Option<Vec<u8>>,
+    config: Option<Vec<u8>>,
+    /// The listed ref and the commit it resolved to.
     git_ref: String,
     commit: Option<String>,
     pinned: bool,
 }
 
-impl<T> Opened<T> {
-    fn map_tree<U>(self, f: impl FnOnce(T) -> U) -> Opened<U> {
-        Opened {
-            tree: f(self.tree),
-            files: self.files,
-            git_ref: self.git_ref,
-            commit: self.commit,
-            pinned: self.pinned,
-        }
-    }
-}
-
-/// A plugin a walk found, before it is validated.
-struct FoundEntry {
-    /// Index into [`Walk::trees`].
-    tree: usize,
-    /// Directory within the tree; empty for the root.
-    dir: String,
-    config: Vec<u8>,
-    location: String,
-    source: SourceRecord,
-}
-
-struct Walk<T> {
+struct Walk {
     git_ref: String,
     commit: Option<String>,
     index: Option<RepositoryManifest>,
-    /// Every tree opened, the origin first.
-    trees: Vec<T>,
-    entries: Vec<FoundEntry>,
+    /// Every repository opened, the origin first.
+    trees: Vec<RepoSpec>,
+    plugins: Vec<ListedPlugin>,
 }
 
 /// An index entry, with a path entry's manifests read.
@@ -582,37 +696,39 @@ async fn probe<'a>(files: &Files, entry: &'a RepositoryEntry) -> Probe<'a> {
     }
 }
 
-/// The repository rules shared by installs and listings: a root holds
-/// exactly one of `plugin.json` and `repository.json`, and index entries
-/// hold a plugin, never another index. `open` opens the origin and each
-/// remote entry's repository; `known` hashes apply to the origin.
-async fn walk<T, Fut>(
+/// The repository rules: a root holds exactly one of `plugin.json` and
+/// `repository.json`, and index entries hold a plugin, never another index.
+/// Each repository's release commit is chosen by its own `versions.json`.
+/// The origin and each remote entry's repository are opened within
+/// `budget`.
+async fn walk(
     client: &Client,
     spec: &RepoSpec,
     plan: RefPlan,
-    known: Option<KnownTreeHashes<'_>>,
-    open: impl Fn(RepoSpec, RefPlan) -> Fut,
-) -> Result<Walk<T>, ResolveError>
-where
-    Fut: Future<Output = Result<Opened<T>, ResolveError>>,
-{
+    host: &PluginHost,
+    budget: &UnpackBudget,
+) -> Result<Walk, ResolveError> {
     let Opened {
-        tree,
         files,
+        release,
+        index: index_file,
+        config,
         git_ref,
         commit,
         pinned,
-    } = open(spec.clone(), plan).await?;
-    let (index_file, config) = files.read_manifests("").await;
-    let (config, index_file) = (config?, index_file?);
+    } = open(client, spec, plan, host, budget).await?;
 
-    let origin_source = |subpath| source_record(spec, &commit, pinned, subpath, None);
-    let mut entries = Vec::new();
-    let mut trees = vec![tree];
-    let mut sources = vec![TreeSource {
-        spec: spec.clone(),
-        commit: commit.clone(),
-    }];
+    let source = |spec: &RepoSpec, pinned, subpath, via_repository, tree| PluginSource {
+        origin: spec.canonical_url(),
+        forge: spec.forge,
+        git_ref: spec.explicit_ref.clone(),
+        pinned,
+        subpath,
+        via_repository,
+        tree,
+    };
+    let mut plugins = Vec::new();
+    let mut trees = vec![spec.clone()];
     let mut index = None;
 
     match (config, index_file) {
@@ -627,12 +743,13 @@ where
             });
         }
         (Some(config), None) => {
-            entries.push(FoundEntry {
-                tree: 0,
-                dir: String::new(),
-                config,
-                location: spec.human_id(),
-                source: origin_source(None),
+            let location = spec.human_id();
+            let (id, offer) = describe(&config, &release, &location, host)?;
+            plugins.push(ListedPlugin {
+                id,
+                location,
+                source: source(spec, pinned, None, None, 0),
+                offer,
             });
         }
         (None, Some(index_file)) => {
@@ -659,7 +776,6 @@ where
                         config,
                     } => {
                         let location = format!("{}/{path}", spec.human_id());
-
                         if nested?.is_some() {
                             return Err(ResolveError::NestedRepository { target: location });
                         }
@@ -669,48 +785,53 @@ where
                                 path: path.to_string(),
                             });
                         };
-
-                        entries.push(FoundEntry {
-                            tree: 0,
-                            dir: path.to_string(),
-                            config,
+                        let (id, offer) = describe(&config, &release, &location, host)?;
+                        plugins.push(ListedPlugin {
+                            id,
                             location,
-                            source: origin_source(Some(path.to_string())),
+                            source: source(spec, pinned, Some(path.to_string()), None, 0),
+                            offer,
                         });
                     }
                     Probe::Remote(remote) => {
-                        let sub = open(remote.clone(), plan_refs(client, remote).await?).await?;
-                        let (nested, config) = sub.files.read_manifests("").await;
-
-                        if nested?.is_some() {
+                        let plan = plan_refs(client, remote).await?;
+                        // Without a release of the index, its remote entries
+                        // are not offered either: their tip only names them.
+                        let (nested, config, pinned, remote_release) = match &release {
+                            Ok(_) => {
+                                let sub = open(client, remote, plan, host, budget).await?;
+                                (sub.index, sub.config, sub.pinned, sub.release)
+                            }
+                            Err(error) => {
+                                let tip = open_tip(client, remote, plan, budget).await?;
+                                let (nested, config) = tip.files.read_manifests("").await;
+                                (nested?, config?, tip.pinned, Err(error.clone()))
+                            }
+                        };
+                        if nested.is_some() {
                             return Err(ResolveError::NestedRepository {
                                 target: remote.human_id(),
                             });
                         }
-                        let Some(config) = config? else {
+                        let Some(config) = config else {
                             return Err(ResolveError::NotAPluginRepository {
                                 repo: remote.human_id(),
                             });
                         };
-
-                        let source = source_record(
-                            remote,
-                            &sub.commit,
-                            sub.pinned,
-                            None,
-                            Some(spec.canonical_url()),
-                        );
-                        trees.push(sub.tree);
-                        sources.push(TreeSource {
-                            spec: remote.clone(),
-                            commit: sub.commit.clone(),
-                        });
-                        entries.push(FoundEntry {
-                            tree: trees.len() - 1,
-                            dir: String::new(),
-                            config,
-                            location: remote.human_id(),
-                            source,
+                        let location = remote.human_id();
+                        let (id, offer) = describe(&config, &remote_release, &location, host)?;
+                        trees.push(remote.clone());
+                        plugins.push(ListedPlugin {
+                            id,
+                            location,
+                            source: source(
+                                remote,
+                                pinned,
+                                None,
+                                Some(spec.canonical_url()),
+                                trees.len() - 1,
+                            ),
+                            offer,
                         });
                     }
                 }
@@ -721,100 +842,34 @@ where
         }
     }
 
-    record_tree_hashes(client, &sources, known, &mut entries).await?;
-
     Ok(Walk {
         git_ref,
         commit,
         index,
         trees,
-        entries,
+        plugins,
     })
 }
 
-/// Ids that differ only by case collide on case-insensitive filesystems,
-/// so they count as duplicates too.
-fn reject_duplicate_ids<'a>(
-    plugins: impl Iterator<Item = (&'a str, &'a SourceRecord)>,
-) -> Result<(), ResolveError> {
-    let plugins: Vec<_> = plugins.collect();
-    for (i, (first_id, first)) in plugins.iter().enumerate() {
-        for (second_id, second) in plugins.iter().skip(i + 1) {
-            if first_id.eq_ignore_ascii_case(second_id) {
-                return Err(ResolveError::DuplicatePluginId {
-                    first: first.location(),
-                    second: second.location(),
-                });
-            }
+/// Fails every plugin whose id another one shares, each on its own. Ids
+/// that differ only by case collide on case-insensitive filesystems, so
+/// they count as duplicates too.
+fn reject_duplicate_ids(plugins: &mut [ListedPlugin]) {
+    let others: Vec<Option<String>> = plugins
+        .iter()
+        .enumerate()
+        .map(|(i, plugin)| {
+            plugins
+                .iter()
+                .enumerate()
+                .find(|(j, other)| *j != i && other.id.eq_ignore_ascii_case(&plugin.id))
+                .map(|(_, other)| other.location.clone())
+        })
+        .collect();
+    for (plugin, other) in plugins.iter_mut().zip(others) {
+        if let Some(other) = other {
+            plugin.offer = Err(PluginError::DuplicateId { other });
         }
-    }
-    Ok(())
-}
-
-/// The repository and commit an opened tree was read at.
-struct TreeSource {
-    spec: RepoSpec,
-    commit: Option<String>,
-}
-
-/// Records each entry's directory tree hash, asking each tree's forge once
-/// per parent directory. `known` hashes answer for the origin, the first
-/// tree, when they were taken at its commit. Trees without a resolved
-/// commit have none. A rate-limited lookup fails rather than leaving the
-/// hash unset, which update checks would read as changed content.
-async fn record_tree_hashes(
-    client: &Client,
-    sources: &[TreeSource],
-    known: Option<KnownTreeHashes<'_>>,
-    entries: &mut [FoundEntry],
-) -> Result<(), FetchError> {
-    let empty = HashMap::new();
-    for (tree, source) in sources.iter().enumerate() {
-        let Some(commit) = source.commit.as_deref() else {
-            continue;
-        };
-        let known = match known {
-            Some(known) if tree == 0 && known.commit == commit => known.hashes,
-            _ => &empty,
-        };
-        let missing: Vec<&str> = entries
-            .iter()
-            .filter(|entry| entry.tree == tree && !known.contains_key(&entry.dir))
-            .map(|entry| entry.dir.as_str())
-            .collect();
-        let fetched = if missing.is_empty() {
-            HashMap::new()
-        } else {
-            tree_hashes(client, &source.spec, commit, &missing).await?
-        };
-        for entry in entries.iter_mut().filter(|entry| entry.tree == tree) {
-            entry.source.tree_hash = known
-                .get(&entry.dir)
-                .or_else(|| fetched.get(&entry.dir))
-                .cloned();
-        }
-    }
-    Ok(())
-}
-
-fn source_record(
-    spec: &RepoSpec,
-    commit: &Option<String>,
-    pinned: bool,
-    subpath: Option<String>,
-    via_repository: Option<String>,
-) -> SourceRecord {
-    SourceRecord {
-        schema_version: SOURCE_RECORD_SCHEMA_VERSION,
-        origin: spec.canonical_url(),
-        forge: spec.forge,
-        git_ref: spec.explicit_ref.clone(),
-        commit: commit.clone(),
-        tree_hash: None,
-        pinned,
-        subpath,
-        via_repository,
-        installed_at: None,
     }
 }
 
@@ -828,316 +883,23 @@ mod tests {
         TestServer,
         client,
         gitlab_directory_archive,
+        gitlab_raw_file,
         gitlab_repo_routes,
         host,
         plugin_json,
+        raw_file,
         raw_repo_routes,
+        release_commit,
+        released,
         single_plugin_routes,
         targz,
         targz_entries,
+        versions_json,
     };
 
     async fn resolve(server: &TestServer, path: &str) -> Result<ResolvedRepository, ResolveError> {
         let spec = RepoSpec::parse(&format!("{}{path}", server.url()), None).unwrap();
         resolve_plugins(&client(), &spec, None, &host()).await
-    }
-
-    #[tokio::test]
-    async fn resolves_single_plugin_repositories() {
-        let server =
-            TestServer::start(HashMap::from([single_plugin_routes("owner/repo", "foo")])).await;
-
-        let resolved = resolve(&server, "/owner/repo").await.unwrap();
-
-        assert!(resolved.index.is_none());
-        assert_eq!(resolved.candidates.len(), 1);
-        let candidate = &resolved.candidates[0];
-        assert_eq!(candidate.id(), "foo");
-        assert_eq!(
-            candidate.source.origin,
-            format!("{}/owner/repo", server.url())
-        );
-        assert_eq!(candidate.source.subpath, None);
-        assert_eq!(candidate.source.via_repository, None);
-        assert!(!candidate.source.pinned);
-        assert!(candidate.source_dir().join("init.luau").is_file());
-    }
-
-    #[tokio::test]
-    async fn resolves_catalog_with_documentation_symlink_but_requires_real_entrypoint() {
-        for linked_entrypoint in [false, true] {
-            let mut archive = targz_entries();
-            archive.file("repo/AGENTS.md", "Repository documentation");
-            archive.symlink("repo/CLAUDE.md", "AGENTS.md");
-            archive.file(
-                "repo/repository.json",
-                r#"{
-                "schema_version": 1,
-                "name": "Plugins",
-                "plugins": [{ "path": "plugins/foo" }]
-            }"#,
-            );
-            archive.file("repo/plugins/foo/plugin.json", &plugin_json("foo"));
-            if linked_entrypoint {
-                archive.file("repo/shared.luau", "return {}");
-                archive.symlink("repo/plugins/foo/init.luau", "../../shared.luau");
-            } else {
-                archive.file("repo/plugins/foo/init.luau", "return {}");
-            }
-            let server = TestServer::start(HashMap::from([(
-                "/owner/repo/archive/main.tar.gz".to_string(),
-                CannedResponse::targz(archive.finish()),
-            )]))
-            .await;
-
-            let result = resolve(&server, "/owner/repo").await;
-            if linked_entrypoint {
-                assert!(
-                    matches!(
-                        &result,
-                        Err(ResolveError::Plugin { source, .. })
-                            if matches!(**source, PluginLoadError::EntrypointNotFound { .. })
-                    ),
-                    "{result:?}"
-                );
-            } else {
-                let resolved = result.unwrap();
-                assert_eq!(resolved.index.as_ref().unwrap().name, "Plugins");
-                assert_eq!(resolved.candidates.len(), 1);
-                assert_eq!(resolved.candidates[0].id(), "foo");
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn resolves_repository_indexes_with_path_and_remote_entries() {
-        let server = TestServer::start_with(|base| {
-            let index = format!(
-                r#"{{
-                    "schema_version": 1,
-                    "name": "Test Plugins",
-                    "plugins": [
-                        {{ "path": "plugins/foo" }},
-                        {{ "url": "{base}/other/single" }}
-                    ]
-                }}"#
-            );
-            HashMap::from([
-                (
-                    "/owner/repo/archive/main.tar.gz".to_string(),
-                    CannedResponse::targz(targz(&[
-                        ("repo/repository.json", &index),
-                        ("repo/plugins/foo/plugin.json", &plugin_json("foo")),
-                        ("repo/plugins/foo/init.luau", "return {}"),
-                    ])),
-                ),
-                single_plugin_routes("other/single", "bar"),
-            ])
-        })
-        .await;
-
-        let resolved = resolve(&server, "/owner/repo").await.unwrap();
-
-        let index = resolved.index.as_ref().unwrap();
-        assert_eq!(index.name, "Test Plugins");
-        assert_eq!(resolved.candidates.len(), 2);
-
-        let foo = &resolved.candidates[0];
-        assert_eq!(foo.id(), "foo");
-        assert_eq!(foo.source.subpath.as_deref(), Some("plugins/foo"));
-        assert_eq!(foo.source.via_repository, None);
-
-        let bar = &resolved.candidates[1];
-        assert_eq!(bar.id(), "bar");
-        assert_eq!(bar.source.subpath, None);
-        assert_eq!(
-            bar.source.via_repository.as_deref(),
-            Some(format!("{}/owner/repo", server.url()).as_str())
-        );
-    }
-
-    #[tokio::test]
-    async fn rejects_roots_with_both_manifests() {
-        let server = TestServer::start(HashMap::from([(
-            "/owner/repo/archive/main.tar.gz".to_string(),
-            CannedResponse::targz(targz(&[
-                ("repo/plugin.json", &plugin_json("foo")),
-                (
-                    "repo/repository.json",
-                    r#"{ "schema_version": 1, "name": "X", "plugins": [] }"#,
-                ),
-            ])),
-        )]))
-        .await;
-
-        let err = resolve(&server, "/owner/repo").await.unwrap_err();
-        assert!(matches!(err, ResolveError::AmbiguousRoot { .. }), "{err}");
-    }
-
-    #[tokio::test]
-    async fn rejects_roots_without_manifests() {
-        let server = TestServer::start(HashMap::from([(
-            "/owner/repo/archive/main.tar.gz".to_string(),
-            CannedResponse::targz(targz(&[("repo/README.md", "hi")])),
-        )]))
-        .await;
-
-        let err = resolve(&server, "/owner/repo").await.unwrap_err();
-        assert!(
-            matches!(err, ResolveError::NotAPluginRepository { .. }),
-            "{err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn rejects_path_entries_without_plugins() {
-        let server = TestServer::start(HashMap::from([(
-            "/owner/repo/archive/main.tar.gz".to_string(),
-            CannedResponse::targz(targz(&[(
-                "repo/repository.json",
-                r#"{ "schema_version": 1, "name": "X", "plugins": [{ "path": "missing" }] }"#,
-            )])),
-        )]))
-        .await;
-
-        let err = resolve(&server, "/owner/repo").await.unwrap_err();
-        assert!(
-            matches!(err, ResolveError::PathEntryMissing { .. }),
-            "{err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn rejects_nested_indexes_in_path_entries() {
-        let server = TestServer::start(HashMap::from([(
-            "/owner/repo/archive/main.tar.gz".to_string(),
-            CannedResponse::targz(targz(&[
-                (
-                    "repo/repository.json",
-                    r#"{ "schema_version": 1, "name": "X", "plugins": [{ "path": "sub" }] }"#,
-                ),
-                ("repo/sub/plugin.json", &plugin_json("foo")),
-                (
-                    "repo/sub/repository.json",
-                    r#"{ "schema_version": 1, "name": "Y", "plugins": [] }"#,
-                ),
-            ])),
-        )]))
-        .await;
-
-        let err = resolve(&server, "/owner/repo").await.unwrap_err();
-        assert!(
-            matches!(err, ResolveError::NestedRepository { .. }),
-            "{err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn rejects_remote_entries_that_are_indexes() {
-        let server = TestServer::start_with(|base| {
-            let index = format!(
-                r#"{{ "schema_version": 1, "name": "X", "plugins": [{{ "url": "{base}/other/nested" }}] }}"#
-            );
-            HashMap::from([
-                (
-                    "/owner/repo/archive/main.tar.gz".to_string(),
-                    CannedResponse::targz(targz(&[("repo/repository.json", &index)])),
-                ),
-                (
-                    "/other/nested/archive/main.tar.gz".to_string(),
-                    CannedResponse::targz(targz(&[(
-                        "repo/repository.json",
-                        r#"{ "schema_version": 1, "name": "Y", "plugins": [] }"#,
-                    )])),
-                ),
-            ])
-        })
-        .await;
-
-        let err = resolve(&server, "/owner/repo").await.unwrap_err();
-        assert!(
-            matches!(err, ResolveError::NestedRepository { .. }),
-            "{err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn rejects_duplicate_plugin_ids_across_entries() {
-        let server = TestServer::start_with(|base| {
-            let index = format!(
-                r#"{{
-                    "schema_version": 1,
-                    "name": "X",
-                    "plugins": [{{ "path": "foo" }}, {{ "url": "{base}/other/single" }}]
-                }}"#
-            );
-            HashMap::from([
-                (
-                    "/owner/repo/archive/main.tar.gz".to_string(),
-                    CannedResponse::targz(targz(&[
-                        ("repo/repository.json", &index),
-                        ("repo/foo/plugin.json", &plugin_json("Foo")),
-                        ("repo/foo/init.luau", "return {}"),
-                    ])),
-                ),
-                single_plugin_routes("other/single", "foo"),
-            ])
-        })
-        .await;
-
-        let err = resolve(&server, "/owner/repo").await.unwrap_err();
-        assert!(
-            matches!(err, ResolveError::DuplicatePluginId { .. }),
-            "{err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn rejects_plugins_with_unknown_scopes() {
-        let manifest = r#"{
-            "schema_version": 1,
-            "id": "foo",
-            "name": "Foo",
-            "version": "0.0.1",
-            "lyra": "0.0.1",
-            "description": "d",
-            "entrypoint": "init.luau",
-            "scopes": ["no.such.scope"]
-        }"#;
-        let server = TestServer::start(HashMap::from([(
-            "/owner/repo/archive/main.tar.gz".to_string(),
-            CannedResponse::targz(targz(&[
-                ("repo/plugin.json", manifest),
-                ("repo/init.luau", "return {}"),
-            ])),
-        )]))
-        .await;
-
-        let err = resolve(&server, "/owner/repo").await.unwrap_err();
-        assert!(matches!(err, ResolveError::Plugin { .. }), "{err}");
-    }
-
-    #[tokio::test]
-    async fn rejects_plugins_requiring_another_lyra() {
-        let manifest = plugin_json("foo").replace(r#""lyra": "0.0.1""#, r#""lyra": "0.1""#);
-        let server = TestServer::start(HashMap::from([(
-            "/owner/repo/archive/main.tar.gz".to_string(),
-            CannedResponse::targz(targz(&[
-                ("repo/plugin.json", &manifest),
-                ("repo/init.luau", "return {}"),
-            ])),
-        )]))
-        .await;
-
-        let err = resolve(&server, "/owner/repo").await.unwrap_err();
-        assert!(
-            matches!(
-                &err,
-                ResolveError::Plugin { source, .. }
-                    if matches!(**source, PluginLoadError::IncompatibleHost { .. })
-            ),
-            "{err}"
-        );
     }
 
     async fn list(server: &TestServer, path: &str) -> Result<RepositoryListing, ResolveError> {
@@ -1156,93 +918,390 @@ mod tests {
         format!(r#"{{ "schema_version": 1, "name": "Test Plugins", "plugins": [{entries}] }}"#)
     }
 
+    /// The Gitea-style routes of `owner_repo` at `commit`: its `files` as
+    /// raw files, and as an archive under one top-level directory.
+    fn archive_at(
+        owner_repo: &str,
+        commit: &str,
+        files: &[(&str, &str)],
+    ) -> Vec<(String, CannedResponse)> {
+        let mut routes: Vec<_> = files
+            .iter()
+            .map(|(path, content)| raw_file(owner_repo, commit, path, content))
+            .collect();
+        let files: Vec<(String, &str)> = files
+            .iter()
+            .map(|(path, content)| (format!("repo/{path}"), *content))
+            .collect();
+        let files: Vec<(&str, &str)> = files.iter().map(|(p, c)| (p.as_str(), *c)).collect();
+        routes.push((
+            format!("/{owner_repo}/archive/{commit}.tar.gz"),
+            CannedResponse::targz(targz(&files)),
+        ));
+        routes
+    }
+
+    /// Routes for the Gitea-style `owner/repo` whose `main` at `tip` holds
+    /// `versions` and `tip_files`, released at [`release_commit`] with
+    /// `release_files`.
+    fn released_repo(
+        tip: &str,
+        versions: Option<&str>,
+        tip_files: &[(&str, &str)],
+        release_files: &[(&str, &str)],
+    ) -> Vec<(String, CannedResponse)> {
+        let mut files = tip_files.to_vec();
+        files.extend(versions.map(|versions| ("versions.json", versions)));
+        let mut routes = raw_repo_routes("owner/repo", tip, &files);
+        routes.extend(archive_at("owner/repo", &release_commit(), release_files));
+        routes
+    }
+
+    /// `plugin.json` and `init.luau` of plugin `id` in `dir`.
+    fn plugin_files(dir: &str, manifest: &str) -> Vec<(String, String)> {
+        vec![
+            (format!("{dir}/plugin.json"), manifest.to_string()),
+            (format!("{dir}/init.luau"), "return {}".to_string()),
+        ]
+    }
+
+    fn borrowed(files: &[(String, String)]) -> Vec<(&str, &str)> {
+        files
+            .iter()
+            .map(|(path, content)| (path.as_str(), content.as_str()))
+            .collect()
+    }
+
+    fn offered(plugin: &ListedPlugin) -> (&str, String, &str) {
+        let offer = plugin.offer.as_ref().expect("an offered release");
+        (
+            plugin.id.as_str(),
+            offer.manifest.version.to_string(),
+            offer.commit.as_str(),
+        )
+    }
+
+    fn errors(listing: &RepositoryListing) -> Vec<(&str, String)> {
+        listing
+            .plugins
+            .iter()
+            .filter_map(|plugin| {
+                let error = plugin.offer.as_ref().err()?;
+                Some((plugin.id.as_str(), error.to_string()))
+            })
+            .collect()
+    }
+
+    fn ids(resolved: &ResolvedRepository) -> (Vec<&str>, Vec<&str>) {
+        (
+            resolved.candidates.iter().map(|c| c.id()).collect(),
+            resolved.rejected.iter().map(|r| r.id.as_str()).collect(),
+        )
+    }
+
+    fn sha() -> String {
+        "a".repeat(40)
+    }
+
     #[tokio::test]
-    async fn lists_single_plugins_from_raw_manifests_alone() {
-        let sha = "a".repeat(40);
+    async fn resolves_single_plugins_at_their_release() {
         let server = TestServer::start(
-            raw_repo_routes("owner/repo", &sha, &[("plugin.json", &plugin_json("foo"))])
+            single_plugin_routes("owner/repo", "foo")
                 .into_iter()
                 .collect(),
         )
         .await;
 
-        let listing = list(&server, "/owner/repo").await.unwrap();
+        let resolved = resolve(&server, "/owner/repo").await.unwrap();
 
-        assert!(listing.index.is_none());
-        assert_eq!(listing.git_ref, "main");
-        assert_eq!(listing.commit.as_deref(), Some(sha.as_str()));
-        assert_eq!(listing.plugins.len(), 1);
-        let plugin = &listing.plugins[0];
-        assert_eq!(plugin.id(), "foo");
-        assert_eq!(plugin.loaded.manifest.version.to_string(), "0.0.1");
-        assert_eq!(plugin.source.origin, format!("{}/owner/repo", server.url()));
-        assert_eq!(plugin.source.commit.as_deref(), Some(sha.as_str()));
-        assert_eq!(plugin.source.subpath, None);
-        assert_eq!(plugin.source.via_repository, None);
-        assert!(!plugin.source.pinned);
+        assert!(resolved.rejected.is_empty(), "{:?}", resolved.rejected);
+        let [candidate] = &resolved.candidates[..] else {
+            panic!("expected one candidate");
+        };
+        assert_eq!(candidate.id(), "foo");
+        assert_eq!(
+            candidate.source.origin,
+            format!("{}/owner/repo", server.url())
+        );
+        assert_eq!(candidate.source.version, Version::new(0, 0, 1));
+        assert_eq!(candidate.source.commit, release_commit());
+        assert_eq!(candidate.source.subpath, None);
+        assert_eq!(candidate.source.via_repository, None);
+        assert!(!candidate.source.pinned);
+        assert!(candidate.source_dir().join("init.luau").is_file());
     }
 
     #[tokio::test]
-    async fn lists_index_path_and_remote_entries_from_raw_manifests() {
-        let (sha, other_sha) = ("a".repeat(40), "b".repeat(40));
-        let listing = list_routes(|base| {
-            let index = index_json(&format!(
-                r#"{{ "path": "plugins/foo" }}, {{ "url": "{base}/other/single" }}"#
-            ));
-            let mut routes = raw_repo_routes(
-                "owner/repo",
-                &sha,
-                &[
-                    ("repository.json", &index),
-                    ("plugins/foo/plugin.json", &plugin_json("foo")),
-                ],
-            );
-            routes.extend(raw_repo_routes(
-                "other/single",
-                &other_sha,
-                &[("plugin.json", &plugin_json("bar"))],
-            ));
-            routes
-        })
-        .await
-        .unwrap();
-
-        assert_eq!(listing.index.as_ref().unwrap().name, "Test Plugins");
-        assert_eq!(listing.commit.as_deref(), Some(sha.as_str()));
-        let [foo, bar] = &listing.plugins[..] else {
-            panic!("expected two plugins: {:?}", listing.plugins);
+    async fn the_first_compatible_release_commit_defines_the_repository() {
+        let (newer, older) = ("e".repeat(40), release_commit());
+        let manifest = |id: &str, version: &str, scopes: &str, description: &str| {
+            plugin_json(id)
+                .replace(
+                    r#""version": "0.0.1""#,
+                    &format!(r#""version": "{version}""#),
+                )
+                .replace(r#""scopes": []"#, &format!(r#""scopes": [{scopes}]"#))
+                .replace("test plugin", description)
         };
-        assert_eq!(foo.id(), "foo");
-        assert_eq!(foo.source.subpath.as_deref(), Some("plugins/foo"));
-        assert_eq!(foo.source.commit.as_deref(), Some(sha.as_str()));
-        assert_eq!(bar.id(), "bar");
-        assert_eq!(bar.source.commit.as_deref(), Some(other_sha.as_str()));
-        assert_eq!(bar.source.subpath, None);
+        let tip_index = index_json(r#"{ "path": "tip-only" }"#);
+        let tip_plugin = manifest("tip-only", "9.0.0", r#""harmony.http""#, "the tip");
+        let index = index_json(r#"{ "path": "foo" }"#);
+        let released_foo = manifest("foo", "0.1.0", "", "the release");
+        let routes = released_repo(
+            &sha(),
+            Some(&versions_json(&[(&newer, "0.1"), (&older, "0.0.1")])),
+            &[
+                ("repository.json", &tip_index),
+                ("tip-only/plugin.json", &tip_plugin),
+            ],
+            &borrowed(
+                &[
+                    vec![("repository.json".to_string(), index)],
+                    plugin_files("foo", &released_foo),
+                ]
+                .concat(),
+            ),
+        );
+        let server = TestServer::start(routes.into_iter().collect()).await;
+
+        let listing = list(&server, "/owner/repo").await.unwrap();
         assert_eq!(
-            bar.source.via_repository.as_deref(),
-            Some(listing.spec.canonical_url().as_str())
+            offered(&listing.plugins[0]),
+            ("foo", "0.1.0".into(), older.as_str())
+        );
+        let manifest = &listing.plugins[0].offer.as_ref().unwrap().manifest;
+        assert_eq!(
+            (manifest.scopes.as_slice(), manifest.description.as_str()),
+            (&[][..], "the release"),
+        );
+
+        let resolved = resolve(&server, "/owner/repo").await.unwrap();
+        let [candidate] = &resolved.candidates[..] else {
+            panic!("expected one candidate: {:?}", resolved.rejected);
+        };
+        assert_eq!(candidate.source.commit, older);
+        let tip_reads: Vec<String> = server
+            .requests()
+            .into_iter()
+            .filter(|path| path.contains(&sha()) || path.contains("archive/main"))
+            .collect();
+        assert_eq!(
+            tip_reads,
+            vec![format!("/owner/repo/raw/commit/{}/versions.json", sha()); 2],
+            "only versions.json is read at the tip"
         );
     }
 
     #[tokio::test]
-    async fn rate_limited_tree_lookups_fail_the_install() {
-        let sha = "a".repeat(40);
-        let index = index_json(r#"{ "path": "plugins/foo" }"#);
-        let mut routes = raw_repo_routes("owner/repo", &sha, &[]);
-        routes.extend([
+    async fn repositories_without_a_release_fail_each_plugin_named_at_the_tip() {
+        let index = index_json(r#"{ "path": "foo" }, { "path": "bar" }"#);
+        let tip = [
+            ("repository.json", index.as_str()),
+            ("foo/plugin.json", &plugin_json("foo")),
+            ("bar/plugin.json", &plugin_json("bar")),
+        ];
+        let tip: Vec<(&str, String)> = tip.iter().map(|(p, c)| (*p, c.to_string())).collect();
+        let tip: Vec<(&str, &str)> = tip.iter().map(|(p, c)| (*p, c.as_str())).collect();
+        let broken = r#"[{ "commit": "abc", "lyra": "*" }]"#;
+        let future = versions_json(&[(&"e".repeat(40), ">=0.2"), (&"d".repeat(40), "0.1")]);
+        for (versions, expected) in [
             (
-                format!("/owner/repo/archive/{sha}.tar.gz"),
-                CannedResponse::targz(targz(&[
-                    ("repo/repository.json", &index),
-                    ("repo/plugins/foo/plugin.json", &plugin_json("foo")),
-                    ("repo/plugins/foo/init.luau", "return {}"),
-                ])),
+                None,
+                "no releases: the repository has no versions.json".to_string(),
             ),
             (
-                format!("/api/v1/repos/owner/repo/git/trees/{sha}:plugins"),
-                CannedResponse::status(403).with_header("x-ratelimit-remaining", "0"),
+                Some("[]"),
+                "no releases: versions.json lists none".to_string(),
             ),
-        ]);
+            (
+                Some(broken),
+                "failed to parse versions.json: release #0 has commit \"abc\", which is not a \
+                 full 40-character commit id"
+                    .to_string(),
+            ),
+            (
+                Some(future.as_str()),
+                "no release runs on lyra 0.0.1; the newest needs lyra >=0.2".to_string(),
+            ),
+        ] {
+            let server = TestServer::start(
+                released_repo(&sha(), versions, &tip, &[])
+                    .into_iter()
+                    .collect(),
+            )
+            .await;
+
+            let listing = list(&server, "/owner/repo").await.unwrap();
+            assert_eq!(
+                errors(&listing),
+                [("foo", expected.clone()), ("bar", expected.clone())],
+                "{versions:?}"
+            );
+            let resolved = resolve(&server, "/owner/repo").await.unwrap();
+            assert_eq!(ids(&resolved), (vec![], vec!["foo", "bar"]));
+            assert!(
+                !server
+                    .requests()
+                    .iter()
+                    .any(|path| path.contains("archive")),
+                "{:?}",
+                server.requests()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn release_manifests_must_load_on_the_host() {
+        let index = index_json(
+            r#"{ "path": "widened" }, { "path": "scoped" }, { "path": "unparsable" },
+               { "path": "ok" }"#,
+        );
+        let widened = plugin_json("widened").replace(r#""lyra": "0.0.1""#, r#""lyra": "0.1""#);
+        let scoped =
+            plugin_json("scoped").replace(r#""scopes": []"#, r#""scopes": ["no.such.scope"]"#);
+        let unparsable =
+            plugin_json("unparsable").replace(r#""version": "0.0.1""#, r#""version": "one""#);
+        let release = [
+            vec![("repository.json".to_string(), index)],
+            plugin_files("widened", &widened),
+            plugin_files("scoped", &scoped),
+            plugin_files("unparsable", &unparsable),
+            plugin_files("ok", &plugin_json("ok")),
+        ]
+        .concat();
+        let routes = released_repo(&sha(), Some(&released()), &[], &borrowed(&release));
+        let server = TestServer::start(routes.into_iter().collect()).await;
+
+        let listing = list(&server, "/owner/repo").await.unwrap();
+        let listed: Vec<_> = listing
+            .plugins
+            .iter()
+            .map(|plugin| (plugin.id.as_str(), plugin.offer.as_ref().err()))
+            .collect();
+        assert!(
+            matches!(
+                &listed[..],
+                [
+                    (
+                        "widened",
+                        Some(PluginError::Load(PluginLoadError::IncompatibleHost { .. }))
+                    ),
+                    (
+                        "scoped",
+                        Some(PluginError::Load(PluginLoadError::UnknownScope { .. }))
+                    ),
+                    (
+                        "unparsable",
+                        Some(PluginError::Load(PluginLoadError::ConfigParseError { .. }))
+                    ),
+                    ("ok", None),
+                ]
+            ),
+            "a release's plugin.json that fails is never offered: {listed:?}"
+        );
+
+        let resolved = resolve(&server, "/owner/repo").await.unwrap();
+        assert_eq!(
+            ids(&resolved),
+            (vec!["ok"], vec!["widened", "scoped", "unparsable"])
+        );
+    }
+
+    #[tokio::test]
+    async fn release_plugins_without_a_readable_id_fail_the_repository() {
+        let index = index_json(r#"{ "path": "foo" }"#);
+        for manifest in ["{", r#"{"id": "not/valid"}"#] {
+            let routes = released_repo(
+                &sha(),
+                Some(&released()),
+                &[],
+                &[("repository.json", &index), ("foo/plugin.json", manifest)],
+            );
+            let server = TestServer::start(routes.into_iter().collect()).await;
+            let err = list(&server, "/owner/repo").await.unwrap_err();
+            assert!(
+                matches!(&err, ResolveError::Plugin { location, .. } if location.ends_with("/foo")),
+                "{err}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn releases_the_forge_does_not_have_fail_each_plugin() {
+        let missing = "d".repeat(40);
+        let index = index_json(r#"{ "path": "foo" }"#);
+        let routes = raw_repo_routes(
+            "owner/repo",
+            &sha(),
+            &[
+                ("versions.json", &versions_json(&[(&missing, "*")])),
+                ("repository.json", &index),
+                ("foo/plugin.json", &plugin_json("foo")),
+            ],
+        );
+        let server = TestServer::start(routes.into_iter().collect()).await;
+
+        let listing = list(&server, "/owner/repo").await.unwrap();
+        assert!(
+            matches!(
+                &listing.plugins[..],
+                [ListedPlugin {
+                    id,
+                    offer: Err(PluginError::Release(ReleaseError::Unavailable { commit })),
+                    ..
+                }] if id == "foo" && *commit == missing
+            ),
+            "the plugins are named at the tip: {:?}",
+            listing.plugins
+        );
+
+        let release = [
+            vec![("repository.json".to_string(), index.clone())],
+            plugin_files("gone", &plugin_json("gone")),
+        ]
+        .concat();
+        let mut routes = raw_repo_routes("owner/repo", &sha(), &[("versions.json", &released())]);
+        routes.extend(
+            borrowed(&release)
+                .iter()
+                .map(|(path, content)| raw_file("owner/repo", &release_commit(), path, content)),
+        );
+        let index = index_json(r#"{ "path": "gone" }"#);
+        routes.push(raw_file(
+            "owner/repo",
+            &release_commit(),
+            "repository.json",
+            &index,
+        ));
+        let server = TestServer::start(routes.into_iter().collect()).await;
+        let resolved = resolve(&server, "/owner/repo").await.unwrap();
+        assert!(
+            matches!(
+                &resolved.rejected[..],
+                [RejectedPlugin {
+                    id,
+                    error: PluginError::Release(ReleaseError::Unavailable { .. }),
+                    ..
+                }] if id == "gone"
+            ),
+            "a release whose archive the forge lacks fails alone: {:?}",
+            resolved.rejected
+        );
+    }
+
+    #[tokio::test]
+    async fn rate_limited_release_downloads_fail_the_install() {
+        let mut routes = raw_repo_routes("owner/repo", &sha(), &[("versions.json", &released())]);
+        routes.push(raw_file(
+            "owner/repo",
+            &release_commit(),
+            "plugin.json",
+            &plugin_json("foo"),
+        ));
+        routes.push((
+            format!("/owner/repo/archive/{}.tar.gz", release_commit()),
+            CannedResponse::status(429).with_header("Retry-After", "9"),
+        ));
         let server = TestServer::start(routes.into_iter().collect()).await;
 
         let err = resolve(&server, "/owner/repo").await.unwrap_err();
@@ -1250,19 +1309,566 @@ mod tests {
             matches!(
                 &err,
                 ResolveError::Fetch(FetchError::RateLimited(limited))
-                    if limited.url.ends_with(&format!("/git/trees/{sha}:plugins"))
-                        && server.url().ends_with(&limited.host)
+                    if limited.retry_after == Some(std::time::Duration::from_secs(9))
             ),
             "{err}"
         );
     }
 
     #[tokio::test]
+    async fn resolves_catalog_with_documentation_symlink_but_requires_real_entrypoint() {
+        let index = index_json(r#"{ "path": "plugins/foo" }"#);
+        for linked_entrypoint in [false, true] {
+            let mut release = targz_entries();
+            release.file("repo/AGENTS.md", "Repository documentation");
+            release.symlink("repo/CLAUDE.md", "AGENTS.md");
+            release.file("repo/repository.json", &index);
+            release.file("repo/plugins/foo/plugin.json", &plugin_json("foo"));
+            if linked_entrypoint {
+                release.file("repo/shared.luau", "return {}");
+                release.symlink("repo/plugins/foo/init.luau", "../../shared.luau");
+            } else {
+                release.file("repo/plugins/foo/init.luau", "return {}");
+            }
+            let commit = release_commit();
+            let server = TestServer::start(HashMap::from([
+                (
+                    "/owner/repo/archive/main.tar.gz".to_string(),
+                    CannedResponse::targz(targz(&[("repo/versions.json", &released())])),
+                ),
+                (
+                    format!("/owner/repo/archive/{commit}.tar.gz"),
+                    CannedResponse::targz(release.finish()),
+                ),
+                raw_file("owner/repo", &commit, "repository.json", &index),
+                raw_file(
+                    "owner/repo",
+                    &commit,
+                    "plugins/foo/plugin.json",
+                    &plugin_json("foo"),
+                ),
+            ]))
+            .await;
+
+            let resolved = resolve(&server, "/owner/repo").await.unwrap();
+            if linked_entrypoint {
+                assert!(resolved.candidates.is_empty());
+                assert!(
+                    matches!(
+                        &resolved.rejected[..],
+                        [RejectedPlugin {
+                            id,
+                            error: PluginError::Load(PluginLoadError::EntrypointNotFound { .. }),
+                            ..
+                        }] if id == "foo"
+                    ),
+                    "{:?}",
+                    resolved.rejected
+                );
+            } else {
+                assert!(resolved.rejected.is_empty(), "{:?}", resolved.rejected);
+                assert_eq!(ids(&resolved), (vec!["foo"], vec![]));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn resolves_repository_indexes_with_path_and_remote_entries() {
+        let server = TestServer::start_with(|base| {
+            let index = index_json(&format!(
+                r#"{{ "path": "plugins/foo" }}, {{ "url": "{base}/other/single" }}"#
+            ));
+            let release = [
+                vec![("repository.json".to_string(), index)],
+                plugin_files("plugins/foo", &plugin_json("foo")),
+            ]
+            .concat();
+            let mut routes = released_repo(&sha(), Some(&released()), &[], &borrowed(&release));
+            routes.extend(single_plugin_routes("other/single", "bar"));
+            routes.into_iter().collect()
+        })
+        .await;
+
+        let resolved = resolve(&server, "/owner/repo").await.unwrap();
+
+        let [foo, bar] = &resolved.candidates[..] else {
+            panic!("expected two candidates: {:?}", resolved.rejected);
+        };
+        assert_eq!(foo.id(), "foo");
+        assert_eq!(foo.source.subpath.as_deref(), Some("plugins/foo"));
+        assert_eq!(foo.source.via_repository, None);
+        assert!(foo.source_dir().join("init.luau").is_file());
+        assert_eq!(bar.id(), "bar");
+        assert_eq!(bar.source.origin, format!("{}/other/single", server.url()));
+        assert_eq!(bar.source.subpath, None);
+        assert_eq!(
+            bar.source.via_repository.as_deref(),
+            Some(format!("{}/owner/repo", server.url()).as_str())
+        );
+    }
+
+    /// Routes for an `owner/repo` index of the url entry `other/single` at
+    /// `v1`, released by `index_versions`, whose own `versions.json`
+    /// releases plugin `bar` at its own commit.
+    fn index_of_remote(base: &str, index_versions: Option<&str>) -> Vec<(String, CannedResponse)> {
+        let (other_tip, other_release) = ("b".repeat(40), "d".repeat(40));
+        let index = index_json(&format!(r#"{{ "url": "{base}/other/single?ref=v1" }}"#));
+        let mut routes = released_repo(
+            &sha(),
+            index_versions,
+            &[("repository.json", &index)],
+            &[("repository.json", &index)],
+        );
+        routes.extend(raw_repo_routes(
+            "other/single",
+            &other_tip,
+            &[
+                ("versions.json", &versions_json(&[(&other_release, "*")])),
+                ("plugin.json", &plugin_json("bar")),
+            ],
+        ));
+        routes.push((
+            "/api/v1/repos/other/single/git/commits/v1".to_string(),
+            CannedResponse::json(&format!(r#"{{"sha":"{other_tip}"}}"#)),
+        ));
+        routes.push(raw_file(
+            "other/single",
+            &other_release,
+            "plugin.json",
+            &plugin_json("bar"),
+        ));
+        routes
+    }
+
+    #[tokio::test]
+    async fn remote_entries_of_a_released_index_are_released_by_their_own_versions_json() {
+        let listing = list_routes(|base| index_of_remote(base, Some(&released())))
+            .await
+            .unwrap();
+
+        let [bar] = &listing.plugins[..] else {
+            panic!("expected one plugin: {:?}", listing.plugins);
+        };
+        assert_eq!(
+            offered(bar),
+            ("bar", "0.0.1".into(), "d".repeat(40).as_str())
+        );
+        assert_eq!(bar.source.git_ref.as_deref(), Some("v1"));
+        assert!(bar.source.pinned);
+        assert_eq!(
+            bar.source.via_repository.as_deref(),
+            Some(listing.spec.canonical_url().as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_entries_of_an_unreleased_index_carry_its_error() {
+        let server =
+            TestServer::start_with(|base| index_of_remote(base, None).into_iter().collect()).await;
+
+        let listing = list(&server, "/owner/repo").await.unwrap();
+
+        assert_eq!(
+            errors(&listing),
+            [(
+                "bar",
+                "no releases: the repository has no versions.json".to_string()
+            )]
+        );
+        let remote_reads: Vec<String> = server
+            .requests()
+            .into_iter()
+            .filter(|path| path.starts_with("/other/single/raw/"))
+            .collect();
+        let mut remote_reads = remote_reads;
+        remote_reads.sort();
+        let at_tip = |file: &str| format!("/other/single/raw/commit/{}/{file}", "b".repeat(40));
+        assert_eq!(
+            remote_reads,
+            [at_tip("plugin.json"), at_tip("repository.json")],
+            "the remote's tip only names it; its releases are not read"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolving_enforces_the_repository_rules() {
+        let archive = |files: &[(&str, &str)]| {
+            TestServer::start(HashMap::from([(
+                "/owner/repo/archive/main.tar.gz".to_string(),
+                CannedResponse::targz(targz(files)),
+            )]))
+        };
+
+        let server = archive(&[
+            ("repo/plugin.json", &plugin_json("foo")),
+            ("repo/repository.json", &index_json("")),
+        ])
+        .await;
+        let err = resolve(&server, "/owner/repo").await.unwrap_err();
+        assert!(matches!(err, ResolveError::AmbiguousRoot { .. }), "{err}");
+
+        let server = archive(&[("repo/README.md", "hi")]).await;
+        let err = resolve(&server, "/owner/repo").await.unwrap_err();
+        assert!(
+            matches!(err, ResolveError::NotAPluginRepository { .. }),
+            "{err}"
+        );
+
+        let server = archive(&[(
+            "repo/repository.json",
+            &index_json(r#"{ "path": "missing" }"#),
+        )])
+        .await;
+        let err = resolve(&server, "/owner/repo").await.unwrap_err();
+        assert!(
+            matches!(err, ResolveError::PathEntryMissing { .. }),
+            "{err}"
+        );
+
+        let server = archive(&[
+            ("repo/repository.json", &index_json(r#"{ "path": "sub" }"#)),
+            ("repo/sub/plugin.json", &plugin_json("foo")),
+            ("repo/sub/repository.json", &index_json("")),
+        ])
+        .await;
+        let err = resolve(&server, "/owner/repo").await.unwrap_err();
+        assert!(
+            matches!(err, ResolveError::NestedRepository { .. }),
+            "{err}"
+        );
+
+        let oversized = " ".repeat(crate::fetch::MAX_FILE_BYTES as usize + 1);
+        for file in ["repo/plugin.json", "repo/versions.json"] {
+            let manifest = plugin_json("foo");
+            let mut files = vec![("repo/plugin.json", manifest.as_str())];
+            files.retain(|(path, _)| *path != file);
+            files.push((file, &oversized));
+            let server = archive(&files).await;
+            let err = resolve(&server, "/owner/repo").await.unwrap_err();
+            assert!(
+                matches!(
+                    &err,
+                    ResolveError::Fetch(FetchError::FileTooLarge { location, .. })
+                        if location.ends_with(&format!("/owner/{file}"))
+                ),
+                "{err}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn lists_single_plugins_from_raw_manifests_alone() {
+        let routes = released_repo(
+            &sha(),
+            Some(&released()),
+            &[],
+            &[("plugin.json", &plugin_json("foo"))],
+        );
+        let server = TestServer::start(routes.into_iter().collect()).await;
+
+        let listing = list(&server, "/owner/repo").await.unwrap();
+
+        assert!(listing.index.is_none());
+        assert_eq!(listing.git_ref, "main");
+        assert_eq!(listing.commit.as_deref(), Some(sha().as_str()));
+        let [plugin] = &listing.plugins[..] else {
+            panic!("expected one plugin: {:?}", listing.plugins);
+        };
+        assert_eq!(
+            offered(plugin),
+            ("foo", "0.0.1".into(), release_commit().as_str())
+        );
+        assert_eq!(plugin.source.origin, format!("{}/owner/repo", server.url()));
+        assert!(!plugin.source.pinned);
+        assert!(
+            server
+                .requests()
+                .iter()
+                .all(|path| !path.contains("archive")),
+            "{:?}",
+            server.requests()
+        );
+    }
+
+    #[tokio::test]
+    async fn listings_read_versions_json_then_the_release_structure() {
+        let index = index_json(r#"{ "path": "foo" }, { "path": "bar" }"#);
+        let release = [
+            vec![("repository.json".to_string(), index)],
+            plugin_files("foo", &plugin_json("foo")),
+            plugin_files("bar", &plugin_json("bar")),
+        ]
+        .concat();
+        let routes = released_repo(&sha(), Some(&released()), &[], &borrowed(&release));
+        let server = TestServer::start(routes.into_iter().collect()).await;
+
+        let listing = list(&server, "/owner/repo").await.unwrap();
+        assert!(listing.plugins.iter().all(|plugin| plugin.offer.is_ok()));
+
+        let mut raw: Vec<String> = server
+            .requests()
+            .into_iter()
+            .filter(|path| path.contains("/raw/"))
+            .collect();
+        raw.sort();
+        let at = |commit: &str, path: &str| format!("/owner/repo/raw/commit/{commit}/{path}");
+        let commit = release_commit();
+        let mut expected = vec![
+            at(&sha(), "versions.json"),
+            at(&commit, "repository.json"),
+            at(&commit, "plugin.json"),
+            at(&commit, "foo/repository.json"),
+            at(&commit, "foo/plugin.json"),
+            at(&commit, "bar/repository.json"),
+            at(&commit, "bar/plugin.json"),
+        ];
+        expected.sort();
+        assert_eq!(raw, expected);
+    }
+
+    #[tokio::test]
+    async fn listings_enforce_the_repository_rules() {
+        let other = "b".repeat(40);
+
+        let err = list_routes(|_| {
+            raw_repo_routes(
+                "owner/repo",
+                &sha(),
+                &[
+                    ("plugin.json", &plugin_json("foo")),
+                    ("repository.json", &index_json("")),
+                ],
+            )
+        })
+        .await
+        .unwrap_err();
+        assert!(matches!(err, ResolveError::AmbiguousRoot { .. }), "{err}");
+
+        let err = list_routes(|_| raw_repo_routes("owner/repo", &sha(), &[]))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, ResolveError::NotAPluginRepository { .. }),
+            "{err}"
+        );
+
+        let err = list_routes(|_| {
+            released_repo(
+                &sha(),
+                Some(&released()),
+                &[],
+                &[("repository.json", &index_json(r#"{ "path": "missing" }"#))],
+            )
+        })
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(&err, ResolveError::PathEntryMissing { path, .. } if path == "missing"),
+            "a path entry needs a plugin.json at the release commit: {err}"
+        );
+
+        let err = list_routes(|_| {
+            raw_repo_routes(
+                "owner/repo",
+                &sha(),
+                &[
+                    ("repository.json", &index_json(r#"{ "path": "sub" }"#)),
+                    ("sub/plugin.json", &plugin_json("foo")),
+                    ("sub/repository.json", &index_json("")),
+                ],
+            )
+        })
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, ResolveError::NestedRepository { .. }),
+            "{err}"
+        );
+
+        let err = list_routes(|base| {
+            let index = index_json(&format!(r#"{{ "url": "{base}/other/nested" }}"#));
+            let mut routes = raw_repo_routes("owner/repo", &sha(), &[("repository.json", &index)]);
+            routes.extend(raw_repo_routes(
+                "other/nested",
+                &other,
+                &[("repository.json", &index_json(""))],
+            ));
+            routes
+        })
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(&err, ResolveError::NestedRepository { target } if target.ends_with("other/nested")),
+            "{err}"
+        );
+
+        let err = list_routes(|base| {
+            let index = index_json(&format!(r#"{{ "url": "{base}/other/empty" }}"#));
+            let mut routes = raw_repo_routes("owner/repo", &sha(), &[("repository.json", &index)]);
+            routes.extend(raw_repo_routes("other/empty", &other, &[]));
+            routes
+        })
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(&err, ResolveError::NotAPluginRepository { repo } if repo.ends_with("other/empty")),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn duplicate_ids_fail_only_the_colliding_plugins() {
+        let server = TestServer::start_with(|base| {
+            let index = index_json(&format!(
+                r#"{{ "path": "foo" }}, {{ "path": "bar" }}, {{ "url": "{base}/other/single" }},
+                   {{ "path": "ok" }}"#
+            ));
+            let release = [
+                vec![("repository.json".to_string(), index)],
+                plugin_files("foo", &plugin_json("foo")),
+                plugin_files("bar", &plugin_json("Foo")),
+                plugin_files("ok", &plugin_json("ok")),
+            ]
+            .concat();
+            let mut routes = released_repo(&sha(), Some(&released()), &[], &borrowed(&release));
+            routes.extend(raw_repo_routes(
+                "other/single",
+                &"b".repeat(40),
+                &[("plugin.json", &plugin_json("ok"))],
+            ));
+            routes.into_iter().collect()
+        })
+        .await;
+
+        let listing = list(&server, "/owner/repo").await.unwrap();
+        let listed: Vec<(&str, Option<String>)> = listing
+            .plugins
+            .iter()
+            .map(|plugin| {
+                let other = match &plugin.offer {
+                    Err(PluginError::DuplicateId { other }) => Some(other.clone()),
+                    _ => None,
+                };
+                (plugin.id.as_str(), other)
+            })
+            .collect();
+        let repo = listing.spec.human_id();
+        assert_eq!(
+            listed,
+            [
+                ("foo", Some(format!("{repo}/bar"))),
+                ("Foo", Some(format!("{repo}/foo"))),
+                ("ok", Some(format!("{repo}/ok"))),
+                (
+                    "ok",
+                    Some(format!(
+                        "{}/other/single",
+                        &repo[..repo.len() - "/owner/repo".len()]
+                    ))
+                ),
+            ]
+        );
+
+        let resolved = resolve(&server, "/owner/repo").await.unwrap();
+        assert_eq!(ids(&resolved), (vec![], vec!["foo", "Foo", "ok", "ok"]));
+    }
+
+    #[tokio::test]
+    async fn listings_fail_on_raw_read_errors() {
+        let commit = release_commit();
+        for (at, file, limited) in [
+            (sha(), "versions.json", false),
+            (commit.clone(), "plugin.json", false),
+            (sha(), "versions.json", true),
+            (commit.clone(), "repository.json", true),
+        ] {
+            let response = if limited {
+                CannedResponse::status(429).with_header("Retry-After", "7")
+            } else {
+                CannedResponse::status(500)
+            };
+            let err = list_routes(|_| {
+                let mut routes = released_repo(
+                    &sha(),
+                    Some(&released()),
+                    &[],
+                    &[("plugin.json", &plugin_json("foo"))],
+                );
+                routes.push((format!("/owner/repo/raw/commit/{at}/{file}"), response));
+                routes
+            })
+            .await
+            .unwrap_err();
+            let url_matches = |url: &str| url.ends_with(&format!("{at}/{file}"));
+            assert!(
+                match &err {
+                    ResolveError::Fetch(FetchError::RateLimited(rate_limited)) =>
+                        limited && url_matches(&rate_limited.url),
+                    ResolveError::Fetch(FetchError::Status { status, url }) =>
+                        !limited
+                            && *status == reqwest::StatusCode::INTERNAL_SERVER_ERROR
+                            && url_matches(url),
+                    _ => false,
+                },
+                "{at}/{file}: {err}"
+            );
+        }
+
+        let oversized = " ".repeat(crate::fetch::MAX_FILE_BYTES as usize + 1);
+        let err = list_routes(|_| {
+            raw_repo_routes("owner/repo", &sha(), &[("versions.json", &oversized)])
+        })
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, ResolveError::Fetch(FetchError::FileTooLarge { .. })),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn listings_read_versions_json_from_archives_when_the_forge_api_has_no_commit() {
+        let server = TestServer::start(
+            single_plugin_routes("owner/repo", "foo")
+                .into_iter()
+                .collect(),
+        )
+        .await;
+
+        let listing = list(&server, "/owner/repo").await.unwrap();
+
+        assert_eq!(listing.git_ref, "main");
+        assert_eq!(listing.commit, None);
+        assert_eq!(
+            offered(&listing.plugins[0]),
+            ("foo", "0.0.1".into(), release_commit().as_str())
+        );
+        assert!(!listing.plugins[0].source.pinned);
+    }
+
+    #[tokio::test]
+    async fn listings_reject_indexes_that_are_not_utf8() {
+        let err = list_routes(|_| {
+            let mut routes = raw_repo_routes("owner/repo", &sha(), &[]);
+            routes.push((
+                format!("/owner/repo/raw/commit/{}/repository.json", sha()),
+                CannedResponse::bytes(vec![0xff, 0xfe]),
+            ));
+            routes
+        })
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, ResolveError::Manifest(ManifestError::Parse { .. })),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
     async fn rate_limited_remote_entry_plans_fail_the_listing() {
-        let sha = "a".repeat(40);
         let server = TestServer::start_with(|base| {
             let index = index_json(&format!(r#"{{ "url": "{base}/other/single" }}"#));
-            let mut routes = raw_repo_routes("owner/repo", &sha, &[("repository.json", &index)]);
+            let mut routes = raw_repo_routes("owner/repo", &sha(), &[("repository.json", &index)]);
             routes.push((
                 "/api/v1/repos/other/single".to_string(),
                 CannedResponse::status(429).with_header("Retry-After", "30"),
@@ -1291,434 +1897,44 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn listings_record_the_sources_an_install_would() {
-        let (sha, other_sha) = ("a".repeat(40), "b".repeat(40));
-        let server = TestServer::start_with(|base| {
-            let index = index_json(&format!(
-                r#"{{ "path": "plugins/foo" }}, {{ "url": "{base}/other/single?ref=v1" }}"#
-            ));
-            let mut routes = raw_repo_routes(
-                "owner/repo",
-                &sha,
-                &[
-                    ("repository.json", &index),
-                    ("plugins/foo/plugin.json", &plugin_json("foo")),
-                ],
-            );
-            routes.push((
-                format!("/owner/repo/archive/{sha}.tar.gz"),
-                CannedResponse::targz(targz(&[
-                    ("repo/repository.json", &index),
-                    ("repo/plugins/foo/plugin.json", &plugin_json("foo")),
-                    ("repo/plugins/foo/init.luau", "return {}"),
-                ])),
-            ));
-            routes.extend([
-                (
-                    format!("/api/v1/repos/owner/repo/git/trees/{sha}:plugins"),
-                    CannedResponse::json(
-                        r#"{"sha":"p","truncated":false,"tree":[
-                            {"path":"foo","type":"tree","sha":"foo-tree"},
-                            {"path":"other","type":"tree","sha":"other-tree"}
-                        ]}"#,
-                    ),
-                ),
-                (
-                    format!("/api/v1/repos/other/single/git/trees/{other_sha}"),
-                    CannedResponse::json(r#"{"sha":"bar-tree","truncated":false,"tree":[]}"#),
-                ),
-                (
-                    "/api/v1/repos/other/single/git/commits/v1".to_string(),
-                    CannedResponse::json(&format!(r#"{{"sha":"{other_sha}"}}"#)),
-                ),
-                (
-                    format!("/other/single/raw/commit/{other_sha}/plugin.json"),
-                    CannedResponse::json(&plugin_json("bar")),
-                ),
-                (
-                    format!("/other/single/archive/{other_sha}.tar.gz"),
-                    CannedResponse::targz(targz(&[
-                        ("repo/plugin.json", &plugin_json("bar")),
-                        ("repo/init.luau", "return {}"),
-                    ])),
-                ),
-            ]);
-            routes.into_iter().collect()
-        })
-        .await;
-
-        let listing = list(&server, "/owner/repo").await.unwrap();
-        let resolved = resolve(&server, "/owner/repo").await.unwrap();
-        assert!(
-            server
-                .requests()
-                .contains(&format!("/owner/repo/archive/{sha}.tar.gz")),
-            "Gitea installs download the whole archive"
-        );
-
-        assert_eq!(listing.git_ref, resolved.git_ref);
-        assert_eq!(listing.commit, resolved.commit);
-        let listed: Vec<_> = listing
-            .plugins
-            .iter()
-            .map(|p| (p.id(), &p.source))
-            .collect();
-        let installed: Vec<_> = resolved
-            .candidates
-            .iter()
-            .map(|c| (c.id(), &c.source))
-            .collect();
-        assert_eq!(listed, installed);
-        assert!(listing.plugins[1].source.pinned);
-        assert_eq!(
-            listing.plugins[0].source.tree_hash.as_deref(),
-            Some("foo-tree")
-        );
-        assert_eq!(
-            listing.plugins[1].source.tree_hash.as_deref(),
-            Some("bar-tree")
-        );
-    }
-
-    #[tokio::test]
-    async fn listings_enforce_the_repository_rules() {
-        let sha = "a".repeat(40);
-        let other = "b".repeat(40);
-
-        let err = list_routes(|_| {
-            raw_repo_routes(
-                "owner/repo",
-                &sha,
-                &[
-                    ("plugin.json", &plugin_json("foo")),
-                    ("repository.json", &index_json("")),
-                ],
-            )
-        })
-        .await
-        .unwrap_err();
-        assert!(matches!(err, ResolveError::AmbiguousRoot { .. }), "{err}");
-
-        let err = list_routes(|_| raw_repo_routes("owner/repo", &sha, &[]))
-            .await
-            .unwrap_err();
-        assert!(
-            matches!(err, ResolveError::NotAPluginRepository { .. }),
-            "{err}"
-        );
-
-        let err = list_routes(|_| {
-            raw_repo_routes(
-                "owner/repo",
-                &sha,
-                &[("repository.json", &index_json(r#"{ "path": "missing" }"#))],
-            )
-        })
-        .await
-        .unwrap_err();
-        assert!(
-            matches!(&err, ResolveError::PathEntryMissing { path, .. } if path == "missing"),
-            "{err}"
-        );
-
-        let err = list_routes(|_| {
-            raw_repo_routes(
-                "owner/repo",
-                &sha,
-                &[
-                    ("repository.json", &index_json(r#"{ "path": "sub" }"#)),
-                    ("sub/plugin.json", &plugin_json("foo")),
-                    ("sub/repository.json", &index_json("")),
-                ],
-            )
-        })
-        .await
-        .unwrap_err();
-        assert!(
-            matches!(err, ResolveError::NestedRepository { .. }),
-            "{err}"
-        );
-
-        let err = list_routes(|base| {
-            let index = index_json(&format!(r#"{{ "url": "{base}/other/nested" }}"#));
-            let mut routes = raw_repo_routes("owner/repo", &sha, &[("repository.json", &index)]);
-            routes.extend(raw_repo_routes(
-                "other/nested",
-                &other,
-                &[("repository.json", &index_json(""))],
-            ));
-            routes
-        })
-        .await
-        .unwrap_err();
-        assert!(
-            matches!(&err, ResolveError::NestedRepository { target } if target.ends_with("other/nested")),
-            "{err}"
-        );
-
-        let err = list_routes(|base| {
-            let index = index_json(&format!(r#"{{ "url": "{base}/other/empty" }}"#));
-            let mut routes = raw_repo_routes("owner/repo", &sha, &[("repository.json", &index)]);
-            routes.extend(raw_repo_routes("other/empty", &other, &[]));
-            routes
-        })
-        .await
-        .unwrap_err();
-        assert!(
-            matches!(&err, ResolveError::NotAPluginRepository { repo } if repo.ends_with("other/empty")),
-            "{err}"
-        );
-
-        let err = list_routes(|base| {
-            let index = index_json(&format!(
-                r#"{{ "path": "foo" }}, {{ "url": "{base}/other/single" }}"#
-            ));
-            let mut routes = raw_repo_routes(
-                "owner/repo",
-                &sha,
-                &[
-                    ("repository.json", &index),
-                    ("foo/plugin.json", &plugin_json("Foo")),
-                ],
-            );
-            routes.extend(raw_repo_routes(
-                "other/single",
-                &other,
-                &[("plugin.json", &plugin_json("foo"))],
-            ));
-            routes
-        })
-        .await
-        .unwrap_err();
-        assert!(
-            matches!(err, ResolveError::DuplicatePluginId { .. }),
-            "{err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn listings_validate_manifests_and_fail_on_raw_read_errors() {
-        let sha = "a".repeat(40);
-        let unknown_scope = plugin_json("foo").replace(r#""scopes": []"#, r#""scopes": ["nope"]"#);
-
-        let err = list_routes(|_| {
-            raw_repo_routes("owner/repo", &sha, &[("plugin.json", &unknown_scope)])
-        })
-        .await
-        .unwrap_err();
-        assert!(
-            matches!(
-                &err,
-                ResolveError::Plugin { source, .. }
-                    if matches!(**source, PluginLoadError::UnknownScope { .. })
-            ),
-            "{err}"
-        );
-
-        let err = list_routes(|_| {
-            let mut routes = raw_repo_routes("owner/repo", &sha, &[]);
-            routes.push((
-                format!("/owner/repo/raw/commit/{sha}/plugin.json"),
-                CannedResponse::status(500),
-            ));
-            routes
-        })
-        .await
-        .unwrap_err();
-        assert!(
-            matches!(
-                &err,
-                ResolveError::Fetch(FetchError::Status { status, .. })
-                    if *status == reqwest::StatusCode::INTERNAL_SERVER_ERROR
-            ),
-            "{err}"
-        );
-
-        let oversized = " ".repeat(crate::fetch::MAX_FILE_BYTES as usize + 1);
-        let err =
-            list_routes(|_| raw_repo_routes("owner/repo", &sha, &[("plugin.json", &oversized)]))
-                .await
-                .unwrap_err();
-        assert!(
-            matches!(err, ResolveError::Fetch(FetchError::FileTooLarge { .. })),
-            "{err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn listings_download_archives_when_the_forge_api_has_no_commit() {
-        let listing = list_routes(|_| {
-            vec![(
-                "/owner/repo/archive/main.tar.gz".to_string(),
-                CannedResponse::targz(targz(&[("repo/plugin.json", &plugin_json("foo"))])),
-            )]
-        })
-        .await
-        .unwrap();
-
-        assert_eq!(listing.git_ref, "main");
-        assert_eq!(listing.commit, None);
-        assert_eq!(listing.plugins[0].id(), "foo");
-        assert_eq!(listing.plugins[0].source.commit, None);
-        assert!(!listing.plugins[0].source.pinned);
-    }
-
-    #[tokio::test]
-    async fn resolving_caps_manifests_read_from_archives() {
-        let oversized = " ".repeat(crate::fetch::MAX_FILE_BYTES as usize + 1);
-        let server = TestServer::start(HashMap::from([(
-            "/owner/repo/archive/main.tar.gz".to_string(),
-            CannedResponse::targz(targz(&[("repo/plugin.json", &oversized)])),
-        )]))
-        .await;
-
-        let err = resolve(&server, "/owner/repo").await.unwrap_err();
-        assert!(
-            matches!(
-                &err,
-                ResolveError::Fetch(FetchError::FileTooLarge { location, .. })
-                    if location.ends_with("/owner/repo/plugin.json")
-            ),
-            "{err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn listings_reject_indexes_that_are_not_utf8() {
-        let sha = "a".repeat(40);
-        let err = list_routes(|_| {
-            let mut routes = raw_repo_routes("owner/repo", &sha, &[]);
-            routes.push((
-                format!("/owner/repo/raw/commit/{sha}/repository.json"),
-                CannedResponse::bytes(vec![0xff, 0xfe]),
-            ));
-            routes
-        })
-        .await
-        .unwrap_err();
-        assert!(
-            matches!(err, ResolveError::Manifest(ManifestError::Parse { .. })),
-            "{err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn resolving_reuses_known_tree_hashes() {
-        let sha = "a".repeat(40);
-        let index = index_json(r#"{ "path": "plugins/foo" }"#);
-        let mut routes = raw_repo_routes("owner/repo", &sha, &[]);
-        routes.push((
-            format!("/owner/repo/archive/{sha}.tar.gz"),
-            CannedResponse::targz(targz(&[
-                ("repo/repository.json", &index),
-                ("repo/plugins/foo/plugin.json", &plugin_json("foo")),
-                ("repo/plugins/foo/init.luau", "return {}"),
-            ])),
-        ));
-        let server = TestServer::start(routes.into_iter().collect()).await;
-        let spec = RepoSpec::parse(&format!("{}/owner/repo", server.url()), None).unwrap();
-        let plan = plan_refs(&client(), &spec).await.unwrap();
-        let hashes = HashMap::from([("plugins/foo".to_string(), "known-tree".to_string())]);
-        let known = |commit| {
-            Some(KnownTreeHashes {
-                commit,
-                hashes: &hashes,
-            })
-        };
-
-        let budget = UnpackBudget::new();
-        let stale = resolve_planned(&client(), &spec, &plan, known("b"), None, &host(), &budget)
-            .await
-            .unwrap();
-        assert_eq!(stale.candidates[0].source.tree_hash, None);
-        assert!(
-            server
-                .requests()
-                .iter()
-                .any(|path| path.contains("/git/trees/"))
-        );
-
-        let seen = server.requests().len();
-        let resolved =
-            resolve_planned(&client(), &spec, &plan, known(&sha), None, &host(), &budget)
-                .await
-                .unwrap();
-
-        assert_eq!(
-            resolved.candidates[0].source.tree_hash.as_deref(),
-            Some("known-tree")
-        );
-        assert!(
-            !server.requests()[seen..]
-                .iter()
-                .any(|path| path.contains("/git/trees/")),
-            "{:?}",
-            server.requests()
-        );
-    }
-
-    /// A GitLab index of `plugins/<id>` for each of `ids`, downloadable both
-    /// as directory archives and as the whole repository's archive.
-    async fn gitlab_index(sha: &str, ids: &[&str]) -> TestServer {
+    /// A GitLab index of `plugins/<id>` for each of `ids`, released at
+    /// [`release_commit`], downloadable both as directory archives and as
+    /// the release's whole archive.
+    async fn gitlab_index(ids: &[&str]) -> TestServer {
+        let commit = release_commit();
         let entries: Vec<String> = ids
             .iter()
             .map(|id| format!(r#"{{ "path": "plugins/{id}" }}"#))
             .collect();
         let index = index_json(&entries.join(", "));
-        let manifests: Vec<(String, String)> = ids
-            .iter()
-            .map(|id| (format!("plugins/{id}/plugin.json"), plugin_json(id)))
-            .collect();
-        let mut files = vec![("repository.json", index.as_str())];
-        files.extend(
-            manifests
-                .iter()
-                .map(|(path, json)| (path.as_str(), json.as_str())),
-        );
-        let mut routes = gitlab_repo_routes(sha, &files);
+        let mut routes = gitlab_repo_routes(&sha(), &[("versions.json", &released())]);
+        routes.push(gitlab_raw_file(&commit, "repository.json", &index));
 
-        let prefix = format!("repo-main-{sha}");
+        let prefix = format!("repo-{commit}");
         let mut whole = vec![(format!("{prefix}/repository.json"), index.clone())];
         for id in ids {
+            routes.push(gitlab_raw_file(
+                &commit,
+                &format!("plugins/{id}/plugin.json"),
+                &plugin_json(id),
+            ));
             let top = format!("{prefix}-plugins-{id}/plugins/{id}");
             routes.push(gitlab_directory_archive(
-                sha,
+                &commit,
                 &format!("plugins/{id}"),
                 targz(&[
                     (&format!("{top}/plugin.json"), &plugin_json(id)),
                     (&format!("{top}/init.luau"), "return {}"),
                 ]),
             ));
-            whole.push((
-                format!("{prefix}/plugins/{id}/plugin.json"),
-                plugin_json(id),
-            ));
-            whole.push((
-                format!("{prefix}/plugins/{id}/init.luau"),
-                "return {}".to_string(),
+            whole.extend(plugin_files(
+                &format!("{prefix}/plugins/{id}"),
+                &plugin_json(id),
             ));
         }
-        let whole: Vec<(&str, &str)> = whole
-            .iter()
-            .map(|(path, content)| (path.as_str(), content.as_str()))
-            .collect();
         routes.push((
-            format!("/owner/repo/-/archive/{sha}/repo-{sha}.tar.gz"),
-            CannedResponse::targz(targz(&whole)),
-        ));
-
-        let trees: Vec<String> = ids
-            .iter()
-            .map(|id| {
-                format!(r#"{{"id":"{id}-tree","name":"{id}","type":"tree","path":"plugins/{id}"}}"#)
-            })
-            .collect();
-        routes.push((
-            format!(
-                "/api/v4/projects/owner%2Frepo/repository/tree?path=plugins&ref={sha}&per_page=100"
-            ),
-            CannedResponse::json(&format!("[{}]", trees.join(","))),
+            format!("/owner/repo/-/archive/{commit}/repo-{commit}.tar.gz"),
+            CannedResponse::targz(targz(&borrowed(&whole))),
         ));
         TestServer::start(routes.into_iter().collect()).await
     }
@@ -1735,77 +1951,38 @@ mod tests {
         RepoSpec::parse(&format!("{}/owner/repo?forge=gitlab", server.url()), None).unwrap()
     }
 
+    fn directory_archive(id: &str) -> String {
+        format!(
+            "/api/v4/projects/owner%2Frepo/repository/archive.tar.gz?sha={}&path=plugins%2F{id}",
+            release_commit()
+        )
+    }
+
     #[tokio::test]
     async fn gitlab_installs_download_only_the_selected_plugin_directories() {
-        let sha = "a".repeat(40);
-        let server = gitlab_index(&sha, &["foo", "bar"]).await;
-        let spec = gitlab_spec(&server);
+        let server = gitlab_index(&["foo", "bar"]).await;
 
         let selected = ["foo".to_string()];
-        let resolved = resolve_plugins(&client(), &spec, Some(&selected), &host())
+        let resolved = resolve_plugins(&client(), &gitlab_spec(&server), Some(&selected), &host())
             .await
             .unwrap();
 
         let [foo] = &resolved.candidates[..] else {
-            panic!("expected only the selected plugin");
+            panic!("expected only the selected plugin: {:?}", resolved.rejected);
         };
         assert_eq!(foo.id(), "foo");
         assert!(foo.source_dir().join("init.luau").is_file());
         assert_eq!(foo.source.subpath.as_deref(), Some("plugins/foo"));
-        assert_eq!(foo.source.commit.as_deref(), Some(sha.as_str()));
-        assert_eq!(foo.source.tree_hash.as_deref(), Some("foo-tree"));
-
-        assert_eq!(
-            archive_requests(&server),
-            [format!(
-                "/api/v4/projects/owner%2Frepo/repository/archive.tar.gz?sha={sha}&path=plugins%2Ffoo"
-            )]
-        );
-    }
-
-    #[tokio::test]
-    async fn gitlab_installs_record_the_sources_listings_show() {
-        let sha = "a".repeat(40);
-        let server = gitlab_index(&sha, &["foo", "bar"]).await;
-        let spec = gitlab_spec(&server);
-
-        let listing = list_plugins(&client(), &spec, &host()).await.unwrap();
-        let resolved = resolve_plugins(&client(), &spec, None, &host())
-            .await
-            .unwrap();
-
-        let listed: Vec<_> = listing
-            .plugins
-            .iter()
-            .map(|p| (p.id(), &p.source))
-            .collect();
-        let installed: Vec<_> = resolved
-            .candidates
-            .iter()
-            .map(|c| (c.id(), &c.source))
-            .collect();
-        assert_eq!(listed, installed);
-        assert!(
-            !server
-                .requests()
-                .iter()
-                .any(|path| path.contains("/-/archive/")),
-            "{:?}",
-            server.requests()
-        );
+        assert_eq!(foo.source.commit, release_commit());
+        assert_eq!(archive_requests(&server), [directory_archive("foo")]);
     }
 
     #[tokio::test]
     async fn gitlab_installs_past_the_directory_archive_limit_download_the_whole_archive_once() {
-        let sha = "a".repeat(40);
+        let commit = release_commit();
         let ids = ["p1", "p2", "p3", "p4"];
-        let server = gitlab_index(&sha, &ids).await;
+        let server = gitlab_index(&ids).await;
         let spec = gitlab_spec(&server);
-        let directory_archive = |id: &str| {
-            format!(
-                "/api/v4/projects/owner%2Frepo/repository/archive.tar.gz?sha={sha}&path=plugins%2F{id}"
-            )
-        };
 
         let within: Vec<String> = ids[..MAX_DIRECTORY_ARCHIVES]
             .iter()
@@ -1824,28 +2001,78 @@ mod tests {
             .unwrap();
         assert_eq!(
             archive_requests(&server)[seen..],
-            [format!("/owner/repo/-/archive/{sha}/repo-{sha}.tar.gz")]
+            [format!(
+                "/owner/repo/-/archive/{commit}/repo-{commit}.tar.gz"
+            )]
         );
         let installed: Vec<_> = resolved
             .candidates
             .iter()
             .map(|candidate| {
                 assert!(candidate.source_dir().join("init.luau").is_file());
-                (
-                    candidate.id(),
-                    candidate.source.subpath.as_deref(),
-                    candidate.source.tree_hash.as_deref(),
-                )
+                (candidate.id(), candidate.source.subpath.as_deref())
             })
             .collect();
         assert_eq!(
             installed,
             [
-                ("p1", Some("plugins/p1"), Some("p1-tree")),
-                ("p2", Some("plugins/p2"), Some("p2-tree")),
-                ("p3", Some("plugins/p3"), Some("p3-tree")),
-                ("p4", Some("plugins/p4"), Some("p4-tree")),
+                ("p1", Some("plugins/p1")),
+                ("p2", Some("plugins/p2")),
+                ("p3", Some("plugins/p3")),
+                ("p4", Some("plugins/p4")),
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn gitlab_directory_archives_reject_unsafe_entries_and_fail_missing_directories_alone() {
+        let commit = release_commit();
+        let index = index_json(r#"{ "path": "plugins/foo" }"#);
+        let routes = |archive: Vec<u8>| {
+            let mut routes = gitlab_repo_routes(&sha(), &[("versions.json", &released())]);
+            routes.push(gitlab_raw_file(&commit, "repository.json", &index));
+            routes.push(gitlab_raw_file(
+                &commit,
+                "plugins/foo/plugin.json",
+                &plugin_json("foo"),
+            ));
+            routes.push(gitlab_directory_archive(&commit, "plugins/foo", archive));
+            routes.into_iter().collect()
+        };
+
+        let mut hostile = targz_entries();
+        hostile.file("top/plugins/foo/plugin.json", &plugin_json("foo"));
+        hostile.file_with_raw_path("../evil.txt", "x");
+        let server = TestServer::start(routes(hostile.finish())).await;
+        let err = resolve_plugins(&client(), &gitlab_spec(&server), None, &host())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ResolveError::Fetch(FetchError::UnsafeArchiveEntry { .. })
+            ),
+            "{err}"
+        );
+
+        let server = TestServer::start(routes(targz(&[(
+            "top/plugins/other/plugin.json",
+            &plugin_json("foo"),
+        )])))
+        .await;
+        let resolved = resolve_plugins(&client(), &gitlab_spec(&server), None, &host())
+            .await
+            .unwrap();
+        assert!(
+            matches!(
+                &resolved.rejected[..],
+                [RejectedPlugin {
+                    error: PluginError::Release(ReleaseError::Unavailable { .. }),
+                    ..
+                }]
+            ),
+            "{:?}",
+            resolved.rejected
         );
     }
 
@@ -1855,27 +2082,24 @@ mod tests {
         budget: &UnpackBudget,
     ) -> Result<ResolvedRepository, ResolveError> {
         let spec = RepoSpec::parse(&format!("{}{path}", server.url()), None).unwrap();
-        let plan = plan_refs(&client(), &spec).await?;
-        resolve_planned(&client(), &spec, &plan, None, None, &host(), budget).await
+        let listing = list_plugins(&client(), &spec, &host()).await?;
+        resolve_listed(&client(), listing, None, &host(), budget).await
     }
 
     #[tokio::test]
-    async fn origins_and_remote_entries_share_one_unpack_budget() {
+    async fn releases_share_one_unpack_budget() {
         let server = TestServer::start_with(|base| {
             let index = index_json(&format!(
                 r#"{{ "path": "plugins/foo" }}, {{ "url": "{base}/other/single" }}"#
             ));
-            HashMap::from([
-                (
-                    "/owner/repo/archive/main.tar.gz".to_string(),
-                    CannedResponse::targz(targz(&[
-                        ("repo/repository.json", &index),
-                        ("repo/plugins/foo/plugin.json", &plugin_json("foo")),
-                        ("repo/plugins/foo/init.luau", "return {}"),
-                    ])),
-                ),
-                single_plugin_routes("other/single", "bar"),
-            ])
+            let release = [
+                vec![("repository.json".to_string(), index)],
+                plugin_files("plugins/foo", &plugin_json("foo")),
+            ]
+            .concat();
+            let mut routes = released_repo(&sha(), Some(&released()), &[], &borrowed(&release));
+            routes.extend(single_plugin_routes("other/single", "bar"));
+            routes.into_iter().collect()
         })
         .await;
         let index_len = index_json(&format!(
@@ -1911,29 +2135,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_resolves_release_their_share_of_a_shared_budget() {
-        let server = TestServer::start(HashMap::from([
-            (
-                "/broken/repo/archive/main.tar.gz".to_string(),
-                CannedResponse::targz(targz(&[("repo/plugin.json", &plugin_json("foo"))])),
-            ),
-            single_plugin_routes("good/repo", "bar"),
-        ]))
+    async fn dropped_resolves_release_their_share_of_a_shared_budget() {
+        let server = TestServer::start(
+            single_plugin_routes("good/repo", "bar")
+                .into_iter()
+                .collect(),
+        )
         .await;
         let good_len = (plugin_json("bar").len() + "return {}".len()) as u64;
         let budget = UnpackBudget::with_limits(good_len, 100);
 
-        let err = resolve_within(&server, "/broken/repo", &budget)
-            .await
-            .unwrap_err();
-        assert!(
-            matches!(
-                &err,
-                ResolveError::Plugin { source, .. }
-                    if matches!(**source, PluginLoadError::EntrypointNotFound { .. })
-            ),
-            "{err}"
-        );
         let resolved = resolve_within(&server, "/good/repo", &budget)
             .await
             .unwrap();
@@ -1956,138 +2167,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolving_shares_one_unpack_budget_across_archives() {
-        let sha = "a".repeat(40);
-        let server = gitlab_index(&sha, &["foo", "bar"]).await;
-        let spec = gitlab_spec(&server);
-        let plan = plan_refs(&client(), &spec).await.unwrap();
-        let resolve_within = async |max_bytes| {
-            let budget = UnpackBudget::with_limits(max_bytes, 100);
-            resolve_planned(&client(), &spec, &plan, None, None, &host(), &budget).await
-        };
-        let directory_bytes = (plugin_json("foo").len() + "return {}".len()) as u64;
-
-        let err = resolve_within(directory_bytes * 2 - 1).await.unwrap_err();
-        assert!(
-            matches!(
-                err,
-                ResolveError::Fetch(FetchError::UnpackedBytesExceeded { .. })
-            ),
-            "{err}"
-        );
-        resolve_within(directory_bytes * 2).await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn rate_limited_manifest_reads_fail_the_listing() {
-        let sha = "a".repeat(40);
-        let err = list_routes(|_| {
-            let mut routes = raw_repo_routes("owner/repo", &sha, &[]);
-            routes.push((
-                format!("/owner/repo/raw/commit/{sha}/plugin.json"),
-                CannedResponse::status(429).with_header("Retry-After", "7"),
-            ));
-            routes
-        })
-        .await
-        .unwrap_err();
-        assert!(
-            matches!(
-                err,
-                ResolveError::Fetch(FetchError::RateLimited(crate::forge::RateLimited {
-                    retry_after: Some(wait),
-                    ..
-                })) if wait.as_secs() == 7
-            ),
-            "{err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn gitlab_directory_archives_reject_unsafe_entries_and_missing_directories() {
-        let sha = "a".repeat(40);
-        let index = index_json(r#"{ "path": "plugins/foo" }"#);
-        let files = [
-            ("repository.json", index.as_str()),
-            ("plugins/foo/plugin.json", &plugin_json("foo")),
-        ];
-
-        let mut hostile = targz_entries();
-        hostile.file("top/plugins/foo/plugin.json", &plugin_json("foo"));
-        hostile.file_with_raw_path("../evil.txt", "x");
-        let mut routes = gitlab_repo_routes(&sha, &files);
-        routes.push(gitlab_directory_archive(
-            &sha,
-            "plugins/foo",
-            hostile.finish(),
-        ));
-        let server = TestServer::start(routes.into_iter().collect()).await;
-        let err = resolve_plugins(&client(), &gitlab_spec(&server), None, &host())
-            .await
-            .unwrap_err();
-        assert!(
-            matches!(
-                err,
-                ResolveError::Fetch(FetchError::UnsafeArchiveEntry { .. })
-            ),
-            "{err}"
-        );
-
-        let mut routes = gitlab_repo_routes(&sha, &files);
-        routes.push(gitlab_directory_archive(
-            &sha,
-            "plugins/foo",
-            targz(&[("top/plugins/other/plugin.json", &plugin_json("foo"))]),
-        ));
-        let server = TestServer::start(routes.into_iter().collect()).await;
-        let err = resolve_plugins(&client(), &gitlab_spec(&server), None, &host())
-            .await
-            .unwrap_err();
-        assert!(
-            matches!(err, ResolveError::Fetch(FetchError::InvalidArchive { .. })),
-            "{err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn selected_plugins_install_past_siblings_missing_files_but_not_bad_manifests() {
-        let sha = "a".repeat(40);
+    async fn selected_plugins_resolve_past_siblings_that_fail() {
         let index = index_json(r#"{ "path": "plugins/foo" }, { "path": "plugins/bar" }"#);
-        let unknown_scope = plugin_json("bar").replace(r#""scopes": []"#, r#""scopes": ["nope"]"#);
-        let resolve_foo = async |bar_manifest: &str| {
-            let mut routes = raw_repo_routes("owner/repo", &sha, &[]);
-            routes.push((
-                format!("/owner/repo/archive/{sha}.tar.gz"),
-                CannedResponse::targz(targz(&[
-                    ("repo/repository.json", &index),
-                    ("repo/plugins/foo/plugin.json", &plugin_json("foo")),
-                    ("repo/plugins/foo/init.luau", "return {}"),
-                    ("repo/plugins/bar/plugin.json", bar_manifest),
-                ])),
-            ));
-            let server = TestServer::start(routes.into_iter().collect()).await;
-            let spec = RepoSpec::parse(&format!("{}/owner/repo", server.url()), None).unwrap();
-            let selected = ["foo".to_string()];
-            resolve_plugins(&client(), &spec, Some(&selected), &host()).await
+        let incompatible = plugin_json("bar").replace(r#""lyra": "0.0.1""#, r#""lyra": "0.1""#);
+        let release = [
+            vec![("repository.json".to_string(), index)],
+            plugin_files("plugins/foo", &plugin_json("foo")),
+            plugin_files("plugins/bar", &incompatible),
+        ]
+        .concat();
+        let routes = released_repo(&sha(), Some(&released()), &[], &borrowed(&release));
+        let server = TestServer::start(routes.into_iter().collect()).await;
+        let spec = RepoSpec::parse(&format!("{}/owner/repo", server.url()), None).unwrap();
+        let resolve_selected = async |selected: &[&str]| {
+            let selected: Vec<String> = selected.iter().map(|id| id.to_string()).collect();
+            resolve_plugins(&client(), &spec, Some(&selected), &host())
+                .await
+                .unwrap()
         };
 
-        let resolved = resolve_foo(&plugin_json("bar")).await.unwrap();
-        let ids: Vec<_> = resolved
-            .candidates
-            .iter()
-            .map(PluginCandidate::id)
-            .collect();
-        assert_eq!(ids, ["foo"]);
+        let resolved = resolve_selected(&["foo"]).await;
+        assert_eq!(ids(&resolved), (vec!["foo"], vec![]));
 
-        let err = resolve_foo(&unknown_scope).await.unwrap_err();
-        assert!(
-            matches!(
-                &err,
-                ResolveError::Plugin { location, source }
-                    if location.ends_with("plugins/bar")
-                        && matches!(**source, PluginLoadError::UnknownScope { .. })
-            ),
-            "{err}"
+        let resolved = resolve_selected(&["foo", "bar"]).await;
+        assert_eq!(ids(&resolved), (vec!["foo"], vec!["bar"]));
+        assert!(resolved.rejected[0].location.ends_with("plugins/bar"));
+        assert_eq!(
+            resolved.rejected[0].source.subpath.as_deref(),
+            Some("plugins/bar")
         );
     }
 }

@@ -27,16 +27,20 @@ pub struct PluginRepository {
     pub refreshed_at_ms: Option<u64>,
 }
 
-/// The latest known revision of one plugin a subscribed repository offers,
-/// as of its last refresh or update check. Linked from its repository.
+/// One plugin a subscribed repository offers, as of its last refresh or
+/// update check. Linked from its repository.
 #[derive(DbElement, Clone, Debug, PartialEq, Eq)]
 pub struct PluginRepositoryEntry {
     pub db_id: Option<DbId>,
     pub plugin_id: String,
     /// Directory within the repository; unset for a root-level plugin.
     pub subpath: Option<String>,
-    pub commit: Option<String>,
-    pub tree_hash: Option<String>,
+    /// The plugin's version at the release the server would install;
+    /// unset when there is none.
+    pub version: Option<String>,
+    /// The server requirement that excludes the server, when no release
+    /// runs on it.
+    pub requires: Option<String>,
 }
 
 const DEFAULT_SEEDED_KEY: &str = "default_repository_seeded";
@@ -371,20 +375,20 @@ mod tests {
         Ok(())
     }
 
-    fn entry(plugin_id: &str, tree_hash: &str) -> PluginRepositoryEntry {
+    fn entry(plugin_id: &str, version: &str) -> PluginRepositoryEntry {
         PluginRepositoryEntry {
             db_id: None,
             plugin_id: plugin_id.to_string(),
             subpath: Some(format!("plugins/{plugin_id}")),
-            commit: Some("a".repeat(40)),
-            tree_hash: Some(tree_hash.to_string()),
+            version: Some(version.to_string()),
+            requires: None,
         }
     }
 
     fn sorted_entries(db: &DbAny, repo_db_id: DbId) -> anyhow::Result<Vec<(String, String)>> {
         let mut listed: Vec<_> = entries(db, repo_db_id)?
             .into_iter()
-            .map(|entry| (entry.plugin_id, entry.tree_hash.unwrap_or_default()))
+            .map(|entry| (entry.plugin_id, entry.version.unwrap_or_default()))
             .collect();
         listed.sort();
         Ok(listed)

@@ -5,6 +5,7 @@
 
 use std::path::Path;
 
+use semver::Version;
 use serde::{
     Deserialize,
     Serialize,
@@ -257,7 +258,7 @@ fn reject_nested_paths(entries: &[RepositoryEntry]) -> Result<(), ManifestError>
 }
 
 pub const SOURCE_RECORD_FILENAME: &str = ".harmony-source.json";
-pub const SOURCE_RECORD_SCHEMA_VERSION: u32 = 2;
+pub const SOURCE_RECORD_SCHEMA_VERSION: u32 = 3;
 
 /// Provenance of an installed plugin, written next to its `plugin.json`.
 /// Plugins without a record are local (bundled or hand-copied) and are
@@ -269,15 +270,13 @@ pub struct SourceRecord {
     /// Canonical URL of the repository the plugin was installed from.
     pub origin: String,
     pub forge: Forge,
-    /// Ref the install tracks. `None` follows the default branch.
+    /// Ref whose `versions.json` the install chose from. `None` follows
+    /// the default branch.
     pub git_ref: Option<String>,
-    /// Commit the installed tree came from, when the forge API was
-    /// reachable at install time.
-    pub commit: Option<String>,
-    /// Git tree hash of the plugin's directory at `commit`, when the forge
-    /// reported one. Identifies the plugin's content across commits that
-    /// leave its directory untouched.
-    pub tree_hash: Option<String>,
+    /// The installed plugin's version at the release commit.
+    pub version: Version,
+    /// The repository's release commit the plugin came from.
+    pub commit: String,
     /// Whether `git_ref` is a tag or commit, so updates never move it.
     /// Branches, and refs the forge could not classify, track new commits.
     pub pinned: bool,
@@ -291,40 +290,12 @@ pub struct SourceRecord {
     pub installed_at: Option<String>,
 }
 
-/// What identifies a plugin's content: the tree hash of its directory,
-/// falling back to the commit it came from.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Revision<'a> {
-    pub commit: Option<&'a str>,
-    pub tree_hash: Option<&'a str>,
-}
-
-impl Revision<'_> {
-    /// Whether both revisions hold the same plugin content. Tree hashes
-    /// decide when both sides have one, so a commit that left the directory
-    /// untouched still matches; otherwise the commits decide. `None` when
-    /// neither pair is known.
-    pub fn same_content(self, other: Revision<'_>) -> Option<bool> {
-        match (self.tree_hash, other.tree_hash) {
-            (Some(this), Some(other)) => Some(this == other),
-            _ => Some(self.commit? == other.commit?),
-        }
-    }
-}
-
 #[derive(Deserialize)]
 struct SchemaVersion {
     schema_version: u32,
 }
 
 impl SourceRecord {
-    pub fn revision(&self) -> Revision<'_> {
-        Revision {
-            commit: self.commit.as_deref(),
-            tree_hash: self.tree_hash.as_deref(),
-        }
-    }
-
     /// Human-readable source location: the origin, plus the subpath for
     /// plugins installed from a repository index's path entry.
     pub fn location(&self) -> String {
@@ -603,8 +574,8 @@ mod tests {
             origin: "https://github.com/o/r".into(),
             forge: Forge::GitHub,
             git_ref: Some("v1.2.0".into()),
-            commit: Some("a".repeat(40)),
-            tree_hash: Some("b".repeat(40)),
+            version: Version::new(1, 2, 0),
+            commit: "a".repeat(40),
             pinned: true,
             subpath: Some("musicbrainz".into()),
             via_repository: Some("https://github.com/lyra/plugins".into()),
@@ -621,36 +592,14 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::write(
             dir.path().join(SOURCE_RECORD_FILENAME),
-            r#"{
-                "schema_version": 1,
-                "origin": "https://github.com/o/r",
-                "forge": "github",
-                "git_ref": null,
-                "commit": null,
-                "subpath": null,
-                "via_repository": null,
-                "installed_at": null
-            }"#,
-        )
-        .unwrap();
-
-        let err = SourceRecord::load(dir.path()).unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
-        assert!(err.to_string().contains("schema_version 1"), "{err}");
-    }
-
-    #[test]
-    fn source_records_without_a_tree_hash_load_with_none() {
-        let dir = tempfile::TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join(SOURCE_RECORD_FILENAME),
             format!(
                 r#"{{
-                    "schema_version": {SOURCE_RECORD_SCHEMA_VERSION},
+                    "schema_version": 2,
                     "origin": "https://github.com/o/r",
                     "forge": "github",
                     "git_ref": null,
                     "commit": "{}",
+                    "tree_hash": null,
                     "pinned": false,
                     "subpath": null,
                     "via_repository": null,
@@ -661,36 +610,9 @@ mod tests {
         )
         .unwrap();
 
-        let record = SourceRecord::load(dir.path()).unwrap().unwrap();
-        assert_eq!(record.tree_hash, None);
-        assert_eq!(record.revision().tree_hash, None);
-    }
-
-    #[test]
-    fn revisions_compare_tree_hashes_before_commits() {
-        let (a, b) = ("commit-a", "commit-b");
-        let revision = |commit, tree_hash| Revision { commit, tree_hash };
-
-        assert_eq!(
-            revision(Some(a), Some("t")).same_content(revision(Some(b), Some("t"))),
-            Some(true)
-        );
-        assert_eq!(
-            revision(Some(a), Some("t")).same_content(revision(Some(a), Some("u"))),
-            Some(false)
-        );
-        assert_eq!(
-            revision(Some(a), None).same_content(revision(Some(a), Some("t"))),
-            Some(true)
-        );
-        assert_eq!(
-            revision(Some(a), Some("t")).same_content(revision(Some(b), None)),
-            Some(false)
-        );
-        assert_eq!(
-            revision(None, Some("t")).same_content(revision(Some(a), None)),
-            None
-        );
+        let err = SourceRecord::load(dir.path()).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("schema_version 2"), "{err}");
     }
 
     #[test]

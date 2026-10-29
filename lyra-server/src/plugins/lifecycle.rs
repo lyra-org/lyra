@@ -422,7 +422,7 @@ mod tests {
                 "id": id,
                 "name": id,
                 "version": "1.0.0",
-                "lyra": "*",
+                "lyra": crate::plugins::testing::HOST_REQUIREMENT,
                 "description": "",
                 "entrypoint": "init.luau",
                 "scopes": scopes,

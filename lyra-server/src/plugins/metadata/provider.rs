@@ -666,16 +666,17 @@ mod tests {
             std::fs::create_dir_all(&plugin_dir)?;
             std::fs::write(
                 plugin_dir.join("plugin.json"),
-                r#"{
+                serde_json::json!({
                     "schema_version": 1,
                     "id": "searchtest",
                     "name": "Search Test",
                     "version": "1.0.0",
-                    "lyra": "*",
+                    "lyra": crate::plugins::testing::HOST_REQUIREMENT,
                     "description": "Search callback contract test",
                     "entrypoint": "init.luau",
                     "scopes": ["lyra.metadata"]
-                }"#,
+                })
+                .to_string(),
             )?;
             std::fs::write(
                 plugin_dir.join("init.luau"),

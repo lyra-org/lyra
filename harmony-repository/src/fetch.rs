@@ -69,6 +69,8 @@ pub enum FetchError {
     FileTooLarge { location: String, limit: u64 },
     #[error("invalid archive: {reason}")]
     InvalidArchive { reason: String },
+    #[error("archive from {url} has no directory '{dir}'")]
+    DirectoryMissing { url: String, dir: String },
     #[error("archives unpack to more than {limit} bytes")]
     UnpackedBytesExceeded { limit: u64 },
     #[error("archives unpack to more than {limit} entries")]
@@ -360,8 +362,9 @@ pub(crate) async fn fetch_directory(
         dir => root.join(dir),
     };
     if !path.is_dir() {
-        return Err(FetchError::InvalidArchive {
-            reason: format!("archive from {url} has no directory '{dir}'"),
+        return Err(FetchError::DirectoryMissing {
+            url,
+            dir: dir.to_string(),
         });
     }
     Ok(FetchedDirectory {

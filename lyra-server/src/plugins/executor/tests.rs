@@ -232,7 +232,7 @@ fn temp_plugin(id: &str, scopes: &[&str], init: impl AsRef<[u8]>) -> Result<Temp
             "id": id,
             "name": id,
             "version": "1.0.0",
-            "lyra": "*",
+            "lyra": crate::plugins::testing::HOST_REQUIREMENT,
             "description": "",
             "entrypoint": "init.luau",
             "scopes": scopes,
@@ -2227,16 +2227,17 @@ fn plugin_executor_restart_keeps_one_registration_of_each_update_handler() -> Re
     std::fs::create_dir_all(&plugin_dir)?;
     std::fs::write(
         plugin_dir.join("plugin.json"),
-        r#"{
+        serde_json::json!({
             "schema_version": 1,
             "id": "demo",
             "name": "Demo",
             "version": "1.0.0",
-            "lyra": "*",
+            "lyra": crate::plugins::testing::HOST_REQUIREMENT,
             "description": "Demo plugin",
             "entrypoint": "init.luau",
             "scopes": ["lyra.listens", "lyra.playback_sessions"]
-        }"#,
+        })
+        .to_string(),
     )?;
     std::fs::write(
         plugin_dir.join("init.luau"),
@@ -2304,16 +2305,17 @@ fn plugin_executor_failed_restart_keeps_no_update_handler() -> Result<()> {
     std::fs::create_dir_all(&plugin_dir)?;
     std::fs::write(
         plugin_dir.join("plugin.json"),
-        r#"{
+        serde_json::json!({
             "schema_version": 1,
             "id": "demo",
             "name": "Demo",
             "version": "1.0.0",
-            "lyra": "*",
+            "lyra": crate::plugins::testing::HOST_REQUIREMENT,
             "description": "Demo plugin",
             "entrypoint": "init.luau",
             "scopes": ["lyra.listens"]
-        }"#,
+        })
+        .to_string(),
     )?;
     let write_entrypoint = |fail: bool| {
         std::fs::write(
@@ -2521,16 +2523,17 @@ fn plugin_executor_handle_restart_runs_new_entrypoint_on_runtime_thread() -> Res
 
     plugin.write(
         "plugin.json",
-        r#"{
+        serde_json::json!({
             "schema_version": 1,
             "id": "demo",
             "name": "Demo",
             "version": "2.0.0",
-            "lyra": "*",
+            "lyra": crate::plugins::testing::HOST_REQUIREMENT,
             "description": "Demo plugin",
             "entrypoint": "init.luau",
             "scopes": []
-        }"#,
+        })
+        .to_string(),
     )?;
     let error = futures::executor::block_on(runtime.verify_plugin_manifest("demo"))
         .expect_err("changed manifest must be rejected");

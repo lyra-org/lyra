@@ -8,10 +8,6 @@
 //! answers are parsed here; byte downloads (archives, raw files) are URLs
 //! that `fetch` downloads under its size limits.
 
-use std::collections::{
-    BTreeSet,
-    HashMap,
-};
 use std::time::{
     Duration,
     SystemTime,
@@ -346,26 +342,6 @@ impl RepoSpec {
             ),
         }
     }
-
-    /// Lists the entries directly under `dir` at `commit`; an empty `dir`
-    /// lists the repository root.
-    fn tree_api_url(&self, commit: &str, dir: &str) -> String {
-        let repo = self.repo_api_url();
-        let commit = utf8_percent_encode(commit, SEGMENT);
-        match self.forge {
-            Forge::GitHub | Forge::Gitea if dir.is_empty() => format!("{repo}/git/trees/{commit}"),
-            Forge::GitHub | Forge::Gitea => {
-                format!("{repo}/git/trees/{commit}:{}", encode_path(dir))
-            }
-            Forge::GitLab if dir.is_empty() => {
-                format!("{repo}/repository/tree?ref={commit}&per_page=100")
-            }
-            Forge::GitLab => format!(
-                "{repo}/repository/tree?path={}&ref={commit}&per_page=100",
-                utf8_percent_encode(dir, SEGMENT)
-            ),
-        }
-    }
 }
 
 /// Encodes each segment of a repository path, keeping its `/` separators.
@@ -551,122 +527,6 @@ pub async fn branch_exists(client: &Client, spec: &RepoSpec, git_ref: &str) -> A
     })
 }
 
-/// The Git tree hash of the directory at `path` in `commit`, where `path` is
-/// a normalized repository path as `repository.json` entries are and empty
-/// names the root. GitLab's API does not expose the root tree, so it answers
-/// `None` there and callers identify root-level plugins by the commit.
-pub async fn tree_hash(
-    client: &Client,
-    spec: &RepoSpec,
-    commit: &str,
-    path: &str,
-) -> ApiResult<String> {
-    if path.is_empty() {
-        return match spec.forge {
-            Forge::GitLab => Ok(None),
-            Forge::GitHub | Forge::Gitea => {
-                let value = api_get(client, spec, &spec.tree_api_url(commit, "")).await?;
-                Ok(value.and_then(|value| value.get("sha")?.as_str().map(str::to_string)))
-            }
-        };
-    }
-    let (parent, name) = path.rsplit_once('/').unwrap_or(("", path));
-    Ok(child_tree_hashes(client, spec, commit, parent)
-        .await?
-        .and_then(|mut children| children.remove(name)))
-}
-
-/// The Git tree hash at `commit` of each directory in `dirs` and of every
-/// sibling directory, keyed by path, asking once per parent directory. The
-/// result covers whole parents, so it answers later lookups of other
-/// directories under them. Directories the forge reports no hash for are
-/// left out.
-pub async fn tree_hashes(
-    client: &Client,
-    spec: &RepoSpec,
-    commit: &str,
-    dirs: &[&str],
-) -> Result<HashMap<String, String>, RateLimited> {
-    let mut hashes = HashMap::new();
-    if dirs.contains(&"")
-        && let Some(hash) = tree_hash(client, spec, commit, "").await?
-    {
-        hashes.insert(String::new(), hash);
-    }
-    let parents: BTreeSet<&str> = dirs
-        .iter()
-        .filter(|dir| !dir.is_empty())
-        .map(|dir| dir.rsplit_once('/').map_or("", |(parent, _)| parent))
-        .collect();
-    for parent in parents {
-        let Some(children) = child_tree_hashes(client, spec, commit, parent).await? else {
-            continue;
-        };
-        hashes.extend(children.into_iter().map(|(name, hash)| {
-            let dir = match parent {
-                "" => name,
-                parent => format!("{parent}/{name}"),
-            };
-            (dir, hash)
-        }));
-    }
-    Ok(hashes)
-}
-
-/// The Git tree hash of each directory directly under `dir` at `commit`,
-/// keyed by directory name. One request covers every sibling, so callers
-/// checking several plugin directories ask once per parent. `None` when the
-/// API gave no usable answer, including a listing too long for one page.
-pub async fn child_tree_hashes(
-    client: &Client,
-    spec: &RepoSpec,
-    commit: &str,
-    dir: &str,
-) -> ApiResult<HashMap<String, String>> {
-    let url = spec.tree_api_url(commit, dir);
-    let Some(response) = api_request(client, spec, &url).await? else {
-        return Ok(None);
-    };
-    if !response.status().is_success() {
-        return Ok(None);
-    }
-    let more_pages = response
-        .headers()
-        .get("x-next-page")
-        .is_some_and(|page| !page.is_empty());
-    let Some(value) = api_json(&url, response).await else {
-        return Ok(None);
-    };
-    Ok(parse_child_trees(spec.forge, &value, more_pages))
-}
-
-fn parse_child_trees(
-    forge: Forge,
-    value: &serde_json::Value,
-    more_pages: bool,
-) -> Option<HashMap<String, String>> {
-    let (entries, name_key, hash_key) = match forge {
-        Forge::GitLab if more_pages => return None,
-        Forge::GitLab => (value.as_array()?, "name", "id"),
-        Forge::GitHub | Forge::Gitea => {
-            if value.get("truncated").and_then(|t| t.as_bool()) == Some(true) {
-                return None;
-            }
-            (value.get("tree")?.as_array()?, "path", "sha")
-        }
-    };
-
-    entries
-        .iter()
-        .filter(|entry| entry.get("type").and_then(|t| t.as_str()) == Some("tree"))
-        .map(|entry| {
-            let name = entry.get(name_key)?.as_str()?;
-            let hash = entry.get(hash_key)?.as_str()?;
-            Some((name.to_string(), hash.to_string()))
-        })
-        .collect()
-}
-
 /// A forge API request. GitHub's secondary rate limits may answer 403 with
 /// only a message to say so, so its body is read; any other GitHub 403 is no
 /// usable answer either way.
@@ -726,6 +586,8 @@ async fn api_json(url: &str, response: Response) -> Option<serde_json::Value> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
     use crate::testutil::{
         CannedResponse,
@@ -965,41 +827,6 @@ mod tests {
     }
 
     #[test]
-    fn tree_api_urls_match_forge_conventions() {
-        let github = RepoSpec::parse("https://github.com/o/r", None).unwrap();
-        assert_eq!(
-            github.tree_api_url("abc", "plugins"),
-            "https://api.github.com/repos/o/r/git/trees/abc:plugins"
-        );
-        assert_eq!(
-            github.tree_api_url("abc", ""),
-            "https://api.github.com/repos/o/r/git/trees/abc"
-        );
-
-        let ghe = RepoSpec::parse("https://ghe.example.org/o/r", None).unwrap();
-        assert_eq!(
-            ghe.tree_api_url("abc", "a/b"),
-            "https://ghe.example.org/api/v3/repos/o/r/git/trees/abc:a/b"
-        );
-
-        let gitlab = RepoSpec::parse("https://gitlab.com/group/proj", None).unwrap();
-        assert_eq!(
-            gitlab.tree_api_url("abc", "a/b"),
-            "https://gitlab.com/api/v4/projects/group%2Fproj/repository/tree?path=a%2Fb&ref=abc&per_page=100"
-        );
-        assert_eq!(
-            gitlab.tree_api_url("abc", ""),
-            "https://gitlab.com/api/v4/projects/group%2Fproj/repository/tree?ref=abc&per_page=100"
-        );
-
-        let gitea = RepoSpec::parse("https://codeberg.org/o/r", None).unwrap();
-        assert_eq!(
-            gitea.tree_api_url("abc", "plugins"),
-            "https://codeberg.org/api/v1/repos/o/r/git/trees/abc:plugins"
-        );
-    }
-
-    #[test]
     fn directory_archives_are_gitlab_only() {
         let gitlab = RepoSpec::parse("https://gitlab.com/group/proj", None).unwrap();
         assert_eq!(
@@ -1015,178 +842,6 @@ mod tests {
             let spec = RepoSpec::parse(url, None).unwrap();
             assert_eq!(spec.directory_archive_url("abc", "plugins/audiomuse"), None);
         }
-    }
-
-    #[tokio::test]
-    async fn child_tree_hashes_list_directories_from_trees_api() {
-        let server = TestServer::start(HashMap::from([
-            (
-                "/api/v1/repos/owner/repo/git/trees/abc:plugins".to_string(),
-                CannedResponse::json(
-                    r#"{"sha":"p","truncated":false,"tree":[
-                        {"path":"audiomuse","type":"tree","sha":"t1"},
-                        {"path":"README.md","type":"blob","sha":"b1"},
-                        {"path":"lrclib","type":"tree","sha":"t2"}
-                    ]}"#,
-                ),
-            ),
-            (
-                "/api/v1/repos/owner/repo/git/trees/abc:big".to_string(),
-                CannedResponse::json(r#"{"sha":"p","truncated":true,"tree":[]}"#),
-            ),
-        ]))
-        .await;
-
-        let spec = RepoSpec::parse(&format!("{}/owner/repo", server.url()), None).unwrap();
-        let hashes = child_tree_hashes(&client(), &spec, "abc", "plugins")
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            hashes,
-            HashMap::from([
-                ("audiomuse".to_string(), "t1".to_string()),
-                ("lrclib".to_string(), "t2".to_string()),
-            ])
-        );
-
-        assert_eq!(
-            child_tree_hashes(&client(), &spec, "abc", "big")
-                .await
-                .unwrap(),
-            None
-        );
-        assert_eq!(
-            child_tree_hashes(&client(), &spec, "abc", "gone")
-                .await
-                .unwrap(),
-            None
-        );
-    }
-
-    #[tokio::test]
-    async fn child_tree_hashes_read_gitlab_tree_ids() {
-        let server = TestServer::start(HashMap::from([
-            (
-                "/api/v4/projects/owner%2Frepo/repository/tree?path=plugins&ref=abc&per_page=100"
-                    .to_string(),
-                CannedResponse::json(
-                    r#"[
-                        {"id":"t1","name":"audiomuse","type":"tree","path":"plugins/audiomuse"},
-                        {"id":"b1","name":"README.md","type":"blob","path":"plugins/README.md"}
-                    ]"#,
-                ),
-            ),
-            (
-                "/api/v4/projects/owner%2Frepo/repository/tree?path=big&ref=abc&per_page=100"
-                    .to_string(),
-                CannedResponse::json("[]").with_header("x-next-page", "2"),
-            ),
-        ]))
-        .await;
-
-        let url = format!("{}/owner/repo?forge=gitlab", server.url());
-        let spec = RepoSpec::parse(&url, None).unwrap();
-        let hashes = child_tree_hashes(&client(), &spec, "abc", "plugins")
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            hashes,
-            HashMap::from([("audiomuse".to_string(), "t1".to_string())])
-        );
-
-        assert_eq!(
-            child_tree_hashes(&client(), &spec, "abc", "big")
-                .await
-                .unwrap(),
-            None
-        );
-    }
-
-    #[tokio::test]
-    async fn tree_hash_looks_paths_up_in_their_parent_listing() {
-        let server = TestServer::start(HashMap::from([
-            (
-                "/api/v1/repos/owner/repo/git/trees/abc".to_string(),
-                CannedResponse::json(
-                    r#"{"sha":"root","truncated":false,"tree":[
-                        {"path":"plugin.json","type":"blob","sha":"b1"}
-                    ]}"#,
-                ),
-            ),
-            (
-                "/api/v1/repos/owner/repo/git/trees/abc:a/b".to_string(),
-                CannedResponse::json(
-                    r#"{"sha":"ab","truncated":false,"tree":[
-                        {"path":"c","type":"tree","sha":"abc-hash"},
-                        {"path":"d","type":"blob","sha":"d-hash"}
-                    ]}"#,
-                ),
-            ),
-        ]))
-        .await;
-
-        let spec = RepoSpec::parse(&format!("{}/owner/repo", server.url()), None).unwrap();
-        let client = client();
-        assert_eq!(
-            tree_hash(&client, &spec, "abc", "")
-                .await
-                .unwrap()
-                .as_deref(),
-            Some("root")
-        );
-        assert_eq!(
-            tree_hash(&client, &spec, "abc", "a/b/c")
-                .await
-                .unwrap()
-                .as_deref(),
-            Some("abc-hash")
-        );
-        assert_eq!(
-            tree_hash(&client, &spec, "abc", "a/b/d").await.unwrap(),
-            None
-        );
-        assert_eq!(
-            tree_hash(&client, &spec, "abc", "a/b/e").await.unwrap(),
-            None
-        );
-    }
-
-    #[tokio::test]
-    async fn tree_hash_reads_gitlab_listings_but_not_the_root() {
-        let server = TestServer::start(HashMap::from([
-            (
-                "/api/v4/projects/owner%2Frepo/repository/tree?ref=abc&per_page=100".to_string(),
-                CannedResponse::json(r#"[{"id":"t1","name":"a","type":"tree","path":"a"}]"#),
-            ),
-            (
-                "/api/v4/projects/owner%2Frepo/repository/tree?path=a%2Fb&ref=abc&per_page=100"
-                    .to_string(),
-                CannedResponse::json(
-                    r#"[{"id":"abc-hash","name":"c","type":"tree","path":"a/b/c"}]"#,
-                ),
-            ),
-        ]))
-        .await;
-
-        let url = format!("{}/owner/repo?forge=gitlab", server.url());
-        let spec = RepoSpec::parse(&url, None).unwrap();
-        assert_eq!(tree_hash(&client(), &spec, "abc", "").await.unwrap(), None);
-        assert_eq!(
-            tree_hash(&client(), &spec, "abc", "a")
-                .await
-                .unwrap()
-                .as_deref(),
-            Some("t1")
-        );
-        assert_eq!(
-            tree_hash(&client(), &spec, "abc", "a/b/c")
-                .await
-                .unwrap()
-                .as_deref(),
-            Some("abc-hash")
-        );
     }
 
     #[tokio::test]
@@ -1317,54 +972,6 @@ mod tests {
             resolve_commit(&client(), &gitea, "secondary").await,
             Ok(None),
             "only GitHub's 403 bodies are read"
-        );
-    }
-
-    #[tokio::test]
-    async fn tree_hashes_ask_once_per_parent_and_cover_its_siblings() {
-        let server = TestServer::start(HashMap::from([
-            (
-                "/api/v1/repos/owner/repo/git/trees/abc".to_string(),
-                CannedResponse::json(r#"{"sha":"root","truncated":false,"tree":[]}"#),
-            ),
-            (
-                "/api/v1/repos/owner/repo/git/trees/abc:plugins".to_string(),
-                CannedResponse::json(
-                    r#"{"sha":"p","truncated":false,"tree":[
-                        {"path":"a","type":"tree","sha":"a-hash"},
-                        {"path":"b","type":"tree","sha":"b-hash"}
-                    ]}"#,
-                ),
-            ),
-        ]))
-        .await;
-
-        let spec = RepoSpec::parse(&format!("{}/owner/repo", server.url()), None).unwrap();
-        let hashes = tree_hashes(
-            &client(),
-            &spec,
-            "abc",
-            &["plugins/a", "plugins/gone", "", ""],
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(
-            hashes,
-            HashMap::from([
-                ("plugins/a".to_string(), "a-hash".to_string()),
-                ("plugins/b".to_string(), "b-hash".to_string()),
-                (String::new(), "root".to_string()),
-            ])
-        );
-        let mut requests = server.requests();
-        requests.sort();
-        assert_eq!(
-            requests,
-            [
-                "/api/v1/repos/owner/repo/git/trees/abc",
-                "/api/v1/repos/owner/repo/git/trees/abc:plugins",
-            ]
         );
     }
 }

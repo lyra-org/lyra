@@ -694,16 +694,17 @@ mod tests {
         let source = tempfile::tempdir()?;
         std::fs::write(
             source.path().join("plugin.json"),
-            r#"{
+            serde_json::json!({
                 "schema_version": 1,
                 "id": "source-lifetime",
                 "name": "Source lifetime test",
                 "version": "1.0.0",
-                "lyra": "*",
+                "lyra": crate::plugins::testing::HOST_REQUIREMENT,
                 "description": "",
                 "entrypoint": "init.luau",
                 "scopes": ["lyra.metadata"]
-            }"#,
+            })
+            .to_string(),
         )?;
         std::fs::write(
             source.path().join("init.luau"),

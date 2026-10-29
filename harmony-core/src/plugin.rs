@@ -557,7 +557,7 @@ fn unmet_dependency<'a>(
         })
 }
 
-pub(crate) fn validate_plugin_id(id: &str) -> Result<(), String> {
+pub fn validate_plugin_id(id: &str) -> Result<(), String> {
     if id.is_empty() {
         return Err("must not be empty".into());
     }

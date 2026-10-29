@@ -6,14 +6,15 @@
 //! Plugin distribution from Git forges, shared across Harmony host
 //! applications. Hosts bring their own persistence and runtime lifecycle;
 //! this crate owns URL parsing, forge APIs, archive fetching, and the
-//! `repository.json` format. Hosts pass in their own HTTP client, which
-//! must send a descriptive User-Agent: forge APIs such as GitHub's reject
-//! requests without one.
+//! `repository.json` and `versions.json` formats. Hosts pass in their own
+//! HTTP client, which must send a descriptive User-Agent: forge APIs such as
+//! GitHub's reject requests without one.
 
 pub mod fetch;
 pub mod forge;
 pub mod install;
 pub mod manifest;
+pub mod releases;
 pub mod resolve;
 
 pub use fetch::{
@@ -39,18 +40,21 @@ pub use manifest::{
     ManifestError,
     RepositoryEntry,
     RepositoryManifest,
-    Revision,
     SourceRecord,
 };
+pub use releases::ReleaseError;
 pub use resolve::{
-    KnownTreeHashes,
     ListedPlugin,
+    Offer,
     PluginCandidate,
+    PluginError,
+    PluginSource,
+    RejectedPlugin,
     RepositoryListing,
     ResolveError,
     ResolvedRepository,
     list_plugins,
-    resolve_planned,
+    resolve_listed,
     resolve_plugins,
 };
 
