@@ -120,6 +120,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn reads_required_and_optional_string_fields() -> Result<()> {
         let vm = Vm::new()?;
         let table = vm.create_table()?;
@@ -131,6 +132,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn required_field_errors_when_missing() -> Result<()> {
         let vm = Vm::new()?;
         let table = vm.create_table()?;
@@ -142,6 +144,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn string_field_rejects_wrong_type_and_invalid_utf8() -> Result<()> {
         let vm = Vm::new()?;
         let table = vm.create_table()?;
@@ -157,6 +160,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn reads_bool_fields_without_coercion() -> Result<()> {
         let vm = Vm::new()?;
         let table = vm.create_table()?;
@@ -170,6 +174,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn reads_i64_fields_without_lossy_numbers() -> Result<()> {
         let vm = Vm::new()?;
         let table = vm.create_table()?;
@@ -186,6 +191,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn reads_table_fields() -> Result<()> {
         let vm = Vm::new()?;
         let table = vm.create_table()?;
