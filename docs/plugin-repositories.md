@@ -66,9 +66,10 @@ release commit, never at the branch tip: the root `plugin.json` or
 `repository.json`, the index's entries, and each plugin's `plugin.json`.
 Plugin versions live only in `plugin.json`. A repository without a
 `versions.json`, or without a release for the running server, has nothing
-installable. A pre-release server such as 0.0.6-dev matches only
-requirements that name a pre-release of 0.0.6, such as `">=0.0.6-dev"`;
-`"*"` does not match it.
+installable. A requirement naming a pre-release, such as `"0.0.6-dev"`,
+matches development builds of 0.0.6 and the 0.0.6 release, but nothing
+older. A pre-release server matches only such requirements; `"*"` does
+not match it.
 
 `versions.json` decides what is offered, and each `plugin.json` at the
 release commit decides what loads: it goes through every check above, its

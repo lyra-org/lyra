@@ -1662,6 +1662,45 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn shipped_manifests_require_exactly_this_server_version() -> anyhow::Result<()> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
+        let mut manifests = vec![root.join("lyra-harmony-test/tests/plugin.json")];
+        for entry in std::fs::read_dir(root.join("plugins"))? {
+            let manifest = entry?.path().join("plugin.json");
+            if manifest.is_file() {
+                manifests.push(manifest);
+            }
+        }
+        for manifest in manifests {
+            let json: serde_json::Value = serde_json::from_slice(&std::fs::read(&manifest)?)?;
+            assert_eq!(
+                json["lyra"].as_str(),
+                Some(env!("CARGO_PKG_VERSION")),
+                "{} must require the server version exactly",
+                manifest.display()
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn shipped_release_index_parses() -> anyhow::Result<()> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join(harmony_repository::releases::RELEASE_INDEX_FILENAME);
+        if path.is_file() {
+            harmony_repository::ReleaseIndex::parse(
+                &std::fs::read(&path)?,
+                &crate::plugins::surfaces::plugin_host(),
+            )?;
+        }
+        Ok(())
+    }
+
     /// The status of `plugin_id` alone, as [`installed_statuses`] reports
     /// it.
     pub(super) fn installed_status(

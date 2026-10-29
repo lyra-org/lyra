@@ -61,6 +61,16 @@ To create and scan a library at startup, add a `library` block to [`config.json`
 
 Use a path visible to the server. `path` is required. `name` defaults to `Music`. `language` and `country` are optional; language accepts ISO 639-1 or 639-3 codes or English names, and country accepts country codes or names.
 
+## Versions and releases
+
+Between releases, `main` carries the next version with a `-dev` suffix, such as `0.0.2-dev`, in `lyra-server/Cargo.toml`, and every plugin manifest in the repository declares the same `lyra` version. Tests check that they match.
+
+To release a version:
+
+1. Set the server version and every in-repository `lyra` to it, and bump `version` in each plugin whose files changed since the previous release.
+2. Commit, then add that commit to the top of `versions.json` as described in [plugin repositories](plugin-repositories.md#releases).
+3. Move `main` to the next `-dev` version, in the server and every in-repository `lyra`.
+
 ## Docker builds
 
 Full image builds require a lyra-web commit SHA in `LYRA_WEB_GIT_HASH`. To build with its current `main`, as CI does:

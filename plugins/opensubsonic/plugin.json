@@ -3,7 +3,7 @@
   "id": "opensubsonic",
   "name": "OpenSubsonic Compatibility",
   "version": "0.0.1",
-  "lyra": "0.0.1",
+  "lyra": "0.0.1-dev",
   "description": "Plugin for creating OpenSubsonic-compatible routes",
   "entrypoint": "init.luau",
   "scopes": [

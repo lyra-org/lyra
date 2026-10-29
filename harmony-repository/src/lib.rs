@@ -46,7 +46,10 @@ pub use manifest::{
     RepositoryManifest,
     SourceRecord,
 };
-pub use releases::ReleaseError;
+pub use releases::{
+    ReleaseError,
+    ReleaseIndex,
+};
 pub use resolve::{
     ListedPlugin,
     Offer,

@@ -3,7 +3,7 @@
   "id": "listenbrainz",
   "name": "ListenBrainz Integration",
   "version": "0.0.1",
-  "lyra": "0.0.1",
+  "lyra": "0.0.1-dev",
   "description": "Sync your listens to ListenBrainz",
   "entrypoint": "init.luau",
   "scopes": [

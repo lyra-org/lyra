@@ -46,7 +46,7 @@ pub(crate) struct Release {
 
 /// A repository's validated `versions.json`: its releases, newest first.
 #[derive(Debug)]
-pub(crate) struct ReleaseIndex {
+pub struct ReleaseIndex {
     releases: Vec<Release>,
 }
 
@@ -54,7 +54,7 @@ impl ReleaseIndex {
     /// Parses `versions.json`, whose entries hold a `commit` and the
     /// requirement on `host` under the key [`PluginHost::name`] names, and
     /// nothing else.
-    pub(crate) fn parse(bytes: &[u8], host: &PluginHost) -> Result<Self, ReleaseError> {
+    pub fn parse(bytes: &[u8], host: &PluginHost) -> Result<Self, ReleaseError> {
         #[derive(Deserialize)]
         struct Entry {
             commit: String,
