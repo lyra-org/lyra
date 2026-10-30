@@ -51,6 +51,15 @@ assert(got[ids.hidden] == nil, "a hidden target's rating is absent")
 assert(got[ids.amy] == nil and got[999999999] == nil, "unrated and missing targets are absent")
 assert(next(ratings.get({})) == nil, "no ids, no ratings")
 
+-- Averages across users.
+local averages = ratings.average({ ids.low, ids.high, ids.unrated, ids.hidden, ids.amy, 999999999 })
+assert(averages[ids.low] == 2, `low average {averages[ids.low]}`)
+assert(averages[ids.high] == 4.5, `high average {averages[ids.high]}`)
+assert(averages[ids.unrated] == 5, "another user's rating counts toward the average")
+assert(averages[ids.hidden] == nil, "a hidden target's average is absent")
+assert(averages[ids.amy] == nil and averages[999999999] == nil, "unrated and missing targets are absent")
+assert(next(ratings.average({})) == nil, "no ids, no averages")
+
 -- Filters.
 same(order(tracks.query({ min_rating = 3 }).items), { ids.high }, "min_rating")
 same(order(tracks.query({ max_rating = 2 }).items), { ids.low }, "max_rating")
@@ -81,6 +90,7 @@ same(
 assert(ratings.remove(ids.low), "a rating can be removed")
 assert(ratings.remove(ids.low), "removing again still names a ratable target")
 assert(ratings.get({ ids.low })[ids.low] == nil, "a removed rating is gone")
+assert(ratings.average({ ids.low })[ids.low] == nil, "a removed rating leaves the average")
 assert(ratings.remove(ids.hidden), "a hidden target's rating can be cleared")
 assert(not ratings.remove(ids.mix), "a playlist has no rating")
 assert(not ratings.remove(999999999), "a missing target has no rating")

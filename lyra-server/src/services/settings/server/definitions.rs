@@ -83,6 +83,14 @@ pub(super) static ALL: &[SettingDefinition] = &[
         Kind::Path { default: "covers" },
     ),
     setting(
+        "instance_stats",
+        SERVER,
+        "Instance statistics",
+        "Show users averages computed across all users, such as average ratings.",
+        Live,
+        Kind::Bool { default: true },
+    ),
+    setting(
         "cors.allowed_origins",
         CORS,
         "Allowed origins",

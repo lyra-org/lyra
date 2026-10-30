@@ -16,7 +16,10 @@ use agdb::{
     DbId,
 };
 
-use crate::services::auth::Principal;
+use crate::services::{
+    STATE,
+    auth::Principal,
+};
 use lyra_db::{
     entities::MetadataEntityType,
     ratings::RatingValue,
@@ -85,6 +88,28 @@ pub(crate) fn values_for_principal(
         }
     }
     Ok(values)
+}
+
+/// Every user's average rating of the targets the caller can see, or nothing while the
+/// `instance_stats` setting is off; unrated targets are absent.
+pub(crate) fn averages_for_principal(
+    db: &DbAny,
+    principal: &Principal,
+    target_db_ids: &[DbId],
+) -> anyhow::Result<HashMap<DbId, f64>> {
+    if !STATE.config().instance_stats {
+        return Ok(HashMap::new());
+    }
+    let existing: Vec<DbId> = lyra_db::lookup::find_ids_by_db_ids(db, target_db_ids)?
+        .into_keys()
+        .collect();
+    let mut averages = HashMap::new();
+    for (target_db_id, average) in lyra_db::ratings::averages_for_targets(db, &existing)? {
+        if targetable_by_principal(db, principal, target_db_id)? {
+            averages.insert(target_db_id, average);
+        }
+    }
+    Ok(averages)
 }
 
 fn targetable_by_principal(
@@ -223,6 +248,45 @@ mod tests {
             HashMap::from([(track, 2), (release, 3), (artist, 4)])
         );
         assert!(values_for_principal(&db, &principal, &[])?.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn averages_cover_every_user_for_visible_targets_while_instance_stats_is_on()
+    -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+
+        let mut db = new_test_db()?;
+        let user = users::create(&mut db, &test_user("alice")?)?;
+        let other_user = users::create(&mut db, &test_user("bob")?)?;
+        let outsider = users::create(&mut db, &test_user("carol")?)?;
+        let visible_library = insert_library(&mut db, "Visible", "/tmp/lyra-ratings-average")?;
+        let hidden_library = insert_library(&mut db, "Hidden", "/tmp/lyra-ratings-average-hidden")?;
+        let visible_library_id = lyra_db::lookup::find_id_by_db_id(&db, visible_library)?.unwrap();
+        let principal = principal(&db, user, HashSet::from([visible_library_id]));
+
+        let track = insert_track(&mut db, "Shared")?;
+        let unrated = insert_track(&mut db, "Unrated")?;
+        let hidden = insert_track(&mut db, "Hidden")?;
+        connect(&mut db, visible_library, track)?;
+        connect(&mut db, visible_library, unrated)?;
+        connect(&mut db, hidden_library, hidden)?;
+        rate(&mut db, user, track, 2)?;
+        rate(&mut db, other_user, track, 3)?;
+        rate(&mut db, outsider, track, 5)?;
+        rate(&mut db, other_user, hidden, 4)?;
+
+        let targets = [track, unrated, hidden, DbId(999_999_999)];
+        assert_eq!(
+            averages_for_principal(&db, &principal, &targets)?,
+            HashMap::from([(track, 10.0 / 3.0)]),
+        );
+
+        let mut config = STATE.config().as_ref().clone();
+        config.instance_stats = false;
+        crate::services::testing::publish_config(config);
+        assert!(averages_for_principal(&db, &principal, &targets)?.is_empty());
         Ok(())
     }
 

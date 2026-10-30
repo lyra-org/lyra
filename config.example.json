@@ -18,6 +18,7 @@
     "login_burst": 3
   },
   "covers_path": "covers",
+  "instance_stats": true,
   "db": {
     "kind": "mmap",
     "path": "lyra.db"

@@ -156,6 +156,26 @@ pub fn values_for_targets(
         .collect())
 }
 
+/// The mean of every user's rating of each target; unrated targets are absent.
+pub fn averages_for_targets(
+    db: &impl DbAccess,
+    target_db_ids: &[DbId],
+) -> anyhow::Result<HashMap<DbId, f64>> {
+    let mut averages = HashMap::new();
+    for &target_db_id in target_db_ids {
+        let (sum, count) = read_inbound_rating_edges(db, target_db_id)?
+            .into_iter()
+            .filter_map(parse_rating_edge)
+            .fold((0_u64, 0_u64), |(sum, count), edge| {
+                (sum + u64::from(edge.value.get()), count + 1)
+            });
+        if count > 0 {
+            averages.insert(target_db_id, sum as f64 / count as f64);
+        }
+    }
+    Ok(averages)
+}
+
 pub fn target_ids_matching(
     db: &impl DbAccess,
     user_db_id: DbId,
@@ -406,6 +426,45 @@ mod tests {
         assert!(
             !values.contains_key(&other_user_target),
             "another user's rating must be omitted",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn averages_for_targets_take_the_mean_across_users() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_a = create_node(&mut db)?;
+        let user_b = create_node(&mut db)?;
+        let user_c = create_node(&mut db)?;
+        let shared = create_node(&mut db)?;
+        let single = create_node(&mut db)?;
+        let unrated = create_node(&mut db)?;
+
+        for (user, value) in [(user_a, 2), (user_b, 5), (user_c, 4)] {
+            upsert(&mut db, user, shared, RatingValue::new(value).unwrap(), 100)?;
+        }
+        upsert(&mut db, user_a, single, RatingValue::new(3).unwrap(), 100)?;
+        db.exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from(user_b)
+                .to(single)
+                .query(),
+        )?;
+        db.exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from(user_c)
+                .to(unrated)
+                .values([[("other_value", 1_u64).into()]])
+                .query(),
+        )?;
+
+        assert!(averages_for_targets(&db, &[])?.is_empty());
+        let averages = averages_for_targets(&db, &[shared, single, unrated])?;
+        assert_eq!(
+            averages,
+            HashMap::from([(shared, 11.0 / 3.0), (single, 3.0)])
         );
         Ok(())
     }

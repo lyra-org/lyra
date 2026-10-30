@@ -355,6 +355,7 @@ mod tests {
             },
             library: None,
             covers_path: PathBuf::from("/srv/lyra/covers"),
+            instance_stats: true,
             auth: AuthConfig {
                 enabled: true,
                 allow_default_login_when_disabled: true,

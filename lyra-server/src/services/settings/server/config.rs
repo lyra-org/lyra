@@ -29,6 +29,7 @@ pub(crate) struct Config {
     pub(crate) rate_limit: RateLimitConfig,
     pub(crate) library: Option<LibraryConfig>,
     pub(crate) covers_path: PathBuf,
+    pub(crate) instance_stats: bool,
     pub(crate) auth: AuthConfig,
     pub(crate) sync: SyncConfig,
     pub(crate) hls: HlsConfig,
@@ -62,6 +63,7 @@ impl Config {
             },
             library,
             covers_path: resolve_path(data_dir, &settings.value::<PathBuf>("covers_path")),
+            instance_stats: settings.value("instance_stats"),
             auth: AuthConfig {
                 enabled: settings.value("auth.enabled"),
                 allow_default_login_when_disabled: settings

@@ -31,7 +31,7 @@ pub(crate) struct RatingsModule;
 
 #[harmony_macros::module(
     id = "lyra/ratings",
-    description = "The dispatch principal's 1-5 ratings of tracks, releases and artists.",
+    description = "The dispatch principal's 1-5 ratings of tracks, releases and artists, and their averages across users.",
     docs_feature = "docgen"
 )]
 impl RatingsModule {
@@ -86,6 +86,25 @@ impl RatingsModule {
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, values.len());
         for (id, value) in values {
             table.set_key(id.0, i64::from(value.get()));
+        }
+        Ok(table)
+    }
+
+    #[harmony(
+        description = "Every user's average rating of the targets, keyed by id. Unrated targets, ones the caller cannot see, and every target while the server's instance statistics are off are absent.",
+        returns(HashMap<u64, f64>)
+    )]
+    async fn average(
+        target_ids: UniqueIds,
+        #[context] db: Db,
+        #[context] principal: Principal,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let db = db.read().await;
+        let averages = rating_service::averages_for_principal(&db, &principal, &target_ids.0)?;
+
+        let mut table = luau::OwnedTable::with_entry_capacity(0, 0, averages.len());
+        for (id, average) in averages {
+            table.set_key(id.0, average);
         }
         Ok(table)
     }
