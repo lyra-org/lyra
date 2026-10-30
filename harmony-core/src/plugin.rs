@@ -1546,21 +1546,8 @@ impl Runtime {
         args: Vec<luau::Value>,
     ) -> anyhow::Result<Vec<luau::Value>> {
         let mut context = context;
-        let origin = context.origin.clone();
+        let thread = self.load_source_thread(source, &mut context)?;
         let scheduler = self.vm.data().get::<LocalScheduler>()?;
-        // Plugin code runs in its plugin's current run, never the default group.
-        if let Some(plugin_id) = origin.plugin.as_deref()
-            && context.task_group == TaskGroupId::default()
-        {
-            context.task_group = self
-                .vm
-                .data()
-                .get::<RequireRuntime>()?
-                .plugin_group(&scheduler, plugin_id);
-        }
-        let function = load_chunk_with_require(&self.vm, source, &origin, context.task_group)?;
-        let thread = self.vm.create_thread(&function)?;
-        self.vm.sandbox_thread(&thread)?;
         scheduler.spawn_luau_thread(context, self.vm.clone(), thread.clone(), args);
         drive_thread(
             &self.tokio_runtime,
@@ -1568,6 +1555,31 @@ impl Runtime {
             &thread,
             ThreadDriveOptions::default(),
         )
+    }
+
+    /// Loads `source` as a sandboxed thread for the caller to schedule under `context`. Plugin
+    /// code runs in its plugin's current run, never the default group, so a default group in
+    /// `context` becomes the plugin's.
+    pub fn load_source_thread(
+        &self,
+        source: impl Into<Arc<[u8]>>,
+        context: &mut CallContext,
+    ) -> anyhow::Result<luau::Thread> {
+        if let Some(plugin_id) = context.origin.plugin.as_deref()
+            && context.task_group == TaskGroupId::default()
+        {
+            let scheduler = self.vm.data().get::<LocalScheduler>()?;
+            context.task_group = self
+                .vm
+                .data()
+                .get::<RequireRuntime>()?
+                .plugin_group(&scheduler, plugin_id);
+        }
+        let function =
+            load_chunk_with_require(&self.vm, source, &context.origin, context.task_group)?;
+        let thread = self.vm.create_thread(&function)?;
+        self.vm.sandbox_thread(&thread)?;
+        Ok(thread)
     }
 
     pub fn poll_background_tasks(&self) -> usize {
