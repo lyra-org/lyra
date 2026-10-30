@@ -1681,6 +1681,42 @@ impl From<u64> for Value {
     }
 }
 
+impl From<f64> for Value {
+    fn from(value: f64) -> Self {
+        Self::Number(value)
+    }
+}
+
+impl From<bool> for Value {
+    fn from(value: bool) -> Self {
+        Self::Boolean(value)
+    }
+}
+
+impl From<String> for Value {
+    fn from(value: String) -> Self {
+        Self::String(value.into_bytes())
+    }
+}
+
+impl From<&str> for Value {
+    fn from(value: &str) -> Self {
+        Self::String(value.as_bytes().to_vec())
+    }
+}
+
+impl From<OwnedTable> for Value {
+    fn from(value: OwnedTable) -> Self {
+        Self::TableData(value)
+    }
+}
+
+impl<T: Into<Value>> From<Option<T>> for Value {
+    fn from(value: Option<T>) -> Self {
+        value.map_or(Self::Nil, Into::into)
+    }
+}
+
 #[derive(Clone)]
 pub struct NativeFunctionValue {
     options: NativeFunctionOptions,
@@ -1735,16 +1771,37 @@ impl OwnedTable {
         }
     }
 
-    pub fn push_array(&mut self, value: Value) {
-        self.array.push(value);
+    /// An array of `values` in order.
+    pub fn from_array<V: Into<Value>>(values: impl IntoIterator<Item = V>) -> Self {
+        Self {
+            array: values.into_iter().map(Into::into).collect(),
+            ..Self::default()
+        }
     }
 
-    pub fn set_field(&mut self, key: impl Into<String>, value: Value) {
-        self.fields.push((key.into(), value));
+    /// A table of `entries`, keyed by any value.
+    pub fn from_entries<K: Into<Value>, V: Into<Value>>(
+        entries: impl IntoIterator<Item = (K, V)>,
+    ) -> Self {
+        Self {
+            entries: entries
+                .into_iter()
+                .map(|(key, value)| (key.into(), value.into()))
+                .collect(),
+            ..Self::default()
+        }
     }
 
-    pub fn set_key(&mut self, key: Value, value: Value) {
-        self.entries.push((key, value));
+    pub fn push_array(&mut self, value: impl Into<Value>) {
+        self.array.push(value.into());
+    }
+
+    pub fn set_field(&mut self, key: impl Into<String>, value: impl Into<Value>) {
+        self.fields.push((key.into(), value.into()));
+    }
+
+    pub fn set_key(&mut self, key: impl Into<Value>, value: impl Into<Value>) {
+        self.entries.push((key.into(), value.into()));
     }
 
     pub fn array(&self) -> &[Value] {
@@ -3166,6 +3223,38 @@ mod tests {
 
     fn stack_top(vm: &Vm) -> i32 {
         vm.top()
+    }
+
+    #[test]
+    fn owned_tables_build_from_rust_values() {
+        let array = OwnedTable::from_array(["a", "b"]);
+        assert_eq!(
+            array.array(),
+            [Value::String(b"a".to_vec()), Value::String(b"b".to_vec())]
+        );
+
+        let map = OwnedTable::from_entries([(1_u64, Some(true)), (2_u64, None)]);
+        assert_eq!(
+            map.entries(),
+            [
+                (Value::Number(1.0), Value::Boolean(true)),
+                (Value::Number(2.0), Value::Nil),
+            ]
+        );
+
+        let mut record = OwnedTable::new();
+        record.set_field("name", String::from("demo"));
+        record.set_field("tags", array);
+        assert_eq!(
+            record.fields(),
+            [
+                ("name".to_string(), Value::String(b"demo".to_vec())),
+                (
+                    "tags".to_string(),
+                    Value::TableData(OwnedTable::from_array(["a", "b"]))
+                ),
+            ]
+        );
     }
 
     #[cfg(feature = "anyhow")]

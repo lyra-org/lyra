@@ -236,7 +236,7 @@ fn websocket_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<(
 
 fn response_json_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
     let status = read_status(&mut frame, "status")?;
-    let body = frame.args.read_named("body")?;
+    let body: luau::Value = frame.args.read_named("body")?;
     let headers = optional_value(frame.args.read_optional_named("headers")?);
     let mut response = kind_table("json");
     response.set_field("status", luau::Value::from(i64::from(status)));
