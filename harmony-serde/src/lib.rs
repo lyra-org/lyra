@@ -32,8 +32,8 @@ impl SerdeModule {
         description = "Encodes a Lua JSON-compatible value into a JSON string.",
         args(input: JsonValue)
     )]
-    fn json_encode(vm: &luau::Vm, input: luau::Value) -> luau::runtime::Result<String> {
-        let json = luau_to_json(vm, &input, 0)?;
+    fn json_encode(input: luau::Value) -> luau::runtime::Result<String> {
+        let json = luau_to_json(&input, 0)?;
         serde_json::to_string(&json).map_err(|error| runtime_error("JSON encode failed", error))
     }
 
@@ -53,8 +53,8 @@ impl SerdeModule {
         description = "Encodes a Lua JSON-compatible value into a YAML string.",
         args(input: JsonValue)
     )]
-    fn yaml_encode(vm: &luau::Vm, input: luau::Value) -> luau::runtime::Result<String> {
-        let json = luau_to_json(vm, &input, 0)?;
+    fn yaml_encode(input: luau::Value) -> luau::runtime::Result<String> {
+        let json = luau_to_json(&input, 0)?;
         serde_saphyr::to_string(&json).map_err(|error| runtime_error("YAML encode failed", error))
     }
 
@@ -74,12 +74,8 @@ impl SerdeModule {
         description = "Encodes a Lua JSON-compatible value into an XML string using the given root element name.",
         args(root: String, input: JsonValue)
     )]
-    fn xml_encode(
-        vm: &luau::Vm,
-        root: String,
-        input: luau::Value,
-    ) -> luau::runtime::Result<String> {
-        let json = luau_to_json(vm, &input, 0)?;
+    fn xml_encode(root: String, input: luau::Value) -> luau::runtime::Result<String> {
+        let json = luau_to_json(&input, 0)?;
         quick_xml::se::to_string_with_root(&root, &json)
             .map_err(|error| runtime_error("XML encode failed", error))
     }
@@ -114,11 +110,7 @@ impl SerdeModule {
     }
 }
 
-pub fn luau_to_json(
-    vm: &luau::Vm,
-    value: &luau::Value,
-    depth: usize,
-) -> luau::runtime::Result<serde_json::Value> {
+pub fn luau_to_json(value: &luau::Value, depth: usize) -> luau::runtime::Result<serde_json::Value> {
     if depth > 128 {
         return Err(luau::Error::Runtime(
             "JSON value is too deeply nested".into(),
@@ -135,8 +127,8 @@ pub fn luau_to_json(
         luau::Value::String(value) => String::from_utf8(value.clone())
             .map(serde_json::Value::String)
             .map_err(|error| runtime_error("JSON strings must be valid UTF-8", error)),
-        luau::Value::TableData(table) => owned_table_to_json(vm, table, depth + 1),
-        luau::Value::Table(table) => table_to_json(vm, table, depth + 1),
+        luau::Value::TableData(table) => owned_table_to_json(table, depth + 1),
+        luau::Value::Table(table) => table_to_json(table, depth + 1),
         luau::Value::Buffer(_) => Err(luau::Error::Runtime(
             "buffers cannot be encoded as JSON".into(),
         )),
@@ -194,7 +186,6 @@ pub fn optional_i64_field(table: &luau::Table, key: &str) -> luau::runtime::Resu
 }
 
 pub fn optional_json_field(
-    vm: &luau::Vm,
     table: &luau::Table,
     key: &str,
 ) -> luau::runtime::Result<Option<serde_json::Value>> {
@@ -202,7 +193,7 @@ pub fn optional_json_field(
     if matches!(value, luau::Value::Nil) {
         Ok(None)
     } else {
-        luau_to_json(vm, &value, 0).map(Some)
+        luau_to_json(&value, 0).map(Some)
     }
 }
 
@@ -245,7 +236,6 @@ fn json_number_from_f64(value: f64) -> Option<serde_json::Number> {
 }
 
 fn owned_table_to_json(
-    vm: &luau::Vm,
     table: &luau::OwnedTable,
     depth: usize,
 ) -> luau::runtime::Result<serde_json::Value> {
@@ -260,23 +250,19 @@ fn owned_table_to_json(
             table
                 .array()
                 .iter()
-                .map(|value| luau_to_json(vm, value, depth + 1))
+                .map(|value| luau_to_json(value, depth + 1))
                 .collect::<luau::runtime::Result<Vec<_>>>()?,
         ));
     }
 
     let mut object = serde_json::Map::new();
     for (key, value) in table.fields() {
-        object.insert(key.clone(), luau_to_json(vm, value, depth + 1)?);
+        object.insert(key.clone(), luau_to_json(value, depth + 1)?);
     }
     Ok(serde_json::Value::Object(object))
 }
 
-fn table_to_json(
-    vm: &luau::Vm,
-    table: &luau::Table,
-    depth: usize,
-) -> luau::runtime::Result<serde_json::Value> {
+fn table_to_json(table: &luau::Table, depth: usize) -> luau::runtime::Result<serde_json::Value> {
     if table_is_empty_object_marker(table)? {
         return Ok(serde_json::Value::Object(serde_json::Map::new()));
     }
@@ -296,7 +282,7 @@ fn table_to_json(
     for (key, value) in pairs {
         match (table_array_index(&key), key) {
             (Some(index), _) => {
-                let json = luau_to_json(vm, &value, depth)?;
+                let json = luau_to_json(&value, depth)?;
                 match &mut shape {
                     TableShape::Unknown => shape = TableShape::Array(vec![(index, json)]),
                     TableShape::Array(values) => values.push((index, json)),
@@ -311,7 +297,7 @@ fn table_to_json(
                 let key = String::from_utf8(key).map_err(|error| {
                     runtime_error("JSON object keys must be valid UTF-8", error)
                 })?;
-                let json = luau_to_json(vm, &value, depth)?;
+                let json = luau_to_json(&value, depth)?;
                 match &mut shape {
                     TableShape::Unknown => {
                         let mut object = serde_json::Map::new();

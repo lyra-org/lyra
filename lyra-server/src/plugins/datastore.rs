@@ -64,12 +64,8 @@ impl DataStoreHandle {
         description = "Writes multiple JSON values to this store under one write lock.",
         args(entries: std::collections::BTreeMap<String, JsonValue>)
     )]
-    fn set_many(
-        &self,
-        vm: &luau::Vm,
-        entries: luau::Table,
-    ) -> luau::runtime::Result<luau::ScheduledFuture> {
-        let entries = read_json_entries(vm, &entries)?;
+    fn set_many(&self, entries: luau::Table) -> luau::runtime::Result<luau::ScheduledFuture> {
+        let entries = read_json_entries(&entries)?;
         let handle = self.clone();
         Ok(luau::ScheduledFuture::new(async move {
             write_values(&handle.db, handle.datastore_id, entries).await
@@ -246,7 +242,6 @@ fn read_string_array(table: &luau::Table) -> luau::runtime::Result<Vec<String>> 
 }
 
 fn read_json_entries(
-    vm: &luau::Vm,
     table: &luau::Table,
 ) -> luau::runtime::Result<Vec<(String, serde_json::Value)>> {
     let mut entries = Vec::new();
@@ -257,7 +252,7 @@ fn read_json_entries(
             ));
         };
         let key = String::from_utf8(key).map_err(crate::plugins::runtime_error)?;
-        let value = harmony_serde::luau_to_json(vm, &value, 0)?;
+        let value = harmony_serde::luau_to_json(&value, 0)?;
         entries.push((key, value));
     }
     Ok(entries)

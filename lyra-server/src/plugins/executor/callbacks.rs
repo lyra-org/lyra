@@ -68,7 +68,7 @@ impl CallbackReply {
         }
     }
 
-    fn send(self, vm: &harmony_luau::Vm, result: Result<Vec<harmony_luau::Value>>) {
+    fn send(self, result: Result<Vec<harmony_luau::Value>>) {
         match self {
             Self::Api {
                 reply,
@@ -76,7 +76,7 @@ impl CallbackReply {
                 auth,
             } => {
                 let result = result.and_then(|values| {
-                    let mut response = super::api::parse_api_response(vm, &request, values)?;
+                    let mut response = super::api::parse_api_response(&request, values)?;
                     response.principal = auth.principal();
                     response.client = request.client;
                     Ok(response)
@@ -96,7 +96,7 @@ impl CallbackReply {
                     let values = values
                         .iter()
                         .map(|value| {
-                            harmony_serde::luau_to_json(vm, value, 0).map_err(anyhow::Error::new)
+                            harmony_serde::luau_to_json(value, 0).map_err(anyhow::Error::new)
                         })
                         .collect::<Result<Vec<_>>>()?;
                     Ok(MetadataRefreshResult { values })
@@ -174,7 +174,7 @@ impl PluginExecutor {
                 reply,
                 _permit: permit,
             }),
-            Err(error) => reply.send(&self.vm, Err(error)),
+            Err(error) => reply.send(Err(error)),
         }
     }
 
@@ -199,7 +199,7 @@ impl PluginExecutor {
             if let Some(result) = result {
                 let task = tasks.swap_remove(index);
                 task.scheduler.cancel_luau_thread(&task.thread);
-                task.reply.send(&self.vm, result);
+                task.reply.send(result);
             } else {
                 index += 1;
             }

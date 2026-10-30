@@ -88,7 +88,7 @@ impl LuauTypeInfo for GenrePage {
 impl<'vm> luau::FromLuau<'vm> for GenreResolveRequest {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let table: luau::Table = reader.read()?;
-        genre_request_from_table(reader.vm(), table)
+        genre_request_from_table(table)
     }
 }
 
@@ -251,11 +251,8 @@ struct GenreResolveRequest {
     aliases: Option<Vec<GenreAliasInput>>,
 }
 
-fn genre_request_from_table(
-    vm: &luau::Vm,
-    table: luau::Table,
-) -> luau::runtime::Result<GenreResolveRequest> {
-    let value = harmony_serde::luau_to_json(vm, &luau::Value::Table(table), 0)?;
+fn genre_request_from_table(table: luau::Table) -> luau::runtime::Result<GenreResolveRequest> {
+    let value = harmony_serde::luau_to_json(&luau::Value::Table(table), 0)?;
     serde_json::from_value(value).map_err(crate::plugins::runtime_error)
 }
 

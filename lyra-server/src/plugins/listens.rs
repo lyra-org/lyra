@@ -92,8 +92,8 @@ struct SubmittedPlayRequest {
     played_ms: u64,
 }
 
-fn submitted_play(vm: &luau::Vm, value: &luau::Value) -> luau::runtime::Result<SubmittedPlay> {
-    let request: SubmittedPlayRequest = args::from_json(vm, value)?;
+fn submitted_play(value: &luau::Value) -> luau::runtime::Result<SubmittedPlay> {
+    let request: SubmittedPlayRequest = args::from_json(value)?;
     if !listen_service::is_play_id(&request.play_id) {
         return Err(crate::plugins::runtime_error(format!(
             "malformed play_id: {}",
@@ -114,7 +114,6 @@ struct SubmittedPlays(Vec<SubmittedPlay>);
 impl<'vm> luau::FromLuau<'vm> for SubmittedPlays {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let plays: luau::Table = reader.read()?;
-        let vm = reader.vm();
         let plays = args::array_values(&plays)?;
         if plays.len() > MAX_SUBMITTED_PLAYS {
             return Err(crate::plugins::runtime_error(format!(
@@ -125,7 +124,7 @@ impl<'vm> luau::FromLuau<'vm> for SubmittedPlays {
         plays
             .iter()
             .map(|(index, value)| {
-                submitted_play(vm, value).map_err(|error| {
+                submitted_play(value).map_err(|error| {
                     let message = match error {
                         luau::Error::Runtime(message) => message,
                         other => other.to_string(),

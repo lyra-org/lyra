@@ -154,7 +154,6 @@ fn is_json_content_type(headers: &[(String, String)]) -> bool {
 }
 
 pub(super) fn parse_api_response(
-    vm: &luau::Vm,
     request: &ApiHandlerRequest,
     values: Vec<luau::Value>,
 ) -> Result<ApiHandlerResponse> {
@@ -193,8 +192,8 @@ pub(super) fn parse_api_response(
     let headers = harmony_serde::optional_string_pairs_field(&table, "headers")?;
     let body_value = table.get("body").unwrap_or(luau::Value::Nil);
     let path = harmony_serde::optional_string_field(&table, "path")?;
-    let transform = harmony_serde::optional_json_field(vm, &table, "transform")?;
-    let options = harmony_serde::optional_json_field(vm, &table, "options")?;
+    let transform = harmony_serde::optional_json_field(&table, "transform")?;
+    let options = harmony_serde::optional_json_field(&table, "options")?;
     let track_id = harmony_serde::optional_i64_field(&table, "track_id")?;
 
     let body = match kind {
@@ -202,7 +201,7 @@ pub(super) fn parse_api_response(
             if matches!(body_value, luau::Value::Nil) {
                 serde_json::Value::Null
             } else {
-                harmony_serde::luau_to_json(vm, &body_value, 0)?
+                harmony_serde::luau_to_json(&body_value, 0)?
             },
         )),
         ApiResponseKind::Empty => None,

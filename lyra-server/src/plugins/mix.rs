@@ -195,7 +195,7 @@ impl Mixer {
         config: luau::Table,
     ) -> luau::runtime::Result<luau::ScheduledFuture> {
         self.ensure_owner(vm, context)?;
-        let option = parse_option_declaration(vm, &config)?;
+        let option = parse_option_declaration(&config)?;
         let mixer = self.clone();
         Ok(luau::ScheduledFuture::new(async move {
             let generation = crate::plugins::STATE.generation();
@@ -536,10 +536,7 @@ fn request_fields(
     Ok(fields)
 }
 
-fn parse_option_declaration(
-    vm: &luau::Vm,
-    config: &luau::Table,
-) -> luau::runtime::Result<OptionDeclaration> {
+fn parse_option_declaration(config: &luau::Table) -> luau::runtime::Result<OptionDeclaration> {
     let name = required_string_field(config, "name")?;
     let label = required_string_field(config, "label")?;
     let option_type = match required_string_field(config, "type")?.as_str() {
@@ -554,7 +551,7 @@ fn parse_option_declaration(
     };
     let default = match config.get("default")? {
         luau::Value::Nil => serde_json::Value::Null,
-        value => harmony_serde::luau_to_json(vm, &value, 0)?,
+        value => harmony_serde::luau_to_json(&value, 0)?,
     };
     let requires_settings = match config.get("requires_settings")? {
         luau::Value::Nil => Vec::new(),
