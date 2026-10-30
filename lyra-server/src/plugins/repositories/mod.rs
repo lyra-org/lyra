@@ -456,6 +456,7 @@ fn listing_entries(listing: &RepositoryListing) -> Vec<repo_db::PluginRepository
                 scopes: offered.map(|offered| offered.scopes),
                 requires,
                 error: plugin.offer.as_ref().err().map(ToString::to_string),
+                position: None,
             }
         })
         .collect()
@@ -535,7 +536,7 @@ fn ensure_not_subscribed(
 }
 
 /// The plugins `entries` describe, each with where it stands against
-/// `plugins_dir`, whose plugins are `installed`. Sorted by id.
+/// `plugins_dir`, whose plugins are `installed`, in the order of `entries`.
 fn catalog_plugins(
     entries: &[repo_db::PluginRepositoryEntry],
     plugins_dir: &Path,
@@ -550,7 +551,7 @@ fn catalog_plugins(
         .filter_map(|(entry, offer)| Some(Reach::Release(&entry.plugin_id, offer.as_ref().ok()?)))
         .collect();
     let installed: Vec<Reach<'_>> = installed.iter().map(Reach::Installed).collect();
-    let mut plugins: Vec<PluginPreview> = offers
+    offers
         .iter()
         .map(|(entry, offer)| {
             let mut preview = PluginPreview {
@@ -583,9 +584,7 @@ fn catalog_plugins(
             }
             preview
         })
-        .collect();
-    plugins.sort_by(|a, b| a.id.cmp(&b.id));
-    plugins
+        .collect()
 }
 
 fn build_preview(listing: &RepositoryListing, plugins_dir: &Path) -> RepositoryPreview {
@@ -2618,6 +2617,7 @@ mod tests {
                 commit: Some("1".repeat(40)),
                 scopes: Some(Vec::new()),
                 dependencies: None,
+                position: None,
                 requires: None,
                 error: None,
             })
@@ -3368,6 +3368,7 @@ mod tests {
             commit: version.map(|_| "1".repeat(40)),
             scopes: version.map(|_| Vec::new()),
             dependencies: None,
+            position: None,
             requires: None,
             error: None,
         };
@@ -3482,6 +3483,7 @@ mod tests {
             commit: Some("1".repeat(40)),
             scopes: Some(Vec::new()),
             dependencies: None,
+            position: None,
             requires: None,
             error: None,
         };
@@ -3564,7 +3566,8 @@ mod tests {
         let plugins = added.plugins.expect("adding shows the plugins");
         assert_eq!(
             plugins.iter().map(|plugin| &*plugin.id).collect::<Vec<_>>(),
-            ["changed", "same"]
+            ["same", "changed"],
+            "plugins keep the order of the index"
         );
         assert!(plugins.iter().all(|plugin| plugin.access.is_some()));
         assert_eq!(added.repository.resolved_ref.as_deref(), Some("main"));
@@ -3771,7 +3774,7 @@ mod tests {
                 .flatten()
                 .map(|plugin| (&*plugin.id, &*plugin.version))
                 .collect::<Vec<_>>(),
-            [("changed", "2.0.0"), ("same", "1.0.0")]
+            [("same", "1.0.0"), ("changed", "2.0.0")]
         );
         assert_eq!(view("first").repository.refreshed_at_ms, None);
         assert_eq!(view("second").plugins.as_deref().map(<[_]>::len), Some(0));

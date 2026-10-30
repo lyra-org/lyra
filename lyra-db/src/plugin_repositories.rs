@@ -62,6 +62,9 @@ pub struct PluginRepositoryEntry {
     pub error: Option<String>,
     /// The plugins the plugin depends on at that release.
     pub dependencies: Option<Vec<PluginDependency>>,
+    /// Where the listing placed the plugin, assigned on storing; unset on
+    /// entries stored before positions were.
+    pub position: Option<u64>,
 }
 
 /// A plugin a release depends on, as its `plugin.json` declares it.
@@ -146,12 +149,13 @@ pub fn update(
     })
 }
 
-/// The plugin entries stored on a subscription, in no particular order.
+/// The plugin entries stored on a subscription, in the order they were
+/// stored; those without a position last.
 pub fn entries(
     db: &impl super::DbAccess,
     repo_db_id: DbId,
 ) -> anyhow::Result<Vec<PluginRepositoryEntry>> {
-    Ok(db
+    let mut entries: Vec<PluginRepositoryEntry> = db
         .exec(
             QueryBuilder::select()
                 .elements::<PluginRepositoryEntry>()
@@ -162,7 +166,9 @@ pub fn entries(
                 .end_where()
                 .query(),
         )?
-        .try_into()?)
+        .try_into()?;
+    entries.sort_by_key(|entry| (entry.position.is_none(), entry.position));
+    Ok(entries)
 }
 
 fn insert_entries(
@@ -175,8 +181,10 @@ fn insert_entries(
     }
     let entries: Vec<PluginRepositoryEntry> = entries
         .iter()
-        .map(|entry| PluginRepositoryEntry {
+        .zip(0..)
+        .map(|(entry, position)| PluginRepositoryEntry {
             db_id: None,
+            position: Some(position),
             ..entry.clone()
         })
         .collect();
@@ -420,6 +428,7 @@ mod tests {
             commit: None,
             scopes: None,
             dependencies: None,
+            position: None,
             requires: None,
             error: None,
         }
@@ -516,8 +525,35 @@ mod tests {
                 db_id: None,
                 ..loaded.clone()
             },
-            stored
+            PluginRepositoryEntry {
+                position: Some(0),
+                ..stored
+            }
         );
+        Ok(())
+    }
+
+    #[test]
+    fn entries_keep_the_order_they_were_stored_in() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let ids = |db: &DbAny, repo_db_id| -> anyhow::Result<Vec<String>> {
+            Ok(entries(db, repo_db_id)?
+                .into_iter()
+                .map(|entry| entry.plugin_id)
+                .collect())
+        };
+        let mut record = repository("https://github.com/lyra/plugins");
+        let listed = ["zeta", "alpha", "mid", "beta"].map(|id| entry(id, "1"));
+        let db_id = create(&mut db, &record, &listed)?;
+        record.db_id = Some(db_id);
+        assert_eq!(ids(&db, db_id)?, ["zeta", "alpha", "mid", "beta"]);
+
+        update(
+            &mut db,
+            &record,
+            &["mid", "omega", "zeta"].map(|id| entry(id, "2")),
+        )?;
+        assert_eq!(ids(&db, db_id)?, ["mid", "omega", "zeta"]);
         Ok(())
     }
 }

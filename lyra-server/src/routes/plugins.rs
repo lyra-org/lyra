@@ -695,8 +695,9 @@ struct PluginRepositoryResponse {
     /// Absent until the first refresh.
     #[serde(skip_serializing_if = "Option::is_none")]
     refreshed_at: Option<String>,
-    /// The plugins offered at the last refresh, each with where it stands
-    /// against the plugins directory now; present when requested with
+    /// The plugins offered at the last refresh, in the order the repository
+    /// lists them, each with where it stands against the plugins directory
+    /// now; present when requested with
     /// `inc=plugins`, and always on adding or refreshing.
     #[serde(skip_serializing_if = "Option::is_none")]
     plugins: Option<Vec<PluginPreviewResponse>>,
@@ -2016,6 +2017,7 @@ mod tests {
                 commit: None,
                 scopes: None,
                 dependencies: None,
+                position: None,
                 requires: None,
                 error: Some("no releases: the repository has no versions.json".into()),
             }],
@@ -2094,6 +2096,7 @@ mod tests {
                 commit: Some("b".repeat(40)),
                 scopes: Some(scopes.iter().map(ToString::to_string).collect()),
                 dependencies: None,
+                position: None,
                 requires: None,
                 error: None,
             };
@@ -2536,6 +2539,7 @@ mod tests {
                 commit: Some("b".repeat(40)),
                 scopes: Some(vec!["lyra.metadata".into()]),
                 dependencies: None,
+                position: None,
                 requires: None,
                 error: None,
             }],
