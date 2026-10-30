@@ -202,7 +202,7 @@ mod tests {
         let table = vm.create_table()?;
         let child = vm.create_table()?;
         child.set("value", Value::String(b"child".to_vec()))?;
-        table.set_table("child", &child)?;
+        table.set("child", &child)?;
 
         let read = table.required_table_field("child")?;
         assert_eq!(read.get("value")?, Value::String(b"child".to_vec()));

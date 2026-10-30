@@ -189,7 +189,7 @@ where
         root: &luau::Table,
     ) -> luau::runtime::Result<()> {
         let table = self.create_variant_table(vm, origin)?;
-        root.set_table(self.class_name, &table)
+        root.set(self.class_name, &table)
     }
 
     fn metatable(
@@ -210,7 +210,7 @@ where
         }
 
         let metatable = vm.create_table_with_capacity(0, 1)?;
-        metatable.set_table("__index", &methods)?;
+        metatable.set("__index", &methods)?;
         if let Some(equality) = &self.equality {
             self.install_equality_method(vm, origin, tag, &metatable, equality.clone())?;
         }
@@ -257,7 +257,7 @@ where
                 )?
             }
         };
-        methods.set_function(method.name, &function)
+        methods.set(method.name, &function)
     }
 
     fn install_equality_method(
@@ -280,7 +280,7 @@ where
                 frame.returns.write(equality(frame.vm, &lhs, &rhs, tag)?)
             }),
         )?;
-        metatable.set_function("__eq", &function)
+        metatable.set("__eq", &function)
     }
 }
 

@@ -390,7 +390,7 @@ mod tests {
     fn array(vm: &luau::Vm, values: Vec<luau::Value>) -> luau::runtime::Result<luau::Table> {
         let table = vm.create_table()?;
         for (index, value) in values.into_iter().enumerate() {
-            table.set_key(luau::Value::Integer(index as i64 + 1), value)?;
+            table.set_integer(index as i32 + 1, value)?;
         }
         Ok(table)
     }
@@ -424,7 +424,7 @@ mod tests {
         let mixed = array(&vm, vec![luau::Value::Integer(1)])?;
         mixed.set("foo", luau::Value::Integer(5))?;
         let holed = vm.create_table()?;
-        holed.set_key(luau::Value::Integer(2), luau::Value::Integer(5))?;
+        holed.set_integer(2, luau::Value::Integer(5))?;
 
         for table in [keyed, mixed, holed] {
             assert!(id_sequence(&table).is_err());

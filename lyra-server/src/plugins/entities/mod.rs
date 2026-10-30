@@ -539,7 +539,7 @@ fn install_string_table(
         table.set(name, luau::Value::String(value.as_bytes().to_vec()))?;
     }
     table.set_readonly(true)?;
-    root.set_table(key, &table)
+    root.set(key, &table)
 }
 
 #[cfg(feature = "docgen")]

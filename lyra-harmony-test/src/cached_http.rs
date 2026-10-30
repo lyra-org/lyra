@@ -276,7 +276,7 @@ fn init_luau_http_module(
         methods.set(name, luau::Value::String(method.as_bytes().to_vec()))?;
     }
     methods.set_readonly(true)?;
-    table.set_table("HttpMethod", &methods)
+    table.set("HttpMethod", &methods)
 }
 
 fn xxh3_hex(input: &str) -> String {

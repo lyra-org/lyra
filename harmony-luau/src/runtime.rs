@@ -704,7 +704,7 @@ impl Vm {
                 Ok(())
             }),
         )?;
-        table.set_function("time", &time)?;
+        table.set("time", &time)?;
 
         let started_at = self.inner.started_at;
         let clock = self.create_function_with_options(
@@ -716,7 +716,7 @@ impl Vm {
                 Ok(())
             }),
         )?;
-        table.set_function("clock", &clock)?;
+        table.set("clock", &clock)?;
 
         let date = self.create_function_with_options(
             NativeFunctionOptions::new(origin)
@@ -735,7 +735,7 @@ impl Vm {
                 Ok(())
             }),
         )?;
-        table.set_function("date", &date)?;
+        table.set("date", &date)?;
 
         self.set_global_table("os", &table)?;
         Ok(())
@@ -1409,24 +1409,6 @@ impl Table {
         unsafe { gateway::raw_set(self.state(), -3) }
     }
 
-    pub fn set_function(&self, key: &str, function: &Function) -> Result<()> {
-        let key = CString::new(key)?;
-        let vm = self.vm();
-        let _guard = vm.stack_guard();
-        vm.push_registry(&self.reference)?;
-        vm.push_registry(&function.reference)?;
-        unsafe { gateway::raw_set_field(self.state(), -2, &key) }
-    }
-
-    pub fn set_table(&self, key: &str, table: &Table) -> Result<()> {
-        let key = CString::new(key)?;
-        let vm = self.vm();
-        let _guard = vm.stack_guard();
-        vm.push_registry(&self.reference)?;
-        vm.push_registry(&table.reference)?;
-        unsafe { gateway::raw_set_field(self.state(), -2, &key) }
-    }
-
     pub fn get(&self, key: &str) -> Result<Value> {
         let key = CString::new(key)?;
         let vm = self.vm();
@@ -1671,6 +1653,30 @@ impl From<&str> for Value {
 impl From<OwnedTable> for Value {
     fn from(value: OwnedTable) -> Self {
         Self::TableData(value)
+    }
+}
+
+impl From<Table> for Value {
+    fn from(value: Table) -> Self {
+        Self::Table(value)
+    }
+}
+
+impl From<&Table> for Value {
+    fn from(value: &Table) -> Self {
+        Self::Table(value.clone())
+    }
+}
+
+impl From<Function> for Value {
+    fn from(value: Function) -> Self {
+        Self::Function(value)
+    }
+}
+
+impl From<&Function> for Value {
+    fn from(value: &Function) -> Self {
+        Self::Function(value.clone())
     }
 }
 
@@ -3590,12 +3596,7 @@ mod tests {
         let foreign = other.create_table()?;
 
         let error = table
-            .set_table("child", &foreign)
-            .expect_err("storing a table from another VM must fail");
-        assert!(matches!(error, Error::VmMismatch { .. }));
-
-        let error = table
-            .set("child", Value::Table(foreign))
+            .set("child", &foreign)
             .expect_err("storing a table from another VM must fail");
         assert!(matches!(error, Error::VmMismatch { .. }));
         assert_eq!(stack_top(&owner), 0);
