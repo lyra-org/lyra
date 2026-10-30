@@ -17,8 +17,14 @@ use serde::Deserialize;
 use tokio::sync::RwLock;
 
 use super::{
+    DbAccess,
     DbAsync,
     indexes,
+    migration::{
+        self,
+        Migration,
+        Plan,
+    },
     process_lock::{
         self,
         DbProcessLock,
@@ -146,7 +152,10 @@ pub fn open(kind: DbKind, db_path: &str) -> anyhow::Result<DbAny> {
     })
 }
 
-pub(crate) fn initialize_root_aliases(db: &mut DbAny, aliases: &[&str]) -> anyhow::Result<()> {
+pub(crate) fn initialize_root_aliases(
+    db: &mut impl DbAccess,
+    aliases: &[&str],
+) -> anyhow::Result<()> {
     let mut root_aliases = vec!["root"];
     for alias in aliases {
         if *alias != "root" && !root_aliases.contains(alias) {
@@ -159,63 +168,63 @@ pub(crate) fn initialize_root_aliases(db: &mut DbAny, aliases: &[&str]) -> anyho
         .filter(|alias| *alias != "root")
         .collect::<Vec<_>>();
 
-    db.transaction_mut(|t| -> anyhow::Result<()> {
-        t.exec_mut(
+    db.exec_mut(QueryBuilder::insert().nodes().aliases(root_aliases).query())?;
+    db.exec_mut(
+        QueryBuilder::remove()
+            .search()
+            .from("root")
+            .where_()
+            .edge()
+            .and()
+            .distance(CountComparison::Equal(1))
+            .query(),
+    )?;
+    if !root_edge_targets.is_empty() {
+        db.exec_mut(
             QueryBuilder::insert()
-                .nodes()
-                .aliases(root_aliases.clone())
-                .query(),
-        )?;
-        t.exec_mut(
-            QueryBuilder::remove()
-                .search()
+                .edges()
                 .from("root")
-                .where_()
-                .edge()
-                .and()
-                .distance(CountComparison::Equal(1))
+                .to(root_edge_targets)
                 .query(),
         )?;
-        if !root_edge_targets.is_empty() {
-            t.exec_mut(
-                QueryBuilder::insert()
-                    .edges()
-                    .from("root")
-                    .to(root_edge_targets.clone())
-                    .query(),
-            )?;
-        }
-
-        Ok(())
-    })
-}
-
-const LEGACY_ROOT_ALIASES: &[&str] = &["settings", "user_settings"];
-
-fn reject_legacy_root_aliases(db: &DbAny) -> anyhow::Result<()> {
-    let aliases = db.exec(QueryBuilder::select().aliases().query())?;
-    for element in aliases.elements {
-        for value in element.values {
-            let alias = value.value.to_string();
-            if LEGACY_ROOT_ALIASES.contains(&alias.as_str()) {
-                anyhow::bail!(
-                    "database contains legacy root alias '{alias}' from a previous settings layout; delete the database and start again"
-                );
-            }
-        }
     }
     Ok(())
 }
 
+#[cfg(any(test, feature = "testing"))]
 pub(crate) fn initialize(db: &mut DbAny) -> anyhow::Result<()> {
-    reject_legacy_root_aliases(db)?;
-    initialize_root_aliases(db, ROOT_COLLECTION_ALIASES)?;
-    indexes::ensure_indexes(db, CORE_INDEXES)?;
-    Ok(())
+    initialize_with(db, &migration::TO_CURRENT)
+}
+
+#[cfg(any(test, feature = "testing"))]
+pub(crate) fn initialize_with(db: &mut DbAny, migration: &Migration) -> anyhow::Result<()> {
+    let plan = migration.plan(db)?;
+    set_up(db, migration, &plan)
+}
+
+/// Adds the current root aliases and indexes, whatever the plan, then runs the
+/// plan's migration steps on them, in one transaction so a failure changes
+/// nothing.
+fn set_up(db: &mut DbAny, migration: &Migration, plan: &Plan) -> anyhow::Result<()> {
+    db.transaction_mut(|t| -> anyhow::Result<()> {
+        initialize_root_aliases(t, ROOT_COLLECTION_ALIASES)?;
+        indexes::ensure_indexes(t, CORE_INDEXES)?;
+        migration.apply(t, plan)
+    })
+}
+
+/// Fails unless `db`, opened without `create`, is on this version with nothing
+/// left to migrate or stamp.
+pub fn ensure_current(db: &DbAny) -> anyhow::Result<()> {
+    migration::TO_CURRENT.ensure_current(db)
 }
 
 /// Server-side path: open + schema init.
 pub fn create(config: &DbConfig) -> anyhow::Result<Created> {
+    create_with(config, &migration::TO_CURRENT)
+}
+
+pub(crate) fn create_with(config: &DbConfig, migration: &Migration) -> anyhow::Result<Created> {
     let lock = process_lock::acquire(config, LockMode::Blocking)?;
     let db_path = config.path.to_string_lossy();
     tracing::info!(
@@ -224,7 +233,13 @@ pub fn create(config: &DbConfig) -> anyhow::Result<Created> {
         "opening db"
     );
     let mut db = open(config.kind, db_path.as_ref())?;
-    initialize(&mut db)?;
+    let plan = migration.plan(&db)?;
+    if let Plan::Migrate { from, steps, .. } = &plan {
+        drop(db);
+        migration::back_up(config, from, *steps)?;
+        db = open(config.kind, db_path.as_ref())?;
+    }
+    set_up(&mut db, migration, &plan)?;
     optimize_storage(&mut db, config);
     Ok(Created {
         db: Arc::new(RwLock::new(db)),
@@ -263,17 +278,6 @@ fn kind_label(kind: DbKind) -> &'static str {
 mod tests {
     use super::*;
     use crate::test_db::TestDb;
-
-    #[test]
-    fn initialize_rejects_legacy_settings_aliases() -> anyhow::Result<()> {
-        for legacy in LEGACY_ROOT_ALIASES {
-            let mut db = TestDb::with_root_aliases(&[legacy])?.into_inner();
-            let error = initialize(&mut db).expect_err("legacy alias should be rejected");
-            assert!(error.to_string().contains(legacy));
-            assert!(error.to_string().contains("delete the database"));
-        }
-        Ok(())
-    }
 
     #[test]
     fn initialize_is_repeatable_on_current_layout() -> anyhow::Result<()> {

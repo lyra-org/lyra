@@ -28,6 +28,7 @@ pub mod listens;
 pub mod lookup;
 pub mod lyrics;
 pub mod metadata;
+pub(crate) mod migration;
 pub mod mixers;
 pub mod playback_sessions;
 pub mod playbacks;

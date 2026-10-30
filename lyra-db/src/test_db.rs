@@ -57,7 +57,8 @@ impl TestDb {
     #[track_caller]
     pub fn with_root_aliases(aliases: &[&str]) -> anyhow::Result<Self> {
         let mut db = Self::new()?;
-        super::bootstrap::initialize_root_aliases(&mut db.db, aliases)?;
+        db.db
+            .transaction_mut(|t| super::bootstrap::initialize_root_aliases(t, aliases))?;
         Ok(db)
     }
 
