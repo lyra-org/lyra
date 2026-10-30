@@ -101,37 +101,19 @@ fn server_info_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result
 }
 fn server_info_table(info: &ServerInfo) -> luau::OwnedTable {
     let mut table = luau::OwnedTable::with_capacity(0, 7);
-    table.set_field("id", luau::Value::String(info.id.clone().into_bytes()));
-    table.set_field(
-        "version",
-        luau::Value::String(info.version.clone().into_bytes()),
-    );
-    table.set_field(
-        "commit_hash",
-        luau::Value::String(info.commit_hash.clone().into_bytes()),
-    );
-    table.set_field(
-        "hostname",
-        luau::Value::String(info.hostname.clone().into_bytes()),
-    );
-    table.set_field("port", luau::Value::from(i64::from(info.port)));
-    table.set_field(
-        "published_url",
-        info.published_url
-            .as_ref()
-            .map(|url| luau::Value::String(url.clone().into_bytes()))
-            .unwrap_or(luau::Value::Nil),
-    );
+    table.set_field("id", info.id.clone());
+    table.set_field("version", info.version.clone());
+    table.set_field("commit_hash", info.commit_hash.clone());
+    table.set_field("hostname", info.hostname.clone());
+    table.set_field("port", i64::from(info.port));
+    table.set_field("published_url", info.published_url.clone());
     let mut setup = luau::OwnedTable::with_capacity(0, 2);
-    setup.set_field(
-        "account_required",
-        luau::Value::Boolean(info.setup.account_required),
-    );
+    setup.set_field("account_required", info.setup.account_required);
     setup.set_field(
         "plugin_selection_required",
-        luau::Value::Boolean(info.setup.plugin_selection_required),
+        info.setup.plugin_selection_required,
     );
-    table.set_field("setup", luau::Value::TableData(setup));
+    table.set_field("setup", setup);
     table
 }
 

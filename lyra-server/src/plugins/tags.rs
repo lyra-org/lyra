@@ -149,7 +149,7 @@ fn has_callback(
     let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let has_tag = has(db, principal, target_id, tag).await?;
-        Ok(luau::Value::Boolean(has_tag))
+        Ok(has_tag)
     }))
 }
 fn has_many_callback(
@@ -162,14 +162,12 @@ fn has_many_callback(
     let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let result = has_many(db, principal, target_ids.clone(), tag).await?;
-        let mut table = luau::OwnedTable::with_entry_capacity(0, 0, target_ids.len());
-        for id in target_ids {
-            table.set_key(
-                luau::Value::from(id.0),
-                luau::Value::Boolean(result.get(&id).copied().unwrap_or(false)),
-            );
-        }
-        Ok(luau::Value::TableData(table))
+        let table = luau::OwnedTable::from_entries(
+            target_ids
+                .into_iter()
+                .map(|id| (id.0, result.get(&id).copied().unwrap_or(false))),
+        );
+        Ok(table)
     }))
 }
 fn get_for_target_callback(
@@ -180,7 +178,7 @@ fn get_for_target_callback(
     let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let tags = get_for_target(db, principal, target_id).await?;
-        Ok(luau::Value::TableData(tag_info_array(tags)))
+        Ok(tag_info_array(tags))
     }))
 }
 fn get_for_targets_many_callback(
@@ -192,14 +190,12 @@ fn get_for_targets_many_callback(
     let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let mut result = get_for_targets_many(db, principal, target_ids.clone()).await?;
-        let mut table = luau::OwnedTable::with_entry_capacity(0, 0, target_ids.len());
-        for id in target_ids {
-            table.set_key(
-                luau::Value::from(id.0),
-                luau::Value::TableData(tag_info_array(result.remove(&id).unwrap_or_default())),
-            );
-        }
-        Ok(luau::Value::TableData(table))
+        let table = luau::OwnedTable::from_entries(
+            target_ids
+                .into_iter()
+                .map(|id| (id.0, tag_info_array(result.remove(&id).unwrap_or_default()))),
+        );
+        Ok(table)
     }))
 }
 fn get_tagged_callback(
@@ -210,7 +206,7 @@ fn get_tagged_callback(
     let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let ids = get_tagged(db, principal, tag).await?;
-        Ok(luau::Value::TableData(db_id_array(ids)))
+        Ok(db_id_array(ids))
     }))
 }
 async fn add(
@@ -302,11 +298,7 @@ async fn get_tagged(
     Ok(ids)
 }
 fn tag_info_array(tags: Vec<TagInfo>) -> luau::OwnedTable {
-    let mut table = luau::OwnedTable::with_capacity(tags.len(), 0);
-    for tag in tags {
-        table.push_array(luau::Value::TableData(tag_info_table(tag)));
-    }
-    table
+    luau::OwnedTable::from_array(tags.into_iter().map(tag_info_table))
 }
 fn tag_info_table(tag: TagInfo) -> luau::OwnedTable {
     let mut table = luau::OwnedTable::with_capacity(0, 5);
@@ -319,18 +311,14 @@ fn tag_info_table(tag: TagInfo) -> luau::OwnedTable {
             })
             .unwrap_or(luau::Value::Nil),
     );
-    table.set_field("id", luau::Value::String(tag.id.into_bytes()));
-    table.set_field("tag", luau::Value::String(tag.tag.into_bytes()));
-    table.set_field("color", luau::Value::String(tag.color.into_bytes()));
-    table.set_field("created_at_ms", luau::Value::from(tag.created_at_ms));
+    table.set_field("id", tag.id);
+    table.set_field("tag", tag.tag);
+    table.set_field("color", tag.color);
+    table.set_field("created_at_ms", tag.created_at_ms);
     table
 }
 fn db_id_array(ids: Vec<DbId>) -> luau::OwnedTable {
-    let mut table = luau::OwnedTable::with_capacity(ids.len(), 0);
-    for id in ids {
-        table.push_array(luau::Value::from(id.0));
-    }
-    table
+    luau::OwnedTable::from_array(ids.into_iter().map(|id| id.0))
 }
 fn read_db_id_arg(
     args: &mut luau::ArgReader<'_>,

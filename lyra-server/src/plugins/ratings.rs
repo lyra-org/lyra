@@ -82,14 +82,14 @@ fn set_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let mut db = db.write().await;
         let Some(public_target_id) = lyra_db::lookup::find_id_by_db_id(&*db, target_id)? else {
-            return Ok(luau::Value::Boolean(false));
+            return Ok(false);
         };
         let outcome =
             rating_service::set_for_principal(&mut db, &principal, &public_target_id, value)?;
-        Ok(luau::Value::Boolean(matches!(
+        Ok(matches!(
             outcome,
             rating_service::MutationOutcome::Applied(_)
-        )))
+        ))
     }))
 }
 
@@ -104,13 +104,13 @@ fn remove_callback(
         let mut db = db.write().await;
         let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
         let Some(public_target_id) = lyra_db::lookup::find_id_by_db_id(&*db, target_id)? else {
-            return Ok(luau::Value::Boolean(false));
+            return Ok(false);
         };
         let outcome = rating_service::remove(&mut db, user_db_id, &public_target_id)?;
-        Ok(luau::Value::Boolean(matches!(
+        Ok(matches!(
             outcome,
             rating_service::MutationOutcome::Applied(_)
-        )))
+        ))
     }))
 }
 
@@ -131,13 +131,10 @@ fn get_callback(
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, target_ids.len());
         for (id, public_id) in public_ids_by_db_id {
             if let Some(value) = values.get(&public_id).copied().flatten() {
-                table.set_key(
-                    luau::Value::from(id.0),
-                    luau::Value::from(i64::from(value.get())),
-                );
+                table.set_key(id.0, i64::from(value.get()));
             }
         }
-        Ok(luau::Value::TableData(table))
+        Ok(table)
     }))
 }
 

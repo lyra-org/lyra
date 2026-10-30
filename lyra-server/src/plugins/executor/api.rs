@@ -100,32 +100,29 @@ pub(super) fn api_context_value(request: &ApiHandlerRequest) -> Result<luau::Val
         "path",
         luau::Value::String(request.path.as_bytes().to_vec()),
     );
-    req.set_field(
-        "headers",
-        luau::Value::TableData(headers_table(&request.headers)),
-    );
-    req.set_field("query", luau::Value::TableData(query_table(&request.query)));
+    req.set_field("headers", headers_table(&request.headers));
+    req.set_field("query", query_table(&request.query));
     req.set_field("body_raw", luau::Value::String(request.body.clone()));
     if let Some(json) = parse_json_body(&request.headers, &request.body) {
         req.set_field("json", harmony_serde::json_to_luau_owned(json, 0)?);
     } else {
         req.set_field("json", luau::Value::Nil);
     }
-    ctx.set_field("request", luau::Value::TableData(req));
+    ctx.set_field("request", req);
 
     let mut params = luau::OwnedTable::with_capacity(0, request.params.len());
     for (name, value) in &request.params {
-        params.set_field(name.clone(), luau::Value::String(value.as_bytes().to_vec()));
+        params.set_field(name.clone(), value.as_str());
     }
-    ctx.set_field("params", luau::Value::TableData(params));
+    ctx.set_field("params", params);
 
-    Ok(luau::Value::TableData(ctx))
+    Ok(ctx.into())
 }
 
 fn headers_table(headers: &[(String, String)]) -> luau::OwnedTable {
     let mut table = luau::OwnedTable::with_capacity(0, headers.len());
     for (name, value) in headers {
-        table.set_field(name.clone(), luau::Value::String(value.as_bytes().to_vec()));
+        table.set_field(name.clone(), value.as_str());
     }
     table
 }
@@ -133,11 +130,8 @@ fn headers_table(headers: &[(String, String)]) -> luau::OwnedTable {
 fn query_table(query: &HashMap<String, Vec<String>>) -> luau::OwnedTable {
     let mut table = luau::OwnedTable::with_capacity(0, query.len());
     for (name, values) in query {
-        let mut array = luau::OwnedTable::with_capacity(values.len(), 0);
-        for value in values {
-            array.push_array(luau::Value::String(value.as_bytes().to_vec()));
-        }
-        table.set_field(name.clone(), luau::Value::TableData(array));
+        let array = luau::OwnedTable::from_array(values.iter().map(String::as_str));
+        table.set_field(name.clone(), array);
     }
     table
 }

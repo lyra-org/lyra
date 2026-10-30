@@ -246,7 +246,7 @@ fn query_many_callback(
         for (key, projection) in keys.into_iter().zip(projections) {
             table.set_field(key, projection_to_luau_owned(projection)?);
         }
-        Ok(luau::Value::TableData(table))
+        Ok(table)
     }))
 }
 

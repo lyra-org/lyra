@@ -254,7 +254,7 @@ fn compose_callback(
         let result = compose_impl(options)
             .await
             .map_err(|error| luau::Error::Runtime(error.to_string()))?;
-        Ok(luau::Value::TableData(result.into_luau_table()))
+        Ok(result.into_luau_table())
     }))
 }
 fn parse_compose_options(
@@ -333,12 +333,9 @@ fn parse_optional_u8(
 impl ComposeResult {
     fn into_luau_table(self) -> luau::OwnedTable {
         let mut table = luau::OwnedTable::with_capacity(0, 3);
-        table.set_field("path", luau::Value::String(self.path.into_bytes()));
-        table.set_field("hash", luau::Value::String(self.hash.into_bytes()));
-        table.set_field(
-            "mime_type",
-            luau::Value::String(self.mime_type.into_bytes()),
-        );
+        table.set_field("path", self.path);
+        table.set_field("hash", self.hash);
+        table.set_field("mime_type", self.mime_type);
         table
     }
 }

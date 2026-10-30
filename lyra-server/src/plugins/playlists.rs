@@ -359,9 +359,7 @@ fn get_owner_callback(
             return Ok(luau::Value::Nil);
         };
         let owner = lyra_db::users::get_by_id(&*db, owner_db_id)?;
-        Ok(owner
-            .map(|owner| luau::Value::String(owner.id.into_bytes()))
-            .unwrap_or(luau::Value::Nil))
+        Ok(owner.map(|owner| owner.id).into())
     }))
 }
 
@@ -414,9 +412,9 @@ fn get_tracks_many_callback(
                 Vec::new()
             };
             let value = harmony_luau::serializable_to_luau_owned(links)?;
-            table.set_key(luau::Value::from(id.0), value);
+            table.set_key(id.0, value);
         }
-        Ok(luau::Value::TableData(table))
+        Ok(table)
     }))
 }
 
@@ -475,13 +473,13 @@ fn delete_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let mut db = db.write().await;
         let Some(QueryId::Id(playlist_db_id)) = playlist_id.to_query_id(&db)? else {
-            return Ok(luau::Value::Boolean(false));
+            return Ok(false);
         };
         if !crate::services::auth::access::playlist_deletable(&db, &principal, playlist_db_id)? {
-            return Ok(luau::Value::Boolean(false));
+            return Ok(false);
         }
         let deleted = playlist_service::delete(&mut db, QueryId::Id(playlist_db_id))?;
-        Ok(luau::Value::Boolean(deleted.is_some()))
+        Ok(deleted.is_some())
     }))
 }
 
@@ -624,10 +622,10 @@ fn remove_track_callback(
         let Some(playlist_db_id) =
             owned_playlist_with_entry(&db, &principal, playlist_id, &entry_id)?
         else {
-            return Ok(luau::Value::Boolean(false));
+            return Ok(false);
         };
         playlist_service::remove_tracks(&mut db, playlist_db_id, &[entry_id])?;
-        Ok(luau::Value::Boolean(true))
+        Ok(true)
     }))
 }
 
@@ -643,15 +641,15 @@ fn remove_tracks_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let mut db = db.write().await;
         let Some(playlist_db_id) = owned_playlist(&db, &principal, playlist_id)? else {
-            return Ok(luau::Value::Boolean(false));
+            return Ok(false);
         };
         for entry_id in &entry_ids {
             if playlist_service::find_entry(&db, playlist_db_id, entry_id)?.is_none() {
-                return Ok(luau::Value::Boolean(false));
+                return Ok(false);
             }
         }
         playlist_service::remove_tracks(&mut db, playlist_db_id, &entry_ids)?;
-        Ok(luau::Value::Boolean(true))
+        Ok(true)
     }))
 }
 
@@ -688,10 +686,10 @@ fn move_track_callback(
         let Some(playlist_db_id) =
             owned_playlist_with_entry(&db, &principal, playlist_id, &entry_id)?
         else {
-            return Ok(luau::Value::Boolean(false));
+            return Ok(false);
         };
         playlist_service::move_track(&mut db, playlist_db_id, &entry_id, new_position)?;
-        Ok(luau::Value::Boolean(true))
+        Ok(true)
     }))
 }
 

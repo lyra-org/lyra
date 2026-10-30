@@ -76,16 +76,15 @@ fn get_ids_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let resolved = find_ids_by_db_ids(db, &ids).await?;
 
-        let mut table = luau::OwnedTable::with_entry_capacity(0, 0, ids.len());
-        for id in ids {
-            table.set_key(
-                luau::Value::from(id.0),
+        let table = luau::OwnedTable::from_entries(ids.into_iter().map(|id| {
+            (
+                id.0,
                 resolved
                     .get(&id)
                     .map(|value| luau::Value::String(value.clone().into_bytes()))
                     .unwrap_or(luau::Value::Nil),
-            );
-        }
+            )
+        }));
         Ok(table)
     }))
 }

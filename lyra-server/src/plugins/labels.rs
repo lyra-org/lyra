@@ -150,7 +150,7 @@ fn get_for_release_callback(
                 Vec::new()
             }
         };
-        Ok(luau::Value::TableData(label_release_array(labels)))
+        Ok(label_release_array(labels))
     }))
 }
 
@@ -167,14 +167,9 @@ fn get_for_releases_many_callback(
             lyra_db::labels::get_for_releases_many(&db, &readable)
                 .map_err(crate::plugins::runtime_error)
         }?;
-        let mut table = luau::OwnedTable::with_capacity(0, labels.len());
-        for (release_id, labels) in labels {
-            table.set_key(
-                luau::Value::from(release_id.0),
-                luau::Value::TableData(label_release_array(labels)),
-            );
-        }
-        Ok(luau::Value::TableData(table))
+        Ok(luau::OwnedTable::from_entries(labels.into_iter().map(
+            |(release_id, labels)| (release_id.0, label_release_array(labels)),
+        )))
     }))
 }
 
@@ -191,7 +186,7 @@ fn get_releases_callback(
                 .visible(&db, release_ids)
                 .map_err(crate::plugins::runtime_error)
         }?;
-        Ok(luau::Value::TableData(id_array(release_ids)))
+        Ok(id_array(release_ids))
     }))
 }
 
@@ -211,14 +206,12 @@ fn get_releases_many_callback(
             }
             Ok::<_, luau::runtime::Error>(visible)
         }?;
-        let mut table = luau::OwnedTable::with_capacity(0, release_ids.len());
-        for (label_id, ids) in release_ids {
-            table.set_key(
-                luau::Value::from(label_id.0),
-                luau::Value::TableData(id_array(ids)),
-            );
-        }
-        Ok(luau::Value::TableData(table))
+        let table = luau::OwnedTable::from_entries(
+            release_ids
+                .into_iter()
+                .map(|(label_id, ids)| (label_id.0, id_array(ids))),
+        );
+        Ok(table)
     }))
 }
 
@@ -296,51 +289,34 @@ fn can_mutate_global(principal: Option<&Principal>) -> bool {
 
 fn label_info_table(label: lyra_db::labels::Label) -> luau::OwnedTable {
     let mut table = luau::OwnedTable::with_capacity(0, 3);
-    let db_id = label.db_id.map(DbId::from);
-    table.set_field(
-        "db_id",
-        db_id
-            .map(|id| luau::Value::from(id.0))
-            .unwrap_or(luau::Value::Nil),
-    );
-    table.set_field("id", luau::Value::String(label.id.into_bytes()));
-    table.set_field("name", luau::Value::String(label.name.into_bytes()));
+    table.set_field("db_id", label.db_id.map(|id| DbId::from(id).0));
+    table.set_field("id", label.id);
+    table.set_field("name", label.name);
     table
 }
 
 fn label_for_release_table(label: lyra_db::labels::LabelForRelease) -> luau::OwnedTable {
     let mut table = luau::OwnedTable::with_capacity(0, 2);
-    table.set_field(
-        "label",
-        luau::Value::TableData(label_info_table(label.label)),
-    );
-    table.set_field(
-        "catalog_number",
-        label
-            .catalog_number
-            .map(|value| luau::Value::String(value.into_bytes()))
-            .unwrap_or(luau::Value::Nil),
-    );
+    table.set_field("label", label_info_table(label.label));
+    table.set_field("catalog_number", label.catalog_number);
     table
 }
 
 fn label_release_array(labels: Vec<lyra_db::labels::LabelForRelease>) -> luau::OwnedTable {
-    let mut table = luau::OwnedTable::with_entry_capacity(0, 0, labels.len());
-    for (index, label) in labels.into_iter().enumerate() {
-        table.set_key(
-            luau::Value::from(index as i64 + 1),
-            luau::Value::TableData(label_for_release_table(label)),
-        );
-    }
-    table
+    luau::OwnedTable::from_entries(
+        labels
+            .into_iter()
+            .enumerate()
+            .map(|(index, label)| (index as i64 + 1, label_for_release_table(label))),
+    )
 }
 
 fn id_array(ids: Vec<DbId>) -> luau::OwnedTable {
-    let mut table = luau::OwnedTable::with_entry_capacity(0, 0, ids.len());
-    for (index, id) in ids.into_iter().enumerate() {
-        table.set_key(luau::Value::from(index as i64 + 1), luau::Value::from(id.0));
-    }
-    table
+    luau::OwnedTable::from_entries(
+        ids.into_iter()
+            .enumerate()
+            .map(|(index, id)| (index as i64 + 1, id.0)),
+    )
 }
 
 #[cfg(feature = "docgen")]

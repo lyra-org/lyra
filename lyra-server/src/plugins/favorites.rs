@@ -81,13 +81,13 @@ fn add_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let mut db = db.write().await;
         let Some(public_target_id) = lyra_db::lookup::find_id_by_db_id(&*db, target_id)? else {
-            return Ok(luau::Value::Boolean(false));
+            return Ok(false);
         };
         let outcome = favorite_service::add_for_principal(&mut db, &principal, &public_target_id)?;
-        Ok(luau::Value::Boolean(matches!(
+        Ok(matches!(
             outcome,
             favorite_service::MutationOutcome::Applied(_)
-        )))
+        ))
     }))
 }
 
@@ -102,10 +102,10 @@ fn remove_callback(
         let mut db = db.write().await;
         let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
         let outcome = favorite_service::remove_by_db_id(&mut db, user_db_id, target_id)?;
-        Ok(luau::Value::Boolean(matches!(
+        Ok(matches!(
             outcome,
             favorite_service::MutationOutcome::Applied(_)
-        )))
+        ))
     }))
 }
 
@@ -119,10 +119,10 @@ fn has_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let Some(public_target_id) = lyra_db::lookup::find_id_by_db_id(&*db, target_id)? else {
-            return Ok(luau::Value::Boolean(false));
+            return Ok(false);
         };
         let favored = favorite_service::has_for_principal(&db, &principal, &public_target_id)?;
-        Ok(luau::Value::Boolean(favored))
+        Ok(favored)
     }))
 }
 
@@ -149,9 +149,9 @@ fn has_many_callback(
                 .get(&id)
                 .and_then(|public_id| result.get(public_id).copied())
                 .unwrap_or(false);
-            table.set_key(luau::Value::from(id.0), luau::Value::Boolean(favored));
+            table.set_key(id.0, favored);
         }
-        Ok(luau::Value::TableData(table))
+        Ok(table)
     }))
 }
 
@@ -175,7 +175,7 @@ fn list_ids_callback(
                 visible_ids.push(id);
             }
         }
-        Ok(luau::Value::TableData(db_id_array(visible_ids)))
+        Ok(db_id_array(visible_ids))
     }))
 }
 
@@ -184,11 +184,7 @@ fn parse_kind(value: &str) -> luau::runtime::Result<FavoriteKind> {
 }
 
 fn db_id_array(ids: Vec<DbId>) -> luau::OwnedTable {
-    let mut table = luau::OwnedTable::with_capacity(ids.len(), 0);
-    for id in ids {
-        table.push_array(luau::Value::from(id.0));
-    }
-    table
+    luau::OwnedTable::from_array(ids.into_iter().map(|id| id.0))
 }
 
 #[cfg(feature = "docgen")]

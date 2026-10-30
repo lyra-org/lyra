@@ -138,7 +138,7 @@ fn cover_callback(
         let Some((owner_id, cover)) = resolved_cover else {
             return Ok(luau::Value::Nil);
         };
-        Ok(luau::Value::TableData(cover_to_table(owner_id, cover)))
+        Ok(cover_to_table(owner_id, cover).into())
     }))
 }
 
@@ -175,10 +175,10 @@ fn covers_callback(
                 .cloned()
                 .map(|(owner_id, cover)| luau::Value::TableData(cover_to_table(owner_id, cover)))
                 .unwrap_or(luau::Value::Nil);
-            table.set_key(luau::Value::from(item_id.0), value);
+            table.set_key(item_id.0, value);
         }
 
-        Ok(luau::Value::TableData(table))
+        Ok(table)
     }))
 }
 
@@ -193,9 +193,7 @@ fn playlist_sources_callback(
         let (sources, stale_owners) = {
             let (db_read, viewer) = db.read().await?;
             let Some(QueryId::Id(playlist_id)) = id.to_query_id(&db_read)? else {
-                return Ok(luau::Value::TableData(luau::OwnedTable::with_capacity(
-                    0, 0,
-                )));
+                return Ok(luau::OwnedTable::with_capacity(0, 0));
             };
             let mut stale_owners = Vec::new();
             let result =
@@ -207,7 +205,7 @@ fn playlist_sources_callback(
             remove_still_stale_covers(db.handle(), stale_owners).await?;
         }
 
-        Ok(luau::Value::TableData(sources_to_table(sources)))
+        Ok(sources_to_table(sources))
     }))
 }
 
@@ -235,15 +233,13 @@ fn get_playlist_sources_many_callback(
             remove_still_stale_covers(db.handle(), stale_owners).await?;
         }
 
-        let mut table = luau::OwnedTable::with_entry_capacity(0, 0, resolved.len());
-        for (playlist_id, sources) in resolved {
-            table.set_key(
-                luau::Value::from(playlist_id.0),
-                luau::Value::TableData(sources_to_table(sources)),
-            );
-        }
+        let table = luau::OwnedTable::from_entries(
+            resolved
+                .into_iter()
+                .map(|(playlist_id, sources)| (playlist_id.0, sources_to_table(sources))),
+        );
 
-        Ok(luau::Value::TableData(table))
+        Ok(table)
     }))
 }
 
@@ -275,11 +271,11 @@ fn resolve_playlist_sources(
 }
 
 fn sources_to_table(sources: Vec<(DbId, Cover)>) -> luau::OwnedTable {
-    let mut table = luau::OwnedTable::with_capacity(sources.len(), 0);
-    for (owner_id, cover) in sources {
-        table.push_array(luau::Value::TableData(cover_to_table(owner_id, cover)));
-    }
-    table
+    luau::OwnedTable::from_array(
+        sources
+            .into_iter()
+            .map(|(owner_id, cover)| cover_to_table(owner_id, cover)),
+    )
 }
 
 fn check_cover_validity(cover: Cover) -> CoverValidity {
@@ -407,12 +403,9 @@ async fn remove_still_stale_covers(
 
 fn cover_to_table(owner_db_id: DbId, cover: Cover) -> luau::OwnedTable {
     let mut table = luau::OwnedTable::with_capacity(0, 5);
-    table.set_field("path", luau::Value::String(cover.path.into_bytes()));
-    table.set_field(
-        "mime_type",
-        luau::Value::String(cover.mime_type.into_bytes()),
-    );
-    table.set_field("hash", luau::Value::String(cover.hash.into_bytes()));
+    table.set_field("path", cover.path);
+    table.set_field("mime_type", cover.mime_type);
+    table.set_field("hash", cover.hash);
     table.set_field(
         "blurhash",
         cover
@@ -420,7 +413,7 @@ fn cover_to_table(owner_db_id: DbId, cover: Cover) -> luau::OwnedTable {
             .map(|value| luau::Value::String(value.into_bytes()))
             .unwrap_or(luau::Value::Nil),
     );
-    table.set_field("release_id", luau::Value::from(owner_db_id.0));
+    table.set_field("release_id", owner_db_id.0);
     table
 }
 

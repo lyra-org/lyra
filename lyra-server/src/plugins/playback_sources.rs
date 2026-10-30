@@ -205,7 +205,7 @@ fn get_callback(
             )?));
         }
 
-        Ok(luau::Value::TableData(rows))
+        Ok(rows)
     }))
 }
 
@@ -238,10 +238,10 @@ fn get_many_callback(
                 } else {
                     luau::Value::Nil
                 };
-            rows.set_key(luau::Value::from(track_id.0), value);
+            rows.set_key(track_id.0, value);
         }
 
-        Ok(luau::Value::TableData(rows))
+        Ok(rows)
     }))
 }
 
@@ -285,24 +285,16 @@ fn source_to_table(
     } = source;
 
     let mut table = luau::OwnedTable::with_capacity(0, 15);
-    table.set_field("track_id", luau::Value::from(track_db_id.0));
-    table.set_field("source_id", luau::Value::from(source_id.0));
-    table.set_field("source_kind", luau::Value::String(source_kind.into_bytes()));
-    table.set_field("source_key", luau::Value::String(source_key.into_bytes()));
-    table.set_field("is_primary", luau::Value::Boolean(is_primary));
-    let optional_str = |value: Option<&'static str>| {
-        value
-            .map(|value| luau::Value::String(value.as_bytes().to_vec()))
-            .unwrap_or(luau::Value::Nil)
-    };
+    table.set_field("track_id", track_db_id.0);
+    table.set_field("source_id", source_id.0);
+    table.set_field("source_kind", source_kind);
+    table.set_field("source_key", source_key);
+    table.set_field("is_primary", is_primary);
     table.set_field(
         "container",
-        optional_str(format.container.map(|container| container.as_str())),
+        format.container.map(|container| container.as_str()),
     );
-    table.set_field(
-        "codec",
-        optional_str(format.codec.map(|codec| codec.as_str())),
-    );
+    table.set_field("codec", format.codec.map(|codec| codec.as_str()));
     for (name, value) in [
         ("sample_rate_hz", format.sample_rate_hz),
         ("channel_count", format.channel_count),
@@ -313,10 +305,7 @@ fn source_to_table(
     }
     table.set_field("start_ms", optional_u64(start_ms));
     table.set_field("end_ms", optional_u64(end_ms));
-    table.set_field(
-        "is_virtual",
-        luau::Value::Boolean(start_ms.is_some() || end_ms.is_some()),
-    );
+    table.set_field("is_virtual", start_ms.is_some() || end_ms.is_some());
     if include_entry {
         table.set_field(
             "entry",

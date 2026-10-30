@@ -107,10 +107,7 @@ fn plugin_manifest_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Re
 
 fn plugin_list_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
     let manifests = frame.vm.data().get::<PluginManifestModuleStore>()?;
-    let mut table = luau::OwnedTable::with_capacity(manifests.manifests.len(), 0);
-    for manifest in manifests.iter() {
-        table.push_array(luau::Value::TableData(manifest_table(manifest)));
-    }
+    let table = luau::OwnedTable::from_array(manifests.iter().map(manifest_table));
     frame.returns.write(table)?;
     Ok(())
 }
@@ -132,23 +129,11 @@ fn plugin_get_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<
 
 fn manifest_table(manifest: &harmony_core::plugin::PluginManifest) -> luau::OwnedTable {
     let mut table = luau::OwnedTable::with_capacity(0, 6);
-    table.set_field(
-        "schema_version",
-        luau::Value::from(i64::from(manifest.schema_version)),
-    );
-    table.set_field("id", luau::Value::String(manifest.id.clone().into_bytes()));
-    table.set_field(
-        "name",
-        luau::Value::String(manifest.name.clone().into_bytes()),
-    );
-    table.set_field(
-        "version",
-        luau::Value::String(manifest.version.to_string().into_bytes()),
-    );
-    table.set_field(
-        "description",
-        luau::Value::String(manifest.description.clone().into_bytes()),
-    );
+    table.set_field("schema_version", i64::from(manifest.schema_version));
+    table.set_field("id", manifest.id.clone());
+    table.set_field("name", manifest.name.clone());
+    table.set_field("version", manifest.version.to_string());
+    table.set_field("description", manifest.description.clone());
     table.set_field(
         "entrypoint",
         match &manifest.entrypoint {

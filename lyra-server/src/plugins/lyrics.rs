@@ -396,7 +396,7 @@ fn delete_personal_for_track_callback(
             &principal,
         )
         .map_err(crate::plugins::runtime_error)?;
-        Ok(luau::Value::Boolean(deleted))
+        Ok(deleted)
     }))
 }
 
@@ -431,12 +431,12 @@ fn has_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let track_db_id = DbId(track_id);
         if track_db_id.0 <= 0 {
-            return Ok(luau::Value::Boolean(false));
+            return Ok(false);
         }
 
         let db = db.read().await;
         if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)? {
-            return Ok(luau::Value::Boolean(false));
+            return Ok(false);
         }
         let detail = lyrics_service::get_preferred_detail(
             &db,
@@ -446,7 +446,7 @@ fn has_callback(
             None,
             false,
         )?;
-        Ok(luau::Value::Boolean(detail.is_some()))
+        Ok(detail.is_some())
     }))
 }
 
@@ -486,53 +486,33 @@ fn has_many_callback(
                         None => false,
                     }
                 };
-            table.set_key(
-                luau::Value::from(track_id.0),
-                luau::Value::Boolean(has_lyrics),
-            );
+            table.set_key(track_id.0, has_lyrics);
         }
 
-        Ok(luau::Value::TableData(table))
+        Ok(table)
     }))
 }
 impl ParsedLyricsInput {
     fn into_luau_table(self) -> luau::OwnedTable {
         let mut table = luau::OwnedTable::with_capacity(0, 3);
-        table.set_field("language", luau::Value::String(self.language.into_bytes()));
-        table.set_field(
-            "plain_text",
-            luau::Value::String(self.plain_text.into_bytes()),
-        );
-        table.set_field(
-            "lines",
-            luau::Value::TableData(lyric_lines_table(self.lines)),
-        );
+        table.set_field("language", self.language);
+        table.set_field("plain_text", self.plain_text);
+        table.set_field("lines", lyric_lines_table(self.lines));
         table
     }
 }
 fn lyric_lines_table(lines: Vec<PluginLyricLineInput>) -> luau::OwnedTable {
-    let mut table = luau::OwnedTable::with_capacity(lines.len(), 0);
-    for line in lines {
-        table.push_array(luau::Value::TableData(lyric_line_table(line)));
-    }
-    table
+    luau::OwnedTable::from_array(lines.into_iter().map(lyric_line_table))
 }
 fn lyric_line_table(line: PluginLyricLineInput) -> luau::OwnedTable {
     let mut table = luau::OwnedTable::with_capacity(0, 3);
     table.set_field("ts_ms", luau::Value::Number(line.ts_ms as f64));
-    table.set_field("text", luau::Value::String(line.text.into_bytes()));
-    table.set_field(
-        "words",
-        luau::Value::TableData(lyric_words_table(line.words)),
-    );
+    table.set_field("text", line.text);
+    table.set_field("words", lyric_words_table(line.words));
     table
 }
 fn lyric_words_table(words: Vec<PluginLyricWordInput>) -> luau::OwnedTable {
-    let mut table = luau::OwnedTable::with_capacity(words.len(), 0);
-    for word in words {
-        table.push_array(luau::Value::TableData(lyric_word_table(word)));
-    }
-    table
+    luau::OwnedTable::from_array(words.into_iter().map(lyric_word_table))
 }
 fn lyric_word_table(word: PluginLyricWordInput) -> luau::OwnedTable {
     let mut table = luau::OwnedTable::with_capacity(0, 3);

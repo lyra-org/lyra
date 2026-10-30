@@ -60,10 +60,7 @@ fn barcodes_match_spec() -> FunctionSpec {
 fn media_formats_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
     let input: Option<luau::Value> = frame.args.read_optional_named("input")?;
     let formats = media_formats_value(frame.vm, input)?;
-    let mut result = luau::OwnedTable::with_capacity(formats.len(), 0);
-    for format in formats {
-        result.push_array(luau::Value::String(format.as_str().as_bytes().to_vec()));
-    }
+    let result = luau::OwnedTable::from_array(formats.into_iter().map(|format| format.as_str()));
     frame.returns.write(luau::Value::TableData(result))
 }
 

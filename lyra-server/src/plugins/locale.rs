@@ -260,13 +260,10 @@ impl LocaleRecord {
     fn into_luau_table(self) -> luau::OwnedTable {
         let mut table = luau::OwnedTable::with_capacity(0, 2);
         if let Some(language) = self.language {
-            table.set_field(
-                "language",
-                luau::Value::TableData(language.into_luau_table()),
-            );
+            table.set_field("language", language.into_luau_table());
         }
         if let Some(country) = self.country {
-            table.set_field("country", luau::Value::TableData(country.into_luau_table()));
+            table.set_field("country", country.into_luau_table());
         }
         table
     }

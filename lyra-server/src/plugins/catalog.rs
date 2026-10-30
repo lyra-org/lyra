@@ -232,11 +232,11 @@ fn keyed<T: 'static, R: Serialize + 'static>(
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, found.len());
         for (id, value) in found {
             table.set_key(
-                luau::Value::from(id.0),
+                id.0,
                 harmony_luau::serializable_to_luau_owned(show(value, &viewer))?,
             );
         }
-        Ok(luau::Value::TableData(table))
+        Ok(table)
     }))
 }
 
@@ -293,8 +293,8 @@ pub(crate) fn page_table<T: Serialize>(page: Page<T>) -> luau::runtime::Result<l
         "items",
         harmony_luau::serializable_to_luau_owned(page.items)?,
     );
-    table.set_field("total", luau::Value::from(page.total as i64));
-    table.set_field("offset", luau::Value::from(page.offset as i64));
+    table.set_field("total", page.total as i64);
+    table.set_field("offset", page.offset as i64);
     Ok(table)
 }
 

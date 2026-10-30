@@ -414,7 +414,7 @@ fn logout_session_callback(
         let revoked = logout_with_token(token.as_deref())
             .await
             .map_err(crate::plugins::runtime_error)?;
-        Ok(luau::Value::Boolean(revoked))
+        Ok(revoked)
     }))
 }
 
@@ -479,7 +479,7 @@ fn revoke_session_callback(
         let revoked = sessions::revoke_session(&principal, &session_id)
             .await
             .map_err(crate::plugins::runtime_error)?;
-        Ok(luau::Value::Boolean(revoked))
+        Ok(revoked)
     }))
 }
 
@@ -550,10 +550,10 @@ fn auth_capabilities_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::
 }
 fn auth_capabilities_table(capabilities: &AuthCapabilities) -> luau::OwnedTable {
     let mut table = luau::OwnedTable::with_capacity(0, 2);
-    table.set_field("enabled", luau::Value::Boolean(capabilities.enabled));
+    table.set_field("enabled", capabilities.enabled);
     table.set_field(
         "allow_default_login_when_disabled",
-        luau::Value::Boolean(capabilities.allow_default_login_when_disabled),
+        capabilities.allow_default_login_when_disabled,
     );
     table
 }

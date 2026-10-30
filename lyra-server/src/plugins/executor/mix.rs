@@ -66,17 +66,16 @@ impl PluginExecutor {
 fn mix_context_value(request: &MixHandlerRequest) -> Result<luau::Value> {
     let mut table = luau::OwnedTable::with_capacity(0, 5);
     if let Some(seed_id) = request.seed_id {
-        table.set_field("seed_id", luau::Value::from(seed_id));
+        table.set_field("seed_id", seed_id);
     }
     if let Some(limit) = request.limit {
-        table.set_field("limit", luau::Value::from(limit as i64));
+        table.set_field("limit", limit as i64);
     }
     if !request.recent_track_ids.is_empty() {
-        let mut recent = luau::OwnedTable::with_capacity(request.recent_track_ids.len(), 0);
-        for track_id in &request.recent_track_ids {
-            recent.push_array(luau::Value::from(*track_id));
-        }
-        table.set_field("recent_track_ids", luau::Value::TableData(recent));
+        table.set_field(
+            "recent_track_ids",
+            luau::OwnedTable::from_array(request.recent_track_ids.iter().copied()),
+        );
     }
     if !request.options.is_empty() {
         table.set_field(
@@ -87,7 +86,7 @@ fn mix_context_value(request: &MixHandlerRequest) -> Result<luau::Value> {
             )?,
         );
     }
-    Ok(luau::Value::TableData(table))
+    Ok(table.into())
 }
 
 pub(super) fn parse_mix_result(

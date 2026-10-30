@@ -215,15 +215,9 @@ fn get_stats_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let stats = resolve_stats(db, &track_ids, &principal, merge).await?;
         let mut table = luau::OwnedTable::with_capacity(0, 2);
-        table.set_field(
-            "counts",
-            luau::Value::TableData(dbid_map_to_table(&stats.counts)),
-        );
-        table.set_field(
-            "last_played",
-            luau::Value::TableData(dbid_map_to_table(&stats.last_played)),
-        );
-        Ok(luau::Value::TableData(table))
+        table.set_field("counts", dbid_map_to_table(&stats.counts));
+        table.set_field("last_played", dbid_map_to_table(&stats.last_played));
+        Ok(table)
     }))
 }
 
@@ -324,7 +318,7 @@ fn dbid_map_to_table(map: &HashMap<DbId, u64>) -> luau::OwnedTable {
     let mut table = luau::OwnedTable::with_entry_capacity(0, 0, map.len());
     for (id, value) in map {
         let value = luau::Value::from(*value);
-        table.set_key(luau::Value::from(id.0), value);
+        table.set_key(id.0, value);
     }
     table
 }

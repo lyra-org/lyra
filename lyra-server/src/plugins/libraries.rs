@@ -194,7 +194,7 @@ fn get_for_entities_callback(
                 .map(harmony_luau::serializable_to_luau_owned)
                 .transpose()?
                 .unwrap_or(luau::Value::Nil);
-            table.set_key(luau::Value::from(id.0), value);
+            table.set_key(id.0, value);
         }
         table.into_luau_return()
     }))

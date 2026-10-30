@@ -87,11 +87,7 @@ impl ApiWebSocketReader {
         let inbound = self.inbound.clone();
         Ok(luau::ScheduledFuture::new(async move {
             let mut rx = inbound.lock().await;
-            Ok(rx
-                .recv()
-                .await
-                .map(|text| luau::Value::String(text.into_bytes()))
-                .unwrap_or(luau::Value::Nil))
+            Ok(rx.recv().await)
         }))
     }
 

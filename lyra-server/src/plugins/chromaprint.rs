@@ -67,8 +67,8 @@ fn compute_callback(
             lyra_chromaprint::compute_fingerprint_from_file(&path, None, Some(DECODE_TIMEOUT))
                 .map_err(crate::plugins::runtime_error)?;
         let mut table = luau::OwnedTable::with_capacity(0, 1);
-        table.set_field("fingerprint", luau::Value::String(fingerprint.into_bytes()));
-        Ok(luau::Value::TableData(table))
+        table.set_field("fingerprint", fingerprint);
+        Ok(table)
     }))
 }
 
