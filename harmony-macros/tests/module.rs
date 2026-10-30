@@ -67,6 +67,10 @@ impl DemoModule {
         format!("{}, {}", greeting.0, name.as_deref().unwrap_or("stranger"))
     }
 
+    fn ignore(_unused: i64) -> bool {
+        true
+    }
+
     fn borrowed_plugin(
         vm: &luau::Vm,
         context: &CallContext,
@@ -218,6 +222,25 @@ fn module_descriptor_documents_functions_from_their_signatures() {
         ]
     );
     assert_eq!(descriptor.functions[0].description, Some("Adds one."));
+}
+
+#[test]
+fn arguments_take_their_names_without_a_leading_underscore() -> luau::runtime::Result<()> {
+    let failed = run("return demo.ignore('x')", CallContext::default())?;
+    assert_eq!(failed[0], luau::Value::Boolean(false));
+    let luau::Value::String(message) = &failed[1] else {
+        panic!("expected an error message, got {:?}", failed[1]);
+    };
+    assert!(String::from_utf8_lossy(message).contains("argument `unused` expected number"));
+
+    let descriptor = DemoModule::module_descriptor();
+    let ignore = descriptor
+        .functions
+        .iter()
+        .find(|function| function.path == ["ignore"])
+        .expect("ignore is documented");
+    assert_eq!(ignore.params[0].name, "unused");
+    Ok(())
 }
 
 #[test]

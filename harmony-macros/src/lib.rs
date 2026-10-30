@@ -599,8 +599,12 @@ fn function_parameters(inputs: &Punctuated<FnArg, Token![,]>) -> syn::Result<Vec
         .collect()
 }
 
+/// The Luau name of an argument: its identifier without a leading `_`, so a parameter the
+/// function ignores keeps its documented name.
 fn argument_name(ident: &Ident) -> LitStr {
-    lit_str(&ident.to_string(), ident.span())
+    let name = ident.to_string();
+    let name = name.strip_prefix("r#").unwrap_or(&name);
+    lit_str(name.strip_prefix('_').unwrap_or(name), ident.span())
 }
 
 fn frame_borrow(ty: &Type) -> Option<TokenStream2> {
