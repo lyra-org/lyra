@@ -1,6 +1,7 @@
 #!/bin/sh
-# Checks the version line and the releases in versions.json; see "Versions and releases" in
-# docs/development.md. Needs the full history, git and jq.
+# Checks the version line, PREVIOUS_RELEASE in lyra-db/src/migration.rs, and the releases in
+# versions.json; see "Versions and releases" in docs/development.md. Needs the full history, git
+# and jq.
 set -eu
 
 failed=0
@@ -45,6 +46,32 @@ else
 	printf '%s\n' "$head_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$' ||
 		fail "version $head_version is not a development version such as 0.0.2-dev.0"
 fi
+
+# Whether release $1 precedes version $2, ignoring $2's pre-release: 0.0.2-dev.N follows every
+# release before 0.0.2.
+release_before() {
+	printf '%s %s\n' "$1" "${2%%-*}" | awk '{
+		split($1, a, "."); split($2, b, ".")
+		for (i = 1; i <= 3; i++) if (a[i] != b[i]) exit !(a[i] + 0 < b[i] + 0)
+		exit 1
+	}'
+}
+
+previous_release=""
+for tag in $(git tag -l 'v*' --sort=-v:refname); do
+	version=${tag#v}
+	printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || continue
+	if release_before "$version" "$head_version"; then
+		previous_release=$version
+		break
+	fi
+done
+expected=None
+[ -z "$previous_release" ] || expected="Some(\"$previous_release\")"
+declared=$(git show HEAD:lyra-db/src/migration.rs |
+	sed -n 's/^pub(crate) const PREVIOUS_RELEASE: Option<&str> = \(.*\);$/\1/p')
+[ "$declared" = "$expected" ] ||
+	fail "PREVIOUS_RELEASE is ${declared:-missing} but should be $expected, the newest release before $head_version"
 
 entries=$(jq -r '.[] | "\(.commit) \(.lyra)"' versions.json)
 newer=""
