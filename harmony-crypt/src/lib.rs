@@ -45,31 +45,24 @@ pub fn module_spec() -> ModuleSpec {
 }
 
 fn hash_spec() -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn("hash")
-        .named_arg::<HashAlgorithm>("algorithm")
-        .named_arg::<String>("data")
-        .returns::<String>();
+    let spec = FunctionSpec::new("hash")
+        .arg_name("algorithm")
+        .arg_name("data");
     spec.call(hash_callback)
 }
 
 fn base64_encode_spec() -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn("base64.encode")
-        .named_arg::<String>("data")
-        .returns::<String>();
+    let spec = FunctionSpec::new("base64.encode").arg_name("data");
     spec.call(base64_encode_callback)
 }
 
 fn base64_decode_spec() -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn("base64.decode")
-        .named_arg::<String>("data")
-        .returns::<String>();
+    let spec = FunctionSpec::new("base64.decode").arg_name("data");
     spec.call(base64_decode_callback)
 }
 
 fn random_spec() -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn("random")
-        .named_arg::<f64>("size")
-        .returns::<String>();
+    let spec = FunctionSpec::new("random").arg_name("size");
     spec.call(random_callback)
 }
 

@@ -51,10 +51,9 @@ use super::parsing::{
 };
 
 pub(super) fn provider_new_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("Provider.new")
-        .named_arg::<String>("id")
-        .named_arg::<Option<luau::Table>>("options")
-        .returns::<MetadataProvider>()
+    FunctionSpec::new("Provider.new")
+        .arg_name("id")
+        .arg_name("options")
         .call_async(Arc::new(provider_new_callback))
 }
 

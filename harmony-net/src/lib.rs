@@ -150,26 +150,17 @@ pub fn module_spec() -> ModuleSpec {
 }
 
 fn udp_bind_spec() -> FunctionSpec {
-    let spec = FunctionSpec::async_fn("udp_bind")
-        .arg_name("options")
-        .args::<UdpBindOptions>()
-        .returns::<UdpSocket>();
+    let spec = FunctionSpec::new("udp_bind").arg_name("options");
     spec.call_async(Arc::new(udp_bind_callback))
 }
 
 fn tcp_connect_spec() -> FunctionSpec {
-    let spec = FunctionSpec::async_fn("tcp_connect")
-        .arg_name("options")
-        .args::<TcpConnectOptions>()
-        .returns::<TcpStream>();
+    let spec = FunctionSpec::new("tcp_connect").arg_name("options");
     spec.call_async(Arc::new(tcp_connect_callback))
 }
 
 fn tcp_bind_spec() -> FunctionSpec {
-    let spec = FunctionSpec::async_fn("tcp_bind")
-        .arg_name("options")
-        .args::<TcpBindOptions>()
-        .returns::<TcpListener>();
+    let spec = FunctionSpec::new("tcp_bind").arg_name("options");
     spec.call_async(Arc::new(tcp_bind_callback))
 }
 

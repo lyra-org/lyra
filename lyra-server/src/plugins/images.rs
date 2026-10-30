@@ -350,10 +350,7 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn compose_spec() -> FunctionSpec {
-    let spec = FunctionSpec::async_fn("compose")
-        .arg_name("options")
-        .args::<ComposeOptions>()
-        .returns::<ComposeResult>();
+    let spec = FunctionSpec::new("compose").arg_name("options");
     spec.call_async(Arc::new(compose_callback))
 }
 

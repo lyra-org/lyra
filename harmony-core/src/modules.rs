@@ -356,7 +356,6 @@ impl ModuleSpec {
 #[derive(Clone)]
 pub struct UserDataSpec {
     pub name: Arc<str>,
-    pub methods: Vec<FunctionSpec>,
     pub initializer: Option<UserDataInitializer>,
 }
 
@@ -364,7 +363,6 @@ impl fmt::Debug for UserDataSpec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("UserDataSpec")
             .field("name", &self.name)
-            .field("methods", &self.methods)
             .finish_non_exhaustive()
     }
 }
@@ -373,14 +371,8 @@ impl UserDataSpec {
     pub fn new(name: impl Into<Arc<str>>) -> Self {
         Self {
             name: name.into(),
-            methods: Vec::new(),
             initializer: None,
         }
-    }
-
-    pub fn method(mut self, method: FunctionSpec) -> Self {
-        self.methods.push(method);
-        self
     }
 
     pub fn initializer<F>(mut self, initializer: F) -> Self
@@ -433,66 +425,21 @@ impl fmt::Debug for FunctionCallback {
 #[derive(Clone, Debug)]
 pub struct FunctionSpec {
     pub name: Arc<str>,
-    pub yields: bool,
-    pub context_type: Option<&'static str>,
-    pub arg_types: Vec<&'static str>,
     pub arg_names: Vec<Arc<str>>,
-    pub variadic: bool,
-    pub return_types: Vec<&'static str>,
     pub callback: Option<FunctionCallback>,
 }
 
 impl FunctionSpec {
-    pub fn sync_fn(name: impl Into<Arc<str>>) -> Self {
-        Self::new(name, false)
-    }
-
-    pub fn async_fn(name: impl Into<Arc<str>>) -> Self {
-        Self::new(name, true)
-    }
-
-    fn new(name: impl Into<Arc<str>>, yields: bool) -> Self {
+    pub fn new(name: impl Into<Arc<str>>) -> Self {
         Self {
             name: name.into(),
-            yields,
-            context_type: None,
-            arg_types: Vec::new(),
             arg_names: Vec::new(),
-            variadic: false,
-            return_types: Vec::new(),
             callback: None,
         }
     }
 
-    pub fn context<T: 'static>(mut self) -> Self {
-        self.context_type = Some(std::any::type_name::<T>());
-        self
-    }
-
-    pub fn args<T: 'static>(mut self) -> Self {
-        self.arg_types.push(std::any::type_name::<T>());
-        self
-    }
-
-    pub fn named_arg<T: 'static>(mut self, name: impl Into<Arc<str>>) -> Self {
-        self.arg_types.push(std::any::type_name::<T>());
-        self.arg_names.push(name.into());
-        self
-    }
-
     pub fn arg_name(mut self, name: impl Into<Arc<str>>) -> Self {
         self.arg_names.push(name.into());
-        self
-    }
-
-    pub fn variadic_args<T: 'static>(mut self) -> Self {
-        self.arg_types.push(std::any::type_name::<T>());
-        self.variadic = true;
-        self
-    }
-
-    pub fn returns<T: 'static>(mut self) -> Self {
-        self.return_types.push(std::any::type_name::<T>());
         self
     }
 
@@ -1405,36 +1352,35 @@ mod tests {
             path: Some(Arc::from("plugins/demo/init.luau")),
             ..ChunkOrigin::default()
         };
-        let module = ModuleSpec::new("demo/math")
-            .function(
-                FunctionSpec::sync_fn("add")
-                    .arg_name("lhs")
-                    .arg_name("rhs")
-                    .call(|mut frame| {
-                        assert_eq!(
-                            frame.context.origin.module.as_ref().map(|id| id.0.as_ref()),
-                            Some("demo/math")
-                        );
-                        assert_eq!(frame.context.origin.plugin.as_deref(), Some("demo"));
-                        assert_eq!(
-                            frame.context.capability.as_ref().map(|id| id.0.as_ref()),
-                            Some("demo.math")
-                        );
-                        let lhs: f64 = frame.args.read()?;
-                        let rhs: f64 = frame.args.read()?;
-                        frame.returns.write(lhs + rhs)?;
-                        Ok(())
-                    }),
-            )
-            .function(
-                FunctionSpec::sync_fn("nested.double")
-                    .arg_name("value")
-                    .call(|mut frame| {
+        let module =
+            ModuleSpec::new("demo/math")
+                .function(
+                    FunctionSpec::new("add")
+                        .arg_name("lhs")
+                        .arg_name("rhs")
+                        .call(|mut frame| {
+                            assert_eq!(
+                                frame.context.origin.module.as_ref().map(|id| id.0.as_ref()),
+                                Some("demo/math")
+                            );
+                            assert_eq!(frame.context.origin.plugin.as_deref(), Some("demo"));
+                            assert_eq!(
+                                frame.context.capability.as_ref().map(|id| id.0.as_ref()),
+                                Some("demo.math")
+                            );
+                            let lhs: f64 = frame.args.read()?;
+                            let rhs: f64 = frame.args.read()?;
+                            frame.returns.write(lhs + rhs)?;
+                            Ok(())
+                        }),
+                )
+                .function(FunctionSpec::new("nested.double").arg_name("value").call(
+                    |mut frame| {
                         let value: f64 = frame.args.read()?;
                         frame.returns.write(value * 2.0)?;
                         Ok(())
-                    }),
-            );
+                    },
+                ));
         let capability = CapabilityId(Arc::from("demo.math"));
         let table = install_gated_luau_module(
             &vm,
@@ -1470,7 +1416,7 @@ mod tests {
         vm.data().insert(crate::LocalScheduler::new())?;
         let scheduler = vm.data().get::<crate::LocalScheduler>()?;
         let module = ModuleSpec::new("demo/async").function(
-            FunctionSpec::async_fn("add_one")
+            FunctionSpec::new("add_one")
                 .arg_name("value")
                 .call_async(Arc::new(|mut frame| {
                     let value: i64 = frame.args.read_named("value")?;
@@ -1506,7 +1452,7 @@ mod tests {
         let pending_once = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let pending_once_for_callback = pending_once.clone();
         let module = ModuleSpec::new("demo/async").function(
-            FunctionSpec::async_fn("add_one")
+            FunctionSpec::new("add_one")
                 .arg_name("value")
                 .call_async(Arc::new(move |mut frame| {
                     let value: i64 = frame.args.read_named("value")?;
@@ -1572,7 +1518,7 @@ mod tests {
             ..ChunkOrigin::default()
         };
         let globals = GlobalSpec::new("demo.globals").function(
-            FunctionSpec::sync_fn("demo_global")
+            FunctionSpec::new("demo_global")
                 .arg_name("value")
                 .call(|mut frame| {
                     assert_eq!(
@@ -1606,12 +1552,12 @@ mod tests {
         registry
             .register(GatedModule::new(
                 "demo.math",
-                ModuleSpec::new(module_id.0.clone()).function(
-                    FunctionSpec::sync_fn("answer").call(|mut frame| {
+                ModuleSpec::new(module_id.0.clone()).function(FunctionSpec::new("answer").call(
+                    |mut frame| {
                         frame.returns.write(42_i64)?;
                         Ok(())
-                    }),
-                ),
+                    },
+                )),
             ))
             .expect("register module");
 
@@ -1680,13 +1626,13 @@ mod tests {
         registry
             .register(GatedModule::new(
                 "lyra.plugins",
-                ModuleSpec::new(module_id.0.clone()).function(
-                    FunctionSpec::sync_fn("plugin_id").call(|mut frame| {
+                ModuleSpec::new(module_id.0.clone()).function(FunctionSpec::new("plugin_id").call(
+                    |mut frame| {
                         let plugin_id = frame.context.origin.plugin.as_deref().unwrap_or("");
                         frame.returns.write(plugin_id)?;
                         Ok(())
-                    }),
-                ),
+                    },
+                )),
             ))
             .expect("register module");
 
@@ -1806,7 +1752,7 @@ mod tests {
         runtime
             .register(GatedModule::new(
                 "harmony.math",
-                ModuleSpec::new("harmony/math").function(FunctionSpec::sync_fn("answer").call(
+                ModuleSpec::new("harmony/math").function(FunctionSpec::new("answer").call(
                     |mut frame| {
                         frame.returns.write(42_i64)?;
                         Ok(())

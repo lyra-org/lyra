@@ -266,13 +266,11 @@ fn plugin_executor_preserves_typed_call_context_across_luau_yield() -> Result<()
         "test.context",
         ModuleSpec::new("test/context")
             .function(
-                harmony_core::FunctionSpec::sync_fn("username")
-                    .returns::<String>()
-                    .call(|mut frame| {
-                        let principal =
-                            crate::plugins::auth::require_dispatch_principal(&frame.context)?;
-                        frame.returns.write(principal.username.as_str())
-                    }),
+                harmony_core::FunctionSpec::new("username").call(|mut frame| {
+                    let principal =
+                        crate::plugins::auth::require_dispatch_principal(&frame.context)?;
+                    frame.returns.write(principal.username.as_str())
+                }),
             )
             .install(|_| Ok(harmony_core::ModuleExport::new(()))),
     ))?;
@@ -319,13 +317,11 @@ fn plugin_executor_keeps_dispatch_auth_inside_coroutines() -> Result<()> {
         "test.context",
         ModuleSpec::new("test/context")
             .function(
-                harmony_core::FunctionSpec::sync_fn("username")
-                    .returns::<String>()
-                    .call(|mut frame| {
-                        let principal =
-                            crate::plugins::auth::require_dispatch_principal(&frame.context)?;
-                        frame.returns.write(principal.username.as_str())
-                    }),
+                harmony_core::FunctionSpec::new("username").call(|mut frame| {
+                    let principal =
+                        crate::plugins::auth::require_dispatch_principal(&frame.context)?;
+                    frame.returns.write(principal.username.as_str())
+                }),
             )
             .install(|_| Ok(harmony_core::ModuleExport::new(()))),
     ))?;
@@ -2443,12 +2439,10 @@ fn plugin_executor_handle_shutdown_stops_lua_and_the_executor_thread() -> Result
     // Overrides replace a module, so the counter stands in for one this
     // plugin does not otherwise use.
     let ticks_module = ModuleSpec::new("harmony/crypt")
-        .function(
-            harmony_core::FunctionSpec::sync_fn("tick").call(move |_frame| {
-                module_ticks.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                Ok(())
-            }),
-        )
+        .function(harmony_core::FunctionSpec::new("tick").call(move |_frame| {
+            module_ticks.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }))
         .install(|_| Ok(harmony_core::ModuleExport::new(())));
 
     let (runtime, errors) = PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(

@@ -25,7 +25,6 @@ use harmony_luau::{
 use crate::plugins::db;
 use lyra_db::DataStore;
 use lyra_db::DbAsync;
-struct PluginCaller;
 
 #[cfg(feature = "docgen")]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
@@ -130,10 +129,7 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn get_or_create_spec() -> FunctionSpec {
-    let spec = FunctionSpec::async_fn("get_or_create")
-        .context::<PluginCaller>()
-        .named_arg::<String>("name")
-        .returns::<DataStoreHandle>();
+    let spec = FunctionSpec::new("get_or_create").arg_name("name");
     spec.call_async(std::sync::Arc::new(get_or_create_callback))
 }
 

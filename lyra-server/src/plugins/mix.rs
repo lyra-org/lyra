@@ -294,10 +294,8 @@ impl Mixer {
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/mix")
         .function(
-            FunctionSpec::async_fn("Mixer.new")
+            FunctionSpec::new("Mixer.new")
                 .arg_name("id")
-                .args::<String>()
-                .returns::<Mixer>()
                 .call_async(Arc::new(mixer_new_callback)),
         )
         .function(consumer_spec("from_track", from_track_callback))
@@ -317,13 +315,9 @@ fn consumer_spec(
     name: &'static str,
     callback: fn(luau::AsyncCallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture>,
 ) -> FunctionSpec {
-    FunctionSpec::async_fn(name)
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new(name)
         .arg_name("seed_id")
-        .args::<i64>()
         .arg_name("opts")
-        .args::<Option<luau::Value>>()
-        .returns::<Option<Vec<Track>>>()
         .call_async(Arc::new(callback))
 }
 

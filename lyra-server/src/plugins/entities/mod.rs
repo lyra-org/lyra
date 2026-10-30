@@ -73,28 +73,22 @@ enum ProjectionKind {
 }
 
 fn query_spec(name: &'static str, kind: ProjectionKind) -> FunctionSpec {
-    FunctionSpec::async_fn(name)
+    FunctionSpec::new(name)
         .arg_name("request")
-        .args::<luau::Table>()
-        .returns::<luau::Value>()
         .call_async(std::sync::Arc::new(move |frame| {
             query_callback(frame, kind)
         }))
 }
 
 fn get_type_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_type")
+    FunctionSpec::new("get_type")
         .arg_name("id")
-        .args::<luau::Value>()
-        .returns::<Option<String>>()
         .call_async(std::sync::Arc::new(get_type_callback))
 }
 
 fn query_many_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("query_many")
+    FunctionSpec::new("query_many")
         .arg_name("request")
-        .args::<luau::Table>()
-        .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(query_many_callback))
 }
 

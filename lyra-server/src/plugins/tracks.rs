@@ -53,55 +53,38 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn get_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("get")
         .arg_name("ids")
-        .args::<Vec<u64>>()
-        .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(get_callback))
 }
 
 fn streamable_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("streamable")
+    FunctionSpec::new("streamable")
         .arg_name("ids")
-        .args::<Vec<u64>>()
-        .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(streamable_callback))
 }
 
 fn by_release_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("by_release")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("by_release")
         .arg_name("release_ids")
-        .args::<Vec<u64>>()
-        .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(by_release_callback))
 }
 
 fn by_entry_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("by_entry")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("by_entry")
         .arg_name("entry_ids")
-        .args::<Vec<u64>>()
-        .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(by_entry_callback))
 }
 
 fn chains_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("chains")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("chains")
         .arg_name("track_ids")
-        .args::<Vec<u64>>()
-        .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(chains_callback))
 }
 
 fn query_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("query")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("query")
         .arg_name("query")
-        .args::<luau::Table>()
-        .returns::<luau::Value>()
         .call_async(std::sync::Arc::new(query_callback))
 }
 

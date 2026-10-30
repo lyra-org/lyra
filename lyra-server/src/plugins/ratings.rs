@@ -45,31 +45,21 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn set_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("set")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("set")
         .arg_name("target_id")
-        .args::<i64>()
         .arg_name("rating")
-        .args::<i64>()
-        .returns::<bool>()
         .call_async(Arc::new(set_callback))
 }
 
 fn remove_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("remove")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("remove")
         .arg_name("target_id")
-        .args::<i64>()
-        .returns::<bool>()
         .call_async(Arc::new(remove_callback))
 }
 
 fn get_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("get")
         .arg_name("target_ids")
-        .args::<luau::Table>()
-        .returns::<luau::Table>()
         .call_async(Arc::new(get_callback))
 }
 
@@ -187,7 +177,7 @@ fn module_descriptor() -> ModuleDescriptor {
                     param("rating", u8::luau_type()),
                 ],
                 returns: vec![bool::luau_type()],
-                yields: false,
+                yields: true,
             },
             ModuleFunctionDescriptor {
                 path: vec!["remove"],
@@ -196,7 +186,7 @@ fn module_descriptor() -> ModuleDescriptor {
                 ),
                 params: vec![param("target_id", u64::luau_type())],
                 returns: vec![bool::luau_type()],
-                yields: false,
+                yields: true,
             },
             ModuleFunctionDescriptor {
                 path: vec!["get"],
@@ -205,7 +195,7 @@ fn module_descriptor() -> ModuleDescriptor {
                 ),
                 params: vec![param("target_ids", Vec::<u64>::luau_type())],
                 returns: vec![LuauType::map(u64::luau_type(), u8::luau_type())],
-                yields: false,
+                yields: true,
             },
         ],
     }

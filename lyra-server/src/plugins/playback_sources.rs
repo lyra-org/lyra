@@ -66,45 +66,30 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn get_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("get")
         .arg_name("id")
-        .args::<Option<ResolveId>>()
         .arg_name("include_entry")
-        .args::<Option<bool>>()
-        .returns::<luau::Table>()
         .call_async(Arc::new(get_callback))
 }
 
 fn get_many_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_many")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("get_many")
         .arg_name("track_ids")
-        .args::<luau::Table>()
         .arg_name("include_entry")
-        .args::<Option<bool>>()
-        .returns::<luau::Table>()
         .call_async(Arc::new(get_many_callback))
 }
 
 fn streamable_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("streamable")
+    FunctionSpec::new("streamable")
         .arg_name("track_id")
-        .args::<i64>()
         .arg_name("include_entry")
-        .args::<Option<bool>>()
-        .returns::<Option<luau::Table>>()
         .call_async(Arc::new(streamable_callback))
 }
 
 fn decide_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("decide")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("decide")
         .arg_name("track_id")
-        .args::<i64>()
         .arg_name("options")
-        .args::<Option<luau::Value>>()
-        .returns::<luau::Table>()
         .call_async(Arc::new(decide_callback))
 }
 

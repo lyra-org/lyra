@@ -73,62 +73,46 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn add_spec() -> FunctionSpec {
-    let spec = FunctionSpec::async_fn("add")
-        .context::<crate::plugins::auth::DispatchAuth>()
-        .named_arg::<NodeId>("target_id")
-        .named_arg::<String>("tag")
-        .named_arg::<String>("color")
-        .returns::<String>();
+    let spec = FunctionSpec::new("add")
+        .arg_name("target_id")
+        .arg_name("tag")
+        .arg_name("color");
     spec.call_async(Arc::new(add_callback))
 }
 
 fn remove_spec() -> FunctionSpec {
-    let spec = FunctionSpec::async_fn("remove")
-        .context::<crate::plugins::auth::DispatchAuth>()
-        .named_arg::<NodeId>("target_id")
-        .named_arg::<String>("tag");
+    let spec = FunctionSpec::new("remove")
+        .arg_name("target_id")
+        .arg_name("tag");
     spec.call_async(Arc::new(remove_callback))
 }
 
 fn has_spec() -> FunctionSpec {
-    let spec = FunctionSpec::async_fn("has")
-        .context::<crate::plugins::auth::DispatchAuth>()
-        .named_arg::<NodeId>("target_id")
-        .named_arg::<String>("tag")
-        .returns::<bool>();
+    let spec = FunctionSpec::new("has")
+        .arg_name("target_id")
+        .arg_name("tag");
     spec.call_async(Arc::new(has_callback))
 }
 
 fn has_many_spec() -> FunctionSpec {
-    let spec = FunctionSpec::async_fn("has_many")
-        .context::<crate::plugins::auth::DispatchAuth>()
-        .named_arg::<Vec<u64>>("target_ids")
-        .named_arg::<String>("tag")
-        .returns::<std::collections::BTreeMap<u64, bool>>();
+    let spec = FunctionSpec::new("has_many")
+        .arg_name("target_ids")
+        .arg_name("tag");
     spec.call_async(Arc::new(has_many_callback))
 }
 
 fn get_for_target_spec() -> FunctionSpec {
-    let spec = FunctionSpec::async_fn("get_for_target")
-        .context::<crate::plugins::auth::DispatchAuth>()
-        .named_arg::<NodeId>("target_id")
-        .returns::<Vec<TagInfo>>();
+    let spec = FunctionSpec::new("get_for_target").arg_name("target_id");
     spec.call_async(Arc::new(get_for_target_callback))
 }
 
 fn get_for_targets_many_spec() -> FunctionSpec {
-    let spec = FunctionSpec::async_fn("get_for_targets_many")
-        .context::<crate::plugins::auth::DispatchAuth>()
-        .named_arg::<Vec<u64>>("target_ids")
-        .returns::<std::collections::BTreeMap<u64, Vec<TagInfo>>>();
+    let spec = FunctionSpec::new("get_for_targets_many").arg_name("target_ids");
     spec.call_async(Arc::new(get_for_targets_many_callback))
 }
 
 fn get_tagged_spec() -> FunctionSpec {
-    let spec = FunctionSpec::async_fn("get_tagged")
-        .context::<crate::plugins::auth::DispatchAuth>()
-        .named_arg::<String>("tag")
-        .returns::<Vec<NodeId>>();
+    let spec = FunctionSpec::new("get_tagged").arg_name("tag");
     spec.call_async(Arc::new(get_tagged_callback))
 }
 fn add_callback(

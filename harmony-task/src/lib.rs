@@ -26,9 +26,6 @@ use harmony_luau::{
 
 struct TaskModuleDocs;
 struct TaskModule;
-struct TaskLike;
-struct TaskThread;
-struct TaskArg;
 
 /// The capability hosts conventionally gate this module behind.
 pub const SCOPE: &str = "harmony.task";
@@ -44,46 +41,27 @@ pub fn module_spec() -> ModuleSpec {
 }
 
 fn defer_spec() -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn("defer")
-        .arg_name("task")
-        .args::<TaskLike>()
-        .variadic_args::<TaskArg>()
-        .returns::<TaskThread>();
+    let spec = FunctionSpec::new("defer").arg_name("task");
     spec.call(defer_callback)
 }
 
 fn delay_spec() -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn("delay")
-        .arg_name("time")
-        .arg_name("task")
-        .args::<f64>()
-        .args::<TaskLike>()
-        .variadic_args::<TaskArg>()
-        .returns::<TaskThread>();
+    let spec = FunctionSpec::new("delay").arg_name("time").arg_name("task");
     spec.call(delay_callback)
 }
 
 fn cancel_spec() -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn("cancel")
-        .arg_name("thread")
-        .args::<TaskThread>();
+    let spec = FunctionSpec::new("cancel").arg_name("thread");
     spec.call(cancel_callback)
 }
 
 fn wait_spec() -> FunctionSpec {
-    let spec = FunctionSpec::async_fn("wait")
-        .arg_name("time")
-        .args::<Option<f64>>()
-        .returns::<f64>();
+    let spec = FunctionSpec::new("wait").arg_name("time");
     spec.call_async(Arc::new(wait_callback))
 }
 
 fn spawn_spec() -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn("spawn")
-        .arg_name("task")
-        .args::<TaskLike>()
-        .variadic_args::<TaskArg>()
-        .returns::<TaskThread>();
+    let spec = FunctionSpec::new("spawn").arg_name("task");
     spec.call(spawn_callback)
 }
 

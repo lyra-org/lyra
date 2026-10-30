@@ -13,7 +13,6 @@ use std::time::{
 };
 
 use harmony_core::{
-    ChunkOrigin,
     FunctionSpec,
     ModuleExport,
     ModuleSpec,
@@ -911,34 +910,22 @@ pub fn module_spec() -> ModuleSpec {
 }
 
 fn request_spec() -> FunctionSpec {
-    let spec = FunctionSpec::async_fn("request")
-        .context::<ChunkOrigin>()
-        .arg_name("options")
-        .args::<HttpRequestOptions>()
-        .returns::<HttpResponse>();
+    let spec = FunctionSpec::new("request").arg_name("options");
     spec.call_async(Arc::new(request_callback))
 }
 
 fn set_rate_limit_spec() -> FunctionSpec {
-    let spec = FunctionSpec::async_fn("set_rate_limit")
-        .context::<ChunkOrigin>()
-        .arg_name("options")
-        .args::<HttpRateLimitOptions>();
+    let spec = FunctionSpec::new("set_rate_limit").arg_name("options");
     spec.call_async(Arc::new(set_rate_limit_callback))
 }
 
 fn set_max_in_flight_spec() -> FunctionSpec {
-    let spec = FunctionSpec::async_fn("set_max_in_flight")
-        .context::<ChunkOrigin>()
-        .arg_name("options")
-        .args::<HttpConcurrencyOptions>();
+    let spec = FunctionSpec::new("set_max_in_flight").arg_name("options");
     spec.call_async(Arc::new(set_max_in_flight_callback))
 }
 
 fn encode_uri_component_spec() -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn("encode_uri_component")
-        .named_arg::<String>("input")
-        .returns::<String>();
+    let spec = FunctionSpec::new("encode_uri_component").arg_name("input");
     spec.call(encode_uri_component_callback)
 }
 

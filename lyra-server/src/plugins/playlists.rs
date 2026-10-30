@@ -162,149 +162,96 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn list_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("list")
-        .context::<crate::plugins::auth::DispatchAuth>()
-        .returns::<Vec<PlaylistInfo>>()
-        .call_async(Arc::new(list_callback))
+    FunctionSpec::new("list").call_async(Arc::new(list_callback))
 }
 
 fn get_by_id_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_by_id")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("get_by_id")
         .arg_name("id")
-        .args::<ResolveId>()
-        .returns::<Option<PlaylistInfo>>()
         .call_async(Arc::new(get_by_id_callback))
 }
 
 fn list_owned_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("list_owned")
-        .context::<crate::plugins::auth::DispatchAuth>()
-        .returns::<Vec<PlaylistInfo>>()
-        .call_async(Arc::new(list_owned_callback))
+    FunctionSpec::new("list_owned").call_async(Arc::new(list_owned_callback))
 }
 
 fn get_owner_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_owner")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("get_owner")
         .arg_name("playlist_id")
-        .args::<ResolveId>()
-        .returns::<Option<String>>()
         .call_async(Arc::new(get_owner_callback))
 }
 
 fn get_tracks_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_tracks")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("get_tracks")
         .arg_name("playlist_id")
-        .args::<ResolveId>()
-        .returns::<Vec<PlaylistTrackLink>>()
         .call_async(Arc::new(get_tracks_callback))
 }
 
 fn get_tracks_many_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_tracks_many")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("get_tracks_many")
         .arg_name("playlist_ids")
-        .args::<luau::Table>()
-        .returns::<luau::Table>()
         .call_async(Arc::new(get_tracks_many_callback))
 }
 
 fn create_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("create")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("create")
         .arg_name("request")
-        .args::<PlaylistCreateRequest>()
-        .returns::<i64>()
         .call_async(Arc::new(create_callback))
 }
 
 fn update_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("update")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("update")
         .arg_name("request")
-        .args::<PlaylistUpdateRequest>()
-        .returns::<Option<PlaylistInfo>>()
         .call_async(Arc::new(update_callback))
 }
 
 fn delete_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("delete")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("delete")
         .arg_name("playlist_id")
-        .args::<ResolveId>()
-        .returns::<bool>()
         .call_async(Arc::new(delete_callback))
 }
 
 fn replace_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("replace")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("replace")
         .arg_name("playlist_id")
-        .args::<ResolveId>()
         .arg_name("request")
-        .args::<PlaylistReplaceRequest>()
-        .returns::<Option<PlaylistInfo>>()
         .call_async(Arc::new(replace_callback))
 }
 
 fn add_tracks_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("add_tracks")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("add_tracks")
         .arg_name("playlist_id")
-        .args::<ResolveId>()
         .arg_name("track_ids")
-        .args::<luau::Table>()
         .arg_name("position")
-        .args::<Option<u64>>()
-        .returns::<Option<Vec<String>>>()
         .call_async(Arc::new(add_tracks_callback))
 }
 
 fn add_track_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("add_track")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("add_track")
         .arg_name("playlist_id")
-        .args::<ResolveId>()
         .arg_name("track_id")
-        .args::<ResolveId>()
-        .returns::<Option<String>>()
         .call_async(Arc::new(add_track_callback))
 }
 
 fn remove_track_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("remove_track")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("remove_track")
         .arg_name("playlist_id")
-        .args::<ResolveId>()
         .arg_name("entry_id")
-        .args::<String>()
-        .returns::<bool>()
         .call_async(Arc::new(remove_track_callback))
 }
 
 fn remove_tracks_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("remove_tracks")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("remove_tracks")
         .arg_name("playlist_id")
-        .args::<ResolveId>()
         .arg_name("entry_ids")
-        .args::<luau::Table>()
-        .returns::<bool>()
         .call_async(Arc::new(remove_tracks_callback))
 }
 
 fn move_track_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("move_track")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("move_track")
         .arg_name("playlist_id")
-        .args::<ResolveId>()
         .arg_name("entry_id")
-        .args::<String>()
         .arg_name("new_position")
-        .args::<u64>()
-        .returns::<bool>()
         .call_async(Arc::new(move_track_callback))
 }
 

@@ -40,34 +40,22 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn get_id_spec() -> FunctionSpec {
-    let spec = FunctionSpec::async_fn("get_id")
-        .arg_name("db_id")
-        .args::<i64>()
-        .returns::<Option<String>>();
+    let spec = FunctionSpec::new("get_id").arg_name("db_id");
     spec.call_async(Arc::new(get_id_callback))
 }
 
 fn get_ids_spec() -> FunctionSpec {
-    let spec = FunctionSpec::async_fn("get_ids")
-        .arg_name("db_ids")
-        .args::<Vec<u64>>()
-        .returns::<std::collections::BTreeMap<u64, Option<String>>>();
+    let spec = FunctionSpec::new("get_ids").arg_name("db_ids");
     spec.call_async(Arc::new(get_ids_callback))
 }
 
 fn get_db_id_spec() -> FunctionSpec {
-    let spec = FunctionSpec::async_fn("get_db_id")
-        .arg_name("id")
-        .args::<String>()
-        .returns::<Option<i64>>();
+    let spec = FunctionSpec::new("get_db_id").arg_name("id");
     spec.call_async(Arc::new(get_db_id_callback))
 }
 
 fn get_db_ids_spec() -> FunctionSpec {
-    let spec = FunctionSpec::async_fn("get_db_ids")
-        .arg_name("ids")
-        .args::<Vec<String>>()
-        .returns::<std::collections::BTreeMap<String, Option<u64>>>();
+    let spec = FunctionSpec::new("get_db_ids").arg_name("ids");
     spec.call_async(Arc::new(get_db_ids_callback))
 }
 fn get_id_callback(

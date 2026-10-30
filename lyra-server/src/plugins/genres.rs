@@ -64,11 +64,8 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn query_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("query")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("query")
         .arg_name("query")
-        .args::<luau::Table>()
-        .returns::<luau::Value>()
         .call_async(std::sync::Arc::new(query_callback))
 }
 
@@ -108,20 +105,14 @@ fn query_callback(
 }
 
 fn get_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("get")
         .arg_name("ids")
-        .args::<Vec<u64>>()
-        .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(get_callback))
 }
 
 fn by_release_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("by_release")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("by_release")
         .arg_name("release_ids")
-        .args::<Vec<u64>>()
-        .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(by_release_callback))
 }
 
@@ -156,27 +147,22 @@ fn by_release_callback(
 }
 
 fn resolve_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("resolve")
+    FunctionSpec::new("resolve")
         .arg_name("request")
-        .args::<luau::Table>()
-        .returns::<i64>()
         .call_async(std::sync::Arc::new(resolve_callback))
 }
 
 fn add_parent_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("add_parent")
-        .named_arg::<i64>("child_id")
-        .named_arg::<i64>("parent_id")
-        .returns::<()>()
+    FunctionSpec::new("add_parent")
+        .arg_name("child_id")
+        .arg_name("parent_id")
         .call_async(std::sync::Arc::new(add_parent_callback))
 }
 
 // Unscoped: public artwork routes compose a genre's cover without a caller.
 fn artwork_release_ids_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("artwork_release_ids")
+    FunctionSpec::new("artwork_release_ids")
         .arg_name("genre_id")
-        .args::<i64>()
-        .returns::<Vec<i64>>()
         .call_async(std::sync::Arc::new(artwork_release_ids_callback))
 }
 
@@ -204,10 +190,8 @@ fn artwork_release_ids_callback(
 }
 
 fn find_by_name_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("find_by_name")
+    FunctionSpec::new("find_by_name")
         .arg_name("name")
-        .args::<String>()
-        .returns::<Option<GenreRecord>>()
         .call_async(std::sync::Arc::new(find_by_name_callback))
 }
 

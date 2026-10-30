@@ -52,9 +52,7 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn server_info_spec() -> FunctionSpec {
-    FunctionSpec::sync_fn("info")
-        .returns::<ServerInfo>()
-        .call(server_info_callback)
+    FunctionSpec::new("info").call(server_info_callback)
 }
 
 pub(crate) async fn load_server_info() -> anyhow::Result<ServerInfo> {

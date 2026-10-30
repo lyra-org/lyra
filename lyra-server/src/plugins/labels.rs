@@ -57,50 +57,38 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn resolve_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("resolve")
+    FunctionSpec::new("resolve")
         .arg_name("request")
-        .args::<luau::Table>()
-        .returns::<i64>()
         .call_async(std::sync::Arc::new(resolve_callback))
 }
 
 fn get_by_id_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_by_id")
+    FunctionSpec::new("get_by_id")
         .arg_name("label_id")
-        .args::<i64>()
-        .returns::<Option<LabelInfo>>()
         .call_async(std::sync::Arc::new(get_by_id_callback))
 }
 
 fn get_for_release_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_for_release")
+    FunctionSpec::new("get_for_release")
         .arg_name("release_id")
-        .args::<i64>()
-        .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(get_for_release_callback))
 }
 
 fn get_for_releases_many_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_for_releases_many")
+    FunctionSpec::new("get_for_releases_many")
         .arg_name("release_ids")
-        .args::<luau::Table>()
-        .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(get_for_releases_many_callback))
 }
 
 fn get_releases_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_releases")
+    FunctionSpec::new("get_releases")
         .arg_name("label_id")
-        .args::<i64>()
-        .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(get_releases_callback))
 }
 
 fn get_releases_many_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_releases_many")
+    FunctionSpec::new("get_releases_many")
         .arg_name("label_ids")
-        .args::<luau::Table>()
-        .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(get_releases_many_callback))
 }
 

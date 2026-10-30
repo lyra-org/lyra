@@ -27,7 +27,6 @@ use super::{
     SettingsScope,
     descriptors::{
         SettingsBoolProps,
-        SettingsCallback,
         SettingsChoiceProps,
         SettingsConfig,
         SettingsNumberProps,
@@ -680,18 +679,12 @@ fn sequence_index(value: luau::Value) -> Option<i64> {
 }
 
 pub(crate) fn declare_settings_spec() -> FunctionSpec {
-    let spec = FunctionSpec::async_fn("declare_settings")
-        .context::<Option<Arc<str>>>()
-        .named_arg::<SettingsCallback>("callback")
-        .returns::<SettingsConfig>();
+    let spec = FunctionSpec::new("declare_settings").arg_name("callback");
     spec.call_async(Arc::new(declare_settings_callback))
 }
 
 pub(crate) fn declare_user_settings_spec() -> FunctionSpec {
-    let spec = FunctionSpec::async_fn("declare_user_settings")
-        .context::<Option<Arc<str>>>()
-        .named_arg::<SettingsCallback>("callback")
-        .returns::<UserSettingsAccessor>();
+    let spec = FunctionSpec::new("declare_user_settings").arg_name("callback");
     spec.call_async(Arc::new(declare_user_settings_callback))
 }
 

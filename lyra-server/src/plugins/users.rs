@@ -43,9 +43,7 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn list_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("list")
-        .returns::<Vec<PublicUser>>()
-        .call_async(std::sync::Arc::new(list_callback))
+    FunctionSpec::new("list").call_async(std::sync::Arc::new(list_callback))
 }
 
 fn list_callback(frame: luau::AsyncCallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {

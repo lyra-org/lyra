@@ -55,39 +55,34 @@ fn install_locale_constants(
 }
 
 fn language_spec() -> FunctionSpec {
-    FunctionSpec::sync_fn("language")
-        .named_arg::<Option<String>>("input")
-        .returns::<Option<LanguageRecord>>()
+    FunctionSpec::new("language")
+        .arg_name("input")
         .call(language_callback)
 }
 
 fn country_spec() -> FunctionSpec {
-    FunctionSpec::sync_fn("country")
-        .named_arg::<Option<String>>("input")
-        .returns::<Option<CountryRecord>>()
+    FunctionSpec::new("country")
+        .arg_name("input")
         .call(country_callback)
 }
 
 fn parse_spec() -> FunctionSpec {
-    FunctionSpec::sync_fn("parse")
-        .named_arg::<Option<String>>("tag")
-        .returns::<LocaleRecord>()
+    FunctionSpec::new("parse")
+        .arg_name("tag")
         .call(parse_callback)
 }
 
 fn tag_spec() -> FunctionSpec {
-    FunctionSpec::sync_fn("tag")
-        .named_arg::<luau::Value>("language")
-        .named_arg::<Option<luau::Value>>("country")
-        .returns::<Option<String>>()
+    FunctionSpec::new("tag")
+        .arg_name("language")
+        .arg_name("country")
         .call(tag_callback)
 }
 
 fn languages_match_spec() -> FunctionSpec {
-    FunctionSpec::sync_fn("languages_match")
-        .named_arg::<Option<luau::Value>>("a")
-        .named_arg::<Option<luau::Value>>("b")
-        .returns::<bool>()
+    FunctionSpec::new("languages_match")
+        .arg_name("a")
+        .arg_name("b")
         .call(languages_match_callback)
 }
 

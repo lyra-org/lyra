@@ -2077,7 +2077,7 @@ mod tests {
             ..CallContext::default()
         };
         ModuleSpec::new("test/tasks")
-            .function(FunctionSpec::sync_fn("later").call(move |mut frame| {
+            .function(FunctionSpec::new("later").call(move |mut frame| {
                 let seconds: f64 = frame.args.read()?;
                 let function = read_function(&mut frame)?;
                 let thread = frame.vm.create_thread(&function)?;
@@ -2094,7 +2094,7 @@ mod tests {
                     );
                 Ok(())
             }))
-            .function(FunctionSpec::sync_fn("register").call(move |mut frame| {
+            .function(FunctionSpec::new("register").call(move |mut frame| {
                 let function = read_function(&mut frame)?;
                 let context = group_context(&frame);
                 frame
@@ -2106,13 +2106,13 @@ mod tests {
                     .push((function, context));
                 Ok(())
             }))
-            .function(FunctionSpec::sync_fn("run").call(move |mut frame| {
+            .function(FunctionSpec::new("run").call(move |mut frame| {
                 let mut runs = runs.lock().expect("runs mutex poisoned");
                 *runs += 1;
                 frame.returns.write(*runs as i64)?;
                 Ok(())
             }))
-            .function(FunctionSpec::sync_fn("record").call(move |mut frame| {
+            .function(FunctionSpec::new("record").call(move |mut frame| {
                 let value: String = frame.args.read()?;
                 recorded
                     .lock()
@@ -2120,30 +2120,26 @@ mod tests {
                     .push(value);
                 Ok(())
             }))
-            .function(FunctionSpec::sync_fn("check").call(|mut frame| {
+            .function(FunctionSpec::new("check").call(|mut frame| {
                 let checked = crate::ensure_current_plugin_run(frame.vm, &frame.context);
                 frame
                     .returns
                     .write(checked.err().map(|error| error.to_string()))?;
                 Ok(())
             }))
+            .function(FunctionSpec::new("forever").call_async(Arc::new(|_frame| {
+                Ok(luau::ScheduledFuture::new(std::future::pending::<
+                    luau::runtime::Result<()>,
+                >()))
+            })))
+            .function(FunctionSpec::new("soon").call_async(Arc::new(|_frame| {
+                Ok(luau::ScheduledFuture::after(
+                    std::time::Duration::from_millis(10),
+                    async { Ok(()) },
+                ))
+            })))
             .function(
-                FunctionSpec::async_fn("forever").call_async(Arc::new(|_frame| {
-                    Ok(luau::ScheduledFuture::new(std::future::pending::<
-                        luau::runtime::Result<()>,
-                    >()))
-                })),
-            )
-            .function(
-                FunctionSpec::async_fn("soon").call_async(Arc::new(|_frame| {
-                    Ok(luau::ScheduledFuture::after(
-                        std::time::Duration::from_millis(10),
-                        async { Ok(()) },
-                    ))
-                })),
-            )
-            .function(FunctionSpec::async_fn("eventually").call_async(Arc::new(
-                move |mut frame| {
+                FunctionSpec::new("eventually").call_async(Arc::new(move |mut frame| {
                     let value: String = frame.args.read()?;
                     let recorded = eventually_recorded.clone();
                     Ok(luau::ScheduledFuture::after(
@@ -2156,9 +2152,9 @@ mod tests {
                             Ok(())
                         },
                     ))
-                },
-            )))
-            .function(FunctionSpec::sync_fn("thread_plugin").call(|mut frame| {
+                })),
+            )
+            .function(FunctionSpec::new("thread_plugin").call(|mut frame| {
                 let plugin = frame
                     .vm
                     .thread_call_context(&frame.thread)?
@@ -2173,7 +2169,7 @@ mod tests {
     /// A capability only `lib` holds in the task test runtimes.
     fn secret_module() -> ModuleSpec {
         ModuleSpec::new("test/secret")
-            .function(FunctionSpec::sync_fn("get").call(|mut frame| {
+            .function(FunctionSpec::new("get").call(|mut frame| {
                 frame.returns.write("secret")?;
                 Ok(())
             }))
@@ -2998,7 +2994,7 @@ mod tests {
         )
         .modules(vec![GatedModule::new(
             "demo.secret",
-            ModuleSpec::new("demo/secret").function(FunctionSpec::sync_fn("value").call(
+            ModuleSpec::new("demo/secret").function(FunctionSpec::new("value").call(
                 |mut frame| {
                     frame.returns.write("secret")?;
                     Ok(())
@@ -3032,12 +3028,10 @@ mod tests {
         )
         .modules(vec![GatedModule::new(
             "demo.math",
-            ModuleSpec::new("demo/math").function(FunctionSpec::sync_fn("answer").call(
-                |mut frame| {
-                    frame.returns.write(42_i64)?;
-                    Ok(())
-                },
-            )),
+            ModuleSpec::new("demo/math").function(FunctionSpec::new("answer").call(|mut frame| {
+                frame.returns.write(42_i64)?;
+                Ok(())
+            })),
         )])
         .build()?;
 
@@ -3068,13 +3062,11 @@ mod tests {
         })
         .modules(vec![GatedModule::new(
             "demo.store",
-            ModuleSpec::new("demo/store").function(FunctionSpec::sync_fn("value").call(
-                |mut frame| {
-                    let store = frame.vm.data().get::<TestStore>()?;
-                    frame.returns.write(store.0)?;
-                    Ok(())
-                },
-            )),
+            ModuleSpec::new("demo/store").function(FunctionSpec::new("value").call(|mut frame| {
+                let store = frame.vm.data().get::<TestStore>()?;
+                frame.returns.write(store.0)?;
+                Ok(())
+            })),
         )])
         .build()?;
 
@@ -3120,7 +3112,7 @@ mod tests {
         let order = Arc::new(Mutex::new(Vec::<String>::new()));
         let order_for_module = order.clone();
         let module = ModuleSpec::new("test/order")
-            .function(FunctionSpec::sync_fn("record").call(move |mut frame| {
+            .function(FunctionSpec::new("record").call(move |mut frame| {
                 let id: String = frame.args.read_named("id")?;
                 order_for_module
                     .lock()
@@ -3589,7 +3581,7 @@ mod tests {
         let runs = Arc::new(Mutex::new(0usize));
         let runs_for_module = runs.clone();
         let module = ModuleSpec::new("test/order")
-            .function(FunctionSpec::sync_fn("record").call(move |_frame| {
+            .function(FunctionSpec::new("record").call(move |_frame| {
                 *runs_for_module.lock().expect("runs mutex poisoned") += 1;
                 Ok(())
             }))

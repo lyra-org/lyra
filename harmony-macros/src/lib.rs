@@ -340,7 +340,6 @@ pub fn userdata_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let self_ty = ast.self_ty.clone();
     let mut class_methods = Vec::new();
     let mut method_descriptors = Vec::new();
-    let mut spec_methods = Vec::new();
 
     for item in &mut ast.items {
         let ImplItem::Fn(fn_item) = item else {
@@ -453,17 +452,6 @@ pub fn userdata_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 kind: ::harmony_luau::MethodKind::Instance,
             }
         });
-
-        let spec = method_spec_tokens(
-            &options,
-            &fn_item.sig.inputs,
-            &fn_item.sig.output,
-            &fn_name_lit,
-            is_async || returns_future,
-        );
-        spec_methods.push(quote! {
-            .method(#spec)
-        });
     }
 
     quote! {
@@ -490,7 +478,6 @@ pub fn userdata_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 ::harmony_core::UserDataSpec::new(
                     <#self_ty as ::harmony_core::UserDataType>::CLASS_NAME,
                 )
-                    #(#spec_methods)*
             }
         }
 
@@ -788,75 +775,6 @@ fn return_descriptor_tokens(options: &HarmonyMethodOptions, output: &ReturnType)
             ::std::vec::Vec::new()
         },
     }
-}
-
-fn method_spec_tokens(
-    options: &HarmonyMethodOptions,
-    inputs: &Punctuated<FnArg, Token![,]>,
-    output: &ReturnType,
-    name: &LitStr,
-    is_async: bool,
-) -> TokenStream2 {
-    let constructor = if is_async {
-        quote! { async_fn }
-    } else {
-        quote! { sync_fn }
-    };
-    let mut spec = quote! {
-        ::harmony_core::FunctionSpec::#constructor(#name)
-    };
-
-    let arg_types = if let Some(args) = &options.args {
-        args.iter()
-            .map(|arg| {
-                let name = lit_str(&arg.name, name.span());
-                let ty = &arg.ty;
-                (name, quote! { #ty })
-            })
-            .collect::<Vec<_>>()
-    } else {
-        collect_parameters(inputs)
-            .iter()
-            .map(|param| {
-                let name = &param.name_lit;
-                let ty = param.ty;
-                (name.clone(), quote! { #ty })
-            })
-            .collect::<Vec<_>>()
-    };
-
-    for (arg_name, arg_ty) in arg_types {
-        spec = quote! {
-            #spec.named_arg::<#arg_ty>(#arg_name)
-        };
-    }
-
-    let return_types = if let Some(returns) = &options.returns {
-        returns.iter().map(|ty| quote! { #ty }).collect::<Vec<_>>()
-    } else {
-        function_spec_return_types(output)
-    };
-
-    for return_ty in return_types {
-        spec = quote! {
-            #spec.returns::<#return_ty>()
-        };
-    }
-
-    spec
-}
-
-fn function_spec_return_types(output: &ReturnType) -> Vec<TokenStream2> {
-    let Some(return_ty) = effective_return_type(output) else {
-        return Vec::new();
-    };
-    if is_unit_type(&return_ty) || is_scheduled_future_type(&return_ty) {
-        return Vec::new();
-    }
-    if let Type::Tuple(tuple) = &return_ty {
-        return tuple.elems.iter().map(|ty| quote! { #ty }).collect();
-    }
-    vec![quote! { #return_ty }]
 }
 
 fn effective_return_type(output: &ReturnType) -> Option<Type> {

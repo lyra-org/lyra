@@ -32,10 +32,8 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn get_primary_source_key_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_primary_source_key")
+    FunctionSpec::new("get_primary_source_key")
         .arg_name("track_id")
-        .args::<i64>()
-        .returns::<Option<String>>()
         .call_async(std::sync::Arc::new(get_primary_source_key_callback))
 }
 

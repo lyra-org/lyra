@@ -40,7 +40,6 @@ use crate::plugins::db;
 use crate::services::catalog::Viewer;
 use lyra_db::Cover;
 use lyra_db::DbAsync;
-use lyra_db::ResolveId;
 
 enum CoverValidity {
     Valid(Cover),
@@ -66,64 +65,46 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn get_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("get")
         .arg_name("id")
-        .args::<ResolveId>()
-        .returns::<Option<luau::Table>>()
         .call_async(Arc::new(|frame| cover_callback(frame, db::scoped)))
 }
 
 fn get_many_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_many")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("get_many")
         .arg_name("ids")
-        .args::<luau::Table>()
-        .returns::<luau::Table>()
         .call_async(Arc::new(|frame| covers_callback(frame, db::scoped)))
 }
 
 fn get_playlist_sources_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_playlist_sources")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("get_playlist_sources")
         .arg_name("id")
-        .args::<ResolveId>()
-        .returns::<luau::Table>()
         .call_async(Arc::new(|frame| {
             playlist_sources_callback(frame, db::scoped)
         }))
 }
 
 fn get_playlist_sources_many_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_playlist_sources_many")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("get_playlist_sources_many")
         .arg_name("ids")
-        .args::<luau::Table>()
-        .returns::<luau::Table>()
         .call_async(Arc::new(get_playlist_sources_many_callback))
 }
 
 fn artwork_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("artwork")
+    FunctionSpec::new("artwork")
         .arg_name("id")
-        .args::<ResolveId>()
-        .returns::<Option<luau::Table>>()
         .call_async(Arc::new(|frame| cover_callback(frame, db::system)))
 }
 
 fn artwork_many_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("artwork_many")
+    FunctionSpec::new("artwork_many")
         .arg_name("ids")
-        .args::<luau::Table>()
-        .returns::<luau::Table>()
         .call_async(Arc::new(|frame| covers_callback(frame, db::system)))
 }
 
 fn artwork_playlist_sources_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("artwork_playlist_sources")
+    FunctionSpec::new("artwork_playlist_sources")
         .arg_name("id")
-        .args::<ResolveId>()
-        .returns::<luau::Table>()
         .call_async(Arc::new(|frame| {
             playlist_sources_callback(frame, db::system)
         }))

@@ -14,7 +14,6 @@ use harmony_luau as luau;
 
 mod descriptors;
 
-use self::descriptors::PluginManifest;
 #[cfg(feature = "docgen")]
 pub(crate) use self::descriptors::render_luau_definition;
 
@@ -45,7 +44,7 @@ pub(super) struct PluginsModule;
 impl PluginsModule {}
 
 pub(super) fn plugin_id_spec() -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn("id").returns::<String>();
+    let spec = FunctionSpec::new("id");
     spec.call(plugin_id_callback)
 }
 
@@ -60,20 +59,17 @@ fn plugin_id_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<(
 }
 
 pub(super) fn plugin_manifest_spec() -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn("manifest").returns::<PluginManifest>();
+    let spec = FunctionSpec::new("manifest");
     spec.call(plugin_manifest_callback)
 }
 
 pub(super) fn plugin_list_spec() -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn("list").returns::<Vec<PluginManifest>>();
+    let spec = FunctionSpec::new("list");
     spec.call(plugin_list_callback)
 }
 
 pub(super) fn plugin_get_spec() -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn("get")
-        .arg_name("id")
-        .args::<String>()
-        .returns::<Option<PluginManifest>>();
+    let spec = FunctionSpec::new("get").arg_name("id");
     spec.call(plugin_get_callback)
 }
 

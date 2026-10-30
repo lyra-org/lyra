@@ -38,29 +38,20 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn get_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("get")
         .arg_name("ids")
-        .args::<Vec<u64>>()
-        .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(get_callback))
 }
 
 fn by_parent_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("by_parent")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("by_parent")
         .arg_name("parent_ids")
-        .args::<Vec<u64>>()
-        .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(by_parent_callback))
 }
 
 fn by_track_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("by_track")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("by_track")
         .arg_name("track_ids")
-        .args::<Vec<u64>>()
-        .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(by_track_callback))
 }
 

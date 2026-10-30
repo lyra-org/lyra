@@ -303,10 +303,8 @@ pub(crate) fn require_user_db_id(
 }
 
 fn resolve_auth_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("resolve_auth")
+    FunctionSpec::new("resolve_auth")
         .arg_name("bearer")
-        .args::<Option<String>>()
-        .returns::<Option<ResolvedAuth>>()
         .call_async(Arc::new(resolve_auth_callback))
 }
 
@@ -337,16 +335,11 @@ fn resolve_auth_callback(
 }
 
 fn login_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("login")
+    FunctionSpec::new("login")
         .arg_name("username")
-        .args::<String>()
         .arg_name("password")
-        .args::<Option<String>>()
         .arg_name("user_agent")
-        .args::<Option<String>>()
         .arg_name("client_name")
-        .args::<Option<String>>()
-        .returns::<LoginOutcome>()
         .call_async(Arc::new(login_callback))
 }
 
@@ -408,10 +401,8 @@ fn login_callback(
 }
 
 fn logout_session_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("logout_session")
+    FunctionSpec::new("logout_session")
         .arg_name("token")
-        .args::<Option<String>>()
-        .returns::<bool>()
         .call_async(Arc::new(logout_session_callback))
 }
 
@@ -428,10 +419,8 @@ fn logout_session_callback(
 }
 
 fn list_sessions_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("list_sessions")
-        .context::<DispatchAuth>()
-        .named_arg::<Option<SessionListQuery>>("query")
-        .returns::<Vec<SessionInfo>>()
+    FunctionSpec::new("list_sessions")
+        .arg_name("query")
         .call_async(Arc::new(list_sessions_callback))
 }
 
@@ -476,10 +465,8 @@ fn list_sessions_callback(
 }
 
 fn revoke_session_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("revoke_session")
-        .context::<DispatchAuth>()
-        .named_arg::<String>("session_id")
-        .returns::<bool>()
+    FunctionSpec::new("revoke_session")
+        .arg_name("session_id")
         .call_async(Arc::new(revoke_session_callback))
 }
 
@@ -497,9 +484,8 @@ fn revoke_session_callback(
 }
 
 fn get_session_data_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_session_data")
-        .named_arg::<String>("token")
-        .returns::<JsonValue>()
+    FunctionSpec::new("get_session_data")
+        .arg_name("token")
         .call_async(Arc::new(|mut frame| {
             let token: String = frame.args.read_named("token")?;
             let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
@@ -515,10 +501,9 @@ fn get_session_data_spec() -> FunctionSpec {
 }
 
 fn set_session_data_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("set_session_data")
-        .named_arg::<String>("token")
-        .named_arg::<JsonValue>("data")
-        .returns::<()>()
+    FunctionSpec::new("set_session_data")
+        .arg_name("token")
+        .arg_name("data")
         .call_async(Arc::new(|mut frame| {
             let token: String = frame.args.read_named("token")?;
             let value: luau::Value = frame.args.read_named("data")?;
@@ -536,7 +521,7 @@ fn set_session_data_spec() -> FunctionSpec {
 }
 
 fn auth_capabilities_spec() -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn("capabilities").returns::<AuthCapabilities>();
+    let spec = FunctionSpec::new("capabilities");
     spec.call(auth_capabilities_callback)
 }
 #[derive(Clone)]

@@ -42,47 +42,32 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn add_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("add")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("add")
         .arg_name("target_id")
-        .args::<i64>()
-        .returns::<bool>()
         .call_async(Arc::new(add_callback))
 }
 
 fn remove_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("remove")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("remove")
         .arg_name("target_id")
-        .args::<i64>()
-        .returns::<bool>()
         .call_async(Arc::new(remove_callback))
 }
 
 fn has_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("has")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("has")
         .arg_name("target_id")
-        .args::<i64>()
-        .returns::<bool>()
         .call_async(Arc::new(has_callback))
 }
 
 fn has_many_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("has_many")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("has_many")
         .arg_name("target_ids")
-        .args::<luau::Table>()
-        .returns::<luau::Table>()
         .call_async(Arc::new(has_many_callback))
 }
 
 fn list_ids_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("list_ids")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("list_ids")
         .arg_name("entity")
-        .args::<String>()
-        .returns::<luau::Table>()
         .call_async(Arc::new(list_ids_callback))
 }
 
@@ -240,35 +225,35 @@ fn module_descriptor() -> ModuleDescriptor {
                 description: None,
                 params: vec![param("target_id", i64::luau_type())],
                 returns: vec![bool::luau_type()],
-                yields: false,
+                yields: true,
             },
             ModuleFunctionDescriptor {
                 path: vec!["remove"],
                 description: None,
                 params: vec![param("target_id", i64::luau_type())],
                 returns: vec![bool::luau_type()],
-                yields: false,
+                yields: true,
             },
             ModuleFunctionDescriptor {
                 path: vec!["has"],
                 description: None,
                 params: vec![param("target_id", i64::luau_type())],
                 returns: vec![bool::luau_type()],
-                yields: false,
+                yields: true,
             },
             ModuleFunctionDescriptor {
                 path: vec!["has_many"],
                 description: None,
                 params: vec![param("target_ids", Vec::<u64>::luau_type())],
                 returns: vec![LuauType::map(u64::luau_type(), bool::luau_type())],
-                yields: false,
+                yields: true,
             },
             ModuleFunctionDescriptor {
                 path: vec!["list_ids"],
                 description: None,
                 params: vec![param("entity", String::luau_type())],
                 returns: vec![Vec::<i64>::luau_type()],
-                yields: false,
+                yields: true,
             },
         ],
     }

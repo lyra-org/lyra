@@ -21,8 +21,6 @@ const LOG_GLOBAL_SCOPE_NAME: &str = "harmony.globals";
 const WARN_GLOBAL_NAME: &str = "warn";
 const LUAURC_GLOBAL_NAMES: &[&str] = &[WARN_GLOBAL_NAME];
 
-struct LogValue;
-
 pub fn plugin_log_global_specs() -> Vec<GlobalSpec> {
     vec![
         GlobalSpec::new(LOG_GLOBAL_SCOPE_NAME)
@@ -50,7 +48,7 @@ pub fn render_plugin_log_globals_luau_definition() -> Result<String, std::fmt::E
 }
 
 fn log_function_spec(name: &'static str, level: Level) -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn(name).variadic_args::<LogValue>();
+    let spec = FunctionSpec::new(name);
     spec.call(move |frame| emit_callback(level, frame))
 }
 

@@ -42,7 +42,6 @@ use crate::{
         releases as release_service,
     },
 };
-use lyra_db::Release;
 
 struct ReleasesModule;
 
@@ -59,69 +58,46 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn get_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("get")
         .arg_name("ids")
-        .args::<Vec<u64>>()
-        .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(get_callback))
 }
 
 fn by_track_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("by_track")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("by_track")
         .arg_name("track_ids")
-        .args::<Vec<u64>>()
-        .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(by_track_callback))
 }
 
 fn by_genre_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("by_genre")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("by_genre")
         .arg_name("genre_ids")
-        .args::<Vec<u64>>()
-        .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(by_genre_callback))
 }
 
 fn query_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("query")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("query")
         .arg_name("query")
-        .args::<luau::Table>()
-        .returns::<luau::Value>()
         .call_async(std::sync::Arc::new(query_callback))
 }
 
 fn similar_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("similar")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("similar")
         .arg_name("release_db_id")
-        .args::<i64>()
         .arg_name("opts")
-        .args::<Option<luau::Table>>()
-        .returns::<Option<Vec<Release>>>()
         .call_async(std::sync::Arc::new(similar_callback))
 }
 
 fn chains_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("chains")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("chains")
         .arg_name("release_ids")
-        .args::<Vec<u64>>()
-        .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(chains_callback))
 }
 
 fn replace_chains_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("replace_chains")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("replace_chains")
         .arg_name("release_id")
-        .args::<i64>()
         .arg_name("chains")
-        .args::<luau::Table>()
-        .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(replace_chains_callback))
 }
 

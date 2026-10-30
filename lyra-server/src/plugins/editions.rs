@@ -32,32 +32,28 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn media_formats_spec() -> FunctionSpec {
-    FunctionSpec::sync_fn("media_formats")
-        .named_arg::<Option<luau::Value>>("input")
-        .returns::<Vec<String>>()
+    FunctionSpec::new("media_formats")
+        .arg_name("input")
         .call(media_formats_callback)
 }
 
 fn media_formats_match_spec() -> FunctionSpec {
-    FunctionSpec::sync_fn("media_formats_match")
-        .named_arg::<Option<luau::Value>>("a")
-        .named_arg::<Option<luau::Value>>("b")
-        .returns::<bool>()
+    FunctionSpec::new("media_formats_match")
+        .arg_name("a")
+        .arg_name("b")
         .call(media_formats_match_callback)
 }
 
 fn barcode_spec() -> FunctionSpec {
-    FunctionSpec::sync_fn("barcode")
-        .named_arg::<Option<String>>("input")
-        .returns::<Option<String>>()
+    FunctionSpec::new("barcode")
+        .arg_name("input")
         .call(barcode_callback)
 }
 
 fn barcodes_match_spec() -> FunctionSpec {
-    FunctionSpec::sync_fn("barcodes_match")
-        .named_arg::<Option<String>>("a")
-        .named_arg::<Option<String>>("b")
-        .returns::<bool>()
+    FunctionSpec::new("barcodes_match")
+        .arg_name("a")
+        .arg_name("b")
         .call(barcodes_match_callback)
 }
 

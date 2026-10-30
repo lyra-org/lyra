@@ -43,50 +43,39 @@ pub fn module_spec() -> ModuleSpec {
 }
 
 fn json_encode_spec() -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn("json.encode")
-        .named_arg::<JsonValue>("input")
-        .returns::<String>();
+    let spec = FunctionSpec::new("json.encode").arg_name("input");
     spec.call(json_encode_callback)
 }
 
 fn json_decode_spec() -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn("json.decode")
-        .named_arg::<String>("input")
-        .returns::<JsonValue>();
+    let spec = FunctionSpec::new("json.decode").arg_name("input");
     spec.call(json_decode_callback)
 }
 
 fn yaml_encode_spec() -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn("yaml.encode")
-        .named_arg::<JsonValue>("input")
-        .returns::<String>();
+    let spec = FunctionSpec::new("yaml.encode").arg_name("input");
     spec.call(yaml_encode_callback)
 }
 
 fn yaml_decode_spec() -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn("yaml.decode")
-        .named_arg::<String>("input")
-        .returns::<JsonValue>();
+    let spec = FunctionSpec::new("yaml.decode").arg_name("input");
     spec.call(yaml_decode_callback)
 }
 
 fn xml_encode_spec() -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn("xml.encode")
-        .named_arg::<String>("root")
-        .named_arg::<JsonValue>("input")
-        .returns::<String>();
+    let spec = FunctionSpec::new("xml.encode")
+        .arg_name("root")
+        .arg_name("input");
     spec.call(xml_encode_callback)
 }
 
 fn xml_decode_spec() -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn("xml.decode")
-        .named_arg::<String>("input")
-        .returns::<JsonValue>();
+    let spec = FunctionSpec::new("xml.decode").arg_name("input");
     spec.call(xml_decode_callback)
 }
 
 fn empty_object_spec() -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn("empty_object").returns::<JsonValue>();
+    let spec = FunctionSpec::new("empty_object");
     spec.call(empty_object_callback)
 }
 

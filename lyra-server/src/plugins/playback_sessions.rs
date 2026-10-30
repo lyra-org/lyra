@@ -133,34 +133,24 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn on_update_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("on_update")
+    FunctionSpec::new("on_update")
         .arg_name("handler")
-        .args::<PlaybackUpdateHandler>()
         .call_async(Arc::new(on_update_callback))
 }
 
 fn report_session_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("report_session")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("report_session")
         .arg_name("request")
-        .args::<PlaybackSessionReportRequest>()
-        .returns::<Option<String>>()
-        .returns::<Option<String>>()
         .call_async(Arc::new(report_session_callback))
 }
 
 fn list_connections_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("list_connections")
-        .context::<crate::plugins::auth::DispatchAuth>()
-        .returns::<Vec<ConnectionInfo>>()
-        .call_async(Arc::new(list_connections_callback))
+    FunctionSpec::new("list_connections").call_async(Arc::new(list_connections_callback))
 }
 
 fn send_command_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("send_command")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("send_command")
         .arg_name("request")
-        .args::<SendCommandRequest>()
         .call_async(Arc::new(send_command_callback))
 }
 

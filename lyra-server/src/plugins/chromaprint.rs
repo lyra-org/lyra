@@ -41,10 +41,8 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn compute_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("compute")
+    FunctionSpec::new("compute")
         .arg_name("entry_id")
-        .args::<i64>()
-        .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(compute_callback))
 }
 

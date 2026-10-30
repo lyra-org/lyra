@@ -234,28 +234,27 @@ pub(crate) fn module_spec(state: CachedHttpState) -> ModuleSpec {
 
     ModuleSpec::new("harmony/http")
         .function(
-            FunctionSpec::async_fn("request")
+            FunctionSpec::new("request")
                 .arg_name("options")
                 .call_async(Arc::new(move |frame| {
                     request_callback(frame, request_state.clone())
                 })),
         )
         .function(
-            FunctionSpec::async_fn("set_rate_limit")
+            FunctionSpec::new("set_rate_limit")
                 .arg_name("options")
                 .call_async(Arc::new(move |frame| {
                     set_rate_limit_callback(frame, rate_limit_plugin_id.clone())
                 })),
         )
         .function(
-            FunctionSpec::async_fn("set_max_in_flight")
+            FunctionSpec::new("set_max_in_flight")
                 .arg_name("options")
                 .call_async(Arc::new(set_max_in_flight_callback)),
         )
         .function(
-            FunctionSpec::sync_fn("encode_uri_component")
-                .named_arg::<String>("input")
-                .returns::<String>()
+            FunctionSpec::new("encode_uri_component")
+                .arg_name("input")
                 .call(encode_uri_component_callback),
         )
         .install(|_| Ok(ModuleExport::new(CachedHttpModule)))

@@ -80,10 +80,8 @@ pub(crate) fn module_spec() -> ModuleSpec {
 
 // Unscoped: public artwork routes resolve names without a caller.
 fn artwork_id_by_name_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("artwork_id_by_name")
+    FunctionSpec::new("artwork_id_by_name")
         .arg_name("name")
-        .args::<String>()
-        .returns::<Option<i64>>()
         .call_async(std::sync::Arc::new(artwork_id_by_name_callback))
 }
 
@@ -105,47 +103,32 @@ fn artwork_id_by_name_callback(
 }
 
 fn query_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("query")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("query")
         .arg_name("query")
-        .args::<luau::Table>()
-        .returns::<luau::Value>()
         .call_async(std::sync::Arc::new(query_callback))
 }
 
 fn get_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("get")
         .arg_name("ids")
-        .args::<Vec<u64>>()
-        .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(get_callback))
 }
 
 fn by_release_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("by_release")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("by_release")
         .arg_name("release_ids")
-        .args::<Vec<u64>>()
-        .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(by_release_callback))
 }
 
 fn by_track_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("by_track")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("by_track")
         .arg_name("track_ids")
-        .args::<Vec<u64>>()
-        .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(by_track_callback))
 }
 
 fn relations_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("relations")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("relations")
         .arg_name("ids")
-        .args::<Vec<u64>>()
-        .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(relations_callback))
 }
 

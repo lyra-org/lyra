@@ -40,7 +40,6 @@ use crate::services::auth::access::{
     LibraryFull,
     LibraryView,
 };
-use lyra_db::ResolveId;
 
 struct LibrariesModule;
 
@@ -53,26 +52,20 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn list_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("list")
+    FunctionSpec::new("list")
         .arg_name("id")
-        .args::<Option<ResolveId>>()
-        .returns::<Vec<LibraryRecord>>()
         .call_async(std::sync::Arc::new(list_callback))
 }
 
 fn get_for_entity_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_for_entity")
+    FunctionSpec::new("get_for_entity")
         .arg_name("entity_id")
-        .args::<i64>()
-        .returns::<Vec<LibraryRecord>>()
         .call_async(std::sync::Arc::new(get_for_entity_callback))
 }
 
 fn get_for_entities_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_for_entities")
+    FunctionSpec::new("get_for_entities")
         .arg_name("entity_ids")
-        .args::<Vec<u64>>()
-        .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(get_for_entities_callback))
 }
 

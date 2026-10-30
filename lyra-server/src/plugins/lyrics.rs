@@ -250,66 +250,50 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn get_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get")
-        .context::<crate::plugins::auth::DispatchAuth>()
-        .named_arg::<i64>("track_id")
-        .named_arg::<Option<String>>("language")
-        .named_arg::<Option<bool>>("require_synced")
-        .named_arg::<Option<String>>("provider")
-        .returns::<Option<LyricsInfo>>()
+    FunctionSpec::new("get")
+        .arg_name("track_id")
+        .arg_name("language")
+        .arg_name("require_synced")
+        .arg_name("provider")
         .call_async(Arc::new(get_callback))
 }
 
 fn parse_lrc_spec() -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn("parse_lrc")
-        .named_arg::<String>("text")
-        .named_arg::<Option<String>>("language")
-        .returns::<ParsedLyricsInput>();
+    let spec = FunctionSpec::new("parse_lrc")
+        .arg_name("text")
+        .arg_name("language");
     spec.call(parse_lrc_callback)
 }
 
 fn upsert_personal_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("upsert_personal")
-        .context::<crate::plugins::auth::DispatchAuth>()
-        .named_arg::<i64>("track_id")
-        .named_arg::<String>("track_public_id")
-        .named_arg::<PersonalLyricsUploadInput>("upload")
-        .returns::<LyricsInfo>()
+    FunctionSpec::new("upsert_personal")
+        .arg_name("track_id")
+        .arg_name("track_public_id")
+        .arg_name("upload")
         .call_async(Arc::new(upsert_personal_callback))
 }
 
 fn delete_personal_for_track_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("delete_personal_for_track")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("delete_personal_for_track")
         .arg_name("track_id")
-        .args::<i64>()
-        .returns::<bool>()
         .call_async(Arc::new(delete_personal_for_track_callback))
 }
 
 fn delete_for_track_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("delete_for_track")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("delete_for_track")
         .arg_name("track_id")
-        .args::<i64>()
         .call_async(Arc::new(delete_for_track_callback))
 }
 
 fn has_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("has")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("has")
         .arg_name("track_id")
-        .args::<i64>()
-        .returns::<bool>()
         .call_async(Arc::new(has_callback))
 }
 
 fn has_many_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("has_many")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("has_many")
         .arg_name("track_ids")
-        .args::<Vec<u64>>()
-        .returns::<std::collections::BTreeMap<u64, bool>>()
         .call_async(Arc::new(has_many_callback))
 }
 

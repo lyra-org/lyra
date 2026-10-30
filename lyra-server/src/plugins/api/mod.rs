@@ -141,19 +141,14 @@ fn route_spec(
     include_method: bool,
     callback: for<'vm> fn(luau::CallFrame<'vm>) -> luau::runtime::Result<()>,
 ) -> FunctionSpec {
-    let mut spec = FunctionSpec::sync_fn(name);
+    let mut spec = FunctionSpec::new(name);
     if include_method {
-        spec = spec.arg_name("method").args::<ApiMethod>();
+        spec = spec.arg_name("method");
     }
     spec.arg_name("path")
-        .args::<String>()
         .arg_name("handler")
-        .args::<ApiHandler>()
         .arg_name("auth_mode")
-        .args::<Option<ApiRouteAuthMode>>()
         .arg_name("case_insensitive")
-        .args::<Option<bool>>()
-        .returns::<()>()
         .call(callback)
 }
 
@@ -161,7 +156,7 @@ fn response_spec(
     name: &'static str,
     callback: for<'vm> fn(luau::CallFrame<'vm>) -> luau::runtime::Result<()>,
 ) -> FunctionSpec {
-    FunctionSpec::sync_fn(name).call(callback)
+    FunctionSpec::new(name).call(callback)
 }
 
 fn register_route_callback(
@@ -1205,14 +1200,10 @@ pub(crate) fn module_spec() -> harmony_core::ModuleSpec {
         .function(route_spec("head", false, head_callback))
         .function(route_spec("options", false, options_callback))
         .function(
-            FunctionSpec::sync_fn("websocket")
+            FunctionSpec::new("websocket")
                 .arg_name("path")
-                .args::<String>()
                 .arg_name("handler")
-                .args::<ApiWebSocketHandler>()
                 .arg_name("auth_mode")
-                .args::<Option<ApiRouteAuthMode>>()
-                .returns::<()>()
                 .call(websocket_callback),
         )
         .function(response_spec("response.json", response_json_callback))
@@ -1237,38 +1228,25 @@ pub(crate) fn module_spec() -> harmony_core::ModuleSpec {
             response_hls_playlist_callback,
         ))
         .function(
-            FunctionSpec::sync_fn("query.bool")
+            FunctionSpec::new("query.bool")
                 .arg_name("query")
-                .args::<ApiQueryParams>()
                 .arg_name("key")
-                .args::<String>()
                 .arg_name("default")
-                .args::<Option<bool>>()
-                .returns::<Option<bool>>()
                 .call(query_bool_callback),
         )
         .function(
-            FunctionSpec::sync_fn("query.int")
+            FunctionSpec::new("query.int")
                 .arg_name("query")
-                .args::<ApiQueryParams>()
                 .arg_name("key")
-                .args::<String>()
                 .arg_name("default")
-                .args::<Option<i64>>()
                 .arg_name("min")
-                .args::<Option<i64>>()
                 .arg_name("max")
-                .args::<Option<i64>>()
-                .returns::<Option<i64>>()
                 .call(query_int_callback),
         )
         .function(
-            FunctionSpec::sync_fn("query.csv")
+            FunctionSpec::new("query.csv")
                 .arg_name("query")
-                .args::<ApiQueryParams>()
                 .arg_name("key")
-                .args::<String>()
-                .returns::<Vec<String>>()
                 .call(query_csv_callback),
         )
         .install(|_| Ok(harmony_core::ModuleExport::new(ApiModule)))

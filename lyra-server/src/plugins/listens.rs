@@ -99,29 +99,21 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn get_stats_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_stats")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("get_stats")
         .arg_name("track_ids")
-        .args::<luau::Table>()
         .arg_name("merge_unique_external_ids")
-        .args::<Option<bool>>()
-        .returns::<luau::Table>()
         .call_async(Arc::new(get_stats_callback))
 }
 
 fn submit_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("submit")
-        .context::<crate::plugins::auth::DispatchAuth>()
+    FunctionSpec::new("submit")
         .arg_name("plays")
-        .args::<luau::Table>()
-        .returns::<luau::Table>()
         .call_async(Arc::new(submit_callback))
 }
 
 fn on_update_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("on_update")
+    FunctionSpec::new("on_update")
         .arg_name("handler")
-        .args::<ListenUpdateHandler>()
         .call_async(Arc::new(on_update_callback))
 }
 
@@ -378,7 +370,7 @@ fn module_descriptor() -> ModuleDescriptor {
                     String::luau_type(),
                     LuauType::map(u64::luau_type(), u64::luau_type()),
                 )],
-                yields: false,
+                yields: true,
             },
             ModuleFunctionDescriptor {
                 path: vec!["submit"],
