@@ -5,10 +5,6 @@
 
 use std::sync::Arc;
 
-use harmony_core::{
-    FunctionSpec,
-    ModuleSpec,
-};
 use harmony_luau as luau;
 #[cfg(feature = "docgen")]
 use harmony_luau::FunctionParameter;
@@ -24,9 +20,6 @@ use harmony_luau::{
 #[cfg(feature = "docgen")]
 use harmony_luau::{
     DescribeModule,
-    ModuleDescriptor,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
     render_definition_file_with_support,
 };
 use serde::{
@@ -159,13 +152,25 @@ impl luau::FromCallFrame for ReportingPlugin {
 
 pub(crate) struct PlaybackSessionsModule;
 
-#[harmony_macros::module(
-    id = "lyra/playback_sessions",
-    docs_feature = "docgen",
-    extend = "extend_module",
-    describe = "describe_module"
-)]
+#[harmony_macros::module(id = "lyra/playback_sessions", docs_feature = "docgen")]
 impl PlaybackSessionsModule {
+    #[harmony(
+        description = "Registers a callback for per-track playback accounting updates.",
+        args(handler: PlaybackUpdateHandler)
+    )]
+    fn on_update(
+        vm: &luau::Vm,
+        context: &luau::CallContext,
+        handler: luau::Function,
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
+        crate::plugins::update_callbacks::register::<playbacks::PlaybackUpdatePayload>(
+            vm,
+            context,
+            handler,
+            "playback_sessions.on_update",
+        )
+    }
+
     #[harmony(
         description = "Reports an observation for a plugin's player context. Returns (public /api/me/playbacks ID, nil) when accepted, (nil, nil) when ignored, or (nil, rejection reason) when admission is refused. Internal failures raise an error. Track changes retain the context ID; stopped contexts expire after five minutes without an accepted current observation.",
         returns(Option<String>, Option<String>)
@@ -417,38 +422,6 @@ impl PlaybackSessionsModule {
 
 /// `on_update` registers through the store shared with `listens.on_update`, which reads the
 /// call frame itself.
-fn extend_module(spec: ModuleSpec) -> ModuleSpec {
-    spec.function(
-        FunctionSpec::new("on_update")
-            .arg_name("handler")
-            .call_async(Arc::new(|frame| {
-                crate::plugins::update_callbacks::register::<playbacks::PlaybackUpdatePayload>(
-                    frame,
-                    "playback_sessions.on_update",
-                )
-            })),
-    )
-}
-
-#[cfg(feature = "docgen")]
-fn describe_module(descriptor: &mut ModuleDescriptor) {
-    descriptor.functions.insert(
-        0,
-        ModuleFunctionDescriptor {
-            path: vec!["on_update"],
-            description: Some("Registers a callback for per-track playback accounting updates."),
-            params: vec![ParameterDescriptor {
-                name: "handler",
-                ty: PlaybackUpdateHandler::luau_type(),
-                description: None,
-                variadic: false,
-            }],
-            returns: vec![],
-            yields: true,
-        },
-    );
-}
-
 fn from_luau_json<T>(vm: &luau::Vm, value: &luau::Value) -> luau::runtime::Result<T>
 where
     T: DeserializeOwned,

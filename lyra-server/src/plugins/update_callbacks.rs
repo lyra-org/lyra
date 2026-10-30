@@ -59,21 +59,22 @@ impl<Payload> UpdateCallbackStore<Payload> {
     }
 }
 
-/// Registers the frame's `handler` argument in the VM's store for `Payload` updates.
+/// Registers `function`, called as `function_name`, in the VM's store for `Payload` updates.
 pub(crate) fn register<Payload: 'static>(
-    mut frame: luau::AsyncCallFrame<'_>,
+    vm: &luau::Vm,
+    context: &luau::CallContext,
+    function: luau::Function,
     function_name: &str,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let function: luau::Function = frame.args.read_named("handler")?;
-    let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
+    let plugin_id = context.origin.plugin.clone().ok_or_else(|| {
         luau::Error::Runtime(format!(
             "{function_name} must be called from plugin Luau code"
         ))
     })?;
     let validated_plugin_id = PluginId::new(plugin_id.to_string())?;
-    harmony_core::ensure_current_plugin_run(frame.vm, &frame.context)?;
-    let vm = frame.vm.clone();
-    let context = frame.context.clone();
+    harmony_core::ensure_current_plugin_run(vm, context)?;
+    let vm = vm.clone();
+    let context = context.clone();
     Ok(luau::ScheduledFuture::new(async move {
         let generation = crate::plugins::STATE.generation();
         let _registration = generation

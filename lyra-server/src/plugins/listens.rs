@@ -9,19 +9,12 @@ use std::collections::{
 };
 
 use agdb::DbId;
-use harmony_core::{
-    FunctionSpec,
-    ModuleSpec,
-};
 use harmony_luau as luau;
 #[cfg(feature = "docgen")]
 use harmony_luau::{
     DescribeInterface,
     FieldDescriptor,
     InterfaceDescriptor,
-    ModuleDescriptor,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
 };
 #[cfg(feature = "docgen")]
 use harmony_luau::{
@@ -156,9 +149,7 @@ impl LuauTypeInfo for SubmittedPlays {
 #[harmony_macros::module(
     id = "lyra/listens",
     description = "Listen counts and submitted plays of the dispatch principal, and every user's listens as they are recorded: like `playback_sessions.on_update` for playbacks, `on_update` delivers all users' listens, not only the caller's.",
-    docs_feature = "docgen",
-    extend = "on_update_spec",
-    describe = "describe_on_update"
+    docs_feature = "docgen"
 )]
 impl ListensModule {
     #[harmony(returns(HashMap<String, HashMap<u64, u64>>))]
@@ -202,38 +193,23 @@ impl ListensModule {
             .collect::<HashMap<_, _>>();
         harmony_luau::serializable_to_luau_owned(outcomes)
     }
-}
 
-fn on_update_spec(spec: ModuleSpec) -> ModuleSpec {
-    spec.function(
-        FunctionSpec::new("on_update")
-            .arg_name("handler")
-            .call_async(std::sync::Arc::new(on_update_callback)),
-    )
-}
-
-fn on_update_callback(
-    frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    crate::plugins::update_callbacks::register::<ListenUpdatePayload>(frame, "listens.on_update")
-}
-
-#[cfg(feature = "docgen")]
-fn describe_on_update(descriptor: &mut ModuleDescriptor) {
-    descriptor.functions.push(ModuleFunctionDescriptor {
-        path: vec!["on_update"],
-        description: Some(
-            "Registers a callback for every user's listens. A `recorded` update arrives once for each commit that stored listens, right after it, carrying all of that commit's listens for one user: one for a live play, up to a whole submitted batch. Each listen is announced once. Delivery is best effort: updates are dropped while the plugin runtime is saturated.",
-        ),
-        params: vec![ParameterDescriptor {
-            name: "handler",
-            ty: ListenUpdateHandler::luau_type(),
-            description: None,
-            variadic: false,
-        }],
-        returns: vec![],
-        yields: true,
-    });
+    #[harmony(
+        description = "Registers a callback for every user's listens. A `recorded` update arrives once for each commit that stored listens, right after it, carrying all of that commit's listens for one user: one for a live play, up to a whole submitted batch. Each listen is announced once. Delivery is best effort: updates are dropped while the plugin runtime is saturated.",
+        args(handler: ListenUpdateHandler)
+    )]
+    fn on_update(
+        vm: &luau::Vm,
+        context: &luau::CallContext,
+        handler: luau::Function,
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
+        crate::plugins::update_callbacks::register::<ListenUpdatePayload>(
+            vm,
+            context,
+            handler,
+            "listens.on_update",
+        )
+    }
 }
 
 fn outcome_name(outcome: &SubmissionOutcome) -> &'static str {
