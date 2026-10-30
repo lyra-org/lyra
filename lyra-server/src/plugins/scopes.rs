@@ -219,7 +219,7 @@ scopes! {
     },
     Listens => {
         id: "lyra.listens",
-        module: listens::module_spec,
+        module: listens::ListensModule::module_spec,
         effects: &[Effect::ReadsPersonal("listening history")],
     },
     Locale => {
@@ -229,7 +229,7 @@ scopes! {
     },
     Lyrics => {
         id: "lyra.lyrics",
-        module: lyrics::module_spec,
+        module: lyrics::LyricsModule::module_spec,
         effects: &[
             Effect::WritesLibrary("lyrics"),
             Effect::WritesPersonal("lyrics"),
@@ -260,7 +260,7 @@ scopes! {
     },
     Playlists => {
         id: "lyra.playlists",
-        module: playlists::module_spec,
+        module: playlists::PlaylistsModule::module_spec,
         effects: &[
             Effect::ReadsPersonal("playlists"),
             Effect::WritesPersonal("playlists"),
@@ -291,7 +291,7 @@ scopes! {
     },
     Tags => {
         id: "lyra.tags",
-        module: tags::module_spec,
+        module: tags::TagsModule::module_spec,
         effects: &[
             Effect::ReadsPersonal("tags"),
             Effect::WritesPersonal("tags"),
@@ -299,7 +299,7 @@ scopes! {
     },
     TrackSources => {
         id: "lyra.track_sources",
-        module: track_sources::module_spec,
+        module: track_sources::TrackSourcesModule::module_spec,
         effects: &[],
     },
     Tracks => {
@@ -309,7 +309,7 @@ scopes! {
     },
     Users => {
         id: "lyra.users",
-        module: users::module_spec,
+        module: users::UsersModule::module_spec,
         effects: &[Effect::ReadsPersonal("user accounts")],
     },
 }

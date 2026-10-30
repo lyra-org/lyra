@@ -3,11 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use harmony_core::{
-    FunctionSpec,
-    ModuleExport,
-    ModuleSpec,
-};
 use harmony_luau as luau;
 use harmony_luau::{
     DescribeInterface,
@@ -16,15 +11,9 @@ use harmony_luau::{
     LuauType,
     LuauTypeInfo,
 };
-#[cfg(feature = "docgen")]
-use harmony_luau::{
-    ModuleDescriptor,
-    ModuleFunctionDescriptor,
-    render_definition_file_with_support,
-};
 use serde::Serialize;
 
-use crate::plugins::db;
+use crate::plugins::db::Db;
 
 #[derive(Clone, Debug, Serialize)]
 struct PublicUser {
@@ -34,22 +23,12 @@ struct PublicUser {
     permissions: Vec<lyra_db::Permission>,
 }
 
-struct UsersModule;
+pub(crate) struct UsersModule;
 
-pub(crate) fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("lyra/users")
-        .function(list_spec())
-        .install(|_| Ok(ModuleExport::new(UsersModule)))
-}
-
-fn list_spec() -> FunctionSpec {
-    FunctionSpec::new("list").call_async(std::sync::Arc::new(list_callback))
-}
-
-fn list_callback(frame: luau::AsyncCallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let db = db::get(frame.vm)?;
-
-    Ok(luau::ScheduledFuture::new(async move {
+#[harmony_macros::module(id = "lyra/users", docs_feature = "docgen")]
+impl UsersModule {
+    #[harmony(returns(Vec<PublicUser>))]
+    async fn list(#[context] db: Db) -> luau::runtime::Result<luau::Value> {
         let db = db.read().await;
         let users = lyra_db::users::get(&db)?
             .into_iter()
@@ -70,7 +49,7 @@ fn list_callback(frame: luau::AsyncCallFrame<'_>) -> luau::runtime::Result<luau:
             })
             .collect::<Vec<_>>();
         harmony_luau::serializable_to_luau_owned(users)
-    }))
+    }
 }
 
 impl LuauTypeInfo for PublicUser {
@@ -109,26 +88,11 @@ impl DescribeInterface for PublicUser {
 }
 
 #[cfg(feature = "docgen")]
-fn module_descriptor() -> ModuleDescriptor {
-    ModuleDescriptor {
-        name: "Users",
-        local_name: "users",
-        description: None,
-        fields: Vec::new(),
-        functions: vec![ModuleFunctionDescriptor {
-            path: vec!["list"],
-            description: None,
-            params: Vec::new(),
-            returns: vec![Vec::<PublicUser>::luau_type()],
-            yields: true,
-        }],
-    }
-}
-
-#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
-    render_definition_file_with_support(
-        &module_descriptor(),
+    use harmony_luau::DescribeModule;
+
+    harmony_luau::render_definition_file_with_support(
+        &UsersModule::module_descriptor(),
         &[],
         &[PublicUser::interface_descriptor()],
         &[],

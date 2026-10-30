@@ -3,18 +3,14 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::{
-    collections::{
-        HashMap,
-        HashSet,
-    },
-    sync::Arc,
+use std::collections::{
+    HashMap,
+    HashSet,
 };
 
 use agdb::DbId;
 use harmony_core::{
     FunctionSpec,
-    ModuleExport,
     ModuleSpec,
 };
 use harmony_luau as luau;
@@ -26,7 +22,6 @@ use harmony_luau::{
     ModuleDescriptor,
     ModuleFunctionDescriptor,
     ParameterDescriptor,
-    render_definition_file_with_support,
 };
 use harmony_luau::{
     DescribeTypeAlias,
@@ -38,7 +33,7 @@ use harmony_luau::{
 
 use crate::plugins::args;
 use crate::{
-    plugins::db,
+    plugins::db::Db,
     services::{
         auth::Principal,
         listens::{
@@ -59,7 +54,7 @@ use lyra_db::{
 };
 use serde::Deserialize;
 
-struct ListensModule;
+pub(crate) struct ListensModule;
 struct ListenUpdateHandler;
 
 impl LuauTypeInfo for ListenUpdateHandler {
@@ -90,39 +85,6 @@ struct ResolvedStats {
     last_played: HashMap<DbId, u64>,
 }
 
-pub(crate) fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("lyra/listens")
-        .function(get_stats_spec())
-        .function(submit_spec())
-        .function(on_update_spec())
-        .install(|_| Ok(ModuleExport::new(ListensModule)))
-}
-
-fn get_stats_spec() -> FunctionSpec {
-    FunctionSpec::new("get_stats")
-        .arg_name("track_ids")
-        .arg_name("merge_unique_external_ids")
-        .call_async(Arc::new(get_stats_callback))
-}
-
-fn submit_spec() -> FunctionSpec {
-    FunctionSpec::new("submit")
-        .arg_name("plays")
-        .call_async(Arc::new(submit_callback))
-}
-
-fn on_update_spec() -> FunctionSpec {
-    FunctionSpec::new("on_update")
-        .arg_name("handler")
-        .call_async(Arc::new(on_update_callback))
-}
-
-fn on_update_callback(
-    frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    crate::plugins::update_callbacks::register::<ListenUpdatePayload>(frame, "listens.on_update")
-}
-
 #[derive(Deserialize)]
 struct SubmittedPlayRequest {
     play_id: String,
@@ -149,45 +111,123 @@ fn submitted_play(vm: &luau::Vm, value: &luau::Value) -> luau::runtime::Result<S
     })
 }
 
-fn submit_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let plays: luau::Table = frame.args.read_named("plays")?;
-    let plays = args::array_values(frame.vm, &plays)?;
-    if plays.len() > MAX_SUBMITTED_PLAYS {
-        return Err(crate::plugins::runtime_error(format!(
-            "plays cap exceeded: {} > {MAX_SUBMITTED_PLAYS}",
-            plays.len()
-        )));
-    }
-    let plays = plays
-        .iter()
-        .map(|(index, value)| {
-            submitted_play(frame.vm, value).map_err(|error| {
-                let message = match error {
-                    luau::Error::Runtime(message) => message,
-                    other => other.to_string(),
-                };
-                crate::plugins::runtime_error(format!("plays[{index}]: {message}"))
-            })
-        })
-        .collect::<luau::runtime::Result<Vec<_>>>()?;
-    let db = db::get(frame.vm)?;
-    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
+/// A batch of plays, each judged for the cap and its shape before any is recorded.
+struct SubmittedPlays(Vec<SubmittedPlay>);
 
-    Ok(luau::ScheduledFuture::new(async move {
+impl<'vm> luau::FromLuau<'vm> for SubmittedPlays {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let plays: luau::Table = reader.read()?;
+        let vm = reader.vm();
+        let plays = args::array_values(vm, &plays)?;
+        if plays.len() > MAX_SUBMITTED_PLAYS {
+            return Err(crate::plugins::runtime_error(format!(
+                "plays cap exceeded: {} > {MAX_SUBMITTED_PLAYS}",
+                plays.len()
+            )));
+        }
+        plays
+            .iter()
+            .map(|(index, value)| {
+                submitted_play(vm, value).map_err(|error| {
+                    let message = match error {
+                        luau::Error::Runtime(message) => message,
+                        other => other.to_string(),
+                    };
+                    crate::plugins::runtime_error(format!("plays[{index}]: {message}"))
+                })
+            })
+            .collect::<luau::runtime::Result<Vec<_>>>()
+            .map(Self)
+    }
+}
+
+impl LuauTypeInfo for SubmittedPlays {
+    fn luau_type() -> LuauType {
+        LuauType::array(SubmittedPlayRequest::luau_type())
+    }
+}
+
+#[harmony_macros::module(
+    id = "lyra/listens",
+    description = "Listen counts and submitted plays of the dispatch principal, and every user's listens as they are recorded: like `playback_sessions.on_update` for playbacks, `on_update` delivers all users' listens, not only the caller's.",
+    docs_feature = "docgen",
+    extend = "on_update_spec",
+    describe = "describe_on_update"
+)]
+impl ListensModule {
+    #[harmony(returns(HashMap<String, HashMap<u64, u64>>))]
+    async fn get_stats(
+        track_ids: args::UniqueIds,
+        merge_unique_external_ids: Option<bool>,
+        #[context] db: Db,
+        #[context] principal: Principal,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let stats = resolve_stats(
+            &db,
+            &track_ids.0,
+            &principal,
+            merge_unique_external_ids.unwrap_or(false),
+        )
+        .await?;
+        let mut table = luau::OwnedTable::with_capacity(0, 2);
+        table.set_field("counts", dbid_map_to_table(&stats.counts));
+        table.set_field("last_played", dbid_map_to_table(&stats.last_played));
+        Ok(table)
+    }
+
+    #[harmony(
+        description = "Judges the dispatch principal's plays as listens in one transaction and returns each play's outcome, keyed by `play_id`. A `play_id` repeated in the batch is judged by its first occurrence. Recorded listens reach `on_update`. Raises on a malformed play or more than 500 plays, judging none.",
+        returns(HashMap<String, LuauListenOutcome>)
+    )]
+    async fn submit(
+        plays: SubmittedPlays,
+        #[context] db: Db,
+        #[context] principal: Principal,
+    ) -> luau::runtime::Result<luau::Value> {
         let now_ms = playback_sessions::now_ms().map_err(crate::plugins::runtime_error)?;
         let mut db = db.write().await;
         let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
         let outcomes =
-            listen_service::record_submitted(&mut db, &principal, user_db_id, plays, now_ms)?;
+            listen_service::record_submitted(&mut db, &principal, user_db_id, plays.0, now_ms)?;
         drop(db);
         let outcomes = outcomes
             .into_iter()
             .map(|(play_id, outcome)| (play_id, outcome_name(&outcome)))
             .collect::<HashMap<_, _>>();
         harmony_luau::serializable_to_luau_owned(outcomes)
-    }))
+    }
+}
+
+fn on_update_spec(spec: ModuleSpec) -> ModuleSpec {
+    spec.function(
+        FunctionSpec::new("on_update")
+            .arg_name("handler")
+            .call_async(std::sync::Arc::new(on_update_callback)),
+    )
+}
+
+fn on_update_callback(
+    frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    crate::plugins::update_callbacks::register::<ListenUpdatePayload>(frame, "listens.on_update")
+}
+
+#[cfg(feature = "docgen")]
+fn describe_on_update(descriptor: &mut ModuleDescriptor) {
+    descriptor.functions.push(ModuleFunctionDescriptor {
+        path: vec!["on_update"],
+        description: Some(
+            "Registers a callback for every user's listens. A `recorded` update arrives once for each commit that stored listens, right after it, carrying all of that commit's listens for one user: one for a live play, up to a whole submitted batch. Each listen is announced once. Delivery is best effort: updates are dropped while the plugin runtime is saturated.",
+        ),
+        params: vec![ParameterDescriptor {
+            name: "handler",
+            ty: ListenUpdateHandler::luau_type(),
+            description: None,
+            variadic: false,
+        }],
+        returns: vec![],
+        yields: true,
+    });
 }
 
 fn outcome_name(outcome: &SubmissionOutcome) -> &'static str {
@@ -200,29 +240,8 @@ fn outcome_name(outcome: &SubmissionOutcome) -> &'static str {
     }
 }
 
-fn get_stats_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let track_ids: luau::Table = frame.args.read_named("track_ids")?;
-    let track_ids = args::unique_ids(frame.vm, &track_ids)?;
-    let merge = frame
-        .args
-        .read_optional_named::<bool>("merge_unique_external_ids")?
-        .unwrap_or(false);
-    let db = db::get(frame.vm)?;
-    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
-
-    Ok(luau::ScheduledFuture::new(async move {
-        let stats = resolve_stats(db, &track_ids, &principal, merge).await?;
-        let mut table = luau::OwnedTable::with_capacity(0, 2);
-        table.set_field("counts", dbid_map_to_table(&stats.counts));
-        table.set_field("last_played", dbid_map_to_table(&stats.last_played));
-        Ok(table)
-    }))
-}
-
 async fn resolve_stats(
-    db: DbAsync,
+    db: &DbAsync,
     track_ids: &[DbId],
     principal: &Principal,
     merge_unique_external_ids: bool,
@@ -323,67 +342,6 @@ fn dbid_map_to_table(map: &HashMap<DbId, u64>) -> luau::OwnedTable {
     table
 }
 
-#[cfg(feature = "docgen")]
-fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
-    ParameterDescriptor {
-        name,
-        ty,
-        description: None,
-        variadic: false,
-    }
-}
-
-#[cfg(feature = "docgen")]
-fn module_descriptor() -> ModuleDescriptor {
-    ModuleDescriptor {
-        name: "Listens",
-        local_name: "listens",
-        description: Some(
-            "Listen counts and submitted plays of the dispatch principal, and every user's listens as they are recorded: like `playback_sessions.on_update` for playbacks, `on_update` delivers all users' listens, not only the caller's.",
-        ),
-        fields: Vec::new(),
-        functions: vec![
-            ModuleFunctionDescriptor {
-                path: vec!["get_stats"],
-                description: None,
-                params: vec![
-                    param("track_ids", Vec::<u64>::luau_type()),
-                    param("merge_unique_external_ids", Option::<bool>::luau_type()),
-                ],
-                returns: vec![LuauType::map(
-                    String::luau_type(),
-                    LuauType::map(u64::luau_type(), u64::luau_type()),
-                )],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["submit"],
-                description: Some(
-                    "Judges the dispatch principal's plays as listens in one transaction and returns each play's outcome, keyed by `play_id`. A `play_id` repeated in the batch is judged by its first occurrence. Recorded listens reach `on_update`. Raises on a malformed play or more than 500 plays, judging none.",
-                ),
-                params: vec![param(
-                    "plays",
-                    LuauType::array(SubmittedPlayRequest::luau_type()),
-                )],
-                returns: vec![LuauType::map(
-                    String::luau_type(),
-                    LuauListenOutcome::luau_type(),
-                )],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["on_update"],
-                description: Some(
-                    "Registers a callback for every user's listens. A `recorded` update arrives once for each commit that stored listens, right after it, carrying all of that commit's listens for one user: one for a live play, up to a whole submitted batch. Each listen is announced once. Delivery is best effort: updates are dropped while the plugin runtime is saturated.",
-                ),
-                params: vec![param("handler", ListenUpdateHandler::luau_type())],
-                returns: vec![],
-                yields: true,
-            },
-        ],
-    }
-}
-
 /// [`ListenUpdatePayload`] as described to Luau.
 #[cfg(feature = "docgen")]
 struct LuauListenUpdatePayload;
@@ -463,7 +421,6 @@ const _: fn(&ListenUpdatePayload) = |value| {
     {}
 };
 
-#[cfg(feature = "docgen")]
 impl LuauTypeInfo for SubmittedPlayRequest {
     fn luau_type() -> LuauType {
         LuauType::literal("SubmittedPlay")
@@ -533,8 +490,10 @@ impl DescribeTypeAlias for LuauListenOutcome {
 
 #[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
-    render_definition_file_with_support(
-        &module_descriptor(),
+    use harmony_luau::DescribeModule;
+
+    harmony_luau::render_definition_file_with_support(
+        &ListensModule::module_descriptor(),
         &[
             ListenUpdateHandler::type_alias_descriptor(),
             LuauListenOutcome::type_alias_descriptor(),
