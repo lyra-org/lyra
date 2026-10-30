@@ -208,8 +208,7 @@ struct UdpSocket {
 #[harmony_macros::userdata_methods]
 impl UdpSocket {
     #[harmony(
-        description = "Sets the default timeout in seconds for all subsequent operations. Pass nil to clear.",
-        args(seconds: Option<f64>)
+        description = "Sets the default timeout in seconds for all subsequent operations. Pass nil to clear."
     )]
     fn set_timeout(&self, seconds: Option<f64>) -> luau::runtime::Result<()> {
         if let Some(secs) = seconds {
@@ -474,8 +473,7 @@ struct TcpStream {
 #[harmony_macros::userdata_methods]
 impl TcpStream {
     #[harmony(
-        description = "Sets the default timeout in seconds for all subsequent operations. Pass nil to clear.",
-        args(seconds: Option<f64>)
+        description = "Sets the default timeout in seconds for all subsequent operations. Pass nil to clear."
     )]
     fn set_timeout(&self, seconds: Option<f64>) -> luau::runtime::Result<()> {
         if let Some(secs) = seconds {
@@ -612,8 +610,7 @@ struct TcpListener {
 #[harmony_macros::userdata_methods]
 impl TcpListener {
     #[harmony(
-        description = "Sets the default timeout in seconds for all subsequent operations. Pass nil to clear.",
-        args(seconds: Option<f64>)
+        description = "Sets the default timeout in seconds for all subsequent operations. Pass nil to clear."
     )]
     fn set_timeout(&self, seconds: Option<f64>) -> luau::runtime::Result<()> {
         if let Some(secs) = seconds {
