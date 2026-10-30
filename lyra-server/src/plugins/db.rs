@@ -60,13 +60,6 @@ pub(crate) struct ViewerDb {
     principal: Option<crate::services::auth::Principal>,
 }
 
-pub(crate) fn scoped(
-    frame: &harmony_luau::AsyncCallFrame<'_>,
-) -> harmony_luau::runtime::Result<ViewerDb> {
-    harmony_luau::FromCallFrame::from_call_frame(frame.vm, &frame.context)
-}
-
-/// A module function's [`ViewerDb`] is [`scoped`].
 impl harmony_luau::FromCallFrame for ViewerDb {
     fn from_call_frame(
         vm: &harmony_luau::Vm,

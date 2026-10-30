@@ -15,7 +15,6 @@ use std::{
     },
 };
 
-use harmony_core::FunctionSpec;
 use harmony_luau as luau;
 
 use super::{
@@ -174,7 +173,7 @@ impl SettingsBuilder {
 
 #[harmony_macros::userdata(name = "UserSettingsAccessor")]
 #[derive(Clone)]
-pub(super) struct UserSettingsAccessor {
+pub(crate) struct UserSettingsAccessor {
     db: Option<DbAsync>,
     plugin_id: PluginId,
     schema: Schema,
@@ -245,93 +244,111 @@ async fn load_user_stored_values(
     .map_err(crate::plugins::runtime_error)
 }
 
-fn declare_settings_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let plugin_id = current_plugin_id(&frame.context)?;
-    harmony_core::ensure_current_plugin_run(frame.vm, &frame.context)?;
-    let callback: luau::Function = frame.args.read_named("callback")?;
-    let db = crate::plugins::db::get_optional(frame.vm)?;
-    let vm = frame.vm.clone();
-    let origin = frame.context.origin.clone();
-    let context = frame.context.clone();
-    Ok(luau::ScheduledFuture::new(async move {
-        let generation = crate::plugins::STATE.generation();
-        let _registration = generation
-            .registries
-            .ensure_registrations_open(&plugin_id)
-            .await?;
-        let stored_values = load_stored_values(db.as_ref(), &plugin_id).await?;
-        let builder = settings_builder(stored_values);
-        let builder_value = SettingsBuilder::_harmony_userdata_class().create_value(
-            &vm,
-            &origin,
-            builder.clone(),
-        )?;
-
-        callback.call_with_context(&vm, &[builder_value], context)?;
-
-        let groups = take_groups(&builder)?;
-        let schema = Schema { groups };
-        plugin_settings_service::validate_stored_values(
-            plugin_id.as_str(),
-            &schema,
-            &builder.stored_values,
-        )?;
-        let config = build_config_table(&schema.groups, &builder)?;
-
-        super::settings_registry()
-            .write_owned()
-            .await
-            .register_schema(plugin_id, SettingsScope::Global, schema)?;
-
-        Ok(config)
-    }))
+/// What a settings declaration takes from its call: the calling plugin, which must be the
+/// current run, and the handles its deferred callback needs.
+pub(crate) struct SettingsHost {
+    plugin_id: PluginId,
+    db: Option<DbAsync>,
+    vm: luau::Vm,
+    context: luau::CallContext,
 }
 
-fn declare_user_settings_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let plugin_id = current_plugin_id(&frame.context)?;
-    harmony_core::ensure_current_plugin_run(frame.vm, &frame.context)?;
-    let callback: luau::Function = frame.args.read_named("callback")?;
-    let db = crate::plugins::db::get_optional(frame.vm)?;
-    let vm = frame.vm.clone();
-    let origin = frame.context.origin.clone();
-    let context = frame.context.clone();
-    Ok(luau::ScheduledFuture::new(async move {
-        let generation = crate::plugins::STATE.generation();
-        let _registration = generation
-            .registries
-            .ensure_registrations_open(&plugin_id)
-            .await?;
-        let builder = settings_builder(HashMap::new());
-        let builder_value = SettingsBuilder::_harmony_userdata_class().create_value(
-            &vm,
-            &origin,
-            builder.clone(),
-        )?;
+impl luau::FromCallFrame for SettingsHost {
+    fn from_call_frame(vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
+        let plugin_id = current_plugin_id(context)?;
+        harmony_core::ensure_current_plugin_run(vm, context)?;
+        Ok(Self {
+            plugin_id,
+            db: crate::plugins::db::get_optional(vm)?,
+            vm: vm.clone(),
+            context: context.clone(),
+        })
+    }
+}
 
-        callback.call_with_context(&vm, &[builder_value], context)?;
+pub(crate) async fn declare_settings(
+    callback: luau::Function,
+    host: SettingsHost,
+) -> luau::runtime::Result<luau::OwnedTable> {
+    let SettingsHost {
+        plugin_id,
+        db,
+        vm,
+        context,
+    } = host;
+    let generation = crate::plugins::STATE.generation();
+    let _registration = generation
+        .registries
+        .ensure_registrations_open(&plugin_id)
+        .await?;
+    let stored_values = load_stored_values(db.as_ref(), &plugin_id).await?;
+    let builder = settings_builder(stored_values);
+    let builder_value = SettingsBuilder::_harmony_userdata_class().create_value(
+        &vm,
+        &context.origin,
+        builder.clone(),
+    )?;
 
-        let groups = take_groups(&builder)?;
-        let schema = Schema { groups };
+    callback.call_with_context(&vm, &[builder_value], context)?;
 
-        super::settings_registry()
-            .write_owned()
-            .await
-            .register_schema(plugin_id.clone(), SettingsScope::User, schema.clone())?;
+    let groups = take_groups(&builder)?;
+    let schema = Schema { groups };
+    plugin_settings_service::validate_stored_values(
+        plugin_id.as_str(),
+        &schema,
+        &builder.stored_values,
+    )?;
+    let config = build_config_table(&schema.groups, &builder)?;
 
-        UserSettingsAccessor::_harmony_userdata_class().create(
-            &vm,
-            &origin,
-            UserSettingsAccessor {
-                db,
-                plugin_id,
-                schema,
-            },
-        )
-    }))
+    super::settings_registry()
+        .write_owned()
+        .await
+        .register_schema(plugin_id, SettingsScope::Global, schema)?;
+
+    Ok(config)
+}
+
+pub(crate) async fn declare_user_settings(
+    callback: luau::Function,
+    host: SettingsHost,
+) -> luau::runtime::Result<luau::UserData> {
+    let SettingsHost {
+        plugin_id,
+        db,
+        vm,
+        context,
+    } = host;
+    let generation = crate::plugins::STATE.generation();
+    let _registration = generation
+        .registries
+        .ensure_registrations_open(&plugin_id)
+        .await?;
+    let builder = settings_builder(HashMap::new());
+    let builder_value = SettingsBuilder::_harmony_userdata_class().create_value(
+        &vm,
+        &context.origin,
+        builder.clone(),
+    )?;
+
+    callback.call_with_context(&vm, &[builder_value], context.clone())?;
+
+    let groups = take_groups(&builder)?;
+    let schema = Schema { groups };
+
+    super::settings_registry()
+        .write_owned()
+        .await
+        .register_schema(plugin_id.clone(), SettingsScope::User, schema.clone())?;
+
+    UserSettingsAccessor::_harmony_userdata_class().create(
+        &vm,
+        &context.origin,
+        UserSettingsAccessor {
+            db,
+            plugin_id,
+            schema,
+        },
+    )
 }
 
 fn settings_builder(stored_values: HashMap<String, serde_json::Value>) -> SettingsBuilder {
@@ -668,16 +685,6 @@ fn sequence_index(value: luau::Value) -> Option<i64> {
         }
         _ => None,
     }
-}
-
-pub(crate) fn declare_settings_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("declare_settings").arg_name("callback");
-    spec.call_async(Arc::new(declare_settings_callback))
-}
-
-pub(crate) fn declare_user_settings_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("declare_user_settings").arg_name("callback");
-    spec.call_async(Arc::new(declare_user_settings_callback))
 }
 
 pub(crate) fn user_settings_accessor_spec() -> harmony_core::UserDataSpec {

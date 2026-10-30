@@ -6,32 +6,32 @@
 #[cfg(feature = "docgen")]
 mod types;
 
-use harmony_core::{
-    FunctionSpec,
-    ModuleExport,
-    ModuleSpec,
-};
+use harmony_core::ModuleSpec;
 use harmony_luau as luau;
-use harmony_luau::IntoLuauReturn;
 #[cfg(feature = "docgen")]
 use harmony_luau::render_definition_file_with_support;
 #[cfg(feature = "docgen")]
 use harmony_luau::{
     DescribeInterface,
+    DescribeModule,
     DescribeTypeAlias,
     FieldDescriptor,
     LuauType,
     LuauTypeInfo,
     ModuleDescriptor,
     ModuleFieldDescriptor,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
     TypeAliasDescriptor,
 };
+#[cfg(feature = "docgen")]
+use std::collections::HashMap;
 
 use crate::plugins::args;
+use crate::plugins::args::ResolveIdArg;
 use crate::{
-    plugins::db,
+    plugins::db::{
+        Db,
+        ViewerDb,
+    },
     services::{
         entities::{
             EntityInclude,
@@ -50,20 +50,6 @@ use crate::{
 use lyra_db::DbAsync;
 use lyra_db::ResolveId;
 
-struct EntitiesModule;
-
-pub(crate) fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("lyra/entities")
-        .function(query_spec("query", ProjectionKind::Any))
-        .function(query_spec("query_release", ProjectionKind::Release))
-        .function(query_spec("query_track", ProjectionKind::Track))
-        .function(query_spec("query_artist", ProjectionKind::Artist))
-        .function(get_type_spec())
-        .function(query_many_spec())
-        .initializer(install_entity_constants)
-        .install(|_| Ok(ModuleExport::new(EntitiesModule)))
-}
-
 #[derive(Clone, Copy)]
 enum ProjectionKind {
     Any,
@@ -72,139 +58,223 @@ enum ProjectionKind {
     Artist,
 }
 
-fn query_spec(name: &'static str, kind: ProjectionKind) -> FunctionSpec {
-    FunctionSpec::new(name)
-        .arg_name("request")
-        .call_async(std::sync::Arc::new(move |frame| {
-            query_callback(frame, kind)
-        }))
+struct QueryRequest {
+    id: ResolveId,
+    includes: Vec<EntityInclude>,
+    library_id: Option<agdb::DbId>,
 }
 
-fn get_type_spec() -> FunctionSpec {
-    FunctionSpec::new("get_type")
-        .arg_name("id")
-        .call_async(std::sync::Arc::new(get_type_callback))
-}
-
-fn query_many_spec() -> FunctionSpec {
-    FunctionSpec::new("query_many")
-        .arg_name("request")
-        .call_async(std::sync::Arc::new(query_many_callback))
-}
-
-fn query_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-    kind: ProjectionKind,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let request: luau::Table = frame.args.read_named("request")?;
-    let (resolve_id, includes, library_id) = parse_query_request(frame.vm, &request)?;
-    let link_vm = link_generator_vm(&frame, &includes)?;
-    let scoped = db::scoped(&frame)?;
-
-    Ok(luau::ScheduledFuture::new(async move {
-        let mut projections = project_with_links(
-            scoped.handle(),
-            link_vm,
-            &includes,
+impl<'vm> luau::FromLuau<'vm> for QueryRequest {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let request: luau::Table = reader.read()?;
+        let vm = reader.vm();
+        let id = args::resolve_id(required_value(vm, &request, "id")?)?;
+        let includes = parse_includes(vm, request.get_raw(vm, "include")?)?;
+        let library_id = args::optional_positive_id(vm, &request, "library_id")?;
+        Ok(Self {
+            id,
+            includes,
             library_id,
-            |db, id_includes| {
-                let query_id = resolve_id
-                    .to_query_id(db)?
-                    .ok_or_else(|| crate::plugins::runtime_error("could not resolve id"))?;
-                let viewer = scoped.viewer(db)?;
-                let projections = project_visible_entities(
-                    db,
-                    &viewer,
-                    vec![query_id],
-                    &includes,
-                    library_id,
-                    id_includes,
-                )?;
-                Ok(projections.into_iter().flatten().collect())
-            },
-        )
-        .await?;
-        let projection = projections
-            .pop()
-            .ok_or_else(|| crate::plugins::runtime_error("could not resolve id"))?;
+        })
+    }
+}
 
-        let value = match (kind, projection) {
-            (ProjectionKind::Any, projection) => projection_to_luau_owned(projection)?,
-            (ProjectionKind::Release, EntityProjectionInfo::Release(projection)) => {
-                harmony_luau::serializable_to_luau_owned(projection)?
+struct QueryManyRequest {
+    ids: Vec<(String, ResolveId)>,
+    includes: Vec<EntityInclude>,
+    library_id: Option<agdb::DbId>,
+}
+
+impl<'vm> luau::FromLuau<'vm> for QueryManyRequest {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let request: luau::Table = reader.read()?;
+        let vm = reader.vm();
+        let ids = match required_value(vm, &request, "ids")? {
+            luau::Value::Table(table) => {
+                let mut ids = Vec::new();
+                for (_, value) in table.pairs_raw(vm)? {
+                    let key = match &value {
+                        luau::Value::Integer(value) if *value > 0 => value.to_string(),
+                        luau::Value::Number(value)
+                            if value.is_finite() && value.fract() == 0.0 && *value > 0.0 =>
+                        {
+                            (*value as i64).to_string()
+                        }
+                        luau::Value::String(bytes) => String::from_utf8(bytes.clone())
+                            .map_err(crate::plugins::runtime_error)?,
+                        _ => continue,
+                    };
+                    ids.push((key, args::resolve_id(value)?));
+                }
+                ids
             }
-            (ProjectionKind::Track, EntityProjectionInfo::Track(projection)) => {
-                harmony_luau::serializable_to_luau_owned(projection)?
-            }
-            (ProjectionKind::Artist, EntityProjectionInfo::Artist(projection)) => {
-                harmony_luau::serializable_to_luau_owned(projection)?
-            }
-            (ProjectionKind::Release, EntityProjectionInfo::Track(_)) => {
-                return Err(crate::plugins::runtime_error(
-                    "requested entity is a track, not a release",
-                ));
-            }
-            (ProjectionKind::Release, EntityProjectionInfo::Artist(_)) => {
-                return Err(crate::plugins::runtime_error(
-                    "requested entity is an artist, not a release",
-                ));
-            }
-            (ProjectionKind::Track, EntityProjectionInfo::Release(_)) => {
-                return Err(crate::plugins::runtime_error(
-                    "requested entity is a release, not a track",
-                ));
-            }
-            (ProjectionKind::Track, EntityProjectionInfo::Artist(_)) => {
-                return Err(crate::plugins::runtime_error(
-                    "requested entity is an artist, not a track",
-                ));
-            }
-            (ProjectionKind::Artist, EntityProjectionInfo::Release(_)) => {
-                return Err(crate::plugins::runtime_error(
-                    "requested entity is a release, not an artist",
-                ));
-            }
-            (ProjectionKind::Artist, EntityProjectionInfo::Track(_)) => {
-                return Err(crate::plugins::runtime_error(
-                    "requested entity is a track, not an artist",
-                ));
+            other => {
+                return Err(crate::plugins::runtime_error(format!(
+                    "ids must be an array of integer or string values, got {}",
+                    other.type_name()
+                )));
             }
         };
-
-        Ok(value)
-    }))
+        let includes = parse_includes(vm, request.get_raw(vm, "include")?)?;
+        let library_id = args::optional_positive_id(vm, &request, "library_id")?;
+        Ok(Self {
+            ids,
+            includes,
+            library_id,
+        })
+    }
 }
 
-fn get_type_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let id_value: luau::Value = frame.args.read_named("id")?;
-    let resolve_id = args::resolve_id(id_value)?;
-    let db = db::get(frame.vm)?;
+/// What a query takes from its call to run link generators when the `links` include is
+/// requested. Generators can't request links themselves, even from tasks they spawn, since those
+/// inherit the caller context.
+struct LinkCaller {
+    vm: luau::Vm,
+    from_link_generator: bool,
+}
 
-    Ok(luau::ScheduledFuture::new(async move {
+impl luau::FromCallFrame for LinkCaller {
+    fn from_call_frame(vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
+        Ok(Self {
+            vm: vm.clone(),
+            from_link_generator: context
+                .caller
+                .get::<crate::plugins::executor::IdLinkDispatchContext>()
+                .is_ok(),
+        })
+    }
+}
+
+impl LinkCaller {
+    /// The VM to run link generators on, when the `links` include is requested.
+    fn link_generator_vm(
+        self,
+        includes: &[EntityInclude],
+    ) -> luau::runtime::Result<Option<luau::Vm>> {
+        if !includes.contains(&EntityInclude::Links) {
+            return Ok(None);
+        }
+        if self.from_link_generator {
+            return Err(crate::plugins::runtime_error(
+                "the links include cannot be requested from an id link generator",
+            ));
+        }
+        Ok(Some(self.vm))
+    }
+}
+
+#[cfg(feature = "docgen")]
+struct EntityQueryRequest;
+
+#[cfg(feature = "docgen")]
+impl LuauTypeInfo for EntityQueryRequest {
+    fn luau_type() -> LuauType {
+        LuauType::named("EntityQueryRequest")
+    }
+}
+
+#[cfg(feature = "docgen")]
+struct EntityQueryManyRequest;
+
+#[cfg(feature = "docgen")]
+impl LuauTypeInfo for EntityQueryManyRequest {
+    fn luau_type() -> LuauType {
+        LuauType::named("EntityQueryManyRequest")
+    }
+}
+
+#[cfg(feature = "docgen")]
+struct EntityProjection;
+
+#[cfg(feature = "docgen")]
+impl LuauTypeInfo for EntityProjection {
+    fn luau_type() -> LuauType {
+        LuauType::named("EntityProjectionInfo")
+    }
+}
+
+pub(crate) struct EntitiesModule;
+
+#[harmony_macros::module(
+    id = "lyra/entities",
+    docs_feature = "docgen",
+    extend = "extend_module",
+    describe = "describe_module"
+)]
+impl EntitiesModule {
+    #[harmony(args(request: EntityQueryRequest), returns(EntityProjection))]
+    async fn query(
+        request: QueryRequest,
+        #[context] scoped: ViewerDb,
+        #[context] caller: LinkCaller,
+    ) -> luau::runtime::Result<luau::Value> {
+        query_entity(ProjectionKind::Any, request, scoped, caller).await
+    }
+
+    #[harmony(
+        args(request: EntityQueryRequest),
+        returns(types::LuauReleaseProjectionInfo)
+    )]
+    async fn query_release(
+        request: QueryRequest,
+        #[context] scoped: ViewerDb,
+        #[context] caller: LinkCaller,
+    ) -> luau::runtime::Result<luau::Value> {
+        query_entity(ProjectionKind::Release, request, scoped, caller).await
+    }
+
+    #[harmony(
+        args(request: EntityQueryRequest),
+        returns(types::LuauTrackProjectionInfo)
+    )]
+    async fn query_track(
+        request: QueryRequest,
+        #[context] scoped: ViewerDb,
+        #[context] caller: LinkCaller,
+    ) -> luau::runtime::Result<luau::Value> {
+        query_entity(ProjectionKind::Track, request, scoped, caller).await
+    }
+
+    #[harmony(
+        args(request: EntityQueryRequest),
+        returns(types::LuauArtistProjectionInfo)
+    )]
+    async fn query_artist(
+        request: QueryRequest,
+        #[context] scoped: ViewerDb,
+        #[context] caller: LinkCaller,
+    ) -> luau::runtime::Result<luau::Value> {
+        query_entity(ProjectionKind::Artist, request, scoped, caller).await
+    }
+
+    async fn get_type(
+        id: ResolveIdArg,
+        #[context] db: Db,
+    ) -> luau::runtime::Result<Option<String>> {
         let db = db.read().await;
-        let db_id = resolve_id.to_db_id(&db)?;
-        let entity_type = match db_id {
+        match id.0.to_db_id(&db)? {
             Some(id) => {
                 lyra_db::entities::get_element_type(&db, id).map_err(crate::plugins::runtime_error)
             }
             None => Ok(None),
-        }?;
+        }
+    }
 
-        entity_type.into_luau_return()
-    }))
-}
-
-fn query_many_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let request: luau::Table = frame.args.read_named("request")?;
-    let (ids, includes, library_id) = parse_query_many_request(frame.vm, &request)?;
-    let link_vm = link_generator_vm(&frame, &includes)?;
-    let scoped = db::scoped(&frame)?;
-
-    Ok(luau::ScheduledFuture::new(async move {
+    #[harmony(
+        args(request: EntityQueryManyRequest),
+        returns(HashMap<String, EntityProjection>)
+    )]
+    async fn query_many(
+        request: QueryManyRequest,
+        #[context] scoped: ViewerDb,
+        #[context] caller: LinkCaller,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let QueryManyRequest {
+            ids,
+            includes,
+            library_id,
+        } = request;
+        let link_vm = caller.link_generator_vm(&includes)?;
         let mut keys = Vec::new();
         let projections = project_with_links(
             scoped.handle(),
@@ -247,30 +317,81 @@ fn query_many_callback(
             table.set_field(key, projection_to_luau_owned(projection)?);
         }
         Ok(table)
-    }))
+    }
 }
 
-/// The VM to run link generators on when the `links` include is requested.
-/// Generators can't request links themselves, even from tasks they spawn,
-/// since those inherit the caller context.
-fn link_generator_vm(
-    frame: &luau::AsyncCallFrame<'_>,
-    includes: &[EntityInclude],
-) -> luau::runtime::Result<Option<luau::Vm>> {
-    if !includes.contains(&EntityInclude::Links) {
-        return Ok(None);
+fn extend_module(spec: ModuleSpec) -> ModuleSpec {
+    spec.initializer(install_entity_constants)
+}
+
+async fn query_entity(
+    kind: ProjectionKind,
+    request: QueryRequest,
+    scoped: ViewerDb,
+    caller: LinkCaller,
+) -> luau::runtime::Result<luau::Value> {
+    let QueryRequest {
+        id: resolve_id,
+        includes,
+        library_id,
+    } = request;
+    let link_vm = caller.link_generator_vm(&includes)?;
+    let mut projections = project_with_links(
+        scoped.handle(),
+        link_vm,
+        &includes,
+        library_id,
+        |db, id_includes| {
+            let query_id = resolve_id
+                .to_query_id(db)?
+                .ok_or_else(|| crate::plugins::runtime_error("could not resolve id"))?;
+            let viewer = scoped.viewer(db)?;
+            let projections = project_visible_entities(
+                db,
+                &viewer,
+                vec![query_id],
+                &includes,
+                library_id,
+                id_includes,
+            )?;
+            Ok(projections.into_iter().flatten().collect())
+        },
+    )
+    .await?;
+    let projection = projections
+        .pop()
+        .ok_or_else(|| crate::plugins::runtime_error("could not resolve id"))?;
+
+    match (kind, projection) {
+        (ProjectionKind::Any, projection) => projection_to_luau_owned(projection),
+        (ProjectionKind::Release, EntityProjectionInfo::Release(projection)) => {
+            harmony_luau::serializable_to_luau_owned(projection)
+        }
+        (ProjectionKind::Track, EntityProjectionInfo::Track(projection)) => {
+            harmony_luau::serializable_to_luau_owned(projection)
+        }
+        (ProjectionKind::Artist, EntityProjectionInfo::Artist(projection)) => {
+            harmony_luau::serializable_to_luau_owned(projection)
+        }
+        (ProjectionKind::Release, EntityProjectionInfo::Track(_)) => Err(
+            crate::plugins::runtime_error("requested entity is a track, not a release"),
+        ),
+        (ProjectionKind::Release, EntityProjectionInfo::Artist(_)) => Err(
+            crate::plugins::runtime_error("requested entity is an artist, not a release"),
+        ),
+        (ProjectionKind::Track, EntityProjectionInfo::Release(_)) => Err(
+            crate::plugins::runtime_error("requested entity is a release, not a track"),
+        ),
+        (ProjectionKind::Track, EntityProjectionInfo::Artist(_)) => Err(
+            crate::plugins::runtime_error("requested entity is an artist, not a track"),
+        ),
+        (ProjectionKind::Artist, EntityProjectionInfo::Release(_)) => Err(
+            crate::plugins::runtime_error("requested entity is a release, not an artist"),
+        ),
+        (ProjectionKind::Artist, EntityProjectionInfo::Track(_)) => Err(
+            crate::plugins::runtime_error("requested entity is a track, not an artist"),
+        ),
     }
-    if frame
-        .context
-        .caller
-        .get::<crate::plugins::executor::IdLinkDispatchContext>()
-        .is_ok()
-    {
-        return Err(crate::plugins::runtime_error(
-            "the links include cannot be requested from an id link generator",
-        ));
-    }
-    Ok(Some(frame.vm.clone()))
 }
 
 /// Projects under one DB read, then resolves the `links` include after the
@@ -314,58 +435,6 @@ async fn project_with_links(
         apply_id_links(&mut projections, &links);
     }
     Ok(projections)
-}
-
-type QueryManyRequest = (
-    Vec<(String, ResolveId)>,
-    Vec<EntityInclude>,
-    Option<agdb::DbId>,
-);
-
-fn parse_query_request(
-    vm: &luau::Vm,
-    request: &luau::Table,
-) -> luau::runtime::Result<(ResolveId, Vec<EntityInclude>, Option<agdb::DbId>)> {
-    let id = args::resolve_id(required_value(vm, request, "id")?)?;
-    let includes = parse_includes(vm, request.get_raw(vm, "include")?)?;
-    let library_id = args::optional_positive_id(vm, request, "library_id")?;
-    Ok((id, includes, library_id))
-}
-
-fn parse_query_many_request(
-    vm: &luau::Vm,
-    request: &luau::Table,
-) -> luau::runtime::Result<QueryManyRequest> {
-    let ids = match required_value(vm, request, "ids")? {
-        luau::Value::Table(table) => {
-            let mut ids = Vec::new();
-            for (_, value) in table.pairs_raw(vm)? {
-                let key = match &value {
-                    luau::Value::Integer(value) if *value > 0 => value.to_string(),
-                    luau::Value::Number(value)
-                        if value.is_finite() && value.fract() == 0.0 && *value > 0.0 =>
-                    {
-                        (*value as i64).to_string()
-                    }
-                    luau::Value::String(bytes) => {
-                        String::from_utf8(bytes.clone()).map_err(crate::plugins::runtime_error)?
-                    }
-                    _ => continue,
-                };
-                ids.push((key, args::resolve_id(value)?));
-            }
-            ids
-        }
-        other => {
-            return Err(crate::plugins::runtime_error(format!(
-                "ids must be an array of integer or string values, got {}",
-                other.type_name()
-            )));
-        }
-    };
-    let includes = parse_includes(vm, request.get_raw(vm, "include")?)?;
-    let library_id = args::optional_positive_id(vm, request, "library_id")?;
-    Ok((ids, includes, library_id))
 }
 
 fn parse_includes(vm: &luau::Vm, value: luau::Value) -> luau::runtime::Result<Vec<EntityInclude>> {
@@ -490,16 +559,6 @@ fn install_string_table(
     }
     table.set_readonly(vm, true)?;
     root.set_table_raw(vm, key, &table)
-}
-
-#[cfg(feature = "docgen")]
-fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
-    ParameterDescriptor {
-        name,
-        ty,
-        description: None,
-        variadic: false,
-    }
 }
 
 #[cfg(feature = "docgen")]
@@ -687,88 +746,36 @@ fn entity_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
 }
 
 #[cfg(feature = "docgen")]
-fn module_descriptor() -> ModuleDescriptor {
-    ModuleDescriptor {
-        name: "Entities",
-        local_name: "entities",
+fn describe_module(descriptor: &mut ModuleDescriptor) {
+    descriptor.fields = [
+        (vec!["CreditType", "Artist"], "artist"),
+        (vec!["CreditType", "Vocalist"], "vocalist"),
+        (vec!["CreditType", "Instrumentalist"], "instrumentalist"),
+        (vec!["CreditType", "Composer"], "composer"),
+        (vec!["CreditType", "Lyricist"], "lyricist"),
+        (vec!["CreditType", "Arranger"], "arranger"),
+        (vec!["CreditType", "Writer"], "writer"),
+        (vec!["CreditType", "Producer"], "producer"),
+        (vec!["CreditType", "Conductor"], "conductor"),
+        (vec!["CreditType", "Engineer"], "engineer"),
+        (vec!["CreditType", "Mixer"], "mixer"),
+        (vec!["CreditType", "Remixer"], "remixer"),
+        (vec!["ArtistCreditSource", "Track"], "track"),
+        (vec!["ArtistCreditSource", "Release"], "release"),
+    ]
+    .into_iter()
+    .map(|(path, value)| ModuleFieldDescriptor {
+        path,
         description: None,
-        fields: [
-            (vec!["CreditType", "Artist"], "artist"),
-            (vec!["CreditType", "Vocalist"], "vocalist"),
-            (vec!["CreditType", "Instrumentalist"], "instrumentalist"),
-            (vec!["CreditType", "Composer"], "composer"),
-            (vec!["CreditType", "Lyricist"], "lyricist"),
-            (vec!["CreditType", "Arranger"], "arranger"),
-            (vec!["CreditType", "Writer"], "writer"),
-            (vec!["CreditType", "Producer"], "producer"),
-            (vec!["CreditType", "Conductor"], "conductor"),
-            (vec!["CreditType", "Engineer"], "engineer"),
-            (vec!["CreditType", "Mixer"], "mixer"),
-            (vec!["CreditType", "Remixer"], "remixer"),
-            (vec!["ArtistCreditSource", "Track"], "track"),
-            (vec!["ArtistCreditSource", "Release"], "release"),
-        ]
-        .into_iter()
-        .map(|(path, value)| ModuleFieldDescriptor {
-            path,
-            description: None,
-            ty: LuauType::string_literal(value),
-        })
-        .collect(),
-        functions: vec![
-            ModuleFunctionDescriptor {
-                path: vec!["query"],
-                description: None,
-                params: vec![param("request", LuauType::named("EntityQueryRequest"))],
-                returns: vec![LuauType::named("EntityProjectionInfo")],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["query_release"],
-                description: None,
-                params: vec![param("request", LuauType::named("EntityQueryRequest"))],
-                returns: vec![LuauType::named("ReleaseProjectionInfo")],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["query_track"],
-                description: None,
-                params: vec![param("request", LuauType::named("EntityQueryRequest"))],
-                returns: vec![LuauType::named("TrackProjectionInfo")],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["query_artist"],
-                description: None,
-                params: vec![param("request", LuauType::named("EntityQueryRequest"))],
-                returns: vec![LuauType::named("ArtistProjectionInfo")],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["get_type"],
-                description: None,
-                params: vec![param("id", args::resolve_id_type())],
-                returns: vec![Option::<String>::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["query_many"],
-                description: None,
-                params: vec![param("request", LuauType::named("EntityQueryManyRequest"))],
-                returns: vec![LuauType::map(
-                    String::luau_type(),
-                    LuauType::named("EntityProjectionInfo"),
-                )],
-                yields: true,
-            },
-        ],
-    }
+        ty: LuauType::string_literal(value),
+    })
+    .collect();
 }
 
 #[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
-        &module_descriptor(),
+        &EntitiesModule::module_descriptor(),
         &entity_type_aliases(),
         &entity_interfaces(),
         &[],

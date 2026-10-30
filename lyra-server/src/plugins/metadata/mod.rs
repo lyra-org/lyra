@@ -10,15 +10,16 @@ mod parsing;
 mod provider;
 mod registry;
 
-use harmony_core::{
-    ModuleExport,
-    ModuleSpec,
-};
+use harmony_core::ModuleSpec;
+use harmony_luau as luau;
 
 use self::layer::MetadataLayer;
+#[cfg(feature = "docgen")]
+use self::provider::ProviderOptions;
 use self::provider::{
     MetadataProvider,
-    provider_new_spec,
+    ProviderHost,
+    provider_new,
 };
 
 #[cfg(feature = "docgen")]
@@ -28,16 +29,34 @@ pub(crate) use self::registry::{
     MetadataCallbackRegistry,
 };
 
-pub(crate) fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("lyra/metadata")
-        .function(provider_new_spec())
-        .userdata(crate::plugins::types::LuauEntityType::_harmony_userdata_spec())
+pub(crate) struct MetadataModule;
+
+#[harmony_macros::module(
+    id = "lyra/metadata",
+    docs_feature = "docgen",
+    extend = "extend_module"
+)]
+impl MetadataModule {
+    #[harmony(
+        name = "Provider.new",
+        description = "Creates a metadata provider registration object.",
+        args(id: String, options: Option<ProviderOptions>),
+        returns(MetadataProvider)
+    )]
+    async fn provider_new(
+        id: String,
+        options: Option<luau::Table>,
+        #[context] host: ProviderHost,
+    ) -> luau::runtime::Result<luau::Value> {
+        provider_new(id, options, host).await
+    }
+}
+
+fn extend_module(spec: ModuleSpec) -> ModuleSpec {
+    spec.userdata(crate::plugins::types::LuauEntityType::_harmony_userdata_spec())
         .userdata(crate::plugins::types::LuauArtistType::_harmony_userdata_spec())
         .userdata(crate::plugins::types::LuauCreditType::_harmony_userdata_spec())
         .userdata(crate::plugins::types::LuauArtistRelationType::_harmony_userdata_spec())
         .userdata(MetadataProvider::_harmony_userdata_spec())
         .userdata(MetadataLayer::_harmony_userdata_spec())
-        .install(|_| Ok(ModuleExport::new(MetadataModule)))
 }
-
-struct MetadataModule;

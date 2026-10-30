@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     DescribeInterface,
     FieldDescriptor,
@@ -12,23 +13,26 @@ use harmony_luau::{
 };
 #[cfg(feature = "docgen")]
 use harmony_luau::{
-    ModuleDescriptor,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
+    DescribeModule,
     render_definition_file_with_support,
 };
 
 #[cfg(feature = "docgen")]
+use super::PluginsModule;
+#[cfg(feature = "docgen")]
 use crate::plugins::settings;
 
+#[cfg(feature = "docgen")]
 pub(super) struct PluginManifest;
 
+#[cfg(feature = "docgen")]
 impl LuauTypeInfo for PluginManifest {
     fn luau_type() -> LuauType {
         LuauType::literal("PluginManifest")
     }
 }
 
+#[cfg(feature = "docgen")]
 impl DescribeInterface for PluginManifest {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("PluginManifest", None);
@@ -69,63 +73,16 @@ impl DescribeInterface for PluginManifest {
 }
 
 #[cfg(feature = "docgen")]
-fn module_descriptor() -> ModuleDescriptor {
-    ModuleDescriptor {
-        name: "Plugins",
-        local_name: "plugins",
-        description: None,
-        fields: Vec::new(),
-        functions: vec![
-            settings::descriptors::declare_settings_descriptor(),
-            settings::descriptors::declare_user_settings_descriptor(),
-            ModuleFunctionDescriptor {
-                path: vec!["id"],
-                description: None,
-                params: vec![],
-                returns: vec![String::luau_type()],
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["manifest"],
-                description: None,
-                params: vec![],
-                returns: vec![PluginManifest::luau_type()],
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["list"],
-                description: None,
-                params: vec![],
-                returns: vec![Vec::<PluginManifest>::luau_type()],
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["get"],
-                description: None,
-                params: vec![param("id", String::luau_type())],
-                returns: vec![Option::<PluginManifest>::luau_type()],
-                yields: false,
-            },
-        ],
-    }
-}
-
-#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     let type_aliases = settings::descriptors::type_alias_descriptors().to_vec();
     let mut interfaces = vec![PluginManifest::interface_descriptor()];
     interfaces.extend(settings::descriptors::interface_descriptors());
     let classes = settings::descriptors::class_descriptors();
 
-    render_definition_file_with_support(&module_descriptor(), &type_aliases, &interfaces, &classes)
-}
-
-#[cfg(feature = "docgen")]
-fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
-    ParameterDescriptor {
-        name,
-        ty,
-        description: None,
-        variadic: false,
-    }
+    render_definition_file_with_support(
+        &PluginsModule::module_descriptor(),
+        &type_aliases,
+        &interfaces,
+        &classes,
+    )
 }

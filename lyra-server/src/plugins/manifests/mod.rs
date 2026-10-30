@@ -6,13 +6,27 @@
 use std::sync::Arc;
 
 use harmony_core::{
-    FunctionSpec,
-    ModuleExport,
+    ChunkOrigin,
     ModuleSpec,
 };
 use harmony_luau as luau;
 
 mod descriptors;
+
+#[cfg(feature = "docgen")]
+use self::descriptors::PluginManifest;
+use crate::plugins::settings::{
+    self,
+    SettingsHost,
+};
+#[cfg(feature = "docgen")]
+use crate::plugins::settings::{
+    UserSettingsAccessor,
+    descriptors::{
+        SettingsCallback,
+        SettingsConfig,
+    },
+};
 
 #[cfg(feature = "docgen")]
 pub(crate) use self::descriptors::render_luau_definition;
@@ -39,92 +53,73 @@ impl PluginManifestModuleStore {
     }
 }
 
-pub(super) struct PluginsModule;
+pub(crate) struct PluginsModule;
 
-impl PluginsModule {}
-
-pub(super) fn plugin_id_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("id");
-    spec.call(plugin_id_callback)
-}
-
-fn plugin_id_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let Some(plugin_id) = frame.context.origin.plugin.as_deref() else {
-        return Err(luau::Error::Runtime(
-            "plugins.id must be called from plugin Lua code".to_string(),
-        ));
-    };
-    frame.returns.write(plugin_id)?;
-    Ok(())
-}
-
-pub(super) fn plugin_manifest_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("manifest");
-    spec.call(plugin_manifest_callback)
-}
-
-pub(super) fn plugin_list_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("list");
-    spec.call(plugin_list_callback)
-}
-
-pub(super) fn plugin_get_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("get").arg_name("id");
-    spec.call(plugin_get_callback)
-}
-
-pub(super) fn module_export() -> ModuleExport {
-    ModuleExport::new(PluginsModule)
-}
-
-pub(crate) fn module_spec() -> ModuleSpec {
-    let spec = ModuleSpec::new("lyra/plugins")
-        .function(plugin_id_spec())
-        .function(plugin_manifest_spec())
-        .function(plugin_list_spec())
-        .function(plugin_get_spec())
-        .install(|_| Ok(module_export()));
-    spec.function(crate::plugins::settings::declare_settings_spec())
-        .function(crate::plugins::settings::declare_user_settings_spec())
-        .userdata(crate::plugins::settings::user_settings_accessor_spec())
-}
-
-fn plugin_manifest_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let Some(plugin_id) = frame.context.origin.plugin.as_deref() else {
-        return Err(luau::Error::Runtime(
-            "plugins.manifest must be called from plugin Lua code".to_string(),
-        ));
-    };
-    let manifests = frame.vm.data().get::<PluginManifestModuleStore>()?;
-    let Some(manifest) = manifests.find(plugin_id) else {
-        return Err(luau::Error::Runtime(format!(
-            "plugin manifest not found: {plugin_id}"
-        )));
-    };
-    frame.returns.write(manifest_table(manifest))?;
-    Ok(())
-}
-
-fn plugin_list_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let manifests = frame.vm.data().get::<PluginManifestModuleStore>()?;
-    let table = luau::OwnedTable::from_array(manifests.iter().map(manifest_table));
-    frame.returns.write(table)?;
-    Ok(())
-}
-
-fn plugin_get_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let id: String = frame.args.read_named("id")?;
-    let id = id.trim();
-    if id.is_empty() {
-        return Err(luau::Error::Runtime("id must not be empty".to_string()));
+#[harmony_macros::module(id = "lyra/plugins", docs_feature = "docgen", extend = "extend_module")]
+impl PluginsModule {
+    #[harmony(args(callback: SettingsCallback), returns(SettingsConfig))]
+    async fn declare_settings(
+        callback: luau::Function,
+        #[context] host: SettingsHost,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        settings::declare_settings(callback, host).await
     }
 
-    let manifests = frame.vm.data().get::<PluginManifestModuleStore>()?;
-    match manifests.find(id) {
-        Some(manifest) => frame.returns.write(manifest_table(manifest))?,
-        None => frame.returns.write(luau::Value::Nil)?,
+    #[harmony(args(callback: SettingsCallback), returns(UserSettingsAccessor))]
+    async fn declare_user_settings(
+        callback: luau::Function,
+        #[context] host: SettingsHost,
+    ) -> luau::runtime::Result<luau::UserData> {
+        settings::declare_user_settings(callback, host).await
     }
-    Ok(())
+
+    fn id(origin: &ChunkOrigin) -> luau::runtime::Result<String> {
+        origin.plugin.as_deref().map(str::to_string).ok_or_else(|| {
+            luau::Error::Runtime("plugins.id must be called from plugin Lua code".to_string())
+        })
+    }
+
+    #[harmony(returns(PluginManifest))]
+    fn manifest(vm: &luau::Vm, origin: &ChunkOrigin) -> luau::runtime::Result<luau::OwnedTable> {
+        let Some(plugin_id) = origin.plugin.as_deref() else {
+            return Err(luau::Error::Runtime(
+                "plugins.manifest must be called from plugin Lua code".to_string(),
+            ));
+        };
+        let manifests = vm.data().get::<PluginManifestModuleStore>()?;
+        let Some(manifest) = manifests.find(plugin_id) else {
+            return Err(luau::Error::Runtime(format!(
+                "plugin manifest not found: {plugin_id}"
+            )));
+        };
+        Ok(manifest_table(manifest))
+    }
+
+    #[harmony(returns(Vec<PluginManifest>))]
+    fn list(vm: &luau::Vm) -> luau::runtime::Result<luau::OwnedTable> {
+        let manifests = vm.data().get::<PluginManifestModuleStore>()?;
+        Ok(luau::OwnedTable::from_array(
+            manifests.iter().map(manifest_table),
+        ))
+    }
+
+    #[harmony(args(id: String), returns(Option<PluginManifest>))]
+    fn get(vm: &luau::Vm, id: String) -> luau::runtime::Result<luau::Value> {
+        let id = id.trim();
+        if id.is_empty() {
+            return Err(luau::Error::Runtime("id must not be empty".to_string()));
+        }
+
+        let manifests = vm.data().get::<PluginManifestModuleStore>()?;
+        Ok(match manifests.find(id) {
+            Some(manifest) => manifest_table(manifest).into(),
+            None => luau::Value::Nil,
+        })
+    }
+}
+
+fn extend_module(spec: ModuleSpec) -> ModuleSpec {
+    spec.userdata(settings::user_settings_accessor_spec())
 }
 
 fn manifest_table(manifest: &harmony_core::plugin::PluginManifest) -> luau::OwnedTable {

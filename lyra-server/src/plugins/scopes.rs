@@ -141,7 +141,7 @@ scopes! {
     },
     Api => {
         id: "lyra.api",
-        module: api::module_spec,
+        module: api::ApiModule::module_spec,
         effects: &[Effect::Exposes],
     },
     Artists => {
@@ -176,7 +176,7 @@ scopes! {
     },
     Entities => {
         id: "lyra.entities",
-        module: entities::module_spec,
+        module: entities::EntitiesModule::module_spec,
         effects: &[],
     },
     Entries => {
@@ -237,17 +237,17 @@ scopes! {
     },
     Metadata => {
         id: "lyra.metadata",
-        module: metadata::module_spec,
+        module: metadata::MetadataModule::module_spec,
         effects: &[Effect::WritesLibrary("metadata")],
     },
     Mix => {
         id: "lyra.mix",
-        module: mix::module_spec,
+        module: mix::MixModule::module_spec,
         effects: &[Effect::ReadsPersonal("recent listens")],
     },
     PlaybackSessions => {
         id: "lyra.playback_sessions",
-        module: playback_sessions::module_spec,
+        module: playback_sessions::PlaybackSessionsModule::module_spec,
         effects: &[
             Effect::ReadsPersonal("what you are playing"),
             Effect::WritesPersonal("playback on your devices"),
@@ -255,7 +255,7 @@ scopes! {
     },
     PlaybackSources => {
         id: "lyra.playback_sources",
-        module: playback_sources::module_spec,
+        module: playback_sources::PlaybackSourcesModule::module_spec,
         effects: &[],
     },
     Playlists => {
@@ -268,7 +268,7 @@ scopes! {
     },
     Plugins => {
         id: "lyra.plugins",
-        module: manifests::module_spec,
+        module: manifests::PluginsModule::module_spec,
         effects: &[],
     },
     Ratings => {

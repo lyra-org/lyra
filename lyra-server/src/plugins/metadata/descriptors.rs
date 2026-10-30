@@ -5,6 +5,7 @@
 
 use harmony_luau::{
     ClassDescriptor,
+    DescribeModule,
     FieldDescriptor,
     FunctionParameter,
     InterfaceDescriptor,
@@ -12,40 +13,24 @@ use harmony_luau::{
     LuauTypeInfo,
     MethodDescriptor,
     MethodKind,
-    ModuleDescriptor,
-    ModuleFunctionDescriptor,
     ParameterDescriptor,
     TypeAliasDescriptor,
     render_definition_file_with_support,
 };
 
 #[cfg(feature = "docgen")]
+use super::MetadataModule;
+#[cfg(feature = "docgen")]
 use crate::services::providers::IDENTIFIERS_DOC;
 
 #[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
-        &metadata_module_descriptor(),
+        &MetadataModule::module_descriptor(),
         &metadata_type_aliases(),
         &metadata_interfaces(),
         &metadata_classes(),
     )
-}
-
-#[cfg(feature = "docgen")]
-fn metadata_module_descriptor() -> ModuleDescriptor {
-    let mut descriptor = ModuleDescriptor::new("Metadata", "metadata", None);
-    descriptor.functions.push(ModuleFunctionDescriptor {
-        path: vec!["Provider", "new"],
-        description: Some("Creates a metadata provider registration object."),
-        params: vec![
-            param("id", string()),
-            param("options", opt(ty("ProviderOptions"))),
-        ],
-        returns: vec![ty("Provider")],
-        yields: true,
-    });
-    descriptor
 }
 
 #[cfg(feature = "docgen")]

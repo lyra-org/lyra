@@ -3,12 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::{
-    collections::HashSet,
-    sync::Arc,
-};
+use std::collections::HashSet;
 
-use harmony_core::FunctionSpec;
 use harmony_luau as luau;
 
 use crate::plugins::args;
@@ -50,56 +46,79 @@ use super::parsing::{
     string_array_from_table,
 };
 
-pub(super) fn provider_new_spec() -> FunctionSpec {
-    FunctionSpec::new("Provider.new")
-        .arg_name("id")
-        .arg_name("options")
-        .call_async(Arc::new(provider_new_callback))
+/// What `Provider.new` takes from its call: the calling plugin, which must be the current run,
+/// and the handles its registration needs.
+pub(super) struct ProviderHost {
+    plugin_id: PluginId,
+    db: Option<lyra_db::DbAsync>,
+    vm: luau::Vm,
+    origin: luau::ChunkOrigin,
 }
 
-fn provider_new_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let provider_id: String = frame.args.read_named("id")?;
-    let options: Option<luau::Table> = frame.args.read_optional_named("options")?;
+impl luau::FromCallFrame for ProviderHost {
+    fn from_call_frame(vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
+        let plugin_id = context.origin.plugin.clone().ok_or_else(|| {
+            crate::plugins::runtime_error(
+                "metadata.Provider.new must be called from plugin Lua code",
+            )
+        })?;
+        let plugin_id = PluginId::new(plugin_id.to_string())?;
+        harmony_core::ensure_current_plugin_run(vm, context)?;
+        Ok(Self {
+            plugin_id,
+            db: db::get_optional(vm)?,
+            vm: vm.clone(),
+            origin: context.origin.clone(),
+        })
+    }
+}
+
+#[cfg(feature = "docgen")]
+pub(super) struct ProviderOptions;
+
+#[cfg(feature = "docgen")]
+impl luau::LuauTypeInfo for ProviderOptions {
+    fn luau_type() -> luau::LuauType {
+        luau::LuauType::literal("ProviderOptions")
+    }
+}
+
+pub(super) async fn provider_new(
+    provider_id: String,
+    options: Option<luau::Table>,
+    host: ProviderHost,
+) -> luau::runtime::Result<luau::Value> {
+    let ProviderHost {
+        plugin_id,
+        db,
+        vm,
+        origin,
+    } = host;
     let display_name = match &options {
         Some(options) => {
-            optional_table_string(frame.vm, options, "display_name", "metadata.Provider.new")?
+            optional_table_string(&vm, options, "display_name", "metadata.Provider.new")?
         }
         None => None,
     };
-    let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
-        crate::plugins::runtime_error("metadata.Provider.new must be called from plugin Lua code")
-    })?;
-    let plugin_id = PluginId::new(plugin_id.to_string())?;
-    harmony_core::ensure_current_plugin_run(frame.vm, &frame.context)?;
-    let db = db::get_optional(frame.vm)?;
+    let generation = crate::plugins::STATE.generation();
+    let _registration = generation
+        .registries
+        .ensure_registrations_open(&plugin_id)
+        .await?;
+    let mut registry = provider_registry().write_owned().await;
+    registry.register(plugin_id.clone(), provider_id.clone(), display_name)?;
+    drop(registry);
 
-    let vm = frame.vm.clone();
-    let origin = frame.context.origin.clone();
-    Ok(luau::ScheduledFuture::new(async move {
-        let generation = crate::plugins::STATE.generation();
-        let _registration = generation
-            .registries
-            .ensure_registrations_open(&plugin_id)
-            .await?;
-        let mut registry = provider_registry().write_owned().await;
-        registry.register(plugin_id.clone(), provider_id.clone(), display_name)?;
-        drop(registry);
+    if let Some(db) = db {
+        let mut db_write = db.write().await;
+        lyra_db::providers::register(&mut db_write, &provider_id)?;
+    }
 
-        if let Some(db) = db {
-            let mut db_write = db.write().await;
-            lyra_db::providers::register(&mut db_write, &provider_id)?;
-        }
-
-        let provider = MetadataProvider {
-            plugin_id,
-            provider_id,
-        };
-        let provider =
-            MetadataProvider::_harmony_userdata_class().create_value(&vm, &origin, provider)?;
-        Ok(provider)
-    }))
+    let provider = MetadataProvider {
+        plugin_id,
+        provider_id,
+    };
+    MetadataProvider::_harmony_userdata_class().create_value(&vm, &origin, provider)
 }
 
 #[harmony_macros::userdata(

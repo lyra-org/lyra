@@ -3,17 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::{
-    collections::HashMap,
-    sync::Arc,
-};
+use std::collections::HashMap;
 
 use agdb::DbId;
-use harmony_core::{
-    FunctionSpec,
-    ModuleExport,
-    ModuleSpec,
-};
+use harmony_core::ModuleSpec;
 use harmony_luau as luau;
 #[cfg(feature = "docgen")]
 use harmony_luau::{
@@ -21,9 +14,6 @@ use harmony_luau::{
     DescribeModule,
     DescribeUserData,
     FieldDescriptor,
-    ModuleDescriptor,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
     TypeAliasDescriptor,
     render_definition_file_with_support,
 };
@@ -35,7 +25,8 @@ use harmony_luau::{
 
 use crate::{
     plugins::OptionConfig,
-    plugins::db,
+    plugins::args::JsonArg,
+    plugins::db::Db,
     services::auth::Principal,
     services::mix::{
         self as mix_service,
@@ -54,7 +45,7 @@ use lyra_db::Track;
 
 struct MixHandler;
 struct MixRecentListensHandler;
-struct MixModule;
+pub(crate) struct MixModule;
 
 pub(crate) struct MixCallbackRegistry {
     handlers: crate::plugins::callback_table::CallbackTable<MixCallback>,
@@ -289,51 +280,70 @@ impl Mixer {
     }
 }
 
-pub(crate) fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("lyra/mix")
-        .function(
-            FunctionSpec::new("Mixer.new")
-                .arg_name("id")
-                .call_async(Arc::new(mixer_new_callback)),
-        )
-        .function(consumer_spec("from_track", from_track_callback))
-        .function(consumer_spec("from_release", from_release_callback))
-        .function(consumer_spec("from_artist", from_artist_callback))
-        .function(consumer_spec("from_genre", from_genre_callback))
-        .function(consumer_spec("from_playlist", from_playlist_callback))
-        .function(consumer_spec(
-            "instant_mix_from_audio",
-            instant_mix_from_audio_callback,
-        ))
-        .userdata(Mixer::_harmony_userdata_spec())
-        .install(|_| Ok(ModuleExport::new(MixModule)))
+/// What `Mixer.new` takes from its call: the calling plugin, which must be the current run, and
+/// the handles its registration needs.
+struct MixerHost {
+    plugin_id: crate::services::plugin_scope::PluginId,
+    vm: luau::Vm,
+    origin: harmony_core::ChunkOrigin,
 }
 
-fn consumer_spec(
-    name: &'static str,
-    callback: fn(luau::AsyncCallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture>,
-) -> FunctionSpec {
-    FunctionSpec::new(name)
-        .arg_name("seed_id")
-        .arg_name("opts")
-        .call_async(Arc::new(callback))
+impl luau::FromCallFrame for MixerHost {
+    fn from_call_frame(vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
+        let Some(plugin_id) = context.origin.plugin.clone() else {
+            return Err(crate::plugins::runtime_error(
+                "mix.Mixer.new must be called from plugin Luau code",
+            ));
+        };
+        let plugin_id = crate::services::plugin_scope::PluginId::new(plugin_id.to_string())?;
+        harmony_core::ensure_current_plugin_run(vm, context)?;
+        Ok(Self {
+            plugin_id,
+            vm: vm.clone(),
+            origin: context.origin.clone(),
+        })
+    }
 }
 
-fn mixer_new_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let id: String = frame.args.read_named("id")?;
-    let Some(plugin_id) = frame.context.origin.plugin.clone() else {
-        return Err(crate::plugins::runtime_error(
-            "mix.Mixer.new must be called from plugin Luau code",
-        ));
-    };
-    let plugin_id = crate::services::plugin_scope::PluginId::new(plugin_id.to_string())?;
-    harmony_core::ensure_current_plugin_run(frame.vm, &frame.context)?;
-    let vm = frame.vm.clone();
-    let origin = frame.context.origin.clone();
-    let db = db::get(frame.vm)?;
-    Ok(luau::ScheduledFuture::new(async move {
+/// The documented type of the optional `opts` of the mix consumers.
+#[cfg(feature = "docgen")]
+struct MixConsumerOptions;
+
+#[cfg(feature = "docgen")]
+impl LuauTypeInfo for MixConsumerOptions {
+    fn luau_type() -> LuauType {
+        LuauType::literal("MixConsumerOptions")
+    }
+}
+
+/// The documented return of the mix consumers.
+#[cfg(feature = "docgen")]
+struct OptionalTrackList;
+
+#[cfg(feature = "docgen")]
+impl LuauTypeInfo for OptionalTrackList {
+    fn luau_type() -> LuauType {
+        LuauType::Optional(Box::new(LuauType::literal("{ Track }")))
+    }
+}
+
+#[harmony_macros::module(id = "lyra/mix", docs_feature = "docgen", extend = "extend_module")]
+impl MixModule {
+    #[harmony(
+        name = "Mixer.new",
+        description = "Creates a mixer registration object.",
+        returns(Mixer)
+    )]
+    async fn mixer_new(
+        id: String,
+        #[context] host: MixerHost,
+        #[context] db: Db,
+    ) -> luau::runtime::Result<luau::UserData> {
+        let MixerHost {
+            plugin_id,
+            vm,
+            origin,
+        } = host;
         let generation = crate::plugins::STATE.generation();
         let _registration = generation
             .registries
@@ -349,90 +359,149 @@ fn mixer_new_callback(
 
         drop(db);
         Mixer::_harmony_userdata_class().create(&vm, &origin, Mixer { id })
-    }))
-}
+    }
 
-fn consumer_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-    label: &'static str,
-    variant: fn(String) -> MixSeedId,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let seed = parse_seed_id(frame.args.read_named("seed_id")?, label)?;
-    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
-    let options = parse_consumer_options(
-        frame.vm,
-        frame.args.read_optional_named("opts")?,
-        &principal,
-    )?;
-    let db = db::get(frame.vm)?;
-    Ok(luau::ScheduledFuture::new(async move {
-        let Some(seed) = seed_public_id(db, seed).await? else {
-            return tracks_to_luau(None);
-        };
-        let tracks = mix_service::from_seed(variant(seed), &options).await?;
-        tracks_to_luau(tracks)
-    }))
-}
+    #[harmony(
+        description = "Mix from a seed track. Nil if missing.",
+        args(id: f64, opts: Option<MixConsumerOptions>),
+        returns(OptionalTrackList)
+    )]
+    async fn from_track(
+        seed_id: i64,
+        opts: Option<JsonArg>,
+        #[context] principal: Principal,
+        #[context] db: Db,
+    ) -> luau::runtime::Result<luau::Value> {
+        consume("from_track", MixSeedId::Track, seed_id, opts, principal, db).await
+    }
 
-fn from_track_callback(
-    frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    consumer_callback(frame, "from_track", MixSeedId::Track)
-}
+    #[harmony(
+        description = "Mix from a seed release. Nil if missing.",
+        args(id: f64, opts: Option<MixConsumerOptions>),
+        returns(OptionalTrackList)
+    )]
+    async fn from_release(
+        seed_id: i64,
+        opts: Option<JsonArg>,
+        #[context] principal: Principal,
+        #[context] db: Db,
+    ) -> luau::runtime::Result<luau::Value> {
+        consume(
+            "from_release",
+            MixSeedId::Release,
+            seed_id,
+            opts,
+            principal,
+            db,
+        )
+        .await
+    }
 
-fn from_release_callback(
-    frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    consumer_callback(frame, "from_release", MixSeedId::Release)
-}
+    #[harmony(
+        description = "Mix from a seed artist. Nil if missing.",
+        args(id: f64, opts: Option<MixConsumerOptions>),
+        returns(OptionalTrackList)
+    )]
+    async fn from_artist(
+        seed_id: i64,
+        opts: Option<JsonArg>,
+        #[context] principal: Principal,
+        #[context] db: Db,
+    ) -> luau::runtime::Result<luau::Value> {
+        consume(
+            "from_artist",
+            MixSeedId::Artist,
+            seed_id,
+            opts,
+            principal,
+            db,
+        )
+        .await
+    }
 
-fn from_artist_callback(
-    frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    consumer_callback(frame, "from_artist", MixSeedId::Artist)
-}
+    #[harmony(
+        description = "Mix from a seed genre. Nil if missing.",
+        args(id: f64, opts: Option<MixConsumerOptions>),
+        returns(OptionalTrackList)
+    )]
+    async fn from_genre(
+        seed_id: i64,
+        opts: Option<JsonArg>,
+        #[context] principal: Principal,
+        #[context] db: Db,
+    ) -> luau::runtime::Result<luau::Value> {
+        consume("from_genre", MixSeedId::Genre, seed_id, opts, principal, db).await
+    }
 
-fn from_genre_callback(
-    frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    consumer_callback(frame, "from_genre", MixSeedId::Genre)
-}
+    #[harmony(
+        description = "Mix from a seed playlist. Nil if missing.",
+        args(id: f64, opts: Option<MixConsumerOptions>),
+        returns(OptionalTrackList)
+    )]
+    async fn from_playlist(
+        seed_id: i64,
+        opts: Option<JsonArg>,
+        #[context] principal: Principal,
+        #[context] db: Db,
+    ) -> luau::runtime::Result<luau::Value> {
+        consume(
+            "from_playlist",
+            MixSeedId::Playlist,
+            seed_id,
+            opts,
+            principal,
+            db,
+        )
+        .await
+    }
 
-fn from_playlist_callback(
-    frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    consumer_callback(frame, "from_playlist", MixSeedId::Playlist)
-}
-
-fn instant_mix_from_audio_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let seed = parse_seed_id(frame.args.read_named("seed_id")?, "instant_mix_from_audio")?;
-    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
-    let options = parse_consumer_options(
-        frame.vm,
-        frame.args.read_optional_named("opts")?,
-        &principal,
-    )?;
-    let db = db::get(frame.vm)?;
-    Ok(luau::ScheduledFuture::new(async move {
+    #[harmony(
+        description = "Mix from a seed track with the seed pinned at index 1. Nil if missing.",
+        args(id: f64, opts: Option<MixConsumerOptions>),
+        returns(OptionalTrackList)
+    )]
+    async fn instant_mix_from_audio(
+        seed_id: i64,
+        opts: Option<JsonArg>,
+        #[context] principal: Principal,
+        #[context] db: Db,
+    ) -> luau::runtime::Result<luau::Value> {
+        let seed = parse_seed_id(seed_id, "instant_mix_from_audio")?;
+        let options = parse_consumer_options(opts.map(|opts| opts.0), &principal)?;
         let Some(seed) = seed_public_id(db, seed).await? else {
             return tracks_to_luau(None);
         };
         let tracks = mix_service::instant_mix_from_audio(&seed, &options).await?;
         tracks_to_luau(tracks)
-    }))
+    }
+}
+
+fn extend_module(spec: ModuleSpec) -> ModuleSpec {
+    spec.userdata(Mixer::_harmony_userdata_spec())
+}
+
+async fn consume(
+    label: &'static str,
+    variant: fn(String) -> MixSeedId,
+    seed_id: i64,
+    opts: Option<JsonArg>,
+    principal: Principal,
+    db: Db,
+) -> luau::runtime::Result<luau::Value> {
+    let seed = parse_seed_id(seed_id, label)?;
+    let options = parse_consumer_options(opts.map(|opts| opts.0), &principal)?;
+    let Some(seed) = seed_public_id(db, seed).await? else {
+        return tracks_to_luau(None);
+    };
+    let tracks = mix_service::from_seed(variant(seed), &options).await?;
+    tracks_to_luau(tracks)
 }
 
 fn parse_consumer_options(
-    vm: &luau::Vm,
-    opts: Option<luau::Value>,
+    opts: Option<serde_json::Value>,
     principal: &Principal,
 ) -> luau::runtime::Result<MixOptions> {
-    let json = match opts {
-        None | Some(luau::Value::Nil) => serde_json::Value::Object(Default::default()),
-        Some(opts) => harmony_serde::luau_to_json(vm, &opts, 0)?,
-    };
+    let json = opts.unwrap_or_else(|| serde_json::Value::Object(Default::default()));
     let json = match json {
         serde_json::Value::Array(values) if values.is_empty() => {
             serde_json::Value::Object(Default::default())
@@ -549,7 +618,7 @@ fn required_string_field(
 }
 
 /// The mix service seeds by public id, which it re-resolves under each guard it takes.
-async fn seed_public_id(db: lyra_db::DbAsync, seed: DbId) -> luau::runtime::Result<Option<String>> {
+async fn seed_public_id(db: Db, seed: DbId) -> luau::runtime::Result<Option<String>> {
     let db = db.read().await;
     lyra_db::lookup::find_id_by_db_id(&*db, seed).map_err(crate::plugins::runtime_error)
 }
@@ -594,95 +663,6 @@ fn tracks_to_luau(tracks: Option<Vec<Track>>) -> luau::runtime::Result<luau::Val
         return Ok(luau::Value::Nil);
     };
     harmony_luau::serializable_to_luau_owned(tracks)
-}
-
-#[cfg(feature = "docgen")]
-fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
-    ParameterDescriptor {
-        name,
-        ty,
-        description: None,
-        variadic: false,
-    }
-}
-
-#[cfg(feature = "docgen")]
-fn id_param() -> ParameterDescriptor {
-    param("id", f64::luau_type())
-}
-
-#[cfg(feature = "docgen")]
-fn opts_param() -> ParameterDescriptor {
-    ParameterDescriptor {
-        name: "opts",
-        ty: LuauType::Optional(Box::new(LuauType::literal("MixConsumerOptions"))),
-        description: None,
-        variadic: false,
-    }
-}
-
-#[cfg(feature = "docgen")]
-impl DescribeModule for MixModule {
-    fn module_descriptor() -> ModuleDescriptor {
-        let mut descriptor = ModuleDescriptor::new("Mix", "mix", None);
-        let optional_track_list =
-            || vec![LuauType::Optional(Box::new(LuauType::literal("{ Track }")))];
-
-        descriptor.functions.extend(vec![
-            ModuleFunctionDescriptor {
-                path: vec!["Mixer", "new"],
-                description: Some("Creates a mixer registration object."),
-                params: vec![param("id", String::luau_type())],
-                returns: vec![LuauType::literal("Mixer")],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["from_track"],
-                description: Some("Mix from a seed track. Nil if missing."),
-                params: vec![id_param(), opts_param()],
-                returns: optional_track_list(),
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["from_release"],
-                description: Some("Mix from a seed release. Nil if missing."),
-                params: vec![id_param(), opts_param()],
-                returns: optional_track_list(),
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["from_artist"],
-                description: Some("Mix from a seed artist. Nil if missing."),
-                params: vec![id_param(), opts_param()],
-                returns: optional_track_list(),
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["from_genre"],
-                description: Some("Mix from a seed genre. Nil if missing."),
-                params: vec![id_param(), opts_param()],
-                returns: optional_track_list(),
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["from_playlist"],
-                description: Some("Mix from a seed playlist. Nil if missing."),
-                params: vec![id_param(), opts_param()],
-                returns: optional_track_list(),
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["instant_mix_from_audio"],
-                description: Some(
-                    "Mix from a seed track with the seed pinned at index 1. Nil if missing.",
-                ),
-                params: vec![id_param(), opts_param()],
-                returns: optional_track_list(),
-                yields: true,
-            },
-        ]);
-        descriptor
-    }
 }
 
 #[cfg(feature = "docgen")]
@@ -907,8 +887,7 @@ mod tests {
 
     #[test]
     fn consumer_options_take_viewer_and_libraries_from_principal() -> luau::runtime::Result<()> {
-        let vm = luau::Vm::new()?;
-        let options = parse_consumer_options(&vm, None, &principal(Vec::new()))?;
+        let options = parse_consumer_options(None, &principal(Vec::new()))?;
         assert_eq!(
             options
                 .viewer
@@ -921,8 +900,7 @@ mod tests {
             Some(HashSet::from(["visible-library".to_string()]))
         );
 
-        let admin =
-            parse_consumer_options(&vm, None, &principal(vec![lyra_db::Permission::Admin]))?;
+        let admin = parse_consumer_options(None, &principal(vec![lyra_db::Permission::Admin]))?;
         assert!(admin.viewer.is_some());
         assert_eq!(admin.viewer_accessible_library_ids, None);
         Ok(())

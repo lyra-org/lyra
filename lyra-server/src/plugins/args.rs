@@ -285,6 +285,16 @@ impl LuauTypeInfo for ResolveIdArg {
     }
 }
 
+/// A Luau value converted to JSON.
+pub(crate) struct JsonArg(pub(crate) serde_json::Value);
+
+impl<'vm> luau::FromLuau<'vm> for JsonArg {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let value: luau::Value = reader.read()?;
+        harmony_serde::luau_to_json(reader.vm(), &value, 0).map(Self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

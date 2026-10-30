@@ -7,15 +7,15 @@ use std::sync::Arc;
 
 use harmony_core::{
     FunctionSpec,
-    ModuleExport,
     ModuleSpec,
 };
 use harmony_luau as luau;
+#[cfg(feature = "docgen")]
+use harmony_luau::FunctionParameter;
 use harmony_luau::{
     DescribeInterface,
     DescribeTypeAlias,
     FieldDescriptor,
-    FunctionParameter,
     InterfaceDescriptor,
     LuauType,
     LuauTypeInfo,
@@ -23,6 +23,7 @@ use harmony_luau::{
 };
 #[cfg(feature = "docgen")]
 use harmony_luau::{
+    DescribeModule,
     ModuleDescriptor,
     ModuleFunctionDescriptor,
     ParameterDescriptor,
@@ -36,8 +37,9 @@ use serde::{
 
 use crate::plugins::args;
 use crate::{
-    plugins::db,
+    plugins::db::Db,
     services::{
+        auth::Principal,
         playback_sessions::{
             self as playbacks,
             PlaybackScopeKey,
@@ -53,7 +55,7 @@ use crate::{
     },
 };
 
-struct PlaybackSessionsModule;
+#[cfg(feature = "docgen")]
 struct PlaybackUpdateHandler;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -94,12 +96,14 @@ struct ConnectionInfo {
     degraded: bool,
 }
 
+#[cfg(feature = "docgen")]
 impl LuauTypeInfo for PlaybackUpdateHandler {
     fn luau_type() -> LuauType {
         LuauType::literal("PlaybackUpdateHandler")
     }
 }
 
+#[cfg(feature = "docgen")]
 impl PlaybackUpdateHandler {
     fn callback_type() -> LuauType {
         LuauType::function(
@@ -113,6 +117,7 @@ impl PlaybackUpdateHandler {
     }
 }
 
+#[cfg(feature = "docgen")]
 impl DescribeTypeAlias for PlaybackUpdateHandler {
     fn type_alias_descriptor() -> TypeAliasDescriptor {
         TypeAliasDescriptor::new(
@@ -123,60 +128,56 @@ impl DescribeTypeAlias for PlaybackUpdateHandler {
     }
 }
 
-pub(crate) fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("lyra/playback_sessions")
-        .function(on_update_spec())
-        .function(report_session_spec())
-        .function(list_connections_spec())
-        .function(send_command_spec())
-        .install(|_| Ok(ModuleExport::new(PlaybackSessionsModule)))
+/// A Luau table read as the JSON-deserializable `T`.
+struct LuauJson<T>(T);
+
+impl<'vm, T: DeserializeOwned> luau::FromLuau<'vm> for LuauJson<T> {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let value: luau::Value = reader.read()?;
+        from_luau_json(reader.vm(), &value).map(Self)
+    }
 }
 
-fn on_update_spec() -> FunctionSpec {
-    FunctionSpec::new("on_update")
-        .arg_name("handler")
-        .call_async(Arc::new(on_update_callback))
+impl<T: LuauTypeInfo> LuauTypeInfo for LuauJson<T> {
+    fn luau_type() -> LuauType {
+        T::luau_type()
+    }
 }
 
-fn report_session_spec() -> FunctionSpec {
-    FunctionSpec::new("report_session")
-        .arg_name("request")
-        .call_async(Arc::new(report_session_callback))
+/// The plugin calling `report_session`.
+struct ReportingPlugin(Arc<str>);
+
+impl luau::FromCallFrame for ReportingPlugin {
+    fn from_call_frame(_vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
+        context.origin.plugin.clone().map(Self).ok_or_else(|| {
+            luau::Error::Runtime(
+                "playback_sessions.report_session must be called from plugin Luau code".into(),
+            )
+        })
+    }
 }
 
-fn list_connections_spec() -> FunctionSpec {
-    FunctionSpec::new("list_connections").call_async(Arc::new(list_connections_callback))
-}
+pub(crate) struct PlaybackSessionsModule;
 
-fn send_command_spec() -> FunctionSpec {
-    FunctionSpec::new("send_command")
-        .arg_name("request")
-        .call_async(Arc::new(send_command_callback))
-}
-
-fn on_update_callback(
-    frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    crate::plugins::update_callbacks::register::<playbacks::PlaybackUpdatePayload>(
-        frame,
-        "playback_sessions.on_update",
-    )
-}
-
-fn report_session_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let request_value: luau::Value = frame.args.read_named("request")?;
-    let request: PlaybackSessionReportRequest = from_luau_json(frame.vm, &request_value)?;
-    let db = db::get(frame.vm)?;
-    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
-    let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
-        luau::Error::Runtime(
-            "playback_sessions.report_session must be called from plugin Luau code".into(),
-        )
-    })?;
-
-    Ok(luau::ScheduledFuture::new(async move {
+#[harmony_macros::module(
+    id = "lyra/playback_sessions",
+    docs_feature = "docgen",
+    extend = "extend_module",
+    describe = "describe_module"
+)]
+impl PlaybackSessionsModule {
+    #[harmony(
+        description = "Reports an observation for a plugin's player context. Returns (public /api/me/playbacks ID, nil) when accepted, (nil, nil) when ignored, or (nil, rejection reason) when admission is refused. Internal failures raise an error. Track changes retain the context ID; stopped contexts expire after five minutes without an accepted current observation.",
+        returns(Option<String>, Option<String>)
+    )]
+    async fn report_session(
+        request: LuauJson<PlaybackSessionReportRequest>,
+        #[context] db: Db,
+        #[context] principal: Principal,
+        #[context] plugin_id: ReportingPlugin,
+    ) -> luau::runtime::Result<(Option<String>, Option<String>)> {
+        let request = request.0;
+        let plugin_id = plugin_id.0;
         let session_key = require_non_empty_string(request.session_key, "session_key")?;
         let track_db_id = args::positive_id(request.track_id, "track_id")?;
         if let Some(play_id) = request.play_id.as_deref()
@@ -243,16 +244,16 @@ fn report_session_callback(
         drop(db);
         playbacks::dispatch_playback_update_for_caller(dispatch_caller, &playback, event_label);
         Ok((Some(playback_id), None))
-    }))
-}
+    }
 
-fn list_connections_callback(
-    frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let db = db::get(frame.vm)?;
-    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
-
-    Ok(luau::ScheduledFuture::new(async move {
+    #[harmony(
+        description = "Lists the dispatch principal's active connections with their playback state.",
+        returns(Vec<ConnectionInfo>)
+    )]
+    async fn list_connections(
+        #[context] db: Db,
+        #[context] principal: Principal,
+    ) -> luau::runtime::Result<luau::Value> {
         let connections = registry::list_connections().await;
         let now_ms = playbacks::now_ms().map_err(crate::plugins::runtime_error)?;
 
@@ -310,20 +311,16 @@ fn list_connections_callback(
             });
         }
 
-        let value = harmony_luau::serializable_to_luau_owned(&result)?;
-        Ok(value)
-    }))
-}
+        harmony_luau::serializable_to_luau_owned(&result)
+    }
 
-fn send_command_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let request_value: luau::Value = frame.args.read_named("request")?;
-    let request: SendCommandRequest = from_luau_json(frame.vm, &request_value)?;
-    let db = db::get(frame.vm)?;
-    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
-
-    Ok(luau::ScheduledFuture::new(async move {
+    #[harmony(description = "Sends a remote control command to a connection.")]
+    async fn send_command(
+        request: LuauJson<SendCommandRequest>,
+        #[context] db: Db,
+        #[context] principal: Principal,
+    ) -> luau::runtime::Result<()> {
+        let request = request.0;
         // Held through the send, so a user deleted meanwhile commands nothing. Handoffs verify
         // their owner under their own guard.
         let db = db.read().await;
@@ -415,7 +412,41 @@ fn send_command_callback(
         }
 
         Ok(())
-    }))
+    }
+}
+
+/// `on_update` registers through the store shared with `listens.on_update`, which reads the
+/// call frame itself.
+fn extend_module(spec: ModuleSpec) -> ModuleSpec {
+    spec.function(
+        FunctionSpec::new("on_update")
+            .arg_name("handler")
+            .call_async(Arc::new(|frame| {
+                crate::plugins::update_callbacks::register::<playbacks::PlaybackUpdatePayload>(
+                    frame,
+                    "playback_sessions.on_update",
+                )
+            })),
+    )
+}
+
+#[cfg(feature = "docgen")]
+fn describe_module(descriptor: &mut ModuleDescriptor) {
+    descriptor.functions.insert(
+        0,
+        ModuleFunctionDescriptor {
+            path: vec!["on_update"],
+            description: Some("Registers a callback for per-track playback accounting updates."),
+            params: vec![ParameterDescriptor {
+                name: "handler",
+                ty: PlaybackUpdateHandler::luau_type(),
+                description: None,
+                variadic: false,
+            }],
+            returns: vec![],
+            yields: true,
+        },
+    );
 }
 
 fn from_luau_json<T>(vm: &luau::Vm, value: &luau::Value) -> luau::runtime::Result<T>
@@ -463,65 +494,9 @@ fn playback_state_string(state: lyra_db::PlaybackState) -> String {
 }
 
 #[cfg(feature = "docgen")]
-fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
-    ParameterDescriptor {
-        name,
-        ty,
-        description: None,
-        variadic: false,
-    }
-}
-
-#[cfg(feature = "docgen")]
-fn module_descriptor() -> ModuleDescriptor {
-    ModuleDescriptor {
-        name: "PlaybackSessions",
-        local_name: "playback_sessions",
-        description: None,
-        fields: Vec::new(),
-        functions: vec![
-            ModuleFunctionDescriptor {
-                path: vec!["on_update"],
-                description: Some(
-                    "Registers a callback for per-track playback accounting updates.",
-                ),
-                params: vec![param("handler", PlaybackUpdateHandler::luau_type())],
-                returns: vec![],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["report_session"],
-                description: Some(
-                    "Reports an observation for a plugin's player context. Returns (public /api/me/playbacks ID, nil) when accepted, (nil, nil) when ignored, or (nil, rejection reason) when admission is refused. Internal failures raise an error. Track changes retain the context ID; stopped contexts expire after five minutes without an accepted current observation.",
-                ),
-                params: vec![param("request", PlaybackSessionReportRequest::luau_type())],
-                returns: vec![Option::<String>::luau_type(), Option::<String>::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["list_connections"],
-                description: Some(
-                    "Lists the dispatch principal's active connections with their playback state.",
-                ),
-                params: Vec::new(),
-                returns: vec![Vec::<ConnectionInfo>::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["send_command"],
-                description: Some("Sends a remote control command to a connection."),
-                params: vec![param("request", SendCommandRequest::luau_type())],
-                returns: vec![],
-                yields: true,
-            },
-        ],
-    }
-}
-
-#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
-        &module_descriptor(),
+        &PlaybackSessionsModule::module_descriptor(),
         &[
             PlaybackUpdateHandler::type_alias_descriptor(),
             LuauPlaybackEvent::type_alias_descriptor(),

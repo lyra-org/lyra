@@ -10,9 +10,12 @@ mod registry;
 #[cfg(test)]
 mod tests;
 
+#[cfg(feature = "docgen")]
+pub(crate) use self::luau::UserSettingsAccessor;
 pub(crate) use self::luau::{
-    declare_settings_spec,
-    declare_user_settings_spec,
+    SettingsHost,
+    declare_settings,
+    declare_user_settings,
     user_settings_accessor_spec,
 };
 pub(crate) use self::registry::{

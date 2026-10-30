@@ -4,17 +4,16 @@
 // www.meshiplaw.com/lyra.
 
 #[cfg(feature = "docgen")]
+use harmony_luau::FunctionParameter;
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     ClassDescriptor,
     DescribeUserData,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
 };
 use harmony_luau::{
     DescribeInterface,
     DescribeTypeAlias,
     FieldDescriptor,
-    FunctionParameter,
     InterfaceDescriptor,
     LuauType,
     LuauTypeInfo,
@@ -27,7 +26,7 @@ use super::luau::{
     UserSettingsAccessor,
 };
 
-pub(super) struct SettingsConfig;
+pub(crate) struct SettingsConfig;
 
 impl LuauTypeInfo for SettingsConfig {
     fn luau_type() -> LuauType {
@@ -52,8 +51,10 @@ impl DescribeTypeAlias for SettingsConfig {
     }
 }
 
-pub(super) struct SettingsCallback;
+#[cfg(feature = "docgen")]
+pub(crate) struct SettingsCallback;
 
+#[cfg(feature = "docgen")]
 impl LuauTypeInfo for SettingsCallback {
     fn luau_type() -> LuauType {
         LuauType::function(
@@ -67,6 +68,7 @@ impl LuauTypeInfo for SettingsCallback {
     }
 }
 
+#[cfg(feature = "docgen")]
 impl DescribeTypeAlias for SettingsCallback {
     fn type_alias_descriptor() -> TypeAliasDescriptor {
         TypeAliasDescriptor::new(
@@ -252,28 +254,6 @@ impl DescribeInterface for SettingsChoiceProps {
 }
 
 #[cfg(feature = "docgen")]
-pub(crate) fn declare_settings_descriptor() -> ModuleFunctionDescriptor {
-    ModuleFunctionDescriptor {
-        path: vec!["declare_settings"],
-        description: None,
-        params: vec![param("callback", SettingsCallback::luau_type())],
-        returns: vec![SettingsConfig::luau_type()],
-        yields: true,
-    }
-}
-
-#[cfg(feature = "docgen")]
-pub(crate) fn declare_user_settings_descriptor() -> ModuleFunctionDescriptor {
-    ModuleFunctionDescriptor {
-        path: vec!["declare_user_settings"],
-        description: None,
-        params: vec![param("callback", SettingsCallback::luau_type())],
-        returns: vec![UserSettingsAccessor::luau_type()],
-        yields: true,
-    }
-}
-
-#[cfg(feature = "docgen")]
 pub(crate) fn type_alias_descriptors() -> [TypeAliasDescriptor; 2] {
     [
         SettingsConfig::type_alias_descriptor(),
@@ -298,14 +278,4 @@ pub(crate) fn class_descriptors() -> [ClassDescriptor; 2] {
         SettingsBuilder::class_descriptor(),
         UserSettingsAccessor::class_descriptor(),
     ]
-}
-
-#[cfg(feature = "docgen")]
-fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
-    ParameterDescriptor {
-        name,
-        ty,
-        description: None,
-        variadic: false,
-    }
 }

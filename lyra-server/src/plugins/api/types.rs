@@ -3,21 +3,27 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     LuauType,
     LuauTypeInfo,
 };
 
+#[cfg(feature = "docgen")]
 pub(super) struct ApiMethod;
+#[cfg(feature = "docgen")]
 pub(super) struct ApiRouteAuthMode;
 #[cfg(feature = "docgen")]
 pub(super) struct ApiHeaders;
+#[cfg(feature = "docgen")]
 pub(super) struct ApiQueryParams;
 #[cfg(feature = "docgen")]
 pub(super) struct ApiPathParams;
 #[cfg(feature = "docgen")]
 pub(super) struct ApiResponse;
+#[cfg(feature = "docgen")]
 pub(super) struct ApiHandler;
+#[cfg(feature = "docgen")]
 pub(super) struct ApiWebSocketHandler;
 #[cfg(feature = "docgen")]
 pub(super) struct ApiWebSocketReader;
@@ -38,12 +44,14 @@ pub(super) struct TrackStreamOptions;
 #[cfg(feature = "docgen")]
 pub(super) struct HlsServeOptions;
 
+#[cfg(feature = "docgen")]
 impl LuauTypeInfo for ApiMethod {
     fn luau_type() -> LuauType {
         LuauType::literal("ApiMethod")
     }
 }
 
+#[cfg(feature = "docgen")]
 impl LuauTypeInfo for ApiRouteAuthMode {
     fn luau_type() -> LuauType {
         LuauType::literal("ApiRouteAuthMode")
@@ -57,6 +65,7 @@ impl LuauTypeInfo for ApiHeaders {
     }
 }
 
+#[cfg(feature = "docgen")]
 impl LuauTypeInfo for ApiQueryParams {
     fn luau_type() -> LuauType {
         LuauType::literal("ApiQueryParams")
@@ -77,12 +86,14 @@ impl LuauTypeInfo for ApiResponse {
     }
 }
 
+#[cfg(feature = "docgen")]
 impl LuauTypeInfo for ApiHandler {
     fn luau_type() -> LuauType {
         LuauType::literal("ApiHandler")
     }
 }
 
+#[cfg(feature = "docgen")]
 impl LuauTypeInfo for ApiWebSocketHandler {
     fn luau_type() -> LuauType {
         LuauType::literal("ApiWebSocketHandler")

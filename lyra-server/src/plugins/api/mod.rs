@@ -33,23 +33,21 @@ pub(crate) use self::route_key::{
 use self::types::{
     ApiAuth,
     ApiContext,
+    ApiHandler,
     ApiHeaders,
+    ApiMethod,
     ApiPathParams,
+    ApiQueryParams,
     ApiRequest,
     ApiResponse,
+    ApiRouteAuthMode,
+    ApiWebSocketHandler,
     ApiWebSocketReader,
     ApiWebSocketSender,
     HlsServeOptions,
     ImageTransformOptions,
     TrackServeOptions,
     TrackStreamOptions,
-};
-use self::types::{
-    ApiHandler,
-    ApiMethod,
-    ApiQueryParams,
-    ApiRouteAuthMode,
-    ApiWebSocketHandler,
 };
 
 use std::{
@@ -66,10 +64,6 @@ use anyhow::{
     bail,
 };
 use axum::http::StatusCode;
-use harmony_core::{
-    FunctionSpec,
-    ModuleSpec,
-};
 use harmony_luau as luau;
 #[cfg(feature = "docgen")]
 use harmony_luau::render_definition_file_with_support;
@@ -83,20 +77,15 @@ use harmony_luau::{
     JsonValue,
     LuauType,
     LuauTypeInfo,
-    ModuleDescriptor,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
     TypeAliasDescriptor,
 };
 
-use crate::plugins::args;
+use crate::plugins::args::PositiveId;
 #[cfg(feature = "docgen")]
 use crate::plugins::auth::{
     AuthCredential,
     Principal as AuthPrincipal,
 };
-struct ApiModule;
-
 pub(crate) async fn finalize() -> anyhow::Result<()> {
     freeze_registry().await;
     rebuild_registered_routes().await
@@ -136,307 +125,554 @@ pub(crate) async fn teardown_plugin_routes(plugin_id: &crate::services::plugin_s
         .unwrap_or_else(|err| panic!("router rebuild must not fail post-teardown: {err}"));
 }
 
-fn route_spec(
-    name: &'static str,
-    include_method: bool,
-    callback: for<'vm> fn(luau::CallFrame<'vm>) -> luau::runtime::Result<()>,
-) -> FunctionSpec {
-    let mut spec = FunctionSpec::new(name);
-    if include_method {
-        spec = spec.arg_name("method");
+/// An HTTP method name, normalized.
+struct Method(&'static str);
+
+impl<'vm> luau::FromLuau<'vm> for Method {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let method: String = reader.read()?;
+        normalize_api_method(&method).map(Self)
     }
-    spec.arg_name("path")
-        .arg_name("handler")
-        .arg_name("auth_mode")
-        .arg_name("case_insensitive")
-        .call(callback)
 }
 
-fn response_spec(
-    name: &'static str,
-    callback: for<'vm> fn(luau::CallFrame<'vm>) -> luau::runtime::Result<()>,
-) -> FunctionSpec {
-    FunctionSpec::new(name).call(callback)
+/// An HTTP status code argument.
+struct Status(u16);
+
+impl<'vm> luau::FromLuau<'vm> for Status {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let status: i64 = reader.read()?;
+        validate_status(status).map(Self)
+    }
 }
 
-fn register_route_callback(
-    mut frame: luau::CallFrame<'_>,
+/// The documented type of a `response.bytes` body.
+#[cfg(feature = "docgen")]
+struct BytesBody;
+
+#[cfg(feature = "docgen")]
+impl LuauTypeInfo for BytesBody {
+    fn luau_type() -> LuauType {
+        LuauType::union(vec![String::luau_type(), LuauType::literal("buffer")])
+    }
+}
+
+pub(crate) struct ApiModule;
+
+#[harmony_macros::module(id = "lyra/api", docs_feature = "docgen")]
+impl ApiModule {
+    #[harmony(
+        description = "Registers a plugin API route.",
+        args(method: ApiMethod, path: String, handler: ApiHandler, auth_mode: Option<ApiRouteAuthMode>, case_insensitive: Option<bool>)
+    )]
+    fn route(
+        method: Method,
+        path: String,
+        handler: luau::Function,
+        auth_mode: Option<String>,
+        case_insensitive: Option<bool>,
+        context: &luau::CallContext,
+        vm: &luau::Vm,
+    ) -> luau::runtime::Result<()> {
+        register_route(
+            vm,
+            context,
+            method.0,
+            path,
+            handler,
+            auth_mode,
+            case_insensitive,
+        )
+    }
+
+    #[harmony(
+        description = "Registers a GET API route.",
+        args(path: String, handler: ApiHandler, auth_mode: Option<ApiRouteAuthMode>, case_insensitive: Option<bool>)
+    )]
+    fn get(
+        path: String,
+        handler: luau::Function,
+        auth_mode: Option<String>,
+        case_insensitive: Option<bool>,
+        context: &luau::CallContext,
+        vm: &luau::Vm,
+    ) -> luau::runtime::Result<()> {
+        register_route(
+            vm,
+            context,
+            "GET",
+            path,
+            handler,
+            auth_mode,
+            case_insensitive,
+        )
+    }
+
+    #[harmony(
+        description = "Registers a POST API route.",
+        args(path: String, handler: ApiHandler, auth_mode: Option<ApiRouteAuthMode>, case_insensitive: Option<bool>)
+    )]
+    fn post(
+        path: String,
+        handler: luau::Function,
+        auth_mode: Option<String>,
+        case_insensitive: Option<bool>,
+        context: &luau::CallContext,
+        vm: &luau::Vm,
+    ) -> luau::runtime::Result<()> {
+        register_route(
+            vm,
+            context,
+            "POST",
+            path,
+            handler,
+            auth_mode,
+            case_insensitive,
+        )
+    }
+
+    #[harmony(
+        description = "Registers a PUT API route.",
+        args(path: String, handler: ApiHandler, auth_mode: Option<ApiRouteAuthMode>, case_insensitive: Option<bool>)
+    )]
+    fn put(
+        path: String,
+        handler: luau::Function,
+        auth_mode: Option<String>,
+        case_insensitive: Option<bool>,
+        context: &luau::CallContext,
+        vm: &luau::Vm,
+    ) -> luau::runtime::Result<()> {
+        register_route(
+            vm,
+            context,
+            "PUT",
+            path,
+            handler,
+            auth_mode,
+            case_insensitive,
+        )
+    }
+
+    #[harmony(
+        description = "Registers a PATCH API route.",
+        args(path: String, handler: ApiHandler, auth_mode: Option<ApiRouteAuthMode>, case_insensitive: Option<bool>)
+    )]
+    fn patch(
+        path: String,
+        handler: luau::Function,
+        auth_mode: Option<String>,
+        case_insensitive: Option<bool>,
+        context: &luau::CallContext,
+        vm: &luau::Vm,
+    ) -> luau::runtime::Result<()> {
+        register_route(
+            vm,
+            context,
+            "PATCH",
+            path,
+            handler,
+            auth_mode,
+            case_insensitive,
+        )
+    }
+
+    #[harmony(
+        description = "Registers a DELETE API route.",
+        args(path: String, handler: ApiHandler, auth_mode: Option<ApiRouteAuthMode>, case_insensitive: Option<bool>)
+    )]
+    fn delete(
+        path: String,
+        handler: luau::Function,
+        auth_mode: Option<String>,
+        case_insensitive: Option<bool>,
+        context: &luau::CallContext,
+        vm: &luau::Vm,
+    ) -> luau::runtime::Result<()> {
+        register_route(
+            vm,
+            context,
+            "DELETE",
+            path,
+            handler,
+            auth_mode,
+            case_insensitive,
+        )
+    }
+
+    #[harmony(
+        description = "Registers a HEAD API route.",
+        args(path: String, handler: ApiHandler, auth_mode: Option<ApiRouteAuthMode>, case_insensitive: Option<bool>)
+    )]
+    fn head(
+        path: String,
+        handler: luau::Function,
+        auth_mode: Option<String>,
+        case_insensitive: Option<bool>,
+        context: &luau::CallContext,
+        vm: &luau::Vm,
+    ) -> luau::runtime::Result<()> {
+        register_route(
+            vm,
+            context,
+            "HEAD",
+            path,
+            handler,
+            auth_mode,
+            case_insensitive,
+        )
+    }
+
+    #[harmony(
+        description = "Registers an OPTIONS API route.",
+        args(path: String, handler: ApiHandler, auth_mode: Option<ApiRouteAuthMode>, case_insensitive: Option<bool>)
+    )]
+    fn options(
+        path: String,
+        handler: luau::Function,
+        auth_mode: Option<String>,
+        case_insensitive: Option<bool>,
+        context: &luau::CallContext,
+        vm: &luau::Vm,
+    ) -> luau::runtime::Result<()> {
+        register_route(
+            vm,
+            context,
+            "OPTIONS",
+            path,
+            handler,
+            auth_mode,
+            case_insensitive,
+        )
+    }
+
+    #[harmony(
+        description = "Registers a plugin WebSocket route.",
+        args(path: String, handler: ApiWebSocketHandler, auth_mode: Option<ApiRouteAuthMode>)
+    )]
+    fn websocket(
+        path: String,
+        handler: luau::Function,
+        auth_mode: Option<String>,
+        context: &luau::CallContext,
+        vm: &luau::Vm,
+    ) -> luau::runtime::Result<()> {
+        let plugin_id = context.origin.plugin.clone().ok_or_else(|| {
+            crate::plugins::runtime_error(
+                "lyra/api websocket routes must be registered from plugin Luau code",
+            )
+        })?;
+        harmony_core::ensure_current_plugin_run(vm, context)?;
+        let routes = vm.data().get::<ApiRouteStore>()?;
+        routes.register_websocket(plugin_id, path, handler, auth_mode, context.clone())
+    }
+
+    #[harmony(
+        name = "response.json",
+        description = "Builds a JSON response.",
+        args(status: u16, body: JsonValue, headers: Option<ApiHeaders>),
+        returns(ApiResponse)
+    )]
+    fn response_json(
+        status: Status,
+        body: luau::Value,
+        headers: Option<luau::Value>,
+        vm: &luau::Vm,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let headers = optional_value(headers);
+        let mut response = kind_table("json");
+        response.set_field("status", i64::from(status.0));
+        response.set_field(
+            "headers",
+            merge_headers(vm, &[("content-type", "application/json")], headers)?,
+        );
+        response.set_field("body", body);
+        Ok(response)
+    }
+
+    #[harmony(
+        name = "response.empty",
+        description = "Builds an empty response.",
+        args(status: Option<u16>, headers: Option<ApiHeaders>),
+        returns(ApiResponse)
+    )]
+    fn response_empty(
+        status: Option<Status>,
+        headers: Option<luau::Value>,
+        vm: &luau::Vm,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let status = status.map_or(StatusCode::NO_CONTENT.as_u16(), |status| status.0);
+        let headers = optional_value(headers);
+        let mut response = kind_table("empty");
+        response.set_field("status", i64::from(status));
+        if !is_nil(&headers) {
+            response.set_field("headers", headers_to_value(vm, headers)?);
+        }
+        Ok(response)
+    }
+
+    #[harmony(
+        name = "response.text",
+        description = "Builds a text response.",
+        args(status: u16, body: String, headers: Option<ApiHeaders>),
+        returns(ApiResponse)
+    )]
+    fn response_text(
+        status: Status,
+        body: String,
+        headers: Option<luau::Value>,
+        vm: &luau::Vm,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let headers = optional_value(headers);
+        let mut response = kind_table("text");
+        response.set_field("status", i64::from(status.0));
+        response.set_field("body", body);
+        response.set_field(
+            "headers",
+            merge_headers(
+                vm,
+                &[("content-type", "text/plain; charset=utf-8")],
+                headers,
+            )?,
+        );
+        Ok(response)
+    }
+
+    #[harmony(
+        name = "response.bytes",
+        description = "Builds a binary response.",
+        args(status: u16, body: BytesBody, headers: Option<ApiHeaders>),
+        returns(ApiResponse)
+    )]
+    fn response_bytes(
+        status: Status,
+        body: luau::Value,
+        headers: Option<luau::Value>,
+        vm: &luau::Vm,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        if !matches!(body, luau::Value::String(_) | luau::Value::Buffer(_)) {
+            return Err(crate::plugins::runtime_error(
+                "response.bytes body must be a string or buffer",
+            ));
+        }
+        let headers = optional_value(headers);
+        let mut response = kind_table("bytes");
+        response.set_field("status", i64::from(status.0));
+        response.set_field("body", body);
+        response.set_field(
+            "headers",
+            merge_headers(vm, &[("content-type", "application/octet-stream")], headers)?,
+        );
+        Ok(response)
+    }
+
+    #[harmony(
+        name = "response.redirect",
+        description = "Builds a redirect response.",
+        args(status: u16, location: String, headers: Option<ApiHeaders>),
+        returns(ApiResponse)
+    )]
+    fn response_redirect(
+        status: Status,
+        location: String,
+        headers: Option<luau::Value>,
+        vm: &luau::Vm,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        if !(300..400).contains(&status.0) {
+            return Err(crate::plugins::runtime_error(
+                "redirect status must be a 3xx HTTP status code",
+            ));
+        }
+        let location = location.trim();
+        if location.is_empty() {
+            return Err(crate::plugins::runtime_error(
+                "redirect location must not be empty",
+            ));
+        }
+        let headers = optional_value(headers);
+        let mut response = kind_table("redirect");
+        response.set_field("status", i64::from(status.0));
+        let mut headers = collect_headers(vm, headers)?;
+        headers.set_field(
+            "location",
+            luau::Value::String(location.as_bytes().to_vec()),
+        );
+        response.set_field("headers", headers);
+        Ok(response)
+    }
+
+    #[harmony(
+        name = "response.file",
+        description = "Builds a file response. The path must resolve inside a library root or the configured cover storage root.",
+        args(status: Option<u16>, path: String, headers: Option<ApiHeaders>, transform: Option<ImageTransformOptions>),
+        returns(ApiResponse)
+    )]
+    fn response_file(
+        status: Option<Status>,
+        path: String,
+        headers: Option<luau::Value>,
+        transform: Option<luau::Value>,
+        vm: &luau::Vm,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let status = status.map_or(StatusCode::OK.as_u16(), |status| status.0);
+        let path = path.trim();
+        if path.is_empty() {
+            return Err(crate::plugins::runtime_error("file path must not be empty"));
+        }
+        let headers = optional_value(headers);
+        let transform = optional_value(transform);
+        let mut response = kind_table("file");
+        response.set_field("status", i64::from(status));
+        response.set_field("path", path);
+        if !is_nil(&headers) {
+            response.set_field("headers", headers_to_value(vm, headers)?);
+        }
+        if !is_nil(&transform) {
+            response.set_field("transform", transform);
+        }
+        Ok(response)
+    }
+
+    #[harmony(
+        name = "response.stream_track",
+        description = "Builds a streamed-track response.",
+        args(track_id: i64, options: Option<TrackStreamOptions>),
+        returns(ApiResponse)
+    )]
+    fn response_stream_track(
+        track_id: PositiveId,
+        options: Option<luau::Value>,
+    ) -> luau::OwnedTable {
+        track_response("stream_track", track_id, options)
+    }
+
+    #[harmony(
+        name = "response.download_track",
+        description = "Builds a download-track response.",
+        args(track_id: i64, options: Option<TrackServeOptions>),
+        returns(ApiResponse)
+    )]
+    fn response_download_track(
+        track_id: PositiveId,
+        options: Option<luau::Value>,
+    ) -> luau::OwnedTable {
+        track_response("download_track", track_id, options)
+    }
+
+    #[harmony(
+        name = "response.hls_playlist",
+        description = "Builds an HLS playlist response.",
+        args(track_id: i64, options: Option<HlsServeOptions>),
+        returns(ApiResponse)
+    )]
+    fn response_hls_playlist(
+        track_id: PositiveId,
+        options: Option<luau::Value>,
+    ) -> luau::OwnedTable {
+        track_response("hls_playlist", track_id, options)
+    }
+
+    #[harmony(
+        name = "query.bool",
+        description = "Reads a boolean query parameter.",
+        args(query: ApiQueryParams, key: String, default: Option<bool>)
+    )]
+    fn query_bool(
+        query: luau::Table,
+        key: String,
+        default: Option<bool>,
+        vm: &luau::Vm,
+    ) -> luau::runtime::Result<Option<bool>> {
+        let value = first_query_value(vm, &query, &key)?;
+        let parsed = value.as_deref().and_then(parse_query_bool);
+        Ok(parsed.or(default))
+    }
+
+    #[harmony(
+        name = "query.int",
+        description = "Reads an integer query parameter.",
+        args(query: ApiQueryParams, key: String, default: Option<i64>, min: Option<i64>, max: Option<i64>)
+    )]
+    fn query_int(
+        query: luau::Table,
+        key: String,
+        default: Option<i64>,
+        min: Option<i64>,
+        max: Option<i64>,
+        vm: &luau::Vm,
+    ) -> luau::runtime::Result<Option<i64>> {
+        let parsed = first_query_value(vm, &query, &key)?
+            .and_then(|raw| raw.trim().parse::<i64>().ok())
+            .filter(|parsed| {
+                min.is_none_or(|min| *parsed >= min) && max.is_none_or(|max| *parsed <= max)
+            });
+        Ok(parsed.or(default))
+    }
+
+    #[harmony(
+        name = "query.csv",
+        description = "Splits comma-separated query parameter values.",
+        args(query: ApiQueryParams, key: String),
+        returns(Vec<String>)
+    )]
+    fn query_csv(
+        query: luau::Table,
+        key: String,
+        vm: &luau::Vm,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let mut result = luau::OwnedTable::new();
+        if let luau::Value::Table(occurrences) = query.get_raw(vm, &key)? {
+            let mut values = occurrence_values(vm, &occurrences)?;
+            values.sort_by_key(|(index, _)| *index);
+            for (_, raw) in values {
+                for part in raw.split(',') {
+                    let item = part.trim();
+                    if !item.is_empty() {
+                        result.push_array(item);
+                    }
+                }
+            }
+        }
+        Ok(result)
+    }
+}
+
+fn register_route(
+    vm: &luau::Vm,
+    context: &luau::CallContext,
     method: &'static str,
+    path: String,
+    handler: luau::Function,
+    auth_mode: Option<String>,
+    case_insensitive: Option<bool>,
 ) -> luau::runtime::Result<()> {
-    let path = frame.args.read_named("path")?;
-    let handler = frame.args.read_named("handler")?;
-    let auth_mode = frame.args.read_optional_named("auth_mode")?;
-    let case_insensitive = frame
-        .args
-        .read_optional_named("case_insensitive")?
-        .unwrap_or(false);
-    let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
+    let plugin_id = context.origin.plugin.clone().ok_or_else(|| {
         crate::plugins::runtime_error("lyra/api routes must be registered from plugin Luau code")
     })?;
-    harmony_core::ensure_current_plugin_run(frame.vm, &frame.context)?;
-    let routes = frame.vm.data().get::<ApiRouteStore>()?;
+    harmony_core::ensure_current_plugin_run(vm, context)?;
+    let routes = vm.data().get::<ApiRouteStore>()?;
     routes.register(ApiRouteRegistration {
         plugin_id,
         method,
         path,
         handler,
         auth_mode,
-        case_insensitive,
-        context: frame.context.clone(),
+        case_insensitive: case_insensitive.unwrap_or(false),
+        context: context.clone(),
     })
 }
 
-fn route_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let method: String = frame.args.read_named("method")?;
-    let normalized = normalize_api_method(&method)?;
-    register_route_callback(frame, normalized)
-}
-
-fn get_callback(frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    register_route_callback(frame, "GET")
-}
-
-fn post_callback(frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    register_route_callback(frame, "POST")
-}
-
-fn put_callback(frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    register_route_callback(frame, "PUT")
-}
-
-fn patch_callback(frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    register_route_callback(frame, "PATCH")
-}
-
-fn delete_callback(frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    register_route_callback(frame, "DELETE")
-}
-
-fn head_callback(frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    register_route_callback(frame, "HEAD")
-}
-
-fn options_callback(frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    register_route_callback(frame, "OPTIONS")
-}
-
-fn websocket_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let path = frame.args.read_named("path")?;
-    let handler = frame.args.read_named("handler")?;
-    let auth_mode = frame.args.read_optional_named("auth_mode")?;
-    let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
-        crate::plugins::runtime_error(
-            "lyra/api websocket routes must be registered from plugin Luau code",
-        )
-    })?;
-    harmony_core::ensure_current_plugin_run(frame.vm, &frame.context)?;
-    let routes = frame.vm.data().get::<ApiRouteStore>()?;
-    routes.register_websocket(plugin_id, path, handler, auth_mode, frame.context.clone())
-}
-
-fn response_json_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let status = read_status(&mut frame, "status")?;
-    let body: luau::Value = frame.args.read_named("body")?;
-    let headers = optional_value(frame.args.read_optional_named("headers")?);
-    let mut response = kind_table("json");
-    response.set_field("status", i64::from(status));
-    response.set_field(
-        "headers",
-        merge_headers(frame.vm, &[("content-type", "application/json")], headers)?,
-    );
-    response.set_field("body", body);
-    frame.returns.write(luau::Value::TableData(response))
-}
-
-fn response_empty_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let status = frame
-        .args
-        .read_optional_named::<i64>("status")?
-        .unwrap_or(i64::from(StatusCode::NO_CONTENT.as_u16()));
-    validate_status(status)?;
-    let headers = optional_value(frame.args.read_optional_named("headers")?);
-    let mut response = kind_table("empty");
-    response.set_field("status", status);
-    if !is_nil(&headers) {
-        response.set_field("headers", headers_to_value(frame.vm, headers)?);
-    }
-    frame.returns.write(luau::Value::TableData(response))
-}
-
-fn response_text_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let status = read_status(&mut frame, "status")?;
-    let body: String = frame.args.read_named("body")?;
-    let headers = optional_value(frame.args.read_optional_named("headers")?);
-    let mut response = kind_table("text");
-    response.set_field("status", i64::from(status));
-    response.set_field("body", body);
-    response.set_field(
-        "headers",
-        merge_headers(
-            frame.vm,
-            &[("content-type", "text/plain; charset=utf-8")],
-            headers,
-        )?,
-    );
-    frame.returns.write(luau::Value::TableData(response))
-}
-
-fn response_bytes_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let status = read_status(&mut frame, "status")?;
-    let body = frame.args.read_named("body")?;
-    if !matches!(body, luau::Value::String(_) | luau::Value::Buffer(_)) {
-        return Err(crate::plugins::runtime_error(
-            "response.bytes body must be a string or buffer",
-        ));
-    }
-    let headers = optional_value(frame.args.read_optional_named("headers")?);
-    let mut response = kind_table("bytes");
-    response.set_field("status", i64::from(status));
-    response.set_field("body", body);
-    response.set_field(
-        "headers",
-        merge_headers(
-            frame.vm,
-            &[("content-type", "application/octet-stream")],
-            headers,
-        )?,
-    );
-    frame.returns.write(luau::Value::TableData(response))
-}
-
-fn response_redirect_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let status = read_status(&mut frame, "status")?;
-    if !(300..400).contains(&status) {
-        return Err(crate::plugins::runtime_error(
-            "redirect status must be a 3xx HTTP status code",
-        ));
-    }
-    let location: String = frame.args.read_named("location")?;
-    let location = location.trim();
-    if location.is_empty() {
-        return Err(crate::plugins::runtime_error(
-            "redirect location must not be empty",
-        ));
-    }
-    let headers = optional_value(frame.args.read_optional_named("headers")?);
-    let mut response = kind_table("redirect");
-    response.set_field("status", i64::from(status));
-    let mut headers = collect_headers(frame.vm, headers)?;
-    headers.set_field(
-        "location",
-        luau::Value::String(location.as_bytes().to_vec()),
-    );
-    response.set_field("headers", headers);
-    frame.returns.write(luau::Value::TableData(response))
-}
-
-fn response_file_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let status = frame
-        .args
-        .read_optional_named::<i64>("status")?
-        .unwrap_or(i64::from(StatusCode::OK.as_u16()));
-    validate_status(status)?;
-    let path: String = frame.args.read_named("path")?;
-    let path = path.trim();
-    if path.is_empty() {
-        return Err(crate::plugins::runtime_error("file path must not be empty"));
-    }
-    let headers = optional_value(frame.args.read_optional_named("headers")?);
-    let transform = optional_value(frame.args.read_optional_named("transform")?);
-    let mut response = kind_table("file");
-    response.set_field("status", status);
-    response.set_field("path", path);
-    if !is_nil(&headers) {
-        response.set_field("headers", headers_to_value(frame.vm, headers)?);
-    }
-    if !is_nil(&transform) {
-        response.set_field("transform", transform);
-    }
-    frame.returns.write(luau::Value::TableData(response))
-}
-
-fn response_stream_track_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    track_response_callback(&mut frame, "stream_track")
-}
-
-fn response_download_track_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    track_response_callback(&mut frame, "download_track")
-}
-
-fn response_hls_playlist_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    track_response_callback(&mut frame, "hls_playlist")
-}
-
-fn track_response_callback(
-    frame: &mut luau::CallFrame<'_>,
+fn track_response(
     kind: &'static str,
-) -> luau::runtime::Result<()> {
-    let track_id = args::positive_id(frame.args.read_named("track_id")?, "track_id")?.0;
-    let options = optional_value(frame.args.read_optional_named("options")?);
+    track_id: PositiveId,
+    options: Option<luau::Value>,
+) -> luau::OwnedTable {
+    let options = optional_value(options);
     let mut response = kind_table(kind);
-    response.set_field("track_id", track_id);
+    response.set_field("track_id", track_id.0.0);
     if !is_nil(&options) {
         response.set_field("options", options);
     }
-    frame.returns.write(luau::Value::TableData(response))
-}
-
-fn query_bool_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let query: luau::Table = frame.args.read_named("query")?;
-    let key: String = frame.args.read_named("key")?;
-    let default: Option<bool> = frame.args.read_optional_named("default")?;
-    let value = first_query_value(frame.vm, &query, &key)?;
-    let parsed = value.as_deref().and_then(parse_query_bool);
-    match parsed.or(default) {
-        Some(value) => frame.returns.write(value),
-        None => frame.returns.write(luau::Value::Nil),
-    }
-}
-
-fn query_int_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let query: luau::Table = frame.args.read_named("query")?;
-    let key: String = frame.args.read_named("key")?;
-    let default: Option<i64> = frame.args.read_optional_named("default")?;
-    let min: Option<i64> = frame.args.read_optional_named("min")?;
-    let max: Option<i64> = frame.args.read_optional_named("max")?;
-    let Some(raw) = first_query_value(frame.vm, &query, &key)? else {
-        return match default {
-            Some(value) => frame.returns.write(value),
-            None => frame.returns.write(luau::Value::Nil),
-        };
-    };
-    let Ok(parsed) = raw.trim().parse::<i64>() else {
-        return match default {
-            Some(value) => frame.returns.write(value),
-            None => frame.returns.write(luau::Value::Nil),
-        };
-    };
-    if min.is_some_and(|min| parsed < min) || max.is_some_and(|max| parsed > max) {
-        return match default {
-            Some(value) => frame.returns.write(value),
-            None => frame.returns.write(luau::Value::Nil),
-        };
-    }
-    frame.returns.write(parsed)
-}
-
-fn query_csv_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let query: luau::Table = frame.args.read_named("query")?;
-    let key: String = frame.args.read_named("key")?;
-    let mut result = luau::OwnedTable::new();
-    if let luau::Value::Table(occurrences) = query.get_raw(frame.vm, &key)? {
-        let mut values = occurrence_values(frame.vm, &occurrences)?;
-        values.sort_by_key(|(index, _)| *index);
-        for (_, raw) in values {
-            for part in raw.split(',') {
-                let item = part.trim();
-                if !item.is_empty() {
-                    result.push_array(item);
-                }
-            }
-        }
-    }
-    frame.returns.write(luau::Value::TableData(result))
+    response
 }
 
 fn first_query_value(
@@ -546,11 +782,6 @@ fn optional_value(value: Option<luau::Value>) -> luau::Value {
     value.unwrap_or(luau::Value::Nil)
 }
 
-fn read_status(frame: &mut luau::CallFrame<'_>, name: &'static str) -> luau::runtime::Result<u16> {
-    let status: i64 = frame.args.read_named(name)?;
-    validate_status(status)
-}
-
 fn validate_status(status: i64) -> luau::runtime::Result<u16> {
     u16::try_from(status)
         .ok()
@@ -593,263 +824,6 @@ fn normalize_auth_mode(auth_mode: Option<&str>) -> luau::runtime::Result<RouteAu
         Some(other) => Err(crate::plugins::runtime_error(format!(
             "unsupported auth mode '{other}'; expected 'public' or 'required'"
         ))),
-    }
-}
-
-#[cfg(feature = "docgen")]
-fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
-    ParameterDescriptor {
-        name,
-        ty,
-        description: None,
-        variadic: false,
-    }
-}
-
-#[cfg(feature = "docgen")]
-fn route_params(include_method: bool) -> Vec<ParameterDescriptor> {
-    let mut params = Vec::new();
-    if include_method {
-        params.push(param("method", ApiMethod::luau_type()));
-    }
-    params.extend([
-        param("path", String::luau_type()),
-        param("handler", ApiHandler::luau_type()),
-        param(
-            "auth_mode",
-            LuauType::optional(ApiRouteAuthMode::luau_type()),
-        ),
-        param("case_insensitive", LuauType::optional(bool::luau_type())),
-    ]);
-    params
-}
-
-#[cfg(feature = "docgen")]
-fn response_returns() -> Vec<LuauType> {
-    vec![ApiResponse::luau_type()]
-}
-
-#[cfg(feature = "docgen")]
-impl DescribeModule for ApiModule {
-    fn module_descriptor() -> ModuleDescriptor {
-        let mut descriptor = ModuleDescriptor::new("Api", "api", None);
-        descriptor.functions.extend([
-            ModuleFunctionDescriptor {
-                path: vec!["route"],
-                description: Some("Registers a plugin API route."),
-                params: route_params(true),
-                returns: vec![],
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["get"],
-                description: Some("Registers a GET API route."),
-                params: route_params(false),
-                returns: vec![],
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["post"],
-                description: Some("Registers a POST API route."),
-                params: route_params(false),
-                returns: vec![],
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["put"],
-                description: Some("Registers a PUT API route."),
-                params: route_params(false),
-                returns: vec![],
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["patch"],
-                description: Some("Registers a PATCH API route."),
-                params: route_params(false),
-                returns: vec![],
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["delete"],
-                description: Some("Registers a DELETE API route."),
-                params: route_params(false),
-                returns: vec![],
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["head"],
-                description: Some("Registers a HEAD API route."),
-                params: route_params(false),
-                returns: vec![],
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["options"],
-                description: Some("Registers an OPTIONS API route."),
-                params: route_params(false),
-                returns: vec![],
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["websocket"],
-                description: Some("Registers a plugin WebSocket route."),
-                params: vec![
-                    param("path", String::luau_type()),
-                    param("handler", ApiWebSocketHandler::luau_type()),
-                    param(
-                        "auth_mode",
-                        LuauType::optional(ApiRouteAuthMode::luau_type()),
-                    ),
-                ],
-                returns: vec![],
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["response", "json"],
-                description: Some("Builds a JSON response."),
-                params: vec![
-                    param("status", u16::luau_type()),
-                    param("body", JsonValue::luau_type()),
-                    param("headers", LuauType::optional(ApiHeaders::luau_type())),
-                ],
-                returns: response_returns(),
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["response", "empty"],
-                description: Some("Builds an empty response."),
-                params: vec![
-                    param("status", LuauType::optional(u16::luau_type())),
-                    param("headers", LuauType::optional(ApiHeaders::luau_type())),
-                ],
-                returns: response_returns(),
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["response", "text"],
-                description: Some("Builds a text response."),
-                params: vec![
-                    param("status", u16::luau_type()),
-                    param("body", String::luau_type()),
-                    param("headers", LuauType::optional(ApiHeaders::luau_type())),
-                ],
-                returns: response_returns(),
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["response", "bytes"],
-                description: Some("Builds a binary response."),
-                params: vec![
-                    param("status", u16::luau_type()),
-                    param(
-                        "body",
-                        LuauType::union(vec![String::luau_type(), LuauType::literal("buffer")]),
-                    ),
-                    param("headers", LuauType::optional(ApiHeaders::luau_type())),
-                ],
-                returns: response_returns(),
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["response", "redirect"],
-                description: Some("Builds a redirect response."),
-                params: vec![
-                    param("status", u16::luau_type()),
-                    param("location", String::luau_type()),
-                    param("headers", LuauType::optional(ApiHeaders::luau_type())),
-                ],
-                returns: response_returns(),
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["response", "file"],
-                description: Some(
-                    "Builds a file response. The path must resolve inside a library root or the configured cover storage root.",
-                ),
-                params: vec![
-                    param("status", LuauType::optional(u16::luau_type())),
-                    param("path", String::luau_type()),
-                    param("headers", LuauType::optional(ApiHeaders::luau_type())),
-                    param(
-                        "transform",
-                        LuauType::optional(ImageTransformOptions::luau_type()),
-                    ),
-                ],
-                returns: response_returns(),
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["response", "stream_track"],
-                description: Some("Builds a streamed-track response."),
-                params: vec![
-                    param("track_id", i64::luau_type()),
-                    param(
-                        "options",
-                        LuauType::optional(TrackStreamOptions::luau_type()),
-                    ),
-                ],
-                returns: response_returns(),
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["response", "download_track"],
-                description: Some("Builds a download-track response."),
-                params: vec![
-                    param("track_id", i64::luau_type()),
-                    param(
-                        "options",
-                        LuauType::optional(TrackServeOptions::luau_type()),
-                    ),
-                ],
-                returns: response_returns(),
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["response", "hls_playlist"],
-                description: Some("Builds an HLS playlist response."),
-                params: vec![
-                    param("track_id", i64::luau_type()),
-                    param("options", LuauType::optional(HlsServeOptions::luau_type())),
-                ],
-                returns: response_returns(),
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["query", "bool"],
-                description: Some("Reads a boolean query parameter."),
-                params: vec![
-                    param("query", ApiQueryParams::luau_type()),
-                    param("key", String::luau_type()),
-                    param("default", LuauType::optional(bool::luau_type())),
-                ],
-                returns: vec![LuauType::optional(bool::luau_type())],
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["query", "int"],
-                description: Some("Reads an integer query parameter."),
-                params: vec![
-                    param("query", ApiQueryParams::luau_type()),
-                    param("key", String::luau_type()),
-                    param("default", LuauType::optional(i64::luau_type())),
-                    param("min", LuauType::optional(i64::luau_type())),
-                    param("max", LuauType::optional(i64::luau_type())),
-                ],
-                returns: vec![LuauType::optional(i64::luau_type())],
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["query", "csv"],
-                description: Some("Splits comma-separated query parameter values."),
-                params: vec![
-                    param("query", ApiQueryParams::luau_type()),
-                    param("key", String::luau_type()),
-                ],
-                returns: vec![Vec::<String>::luau_type()],
-                yields: false,
-            },
-        ]);
-        descriptor
     }
 }
 
@@ -1187,69 +1161,6 @@ fn track_serve_option_fields(include_format: bool) -> Vec<FieldDescriptor> {
         field("start_offset_ms", LuauType::optional(u64::luau_type())),
     ]);
     fields
-}
-
-pub(crate) fn module_spec() -> harmony_core::ModuleSpec {
-    ModuleSpec::new("lyra/api")
-        .function(route_spec("route", true, route_callback))
-        .function(route_spec("get", false, get_callback))
-        .function(route_spec("post", false, post_callback))
-        .function(route_spec("put", false, put_callback))
-        .function(route_spec("patch", false, patch_callback))
-        .function(route_spec("delete", false, delete_callback))
-        .function(route_spec("head", false, head_callback))
-        .function(route_spec("options", false, options_callback))
-        .function(
-            FunctionSpec::new("websocket")
-                .arg_name("path")
-                .arg_name("handler")
-                .arg_name("auth_mode")
-                .call(websocket_callback),
-        )
-        .function(response_spec("response.json", response_json_callback))
-        .function(response_spec("response.empty", response_empty_callback))
-        .function(response_spec("response.text", response_text_callback))
-        .function(response_spec("response.bytes", response_bytes_callback))
-        .function(response_spec(
-            "response.redirect",
-            response_redirect_callback,
-        ))
-        .function(response_spec("response.file", response_file_callback))
-        .function(response_spec(
-            "response.stream_track",
-            response_stream_track_callback,
-        ))
-        .function(response_spec(
-            "response.download_track",
-            response_download_track_callback,
-        ))
-        .function(response_spec(
-            "response.hls_playlist",
-            response_hls_playlist_callback,
-        ))
-        .function(
-            FunctionSpec::new("query.bool")
-                .arg_name("query")
-                .arg_name("key")
-                .arg_name("default")
-                .call(query_bool_callback),
-        )
-        .function(
-            FunctionSpec::new("query.int")
-                .arg_name("query")
-                .arg_name("key")
-                .arg_name("default")
-                .arg_name("min")
-                .arg_name("max")
-                .call(query_int_callback),
-        )
-        .function(
-            FunctionSpec::new("query.csv")
-                .arg_name("query")
-                .arg_name("key")
-                .call(query_csv_callback),
-        )
-        .install(|_| Ok(harmony_core::ModuleExport::new(ApiModule)))
 }
 
 #[cfg(feature = "docgen")]

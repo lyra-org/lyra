@@ -3,36 +3,35 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::sync::Arc;
-
 use agdb::DbId;
 use axum::http::StatusCode;
-use harmony_core::{
-    FunctionSpec,
-    ModuleExport,
-    ModuleSpec,
-};
 use harmony_luau as luau;
 #[cfg(feature = "docgen")]
 use harmony_luau::{
     DescribeInterface,
+    DescribeModule,
     FieldDescriptor,
     InterfaceDescriptor,
     LuauType,
     LuauTypeInfo,
-    ModuleDescriptor,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
     TypeAliasDescriptor,
     render_definition_file_with_support,
 };
 
-use crate::plugins::args;
+use crate::plugins::args::{
+    JsonArg,
+    PositiveId,
+    ResolveIdArg,
+    UniqueIds,
+};
 use crate::plugins::types::EntryInfo;
 use crate::{
-    plugins::db,
+    plugins::db::Db,
     services::{
-        auth::AuthError,
+        auth::{
+            AuthError,
+            Principal,
+        },
         delivery::{
             self,
             DeliveryError,
@@ -42,7 +41,8 @@ use crate::{
 };
 use lyra_db::ResolveId;
 
-struct PlaybackSourcesModule;
+#[cfg(feature = "docgen")]
+use std::collections::HashMap;
 
 #[cfg(feature = "docgen")]
 struct PlaybackSourceInfo;
@@ -56,61 +56,103 @@ struct DeliveryDescription;
 #[cfg(feature = "docgen")]
 struct SourceDescription;
 
-pub(crate) fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("lyra/playback_sources")
-        .function(get_spec())
-        .function(get_many_spec())
-        .function(streamable_spec())
-        .function(decide_spec())
-        .install(|_| Ok(ModuleExport::new(PlaybackSourcesModule)))
+/// The dispatch's principal, when it has one.
+struct DispatchPrincipal(Option<Principal>);
+
+impl luau::FromCallFrame for DispatchPrincipal {
+    fn from_call_frame(_vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
+        crate::plugins::auth::dispatch_principal(context).map(Self)
+    }
 }
 
-fn get_spec() -> FunctionSpec {
-    FunctionSpec::new("get")
-        .arg_name("id")
-        .arg_name("include_entry")
-        .call_async(Arc::new(get_callback))
-}
+pub(crate) struct PlaybackSourcesModule;
 
-fn get_many_spec() -> FunctionSpec {
-    FunctionSpec::new("get_many")
-        .arg_name("track_ids")
-        .arg_name("include_entry")
-        .call_async(Arc::new(get_many_callback))
-}
+#[harmony_macros::module(id = "lyra/playback_sources", docs_feature = "docgen")]
+impl PlaybackSourcesModule {
+    #[harmony(returns(Vec<PlaybackSourceInfo>))]
+    async fn get(
+        id: Option<ResolveIdArg>,
+        include_entry: Option<bool>,
+        #[context] db: Db,
+        #[context] principal: Principal,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let id = id
+            .map(|id| id.0)
+            .unwrap_or_else(|| ResolveId::alias("tracks"));
+        let include_entry = include_entry.unwrap_or(false);
+        let db = db.read().await;
+        let include_full_path = lyra_db::roles::has_permission(
+            &principal.permissions,
+            lyra_db::Permission::ManageLibraries,
+        );
+        let query_id = id
+            .to_query_id(&db)?
+            .ok_or_else(|| crate::plugins::runtime_error("could not resolve scope"))?;
+        let tracks = lyra_db::tracks::get(&db, query_id)?;
 
-fn streamable_spec() -> FunctionSpec {
-    FunctionSpec::new("streamable")
-        .arg_name("track_id")
-        .arg_name("include_entry")
-        .call_async(Arc::new(streamable_callback))
-}
+        let mut rows = luau::OwnedTable::new();
+        for track in tracks {
+            let Some(track_id) = track.db_id.map(DbId::from) else {
+                continue;
+            };
+            if !crate::services::auth::access::entity_accessible(&db, &principal, track_id)? {
+                continue;
+            }
+            let Some(source) = playback_source_service::resolve(&db, track_id, include_entry)?
+            else {
+                continue;
+            };
+            rows.push_array(luau::Value::TableData(source_to_table(
+                source,
+                include_entry,
+                include_full_path,
+            )?));
+        }
 
-fn decide_spec() -> FunctionSpec {
-    FunctionSpec::new("decide")
-        .arg_name("track_id")
-        .arg_name("options")
-        .call_async(Arc::new(decide_callback))
-}
+        Ok(rows)
+    }
 
-fn decide_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let track_id = args::positive_id(frame.args.read_named::<i64>("track_id")?, "track_id")?;
-    let options = frame
-        .args
-        .read_optional_named::<luau::Value>("options")?
-        .map(|options| harmony_serde::luau_to_json(frame.vm, &options, 0))
-        .transpose()?;
-    let principal = crate::plugins::auth::dispatch_principal(&frame.context)?;
+    #[harmony(
+        description = "A track's playback source read as the system, without the entry's full path. Ignores library visibility, so it is only for public streaming routes, which must serve nothing from it but the audio.",
+        args(track_id: i64, include_entry: Option<bool>),
+        returns(Option<PlaybackSourceInfo>)
+    )]
+    async fn streamable(
+        track_id: PositiveId,
+        include_entry: Option<bool>,
+        #[context] db: Db,
+    ) -> luau::runtime::Result<luau::Value> {
+        let include_entry = include_entry.unwrap_or(false);
+        let db = db.read().await;
+        Ok(
+            playback_source_service::resolve(&db, track_id.0, include_entry)?
+                .map(|source| source_to_table(source, include_entry, false))
+                .transpose()?
+                .map_or(luau::Value::Nil, luau::Value::TableData),
+        )
+    }
 
-    Ok(luau::ScheduledFuture::new(async move {
+    #[harmony(
+        description = "What `api.response.stream_track(track_id, options)` would deliver, without serving anything: whether the source file is served as it is or transcoded, why, and the delivered format. Raises the error the stream would answer with when the request cannot be served.",
+        args(track_id: i64, options: Option<DeliveryRequest>),
+        returns(DeliveryDescription)
+    )]
+    async fn decide(
+        track_id: PositiveId,
+        options: Option<JsonArg>,
+        #[context] principal: DispatchPrincipal,
+    ) -> luau::runtime::Result<luau::Value> {
+        let options = options.map(|options| options.0);
         let (public, options) =
             crate::plugins::api::options::stream_track_options(options.as_ref())?;
-        let (track_id, access) =
-            delivery::stream_track_access(principal.as_ref(), Default::default(), track_id, public)
-                .await
-                .map_err(delivery_runtime_error)?;
+        let (track_id, access) = delivery::stream_track_access(
+            principal.0.as_ref(),
+            Default::default(),
+            track_id.0,
+            public,
+        )
+        .await
+        .map_err(delivery_runtime_error)?;
         let description = delivery::describe_stream(&track_id, &access, options)
             .await
             .map_err(delivery_runtime_error)?;
@@ -118,7 +160,38 @@ fn decide_callback(
             serde_json::to_value(description).map_err(crate::plugins::runtime_error)?,
             0,
         )
-    }))
+    }
+
+    #[harmony(returns(HashMap<u64, Option<PlaybackSourceInfo>>))]
+    async fn get_many(
+        track_ids: UniqueIds,
+        include_entry: Option<bool>,
+        #[context] db: Db,
+        #[context] principal: Principal,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let track_ids = track_ids.0;
+        let include_entry = include_entry.unwrap_or(false);
+        let db = db.read().await;
+        let include_full_path = lyra_db::roles::has_permission(
+            &principal.permissions,
+            lyra_db::Permission::ManageLibraries,
+        );
+        let mut rows = luau::OwnedTable::with_entry_capacity(0, 0, track_ids.len());
+        for track_id in track_ids {
+            let value =
+                if crate::services::auth::access::entity_accessible(&db, &principal, track_id)? {
+                    playback_source_service::resolve(&db, track_id, include_entry)?
+                        .map(|source| source_to_table(source, include_entry, include_full_path))
+                        .transpose()?
+                        .map_or(luau::Value::Nil, luau::Value::TableData)
+                } else {
+                    luau::Value::Nil
+                };
+            rows.set_key(track_id.0, value);
+        }
+
+        Ok(rows)
+    }
 }
 
 fn delivery_runtime_error(error: DeliveryError) -> luau::Error {
@@ -157,113 +230,6 @@ fn internal_error_status(error: anyhow::Error) -> (StatusCode, String) {
         Ok(error) => auth_error_status(error),
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
     }
-}
-
-fn get_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let id = frame
-        .args
-        .read_optional_named::<luau::Value>("id")?
-        .map(args::resolve_id)
-        .transpose()?
-        .unwrap_or_else(|| ResolveId::alias("tracks"));
-    let include_entry = frame
-        .args
-        .read_optional_named::<bool>("include_entry")?
-        .unwrap_or(false);
-    let db = db::get(frame.vm)?;
-    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
-
-    Ok(luau::ScheduledFuture::new(async move {
-        let db = db.read().await;
-        let include_full_path = lyra_db::roles::has_permission(
-            &principal.permissions,
-            lyra_db::Permission::ManageLibraries,
-        );
-        let query_id = id
-            .to_query_id(&db)?
-            .ok_or_else(|| crate::plugins::runtime_error("could not resolve scope"))?;
-        let tracks = lyra_db::tracks::get(&db, query_id)?;
-
-        let mut rows = luau::OwnedTable::new();
-        for track in tracks {
-            let Some(track_id) = track.db_id.map(DbId::from) else {
-                continue;
-            };
-            if !crate::services::auth::access::entity_accessible(&db, &principal, track_id)? {
-                continue;
-            }
-            let Some(source) = playback_source_service::resolve(&db, track_id, include_entry)?
-            else {
-                continue;
-            };
-            rows.push_array(luau::Value::TableData(source_to_table(
-                source,
-                include_entry,
-                include_full_path,
-            )?));
-        }
-
-        Ok(rows)
-    }))
-}
-
-fn get_many_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let track_ids: luau::Table = frame.args.read_named("track_ids")?;
-    let track_ids = args::unique_ids(frame.vm, &track_ids)?;
-    let include_entry = frame
-        .args
-        .read_optional_named::<bool>("include_entry")?
-        .unwrap_or(false);
-    let db = db::get(frame.vm)?;
-    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
-
-    Ok(luau::ScheduledFuture::new(async move {
-        let db = db.read().await;
-        let include_full_path = lyra_db::roles::has_permission(
-            &principal.permissions,
-            lyra_db::Permission::ManageLibraries,
-        );
-        let mut rows = luau::OwnedTable::with_entry_capacity(0, 0, track_ids.len());
-        for track_id in track_ids {
-            let value =
-                if crate::services::auth::access::entity_accessible(&db, &principal, track_id)? {
-                    playback_source_service::resolve(&db, track_id, include_entry)?
-                        .map(|source| source_to_table(source, include_entry, include_full_path))
-                        .transpose()?
-                        .map_or(luau::Value::Nil, luau::Value::TableData)
-                } else {
-                    luau::Value::Nil
-                };
-            rows.set_key(track_id.0, value);
-        }
-
-        Ok(rows)
-    }))
-}
-
-fn streamable_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let track_id = args::positive_id(frame.args.read_named::<i64>("track_id")?, "track_id")?;
-    let include_entry = frame
-        .args
-        .read_optional_named::<bool>("include_entry")?
-        .unwrap_or(false);
-    let db = db::get(frame.vm)?;
-
-    Ok(luau::ScheduledFuture::new(async move {
-        let db = db.read().await;
-        Ok(
-            playback_source_service::resolve(&db, track_id, include_entry)?
-                .map(|source| source_to_table(source, include_entry, false))
-                .transpose()?
-                .map_or(luau::Value::Nil, luau::Value::TableData),
-        )
-    }))
 }
 
 fn source_to_table(
@@ -541,75 +507,6 @@ impl DescribeInterface for SourceDescription {
 }
 
 #[cfg(feature = "docgen")]
-fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
-    ParameterDescriptor {
-        name,
-        ty,
-        description: None,
-        variadic: false,
-    }
-}
-
-#[cfg(feature = "docgen")]
-fn module_descriptor() -> ModuleDescriptor {
-    ModuleDescriptor {
-        name: "PlaybackSources",
-        local_name: "playback_sources",
-        description: None,
-        fields: Vec::new(),
-        functions: vec![
-            ModuleFunctionDescriptor {
-                path: vec!["get"],
-                description: None,
-                params: vec![
-                    param("id", LuauType::optional(args::resolve_id_type())),
-                    param("include_entry", Option::<bool>::luau_type()),
-                ],
-                returns: vec![Vec::<PlaybackSourceInfo>::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["streamable"],
-                description: Some(
-                    "A track's playback source read as the system, without the entry's full path. Ignores library visibility, so it is only for public streaming routes, which must serve nothing from it but the audio.",
-                ),
-                params: vec![
-                    param("track_id", i64::luau_type()),
-                    param("include_entry", Option::<bool>::luau_type()),
-                ],
-                returns: vec![Option::<PlaybackSourceInfo>::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["decide"],
-                description: Some(
-                    "What `api.response.stream_track(track_id, options)` would deliver, without serving anything: whether the source file is served as it is or transcoded, why, and the delivered format. Raises the error the stream would answer with when the request cannot be served.",
-                ),
-                params: vec![
-                    param("track_id", i64::luau_type()),
-                    param("options", Option::<DeliveryRequest>::luau_type()),
-                ],
-                returns: vec![DeliveryDescription::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["get_many"],
-                description: None,
-                params: vec![
-                    param("track_ids", Vec::<u64>::luau_type()),
-                    param("include_entry", Option::<bool>::luau_type()),
-                ],
-                returns: vec![LuauType::map(
-                    u64::luau_type(),
-                    Option::<PlaybackSourceInfo>::luau_type(),
-                )],
-                yields: true,
-            },
-        ],
-    }
-}
-
-#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     let string_enum = |values: &[&'static str]| {
         LuauType::union(
@@ -621,7 +518,7 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         )
     };
     render_definition_file_with_support(
-        &module_descriptor(),
+        &PlaybackSourcesModule::module_descriptor(),
         &[
             TypeAliasDescriptor::new(
                 "SourceContainer",
