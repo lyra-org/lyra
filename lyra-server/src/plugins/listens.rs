@@ -93,9 +93,7 @@ struct SubmittedPlayRequest {
 }
 
 fn submitted_play(vm: &luau::Vm, value: &luau::Value) -> luau::runtime::Result<SubmittedPlay> {
-    let request: SubmittedPlayRequest =
-        serde_json::from_value(harmony_serde::luau_to_json(vm, value, 0)?)
-            .map_err(crate::plugins::runtime_error)?;
+    let request: SubmittedPlayRequest = args::from_json(vm, value)?;
     if !listen_service::is_play_id(&request.play_id) {
         return Err(crate::plugins::runtime_error(format!(
             "malformed play_id: {}",

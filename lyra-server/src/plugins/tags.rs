@@ -5,6 +5,8 @@
 #[cfg(feature = "docgen")]
 use std::collections::HashMap;
 
+#[cfg(feature = "docgen")]
+use crate::plugins::types::LuauNodeId;
 use agdb::DbId;
 use harmony_luau as luau;
 use harmony_luau::{
@@ -18,9 +20,11 @@ use serde::Serialize;
 
 use crate::{
     plugins::{
-        args::UniqueIds,
+        args::{
+            NodeIdArg,
+            UniqueIds,
+        },
         db::Db,
-        types::LuauNodeId,
     },
     services::{
         auth::Principal,
@@ -52,26 +56,11 @@ fn tag_to_info(tag: lyra_db::Tag) -> TagInfo {
     }
 }
 
-/// A target id argument, taken as given.
-struct TargetId(DbId);
-
-impl<'vm> luau::FromLuau<'vm> for TargetId {
-    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
-        Ok(Self(DbId(reader.read()?)))
-    }
-}
-
-impl LuauTypeInfo for TargetId {
-    fn luau_type() -> LuauType {
-        LuauNodeId::luau_type()
-    }
-}
-
 #[harmony_macros::module(id = "lyra/tags", docs_feature = "docgen")]
 impl TagsModule {
     #[harmony(description = "Returns the canonical tag name. color is ignored on reuse.")]
     async fn add(
-        target_id: TargetId,
+        target_id: NodeIdArg,
         tag: String,
         color: String,
         #[context] db: Db,
@@ -88,7 +77,7 @@ impl TagsModule {
 
     #[harmony(description = "Removes a tag from a target.")]
     async fn remove(
-        target_id: TargetId,
+        target_id: NodeIdArg,
         tag: String,
         #[context] db: Db,
         #[context] principal: Principal,
@@ -101,7 +90,7 @@ impl TagsModule {
 
     #[harmony(description = "Returns whether a target has a tag.")]
     async fn has(
-        target_id: TargetId,
+        target_id: NodeIdArg,
         tag: String,
         #[context] db: Db,
         #[context] principal: Principal,
@@ -137,7 +126,7 @@ impl TagsModule {
         returns(Vec<TagInfo>)
     )]
     async fn get_for_target(
-        target_id: TargetId,
+        target_id: NodeIdArg,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::OwnedTable> {

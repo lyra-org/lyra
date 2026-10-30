@@ -25,7 +25,6 @@ use harmony_luau::{
 use serde::{
     Deserialize,
     Serialize,
-    de::DeserializeOwned,
 };
 
 use crate::plugins::args;
@@ -121,22 +120,6 @@ impl DescribeTypeAlias for PlaybackUpdateHandler {
     }
 }
 
-/// A Luau table read as the JSON-deserializable `T`.
-struct LuauJson<T>(T);
-
-impl<'vm, T: DeserializeOwned> luau::FromLuau<'vm> for LuauJson<T> {
-    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
-        let value: luau::Value = reader.read()?;
-        from_luau_json(reader.vm(), &value).map(Self)
-    }
-}
-
-impl<T: LuauTypeInfo> LuauTypeInfo for LuauJson<T> {
-    fn luau_type() -> LuauType {
-        T::luau_type()
-    }
-}
-
 /// The plugin calling `report_session`.
 struct ReportingPlugin(Arc<str>);
 
@@ -176,7 +159,7 @@ impl PlaybackSessionsModule {
         returns(Option<String>, Option<String>)
     )]
     async fn report_session(
-        request: LuauJson<PlaybackSessionReportRequest>,
+        request: args::Json<PlaybackSessionReportRequest>,
         #[context] db: Db,
         #[context] principal: Principal,
         #[context] plugin_id: ReportingPlugin,
@@ -321,7 +304,7 @@ impl PlaybackSessionsModule {
 
     #[harmony(description = "Sends a remote control command to a connection.")]
     async fn send_command(
-        request: LuauJson<SendCommandRequest>,
+        request: args::Json<SendCommandRequest>,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<()> {
@@ -418,16 +401,6 @@ impl PlaybackSessionsModule {
 
         Ok(())
     }
-}
-
-/// `on_update` registers through the store shared with `listens.on_update`, which reads the
-/// call frame itself.
-fn from_luau_json<T>(vm: &luau::Vm, value: &luau::Value) -> luau::runtime::Result<T>
-where
-    T: DeserializeOwned,
-{
-    serde_json::from_value(harmony_serde::luau_to_json(vm, value, 0)?)
-        .map_err(crate::plugins::runtime_error)
 }
 
 fn playback_mutation(

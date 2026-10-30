@@ -10,11 +10,15 @@ use std::collections::HashSet;
 use agdb::DbId;
 use harmony_luau as luau;
 use harmony_luau::{
+    JsonValue,
     LuauType,
     LuauTypeInfo,
 };
+use serde::de::DeserializeOwned;
 
 use lyra_db::ResolveId;
+
+use crate::plugins::types::LuauNodeId;
 
 /// The ids of a Luau array in array order, each once.
 pub(crate) fn unique_ids(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
@@ -128,7 +132,22 @@ impl<'vm> luau::FromLuau<'vm> for PositiveId {
 
 impl LuauTypeInfo for PositiveId {
     fn luau_type() -> LuauType {
-        u64::luau_type()
+        LuauNodeId::luau_type()
+    }
+}
+
+/// A node id argument, taken as given.
+pub(crate) struct NodeIdArg(pub(crate) DbId);
+
+impl<'vm> luau::FromLuau<'vm> for NodeIdArg {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        Ok(Self(DbId(reader.read()?)))
+    }
+}
+
+impl LuauTypeInfo for NodeIdArg {
+    fn luau_type() -> LuauType {
+        LuauNodeId::luau_type()
     }
 }
 
@@ -144,7 +163,7 @@ impl<'vm> luau::FromLuau<'vm> for UniqueIds {
 
 impl LuauTypeInfo for UniqueIds {
     fn luau_type() -> LuauType {
-        Vec::<u64>::luau_type()
+        Vec::<LuauNodeId>::luau_type()
     }
 }
 
@@ -349,6 +368,37 @@ impl<'vm> luau::FromLuau<'vm> for JsonArg {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let value: luau::Value = reader.read()?;
         harmony_serde::luau_to_json(reader.vm(), &value, 0).map(Self)
+    }
+}
+
+impl LuauTypeInfo for JsonArg {
+    fn luau_type() -> LuauType {
+        JsonValue::luau_type()
+    }
+}
+
+/// A Luau value read as the JSON-deserializable `T`.
+pub(crate) fn from_json<T: DeserializeOwned>(
+    vm: &luau::Vm,
+    value: &luau::Value,
+) -> luau::runtime::Result<T> {
+    serde_json::from_value(harmony_serde::luau_to_json(vm, value, 0)?)
+        .map_err(crate::plugins::runtime_error)
+}
+
+/// A [`from_json`] argument, documented as `T`.
+pub(crate) struct Json<T>(pub(crate) T);
+
+impl<'vm, T: DeserializeOwned> luau::FromLuau<'vm> for Json<T> {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let value: luau::Value = reader.read()?;
+        from_json(reader.vm(), &value).map(Self)
+    }
+}
+
+impl<T: LuauTypeInfo> LuauTypeInfo for Json<T> {
+    fn luau_type() -> LuauType {
+        T::luau_type()
     }
 }
 

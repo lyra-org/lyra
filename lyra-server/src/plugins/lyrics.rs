@@ -6,7 +6,6 @@
 #[cfg(feature = "docgen")]
 use std::collections::HashMap;
 
-use agdb::DbId;
 use harmony_luau as luau;
 use harmony_luau::{
     ClassDescriptor,
@@ -20,17 +19,19 @@ use harmony_luau::{
 use serde::{
     Deserialize,
     Serialize,
-    de::DeserializeOwned,
 };
 
+#[cfg(feature = "docgen")]
+use crate::plugins::types::LuauNodeId;
 use crate::{
     plugins::{
         args::{
+            Json,
+            NodeIdArg,
             PositiveId,
             UniqueIds,
         },
         db::Db,
-        types::LuauNodeId,
     },
     services::{
         auth::Principal,
@@ -154,13 +155,6 @@ struct PersonalLyricsUploadInput {
     language: Option<String>,
 }
 
-impl<'vm> luau::FromLuau<'vm> for PersonalLyricsUploadInput {
-    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
-        let value: luau::Value = reader.read()?;
-        from_luau_json(reader.vm(), &value)
-    }
-}
-
 #[derive(Serialize)]
 struct LyricsInfo {
     db_id: Option<NodeId>,
@@ -242,21 +236,6 @@ fn parse_lrc_input(text: String, language: Option<String>) -> anyhow::Result<Par
     Ok(ParsedLyricsInput::from_lyrics_input(input))
 }
 
-/// A track id argument, taken as given.
-struct TrackId(DbId);
-
-impl<'vm> luau::FromLuau<'vm> for TrackId {
-    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
-        Ok(Self(DbId(reader.read()?)))
-    }
-}
-
-impl LuauTypeInfo for TrackId {
-    fn luau_type() -> LuauType {
-        LuauNodeId::luau_type()
-    }
-}
-
 #[harmony_macros::module(id = "lyra/lyrics", docs_feature = "docgen")]
 impl LyricsModule {
     #[harmony(
@@ -264,7 +243,7 @@ impl LyricsModule {
         returns(Option<LyricsInfo>)
     )]
     async fn get(
-        track_id: TrackId,
+        track_id: NodeIdArg,
         language: Option<String>,
         require_synced: Option<bool>,
         provider: Option<String>,
@@ -314,7 +293,7 @@ impl LyricsModule {
     async fn upsert_personal(
         track_id: PositiveId,
         track_public_id: String,
-        upload: PersonalLyricsUploadInput,
+        upload: Json<PersonalLyricsUploadInput>,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::Value> {
@@ -324,7 +303,7 @@ impl LyricsModule {
             content_type,
             body,
             language,
-        } = upload;
+        } = upload.0;
         let input =
             lyrics_service::input_from_upload(&content_type, body.as_bytes(), language, now)
                 .map_err(crate::plugins::runtime_error)?;
@@ -380,7 +359,7 @@ impl LyricsModule {
 
     #[harmony(description = "Returns true when the track has preferred lyrics available.")]
     async fn has(
-        track_id: TrackId,
+        track_id: NodeIdArg,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<bool> {
@@ -483,14 +462,6 @@ fn lyric_word_table(word: PluginLyricWordInput) -> luau::OwnedTable {
 
 fn lyrics_detail_to_luau_value(detail: LyricsDetail) -> luau::runtime::Result<luau::Value> {
     harmony_luau::serializable_to_luau_owned(lyrics_detail_to_info(detail))
-}
-
-fn from_luau_json<T>(vm: &luau::Vm, value: &luau::Value) -> luau::runtime::Result<T>
-where
-    T: DeserializeOwned,
-{
-    serde_json::from_value(harmony_serde::luau_to_json(vm, value, 0)?)
-        .map_err(crate::plugins::runtime_error)
 }
 
 impl LuauTypeInfo for ParsedLyricsInput {

@@ -20,6 +20,7 @@ use serde::{
 };
 use std::sync::Arc;
 
+use crate::plugins::args::JsonArg;
 use crate::services::auth::{
     AuthCredential as ServiceAuthCredential,
     AuthError,
@@ -237,22 +238,6 @@ impl luau::FromCallFrame for LoginClient {
                 .map(|client| client.0)
                 .unwrap_or_default(),
         ))
-    }
-}
-
-/// A [`JsonValue`] argument.
-struct JsonArg(serde_json::Value);
-
-impl<'vm> luau::FromLuau<'vm> for JsonArg {
-    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
-        let value: luau::Value = reader.read()?;
-        harmony_serde::luau_to_json(reader.vm(), &value, 0).map(Self)
-    }
-}
-
-impl LuauTypeInfo for JsonArg {
-    fn luau_type() -> LuauType {
-        JsonValue::luau_type()
     }
 }
 

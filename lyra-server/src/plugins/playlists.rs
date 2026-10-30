@@ -24,7 +24,10 @@ use serde::Serialize;
 use crate::plugins::args;
 use crate::{
     plugins::{
-        args::UniqueIds,
+        args::{
+            ResolveIdArg,
+            UniqueIds,
+        },
         db::Db,
     },
     services::{
@@ -154,22 +157,6 @@ impl<'vm> luau::FromLuau<'vm> for PlaylistReplaceRequest {
     }
 }
 
-/// A playlist or track id argument, as an integer or a public id.
-struct AnyId(ResolveId);
-
-impl<'vm> luau::FromLuau<'vm> for AnyId {
-    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
-        let value: luau::Value = reader.read()?;
-        args::resolve_id(value).map(Self)
-    }
-}
-
-impl LuauTypeInfo for AnyId {
-    fn luau_type() -> LuauType {
-        args::resolve_id_type()
-    }
-}
-
 /// A track id array argument, repeats included.
 struct IdSequence(Vec<DbId>);
 
@@ -249,7 +236,7 @@ impl PlaylistsModule {
 
     #[harmony(returns(Option<PlaylistInfo>))]
     async fn get_by_id(
-        id: AnyId,
+        id: ResolveIdArg,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::Value> {
@@ -294,7 +281,7 @@ impl PlaylistsModule {
 
     #[harmony(description = "The owning user's public id.")]
     async fn get_owner(
-        playlist_id: AnyId,
+        playlist_id: ResolveIdArg,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<Option<String>> {
@@ -324,7 +311,7 @@ impl PlaylistsModule {
 
     #[harmony(returns(Vec<PlaylistTrackLink>))]
     async fn get_tracks(
-        playlist_id: AnyId,
+        playlist_id: ResolveIdArg,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::Value> {
@@ -419,7 +406,7 @@ impl PlaylistsModule {
         description = "Returns true when deleted, or false if the playlist is missing or the caller neither owns it nor is an admin."
     )]
     async fn delete(
-        playlist_id: AnyId,
+        playlist_id: ResolveIdArg,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<bool> {
@@ -439,7 +426,7 @@ impl PlaylistsModule {
         returns(Option<PlaylistInfo>)
     )]
     async fn replace(
-        playlist_id: AnyId,
+        playlist_id: ResolveIdArg,
         request: PlaylistReplaceRequest,
         #[context] db: Db,
         #[context] principal: Principal,
@@ -464,7 +451,7 @@ impl PlaylistsModule {
         returns(Option<Vec<String>>)
     )]
     async fn add_tracks(
-        playlist_id: AnyId,
+        playlist_id: ResolveIdArg,
         track_ids: IdSequence,
         position: Option<PlaylistPosition>,
         #[context] db: Db,
@@ -494,8 +481,8 @@ impl PlaylistsModule {
         description = "Returns the entry ID, or nil if the playlist or track is missing or inaccessible."
     )]
     async fn add_track(
-        playlist_id: AnyId,
-        track_id: AnyId,
+        playlist_id: ResolveIdArg,
+        track_id: ResolveIdArg,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<Option<String>> {
@@ -526,7 +513,7 @@ impl PlaylistsModule {
         description = "Returns true when removed, or false if the playlist is not owned by the caller or the entry is not in it."
     )]
     async fn remove_track(
-        playlist_id: AnyId,
+        playlist_id: ResolveIdArg,
         entry_id: String,
         #[context] db: Db,
         #[context] principal: Principal,
@@ -545,7 +532,7 @@ impl PlaylistsModule {
         description = "Removes the entries in one transaction. Returns false, removing nothing, if the playlist is not owned by the caller or an entry is not in it."
     )]
     async fn remove_tracks(
-        playlist_id: AnyId,
+        playlist_id: ResolveIdArg,
         entry_ids: EntryIds,
         #[context] db: Db,
         #[context] principal: Principal,
@@ -568,7 +555,7 @@ impl PlaylistsModule {
         description = "Moves an entry to a zero-based position, clamping past the end. Returns false if the playlist is not owned by the caller or the entry is not in it. A move to the current position succeeds."
     )]
     async fn move_track(
-        playlist_id: AnyId,
+        playlist_id: ResolveIdArg,
         entry_id: String,
         new_position: PlaylistPosition,
         #[context] db: Db,
