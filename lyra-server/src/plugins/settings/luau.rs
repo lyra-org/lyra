@@ -686,7 +686,3 @@ fn sequence_index(value: luau::Value) -> Option<i64> {
         _ => None,
     }
 }
-
-pub(crate) fn user_settings_accessor_spec() -> harmony_core::UserDataSpec {
-    UserSettingsAccessor::_harmony_userdata_spec()
-}

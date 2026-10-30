@@ -492,17 +492,20 @@ struct ModuleOptions {
     local: Option<LitStr>,
     description: Option<LitStr>,
     docs_feature: Option<LitStr>,
-    /// A `fn(ModuleSpec) -> ModuleSpec` adding what the functions don't, such as userdata.
-    extend: Option<LitStr>,
+    /// Userdata types whose classes the module registers.
+    userdata: Vec<Type>,
+    /// A `fn(ModuleSpec) -> ModuleSpec` adding what the functions don't, such as initializers.
+    extend: Option<syn::Path>,
     /// A `fn(&mut ModuleDescriptor)` adding what the functions don't, such as fields.
-    describe: Option<LitStr>,
+    describe: Option<syn::Path>,
 }
 
 struct ModuleOptionList(Punctuated<ModuleOption, Token![,]>);
 
-struct ModuleOption {
-    key: Ident,
-    value: LitStr,
+enum ModuleOption {
+    Text(Ident, LitStr),
+    Path(Ident, syn::Path),
+    Userdata(Punctuated<Type, Token![,]>),
 }
 
 impl Parse for ModuleOptionList {
@@ -514,33 +517,48 @@ impl Parse for ModuleOptionList {
 impl Parse for ModuleOption {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let key: Ident = input.parse()?;
+        if key == "userdata" {
+            let content;
+            syn::parenthesized!(content in input);
+            return Ok(Self::Userdata(Punctuated::parse_terminated(&content)?));
+        }
         let _: Token![=] = input.parse()?;
-        Ok(Self {
-            key,
-            value: input.parse()?,
-        })
+        if key == "extend" || key == "describe" {
+            return Ok(Self::Path(key, input.parse()?));
+        }
+        Ok(Self::Text(key, input.parse()?))
     }
 }
 
 fn parse_module_options(attr: TokenStream) -> syn::Result<ModuleOptions> {
     let mut options = ModuleOptions::default();
     for option in syn::parse::<ModuleOptionList>(attr)?.0 {
-        let slot = match option.key.to_string().as_str() {
-            "id" => &mut options.id,
-            "name" => &mut options.name,
-            "local" => &mut options.local,
-            "description" => &mut options.description,
-            "docs_feature" => &mut options.docs_feature,
-            "extend" => &mut options.extend,
-            "describe" => &mut options.describe,
-            _ => {
-                return Err(syn::Error::new(
-                    option.key.span(),
-                    "unsupported module option; expected id, name, local, description, docs_feature, extend, or describe",
-                ));
+        match option {
+            ModuleOption::Userdata(types) => options.userdata.extend(types),
+            ModuleOption::Path(key, path) => {
+                if key == "extend" {
+                    options.extend = Some(path);
+                } else {
+                    options.describe = Some(path);
+                }
             }
-        };
-        *slot = Some(option.value);
+            ModuleOption::Text(key, value) => {
+                let slot = match key.to_string().as_str() {
+                    "id" => &mut options.id,
+                    "name" => &mut options.name,
+                    "local" => &mut options.local,
+                    "description" => &mut options.description,
+                    "docs_feature" => &mut options.docs_feature,
+                    _ => {
+                        return Err(syn::Error::new(
+                            key.span(),
+                            "unsupported module option; expected id, name, local, description, docs_feature, userdata, extend, or describe",
+                        ));
+                    }
+                };
+                *slot = Some(value);
+            }
+        }
     }
     Ok(options)
 }
@@ -867,17 +885,14 @@ fn module_impl(mut ast: ItemImpl, options: ModuleOptions) -> syn::Result<TokenSt
     let docs_cfg = options
         .docs_feature
         .map(|feature| quote! { #[cfg(feature = #feature)] });
+    let userdata = &options.userdata;
     let extend = options
         .extend
         .as_ref()
-        .map(|path| path.parse::<syn::Path>())
-        .transpose()?
         .map(|path| quote! { let spec = #path(spec); });
     let describe = options
         .describe
         .as_ref()
-        .map(|path| path.parse::<syn::Path>())
-        .transpose()?
         .map(|path| quote! { #path(&mut descriptor); });
 
     Ok(quote! {
@@ -888,7 +903,8 @@ fn module_impl(mut ast: ItemImpl, options: ModuleOptions) -> syn::Result<TokenSt
             /// The module's functions, as the host registers them.
             pub fn module_spec() -> ::harmony_core::ModuleSpec {
                 let spec = ::harmony_core::ModuleSpec::new(#id)
-                    #(.function(#function_specs))*;
+                    #(.function(#function_specs))*
+                    #(.userdata(<#userdata>::_harmony_userdata_spec()))*;
                 #extend
                 spec
             }

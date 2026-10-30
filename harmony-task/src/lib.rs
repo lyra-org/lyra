@@ -30,8 +30,8 @@ pub const SCOPE: &str = "harmony.task";
     name = "Task",
     local = "task",
     description = "Task scheduling primitives backed by the Harmony scheduler.",
-    extend = "with_scheduling_functions",
-    describe = "describe_scheduling_functions"
+    extend = with_scheduling_functions,
+    describe = describe_scheduling_functions
 )]
 impl TaskModule {
     #[harmony(

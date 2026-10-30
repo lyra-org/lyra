@@ -198,8 +198,8 @@ pub(crate) struct EntitiesModule;
 #[harmony_macros::module(
     id = "lyra/entities",
     docs_feature = "docgen",
-    extend = "extend_module",
-    describe = "describe_module"
+    extend = extend_module,
+    describe = describe_module
 )]
 impl EntitiesModule {
     #[harmony(args(request: EntityQueryRequest), returns(EntityProjection))]

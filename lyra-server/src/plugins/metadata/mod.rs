@@ -10,7 +10,6 @@ mod parsing;
 mod provider;
 mod registry;
 
-use harmony_core::ModuleSpec;
 use harmony_luau as luau;
 
 use self::layer::MetadataLayer;
@@ -34,7 +33,14 @@ pub(crate) struct MetadataModule;
 #[harmony_macros::module(
     id = "lyra/metadata",
     docs_feature = "docgen",
-    extend = "extend_module"
+    userdata(
+        crate::plugins::types::LuauEntityType,
+        crate::plugins::types::LuauArtistType,
+        crate::plugins::types::LuauCreditType,
+        crate::plugins::types::LuauArtistRelationType,
+        MetadataProvider,
+        MetadataLayer
+    )
 )]
 impl MetadataModule {
     #[harmony(
@@ -50,13 +56,4 @@ impl MetadataModule {
     ) -> luau::runtime::Result<luau::Value> {
         provider_new(id, options, host).await
     }
-}
-
-fn extend_module(spec: ModuleSpec) -> ModuleSpec {
-    spec.userdata(crate::plugins::types::LuauEntityType::_harmony_userdata_spec())
-        .userdata(crate::plugins::types::LuauArtistType::_harmony_userdata_spec())
-        .userdata(crate::plugins::types::LuauCreditType::_harmony_userdata_spec())
-        .userdata(crate::plugins::types::LuauArtistRelationType::_harmony_userdata_spec())
-        .userdata(MetadataProvider::_harmony_userdata_spec())
-        .userdata(MetadataLayer::_harmony_userdata_spec())
 }

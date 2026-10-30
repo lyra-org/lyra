@@ -46,8 +46,9 @@ fn describe_greeting_count(descriptor: &mut ModuleDescriptor) {
 #[harmony_macros::module(
     id = "demo/greetings",
     description = "Greets people.",
-    extend = "install_greeting_count",
-    describe = "describe_greeting_count"
+    userdata(Mood),
+    extend = install_greeting_count,
+    describe = describe_greeting_count
 )]
 impl DemoModule {
     #[harmony(description = "Adds one.")]
@@ -90,6 +91,12 @@ impl DemoModule {
         assert_eq!(origin, context.origin);
         Ok(origin.plugin.as_deref().map(str::to_string))
     }
+}
+
+#[harmony_macros::userdata]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mood {
+    Happy,
 }
 
 fn run(source: &str, context: CallContext) -> luau::runtime::Result<Vec<luau::Value>> {
@@ -253,5 +260,17 @@ fn functions_borrow_or_own_the_vm_call_context_and_origin() -> luau::runtime::Re
             vec![luau::Value::Boolean(true), string("demo-plugin")]
         );
     }
+    Ok(())
+}
+
+#[test]
+fn modules_register_their_userdata() -> luau::runtime::Result<()> {
+    assert_eq!(
+        run(
+            "return demo.Mood.Happy == demo.Mood.Happy",
+            CallContext::default()
+        )?,
+        vec![luau::Value::Boolean(true), luau::Value::Boolean(true)]
+    );
     Ok(())
 }

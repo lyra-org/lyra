@@ -59,8 +59,8 @@ fn describe_constants(descriptor: &mut ModuleDescriptor) {
     id = "lyra/locale",
     description = "Language and country normalization backed by the server's ISO 639 and ISO 3166 tables.",
     docs_feature = "docgen",
-    extend = "install_constants",
-    describe = "describe_constants"
+    extend = install_constants,
+    describe = describe_constants
 )]
 impl LocaleModule {
     #[harmony(

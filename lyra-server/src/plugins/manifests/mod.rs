@@ -5,27 +5,22 @@
 
 use std::sync::Arc;
 
-use harmony_core::{
-    ChunkOrigin,
-    ModuleSpec,
-};
+use harmony_core::ChunkOrigin;
 use harmony_luau as luau;
 
 mod descriptors;
 
 #[cfg(feature = "docgen")]
 use self::descriptors::PluginManifest;
+#[cfg(feature = "docgen")]
+use crate::plugins::settings::descriptors::{
+    SettingsCallback,
+    SettingsConfig,
+};
 use crate::plugins::settings::{
     self,
     SettingsHost,
-};
-#[cfg(feature = "docgen")]
-use crate::plugins::settings::{
     UserSettingsAccessor,
-    descriptors::{
-        SettingsCallback,
-        SettingsConfig,
-    },
 };
 
 #[cfg(feature = "docgen")]
@@ -55,7 +50,11 @@ impl PluginManifestModuleStore {
 
 pub(crate) struct PluginsModule;
 
-#[harmony_macros::module(id = "lyra/plugins", docs_feature = "docgen", extend = "extend_module")]
+#[harmony_macros::module(
+    id = "lyra/plugins",
+    docs_feature = "docgen",
+    userdata(UserSettingsAccessor)
+)]
 impl PluginsModule {
     #[harmony(args(callback: SettingsCallback), returns(SettingsConfig))]
     async fn declare_settings(
@@ -116,10 +115,6 @@ impl PluginsModule {
             None => luau::Value::Nil,
         })
     }
-}
-
-fn extend_module(spec: ModuleSpec) -> ModuleSpec {
-    spec.userdata(settings::user_settings_accessor_spec())
 }
 
 fn manifest_table(manifest: &harmony_core::plugin::PluginManifest) -> luau::OwnedTable {

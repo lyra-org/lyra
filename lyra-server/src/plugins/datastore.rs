@@ -3,7 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use harmony_core::ModuleSpec;
 use harmony_luau as luau;
 use harmony_luau::JsonValue;
 #[cfg(feature = "docgen")]
@@ -116,15 +115,11 @@ impl luau::FromCallFrame for HandleFactory {
     }
 }
 
-fn register_handle(spec: ModuleSpec) -> ModuleSpec {
-    spec.userdata(DataStoreHandle::_harmony_userdata_spec())
-}
-
 #[harmony_macros::module(
     id = "lyra/datastore",
     name = "DataStore",
     docs_feature = "docgen",
-    extend = "register_handle"
+    userdata(DataStoreHandle)
 )]
 impl DataStoreModule {
     #[harmony(

@@ -63,12 +63,6 @@ use lyra_db::CreditType;
 
 pub(crate) struct ArtistsModule;
 
-fn register_userdata(spec: harmony_core::ModuleSpec) -> harmony_core::ModuleSpec {
-    spec.userdata(crate::plugins::types::LuauArtistType::_harmony_userdata_spec())
-        .userdata(crate::plugins::types::LuauArtistRelationType::_harmony_userdata_spec())
-        .userdata(crate::plugins::types::LuauCreditType::_harmony_userdata_spec())
-}
-
 /// The `query` argument, read with its page bounds.
 struct ArtistQuery(catalog::PagedQuery<Artists>);
 
@@ -109,7 +103,11 @@ impl LuauTypeInfo for ArtistPage {
 #[harmony_macros::module(
     id = "lyra/artists",
     docs_feature = "docgen",
-    extend = "register_userdata"
+    userdata(
+        crate::plugins::types::LuauArtistType,
+        crate::plugins::types::LuauArtistRelationType,
+        crate::plugins::types::LuauCreditType
+    )
 )]
 impl ArtistsModule {
     #[harmony(

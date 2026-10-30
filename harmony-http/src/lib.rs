@@ -12,7 +12,6 @@ use std::time::{
     SystemTime,
 };
 
-use harmony_core::ModuleSpec;
 use harmony_luau as luau;
 use harmony_luau::{
     DescribeInterface,
@@ -898,7 +897,7 @@ pub const SCOPE: &str = "harmony.http";
     name = "Http",
     local = "http",
     description = "Outbound HTTP requests, rate limits, and URI encoding.",
-    extend = "with_http_method"
+    userdata(HttpMethod)
 )]
 impl HttpModule {
     #[harmony(
@@ -959,10 +958,6 @@ impl HttpModule {
     fn encode_uri_component(input: String) -> String {
         percent_encoding::utf8_percent_encode(&input, URI_COMPONENT_SET).to_string()
     }
-}
-
-fn with_http_method(spec: ModuleSpec) -> ModuleSpec {
-    spec.userdata(HttpMethod::_harmony_userdata_spec())
 }
 
 fn request_options_from_luau(

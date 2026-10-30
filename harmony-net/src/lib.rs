@@ -8,7 +8,6 @@ use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 
-use harmony_core::ModuleSpec;
 use harmony_luau as luau;
 use harmony_luau::{
     DescribeInterface,
@@ -137,7 +136,7 @@ pub const SCOPE: &str = "harmony.net";
     name = "Net",
     local = "net",
     description = "UDP and TCP socket networking.",
-    extend = "with_socket_classes"
+    userdata(UdpSocket, TcpStream, TcpListener)
 )]
 impl NetModule {
     #[harmony(
@@ -196,12 +195,6 @@ impl NetModule {
             TcpListener::_harmony_userdata_class().create_value(&vm, &origin, listener)
         }))
     }
-}
-
-fn with_socket_classes(spec: ModuleSpec) -> ModuleSpec {
-    spec.userdata(UdpSocket::_harmony_userdata_spec())
-        .userdata(TcpStream::_harmony_userdata_spec())
-        .userdata(TcpListener::_harmony_userdata_spec())
 }
 
 #[harmony_macros::userdata(name = "UdpSocket")]

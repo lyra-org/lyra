@@ -5,7 +5,6 @@
 
 use std::time::Duration;
 
-use harmony_core::ModuleSpec;
 use harmony_luau as luau;
 #[cfg(feature = "docgen")]
 use harmony_luau::{
@@ -324,7 +323,7 @@ documented_type!(
     LuauType::Optional(Box::new(LuauType::literal("{ Track }")))
 );
 
-#[harmony_macros::module(id = "lyra/mix", docs_feature = "docgen", extend = "extend_module")]
+#[harmony_macros::module(id = "lyra/mix", docs_feature = "docgen", userdata(LuauMixSeedType, Mixer))]
 impl MixModule {
     #[harmony(
         name = "Mixer.new",
@@ -389,11 +388,6 @@ impl MixModule {
     ) -> luau::runtime::Result<luau::Value> {
         consume(MixShape::Path, request, principal, db).await
     }
-}
-
-fn extend_module(spec: ModuleSpec) -> ModuleSpec {
-    spec.userdata(LuauMixSeedType::_harmony_userdata_spec())
-        .userdata(Mixer::_harmony_userdata_spec())
 }
 
 fn optional_display_name(
