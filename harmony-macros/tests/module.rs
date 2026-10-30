@@ -66,6 +66,26 @@ impl DemoModule {
     async fn greet(#[context] greeting: Greeting, name: Option<String>) -> String {
         format!("{}, {}", greeting.0, name.as_deref().unwrap_or("stranger"))
     }
+
+    fn borrowed_plugin(
+        vm: &luau::Vm,
+        context: &CallContext,
+        origin: &ChunkOrigin,
+    ) -> luau::runtime::Result<Option<String>> {
+        vm.create_table()?;
+        assert_eq!(origin, &context.origin);
+        Ok(origin.plugin.as_deref().map(str::to_string))
+    }
+
+    async fn owned_plugin(
+        #[context] vm: luau::Vm,
+        #[context] context: CallContext,
+        #[context] origin: ChunkOrigin,
+    ) -> luau::runtime::Result<Option<String>> {
+        vm.create_table()?;
+        assert_eq!(origin, context.origin);
+        Ok(origin.plugin.as_deref().map(str::to_string))
+    }
 }
 
 fn run(source: &str, context: CallContext) -> luau::runtime::Result<Vec<luau::Value>> {
@@ -73,15 +93,12 @@ fn run(source: &str, context: CallContext) -> luau::runtime::Result<Vec<luau::Va
     vm.open_standard_libraries(luau::StandardLibraries::all_supported())?;
     vm.data().insert(LocalScheduler::new())?;
     let scheduler = vm.data().get::<LocalScheduler>()?;
-    let table = harmony_core::luau::install_module(
-        &vm,
-        &ChunkOrigin::default(),
-        &DemoModule::module_spec(),
-    )?;
+    let table =
+        harmony_core::luau::install_module(&vm, &context.origin, &DemoModule::module_spec())?;
     vm.set_global_table("demo", &table)?;
     let root = vm.load_chunk(&luau::Chunk::new(
         Arc::<[u8]>::from(format!("return pcall(function() {source} end)").as_bytes()),
-        luau::ChunkOrigin::default(),
+        context.origin.clone(),
     ))?;
     let thread = vm.create_thread(&root)?;
     scheduler.spawn_luau_thread(context, vm.clone(), thread.clone(), vec![]);
@@ -178,7 +195,7 @@ fn module_descriptor_documents_functions_from_their_signatures() {
         })
         .collect::<Vec<_>>();
     assert_eq!(
-        functions,
+        functions[..3],
         vec![
             (
                 "add_one".to_string(),
@@ -201,4 +218,17 @@ fn module_descriptor_documents_functions_from_their_signatures() {
         ]
     );
     assert_eq!(descriptor.functions[0].description, Some("Adds one."));
+}
+
+#[test]
+fn functions_borrow_or_own_the_vm_call_context_and_origin() -> luau::runtime::Result<()> {
+    let mut context = CallContext::default();
+    context.origin.plugin = Some("demo-plugin".into());
+    for function in ["borrowed_plugin", "owned_plugin"] {
+        assert_eq!(
+            run(&format!("return demo.{function}()"), context.clone())?,
+            vec![luau::Value::Boolean(true), string("demo-plugin")]
+        );
+    }
+    Ok(())
 }
