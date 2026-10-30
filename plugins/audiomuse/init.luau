@@ -21,8 +21,7 @@ type JsonValue = serde.JsonValue
 type JsonObject = { [string]: JsonValue }
 type HttpRequestOptions = http.HttpRequestOptions
 type HttpResponse = http.HttpResponse
-type MixContext = mix.MixContext
-type MixRecentListensContext = mix.MixRecentListensContext
+type MixBlendContext = mix.MixBlendContext
 type MixResult = mix.MixResult
 type MixResultTrack = mix.MixResultTrack
 
@@ -83,32 +82,8 @@ local function resolve_hex_id(db_id: number): string?
 	return jellyfin_hex.nanoid_to_hex(nanoid)
 end
 
-local function query_similar_tracks(item_id: string, n: number): { MixResultTrack }?
-	local url = `{BASE_URL}/api/similar_tracks?item_id={item_id}&n={n}`
-	local response: HttpResponse = http.request({
-		url = url,
-		method = http.HttpMethod.Get,
-		headers = auth_headers(),
-	})
-
-	if not response.success then
-		-- 404 = seed not yet analyzed; distinct from a backend outage.
-		if response.status_code == 404 then
-			return {}
-		end
-		warn(
-			`similar_tracks({item_id}) backend failure: status={response.status_code} kind={response.error_kind or ""}`
-		)
-		return nil
-	end
-
-	local body = safe_json_decode(response.body)
-	if type(body) ~= "table" then
-		warn(`similar_tracks({item_id}) returned non-JSON or non-object body`)
-		return nil
-	end
-
-	local items = body :: { JsonObject }
+-- Maps AudioMuse result rows to tracks, warning about ids that don't decode or resolve.
+local function result_tracks(label: string, items: { JsonObject }): { MixResultTrack }
 	local results: { MixResultTrack } = {}
 	local decode_failed = 0
 	local orphaned = 0
@@ -137,77 +112,88 @@ local function query_similar_tracks(item_id: string, n: number): { MixResultTrac
 
 	-- Encoder/version mismatch; escalate above routine orphans.
 	if decode_failed > 0 then
-		warn(`similar_tracks({item_id}): {decode_failed}/{#items} hex decode failed — possible ID format mismatch`)
+		warn(`{label}: {decode_failed}/{#items} hex decode failed — possible ID format mismatch`)
 	end
 	if orphaned > 0 then
-		warn(`similar_tracks({item_id}): {#items} returned, {#results} resolved, {orphaned} orphaned`)
+		warn(`{label}: {#items} returned, {#results} resolved, {orphaned} orphaned`)
 	end
 
 	return results
 end
 
--- Queries similarity for multiple seed track DB IDs, merges and deduplicates.
-local function multi_seed_mix(seed_track_db_ids: { number }, limit: number, max_seeds: number): MixResult
-	if #seed_track_db_ids == 0 then
-		return { tracks = {} }
-	end
-
-	local all_results: { MixResultTrack } = {}
-	local seen: { [number]: boolean } = {}
-	-- Pre-mark seed tracks so they're excluded from results
-	for _, seed_id in seed_track_db_ids do
-		seen[seed_id] = true
-	end
-	local seeds_to_use = math.min(#seed_track_db_ids, max_seeds)
-	-- AudioMuse's top-K for a within-scope seed often overlaps the other seeds; request
-	-- `limit + #seeds` per query so we keep `limit` survivors after the seen[] filter.
-	local per_seed = limit + #seed_track_db_ids
-	local failed = 0
-
-	for i = 1, seeds_to_use do
-		if #all_results >= limit then
-			break
+-- The JSON body of a successful response; `{}` for a 404 (seeds not yet analyzed), nil for a
+-- backend failure.
+local function response_body(label: string, response: HttpResponse): JsonValue?
+	if not response.success then
+		-- 404 = seed not yet analyzed; distinct from a backend outage.
+		if response.status_code == 404 then
+			return {}
 		end
-		local track_db_id = seed_track_db_ids[i]
-		local hex_id = resolve_hex_id(track_db_id)
-		if not hex_id then
-			continue
-		end
-		local results = query_similar_tracks(hex_id, per_seed)
-		if results then
-			for _, result in results do
-				if not seen[result.track_id] then
-					seen[result.track_id] = true
-					table.insert(all_results, result)
-					if #all_results >= limit then
-						break
-					end
-				end
-			end
-		else
-			failed += 1
-		end
+		warn(`{label} backend failure: status={response.status_code} kind={response.error_kind or ""}`)
+		return nil
 	end
 
-	if failed > 0 then
-		warn(`{failed}/{seeds_to_use} seed queries failed`)
+	local body = safe_json_decode(response.body)
+	if type(body) ~= "table" then
+		warn(`{label} returned non-JSON or non-object body`)
+		return nil
 	end
-
-	return { tracks = all_results }
+	return body
 end
 
--- Register the mixer
-local mixer = mix.Mixer.new("audiomuse")
+local function query_similar_tracks(item_id: string, n: number): { MixResultTrack }?
+	local label = `similar_tracks({item_id})`
+	local body = response_body(
+		label,
+		http.request({
+			url = `{BASE_URL}/api/similar_tracks?item_id={item_id}&n={n}`,
+			method = http.HttpMethod.Get,
+			headers = auth_headers(),
+		})
+	)
+	if body == nil then
+		return nil
+	end
+	return result_tracks(label, body :: { JsonObject })
+end
 
-mixer:from_track(function(ctx: MixContext): MixResult
-	local hex_id = resolve_hex_id(ctx.seed_id)
+-- An item of an alchemy blend: a song by hex id, added to or subtracted from the blend.
+type AlchemyItem = { id: string, op: string, type: string }
+
+local function query_alchemy(items: { AlchemyItem }, n: number): { MixResultTrack }?
+	local label = `alchemy({#items} items)`
+	local body = response_body(
+		label,
+		http.request({
+			url = `{BASE_URL}/api/alchemy`,
+			method = http.HttpMethod.Post,
+			headers = json_post_headers(),
+			body = json.encode({ items = items, n = n } :: any),
+		})
+	)
+	if body == nil then
+		return nil
+	end
+	local rows = (body :: JsonObject).results
+	if rows == nil then
+		return {}
+	end
+	if type(rows) ~= "table" then
+		warn(`{label} returned non-array results`)
+		return nil
+	end
+	return result_tracks(label, rows :: { JsonObject })
+end
+
+local function track_mix(seed_id: number, limit: number?): MixResult
+	local hex_id = resolve_hex_id(seed_id)
 	if not hex_id then
-		warn(`from_track: seed {ctx.seed_id} could not be encoded; returning empty mix`)
+		warn(`track mix: seed {seed_id} could not be encoded; returning empty mix`)
 		return { tracks = {} }
 	end
 
-	local limit = ctx.limit or 50
-	local results = query_similar_tracks(hex_id, limit + 1)
+	local n = (limit or 50) + 1
+	local results = query_similar_tracks(hex_id, n)
 	if not results then
 		return { tracks = {} }
 	end
@@ -215,56 +201,101 @@ mixer:from_track(function(ctx: MixContext): MixResult
 	-- Filter out the seed track from results
 	local filtered: { MixResultTrack } = {}
 	for _, result in results do
-		if result.track_id ~= ctx.seed_id then
+		if result.track_id ~= seed_id then
 			table.insert(filtered, result)
 		end
 	end
 
 	return { tracks = filtered }
-end)
+end
 
-mixer:from_release(function(ctx: MixContext): MixResult
-	local release_tracks = tracks.by_release({ ctx.seed_id })[ctx.seed_id]
-	if not release_tracks or #release_tracks == 0 then
-		warn(`from_release: seed {ctx.seed_id} has no tracks; returning empty mix`)
-		return { tracks = {} }
+-- The most tracks a release or artist seed adds to a blend. Alchemy treats every item alike,
+-- so this bounds how much one release or artist outweighs a single track seed.
+local SEED_ENTITY_TRACKS = 5
+-- The most items one alchemy request carries.
+local MAX_ALCHEMY_ITEMS = 100
+
+-- The track ids a seed stands for: itself, or the first tracks of its release or artist.
+-- Artists are expanded rather than sent as `type = "artist"`, since AudioMuse resolves artist
+-- ids through a name map built from each track's album artist and first artist id, which a Lyra
+-- artist id doesn't reliably reach.
+local function seed_tracks(seed: mix.MixSeed): { number }
+	local seed_track_list: { tracks.Track }
+	if seed.type == mix.SeedType.Track then
+		return { seed.id }
+	elseif seed.type == mix.SeedType.Release then
+		seed_track_list = tracks.by_release({ seed.id })[seed.id] or {}
+	else
+		seed_track_list = tracks.query({ artist_ids = { seed.id }, credit_role = "track" }).items
 	end
-
-	local seed_ids: { number } = {}
-	for _, track in release_tracks do
+	local ids_out: { number } = {}
+	for _, track in seed_track_list do
+		if #ids_out >= SEED_ENTITY_TRACKS then
+			break
+		end
 		if track.db_id then
-			table.insert(seed_ids, track.db_id)
+			table.insert(ids_out, track.db_id)
 		end
 	end
+	return ids_out
+end
 
-	return multi_seed_mix(seed_ids, ctx.limit or 50, 3)
-end)
-
-mixer:from_artist(function(ctx: MixContext): MixResult
-	local result = tracks.query({ artist_ids = { ctx.seed_id }, credit_role = "track" })
-	local artist_tracks = result.items
-	if #artist_tracks == 0 then
-		warn(`from_artist: seed {ctx.seed_id} has no tracks; returning empty mix`)
-		return { tracks = {} }
-	end
-
-	local seed_ids: { number } = {}
-	for _, track in artist_tracks do
-		if track.db_id then
-			table.insert(seed_ids, track.db_id)
+-- Blends the seeds through AudioMuse's alchemy: excluded seeds subtract, the rest add.
+local function alchemy_mix(seeds: { mix.MixSeed }, limit: number?): MixResult
+	local items: { AlchemyItem } = {}
+	local seed_track_ids: { [number]: boolean } = {}
+	local adds = 0
+	for _, seed in seeds do
+		local op = if seed.exclude then "SUBTRACT" else "ADD"
+		for _, track_id in seed_tracks(seed) do
+			if #items >= MAX_ALCHEMY_ITEMS then
+				break
+			end
+			local hex_id = if seed_track_ids[track_id] then nil else resolve_hex_id(track_id)
+			if hex_id then
+				seed_track_ids[track_id] = true
+				table.insert(items, { id = hex_id, op = op, type = "song" })
+				if op == "ADD" then
+					adds += 1
+				end
+			end
 		end
 	end
-
-	return multi_seed_mix(seed_ids, ctx.limit or 50, 3)
-end)
-
-mixer:from_recent_listens(function(ctx: MixRecentListensContext): MixResult
-	local recent_ids = ctx.recent_track_ids
-	if not recent_ids or #recent_ids == 0 then
+	-- Alchemy needs something to add.
+	if adds == 0 then
 		return { tracks = {} }
 	end
 
-	return multi_seed_mix(recent_ids, ctx.limit or 50, 5)
+	local results = query_alchemy(items, limit or 50)
+	if not results then
+		return { tracks = {} }
+	end
+	local filtered: { MixResultTrack } = {}
+	for _, result in results do
+		if not seed_track_ids[result.track_id] then
+			table.insert(filtered, result)
+		end
+	end
+	return { tracks = filtered }
+end
+
+-- The most explicit seeds a blend takes; recent listens fill the rest. It matches the server's
+-- `RECENT_LISTEN_COUNT`, so a history blend can draw on every recent listen, up to
+-- `MAX_ALCHEMY_ITEMS` tracks.
+local MAX_BLEND_SEEDS = 50
+
+local mixer = mix.Mixer.new("audiomuse", { display_name = "AudioMuse AI" })
+
+mixer:blend({
+	seeds = { mix.SeedType.Track, mix.SeedType.Release, mix.SeedType.Artist },
+	max_seeds = MAX_BLEND_SEEDS,
+	exclude = true,
+}, function(ctx: MixBlendContext): MixResult
+	local seeds = ctx.seeds
+	if #seeds == 1 and seeds[1].type == mix.SeedType.Track and not seeds[1].exclude then
+		return track_mix(seeds[1].id, ctx.limit)
+	end
+	return alchemy_mix(seeds, ctx.limit)
 end)
 
 -- Operational routes (separate from mix provider)
