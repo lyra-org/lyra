@@ -135,7 +135,7 @@ where
         let tag = vm.userdata_tag::<T>()?;
         let userdata = vm.create_userdata(tag, value)?;
         let metatable = self.metatable(vm, origin, tag)?;
-        userdata.set_metatable_raw(vm, Some(&metatable))?;
+        userdata.set_metatable(Some(&metatable))?;
         Ok(userdata)
     }
 

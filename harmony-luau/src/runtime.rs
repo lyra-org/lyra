@@ -1550,7 +1550,8 @@ impl UserData {
         self.tag
     }
 
-    pub fn set_metatable_raw(&self, vm: &Vm, metatable: Option<&Table>) -> Result<()> {
+    pub fn set_metatable(&self, metatable: Option<&Table>) -> Result<()> {
+        let vm = self.reference.vm();
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
         vm.push_metatable(metatable)?;
@@ -3584,6 +3585,22 @@ mod tests {
         table.set_metatable(None)?;
         assert!(table.metatable()?.is_none());
         assert_eq!(stack_top(&vm), 0);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn userdata_metatable_rejects_tables_from_another_vm() -> Result<()> {
+        let owner = Vm::new()?;
+        let other = Vm::new()?;
+        let userdata = owner.create_userdata_auto(0_u8)?;
+        let foreign = other.create_table()?;
+
+        let error = userdata
+            .set_metatable(Some(&foreign))
+            .expect_err("a metatable from another VM must fail");
+        assert!(matches!(error, Error::VmMismatch { .. }));
+        assert_eq!(stack_top(&owner), 0);
         Ok(())
     }
 
