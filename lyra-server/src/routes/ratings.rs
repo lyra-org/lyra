@@ -58,6 +58,7 @@ pub(crate) struct RatingFilterQuery {
             description = "Optional inclusive minimum personal rating. Must be an integer from 1 through 5. Unrated entities are excluded."
         )
     )]
+    #[serde(default, deserialize_with = "super::deserialize_optional_number")]
     min_rating: Option<i64>,
     #[cfg_attr(
         feature = "docgen",
@@ -65,6 +66,7 @@ pub(crate) struct RatingFilterQuery {
             description = "Optional inclusive maximum personal rating. Must be an integer from 1 through 5. Unrated entities are excluded."
         )
     )]
+    #[serde(default, deserialize_with = "super::deserialize_optional_number")]
     max_rating: Option<i64>,
 }
 
@@ -339,6 +341,25 @@ mod tests {
     };
     use lyra_db::test_db::insert_library;
     use tower::ServiceExt;
+
+    #[test]
+    fn rating_filters_parse_when_flattened_into_a_query_string() {
+        #[derive(Deserialize)]
+        struct ListQuery {
+            #[serde(flatten)]
+            rating: RatingFilterQuery,
+        }
+
+        let parse = |query: &str| {
+            let uri: axum::http::Uri = format!("/?{query}").parse().expect("valid uri");
+            axum::extract::Query::<ListQuery>::try_from_uri(&uri).map(|query| query.0.rating)
+        };
+        let rating = parse("min_rating=2&max_rating=4").expect("bounds parse");
+        assert_eq!((rating.min_rating, rating.max_rating), (Some(2), Some(4)));
+        let rating = parse("min_rating=").expect("a blank bound parses");
+        assert_eq!((rating.min_rating, rating.max_rating), (None, None));
+        assert!(parse("min_rating=high").is_err());
+    }
 
     #[test]
     fn rating_bounds_are_inclusive() {

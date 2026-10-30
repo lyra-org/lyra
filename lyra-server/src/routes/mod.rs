@@ -155,7 +155,7 @@ pub(crate) struct PageQuery {
         feature = "docgen",
         schemars(description = "Page size. Default 100, cap 500.")
     )]
-    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    #[serde(default, deserialize_with = "deserialize_optional_number")]
     limit: Option<u64>,
     #[cfg_attr(
         feature = "docgen",
@@ -194,18 +194,22 @@ where
     Option::<T>::deserialize(deserializer).map(Some)
 }
 
-fn deserialize_optional_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+/// A number given as a number or, as query strings and flattened fields give it, as a string.
+/// A blank string is no number.
+pub(crate) fn deserialize_optional_number<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: Deserializer<'de>,
+    T: Deserialize<'de> + std::str::FromStr,
+    T::Err: std::fmt::Display,
 {
     #[derive(Deserialize)]
     #[serde(untagged)]
-    enum Value {
-        Number(u64),
+    enum Value<T> {
+        Number(T),
         String(String),
     }
 
-    let Some(value) = Option::<Value>::deserialize(deserializer)? else {
+    let Some(value) = Option::<Value<T>>::deserialize(deserializer)? else {
         return Ok(None);
     };
     match value {
@@ -215,7 +219,7 @@ where
             if trimmed.is_empty() {
                 return Ok(None);
             }
-            trimmed.parse::<u64>().map(Some).map_err(de::Error::custom)
+            trimmed.parse::<T>().map(Some).map_err(de::Error::custom)
         }
     }
 }
@@ -224,7 +228,7 @@ pub(crate) fn deserialize_optional_usize<'de, D>(deserializer: D) -> Result<Opti
 where
     D: Deserializer<'de>,
 {
-    deserialize_optional_u64(deserializer)?
+    deserialize_optional_number::<D, u64>(deserializer)?
         .map(usize::try_from)
         .transpose()
         .map_err(|_| de::Error::custom("number is too large"))
