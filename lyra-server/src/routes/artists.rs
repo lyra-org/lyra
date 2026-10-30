@@ -1050,7 +1050,6 @@ mod tests {
                     &mut *db,
                     user_db_id,
                     target,
-                    lyra_db::ratings::RatingKind::Artist,
                     lyra_db::ratings::RatingValue::new(value).unwrap(),
                     1,
                 )?;

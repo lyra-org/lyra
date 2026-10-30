@@ -36,6 +36,7 @@ mod server;
 mod sorting;
 mod sync;
 mod tags;
+mod targets;
 mod tracks;
 mod users;
 mod websocket;

@@ -52,33 +52,51 @@ pub(crate) enum CreateResult {
     Reused,
 }
 
-/// Create or reuse a tag, then attach the target. Resolves + whitelists + writes atomically.
-/// Color is ignored on reuse.
+/// A tag name and color validated for [`create`].
+#[derive(Debug)]
+pub(crate) struct NewTag {
+    name: String,
+    color: String,
+}
+
+impl NewTag {
+    pub(crate) fn parse(raw_name: &str, color: &str) -> Result<Self, TagServiceError> {
+        let name =
+            lyra_db::tags::normalize_tag_name(raw_name).map_err(TagServiceError::BadTagName)?;
+        let color = color.trim();
+        if color.is_empty() {
+            return Err(TagServiceError::EmptyColor);
+        }
+        Ok(Self {
+            name,
+            color: color.to_string(),
+        })
+    }
+
+    /// The canonical tag name.
+    pub(crate) fn into_name(self) -> String {
+        self.name
+    }
+}
+
+/// Create or reuse a tag, then attach the target. Whitelists + writes atomically. Color is
+/// ignored on reuse.
 pub(crate) fn create(
     db: &mut DbAny,
     owner_db_id: DbId,
-    public_target_id: &str,
-    raw_tag_name: &str,
-    color: &str,
+    target_db_id: DbId,
+    tag: &NewTag,
 ) -> Result<CreateResult, TagServiceError> {
-    let normalized =
-        lyra_db::tags::normalize_tag_name(raw_tag_name).map_err(TagServiceError::BadTagName)?;
-    let color = color.trim();
-    if color.is_empty() {
-        return Err(TagServiceError::EmptyColor);
-    }
-    let color = color.to_string();
     let now_ms = now_ms().map_err(TagServiceError::Internal)?;
 
     db.transaction_mut(
         |t| -> anyhow::Result<Result<CreateResult, TagServiceError>> {
             let visibility = TargetVisibility::for_user(t, owner_db_id)?;
-            let Some((target_db_id, _)) = resolve_targetable(t, &visibility, public_target_id)?
-            else {
+            if !targetable(t, &visibility, target_db_id)? {
                 return Ok(Err(TagServiceError::NotTargetable));
-            };
+            }
             let (_, outcome) =
-                lyra_db::tags::create(t, owner_db_id, target_db_id, &normalized, &color, now_ms)?;
+                lyra_db::tags::create(t, owner_db_id, target_db_id, &tag.name, &tag.color, now_ms)?;
             let result = match outcome {
                 CreateOutcome::Created => CreateResult::Created,
                 CreateOutcome::ReusedExisting => CreateResult::Reused,
@@ -90,47 +108,44 @@ pub(crate) fn create(
 }
 
 /// Detach a target from the caller's named tag. No visibility gate.
-pub(crate) fn remove_target_by_tag_id(
+pub(crate) fn remove_target(
     db: &mut DbAny,
     owner_db_id: DbId,
-    tag_db_id: DbId,
-    public_target_id: &str,
+    target_db_id: DbId,
+    raw_tag_name: &str,
 ) -> Result<(), TagServiceError> {
-    ensure_owner(db, tag_db_id, owner_db_id)?;
+    let normalized =
+        lyra_db::tags::normalize_tag_name(raw_tag_name).map_err(TagServiceError::BadTagName)?;
+
     db.transaction_mut(|t| -> anyhow::Result<Result<(), TagServiceError>> {
-        let Some((target_db_id, _)) = resolve_whitelisted(t, public_target_id)? else {
+        if target_kind(t, target_db_id)?.is_none() {
             return Ok(Err(TagServiceError::NotTargetable));
-        };
-        let tag = lyra_db::tags::get_by_id(t, tag_db_id)?.ok_or(TagServiceError::NotFound)?;
-        lyra_db::tags::remove_target(t, owner_db_id, target_db_id, &tag.tag)?;
+        }
+        lyra_db::tags::remove_target(t, owner_db_id, target_db_id, &normalized)?;
         Ok(Ok(()))
     })
     .map_err(TagServiceError::Internal)?
 }
 
-pub(crate) fn has_target_by_tag_id(
+pub(crate) fn has_target(
     db: &DbAny,
     owner_db_id: DbId,
-    tag_db_id: DbId,
-    public_target_id: &str,
+    target_db_id: DbId,
+    raw_tag_name: &str,
 ) -> Result<bool, TagServiceError> {
-    ensure_owner(db, tag_db_id, owner_db_id)?;
-    let tag = lyra_db::tags::get_by_id(db, tag_db_id)
-        .map_err(TagServiceError::Internal)?
-        .ok_or(TagServiceError::NotFound)?;
+    let normalized =
+        lyra_db::tags::normalize_tag_name(raw_tag_name).map_err(TagServiceError::BadTagName)?;
     let visibility =
         TargetVisibility::for_user(db, owner_db_id).map_err(TagServiceError::Internal)?;
-    let Some((target_db_id, _)) =
-        resolve_targetable(db, &visibility, public_target_id).map_err(TagServiceError::Internal)?
-    else {
+    if !targetable(db, &visibility, target_db_id).map_err(TagServiceError::Internal)? {
         return Ok(false);
-    };
-    lyra_db::tags::has_target(db, owner_db_id, target_db_id, &tag.tag)
+    }
+    lyra_db::tags::has_target(db, owner_db_id, target_db_id, &normalized)
         .map_err(TagServiceError::Internal)
 }
 
-/// Plugin-host batch check. Non-whitelisted or non-visible targets map to `false`.
-pub(crate) fn has_targets_by_db_id(
+/// Batch check. Non-whitelisted or non-visible targets map to `false`.
+pub(crate) fn has_targets(
     db: &DbAny,
     owner_db_id: DbId,
     target_db_ids: &[DbId],
@@ -146,15 +161,7 @@ pub(crate) fn has_targets_by_db_id(
         lyra_db::tags::normalize_tag_name(raw_tag_name).map_err(TagServiceError::BadTagName)?;
     let visibility =
         TargetVisibility::for_user(db, owner_db_id).map_err(TagServiceError::Internal)?;
-    let mut visible: Vec<DbId> = Vec::with_capacity(target_db_ids.len());
-    for &id in target_db_ids {
-        if resolve_targetable_by_db_id(db, &visibility, id)
-            .map_err(TagServiceError::Internal)?
-            .is_some()
-        {
-            visible.push(id);
-        }
-    }
+    let visible = visible_targets(db, &visibility, target_db_ids)?;
     let raw = lyra_db::tags::has_targets(db, owner_db_id, &visible, &normalized)
         .map_err(TagServiceError::Internal)?;
     let mut out: HashMap<DbId, bool> = target_db_ids
@@ -168,22 +175,20 @@ pub(crate) fn has_targets_by_db_id(
     Ok(out)
 }
 
-pub(crate) fn get_for_target_by_db_id(
+pub(crate) fn get_for_target(
     db: &DbAny,
     owner_db_id: DbId,
     target_db_id: DbId,
 ) -> Result<Vec<Tag>, TagServiceError> {
     let visibility =
         TargetVisibility::for_user(db, owner_db_id).map_err(TagServiceError::Internal)?;
-    let Some((target_db_id, _)) = resolve_targetable_by_db_id(db, &visibility, target_db_id)
-        .map_err(TagServiceError::Internal)?
-    else {
+    if !targetable(db, &visibility, target_db_id).map_err(TagServiceError::Internal)? {
         return Ok(Vec::new());
-    };
+    }
     lyra_db::tags::get_for_target(db, owner_db_id, target_db_id).map_err(TagServiceError::Internal)
 }
 
-pub(crate) fn get_for_targets_many_by_db_id(
+pub(crate) fn get_for_targets_many(
     db: &DbAny,
     owner_db_id: DbId,
     target_db_ids: &[DbId],
@@ -197,20 +202,12 @@ pub(crate) fn get_for_targets_many_by_db_id(
 
     let visibility =
         TargetVisibility::for_user(db, owner_db_id).map_err(TagServiceError::Internal)?;
-    let mut visible: Vec<DbId> = Vec::with_capacity(target_db_ids.len());
     let mut out: HashMap<DbId, Vec<Tag>> = target_db_ids
         .iter()
         .copied()
         .map(|id| (id, Vec::new()))
         .collect();
-    for &id in target_db_ids {
-        if resolve_targetable_by_db_id(db, &visibility, id)
-            .map_err(TagServiceError::Internal)?
-            .is_some()
-        {
-            visible.push(id);
-        }
-    }
+    let visible = visible_targets(db, &visibility, target_db_ids)?;
     if visible.is_empty() {
         return Ok(out);
     }
@@ -221,88 +218,6 @@ pub(crate) fn get_for_targets_many_by_db_id(
         out.insert(id, tags);
     }
     Ok(out)
-}
-
-pub(crate) fn create_by_db_id(
-    db: &mut DbAny,
-    owner_db_id: DbId,
-    target_db_id: DbId,
-    raw_tag_name: &str,
-    color: &str,
-) -> Result<(CreateResult, String), TagServiceError> {
-    let normalized =
-        lyra_db::tags::normalize_tag_name(raw_tag_name).map_err(TagServiceError::BadTagName)?;
-    let color = color.trim();
-    if color.is_empty() {
-        return Err(TagServiceError::EmptyColor);
-    }
-    let color = color.to_string();
-    let now_ms = now_ms().map_err(TagServiceError::Internal)?;
-    let normalized_clone = normalized.clone();
-
-    db.transaction_mut(
-        |t| -> anyhow::Result<Result<(CreateResult, String), TagServiceError>> {
-            let visibility = TargetVisibility::for_user(t, owner_db_id)?;
-            let Some((target_db_id, _)) =
-                resolve_targetable_by_db_id(t, &visibility, target_db_id)?
-            else {
-                return Ok(Err(TagServiceError::NotTargetable));
-            };
-            let (_, outcome) = lyra_db::tags::create(
-                t,
-                owner_db_id,
-                target_db_id,
-                &normalized_clone,
-                &color,
-                now_ms,
-            )?;
-            let result = match outcome {
-                CreateOutcome::Created => CreateResult::Created,
-                CreateOutcome::ReusedExisting => CreateResult::Reused,
-            };
-            Ok(Ok((result, normalized_clone.clone())))
-        },
-    )
-    .map_err(TagServiceError::Internal)?
-}
-
-/// No visibility gate.
-pub(crate) fn remove_target_by_db_id(
-    db: &mut DbAny,
-    owner_db_id: DbId,
-    target_db_id: DbId,
-    raw_tag_name: &str,
-) -> Result<(), TagServiceError> {
-    let normalized =
-        lyra_db::tags::normalize_tag_name(raw_tag_name).map_err(TagServiceError::BadTagName)?;
-
-    db.transaction_mut(|t| -> anyhow::Result<Result<(), TagServiceError>> {
-        let Some(_) = resolve_whitelisted_by_db_id(t, target_db_id)? else {
-            return Ok(Err(TagServiceError::NotTargetable));
-        };
-        lyra_db::tags::remove_target(t, owner_db_id, target_db_id, &normalized)?;
-        Ok(Ok(()))
-    })
-    .map_err(TagServiceError::Internal)?
-}
-
-pub(crate) fn has_target_by_db_id(
-    db: &DbAny,
-    owner_db_id: DbId,
-    target_db_id: DbId,
-    raw_tag_name: &str,
-) -> Result<bool, TagServiceError> {
-    let normalized =
-        lyra_db::tags::normalize_tag_name(raw_tag_name).map_err(TagServiceError::BadTagName)?;
-    let visibility =
-        TargetVisibility::for_user(db, owner_db_id).map_err(TagServiceError::Internal)?;
-    let Some((target_db_id, _)) = resolve_targetable_by_db_id(db, &visibility, target_db_id)
-        .map_err(TagServiceError::Internal)?
-    else {
-        return Ok(false);
-    };
-    lyra_db::tags::has_target(db, owner_db_id, target_db_id, &normalized)
-        .map_err(TagServiceError::Internal)
 }
 
 /// Targets tagged `raw_tag_name` by `owner`. Non-visible playlists are filtered out; underlying
@@ -318,15 +233,7 @@ pub(crate) fn get_tagged(
         TargetVisibility::for_user(db, owner_db_id).map_err(TagServiceError::Internal)?;
     let ids = lyra_db::tags::get_targets_by_tag(db, owner_db_id, &normalized)
         .map_err(TagServiceError::Internal)?;
-    let mut visible = Vec::with_capacity(ids.len());
-    for id in ids {
-        if resolve_targetable_by_db_id(db, &visibility, id)
-            .map_err(TagServiceError::Internal)?
-            .is_some()
-        {
-            visible.push(id);
-        }
-    }
+    let visible = visible_targets(db, &visibility, &ids)?;
     Ok((visible, normalized))
 }
 
@@ -480,9 +387,7 @@ pub(crate) fn list_targets(
         .map_err(TagServiceError::Internal)?;
     let mut filtered = Vec::with_capacity(targets.len());
     for target in targets {
-        if resolve_targetable_by_db_id(db, &visibility, target.target_db_id)
-            .map_err(TagServiceError::Internal)?
-            .is_some()
+        if targetable(db, &visibility, target.target_db_id).map_err(TagServiceError::Internal)?
             && let Some(target_id) = target_ids.get(&target.target_db_id)
         {
             filtered.push(TargetListItem {
@@ -529,10 +434,7 @@ pub(crate) fn hydrate_target_snapshot(
         let Some(target) = targets.remove(&edge_db_id) else {
             continue;
         };
-        if resolve_targetable_by_db_id(db, &visibility, target.target_db_id)
-            .map_err(TagServiceError::Internal)?
-            .is_none()
-        {
+        if !targetable(db, &visibility, target.target_db_id).map_err(TagServiceError::Internal)? {
             continue;
         }
         let Some(target_id) = target_ids.get(&target.target_db_id) else {
@@ -549,60 +451,43 @@ pub(crate) fn hydrate_target_snapshot(
     Ok(items)
 }
 
-fn resolve_targetable(
-    db: &impl lyra_db::DbAccess,
+fn visible_targets(
+    db: &DbAny,
     visibility: &TargetVisibility,
-    public_target_id: &str,
-) -> anyhow::Result<Option<(DbId, TargetKind)>> {
-    let Some(target_db_id) = lyra_db::lookup::find_node_id_by_id(db, public_target_id)? else {
-        return Ok(None);
-    };
-    resolve_targetable_by_db_id(db, visibility, target_db_id)
+    target_db_ids: &[DbId],
+) -> Result<Vec<DbId>, TagServiceError> {
+    let mut visible = Vec::with_capacity(target_db_ids.len());
+    for &id in target_db_ids {
+        if targetable(db, visibility, id).map_err(TagServiceError::Internal)? {
+            visible.push(id);
+        }
+    }
+    Ok(visible)
 }
 
-fn resolve_targetable_by_db_id(
+fn targetable(
     db: &impl lyra_db::DbAccess,
     visibility: &TargetVisibility,
     target_db_id: DbId,
-) -> anyhow::Result<Option<(DbId, TargetKind)>> {
-    let Some((target_db_id, kind)) = resolve_whitelisted_by_db_id(db, target_db_id)? else {
-        return Ok(None);
-    };
-    if !visibility.can_access_target(db, target_db_id, kind)? {
-        return Ok(None);
+) -> anyhow::Result<bool> {
+    match target_kind(db, target_db_id)? {
+        Some(kind) => visibility.can_access_target(db, target_db_id, kind),
+        None => Ok(false),
     }
-    Ok(Some((target_db_id, kind)))
 }
 
-fn resolve_whitelisted(
-    db: &impl lyra_db::DbAccess,
-    public_target_id: &str,
-) -> anyhow::Result<Option<(DbId, TargetKind)>> {
-    let Some(target_db_id) = lyra_db::lookup::find_node_id_by_id(db, public_target_id)? else {
-        return Ok(None);
-    };
-    resolve_whitelisted_by_db_id(db, target_db_id)
-}
-
-fn resolve_whitelisted_by_db_id(
+fn target_kind(
     db: &impl lyra_db::DbAccess,
     target_db_id: DbId,
-) -> anyhow::Result<Option<(DbId, TargetKind)>> {
-    match lyra_db::favorites::target_kind(db, target_db_id)? {
-        Some(lyra_db::favorites::FavoriteKind::Track) => {
-            Ok(Some((target_db_id, TargetKind::Track)))
-        }
-        Some(lyra_db::favorites::FavoriteKind::Release) => {
-            Ok(Some((target_db_id, TargetKind::Release)))
-        }
-        Some(lyra_db::favorites::FavoriteKind::Artist) => {
-            Ok(Some((target_db_id, TargetKind::Artist)))
-        }
-        Some(lyra_db::favorites::FavoriteKind::Playlist) => {
-            Ok(Some((target_db_id, TargetKind::Playlist)))
-        }
-        None => Ok(None),
-    }
+) -> anyhow::Result<Option<TargetKind>> {
+    Ok(
+        lyra_db::favorites::target_kind(db, target_db_id)?.map(|kind| match kind {
+            lyra_db::favorites::FavoriteKind::Track => TargetKind::Track,
+            lyra_db::favorites::FavoriteKind::Release => TargetKind::Release,
+            lyra_db::favorites::FavoriteKind::Artist => TargetKind::Artist,
+            lyra_db::favorites::FavoriteKind::Playlist => TargetKind::Playlist,
+        }),
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -666,6 +551,16 @@ mod tests {
         users,
     };
     use nanoid::nanoid;
+
+    fn create_tag(
+        db: &mut DbAny,
+        owner_db_id: DbId,
+        target_db_id: DbId,
+        name: &str,
+        color: &str,
+    ) -> Result<CreateResult, TagServiceError> {
+        create(db, owner_db_id, target_db_id, &NewTag::parse(name, color)?)
+    }
 
     fn setup_id_index(db: &mut DbAny) -> anyhow::Result<()> {
         lyra_db::indexes::ensure_index(db, "id")?;
@@ -772,15 +667,16 @@ mod tests {
         let mut db = new_test_db()?;
         setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
-        let (_, track_a, _) = create_accessible_track(&mut db, user)?;
-        let (_, track_b, _) = create_accessible_track(&mut db, user)?;
+        let (track_a, _, _) = create_accessible_track(&mut db, user)?;
+        let (track_b, _, _) = create_accessible_track(&mut db, user)?;
 
+        assert_eq!(NewTag::parse(" Workout", "blue")?.into_name(), "Workout");
         assert_eq!(
-            create(&mut db, user, &track_a, "Workout", "blue")?,
+            create_tag(&mut db, user, track_a, " Workout", "blue")?,
             CreateResult::Created
         );
         assert_eq!(
-            create(&mut db, user, &track_b, "Workout", "red")?,
+            create_tag(&mut db, user, track_b, "Workout", "red")?,
             CreateResult::Reused
         );
         Ok(())
@@ -791,14 +687,14 @@ mod tests {
         let mut db = new_test_db()?;
         setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
-        let (_, track_id, _) = create_accessible_track(&mut db, user)?;
+        let (track, _, _) = create_accessible_track(&mut db, user)?;
 
-        create(&mut db, user, &track_id, "Keep", "blue")?;
+        create_tag(&mut db, user, track, "Keep", "blue")?;
         let original = list_for_user(&db, user)?.pop().expect("tag present");
         let tag_db_id = original.db_id.clone().expect("tag db id").into();
 
-        remove_target_by_tag_id(&mut db, user, tag_db_id, &track_id)?;
-        remove_target_by_tag_id(&mut db, user, tag_db_id, &track_id)?;
+        remove_target(&mut db, user, track, &original.tag)?;
+        remove_target(&mut db, user, track, &original.tag)?;
 
         let detached = get_by_public_id(&db, user, &original.id)?;
         assert_eq!(detached.id, original.id);
@@ -827,10 +723,14 @@ mod tests {
         let mut db = new_test_db()?;
         setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
-        let (_, track_id, _) = create_accessible_track(&mut db, user)?;
+        let (track, _, _) = create_accessible_track(&mut db, user)?;
 
-        let err = create(&mut db, user, &track_id, "bad\x00name", "blue").unwrap_err();
+        let err = create_tag(&mut db, user, track, "bad\x00name", "blue").unwrap_err();
         assert!(matches!(err, TagServiceError::BadTagName(_)));
+        assert!(matches!(
+            NewTag::parse("Name", " "),
+            Err(TagServiceError::EmptyColor)
+        ));
         Ok(())
     }
 
@@ -839,9 +739,9 @@ mod tests {
         let mut db = new_test_db()?;
         setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
-        let (_, track_id) = create_inaccessible_track(&mut db)?;
+        let (track, _) = create_inaccessible_track(&mut db)?;
 
-        let err = create(&mut db, user, &track_id, "Hidden", "blue").unwrap_err();
+        let err = create_tag(&mut db, user, track, "Hidden", "blue").unwrap_err();
         assert!(matches!(err, TagServiceError::NotTargetable));
         Ok(())
     }
@@ -852,9 +752,9 @@ mod tests {
         setup_id_index(&mut db)?;
         let owner = create_user(&mut db, "alice")?;
         let intruder = create_user(&mut db, "bob")?;
-        let (_, public_id) = create_playlist(&mut db, owner, false)?;
+        let (playlist, _) = create_playlist(&mut db, owner, false)?;
 
-        let err = create(&mut db, intruder, &public_id, "Stalker", "red").unwrap_err();
+        let err = create_tag(&mut db, intruder, playlist, "Stalker", "red").unwrap_err();
         assert!(matches!(err, TagServiceError::NotTargetable));
         Ok(())
     }
@@ -867,13 +767,8 @@ mod tests {
         let bob = create_user(&mut db, "bob")?;
         let (playlist_db_id, public_id) = create_playlist(&mut db, alice, true)?;
 
-        create(&mut db, bob, &public_id, "Ref", "blue")?;
-        let tag_id = lyra_db::tags::list_for_user(&db, bob)?
-            .first()
-            .and_then(|tag| tag.db_id.clone())
-            .expect("tag present")
-            .into();
-        assert!(has_target_by_tag_id(&db, bob, tag_id, &public_id)?);
+        create_tag(&mut db, bob, playlist_db_id, "Ref", "blue")?;
+        assert!(has_target(&db, bob, playlist_db_id, "Ref")?);
 
         lyra_db::playlists::update(
             &mut db,
@@ -889,10 +784,11 @@ mod tests {
         )?;
 
         assert!(
-            !has_target_by_tag_id(&db, bob, tag_id, &public_id)?,
+            !has_target(&db, bob, playlist_db_id, "Ref")?,
             "has is opaque-false after visibility loss",
         );
-        remove_target_by_tag_id(&mut db, bob, tag_id, &public_id)?;
+        remove_target(&mut db, bob, playlist_db_id, "Ref")?;
+        assert!(lyra_db::tags::get_for_target(&db, bob, playlist_db_id)?.is_empty());
 
         Ok(())
     }
@@ -905,7 +801,7 @@ mod tests {
         let bob = create_user(&mut db, "bob")?;
         let (playlist_db_id, public_id) = create_playlist(&mut db, alice, true)?;
 
-        create(&mut db, bob, &public_id, "Ref", "blue")?;
+        create_tag(&mut db, bob, playlist_db_id, "Ref", "blue")?;
 
         lyra_db::playlists::update(
             &mut db,
@@ -956,8 +852,8 @@ mod tests {
         let bob = create_user(&mut db, "bob")?;
         let (playlist_db_id, public_id) = create_playlist(&mut db, alice, true)?;
 
-        create(&mut db, bob, &public_id, "Visible", "blue")?;
-        let visible = get_for_targets_many_by_db_id(&db, bob, &[playlist_db_id])?;
+        create_tag(&mut db, bob, playlist_db_id, "Visible", "blue")?;
+        let visible = get_for_targets_many(&db, bob, &[playlist_db_id])?;
         assert_eq!(visible[&playlist_db_id].len(), 1);
 
         lyra_db::playlists::update(
@@ -973,7 +869,7 @@ mod tests {
             },
         )?;
 
-        let hidden = get_for_targets_many_by_db_id(&db, bob, &[playlist_db_id])?;
+        let hidden = get_for_targets_many(&db, bob, &[playlist_db_id])?;
         assert!(
             hidden[&playlist_db_id].is_empty(),
             "non-visible playlist keeps an empty batch entry",
@@ -986,17 +882,44 @@ mod tests {
         let mut db = new_test_db()?;
         setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
-        let (track_db_id, track_id, library_db_id) = create_accessible_track(&mut db, user)?;
+        let (track_db_id, _, library_db_id) = create_accessible_track(&mut db, user)?;
 
-        create(&mut db, user, &track_id, "Visible", "blue")?;
-        assert!(has_target_by_db_id(&db, user, track_db_id, "Visible")?);
+        create_tag(&mut db, user, track_db_id, "Visible", "blue")?;
+        assert!(has_target(&db, user, track_db_id, "Visible")?);
 
         lyra_db::libraries::revoke_access(&mut db, user, library_db_id)?;
 
-        assert!(!has_target_by_db_id(&db, user, track_db_id, "Visible")?);
-        assert!(get_for_target_by_db_id(&db, user, track_db_id)?.is_empty());
+        assert!(!has_target(&db, user, track_db_id, "Visible")?);
+        assert!(get_for_target(&db, user, track_db_id)?.is_empty());
         let (targets, _) = get_tagged(&db, user, "Visible")?;
         assert!(targets.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn missing_and_unsupported_targets_are_not_targetable() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        setup_id_index(&mut db)?;
+        let user = create_user(&mut db, "alice")?;
+        let other_user = create_user(&mut db, "bob")?;
+
+        for target in [DbId(999_999_999), DbId(0), other_user] {
+            assert!(matches!(
+                create_tag(&mut db, user, target, "X", "blue"),
+                Err(TagServiceError::NotTargetable),
+            ));
+            assert!(matches!(
+                remove_target(&mut db, user, target, "X"),
+                Err(TagServiceError::NotTargetable),
+            ));
+            assert!(!has_target(&db, user, target, "X")?);
+            assert!(get_for_target(&db, user, target)?.is_empty());
+        }
+        let many = has_targets(&db, user, &[DbId(999_999_999), other_user], "X")?;
+        assert_eq!(
+            many,
+            HashMap::from([(DbId(999_999_999), false), (other_user, false)])
+        );
         Ok(())
     }
 
@@ -1006,8 +929,8 @@ mod tests {
         setup_id_index(&mut db)?;
         let alice = create_user(&mut db, "alice")?;
         let bob = create_user(&mut db, "bob")?;
-        let (_, track_id, _) = create_accessible_track(&mut db, alice)?;
-        create(&mut db, alice, &track_id, "Private", "blue")?;
+        let (track, _, _) = create_accessible_track(&mut db, alice)?;
+        create_tag(&mut db, alice, track, "Private", "blue")?;
 
         let tags = lyra_db::tags::list_for_user(&db, alice)?;
         let public_id = tags.first().map(|t| t.id.clone()).expect("alice has a tag");
@@ -1022,10 +945,10 @@ mod tests {
         let mut db = new_test_db()?;
         setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
-        let (_, track_id, _) = create_accessible_track(&mut db, user)?;
+        let (track, _, _) = create_accessible_track(&mut db, user)?;
 
-        create(&mut db, user, &track_id, "Workout", "blue")?;
-        create(&mut db, user, &track_id, "Mood", "red")?;
+        create_tag(&mut db, user, track, "Workout", "blue")?;
+        create_tag(&mut db, user, track, "Mood", "red")?;
 
         let workout_id = lyra_db::tags::list_for_user(&db, user)?
             .into_iter()
@@ -1044,8 +967,8 @@ mod tests {
         let mut db = new_test_db()?;
         setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
-        let (_, track_id, _) = create_accessible_track(&mut db, user)?;
-        create(&mut db, user, &track_id, "X", "blue")?;
+        let (track, _, _) = create_accessible_track(&mut db, user)?;
+        create_tag(&mut db, user, track, "X", "blue")?;
         let tag_id = lyra_db::tags::list_for_user(&db, user)?
             .first()
             .and_then(|t| t.db_id.clone())

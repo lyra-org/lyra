@@ -1065,7 +1065,6 @@ mod tests {
                 &mut *db,
                 user_db_id,
                 rated_release,
-                lyra_db::ratings::RatingKind::Release,
                 lyra_db::ratings::RatingValue::new(4).unwrap(),
                 1,
             )?;
@@ -1073,7 +1072,6 @@ mod tests {
                 &mut *db,
                 user_db_id,
                 five_star_release,
-                lyra_db::ratings::RatingKind::Release,
                 lyra_db::ratings::RatingValue::new(5).unwrap(),
                 1,
             )?;
@@ -1081,7 +1079,6 @@ mod tests {
                 &mut *db,
                 user_db_id,
                 rated_track,
-                lyra_db::ratings::RatingKind::Track,
                 lyra_db::ratings::RatingValue::new(4).unwrap(),
                 1,
             )?;

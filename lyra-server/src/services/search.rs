@@ -379,17 +379,16 @@ mod tests {
         let high_release = insert_release(&mut db, "Blue High Release")?;
 
         let user_db_id = principal.require(&db)?;
-        for (target, kind, value) in [
-            (rated_track, lyra_db::ratings::RatingKind::Track, 4),
-            (rated_artist, lyra_db::ratings::RatingKind::Artist, 3),
-            (low_release, lyra_db::ratings::RatingKind::Release, 2),
-            (high_release, lyra_db::ratings::RatingKind::Release, 5),
+        for (target, value) in [
+            (rated_track, 4),
+            (rated_artist, 3),
+            (low_release, 2),
+            (high_release, 5),
         ] {
             lyra_db::ratings::upsert(
                 &mut db,
                 user_db_id,
                 target,
-                kind,
                 lyra_db::ratings::RatingValue::new(value).unwrap(),
                 100,
             )?;

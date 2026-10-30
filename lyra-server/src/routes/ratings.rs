@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use agdb::DbId;
 #[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
@@ -27,6 +28,10 @@ use serde::{
 use std::collections::HashMap;
 
 use crate::routes::request::bearer_credential;
+use crate::routes::targets::{
+    resolve_target,
+    validate_target_id,
+};
 use crate::{
     services::STATE,
     services::{
@@ -142,12 +147,9 @@ async fn set_rating(
     let rating = parse_rating(request.rating)?;
 
     let mut db = STATE.db.write().await;
-    match rating_service::set_for_principal(&mut db, &principal, &target_id, rating)? {
-        rating_service::MutationOutcome::Applied(_) => Ok(StatusCode::NO_CONTENT),
-        rating_service::MutationOutcome::NotTargetable => Err(AppError::not_found(format!(
-            "rating target not found: {target_id}"
-        ))),
-    }
+    let target_db_id = resolve_target(&*db, &target_id, || target_not_found(&target_id))?;
+    let outcome = rating_service::set_for_principal(&mut db, &principal, target_db_id, rating)?;
+    mutation_response(outcome, &target_id)
 }
 
 async fn get_rating(
@@ -158,8 +160,12 @@ async fn get_rating(
     validate_target_id(&target_id)?;
 
     let db = STATE.db.read().await;
-    let rating =
-        rating_service::get_for_principal(&db, &principal, &target_id)?.map(RatingValue::get);
+    let rating = match lyra_db::lookup::find_node_id_by_id(&*db, &target_id)? {
+        Some(target_db_id) => {
+            rating_service::get_for_principal(&db, &principal, target_db_id)?.map(RatingValue::get)
+        }
+        None => None,
+    };
     Ok(Json(RatingStateResponse { rating }))
 }
 
@@ -172,12 +178,23 @@ async fn delete_rating(
 
     let mut db = STATE.db.write().await;
     let user_db_id = principal.require(&db)?;
-    match rating_service::remove(&mut db, user_db_id, &target_id)? {
-        rating_service::MutationOutcome::Applied(_) => Ok(StatusCode::NO_CONTENT),
-        rating_service::MutationOutcome::NotTargetable => Err(AppError::not_found(format!(
-            "rating target not found: {target_id}"
-        ))),
+    let target_db_id = resolve_target(&*db, &target_id, || target_not_found(&target_id))?;
+    let outcome = rating_service::remove(&mut db, user_db_id, target_db_id)?;
+    mutation_response(outcome, &target_id)
+}
+
+fn mutation_response(
+    outcome: rating_service::MutationOutcome,
+    target_id: &str,
+) -> Result<StatusCode, AppError> {
+    match outcome {
+        rating_service::MutationOutcome::Applied => Ok(StatusCode::NO_CONTENT),
+        rating_service::MutationOutcome::NotTargetable => Err(target_not_found(target_id)),
     }
+}
+
+fn target_not_found(target_id: &str) -> AppError {
+    AppError::not_found(format!("rating target not found: {target_id}"))
 }
 
 async fn check_ratings(
@@ -194,10 +211,20 @@ async fn check_ratings(
     }
 
     let db = STATE.db.read().await;
-    let ratings = rating_service::values_for_principal(&db, &principal, &request.target_ids)?
-        .into_iter()
-        .map(|(target_id, rating)| (target_id, rating.map(RatingValue::get)))
+    let mut ratings: HashMap<String, Option<u8>> = request
+        .target_ids
+        .iter()
+        .map(|target_id| (target_id.clone(), None))
         .collect();
+    let target_ids: Vec<&str> = ratings.keys().map(String::as_str).collect();
+    let resolved = lyra_db::lookup::find_node_ids_by_ids(&*db, &target_ids)?;
+    let target_db_ids: Vec<DbId> = resolved.values().copied().collect();
+    let values = rating_service::values_for_principal(&db, &principal, &target_db_ids)?;
+    for (target_id, target_db_id) in resolved {
+        if let Some(value) = values.get(&target_db_id) {
+            ratings.insert(target_id, Some(value.get()));
+        }
+    }
     Ok(Json(CheckRatingsResponse { ratings }))
 }
 
@@ -214,19 +241,6 @@ fn parse_rating_bound(name: &str, raw: i64) -> Result<RatingValue, AppError> {
                 "{name} must be an integer from {MIN_VALUE} through {MAX_VALUE}"
             ))
         })
-}
-
-fn validate_target_id(target_id: &str) -> Result<(), AppError> {
-    let valid_len = (6..=64).contains(&target_id.len());
-    let valid_chars = target_id
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
-    if valid_len && valid_chars {
-        return Ok(());
-    }
-    Err(AppError::bad_request(format!(
-        "malformed target id: {target_id}"
-    )))
 }
 
 #[cfg(feature = "docgen")]
@@ -265,7 +279,7 @@ fn check_ratings_docs(op: TransformOperation) -> TransformOperation {
         "Checks up to 500 submitted target IDs, counted before duplicate IDs are collapsed, and \
          returns a dense `{ ratings: { [submitted_id]: 1..5 | null } }` map. Mixed track, \
          release, and artist IDs are supported. Missing, malformed, unsupported, non-visible, \
-         kind-mismatched, other-user-only, and unrated targets all map to `null`; an empty input \
+         other-user-only, and unrated targets all map to `null`; an empty input \
          returns an empty map. Unlike singular rating routes, malformed individual target IDs do \
          not return 400. Malformed JSON and requests containing more than 500 submitted IDs \
          return 400.",
@@ -398,14 +412,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn target_id_validation_matches_public_id_shape() {
-        assert!(validate_target_id("abc123").is_ok());
-        assert!(validate_target_id("V1StGXR8_Z5jdHi6B-myT").is_ok());
-        assert!(validate_target_id("short").is_err());
-        assert!(validate_target_id("has/slash").is_err());
-    }
-
     #[tokio::test]
     async fn check_ratings_route_is_authenticated_and_enforces_raw_cap() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
@@ -430,7 +436,6 @@ mod tests {
                 &mut *db,
                 user_db_id,
                 track,
-                lyra_db::ratings::RatingKind::Track,
                 lyra_db::ratings::RatingValue::new(2).unwrap(),
                 100,
             )?;
@@ -453,7 +458,7 @@ mod tests {
                     .header(CONTENT_TYPE, "application/json")
                     .header(AUTHORIZATION, &authorization)
                     .body(Body::from(serde_json::to_vec(&serde_json::json!({
-                        "target_ids": [track_id.clone()],
+                        "target_ids": [track_id.clone(), track_id.clone(), "missing-id", "bad/id"],
                     }))?))?,
             )
             .await?;
@@ -466,7 +471,11 @@ mod tests {
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&body)?,
             serde_json::json!({
-                "ratings": HashMap::from([(track_id.clone(), 2)]),
+                "ratings": {
+                    track_id.clone(): 2,
+                    "missing-id": null,
+                    "bad/id": null,
+                },
             }),
         );
 

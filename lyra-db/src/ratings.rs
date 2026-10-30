@@ -18,7 +18,6 @@ use agdb::{
 
 use super::DbAccess;
 
-const KIND_KEY: &str = "rating_kind";
 const VALUE_KEY: &str = "rating_value";
 const CREATED_AT_KEY: &str = "rating_created_at_ms";
 const UPDATED_AT_KEY: &str = "rating_updated_at_ms";
@@ -77,50 +76,9 @@ impl RatingFilter {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum RatingKind {
-    Track,
-    Release,
-    Artist,
-}
-
-impl RatingKind {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Track => "track",
-            Self::Release => "release",
-            Self::Artist => "artist",
-        }
-    }
-}
-
-impl TryFrom<&str> for RatingKind {
-    type Error = ();
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            "track" => Ok(Self::Track),
-            "release" => Ok(Self::Release),
-            "artist" => Ok(Self::Artist),
-            _ => Err(()),
-        }
-    }
-}
-
-impl From<super::entities::MetadataEntityType> for RatingKind {
-    fn from(value: super::entities::MetadataEntityType) -> Self {
-        match value {
-            super::entities::MetadataEntityType::Track => Self::Track,
-            super::entities::MetadataEntityType::Release => Self::Release,
-            super::entities::MetadataEntityType::Artist => Self::Artist,
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RatingEdge {
     pub(crate) target_db_id: DbId,
-    pub kind: RatingKind,
     pub value: RatingValue,
     pub(crate) created_at_ms: i64,
     pub(crate) updated_at_ms: i64,
@@ -130,7 +88,6 @@ pub fn upsert(
     db: &mut impl DbAccess,
     user_db_id: DbId,
     target_db_id: DbId,
-    kind: RatingKind,
     value: RatingValue,
     now_ms: i64,
 ) -> anyhow::Result<()> {
@@ -138,7 +95,6 @@ pub fn upsert(
         db.exec_mut(
             QueryBuilder::insert()
                 .values_uniform([
-                    (KIND_KEY, kind.as_str()).into(),
                     (VALUE_KEY, u64::from(value.get())).into(),
                     (UPDATED_AT_KEY, now_ms).into(),
                 ])
@@ -160,7 +116,6 @@ pub fn upsert(
     db.exec_mut(
         QueryBuilder::insert()
             .values_uniform([
-                (KIND_KEY, kind.as_str()).into(),
                 (VALUE_KEY, u64::from(value.get())).into(),
                 (CREATED_AT_KEY, now_ms).into(),
                 (UPDATED_AT_KEY, now_ms).into(),
@@ -326,7 +281,7 @@ fn element_is_rating(element: &DbElement) -> bool {
     element
         .values
         .iter()
-        .any(|kv| matches!(&kv.key, DbValue::String(key) if key == KIND_KEY))
+        .any(|kv| matches!(&kv.key, DbValue::String(key) if key == VALUE_KEY))
 }
 
 fn parse_rating_edge(element: DbElement) -> Option<RatingEdge> {
@@ -334,7 +289,6 @@ fn parse_rating_edge(element: DbElement) -> Option<RatingEdge> {
         return None;
     }
     let target_db_id = (element.to.0 != 0).then_some(element.to)?;
-    let mut kind = None;
     let mut value = None;
     let mut created_at_ms = None;
     let mut updated_at_ms = None;
@@ -344,11 +298,6 @@ fn parse_rating_edge(element: DbElement) -> Option<RatingEdge> {
             continue;
         };
         match key.as_str() {
-            KIND_KEY => {
-                if let DbValue::String(raw) = &kv.value {
-                    kind = RatingKind::try_from(raw.as_str()).ok();
-                }
-            }
             VALUE_KEY => value = db_value_to_rating(&kv.value),
             CREATED_AT_KEY => created_at_ms = db_value_to_i64(&kv.value),
             UPDATED_AT_KEY => updated_at_ms = db_value_to_i64(&kv.value),
@@ -358,7 +307,6 @@ fn parse_rating_edge(element: DbElement) -> Option<RatingEdge> {
 
     Some(RatingEdge {
         target_db_id,
-        kind: kind?,
         value: value?,
         created_at_ms: created_at_ms?,
         updated_at_ms: updated_at_ms?,
@@ -400,22 +348,8 @@ mod tests {
         let user = create_node(&mut db)?;
         let target = create_node(&mut db)?;
 
-        upsert(
-            &mut db,
-            user,
-            target,
-            RatingKind::Track,
-            RatingValue::new(2).unwrap(),
-            100,
-        )?;
-        upsert(
-            &mut db,
-            user,
-            target,
-            RatingKind::Track,
-            RatingValue::new(5).unwrap(),
-            200,
-        )?;
+        upsert(&mut db, user, target, RatingValue::new(2).unwrap(), 100)?;
+        upsert(&mut db, user, target, RatingValue::new(5).unwrap(), 200)?;
 
         let ratings = list(&db, user)?;
         assert_eq!(ratings.len(), 1);
@@ -431,14 +365,7 @@ mod tests {
         let user_a = create_node(&mut db)?;
         let user_b = create_node(&mut db)?;
         let target = create_node(&mut db)?;
-        upsert(
-            &mut db,
-            user_a,
-            target,
-            RatingKind::Track,
-            RatingValue::new(4).unwrap(),
-            100,
-        )?;
+        upsert(&mut db, user_a, target, RatingValue::new(4).unwrap(), 100)?;
 
         assert!(get(&db, user_b, target)?.is_none());
         assert!(list(&db, user_b)?.is_empty());
@@ -455,27 +382,12 @@ mod tests {
         let other_user_target = create_node(&mut db)?;
         let unrated = create_node(&mut db)?;
 
-        upsert(
-            &mut db,
-            user_a,
-            track,
-            RatingKind::Track,
-            RatingValue::new(2).unwrap(),
-            100,
-        )?;
-        upsert(
-            &mut db,
-            user_a,
-            artist,
-            RatingKind::Artist,
-            RatingValue::new(5).unwrap(),
-            200,
-        )?;
+        upsert(&mut db, user_a, track, RatingValue::new(2).unwrap(), 100)?;
+        upsert(&mut db, user_a, artist, RatingValue::new(5).unwrap(), 200)?;
         upsert(
             &mut db,
             user_b,
             other_user_target,
-            RatingKind::Release,
             RatingValue::new(4).unwrap(),
             300,
         )?;
@@ -484,7 +396,6 @@ mod tests {
         let values = values_for_targets(&db, user_a, &[track, other_user_target, unrated])?;
         assert_eq!(values.len(), 1);
         let edge = values.get(&track).expect("requested track rating");
-        assert_eq!(edge.kind, RatingKind::Track);
         assert_eq!(edge.value.get(), 2);
         assert_eq!(edge.created_at_ms, 100);
         assert_eq!(edge.updated_at_ms, 100);
@@ -514,19 +425,11 @@ mod tests {
                 &mut db,
                 user_a,
                 target,
-                RatingKind::Track,
                 RatingValue::new(value).unwrap(),
                 100,
             )?;
         }
-        upsert(
-            &mut db,
-            user_b,
-            high,
-            RatingKind::Track,
-            RatingValue::new(4).unwrap(),
-            100,
-        )?;
+        upsert(&mut db, user_b, high, RatingValue::new(4).unwrap(), 100)?;
 
         let filter = RatingFilter::new(RatingValue::new(3), RatingValue::new(4)).unwrap();
         let matches = target_ids_matching(&db, user_a, filter)?;
@@ -559,14 +462,7 @@ mod tests {
         let mut db = new_test_db()?;
         let user = create_node(&mut db)?;
         let target = create_node(&mut db)?;
-        upsert(
-            &mut db,
-            user,
-            target,
-            RatingKind::Track,
-            RatingValue::new(4).unwrap(),
-            100,
-        )?;
+        upsert(&mut db, user, target, RatingValue::new(4).unwrap(), 100)?;
 
         assert!(remove(&mut db, user, target)?);
         assert!(!remove(&mut db, user, target)?);
@@ -578,14 +474,7 @@ mod tests {
         let mut db = new_test_db()?;
         let user = create_node(&mut db)?;
         let target = create_node(&mut db)?;
-        upsert(
-            &mut db,
-            user,
-            target,
-            RatingKind::Track,
-            RatingValue::new(4).unwrap(),
-            100,
-        )?;
+        upsert(&mut db, user, target, RatingValue::new(4).unwrap(), 100)?;
         let unrelated_edge = db
             .exec_mut(QueryBuilder::insert().edges().from(user).to(target).query())?
             .ids()[0];
@@ -613,7 +502,6 @@ mod tests {
         db.exec_mut(
             QueryBuilder::insert()
                 .values_uniform([
-                    (KIND_KEY, "track").into(),
                     (VALUE_KEY, 99_u64).into(),
                     (CREATED_AT_KEY, 100_i64).into(),
                     (UPDATED_AT_KEY, 100_i64).into(),

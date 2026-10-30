@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use agdb::DbId;
 #[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
@@ -32,6 +33,10 @@ use serde::{
 use std::collections::HashMap;
 
 use crate::routes::request::bearer_credential;
+use crate::routes::targets::{
+    resolve_target,
+    validate_target_id,
+};
 use crate::{
     routes::{
         AppError,
@@ -147,19 +152,15 @@ async fn put_favorite(
     Path(target_id): Path<String>,
 ) -> Result<StatusCode, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
-    if !crate::services::opaque_ids::is_public_id(&target_id) {
-        return Err(AppError::bad_request(format!(
-            "malformed target id: {target_id}"
-        )));
-    }
+    validate_target_id(&target_id)?;
 
     let mut db = STATE.db.write().await;
-    match favorite_service::add_for_principal(&mut db, &principal, &target_id)? {
-        favorite_service::MutationOutcome::Applied(_) => Ok(StatusCode::NO_CONTENT),
-        favorite_service::MutationOutcome::NotTargetable => Err(AppError::not_found(format!(
-            "favorite target not found: {target_id}"
-        ))),
-    }
+    let Some(target_db_id) = lyra_db::lookup::find_node_id_by_id(&*db, &target_id)? else {
+        principal.require(&db)?;
+        return Err(target_not_found(&target_id));
+    };
+    let outcome = favorite_service::add_for_principal(&mut db, &principal, target_db_id)?;
+    mutation_response(outcome, &target_id)
 }
 
 async fn delete_favorite(
@@ -167,20 +168,27 @@ async fn delete_favorite(
     Path(target_id): Path<String>,
 ) -> Result<StatusCode, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
-    if !crate::services::opaque_ids::is_public_id(&target_id) {
-        return Err(AppError::bad_request(format!(
-            "malformed target id: {target_id}"
-        )));
-    }
+    validate_target_id(&target_id)?;
 
     let mut db = STATE.db.write().await;
     let user_db_id = principal.require(&db)?;
-    match favorite_service::remove(&mut db, user_db_id, &target_id)? {
-        favorite_service::MutationOutcome::Applied(_) => Ok(StatusCode::NO_CONTENT),
-        favorite_service::MutationOutcome::NotTargetable => Err(AppError::not_found(format!(
-            "favorite target not found: {target_id}"
-        ))),
+    let target_db_id = resolve_target(&*db, &target_id, || target_not_found(&target_id))?;
+    let outcome = favorite_service::remove(&mut db, user_db_id, target_db_id)?;
+    mutation_response(outcome, &target_id)
+}
+
+fn mutation_response(
+    outcome: favorite_service::MutationOutcome,
+    target_id: &str,
+) -> Result<StatusCode, AppError> {
+    match outcome {
+        favorite_service::MutationOutcome::Applied => Ok(StatusCode::NO_CONTENT),
+        favorite_service::MutationOutcome::NotTargetable => Err(target_not_found(target_id)),
     }
+}
+
+fn target_not_found(target_id: &str) -> AppError {
+    AppError::not_found(format!("favorite target not found: {target_id}"))
 }
 
 async fn get_favorite_state(
@@ -189,14 +197,16 @@ async fn get_favorite_state(
     Query(_): Query<FavoriteStateResponseQuery>,
 ) -> Result<Json<FavoriteStateResponse>, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
-    if !crate::services::opaque_ids::is_public_id(&target_id) {
-        return Err(AppError::bad_request(format!(
-            "malformed target id: {target_id}"
-        )));
-    }
+    validate_target_id(&target_id)?;
 
     let db = STATE.db.read().await;
-    let favorited = favorite_service::has_for_principal(&db, &principal, &target_id)?;
+    let favorited = match lyra_db::lookup::find_node_id_by_id(&*db, &target_id)? {
+        Some(target_db_id) => favorite_service::has_for_principal(&db, &principal, target_db_id)?,
+        None => {
+            principal.require(&db)?;
+            false
+        }
+    };
     Ok(Json(FavoriteStateResponse { favorited }))
 }
 
@@ -215,7 +225,21 @@ async fn check_favorites(
     }
 
     let db = STATE.db.read().await;
-    let favorited = favorite_service::has_many_for_principal(&db, &principal, &request.target_ids)?;
+    let mut favorited: HashMap<String, bool> = request
+        .target_ids
+        .iter()
+        .map(|target_id| (target_id.clone(), false))
+        .collect();
+    let target_ids: Vec<&str> = favorited.keys().map(String::as_str).collect();
+    let resolved = lyra_db::lookup::find_node_ids_by_ids(&*db, &target_ids)?;
+    let target_db_ids: Vec<DbId> = resolved.values().copied().collect();
+    let favorited_db_ids =
+        favorite_service::favorited_for_principal(&db, &principal, &target_db_ids)?;
+    for (target_id, target_db_id) in resolved {
+        if favorited_db_ids.contains(&target_db_id) {
+            favorited.insert(target_id, true);
+        }
+    }
     Ok(Json(CheckResponse { favorited }))
 }
 
@@ -347,9 +371,237 @@ mod tests {
         services::testing::runtime_test_lock,
     };
     use axum::{
-        http::header::AUTHORIZATION,
+        body::{
+            Body,
+            to_bytes,
+        },
+        http::{
+            Request,
+            header::{
+                AUTHORIZATION,
+                CONTENT_TYPE,
+            },
+        },
         response::IntoResponse,
     };
+    use lyra_db::fixtures::{
+        connect,
+        insert_track,
+    };
+    use lyra_db::test_db::insert_library;
+    use tower::ServiceExt;
+
+    async fn send(
+        routes: &Router,
+        method: &str,
+        uri: &str,
+        authorization: &str,
+        body: Option<serde_json::Value>,
+    ) -> anyhow::Result<(StatusCode, String)> {
+        let request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(AUTHORIZATION, authorization);
+        let request = match body {
+            Some(body) => request
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&body)?))?,
+            None => request.body(Body::empty())?,
+        };
+        let response = routes.clone().oneshot(request).await?;
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        Ok((status, String::from_utf8(body.to_vec())?))
+    }
+
+    #[tokio::test]
+    async fn favorite_routes_resolve_public_ids() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_library_test_state(std::path::PathBuf::from(".")).await?;
+
+        let (user_db_id, track_id, user_id) = {
+            let mut db = STATE.db.write().await;
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
+            let user_db_id = lyra_db::users::create(
+                &mut db,
+                &lyra_db::fixtures::test_user("favorites-route-admin")?,
+            )?;
+            lyra_db::roles::ensure_user_has_role(
+                &mut db,
+                user_db_id,
+                lyra_db::roles::BUILTIN_ADMIN_ROLE,
+            )?;
+            let library = insert_library(&mut db, "Favorites", "/tmp/lyra-favorites-route")?;
+            let track = insert_track(&mut db, "Favorite Track")?;
+            connect(&mut db, library, track)?;
+            (
+                user_db_id,
+                lyra_db::lookup::find_id_by_db_id(&db, track)?.unwrap(),
+                lyra_db::lookup::find_id_by_db_id(&db, user_db_id)?.unwrap(),
+            )
+        };
+        let session =
+            crate::services::testing::create_session(user_db_id, Default::default()).await?;
+        let auth = format!("Bearer {}", session.token);
+        let routes = me_favorite_routes();
+        let missing_id = "missing-favorite-target";
+
+        for method in ["PUT", "DELETE"] {
+            assert_eq!(
+                send(&routes, method, "/bad!id", &auth, None).await?,
+                (
+                    StatusCode::BAD_REQUEST,
+                    "Error: malformed target id: bad!id".to_string()
+                ),
+            );
+            for target in [missing_id, user_id.as_str()] {
+                assert_eq!(
+                    send(&routes, method, &format!("/{target}"), &auth, None).await?,
+                    (
+                        StatusCode::NOT_FOUND,
+                        format!("Error: favorite target not found: {target}")
+                    ),
+                );
+            }
+        }
+        for target in [missing_id, user_id.as_str(), track_id.as_str()] {
+            assert_eq!(
+                send(&routes, "GET", &format!("/{target}"), &auth, None).await?,
+                (StatusCode::OK, r#"{"favorited":false}"#.to_string()),
+            );
+        }
+
+        assert_eq!(
+            send(&routes, "PUT", &format!("/{track_id}"), &auth, None)
+                .await?
+                .0,
+            StatusCode::NO_CONTENT,
+        );
+        assert_eq!(
+            send(&routes, "GET", &format!("/{track_id}"), &auth, None).await?,
+            (StatusCode::OK, r#"{"favorited":true}"#.to_string()),
+        );
+        let (status, body) = send(
+            &routes,
+            "POST",
+            "/check",
+            &auth,
+            Some(serde_json::json!({
+                "target_ids": [track_id, track_id, missing_id, "bad/id", user_id],
+            })),
+        )
+        .await?;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&body)?,
+            serde_json::json!({
+                "favorited": {
+                    track_id.clone(): true,
+                    missing_id: false,
+                    "bad/id": false,
+                    user_id: false,
+                },
+            }),
+        );
+
+        assert_eq!(
+            send(&routes, "DELETE", &format!("/{track_id}"), &auth, None)
+                .await?
+                .0,
+            StatusCode::NO_CONTENT,
+        );
+        assert_eq!(
+            send(&routes, "GET", &format!("/{track_id}"), &auth, None).await?,
+            (StatusCode::OK, r#"{"favorited":false}"#.to_string()),
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn favorite_routes_hide_targets_outside_the_callers_libraries() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_library_test_state(std::path::PathBuf::from(".")).await?;
+
+        let (viewer, visible_id, hidden_id) = {
+            let mut db = STATE.db.write().await;
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
+            let viewer = lyra_db::users::create(
+                &mut db,
+                &lyra_db::fixtures::test_user("favorites-route-viewer")?,
+            )?;
+            let visible_library =
+                insert_library(&mut db, "Visible", "/tmp/lyra-favorites-route-visible")?;
+            let hidden_library =
+                insert_library(&mut db, "Hidden", "/tmp/lyra-favorites-route-hidden")?;
+            lyra_db::libraries::grant_access(
+                &mut *db,
+                viewer,
+                visible_library,
+                lyra_db::libraries::AccessKind::ReadWrite,
+            )?;
+            let visible = insert_track(&mut db, "Visible Track")?;
+            let hidden = insert_track(&mut db, "Hidden Track")?;
+            connect(&mut db, visible_library, visible)?;
+            connect(&mut db, hidden_library, hidden)?;
+            lyra_db::favorites::add(
+                &mut db,
+                viewer,
+                hidden,
+                lyra_db::favorites::FavoriteKind::Track,
+                1,
+            )?;
+            (
+                viewer,
+                lyra_db::lookup::find_id_by_db_id(&db, visible)?.unwrap(),
+                lyra_db::lookup::find_id_by_db_id(&db, hidden)?.unwrap(),
+            )
+        };
+        let session = crate::services::testing::create_session(viewer, Default::default()).await?;
+        let auth = format!("Bearer {}", session.token);
+        let routes = me_favorite_routes();
+
+        assert_eq!(
+            send(&routes, "PUT", &format!("/{hidden_id}"), &auth, None).await?,
+            (
+                StatusCode::NOT_FOUND,
+                format!("Error: favorite target not found: {hidden_id}")
+            ),
+        );
+        assert_eq!(
+            send(&routes, "GET", &format!("/{hidden_id}"), &auth, None).await?,
+            (StatusCode::OK, r#"{"favorited":false}"#.to_string()),
+        );
+        assert_eq!(
+            send(&routes, "PUT", &format!("/{visible_id}"), &auth, None)
+                .await?
+                .0,
+            StatusCode::NO_CONTENT,
+        );
+        let (status, body) = send(
+            &routes,
+            "POST",
+            "/check",
+            &auth,
+            Some(serde_json::json!({ "target_ids": [visible_id, hidden_id] })),
+        )
+        .await?;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&body)?,
+            serde_json::json!({ "favorited": { visible_id: true, hidden_id.clone(): false } }),
+        );
+        assert_eq!(
+            send(&routes, "DELETE", &format!("/{hidden_id}"), &auth, None)
+                .await?
+                .0,
+            StatusCode::NO_CONTENT,
+            "remove has no visibility gate",
+        );
+        let db = STATE.db.read().await;
+        let hidden = lyra_db::lookup::find_node_id_by_id(&*db, &hidden_id)?.unwrap();
+        assert!(!lyra_db::favorites::has(&*db, viewer, hidden)?);
+        Ok(())
+    }
 
     #[test]
     fn favorite_item_from_list_item_formats_fields() {

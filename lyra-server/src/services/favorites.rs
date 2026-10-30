@@ -3,7 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::time::{
     SystemTime,
     UNIX_EPOCH,
@@ -25,9 +25,8 @@ use lyra_db::favorites::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MutationOutcome {
-    /// Whitelist passed; mutation applied.
-    Applied(FavoriteKind),
-    /// Target didn't resolve to a whitelisted kind, or a visibility gate rejected it.
+    Applied,
+    /// The target is not a favoritable kind, or a visibility gate rejected it.
     NotTargetable,
 }
 
@@ -46,22 +45,20 @@ impl ListItem {
     }
 }
 
-/// Add or refresh a favorite. Atomic over resolve + whitelist + visibility + write.
+/// Add or refresh a favorite. Atomic over whitelist + visibility + write.
 pub(crate) fn add_for_principal(
     db: &mut DbAny,
     principal: &Principal,
-    public_target_id: &str,
+    target_db_id: DbId,
 ) -> anyhow::Result<MutationOutcome> {
     let now_ms = now_ms()?;
     db.transaction_mut(|t| -> anyhow::Result<MutationOutcome> {
         let user_db_id = principal.require(t)?;
-        let Some((target_db_id, kind)) =
-            resolve_targetable_for_principal(t, principal, user_db_id, public_target_id)?
-        else {
+        let Some(kind) = targetable_kind(t, principal, user_db_id, target_db_id)? else {
             return Ok(MutationOutcome::NotTargetable);
         };
         lyra_db::favorites::add(t, user_db_id, target_db_id, kind, now_ms)?;
-        Ok(MutationOutcome::Applied(kind))
+        Ok(MutationOutcome::Applied)
     })
 }
 
@@ -70,68 +67,55 @@ pub(crate) fn add_for_principal(
 pub(crate) fn remove(
     db: &mut DbAny,
     user_db_id: DbId,
-    public_target_id: &str,
+    target_db_id: DbId,
 ) -> anyhow::Result<MutationOutcome> {
     db.transaction_mut(|t| -> anyhow::Result<MutationOutcome> {
-        let Some((target_db_id, kind)) = resolve_whitelisted(t, public_target_id)? else {
+        if lyra_db::favorites::target_kind(t, target_db_id)?.is_none() {
             return Ok(MutationOutcome::NotTargetable);
-        };
+        }
         lyra_db::favorites::remove(t, user_db_id, target_db_id)?;
-        Ok(MutationOutcome::Applied(kind))
+        Ok(MutationOutcome::Applied)
     })
 }
 
 pub(crate) fn has_for_principal(
     db: &DbAny,
     principal: &Principal,
-    public_target_id: &str,
+    target_db_id: DbId,
 ) -> anyhow::Result<bool> {
     let user_db_id = principal.require(db)?;
-    let Some((target_db_id, _kind)) =
-        resolve_targetable_for_principal(db, principal, user_db_id, public_target_id)?
-    else {
+    if targetable_kind(db, principal, user_db_id, target_db_id)?.is_none() {
         return Ok(false);
-    };
+    }
     lyra_db::favorites::has(db, user_db_id, target_db_id)
 }
 
-pub(crate) fn has_many_for_principal(
+/// The targets the caller has favorited and can see. Errs when more than [`HAS_MANY_CAP`] of
+/// the ids exist.
+pub(crate) fn favorited_for_principal(
     db: &DbAny,
     principal: &Principal,
-    public_target_ids: &[String],
-) -> anyhow::Result<HashMap<String, bool>> {
+    target_db_ids: &[DbId],
+) -> anyhow::Result<HashSet<DbId>> {
+    let existing = lyra_db::lookup::find_ids_by_db_ids(db, target_db_ids)?.len();
     anyhow::ensure!(
-        public_target_ids.len() <= HAS_MANY_CAP,
-        "has_many cap exceeded: {} > {HAS_MANY_CAP}",
-        public_target_ids.len(),
+        existing <= HAS_MANY_CAP,
+        "has_many cap exceeded: {existing} > {HAS_MANY_CAP}",
     );
-
-    let mut response: HashMap<String, bool> = public_target_ids
-        .iter()
-        .cloned()
-        .map(|public_id| (public_id, false))
-        .collect();
-    let unique_public_ids: Vec<String> = response.keys().cloned().collect();
     let user_db_id = principal.require(db)?;
-    let mut resolved: Vec<(String, DbId)> = Vec::with_capacity(unique_public_ids.len());
-    for public_id in unique_public_ids {
-        if let Some((target_db_id, _)) =
-            resolve_targetable_for_principal(db, principal, user_db_id, &public_id)?
-        {
-            resolved.push((public_id, target_db_id));
+    let mut targetable = Vec::with_capacity(target_db_ids.len());
+    for &target_db_id in target_db_ids {
+        if targetable_kind(db, principal, user_db_id, target_db_id)?.is_some() {
+            targetable.push(target_db_id);
         }
     }
-
-    if !resolved.is_empty() {
-        let db_ids: Vec<DbId> = resolved.iter().map(|(_, id)| *id).collect();
-        let states = lyra_db::favorites::has_many(db, user_db_id, &db_ids)?;
-        for (public_id, db_id) in resolved {
-            let is_fav = states.get(&db_id).copied().unwrap_or(false);
-            response.insert(public_id, is_fav);
-        }
+    if targetable.is_empty() {
+        return Ok(HashSet::new());
     }
-
-    Ok(response)
+    Ok(lyra_db::favorites::has_many(db, user_db_id, &targetable)?
+        .into_iter()
+        .filter_map(|(target_db_id, favorited)| favorited.then_some(target_db_id))
+        .collect())
 }
 
 /// Favorites list for one `kind`, with target visibility filtered on hydration.
@@ -233,22 +217,19 @@ pub(crate) fn list_ids(
 }
 
 /// `user_db_id` comes from [`Principal::require`] under the same guard as `db`.
-fn resolve_targetable_for_principal(
+fn targetable_kind(
     db: &impl lyra_db::DbAccess,
     principal: &Principal,
     user_db_id: DbId,
-    public_target_id: &str,
-) -> anyhow::Result<Option<(DbId, FavoriteKind)>> {
-    let Some(target_db_id) = lyra_db::lookup::find_node_id_by_id(db, public_target_id)? else {
-        return Ok(None);
-    };
-    let Some((target_db_id, kind)) = resolve_whitelisted_by_db_id(db, target_db_id)? else {
+    target_db_id: DbId,
+) -> anyhow::Result<Option<FavoriteKind>> {
+    let Some(kind) = lyra_db::favorites::target_kind(db, target_db_id)? else {
         return Ok(None);
     };
     if !target_visible_to_principal(db, principal, user_db_id, target_db_id, kind)? {
         return Ok(None);
     }
-    Ok(Some((target_db_id, kind)))
+    Ok(Some(kind))
 }
 
 /// `user_db_id` comes from [`Principal::require`] under the same guard as `db`.
@@ -268,41 +249,6 @@ fn target_visible_to_principal(
     }
 }
 
-/// No visibility gate.
-fn resolve_whitelisted(
-    db: &impl lyra_db::DbAccess,
-    public_target_id: &str,
-) -> anyhow::Result<Option<(DbId, FavoriteKind)>> {
-    let Some(target_db_id) = lyra_db::lookup::find_node_id_by_id(db, public_target_id)? else {
-        return Ok(None);
-    };
-    resolve_whitelisted_by_db_id(db, target_db_id)
-}
-
-fn resolve_whitelisted_by_db_id(
-    db: &impl lyra_db::DbAccess,
-    target_db_id: DbId,
-) -> anyhow::Result<Option<(DbId, FavoriteKind)>> {
-    let Some(kind) = lyra_db::favorites::target_kind(db, target_db_id)? else {
-        return Ok(None);
-    };
-    Ok(Some((target_db_id, kind)))
-}
-
-pub(crate) fn remove_by_db_id(
-    db: &mut DbAny,
-    user_db_id: DbId,
-    target_db_id: DbId,
-) -> anyhow::Result<MutationOutcome> {
-    db.transaction_mut(|t| -> anyhow::Result<MutationOutcome> {
-        let Some((target_db_id, kind)) = resolve_whitelisted_by_db_id(t, target_db_id)? else {
-            return Ok(MutationOutcome::NotTargetable);
-        };
-        lyra_db::favorites::remove(t, user_db_id, target_db_id)?;
-        Ok(MutationOutcome::Applied(kind))
-    })
-}
-
 fn now_ms() -> anyhow::Result<i64> {
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
     Ok(nanos as i64)
@@ -311,7 +257,6 @@ fn now_ms() -> anyhow::Result<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
 
     use agdb::{
         DbAny,
@@ -385,6 +330,27 @@ mod tests {
         Principal::for_user(db, user_db_id, Vec::new(), accessible_library_ids)
     }
 
+    fn set_playlist_public(
+        db: &mut DbAny,
+        playlist_db_id: DbId,
+        public_id: &str,
+        is_public: bool,
+    ) -> anyhow::Result<()> {
+        lyra_db::playlists::update(
+            db,
+            &Playlist {
+                db_id: Some(playlist_db_id.into()),
+                id: public_id.to_string(),
+                name: "p".to_string(),
+                description: None,
+                is_public: Some(is_public),
+                created_at: None,
+                updated_at: None,
+            },
+        )?;
+        Ok(())
+    }
+
     #[test]
     fn add_applies_for_whitelisted_track() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
@@ -393,30 +359,35 @@ mod tests {
         let library_db_id = insert_library(&mut db, "Favorites", "/tmp/lyra-favorites-add")?;
         let library_public_id = lyra_db::lookup::find_id_by_db_id(&db, library_db_id)?
             .expect("library should have a public id");
-        let track_id = nanoid!();
-        let track_db_id = create_track(&mut db, &track_id)?;
+        let track_db_id = create_track(&mut db, &nanoid!())?;
         connect(&mut db, library_db_id, track_db_id)?;
 
         let principal = principal_for(&db, user, HashSet::from([library_public_id]));
-        let outcome = add_for_principal(&mut db, &principal, &track_id)?;
-        assert!(matches!(
-            outcome,
-            MutationOutcome::Applied(FavoriteKind::Track)
-        ));
-        assert!(has_for_principal(&db, &principal, &track_id)?);
+        let outcome = add_for_principal(&mut db, &principal, track_db_id)?;
+        assert_eq!(outcome, MutationOutcome::Applied);
+        assert!(has_for_principal(&db, &principal, track_db_id)?);
 
         Ok(())
     }
 
     #[test]
-    fn add_returns_not_targetable_for_unknown_nanoid() -> anyhow::Result<()> {
+    fn missing_db_ids_are_not_targetable() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
 
         let principal = principal_for(&db, user, HashSet::new());
-        let outcome = add_for_principal(&mut db, &principal, "unknown-id-string")?;
-        assert_eq!(outcome, MutationOutcome::NotTargetable);
+        for target in [DbId(999_999_999), DbId(0), DbId(-5)] {
+            assert_eq!(
+                add_for_principal(&mut db, &principal, target)?,
+                MutationOutcome::NotTargetable,
+            );
+            assert_eq!(
+                remove(&mut db, user, target)?,
+                MutationOutcome::NotTargetable
+            );
+            assert!(!has_for_principal(&db, &principal, target)?);
+        }
 
         Ok(())
     }
@@ -426,38 +397,35 @@ mod tests {
         let mut db = new_test_db()?;
         setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
-        let other_user_id = nanoid!();
-        let other_user = db.exec_mut(
-            QueryBuilder::insert()
-                .nodes()
-                .values([[("id", other_user_id.as_str()).into()]])
-                .query(),
-        )?;
-        let _ = (user, other_user);
+        let other_node = db
+            .exec_mut(
+                QueryBuilder::insert()
+                    .nodes()
+                    .values([[("id", nanoid!().as_str()).into()]])
+                    .query(),
+            )?
+            .ids()[0];
 
         let principal = principal_for(&db, user, HashSet::new());
-        let outcome = add_for_principal(&mut db, &principal, &other_user_id)?;
+        let outcome = add_for_principal(&mut db, &principal, other_node)?;
         assert_eq!(outcome, MutationOutcome::NotTargetable);
 
         Ok(())
     }
 
     #[test]
-    fn add_rejects_whitelist_bypass_via_real_user_nanoid() -> anyhow::Result<()> {
+    fn add_rejects_whitelist_bypass_via_real_user() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         setup_id_index(&mut db)?;
         let caller = create_user(&mut db, "alice")?;
         let bob_db_id = create_user(&mut db, "bob")?;
-        let bob_public_id = lyra_db::users::get_by_id(&db, bob_db_id)?
-            .expect("bob should exist")
-            .id;
 
         let principal = principal_for(&db, caller, HashSet::new());
-        let outcome = add_for_principal(&mut db, &principal, &bob_public_id)?;
+        let outcome = add_for_principal(&mut db, &principal, bob_db_id)?;
         assert_eq!(
             outcome,
             MutationOutcome::NotTargetable,
-            "caller must not be able to favorite a user node via its real public nanoid",
+            "caller must not be able to favorite a user node",
         );
 
         Ok(())
@@ -469,11 +437,10 @@ mod tests {
         setup_id_index(&mut db)?;
         let owner = create_user(&mut db, "alice")?;
         let intruder = create_user(&mut db, "bob")?;
-        let pub_id = nanoid!();
-        create_playlist(&mut db, owner, &pub_id, /* is_public= */ false)?;
+        let playlist = create_playlist(&mut db, owner, &nanoid!(), /* is_public= */ false)?;
 
         let principal = principal_for(&db, intruder, HashSet::new());
-        let outcome = add_for_principal(&mut db, &principal, &pub_id)?;
+        let outcome = add_for_principal(&mut db, &principal, playlist)?;
         assert_eq!(
             outcome,
             MutationOutcome::NotTargetable,
@@ -481,7 +448,7 @@ mod tests {
         );
 
         assert!(
-            !has_for_principal(&db, &principal, &pub_id)?,
+            !has_for_principal(&db, &principal, playlist)?,
             "has must return false for a non-visible private playlist",
         );
 
@@ -493,16 +460,12 @@ mod tests {
         let mut db = new_test_db()?;
         setup_id_index(&mut db)?;
         let owner = create_user(&mut db, "alice")?;
-        let pub_id = nanoid!();
-        create_playlist(&mut db, owner, &pub_id, false)?;
+        let playlist = create_playlist(&mut db, owner, &nanoid!(), false)?;
 
         let principal = principal_for(&db, owner, HashSet::new());
-        let outcome = add_for_principal(&mut db, &principal, &pub_id)?;
-        assert!(matches!(
-            outcome,
-            MutationOutcome::Applied(FavoriteKind::Playlist)
-        ));
-        assert!(has_for_principal(&db, &principal, &pub_id)?);
+        let outcome = add_for_principal(&mut db, &principal, playlist)?;
+        assert_eq!(outcome, MutationOutcome::Applied);
+        assert!(has_for_principal(&db, &principal, playlist)?);
 
         Ok(())
     }
@@ -513,15 +476,11 @@ mod tests {
         setup_id_index(&mut db)?;
         let owner = create_user(&mut db, "alice")?;
         let other = create_user(&mut db, "bob")?;
-        let pub_id = nanoid!();
-        create_playlist(&mut db, owner, &pub_id, true)?;
+        let playlist = create_playlist(&mut db, owner, &nanoid!(), true)?;
 
         let principal = principal_for(&db, other, HashSet::new());
-        let outcome = add_for_principal(&mut db, &principal, &pub_id)?;
-        assert!(matches!(
-            outcome,
-            MutationOutcome::Applied(FavoriteKind::Playlist)
-        ));
+        let outcome = add_for_principal(&mut db, &principal, playlist)?;
+        assert_eq!(outcome, MutationOutcome::Applied);
         Ok(())
     }
 
@@ -535,25 +494,14 @@ mod tests {
         let playlist_db_id = create_playlist(&mut db, owner, &pub_id, true)?;
 
         let other_principal = principal_for(&db, other, HashSet::new());
-        add_for_principal(&mut db, &other_principal, &pub_id)?;
+        add_for_principal(&mut db, &other_principal, playlist_db_id)?;
         assert_eq!(
             list(&db, &other_principal, FavoriteKind::Playlist)?.len(),
             1,
             "public playlist should hydrate for non-owner",
         );
 
-        lyra_db::playlists::update(
-            &mut db,
-            &Playlist {
-                db_id: Some(playlist_db_id.into()),
-                id: pub_id.clone(),
-                name: "p".to_string(),
-                description: None,
-                is_public: Some(false),
-                created_at: None,
-                updated_at: None,
-            },
-        )?;
+        set_playlist_public(&mut db, playlist_db_id, &pub_id, false)?;
 
         assert!(
             list(&db, &other_principal, FavoriteKind::Playlist)?.is_empty(),
@@ -584,11 +532,8 @@ mod tests {
         let visible_principal = principal_for(&db, user, HashSet::from([library_public_id]));
         let hidden_principal = principal_for(&db, user, HashSet::new());
 
-        let added = add_for_principal(&mut db, &visible_principal, &track_public_id)?;
-        assert!(matches!(
-            added,
-            MutationOutcome::Applied(FavoriteKind::Track)
-        ));
+        let added = add_for_principal(&mut db, &visible_principal, track_db_id)?;
+        assert_eq!(added, MutationOutcome::Applied);
         let visible_items = list(&db, &visible_principal, FavoriteKind::Track)?;
         assert_eq!(
             visible_items.len(),
@@ -605,7 +550,7 @@ mod tests {
     }
 
     #[test]
-    fn has_many_for_principal_is_dense_deduplicated_and_capped_before_deduplication()
+    fn favorited_for_principal_returns_visible_favorites_and_caps_existing_ids()
     -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         setup_id_index(&mut db)?;
@@ -615,53 +560,48 @@ mod tests {
         let hidden_library = insert_library(&mut db, "Hidden", "/tmp/lyra-favorites-check-hidden")?;
         let visible_library_id = lyra_db::lookup::find_id_by_db_id(&db, visible_library)?.unwrap();
         let principal = principal_for(&db, user, HashSet::from([visible_library_id]));
-        let favorited_id = nanoid!();
-        let unfavorited_id = nanoid!();
-        let hidden_id = nanoid!();
-        let favorited = create_track(&mut db, &favorited_id)?;
-        let unfavorited = create_track(&mut db, &unfavorited_id)?;
-        let hidden = create_track(&mut db, &hidden_id)?;
+        let favorited = create_track(&mut db, &nanoid!())?;
+        let unfavorited = create_track(&mut db, &nanoid!())?;
+        let hidden = create_track(&mut db, &nanoid!())?;
         connect(&mut db, visible_library, favorited)?;
         connect(&mut db, visible_library, unfavorited)?;
         connect(&mut db, hidden_library, hidden)?;
-        add_for_principal(&mut db, &principal, &favorited_id)?;
+        add_for_principal(&mut db, &principal, favorited)?;
         lyra_db::favorites::add(&mut db, user, hidden, FavoriteKind::Track, now_ms()?)?;
 
-        let malformed_id = "bad/id".to_string();
-        let missing_id = "nonexistent".to_string();
-        let unsupported_id = lyra_db::users::get_by_id(&db, unsupported_user)?
-            .unwrap()
-            .id;
-        let submitted = vec![
-            favorited_id.clone(),
-            favorited_id.clone(),
-            unfavorited_id.clone(),
-            hidden_id.clone(),
-            malformed_id.clone(),
-            missing_id.clone(),
-            unsupported_id.clone(),
-        ];
-        let result = has_many_for_principal(&db, &principal, &submitted)?;
-        assert_eq!(result.len(), submitted.iter().collect::<HashSet<_>>().len());
-        assert_eq!(result.get(&favorited_id), Some(&true));
-        for opaque_id in [
-            unfavorited_id,
-            hidden_id,
-            malformed_id,
-            missing_id,
-            unsupported_id,
-        ] {
-            assert_eq!(result.get(&opaque_id), Some(&false), "{opaque_id}");
-        }
-        assert!(has_many_for_principal(&db, &principal, &[])?.is_empty());
+        let result = favorited_for_principal(
+            &db,
+            &principal,
+            &[
+                favorited,
+                unfavorited,
+                hidden,
+                unsupported_user,
+                DbId(999_999_999),
+            ],
+        )?;
+        assert_eq!(result, HashSet::from([favorited]));
+        assert!(favorited_for_principal(&db, &principal, &[])?.is_empty());
 
-        let exact_cap = vec![favorited_id.clone(); HAS_MANY_CAP];
-        assert_eq!(
-            has_many_for_principal(&db, &principal, &exact_cap)?.get(&favorited_id),
-            Some(&true),
-        );
-        let over_cap = vec![favorited_id; HAS_MANY_CAP + 1];
-        assert!(has_many_for_principal(&db, &principal, &over_cap).is_err());
+        let missing = (1..=HAS_MANY_CAP as i64 + 1)
+            .map(|offset| DbId(1_000_000_000 + offset))
+            .collect::<Vec<_>>();
+        assert!(favorited_for_principal(&db, &principal, &missing)?.is_empty());
+        let existing = db
+            .exec_mut(
+                QueryBuilder::insert()
+                    .nodes()
+                    .values(
+                        (0..HAS_MANY_CAP)
+                            .map(|_| vec![("id", nanoid!().as_str()).into()])
+                            .collect::<Vec<_>>(),
+                    )
+                    .query(),
+            )?
+            .ids();
+        assert!(favorited_for_principal(&db, &principal, &existing)?.is_empty());
+        let over_cap = [existing.as_slice(), &[favorited]].concat();
+        assert!(favorited_for_principal(&db, &principal, &over_cap).is_err());
 
         Ok(())
     }
@@ -676,47 +616,22 @@ mod tests {
         let playlist_db_id = create_playlist(&mut db, owner, &pub_id, /* is_public= */ true)?;
 
         let principal = principal_for(&db, other, HashSet::new());
-        let added = add_for_principal(&mut db, &principal, &pub_id)?;
-        assert!(matches!(
-            added,
-            MutationOutcome::Applied(FavoriteKind::Playlist)
-        ));
+        let added = add_for_principal(&mut db, &principal, playlist_db_id)?;
+        assert_eq!(added, MutationOutcome::Applied);
 
-        lyra_db::playlists::update(
-            &mut db,
-            &lyra_db::Playlist {
-                db_id: Some(playlist_db_id.into()),
-                id: pub_id.clone(),
-                name: "p".to_string(),
-                description: None,
-                is_public: Some(false),
-                created_at: None,
-                updated_at: None,
-            },
-        )?;
+        set_playlist_public(&mut db, playlist_db_id, &pub_id, false)?;
+        assert!(!has_for_principal(&db, &principal, playlist_db_id)?);
 
-        assert!(!has_for_principal(&db, &principal, &pub_id)?);
-
-        let removed = remove(&mut db, other, &pub_id)?;
-        assert!(
-            matches!(removed, MutationOutcome::Applied(FavoriteKind::Playlist)),
+        let removed = remove(&mut db, other, playlist_db_id)?;
+        assert_eq!(
+            removed,
+            MutationOutcome::Applied,
             "DELETE on non-visible playlist must still be Applied (idempotent)",
         );
 
-        lyra_db::playlists::update(
-            &mut db,
-            &lyra_db::Playlist {
-                db_id: Some(playlist_db_id.into()),
-                id: pub_id.clone(),
-                name: "p".to_string(),
-                description: None,
-                is_public: Some(true),
-                created_at: None,
-                updated_at: None,
-            },
-        )?;
+        set_playlist_public(&mut db, playlist_db_id, &pub_id, true)?;
         assert!(
-            !has_for_principal(&db, &principal, &pub_id)?,
+            !has_for_principal(&db, &principal, playlist_db_id)?,
             "after DELETE, re-visibility must not resurrect a ghost favorite",
         );
 
@@ -724,20 +639,17 @@ mod tests {
     }
 
     #[test]
-    fn remove_still_rejects_non_whitelisted_nanoid() -> anyhow::Result<()> {
+    fn remove_still_rejects_non_whitelisted_node() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         setup_id_index(&mut db)?;
         let caller = create_user(&mut db, "alice")?;
         let victim_db_id = create_user(&mut db, "victim")?;
-        let victim_public_id = lyra_db::users::get_by_id(&db, victim_db_id)?
-            .expect("victim exists")
-            .id;
 
-        let outcome = remove(&mut db, caller, &victim_public_id)?;
+        let outcome = remove(&mut db, caller, victim_db_id)?;
         assert_eq!(
             outcome,
             MutationOutcome::NotTargetable,
-            "DELETE must still reject nanoids that resolve to non-whitelisted kinds",
+            "DELETE must still reject nodes of non-whitelisted kinds",
         );
 
         Ok(())
@@ -748,12 +660,12 @@ mod tests {
         let mut db = new_test_db()?;
         setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
-        let track_id = nanoid!();
-        create_track(&mut db, &track_id)?;
+        let track = create_track(&mut db, &nanoid!())?;
 
-        let outcome = remove(&mut db, user, &track_id)?;
-        assert!(
-            matches!(outcome, MutationOutcome::Applied(FavoriteKind::Track)),
+        let outcome = remove(&mut db, user, track)?;
+        assert_eq!(
+            outcome,
+            MutationOutcome::Applied,
             "remove on valid kind without an existing edge is still Applied",
         );
 

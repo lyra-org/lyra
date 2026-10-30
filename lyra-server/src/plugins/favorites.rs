@@ -31,15 +31,8 @@ impl FavoritesModule {
         #[context] principal: Principal,
     ) -> luau::runtime::Result<bool> {
         let mut db = db.write().await;
-        let Some(public_target_id) = lyra_db::lookup::find_id_by_db_id(&*db, DbId(target_id))?
-        else {
-            return Ok(false);
-        };
-        let outcome = favorite_service::add_for_principal(&mut db, &principal, &public_target_id)?;
-        Ok(matches!(
-            outcome,
-            favorite_service::MutationOutcome::Applied(_)
-        ))
+        let outcome = favorite_service::add_for_principal(&mut db, &principal, DbId(target_id))?;
+        Ok(outcome == favorite_service::MutationOutcome::Applied)
     }
 
     async fn remove(
@@ -49,11 +42,8 @@ impl FavoritesModule {
     ) -> luau::runtime::Result<bool> {
         let mut db = db.write().await;
         let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let outcome = favorite_service::remove_by_db_id(&mut db, user_db_id, DbId(target_id))?;
-        Ok(matches!(
-            outcome,
-            favorite_service::MutationOutcome::Applied(_)
-        ))
+        let outcome = favorite_service::remove(&mut db, user_db_id, DbId(target_id))?;
+        Ok(outcome == favorite_service::MutationOutcome::Applied)
     }
 
     async fn has(
@@ -62,14 +52,10 @@ impl FavoritesModule {
         #[context] principal: Principal,
     ) -> luau::runtime::Result<bool> {
         let db = db.read().await;
-        let Some(public_target_id) = lyra_db::lookup::find_id_by_db_id(&*db, DbId(target_id))?
-        else {
-            return Ok(false);
-        };
         Ok(favorite_service::has_for_principal(
             &db,
             &principal,
-            &public_target_id,
+            DbId(target_id),
         )?)
     }
 
@@ -81,20 +67,11 @@ impl FavoritesModule {
     ) -> luau::runtime::Result<luau::OwnedTable> {
         let target_ids = target_ids.0;
         let db = db.read().await;
-        let public_ids_by_db_id = lyra_db::lookup::find_ids_by_db_ids(&*db, &target_ids)?;
-        let public_ids = target_ids
-            .iter()
-            .filter_map(|id| public_ids_by_db_id.get(id).cloned())
-            .collect::<Vec<_>>();
-        let result = favorite_service::has_many_for_principal(&db, &principal, &public_ids)?;
+        let favorited = favorite_service::favorited_for_principal(&db, &principal, &target_ids)?;
 
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, target_ids.len());
         for id in target_ids {
-            let favored = public_ids_by_db_id
-                .get(&id)
-                .and_then(|public_id| result.get(public_id).copied())
-                .unwrap_or(false);
-            table.set_key(id.0, favored);
+            table.set_key(id.0, favorited.contains(&id));
         }
         Ok(table)
     }

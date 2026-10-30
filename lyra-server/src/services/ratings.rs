@@ -17,32 +17,30 @@ use agdb::{
 };
 
 use crate::services::auth::Principal;
-use lyra_db::ratings::{
-    RatingKind,
-    RatingValue,
+use lyra_db::{
+    entities::MetadataEntityType,
+    ratings::RatingValue,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MutationOutcome {
-    Applied(RatingKind),
+    Applied,
     NotTargetable,
 }
 
 pub(crate) fn set_for_principal(
     db: &mut DbAny,
     principal: &Principal,
-    public_target_id: &str,
+    target_db_id: DbId,
     value: RatingValue,
 ) -> anyhow::Result<MutationOutcome> {
     let now_ms = now_ms()?;
     db.transaction_mut(|t| -> anyhow::Result<MutationOutcome> {
-        let Some((target_db_id, kind)) =
-            resolve_targetable_for_principal(t, principal, public_target_id)?
-        else {
+        if !targetable_by_principal(t, principal, target_db_id)? {
             return Ok(MutationOutcome::NotTargetable);
-        };
-        lyra_db::ratings::upsert(t, principal.require(t)?, target_db_id, kind, value, now_ms)?;
-        Ok(MutationOutcome::Applied(kind))
+        }
+        lyra_db::ratings::upsert(t, principal.require(t)?, target_db_id, value, now_ms)?;
+        Ok(MutationOutcome::Applied)
     })
 }
 
@@ -50,118 +48,70 @@ pub(crate) fn set_for_principal(
 pub(crate) fn remove(
     db: &mut DbAny,
     user_db_id: DbId,
-    public_target_id: &str,
+    target_db_id: DbId,
 ) -> anyhow::Result<MutationOutcome> {
     db.transaction_mut(|t| -> anyhow::Result<MutationOutcome> {
-        let Some((target_db_id, kind)) = resolve_whitelisted(t, public_target_id)? else {
+        if target_kind(t, target_db_id)?.is_none() {
             return Ok(MutationOutcome::NotTargetable);
-        };
+        }
         lyra_db::ratings::remove(t, user_db_id, target_db_id)?;
-        Ok(MutationOutcome::Applied(kind))
+        Ok(MutationOutcome::Applied)
     })
 }
 
 pub(crate) fn get_for_principal(
     db: &DbAny,
     principal: &Principal,
-    public_target_id: &str,
+    target_db_id: DbId,
 ) -> anyhow::Result<Option<RatingValue>> {
-    let Some((target_db_id, kind)) =
-        resolve_targetable_for_principal(db, principal, public_target_id)?
-    else {
-        return Ok(None);
-    };
-    let Some(edge) = lyra_db::ratings::get(db, principal.require(db)?, target_db_id)? else {
-        return Ok(None);
-    };
-    if edge.kind != kind {
+    if !targetable_by_principal(db, principal, target_db_id)? {
         return Ok(None);
     }
-    Ok(Some(edge.value))
+    Ok(lyra_db::ratings::get(db, principal.require(db)?, target_db_id)?.map(|edge| edge.value))
 }
 
+/// The caller's ratings of the targets it can see; unrated targets are absent.
 pub(crate) fn values_for_principal(
     db: &DbAny,
     principal: &Principal,
-    public_target_ids: &[String],
-) -> anyhow::Result<HashMap<String, Option<RatingValue>>> {
-    let mut response: HashMap<String, Option<RatingValue>> = public_target_ids
-        .iter()
-        .cloned()
-        .map(|public_id| (public_id, None))
-        .collect();
-    let unique_public_ids: Vec<String> = response.keys().cloned().collect();
-    let public_id_refs: Vec<&str> = unique_public_ids.iter().map(String::as_str).collect();
-    let resolved_ids = lyra_db::lookup::find_node_ids_by_ids(db, &public_id_refs)?;
-    let target_db_ids: Vec<DbId> = resolved_ids.values().copied().collect();
-    let stored = lyra_db::ratings::values_for_targets(db, principal.require(db)?, &target_db_ids)?;
-
-    for public_id in unique_public_ids {
-        let Some(target_db_id) = resolved_ids.get(&public_id).copied() else {
-            continue;
-        };
-        let Some(edge) = stored.get(&target_db_id) else {
-            continue;
-        };
-        let Some(actual_kind) = target_kind(db, target_db_id)? else {
-            continue;
-        };
-        if !target_visible_to_principal(db, principal, target_db_id, actual_kind)? {
-            continue;
-        }
-        if edge.kind == actual_kind {
-            response.insert(public_id, Some(edge.value));
+    target_db_ids: &[DbId],
+) -> anyhow::Result<HashMap<DbId, RatingValue>> {
+    let mut values = HashMap::new();
+    for (target_db_id, edge) in
+        lyra_db::ratings::values_for_targets(db, principal.require(db)?, target_db_ids)?
+    {
+        if targetable_by_principal(db, principal, target_db_id)? {
+            values.insert(target_db_id, edge.value);
         }
     }
-
-    Ok(response)
+    Ok(values)
 }
 
-fn resolve_targetable_for_principal(
-    db: &impl lyra_db::DbAccess,
-    principal: &Principal,
-    public_target_id: &str,
-) -> anyhow::Result<Option<(DbId, RatingKind)>> {
-    let Some((target_db_id, kind)) = resolve_whitelisted(db, public_target_id)? else {
-        return Ok(None);
-    };
-    if !target_visible_to_principal(db, principal, target_db_id, kind)? {
-        return Ok(None);
-    }
-    Ok(Some((target_db_id, kind)))
-}
-
-fn resolve_whitelisted(
-    db: &impl lyra_db::DbAccess,
-    public_target_id: &str,
-) -> anyhow::Result<Option<(DbId, RatingKind)>> {
-    let Some(target_db_id) = lyra_db::lookup::find_node_id_by_id(db, public_target_id)? else {
-        return Ok(None);
-    };
-    Ok(target_kind(db, target_db_id)?.map(|kind| (target_db_id, kind)))
-}
-
-fn target_kind(
-    db: &impl lyra_db::DbAccess,
-    target_db_id: DbId,
-) -> anyhow::Result<Option<RatingKind>> {
-    Ok(lyra_db::entities::metadata_entity_type(db, target_db_id)?.map(RatingKind::from))
-}
-
-fn target_visible_to_principal(
+fn targetable_by_principal(
     db: &impl lyra_db::DbAccess,
     principal: &Principal,
     target_db_id: DbId,
-    kind: RatingKind,
 ) -> anyhow::Result<bool> {
-    match kind {
-        RatingKind::Artist => {
+    match target_kind(db, target_db_id)? {
+        None => Ok(false),
+        Some(MetadataEntityType::Artist) => {
             crate::services::auth::access::artist_accessible(db, principal, target_db_id)
         }
-        RatingKind::Track | RatingKind::Release => {
+        Some(MetadataEntityType::Track | MetadataEntityType::Release) => {
             crate::services::auth::access::entity_accessible(db, principal, target_db_id)
         }
     }
+}
+
+/// Plugins pass raw ids, so an id naming no node is untargetable rather than an error.
+fn target_kind(
+    db: &impl lyra_db::DbAccess,
+    target_db_id: DbId,
+) -> anyhow::Result<Option<MetadataEntityType>> {
+    if lyra_db::lookup::find_id_by_db_id(db, target_db_id)?.is_none() {
+        return Ok(None);
+    }
+    lyra_db::entities::metadata_entity_type(db, target_db_id)
 }
 
 fn now_ms() -> anyhow::Result<i64> {
@@ -197,6 +147,10 @@ mod tests {
         Principal::for_user(db, user_db_id, Vec::new(), accessible_library_ids)
     }
 
+    fn rate(db: &mut DbAny, user: DbId, target: DbId, value: u8) -> anyhow::Result<()> {
+        lyra_db::ratings::upsert(db, user, target, RatingValue::new(value).unwrap(), 100)
+    }
+
     #[test]
     fn set_get_update_and_remove_rating() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
@@ -204,48 +158,23 @@ mod tests {
         let library = insert_library(&mut db, "Music", "/tmp/lyra-ratings-service")?;
         let library_public_id = lyra_db::lookup::find_id_by_db_id(&db, library)?.unwrap();
         let track = insert_track(&mut db, "Track")?;
-        let track_public_id = lyra_db::lookup::find_id_by_db_id(&db, track)?.unwrap();
         connect(&mut db, library, track)?;
         let principal = principal(&db, user, HashSet::from([library_public_id]));
 
-        let outcome = set_for_principal(
-            &mut db,
-            &principal,
-            &track_public_id,
-            RatingValue::new(2).unwrap(),
-        )?;
-        assert_eq!(outcome, MutationOutcome::Applied(RatingKind::Track));
-        assert_eq!(
-            get_for_principal(&db, &principal, &track_public_id)?
-                .unwrap()
-                .get(),
-            2,
-        );
+        let outcome = set_for_principal(&mut db, &principal, track, RatingValue::new(2).unwrap())?;
+        assert_eq!(outcome, MutationOutcome::Applied);
+        assert_eq!(get_for_principal(&db, &principal, track)?.unwrap().get(), 2);
 
-        set_for_principal(
-            &mut db,
-            &principal,
-            &track_public_id,
-            RatingValue::new(5).unwrap(),
-        )?;
-        assert_eq!(
-            get_for_principal(&db, &principal, &track_public_id)?
-                .unwrap()
-                .get(),
-            5,
-        );
+        set_for_principal(&mut db, &principal, track, RatingValue::new(5).unwrap())?;
+        assert_eq!(get_for_principal(&db, &principal, track)?.unwrap().get(), 5);
 
-        assert_eq!(
-            remove(&mut db, user, &track_public_id)?,
-            MutationOutcome::Applied(RatingKind::Track),
-        );
-        assert!(get_for_principal(&db, &principal, &track_public_id)?.is_none());
+        assert_eq!(remove(&mut db, user, track)?, MutationOutcome::Applied);
+        assert!(get_for_principal(&db, &principal, track)?.is_none());
         Ok(())
     }
 
     #[test]
-    fn values_for_principal_returns_dense_mixed_kind_state_with_opaque_nulls() -> anyhow::Result<()>
-    {
+    fn values_for_principal_returns_visible_mixed_kind_ratings() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user = users::create(&mut db, &test_user("alice")?)?;
         let other_user = users::create(&mut db, &test_user("bob")?)?;
@@ -260,102 +189,40 @@ mod tests {
         let unrated = insert_track(&mut db, "Unrated Track")?;
         let other_user_rating = insert_track(&mut db, "Other User Rating")?;
         let hidden = insert_track(&mut db, "Hidden Rating")?;
-        let kind_mismatch = insert_track(&mut db, "Kind Mismatch")?;
-        for target in [track, release, unrated, other_user_rating, kind_mismatch] {
+        for target in [track, release, unrated, other_user_rating] {
             connect(&mut db, visible_library, target)?;
         }
         connect_artist(&mut db, release, artist)?;
         connect(&mut db, hidden_library, hidden)?;
 
-        for (target, kind, value) in [
-            (track, RatingKind::Track, 2),
-            (release, RatingKind::Release, 3),
-            (artist, RatingKind::Artist, 4),
-            (hidden, RatingKind::Track, 5),
-            (kind_mismatch, RatingKind::Artist, 5),
-        ] {
-            lyra_db::ratings::upsert(
-                &mut db,
-                user,
-                target,
-                kind,
-                RatingValue::new(value).unwrap(),
-                100,
-            )?;
+        for (target, value) in [(track, 2), (release, 3), (artist, 4), (hidden, 5)] {
+            rate(&mut db, user, target, value)?;
         }
-        lyra_db::ratings::upsert(
-            &mut db,
-            other_user,
-            other_user_rating,
-            RatingKind::Track,
-            RatingValue::new(5).unwrap(),
-            100,
+        rate(&mut db, other_user, other_user_rating, 5)?;
+
+        let values = values_for_principal(
+            &db,
+            &principal,
+            &[
+                track,
+                release,
+                artist,
+                unrated,
+                other_user_rating,
+                hidden,
+                other_user,
+                DbId(999_999_999),
+            ],
         )?;
-
-        let public_id = |target| lyra_db::lookup::find_id_by_db_id(&db, target).map(Option::unwrap);
-        let track_id = public_id(track)?;
-        let release_id = public_id(release)?;
-        let artist_id = public_id(artist)?;
-        let unrated_id = public_id(unrated)?;
-        let other_user_rating_id = public_id(other_user_rating)?;
-        let hidden_id = public_id(hidden)?;
-        let kind_mismatch_id = public_id(kind_mismatch)?;
-        let unsupported_id = lyra_db::users::get_by_id(&db, other_user)?.unwrap().id;
-        let missing_id = "missing-id".to_string();
-        let malformed_id = "bad/id".to_string();
-        let submitted = vec![
-            track_id.clone(),
-            track_id.clone(),
-            release_id.clone(),
-            artist_id.clone(),
-            unrated_id.clone(),
-            other_user_rating_id.clone(),
-            hidden_id.clone(),
-            kind_mismatch_id.clone(),
-            unsupported_id.clone(),
-            missing_id.clone(),
-            malformed_id.clone(),
-        ];
-
-        let values = values_for_principal(&db, &principal, &submitted)?;
-        assert_eq!(values.len(), submitted.iter().collect::<HashSet<_>>().len());
+        let values: HashMap<DbId, u8> = values
+            .into_iter()
+            .map(|(id, value)| (id, value.get()))
+            .collect();
         assert_eq!(
-            values
-                .get(&track_id)
-                .copied()
-                .flatten()
-                .map(RatingValue::get),
-            Some(2)
+            values,
+            HashMap::from([(track, 2), (release, 3), (artist, 4)])
         );
-        assert_eq!(
-            values
-                .get(&release_id)
-                .copied()
-                .flatten()
-                .map(RatingValue::get),
-            Some(3),
-        );
-        assert_eq!(
-            values
-                .get(&artist_id)
-                .copied()
-                .flatten()
-                .map(RatingValue::get),
-            Some(4),
-        );
-        for opaque_id in [
-            unrated_id,
-            other_user_rating_id,
-            hidden_id,
-            kind_mismatch_id,
-            unsupported_id,
-            missing_id,
-            malformed_id,
-        ] {
-            assert_eq!(values.get(&opaque_id), Some(&None), "{opaque_id}");
-        }
         assert!(values_for_principal(&db, &principal, &[])?.is_empty());
-
         Ok(())
     }
 
@@ -366,22 +233,13 @@ mod tests {
         let library = insert_library(&mut db, "Music", "/tmp/lyra-ratings-hidden")?;
         let library_public_id = lyra_db::lookup::find_id_by_db_id(&db, library)?.unwrap();
         let track = insert_track(&mut db, "Track")?;
-        let track_public_id = lyra_db::lookup::find_id_by_db_id(&db, track)?.unwrap();
         connect(&mut db, library, track)?;
         let visible = principal(&db, user, HashSet::from([library_public_id]));
-        set_for_principal(
-            &mut db,
-            &visible,
-            &track_public_id,
-            RatingValue::new(4).unwrap(),
-        )?;
+        set_for_principal(&mut db, &visible, track, RatingValue::new(4).unwrap())?;
 
         let hidden = principal(&db, user, HashSet::new());
-        assert!(get_for_principal(&db, &hidden, &track_public_id)?.is_none());
-        assert_eq!(
-            remove(&mut db, user, &track_public_id)?,
-            MutationOutcome::Applied(RatingKind::Track),
-        );
+        assert!(get_for_principal(&db, &hidden, track)?.is_none());
+        assert_eq!(remove(&mut db, user, track)?, MutationOutcome::Applied);
         Ok(())
     }
 
@@ -390,18 +248,18 @@ mod tests {
         let mut db = new_test_db()?;
         let user = users::create(&mut db, &test_user("alice")?)?;
         let other_user = users::create(&mut db, &test_user("bob")?)?;
-        let other_user_public_id = lyra_db::lookup::find_id_by_db_id(&db, other_user)?.unwrap();
         let principal = principal(&db, user, HashSet::new());
 
-        assert_eq!(
-            set_for_principal(
-                &mut db,
-                &principal,
-                &other_user_public_id,
-                RatingValue::new(4).unwrap(),
-            )?,
-            MutationOutcome::NotTargetable,
-        );
+        for target in [other_user, DbId(999_999_999)] {
+            assert_eq!(
+                set_for_principal(&mut db, &principal, target, RatingValue::new(4).unwrap())?,
+                MutationOutcome::NotTargetable,
+            );
+            assert_eq!(
+                remove(&mut db, user, target)?,
+                MutationOutcome::NotTargetable
+            );
+        }
         Ok(())
     }
 }

@@ -1,0 +1,61 @@
+run_as = "listener"
+
+[[users]]
+key = "listener"
+
+[[users]]
+key = "other"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener", "other"]
+
+[[artists]]
+key = "amy"
+name = "Amy"
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+artists = ["amy"]
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+
+[[tracks]]
+key = "plain"
+title = "Plain"
+release = "album"
+
+[[tracks]]
+key = "hidden"
+title = "Hidden"
+
+[[playlists]]
+key = "mine"
+owner = "listener"
+name = "Mine"
+
+[[playlists]]
+key = "theirs"
+owner = "other"
+name = "Theirs"
+
+[[playlists]]
+key = "shared"
+owner = "other"
+name = "Shared"
+public = true
+
+[[favorites]]
+user = "listener"
+target = "hidden"
+
+[[tags]]
+user = "listener"
+target = "plain"
+name = "Marker"

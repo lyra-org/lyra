@@ -53,15 +53,8 @@ impl RatingsModule {
                 ))
             })?;
         let mut db = db.write().await;
-        let Some(public_target_id) = lyra_db::lookup::find_id_by_db_id(&*db, target_id.0)? else {
-            return Ok(false);
-        };
-        let outcome =
-            rating_service::set_for_principal(&mut db, &principal, &public_target_id, value)?;
-        Ok(matches!(
-            outcome,
-            rating_service::MutationOutcome::Applied(_)
-        ))
+        let outcome = rating_service::set_for_principal(&mut db, &principal, target_id.0, value)?;
+        Ok(outcome == rating_service::MutationOutcome::Applied)
     }
 
     #[harmony(
@@ -74,14 +67,8 @@ impl RatingsModule {
     ) -> luau::runtime::Result<bool> {
         let mut db = db.write().await;
         let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let Some(public_target_id) = lyra_db::lookup::find_id_by_db_id(&*db, target_id.0)? else {
-            return Ok(false);
-        };
-        let outcome = rating_service::remove(&mut db, user_db_id, &public_target_id)?;
-        Ok(matches!(
-            outcome,
-            rating_service::MutationOutcome::Applied(_)
-        ))
+        let outcome = rating_service::remove(&mut db, user_db_id, target_id.0)?;
+        Ok(outcome == rating_service::MutationOutcome::Applied)
     }
 
     #[harmony(
@@ -94,15 +81,11 @@ impl RatingsModule {
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::OwnedTable> {
         let db = db.read().await;
-        let public_ids_by_db_id = lyra_db::lookup::find_ids_by_db_ids(&*db, &target_ids.0)?;
-        let public_ids = public_ids_by_db_id.values().cloned().collect::<Vec<_>>();
-        let values = rating_service::values_for_principal(&db, &principal, &public_ids)?;
+        let values = rating_service::values_for_principal(&db, &principal, &target_ids.0)?;
 
-        let mut table = luau::OwnedTable::with_entry_capacity(0, 0, target_ids.0.len());
-        for (id, public_id) in public_ids_by_db_id {
-            if let Some(value) = values.get(&public_id).copied().flatten() {
-                table.set_key(id.0, i64::from(value.get()));
-            }
+        let mut table = luau::OwnedTable::with_entry_capacity(0, 0, values.len());
+        for (id, value) in values {
+            table.set_key(id.0, i64::from(value.get()));
         }
         Ok(table)
     }

@@ -1,0 +1,41 @@
+run_as = "listener"
+
+[[users]]
+key = "listener"
+
+[[users]]
+key = "other"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener", "other"]
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+
+[[tracks]]
+key = "plain"
+title = "Plain"
+release = "album"
+
+[[tracks]]
+key = "hidden"
+title = "Hidden"
+
+[[playlists]]
+key = "theirs"
+owner = "other"
+name = "Theirs"
+
+[[tags]]
+user = "listener"
+target = "hidden"
+name = "Mood"

@@ -79,10 +79,11 @@ impl TagsModule {
     ) -> luau::runtime::Result<String> {
         let mut db = db.write().await;
         let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let (_, canonical) =
-            tag_service::create_by_db_id(&mut db, user_id, target_id.0, &tag, &color)
-                .map_err(crate::plugins::runtime_error)?;
-        Ok(canonical)
+        let tag =
+            tag_service::NewTag::parse(&tag, &color).map_err(crate::plugins::runtime_error)?;
+        tag_service::create(&mut db, user_id, target_id.0, &tag)
+            .map_err(crate::plugins::runtime_error)?;
+        Ok(tag.into_name())
     }
 
     #[harmony(description = "Removes a tag from a target.")]
@@ -94,7 +95,7 @@ impl TagsModule {
     ) -> luau::runtime::Result<()> {
         let mut db = db.write().await;
         let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        tag_service::remove_target_by_db_id(&mut db, user_id, target_id.0, &tag)
+        tag_service::remove_target(&mut db, user_id, target_id.0, &tag)
             .map_err(crate::plugins::runtime_error)
     }
 
@@ -107,7 +108,7 @@ impl TagsModule {
     ) -> luau::runtime::Result<bool> {
         let db = db.read().await;
         let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        tag_service::has_target_by_db_id(&db, user_id, target_id.0, &tag)
+        tag_service::has_target(&db, user_id, target_id.0, &tag)
             .map_err(crate::plugins::runtime_error)
     }
 
@@ -124,7 +125,7 @@ impl TagsModule {
         let target_ids = target_ids.0;
         let db = db.read().await;
         let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let result = tag_service::has_targets_by_db_id(&db, user_id, &target_ids, &tag)
+        let result = tag_service::has_targets(&db, user_id, &target_ids, &tag)
             .map_err(crate::plugins::runtime_error)?;
         Ok(luau::OwnedTable::from_entries(target_ids.into_iter().map(
             |id| (id.0, result.get(&id).copied().unwrap_or(false)),
@@ -142,7 +143,7 @@ impl TagsModule {
     ) -> luau::runtime::Result<luau::OwnedTable> {
         let db = db.read().await;
         let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let tags = tag_service::get_for_target_by_db_id(&db, user_id, target_id.0)
+        let tags = tag_service::get_for_target(&db, user_id, target_id.0)
             .map_err(crate::plugins::runtime_error)?;
         Ok(tag_info_array(tags.into_iter().map(tag_to_info).collect()))
     }
@@ -159,7 +160,7 @@ impl TagsModule {
         let target_ids = target_ids.0;
         let db = db.read().await;
         let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let mut result = tag_service::get_for_targets_many_by_db_id(&db, user_id, &target_ids)
+        let mut result = tag_service::get_for_targets_many(&db, user_id, &target_ids)
             .map_err(crate::plugins::runtime_error)?;
         Ok(luau::OwnedTable::from_entries(target_ids.into_iter().map(
             |id| {
