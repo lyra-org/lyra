@@ -191,10 +191,10 @@ pub(super) fn parse_api_response(
         .ok_or_else(|| anyhow::anyhow!("unsupported response kind: {kind}"))?;
     let headers = harmony_serde::optional_string_pairs_field(&table, "headers")?;
     let body_value = table.get("body").unwrap_or(luau::Value::Nil);
-    let path = harmony_serde::optional_string_field(&table, "path")?;
+    let path = table.optional_string_field("path")?;
     let transform = harmony_serde::optional_json_field(&table, "transform")?;
     let options = harmony_serde::optional_json_field(&table, "options")?;
-    let track_id = harmony_serde::optional_i64_field(&table, "track_id")?;
+    let track_id = table.optional_i64_field("track_id")?;
 
     let body = match kind {
         ApiResponseKind::Json => Some(ApiResponseBody::Json(

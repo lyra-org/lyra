@@ -147,44 +147,6 @@ pub fn luau_to_json(value: &luau::Value, depth: usize) -> luau::runtime::Result<
     }
 }
 
-pub fn optional_string_field(
-    table: &luau::Table,
-    key: &str,
-) -> luau::runtime::Result<Option<String>> {
-    match table.get(key)? {
-        luau::Value::String(value) => String::from_utf8(value)
-            .map(Some)
-            .map_err(|error| luau::Error::Runtime(format!("{key} must be valid UTF-8: {error}"))),
-        luau::Value::Nil => Ok(None),
-        other => Err(luau::Error::Runtime(format!(
-            "{key} must be a string or nil, got {}",
-            other.type_name()
-        ))),
-    }
-}
-
-pub fn optional_i64_field(table: &luau::Table, key: &str) -> luau::runtime::Result<Option<i64>> {
-    match table.get(key)? {
-        luau::Value::Integer(value) => Ok(Some(value)),
-        luau::Value::Number(value)
-            if value.is_finite()
-                && value.fract() == 0.0
-                && value >= i64::MIN as f64
-                && value < 9_223_372_036_854_775_808.0 =>
-        {
-            Ok(Some(value as i64))
-        }
-        luau::Value::Number(_) => Err(luau::Error::Runtime(format!(
-            "{key} must be an integer or nil"
-        ))),
-        luau::Value::Nil => Ok(None),
-        other => Err(luau::Error::Runtime(format!(
-            "{key} must be a number or nil, got {}",
-            other.type_name()
-        ))),
-    }
-}
-
 pub fn optional_json_field(
     table: &luau::Table,
     key: &str,
