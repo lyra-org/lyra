@@ -493,125 +493,35 @@ mod benches {
     use test::Bencher;
 
     use super::*;
-    use crate::services::auth::Principal;
-    use lyra_db::fixtures::{
-        connect,
-        insert_artist,
-        insert_release,
-        insert_track,
-    };
-    use lyra_db::test_db::{
-        connect_artist,
-        insert_library,
-        new_test_db,
-    };
+    use crate::services::catalog::benches::search_fixture;
 
-    fn fixture(track_count: usize, library_count: usize, admin: bool) -> (DbAny, Principal) {
-        let mut db = new_test_db().unwrap();
-        let user_db_id = lyra_db::test_db::insert_user(&mut db, "search-bench-user").unwrap();
-        let mut principal = Principal::for_user(
-            &db,
-            user_db_id,
-            if admin {
-                vec![lyra_db::Permission::Admin]
-            } else {
-                Vec::new()
-            },
-            HashSet::new(),
-        );
-        let libraries: Vec<_> = (0..library_count)
-            .map(|i| {
-                let id = insert_library(
-                    &mut db,
-                    &format!("Library {i}"),
-                    &format!("/search-bench/{i}"),
-                )
-                .unwrap();
-                principal
-                    .accessible_library_ids
-                    .insert(lyra_db::libraries::get_by_id(&db, id).unwrap().unwrap().id);
-                id
-            })
-            .collect();
-
-        // Ten tracks per release, five releases per artist; 5% share a selective phrase.
-        for artist_idx in 0..track_count / 50 {
-            let phrase = if artist_idx % 20 == 0 {
-                "Velvet Horizon"
-            } else {
-                "Silver Moon"
-            };
-            let artist =
-                insert_artist(&mut db, &format!("{phrase} Artist {artist_idx:05}")).unwrap();
-            for release_idx in 0..5 {
-                let release_number = artist_idx * 5 + release_idx;
-                let release =
-                    insert_release(&mut db, &format!("{phrase} Release {release_number:05}"))
-                        .unwrap();
-                connect(&mut db, libraries[release_number % library_count], release).unwrap();
-                connect_artist(&mut db, release, artist).unwrap();
-                for track_idx in 0..10 {
-                    let track_number = release_number * 10 + track_idx;
-                    let track = insert_track(&mut db, &format!("{phrase} Track {track_number:06}"))
-                        .unwrap();
-                    connect(&mut db, release, track).unwrap();
-                }
-            }
-        }
-
-        // Unreachable from the user's libraries, but visible through the admin roots.
-        let hidden_library = insert_library(&mut db, "Hidden", "/search-bench/hidden").unwrap();
-        let hidden_artist = insert_artist(&mut db, "Quarantined Artist").unwrap();
-        let hidden_release = insert_release(&mut db, "Quarantined Release").unwrap();
-        let hidden_track = insert_track(&mut db, "Quarantined Track").unwrap();
-        connect(&mut db, hidden_library, hidden_release).unwrap();
-        connect_artist(&mut db, hidden_release, hidden_artist).unwrap();
-        connect(&mut db, hidden_release, hidden_track).unwrap();
+    /// Searches for a term every entity matches.
+    fn search(b: &mut Bencher, track_count: usize, library_count: usize, admin: bool) {
+        let (db, principal) = search_fixture(track_count, library_count, admin);
         let hidden = search_accessible(
             &db,
             &principal,
             &SearchOptions::new("quarantined".to_string(), Some(5), RatingFilter::default()),
         )
         .unwrap();
+        let hidden_count = usize::from(admin);
         assert_eq!(
             (
                 hidden.tracks.len(),
                 hidden.artists.len(),
                 hidden.releases.len()
             ),
-            if admin { (1, 1, 1) } else { (0, 0, 0) }
+            (hidden_count, hidden_count, hidden_count)
         );
-        (db, principal)
-    }
-
-    fn run(
-        b: &mut Bencher,
-        track_count: usize,
-        library_count: usize,
-        admin: bool,
-        query: &str,
-        limit: u64,
-    ) {
-        let (db, principal) = fixture(track_count, library_count, admin);
-        let options = SearchOptions::new(query.to_string(), Some(limit), RatingFilter::default());
+        let options = SearchOptions::new("a".to_string(), Some(20), RatingFilter::default());
         let results = search_accessible(&db, &principal, &options).unwrap();
-        let expected = match query {
-            "a" => (limit as usize, limit as usize, limit as usize),
-            "vlthrz" => (
-                limit as usize,
-                (track_count / 1_000).min(limit as usize),
-                (track_count / 200).min(limit as usize),
-            ),
-            "zzzzzz" => (0, 0, 0),
-            _ => unreachable!(),
-        };
         assert_eq!(
             (
                 results.tracks.len(),
                 results.artists.len(),
                 results.releases.len()
             ),
-            expected
+            (20, 20, 20)
         );
         b.iter(|| {
             black_box(
@@ -621,85 +531,33 @@ mod benches {
         });
     }
 
-    fn collect(b: &mut Bencher, size: usize, libraries: usize, admin: bool) {
-        let (db, principal) = fixture(size, libraries, admin);
-        let library_ids = (!admin).then_some(&principal.accessible_library_ids);
-        b.iter(|| {
-            black_box(lyra_db::search::collect_candidates(black_box(&db), library_ids).unwrap())
-        });
-    }
-
-    fn ranking(b: &mut Bencher, query: &str) {
-        let (db, _) = fixture(100_000, 1, true);
+    #[bench]
+    fn ranking_100k(b: &mut Bencher) {
+        let (db, _) = search_fixture(100_000, 1, true);
         let candidates = lyra_db::search::collect_candidates(&db, None).unwrap();
         b.iter(|| {
-            black_box(rank(black_box(&candidates.tracks), black_box(query), 5));
-            black_box(rank(black_box(&candidates.artists), black_box(query), 5));
-            black_box(rank(black_box(&candidates.releases), black_box(query), 5));
+            black_box(rank(black_box(&candidates.tracks), black_box("a"), 20));
+            black_box(rank(black_box(&candidates.artists), black_box("a"), 20));
+            black_box(rank(black_box(&candidates.releases), black_box("a"), 20));
         });
-    }
-
-    #[bench]
-    fn ranking_100k_broad(b: &mut Bencher) {
-        ranking(b, "a");
-    }
-    #[bench]
-    fn ranking_100k_selective(b: &mut Bencher) {
-        ranking(b, "vlthrz");
-    }
-    #[bench]
-    fn ranking_100k_no_match(b: &mut Bencher) {
-        ranking(b, "zzzzzz");
-    }
-
-    macro_rules! queries {
-        ($size:expr, $libraries:expr, $admin:expr) => {
-            #[bench]
-            fn collection(b: &mut Bencher) {
-                collect(b, $size, $libraries, $admin);
-            }
-            #[bench]
-            fn broad_limit_5(b: &mut Bencher) {
-                run(b, $size, $libraries, $admin, "a", 5);
-            }
-            #[bench]
-            fn broad_limit_20(b: &mut Bencher) {
-                run(b, $size, $libraries, $admin, "a", 20);
-            }
-            #[bench]
-            fn selective_limit_5(b: &mut Bencher) {
-                run(b, $size, $libraries, $admin, "vlthrz", 5);
-            }
-            #[bench]
-            fn selective_limit_20(b: &mut Bencher) {
-                run(b, $size, $libraries, $admin, "vlthrz", 20);
-            }
-            #[bench]
-            fn no_match_limit_5(b: &mut Bencher) {
-                run(b, $size, $libraries, $admin, "zzzzzz", 5);
-            }
-            #[bench]
-            fn no_match_limit_20(b: &mut Bencher) {
-                run(b, $size, $libraries, $admin, "zzzzzz", 20);
-            }
-        };
     }
 
     macro_rules! access_cases {
         ($name:ident, $size:expr) => {
             mod $name {
                 use super::*;
-                mod admin {
-                    use super::*;
-                    queries!($size, 1, true);
+
+                #[bench]
+                fn admin(b: &mut Bencher) {
+                    search(b, $size, 1, true);
                 }
-                mod user_one_library {
-                    use super::*;
-                    queries!($size, 1, false);
+                #[bench]
+                fn user_one_library(b: &mut Bencher) {
+                    search(b, $size, 1, false);
                 }
-                mod user_four_libraries {
-                    use super::*;
-                    queries!($size, 4, false);
+                #[bench]
+                fn user_four_libraries(b: &mut Bencher) {
+                    search(b, $size, 4, false);
                 }
             }
         };

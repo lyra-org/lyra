@@ -565,3 +565,180 @@ impl Candidates {
         Ok(ids.into_iter().filter(|id| !exclude.contains(id)).collect())
     }
 }
+
+#[cfg(all(test, feature = "nightly"))]
+pub(crate) mod benches {
+    extern crate test;
+
+    use std::{
+        collections::HashSet,
+        hint::black_box,
+    };
+
+    use agdb::DbAny;
+    use test::Bencher;
+
+    use super::{
+        Viewer,
+        artists::Artists,
+        page,
+        pipeline::{
+            Catalog,
+            Query,
+        },
+        releases::Releases,
+        tracks::Tracks,
+    };
+    use crate::services::auth::Principal;
+    use lyra_db::fixtures::{
+        connect,
+        insert_artist,
+        insert_release,
+        insert_track,
+    };
+    use lyra_db::test_db::{
+        connect_artist,
+        insert_library,
+        new_test_db,
+    };
+
+    /// A library of `track_count` tracks, ten per release and five releases per artist, with
+    /// releases spread across `library_count` libraries the principal is granted, and one more
+    /// release, artist and track named "Quarantined" in a library only an admin sees.
+    pub(crate) fn search_fixture(
+        track_count: usize,
+        library_count: usize,
+        admin: bool,
+    ) -> (DbAny, Principal) {
+        let mut db = new_test_db().unwrap();
+        let user_db_id = lyra_db::test_db::insert_user(&mut db, "search-bench-user").unwrap();
+        let mut principal = Principal::for_user(
+            &db,
+            user_db_id,
+            if admin {
+                vec![lyra_db::Permission::Admin]
+            } else {
+                Vec::new()
+            },
+            HashSet::new(),
+        );
+        let libraries: Vec<_> = (0..library_count)
+            .map(|i| {
+                let id = insert_library(
+                    &mut db,
+                    &format!("Library {i}"),
+                    &format!("/search-bench/{i}"),
+                )
+                .unwrap();
+                principal
+                    .accessible_library_ids
+                    .insert(lyra_db::libraries::get_by_id(&db, id).unwrap().unwrap().id);
+                id
+            })
+            .collect();
+
+        // 5% share a selective phrase.
+        for artist_idx in 0..track_count / 50 {
+            let phrase = if artist_idx % 20 == 0 {
+                "Velvet Horizon"
+            } else {
+                "Silver Moon"
+            };
+            let artist =
+                insert_artist(&mut db, &format!("{phrase} Artist {artist_idx:05}")).unwrap();
+            for release_idx in 0..5 {
+                let release_number = artist_idx * 5 + release_idx;
+                let release =
+                    insert_release(&mut db, &format!("{phrase} Release {release_number:05}"))
+                        .unwrap();
+                connect(&mut db, libraries[release_number % library_count], release).unwrap();
+                connect_artist(&mut db, release, artist).unwrap();
+                for track_idx in 0..10 {
+                    let track_number = release_number * 10 + track_idx;
+                    let track = insert_track(&mut db, &format!("{phrase} Track {track_number:06}"))
+                        .unwrap();
+                    connect(&mut db, release, track).unwrap();
+                }
+            }
+        }
+
+        let hidden_library = insert_library(&mut db, "Hidden", "/search-bench/hidden").unwrap();
+        let hidden_artist = insert_artist(&mut db, "Quarantined Artist").unwrap();
+        let hidden_release = insert_release(&mut db, "Quarantined Release").unwrap();
+        let hidden_track = insert_track(&mut db, "Quarantined Track").unwrap();
+        connect(&mut db, hidden_library, hidden_release).unwrap();
+        connect_artist(&mut db, hidden_release, hidden_artist).unwrap();
+        connect(&mut db, hidden_release, hidden_track).unwrap();
+        (db, principal)
+    }
+
+    fn searched<C: Catalog>(db: &DbAny, viewer: &Viewer, term: &str, limit: u64) -> u64
+    where
+        C::Filter: Default,
+    {
+        let mut query = Query::<C>::new(C::Filter::default());
+        query.search = Some(term.to_string());
+        page(db, viewer, &query, 0, Some(limit)).unwrap().total
+    }
+
+    fn search_all(db: &DbAny, viewer: &Viewer, term: &str, limit: u64) -> (u64, u64, u64) {
+        (
+            searched::<Tracks>(db, viewer, term, limit),
+            searched::<Artists>(db, viewer, term, limit),
+            searched::<Releases>(db, viewer, term, limit),
+        )
+    }
+
+    /// Searches tracks, artists and releases for a term every entity matches.
+    fn search(b: &mut Bencher, track_count: usize, library_count: usize, admin: bool) {
+        let (db, principal) = search_fixture(track_count, library_count, admin);
+        let viewer = Viewer::user(&db, principal).unwrap();
+        let hidden = u64::from(admin);
+        assert_eq!(
+            search_all(&db, &viewer, "quarantined", 5),
+            (hidden, hidden, hidden)
+        );
+        let visible = (
+            track_count as u64,
+            track_count as u64 / 50,
+            track_count as u64 / 10,
+        );
+        assert_eq!(
+            search_all(&db, &viewer, "a", 20),
+            (visible.0 + hidden, visible.1 + hidden, visible.2 + hidden)
+        );
+        b.iter(|| {
+            black_box(search_all(
+                black_box(&db),
+                black_box(&viewer),
+                black_box("a"),
+                20,
+            ))
+        });
+    }
+
+    macro_rules! access_cases {
+        ($name:ident, $size:expr) => {
+            mod $name {
+                use super::*;
+
+                #[bench]
+                fn admin(b: &mut Bencher) {
+                    search(b, $size, 1, true);
+                }
+                #[bench]
+                fn user_one_library(b: &mut Bencher) {
+                    search(b, $size, 1, false);
+                }
+                #[bench]
+                fn user_four_libraries(b: &mut Bencher) {
+                    search(b, $size, 4, false);
+                }
+            }
+        };
+    }
+
+    access_cases!(search_1k, 1_000);
+    access_cases!(search_10k, 10_000);
+    access_cases!(search_100k, 100_000);
+}
