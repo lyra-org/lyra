@@ -1226,12 +1226,13 @@ pub fn async_luau_callback(callback: luau::NativeAsyncFn) -> luau::NativeFn {
             ));
         }
         let mut returns = frame.returns.clone();
+        let site = frame.site.clone();
         let mut future = callback(frame.into_async())?;
         if let Some(delay) = future.take_start_delay() {
             ensure_yieldable(&thread)?;
             returns.request_yield();
             scheduler.park_luau_thread(&thread);
-            scheduler.schedule_luau_future_after(context, delay, vm, thread, future);
+            scheduler.schedule_luau_future_after(context, delay, vm, thread, future.for_call(site));
             return Ok(());
         }
         match poll_luau_future_once(&mut future) {
@@ -1241,7 +1242,7 @@ pub fn async_luau_callback(callback: luau::NativeAsyncFn) -> luau::NativeFn {
                 ensure_yieldable(&thread)?;
                 returns.request_yield();
                 scheduler.park_luau_thread(&thread);
-                scheduler.schedule_luau_future(context, vm, thread, future);
+                scheduler.schedule_luau_future(context, vm, thread, future.for_call(site));
             }
         }
         Ok(())
@@ -1513,6 +1514,176 @@ mod tests {
                 luau::ChunkOrigin::default(),
             )?,
             vec![luau::Value::Number(42.0)]
+        );
+        Ok(())
+    }
+
+    /// Calls that answer or fail after waiting once; `fail_now` fails without waiting and
+    /// `fail_later` after a start delay.
+    fn waiting_module() -> ModuleSpec {
+        fn wait_once<T: 'static>(
+            output: impl FnOnce() -> luau::runtime::Result<T> + 'static,
+        ) -> impl std::future::Future<Output = luau::runtime::Result<T>> {
+            let mut output = Some(output);
+            let mut waited = false;
+            std::future::poll_fn(move |cx| {
+                if !std::mem::replace(&mut waited, true) {
+                    cx.waker().wake_by_ref();
+                    return std::task::Poll::Pending;
+                }
+                std::task::Poll::Ready(output.take().expect("polled after completion")())
+            })
+        }
+        fn boom() -> luau::runtime::Result<()> {
+            Err(luau::Error::Runtime("boom".to_string()))
+        }
+
+        ModuleSpec::new("demo/async")
+            .function(FunctionSpec::new("fail_now").call_async(Arc::new(|_| {
+                boom().map(|()| luau::ScheduledFuture::new(async { Ok(()) }))
+            })))
+            .function(FunctionSpec::new("fail").call_async(Arc::new(|_| {
+                Ok(luau::ScheduledFuture::new(wait_once(boom)))
+            })))
+            .function(FunctionSpec::new("fail_later").call_async(Arc::new(|_| {
+                Ok(luau::ScheduledFuture::after(
+                    std::time::Duration::ZERO,
+                    async { boom() },
+                ))
+            })))
+            .function(
+                FunctionSpec::new("fail_out_of_memory").call_async(Arc::new(|_| {
+                    Ok(luau::ScheduledFuture::new(wait_once(|| {
+                        Err::<(), _>(luau::Error::OutOfMemory)
+                    })))
+                })),
+            )
+            .function(
+                FunctionSpec::new("add_one")
+                    .arg_name("value")
+                    .call_async(Arc::new(|mut frame| {
+                        let value: i64 = frame.args.read_named("value")?;
+                        Ok(luau::ScheduledFuture::new(wait_once(move || Ok(value + 1))))
+                    })),
+            )
+    }
+
+    /// Runs `source` as a task of plugin `demo` until it settles.
+    fn run_waiting_module_task(
+        source: &'static str,
+    ) -> luau::runtime::Result<(luau::Vm, crate::TaskSnapshot)> {
+        let vm = luau::Vm::new()?;
+        vm.open_standard_libraries(luau::StandardLibraries::all_supported())?;
+        vm.data().insert(crate::LocalScheduler::new())?;
+        let scheduler = vm.data().get::<crate::LocalScheduler>()?;
+        let origin = ChunkOrigin {
+            plugin: Some(Arc::from("demo")),
+            ..ChunkOrigin::default()
+        };
+        let table = install_luau_module(&vm, &origin, &waiting_module())?;
+        vm.set_global_table("module", &table)?;
+        let root = vm.load_chunk(&luau::Chunk::new(
+            Arc::<[u8]>::from(source.as_bytes()),
+            luau::ChunkOrigin::default(),
+        ))?;
+        let thread = vm.create_thread(&root)?;
+        let handle =
+            scheduler.spawn_luau_thread(crate::CallContext::default(), vm.clone(), thread, vec![]);
+        for _ in 0..16 {
+            scheduler.poll_ready();
+            let snapshot = scheduler.snapshot(handle.id()).expect("task snapshot");
+            if snapshot.state != crate::TaskState::Pending {
+                return Ok((vm, snapshot));
+            }
+        }
+        panic!("task did not settle");
+    }
+
+    const WAITING_FAILURE: &str =
+        "module 'demo/async' function 'fail' plugin 'demo': Luau runtime failed: boom";
+
+    #[test]
+    fn waiting_async_callback_errors_are_caught_by_pcall() -> luau::runtime::Result<()> {
+        let (vm, snapshot) = run_waiting_module_task(
+            r#"
+                local ok, err = pcall(module.fail)
+                local now_ok, now_err = pcall(module.fail_now)
+                local later_ok, later_err = pcall(module.fail_later)
+                local memory_ok, memory_err = pcall(module.fail_out_of_memory)
+                result = { ok, err, now_ok, now_err, later_ok, later_err, memory_ok, memory_err, module.add_one(41) }
+            "#,
+        )?;
+        assert_eq!(
+            snapshot.state,
+            crate::TaskState::Completed,
+            "{:?}",
+            snapshot.error
+        );
+        let result = vm.eval(
+            Arc::<[u8]>::from(&b"return table.unpack(result, 1, 9)"[..]),
+            luau::ChunkOrigin::default(),
+        )?;
+        let message = |function: &str| {
+            luau::Value::String(
+                WAITING_FAILURE
+                    .replace("'fail'", &format!("'{function}'"))
+                    .into_bytes(),
+            )
+        };
+        assert_eq!(
+            result,
+            vec![
+                luau::Value::Boolean(false),
+                message("fail"),
+                luau::Value::Boolean(false),
+                message("fail_now"),
+                luau::Value::Boolean(false),
+                message("fail_later"),
+                luau::Value::Boolean(false),
+                luau::Value::String(b"not enough memory".to_vec()),
+                luau::Value::Number(42.0),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn waiting_async_callback_errors_are_caught_by_pcall_in_their_coroutine()
+    -> luau::runtime::Result<()> {
+        let (vm, snapshot) = run_waiting_module_task(
+            r#"
+                coroutine.resume(coroutine.create(function()
+                    result = { pcall(module.fail) }
+                end))
+            "#,
+        )?;
+        assert_eq!(
+            snapshot.state,
+            crate::TaskState::Completed,
+            "{:?}",
+            snapshot.error
+        );
+        vm.data().get::<crate::LocalScheduler>()?.poll_ready();
+        assert_eq!(
+            vm.eval(
+                Arc::<[u8]>::from(&b"return table.unpack(result, 1, 2)"[..]),
+                luau::ChunkOrigin::default(),
+            )?,
+            vec![
+                luau::Value::Boolean(false),
+                luau::Value::String(WAITING_FAILURE.as_bytes().to_vec()),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn waiting_async_callback_errors_fail_the_task_without_pcall() -> luau::runtime::Result<()> {
+        let (_, snapshot) = run_waiting_module_task("module.fail()")?;
+        assert_eq!(snapshot.state, crate::TaskState::Failed);
+        assert_eq!(
+            snapshot.error.as_deref(),
+            Some(format!("Luau runtime failed: {WAITING_FAILURE}").as_str())
         );
         Ok(())
     }

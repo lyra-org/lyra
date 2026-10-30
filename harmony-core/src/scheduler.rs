@@ -1424,27 +1424,33 @@ fn poll_work(
             args.clear();
             poll_luau_resume(vm, thread, result, previous)
         }
-        TaskWork::LuauFuture { vm, thread, future } => match Pin::new(future).poll(cx) {
-            Poll::Ready(Ok(values)) => {
-                let (vm, thread) = (vm.clone(), thread.clone());
-                // The future is done; what is left is the thread itself.
-                *work = TaskWork::LuauThread {
-                    vm: vm.clone(),
-                    thread: thread.clone(),
-                    args: Vec::new(),
-                    pending_start: false,
-                };
-                let previous = match vm.set_thread_call_context(&thread, context.clone()) {
-                    Ok(previous) => previous,
-                    Err(error) => return WorkPoll::Failed(error.to_string()),
-                };
-                let result =
-                    resume_luau_thread(&vm, &thread, values.as_slice(), luau_resume_budget);
-                poll_luau_resume(&vm, &thread, result, previous)
-            }
-            Poll::Ready(Err(error)) => WorkPoll::Failed(error.to_string()),
-            Poll::Pending => WorkPoll::Pending,
-        },
+        TaskWork::LuauFuture { vm, thread, future } => {
+            let output = match Pin::new(&mut *future).poll(cx) {
+                Poll::Ready(Ok(values)) => Ok(values),
+                // Raised where the thread waits, as the call would have raised it had it not
+                // waited, so a `pcall` around the call catches it.
+                Poll::Ready(Err(error)) => Err(future.error_message(&error)),
+                Poll::Pending => return WorkPoll::Pending,
+            };
+            let (vm, thread) = (vm.clone(), thread.clone());
+            // The future is done; what is left is the thread itself.
+            *work = TaskWork::LuauThread {
+                vm: vm.clone(),
+                thread: thread.clone(),
+                args: Vec::new(),
+                pending_start: false,
+            };
+            let previous = match vm.set_thread_call_context(&thread, context.clone()) {
+                Ok(previous) => previous,
+                Err(error) => return WorkPoll::Failed(error.to_string()),
+            };
+            let _guard = luau_resume_budget.map(|budget| vm.interrupt_after(budget));
+            let result = match output {
+                Ok(values) => thread.resume(&vm, values.as_slice()),
+                Err(message) => thread.resume_error(&vm, &message),
+            };
+            poll_luau_resume(&vm, &thread, result, previous)
+        }
     }
 }
 
