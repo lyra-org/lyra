@@ -86,13 +86,14 @@ pub const RESERVED_HOST_NAMES: &[&str] = &[
 
 /// What manifests are checked against: the running host's name, which is
 /// the top-level key holding each manifest's requirement on the host, the
-/// host's version, which that requirement must match, and the scope ids
-/// its modules register.
+/// host's version, which that requirement must match, the scope ids its
+/// modules register, and the plugin ids it addresses something else by.
 #[derive(Debug, Clone)]
 pub struct PluginHost {
     name: String,
     version: Version,
     scope_ids: HashSet<Arc<str>>,
+    reserved_ids: HashSet<String>,
 }
 
 impl PluginHost {
@@ -110,7 +111,19 @@ impl PluginHost {
             name,
             version,
             scope_ids,
+            reserved_ids: HashSet::new(),
         })
+    }
+
+    /// Ids a manifest may not take, such as names the host's own interfaces
+    /// would read as something other than a plugin.
+    pub fn with_reserved_ids<I>(mut self, ids: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: Into<String>,
+    {
+        self.reserved_ids.extend(ids.into_iter().map(Into::into));
+        self
     }
 
     pub fn name(&self) -> &str {
@@ -1073,6 +1086,13 @@ impl PluginManager {
             return Err(PluginLoadError::InvalidPluginId {
                 plugin_id: manifest.id,
                 reason,
+            });
+        }
+
+        if host.reserved_ids.contains(&manifest.id) {
+            return Err(PluginLoadError::InvalidPluginId {
+                reason: format!("'{}' is reserved by {}", manifest.id, host.name),
+                plugin_id: manifest.id,
             });
         }
 
@@ -3344,6 +3364,47 @@ mod tests {
         let message = load_manifest(json.as_bytes()).unwrap_err().to_string();
 
         assert!(message.contains("duplicate field `host`"), "{message}");
+    }
+
+    #[test]
+    fn hosts_reserve_plugin_ids_at_manifest_and_directory_load() {
+        let reserving = host().with_reserved_ids(["update"]);
+        let json = manifest_json("update", "");
+
+        assert!(load_manifest(json.as_bytes()).is_ok());
+        let err = PluginManager::load_manifest(
+            std::path::Path::new("plugin.json"),
+            json.as_bytes(),
+            &reserving,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "invalid plugin id 'update': 'update' is reserved by host"
+        );
+
+        let plugins_dir = temp_plugin_dir("reserved-ids");
+        for id in ["update", "demo"] {
+            let dir = plugins_dir.join(id);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("init.luau"), "").unwrap();
+            std::fs::write(
+                dir.join(super::PLUGIN_CONFIG_FILENAME),
+                manifest_json(id, ""),
+            )
+            .unwrap();
+        }
+        let mut mgr = PluginManager::new(plugins_dir);
+        let errors = mgr.discover_plugins(&reserving).unwrap();
+        assert!(
+            matches!(errors.as_slice(), [PluginLoadError::InvalidPluginId { plugin_id, .. }] if plugin_id == "update"),
+            "{errors:?}"
+        );
+        assert_eq!(order(&mgr), vec!["demo"]);
+        assert!(matches!(
+            mgr.reload_plugin("update", &reserving),
+            Err(PluginLoadError::InvalidPluginId { .. })
+        ));
     }
 
     #[test]
