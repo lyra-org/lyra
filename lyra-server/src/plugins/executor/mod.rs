@@ -23,6 +23,7 @@ pub(crate) use self::messages::{
     ApiResponseKind,
     IdLinkDispatchContext,
     MetadataDispatchContext,
+    PluginSourceRun,
     WebSocketStartRequest,
     WebSocketState,
 };

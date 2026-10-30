@@ -10,7 +10,7 @@ scenarios and Luau tests against a real server state.
 | **Scenario** | A `.toml` that ingests a library of raw tags, runs it end to end through a provider (`run = "refresh"` or `"sync"`), and checks the `expect` section. |
 | **Trace** | One recorded set of HTTP responses a scenario received. A scenario keeps its traces in `cache/` and must pass against each of them. |
 | **Fixture** | The data a test runs against: audio assets, a scenario's ingested library, or a Luau test's `<test>.fixture.toml`. |
-| **Luau test** | A `.luau` file run as the plugin that owns it, optionally with a fixture. |
+| **Luau test** | A `.luau` file run as the plugin that owns it, optionally with a fixture. Services it calls dispatch to the handlers it registers, as they would to a loaded plugin's. |
 
 ## Layout
 

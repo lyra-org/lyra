@@ -36,6 +36,7 @@ use super::{
     MixHandlerRequest,
     MixHandlerResult,
     PluginExecutor,
+    PluginSourceRun,
     SimilarReleasesDispatchRequest,
     SimilarReleasesDispatchResult,
     WebSocketStartRequest,
@@ -133,30 +134,37 @@ impl PluginExecutorHandle {
         settings: Option<crate::services::state::SettingsHandle>,
     ) -> Result<(Self, Vec<PluginLoadError>)> {
         let plugins_dir = plugins_dir.into();
+        Self::spawn(move || {
+            let mut stores = super::stores::PluginModuleStores::with_db(db);
+            stores.server_settings = settings;
+            PluginExecutor::discover_from_plugins_dir_with_stores(
+                plugins_dir,
+                server_info,
+                auth_capabilities,
+                stores,
+                module_overrides,
+            )
+        })
+    }
+
+    /// Runs the executor `build` makes on its own thread.
+    pub(crate) fn spawn(
+        build: impl FnOnce() -> Result<(PluginExecutor, Vec<PluginLoadError>)> + Send + 'static,
+    ) -> Result<(Self, Vec<PluginLoadError>)> {
         let (tx, rx) = plugin_executor_channel(EXECUTOR_QUEUE_CAPACITY);
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
 
         thread::Builder::new()
             .name("lyra-plugin-executor".to_string())
-            .spawn(move || {
-                let mut stores = super::stores::PluginModuleStores::with_db(db);
-                stores.server_settings = settings;
-                match PluginExecutor::discover_from_plugins_dir_with_stores(
-                    plugins_dir,
-                    server_info,
-                    auth_capabilities,
-                    stores,
-                    module_overrides,
-                ) {
-                    Ok((runtime, errors)) => {
-                        if ready_tx.send(Ok(errors)).is_err() {
-                            return;
-                        }
-                        run_plugin_executor_thread(runtime, rx);
+            .spawn(move || match build() {
+                Ok((runtime, errors)) => {
+                    if ready_tx.send(Ok(errors)).is_err() {
+                        return;
                     }
-                    Err(error) => {
-                        let _ = ready_tx.send(Err(error));
-                    }
+                    run_plugin_executor_thread(runtime, rx);
+                }
+                Err(error) => {
+                    let _ = ready_tx.send(Err(error));
                 }
             })
             .context("spawn plugin executor thread")?;
@@ -229,6 +237,12 @@ impl PluginExecutorHandle {
         request: ApiHandlerRequest,
     ) -> Result<ApiHandlerResponse> {
         self.request_async(|reply| PluginExecutorCommand::ApiHandler { request, reply })
+            .await
+    }
+
+    /// Resolves once the chunk finishes.
+    pub(crate) async fn run_source(&self, request: PluginSourceRun) -> Result<()> {
+        self.request_async(|reply| PluginExecutorCommand::RunPluginSource { request, reply })
             .await
     }
 
@@ -409,6 +423,9 @@ fn handle_plugin_executor_command(
             if let Err(error) = runtime.dispatch_listen_update(payload) {
                 tracing::warn!(error = %error, "plugin listen on_update dispatch failed");
             }
+        }
+        PluginExecutorCommand::RunPluginSource { request, reply } => {
+            runtime.start_plugin_source(request, reply, permit);
         }
     }
 }

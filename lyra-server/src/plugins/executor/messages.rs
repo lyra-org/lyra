@@ -109,6 +109,21 @@ pub(super) enum PluginExecutorCommand {
     },
     PlaybackUpdate(PlaybackUpdatePayload),
     ListenUpdate(crate::services::listens::ListenUpdatePayload),
+    RunPluginSource {
+        request: PluginSourceRun,
+        reply: tokio::sync::oneshot::Sender<Result<()>>,
+    },
+}
+
+/// A chunk run as a plugin's code without its entrypoint, dispatching as `principal`, the way a
+/// Luau test runs. It runs beside dispatched handlers, so it can reach handlers it registers.
+pub(crate) struct PluginSourceRun {
+    pub(crate) plugin_id: String,
+    pub(crate) path: String,
+    pub(crate) source: Arc<[u8]>,
+    /// Builds the chunk's `...` on the executor thread, where Luau values live.
+    pub(crate) args: Box<dyn FnOnce() -> Result<Vec<harmony_luau::Value>> + Send + Sync>,
+    pub(crate) principal: crate::services::auth::Principal,
 }
 
 #[derive(Clone, Debug)]

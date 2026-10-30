@@ -41,7 +41,6 @@ use crate::services;
 use crate::services::STATE;
 use crate::services::testing::runtime_test_lock;
 use lyra_db::Entry;
-use tokio::sync::oneshot;
 
 #[derive(Debug, Clone)]
 pub struct LibraryFixtureConfig {
@@ -363,49 +362,45 @@ pub async fn run_luau_plugin_test_file(
     let auth_capabilities =
         crate::plugins::auth::AuthCapabilities::from_config(&STATE.config().auth);
     let manifest = plugin.manifest.clone();
+    let plugin_id = manifest.id.clone();
     let db = STATE.db.get();
     let source_root = isolated.source_root();
     let plugins_dir = isolated.plugins_dir();
     let source = std::fs::read(&test_path)
         .with_context(|| format!("read Luau test {}", test_path.display()))?;
 
-    // Like the server's plugin executor, the test runs on its own thread rather than blocking a
-    // task of this runtime.
-    let (result_tx, result_rx) = oneshot::channel();
-    std::thread::Builder::new()
-        .name("lyra-luau-test".to_string())
-        .spawn(move || {
-            let run = || {
-                let args = seeded
+    // Published like the server's runtime, so the services the test calls dispatch to the
+    // handlers it registers.
+    let (runtime, _) = crate::plugins::executor::PluginExecutorHandle::spawn(move || {
+        let runtime = crate::plugins::executor::PluginExecutor::with_filesystem_sources(
+            Arc::from(vec![manifest]),
+            server_info,
+            auth_capabilities,
+            db,
+            source_root,
+            plugins_dir,
+        )?;
+        Ok((runtime, Vec::new()))
+    })?;
+    crate::plugins::STATE.publish_runtime(runtime.clone());
+    let result = runtime
+        .run_source(crate::plugins::executor::PluginSourceRun {
+            plugin_id,
+            path: relative_path_text,
+            source: Arc::from(source),
+            args: Box::new(move || {
+                Ok(seeded
                     .map(harmony_luau::serializable_to_luau_owned)
                     .transpose()?
                     .into_iter()
-                    .collect();
-                let plugin_id = manifest.id.clone();
-                crate::plugins::executor::PluginExecutor::with_filesystem_sources(
-                    Arc::from(vec![manifest]),
-                    server_info,
-                    auth_capabilities,
-                    db,
-                    source_root,
-                    plugins_dir,
-                )?
-                .run_plugin_source_as(
-                    &plugin_id,
-                    &relative_path_text,
-                    source,
-                    args,
-                    principal,
-                )
-            };
-            let result: anyhow::Result<()> = run();
-            let _ = result_tx.send(result);
+                    .collect())
+            }),
+            principal,
         })
-        .context("spawn Luau test thread")?;
-    result_rx
         .await
-        .context("Luau test thread exited without a result")?
-        .with_context(|| format!("run Luau test {}", test_path.display()))
+        .with_context(|| format!("run Luau test {}", test_path.display()));
+    let shutdown = runtime.shutdown().await;
+    result.and(shutdown)
 }
 
 pub async fn refresh_release(release_id: i64) -> anyhow::Result<()> {

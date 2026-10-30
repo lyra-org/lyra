@@ -50,6 +50,7 @@ pub(super) enum CallbackReply {
         cancellation: super::DispatchCancellation,
         max_candidates: usize,
     },
+    Source(tokio::sync::oneshot::Sender<Result<()>>),
 }
 
 impl CallbackReply {
@@ -58,6 +59,7 @@ impl CallbackReply {
             Self::Refresh(reply) => reply.is_closed(),
             Self::Api { reply, .. } => reply.is_closed(),
             Self::Mix { reply, .. } => reply.is_closed(),
+            Self::Source(reply) => reply.is_closed(),
             Self::Similar {
                 reply,
                 cancellation,
@@ -85,6 +87,9 @@ impl CallbackReply {
                 let result =
                     result.and_then(|values| super::mix::parse_mix_result(vm, &mixer_id, values));
                 let _ = reply.send(result);
+            }
+            Self::Source(reply) => {
+                let _ = reply.send(result.map(|_| ()));
             }
             Self::Refresh(reply) => {
                 let result = result.and_then(|values| {

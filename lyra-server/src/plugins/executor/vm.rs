@@ -42,6 +42,10 @@ use super::{
     stores::PluginModuleStores,
 };
 
+/// How long a chunk [`PluginExecutor::start_plugin_source`] runs may take, as long as a plugin's
+/// entrypoint may.
+const PLUGIN_SOURCE_RUN_BUDGET: std::time::Duration = std::time::Duration::from_secs(300);
+
 impl PluginExecutor {
     pub(crate) fn with_filesystem_sources(
         manifests: Arc<[PluginManifest]>,
@@ -229,24 +233,38 @@ impl PluginExecutor {
     }
 
     /// Runs `source` with `args` as its `...`, as a dispatch acting for `principal`.
-    pub(crate) fn run_plugin_source_as(
+    pub(super) fn start_plugin_source(
         &self,
-        plugin_id: &str,
-        path: &str,
-        source: impl Into<Arc<[u8]>>,
-        args: Vec<luau::Value>,
-        principal: crate::services::auth::Principal,
-    ) -> Result<()> {
-        let dispatch_auth = crate::plugins::auth::DispatchAuth::default();
-        dispatch_auth.record(principal);
-        let mut context = CallContext {
-            origin: super::plugin_origin(plugin_id.to_string(), path.to_string()),
-            ..CallContext::default()
-        };
-        context.caller.insert(dispatch_auth);
-        self.runtime
-            .eval_source_with_args(source, context, args)
-            .map(|_| ())
+        run: super::PluginSourceRun,
+        reply: tokio::sync::oneshot::Sender<Result<()>>,
+        permit: tokio::sync::OwnedSemaphorePermit,
+    ) {
+        self.start_callback(
+            std::time::Instant::now() + PLUGIN_SOURCE_RUN_BUDGET,
+            super::callbacks::CallbackReply::Source(reply),
+            permit,
+            |timeout, completion| {
+                let dispatch_auth = crate::plugins::auth::DispatchAuth::default();
+                dispatch_auth.record(run.principal);
+                let mut context = CallContext {
+                    origin: super::plugin_origin(run.plugin_id, run.path),
+                    ..CallContext::default()
+                };
+                context.caller.insert(dispatch_auth);
+                let args = (run.args)()?;
+                let thread = self.runtime.load_source_thread(run.source, &mut context)?;
+                let scheduler = self.vm.data().get::<harmony_core::LocalScheduler>()?;
+                scheduler.schedule_luau_thread_with_budget_and_completion(
+                    context,
+                    self.vm.clone(),
+                    thread.clone(),
+                    args,
+                    timeout,
+                    completion,
+                );
+                Ok((scheduler, thread))
+            },
+        );
     }
 
     #[cfg(test)]
