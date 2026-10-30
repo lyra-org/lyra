@@ -344,7 +344,7 @@ end)
 
 api.get("/audiomuse/health", function(): ApiResponse
 	local response: HttpResponse = http.request({
-		url = `{BASE_URL}/`,
+		url = `{BASE_URL}/api/health`,
 		method = http.HttpMethod.Get,
 	})
 
