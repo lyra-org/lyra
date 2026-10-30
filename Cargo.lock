@@ -1509,7 +1509,6 @@ dependencies = [
  "harmony-core",
  "harmony-http",
  "harmony-luau",
- "harmony-macros",
  "lyra-metadata",
  "lyra-server",
  "percent-encoding",

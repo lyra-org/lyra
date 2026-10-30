@@ -12,7 +12,6 @@ path = "src/main.rs"
 harmony-core = { path = "../harmony-core" }
 harmony-http = { path = "../harmony-http" }
 harmony-luau = { workspace = true }
-harmony-macros = { path = "../harmony-macros" }
 lyra-server = { path = "../lyra-server" }
 lyra-metadata = { path = "../lyra-metadata" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
