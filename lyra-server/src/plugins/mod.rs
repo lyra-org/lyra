@@ -42,6 +42,7 @@ pub(crate) mod mix;
 pub(crate) mod playback_sessions;
 pub(crate) mod playback_sources;
 pub(crate) mod playlists;
+pub(crate) mod ratings;
 pub(crate) mod releases;
 pub(crate) mod repositories;
 pub(crate) mod server;

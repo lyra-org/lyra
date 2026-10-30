@@ -37,6 +37,7 @@ use crate::plugins::{
     playback_sessions,
     playback_sources,
     playlists,
+    ratings,
     releases,
     server,
     tags,
@@ -112,6 +113,7 @@ pub(crate) fn module_specs() -> Vec<ModuleSpec> {
         playback_sessions::module_spec(),
         playback_sources::module_spec(),
         playlists::module_spec(),
+        ratings::module_spec(),
         releases::module_spec(),
         server::module_spec(),
         harmony_task::module_spec(),
@@ -165,6 +167,11 @@ fn surfaces() -> &'static [Surface] {
             "lyra/favorites",
             favorites::get_module,
             favorites::render_luau_definition
+        ),
+        surface!(
+            "lyra/ratings",
+            ratings::get_module,
+            ratings::render_luau_definition
         ),
         surface!(
             "lyra/track_sources",

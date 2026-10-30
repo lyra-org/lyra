@@ -1,0 +1,67 @@
+run_as = "listener"
+
+[[users]]
+key = "listener"
+
+[[users]]
+key = "other"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener", "other"]
+
+[[artists]]
+key = "amy"
+name = "Amy"
+
+[[artists]]
+key = "bea"
+name = "Bea"
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+artists = ["amy"]
+
+[[releases]]
+key = "single"
+title = "Single"
+library = "music"
+artists = ["bea"]
+
+[[tracks]]
+key = "low"
+title = "Low"
+release = "album"
+
+[[tracks]]
+key = "high"
+title = "High"
+release = "album"
+
+[[tracks]]
+key = "unrated"
+title = "Unrated"
+release = "album"
+
+[[tracks]]
+key = "hidden"
+title = "Hidden"
+
+[[playlists]]
+key = "mix"
+owner = "listener"
+name = "Mix"
+public = false
+
+[[ratings]]
+user = "listener"
+target = "hidden"
+value = 3
+
+[[ratings]]
+user = "other"
+target = "unrated"
+value = 5

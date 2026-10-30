@@ -123,6 +123,11 @@ track = "s1"
 user = "owner"
 target = "mix"       # any artist, release, track or playlist key
 
+[[ratings]]
+user = "owner"
+target = "s1"        # any artist, release or track key, seen by the user or not
+value = 4            # 1 through 5
+
 [[tags]]
 user = "owner"
 target = "solo"      # any artist, release, track or playlist key, seen by the user or not

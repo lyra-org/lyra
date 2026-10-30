@@ -1,0 +1,86 @@
+local fixture = ...
+
+local artists = require("@lyra/artists")
+local ratings = require("@lyra/ratings")
+local releases = require("@lyra/releases")
+local tracks = require("@lyra/tracks")
+
+local ids = fixture.ids
+
+local function rejects(f: (...any) -> ...any, message: string, ...: any)
+	local ok, err = pcall(f, ...)
+	assert(not ok, `rejected: {message}`)
+	assert(string.find(tostring(err), message, 1, true), `error {err}`)
+end
+
+local function order(items: { any }): { number }
+	local result = {}
+	for _, item in items do
+		table.insert(result, item.db_id)
+	end
+	return result
+end
+
+local function same(actual: { number }, expected: { number }, label: string)
+	assert(#actual == #expected, `{label}: {#actual} items`)
+	for index, id in expected do
+		assert(actual[index] == id, `{label}: item {index} is {actual[index]}, expected {id}`)
+	end
+end
+
+assert(ratings.set(ids.low, 2), "a visible track is ratable")
+assert(ratings.set(ids.high, 3), "a visible track is ratable")
+assert(ratings.set(ids.high, 5), "a rating can change")
+assert(ratings.set(ids.album, 4), "a release is ratable")
+assert(ratings.set(ids.bea, 1), "an artist is ratable")
+assert(not ratings.set(ids.hidden, 4), "a hidden track is not ratable")
+assert(not ratings.set(ids.mix, 4), "a playlist is not ratable")
+assert(not ratings.set(999999999, 4), "a missing target is not ratable")
+
+rejects(ratings.set, "rating must be an integer from 1 to 5, got 0", ids.low, 0)
+rejects(ratings.set, "rating must be an integer from 1 to 5, got 6", ids.low, 6)
+rejects(ratings.set, "target_id must be a positive id", 0, 3)
+
+local got = ratings.get({ ids.low, ids.high, ids.unrated, ids.hidden, ids.album, ids.bea, ids.amy, 999999999 })
+assert(got[ids.low] == 2, `low {got[ids.low]}`)
+assert(got[ids.high] == 5, `high {got[ids.high]}`)
+assert(got[ids.album] == 4, `album {got[ids.album]}`)
+assert(got[ids.bea] == 1, `bea {got[ids.bea]}`)
+assert(got[ids.unrated] == nil, "another user's rating is not the caller's")
+assert(got[ids.hidden] == nil, "a hidden target's rating is absent")
+assert(got[ids.amy] == nil and got[999999999] == nil, "unrated and missing targets are absent")
+assert(next(ratings.get({})) == nil, "no ids, no ratings")
+
+-- Filters.
+same(order(tracks.query({ min_rating = 3 }).items), { ids.high }, "min_rating")
+same(order(tracks.query({ max_rating = 2 }).items), { ids.low }, "max_rating")
+same(order(releases.query({ min_rating = 4, max_rating = 4 }).items), { ids.album }, "release rating")
+same(order(artists.query({ max_rating = 1 }).items), { ids.bea }, "artist rating")
+rejects(tracks.query, "min_rating must not exceed max_rating", { min_rating = 4, max_rating = 2 })
+rejects(tracks.query, "min_rating must be an integer from 1 to 5, got 0", { min_rating = 0 })
+rejects(releases.query, "max_rating must be an integer from 1 to 5, got 6", { max_rating = 6 })
+
+-- Sorting: unrated items sort last in both directions.
+local function by_rating(direction: string): { number }
+	return order(tracks.query({ release_ids = { ids.album }, sort = { { key = "rating", order = direction } } }).items)
+end
+same(by_rating("descending"), { ids.high, ids.low, ids.unrated }, "descending")
+same(by_rating("ascending"), { ids.low, ids.high, ids.unrated }, "ascending")
+same(
+	order(releases.query({ sort = { { key = "rating", order = "ascending" } } }).items),
+	{ ids.album, ids.single },
+	"release sort"
+)
+same(
+	order(artists.query({ sort = { { key = "rating", order = "descending" } } }).items),
+	{ ids.bea, ids.amy },
+	"artist sort"
+)
+
+-- Removing.
+assert(ratings.remove(ids.low), "a rating can be removed")
+assert(ratings.remove(ids.low), "removing again still names a ratable target")
+assert(ratings.get({ ids.low })[ids.low] == nil, "a removed rating is gone")
+assert(ratings.remove(ids.hidden), "a hidden target's rating can be cleared")
+assert(not ratings.remove(ids.mix), "a playlist has no rating")
+assert(not ratings.remove(999999999), "a missing target has no rating")

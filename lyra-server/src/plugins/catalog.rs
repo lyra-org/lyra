@@ -22,6 +22,10 @@ use harmony_luau::{
     LuauTypeInfo,
     TypeAliasDescriptor,
 };
+use lyra_db::ratings::{
+    RatingFilter,
+    RatingValue,
+};
 use serde::Serialize;
 
 use crate::{
@@ -122,6 +126,31 @@ pub(crate) fn read_years(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::R
         .map(|years| args::integers(vm, &years))
         .transpose()?
         .unwrap_or_default())
+}
+
+/// The caller's rating bounds from `min_rating` and `max_rating`.
+pub(crate) fn read_rating(
+    vm: &luau::Vm,
+    table: &luau::Table,
+) -> luau::runtime::Result<RatingFilter> {
+    let bound = |key| {
+        luau::table::optional_i64_field(vm, table, key)?
+            .map(|value| {
+                u8::try_from(value)
+                    .ok()
+                    .and_then(RatingValue::new)
+                    .ok_or_else(|| {
+                        crate::plugins::runtime_error(format!(
+                            "{key} must be an integer from {} to {}, got {value}",
+                            lyra_db::ratings::MIN_VALUE,
+                            lyra_db::ratings::MAX_VALUE,
+                        ))
+                    })
+            })
+            .transpose()
+    };
+    RatingFilter::new(bound("min_rating")?, bound("max_rating")?)
+        .map_err(|_| crate::plugins::runtime_error("min_rating must not exceed max_rating"))
 }
 
 /// The `artist_ids` filter with its `credit_role` and `exclude_credit_role`.
@@ -276,6 +305,24 @@ pub(crate) fn query_fields(sort_key: &'static str) -> Vec<FieldDescriptor> {
         field("seed", Option::<u64>::luau_type()),
         field("offset", Option::<u64>::luau_type()),
         field("limit", Option::<u64>::luau_type()),
+    ]
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn rating_fields() -> Vec<FieldDescriptor> {
+    vec![
+        FieldDescriptor {
+            name: "min_rating",
+            ty: Option::<u8>::luau_type(),
+            description: Some(
+                "Inclusive lower bound on the caller's 1-5 rating. Either bound leaves out unrated items.",
+            ),
+        },
+        FieldDescriptor {
+            name: "max_rating",
+            ty: Option::<u8>::luau_type(),
+            description: Some("Inclusive upper bound on the caller's 1-5 rating."),
+        },
     ]
 }
 

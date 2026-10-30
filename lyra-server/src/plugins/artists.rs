@@ -273,7 +273,7 @@ fn read_filter(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Arti
         artist_type: parse_optional_artist_type(vm, table, "artist_type")?,
         favorite: luau::table::optional_bool_field(vm, table, "favorite")?,
         listened: luau::table::optional_bool_field(vm, table, "listened")?,
-        rating: Default::default(),
+        rating: catalog::read_rating(vm, table)?,
     })
 }
 
@@ -465,6 +465,7 @@ fn artist_interfaces() -> Vec<InterfaceDescriptor> {
             "Whether the caller has listened to any track credited to the artist or on its releases.",
         ),
     ]);
+    query.fields.extend(catalog::rating_fields());
     query.fields.extend(catalog::query_fields("ArtistSortKey"));
 
     vec![relation, query]

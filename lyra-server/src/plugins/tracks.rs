@@ -149,7 +149,7 @@ fn read_filter(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Trac
         years: catalog::read_years(vm, table)?,
         favorite: luau::table::optional_bool_field(vm, table, "favorite")?,
         listened: luau::table::optional_bool_field(vm, table, "listened")?,
-        rating: Default::default(),
+        rating: catalog::read_rating(vm, table)?,
     })
 }
 
@@ -233,6 +233,7 @@ fn track_query() -> InterfaceDescriptor {
         field("favorite", Option::<bool>::luau_type()),
         field("listened", Option::<bool>::luau_type()),
     ]);
+    descriptor.fields.extend(catalog::rating_fields());
     descriptor.fields.extend(catalog::credit_fields());
     descriptor
         .fields

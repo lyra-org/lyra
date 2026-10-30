@@ -62,6 +62,8 @@ pub struct Fixture {
     #[serde(default)]
     favorites: Vec<Favorite>,
     #[serde(default)]
+    ratings: Vec<Rating>,
+    #[serde(default)]
     tags: Vec<Tag>,
     /// The directory fixture paths resolve against.
     #[serde(skip)]
@@ -201,6 +203,15 @@ struct Listen {
 struct Favorite {
     user: String,
     target: String,
+}
+
+/// A user's rating, written without the check that the user can see its target.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Rating {
+    user: String,
+    target: String,
+    value: u8,
 }
 
 /// A user's tag, written without the check that the user can see its target, as one the user
@@ -598,6 +609,22 @@ impl Fixture {
         for favorite in &self.favorites {
             let (target_db_id, kind) = keys.entity(&favorite.target)?;
             lyra_db::favorites::add(db, keys.user(&favorite.user)?, target_db_id, kind, 1)?;
+        }
+
+        for rating in &self.ratings {
+            let (target_db_id, kind) = keys.entity(&rating.target)?;
+            let kind = match kind {
+                lyra_db::favorites::FavoriteKind::Track => lyra_db::ratings::RatingKind::Track,
+                lyra_db::favorites::FavoriteKind::Release => lyra_db::ratings::RatingKind::Release,
+                lyra_db::favorites::FavoriteKind::Artist => lyra_db::ratings::RatingKind::Artist,
+                lyra_db::favorites::FavoriteKind::Playlist => {
+                    anyhow::bail!("rating target {} is a playlist", rating.target)
+                }
+            };
+            let value = lyra_db::ratings::RatingValue::new(rating.value).ok_or_else(|| {
+                anyhow::anyhow!("rating of {} must be from 1 to 5", rating.target)
+            })?;
+            lyra_db::ratings::upsert(db, keys.user(&rating.user)?, target_db_id, kind, value, 1)?;
         }
 
         for tag in &self.tags {

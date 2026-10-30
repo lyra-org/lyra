@@ -20,6 +20,7 @@
     "lyra.metadata",
     "lyra.playback_sources",
     "lyra.playlists",
+    "lyra.ratings",
     "lyra.plugins",
     "lyra.releases",
     "lyra.tracks"
