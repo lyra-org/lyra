@@ -165,7 +165,7 @@ pub(super) static RELOAD_PENDING: AtomicBool = AtomicBool::new(false);
 /// automatic; otherwise they are only reported as available. The runtime
 /// is not reloaded; that waits for [`apply_pending_reload`]. A
 /// subscription removed in the meantime is not checked.
-async fn check_subscription(
+pub(super) async fn check_subscription(
     repository: &repo_db::PluginRepository,
     plugins_dir: &Path,
     install: bool,

@@ -1108,23 +1108,37 @@ fn load_managed_record(
         })
 }
 
+/// Whether a plugin a repository lists at `subpath`, `via` the index that
+/// references it when it lives in another repository, is the plugin
+/// installed at `record`: one the repository holds itself, at the same
+/// path, as the installed status matches stored entries.
+fn lists_installed(subpath: &Option<String>, via: &Option<String>, record: &SourceRecord) -> bool {
+    via.is_none() && *subpath == record.subpath
+}
+
 /// Finds the candidate a plugin with a newer release is reinstalled from.
 fn find_update<'a>(
     resolved: &'a ResolvedRepository,
     plugin_id: &str,
     record: &SourceRecord,
 ) -> Result<&'a PluginCandidate, PluginRepoError> {
-    if let Some(rejected) = resolved
-        .rejected
-        .iter()
-        .find(|plugin| plugin.id == plugin_id && plugin.source.subpath == record.subpath)
-    {
+    if let Some(rejected) = resolved.rejected.iter().find(|plugin| {
+        plugin.id == plugin_id
+            && lists_installed(
+                &plugin.source.subpath,
+                &plugin.source.via_repository,
+                record,
+            )
+    }) {
         return Err(PluginRepoError::BadRequest(rejected_message(rejected)));
     }
     resolved
         .candidates
         .iter()
-        .find(|c| c.id() == plugin_id && c.source.subpath == record.subpath)
+        .find(|c| {
+            c.id() == plugin_id
+                && lists_installed(&c.source.subpath, &c.source.via_repository, record)
+        })
         .ok_or_else(|| {
             PluginRepoError::Conflict(format!(
                 "plugin '{plugin_id}' is no longer available at {}",
@@ -1221,11 +1235,14 @@ async fn list_update_source(
     let outcomes = installed
         .iter()
         .map(|(id, record)| {
-            let outcome = match listing
-                .plugins
-                .iter()
-                .find(|plugin| plugin.id == *id && plugin.source.subpath == record.subpath)
-            {
+            let outcome = match listing.plugins.iter().find(|plugin| {
+                plugin.id == *id
+                    && lists_installed(
+                        &plugin.source.subpath,
+                        &plugin.source.via_repository,
+                        record,
+                    )
+            }) {
                 Some(plugin) => update_outcome(id, record, listed_offer(plugin), selection),
                 None => UpdateOutcome::Unknown,
             };
@@ -1275,12 +1292,18 @@ fn settle_updates<'a>(
     }
 }
 
-/// Downloads the plugins `listed` settled as changed.
+/// Downloads the plugins `listed` settled as changed. Plugins its index
+/// references in other repositories are left out: an update reinstalls a
+/// plugin only from the repository holding it.
 async fn resolve_update_source(
     client: &reqwest::Client,
-    listed: ListedSource,
+    mut listed: ListedSource,
     budget: &UnpackBudget,
 ) -> Result<UpdateSource, ResolveError> {
+    listed
+        .listing
+        .plugins
+        .retain(|plugin| plugin.source.via_repository.is_none());
     let changed: Vec<String> = listed
         .outcomes
         .iter()
@@ -3767,6 +3790,34 @@ mod tests {
                 reason: "its repository did not list it at the last refresh".into()
             },
             "a plugin the index references elsewhere is not offered from the index's origin"
+        );
+
+        // A plugin installed from the index's origin before it became an
+        // index is not replaced by the one it now references.
+        let plugins_dir = tempfile::TempDir::new()?;
+        let dir = plugins_dir.path().join("elsewhere");
+        std::fs::create_dir_all(&dir)?;
+        installed.forge = Forge::Gitea;
+        installed.store(&dir)?;
+        std::fs::write(
+            dir.join(PLUGIN_CONFIG_FILENAME),
+            manifest_json("elsewhere", "0.9.0", HOST_REQUIREMENT),
+        )?;
+        let report = update_plugins_in(plugins_dir.path(), UpdateSelection::All).await?;
+        let [failed] = &report.failed[..] else {
+            panic!("expected one failure: {report:?}");
+        };
+        assert!(failed.error.contains("no longer available"), "{failed:?}");
+        let report =
+            auto_update::check_subscription(&added.repository, plugins_dir.path(), true).await?;
+        assert!(
+            report.updated.is_empty() && report.failed.is_empty(),
+            "{report:?}"
+        );
+        assert!(plugin.downloads().is_empty(), "{:?}", plugin.downloads());
+        assert_eq!(
+            load_managed_record(plugins_dir.path(), "elsewhere")?.version,
+            Version::new(0, 9, 0)
         );
         Ok(())
     }
