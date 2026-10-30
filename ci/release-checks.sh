@@ -1,6 +1,6 @@
 #!/bin/sh
-# Checks the version line, PREVIOUS_RELEASE in lyra-db/src/migration.rs, and the releases in
-# versions.json; see "Versions and releases" in docs/development.md. Needs the full history, git
+# Checks the version line, PREVIOUS_RELEASE in lyra-db/src/migration.rs, web.rev, and the releases
+# in versions.json; see "Versions and releases" in docs/development.md. Needs the full history, git
 # and jq.
 set -eu
 
@@ -72,6 +72,10 @@ declared=$(git show HEAD:lyra-db/src/migration.rs |
 	sed -n 's/^pub(crate) const PREVIOUS_RELEASE: Option<&str> = \(.*\);$/\1/p')
 [ "$declared" = "$expected" ] ||
 	fail "PREVIOUS_RELEASE is ${declared:-missing} but should be $expected, the newest release before $head_version"
+
+web_rev=$(git show HEAD:web.rev)
+printf '%s\n' "$web_rev" | grep -Eq '^[0-9a-f]{40}$' && [ "${#web_rev}" -eq 40 ] ||
+	fail "web.rev does not hold a single full lyra-web commit id"
 
 entries=$(jq -r '.[] | "\(.commit) \(.lyra)"' versions.json)
 newer=""
