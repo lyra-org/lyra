@@ -7,7 +7,10 @@ fn tracks_runtime(db: agdb::DbAny) -> Result<PluginExecutor> {
             "demo",
             &[
                 "lyra.artists",
+                "lyra.favorites",
                 "lyra.genres",
+                "lyra.listens",
+                "lyra.ratings",
                 "lyra.releases",
                 "lyra.tracks",
             ],

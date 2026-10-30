@@ -64,16 +64,25 @@ use crate::plugins::{
 pub(crate) enum Effect {
     /// Sends data off the server.
     Egress,
-    /// Adds endpoints to the server.
+    /// Adds endpoints to the server or listens on the network.
     Exposes,
     /// Handles credentials and sign-in sessions.
     Authority,
-    /// Reads the named data of the users it acts for.
-    ReadsPersonal(&'static str),
-    /// Changes the named data of the users it acts for.
-    WritesPersonal(&'static str),
+    /// Reads the named personal data of these users.
+    ReadsPersonal(&'static str, Users),
+    /// Changes the named personal data of these users.
+    WritesPersonal(&'static str, Users),
     /// Changes the named data of the shared library.
     WritesLibrary(&'static str),
+}
+
+/// Whose personal data an effect reaches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Users {
+    /// The users the plugin acts for.
+    Acting,
+    /// Every user's, whoever the plugin acts for.
+    All,
 }
 
 pub(crate) struct ScopeDef {
@@ -127,7 +136,7 @@ scopes! {
     HarmonyNet => {
         id: harmony_net::SCOPE,
         module: harmony_net::NetModule::module_spec,
-        effects: &[Effect::Egress],
+        effects: &[Effect::Egress, Effect::Exposes],
     },
     HarmonySerde => {
         id: harmony_serde::SCOPE,
@@ -188,8 +197,8 @@ scopes! {
         id: "lyra.favorites",
         module: favorites::FavoritesModule::module_spec,
         effects: &[
-            Effect::ReadsPersonal("favorites"),
-            Effect::WritesPersonal("favorites"),
+            Effect::ReadsPersonal("favorites", Users::Acting),
+            Effect::WritesPersonal("favorites", Users::Acting),
         ],
     },
     Genres => {
@@ -220,7 +229,10 @@ scopes! {
     Listens => {
         id: "lyra.listens",
         module: listens::ListensModule::module_spec,
-        effects: &[Effect::ReadsPersonal("listening history")],
+        effects: &[
+            Effect::ReadsPersonal("listening history", Users::All),
+            Effect::WritesPersonal("listening history", Users::Acting),
+        ],
     },
     Locale => {
         id: "lyra.locale",
@@ -231,8 +243,9 @@ scopes! {
         id: "lyra.lyrics",
         module: lyrics::LyricsModule::module_spec,
         effects: &[
+            Effect::ReadsPersonal("lyrics", Users::Acting),
+            Effect::WritesPersonal("lyrics", Users::All),
             Effect::WritesLibrary("lyrics"),
-            Effect::WritesPersonal("lyrics"),
         ],
     },
     Metadata => {
@@ -243,14 +256,15 @@ scopes! {
     Mix => {
         id: "lyra.mix",
         module: mix::MixModule::module_spec,
-        effects: &[Effect::ReadsPersonal("recent listens")],
+        effects: &[Effect::ReadsPersonal("recent listens", Users::Acting)],
     },
     PlaybackSessions => {
         id: "lyra.playback_sessions",
         module: playback_sessions::PlaybackSessionsModule::module_spec,
         effects: &[
-            Effect::ReadsPersonal("what you are playing"),
-            Effect::WritesPersonal("playback on your devices"),
+            Effect::ReadsPersonal("what is playing", Users::All),
+            Effect::WritesPersonal("playback on their devices", Users::Acting),
+            Effect::WritesPersonal("listening history", Users::Acting),
         ],
     },
     PlaybackSources => {
@@ -262,8 +276,8 @@ scopes! {
         id: "lyra.playlists",
         module: playlists::PlaylistsModule::module_spec,
         effects: &[
-            Effect::ReadsPersonal("playlists"),
-            Effect::WritesPersonal("playlists"),
+            Effect::ReadsPersonal("playlists", Users::Acting),
+            Effect::WritesPersonal("playlists", Users::Acting),
         ],
     },
     Plugins => {
@@ -275,8 +289,8 @@ scopes! {
         id: "lyra.ratings",
         module: ratings::RatingsModule::module_spec,
         effects: &[
-            Effect::ReadsPersonal("ratings"),
-            Effect::WritesPersonal("ratings"),
+            Effect::ReadsPersonal("ratings", Users::Acting),
+            Effect::WritesPersonal("ratings", Users::Acting),
         ],
     },
     Releases => {
@@ -293,8 +307,8 @@ scopes! {
         id: "lyra.tags",
         module: tags::TagsModule::module_spec,
         effects: &[
-            Effect::ReadsPersonal("tags"),
-            Effect::WritesPersonal("tags"),
+            Effect::ReadsPersonal("tags", Users::Acting),
+            Effect::WritesPersonal("tags", Users::Acting),
         ],
     },
     TrackSources => {
@@ -310,7 +324,7 @@ scopes! {
     Users => {
         id: "lyra.users",
         module: users::UsersModule::module_spec,
-        effects: &[Effect::ReadsPersonal("user accounts")],
+        effects: &[Effect::ReadsPersonal("user accounts", Users::All)],
     },
 }
 
@@ -326,7 +340,8 @@ pub(crate) enum Risk {
     Standard,
     /// Can send data off the server and touch personal or library data.
     Elevated,
-    /// Adds endpoints or handles credentials.
+    /// Adds endpoints, handles credentials, or can send data off the server
+    /// and touch every user's personal data.
     High,
 }
 
@@ -334,19 +349,22 @@ impl Risk {
     pub(crate) fn of<'a>(effects: impl IntoIterator<Item = &'a Effect>) -> Self {
         let mut egress = false;
         let mut touches_data = false;
+        let mut touches_all_users = false;
         for effect in effects {
             match effect {
                 Effect::Exposes | Effect::Authority => return Self::High,
                 Effect::Egress => egress = true,
-                Effect::ReadsPersonal(_) | Effect::WritesPersonal(_) | Effect::WritesLibrary(_) => {
+                Effect::ReadsPersonal(_, users) | Effect::WritesPersonal(_, users) => {
                     touches_data = true;
+                    touches_all_users |= *users == Users::All;
                 }
+                Effect::WritesLibrary(_) => touches_data = true,
             }
         }
-        if egress && touches_data {
-            Self::Elevated
-        } else {
-            Self::Standard
+        match (egress, touches_all_users, touches_data) {
+            (true, true, _) => Self::High,
+            (true, false, true) => Self::Elevated,
+            _ => Self::Standard,
         }
     }
 }
@@ -470,6 +488,7 @@ mod tests {
         Effect,
         Risk,
         Scope,
+        Users,
         effects_of,
     };
 
@@ -486,21 +505,33 @@ mod tests {
             ("lyra.ids", &own),
         ]);
 
-        assert_eq!(effects.len(), 1);
+        assert_eq!(effects.len(), 2);
         assert_eq!(effects[0].effect, Effect::Egress);
         assert_eq!(effects[0].via, via(&["helper", "plugin"]));
+        assert_eq!(effects[1].effect, Effect::Exposes);
+        assert_eq!(effects[1].via, via(&["helper"]));
     }
 
     #[test]
     fn risk_rises_with_what_a_plugin_can_do() {
         assert_eq!(Risk::of(&[Effect::Egress]), Risk::Standard);
         assert_eq!(
-            Risk::of(&[Effect::ReadsPersonal("listening history")]),
+            Risk::of(&[Effect::ReadsPersonal("listening history", Users::All)]),
             Risk::Standard
         );
         assert_eq!(
-            Risk::of(&[Effect::Egress, Effect::ReadsPersonal("listening history")]),
+            Risk::of(&[
+                Effect::Egress,
+                Effect::ReadsPersonal("listening history", Users::Acting)
+            ]),
             Risk::Elevated
+        );
+        assert_eq!(
+            Risk::of(&[
+                Effect::Egress,
+                Effect::ReadsPersonal("listening history", Users::All)
+            ]),
+            Risk::High
         );
         assert_eq!(Risk::of(&[Effect::Exposes]), Risk::High);
         assert_eq!(Risk::of(&[Effect::Authority]), Risk::High);

@@ -32,6 +32,7 @@ use crate::services::auth::{
 
 pub(crate) use pipeline::{
     NameRange,
+    PersonalData,
     Query,
     counts,
     order,

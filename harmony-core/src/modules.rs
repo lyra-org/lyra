@@ -861,6 +861,13 @@ impl LuauRequireRuntime {
         self.plugin_groups.borrow().get(plugin_id).copied()
     }
 
+    /// Whether `origin` holds `capability`, by the policy that gates its
+    /// requires. Lets a module gate part of what it offers the same way.
+    pub fn allows(&self, origin: &ChunkOrigin, capability: &str) -> bool {
+        self.policy
+            .is_allowed(origin, &CapabilityId(Arc::from(capability)))
+    }
+
     /// Forgets every evaluated source and installed module table owned by
     /// `plugin_id`, so its next load resolves through the loader again.
     pub fn invalidate_plugin(&self, plugin_id: &str) {

@@ -96,14 +96,16 @@ impl<'vm> luau::FromLuau<'vm> for GenreResolveRequest {
 #[harmony_macros::module(id = "lyra/genres", docs_feature = "docgen")]
 impl GenresModule {
     #[harmony(
-        description = "The genres of the releases the caller can see that pass every filter, sorted and paged. Without `sort`, a search ranks by relevance and anything else is by name.",
+        description = "The genres of the releases the caller can see that pass every filter, sorted and paged. Without `sort`, a search ranks by relevance and anything else is by name. Sorting by `listen_count` or `last_played_at` needs the `lyra.listens` scope.",
         returns(GenrePage)
     )]
     async fn query(
         query: GenreQuery,
         #[context] db: ViewerDb,
+        #[context] scopes: catalog::PersonalScopes,
     ) -> luau::runtime::Result<luau::OwnedTable> {
         let request = query.0;
+        scopes.check(&request.query)?;
         let (db, viewer) = db.read().await?;
         let page =
             services::catalog::page(&db, &viewer, &request.query, request.offset, request.limit)

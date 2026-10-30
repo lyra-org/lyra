@@ -1982,7 +1982,10 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap();
-        let mut manifests = vec![root.join("lyra-harmony-test/tests/plugin.json")];
+        let mut manifests = vec![
+            root.join("lyra-harmony-test/tests/plugin.json"),
+            root.join("lyra-harmony-test/restricted/tests/plugin.json"),
+        ];
         for entry in std::fs::read_dir(root.join("plugins"))? {
             let manifest = entry?.path().join("plugin.json");
             if manifest.is_file() {
@@ -2833,7 +2836,7 @@ mod tests {
         crate::plugins::testing::init_default_test_state()?;
         let mut same: serde_json::Value =
             serde_json::from_str(&manifest_json("same", "1.0.0", HOST_REQUIREMENT))?;
-        same["scopes"] = serde_json::json!(["lyra.listens"]);
+        same["scopes"] = serde_json::json!(["lyra.favorites"]);
         same["dependencies"] = serde_json::json!({ "changed": "*" });
         let forge = catalog_forge_with_same(same.to_string(), changed_with_http()).await?;
         let plugins_dir = tempfile::TempDir::new()?;

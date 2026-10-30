@@ -50,6 +50,7 @@ use crate::{
             PluginEffect,
             Risk,
             ScopeGain,
+            Users,
         },
         settings::{
             self as plugin_settings_registry,
@@ -483,8 +484,9 @@ struct PluginAccessResponse {
 }
 
 /// How much care letting a plugin run calls for: `high` when it adds
-/// endpoints or handles credentials, `elevated` when it can send data off
-/// the server and touch personal or library data, else `standard`.
+/// endpoints, handles credentials, or can send data off the server and touch
+/// every user's personal data, `elevated` when it can send data off the
+/// server and touch personal or library data, else `standard`.
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -505,10 +507,10 @@ impl From<Risk> for RiskResponse {
 }
 
 /// `egress`: sends data off the server. `exposes`: adds endpoints to the
-/// server. `authority`: handles credentials and sign-in sessions.
-/// `reads_personal` and `writes_personal`: reads or changes the `data` of
-/// the users it acts for. `writes_library`: changes the shared library's
-/// `data`.
+/// server or listens on the network. `authority`: handles credentials and
+/// sign-in sessions. `reads_personal` and `writes_personal`: reads or
+/// changes the personal `data` of the `users` it names.
+/// `writes_library`: changes the shared library's `data`.
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -528,25 +530,52 @@ struct EffectResponse {
     /// The data the effect concerns, for the kinds that name one.
     #[serde(skip_serializing_if = "Option::is_none")]
     data: Option<String>,
+    /// Whose personal data it reaches, for the personal kinds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    users: Option<UsersResponse>,
     /// The plugins whose scopes give the effect: the plugin itself or its
     /// dependencies.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     via: Vec<String>,
 }
 
+/// `acting`: the users the plugin acts for. `all`: every user's, whoever
+/// it acts for.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum UsersResponse {
+    Acting,
+    All,
+}
+
+impl From<Users> for UsersResponse {
+    fn from(users: Users) -> Self {
+        match users {
+            Users::Acting => Self::Acting,
+            Users::All => Self::All,
+        }
+    }
+}
+
 impl From<PluginEffect> for EffectResponse {
     fn from(effect: PluginEffect) -> Self {
-        let (kind, data) = match effect.effect {
-            Effect::Egress => (EffectKind::Egress, None),
-            Effect::Exposes => (EffectKind::Exposes, None),
-            Effect::Authority => (EffectKind::Authority, None),
-            Effect::ReadsPersonal(data) => (EffectKind::ReadsPersonal, Some(data)),
-            Effect::WritesPersonal(data) => (EffectKind::WritesPersonal, Some(data)),
-            Effect::WritesLibrary(data) => (EffectKind::WritesLibrary, Some(data)),
+        let (kind, data, users) = match effect.effect {
+            Effect::Egress => (EffectKind::Egress, None, None),
+            Effect::Exposes => (EffectKind::Exposes, None, None),
+            Effect::Authority => (EffectKind::Authority, None, None),
+            Effect::ReadsPersonal(data, users) => {
+                (EffectKind::ReadsPersonal, Some(data), Some(users))
+            }
+            Effect::WritesPersonal(data, users) => {
+                (EffectKind::WritesPersonal, Some(data), Some(users))
+            }
+            Effect::WritesLibrary(data) => (EffectKind::WritesLibrary, Some(data), None),
         };
         Self {
             kind,
             data: data.map(ToString::to_string),
+            users: users.map(Into::into),
             via: effect.via.into_iter().collect(),
         }
     }

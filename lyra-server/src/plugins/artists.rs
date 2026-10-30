@@ -122,14 +122,16 @@ impl ArtistsModule {
     }
 
     #[harmony(
-        description = "The artists the caller can see that pass every filter, sorted and paged. Artists are visible through credits on releases or tracks the caller can see. Without `sort`, a search ranks by relevance and anything else is by sort name.",
+        description = "The artists the caller can see that pass every filter, sorted and paged. Artists are visible through credits on releases or tracks the caller can see. Without `sort`, a search ranks by relevance and anything else is by sort name. Filtering by `favorite`, `listened` or a rating, or sorting by listens or rating, needs the `lyra.favorites`, `lyra.listens` or `lyra.ratings` scope respectively.",
         returns(ArtistPage)
     )]
     async fn query(
         query: ArtistQuery,
         #[context] db: ViewerDb,
+        #[context] scopes: catalog::PersonalScopes,
     ) -> luau::runtime::Result<luau::ReturnValues> {
         let request = query.0;
+        scopes.check(&request.query)?;
         let (db, viewer) = db.read().await?;
         let page =
             services::catalog::page(&db, &viewer, &request.query, request.offset, request.limit)

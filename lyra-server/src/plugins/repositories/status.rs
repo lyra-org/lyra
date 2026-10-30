@@ -862,7 +862,7 @@ mod tests {
     fn releases_are_held_for_scopes_their_dependents_would_reach() {
         let installed = [
             with_scopes(manifest("a", "1.0.0", &[]), &["lyra.metadata"]),
-            with_scopes(manifest("b", "1.0.0", &[("a", "^1")]), &["lyra.listens"]),
+            with_scopes(manifest("b", "1.0.0", &[("a", "^1")]), &["lyra.favorites"]),
         ];
         let mut a = release("1.1.0", &[]);
         a.scopes = vec!["lyra.metadata".into(), "harmony.http".into()];
@@ -913,7 +913,7 @@ mod tests {
     fn held_releases_describe_what_each_plugin_newly_reaches_and_its_risk() {
         let installed = [
             manifest("a", "1.0.0", &[]),
-            with_scopes(manifest("b", "1.0.0", &[("a", "^1")]), &["lyra.listens"]),
+            with_scopes(manifest("b", "1.0.0", &[("a", "^1")]), &["lyra.favorites"]),
         ];
         let mut a = release("1.1.0", &[]);
         a.scopes = vec!["harmony.http".into()];
@@ -937,7 +937,7 @@ mod tests {
         assert_eq!(
             (&gains["b"].effects, gains["b"].risk),
             (&egress, Risk::Elevated),
-            "b sends data off the server through a, and touches its listens"
+            "b sends data off the server through a, and touches its favorites"
         );
     }
 }

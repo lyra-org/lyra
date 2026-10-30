@@ -7,13 +7,18 @@
 
 use std::{
     cmp::Ordering,
-    collections::HashMap,
+    collections::{
+        BTreeSet,
+        HashMap,
+    },
 };
 
 use agdb::{
     DbAny,
     DbId,
 };
+
+use lyra_db::ratings::RatingFilter;
 
 use super::{
     CatalogError,
@@ -42,6 +47,11 @@ pub(crate) trait SortKey: Copy + Eq + std::fmt::Debug + 'static {
     const RELEVANCE: Self;
 
     fn kind(self) -> KeyKind;
+
+    /// The viewer's personal data the key orders by, if any.
+    fn personal(self) -> Option<PersonalData> {
+        None
+    }
 
     /// Whether an entity without a value sorts ahead of every value, in both directions.
     /// Otherwise it sorts after them.
@@ -83,10 +93,41 @@ pub(crate) struct Row {
     pub(crate) values: Vec<Option<SortValue>>,
 }
 
+/// Data of the viewer's own that a query can filter or sort by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum PersonalData {
+    Favorites,
+    Listens,
+    Ratings,
+}
+
+impl PersonalData {
+    /// What `favorite`, `listened` and `rating` filters read.
+    pub(crate) fn of_filter(
+        favorite: Option<bool>,
+        listened: Option<bool>,
+        rating: RatingFilter,
+    ) -> Vec<Self> {
+        [
+            favorite.map(|_| Self::Favorites),
+            listened.map(|_| Self::Listens),
+            (!rating.is_empty()).then_some(Self::Ratings),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+}
+
 pub(crate) trait Catalog {
     type Key: SortKey;
     type Filter;
     type Item;
+
+    /// The viewer's personal data the filter reads.
+    fn personal(_filter: &Self::Filter) -> Vec<PersonalData> {
+        Vec::new()
+    }
 
     /// The filter that keeps just these ids.
     fn id_filter(ids: Vec<DbId>) -> Self::Filter;
@@ -183,6 +224,14 @@ impl<C: Catalog> Query<C> {
             sort: Vec::new(),
             seed: 0,
         }
+    }
+
+    /// The viewer's personal data the query reads to filter or sort.
+    pub(crate) fn personal(&self) -> BTreeSet<PersonalData> {
+        C::personal(&self.filter)
+            .into_iter()
+            .chain(self.sort.iter().filter_map(|(key, _)| key.personal()))
+            .collect()
     }
 }
 

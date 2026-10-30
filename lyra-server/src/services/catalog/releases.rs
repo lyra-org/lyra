@@ -18,6 +18,7 @@ use super::{
     CatalogError,
     CreditRole,
     Direction,
+    PersonalData,
     SortSpec,
     Viewer,
     all_releases,
@@ -88,6 +89,14 @@ impl SortKey for ReleaseKey {
             _ => KeyKind::Field,
         }
     }
+
+    fn personal(self) -> Option<PersonalData> {
+        match self {
+            Self::ListenCount | Self::LastPlayedAt => Some(PersonalData::Listens),
+            Self::Rating => Some(PersonalData::Ratings),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -112,6 +121,10 @@ impl Catalog for Releases {
     type Key = ReleaseKey;
     type Filter = ReleaseFilter;
     type Item = Release;
+
+    fn personal(filter: &ReleaseFilter) -> Vec<PersonalData> {
+        PersonalData::of_filter(filter.favorite, filter.listened, filter.rating)
+    }
 
     fn id_filter(ids: Vec<DbId>) -> ReleaseFilter {
         ReleaseFilter {

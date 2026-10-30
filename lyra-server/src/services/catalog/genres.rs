@@ -17,6 +17,7 @@ use super::{
     Candidates,
     CatalogError,
     Direction,
+    PersonalData,
     SortSpec,
     Viewer,
     all_releases,
@@ -67,6 +68,13 @@ impl SortKey for GenreKey {
             Self::Random => KeyKind::Random,
             Self::Id => KeyKind::Id,
             _ => KeyKind::Field,
+        }
+    }
+
+    fn personal(self) -> Option<PersonalData> {
+        match self {
+            Self::ListenCount | Self::LastPlayedAt => Some(PersonalData::Listens),
+            _ => None,
         }
     }
 }

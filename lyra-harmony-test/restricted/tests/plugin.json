@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "restricted",
+  "name": "Restricted Harness Module Tests",
+  "version": "1.0.0",
+  "lyra": "0.0.1-dev",
+  "description": "Luau tests of what server-provided plugin modules refuse a plugin lacking their scopes",
+  "scopes": [
+    "lyra.artists",
+    "lyra.genres",
+    "lyra.releases",
+    "lyra.tracks"
+  ]
+}

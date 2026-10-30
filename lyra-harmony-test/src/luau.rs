@@ -132,13 +132,15 @@ mod tests {
 
     #[tokio::test]
     async fn runs_checked_in_luau_tests() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests")
-            .canonicalize()
-            .expect("canonicalize checked-in Luau tests");
-        let tests = discover(&root, None).expect("discover checked-in Luau tests");
-        let summary = run(&root, tests).await.expect("run checked-in Luau tests");
+        for dir in ["tests", "restricted/tests"] {
+            let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join(dir)
+                .canonicalize()
+                .expect("canonicalize checked-in Luau tests");
+            let tests = discover(&root, None).expect("discover checked-in Luau tests");
+            let summary = run(&root, tests).await.expect("run checked-in Luau tests");
 
-        assert_eq!(summary.failed, 0);
+            assert_eq!(summary.failed, 0, "{dir}");
+        }
     }
 }

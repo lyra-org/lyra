@@ -265,12 +265,15 @@ has changed since fails to install.
 
 Previews, and updates held for the scopes they reach, describe what the
 scopes reached let a plugin do, and which plugins' scopes each effect
-comes through: send data off the server, add endpoints, handle
-credentials, read or change the personal data of the users it acts for, or
-change the shared library. A risk level summarises them: `high` for
-plugins that add endpoints or handle credentials, `elevated` for plugins
-that can send data off the server and touch personal or library data, and
-`standard` otherwise. A preview counts a dependency both as installed and
+comes through: send data off the server, add endpoints or listen on the
+network, handle credentials, read or change personal data, either of the
+users it acts for or of every user, or change the shared library. A risk
+level summarises them: `high` for plugins that add endpoints, handle
+credentials, or can send data off the server and touch every user's
+personal data, `elevated` for plugins that can send data off the server
+and touch personal or library data, and `standard` otherwise. Filtering or
+sorting the catalog by a user's favorites, listens or ratings needs the
+scope that gates that data. A preview counts a dependency both as installed and
 as the repository offers it, since installing them together replaces the
 installed one. A preview also lists installed plugins that depend on the
 plugin, optionally or not, and what installing it would let them newly

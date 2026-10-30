@@ -7,6 +7,7 @@
 
 use std::collections::{
     BTreeMap,
+    BTreeSet,
     HashMap,
 };
 
@@ -32,6 +33,7 @@ use crate::{
     plugins::{
         args,
         db::ViewerDb,
+        scopes::Scope,
     },
     services::{
         self,
@@ -42,6 +44,7 @@ use crate::{
             Direction,
             NameRange,
             Page,
+            PersonalData,
             Query,
             Viewer,
             pipeline::{
@@ -54,6 +57,53 @@ use crate::{
 
 pub(crate) fn error(error: CatalogError) -> luau::Error {
     crate::plugins::runtime_error(error)
+}
+
+/// The personal data whose scopes the calling plugin declares. Filtering or
+/// sorting by a viewer's favorites, listens or ratings reads them, so a query
+/// needs the scope that gates them, as if it used that module.
+pub(crate) struct PersonalScopes(BTreeSet<PersonalData>);
+
+impl luau::FromCallFrame for PersonalScopes {
+    fn from_call_frame(vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
+        let require = vm.data().get::<harmony_core::luau::RequireRuntime>()?;
+        Ok(Self(
+            [
+                PersonalData::Favorites,
+                PersonalData::Listens,
+                PersonalData::Ratings,
+            ]
+            .into_iter()
+            .filter(|data| require.allows(&context.origin, scope_of(*data).def().id))
+            .collect(),
+        ))
+    }
+}
+
+impl PersonalScopes {
+    /// Raises when `query` reads personal data whose scope the caller lacks.
+    pub(crate) fn check<C: Catalog>(&self, query: &Query<C>) -> luau::runtime::Result<()> {
+        match query.personal().difference(&self.0).next() {
+            None => Ok(()),
+            Some(data) => Err(crate::plugins::runtime_error(format!(
+                "filtering or sorting by the caller's {} requires the {} scope",
+                match data {
+                    PersonalData::Favorites => "favorites",
+                    PersonalData::Listens => "listens",
+                    PersonalData::Ratings => "ratings",
+                },
+                scope_of(*data).def().id,
+            ))),
+        }
+    }
+}
+
+fn scope_of(data: PersonalData) -> Scope {
+    match data {
+        PersonalData::Favorites => Scope::Favorites,
+        PersonalData::Listens => Scope::Listens,
+        PersonalData::Ratings => Scope::Ratings,
+    }
 }
 
 /// A query read from the fields every catalog shares, with the page bounds.

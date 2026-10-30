@@ -19,6 +19,7 @@ use super::{
     CatalogError,
     CreditRole,
     Direction,
+    PersonalData,
     SortSpec,
     Viewer,
     credited_owners,
@@ -93,6 +94,14 @@ impl SortKey for TrackKey {
         }
     }
 
+    fn personal(self) -> Option<PersonalData> {
+        match self {
+            Self::ListenCount | Self::LastPlayedAt => Some(PersonalData::Listens),
+            Self::Rating => Some(PersonalData::Ratings),
+            _ => None,
+        }
+    }
+
     fn missing_first(self) -> bool {
         matches!(self, Self::Disc | Self::Track)
     }
@@ -130,6 +139,10 @@ impl Catalog for Tracks {
     type Key = TrackKey;
     type Filter = TrackFilter;
     type Item = Track;
+
+    fn personal(filter: &TrackFilter) -> Vec<PersonalData> {
+        PersonalData::of_filter(filter.favorite, filter.listened, filter.rating)
+    }
 
     fn id_filter(ids: Vec<DbId>) -> TrackFilter {
         TrackFilter {
