@@ -908,6 +908,9 @@ pub struct LuauRequireRuntime {
     /// The task group of each plugin's current run. Only the host starts a
     /// run; a plugin's sources load only while it has one.
     plugin_groups: std::cell::RefCell<HashMap<Arc<str>, crate::TaskGroupId>>,
+    /// The globals each plugin's code writes, kept apart so plugins can't
+    /// change each other's. Code outside any plugin shares the `None` scope.
+    global_scopes: std::cell::RefCell<HashMap<Option<Arc<str>>, luau::Table>>,
     loader: Box<dyn SourceLoader>,
     policy: Box<dyn CapabilityPolicy>,
 }
@@ -924,6 +927,7 @@ impl LuauRequireRuntime {
             plugin_generations: std::cell::RefCell::new(HashMap::new()),
             in_flight_sources: std::cell::RefCell::new(HashSet::new()),
             plugin_groups: std::cell::RefCell::new(HashMap::new()),
+            global_scopes: std::cell::RefCell::new(HashMap::new()),
             loader: Box::new(loader),
             policy: Box::new(policy),
         }
@@ -931,6 +935,21 @@ impl LuauRequireRuntime {
 
     pub fn register(&self, module: GatedModule) -> std::result::Result<(), ModuleLoadError> {
         self.registry.borrow_mut().register(module)
+    }
+
+    fn global_scope(
+        &self,
+        vm: &luau::Vm,
+        plugin: Option<&Arc<str>>,
+    ) -> luau::runtime::Result<luau::Table> {
+        if let Some(scope) = self.global_scopes.borrow().get(&plugin.cloned()) {
+            return Ok(scope.clone());
+        }
+        let scope = vm.create_global_scope()?;
+        self.global_scopes
+            .borrow_mut()
+            .insert(plugin.cloned(), scope.clone());
+        Ok(scope)
     }
 
     /// The task group of `plugin_id`'s current run, starting a run when it
@@ -1035,9 +1054,14 @@ pub(crate) fn load_chunk_with_require(
     task_group: crate::TaskGroupId,
 ) -> luau::runtime::Result<luau::Function> {
     let require = luau::Value::Function(bound_require(vm, origin, task_group)?);
+    let scope = vm
+        .data()
+        .get::<LuauRequireRuntime>()?
+        .global_scope(vm, origin.plugin.as_ref())?;
     vm.load_chunk_with_globals(
         &luau::Chunk::new(source, origin.clone()),
         &[("require", &require)],
+        &scope,
     )
 }
 

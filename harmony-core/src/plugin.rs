@@ -1385,6 +1385,8 @@ where
         for globals in self.global_specs {
             install_globals(&vm, &ChunkOrigin::default(), &globals)?;
         }
+        // Every plugin shares these globals and libraries, so none may change them.
+        vm.sandbox()?;
 
         Ok(Runtime {
             vm,
@@ -2089,12 +2091,8 @@ mod tests {
         )
         .plugins(Arc::from(vec![plugin]))
         .build()?;
-        let read_answer = |runtime: &super::Runtime| {
-            runtime.eval_source_with_context(
-                Arc::<[u8]>::from(&b"return demo_answer"[..]),
-                CallContext::default(),
-            )
-        };
+        let read_answer =
+            |runtime: &super::Runtime| eval_as(runtime, "demo", b"return demo_answer");
 
         runtime.exec_plugin("demo")?;
         assert_eq!(read_answer(&runtime)?, vec![luau::Value::Number(1.0)]);
@@ -2518,6 +2516,46 @@ mod tests {
             recorded_after(&runtime, &recorded),
             ["lib", "app"],
             "stopping lib cancels the task its entrypoint spawned"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_plugin_cannot_change_the_globals_or_libraries_another_plugin_sees() -> anyhow::Result<()> {
+        let recorded = Arc::new(Mutex::new(Vec::new()));
+        let runtime = task_test_runtime_with(
+            recorded.clone(),
+            &[
+                (
+                    "first",
+                    &[],
+                    r#"
+                        local tasks = require('@test/tasks')
+                        written = "first"
+                        print = nil
+                        tasks.record(tostring(pcall(function() string.upper = string.lower end)))
+                        tasks.record(tostring(pcall(function() _G.written = "first" end)))
+                        return {}
+                    "#,
+                ),
+                (
+                    "second",
+                    &["first"],
+                    r#"
+                        require('@first')
+                        local tasks = require('@test/tasks')
+                        tasks.record(tostring(written))
+                        tasks.record(type(print))
+                        tasks.record(string.upper("a"))
+                    "#,
+                ),
+            ],
+            &[],
+        )?;
+        assert!(runtime.exec_all().is_empty());
+        assert_eq!(
+            *recorded.lock().expect("recorded mutex poisoned"),
+            ["false", "false", "nil", "function", "A"]
         );
         Ok(())
     }

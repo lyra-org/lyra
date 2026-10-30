@@ -389,14 +389,33 @@ impl Vm {
         })
     }
 
+    /// A table for [`Vm::load_chunk_with_globals`] that reads through to the
+    /// shared globals and keeps the writes of the chunks loaded with it.
+    pub fn create_global_scope(&self) -> Result<Table> {
+        let guard = self.stack_guard();
+        let state = self.inner.state.as_ptr();
+        unsafe {
+            gateway::create_table(state, 0, 0)?;
+            gateway::create_table(state, 0, 1)?;
+            gateway::push_value(state, sys::LUA_GLOBALSINDEX)?;
+            gateway::raw_set_field(state, -2, c"__index")?;
+            gateway::set_readonly(state, -1, true)?;
+            gateway::set_metatable(state, -2)?;
+        }
+        let reference = self.ref_top()?;
+        drop(guard);
+        Ok(Table { reference })
+    }
+
     /// Loads `chunk` with an environment of its own holding `globals`. Every
-    /// other global falls through to the shared table, and writes go there,
-    /// so only the named globals differ from a [`Vm::load_chunk`] chunk.
-    /// Functions the chunk creates share its environment.
+    /// other global is read from and written to `scope`, so chunks sharing a
+    /// scope share their globals. Functions the chunk creates share its
+    /// environment.
     pub fn load_chunk_with_globals(
         &self,
         chunk: &Chunk,
         globals: &[(&str, &Value)],
+        scope: &Table,
     ) -> Result<Function> {
         let bytecode = compile(&chunk.source.0, chunk.compile)?;
         let names = globals
@@ -413,13 +432,13 @@ impl Vm {
             self.push_value_to(loader, value)?;
             unsafe { gateway::raw_set_field(loader.as_ptr(), -2, name)? };
         }
+        unsafe { gateway::create_table(loader.as_ptr(), 0, 2)? };
+        for field in [c"__index", c"__newindex"] {
+            self.push_registry_to(loader, &scope.reference)?;
+            unsafe { gateway::raw_set_field(loader.as_ptr(), -2, field)? };
+        }
         unsafe {
             let loader = loader.as_ptr();
-            gateway::create_table(loader, 0, 2)?;
-            gateway::push_value(loader, sys::LUA_GLOBALSINDEX)?;
-            gateway::raw_set_field(loader, -2, c"__index")?;
-            gateway::push_value(loader, sys::LUA_GLOBALSINDEX)?;
-            gateway::raw_set_field(loader, -2, c"__newindex")?;
             gateway::set_readonly(loader, -1, true)?;
             gateway::set_metatable(loader, -2)?;
             sys::lua_replace(loader, sys::LUA_GLOBALSINDEX);
@@ -3943,20 +3962,22 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "requires Luau C VM")]
-    fn chunks_loaded_with_globals_keep_their_own_and_share_the_rest() -> Result<()> {
+    fn chunks_loaded_with_globals_share_writes_only_within_their_scope() -> Result<()> {
         let vm = Vm::new()?;
         vm.open_standard_libraries(StandardLibraries {
             base: true,
             ..StandardLibraries::none()
         })?;
+        let scope = vm.create_global_scope()?;
         let function = vm.load_chunk_with_globals(
             &Chunk::new(
                 Arc::<[u8]>::from(
-                    &b"--!strict\nshared = own\nlocal function read() return own end\nreturn read(), select('#', ...), ..."[..],
+                    &b"--!strict\nwritten = own\nlocal function read() return written end\nreturn read(), select('#', ...), ..."[..],
                 ),
                 ChunkOrigin::default(),
             ),
             &[("own", &Value::Number(7.0))],
+            &scope,
         )?;
         assert_eq!(
             function.call(&vm, &[Value::Number(1.0), Value::Number(2.0)])?,
@@ -3967,12 +3988,28 @@ mod tests {
                 Value::Number(2.0)
             ]
         );
+        let read = |scope: &Table| -> Result<Vec<Value>> {
+            vm.load_chunk_with_globals(
+                &Chunk::new(
+                    Arc::<[u8]>::from(&b"return written, own"[..]),
+                    ChunkOrigin::default(),
+                ),
+                &[],
+                scope,
+            )?
+            .call(&vm, &[])
+        };
+        assert_eq!(read(&scope)?, vec![Value::Number(7.0), Value::Nil]);
+        assert_eq!(
+            read(&vm.create_global_scope()?)?,
+            vec![Value::Nil, Value::Nil]
+        );
         assert_eq!(
             vm.eval(
-                Arc::<[u8]>::from(&b"return shared, own"[..]),
+                Arc::<[u8]>::from(&b"return written, own"[..]),
                 ChunkOrigin::default()
             )?,
-            vec![Value::Number(7.0), Value::Nil]
+            vec![Value::Nil, Value::Nil]
         );
         Ok(())
     }
