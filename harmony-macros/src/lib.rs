@@ -513,6 +513,10 @@ struct ModuleOptions {
     local: Option<LitStr>,
     description: Option<LitStr>,
     docs_feature: Option<LitStr>,
+    /// A `fn(ModuleSpec) -> ModuleSpec` adding what the functions don't, such as userdata.
+    extend: Option<LitStr>,
+    /// A `fn(&mut ModuleDescriptor)` adding what the functions don't, such as fields.
+    describe: Option<LitStr>,
 }
 
 struct ModuleOptionList(Punctuated<ModuleOption, Token![,]>);
@@ -548,10 +552,12 @@ fn parse_module_options(attr: TokenStream) -> syn::Result<ModuleOptions> {
             "local" => &mut options.local,
             "description" => &mut options.description,
             "docs_feature" => &mut options.docs_feature,
+            "extend" => &mut options.extend,
+            "describe" => &mut options.describe,
             _ => {
                 return Err(syn::Error::new(
                     option.key.span(),
-                    "unsupported module option; expected id, name, local, description, or docs_feature",
+                    "unsupported module option; expected id, name, local, description, docs_feature, extend, or describe",
                 ));
             }
         };
@@ -839,6 +845,18 @@ fn module_impl(mut ast: ItemImpl, options: ModuleOptions) -> syn::Result<TokenSt
     let docs_cfg = options
         .docs_feature
         .map(|feature| quote! { #[cfg(feature = #feature)] });
+    let extend = options
+        .extend
+        .as_ref()
+        .map(|path| path.parse::<syn::Path>())
+        .transpose()?
+        .map(|path| quote! { let spec = #path(spec); });
+    let describe = options
+        .describe
+        .as_ref()
+        .map(|path| path.parse::<syn::Path>())
+        .transpose()?
+        .map(|path| quote! { #path(&mut descriptor); });
 
     Ok(quote! {
         #ast
@@ -847,8 +865,10 @@ fn module_impl(mut ast: ItemImpl, options: ModuleOptions) -> syn::Result<TokenSt
         impl #self_ty {
             /// The module's functions, as the host registers them.
             pub fn module_spec() -> ::harmony_core::ModuleSpec {
-                ::harmony_core::ModuleSpec::new(#id)
-                    #(.function(#function_specs))*
+                let spec = ::harmony_core::ModuleSpec::new(#id)
+                    #(.function(#function_specs))*;
+                #extend
+                spec
             }
         }
 
@@ -856,13 +876,16 @@ fn module_impl(mut ast: ItemImpl, options: ModuleOptions) -> syn::Result<TokenSt
         #[automatically_derived]
         impl ::harmony_luau::DescribeModule for #self_ty {
             fn module_descriptor() -> ::harmony_luau::ModuleDescriptor {
-                ::harmony_luau::ModuleDescriptor {
+                #[allow(unused_mut)]
+                let mut descriptor = ::harmony_luau::ModuleDescriptor {
                     name: #name,
                     local_name: #local,
                     description: #description,
                     fields: ::std::vec::Vec::new(),
                     functions: vec![#(#function_descriptors),*],
-                }
+                };
+                #describe
+                descriptor
             }
         }
     })

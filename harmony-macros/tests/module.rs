@@ -9,12 +9,15 @@ use harmony_core::{
     CallContext,
     ChunkOrigin,
     LocalScheduler,
+    ModuleSpec,
     TokioRuntimeContext,
 };
 use harmony_luau::{
     self as luau,
     DescribeModule,
     LuauType,
+    ModuleDescriptor,
+    ModuleFieldDescriptor,
 };
 
 /// The caller's greeting, which the host puts in the call context.
@@ -28,7 +31,24 @@ impl luau::FromCallFrame for Greeting {
 
 struct DemoModule;
 
-#[harmony_macros::module(id = "demo/greetings", description = "Greets people.")]
+fn install_greeting_count(spec: ModuleSpec) -> ModuleSpec {
+    spec.initializer(|vm, _origin, table| table.set_raw(vm, "greeting_count", 3_i64.into()))
+}
+
+fn describe_greeting_count(descriptor: &mut ModuleDescriptor) {
+    descriptor.fields.push(ModuleFieldDescriptor {
+        path: vec!["greeting_count"],
+        description: None,
+        ty: LuauType::literal("number"),
+    });
+}
+
+#[harmony_macros::module(
+    id = "demo/greetings",
+    description = "Greets people.",
+    extend = "install_greeting_count",
+    describe = "describe_greeting_count"
+)]
 impl DemoModule {
     #[harmony(description = "Adds one.")]
     fn add_one(value: i64) -> i64 {
@@ -96,6 +116,23 @@ fn module_functions_read_their_arguments_by_name() -> luau::runtime::Result<()> 
 
     let failed = run("return demo.text.shout('')", CallContext::default())?;
     assert_eq!(failed[0], luau::Value::Boolean(false));
+    Ok(())
+}
+
+#[test]
+fn modules_extend_their_spec_and_descriptor() -> luau::runtime::Result<()> {
+    assert_eq!(
+        run("return demo.greeting_count", CallContext::default())?,
+        vec![luau::Value::Boolean(true), luau::Value::Number(3.0)]
+    );
+    assert_eq!(
+        DemoModule::module_descriptor()
+            .fields
+            .iter()
+            .map(|field| field.path.clone())
+            .collect::<Vec<_>>(),
+        vec![vec!["greeting_count"]]
+    );
     Ok(())
 }
 
