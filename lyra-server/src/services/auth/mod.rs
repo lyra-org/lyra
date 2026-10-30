@@ -6,6 +6,7 @@
 use std::{
     collections::HashSet,
     fmt::Write,
+    num::NonZeroUsize,
     sync::LazyLock,
 };
 
@@ -42,6 +43,31 @@ static DUMMY_PASSWORD_HASH: LazyLock<String> = LazyLock::new(|| {
         .expect("dummy password hash must hash successfully")
         .to_string()
 });
+
+/// Password checks are deliberately expensive, so only this many run at once across the server,
+/// whatever number of addresses the logins come from; the rest wait their turn.
+static PASSWORD_CHECKS: LazyLock<tokio::sync::Semaphore> = LazyLock::new(|| {
+    let cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
+    tokio::sync::Semaphore::new((cores / 2).max(1))
+});
+
+/// Checks `password` against a stored hash off the async workers.
+async fn password_matches(password: &str, hash: String) -> AuthResult<bool> {
+    let _permit = PASSWORD_CHECKS
+        .acquire()
+        .await
+        .expect("the password check semaphore is never closed");
+    let password = password.to_owned();
+    tokio::task::spawn_blocking(move || -> anyhow::Result<bool> {
+        let parsed = PasswordHash::new(&hash)?;
+        Ok(Argon2::default()
+            .verify_password(password.as_bytes(), &parsed)
+            .is_ok())
+    })
+    .await
+    .map_err(anyhow::Error::from)?
+    .map_err(AuthError::from)
+}
 
 pub(crate) mod access;
 pub(crate) mod api_keys;
@@ -592,31 +618,29 @@ pub(crate) async fn login_with_password(
         return create_login_result(principal, metadata).await.map(Some);
     }
 
-    let db = STATE.db.read().await;
-    let maybe_user = lyra_db::users::get_by_username(&db, username).map_err(AuthError::from)?;
-
-    let argon2 = Argon2::default();
+    let maybe_user = {
+        let db = STATE.db.read().await;
+        lyra_db::users::get_by_username(&db, username).map_err(AuthError::from)?
+    };
     let Some(user) = maybe_user else {
-        let dummy = PasswordHash::new(&DUMMY_PASSWORD_HASH)
-            .map_err(anyhow::Error::from)
-            .map_err(AuthError::from)?;
-        let _ = argon2.verify_password(password.as_bytes(), &dummy);
+        password_matches(password, DUMMY_PASSWORD_HASH.clone()).await?;
         return Ok(None);
     };
-
-    let parsed_hash = PasswordHash::new(&user.password)
-        .map_err(anyhow::Error::from)
-        .map_err(AuthError::from)?;
-    if argon2
-        .verify_password(password.as_bytes(), &parsed_hash)
-        .is_err()
-    {
+    if !password_matches(password, user.password.clone()).await? {
         return Ok(None);
     }
 
     let user_db_id = user
         .db_id
         .ok_or_else(|| anyhow::anyhow!("user has no db_id"))?;
+    let db = STATE.db.read().await;
+    // The check ran without the lock, so the user must still exist with the password it checked.
+    let Some(user) = lyra_db::users::get_by_id(&*db, user_db_id)
+        .map_err(AuthError::from)?
+        .filter(|current| current.password == user.password)
+    else {
+        return Ok(None);
+    };
     let principal = resolve_principal(&db, user_db_id, user);
     drop(db);
 
