@@ -92,6 +92,10 @@ impl DemoModule {
         assert_eq!(origin, context.origin);
         Ok(origin.plugin.as_deref().map(str::to_string))
     }
+
+    fn total(label: String, values: luau::Variadic<i64>) -> String {
+        format!("{label}: {}", values.0.iter().sum::<i64>())
+    }
 }
 
 #[harmony_macros::userdata]
@@ -261,6 +265,44 @@ fn functions_borrow_or_own_the_vm_call_context_and_origin() -> luau::runtime::Re
             vec![luau::Value::Boolean(true), string("demo-plugin")]
         );
     }
+    Ok(())
+}
+
+#[test]
+fn variadic_parameters_take_the_remaining_arguments() -> luau::runtime::Result<()> {
+    assert_eq!(
+        run("return demo.total('sum', 1, 2, 3)", CallContext::default())?,
+        vec![luau::Value::Boolean(true), string("sum: 6")]
+    );
+    assert_eq!(
+        run("return demo.total('none')", CallContext::default())?,
+        vec![luau::Value::Boolean(true), string("none: 0")]
+    );
+
+    let failed = run("return demo.total('bad', 1, 'x')", CallContext::default())?;
+    assert_eq!(failed[0], luau::Value::Boolean(false));
+    let luau::Value::String(message) = &failed[1] else {
+        panic!("expected an error message, got {:?}", failed[1]);
+    };
+    assert!(String::from_utf8_lossy(message).contains("argument `arg3` expected number"));
+
+    let descriptor = DemoModule::module_descriptor();
+    let total = descriptor
+        .functions
+        .iter()
+        .find(|function| function.path == ["total"])
+        .expect("total is documented");
+    assert_eq!(
+        total
+            .params
+            .iter()
+            .map(|param| (param.name, param.ty.clone(), param.variadic))
+            .collect::<Vec<_>>(),
+        vec![
+            ("label", LuauType::literal("string"), false),
+            ("values", LuauType::literal("number"), true),
+        ]
+    );
     Ok(())
 }
 

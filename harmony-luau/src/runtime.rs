@@ -2537,6 +2537,23 @@ where
     }
 }
 
+/// The remaining arguments of a call, each read as `T`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Variadic<T>(pub Vec<T>);
+
+impl<'vm, T> FromLuau<'vm> for Variadic<T>
+where
+    T: FromLuau<'vm>,
+{
+    fn read(reader: &mut ArgReader<'vm>) -> Result<Self> {
+        let mut values = Vec::new();
+        while !reader.cursor.is_finished() {
+            values.push(T::read(reader)?);
+        }
+        Ok(Self(values))
+    }
+}
+
 impl<T> ToLuau for Option<T>
 where
     T: ToLuau,

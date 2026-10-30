@@ -88,6 +88,8 @@ struct MethodParameter<'a> {
     ident: &'a Ident,
     ty: &'a Type,
     name_lit: LitStr,
+    /// A trailing `Variadic<T>` that takes the remaining arguments.
+    variadic: bool,
 }
 
 impl Parse for UserDataOptionList {
@@ -407,9 +409,9 @@ pub fn userdata_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
         let call_args = call_argument_tokens(&parameters);
         let arguments = luau_arguments(&parameters);
         let method_argument_names = std::iter::once(lit_str("self", fn_name.span()))
-            .chain(arguments.iter().map(|param| param.name_lit.clone()))
+            .chain(named_arguments(&arguments).map(|param| param.name_lit.clone()))
             .collect::<Vec<_>>();
-        let spec_argument_names = arguments.iter().map(|param| &param.name_lit);
+        let spec_argument_names = named_arguments(&arguments).map(|param| &param.name_lit);
         method_specs.push(quote! {
             ::harmony_core::FunctionSpec::new(#fn_name_lit)
                 #(.arg_name(#spec_argument_names))*
@@ -579,7 +581,7 @@ enum Parameter<'a> {
 
 /// Classifies every parameter but the receiver.
 fn function_parameters(inputs: &Punctuated<FnArg, Token![,]>) -> syn::Result<Vec<Parameter<'_>>> {
-    inputs
+    let parameters = inputs
         .iter()
         .filter_map(|argument| match argument {
             FnArg::Typed(pat_type) => Some(pat_type),
@@ -616,9 +618,21 @@ fn function_parameters(inputs: &Punctuated<FnArg, Token![,]>) -> syn::Result<Vec
                 ident: &pattern.ident,
                 ty,
                 name_lit: argument_name(&pattern.ident),
+                variadic: is_variadic_type(ty),
             }))
         })
-        .collect()
+        .collect::<syn::Result<Vec<_>>>()?;
+
+    let arguments = luau_arguments(&parameters);
+    if let Some((_, leading)) = arguments.split_last()
+        && let Some(argument) = leading.iter().find(|argument| argument.variadic)
+    {
+        return Err(syn::Error::new(
+            argument.ty.span(),
+            "a Variadic parameter must be the last Luau argument",
+        ));
+    }
+    Ok(parameters)
 }
 
 /// The Luau name of an argument: its identifier without a leading `_`, so a parameter the
@@ -644,6 +658,10 @@ fn frame_borrow(ty: &Type) -> Option<TokenStream2> {
     }
 }
 
+fn is_variadic_type(ty: &Type) -> bool {
+    matches!(ty, Type::Path(path) if is_type_path_named(path, "Variadic"))
+}
+
 fn is_frame_type(ty: &Type) -> bool {
     is_type_named(ty, "Vm") || is_type_named(ty, "CallContext") || is_type_named(ty, "ChunkOrigin")
 }
@@ -664,13 +682,27 @@ fn luau_arguments<'a>(parameters: &'a [Parameter<'a>]) -> Vec<&'a MethodParamete
         .collect()
 }
 
+/// The arguments Luau labels in errors by name; a trailing `Variadic` has none.
+fn named_arguments<'a>(
+    arguments: &'a [&'a MethodParameter<'a>],
+) -> impl Iterator<Item = &'a MethodParameter<'a>> {
+    arguments
+        .iter()
+        .copied()
+        .filter(|argument| !argument.variadic)
+}
+
 /// Reads the Luau arguments by name, then the context values.
 fn read_parameter_tokens(parameters: &[Parameter<'_>]) -> TokenStream2 {
     let arguments = luau_arguments(parameters).into_iter().map(|argument| {
         let ident = argument.ident;
         let ty = argument.ty;
         let name = &argument.name_lit;
-        quote! { let #ident: #ty = frame.args.read_named(#name)?; }
+        if argument.variadic {
+            quote! { let #ident: #ty = frame.args.read()?; }
+        } else {
+            quote! { let #ident: #ty = frame.args.read_named(#name)?; }
+        }
     });
     let context = parameters.iter().filter_map(|parameter| match parameter {
         Parameter::Context { ident, ty } => Some(quote! {
@@ -843,7 +875,7 @@ fn module_impl(mut ast: ItemImpl, options: ModuleOptions) -> syn::Result<TokenSt
         let call_arguments = call_argument_tokens(&parameters);
         let call = quote! { <#self_ty>::#fn_name(#(#call_arguments),*) };
         let body = call_body(kind, &call, &fn_item.sig.output);
-        let argument_names = arguments.iter().map(|argument| &argument.name_lit);
+        let argument_names = named_arguments(&arguments).map(|argument| &argument.name_lit);
 
         let spec = match kind {
             CallKind::Sync => quote! {
@@ -942,23 +974,29 @@ fn parameter_descriptors(
         Some(overrides) => overrides
             .iter()
             .map(|argument| {
-                parameter_descriptor_tokens(&lit_str(&argument.name, span), &argument.ty)
+                parameter_descriptor_tokens(
+                    &lit_str(&argument.name, span),
+                    &argument.ty,
+                    is_variadic_type(&argument.ty),
+                )
             })
             .collect(),
         None => arguments
             .iter()
-            .map(|argument| parameter_descriptor_tokens(&argument.name_lit, argument.ty))
+            .map(|argument| {
+                parameter_descriptor_tokens(&argument.name_lit, argument.ty, argument.variadic)
+            })
             .collect(),
     }
 }
 
-fn parameter_descriptor_tokens(name: &LitStr, ty: &Type) -> TokenStream2 {
+fn parameter_descriptor_tokens(name: &LitStr, ty: &Type, variadic: bool) -> TokenStream2 {
     quote! {
         ::harmony_luau::ParameterDescriptor {
             name: #name,
             ty: <#ty as ::harmony_luau::LuauTypeInfo>::luau_type(),
             description: None,
-            variadic: false,
+            variadic: #variadic,
         }
     }
 }

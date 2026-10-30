@@ -63,6 +63,7 @@ pub use runtime::{
     UserDataRef,
     UserDataTag,
     Value,
+    Variadic,
     Vm,
     VmData,
     VmOptions,
@@ -505,6 +506,15 @@ where
 }
 
 impl<T> LuauTypeInfo for Box<T>
+where
+    T: LuauTypeInfo,
+{
+    fn luau_type() -> LuauType {
+        T::luau_type()
+    }
+}
+
+impl<T> LuauTypeInfo for Variadic<T>
 where
     T: LuauTypeInfo,
 {
