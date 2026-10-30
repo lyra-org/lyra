@@ -72,7 +72,7 @@ impl PluginExecutor {
 
 #[harmony_macros::userdata(name = "ApiWebSocketReader")]
 #[derive(Clone)]
-struct ApiWebSocketReader {
+pub(crate) struct ApiWebSocketReader {
     inbound: Arc<tokio::sync::Mutex<tokio::sync::mpsc::Receiver<String>>>,
     state: Arc<WebSocketState>,
 }
@@ -99,7 +99,7 @@ impl ApiWebSocketReader {
 
 #[harmony_macros::userdata(name = "ApiWebSocketSender")]
 #[derive(Clone)]
-struct ApiWebSocketSender {
+pub(crate) struct ApiWebSocketSender {
     outbound: tokio::sync::mpsc::Sender<String>,
     state: Arc<WebSocketState>,
 }

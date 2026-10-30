@@ -31,6 +31,10 @@ pub(crate) use self::metadata::{
     dispatch_id_links_in_vm,
     dispatch_similar_releases_in_vm,
 };
+pub(crate) use self::websocket::{
+    ApiWebSocketReader,
+    ApiWebSocketSender,
+};
 use crate::services::plugin_dispatch::{
     DispatchCancellation,
     MetadataRefreshRequest,

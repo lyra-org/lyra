@@ -19,6 +19,7 @@ use crate::plugins::settings::descriptors::{
 };
 use crate::plugins::settings::{
     self,
+    SettingsBuilder,
     UserSettingsAccessor,
 };
 
@@ -52,7 +53,7 @@ pub(crate) struct PluginsModule;
 #[harmony_macros::module(
     id = "lyra/plugins",
     docs_feature = "docgen",
-    userdata(UserSettingsAccessor)
+    userdata(SettingsBuilder, UserSettingsAccessor)
 )]
 impl PluginsModule {
     #[harmony(args(callback: SettingsCallback), returns(SettingsConfig))]

@@ -5,6 +5,23 @@
 
 //! The scopes a plugin manifest may declare, the module or functions each
 //! one gates, and what each lets a plugin do.
+//!
+//! When adding or changing a function of a gated module, or a method of a
+//! class it hands out, check:
+//!
+//! - whether it takes file paths, user ids, or filters by personal data, and
+//!   what it does with those of users the plugin doesn't act for;
+//! - whether its effects are among its scope's, and the scope's effects still
+//!   all hold;
+//! - whether it reaches every user's data rather than the acting users'. Such
+//!   a function gets a narrow scope of its own, `within` its module's, named
+//!   `<module scope>.all`, so plugins that don't call it don't carry its
+//!   effects.
+//!
+//! `gated_module_functions_are_reviewed` lists every function with its
+//! arguments, and the methods of the classes each module declares, and fails
+//! when the list changes, as a prompt for this review. A module must declare
+//! every class it hands out for its methods to be listed.
 
 use std::collections::{
     BTreeMap,
@@ -1169,4 +1186,444 @@ mod tests {
                 .unwrap_or_else(|error| panic!("{id}: {error}"));
         }
     }
+
+    /// Each gated module's functions and the methods of the classes it
+    /// declares, with their arguments and the narrower scope gating any of
+    /// them. A change here is a prompt to review the new or changed ones
+    /// against the checklist in this module's docs.
+    #[test]
+    fn gated_module_functions_are_reviewed() {
+        fn signature(name: &str, function: &harmony_core::FunctionSpec) -> String {
+            let arguments: Vec<&str> = function.arg_names.iter().map(|arg| &**arg).collect();
+            format!("{name}({})", arguments.join(", "))
+        }
+
+        let exported: Vec<(String, Vec<String>)> = super::gated_modules()
+            .into_iter()
+            .map(|module| {
+                let functions = module.spec.functions.iter().map(|function| {
+                    let signature = signature(&function.name, function);
+                    match module.function_scopes.get(&function.name) {
+                        Some(scope) => format!("{signature} [{}]", scope.0),
+                        None => signature,
+                    }
+                });
+                let methods = module.spec.userdata.iter().flat_map(|class| {
+                    class
+                        .methods
+                        .iter()
+                        .map(|method| signature(&format!("{}:{}", class.name, method.name), method))
+                });
+                (
+                    module.spec.id.0.to_string(),
+                    functions.chain(methods).collect(),
+                )
+            })
+            .collect();
+        let reviewed: Vec<(String, Vec<String>)> = REVIEWED_FUNCTIONS
+            .iter()
+            .map(|(module, functions)| {
+                (
+                    module.to_string(),
+                    functions.iter().map(ToString::to_string).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            exported, reviewed,
+            "the functions of the gated modules changed: review each new or changed function \
+             or method against the checklist in the docs of lyra-server/src/plugins/scopes.rs, then \
+             update REVIEWED_FUNCTIONS"
+        );
+    }
+
+    const REVIEWED_FUNCTIONS: &[(&str, &[&str])] = &[
+        (
+            "harmony/crypt",
+            &[
+                "hash(algorithm, data)",
+                "base64.encode(data)",
+                "base64.decode(data)",
+                "random(size)",
+            ],
+        ),
+        (
+            "harmony/http",
+            &[
+                "request(options)",
+                "set_rate_limit(options)",
+                "set_max_in_flight(options)",
+                "encode_uri_component(input)",
+            ],
+        ),
+        (
+            "harmony/net",
+            &[
+                "udp_bind(options)",
+                "tcp_connect(options)",
+                "tcp_bind(options)",
+                "UdpSocket:set_timeout(seconds)",
+                "UdpSocket:address()",
+                "UdpSocket:connect(address)",
+                "UdpSocket:send(data, timeout)",
+                "UdpSocket:recv(timeout)",
+                "UdpSocket:recv_from(timeout)",
+                "UdpSocket:send_to(data, address, timeout)",
+                "UdpSocket:close()",
+                "TcpStream:set_timeout(seconds)",
+                "TcpStream:address()",
+                "TcpStream:read(max_bytes, timeout)",
+                "TcpStream:write(data, timeout)",
+                "TcpStream:close()",
+                "TcpListener:set_timeout(seconds)",
+                "TcpListener:address()",
+                "TcpListener:accept(timeout)",
+                "TcpListener:close()",
+            ],
+        ),
+        (
+            "harmony/serde",
+            &[
+                "json.encode(input)",
+                "json.decode(input)",
+                "yaml.encode(input)",
+                "yaml.decode(input)",
+                "xml.encode(root, input)",
+                "xml.decode(input)",
+                "empty_object()",
+            ],
+        ),
+        (
+            "harmony/task",
+            &[
+                "wait(time)",
+                "cancel(thread)",
+                "defer(task)",
+                "delay(time, task)",
+                "spawn(task)",
+            ],
+        ),
+        (
+            "lyra/api",
+            &[
+                "route(method, path, handler, auth_mode, case_insensitive)",
+                "get(path, handler, auth_mode, case_insensitive)",
+                "post(path, handler, auth_mode, case_insensitive)",
+                "put(path, handler, auth_mode, case_insensitive)",
+                "patch(path, handler, auth_mode, case_insensitive)",
+                "delete(path, handler, auth_mode, case_insensitive)",
+                "head(path, handler, auth_mode, case_insensitive)",
+                "options(path, handler, auth_mode, case_insensitive)",
+                "websocket(path, handler, auth_mode)",
+                "response.json(status, body, headers)",
+                "response.empty(status, headers)",
+                "response.text(status, body, headers)",
+                "response.bytes(status, body, headers)",
+                "response.redirect(status, location, headers)",
+                "response.file(status, path, headers, transform)",
+                "response.stream_track(track_id, options)",
+                "response.download_track(track_id, options)",
+                "response.hls_playlist(track_id, options)",
+                "query.bool(query, key, default)",
+                "query.int(query, key, default, min, max)",
+                "query.csv(query, key)",
+                "ApiWebSocketReader:recv()",
+                "ApiWebSocketReader:close()",
+                "ApiWebSocketSender:send(text)",
+                "ApiWebSocketSender:is_closed()",
+                "ApiWebSocketSender:close()",
+            ],
+        ),
+        (
+            "lyra/artists",
+            &[
+                "get(ids)",
+                "query(query)",
+                "by_release(release_ids)",
+                "by_track(track_ids)",
+                "artwork_id_by_name(name)",
+                "relations(ids)",
+            ],
+        ),
+        (
+            "lyra/auth",
+            &[
+                "get_session_data(token)",
+                "set_session_data(token, data)",
+                "resolve_auth(bearer)",
+                "logout_session(token)",
+                "list_sessions(query)",
+                "revoke_session(session_id)",
+                "login(username, password, user_agent, client_name)",
+                "capabilities()",
+            ],
+        ),
+        ("lyra/chromaprint", &["compute(entry_id)"]),
+        (
+            "lyra/covers",
+            &[
+                "get(id)",
+                "get_many(ids)",
+                "get_playlist_sources(id)",
+                "get_playlist_sources_many(ids)",
+                "artwork(id)",
+                "artwork_many(ids)",
+                "artwork_playlist_sources(id)",
+            ],
+        ),
+        (
+            "lyra/datastore",
+            &[
+                "get_or_create(name)",
+                "DataStore:get(key)",
+                "DataStore:set(key, value)",
+                "DataStore:remove(key)",
+                "DataStore:get_many(keys)",
+                "DataStore:set_many(entries)",
+                "DataStore:clear()",
+            ],
+        ),
+        (
+            "lyra/editions",
+            &[
+                "media_formats(input)",
+                "media_formats_match(a, b)",
+                "barcode(input)",
+                "barcodes_match(a, b)",
+            ],
+        ),
+        (
+            "lyra/entities",
+            &[
+                "query(request)",
+                "query_release(request)",
+                "query_track(request)",
+                "query_artist(request)",
+                "get_type(id)",
+                "query_many(request)",
+            ],
+        ),
+        (
+            "lyra/entries",
+            &["get(ids)", "by_parent(parent_ids)", "by_track(track_ids)"],
+        ),
+        (
+            "lyra/favorites",
+            &[
+                "add(target_id)",
+                "remove(target_id)",
+                "has(target_id)",
+                "has_many(target_ids)",
+                "list_ids(entity)",
+            ],
+        ),
+        (
+            "lyra/genres",
+            &[
+                "query(query)",
+                "resolve(request)",
+                "add_parent(child_id, parent_id)",
+                "get(ids)",
+                "by_release(release_ids)",
+                "artwork_release_ids(genre_id)",
+                "find_by_name(name)",
+            ],
+        ),
+        (
+            "lyra/ids",
+            &[
+                "get_id(db_id)",
+                "get_ids(db_ids)",
+                "get_db_id(id)",
+                "get_db_ids(ids)",
+            ],
+        ),
+        ("lyra/images", &["compose(options)"]),
+        (
+            "lyra/labels",
+            &[
+                "resolve(request)",
+                "get_by_id(label_id)",
+                "get_for_release(release_id)",
+                "get_for_releases_many(release_ids)",
+                "get_releases(label_id)",
+                "get_releases_many(label_ids)",
+            ],
+        ),
+        (
+            "lyra/libraries",
+            &[
+                "list(id)",
+                "get_for_entity(entity_id)",
+                "get_for_entities(entity_ids)",
+            ],
+        ),
+        (
+            "lyra/listens",
+            &[
+                "get_stats(track_ids, merge_unique_external_ids)",
+                "submit(plays)",
+                "on_update(handler) [lyra.listens.all]",
+            ],
+        ),
+        (
+            "lyra/locale",
+            &[
+                "language(input)",
+                "country(input)",
+                "parse(tag)",
+                "tag(language, country)",
+                "languages_match(a, b)",
+            ],
+        ),
+        (
+            "lyra/lyrics",
+            &[
+                "get(track_id, language, require_synced, provider)",
+                "parse_lrc(text, language)",
+                "upsert_personal(track_id, track_public_id, upload)",
+                "delete_personal_for_track(track_id)",
+                "delete_for_track(track_id) [lyra.lyrics.all]",
+                "has(track_id)",
+                "has_many(track_ids)",
+            ],
+        ),
+        (
+            "lyra/metadata",
+            &[
+                "Provider.new(id, options)",
+                "Provider:id(spec, generator)",
+                "Provider:search(entity, handler)",
+                "Provider:cover(entity, config, handler)",
+                "Provider:lyrics(config, handler)",
+                "Provider:similar_releases(config, handler)",
+                "Provider:refresh(entity, handler, filter)",
+                "Provider:declare_option(config)",
+                "Provider:ensure_artist(request)",
+                "Provider:mark_unmatched(node_id, id_types)",
+                "Provider:layer(node_id)",
+                "Layer:set_id(id_type, id_value)",
+                "Layer:set_field(name, value)",
+                "Layer:set_credits(role, credits)",
+                "Layer:set_relations(relation_type, relations)",
+                "Layer:save()",
+                "Layer:set_custom_field(version, name, value)",
+                "Layer:set_custom_fields(version, fields)",
+                "Layer:clear_custom_fields(version)",
+            ],
+        ),
+        (
+            "lyra/mix",
+            &[
+                "Mixer.new(id, options)",
+                "blend(request)",
+                "path(request)",
+                "Mixer:blend(spec, handler)",
+                "Mixer:path(spec, handler)",
+                "Mixer:declare_option(config)",
+            ],
+        ),
+        (
+            "lyra/playback_sessions",
+            &[
+                "on_update(handler) [lyra.playback_sessions.all]",
+                "report_session(request)",
+                "list_connections()",
+                "send_command(request)",
+            ],
+        ),
+        (
+            "lyra/playback_sources",
+            &[
+                "get(id, include_entry)",
+                "streamable(track_id, include_entry)",
+                "decide(track_id, options)",
+                "get_many(track_ids, include_entry)",
+            ],
+        ),
+        (
+            "lyra/playlists",
+            &[
+                "list()",
+                "get_by_id(id)",
+                "list_owned()",
+                "get_owner(playlist_id)",
+                "get_tracks(playlist_id)",
+                "get_tracks_many(playlist_ids)",
+                "create(request)",
+                "update(request)",
+                "delete(playlist_id)",
+                "replace(playlist_id, request)",
+                "add_tracks(playlist_id, track_ids, position)",
+                "add_track(playlist_id, track_id)",
+                "remove_track(playlist_id, entry_id)",
+                "remove_tracks(playlist_id, entry_ids)",
+                "move_track(playlist_id, entry_id, new_position)",
+            ],
+        ),
+        (
+            "lyra/plugins",
+            &[
+                "declare_settings(callback)",
+                "declare_user_settings(callback)",
+                "id()",
+                "manifest()",
+                "list()",
+                "get(id)",
+                "SettingsBuilder:group(id, label)",
+                "SettingsBuilder:string(key, props)",
+                "SettingsBuilder:number(key, props)",
+                "SettingsBuilder:bool(key, props)",
+                "SettingsBuilder:choice(key, props)",
+                "UserSettingsAccessor:get(user_id)",
+            ],
+        ),
+        (
+            "lyra/ratings",
+            &[
+                "set(target_id, rating)",
+                "remove(target_id)",
+                "get(target_ids)",
+                "average(target_ids)",
+            ],
+        ),
+        (
+            "lyra/releases",
+            &[
+                "get(ids)",
+                "query(query)",
+                "by_track(track_ids)",
+                "by_genre(genre_ids)",
+                "chains(release_ids)",
+                "replace_chains(release_id, chains)",
+                "similar(release_db_id, opts)",
+            ],
+        ),
+        ("lyra/server", &["info()"]),
+        (
+            "lyra/tags",
+            &[
+                "add(target_id, tag, color)",
+                "remove(target_id, tag)",
+                "has(target_id, tag)",
+                "has_many(target_ids, tag)",
+                "get_for_target(target_id)",
+                "get_for_targets_many(target_ids)",
+                "get_tagged(tag)",
+            ],
+        ),
+        ("lyra/track_sources", &["get_primary_source_key(track_id)"]),
+        (
+            "lyra/tracks",
+            &[
+                "get(ids)",
+                "streamable(ids)",
+                "query(query)",
+                "by_release(release_ids)",
+                "by_entry(entry_ids)",
+                "chains(track_ids)",
+            ],
+        ),
+        ("lyra/users", &["list()"]),
+    ];
 }

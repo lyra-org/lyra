@@ -11,6 +11,7 @@ mod registry;
 mod tests;
 
 pub(crate) use self::luau::{
+    SettingsBuilder,
     UserSettingsAccessor,
     declare_settings,
     declare_user_settings,

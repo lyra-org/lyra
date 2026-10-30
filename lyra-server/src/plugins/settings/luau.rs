@@ -40,7 +40,7 @@ use lyra_db::DbAsync;
     description = "Builder for declaring plugin settings."
 )]
 #[derive(Clone)]
-pub(super) struct SettingsBuilder {
+pub(crate) struct SettingsBuilder {
     groups: Arc<Mutex<Vec<FieldGroupDefinition>>>,
     stored_values: Arc<HashMap<String, serde_json::Value>>,
 }

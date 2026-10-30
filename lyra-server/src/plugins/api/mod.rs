@@ -158,7 +158,14 @@ impl LuauTypeInfo for BytesBody {
 
 pub(crate) struct ApiModule;
 
-#[harmony_macros::module(id = "lyra/api", docs_feature = "docgen")]
+#[harmony_macros::module(
+    id = "lyra/api",
+    docs_feature = "docgen",
+    userdata(
+        crate::plugins::executor::ApiWebSocketReader,
+        crate::plugins::executor::ApiWebSocketSender
+    )
+)]
 impl ApiModule {
     #[harmony(
         description = "Registers a plugin API route.",
