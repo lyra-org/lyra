@@ -7,20 +7,12 @@ use std::fmt;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use harmony_core::{
-    FunctionSpec,
-    ModuleExport,
-    ModuleSpec,
-};
 use harmony_luau as luau;
 use harmony_luau::{
     DescribeModule,
     DescribeTypeAlias,
     LuauType,
     LuauTypeInfo,
-    ModuleDescriptor,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
     render_definition_file_with_support,
 };
 use sha2::{
@@ -30,88 +22,65 @@ use sha2::{
     Sha512,
 };
 
-struct CryptModule;
+pub struct CryptModule;
 
 /// The capability hosts conventionally gate this module behind.
 pub const SCOPE: &str = "harmony.crypt";
 
-pub fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("harmony/crypt")
-        .function(hash_spec())
-        .function(base64_encode_spec())
-        .function(base64_decode_spec())
-        .function(random_spec())
-        .install(|_| Ok(ModuleExport::new(CryptModule)))
-}
-
-fn hash_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("hash")
-        .arg_name("algorithm")
-        .arg_name("data");
-    spec.call(hash_callback)
-}
-
-fn base64_encode_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("base64.encode").arg_name("data");
-    spec.call(base64_encode_callback)
-}
-
-fn base64_decode_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("base64.decode").arg_name("data");
-    spec.call(base64_decode_callback)
-}
-
-fn random_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("random").arg_name("size");
-    spec.call(random_callback)
-}
-
-fn hash_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let algorithm: String = frame.args.read_named("algorithm")?;
-    let data = read_string_bytes(&mut frame.args, "data")?;
-    frame.returns.write(hash_bytes(&algorithm, &data)?)?;
-    Ok(())
-}
-
-fn base64_encode_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let data = read_string_bytes(&mut frame.args, "data")?;
-    frame.returns.write(BASE64_STANDARD.encode(data))?;
-    Ok(())
-}
-
-fn base64_decode_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let data: String = frame.args.read_named("data")?;
-    let bytes = BASE64_STANDARD
-        .decode(data)
-        .map_err(|error| luau::Error::Runtime(format!("base64 decode failed: {error}")))?;
-    frame.returns.write(luau::Value::String(bytes))?;
-    Ok(())
-}
-
-fn random_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let size: f64 = frame.args.read_named("size")?;
-    if !size.is_finite() || size.fract() != 0.0 || size < 0.0 {
-        return Err(luau::Error::Runtime(
-            "random size must be a non-negative integer".into(),
-        ));
+#[harmony_macros::module(
+    id = "harmony/crypt",
+    name = "Crypt",
+    local = "crypt",
+    description = "Cryptographic hashing, encoding, and random byte generation helpers."
+)]
+impl CryptModule {
+    #[harmony(
+        description = "Hashes data with the specified algorithm and returns the hex-encoded digest.\n\nSupported algorithms: `\"md5\"`, `\"sha1\"`, `\"sha256\"`, `\"sha384\"`, `\"sha512\"`, `\"xxh3_64\"`, `\"xxh3_128\"`.",
+        args(algorithm: HashAlgorithm, data: String)
+    )]
+    fn hash(algorithm: String, data: luau::ByteString) -> luau::runtime::Result<String> {
+        hash_bytes(&algorithm, &data.0)
     }
-    if size > 1024.0 {
-        return Err(luau::Error::Runtime(
-            "random size cannot exceed 1024 bytes".into(),
-        ));
-    }
-    let mut buf = vec![0u8; size as usize];
-    rand::fill(&mut buf[..]);
-    frame.returns.write(hex_bytes(&buf))?;
-    Ok(())
-}
 
-fn read_string_bytes(
-    args: &mut luau::ArgReader<'_>,
-    name: &'static str,
-) -> luau::runtime::Result<Vec<u8>> {
-    let bytes: luau::ByteString = args.read_named(name)?;
-    Ok(bytes.0)
+    #[harmony(
+        name = "base64.encode",
+        description = "Encodes data as a base64 string.",
+        args(data: String)
+    )]
+    fn base64_encode(data: luau::ByteString) -> String {
+        BASE64_STANDARD.encode(data.0)
+    }
+
+    #[harmony(
+        name = "base64.decode",
+        description = "Decodes a base64 string back into raw bytes.",
+        returns(String)
+    )]
+    fn base64_decode(data: String) -> luau::runtime::Result<luau::Value> {
+        let bytes = BASE64_STANDARD
+            .decode(data)
+            .map_err(|error| luau::Error::Runtime(format!("base64 decode failed: {error}")))?;
+        Ok(luau::Value::String(bytes))
+    }
+
+    #[harmony(
+        description = "Generates a hex-encoded string of random bytes. Size cannot exceed 1024."
+    )]
+    fn random(size: f64) -> luau::runtime::Result<String> {
+        if !size.is_finite() || size.fract() != 0.0 || size < 0.0 {
+            return Err(luau::Error::Runtime(
+                "random size must be a non-negative integer".into(),
+            ));
+        }
+        if size > 1024.0 {
+            return Err(luau::Error::Runtime(
+                "random size cannot exceed 1024 bytes".into(),
+            ));
+        }
+        let mut buf = vec![0u8; size as usize];
+        rand::fill(&mut buf[..]);
+        Ok(hex_bytes(&buf))
+    }
 }
 
 fn hash_bytes(algorithm: &str, bytes: &[u8]) -> luau::runtime::Result<String> {
@@ -180,100 +149,23 @@ impl DescribeTypeAlias for HashAlgorithm {
     }
 }
 
-struct CryptModuleDocs;
-
 pub fn render_luau_definition() -> std::result::Result<String, fmt::Error> {
     render_definition_file_with_support(
-        &CryptModuleDocs::module_descriptor(),
+        &CryptModule::module_descriptor(),
         &[HashAlgorithm::type_alias_descriptor()],
         &[],
         &[],
     )
 }
 
-impl DescribeModule for CryptModuleDocs {
-    fn module_descriptor() -> ModuleDescriptor {
-        ModuleDescriptor {
-            name: "Crypt",
-            local_name: "crypt",
-            description: Some(
-                "Cryptographic hashing, encoding, and random byte generation helpers.",
-            ),
-            fields: Vec::new(),
-            functions: vec![
-                ModuleFunctionDescriptor {
-                    path: vec!["hash"],
-                    description: Some(
-                        "Hashes data with the specified algorithm and returns the hex-encoded digest.\n\nSupported algorithms: `\"md5\"`, `\"sha1\"`, `\"sha256\"`, `\"sha384\"`, `\"sha512\"`, `\"xxh3_64\"`, `\"xxh3_128\"`.",
-                    ),
-                    params: vec![
-                        ParameterDescriptor {
-                            name: "algorithm",
-                            ty: HashAlgorithm::luau_type(),
-                            description: None,
-                            variadic: false,
-                        },
-                        ParameterDescriptor {
-                            name: "data",
-                            ty: String::luau_type(),
-                            description: None,
-                            variadic: false,
-                        },
-                    ],
-                    returns: vec![String::luau_type()],
-                    yields: false,
-                },
-                ModuleFunctionDescriptor {
-                    path: vec!["base64", "encode"],
-                    description: Some("Encodes data as a base64 string."),
-                    params: vec![ParameterDescriptor {
-                        name: "data",
-                        ty: String::luau_type(),
-                        description: None,
-                        variadic: false,
-                    }],
-                    returns: vec![String::luau_type()],
-                    yields: false,
-                },
-                ModuleFunctionDescriptor {
-                    path: vec!["base64", "decode"],
-                    description: Some("Decodes a base64 string back into raw bytes."),
-                    params: vec![ParameterDescriptor {
-                        name: "data",
-                        ty: String::luau_type(),
-                        description: None,
-                        variadic: false,
-                    }],
-                    returns: vec![String::luau_type()],
-                    yields: false,
-                },
-                ModuleFunctionDescriptor {
-                    path: vec!["random"],
-                    description: Some(
-                        "Generates a hex-encoded string of random bytes. Size cannot exceed 1024.",
-                    ),
-                    params: vec![ParameterDescriptor {
-                        name: "size",
-                        ty: f64::luau_type(),
-                        description: None,
-                        variadic: false,
-                    }],
-                    returns: vec![String::luau_type()],
-                    yields: false,
-                },
-            ],
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::module_spec;
+    use super::CryptModule;
 
     #[test]
     fn luau_module_hashes_and_base64_encodes() -> harmony_luau::runtime::Result<()> {
         let vm = harmony_luau::Vm::new()?;
-        let spec = module_spec();
+        let spec = CryptModule::module_spec();
         let table =
             harmony_core::luau::install_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;
         vm.set_global_table("crypt", &table)?;
@@ -305,7 +197,7 @@ mod tests {
     #[test]
     fn luau_module_random_validates_size() -> harmony_luau::runtime::Result<()> {
         let vm = harmony_luau::Vm::new()?;
-        let spec = module_spec();
+        let spec = CryptModule::module_spec();
         let table =
             harmony_core::luau::install_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;
         vm.set_global_table("crypt", &table)?;

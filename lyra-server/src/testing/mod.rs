@@ -723,7 +723,8 @@ mod tests {
         })
         .await?;
         let plugin = PluginUnderTest::locate(source.path())?;
-        let _plugin_sources = exec_plugins(&plugin, harmony_http::module_spec()).await?;
+        let _plugin_sources =
+            exec_plugins(&plugin, harmony_http::HttpModule::module_spec()).await?;
         let handler = services::providers::provider_registry()
             .read()
             .await

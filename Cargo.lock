@@ -883,6 +883,7 @@ dependencies = [
  "base64",
  "harmony-core",
  "harmony-luau",
+ "harmony-macros",
  "md5",
  "rand 0.10.0",
  "sha1",
@@ -986,6 +987,7 @@ version = "0.0.1"
 dependencies = [
  "harmony-core",
  "harmony-luau",
+ "harmony-macros",
  "quick-xml",
  "serde-saphyr",
  "serde_json",
@@ -997,6 +999,7 @@ version = "0.0.1"
 dependencies = [
  "harmony-core",
  "harmony-luau",
+ "harmony-macros",
 ]
 
 [[package]]
@@ -1506,6 +1509,7 @@ dependencies = [
  "harmony-core",
  "harmony-http",
  "harmony-luau",
+ "harmony-macros",
  "lyra-metadata",
  "lyra-server",
  "percent-encoding",

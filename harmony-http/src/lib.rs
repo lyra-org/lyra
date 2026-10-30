@@ -12,21 +12,15 @@ use std::time::{
     SystemTime,
 };
 
-use harmony_core::{
-    FunctionSpec,
-    ModuleExport,
-    ModuleSpec,
-};
+use harmony_core::ModuleSpec;
 use harmony_luau as luau;
 use harmony_luau::{
     DescribeInterface,
+    DescribeModule,
     DescribeTypeAlias,
     DescribeUserData,
     LuauType,
     LuauTypeInfo,
-    ModuleDescriptor,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
     render_definition_file_with_support,
 };
 use harmony_luau::{
@@ -854,7 +848,7 @@ fn get_default_user_agent() -> Option<String> {
         .clone()
 }
 
-struct HttpModule;
+pub struct HttpModule;
 
 async fn configure_rate_limit(
     plugin_id: Option<Arc<str>>,
@@ -899,84 +893,76 @@ async fn configure_max_in_flight(
 /// The capability hosts conventionally gate this module behind.
 pub const SCOPE: &str = "harmony.http";
 
-pub fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("harmony/http")
-        .function(request_spec())
-        .function(set_rate_limit_spec())
-        .function(set_max_in_flight_spec())
-        .function(encode_uri_component_spec())
-        .userdata(HttpMethod::_harmony_userdata_spec())
-        .install(|_| Ok(ModuleExport::new(HttpModule)))
+#[harmony_macros::module(
+    id = "harmony/http",
+    name = "Http",
+    local = "http",
+    description = "Outbound HTTP requests, rate limits, and URI encoding.",
+    extend = "with_http_method"
+)]
+impl HttpModule {
+    #[harmony(
+        description = "Makes an outbound HTTP request.",
+        args(options: HttpRequestOptions),
+        returns(HttpResponse)
+    )]
+    fn request(
+        vm: &luau::Vm,
+        options: luau::Table,
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
+        let options = request_options_from_luau(vm, &options)?;
+        Ok(luau::ScheduledFuture::new(async move {
+            let response = execute_request_with_rate_limit(options).await;
+            Ok(response.into_luau_value())
+        }))
+    }
+
+    #[harmony(
+        description = "Registers retry and pacing policy for a host or URL. A host follows the strictest policy any plugin sets for it, the one with the lowest `requests_per_second`; a plugin may loosen its own.",
+        args(options: HttpRateLimitOptions)
+    )]
+    fn set_rate_limit(
+        vm: &luau::Vm,
+        origin: &luau::ChunkOrigin,
+        options: luau::Table,
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
+        let options = rate_limit_options_from_luau(vm, &options)?;
+        let plugin_id = origin.plugin.clone();
+        Ok(luau::ScheduledFuture::new(async move {
+            configure_rate_limit(plugin_id, options)
+                .await
+                .map_err(|error| luau::Error::Runtime(error.to_string()))?;
+            Ok(())
+        }))
+    }
+
+    #[harmony(
+        description = "Registers a maximum concurrent request count for a host or URL. A host follows the lowest count any plugin sets for it; a plugin may loosen its own.",
+        args(options: HttpConcurrencyOptions)
+    )]
+    fn set_max_in_flight(
+        vm: &luau::Vm,
+        origin: &luau::ChunkOrigin,
+        options: luau::Table,
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
+        let options = concurrency_options_from_luau(vm, &options)?;
+        let plugin_id = origin.plugin.clone();
+        Ok(luau::ScheduledFuture::new(async move {
+            configure_max_in_flight(plugin_id, options)
+                .await
+                .map_err(|error| luau::Error::Runtime(error.to_string()))?;
+            Ok(())
+        }))
+    }
+
+    #[harmony(description = "Percent-encodes a string for use in a URI component.")]
+    fn encode_uri_component(input: String) -> String {
+        percent_encoding::utf8_percent_encode(&input, URI_COMPONENT_SET).to_string()
+    }
 }
 
-fn request_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("request").arg_name("options");
-    spec.call_async(Arc::new(request_callback))
-}
-
-fn set_rate_limit_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("set_rate_limit").arg_name("options");
-    spec.call_async(Arc::new(set_rate_limit_callback))
-}
-
-fn set_max_in_flight_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("set_max_in_flight").arg_name("options");
-    spec.call_async(Arc::new(set_max_in_flight_callback))
-}
-
-fn encode_uri_component_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("encode_uri_component").arg_name("input");
-    spec.call(encode_uri_component_callback)
-}
-
-fn encode_uri_component_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let input: String = frame.args.read_named("input")?;
-    frame
-        .returns
-        .write(percent_encoding::utf8_percent_encode(&input, URI_COMPONENT_SET).to_string())?;
-    Ok(())
-}
-
-fn request_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let table: luau::Table = frame.args.read_named("options")?;
-    let options = request_options_from_luau(frame.vm, &table)?;
-    let future = luau::ScheduledFuture::new(async move {
-        let response = execute_request_with_rate_limit(options).await;
-        Ok(response.into_luau_value())
-    });
-    Ok(future)
-}
-
-fn set_rate_limit_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let table: luau::Table = frame.args.read_named("options")?;
-    let options = rate_limit_options_from_luau(frame.vm, &table)?;
-    let plugin_id = frame.context.origin.plugin.clone();
-    let future = luau::ScheduledFuture::new(async move {
-        configure_rate_limit(plugin_id, options)
-            .await
-            .map_err(|error| luau::Error::Runtime(error.to_string()))?;
-        Ok(())
-    });
-    Ok(future)
-}
-
-fn set_max_in_flight_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let table: luau::Table = frame.args.read_named("options")?;
-    let options = concurrency_options_from_luau(frame.vm, &table)?;
-    let plugin_id = frame.context.origin.plugin.clone();
-    let future = luau::ScheduledFuture::new(async move {
-        configure_max_in_flight(plugin_id, options)
-            .await
-            .map_err(|error| luau::Error::Runtime(error.to_string()))?;
-        Ok(())
-    });
-    Ok(future)
+fn with_http_method(spec: ModuleSpec) -> ModuleSpec {
+    spec.userdata(HttpMethod::_harmony_userdata_spec())
 }
 
 fn request_options_from_luau(
@@ -1301,69 +1287,6 @@ pub async fn test_seed_rate_limit(domain: impl Into<String>, plugin_id: impl Int
     );
 }
 
-fn http_module_descriptor() -> ModuleDescriptor {
-    ModuleDescriptor {
-        name: "Http",
-        local_name: "http",
-        description: Some("Outbound HTTP requests, rate limits, and URI encoding."),
-        fields: Vec::new(),
-        functions: vec![
-            ModuleFunctionDescriptor {
-                path: vec!["request"],
-                description: Some("Makes an outbound HTTP request."),
-                params: vec![ParameterDescriptor {
-                    name: "options",
-                    ty: HttpRequestOptions::luau_type(),
-                    description: None,
-                    variadic: false,
-                }],
-                returns: vec![HttpResponse::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["set_rate_limit"],
-                description: Some(
-                    "Registers retry and pacing policy for a host or URL. A host follows the strictest policy any plugin sets for it, the one with the lowest `requests_per_second`; a plugin may loosen its own.",
-                ),
-                params: vec![ParameterDescriptor {
-                    name: "options",
-                    ty: HttpRateLimitOptions::luau_type(),
-                    description: None,
-                    variadic: false,
-                }],
-                returns: Vec::new(),
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["set_max_in_flight"],
-                description: Some(
-                    "Registers a maximum concurrent request count for a host or URL. A host follows the lowest count any plugin sets for it; a plugin may loosen its own.",
-                ),
-                params: vec![ParameterDescriptor {
-                    name: "options",
-                    ty: HttpConcurrencyOptions::luau_type(),
-                    description: None,
-                    variadic: false,
-                }],
-                returns: Vec::new(),
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["encode_uri_component"],
-                description: Some("Percent-encodes a string for use in a URI component."),
-                params: vec![ParameterDescriptor {
-                    name: "input",
-                    ty: String::luau_type(),
-                    description: None,
-                    variadic: false,
-                }],
-                returns: vec![String::luau_type()],
-                yields: false,
-            },
-        ],
-    }
-}
-
 impl LuauTypeInfo for HttpRequestOptions {
     fn luau_type() -> LuauType {
         LuauType::literal("HttpRequestOptions")
@@ -1533,7 +1456,7 @@ impl DescribeInterface for HttpResponse {
 
 pub fn render_luau_definition() -> Result<String, std::fmt::Error> {
     render_definition_file_with_support(
-        &http_module_descriptor(),
+        &HttpModule::module_descriptor(),
         &[HttpHeaderMap::type_alias_descriptor()],
         &[
             HttpRequestOptions::interface_descriptor(),
@@ -1547,7 +1470,7 @@ pub fn render_luau_definition() -> Result<String, std::fmt::Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::module_spec;
+    use super::HttpModule;
 
     fn max_in_flight(limiter: &super::ConcurrencyLimiter, host: &str) -> Option<usize> {
         limiter.entries.get(host).map(|entry| entry.max_in_flight)
@@ -1556,7 +1479,7 @@ mod tests {
     #[test]
     fn luau_module_registers_encode_uri_component() -> harmony_luau::runtime::Result<()> {
         let vm = harmony_luau::Vm::new()?;
-        let spec = module_spec();
+        let spec = HttpModule::module_spec();
         let table =
             harmony_core::luau::install_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;
         vm.set_global_table("http", &table)?;
@@ -1587,7 +1510,7 @@ mod tests {
             plugin: Some(std::sync::Arc::from("luau-http-plugin")),
             ..harmony_core::ChunkOrigin::default()
         };
-        let spec = module_spec();
+        let spec = HttpModule::module_spec();
         let table = harmony_core::luau::install_module(&vm, &origin, &spec)?;
         vm.set_global_table("http", &table)?;
 

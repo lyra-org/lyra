@@ -36,7 +36,6 @@ use flate2::{
 };
 use harmony_core::{
     FunctionSpec,
-    ModuleExport,
     ModuleSpec,
 };
 use harmony_luau as luau;
@@ -232,7 +231,9 @@ pub(crate) fn module_spec(state: CachedHttpState) -> ModuleSpec {
     let request_state = state.clone();
     let rate_limit_plugin_id = state.plugin_id.clone();
 
-    ModuleSpec::new("harmony/http")
+    // `request` and `set_rate_limit` close over the scenario's state, which the module macro's
+    // stateless functions cannot hold.
+    CachedHttpModule::module_spec()
         .function(
             FunctionSpec::new("request")
                 .arg_name("options")
@@ -247,21 +248,24 @@ pub(crate) fn module_spec(state: CachedHttpState) -> ModuleSpec {
                     set_rate_limit_callback(frame, rate_limit_plugin_id.clone())
                 })),
         )
-        .function(
-            FunctionSpec::new("set_max_in_flight")
-                .arg_name("options")
-                .call_async(Arc::new(set_max_in_flight_callback)),
-        )
-        .function(
-            FunctionSpec::new("encode_uri_component")
-                .arg_name("input")
-                .call(encode_uri_component_callback),
-        )
-        .install(|_| Ok(ModuleExport::new(CachedHttpModule)))
-        .initializer(init_luau_http_module)
 }
 
 struct CachedHttpModule;
+
+#[harmony_macros::module(id = "harmony/http", extend = "with_http_method")]
+impl CachedHttpModule {
+    fn set_max_in_flight(_options: luau::Value) -> luau::ScheduledFuture {
+        luau::ScheduledFuture::new(async { Ok(()) })
+    }
+
+    fn encode_uri_component(input: String) -> String {
+        percent_encoding::utf8_percent_encode(&input, URI_COMPONENT_SET).to_string()
+    }
+}
+
+fn with_http_method(spec: ModuleSpec) -> ModuleSpec {
+    spec.initializer(init_luau_http_module)
+}
 
 fn init_luau_http_module(
     vm: &luau::Vm,
@@ -550,21 +554,6 @@ fn set_rate_limit_callback(
         Ok(())
     });
     Ok(future)
-}
-
-fn set_max_in_flight_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let _options: luau::Value = frame.args.read_named("options")?;
-    Ok(luau::ScheduledFuture::new(async { Ok(()) }))
-}
-
-fn encode_uri_component_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let input: String = frame.args.read_named("input")?;
-    frame
-        .returns
-        .write(percent_encoding::utf8_percent_encode(&input, URI_COMPONENT_SET).to_string())?;
-    Ok(())
 }
 
 async fn execute_single_request(options: &RequestOptions) -> anyhow::Result<LiveResponse> {

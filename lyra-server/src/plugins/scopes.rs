@@ -116,27 +116,27 @@ macro_rules! scopes {
 scopes! {
     HarmonyCrypt => {
         id: harmony_crypt::SCOPE,
-        module: harmony_crypt::module_spec,
+        module: harmony_crypt::CryptModule::module_spec,
         effects: &[],
     },
     HarmonyHttp => {
         id: harmony_http::SCOPE,
-        module: harmony_http::module_spec,
+        module: harmony_http::HttpModule::module_spec,
         effects: &[Effect::Egress],
     },
     HarmonyNet => {
         id: harmony_net::SCOPE,
-        module: harmony_net::module_spec,
+        module: harmony_net::NetModule::module_spec,
         effects: &[Effect::Egress],
     },
     HarmonySerde => {
         id: harmony_serde::SCOPE,
-        module: harmony_serde::module_spec,
+        module: harmony_serde::SerdeModule::module_spec,
         effects: &[],
     },
     HarmonyTask => {
         id: harmony_task::SCOPE,
-        module: harmony_task::module_spec,
+        module: harmony_task::TaskModule::module_spec,
         effects: &[],
     },
     Api => {

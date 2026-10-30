@@ -3,14 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::{
-    sync::Arc,
-    time::Duration,
-};
+use std::time::Duration;
 
 use harmony_core::{
     FunctionSpec,
-    ModuleExport,
     ModuleSpec,
 };
 use harmony_luau as luau;
@@ -24,45 +20,64 @@ use harmony_luau::{
     render_definition_file,
 };
 
-struct TaskModuleDocs;
-struct TaskModule;
+pub struct TaskModule;
 
 /// The capability hosts conventionally gate this module behind.
 pub const SCOPE: &str = "harmony.task";
 
-pub fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("harmony/task")
-        .function(defer_spec())
-        .function(delay_spec())
-        .function(wait_spec())
-        .function(cancel_spec())
-        .function(spawn_spec())
-        .install(|_| Ok(ModuleExport::new(TaskModule)))
+#[harmony_macros::module(
+    id = "harmony/task",
+    name = "Task",
+    local = "task",
+    description = "Task scheduling primitives backed by the Harmony scheduler.",
+    extend = "with_scheduling_functions",
+    describe = "describe_scheduling_functions"
+)]
+impl TaskModule {
+    #[harmony(
+        description = "Yields the current thread for at least the requested duration and returns the elapsed seconds.",
+        returns(f64)
+    )]
+    fn wait(time: Option<f64>) -> luau::runtime::Result<luau::ScheduledFuture> {
+        let seconds = time.unwrap_or(0.0);
+        let delay = Duration::try_from_secs_f64(seconds).map_err(|error| {
+            luau::Error::Runtime(format!(
+                "task.wait time must be finite and non-negative: {error}"
+            ))
+        })?;
+        Ok(luau::ScheduledFuture::after(
+            delay,
+            async move { Ok(seconds) },
+        ))
+    }
+
+    #[harmony(description = "Cancels a scheduled thread.")]
+    fn cancel(vm: &luau::Vm, thread: luau::Thread) -> luau::runtime::Result<()> {
+        let scheduler = vm.data().get::<harmony_core::LocalScheduler>()?;
+        scheduler.cancel_luau_thread(&thread);
+        Ok(())
+    }
 }
 
-fn defer_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("defer").arg_name("task");
-    spec.call(defer_callback)
-}
-
-fn delay_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("delay").arg_name("time").arg_name("task");
-    spec.call(delay_callback)
-}
-
-fn cancel_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("cancel").arg_name("thread");
-    spec.call(cancel_callback)
-}
-
-fn wait_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("wait").arg_name("time");
-    spec.call_async(Arc::new(wait_callback))
-}
-
-fn spawn_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("spawn").arg_name("task");
-    spec.call(spawn_callback)
+/// `defer`, `delay`, and `spawn` forward any number of extra arguments to the scheduled task,
+/// which the macro's fixed parameters cannot express.
+fn with_scheduling_functions(spec: ModuleSpec) -> ModuleSpec {
+    spec.function(
+        FunctionSpec::new("defer")
+            .arg_name("task")
+            .call(schedule_defer),
+    )
+    .function(
+        FunctionSpec::new("delay")
+            .arg_name("time")
+            .arg_name("task")
+            .call(schedule_delay),
+    )
+    .function(
+        FunctionSpec::new("spawn")
+            .arg_name("task")
+            .call(schedule_defer),
+    )
 }
 
 enum TaskTarget {
@@ -84,15 +99,11 @@ impl<'vm> luau::FromLuau<'vm> for TaskTarget {
     }
 }
 
-fn defer_callback(frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+fn schedule_defer(frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
     schedule_task(frame, None)
 }
 
-fn spawn_callback(frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    schedule_task(frame, None)
-}
-
-fn delay_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+fn schedule_delay(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
     let seconds: f64 = frame.args.read_named("time")?;
     let delay = Duration::try_from_secs_f64(seconds).map_err(|error| {
         luau::Error::Runtime(format!(
@@ -136,159 +147,70 @@ fn schedule_task(
     Ok(())
 }
 
-fn cancel_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let thread: luau::Thread = frame.args.read_named("thread")?;
-    let scheduler = frame.vm.data().get::<harmony_core::LocalScheduler>()?;
-    scheduler.cancel_luau_thread(&thread);
-    Ok(())
-}
-
-fn wait_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let seconds = frame
-        .args
-        .read_optional_named::<f64>("time")?
-        .unwrap_or(0.0);
-    let delay = Duration::try_from_secs_f64(seconds).map_err(|error| {
-        luau::Error::Runtime(format!(
-            "task.wait time must be finite and non-negative: {error}"
-        ))
-    })?;
-    Ok(luau::ScheduledFuture::after(
-        delay,
-        async move { Ok(seconds) },
-    ))
-}
-
 pub fn render_luau_definition() -> Result<String, std::fmt::Error> {
-    render_definition_file(&TaskModuleDocs::module_descriptor(), &[])
+    render_definition_file(&TaskModule::module_descriptor(), &[])
 }
 
-impl DescribeModule for TaskModuleDocs {
-    fn module_descriptor() -> ModuleDescriptor {
-        let callback = LuauType::function(
-            vec![harmony_luau::FunctionParameter {
-                name: None,
-                ty: LuauType::any(),
-                variadic: true,
-            }],
-            Vec::new(),
-        );
-        let task_like = LuauType::union(vec![callback, LuauType::thread()]);
+fn describe_scheduling_functions(descriptor: &mut ModuleDescriptor) {
+    let callback = LuauType::function(
+        vec![harmony_luau::FunctionParameter {
+            name: None,
+            ty: LuauType::any(),
+            variadic: true,
+        }],
+        Vec::new(),
+    );
+    let task_like = LuauType::union(vec![callback, LuauType::thread()]);
+    let task = |name, ty| ParameterDescriptor {
+        name,
+        ty,
+        description: None,
+        variadic: false,
+    };
+    let args = || ParameterDescriptor {
+        name: "args",
+        ty: LuauType::any(),
+        description: None,
+        variadic: true,
+    };
+    let scheduling = |path, description, params| ModuleFunctionDescriptor {
+        path: vec![path],
+        description: Some(description),
+        params,
+        returns: vec![LuauType::thread()],
+        yields: false,
+    };
 
-        ModuleDescriptor {
-            name: "Task",
-            local_name: "task",
-            description: Some("Task scheduling primitives backed by the Harmony scheduler."),
-            fields: Vec::new(),
-            functions: vec![
-                ModuleFunctionDescriptor {
-                    path: vec!["defer"],
-                    description: Some(
-                        "Schedules a function or thread to resume on the next scheduler tick.",
-                    ),
-                    params: vec![
-                        ParameterDescriptor {
-                            name: "task",
-                            ty: task_like.clone(),
-                            description: None,
-                            variadic: false,
-                        },
-                        ParameterDescriptor {
-                            name: "args",
-                            ty: LuauType::any(),
-                            description: None,
-                            variadic: true,
-                        },
-                    ],
-                    returns: vec![LuauType::thread()],
-                    yields: false,
-                },
-                ModuleFunctionDescriptor {
-                    path: vec!["delay"],
-                    description: Some(
-                        "Schedules a function or thread to resume after a delay in seconds.",
-                    ),
-                    params: vec![
-                        ParameterDescriptor {
-                            name: "time",
-                            ty: f64::luau_type(),
-                            description: None,
-                            variadic: false,
-                        },
-                        ParameterDescriptor {
-                            name: "task",
-                            ty: task_like.clone(),
-                            description: None,
-                            variadic: false,
-                        },
-                        ParameterDescriptor {
-                            name: "args",
-                            ty: LuauType::any(),
-                            description: None,
-                            variadic: true,
-                        },
-                    ],
-                    returns: vec![LuauType::thread()],
-                    yields: false,
-                },
-                ModuleFunctionDescriptor {
-                    path: vec!["wait"],
-                    description: Some(
-                        "Yields the current thread for at least the requested duration and returns the elapsed seconds.",
-                    ),
-                    params: vec![ParameterDescriptor {
-                        name: "time",
-                        ty: LuauType::optional(f64::luau_type()),
-                        description: None,
-                        variadic: false,
-                    }],
-                    returns: vec![f64::luau_type()],
-                    yields: true,
-                },
-                ModuleFunctionDescriptor {
-                    path: vec!["cancel"],
-                    description: Some("Cancels a scheduled thread."),
-                    params: vec![ParameterDescriptor {
-                        name: "thread",
-                        ty: LuauType::thread(),
-                        description: None,
-                        variadic: false,
-                    }],
-                    returns: Vec::new(),
-                    yields: false,
-                },
-                ModuleFunctionDescriptor {
-                    path: vec!["spawn"],
-                    description: Some(
-                        "Starts a function or resumes a thread immediately on the scheduler.",
-                    ),
-                    params: vec![
-                        ParameterDescriptor {
-                            name: "task",
-                            ty: task_like,
-                            description: None,
-                            variadic: false,
-                        },
-                        ParameterDescriptor {
-                            name: "args",
-                            ty: LuauType::any(),
-                            description: None,
-                            variadic: true,
-                        },
-                    ],
-                    returns: vec![LuauType::thread()],
-                    yields: false,
-                },
+    descriptor.functions.insert(
+        0,
+        scheduling(
+            "defer",
+            "Schedules a function or thread to resume on the next scheduler tick.",
+            vec![task("task", task_like.clone()), args()],
+        ),
+    );
+    descriptor.functions.insert(
+        1,
+        scheduling(
+            "delay",
+            "Schedules a function or thread to resume after a delay in seconds.",
+            vec![
+                task("time", f64::luau_type()),
+                task("task", task_like.clone()),
+                args(),
             ],
-        }
-    }
+        ),
+    );
+    descriptor.functions.push(scheduling(
+        "spawn",
+        "Starts a function or resumes a thread immediately on the scheduler.",
+        vec![task("task", task_like), args()],
+    ));
 }
 
 #[cfg(test)]
 mod tests {
-    use super::module_spec;
+    use super::TaskModule;
 
     #[test]
     fn luau_module_schedules_spawn_and_cancel() -> harmony_luau::runtime::Result<()> {
@@ -299,7 +221,7 @@ mod tests {
         })?;
         vm.data().insert(harmony_core::LocalScheduler::new())?;
         let scheduler = vm.data().get::<harmony_core::LocalScheduler>()?;
-        let spec = module_spec();
+        let spec = TaskModule::module_spec();
         let table =
             harmony_core::luau::install_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;
         vm.set_global_table("task", &table)?;

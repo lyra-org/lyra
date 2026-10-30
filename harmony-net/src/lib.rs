@@ -8,20 +8,14 @@ use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 
-use harmony_core::{
-    FunctionSpec,
-    ModuleExport,
-    ModuleSpec,
-};
+use harmony_core::ModuleSpec;
 use harmony_luau as luau;
 use harmony_luau::{
     DescribeInterface,
+    DescribeModule,
     DescribeUserData,
     LuauType,
     LuauTypeInfo,
-    ModuleDescriptor,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
     render_definition_file_with_support,
 };
 use harmony_luau::{
@@ -133,35 +127,81 @@ struct TcpBindOptions {
 const MAX_READ_BYTES: usize = 8 * 1024 * 1024; // 8 MB
 const UDP_MAX_DATAGRAM: usize = 65535;
 
-struct NetModule;
+pub struct NetModule;
 
 /// The capability hosts conventionally gate this module behind.
 pub const SCOPE: &str = "harmony.net";
 
-pub fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("harmony/net")
-        .function(udp_bind_spec())
-        .function(tcp_connect_spec())
-        .function(tcp_bind_spec())
-        .userdata(UdpSocket::_harmony_userdata_spec())
+#[harmony_macros::module(
+    id = "harmony/net",
+    name = "Net",
+    local = "net",
+    description = "UDP and TCP socket networking.",
+    extend = "with_socket_classes"
+)]
+impl NetModule {
+    #[harmony(
+        description = "Binds a UDP socket to a local address and port.",
+        args(options: UdpBindOptions),
+        returns(UdpSocket)
+    )]
+    fn udp_bind(
+        vm: &luau::Vm,
+        origin: &luau::ChunkOrigin,
+        options: luau::Table,
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
+        let options = udp_bind_options_from_luau(vm, &options)?;
+        let vm = vm.clone();
+        let origin = origin.clone();
+        Ok(luau::ScheduledFuture::new(async move {
+            let socket = bind_udp_socket(options).await?;
+            UdpSocket::_harmony_userdata_class().create_value(&vm, &origin, socket)
+        }))
+    }
+
+    #[harmony(
+        description = "Connects to a remote TCP host. Hostnames are resolved automatically.",
+        args(options: TcpConnectOptions),
+        returns(TcpStream)
+    )]
+    fn tcp_connect(
+        vm: &luau::Vm,
+        origin: &luau::ChunkOrigin,
+        options: luau::Table,
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
+        let options = tcp_connect_options_from_luau(vm, &options)?;
+        let vm = vm.clone();
+        let origin = origin.clone();
+        Ok(luau::ScheduledFuture::new(async move {
+            let stream = connect_tcp_stream(options).await?;
+            TcpStream::_harmony_userdata_class().create_value(&vm, &origin, stream)
+        }))
+    }
+
+    #[harmony(
+        description = "Binds a TCP listener to a local address and port.",
+        args(options: TcpBindOptions),
+        returns(TcpListener)
+    )]
+    fn tcp_bind(
+        vm: &luau::Vm,
+        origin: &luau::ChunkOrigin,
+        options: luau::Table,
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
+        let options = tcp_bind_options_from_luau(vm, &options)?;
+        let vm = vm.clone();
+        let origin = origin.clone();
+        Ok(luau::ScheduledFuture::new(async move {
+            let listener = bind_tcp_listener(options).await?;
+            TcpListener::_harmony_userdata_class().create_value(&vm, &origin, listener)
+        }))
+    }
+}
+
+fn with_socket_classes(spec: ModuleSpec) -> ModuleSpec {
+    spec.userdata(UdpSocket::_harmony_userdata_spec())
         .userdata(TcpStream::_harmony_userdata_spec())
         .userdata(TcpListener::_harmony_userdata_spec())
-        .install(|_| Ok(ModuleExport::new(NetModule)))
-}
-
-fn udp_bind_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("udp_bind").arg_name("options");
-    spec.call_async(Arc::new(udp_bind_callback))
-}
-
-fn tcp_connect_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("tcp_connect").arg_name("options");
-    spec.call_async(Arc::new(tcp_connect_callback))
-}
-
-fn tcp_bind_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("tcp_bind").arg_name("options");
-    spec.call_async(Arc::new(tcp_bind_callback))
 }
 
 #[harmony_macros::userdata(name = "UdpSocket")]
@@ -403,20 +443,6 @@ impl UdpSocket {
         *guard = None;
         Ok(())
     }
-}
-
-fn udp_bind_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let table: luau::Table = frame.args.read_named("options")?;
-    let options = udp_bind_options_from_luau(frame.vm, &table)?;
-    let vm = frame.vm.clone();
-    let origin = frame.context.origin.clone();
-    let future = luau::ScheduledFuture::new(async move {
-        let socket = bind_udp_socket(options).await?;
-        UdpSocket::_harmony_userdata_class().create_value(&vm, &origin, socket)
-    });
-    Ok(future)
 }
 
 async fn bind_udp_socket(options: UdpBindOptions) -> luau::runtime::Result<UdpSocket> {
@@ -683,20 +709,6 @@ impl TcpListener {
     }
 }
 
-fn tcp_connect_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let table: luau::Table = frame.args.read_named("options")?;
-    let options = tcp_connect_options_from_luau(frame.vm, &table)?;
-    let vm = frame.vm.clone();
-    let origin = frame.context.origin.clone();
-    let future = luau::ScheduledFuture::new(async move {
-        let stream = connect_tcp_stream(options).await?;
-        TcpStream::_harmony_userdata_class().create_value(&vm, &origin, stream)
-    });
-    Ok(future)
-}
-
 async fn connect_tcp_stream(options: TcpConnectOptions) -> luau::runtime::Result<TcpStream> {
     let addr = format!("{}:{}", options.host, options.port);
 
@@ -720,20 +732,6 @@ async fn connect_tcp_stream(options: TcpConnectOptions) -> luau::runtime::Result
         timeout: Arc::new(StdMutex::new(None)),
         local_addr,
     })
-}
-
-fn tcp_bind_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let table: luau::Table = frame.args.read_named("options")?;
-    let options = tcp_bind_options_from_luau(frame.vm, &table)?;
-    let vm = frame.vm.clone();
-    let origin = frame.context.origin.clone();
-    let future = luau::ScheduledFuture::new(async move {
-        let listener = bind_tcp_listener(options).await?;
-        TcpListener::_harmony_userdata_class().create_value(&vm, &origin, listener)
-    });
-    Ok(future)
 }
 
 async fn bind_tcp_listener(options: TcpBindOptions) -> luau::runtime::Result<TcpListener> {
@@ -953,59 +951,6 @@ fn luau_runtime_error(message: impl Into<String>) -> luau::Error {
     luau::Error::Runtime(message.into())
 }
 
-struct NetModuleDocs;
-
-impl NetModuleDocs {
-    fn module_descriptor() -> ModuleDescriptor {
-        ModuleDescriptor {
-            name: "Net",
-            local_name: "net",
-            description: Some("UDP and TCP socket networking."),
-            fields: Vec::new(),
-            functions: vec![
-                ModuleFunctionDescriptor {
-                    path: vec!["udp_bind"],
-                    description: Some("Binds a UDP socket to a local address and port."),
-                    params: vec![ParameterDescriptor {
-                        name: "options",
-                        ty: UdpBindOptions::luau_type(),
-                        description: None,
-                        variadic: false,
-                    }],
-                    returns: vec![LuauType::literal("UdpSocket")],
-                    yields: true,
-                },
-                ModuleFunctionDescriptor {
-                    path: vec!["tcp_connect"],
-                    description: Some(
-                        "Connects to a remote TCP host. Hostnames are resolved automatically.",
-                    ),
-                    params: vec![ParameterDescriptor {
-                        name: "options",
-                        ty: TcpConnectOptions::luau_type(),
-                        description: None,
-                        variadic: false,
-                    }],
-                    returns: vec![LuauType::literal("TcpStream")],
-                    yields: true,
-                },
-                ModuleFunctionDescriptor {
-                    path: vec!["tcp_bind"],
-                    description: Some("Binds a TCP listener to a local address and port."),
-                    params: vec![ParameterDescriptor {
-                        name: "options",
-                        ty: TcpBindOptions::luau_type(),
-                        description: None,
-                        variadic: false,
-                    }],
-                    returns: vec![LuauType::literal("TcpListener")],
-                    yields: true,
-                },
-            ],
-        }
-    }
-}
-
 fn field(name: &'static str, ty: LuauType, description: &'static str) -> FieldDescriptor {
     FieldDescriptor {
         name,
@@ -1118,7 +1063,7 @@ impl DescribeInterface for TcpBindOptions {
 
 pub fn render_luau_definition() -> Result<String, std::fmt::Error> {
     render_definition_file_with_support(
-        &NetModuleDocs::module_descriptor(),
+        &NetModule::module_descriptor(),
         &[],
         &[
             SocketAddress::interface_descriptor(),
@@ -1136,14 +1081,14 @@ pub fn render_luau_definition() -> Result<String, std::fmt::Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::module_spec;
+    use super::NetModule;
 
     #[tokio::test(flavor = "current_thread")]
     async fn luau_udp_socket_round_trips_datagram() -> harmony_luau::runtime::Result<()> {
         let vm = harmony_luau::Vm::new()?;
         vm.data().insert(harmony_core::LocalScheduler::new())?;
         let scheduler = vm.data().get::<harmony_core::LocalScheduler>()?;
-        let spec = module_spec();
+        let spec = NetModule::module_spec();
         let table =
             harmony_core::luau::install_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;
         vm.set_global_table("net", &table)?;
@@ -1206,7 +1151,7 @@ mod tests {
         let vm = harmony_luau::Vm::new()?;
         vm.data().insert(harmony_core::LocalScheduler::new())?;
         let scheduler = vm.data().get::<harmony_core::LocalScheduler>()?;
-        let spec = module_spec();
+        let spec = NetModule::module_spec();
         let table =
             harmony_core::luau::install_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;
         vm.set_global_table("net", &table)?;

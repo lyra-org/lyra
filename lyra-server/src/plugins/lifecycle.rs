@@ -437,7 +437,8 @@ mod tests {
         })
         .await?;
         let plugin = crate::testing::PluginUnderTest::locate(source.path())?;
-        let sources = crate::testing::exec_plugins(&plugin, harmony_http::module_spec()).await?;
+        let sources =
+            crate::testing::exec_plugins(&plugin, harmony_http::HttpModule::module_spec()).await?;
         Ok((guard, source, sources))
     }
 

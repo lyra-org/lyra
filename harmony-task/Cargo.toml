@@ -7,3 +7,4 @@ license-file = "../LICENSE"
 [dependencies]
 harmony-core = { path = "../harmony-core" }
 harmony-luau = { path = "../harmony-luau" }
+harmony-macros = { path = "../harmony-macros" }
