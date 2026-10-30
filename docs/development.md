@@ -76,26 +76,59 @@ The `lyra-*` crates share the server version, set once under `[workspace.package
 version, starting at `-dev.0`, such as `0.0.2-dev.0`, and every plugin manifest in the repository
 declares the same `lyra` version. Tests check that they match.
 
-Plugins reach servers only through the releases in `versions.json`, which on `main` are offered to
-the development version. To release plugins from `main`:
+Images of tagged versions ship the [lyra-web](https://github.com/lyra-org/lyra-web) commit in
+[`web.rev`](../web.rev); other images ship lyra-web's `main` at build time. Every image records its
+lyra-web commit in the `pub.lyra.web.revision` label.
 
-1. If the server changed since the previous entry's commit, bump the development number, such as
-   `0.0.2-dev.0` to `0.0.2-dev.1`, in the workspace and every in-repository `lyra`, so servers built
-   before the change keep the plugins that work with them.
-2. Bump `version` in each plugin whose files changed since the previous entry's commit.
-3. Commit, then add that commit to the top of `versions.json` as described in
-   [plugin repositories](plugin-repositories.md#releases).
+Plugins reach servers only through the releases in `versions.json`, which on `main` are offered to
+the development version. When a batch of changes is ready for testers, such as a settled database
+change, publish a development version from `main`:
+
+1. Bump the development number, such as `0.0.2-dev.0` to `0.0.2-dev.1`, in the workspace and
+   every in-repository `lyra`, bump `version` in each plugin whose files changed since the
+   previous `versions.json` entry's commit, and set `web.rev` to the lyra-web commit to ship,
+   usually its `main`.
+2. Commit as `release: publish 0.0.2-dev.1`, and tag that commit `v0.0.2-dev.1`.
+3. If any plugin changed, add that commit to the top of `versions.json` as described in
+   [plugin repositories](plugin-repositories.md#releases), and commit as
+   `plugins: release the official catalog as 0.0.2-dev.1`.
+4. Push the commits and the tag together.
+
+After a release, the first development version published is `-dev.1`; `-dev.0` only marks `main`
+until then.
 
 To release a version:
 
-1. Set the workspace version and every in-repository `lyra` to it, and bump `version` in each plugin whose files changed since the previous release.
-2. Commit, and tag that commit `v` followed by the version, such as `v0.0.2`.
-3. Add that commit to the top of `versions.json`, and commit.
-4. Move `main` to the next development version, such as `0.0.3-dev.0`, in the workspace and every in-repository `lyra`. Set `PREVIOUS_RELEASE` in [`lyra-db/src/migration.rs`](../lyra-db/src/migration.rs) to the released version, empty `STEPS` and delete their tests, and commit.
+1. Set the workspace version and every in-repository `lyra` to it, bump `version` in each plugin
+   whose files changed since the previous release, and set `web.rev` to the lyra-web commit to
+   ship.
+2. Commit as `release: publish 0.0.2`, and tag that commit `v0.0.2`.
+3. Add that commit to the top of `versions.json`, and commit as
+   `plugins: release the official catalog as 0.0.2`.
+4. Move `main` to the next development version, such as `0.0.3-dev.0`, in the workspace and every
+   in-repository `lyra`. Set `PREVIOUS_RELEASE` in
+   [`lyra-db/src/migration.rs`](../lyra-db/src/migration.rs) to the released version, empty
+   `STEPS` and delete their tests, and commit as `release: start 0.0.3 development`.
 5. Push the commits and the tag together.
+6. In lyra-web, tag the commit that `web.rev` holds at the release with the same tag, such as
+   `v0.0.2`, and push that tag. lyra-web has no tags for development versions.
 
-CI checks the version line, `PREVIOUS_RELEASE`, and every `versions.json` entry against the one
-before it with [`ci/release-checks.sh`](../ci/release-checks.sh).
+CI publishes images to `registry.lyra.pub/lyra/lyra` under these tags:
+
+| Tag | Image |
+| --- | --- |
+| `latest` | the newest release |
+| `dev` | the newest release or development version |
+| `main` | the newest commit on `main` |
+| `<branch>` | the newest pipeline run by hand on that branch, with `/` replaced by `-` |
+| `0.0.2`, `0.0.2-dev.1` | that version |
+| `sha-<commit>` | that commit |
+
+Tagging an older version, such as a hotfix release, moves neither `latest` nor `dev` past a newer
+one. Pipelines refuse branches whose tag would be `latest`, `dev`, a version, or a `sha-` tag.
+
+CI checks the version line, `PREVIOUS_RELEASE`, `web.rev`, and every `versions.json` entry
+against the one before it with [`ci/release-checks.sh`](../ci/release-checks.sh).
 
 The `harmony-*` crates have their own version, released when Harmony is ready rather than with
 each Lyra release. Plugins depend on the server version only, so a Lyra release may ship a `-dev`
@@ -134,12 +167,15 @@ or restore its backup, when switching between such branches.
 
 ## Docker builds
 
-Full image builds require a lyra-web commit SHA in `LYRA_WEB_GIT_HASH`. To build with its current `main`, as CI does:
+Full image builds require a lyra-web commit SHA in `LYRA_WEB_GIT_HASH`. To build with the one in
+`web.rev`, as CI does for tagged versions:
 
 ```sh
-LYRA_WEB_GIT_HASH=$(git ls-remote https://github.com/lyra-org/lyra-web.git refs/heads/main | cut -f1)
 docker build \
   --build-arg LYRA_GIT_HASH="$(git rev-parse HEAD)" \
-  --build-arg LYRA_WEB_GIT_HASH="$LYRA_WEB_GIT_HASH" \
+  --build-arg LYRA_WEB_GIT_HASH="$(cat web.rev)" \
   -t lyra:local .
 ```
+
+To build with lyra-web's current `main` instead, as CI does for other pipelines, pass
+`LYRA_WEB_GIT_HASH=$(git ls-remote https://github.com/lyra-org/lyra-web.git refs/heads/main | cut -f1)`.

@@ -26,6 +26,8 @@ volumes:
 docker compose up -d
 ```
 
+`latest` is the newest release; use `dev` for the newest development version.
+
 Fresh named volumes need no permission setup. Music is mounted read-only.
 
 ### Storage permissions
