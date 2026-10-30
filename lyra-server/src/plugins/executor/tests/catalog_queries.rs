@@ -809,17 +809,15 @@ fn artwork_lookups_resolve_without_a_caller() -> Result<()> {
         .caller
         .insert(crate::plugins::auth::DispatchAuth::default());
     let values = catalog.runtime.eval_plugin_source_with_call_context(
-        format!(
-            r#"
-                local artists = require("@lyra/artists")
-                local genres = require("@lyra/genres")
-                return artists.artwork_id_by_name("AMY"),
-                    artists.artwork_id_by_name("Nobody") == nil,
-                    assert(genres.find_by_name("ROCK")).name,
-                    pcall(artists.query, {{}})
-            "#,
-        )
-        .into_bytes(),
+        br#"
+            local artists = require("@lyra/artists")
+            local genres = require("@lyra/genres")
+            return artists.artwork_id_by_name("AMY"),
+                artists.artwork_id_by_name("Nobody") == nil,
+                assert(genres.find_by_name("ROCK")).name,
+                pcall(artists.query, {})
+        "#
+        .to_vec(),
         anonymous,
     )?;
     assert_eq!(
