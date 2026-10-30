@@ -245,7 +245,11 @@ Removing a repository subscription keeps its installed plugins on disk.
 
 Plugins and repositories are managed from the server, which requires the
 `manage_plugins` permission. The HTTP API is described by the OpenAPI
-document, which `cargo run -p lyra-docs -- print openapi` prints. An
+document, which `cargo run -p lyra-docs -- print openapi` prints. The
+server keeps what each subscription offered at its last refresh, update
+check, or daily check, and shows subscribed repositories and their
+plugins from it without contacting the forge, judging each plugin's
+status against the plugins installed at the time. An
 install names each plugin with the release commit its preview showed, so
 the scopes approved are the scopes granted: a plugin whose offered release
 has changed since fails to install.

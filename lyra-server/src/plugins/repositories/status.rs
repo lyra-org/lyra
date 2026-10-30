@@ -258,10 +258,10 @@ pub(super) struct Candidate<'a> {
     pub(super) approved: bool,
 }
 
-/// A plugin as [`holds`] weighs what it reaches: installed, or at a
-/// candidate's release.
+/// A plugin as [`holds`] and previews weigh what it reaches: installed,
+/// or at a release.
 #[derive(Clone, Copy)]
-enum Reach<'a> {
+pub(super) enum Reach<'a> {
     Installed(&'a PluginManifest),
     Release(&'a str, &'a OfferedRelease),
 }
@@ -529,11 +529,11 @@ fn offered_status(
     else {
         return unknown("no subscribed repository has its origin and ref");
     };
-    let Some(entry) = subscription
-        .entries
-        .iter()
-        .find(|entry| entry.plugin_id == plugin_id && entry.subpath == record.subpath)
-    else {
+    let Some(entry) = subscription.entries.iter().find(|entry| {
+        entry.plugin_id == plugin_id
+            && entry.subpath == record.subpath
+            && entry.source_origin.is_none()
+    }) else {
         return unknown(match subscription.repository.refreshed_at_ms {
             None => "its repository has not been refreshed yet",
             Some(_) => "its repository did not list it at the last refresh",

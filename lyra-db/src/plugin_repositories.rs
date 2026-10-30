@@ -25,6 +25,9 @@ pub struct PluginRepository {
     pub name: String,
     pub description: String,
     pub git_ref: Option<String>,
+    /// The branch, tag, or commit the subscription resolved to at its last
+    /// refresh.
+    pub resolved_ref: Option<String>,
     pub commit: Option<String>,
     /// Unset until the first refresh.
     pub refreshed_at_ms: Option<u64>,
@@ -38,9 +41,15 @@ pub struct PluginRepositoryEntry {
     pub plugin_id: String,
     /// Directory within the repository; unset for a root-level plugin.
     pub subpath: Option<String>,
+    /// The repository holding the plugin, when the subscription's index
+    /// references it there rather than holding it itself.
+    pub source_origin: Option<String>,
     /// The plugin's version at the release the server would install;
     /// unset when there is none.
     pub version: Option<String>,
+    /// The plugin's name and description at that release.
+    pub name: Option<String>,
+    pub description: Option<String>,
     /// That release's commit.
     pub commit: Option<String>,
     /// The scopes the plugin declares at that release.
@@ -212,6 +221,7 @@ pub(crate) fn update_in_transaction(
         repo_db_id,
         [
             ("git_ref", record.git_ref.is_none()),
+            ("resolved_ref", record.resolved_ref.is_none()),
             ("commit", record.commit.is_none()),
             ("refreshed_at_ms", record.refreshed_at_ms.is_none()),
         ],
@@ -332,6 +342,7 @@ mod tests {
             name: "Test Plugins".to_string(),
             description: String::new(),
             git_ref: None,
+            resolved_ref: None,
             commit: None,
             refreshed_at_ms: None,
         }
@@ -402,7 +413,10 @@ mod tests {
             db_id: None,
             plugin_id: plugin_id.to_string(),
             subpath: Some(format!("plugins/{plugin_id}")),
+            source_origin: None,
             version: Some(version.to_string()),
+            name: None,
+            description: None,
             commit: None,
             scopes: None,
             dependencies: None,
@@ -466,7 +480,7 @@ mod tests {
     }
 
     #[test]
-    fn entries_keep_their_release_dependencies() -> anyhow::Result<()> {
+    fn entries_keep_their_release_dependencies_and_listing() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let dependencies = vec![
             PluginDependency {
@@ -482,6 +496,10 @@ mod tests {
         ];
         let stored = PluginRepositoryEntry {
             dependencies: Some(dependencies),
+            source_origin: Some("https://github.com/lyra/a".into()),
+            name: Some("A".into()),
+            description: Some("Does a".into()),
+            error: Some("no releases".into()),
             ..entry("a", "t1")
         };
         let db_id = create(

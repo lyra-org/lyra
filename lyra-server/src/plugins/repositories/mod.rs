@@ -24,7 +24,10 @@ use std::{
 use agdb::DbAny;
 use harmony_core::{
     plugin::PluginManifest,
-    scopes::EffectiveScopes,
+    scopes::{
+        EffectiveScopes,
+        ScopedPlugin,
+    },
 };
 use harmony_repository::{
     FetchError,
@@ -70,10 +73,13 @@ use lyra_db::plugin_repositories as repo_db;
 use status::{
     Candidate,
     Offered,
+    Reach,
     Unoffered,
     holds,
     listed_offer,
     stored_dependencies,
+    stored_error,
+    stored_offer,
 };
 pub(crate) use status::{
     Hold,
@@ -131,6 +137,7 @@ pub(crate) fn seed_default(db: &mut DbAny) -> anyhow::Result<()> {
             name: manifest.name,
             description: manifest.description,
             git_ref: None,
+            resolved_ref: None,
             commit: None,
             refreshed_at_ms: None,
         },
@@ -285,24 +292,20 @@ pub(crate) struct PluginAccess {
     pub(crate) widens: BTreeMap<String, ScopeGain>,
 }
 
-/// What `manifest` could do installed among `installed`. A dependency is
-/// counted both as installed and as `listing` offers it, since installing
-/// several plugins together may replace the installed one.
+/// What `plugin`, at a release, could do installed among `installed`. A
+/// dependency is counted both as installed and at the release its
+/// repository `offered`, since installing several plugins together may
+/// replace the installed one.
 fn plugin_access(
-    manifest: &PluginManifest,
-    installed: &[PluginManifest],
-    listing: &RepositoryListing,
+    plugin: &Reach<'_>,
+    installed: &[Reach<'_>],
+    offered: &[Reach<'_>],
 ) -> PluginAccess {
-    let offered = listing
-        .plugins
-        .iter()
-        .filter_map(|plugin| plugin.offer.as_ref().ok())
-        .map(|offer| &offer.manifest);
-    let effective = EffectiveScopes::of_any(manifest, |id| {
+    let effective = EffectiveScopes::of_any(plugin, |id| {
         installed
             .iter()
-            .chain(offered.clone())
-            .filter(|candidate| candidate.id == id)
+            .chain(offered)
+            .filter(|candidate| candidate.id() == id)
             .collect()
     });
     let effects = effects_of(
@@ -311,8 +314,8 @@ fn plugin_access(
             .iter()
             .map(|(scope, via)| (scope.as_str(), via)),
     );
-    let mut widens = scope_gains(installed, manifest);
-    widens.remove(&manifest.id);
+    let mut widens = scope_gains(installed, plugin);
+    widens.remove(plugin.id());
     PluginAccess {
         risk: Risk::of(effects.iter().map(|effect| &effect.effect)),
         effects,
@@ -393,24 +396,61 @@ pub(crate) async fn list_subscriptions() -> Result<Vec<Subscription>, PluginRepo
     load_subscriptions(&*db).map_err(PluginRepoError::Internal)
 }
 
-/// The entries a listing stores on its subscription: the repository's own
-/// plugins, not those its index references elsewhere.
+/// What a listing stores on its subscription.
+#[derive(Debug)]
+struct StoredListing {
+    /// From the `repository.json` index when present, else the repository
+    /// name.
+    name: String,
+    description: String,
+    resolved_ref: String,
+    commit: Option<String>,
+    entries: Vec<repo_db::PluginRepositoryEntry>,
+}
+
+impl StoredListing {
+    fn of(listing: &RepositoryListing) -> Self {
+        let index = listing.index.as_ref();
+        Self {
+            name: index.map_or_else(
+                || listing.spec.repo_name.clone(),
+                |index| index.name.clone(),
+            ),
+            description: index
+                .map(|index| index.description.clone())
+                .unwrap_or_default(),
+            resolved_ref: listing.git_ref.clone(),
+            commit: listing.commit.clone(),
+            entries: listing_entries(listing),
+        }
+    }
+}
+
+/// The entries of every plugin a listing offers, those its index
+/// references in other repositories included.
 fn listing_entries(listing: &RepositoryListing) -> Vec<repo_db::PluginRepositoryEntry> {
     listing
         .plugins
         .iter()
-        .filter(|plugin| plugin.source.via_repository.is_none())
         .map(|plugin| {
             let (offered, requires) = match listed_offer(plugin) {
                 Ok(offered) => (Some(offered), None),
                 Err(Unoffered::Incompatible { requires }) => (None, Some(requires)),
                 Err(Unoffered::Unknown { .. }) => (None, None),
             };
+            let manifest = plugin.offer.as_ref().ok().map(|offer| &offer.manifest);
+            let source = &plugin.source;
             repo_db::PluginRepositoryEntry {
                 db_id: None,
                 plugin_id: plugin.id.clone(),
-                subpath: plugin.source.subpath.clone(),
+                subpath: source.subpath.clone(),
+                source_origin: source
+                    .via_repository
+                    .is_some()
+                    .then(|| source.origin.clone()),
                 version: offered.as_ref().map(|offered| offered.version.to_string()),
+                name: manifest.map(|manifest| manifest.name.clone()),
+                description: manifest.map(|manifest| manifest.description.clone()),
                 commit: offered.as_ref().map(|offered| offered.commit.clone()),
                 dependencies: offered.as_ref().map(stored_dependencies),
                 scopes: offered.map(|offered| offered.scopes),
@@ -440,35 +480,36 @@ fn find_subscription<'a>(
     })
 }
 
-/// Stores a fresh listing's commit and entries on the matching
-/// subscription, so update status reflects the forge without a separate
-/// refresh.
+/// Stores a fresh listing on the matching subscription, so update status
+/// reflects the forge without a separate refresh.
 fn record_listed(
     db: &mut DbAny,
     origin: &str,
     git_ref: Option<&str>,
-    commit: Option<String>,
-    entries: &[repo_db::PluginRepositoryEntry],
+    listed: &StoredListing,
 ) -> Result<(), PluginRepoError> {
     let subscriptions = load_subscriptions(&*db)?;
     let Some(subscription) = find_subscription(&subscriptions, origin, git_ref) else {
         return Ok(());
     };
-    store_listed(db, subscription.repository.clone(), commit, entries)
+    store_listed(db, subscription.repository.clone(), listed)?;
+    Ok(())
 }
 
-/// Stores a fresh listing's commit and entries on the subscription
-/// `repository`, by its id, as refreshed now.
+/// Stores a fresh listing on the subscription `repository`, by its id, as
+/// refreshed now, and returns the subscription as stored.
 fn store_listed(
     db: &mut DbAny,
     mut repository: repo_db::PluginRepository,
-    commit: Option<String>,
-    entries: &[repo_db::PluginRepositoryEntry],
-) -> Result<(), PluginRepoError> {
-    repository.commit = commit;
+    listed: &StoredListing,
+) -> Result<repo_db::PluginRepository, PluginRepoError> {
+    repository.name = listed.name.clone();
+    repository.description = listed.description.clone();
+    repository.resolved_ref = Some(listed.resolved_ref.clone());
+    repository.commit = listed.commit.clone();
     repository.refreshed_at_ms = Some(now_ms());
-    repo_db::update(db, &repository, entries)?;
-    Ok(())
+    repo_db::update(db, &repository, &listed.entries)?;
+    Ok(repository)
 }
 
 /// Rejects subscribing the repository `spec` names when a subscription of
@@ -493,58 +534,74 @@ fn ensure_not_subscribed(
     }
 }
 
-fn build_preview(listing: &RepositoryListing, plugins_dir: &Path) -> RepositoryPreview {
-    let installed = installed_manifests(plugins_dir);
-    let plugins = listing
-        .plugins
+/// The plugins `entries` describe, each with where it stands against
+/// `plugins_dir`, whose plugins are `installed`. Sorted by id.
+fn catalog_plugins(
+    entries: &[repo_db::PluginRepositoryEntry],
+    plugins_dir: &Path,
+    installed: &[PluginManifest],
+) -> Vec<PluginPreview> {
+    let offers: Vec<_> = entries
         .iter()
-        .map(|plugin| {
-            let source = &plugin.source;
-            let offer = plugin.offer.as_ref().ok();
+        .map(|entry| (entry, stored_offer(entry)))
+        .collect();
+    let offered: Vec<Reach<'_>> = offers
+        .iter()
+        .filter_map(|(entry, offer)| Some(Reach::Release(&entry.plugin_id, offer.as_ref().ok()?)))
+        .collect();
+    let installed: Vec<Reach<'_>> = installed.iter().map(Reach::Installed).collect();
+    let mut plugins: Vec<PluginPreview> = offers
+        .iter()
+        .map(|(entry, offer)| {
             let mut preview = PluginPreview {
-                id: plugin.id.clone(),
+                id: entry.plugin_id.clone(),
                 name: String::new(),
                 version: String::new(),
                 description: String::new(),
                 scopes: Vec::new(),
                 access: None,
-                commit: offer.map(|offer| offer.commit.clone()),
-                status: catalog_status(&plugins_dir.join(&plugin.id), &listed_offer(plugin)),
-                source_origin: source
-                    .via_repository
-                    .is_some()
-                    .then(|| source.origin.clone()),
+                commit: None,
+                status: catalog_status(&plugins_dir.join(&entry.plugin_id), offer),
+                source_origin: entry.source_origin.clone(),
                 error: None,
             };
-            match &plugin.offer {
-                Ok(offer) => {
-                    let manifest = &offer.manifest;
-                    preview.name = manifest.name.clone();
-                    preview.version = offer.manifest.version.to_string();
-                    preview.description = manifest.description.clone();
-                    preview.scopes = manifest.scopes.clone();
-                    preview.access = Some(plugin_access(manifest, &installed, listing));
+            match offer {
+                Ok(release) => {
+                    preview.name = entry.name.clone().unwrap_or_default();
+                    preview.version = release.version.to_string();
+                    preview.description = entry.description.clone().unwrap_or_default();
+                    preview.scopes = release.scopes.clone();
+                    preview.commit = Some(release.commit.clone());
+                    preview.access = Some(plugin_access(
+                        &Reach::Release(&entry.plugin_id, release),
+                        &installed,
+                        &offered,
+                    ));
                 }
-                Err(error) => preview.error = Some(error.to_string()),
+                Err(Unoffered::Unknown { reason }) => preview.error = Some(reason.clone()),
+                Err(Unoffered::Incompatible { .. }) => preview.error = Some(stored_error(entry)),
             }
             preview
         })
         .collect();
+    plugins.sort_by(|a, b| a.id.cmp(&b.id));
+    plugins
+}
 
-    let index = listing.index.as_ref();
+fn build_preview(listing: &RepositoryListing, plugins_dir: &Path) -> RepositoryPreview {
+    let listed = StoredListing::of(listing);
     RepositoryPreview {
         origin: listing.spec.canonical_url(),
         git_ref: listing.spec.explicit_ref.clone(),
-        resolved_ref: listing.git_ref.clone(),
-        commit: listing.commit.clone(),
-        name: index.map_or_else(
-            || listing.spec.repo_name.clone(),
-            |index| index.name.clone(),
+        plugins: catalog_plugins(
+            &listed.entries,
+            plugins_dir,
+            &installed_manifests(plugins_dir),
         ),
-        description: index
-            .map(|index| index.description.clone())
-            .unwrap_or_default(),
-        plugins,
+        resolved_ref: listed.resolved_ref,
+        commit: listed.commit,
+        name: listed.name,
+        description: listed.description,
     }
 }
 
@@ -1363,8 +1420,7 @@ async fn update_plugins_in(
                     &mut db,
                     origin,
                     git_ref.as_deref(),
-                    source.listing.commit.clone(),
-                    &listing_entries(&source.listing),
+                    &StoredListing::of(&source.listing),
                 )?;
             }
         }
@@ -1527,42 +1583,124 @@ async fn reload_runtime(guard: MutexGuard<'static, ()>) -> Result<(), PluginRepo
     })
 }
 
+/// A subscribed repository as stored, with the plugins it offered at its
+/// last refresh or update check when asked for.
+#[derive(Debug, Clone)]
+pub(crate) struct RepositoryView {
+    pub(crate) repository: repo_db::PluginRepository,
+    pub(crate) plugins: Option<Vec<PluginPreview>>,
+}
+
+/// The manifests of the plugins installed now.
+fn installed_now() -> Vec<PluginManifest> {
+    installed_manifests(&STATE.boot.get().plugins_dir)
+}
+
+/// Views `subscription` with its stored plugins, each with where it stands
+/// against the plugins directory, whose plugins are `installed`.
+fn repository_view(subscription: Subscription, installed: &[PluginManifest]) -> RepositoryView {
+    RepositoryView {
+        plugins: Some(catalog_plugins(
+            &subscription.entries,
+            &STATE.boot.get().plugins_dir,
+            installed,
+        )),
+        repository: subscription.repository,
+    }
+}
+
 pub(crate) async fn add_repository(
     url: &str,
     git_ref: Option<&str>,
-) -> Result<(repo_db::PluginRepository, RepositoryPreview), PluginRepoError> {
+) -> Result<RepositoryView, PluginRepoError> {
     let spec =
         RepoSpec::parse(url, git_ref).map_err(|e| PluginRepoError::BadRequest(e.to_string()))?;
     ensure_not_subscribed(&*STATE.db.read().await, &spec)?;
     let listing = list(url, git_ref, &server_build()).await?;
-    let preview = build_preview(&listing, &STATE.boot.get().plugins_dir);
+    let listed = StoredListing::of(&listing);
 
-    let origin = listing.spec.canonical_url();
     let mut record = repo_db::PluginRepository {
         db_id: None,
         id: nanoid!(),
-        origin: origin.clone(),
-        name: preview.name.clone(),
-        description: preview.description.clone(),
+        origin: listing.spec.canonical_url(),
+        name: listed.name,
+        description: listed.description,
         git_ref: listing.spec.explicit_ref.clone(),
-        commit: listing.commit.clone(),
+        resolved_ref: Some(listed.resolved_ref),
+        commit: listed.commit,
         refreshed_at_ms: Some(now_ms()),
     };
 
     let mut db = STATE.db.write().await;
     ensure_not_subscribed(&*db, &listing.spec)?;
-    let entries = listing_entries(&listing);
     let db_id = db
-        .transaction_mut(|t| repo_db::create(t, &record, &entries))
+        .transaction_mut(|t| repo_db::create(t, &record, &listed.entries))
         .map_err(PluginRepoError::Internal)?;
+    drop(db);
     record.db_id = Some(db_id);
 
-    Ok((record, preview))
+    Ok(repository_view(
+        Subscription {
+            repository: record,
+            entries: listed.entries,
+        },
+        &installed_now(),
+    ))
 }
 
-pub(crate) async fn list_repositories() -> Result<Vec<repo_db::PluginRepository>, PluginRepoError> {
+/// The subscribed repositories, with their stored plugins when
+/// `with_plugins` is set.
+pub(crate) async fn list_repositories(
+    with_plugins: bool,
+) -> Result<Vec<RepositoryView>, PluginRepoError> {
+    if with_plugins {
+        let installed = installed_now();
+        return Ok(list_subscriptions()
+            .await?
+            .into_iter()
+            .map(|subscription| repository_view(subscription, &installed))
+            .collect());
+    }
     let db = STATE.db.read().await;
-    repo_db::list(&*db).map_err(PluginRepoError::Internal)
+    Ok(repo_db::list(&*db)?
+        .into_iter()
+        .map(|repository| RepositoryView {
+            repository,
+            plugins: None,
+        })
+        .collect())
+}
+
+/// One subscribed repository, with its stored plugins when `with_plugins`
+/// is set.
+pub(crate) async fn get_repository(
+    repository_id: &str,
+    with_plugins: bool,
+) -> Result<RepositoryView, PluginRepoError> {
+    let (repository, entries) = {
+        let db = STATE.db.read().await;
+        let repository = repo_db::get_by_id(&*db, repository_id)?.ok_or_else(|| {
+            PluginRepoError::NotFound(format!("repository not found: {repository_id}"))
+        })?;
+        if !with_plugins {
+            return Ok(RepositoryView {
+                repository,
+                plugins: None,
+            });
+        }
+        let db_id = repository
+            .db_id
+            .ok_or_else(|| anyhow::anyhow!("loaded repository has no db_id"))?;
+        let entries = repo_db::entries(&*db, db_id)?;
+        (repository, entries)
+    };
+    Ok(repository_view(
+        Subscription {
+            repository,
+            entries,
+        },
+        &installed_now(),
+    ))
 }
 
 async fn load_repository(
@@ -1574,26 +1712,27 @@ async fn load_repository(
         .ok_or_else(|| PluginRepoError::NotFound(format!("repository not found: {repository_id}")))
 }
 
+/// Lists a subscribed repository again and stores what it offers.
 pub(crate) async fn refresh_repository(
     repository_id: &str,
-) -> Result<(repo_db::PluginRepository, RepositoryPreview), PluginRepoError> {
-    let mut record = load_repository(repository_id).await?;
-
+) -> Result<RepositoryView, PluginRepoError> {
     let _check = CHECK_LOCK.lock().await;
-    let listing = list(&record.origin, record.git_ref.as_deref(), &server_build()).await?;
-    let preview = build_preview(&listing, &STATE.boot.get().plugins_dir);
-
-    record.name = preview.name.clone();
-    record.description = preview.description.clone();
-    record.commit = listing.commit.clone();
-    record.refreshed_at_ms = Some(now_ms());
-    {
-        let mut db = STATE.db.write().await;
-        repo_db::update(&mut db, &record, &listing_entries(&listing))
-            .map_err(PluginRepoError::Internal)?;
-    }
-
-    Ok((record, preview))
+    let repository = load_repository(repository_id).await?;
+    let listing = list(
+        &repository.origin,
+        repository.git_ref.as_deref(),
+        &server_build(),
+    )
+    .await?;
+    let listed = StoredListing::of(&listing);
+    let repository = store_listed(&mut *STATE.db.write().await, repository, &listed)?;
+    Ok(repository_view(
+        Subscription {
+            repository,
+            entries: listed.entries,
+        },
+        &installed_now(),
+    ))
 }
 
 /// Forgets a subscription. Plugins installed from it stay on disk and
@@ -2398,6 +2537,9 @@ mod tests {
                 db_id: None,
                 plugin_id: id.to_string(),
                 subpath: Some(format!("plugins/{id}")),
+                source_origin: None,
+                name: None,
+                description: None,
                 version: Some(version.to_string()),
                 commit: Some("1".repeat(40)),
                 scopes: Some(Vec::new()),
@@ -2415,6 +2557,7 @@ mod tests {
                 name: "Catalog".into(),
                 description: String::new(),
                 git_ref: None,
+                resolved_ref: None,
                 commit: None,
                 refreshed_at_ms: None,
             },
@@ -3144,6 +3287,9 @@ mod tests {
             db_id: None,
             plugin_id: id.to_string(),
             subpath: None,
+            source_origin: None,
+            name: None,
+            description: None,
             version: version.map(str::to_string),
             commit: version.map(|_| "1".repeat(40)),
             scopes: version.map(|_| Vec::new()),
@@ -3160,6 +3306,7 @@ mod tests {
                 name: "Plugins".into(),
                 description: String::new(),
                 git_ref: None,
+                resolved_ref: None,
                 commit: Some("b".repeat(40)),
                 refreshed_at_ms: Some(1),
             },
@@ -3254,6 +3401,9 @@ mod tests {
             db_id: None,
             plugin_id: id.to_string(),
             subpath: Some(format!("plugins/{id}")),
+            source_origin: None,
+            name: None,
+            description: None,
             version: Some(version.to_string()),
             commit: Some("1".repeat(40)),
             scopes: Some(Vec::new()),
@@ -3270,39 +3420,198 @@ mod tests {
                 name: "Plugins".into(),
                 description: String::new(),
                 git_ref: None,
+                resolved_ref: None,
                 commit: Some("a".repeat(40)),
                 refreshed_at_ms: None,
             },
             &[at("dropped", "1.0.0"), at("moved", "1.0.0")],
         )?;
-        let listed = [at("moved", "1.1.0")];
+        let listed = StoredListing {
+            name: "Renamed".into(),
+            description: "Moved plugins".into(),
+            resolved_ref: "main".into(),
+            commit: Some("b".repeat(40)),
+            entries: vec![at("moved", "1.1.0")],
+        };
 
-        record_listed(
-            &mut db,
-            "https://github.com/o/r",
-            Some("v2"),
-            Some("b".repeat(40)),
-            &listed,
-        )?;
+        record_listed(&mut db, "https://github.com/o/r", Some("v2"), &listed)?;
         let subscription = repo_db::get_by_id(&db, "main")?.expect("subscription exists");
         assert_eq!(subscription.commit.as_deref(), Some(&*"a".repeat(40)));
         assert_eq!(subscription.refreshed_at_ms, None);
 
-        record_listed(
-            &mut db,
-            "https://github.com/o/r",
-            None,
-            Some("b".repeat(40)),
-            &listed,
-        )?;
+        record_listed(&mut db, "https://github.com/o/r", None, &listed)?;
         let subscription = repo_db::get_by_id(&db, "main")?.expect("subscription exists");
         assert_eq!(subscription.commit.as_deref(), Some(&*"b".repeat(40)));
         assert!(subscription.refreshed_at_ms.is_some());
+        assert_eq!(
+            (
+                subscription.name.as_str(),
+                subscription.description.as_str(),
+                subscription.resolved_ref.as_deref()
+            ),
+            ("Renamed", "Moved plugins", Some("main"))
+        );
         let entries: Vec<_> = repo_db::entries(&db, subscription.db_id.unwrap())?
             .into_iter()
             .map(|entry| (entry.plugin_id, entry.version))
             .collect();
         assert_eq!(entries, [("moved".to_string(), Some("1.1.0".to_string()))]);
+        Ok(())
+    }
+
+    /// The parts of `plugins` a catalogue shows, by id.
+    fn shown(plugins: &[PluginPreview]) -> Vec<String> {
+        plugins
+            .iter()
+            .map(|plugin| {
+                format!(
+                    "{} {:?} {} {:?} {:?} {:?} {:?}",
+                    plugin.id,
+                    plugin.name,
+                    plugin.version,
+                    plugin.commit,
+                    plugin.status,
+                    plugin.error,
+                    plugin.access.as_ref().map(|access| &access.effects)
+                )
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn subscriptions_show_their_stored_plugins_without_contacting_the_forge()
+    -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        let forge = catalog_forge(HOST_REQUIREMENT, HOST_REQUIREMENT, changed_with_http()).await?;
+
+        let added = add_repository(&forge.origin, None).await?;
+        let id = added.repository.id.clone();
+        let plugins = added.plugins.expect("adding shows the plugins");
+        assert_eq!(
+            plugins.iter().map(|plugin| &*plugin.id).collect::<Vec<_>>(),
+            ["changed", "same"]
+        );
+        assert!(plugins.iter().all(|plugin| plugin.access.is_some()));
+        assert_eq!(added.repository.resolved_ref.as_deref(), Some("main"));
+        let requests = forge.requests.lock().unwrap().len();
+
+        let fetched = get_repository(&id, true).await?;
+        assert_eq!(shown(&fetched.plugins.expect("requested")), shown(&plugins));
+        let listed = list_repositories(true).await?;
+        let listed = listed
+            .iter()
+            .find(|view| view.repository.id == id)
+            .expect("listed");
+        assert_eq!(
+            shown(listed.plugins.as_deref().expect("requested")),
+            shown(&plugins)
+        );
+        assert!(get_repository(&id, false).await?.plugins.is_none());
+        assert!(
+            list_repositories(false)
+                .await?
+                .iter()
+                .all(|view| view.plugins.is_none())
+        );
+        assert_eq!(
+            forge.requests.lock().unwrap().len(),
+            requests,
+            "stored subscriptions are shown without the forge"
+        );
+
+        let refreshed = refresh_repository(&id).await?;
+        assert_eq!(
+            shown(&refreshed.plugins.expect("refreshing shows them")),
+            shown(&plugins)
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn subscriptions_stored_before_listings_show_plugins_unnamed() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        subscribe("http://127.0.0.1:9/o/r", &[("foo", "1.0.0")]).await?;
+
+        let view = get_repository("catalog", true).await?;
+
+        assert_eq!(view.repository.resolved_ref, None);
+        let [plugin] = &view.plugins.expect("requested")[..] else {
+            panic!("expected one plugin");
+        };
+        assert_eq!(
+            (&*plugin.id, &*plugin.name, &*plugin.version),
+            ("foo", "", "1.0.0")
+        );
+        assert_eq!(plugin.status, CatalogStatus::Available);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn subscriptions_store_plugins_their_index_references_elsewhere() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        let release = "1".repeat(40);
+        let manifest = manifest_json("elsewhere", "1.0.0", HOST_REQUIREMENT);
+        let plugin = TestForge::start(
+            vec![
+                ("plugin.json".into(), manifest.clone()),
+                (
+                    "versions.json".into(),
+                    versions_json(&[(&release, HOST_REQUIREMENT)]),
+                ),
+            ],
+            vec![(
+                release.clone(),
+                vec![
+                    ("plugin.json".into(), manifest),
+                    ("init.luau".into(), "return {}".into()),
+                ],
+            )],
+        )
+        .await?;
+        let index = serde_json::json!({
+            "schema_version": 1,
+            "name": "Index",
+            "plugins": [{ "url": plugin.origin }],
+        })
+        .to_string();
+        let catalog = TestForge::start(
+            vec![
+                ("repository.json".into(), index.clone()),
+                (
+                    "versions.json".into(),
+                    versions_json(&[(&release, HOST_REQUIREMENT)]),
+                ),
+            ],
+            vec![(release.clone(), vec![("repository.json".into(), index)])],
+        )
+        .await?;
+
+        let added = add_repository(&catalog.origin, None).await?;
+
+        let fetched = get_repository(&added.repository.id, true).await?;
+        let [listed] = &fetched.plugins.expect("requested")[..] else {
+            panic!("expected the referenced plugin");
+        };
+        assert_eq!(listed.id, "elsewhere");
+        assert_eq!(listed.version, "1.0.0");
+        assert_eq!(
+            listed.source_origin.as_deref(),
+            Some(plugin.origin.as_str())
+        );
+
+        let mut installed = record("0.9.0");
+        installed.origin = catalog.origin.clone();
+        let status = installed_status("elsewhere", &installed, &list_subscriptions().await?, &[]);
+        assert_eq!(
+            status.status,
+            UpdateStatus::Unknown {
+                reason: "its repository did not list it at the last refresh".into()
+            },
+            "a plugin the index references elsewhere is not offered from the index's origin"
+        );
         Ok(())
     }
 

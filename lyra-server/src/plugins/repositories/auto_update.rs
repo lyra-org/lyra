@@ -37,6 +37,7 @@ use super::{
     MUTATION_LOCK,
     OfferedRelease,
     PluginRepoError,
+    StoredListing,
     Subscription,
     UpdateOutcome,
     UpdateReport,
@@ -46,7 +47,6 @@ use super::{
     install_updates,
     installed_manifests,
     list_update_source,
-    listing_entries,
     load_managed_record,
     managed_plugin_ids,
     map_resolve_error,
@@ -199,8 +199,7 @@ async fn check_subscription(
     store_listed(
         &mut *STATE.db.write().await,
         repository,
-        listed.listing.commit.clone(),
-        &listing_entries(&listed.listing),
+        &StoredListing::of(&listed.listing),
     )?;
     let offered: HashMap<String, OfferedRelease> = listed
         .outcomes
@@ -388,6 +387,7 @@ mod tests {
             name: id.to_string(),
             description: String::new(),
             git_ref: None,
+            resolved_ref: None,
             commit: None,
             refreshed_at_ms,
         }
@@ -594,6 +594,7 @@ mod tests {
             name: "Catalog".into(),
             description: String::new(),
             git_ref: None,
+            resolved_ref: None,
             commit: None,
             refreshed_at_ms: None,
         };
