@@ -1296,10 +1296,10 @@ mod tests {
         (
             "harmony/task",
             &[
-                "wait(time)",
-                "cancel(thread)",
                 "defer(task)",
                 "delay(time, task)",
+                "wait(time)",
+                "cancel(thread)",
                 "spawn(task)",
             ],
         ),
