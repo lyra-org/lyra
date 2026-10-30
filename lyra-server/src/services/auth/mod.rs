@@ -52,7 +52,7 @@ static PASSWORD_CHECKS: LazyLock<tokio::sync::Semaphore> = LazyLock::new(|| {
 });
 
 /// Checks `password` against a stored hash off the async workers.
-async fn password_matches(password: &str, hash: String) -> AuthResult<bool> {
+pub(crate) async fn password_matches(password: &str, hash: String) -> AuthResult<bool> {
     let _permit = PASSWORD_CHECKS
         .acquire()
         .await

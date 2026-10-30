@@ -323,12 +323,22 @@ mod test_state {
         let mut operation = std::pin::pin!(operation);
         let mut held = Some(STATE.db.write().await);
         for gap in 0.. {
-            if let Poll::Ready(output) = operation.as_mut().poll(&mut cx) {
-                return output;
-            }
-            let mut next = Box::pin(STATE.db.write());
-            assert!(next.as_mut().poll(&mut cx).is_pending());
-            drop(held.take());
+            let mut next = loop {
+                if let Poll::Ready(output) = operation.as_mut().poll(&mut cx) {
+                    return output;
+                }
+                let mut next = Box::pin(STATE.db.write());
+                assert!(next.as_mut().poll(&mut cx).is_pending());
+                drop(held.take());
+                match next.as_mut().poll(&mut cx) {
+                    Poll::Pending => break next,
+                    // Nothing was queued ahead, so `operation` waits on something besides the lock.
+                    Poll::Ready(guard) => {
+                        held = Some(guard);
+                        tokio::task::yield_now().await;
+                    }
+                }
+            };
             loop {
                 if let Poll::Ready(output) = operation.as_mut().poll(&mut cx) {
                     return output;

@@ -12,8 +12,6 @@ use std::ops::{
 use aide::transform::TransformOperation;
 use argon2::{
     Argon2,
-    PasswordHash,
-    PasswordVerifier,
     password_hash::{
         PasswordHasher,
         SaltString,
@@ -66,6 +64,7 @@ use crate::{
             api_keys,
             login_with_password,
             logout_with_token,
+            password_matches,
             require_grantable_permissions,
             require_manage_roles,
             require_manage_users,
@@ -539,7 +538,17 @@ async fn update_me(
         validate_password(new_password)?;
 
         let new_hash = hash_password(new_password)?;
-        let current_password = current_password.to_string();
+
+        let checked_hash = {
+            let db = STATE.db.read().await;
+            let user_db_id = principal.require(&db)?;
+            lyra_db::users::get_by_id(&db, user_db_id)?
+                .ok_or_else(|| AppError::not_found("user not found"))?
+                .password
+        };
+        if !password_matches(current_password, checked_hash.clone()).await? {
+            return Err(AppError::unauthorized("incorrect current password"));
+        }
 
         let mut db = STATE.db.write().await;
         let user_db_id = principal.require(&db)?;
@@ -547,13 +556,8 @@ async fn update_me(
             .transaction_mut(|t| -> anyhow::Result<Vec<agdb::DbId>> {
                 let user = lyra_db::users::get_by_id(t, user_db_id)?
                     .ok_or(PasswordRotationError::UserNotFound)?;
-
-                let parsed_hash = PasswordHash::new(&user.password)
-                    .map_err(|err| anyhow::anyhow!("stored password hash is unparseable: {err}"))?;
-                if Argon2::default()
-                    .verify_password(current_password.as_bytes(), &parsed_hash)
-                    .is_err()
-                {
+                // The current password was checked without the lock, against this hash.
+                if user.password != checked_hash {
                     return Err(PasswordRotationError::IncorrectCurrentPassword.into());
                 }
 
