@@ -290,10 +290,18 @@ impl ScopedPlugin for Reach<'_> {
     }
 }
 
-/// What installing `candidate` over `plugins` lets each plugin newly reach,
-/// as a hold when anything.
-fn scope_hold(plugins: &[Reach<'_>], candidate: &Candidate<'_>) -> Option<Hold> {
-    let gains = scope_gains(plugins, &Reach::Release(candidate.id, candidate.release));
+/// What installing `candidate` over `plugins`, which may hold other
+/// updates, lets each plugin newly reach, as a hold when anything.
+fn scope_hold(
+    installed: &[Reach<'_>],
+    plugins: &[Reach<'_>],
+    candidate: &Candidate<'_>,
+) -> Option<Hold> {
+    let gains = scope_gains(
+        installed,
+        plugins,
+        &Reach::Release(candidate.id, candidate.release),
+    );
     (!gains.is_empty()).then_some(Hold::AddsScopes { gains })
 }
 
@@ -314,7 +322,12 @@ pub(super) fn holds(
     let mut held: HashMap<String, Hold> = candidates
         .iter()
         .filter(|candidate| !candidate.approved)
-        .filter_map(|candidate| Some((candidate.id.to_string(), scope_hold(&current, candidate)?)))
+        .filter_map(|candidate| {
+            Some((
+                candidate.id.to_string(),
+                scope_hold(&current, &current, candidate)?,
+            ))
+        })
         .collect();
     loop {
         let mut after: BTreeMap<&str, (&Version, &BTreeMap<String, Dependency>)> = installed
@@ -341,6 +354,7 @@ pub(super) fn holds(
             } else if !candidate.approved
                 && !held.contains_key(candidate.id)
                 && let Some(hold) = scope_hold(
+                    &current,
                     &others_after(&current, candidates, &held, candidate),
                     candidate,
                 )
@@ -647,6 +661,7 @@ mod tests {
             growth,
             effects: Vec::new(),
             risk: RiskAssessment::of(&[]),
+            previous_risk: Risk::Standard,
         }
     }
 
@@ -935,13 +950,46 @@ mod tests {
         };
         let egress = vec![(Effect::Egress, ["a"].into())];
         assert_eq!(
-            (effects("a"), gains["a"].risk.risk),
-            (egress.clone(), Risk::Standard)
+            (effects("a"), gains["a"].previous_risk, gains["a"].risk.risk),
+            (egress.clone(), Risk::Standard, Risk::Standard)
         );
         assert_eq!(
-            (effects("b"), gains["b"].risk.risk),
-            (egress, Risk::Elevated),
+            (effects("b"), gains["b"].previous_risk, gains["b"].risk.risk),
+            (egress, Risk::Standard, Risk::Elevated),
             "b sends data off the server through a, and touches its favorites"
+        );
+    }
+
+    #[test]
+    fn previous_risk_is_the_installed_plugins() {
+        let installed = [
+            with_scopes(manifest("a", "1.0.0", &[("d", "^1")]), &["lyra.favorites"]),
+            with_scopes(manifest("c", "1.0.0", &[]), &["harmony.http"]),
+            with_scopes(manifest("d", "1.0.0", &[]), &["harmony.http"]),
+        ];
+        let mut a = release("1.1.0", &[("c", "^1"), ("d", "^1")]);
+        a.scopes = vec!["lyra.favorites".into()];
+        let d = release("1.1.0", &[]);
+        let candidates = [
+            Candidate {
+                id: "a",
+                release: &a,
+                approved: false,
+            },
+            Candidate {
+                id: "d",
+                release: &d,
+                approved: false,
+            },
+        ];
+
+        let Some(Hold::AddsScopes { gains }) = holds(&installed, &candidates).remove("a") else {
+            panic!("a is held for reaching http through c once d drops it");
+        };
+        assert_eq!(
+            (gains["a"].previous_risk, gains["a"].risk.risk),
+            (Risk::Elevated, Risk::Elevated),
+            "installed a already sends favorites off the server through d"
         );
     }
 }

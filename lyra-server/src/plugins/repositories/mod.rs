@@ -314,7 +314,7 @@ fn plugin_access(
             .iter()
             .map(|(scope, via)| (scope.as_str(), via)),
     );
-    let mut widens = scope_gains(installed, plugin);
+    let mut widens = scope_gains(installed, installed, plugin);
     widens.remove(plugin.id());
     PluginAccess {
         risk: RiskAssessment::of(effects.iter().map(|effect| &effect.effect)),

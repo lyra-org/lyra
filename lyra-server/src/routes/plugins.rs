@@ -216,7 +216,7 @@ enum HoldResponse {
     },
 }
 
-/// What one plugin would newly reach.
+/// What one plugin would newly reach, and how its risk changes.
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
 struct ScopeGainResponse {
@@ -224,10 +224,9 @@ struct ScopeGainResponse {
     /// The plugin's risk once it reaches them, from everything it reaches
     /// then.
     risk: RiskResponse,
-    /// Why `risk` is what it is, in English for display, never to be parsed:
-    /// what the plugin could then do that sets the level, or why nothing
-    /// raises it.
-    risk_reasons: Vec<String>,
+    /// The plugin's risk level now, from everything it reaches now;
+    /// `standard` for a plugin not installed.
+    previous_risk: RiskLevelResponse,
     /// What the newly reached scopes let the plugin do.
     effects: Vec<EffectResponse>,
     /// Scopes the plugin would newly reach.
@@ -478,12 +477,9 @@ struct PluginPreviewResponse {
 #[derive(Serialize)]
 struct PluginAccessResponse {
     risk: RiskResponse,
-    /// Why `risk` is what it is, in English for display, never to be parsed:
-    /// what the plugin can do that sets the level, or why nothing raises it.
-    risk_reasons: Vec<String>,
     effects: Vec<EffectResponse>,
     /// Each scope reached, with the plugins declaring it.
-    scopes: Vec<ReachedScopeResponse>,
+    reached_scopes: Vec<ReachedScopeResponse>,
     /// Dependencies, direct or not, neither installed nor in the
     /// repository, so what they can do is unknown.
     unresolved_dependencies: Vec<String>,
@@ -492,20 +488,38 @@ struct PluginAccessResponse {
     widens: Vec<ScopeGainResponse>,
 }
 
-/// How much care letting a plugin run calls for: `high` when it adds
-/// endpoints, handles credentials, or can send data off the server and touch
-/// every user's personal data, `elevated` when it can send data off the
-/// server and touch personal or library data, else `standard`.
+/// How much care letting a plugin run calls for, and what sets it.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct RiskResponse {
+    level: RiskLevelResponse,
+    /// What the plugin can do that sets `level`; empty at `standard`.
+    reasons: Vec<RiskReasonResponse>,
+}
+
+impl From<RiskAssessment> for RiskResponse {
+    fn from(assessment: RiskAssessment) -> Self {
+        Self {
+            level: assessment.risk.into(),
+            reasons: assessment.reasons.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+/// `high` when the plugin adds endpoints, handles credentials, or can send
+/// data off the server and touch every user's personal data, `elevated` when
+/// it can send data off the server and touch personal or library data, else
+/// `standard`.
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
-enum RiskResponse {
+enum RiskLevelResponse {
     Standard,
     Elevated,
     High,
 }
 
-impl From<Risk> for RiskResponse {
+impl From<Risk> for RiskLevelResponse {
     fn from(risk: Risk) -> Self {
         match risk {
             Risk::Standard => Self::Standard,
@@ -546,13 +560,76 @@ struct EffectResponse {
     /// Whose personal data it reaches, for the personal kinds.
     #[serde(skip_serializing_if = "Option::is_none")]
     users: Option<UsersResponse>,
-    /// The plugins whose scopes give the effect: the plugin itself or its
-    /// dependencies.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    via: Vec<String>,
+    /// The scopes giving the effect, each with the plugin declaring it: the
+    /// plugin itself or one of its dependencies.
+    via: Vec<EffectSourceResponse>,
     /// The effect as a sentence-case list item, such as "Reads every user's
     /// listening history".
     description: String,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct EffectSourceResponse {
+    plugin: String,
+    scope: &'static str,
+}
+
+/// `exposes` and `authority`: as the effects of those kinds.
+/// `sends_personal`: can send the personal `data` of the `users` it names
+/// off the server. `changes_personal`: can change that data and send data
+/// off the server. `changes_library`: can change the library's `data` and
+/// send data off the server.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum RiskReasonKind {
+    Exposes,
+    Authority,
+    SendsPersonal,
+    ChangesPersonal,
+    ChangesLibrary,
+}
+
+/// What raises a plugin's risk. `kind`, `data` and `users` are the
+/// machine-readable truth, as on effects; `description` is for display.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct RiskReasonResponse {
+    kind: RiskReasonKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    users: Option<UsersResponse>,
+    /// The reason as a sentence-case list item, such as "Can send every
+    /// user's listening history off the server".
+    description: String,
+}
+
+impl From<RiskReason> for RiskReasonResponse {
+    fn from(reason: RiskReason) -> Self {
+        let (kind, data, users) = match reason {
+            RiskReason::Exposes => (RiskReasonKind::Exposes, None, None),
+            RiskReason::Authority => (RiskReasonKind::Authority, None, None),
+            RiskReason::SendsPersonal(data, users) => {
+                (RiskReasonKind::SendsPersonal, Some(data.id()), Some(users))
+            }
+            RiskReason::ChangesPersonal(data, users) => (
+                RiskReasonKind::ChangesPersonal,
+                Some(data.id()),
+                Some(users),
+            ),
+            RiskReason::ChangesLibrary(data) => {
+                (RiskReasonKind::ChangesLibrary, Some(data.id()), None)
+            }
+        };
+        Self {
+            kind,
+            data,
+            users: users.map(Into::into),
+            description: reason.description(),
+        }
+    }
 }
 
 /// `acting`: the users the plugin acts for. `all`: every user's, whoever
@@ -592,8 +669,15 @@ impl From<PluginEffect> for EffectResponse {
             kind,
             data,
             users: users.map(Into::into),
-            via: effect.plugins().into_iter().map(Into::into).collect(),
             description: effect.effect.description(),
+            via: effect
+                .via
+                .into_iter()
+                .map(|source| EffectSourceResponse {
+                    plugin: source.plugin,
+                    scope: source.scope.def().id,
+                })
+                .collect(),
         }
     }
 }
@@ -605,21 +689,11 @@ struct ReachedScopeResponse {
     via: Vec<String>,
 }
 
-fn risk_reasons(assessment: &RiskAssessment) -> Vec<String> {
-    assessment
-        .reasons
-        .iter()
-        .copied()
-        .map(RiskReason::description)
-        .collect()
-}
-
 fn plugin_access_response(access: repositories_service::PluginAccess) -> PluginAccessResponse {
     PluginAccessResponse {
-        risk: access.risk.risk.into(),
-        risk_reasons: risk_reasons(&access.risk),
+        risk: access.risk.into(),
         effects: access.effects.into_iter().map(Into::into).collect(),
-        scopes: access
+        reached_scopes: access
             .scopes
             .into_iter()
             .map(|(scope, via)| ReachedScopeResponse {
@@ -637,8 +711,8 @@ fn scope_gain_responses(gains: BTreeMap<String, ScopeGain>) -> Vec<ScopeGainResp
         .into_iter()
         .map(|(plugin, gain)| ScopeGainResponse {
             plugin,
-            risk: gain.risk.risk.into(),
-            risk_reasons: risk_reasons(&gain.risk),
+            risk: gain.risk.into(),
+            previous_risk: gain.previous_risk.into(),
             effects: gain.effects.into_iter().map(Into::into).collect(),
             scopes: gain.growth.scopes.into_iter().collect(),
             unresolved_dependencies: gain.growth.unresolved.into_iter().collect(),
@@ -1606,7 +1680,7 @@ fn get_settings_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn list_plugins_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List plugins").description(
-        "Returns the loaded plugin manifests along with where each plugin was installed from: a `source` of kind `repository` (origin, ref, version, commit, pinned, status, offered, hold, installed_at, installed_automatically), `local`, or `invalid` (error) when the source record could not be read and the plugin should be uninstalled or reinstalled. `pinned` is true for tag and commit installs, which updates never move. `status` compares the installed version with the release that the subscribed repository of the same origin and ref last offered this server (`up_to_date`, `update_available`, `incompatible` with the `requires` that excludes this server, or `unknown` with the `reason` when it offered nothing for another reason, such as a missing `versions.json`, or no such subscription lists the plugin), without contacting the forge; refreshing the repository or updating plugins stores the offered releases. `offered` is the release on offer (version, commit, scopes) and `hold` why an available update to it waits for an admin: `adds_scopes` with the `gains` of each plugin it would let reach new scopes, through its own or its dependencies', with what they let it do and its risk then, `breaks_dependents` with each dependent's id and requirement, `unmet_dependencies` with each dependency the release requires that would be missing or at another version, or `dependency_cycle` with the `plugins` it would leave depending on each other in a cycle. Dependencies are judged as if every available update were installed together. `installed_automatically` is true when the daily update check, not a request, installed the release at `installed_at`.",
+        "Returns the loaded plugin manifests along with where each plugin was installed from: a `source` of kind `repository` (origin, ref, version, commit, pinned, status, offered, hold, installed_at, installed_automatically), `local`, or `invalid` (error) when the source record could not be read and the plugin should be uninstalled or reinstalled. `pinned` is true for tag and commit installs, which updates never move. `status` compares the installed version with the release that the subscribed repository of the same origin and ref last offered this server (`up_to_date`, `update_available`, `incompatible` with the `requires` that excludes this server, or `unknown` with the `reason` when it offered nothing for another reason, such as a missing `versions.json`, or no such subscription lists the plugin), without contacting the forge; refreshing the repository or updating plugins stores the offered releases. `offered` is the release on offer (version, commit, scopes) and `hold` why an available update to it waits for an admin: `adds_scopes` with the `gains` of each plugin it would let reach new scopes, through its own or its dependencies', with what they let it do and its risk before and after, `breaks_dependents` with each dependent's id and requirement, `unmet_dependencies` with each dependency the release requires that would be missing or at another version, or `dependency_cycle` with the `plugins` it would leave depending on each other in a cycle. Dependencies are judged as if every available update were installed together. `installed_automatically` is true when the daily update check, not a request, installed the release at `installed_at`.",
     )
 }
 
@@ -2212,12 +2286,12 @@ mod tests {
                 "reason": "adds_scopes",
                 "gains": [{
                     "plugin": "scoped",
-                    "risk": "standard",
-                    "risk_reasons": ["No listed effects that raise its risk"],
+                    "risk": { "level": "standard", "reasons": [] },
+                    "previous_risk": "standard",
                     "effects": [{
                         "kind": "writes_library",
                         "data": "metadata",
-                        "via": ["scoped"],
+                        "via": [{ "plugin": "scoped", "scope": "lyra.metadata" }],
                         "description": "Changes the library's metadata",
                     }],
                     "scopes": ["lyra.metadata"],
@@ -2642,18 +2716,15 @@ mod tests {
         );
         assert_eq!(plugin["status"], "available");
         assert_eq!(
-            (&plugin["access"]["risk"], &plugin["access"]["risk_reasons"]),
-            (
-                &"standard".into(),
-                &serde_json::json!(["No listed effects that raise its risk"])
-            )
+            plugin["access"]["risk"],
+            serde_json::json!({ "level": "standard", "reasons": [] })
         );
         assert_eq!(
             plugin["access"]["effects"][0],
             serde_json::json!({
                 "kind": "writes_library",
                 "data": "metadata",
-                "via": ["foo"],
+                "via": [{ "plugin": "foo", "scope": "lyra.metadata" }],
                 "description": "Changes the library's metadata",
             })
         );

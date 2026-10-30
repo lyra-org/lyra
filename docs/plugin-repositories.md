@@ -275,8 +275,8 @@ the scopes approved are the scopes granted: a plugin whose offered release
 has changed since fails to install.
 
 Previews, and updates held for the scopes they reach, describe what the
-scopes reached let a plugin do, and which plugins' scopes each effect
-comes through: send data off the server, add endpoints or listen on the
+scopes reached let a plugin do, and which scopes, declared by the plugin
+or its dependencies, each effect comes through: send data off the server, add endpoints or listen on the
 network, sign users in and manage their sessions, read or change personal
 data, either of the users it acts for or of every user, or change the
 shared library. Each effect names its kind, the data it concerns by a
@@ -286,11 +286,13 @@ every user's listening history". A risk level summarises them: `high` for
 plugins that add endpoints, sign users in, or can send data off the server
 and touch every user's personal data, `elevated` for plugins that can send
 data off the server and touch personal or library data, and `standard`
-otherwise. `risk_reasons` lists, in English, what sets the level, such as
-"Can send every user's listening history off the server", or why nothing
-raises it. A narrow scope lists the effects of its functions alone, so its
-module's scope doesn't carry them. Descriptions and reasons are for display;
-clients act on the kinds, data ids and levels. Filtering or
+otherwise. The risk lists the reasons that set its level, none at
+`standard`, each named like an effect, with a `description` such as "Can
+send every user's listening history off the server". A plugin's gain in a
+hold or preview gives its risk both before and after. A narrow scope lists
+the effects of its functions alone, so its module's scope doesn't carry
+them. Descriptions are for display; clients act on the kinds, data ids and
+levels. Filtering or
 sorting the catalog by a user's favorites, listens or ratings needs the
 scope that gates that data. A preview counts a dependency both as installed and
 as the repository offers it, since installing them together replaces the

@@ -481,13 +481,9 @@ pub(crate) enum Risk {
     High,
 }
 
-/// Why a plugin has the risk it has.
+/// What raises a plugin's risk above standard.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum RiskReason {
-    /// It lists no effects at all.
-    NoEffects,
-    /// None of the effects it lists raises its risk.
-    NoRaisingEffects,
     Exposes,
     Authority,
     /// It can send data off the server and read this personal data.
@@ -501,7 +497,6 @@ pub(crate) enum RiskReason {
 impl RiskReason {
     fn risk(self) -> Risk {
         match self {
-            Self::NoEffects | Self::NoRaisingEffects => Risk::Standard,
             Self::Exposes
             | Self::Authority
             | Self::SendsPersonal(_, Users::All)
@@ -515,8 +510,6 @@ impl RiskReason {
     /// The reason as a list item for admins, in English.
     pub(crate) fn description(self) -> String {
         match self {
-            Self::NoEffects => "No listed effects beyond reading the shared library".into(),
-            Self::NoRaisingEffects => "No listed effects that raise its risk".into(),
             Self::Exposes => "Can add endpoints to the server or listen on the network".into(),
             Self::Authority => {
                 "Can sign users in to Lyra, check their credentials and manage their sessions"
@@ -549,7 +542,7 @@ impl RiskReason {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RiskAssessment {
     pub(crate) risk: Risk,
-    /// Every reason at `risk`, none below it.
+    /// Every reason at `risk`, none below it; empty at standard.
     pub(crate) reasons: Vec<RiskReason>,
 }
 
@@ -581,13 +574,6 @@ impl RiskAssessment {
             .max()
             .unwrap_or(Risk::Standard);
         reasons.retain(|reason| reason.risk() == risk);
-        if reasons.is_empty() {
-            reasons.push(if effects.is_empty() {
-                RiskReason::NoEffects
-            } else {
-                RiskReason::NoRaisingEffects
-            });
-        }
         reasons.sort();
         reasons.dedup();
         Self { risk, reasons }
@@ -610,6 +596,7 @@ pub(crate) struct PluginEffect {
 
 impl PluginEffect {
     /// The plugins whose scopes give the effect.
+    #[cfg(test)]
     pub(crate) fn plugins(&self) -> BTreeSet<&str> {
         self.via
             .iter()
@@ -705,14 +692,21 @@ pub(crate) struct ScopeGain {
     /// Its risk once the candidate is installed, from everything it
     /// reaches then.
     pub(crate) risk: RiskAssessment,
+    /// Its risk as installed, from everything it reaches now; standard for
+    /// a candidate not installed.
+    pub(crate) previous_risk: Risk,
 }
 
 /// What installing `candidate` among `plugins`, replacing the one with its
-/// id if any, lets each plugin newly reach, by [`scope_growth`].
+/// id if any, lets each plugin newly reach, by [`scope_growth`]. `plugins`
+/// may already hold other updates; each plugin's previous risk is judged
+/// from the `installed` ones.
 pub(crate) fn scope_gains<P: ScopedPlugin>(
+    installed: &[P],
     plugins: &[P],
     candidate: &P,
 ) -> BTreeMap<String, ScopeGain> {
+    let installed_as = |id: &str| installed.iter().find(|plugin| plugin.id() == id);
     let after = |id: &str| {
         if id == candidate.id() {
             Some(candidate)
@@ -720,29 +714,35 @@ pub(crate) fn scope_gains<P: ScopedPlugin>(
             plugins.iter().find(|plugin| plugin.id() == id)
         }
     };
+    let risk_of = |reach: &EffectiveScopes| {
+        let effects = effects_of(
+            reach
+                .scopes
+                .iter()
+                .map(|(scope, via)| (scope.as_str(), via)),
+        );
+        RiskAssessment::of(effects.iter().map(|effect| &effect.effect))
+    };
     scope_growth(plugins, candidate)
         .into_iter()
         .filter_map(|(id, growth)| {
             let reach = EffectiveScopes::of(after(&id)?, after);
+            let previous_risk = installed_as(&id)
+                .map(|plugin| risk_of(&EffectiveScopes::of(plugin, installed_as)).risk)
+                .unwrap_or(Risk::Standard);
             let effects = effects_of(
                 growth
                     .scopes
                     .iter()
                     .filter_map(|scope| Some((scope.as_str(), reach.scopes.get(scope)?))),
             );
-            let all = effects_of(
-                reach
-                    .scopes
-                    .iter()
-                    .map(|(scope, via)| (scope.as_str(), via)),
-            );
-            let risk = RiskAssessment::of(all.iter().map(|effect| &effect.effect));
             Some((
                 id,
                 ScopeGain {
                     growth,
                     effects,
-                    risk,
+                    risk: risk_of(&reach),
+                    previous_risk,
                 },
             ))
         })
@@ -850,18 +850,9 @@ mod tests {
     #[test]
     fn risk_reasons_are_the_ones_at_its_level() {
         let history = PersonalKind::ListeningHistory;
-        assert_eq!(
-            reasons(&[]),
-            ["No listed effects beyond reading the shared library"]
-        );
-        assert_eq!(
-            reasons(&[Effect::Egress]),
-            ["No listed effects that raise its risk"]
-        );
-        assert_eq!(
-            reasons(&[Effect::ReadsPersonal(history, Users::All)]),
-            ["No listed effects that raise its risk"]
-        );
+        assert!(reasons(&[]).is_empty());
+        assert!(reasons(&[Effect::Egress]).is_empty());
+        assert!(reasons(&[Effect::ReadsPersonal(history, Users::All)]).is_empty());
         assert_eq!(
             reasons(&[Effect::Exposes]),
             ["Can add endpoints to the server or listen on the network"]
@@ -1146,6 +1137,7 @@ mod tests {
         let installed = [Plugin::new(&["harmony.http", "lyra.listens"])];
         let gains = super::scope_gains(
             &installed,
+            &installed,
             &Plugin::new(&["harmony.http", "lyra.listens", "lyra.listens.all"]),
         );
         let gain = &gains["demo"];
@@ -1163,15 +1155,9 @@ mod tests {
                 Users::All
             )]
         );
-        assert_eq!(gain.risk.risk, Risk::High);
         assert_eq!(
-            RiskAssessment::of(&[
-                Effect::Egress,
-                Effect::ReadsPersonal(PersonalKind::ListeningHistory, Users::Acting),
-                Effect::WritesPersonal(PersonalKind::ListeningHistory, Users::Acting),
-            ])
-            .risk,
-            Risk::Elevated,
+            (gain.previous_risk, gain.risk.risk),
+            (Risk::Elevated, Risk::High),
             "without the narrow scope, listens alone is no longer high"
         );
     }
