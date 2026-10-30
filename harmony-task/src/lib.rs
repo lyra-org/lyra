@@ -142,7 +142,7 @@ fn schedule_task(
         });
     }
 
-    let context = scheduler_context(&frame.context);
+    let context = frame.context.clone();
     if let Some(delay) = delay {
         scheduler.schedule_luau_thread_after(
             context,
@@ -181,30 +181,6 @@ fn wait_callback(
         delay,
         async move { Ok(seconds) },
     ))
-}
-
-fn scheduler_context(context: &luau::CallContext) -> harmony_core::CallContext {
-    let mut caller = harmony_core::ContextBag::default();
-    for (type_id, value) in context.caller.cloned_entries() {
-        caller.insert_shared(type_id, value);
-    }
-    harmony_core::CallContext {
-        origin: harmony_core::ChunkOrigin {
-            module: context
-                .origin
-                .module
-                .as_ref()
-                .map(|module| harmony_core::ModuleId(module.0.clone())),
-            plugin: context.origin.plugin.clone(),
-            path: context.origin.path.clone(),
-        },
-        capability: context
-            .capability
-            .as_ref()
-            .map(|capability| harmony_core::CapabilityId(capability.0.clone())),
-        caller,
-        task_group: harmony_core::TaskGroupId(context.task_group.0),
-    }
 }
 
 pub fn render_luau_definition() -> Result<String, std::fmt::Error> {

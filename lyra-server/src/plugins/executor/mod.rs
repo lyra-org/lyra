@@ -54,7 +54,6 @@ use harmony_core::{
     TaskState,
     plugin::Runtime,
 };
-use harmony_luau as luau;
 
 pub(crate) struct PluginExecutor {
     runtime: Runtime,
@@ -117,17 +116,6 @@ fn plugin_origin(plugin_id: impl Into<Arc<str>>, path: impl Into<Arc<str>>) -> C
         module: Some(ModuleId(Arc::from(format!("plugins/{plugin}/{path}")))),
         plugin: Some(plugin.clone()),
         path: Some(Arc::from(format!("plugins/{plugin}/{path}"))),
-    }
-}
-
-fn luau_origin(origin: &ChunkOrigin) -> luau::ChunkOrigin {
-    luau::ChunkOrigin {
-        module: origin
-            .module
-            .as_ref()
-            .map(|module| luau::ModuleId(module.0.clone())),
-        plugin: origin.plugin.clone(),
-        path: origin.path.clone(),
     }
 }
 

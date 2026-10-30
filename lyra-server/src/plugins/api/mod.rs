@@ -187,7 +187,7 @@ fn register_route_callback(
         handler,
         auth_mode,
         case_insensitive,
-        context: core_call_context(&frame.context),
+        context: frame.context.clone(),
     })
 }
 
@@ -236,13 +236,7 @@ fn websocket_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<(
     })?;
     harmony_core::ensure_current_plugin_run(frame.vm, &frame.context)?;
     let routes = frame.vm.data().get::<ApiRouteStore>()?;
-    routes.register_websocket(
-        plugin_id,
-        path,
-        handler,
-        auth_mode,
-        core_call_context(&frame.context),
-    )
+    routes.register_websocket(plugin_id, path, handler, auth_mode, frame.context.clone())
 }
 
 fn response_json_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
@@ -604,30 +598,6 @@ fn normalize_auth_mode(auth_mode: Option<&str>) -> luau::runtime::Result<RouteAu
         Some(other) => Err(crate::plugins::runtime_error(format!(
             "unsupported auth mode '{other}'; expected 'public' or 'required'"
         ))),
-    }
-}
-
-fn core_call_context(context: &luau::CallContext) -> harmony_core::CallContext {
-    let mut caller = harmony_core::ContextBag::default();
-    for (type_id, value) in context.caller.cloned_entries() {
-        caller.insert_shared(type_id, value);
-    }
-    harmony_core::CallContext {
-        origin: harmony_core::ChunkOrigin {
-            module: context
-                .origin
-                .module
-                .as_ref()
-                .map(|module| harmony_core::ModuleId(module.0.clone())),
-            plugin: context.origin.plugin.clone(),
-            path: context.origin.path.clone(),
-        },
-        capability: context
-            .capability
-            .as_ref()
-            .map(|capability| harmony_core::CapabilityId(capability.0.clone())),
-        caller,
-        task_group: harmony_core::TaskGroupId(context.task_group.0),
     }
 }
 

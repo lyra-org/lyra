@@ -24,7 +24,7 @@ impl PluginExecutor {
     pub(crate) fn start_websocket(&self, request: WebSocketStartRequest) -> Result<()> {
         let routes = self.vm.data().get::<crate::plugins::api::ApiRouteStore>()?;
         let handler = routes.get(request.handler)?;
-        let origin = super::luau_origin(&handler.context.origin);
+        let origin = handler.context.origin.clone();
         let reader = ApiWebSocketReader::_harmony_userdata_class().create_value(
             &self.vm,
             &origin,

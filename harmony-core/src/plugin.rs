@@ -52,11 +52,11 @@ use crate::{
         CapabilityPolicy,
         load_chunk_with_require,
     },
-    scheduler::{
-        CapabilityId,
-        ChunkOrigin,
-        TaskGroupId,
-    },
+};
+use harmony_luau::{
+    CapabilityId,
+    ChunkOrigin,
+    TaskGroupId,
 };
 
 pub const PLUGIN_CONFIG_FILENAME: &str = "plugin.json";
@@ -2073,7 +2073,7 @@ mod tests {
             ))),
         };
         let group_context = |frame: &luau::CallFrame<'_>| CallContext {
-            task_group: crate::TaskGroupId(frame.context.task_group.0),
+            task_group: frame.context.task_group,
             ..CallContext::default()
         };
         ModuleSpec::new("test/tasks")

@@ -12,6 +12,14 @@ pub mod scopes;
 mod tokio_runtime;
 mod userdata;
 
+pub use harmony_luau::{
+    CallContext,
+    CapabilityId,
+    ChunkOrigin,
+    ContextBag,
+    ModuleId,
+    TaskGroupId,
+};
 pub use luaurc::LuaurcConfig;
 pub use modules::{
     AllowAllCapabilities,
@@ -37,16 +45,10 @@ pub use modules::{
     ensure_current_plugin_run,
 };
 pub use scheduler::{
-    CallContext,
-    CapabilityId,
-    ChunkOrigin,
-    ContextBag,
     LocalLuauTaskCompletion,
     LocalScheduler,
-    ModuleId,
-    ScheduledFuture,
     Scheduler,
-    TaskGroupId,
+    TaskFuture,
     TaskHandle,
     TaskId,
     TaskSnapshot,

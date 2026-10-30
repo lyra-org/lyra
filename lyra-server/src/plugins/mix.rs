@@ -259,7 +259,7 @@ impl Mixer {
     ) -> luau::runtime::Result<luau::ScheduledFuture> {
         let plugin_id = self.current_plugin_id(vm, context)?;
         let id = self.id.clone();
-        let context = core_call_context(context);
+        let context = context.clone();
         let vm = vm.clone();
         Ok(luau::ScheduledFuture::new(async move {
             let generation = crate::plugins::STATE.generation();
@@ -560,30 +560,6 @@ fn required_string_field(
             "mix option '{key}' must be a string, got {}",
             other.type_name()
         ))),
-    }
-}
-
-fn core_call_context(context: &luau::CallContext) -> harmony_core::CallContext {
-    let mut caller = harmony_core::ContextBag::default();
-    for (type_id, value) in context.caller.cloned_entries() {
-        caller.insert_shared(type_id, value);
-    }
-    harmony_core::CallContext {
-        origin: harmony_core::ChunkOrigin {
-            module: context
-                .origin
-                .module
-                .as_ref()
-                .map(|module| harmony_core::ModuleId(module.0.clone())),
-            plugin: context.origin.plugin.clone(),
-            path: context.origin.path.clone(),
-        },
-        capability: context
-            .capability
-            .as_ref()
-            .map(|capability| harmony_core::CapabilityId(capability.0.clone())),
-        caller,
-        task_group: harmony_core::TaskGroupId(context.task_group.0),
     }
 }
 

@@ -1,9 +1,4 @@
 use std::{
-    any::{
-        Any,
-        TypeId,
-        type_name,
-    },
     collections::{
         HashMap,
         HashSet,
@@ -31,76 +26,17 @@ use std::{
 
 use anyhow::Result;
 use harmony_luau as luau;
+use harmony_luau::{
+    CallContext,
+    ChunkOrigin,
+    TaskGroupId,
+};
 use std::cell::{
     Cell,
     RefCell,
 };
 
-pub type ScheduledFuture = Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>;
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ModuleId(pub Arc<str>);
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct CapabilityId(pub Arc<str>);
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct TaskGroupId(pub u64);
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ChunkOrigin {
-    pub module: Option<ModuleId>,
-    pub plugin: Option<Arc<str>>,
-    pub path: Option<Arc<str>>,
-}
-
-#[derive(Clone, Default)]
-pub struct CallContext {
-    pub origin: ChunkOrigin,
-    pub capability: Option<CapabilityId>,
-    pub caller: ContextBag,
-    pub task_group: TaskGroupId,
-}
-
-#[derive(Clone, Default)]
-pub struct ContextBag {
-    values: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
-}
-
-impl ContextBag {
-    pub fn insert<T>(&mut self, value: T)
-    where
-        T: Send + Sync + 'static,
-    {
-        self.values.insert(TypeId::of::<T>(), Arc::new(value));
-    }
-
-    pub fn insert_shared(
-        &mut self,
-        type_id: TypeId,
-        value: Arc<dyn Any + Send + Sync>,
-    ) -> Option<Arc<dyn Any + Send + Sync>> {
-        self.values.insert(type_id, value)
-    }
-
-    pub fn cloned_entries(&self) -> Vec<(TypeId, Arc<dyn Any + Send + Sync>)> {
-        self.values
-            .iter()
-            .map(|(type_id, value)| (*type_id, value.clone()))
-            .collect()
-    }
-
-    pub fn get<T>(&self) -> Result<Arc<T>>
-    where
-        T: Send + Sync + 'static,
-    {
-        self.values
-            .get(&TypeId::of::<T>())
-            .cloned()
-            .and_then(|value| value.downcast::<T>().ok())
-            .ok_or_else(|| anyhow::anyhow!("call context does not contain {}", type_name::<T>()))
-    }
-}
+pub type TaskFuture = Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TaskId(pub u64);
@@ -232,7 +168,7 @@ impl Scheduler {
         self.spawn_boxed(context, Box::pin(future))
     }
 
-    pub fn spawn_boxed(&mut self, context: CallContext, future: ScheduledFuture) -> TaskHandle {
+    pub fn spawn_boxed(&mut self, context: CallContext, future: TaskFuture) -> TaskHandle {
         self.insert_task(context, future, None)
     }
 
@@ -249,7 +185,7 @@ impl Scheduler {
         &mut self,
         context: CallContext,
         delay: Duration,
-        future: ScheduledFuture,
+        future: TaskFuture,
     ) -> TaskHandle {
         let wake_at = Instant::now()
             .checked_add(delay)
@@ -395,7 +331,7 @@ impl Scheduler {
     fn insert_task(
         &mut self,
         context: CallContext,
-        future: ScheduledFuture,
+        future: TaskFuture,
         wake_at: Option<Instant>,
     ) -> TaskHandle {
         self.insert_work(
@@ -1108,7 +1044,6 @@ impl LocalScheduler {
             .thread_call_context(&thread)
             .ok()
             .flatten()
-            .map(|context| crate::modules::core_call_context(&context))
             .unwrap_or_default();
         let handle = self.scheduler.borrow_mut().spawn_luau_future(
             context,
@@ -1431,7 +1366,7 @@ struct Task {
 }
 
 enum TaskWork {
-    Future(ScheduledFuture),
+    Future(TaskFuture),
     LuauThread {
         vm: luau::Vm,
         thread: luau::Thread,
@@ -1481,7 +1416,7 @@ fn poll_work(
                 }
                 *pending_start = false;
             }
-            let previous = match vm.set_thread_call_context(thread, luau_call_context(context)) {
+            let previous = match vm.set_thread_call_context(thread, context.clone()) {
                 Ok(previous) => previous,
                 Err(error) => return WorkPoll::Failed(error.to_string()),
             };
@@ -1499,8 +1434,7 @@ fn poll_work(
                     args: Vec::new(),
                     pending_start: false,
                 };
-                let previous = match vm.set_thread_call_context(&thread, luau_call_context(context))
-                {
+                let previous = match vm.set_thread_call_context(&thread, context.clone()) {
                     Ok(previous) => previous,
                     Err(error) => return WorkPoll::Failed(error.to_string()),
                 };
@@ -1522,30 +1456,6 @@ fn resume_luau_thread(
 ) -> luau::runtime::Result<luau::ThreadStatus> {
     let _guard = budget.map(|budget| vm.interrupt_after(budget));
     thread.resume(vm, args)
-}
-
-fn luau_call_context(context: &CallContext) -> luau::CallContext {
-    let mut caller = luau::ContextBag::default();
-    for (type_id, value) in context.caller.cloned_entries() {
-        caller.insert_shared(type_id, value);
-    }
-    luau::CallContext {
-        origin: luau::ChunkOrigin {
-            module: context
-                .origin
-                .module
-                .as_ref()
-                .map(|module| luau::ModuleId(module.0.clone())),
-            plugin: context.origin.plugin.clone(),
-            path: context.origin.path.clone(),
-        },
-        capability: context
-            .capability
-            .as_ref()
-            .map(|capability| luau::CapabilityId(capability.0.clone())),
-        caller,
-        task_group: luau::TaskGroupId(context.task_group.0),
-    }
 }
 
 /// After a resume the thread gets back the context it had before: none for a
@@ -1595,6 +1505,10 @@ mod tests {
     };
 
     use super::*;
+    use harmony_luau::{
+        CapabilityId,
+        ModuleId,
+    };
 
     #[test]
     fn ready_future_completes_with_origin_snapshot() {
@@ -1941,7 +1855,7 @@ mod tests {
         let function = vm.load_chunk(&luau::Chunk::new(
             Arc::<[u8]>::from(&b"local value = ...; return value + 1"[..]),
             luau::ChunkOrigin {
-                module: Some(luau::ModuleId(Arc::from("demo/root"))),
+                module: Some(ModuleId(Arc::from("demo/root"))),
                 plugin: Some(Arc::from("demo")),
                 path: Some(Arc::from("plugins/demo/init.luau")),
             },

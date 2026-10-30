@@ -6,7 +6,6 @@
 use std::time::Duration;
 
 use agdb::DbId;
-use harmony_core::CallContext;
 use harmony_luau as luau;
 use serde_json::Value as JsonValue;
 
@@ -28,31 +27,6 @@ use crate::services::{
         validate_id_scheme,
     },
 };
-
-pub(super) fn core_call_context(context: &luau::CallContext) -> CallContext {
-    let mut caller = harmony_core::ContextBag::default();
-    for (type_id, value) in context.caller.cloned_entries() {
-        caller.insert_shared(type_id, value);
-    }
-
-    CallContext {
-        origin: harmony_core::ChunkOrigin {
-            module: context
-                .origin
-                .module
-                .as_ref()
-                .map(|module| harmony_core::ModuleId(module.0.clone())),
-            plugin: context.origin.plugin.clone(),
-            path: context.origin.path.clone(),
-        },
-        capability: context
-            .capability
-            .as_ref()
-            .map(|capability| harmony_core::CapabilityId(capability.0.clone())),
-        caller,
-        task_group: harmony_core::TaskGroupId(context.task_group.0),
-    }
-}
 
 pub(super) fn entity_type_for_node(
     db: &agdb::DbAny,

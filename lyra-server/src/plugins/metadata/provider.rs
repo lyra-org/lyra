@@ -36,7 +36,6 @@ use crate::services::{
 use super::MetadataCallbackRegistry;
 use super::layer::MetadataLayer;
 use super::parsing::{
-    core_call_context,
     ensure_provider_owner,
     entity_type_for_node,
     optional_artist_type,
@@ -247,7 +246,7 @@ fn provider_id_callback(
         }
     };
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
-    let context = core_call_context(context);
+    let context = context.clone();
     let provider = provider.clone();
     Ok(luau::ScheduledFuture::new(async move {
         let generation = crate::plugins::STATE.generation();
@@ -314,7 +313,7 @@ fn search_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(vm, context, &provider.plugin_id, &provider.provider_id)?;
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
-    let context = core_call_context(context);
+    let context = context.clone();
     let provider = provider.clone();
     Ok(luau::ScheduledFuture::new(async move {
         let generation = crate::plugins::STATE.generation();
@@ -349,7 +348,7 @@ fn cover_callback(
 
     let (timeout, require) = parse_cover_spec(vm, &config)?;
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
-    let context = core_call_context(context);
+    let context = context.clone();
     let provider = provider.clone();
     Ok(luau::ScheduledFuture::new(async move {
         let generation = crate::plugins::STATE.generation();
@@ -392,7 +391,7 @@ fn lyrics_callback(
 
     let (timeout, require) = parse_lyrics_spec(vm, &config)?;
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
-    let context = core_call_context(context);
+    let context = context.clone();
     let provider = provider.clone();
     Ok(luau::ScheduledFuture::new(async move {
         let generation = crate::plugins::STATE.generation();
@@ -432,7 +431,7 @@ fn similar_releases_callback(
     ensure_provider_owner(vm, context, &provider.plugin_id, &provider.provider_id)?;
     let (timeout, require) = parse_similar_releases_spec(vm, &config)?;
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
-    let context = core_call_context(context);
+    let context = context.clone();
     let provider = provider.clone();
     Ok(luau::ScheduledFuture::new(async move {
         let generation = crate::plugins::STATE.generation();
@@ -471,7 +470,7 @@ fn refresh_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(vm, context, &provider.plugin_id, &provider.provider_id)?;
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
-    let context = core_call_context(context);
+    let context = context.clone();
     let provider = provider.clone();
     Ok(luau::ScheduledFuture::new(async move {
         let generation = crate::plugins::STATE.generation();

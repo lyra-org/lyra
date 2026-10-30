@@ -117,7 +117,7 @@ pub struct ModuleId(pub Arc<str>);
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CapabilityId(pub Arc<str>);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TaskGroupId(pub u64);
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -2708,23 +2708,12 @@ struct CallbackSlot {
     use_thread_context_origin: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct CallContext {
     pub origin: ChunkOrigin,
     pub capability: Option<CapabilityId>,
     pub caller: ContextBag,
     pub task_group: TaskGroupId,
-}
-
-impl Default for CallContext {
-    fn default() -> Self {
-        Self {
-            origin: ChunkOrigin::default(),
-            capability: None,
-            caller: ContextBag::default(),
-            task_group: TaskGroupId(0),
-        }
-    }
 }
 
 #[derive(Clone, Default)]
@@ -2738,21 +2727,6 @@ impl ContextBag {
         T: Send + Sync + 'static,
     {
         self.values.insert(TypeId::of::<T>(), Arc::new(value));
-    }
-
-    pub fn insert_shared(
-        &mut self,
-        type_id: TypeId,
-        value: Arc<dyn Any + Send + Sync>,
-    ) -> Option<Arc<dyn Any + Send + Sync>> {
-        self.values.insert(type_id, value)
-    }
-
-    pub fn cloned_entries(&self) -> Vec<(TypeId, Arc<dyn Any + Send + Sync>)> {
-        self.values
-            .iter()
-            .map(|(type_id, value)| (*type_id, value.clone()))
-            .collect()
     }
 
     pub fn get<T>(&self) -> Result<Arc<T>>

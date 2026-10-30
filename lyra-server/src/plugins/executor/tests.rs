@@ -13,6 +13,7 @@ use harmony_core::{
         PluginManifest,
     },
 };
+use harmony_luau as luau;
 
 fn default_server_info() -> crate::plugins::server::ServerInfo {
     crate::plugins::server::ServerInfo {

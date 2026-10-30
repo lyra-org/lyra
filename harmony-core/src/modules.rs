@@ -943,13 +943,13 @@ fn bound_require(
     task_group: crate::TaskGroupId,
 ) -> luau::runtime::Result<luau::Function> {
     vm.create_function_with_options(
-        luau::NativeFunctionOptions::new(luau_origin(origin))
+        luau::NativeFunctionOptions::new(origin.clone())
             .function_name("require")
             .argument_names([Arc::from("specifier")])
-            .task_group(luau::TaskGroupId(task_group.0)),
+            .task_group(task_group),
         Arc::new(|mut frame| {
             let specifier: String = frame.args.read_named("specifier")?;
-            let origin = core_origin(&frame.context.origin);
+            let origin = frame.context.origin.clone();
             require_from(frame, &specifier, origin)
         }),
     )
@@ -968,7 +968,7 @@ pub fn ensure_current_plugin_run(
         .data()
         .get::<LuauRequireRuntime>()?
         .current_plugin_group(plugin_id);
-    if current.map(|group| group.0) == Some(context.task_group.0) {
+    if current == Some(context.task_group) {
         return Ok(());
     }
     Err(luau::Error::Runtime(format!(
@@ -987,7 +987,7 @@ pub(crate) fn load_chunk_with_require(
 ) -> luau::runtime::Result<luau::Function> {
     let require = luau::Value::Function(bound_require(vm, origin, task_group)?);
     vm.load_chunk_with_globals(
-        &luau::Chunk::new(source, luau_origin(origin)),
+        &luau::Chunk::new(source, origin.clone()),
         &[("require", &require)],
     )
 }
@@ -1009,7 +1009,7 @@ fn require_from(
         .filter(|module_id| runtime.registry.borrow().contains(module_id))
     {
         let task_group = match origin.plugin {
-            Some(_) => crate::TaskGroupId(frame.context.task_group.0),
+            Some(_) => frame.context.task_group,
             None => crate::TaskGroupId::default(),
         };
         let module = runtime
@@ -1055,10 +1055,10 @@ impl LuauRequireRuntime {
                     vm,
                     &[],
                     luau::CallContext {
-                        origin: luau_origin(&source.origin),
+                        origin: source.origin.clone(),
                         capability: None,
                         caller: requester.caller.clone(),
-                        task_group: luau::TaskGroupId(task_group.0),
+                        task_group,
                     },
                 )
                 .map_err(anyhow::Error::new)
@@ -1145,17 +1145,6 @@ fn module_load_runtime_error(error: ModuleLoadError) -> luau::Error {
     luau::Error::Runtime(error.to_string())
 }
 
-fn core_origin(origin: &luau::ChunkOrigin) -> ChunkOrigin {
-    ChunkOrigin {
-        module: origin
-            .module
-            .as_ref()
-            .map(|module| ModuleId(module.0.clone())),
-        plugin: origin.plugin.clone(),
-        path: origin.path.clone(),
-    }
-}
-
 /// Installs `module` directly, outside any registry, so its functions carry
 /// no capability.
 pub fn install_luau_module(
@@ -1190,16 +1179,11 @@ fn install_gated_luau_module(
         }
     }
 
-    fn function_origin(origin: &ChunkOrigin, module_id: &ModuleId) -> luau::ChunkOrigin {
-        luau::ChunkOrigin {
-            module: Some(luau::ModuleId(module_id.0.clone())),
-            plugin: origin.plugin.clone(),
-            path: origin.path.clone(),
+    fn function_origin(origin: &ChunkOrigin, module_id: &ModuleId) -> ChunkOrigin {
+        ChunkOrigin {
+            module: Some(module_id.clone()),
+            ..origin.clone()
         }
-    }
-
-    fn capability(capability: &CapabilityId) -> luau::CapabilityId {
-        luau::CapabilityId(capability.0.clone())
     }
 
     let root = vm.create_table()?;
@@ -1245,9 +1229,9 @@ fn install_gated_luau_module(
         let mut options = luau::NativeFunctionOptions::new(function_origin(origin, &module.id))
             .function_name(spec.name.clone())
             .argument_names(spec.arg_names.clone())
-            .task_group(luau::TaskGroupId(task_group.0));
+            .task_group(task_group);
         if let Some(capability_id) = capability_id {
-            options = options.capability(capability(capability_id));
+            options = options.capability(capability_id.clone());
         }
         let callback = match callback {
             FunctionCallback::Sync(callback) => callback,
@@ -1279,7 +1263,7 @@ pub fn async_luau_callback(callback: luau::NativeAsyncFn) -> luau::NativeFn {
     Arc::new(move |frame| {
         let vm = frame.vm.clone();
         let thread = frame.thread.clone();
-        let context = core_call_context(&frame.context);
+        let context = frame.context.clone();
         let scheduler = frame.vm.data().get::<crate::LocalScheduler>()?;
         // Refused before the thread parks: nothing would resume it.
         if scheduler.is_group_cancelled(context.task_group) {
@@ -1329,32 +1313,15 @@ fn poll_luau_future_once(
     std::pin::Pin::new(future).poll(&mut cx)
 }
 
-pub(crate) fn core_call_context(context: &luau::CallContext) -> crate::CallContext {
-    let mut caller = crate::ContextBag::default();
-    for (type_id, value) in context.caller.cloned_entries() {
-        caller.insert_shared(type_id, value);
-    }
-    crate::CallContext {
-        origin: core_origin(&context.origin),
-        capability: context
-            .capability
-            .as_ref()
-            .map(|capability| CapabilityId(capability.0.clone())),
-        caller,
-        task_group: crate::TaskGroupId(context.task_group.0),
-    }
-}
-
 pub fn install_luau_globals(
     vm: &luau::Vm,
     origin: &ChunkOrigin,
     globals: &GlobalSpec,
 ) -> luau::runtime::Result<()> {
-    fn function_origin(origin: &ChunkOrigin, module_id: &str) -> luau::ChunkOrigin {
-        luau::ChunkOrigin {
-            module: Some(luau::ModuleId(Arc::from(module_id))),
-            plugin: origin.plugin.clone(),
-            path: origin.path.clone(),
+    fn function_origin(origin: &ChunkOrigin, module_id: &str) -> ChunkOrigin {
+        ChunkOrigin {
+            module: Some(ModuleId(Arc::from(module_id))),
+            ..origin.clone()
         }
     }
 
@@ -1386,17 +1353,6 @@ pub fn install_luau_globals(
     }
 
     Ok(())
-}
-
-fn luau_origin(origin: &ChunkOrigin) -> luau::ChunkOrigin {
-    luau::ChunkOrigin {
-        module: origin
-            .module
-            .as_ref()
-            .map(|id| luau::ModuleId(id.0.clone())),
-        plugin: origin.plugin.clone(),
-        path: origin.path.clone(),
-    }
 }
 
 #[cfg(test)]
@@ -1874,8 +1830,8 @@ mod tests {
             ),
             luau::ChunkOrigin::default(),
             luau::CallContext {
-                origin: luau_origin(&origin),
-                task_group: luau::TaskGroupId(run.0),
+                origin: origin.clone(),
+                task_group: run,
                 ..luau::CallContext::default()
             },
         )?;

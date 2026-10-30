@@ -7,12 +7,7 @@
 
 use std::marker::PhantomData;
 
-use harmony_core::{
-    CallContext,
-    CapabilityId,
-    ChunkOrigin,
-    ModuleId,
-};
+use harmony_core::CallContext;
 use harmony_luau as luau;
 
 use crate::{
@@ -79,7 +74,7 @@ pub(crate) fn register<Payload: 'static>(
         PluginId::new(plugin_id.to_string()).map_err(crate::plugins::runtime_error)?;
     harmony_core::ensure_current_plugin_run(frame.vm, &frame.context)?;
     let vm = frame.vm.clone();
-    let context = call_context_to_core(&frame.context);
+    let context = frame.context.clone();
     Ok(luau::ScheduledFuture::new(async move {
         let generation = crate::plugins::STATE.generation();
         let _registration = generation
@@ -93,29 +88,4 @@ pub(crate) fn register<Payload: 'static>(
             .insert(RegisteredUpdateCallback { context, function });
         Ok(())
     }))
-}
-
-fn call_context_to_core(context: &luau::CallContext) -> CallContext {
-    let mut caller = harmony_core::ContextBag::default();
-    for (type_id, value) in context.caller.cloned_entries() {
-        caller.insert_shared(type_id, value);
-    }
-
-    CallContext {
-        origin: ChunkOrigin {
-            module: context
-                .origin
-                .module
-                .as_ref()
-                .map(|module| ModuleId(module.0.clone())),
-            plugin: context.origin.plugin.clone(),
-            path: context.origin.path.clone(),
-        },
-        capability: context
-            .capability
-            .as_ref()
-            .map(|capability| CapabilityId(capability.0.clone())),
-        caller,
-        task_group: harmony_core::TaskGroupId(context.task_group.0),
-    }
 }
