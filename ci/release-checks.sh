@@ -38,10 +38,10 @@ plugin_changed() {
 
 head_version=$(workspace_version HEAD)
 if [ -n "${CI_COMMIT_TAG:-}" ]; then
-	printf '%s\n' "$head_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' ||
-		fail "release tag $CI_COMMIT_TAG is on version $head_version, which has a pre-release"
+	printf '%s\n' "$head_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-dev\.[0-9]+)?$' ||
+		fail "tag $CI_COMMIT_TAG is on version $head_version, which is neither a release nor a development version"
 	[ "$CI_COMMIT_TAG" = "v$head_version" ] ||
-		fail "release tag $CI_COMMIT_TAG does not match version $head_version"
+		fail "tag $CI_COMMIT_TAG does not match version $head_version"
 else
 	printf '%s\n' "$head_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$' ||
 		fail "version $head_version is not a development version such as 0.0.2-dev.0"
