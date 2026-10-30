@@ -196,11 +196,15 @@ async fn check_subscription(
         .await
         .map_err(map_resolve_error)?;
     let [Subscription { repository, .. }] = subscribed;
-    store_listed(
+    if store_listed(
         &mut *STATE.db.write().await,
         repository,
         &StoredListing::of(&listed.listing),
-    )?;
+    )?
+    .is_none()
+    {
+        return Ok(UpdateReport::default());
+    }
     let offered: HashMap<String, OfferedRelease> = listed
         .outcomes
         .iter()

@@ -498,19 +498,19 @@ fn record_listed(
 }
 
 /// Stores a fresh listing on the subscription `repository`, by its id, as
-/// refreshed now, and returns the subscription as stored.
+/// refreshed now, and returns the subscription as stored; `None`, storing
+/// nothing, when it was removed since it was read.
 fn store_listed(
     db: &mut DbAny,
     mut repository: repo_db::PluginRepository,
     listed: &StoredListing,
-) -> Result<repo_db::PluginRepository, PluginRepoError> {
+) -> Result<Option<repo_db::PluginRepository>, PluginRepoError> {
     repository.name = listed.name.clone();
     repository.description = listed.description.clone();
     repository.resolved_ref = Some(listed.resolved_ref.clone());
     repository.commit = listed.commit.clone();
     repository.refreshed_at_ms = Some(now_ms());
-    repo_db::update(db, &repository, &listed.entries)?;
-    Ok(repository)
+    Ok(repo_db::update(db, &repository, &listed.entries)?.then_some(repository))
 }
 
 /// Rejects subscribing the repository `spec` names when a subscription of
@@ -1725,7 +1725,10 @@ pub(crate) async fn refresh_repository(
     )
     .await?;
     let listed = StoredListing::of(&listing);
-    let repository = store_listed(&mut *STATE.db.write().await, repository, &listed)?;
+    let repository =
+        store_listed(&mut *STATE.db.write().await, repository, &listed)?.ok_or_else(|| {
+            PluginRepoError::NotFound(format!("repository not found: {repository_id}"))
+        })?;
     Ok(repository_view(
         Subscription {
             repository,
@@ -2417,9 +2420,13 @@ mod tests {
         Ok(archive.into_inner()?.finish()?)
     }
 
-    /// The requests a [`TestForge`] recorded, and whether it fails
-    /// downloads.
-    type ForgeState = (Arc<Mutex<Vec<String>>>, Arc<AtomicBool>);
+    /// The requests a [`TestForge`] recorded, whether it fails downloads,
+    /// and the gate its `versions.json` reads wait on.
+    type ForgeState = (
+        Arc<Mutex<Vec<String>>>,
+        Arc<AtomicBool>,
+        Arc<tokio::sync::Mutex<()>>,
+    );
 
     /// A Gitea-style forge whose `o/r` default branch `main` is at [`tip`],
     /// serving `files` there as raw files and each `(commit, files)` release
@@ -2428,6 +2435,8 @@ mod tests {
         pub(super) origin: String,
         requests: Arc<Mutex<Vec<String>>>,
         failing_downloads: Arc<AtomicBool>,
+        /// Held to stall every `versions.json` read until it is released.
+        gate: Arc<tokio::sync::Mutex<()>>,
     }
 
     impl TestForge {
@@ -2439,6 +2448,7 @@ mod tests {
             let origin = format!("http://{}/o/r", listener.local_addr()?);
             let requests = Arc::new(Mutex::new(Vec::new()));
             let failing_downloads = Arc::new(AtomicBool::new(false));
+            let gate = Arc::new(tokio::sync::Mutex::new(()));
             let mut router = axum::Router::new()
                 .route(
                     "/api/v1/repos/o/r",
@@ -2472,15 +2482,19 @@ mod tests {
                 );
             }
             let router = router.layer(axum::middleware::from_fn_with_state(
-                (requests.clone(), failing_downloads.clone()),
-                async |axum::extract::State((requests, failing_downloads)): axum::extract::State<
+                (requests.clone(), failing_downloads.clone(), gate.clone()),
+                async |axum::extract::State((requests, failing_downloads, gate)): axum::extract::State<
                     ForgeState,
                 >,
                        request: axum::extract::Request,
                        next: axum::middleware::Next| {
                     let path = request.uri().path().to_string();
                     let fails = path.contains("archive") && failing_downloads.load(Ordering::Relaxed);
+                    let gated = path.ends_with("versions.json");
                     requests.lock().unwrap().push(path);
+                    if gated {
+                        drop(gate.lock().await);
+                    }
                     if fails {
                         return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
                     }
@@ -2492,12 +2506,26 @@ mod tests {
                 origin,
                 requests,
                 failing_downloads,
+                gate,
             })
         }
 
         /// Fails every archive download from now on.
         fn fail_downloads(&self) {
             self.failing_downloads.store(true, Ordering::Relaxed);
+        }
+
+        /// Waits until a `versions.json` read has reached the forge.
+        async fn read_releases(&self) {
+            while !self
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|path| path.ends_with("versions.json"))
+            {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
         }
 
         /// Every archive requested.
@@ -3834,6 +3862,106 @@ mod tests {
         assert_eq!(
             shown(&stored.plugins.expect("requested")),
             shown(catalog.plugins.as_deref().expect("included"))
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn refreshes_skip_a_repository_removed_while_it_is_listed() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        let seeded = repo_db::list(&*STATE.db.read().await)?;
+        for repository in seeded {
+            repo_db::remove(&mut *STATE.db.write().await, repository.db_id.unwrap())?;
+        }
+        let forge = catalog_forge(
+            HOST_REQUIREMENT,
+            HOST_REQUIREMENT,
+            changed_at(HOST_REQUIREMENT),
+        )
+        .await?;
+        /// Removes the `catalog` subscription once `refresh` is listing
+        /// it, and subscribes another, which may take its freed node,
+        /// before the listing finishes.
+        async fn remove_while_listed<T>(
+            forge: &TestForge,
+            refresh: impl Future<Output = T> + Send + 'static,
+        ) -> anyhow::Result<T>
+        where
+            T: Send + 'static,
+        {
+            let gate = forge.gate.lock().await;
+            let refresh = tokio::spawn(refresh);
+            forge.read_releases().await;
+            remove_repository("catalog").await?;
+            repo_db::create(
+                &mut *STATE.db.write().await,
+                &repo_db::PluginRepository {
+                    db_id: None,
+                    id: "other".into(),
+                    origin: "http://127.0.0.1:9/o/other".into(),
+                    name: "Other".into(),
+                    description: String::new(),
+                    git_ref: None,
+                    resolved_ref: None,
+                    commit: None,
+                    refreshed_at_ms: None,
+                },
+                &[repo_db::PluginRepositoryEntry {
+                    db_id: None,
+                    plugin_id: "other".into(),
+                    subpath: None,
+                    source_origin: None,
+                    version: None,
+                    name: None,
+                    description: None,
+                    commit: None,
+                    scopes: None,
+                    requires: None,
+                    error: None,
+                    dependencies: None,
+                    position: None,
+                }],
+            )?;
+            drop(gate);
+            Ok(refresh.await?)
+        }
+
+        subscribe(&forge.origin, &[]).await?;
+        let report = remove_while_listed(&forge, refresh_repositories()).await??;
+        assert!(report.failed.is_empty(), "{report:?}");
+        assert_eq!(
+            report
+                .repositories
+                .iter()
+                .map(|view| &*view.repository.origin)
+                .collect::<Vec<_>>(),
+            ["http://127.0.0.1:9/o/other"],
+            "the removed repository is neither stored nor reported"
+        );
+
+        let seeded = repo_db::list(&*STATE.db.read().await)?;
+        for repository in seeded {
+            repo_db::remove(&mut *STATE.db.write().await, repository.db_id.unwrap())?;
+        }
+        forge.requests.lock().unwrap().clear();
+        subscribe(&forge.origin, &[]).await?;
+        let error = remove_while_listed(&forge, refresh_repository("catalog"))
+            .await?
+            .unwrap_err();
+        assert!(matches!(error, PluginRepoError::NotFound(_)), "{error:?}");
+
+        let [other] = &repo_db::list(&*STATE.db.read().await)?[..] else {
+            panic!("only the other subscription remains");
+        };
+        assert_eq!(other.name, "Other");
+        assert_eq!(other.refreshed_at_ms, None, "the other one is left alone");
+        assert_eq!(
+            repo_db::entries(&*STATE.db.read().await, other.db_id.unwrap())?
+                .into_iter()
+                .map(|entry| entry.plugin_id)
+                .collect::<Vec<_>>(),
+            ["other"]
         );
         Ok(())
     }

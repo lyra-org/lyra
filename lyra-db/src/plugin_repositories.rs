@@ -133,19 +133,25 @@ pub fn create(
 }
 
 /// Atomically aligns the stored row to `record` and replaces its plugin
-/// entries with `entries`.
+/// entries with `entries`. Returns `false`, changing nothing, when the
+/// subscription `record` was read from is gone, so its `db_id` may name
+/// another element now.
 pub fn update(
     db: &mut DbAny,
     record: &PluginRepository,
     entries: &[PluginRepositoryEntry],
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let repo_db_id = record
         .db_id
         .ok_or_else(|| anyhow::anyhow!("cannot update plugin repository without db_id"))?;
     db.transaction_mut(|t| {
+        if get_by_id(t, &record.id)?.and_then(|stored| stored.db_id) != Some(repo_db_id) {
+            return Ok(false);
+        }
         update_in_transaction(t, record)?;
         remove_entries(t, repo_db_id)?;
-        insert_entries(t, repo_db_id, entries)
+        insert_entries(t, repo_db_id, entries)?;
+        Ok(true)
     })
 }
 
@@ -381,6 +387,37 @@ mod tests {
 
         remove(&mut db, db_id)?;
         assert!(list(&db)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn update_leaves_a_removed_subscription_and_what_took_its_id_alone() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let mut record = repository("https://github.com/lyra/plugins");
+        record.db_id = Some(create(&mut db, &record, &[])?);
+        remove(&mut db, record.db_id.unwrap())?;
+        let mut other = repository("https://github.com/lyra/other");
+        other.db_id = Some(create(&mut db, &other, &[entry("b", "t1")])?);
+
+        assert!(!update(&mut db, &record, &[entry("a", "t2")])?);
+        // A removed subscription whose id went to another one is no update of
+        // it either.
+        let stale = PluginRepository {
+            db_id: other.db_id,
+            ..record.clone()
+        };
+        assert!(!update(&mut db, &stale, &[entry("a", "t2")])?);
+
+        let listed = list(&db)?;
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].origin, other.origin);
+        assert_eq!(
+            entries(&db, other.db_id.unwrap())?
+                .into_iter()
+                .map(|entry| entry.plugin_id)
+                .collect::<Vec<_>>(),
+            ["b"]
+        );
         Ok(())
     }
 
