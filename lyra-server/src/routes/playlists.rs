@@ -40,7 +40,10 @@ use std::{
 };
 
 use crate::routes::request::bearer_credential;
-use crate::services::catalog::SortSpec;
+use crate::services::catalog::{
+    self,
+    SortSpec,
+};
 use crate::services::playlists::SortKey as PlaylistSortKey;
 use crate::{
     routes::responses::{
@@ -63,7 +66,10 @@ use crate::{
             Principal,
             require_principal,
         },
-        covers as cover_services,
+        covers::{
+            self as cover_services,
+            display::CoverFilter,
+        },
         entities::resolve_track_artists,
         pagination::SnapshotKey,
         playlists,
@@ -556,9 +562,10 @@ async fn get_playlists(
         summaries = playlists::summaries(db, &principal, &playlist_db_ids)?;
     }
     let covers = if inc.covers {
+        let viewer = catalog::Viewer::user(db, principal.clone())?;
         Some(cover_services::display::playlists::covers_for_playlists(
             db,
-            &principal,
+            &mut CoverFilter::new(&viewer),
             &page_playlists,
         )?)
     } else {
@@ -581,7 +588,7 @@ async fn get_playlists(
             covers
                 .get(&playlist_db_id)
                 .cloned()
-                .map(route_covers::cover_to_response)
+                .map(|resolved| route_covers::cover_to_response(resolved.cover))
         });
         items.push(playlist_to_response(
             playlist,
@@ -621,9 +628,14 @@ async fn get_playlist(
         None
     };
     let cover = if inc.covers {
+        let viewer = catalog::Viewer::user(db, principal.clone())?;
         Some(
-            cover_services::display::playlists::cover_for_playlist(db, &principal, &playlist)?
-                .map(route_covers::cover_to_response),
+            cover_services::display::playlists::cover_for_playlist(
+                db,
+                &mut CoverFilter::new(&viewer),
+                &playlist,
+            )?
+            .map(|resolved| route_covers::cover_to_response(resolved.cover)),
         )
     } else {
         None

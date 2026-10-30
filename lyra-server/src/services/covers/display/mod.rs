@@ -6,12 +6,27 @@
 pub(crate) mod genres;
 pub(crate) mod playlists;
 
-use agdb::DbId;
+use agdb::{
+    DbAny,
+    DbId,
+};
 
 use lyra_db::covers::display::{
     DisplayCoverProfile,
     DisplayCoverWinner,
 };
+
+use super::ResolvedCover;
+use crate::services::catalog::Viewer;
+
+/// Whose listens pick a genre's cover.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Listens {
+    /// The viewing user's own listens first, then the instance's. The system has none of its own.
+    Viewer,
+    /// Only the instance's listens, so every viewer gets the same pick.
+    Instance,
+}
 
 fn ceil_div(value: u64, divisor: u64) -> u64 {
     if divisor == 0 {
@@ -55,33 +70,80 @@ fn profile_is_current(profile: &DisplayCoverProfile) -> bool {
     lyra_db::covers::display::profile_is_clean(profile)
 }
 
-fn release_is_visible(
-    release_db_id: DbId,
-    visible_release_ids: Option<&std::collections::HashSet<DbId>>,
-) -> bool {
-    visible_release_ids.is_none_or(|ids| ids.contains(&release_db_id))
+/// A check a release's cover must pass to be shown, given the release and its cover.
+pub(crate) type CoverCheck<'a> = &'a mut dyn FnMut(DbId, &lyra_db::Cover) -> bool;
+
+/// The releases a display cover may come from: those the viewer sees, only in `library` when
+/// set, whose cover passes the check. Every step of a selection skips the releases it rejects.
+pub(crate) struct CoverFilter<'a> {
+    viewer: &'a Viewer,
+    library: Option<DbId>,
+    check: Option<CoverCheck<'a>>,
 }
 
-fn cover_for_release(
-    db: &agdb::DbAny,
-    release_db_id: DbId,
-    visible_release_ids: Option<&std::collections::HashSet<DbId>>,
-) -> anyhow::Result<Option<lyra_db::Cover>> {
-    if !release_is_visible(release_db_id, visible_release_ids) {
-        return Ok(None);
+impl<'a> CoverFilter<'a> {
+    pub(crate) fn new(viewer: &'a Viewer) -> Self {
+        Self {
+            viewer,
+            library: None,
+            check: None,
+        }
     }
-    lyra_db::covers::get(db, release_db_id)
-}
 
-/// Per-release visibility check, for callers that would otherwise have to
-/// enumerate every accessible release just to filter a handful of winners.
-fn cover_for_accessible_release(
-    db: &agdb::DbAny,
-    principal: &crate::services::auth::Principal,
-    release_db_id: DbId,
-) -> anyhow::Result<Option<lyra_db::Cover>> {
-    if !crate::services::auth::access::entity_accessible(db, principal, release_db_id)? {
-        return Ok(None);
+    pub(crate) fn in_library(self, library: Option<DbId>) -> Self {
+        Self { library, ..self }
     }
-    lyra_db::covers::get(db, release_db_id)
+
+    pub(crate) fn checked(self, check: CoverCheck<'a>) -> Self {
+        Self {
+            check: Some(check),
+            ..self
+        }
+    }
+
+    pub(crate) fn viewer(&self) -> &'a Viewer {
+        self.viewer
+    }
+
+    /// The cover of `release_db_id` when the filter lets it through.
+    fn release_cover(
+        &mut self,
+        db: &DbAny,
+        release_db_id: DbId,
+    ) -> anyhow::Result<Option<ResolvedCover>> {
+        if let Some(library) = self.library
+            && !lyra_db::graph::edge_exists(db, library, release_db_id)?
+        {
+            return Ok(None);
+        }
+        if !self.viewer.sees_entity(db, release_db_id)? {
+            return Ok(None);
+        }
+        let Some(cover) = lyra_db::covers::get(db, release_db_id)? else {
+            return Ok(None);
+        };
+        if let Some(check) = self.check.as_mut()
+            && !check(release_db_id, &cover)
+        {
+            return Ok(None);
+        }
+        Ok(Some(ResolvedCover {
+            owner_db_id: release_db_id,
+            cover,
+        }))
+    }
+
+    /// The first of `release_db_ids` the filter lets through.
+    fn first_release_cover(
+        &mut self,
+        db: &DbAny,
+        release_db_ids: impl IntoIterator<Item = DbId>,
+    ) -> anyhow::Result<Option<ResolvedCover>> {
+        for release_db_id in release_db_ids {
+            if let Some(cover) = self.release_cover(db, release_db_id)? {
+                return Ok(Some(cover));
+            }
+        }
+        Ok(None)
+    }
 }

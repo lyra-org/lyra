@@ -3,12 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashSet;
-
-use agdb::{
-    DbAny,
-    DbId,
-};
+use agdb::DbId;
 #[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
@@ -51,7 +46,13 @@ use crate::{
             },
             pipeline::Catalog,
         },
-        covers as cover_services,
+        covers::{
+            self as cover_services,
+            display::{
+                CoverFilter,
+                Listens,
+            },
+        },
         pagination::SnapshotKey,
     },
 };
@@ -165,35 +166,6 @@ fn genre_to_response(genre: genres::Genre) -> GenreResponse {
     }
 }
 
-fn release_ids_for_library(db: &DbAny, library_db_id: DbId) -> anyhow::Result<Vec<DbId>> {
-    Ok(lyra_db::releases::get_direct(db, library_db_id)?
-        .into_iter()
-        .filter_map(|release| release.db_id.map(DbId::from))
-        .collect())
-}
-
-fn release_ids_for_accessible_libraries(
-    db: &DbAny,
-    accessible_library_ids: &HashSet<String>,
-) -> anyhow::Result<Vec<DbId>> {
-    let mut release_ids = Vec::new();
-    let mut seen_release_ids = HashSet::new();
-    for library_id in accessible_library_ids {
-        let Some(library_db_id) = lyra_db::lookup::find_node_id_by_id(db, library_id)? else {
-            continue;
-        };
-        if lyra_db::libraries::get_by_id(db, library_db_id)?.is_none() {
-            continue;
-        }
-        for release_id in release_ids_for_library(db, library_db_id)? {
-            if seen_release_ids.insert(release_id) {
-                release_ids.push(release_id);
-            }
-        }
-    }
-    Ok(release_ids)
-}
-
 fn genre_accessible_to_principal(
     db: &impl lyra_db::DbAccess,
     principal: &crate::services::auth::Principal,
@@ -237,52 +209,34 @@ async fn list_genres(
         library_id.as_deref(),
     )?;
     let sort = super::parse_catalog_sort(sort_by, sort_order)?;
-    let release_ids = || match library_scope {
-        Some(library_db_id) => release_ids_for_library(db, library_db_id),
-        None => release_ids_for_accessible_libraries(db, &principal.accessible_library_ids),
+    let viewer = catalog::Viewer::user(db, principal.clone())?;
+    let (genres, next_cursor) = if let Some(page) = page_request.resume(&snapshot_key)? {
+        let genres = super::load_snapshot_items(
+            db,
+            &page.item_ids,
+            genres::get_by_id,
+            |db, genre_db_id| genre_accessible_to_principal(db, &principal, genre_db_id),
+        )?;
+        (genres, page.next_cursor)
+    } else {
+        let mut query = catalog::Query::<Genres>::new(GenreFilter {
+            library: library_scope,
+            ..GenreFilter::default()
+        });
+        query.search = search_term;
+        query.sort = sort;
+        query.seed = rand::random();
+        let ids = catalog::order(db, &viewer, &query)?;
+        let page = page_request.start(&snapshot_key, super::public_ids(db, &ids)?)?;
+        let genres = Genres::hydrate(db, &ids[..page.item_ids.len()])?;
+        (genres, page.next_cursor)
     };
-    let (genres, next_cursor, cover_release_ids) =
-        if let Some(page) = page_request.resume(&snapshot_key)? {
-            let genres = super::load_snapshot_items(
-                db,
-                &page.item_ids,
-                genres::get_by_id,
-                |db, genre_db_id| genre_accessible_to_principal(db, &principal, genre_db_id),
-            )?;
-            let cover_release_ids = if inc.covers {
-                Some(release_ids()?)
-            } else {
-                None
-            };
-            (genres, page.next_cursor, cover_release_ids)
-        } else {
-            let viewer = catalog::Viewer::user(db, principal.clone())?;
-            let mut query = catalog::Query::<Genres>::new(GenreFilter {
-                library: library_scope,
-                ..GenreFilter::default()
-            });
-            query.search = search_term;
-            query.sort = sort;
-            query.seed = rand::random();
-            let ids = catalog::order(db, &viewer, &query)?;
-            let page = page_request.start(&snapshot_key, super::public_ids(db, &ids)?)?;
-            let genres = Genres::hydrate(db, &ids[..page.item_ids.len()])?;
-            let cover_release_ids = if inc.covers {
-                Some(release_ids()?)
-            } else {
-                None
-            };
-            (genres, page.next_cursor, cover_release_ids)
-        };
-    let visible_release_ids = cover_release_ids
-        .as_ref()
-        .map(|ids| ids.iter().copied().collect::<HashSet<_>>());
     let covers = if inc.covers {
         Some(cover_services::display::genres::covers_for_genres(
             db,
+            &mut CoverFilter::new(&viewer).in_library(library_scope),
             &genres,
-            &principal.user_public_id,
-            visible_release_ids.as_ref(),
+            Listens::Viewer,
         )?)
     } else {
         None
@@ -297,7 +251,7 @@ async fn list_genres(
                 response.cover = Some(
                     genre_db_id
                         .and_then(|genre_db_id| covers.as_ref()?.get(&genre_db_id).cloned())
-                        .map(route_covers::cover_to_response),
+                        .map(|resolved| route_covers::cover_to_response(resolved.cover)),
                 );
             }
             response
@@ -346,18 +300,15 @@ async fn get_genre(
         None
     };
     let cover = if inc.covers {
-        let visible_release_ids =
-            release_ids_for_accessible_libraries(db, &principal.accessible_library_ids)?
-                .into_iter()
-                .collect::<HashSet<_>>();
+        let viewer = catalog::Viewer::user(db, principal.clone())?;
         Some(
             cover_services::display::genres::cover_for_genre(
                 db,
+                &mut CoverFilter::new(&viewer),
                 &genre,
-                &principal.user_public_id,
-                Some(&visible_release_ids),
+                Listens::Viewer,
             )?
-            .map(route_covers::cover_to_response),
+            .map(|resolved| route_covers::cover_to_response(resolved.cover)),
         )
     } else {
         None
@@ -402,6 +353,7 @@ pub(crate) fn genre_openapi_routes() -> aide::axum::ApiRouter {
 
 #[cfg(test)]
 mod tests {
+    use agdb::DbAny;
     use axum::{
         http::{
             HeaderMap,

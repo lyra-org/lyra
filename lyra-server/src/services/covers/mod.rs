@@ -11,6 +11,14 @@ mod sync;
 
 use std::path::Path;
 
+/// A cover and the node it belongs to: the item itself, a track's release, or the release a
+/// playlist or genre displays.
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedCover {
+    pub(crate) owner_db_id: agdb::DbId,
+    pub(crate) cover: lyra_db::Cover,
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct CoverPaths<'a> {
     pub(crate) library_root: Option<&'a Path>,
