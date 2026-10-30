@@ -52,7 +52,6 @@ impl IdsModule {
 
     #[harmony(
         description = "Returns public nanoid strings for many numeric database IDs.",
-        args(db_ids: Vec<u64>),
         returns(HashMap<u64, Option<String>>)
     )]
     async fn get_ids(

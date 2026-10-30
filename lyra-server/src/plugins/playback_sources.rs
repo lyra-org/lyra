@@ -106,7 +106,6 @@ impl PlaybackSourcesModule {
 
     #[harmony(
         description = "A track's playback source read as the system, without the entry's full path. Ignores library visibility, so it is only for public streaming routes, which must serve nothing from it but the audio.",
-        args(track_id: i64, include_entry: Option<bool>),
         returns(Option<PlaybackSourceInfo>)
     )]
     async fn streamable(

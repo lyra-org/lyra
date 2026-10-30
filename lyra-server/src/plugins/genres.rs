@@ -190,7 +190,6 @@ impl GenresModule {
     // Unscoped: public artwork routes compose a genre's cover without a caller.
     #[harmony(
         description = "The ids of the releases in this genre. Not scoped to any caller: it is only for composing the genre's artwork on public artwork routes, which must return nothing but image bytes.",
-        args(genre_id: i64),
         returns(Vec<i64>)
     )]
     async fn artwork_release_ids(

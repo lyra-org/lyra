@@ -89,7 +89,7 @@ impl LabelsModule {
         Ok(label_id.0)
     }
 
-    #[harmony(args(label_id: i64), returns(Option<LabelInfo>))]
+    #[harmony(returns(Option<LabelInfo>))]
     async fn get_by_id(
         label_id: PositiveId,
         #[context] db: Db,
@@ -101,7 +101,7 @@ impl LabelsModule {
         Ok(label.map(label_info_table))
     }
 
-    #[harmony(args(release_id: i64), returns(Vec<LabelForReleaseInfo>))]
+    #[harmony(returns(Vec<LabelForReleaseInfo>))]
     async fn get_for_release(
         release_id: PositiveId,
         #[context] db: ViewerDb,
@@ -119,7 +119,6 @@ impl LabelsModule {
     }
 
     #[harmony(
-        args(release_ids: Vec<i64>),
         returns(HashMap<i64, Vec<LabelForReleaseInfo>>)
     )]
     async fn get_for_releases_many(
@@ -137,7 +136,7 @@ impl LabelsModule {
         )))
     }
 
-    #[harmony(args(label_id: i64), returns(Vec<i64>))]
+    #[harmony(returns(Vec<i64>))]
     async fn get_releases(
         label_id: PositiveId,
         #[context] db: ViewerDb,
@@ -153,7 +152,7 @@ impl LabelsModule {
         Ok(id_array(release_ids))
     }
 
-    #[harmony(args(label_ids: Vec<i64>), returns(HashMap<i64, Vec<i64>>))]
+    #[harmony(returns(HashMap<i64, Vec<i64>>))]
     async fn get_releases_many(
         label_ids: UniqueIds,
         #[context] db: ViewerDb,

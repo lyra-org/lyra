@@ -103,7 +103,7 @@ impl PluginsModule {
         ))
     }
 
-    #[harmony(args(id: String), returns(Option<PluginManifest>))]
+    #[harmony(returns(Option<PluginManifest>))]
     fn get(vm: &luau::Vm, id: String) -> luau::runtime::Result<luau::Value> {
         let id = id.trim();
         if id.is_empty() {

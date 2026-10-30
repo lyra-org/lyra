@@ -21,8 +21,6 @@ use serde::{
     Serialize,
 };
 
-#[cfg(feature = "docgen")]
-use crate::plugins::types::LuauNodeId;
 use crate::{
     plugins::{
         args::{
@@ -287,7 +285,6 @@ impl LyricsModule {
 
     #[harmony(
         description = "Creates or replaces the authenticated caller's personal lyrics for a track.",
-        args(track_id: LuauNodeId, track_public_id: String, upload: PersonalLyricsUploadInput),
         returns(LyricsInfo)
     )]
     async fn upsert_personal(
@@ -324,8 +321,7 @@ impl LyricsModule {
     }
 
     #[harmony(
-        description = "Deletes the authenticated caller's personal lyrics for a track. Shared and provider lyrics are left intact.",
-        args(track_id: LuauNodeId)
+        description = "Deletes the authenticated caller's personal lyrics for a track. Shared and provider lyrics are left intact."
     )]
     async fn delete_personal_for_track(
         track_id: PositiveId,
@@ -338,8 +334,7 @@ impl LyricsModule {
     }
 
     #[harmony(
-        description = "Deletes every lyrics row for a track. Intended for trusted cleanup workflows.",
-        args(track_id: LuauNodeId)
+        description = "Deletes every lyrics row for a track. Intended for trusted cleanup workflows."
     )]
     async fn delete_for_track(
         track_id: PositiveId,

@@ -11,6 +11,7 @@ use harmony_luau::{
     DescribeUserData,
 };
 
+use crate::plugins::args::JsonArg;
 use crate::plugins::db::Db;
 use lyra_db::DataStore;
 use lyra_db::DbAsync;
@@ -28,28 +29,15 @@ struct DataStoreHandle {
 impl DataStoreHandle {
     #[harmony(
         description = "Gets a JSON value from this store by key.",
-        args(key: String),
         returns(Option<JsonValue>)
     )]
     async fn get(&self, key: String) -> luau::runtime::Result<luau::Value> {
         read_value(&self.db, self.datastore_id, key).await
     }
 
-    #[harmony(
-        description = "Sets a JSON value in this store by key.",
-        args(key: String, value: JsonValue)
-    )]
-    fn set(
-        &self,
-        vm: &luau::Vm,
-        key: String,
-        value: luau::Value,
-    ) -> luau::runtime::Result<luau::ScheduledFuture> {
-        let json = harmony_serde::luau_to_json(vm, &value, 0)?;
-        let handle = self.clone();
-        Ok(luau::ScheduledFuture::new(async move {
-            write_value(&handle.db, handle.datastore_id, key, json).await
-        }))
+    #[harmony(description = "Sets a JSON value in this store by key.")]
+    async fn set(&self, key: String, value: JsonArg) -> luau::runtime::Result<()> {
+        write_value(&self.db, self.datastore_id, key, value.0).await
     }
 
     #[harmony(

@@ -47,10 +47,7 @@ pub(super) struct SettingsBuilder {
 
 #[harmony_macros::userdata_methods]
 impl SettingsBuilder {
-    #[harmony(
-        description = "Starts a settings group.",
-        args(id: String, label: String)
-    )]
+    #[harmony(description = "Starts a settings group.")]
     fn group(&self, id: String, label: String) -> luau::runtime::Result<()> {
         push_group(self, id, label)
     }
