@@ -85,7 +85,7 @@ impl CallbackReply {
             }
             Self::Mix { reply, mixer_id } => {
                 let result =
-                    result.and_then(|values| super::mix::parse_mix_result(vm, &mixer_id, values));
+                    result.and_then(|values| super::mix::parse_mix_result(&mixer_id, values));
                 let _ = reply.send(result);
             }
             Self::Source(reply) => {
@@ -110,7 +110,6 @@ impl CallbackReply {
             } => {
                 let result = result.and_then(|values| {
                     let candidates = super::metadata::decode_similar_releases_result(
-                        vm,
                         values.first(),
                         max_candidates,
                     )?;

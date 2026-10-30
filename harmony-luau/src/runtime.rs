@@ -704,7 +704,7 @@ impl Vm {
                 Ok(())
             }),
         )?;
-        table.set_function_raw(self, "time", &time)?;
+        table.set_function("time", &time)?;
 
         let started_at = self.inner.started_at;
         let clock = self.create_function_with_options(
@@ -716,7 +716,7 @@ impl Vm {
                 Ok(())
             }),
         )?;
-        table.set_function_raw(self, "clock", &clock)?;
+        table.set_function("clock", &clock)?;
 
         let date = self.create_function_with_options(
             NativeFunctionOptions::new(origin)
@@ -735,7 +735,7 @@ impl Vm {
                 Ok(())
             }),
         )?;
-        table.set_function_raw(self, "date", &date)?;
+        table.set_function("date", &date)?;
 
         self.set_global_table("os", &table)?;
         Ok(())
@@ -1069,25 +1069,6 @@ impl StackIndex {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct AbsStackIndex(c_int);
-
-impl AbsStackIndex {
-    fn from_stack(state: NonNull<sys::lua_State>, index: StackIndex) -> Self {
-        let absolute = if index.raw() > 0 {
-            index.raw()
-        } else {
-            unsafe { sys::lua_absindex(state.as_ptr(), index.raw()) }
-        };
-        debug_assert!(absolute > 0, "absolute Luau stack indexes must be positive");
-        Self(absolute)
-    }
-
-    fn raw(self) -> c_int {
-        self.0
-    }
-}
-
 /// A Luau value pinned in the registry. Clones share the pin, which the last one releases.
 #[derive(Clone)]
 pub struct RegistryRef {
@@ -1382,6 +1363,8 @@ pub enum ThreadStatus {
     Completed(Vec<Value>),
 }
 
+/// A table pinned in its VM's registry. Every access is raw: it bypasses
+/// metamethods and works directly on the table's storage.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Table {
     reference: RegistryRef,
@@ -1392,72 +1375,96 @@ impl Table {
         self.reference.vm().id()
     }
 
-    // `raw` table APIs intentionally mirror Lua raw access: they bypass
-    // metamethods and operate directly on table storage.
-    pub fn set_raw(&self, vm: &Vm, key: &str, value: Value) -> Result<()> {
+    fn vm(&self) -> &Vm {
+        self.reference.vm()
+    }
+
+    fn state(&self) -> *mut sys::lua_State {
+        self.vm().inner.state.as_ptr()
+    }
+
+    pub fn set(&self, key: &str, value: impl Into<Value>) -> Result<()> {
         let key = CString::new(key)?;
+        let vm = self.vm();
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
-        vm.push_value(&value)?;
-        unsafe { gateway::raw_set_field(vm.inner.state.as_ptr(), -2, &key) }
+        vm.push_value(&value.into())?;
+        unsafe { gateway::raw_set_field(self.state(), -2, &key) }
     }
 
-    pub fn set_integer_raw(&self, vm: &Vm, key: i32, value: Value) -> Result<()> {
+    pub fn set_integer(&self, key: i32, value: impl Into<Value>) -> Result<()> {
+        let vm = self.vm();
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
-        vm.push_value(&value)?;
-        unsafe { gateway::raw_set_index(vm.inner.state.as_ptr(), -2, key) }
+        vm.push_value(&value.into())?;
+        unsafe { gateway::raw_set_index(self.state(), -2, key) }
     }
 
-    pub fn set_key_raw(&self, vm: &Vm, key: Value, value: Value) -> Result<()> {
+    pub fn set_key(&self, key: impl Into<Value>, value: impl Into<Value>) -> Result<()> {
+        let vm = self.vm();
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
-        vm.push_value(&key)?;
-        vm.push_value(&value)?;
-        unsafe { gateway::raw_set(vm.inner.state.as_ptr(), -3) }
+        vm.push_value(&key.into())?;
+        vm.push_value(&value.into())?;
+        unsafe { gateway::raw_set(self.state(), -3) }
     }
 
-    pub fn set_function_raw(&self, vm: &Vm, key: &str, function: &Function) -> Result<()> {
+    pub fn set_function(&self, key: &str, function: &Function) -> Result<()> {
         let key = CString::new(key)?;
+        let vm = self.vm();
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
         vm.push_registry(&function.reference)?;
-        unsafe { gateway::raw_set_field(vm.inner.state.as_ptr(), -2, &key) }
+        unsafe { gateway::raw_set_field(self.state(), -2, &key) }
     }
 
-    pub fn set_table_raw(&self, vm: &Vm, key: &str, table: &Table) -> Result<()> {
+    pub fn set_table(&self, key: &str, table: &Table) -> Result<()> {
         let key = CString::new(key)?;
+        let vm = self.vm();
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
         vm.push_registry(&table.reference)?;
-        unsafe { gateway::raw_set_field(vm.inner.state.as_ptr(), -2, &key) }
+        unsafe { gateway::raw_set_field(self.state(), -2, &key) }
     }
 
-    pub fn get_raw(&self, vm: &Vm, key: &str) -> Result<Value> {
+    pub fn get(&self, key: &str) -> Result<Value> {
         let key = CString::new(key)?;
+        let vm = self.vm();
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
-        unsafe { gateway::raw_get_field(vm.inner.state.as_ptr(), -1, &key)? };
+        unsafe { gateway::raw_get_field(self.state(), -1, &key)? };
         vm.read_value(StackIndex::TOP)
     }
 
-    pub fn get_integer_raw(&self, vm: &Vm, key: i32) -> Result<Value> {
+    pub fn get_integer(&self, key: i32) -> Result<Value> {
+        let vm = self.vm();
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
-        unsafe { gateway::raw_get_index(vm.inner.state.as_ptr(), -1, key)? };
+        unsafe { gateway::raw_get_index(self.state(), -1, key)? };
         vm.read_value(StackIndex::TOP)
     }
 
-    pub fn raw_len(&self, vm: &Vm) -> Result<usize> {
-        let reader = self.reader(vm)?;
-        Ok(reader.raw_len())
+    /// The table's border, as the `#` operator finds it without `__len`.
+    #[expect(
+        clippy::len_without_is_empty,
+        reason = "a zero border does not mean the table has no entries"
+    )]
+    pub fn len(&self) -> Result<usize> {
+        let vm = self.vm();
+        let _guard = vm.stack_guard();
+        vm.push_registry(&self.reference)?;
+        let len = unsafe { sys::lua_objlen(self.state(), -1) };
+        debug_assert!(len >= 0);
+        Ok(len as usize)
     }
 
-    pub fn array_values_raw(&self, vm: &Vm) -> Result<Vec<Value>> {
+    /// The values at `1, 2, ...` up to the first nil.
+    pub fn array_values(&self) -> Result<Vec<Value>> {
+        let vm = self.vm();
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
 
-        let state = vm.inner.state.as_ptr();
+        let state = self.state();
         let mut values = Vec::new();
         for index in 1..=i32::MAX {
             unsafe { gateway::raw_get_index(state, -1, index)? };
@@ -1476,11 +1483,12 @@ impl Table {
         ))
     }
 
-    pub fn pairs_raw(&self, vm: &Vm) -> Result<Vec<(Value, Value)>> {
+    pub fn pairs(&self) -> Result<Vec<(Value, Value)>> {
+        let vm = self.vm();
         let _guard = vm.stack_guard();
         let mut pairs = Vec::new();
         vm.push_registry(&self.reference)?;
-        let state = vm.inner.state.as_ptr();
+        let state = self.state();
         unsafe {
             gateway::push_nil(state)?;
             while gateway::next(state, -2)? {
@@ -1493,29 +1501,19 @@ impl Table {
         Ok(pairs)
     }
 
-    pub fn reader<'vm>(&self, vm: &'vm Vm) -> Result<TableReader<'vm>> {
-        let guard = vm.stack_guard();
-        vm.push_registry(&self.reference)?;
-        let table_index = AbsStackIndex::from_stack(vm.inner.state, StackIndex::TOP);
-        Ok(TableReader {
-            vm,
-            state: vm.inner.state,
-            table_index,
-            _guard: guard,
-        })
-    }
-
-    pub fn set_metatable_raw(&self, vm: &Vm, metatable: Option<&Table>) -> Result<()> {
+    pub fn set_metatable(&self, metatable: Option<&Table>) -> Result<()> {
+        let vm = self.vm();
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
         vm.push_metatable(metatable)?;
-        unsafe { gateway::set_metatable(vm.inner.state.as_ptr(), -2) }
+        unsafe { gateway::set_metatable(self.state(), -2) }
     }
 
-    pub fn metatable_raw(&self, vm: &Vm) -> Result<Option<Table>> {
+    pub fn metatable(&self) -> Result<Option<Table>> {
+        let vm = self.vm();
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
-        let has_metatable = unsafe { gateway::get_metatable(vm.inner.state.as_ptr(), -1)? };
+        let has_metatable = unsafe { gateway::get_metatable(self.state(), -1)? };
         if !has_metatable {
             return Ok(None);
         }
@@ -1523,67 +1521,11 @@ impl Table {
         Ok(Some(Table { reference }))
     }
 
-    pub fn set_readonly(&self, vm: &Vm, readonly: bool) -> Result<()> {
+    pub fn set_readonly(&self, readonly: bool) -> Result<()> {
+        let vm = self.vm();
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
-        unsafe { gateway::set_readonly(vm.inner.state.as_ptr(), -1, readonly) }
-    }
-}
-
-pub struct TableReader<'vm> {
-    vm: &'vm Vm,
-    state: NonNull<sys::lua_State>,
-    table_index: AbsStackIndex,
-    _guard: StackGuard<'vm>,
-}
-
-impl TableReader<'_> {
-    pub fn raw_len(&self) -> usize {
-        let len = unsafe { sys::lua_objlen(self.state.as_ptr(), self.table_index.raw()) };
-        debug_assert!(len >= 0);
-        len as usize
-    }
-
-    pub fn get_raw(&self, key: &str) -> Result<Value> {
-        let key = CString::new(key)?;
-        unsafe { gateway::raw_get_field(self.state.as_ptr(), self.table_index.raw(), &key)? };
-        self.pop_value()
-    }
-
-    pub fn get_integer_raw(&self, key: i32) -> Result<Value> {
-        unsafe { gateway::raw_get_index(self.state.as_ptr(), self.table_index.raw(), key)? };
-        self.pop_value()
-    }
-
-    pub fn get_fields_raw(&self, keys: &[&str]) -> Result<Vec<Value>> {
-        let mut values = Vec::with_capacity(keys.len());
-        for key in keys {
-            values.push(self.get_raw(key)?);
-        }
-        Ok(values)
-    }
-
-    pub fn array_values_raw(&self) -> Result<Vec<Value>> {
-        let len = self.raw_len();
-        if len > i32::MAX as usize {
-            return Err(Error::Runtime(
-                "table array part exceeded supported integer indexes".to_string(),
-            ));
-        }
-
-        let mut values = Vec::with_capacity(len);
-        for index in 1..=len as i32 {
-            values.push(self.get_integer_raw(index)?);
-        }
-        Ok(values)
-    }
-
-    fn pop_value(&self) -> Result<Value> {
-        let value = self.vm.read_value_from(self.state, StackIndex::TOP);
-        unsafe {
-            sys::lua_pop(self.state.as_ptr(), 1);
-        }
-        value
+        unsafe { gateway::set_readonly(self.state(), -1, readonly) }
     }
 }
 
@@ -3437,7 +3379,7 @@ mod tests {
         let Value::Table(table) = values[0].clone() else {
             panic!("expected first return value to be a table");
         };
-        assert_eq!(table.get_raw(&vm, "answer")?, Value::Number(42.0));
+        assert_eq!(table.get("answer")?, Value::Number(42.0));
 
         let Value::Function(function) = values[1].clone() else {
             panic!("expected second return value to be a function");
@@ -3595,42 +3537,25 @@ mod tests {
         let vm = Vm::new()?;
         let table = vm.create_table()?;
 
-        table.set_raw(&vm, "name", Value::String(b"demo".to_vec()))?;
-        table.set_raw(&vm, "count", Value::Integer(7))?;
-        table.set_integer_raw(&vm, 1, Value::String(b"first".to_vec()))?;
-        table.set_integer_raw(&vm, 2, Value::Integer(9))?;
+        table.set("name", Value::String(b"demo".to_vec()))?;
+        table.set("count", Value::Integer(7))?;
+        table.set_integer(1, Value::String(b"first".to_vec()))?;
+        table.set_integer(2, Value::Integer(9))?;
 
         assert_eq!(table.vm_id(), vm.id());
-        assert_eq!(table.get_raw(&vm, "name")?, Value::String(b"demo".to_vec()));
-        assert_eq!(table.get_raw(&vm, "count")?, Value::Integer(7));
-        assert_eq!(table.raw_len(&vm)?, 2);
+        assert_eq!(table.get("name")?, Value::String(b"demo".to_vec()));
+        assert_eq!(table.get("count")?, Value::Integer(7));
+        assert_eq!(table.len()?, 2);
+        assert_eq!(table.get_integer(1)?, Value::String(b"first".to_vec()));
         assert_eq!(
-            table.get_integer_raw(&vm, 1)?,
-            Value::String(b"first".to_vec())
-        );
-        assert_eq!(
-            table.array_values_raw(&vm)?,
+            table.array_values()?,
             vec![Value::String(b"first".to_vec()), Value::Integer(9)]
         );
-        {
-            let reader = table.reader(&vm)?;
-            assert_eq!(reader.raw_len(), 2);
-            assert_eq!(reader.get_raw("name")?, Value::String(b"demo".to_vec()));
-            assert_eq!(reader.get_integer_raw(2)?, Value::Integer(9));
-            assert_eq!(
-                reader.get_fields_raw(&["name", "count"])?,
-                vec![Value::String(b"demo".to_vec()), Value::Integer(7)]
-            );
-            assert_eq!(
-                reader.array_values_raw()?,
-                vec![Value::String(b"first".to_vec()), Value::Integer(9)]
-            );
-        }
-        assert!(table.pairs_raw(&vm)?.contains(&(
+        assert!(table.pairs()?.contains(&(
             Value::String(b"name".to_vec()),
             Value::String(b"demo".to_vec())
         )));
-        assert!(table.pairs_raw(&vm)?.iter().any(|(key, value)| {
+        assert!(table.pairs()?.iter().any(|(key, value)| {
             matches!(key, Value::Integer(1) | Value::Number(1.0))
                 && *value == Value::String(b"first".to_vec())
         }));
@@ -3645,15 +3570,13 @@ mod tests {
         let table = vm.create_table()?;
         let metatable = vm.create_table()?;
 
-        metatable.set_raw(&vm, "marker", Value::Boolean(true))?;
-        table.set_metatable_raw(&vm, Some(&metatable))?;
-        let returned = table
-            .metatable_raw(&vm)?
-            .expect("table should have metatable");
+        metatable.set("marker", Value::Boolean(true))?;
+        table.set_metatable(Some(&metatable))?;
+        let returned = table.metatable()?.expect("table should have metatable");
 
-        assert_eq!(returned.get_raw(&vm, "marker")?, Value::Boolean(true));
-        table.set_metatable_raw(&vm, None)?;
-        assert!(table.metatable_raw(&vm)?.is_none());
+        assert_eq!(returned.get("marker")?, Value::Boolean(true));
+        table.set_metatable(None)?;
+        assert!(table.metatable()?.is_none());
         assert_eq!(stack_top(&vm), 0);
         Ok(())
     }
@@ -3664,11 +3587,16 @@ mod tests {
         let owner = Vm::new()?;
         let other = Vm::new()?;
         let table = owner.create_table()?;
+        let foreign = other.create_table()?;
 
         let error = table
-            .get_raw(&other, "name")
-            .expect_err("cross-VM table access must fail");
+            .set_table("child", &foreign)
+            .expect_err("storing a table from another VM must fail");
+        assert!(matches!(error, Error::VmMismatch { .. }));
 
+        let error = table
+            .set("child", Value::Table(foreign))
+            .expect_err("storing a table from another VM must fail");
         assert!(matches!(error, Error::VmMismatch { .. }));
         assert_eq!(stack_top(&owner), 0);
         assert_eq!(stack_top(&other), 0);
@@ -4445,18 +4373,16 @@ mod tests {
                 Box::new(|vm, i| vm.set_global_table(&format!("global{i}"), &table)),
             ),
             (
-                "Table::set_raw",
-                Box::new(|vm, i| table.set_raw(vm, &format!("key{i}"), Value::Boolean(true))),
+                "Table::set",
+                Box::new(|_, i| table.set(&format!("key{i}"), Value::Boolean(true))),
             ),
             (
-                "Table::set_integer_raw",
-                Box::new(|vm, i| table.set_integer_raw(vm, i as i32 + 1, Value::Boolean(true))),
+                "Table::set_integer",
+                Box::new(|_, i| table.set_integer(i as i32 + 1, Value::Boolean(true))),
             ),
             (
-                "Table::set_key_raw",
-                Box::new(|vm, i| {
-                    table.set_key_raw(vm, Value::Number(i as f64 + 0.5), Value::Integer(1))
-                }),
+                "Table::set_key",
+                Box::new(|_, i| table.set_key(Value::Number(i as f64 + 0.5), Value::Integer(1))),
             ),
             (
                 "Function::call with a string",

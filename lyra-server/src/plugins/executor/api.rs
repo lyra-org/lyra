@@ -166,7 +166,7 @@ pub(super) fn parse_api_response(
             value.type_name()
         );
     };
-    let status = match table.get_raw(vm, "status")? {
+    let status = match table.get("status")? {
         luau::Value::Integer(status) => status,
         luau::Value::Number(status) => status as i64,
         luau::Value::Nil => 200,
@@ -183,19 +183,19 @@ pub(super) fn parse_api_response(
                 .map(|_| status)
         })
         .ok_or_else(|| anyhow::anyhow!("invalid response status code: {status}"))?;
-    let kind = match table.get_raw(vm, "kind")? {
+    let kind = match table.get("kind")? {
         luau::Value::String(kind) => String::from_utf8(kind)?,
         luau::Value::Nil => anyhow::bail!("response table must include kind"),
         other => anyhow::bail!("response kind must be a string, got {}", other.type_name()),
     };
     let kind = ApiResponseKind::parse(&kind)
         .ok_or_else(|| anyhow::anyhow!("unsupported response kind: {kind}"))?;
-    let headers = harmony_serde::optional_string_pairs_field(vm, &table, "headers")?;
-    let body_value = table.get_raw(vm, "body").unwrap_or(luau::Value::Nil);
-    let path = harmony_serde::optional_string_field(vm, &table, "path")?;
+    let headers = harmony_serde::optional_string_pairs_field(&table, "headers")?;
+    let body_value = table.get("body").unwrap_or(luau::Value::Nil);
+    let path = harmony_serde::optional_string_field(&table, "path")?;
     let transform = harmony_serde::optional_json_field(vm, &table, "transform")?;
     let options = harmony_serde::optional_json_field(vm, &table, "options")?;
-    let track_id = harmony_serde::optional_i64_field(vm, &table, "track_id")?;
+    let track_id = harmony_serde::optional_i64_field(&table, "track_id")?;
 
     let body = match kind {
         ApiResponseKind::Json => Some(ApiResponseBody::Json(

@@ -319,7 +319,7 @@ impl MixModule {
         let plugin_id = crate::plugins::current_plugin(&vm, &context, "mix.Mixer.new")?;
         let db = crate::plugins::db::get(&vm)?;
         let display_name = match &options {
-            Some(options) => optional_display_name(&vm, options)?,
+            Some(options) => optional_display_name(options)?,
             None => None,
         };
         let generation = crate::plugins::STATE.generation();
@@ -366,11 +366,8 @@ impl MixModule {
     }
 }
 
-fn optional_display_name(
-    vm: &luau::Vm,
-    options: &luau::Table,
-) -> luau::runtime::Result<Option<String>> {
-    match options.get_raw(vm, "display_name")? {
+fn optional_display_name(options: &luau::Table) -> luau::runtime::Result<Option<String>> {
+    match options.get("display_name")? {
         luau::Value::Nil => Ok(None),
         luau::Value::String(bytes) => {
             let name = String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?;
@@ -395,7 +392,7 @@ fn parse_handler_spec(
         MixShape::Blend => &["seeds", "max_seeds", "exclude", "query", "timeout_ms"],
         MixShape::Path => &["seeds", "query", "timeout_ms"],
     };
-    for (key, _) in spec.pairs_raw(vm)? {
+    for (key, _) in spec.pairs()? {
         let known = match &key {
             luau::Value::String(key) => fields.iter().any(|field| field.as_bytes() == key),
             _ => false,
@@ -410,10 +407,10 @@ fn parse_handler_spec(
     }
 
     let mut seed_types = Vec::new();
-    match spec.get_raw(vm, "seeds")? {
+    match spec.get("seeds")? {
         luau::Value::Nil => {}
         luau::Value::Table(seeds) => {
-            for (_, value) in args::array_values(vm, &seeds)? {
+            for (_, value) in args::array_values(&seeds)? {
                 let seed_type = LuauMixSeedType::_harmony_userdata_class()
                     .read_value(vm, "seeds", value)?
                     .into();
@@ -429,10 +426,10 @@ fn parse_handler_spec(
             )));
         }
     }
-    let query = args::optional_bool(vm, spec, "query", &owner)?.unwrap_or(false);
+    let query = args::optional_bool(spec, "query", &owner)?.unwrap_or(false);
     let (max_seeds, exclude) = match shape {
         MixShape::Blend => (
-            args::optional_i64(vm, spec, "max_seeds", &owner)?
+            args::optional_i64(spec, "max_seeds", &owner)?
                 .map(|max_seeds| {
                     usize::try_from(max_seeds)
                         .ok()
@@ -445,7 +442,7 @@ fn parse_handler_spec(
                 })
                 .transpose()?
                 .unwrap_or(1),
-            args::optional_bool(vm, spec, "exclude", &owner)?.unwrap_or(false),
+            args::optional_bool(spec, "exclude", &owner)?.unwrap_or(false),
         ),
         MixShape::Path => (2, false),
     };
@@ -456,13 +453,8 @@ fn parse_handler_spec(
         }));
     }
 
-    let timeout = args::optional_timeout(
-        vm,
-        spec,
-        "timeout_ms",
-        &owner,
-        DEFAULT_MIXER_HANDLER_TIMEOUT,
-    )?;
+    let timeout =
+        args::optional_timeout(spec, "timeout_ms", &owner, DEFAULT_MIXER_HANDLER_TIMEOUT)?;
     if timeout > MIX_DISPATCH_BUDGET {
         return Err(crate::plugins::runtime_error(format!(
             "{owner}.timeout_ms must be <= {}",
@@ -548,9 +540,9 @@ fn parse_option_declaration(
     vm: &luau::Vm,
     config: &luau::Table,
 ) -> luau::runtime::Result<OptionDeclaration> {
-    let name = required_string_field(vm, config, "name")?;
-    let label = required_string_field(vm, config, "label")?;
-    let option_type = match required_string_field(vm, config, "type")?.as_str() {
+    let name = required_string_field(config, "name")?;
+    let label = required_string_field(config, "label")?;
+    let option_type = match required_string_field(config, "type")?.as_str() {
         "boolean" => OptionType::Boolean,
         "number" => OptionType::Number,
         "string" => OptionType::String,
@@ -560,15 +552,15 @@ fn parse_option_declaration(
             )));
         }
     };
-    let default = match config.get_raw(vm, "default")? {
+    let default = match config.get("default")? {
         luau::Value::Nil => serde_json::Value::Null,
         value => harmony_serde::luau_to_json(vm, &value, 0)?,
     };
-    let requires_settings = match config.get_raw(vm, "requires_settings")? {
+    let requires_settings = match config.get("requires_settings")? {
         luau::Value::Nil => Vec::new(),
         luau::Value::Table(table) => {
             let mut values = Vec::new();
-            for (key, value) in table.pairs_raw(vm)? {
+            for (key, value) in table.pairs()? {
                 if !matches!(key, luau::Value::Integer(_) | luau::Value::Number(_)) {
                     continue;
                 }
@@ -596,12 +588,8 @@ fn parse_option_declaration(
     })
 }
 
-fn required_string_field(
-    vm: &luau::Vm,
-    table: &luau::Table,
-    key: &'static str,
-) -> luau::runtime::Result<String> {
-    match table.get_raw(vm, key)? {
+fn required_string_field(table: &luau::Table, key: &'static str) -> luau::runtime::Result<String> {
+    match table.get(key)? {
         luau::Value::String(value) => {
             String::from_utf8(value).map_err(crate::plugins::runtime_error)
         }

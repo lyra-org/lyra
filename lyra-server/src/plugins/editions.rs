@@ -61,11 +61,8 @@ impl EditionsModule {
         description = "Parses tag values or canonical names (a string or array) into distinct formats: \"cd\", \"vinyl\", \"digital\", \"cassette\", \"sacd\", \"dvd\", \"bluray\", \"minidisc\", \"other\". Drops unrecognized values.",
         returns(Vec<String>)
     )]
-    fn media_formats(
-        vm: &luau::Vm,
-        input: MediaFormatsInput,
-    ) -> luau::runtime::Result<luau::OwnedTable> {
-        let formats = media_formats_value(vm, input.0)?;
+    fn media_formats(input: MediaFormatsInput) -> luau::runtime::Result<luau::OwnedTable> {
+        let formats = media_formats_value(input.0)?;
         Ok(luau::OwnedTable::from_array(
             formats.into_iter().map(|format| format.as_str()),
         ))
@@ -75,12 +72,11 @@ impl EditionsModule {
         description = "Returns true when both inputs share a format parsed by `media_formats`. Unrecognized formats never match."
     )]
     fn media_formats_match(
-        vm: &luau::Vm,
         a: MediaFormatsInput,
         b: MediaFormatsInput,
     ) -> luau::runtime::Result<bool> {
-        let a = media_formats_value(vm, a.0)?;
-        let b = media_formats_value(vm, b.0)?;
+        let a = media_formats_value(a.0)?;
+        let b = media_formats_value(b.0)?;
         Ok(lyra_metadata::media_formats_match(&a, &b))
     }
 
@@ -104,14 +100,11 @@ impl EditionsModule {
     }
 }
 
-fn media_formats_value(
-    vm: &luau::Vm,
-    value: Option<luau::Value>,
-) -> luau::runtime::Result<Vec<MediaFormat>> {
+fn media_formats_value(value: Option<luau::Value>) -> luau::runtime::Result<Vec<MediaFormat>> {
     match value {
         Some(luau::Value::Table(table)) => {
             let strings: Vec<String> = table
-                .array_values_raw(vm)?
+                .array_values()?
                 .into_iter()
                 .filter_map(|value| string_value(Some(value)))
                 .collect();

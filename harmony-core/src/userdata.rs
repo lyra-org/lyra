@@ -176,9 +176,9 @@ where
         let table = vm.create_table_with_capacity(0, self.variants.len() as i32)?;
         for variant in &self.variants {
             let value = self.create_value(vm, origin, variant.value.clone())?;
-            table.set_raw(vm, variant.name, value)?;
+            table.set(variant.name, value)?;
         }
-        table.set_readonly(vm, true)?;
+        table.set_readonly(true)?;
         Ok(table)
     }
 
@@ -189,7 +189,7 @@ where
         root: &luau::Table,
     ) -> luau::runtime::Result<()> {
         let table = self.create_variant_table(vm, origin)?;
-        root.set_table_raw(vm, self.class_name, &table)
+        root.set_table(self.class_name, &table)
     }
 
     fn metatable(
@@ -210,12 +210,12 @@ where
         }
 
         let metatable = vm.create_table_with_capacity(0, 1)?;
-        metatable.set_table_raw(vm, "__index", &methods)?;
+        metatable.set_table("__index", &methods)?;
         if let Some(equality) = &self.equality {
             self.install_equality_method(vm, origin, tag, &metatable, equality.clone())?;
         }
-        methods.set_readonly(vm, true)?;
-        metatable.set_readonly(vm, true)?;
+        methods.set_readonly(true)?;
+        metatable.set_readonly(true)?;
         vm.data().insert(UserDataClassRuntime::<T> {
             metatable: metatable.clone(),
             _marker: PhantomData,
@@ -257,7 +257,7 @@ where
                 )?
             }
         };
-        methods.set_function_raw(vm, method.name, &function)
+        methods.set_function(method.name, &function)
     }
 
     fn install_equality_method(
@@ -280,7 +280,7 @@ where
                 frame.returns.write(equality(frame.vm, &lhs, &rhs, tag)?)
             }),
         )?;
-        metatable.set_function_raw(vm, "__eq", &function)
+        metatable.set_function("__eq", &function)
     }
 }
 

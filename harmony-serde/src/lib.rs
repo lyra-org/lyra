@@ -105,11 +105,11 @@ impl SerdeModule {
     fn empty_object(vm: &luau::Vm) -> luau::runtime::Result<luau::Table> {
         let table = vm.create_table()?;
         let metatable = vm.create_table()?;
-        metatable.set_raw(vm, EMPTY_OBJECT_MARKER, luau::Value::Boolean(true))?;
-        metatable.set_raw(vm, "__metatable", luau::Value::Boolean(false))?;
-        metatable.set_readonly(vm, true)?;
-        table.set_metatable_raw(vm, Some(&metatable))?;
-        table.set_readonly(vm, true)?;
+        metatable.set(EMPTY_OBJECT_MARKER, luau::Value::Boolean(true))?;
+        metatable.set("__metatable", luau::Value::Boolean(false))?;
+        metatable.set_readonly(true)?;
+        table.set_metatable(Some(&metatable))?;
+        table.set_readonly(true)?;
         Ok(table)
     }
 }
@@ -156,11 +156,10 @@ pub fn luau_to_json(
 }
 
 pub fn optional_string_field(
-    vm: &luau::Vm,
     table: &luau::Table,
     key: &str,
 ) -> luau::runtime::Result<Option<String>> {
-    match table.get_raw(vm, key)? {
+    match table.get(key)? {
         luau::Value::String(value) => String::from_utf8(value)
             .map(Some)
             .map_err(|error| luau::Error::Runtime(format!("{key} must be valid UTF-8: {error}"))),
@@ -172,12 +171,8 @@ pub fn optional_string_field(
     }
 }
 
-pub fn optional_i64_field(
-    vm: &luau::Vm,
-    table: &luau::Table,
-    key: &str,
-) -> luau::runtime::Result<Option<i64>> {
-    match table.get_raw(vm, key)? {
+pub fn optional_i64_field(table: &luau::Table, key: &str) -> luau::runtime::Result<Option<i64>> {
+    match table.get(key)? {
         luau::Value::Integer(value) => Ok(Some(value)),
         luau::Value::Number(value)
             if value.is_finite()
@@ -203,7 +198,7 @@ pub fn optional_json_field(
     table: &luau::Table,
     key: &str,
 ) -> luau::runtime::Result<Option<serde_json::Value>> {
-    let value = table.get_raw(vm, key)?;
+    let value = table.get(key)?;
     if matches!(value, luau::Value::Nil) {
         Ok(None)
     } else {
@@ -212,11 +207,10 @@ pub fn optional_json_field(
 }
 
 pub fn optional_string_pairs_field(
-    vm: &luau::Vm,
     table: &luau::Table,
     key: &str,
 ) -> luau::runtime::Result<Vec<(String, String)>> {
-    let pairs = match table.get_raw(vm, key)? {
+    let pairs = match table.get(key)? {
         luau::Value::Table(pairs) => pairs,
         luau::Value::Nil => return Ok(Vec::new()),
         other => {
@@ -227,7 +221,7 @@ pub fn optional_string_pairs_field(
         }
     };
     let mut result = Vec::new();
-    for (key, value) in pairs.pairs_raw(vm)? {
+    for (key, value) in pairs.pairs()? {
         let (luau::Value::String(key), luau::Value::String(value)) = (key, value) else {
             continue;
         };
@@ -283,11 +277,11 @@ fn table_to_json(
     table: &luau::Table,
     depth: usize,
 ) -> luau::runtime::Result<serde_json::Value> {
-    if table_is_empty_object_marker(vm, table)? {
+    if table_is_empty_object_marker(table)? {
         return Ok(serde_json::Value::Object(serde_json::Map::new()));
     }
 
-    let pairs = table.pairs_raw(vm)?;
+    let pairs = table.pairs()?;
     if pairs.is_empty() {
         return Ok(serde_json::Value::Array(Vec::new()));
     }
@@ -374,12 +368,12 @@ fn table_array_index(key: &luau::Value) -> Option<usize> {
     }
 }
 
-fn table_is_empty_object_marker(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<bool> {
-    let Some(metatable) = table.metatable_raw(vm)? else {
+fn table_is_empty_object_marker(table: &luau::Table) -> luau::runtime::Result<bool> {
+    let Some(metatable) = table.metatable()? else {
         return Ok(false);
     };
     Ok(matches!(
-        metatable.get_raw(vm, EMPTY_OBJECT_MARKER)?,
+        metatable.get(EMPTY_OBJECT_MARKER)?,
         luau::Value::Boolean(true)
     ))
 }
@@ -403,14 +397,14 @@ pub fn json_to_luau(
         serde_json::Value::Array(values) => {
             let table = vm.create_table_with_capacity(values.len() as i32, 0)?;
             for (index, value) in values.into_iter().enumerate() {
-                table.set_integer_raw(vm, index as i32 + 1, json_to_luau(vm, value, depth + 1)?)?;
+                table.set_integer(index as i32 + 1, json_to_luau(vm, value, depth + 1)?)?;
             }
             Ok(luau::Value::Table(table))
         }
         serde_json::Value::Object(values) => {
             let table = vm.create_table_with_capacity(0, values.len() as i32)?;
             for (key, value) in values {
-                table.set_raw(vm, &key, json_to_luau(vm, value, depth + 1)?)?;
+                table.set(&key, json_to_luau(vm, value, depth + 1)?)?;
             }
             Ok(luau::Value::Table(table))
         }

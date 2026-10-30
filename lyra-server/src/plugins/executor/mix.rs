@@ -104,7 +104,6 @@ fn mix_context_value(
 }
 
 pub(super) fn parse_mix_result(
-    vm: &luau::Vm,
     mixer_id: &str,
     values: Vec<luau::Value>,
 ) -> Result<MixHandlerResult> {
@@ -119,7 +118,7 @@ pub(super) fn parse_mix_result(
             value.type_name()
         );
     };
-    let tracks = match result.get_raw(vm, "tracks")? {
+    let tracks = match result.get("tracks")? {
         luau::Value::Table(table) => table,
         luau::Value::Nil => {
             return Ok(MixHandlerResult {
@@ -135,7 +134,7 @@ pub(super) fn parse_mix_result(
     };
 
     let mut entries = Vec::new();
-    for (key, value) in tracks.pairs_raw(vm)? {
+    for (key, value) in tracks.pairs()? {
         let index = match key {
             luau::Value::Integer(index) => index,
             luau::Value::Number(index) => index as i64,
@@ -144,7 +143,7 @@ pub(super) fn parse_mix_result(
         let luau::Value::Table(entry) = value else {
             continue;
         };
-        let track_id = match entry.get_raw(vm, "track_id")? {
+        let track_id = match entry.get("track_id")? {
             luau::Value::Integer(track_id) => track_id,
             luau::Value::Number(track_id) => track_id as i64,
             _ => continue,

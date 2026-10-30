@@ -31,12 +31,11 @@ struct LanguageInput;
 struct CountryInput;
 
 fn install_locale_constants(
-    vm: &luau::Vm,
+    _vm: &luau::Vm,
     _origin: &harmony_core::ChunkOrigin,
     root: &luau::Table,
 ) -> luau::runtime::Result<()> {
-    root.set_raw(
-        vm,
+    root.set(
         "UNDETERMINED",
         luau::Value::String(UNDETERMINED.as_bytes().to_vec()),
     )
@@ -99,13 +98,9 @@ impl LocaleModule {
         description = "Builds a BCP 47 style tag such as \"ja-JP\", preferring the ISO 639-1 code. Returns nil when the language cannot be resolved; an unresolvable country is omitted.",
         args(language: LanguageInput, country: Option<CountryInput>)
     )]
-    fn tag(
-        vm: &luau::Vm,
-        language: Option<luau::Value>,
-        country: Option<luau::Value>,
-    ) -> Option<String> {
-        let language = language.and_then(|value| language_value(vm, value));
-        let country = country.and_then(|value| country_value(vm, value));
+    fn tag(language: Option<luau::Value>, country: Option<luau::Value>) -> Option<String> {
+        let language = language.and_then(language_value);
+        let country = country.and_then(country_value);
         language.map(|language| locale_tag(language, country))
     }
 
@@ -113,9 +108,9 @@ impl LocaleModule {
         description = "Returns true when both sides resolve to the same language. \"und\" only matches \"und\"; nil or unresolvable input never matches.",
         args(a: Option<LanguageInput>, b: Option<LanguageInput>)
     )]
-    fn languages_match(vm: &luau::Vm, a: Option<luau::Value>, b: Option<luau::Value>) -> bool {
-        let a = a.and_then(|value| language_code_value(vm, value));
-        let b = b.and_then(|value| language_code_value(vm, value));
+    fn languages_match(a: Option<luau::Value>, b: Option<luau::Value>) -> bool {
+        let a = a.and_then(language_code_value);
+        let b = b.and_then(language_code_value);
         languages_match(a.as_deref(), b.as_deref())
     }
 }
@@ -154,32 +149,32 @@ fn string_value(value: Option<luau::Value>) -> Option<String> {
     }
 }
 
-fn language_value(vm: &luau::Vm, value: luau::Value) -> Option<isolang::Language> {
+fn language_value(value: luau::Value) -> Option<isolang::Language> {
     match value {
         luau::Value::String(bytes) => {
             let input = String::from_utf8(bytes).ok()?;
             locale::resolve_language(&input)
         }
         luau::Value::Table(table) => {
-            let iso3 = string_value(table.get_raw(vm, "iso3").ok());
+            let iso3 = string_value(table.get("iso3").ok());
             iso3.and_then(|iso3| locale::resolve_language(&iso3))
         }
         _ => None,
     }
 }
 
-fn language_code_value(vm: &luau::Vm, value: luau::Value) -> Option<String> {
-    language_value(vm, value).map(|language| language.to_639_3().to_string())
+fn language_code_value(value: luau::Value) -> Option<String> {
+    language_value(value).map(|language| language.to_639_3().to_string())
 }
 
-fn country_value(vm: &luau::Vm, value: luau::Value) -> Option<celes::Country> {
+fn country_value(value: luau::Value) -> Option<celes::Country> {
     match value {
         luau::Value::String(bytes) => {
             let input = String::from_utf8(bytes).ok()?;
             locale::resolve_country(&input)
         }
         luau::Value::Table(table) => {
-            let alpha2 = string_value(table.get_raw(vm, "alpha2").ok());
+            let alpha2 = string_value(table.get("alpha2").ok());
             alpha2.and_then(|alpha2| locale::resolve_country(&alpha2))
         }
         _ => None,

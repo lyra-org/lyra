@@ -50,23 +50,21 @@ pub(super) fn entity_type_for_node(
 }
 
 pub(super) fn required_table_string(
-    vm: &luau::Vm,
     table: &luau::Table,
     key: &str,
     method: &str,
 ) -> luau::runtime::Result<String> {
-    optional_table_string(vm, table, key, method)?.ok_or_else(|| {
+    optional_table_string(table, key, method)?.ok_or_else(|| {
         crate::plugins::runtime_error(format!("{method}: {key} must be a non-empty string"))
     })
 }
 
 pub(super) fn optional_table_string(
-    vm: &luau::Vm,
     table: &luau::Table,
     key: &str,
     method: &str,
 ) -> luau::runtime::Result<Option<String>> {
-    match table.get_raw(vm, key)? {
+    match table.get(key)? {
         luau::Value::Nil => Ok(None),
         luau::Value::String(bytes) => {
             let value = String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?;
@@ -132,15 +130,15 @@ pub(super) fn parse_id_spec(
     vm: &luau::Vm,
     spec: &luau::Table,
 ) -> luau::runtime::Result<ProviderIdSpec> {
-    let id_type = required_string(vm, spec, "id_type")?;
+    let id_type = required_string(spec, "id_type")?;
     let entity = required_entity_type(vm, spec, "entity")?;
-    let unique = optional_bool(vm, spec, "unique", "provider:id spec")?.unwrap_or(false);
-    let scheme = optional_table_string(vm, spec, "scheme", "provider:id")?;
+    let unique = optional_bool(spec, "unique", "provider:id spec")?.unwrap_or(false);
+    let scheme = optional_table_string(spec, "scheme", "provider:id")?;
     if let Some(scheme) = &scheme {
         validate_id_scheme(scheme)
             .map_err(|err| crate::plugins::runtime_error(format!("provider:id: {err}")))?;
     }
-    let label = optional_table_string(vm, spec, "label", "provider:id")?;
+    let label = optional_table_string(spec, "label", "provider:id")?;
     Ok(ProviderIdSpec {
         id_type,
         entity,
@@ -151,26 +149,22 @@ pub(super) fn parse_id_spec(
 }
 
 pub(super) fn parse_cover_spec(
-    vm: &luau::Vm,
     config: &luau::Table,
 ) -> luau::runtime::Result<(Duration, ProviderRequireSpec)> {
     let timeout = optional_timeout(
-        vm,
         config,
         "timeout_ms",
         "provider:cover config",
         DEFAULT_COVER_HANDLER_TIMEOUT,
     )?;
-    let require = parse_provider_require(vm, config, "provider:cover")?;
+    let require = parse_provider_require(config, "provider:cover")?;
     Ok((timeout, require))
 }
 
 pub(super) fn parse_similar_releases_spec(
-    vm: &luau::Vm,
     config: &luau::Table,
 ) -> luau::runtime::Result<(Duration, ProviderRequireSpec)> {
     let timeout = optional_timeout(
-        vm,
         config,
         "timeout_ms",
         "provider:similar_releases config",
@@ -182,35 +176,32 @@ pub(super) fn parse_similar_releases_spec(
             MAX_SIMILAR_RELEASES_HANDLER_TIMEOUT.as_millis()
         )));
     }
-    let require = parse_provider_require(vm, config, "provider:similar_releases")?;
+    let require = parse_provider_require(config, "provider:similar_releases")?;
     Ok((timeout, require))
 }
 
 pub(super) fn parse_lyrics_spec(
-    vm: &luau::Vm,
     config: &luau::Table,
 ) -> luau::runtime::Result<(Duration, ProviderRequireSpec)> {
     let timeout = optional_timeout(
-        vm,
         config,
         "timeout_ms",
         "provider:lyrics config",
         DEFAULT_HANDLER_TIMEOUT,
     )?;
-    let require = parse_provider_require(vm, config, "provider:lyrics")?;
+    let require = parse_provider_require(config, "provider:lyrics")?;
     Ok((timeout, require))
 }
 
 fn parse_provider_require(
-    vm: &luau::Vm,
     config: &luau::Table,
     method: &str,
 ) -> luau::runtime::Result<ProviderRequireSpec> {
-    match config.get_raw(vm, "require")? {
+    match config.get("require")? {
         luau::Value::Nil => Ok(ProviderRequireSpec::default()),
         luau::Value::Table(require) => Ok(ProviderRequireSpec {
-            all_of: parse_require_paths(vm, &require, "all_of", method)?,
-            any_of: parse_require_paths(vm, &require, "any_of", method)?,
+            all_of: parse_require_paths(&require, "all_of", method)?,
+            any_of: parse_require_paths(&require, "any_of", method)?,
         }),
         other => Err(crate::plugins::runtime_error(format!(
             "{method} config.require must be a table, got {}",
@@ -220,16 +211,15 @@ fn parse_provider_require(
 }
 
 fn parse_require_paths(
-    vm: &luau::Vm,
     require: &luau::Table,
     key: &str,
     method: &str,
 ) -> luau::runtime::Result<Vec<String>> {
-    match require.get_raw(vm, key)? {
+    match require.get(key)? {
         luau::Value::Nil => Ok(Vec::new()),
         luau::Value::Table(table) => {
             let mut parsed = Vec::new();
-            for (_, value) in table.pairs_raw(vm)? {
+            for (_, value) in table.pairs()? {
                 let luau::Value::String(bytes) = value else {
                     return Err(crate::plugins::runtime_error(format!(
                         "{method} require.{key} must contain only strings"
@@ -268,12 +258,11 @@ pub(super) fn parse_id_url_template(bytes: Vec<u8>) -> luau::runtime::Result<Str
 }
 
 pub(super) fn parse_option_declaration(
-    vm: &luau::Vm,
     config: &luau::Table,
 ) -> luau::runtime::Result<OptionDeclaration> {
-    let name = required_string(vm, config, "name")?;
-    let label = required_string(vm, config, "label")?;
-    let option_type = match required_string(vm, config, "type")?.as_str() {
+    let name = required_string(config, "name")?;
+    let label = required_string(config, "label")?;
+    let option_type = match required_string(config, "type")?.as_str() {
         "boolean" => OptionType::Boolean,
         "string" => OptionType::String,
         "number" => OptionType::Number,
@@ -283,7 +272,7 @@ pub(super) fn parse_option_declaration(
             )));
         }
     };
-    let default = match (option_type.clone(), config.get_raw(vm, "default")?) {
+    let default = match (option_type.clone(), config.get("default")?) {
         (_, luau::Value::Nil) => JsonValue::Null,
         (OptionType::Boolean, luau::Value::Boolean(value)) => JsonValue::Bool(value),
         (OptionType::Number, luau::Value::Integer(value)) => serde_json::json!(value),
@@ -298,9 +287,9 @@ pub(super) fn parse_option_declaration(
             )));
         }
     };
-    let requires_settings = match config.get_raw(vm, "requires_settings")? {
+    let requires_settings = match config.get("requires_settings")? {
         luau::Value::Nil => Vec::new(),
-        luau::Value::Table(table) => string_array_from_table(vm, &table)?,
+        luau::Value::Table(table) => string_array_from_table(&table)?,
         other => {
             return Err(crate::plugins::runtime_error(format!(
                 "declare_option: requires_settings must be a string array, got {}",
@@ -318,8 +307,8 @@ pub(super) fn parse_option_declaration(
     })
 }
 
-fn required_string(vm: &luau::Vm, table: &luau::Table, key: &str) -> luau::runtime::Result<String> {
-    match table.get_raw(vm, key)? {
+fn required_string(table: &luau::Table, key: &str) -> luau::runtime::Result<String> {
+    match table.get(key)? {
         luau::Value::String(bytes) => {
             let value = String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?;
             let trimmed = value.trim().to_string();
@@ -343,7 +332,7 @@ fn required_entity_type(
     table: &luau::Table,
     key: &'static str,
 ) -> luau::runtime::Result<EntityType> {
-    let value = table.get_raw(vm, key)?;
+    let value = table.get(key)?;
     crate::plugins::types::LuauEntityType::_harmony_userdata_class()
         .read_value(vm, key, value)
         .map(Into::into)
@@ -354,7 +343,7 @@ pub(super) fn optional_artist_type(
     table: &luau::Table,
     key: &'static str,
 ) -> luau::runtime::Result<Option<lyra_db::ArtistType>> {
-    let value = table.get_raw(vm, key)?;
+    let value = table.get(key)?;
     if matches!(value, luau::Value::Nil) {
         return Ok(None);
     }
@@ -363,12 +352,9 @@ pub(super) fn optional_artist_type(
         .map(|value| Some(value.into()))
 }
 
-pub(super) fn string_array_from_table(
-    vm: &luau::Vm,
-    table: &luau::Table,
-) -> luau::runtime::Result<Vec<String>> {
+pub(super) fn string_array_from_table(table: &luau::Table) -> luau::runtime::Result<Vec<String>> {
     let mut values = Vec::new();
-    for (_, value) in table.pairs_raw(vm)? {
+    for (_, value) in table.pairs()? {
         let luau::Value::String(bytes) = value else {
             return Err(crate::plugins::runtime_error(
                 "array values must be strings",

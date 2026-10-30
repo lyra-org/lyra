@@ -1173,7 +1173,7 @@ fn install_gated_luau_module(
             }
 
             let table = vm.create_table()?;
-            table_for(&root, &nested, parent).set_table_raw(vm, segment, &table)?;
+            table_for(&root, &nested, parent).set_table(segment, &table)?;
             let index = nested.len();
             nested.push((key.clone(), table));
             nested_indices.insert(key.clone(), index);
@@ -1192,7 +1192,7 @@ fn install_gated_luau_module(
             FunctionCallback::Async(callback) => async_luau_callback(callback),
         };
         let function = vm.create_function_with_options(options, callback)?;
-        table_for(&root, &nested, parent).set_function_raw(vm, leaf, &function)?;
+        table_for(&root, &nested, parent).set_function(leaf, &function)?;
     }
 
     let module_origin = function_origin(origin, &module.id);
@@ -1207,9 +1207,9 @@ fn install_gated_luau_module(
     }
 
     for (_, table) in &nested {
-        table.set_readonly(vm, true)?;
+        table.set_readonly(true)?;
     }
-    root.set_readonly(vm, true)?;
+    root.set_readonly(true)?;
     Ok(root)
 }
 

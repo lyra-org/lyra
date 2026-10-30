@@ -59,14 +59,13 @@ struct GenreQuery(catalog::PagedQuery<Genres>);
 impl<'vm> luau::FromLuau<'vm> for GenreQuery {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let opts: luau::Table = reader.read()?;
-        let vm = reader.vm();
         let filter = GenreFilter {
-            ids: catalog::optional_ids(vm, &opts, "ids")?,
-            exclude_ids: args::optional_unique_ids(vm, &opts, "exclude_ids")?,
-            library: args::optional_positive_id(vm, &opts, "library_id")?,
-            releases: catalog::optional_ids(vm, &opts, "release_ids")?,
+            ids: catalog::optional_ids(&opts, "ids")?,
+            exclude_ids: args::optional_unique_ids(&opts, "exclude_ids")?,
+            library: args::optional_positive_id(&opts, "library_id")?,
+            releases: catalog::optional_ids(&opts, "release_ids")?,
         };
-        catalog::read_query::<Genres>(vm, &opts, filter).map(Self)
+        catalog::read_query::<Genres>(&opts, filter).map(Self)
     }
 }
 

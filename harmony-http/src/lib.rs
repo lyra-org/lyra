@@ -921,11 +921,10 @@ impl HttpModule {
         args(options: HttpRateLimitOptions)
     )]
     fn set_rate_limit(
-        vm: &luau::Vm,
         origin: &luau::ChunkOrigin,
         options: luau::Table,
     ) -> luau::runtime::Result<luau::ScheduledFuture> {
-        let options = rate_limit_options_from_luau(vm, &options)?;
+        let options = rate_limit_options_from_luau(&options)?;
         let plugin_id = origin.plugin.clone();
         Ok(luau::ScheduledFuture::new(async move {
             configure_rate_limit(plugin_id, options)
@@ -940,11 +939,10 @@ impl HttpModule {
         args(options: HttpConcurrencyOptions)
     )]
     fn set_max_in_flight(
-        vm: &luau::Vm,
         origin: &luau::ChunkOrigin,
         options: luau::Table,
     ) -> luau::runtime::Result<luau::ScheduledFuture> {
-        let options = concurrency_options_from_luau(vm, &options)?;
+        let options = concurrency_options_from_luau(&options)?;
         let plugin_id = origin.plugin.clone();
         Ok(luau::ScheduledFuture::new(async move {
             configure_max_in_flight(plugin_id, options)
@@ -965,43 +963,40 @@ fn request_options_from_luau(
     table: &luau::Table,
 ) -> luau::runtime::Result<HttpRequestOptions> {
     Ok(HttpRequestOptions {
-        url: required_string_field(vm, table, "url")?,
+        url: required_string_field(table, "url")?,
         method: required_method_field(vm, table, "method")?,
-        body: optional_binary_field(vm, table, "body")?,
-        headers: optional_header_map_field(vm, table, "headers")?,
-        cookies: optional_header_map_field(vm, table, "cookies")?,
+        body: optional_binary_field(table, "body")?,
+        headers: optional_header_map_field(table, "headers")?,
+        cookies: optional_header_map_field(table, "cookies")?,
     })
 }
 
 fn rate_limit_options_from_luau(
-    vm: &luau::Vm,
     table: &luau::Table,
 ) -> luau::runtime::Result<HttpRateLimitOptions> {
     Ok(HttpRateLimitOptions {
-        domain: required_string_field(vm, table, "domain")?,
-        requests_per_second: optional_f64_field(vm, table, "requests_per_second")?,
-        retry_on: optional_u16_array_field(vm, table, "retry_on")?,
-        max_retries: optional_u32_field(vm, table, "max_retries")?,
-        backoff_ms: optional_u64_field(vm, table, "backoff_ms")?,
+        domain: required_string_field(table, "domain")?,
+        requests_per_second: optional_f64_field(table, "requests_per_second")?,
+        retry_on: optional_u16_array_field(table, "retry_on")?,
+        max_retries: optional_u32_field(table, "max_retries")?,
+        backoff_ms: optional_u64_field(table, "backoff_ms")?,
     })
 }
 
 fn concurrency_options_from_luau(
-    vm: &luau::Vm,
     table: &luau::Table,
 ) -> luau::runtime::Result<HttpConcurrencyOptions> {
     Ok(HttpConcurrencyOptions {
-        host: required_string_field(vm, table, "host")?,
-        max_in_flight: required_u32_field(vm, table, "max_in_flight")?,
+        host: required_string_field(table, "host")?,
+        max_in_flight: required_u32_field(table, "max_in_flight")?,
     })
 }
 
 fn required_string_field(
-    vm: &luau::Vm,
     table: &luau::Table,
     field: &'static str,
 ) -> luau::runtime::Result<String> {
-    match table.get_raw(vm, field)? {
+    match table.get(field)? {
         luau::Value::String(value) => String::from_utf8(value).map_err(|error| {
             luau::Error::Runtime(format!("'{field}' must be valid UTF-8: {error}"))
         }),
@@ -1011,11 +1006,10 @@ fn required_string_field(
 }
 
 fn optional_f64_field(
-    vm: &luau::Vm,
     table: &luau::Table,
     field: &'static str,
 ) -> luau::runtime::Result<Option<f64>> {
-    match table.get_raw(vm, field)? {
+    match table.get(field)? {
         luau::Value::Nil => Ok(None),
         luau::Value::Integer(value) => Ok(Some(value as f64)),
         luau::Value::Number(value) => Ok(Some(value)),
@@ -1024,44 +1018,37 @@ fn optional_f64_field(
 }
 
 fn optional_u32_field(
-    vm: &luau::Vm,
     table: &luau::Table,
     field: &'static str,
 ) -> luau::runtime::Result<Option<u32>> {
-    match table.get_raw(vm, field)? {
+    match table.get(field)? {
         luau::Value::Nil => Ok(None),
         value => number_to_u32(field, value).map(Some),
     }
 }
 
 fn optional_u64_field(
-    vm: &luau::Vm,
     table: &luau::Table,
     field: &'static str,
 ) -> luau::runtime::Result<Option<u64>> {
-    match table.get_raw(vm, field)? {
+    match table.get(field)? {
         luau::Value::Nil => Ok(None),
         value => number_to_u64(field, value).map(Some),
     }
 }
 
-fn required_u32_field(
-    vm: &luau::Vm,
-    table: &luau::Table,
-    field: &'static str,
-) -> luau::runtime::Result<u32> {
-    match table.get_raw(vm, field)? {
+fn required_u32_field(table: &luau::Table, field: &'static str) -> luau::runtime::Result<u32> {
+    match table.get(field)? {
         luau::Value::Nil => Err(luau::Error::Runtime(format!("missing '{field}' field"))),
         value => number_to_u32(field, value),
     }
 }
 
 fn optional_binary_field(
-    vm: &luau::Vm,
     table: &luau::Table,
     field: &'static str,
 ) -> luau::runtime::Result<Option<LuaBinaryInput>> {
-    match table.get_raw(vm, field)? {
+    match table.get(field)? {
         luau::Value::Nil => Ok(None),
         luau::Value::String(value) | luau::Value::Buffer(value) => Ok(Some(LuaBinaryInput(value))),
         other => Err(luau_field_type_error(
@@ -1073,27 +1060,25 @@ fn optional_binary_field(
 }
 
 fn optional_header_map_field(
-    vm: &luau::Vm,
     table: &luau::Table,
     field: &'static str,
 ) -> luau::runtime::Result<Option<HttpHeaderMap>> {
-    match table.get_raw(vm, field)? {
+    match table.get(field)? {
         luau::Value::Nil => Ok(None),
-        luau::Value::Table(value) => header_map_from_luau(vm, &value, field).map(Some),
+        luau::Value::Table(value) => header_map_from_luau(&value, field).map(Some),
         other => Err(luau_field_type_error(field, "table", other.type_name())),
     }
 }
 
 fn optional_u16_array_field(
-    vm: &luau::Vm,
     table: &luau::Table,
     field: &'static str,
 ) -> luau::runtime::Result<Option<Vec<u16>>> {
-    match table.get_raw(vm, field)? {
+    match table.get(field)? {
         luau::Value::Nil => Ok(None),
         luau::Value::Table(value) => {
             let mut output = Vec::new();
-            for (_key, value) in value.pairs_raw(vm)? {
+            for (_key, value) in value.pairs()? {
                 output.push(number_to_u16(field, value)?);
             }
             Ok(Some(output))
@@ -1107,7 +1092,7 @@ fn required_method_field(
     table: &luau::Table,
     field: &'static str,
 ) -> luau::runtime::Result<HttpMethod> {
-    let value = table.get_raw(vm, field)?;
+    let value = table.get(field)?;
     if matches!(value, luau::Value::Nil) {
         return Err(luau::Error::Runtime(format!("missing '{field}' field")));
     }
@@ -1115,12 +1100,11 @@ fn required_method_field(
 }
 
 fn header_map_from_luau(
-    vm: &luau::Vm,
     table: &luau::Table,
     field: &'static str,
 ) -> luau::runtime::Result<HttpHeaderMap> {
     let mut map = BTreeMap::new();
-    for (key, value) in table.pairs_raw(vm)? {
+    for (key, value) in table.pairs()? {
         let luau::Value::String(key) = key else {
             return Err(luau_field_type_error(
                 field,

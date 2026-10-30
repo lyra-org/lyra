@@ -376,14 +376,13 @@ impl ApiModule {
         status: Status,
         body: luau::Value,
         headers: Option<luau::Value>,
-        vm: &luau::Vm,
     ) -> luau::runtime::Result<luau::OwnedTable> {
         let headers = optional_value(headers);
         let mut response = kind_table("json");
         response.set_field("status", i64::from(status.0));
         response.set_field(
             "headers",
-            merge_headers(vm, &[("content-type", "application/json")], headers)?,
+            merge_headers(&[("content-type", "application/json")], headers)?,
         );
         response.set_field("body", body);
         Ok(response)
@@ -398,14 +397,13 @@ impl ApiModule {
     fn response_empty(
         status: Option<Status>,
         headers: Option<luau::Value>,
-        vm: &luau::Vm,
     ) -> luau::runtime::Result<luau::OwnedTable> {
         let status = status.map_or(StatusCode::NO_CONTENT.as_u16(), |status| status.0);
         let headers = optional_value(headers);
         let mut response = kind_table("empty");
         response.set_field("status", i64::from(status));
         if !is_nil(&headers) {
-            response.set_field("headers", headers_to_value(vm, headers)?);
+            response.set_field("headers", headers_to_value(headers)?);
         }
         Ok(response)
     }
@@ -420,7 +418,6 @@ impl ApiModule {
         status: Status,
         body: String,
         headers: Option<luau::Value>,
-        vm: &luau::Vm,
     ) -> luau::runtime::Result<luau::OwnedTable> {
         let headers = optional_value(headers);
         let mut response = kind_table("text");
@@ -428,11 +425,7 @@ impl ApiModule {
         response.set_field("body", body);
         response.set_field(
             "headers",
-            merge_headers(
-                vm,
-                &[("content-type", "text/plain; charset=utf-8")],
-                headers,
-            )?,
+            merge_headers(&[("content-type", "text/plain; charset=utf-8")], headers)?,
         );
         Ok(response)
     }
@@ -447,7 +440,6 @@ impl ApiModule {
         status: Status,
         body: luau::Value,
         headers: Option<luau::Value>,
-        vm: &luau::Vm,
     ) -> luau::runtime::Result<luau::OwnedTable> {
         if !matches!(body, luau::Value::String(_) | luau::Value::Buffer(_)) {
             return Err(crate::plugins::runtime_error(
@@ -460,7 +452,7 @@ impl ApiModule {
         response.set_field("body", body);
         response.set_field(
             "headers",
-            merge_headers(vm, &[("content-type", "application/octet-stream")], headers)?,
+            merge_headers(&[("content-type", "application/octet-stream")], headers)?,
         );
         Ok(response)
     }
@@ -475,7 +467,6 @@ impl ApiModule {
         status: Status,
         location: String,
         headers: Option<luau::Value>,
-        vm: &luau::Vm,
     ) -> luau::runtime::Result<luau::OwnedTable> {
         if !(300..400).contains(&status.0) {
             return Err(crate::plugins::runtime_error(
@@ -491,7 +482,7 @@ impl ApiModule {
         let headers = optional_value(headers);
         let mut response = kind_table("redirect");
         response.set_field("status", i64::from(status.0));
-        let mut headers = collect_headers(vm, headers)?;
+        let mut headers = collect_headers(headers)?;
         headers.set_field(
             "location",
             luau::Value::String(location.as_bytes().to_vec()),
@@ -511,7 +502,6 @@ impl ApiModule {
         path: String,
         headers: Option<luau::Value>,
         transform: Option<luau::Value>,
-        vm: &luau::Vm,
     ) -> luau::runtime::Result<luau::OwnedTable> {
         let status = status.map_or(StatusCode::OK.as_u16(), |status| status.0);
         let path = path.trim();
@@ -524,7 +514,7 @@ impl ApiModule {
         response.set_field("status", i64::from(status));
         response.set_field("path", path);
         if !is_nil(&headers) {
-            response.set_field("headers", headers_to_value(vm, headers)?);
+            response.set_field("headers", headers_to_value(headers)?);
         }
         if !is_nil(&transform) {
             response.set_field("transform", transform);
@@ -580,9 +570,8 @@ impl ApiModule {
         query: luau::Table,
         key: String,
         default: Option<bool>,
-        vm: &luau::Vm,
     ) -> luau::runtime::Result<Option<bool>> {
-        let value = first_query_value(vm, &query, &key)?;
+        let value = first_query_value(&query, &key)?;
         let parsed = value.as_deref().and_then(parse_query_bool);
         Ok(parsed.or(default))
     }
@@ -598,9 +587,8 @@ impl ApiModule {
         default: Option<i64>,
         min: Option<i64>,
         max: Option<i64>,
-        vm: &luau::Vm,
     ) -> luau::runtime::Result<Option<i64>> {
-        let parsed = first_query_value(vm, &query, &key)?
+        let parsed = first_query_value(&query, &key)?
             .and_then(|raw| raw.trim().parse::<i64>().ok())
             .filter(|parsed| {
                 min.is_none_or(|min| *parsed >= min) && max.is_none_or(|max| *parsed <= max)
@@ -614,14 +602,10 @@ impl ApiModule {
         args(query: ApiQueryParams, key: String),
         returns(Vec<String>)
     )]
-    fn query_csv(
-        query: luau::Table,
-        key: String,
-        vm: &luau::Vm,
-    ) -> luau::runtime::Result<luau::OwnedTable> {
+    fn query_csv(query: luau::Table, key: String) -> luau::runtime::Result<luau::OwnedTable> {
         let mut result = luau::OwnedTable::new();
-        if let luau::Value::Table(occurrences) = query.get_raw(vm, &key)? {
-            let mut values = occurrence_values(vm, &occurrences)?;
+        if let luau::Value::Table(occurrences) = query.get(&key)? {
+            let mut values = occurrence_values(&occurrences)?;
             values.sort_by_key(|(index, _)| *index);
             for (_, raw) in values {
                 for part in raw.split(',') {
@@ -675,14 +659,10 @@ fn track_response(
     response
 }
 
-fn first_query_value(
-    vm: &luau::Vm,
-    query: &luau::Table,
-    key: &str,
-) -> luau::runtime::Result<Option<String>> {
-    match query.get_raw(vm, key)? {
+fn first_query_value(query: &luau::Table, key: &str) -> luau::runtime::Result<Option<String>> {
+    match query.get(key)? {
         luau::Value::Table(values) => {
-            let mut values = occurrence_values(vm, &values)?;
+            let mut values = occurrence_values(&values)?;
             values.sort_by_key(|(index, _)| *index);
             Ok(values.into_iter().next().map(|(_, value)| value))
         }
@@ -694,12 +674,9 @@ fn first_query_value(
     }
 }
 
-fn occurrence_values(
-    vm: &luau::Vm,
-    table: &luau::Table,
-) -> luau::runtime::Result<Vec<(i64, String)>> {
+fn occurrence_values(table: &luau::Table) -> luau::runtime::Result<Vec<(i64, String)>> {
     let mut values = Vec::new();
-    for (key, value) in table.pairs_raw(vm)? {
+    for (key, value) in table.pairs()? {
         let index = match key {
             luau::Value::Integer(index) => index,
             luau::Value::Number(index) => index as i64,
@@ -723,11 +700,10 @@ fn kind_table(kind: &'static str) -> luau::OwnedTable {
 }
 
 fn merge_headers(
-    vm: &luau::Vm,
     defaults: &[(&'static str, &'static str)],
     custom: luau::Value,
 ) -> luau::runtime::Result<luau::Value> {
-    let mut headers = collect_headers(vm, custom)?;
+    let mut headers = collect_headers(custom)?;
     for (name, value) in defaults.iter().rev() {
         if !headers_has_field(&headers, name) {
             headers.set_field(*name, *value);
@@ -736,16 +712,16 @@ fn merge_headers(
     Ok(headers.into())
 }
 
-fn headers_to_value(vm: &luau::Vm, headers: luau::Value) -> luau::runtime::Result<luau::Value> {
-    Ok(collect_headers(vm, headers)?.into())
+fn headers_to_value(headers: luau::Value) -> luau::runtime::Result<luau::Value> {
+    Ok(collect_headers(headers)?.into())
 }
 
-fn collect_headers(vm: &luau::Vm, custom: luau::Value) -> luau::runtime::Result<luau::OwnedTable> {
+fn collect_headers(custom: luau::Value) -> luau::runtime::Result<luau::OwnedTable> {
     let mut headers = luau::OwnedTable::new();
     match custom {
         luau::Value::Nil => {}
         luau::Value::Table(table) => {
-            for (key, value) in table.pairs_raw(vm)? {
+            for (key, value) in table.pairs()? {
                 let (luau::Value::String(key), luau::Value::String(value)) = (key, value) else {
                     continue;
                 };

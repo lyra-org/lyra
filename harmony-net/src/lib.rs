@@ -149,7 +149,7 @@ impl NetModule {
         origin: &luau::ChunkOrigin,
         options: luau::Table,
     ) -> luau::runtime::Result<luau::ScheduledFuture> {
-        let options = udp_bind_options_from_luau(vm, &options)?;
+        let options = udp_bind_options_from_luau(&options)?;
         let vm = vm.clone();
         let origin = origin.clone();
         Ok(luau::ScheduledFuture::new(async move {
@@ -168,7 +168,7 @@ impl NetModule {
         origin: &luau::ChunkOrigin,
         options: luau::Table,
     ) -> luau::runtime::Result<luau::ScheduledFuture> {
-        let options = tcp_connect_options_from_luau(vm, &options)?;
+        let options = tcp_connect_options_from_luau(&options)?;
         let vm = vm.clone();
         let origin = origin.clone();
         Ok(luau::ScheduledFuture::new(async move {
@@ -187,7 +187,7 @@ impl NetModule {
         origin: &luau::ChunkOrigin,
         options: luau::Table,
     ) -> luau::runtime::Result<luau::ScheduledFuture> {
-        let options = tcp_bind_options_from_luau(vm, &options)?;
+        let options = tcp_bind_options_from_luau(&options)?;
         let vm = vm.clone();
         let origin = origin.clone();
         Ok(luau::ScheduledFuture::new(async move {
@@ -236,12 +236,8 @@ impl UdpSocket {
         description = "Associates the socket with a remote address.",
         args(address: SocketAddress)
     )]
-    fn connect(
-        &self,
-        vm: &luau::Vm,
-        address: luau::Table,
-    ) -> luau::runtime::Result<luau::ScheduledFuture> {
-        let address = socket_address_from_luau(vm, &address)?;
+    fn connect(&self, address: luau::Table) -> luau::runtime::Result<luau::ScheduledFuture> {
+        let address = socket_address_from_luau(&address)?;
         let socket = self.clone();
         Ok(luau::ScheduledFuture::new(async move {
             socket.connect_inner(address).await
@@ -383,13 +379,12 @@ impl UdpSocket {
     )]
     fn send_to(
         &self,
-        vm: &luau::Vm,
         data: luau::Value,
         address: luau::Table,
         timeout: Option<f64>,
     ) -> luau::runtime::Result<luau::ScheduledFuture> {
         let data = binary_input_from_luau("data", data)?;
-        let address = socket_address_from_luau(vm, &address)?;
+        let address = socket_address_from_luau(&address)?;
         let socket = self.clone();
         Ok(luau::ScheduledFuture::new(async move {
             socket.send_to_inner(data, address, timeout).await
@@ -743,45 +738,33 @@ async fn bind_tcp_listener(options: TcpBindOptions) -> luau::runtime::Result<Tcp
     })
 }
 
-fn udp_bind_options_from_luau(
-    vm: &luau::Vm,
-    table: &luau::Table,
-) -> luau::runtime::Result<UdpBindOptions> {
+fn udp_bind_options_from_luau(table: &luau::Table) -> luau::runtime::Result<UdpBindOptions> {
     Ok(UdpBindOptions {
-        address: required_string_field(vm, table, "address")?,
-        port: required_u16_field(vm, table, "port")?,
-        broadcast: optional_bool_field(vm, table, "broadcast")?,
+        address: required_string_field(table, "address")?,
+        port: required_u16_field(table, "port")?,
+        broadcast: optional_bool_field(table, "broadcast")?,
     })
 }
 
-fn tcp_connect_options_from_luau(
-    vm: &luau::Vm,
-    table: &luau::Table,
-) -> luau::runtime::Result<TcpConnectOptions> {
+fn tcp_connect_options_from_luau(table: &luau::Table) -> luau::runtime::Result<TcpConnectOptions> {
     Ok(TcpConnectOptions {
-        host: required_string_field(vm, table, "host")?,
-        port: required_u16_field(vm, table, "port")?,
-        timeout: optional_f64_field(vm, table, "timeout")?,
+        host: required_string_field(table, "host")?,
+        port: required_u16_field(table, "port")?,
+        timeout: optional_f64_field(table, "timeout")?,
     })
 }
 
-fn tcp_bind_options_from_luau(
-    vm: &luau::Vm,
-    table: &luau::Table,
-) -> luau::runtime::Result<TcpBindOptions> {
+fn tcp_bind_options_from_luau(table: &luau::Table) -> luau::runtime::Result<TcpBindOptions> {
     Ok(TcpBindOptions {
-        address: required_string_field(vm, table, "address")?,
-        port: required_u16_field(vm, table, "port")?,
+        address: required_string_field(table, "address")?,
+        port: required_u16_field(table, "port")?,
     })
 }
 
-fn socket_address_from_luau(
-    vm: &luau::Vm,
-    table: &luau::Table,
-) -> luau::runtime::Result<SocketAddress> {
+fn socket_address_from_luau(table: &luau::Table) -> luau::runtime::Result<SocketAddress> {
     Ok(SocketAddress {
-        address: required_string_field(vm, table, "address")?,
-        port: required_u16_field(vm, table, "port")?,
+        address: required_string_field(table, "address")?,
+        port: required_u16_field(table, "port")?,
     })
 }
 
@@ -793,11 +776,10 @@ fn socket_address_value(address: SocketAddress) -> luau::Value {
 }
 
 fn required_string_field(
-    vm: &luau::Vm,
     table: &luau::Table,
     field: &'static str,
 ) -> luau::runtime::Result<String> {
-    match table.get_raw(vm, field)? {
+    match table.get(field)? {
         luau::Value::String(value) => String::from_utf8(value)
             .map_err(|error| luau_runtime_error(format!("'{field}' must be valid UTF-8: {error}"))),
         luau::Value::Nil => Err(luau_runtime_error(format!("missing '{field}' field"))),
@@ -805,12 +787,8 @@ fn required_string_field(
     }
 }
 
-fn required_u16_field(
-    vm: &luau::Vm,
-    table: &luau::Table,
-    field: &'static str,
-) -> luau::runtime::Result<u16> {
-    match table.get_raw(vm, field)? {
+fn required_u16_field(table: &luau::Table, field: &'static str) -> luau::runtime::Result<u16> {
+    match table.get(field)? {
         luau::Value::Integer(value) if (0..=u16::MAX as i64).contains(&value) => Ok(value as u16),
         luau::Value::Number(value)
             if value.is_finite()
@@ -830,11 +808,10 @@ fn required_u16_field(
 }
 
 fn optional_f64_field(
-    vm: &luau::Vm,
     table: &luau::Table,
     field: &'static str,
 ) -> luau::runtime::Result<Option<f64>> {
-    match table.get_raw(vm, field)? {
+    match table.get(field)? {
         luau::Value::Nil => Ok(None),
         luau::Value::Integer(value) => Ok(Some(value as f64)),
         luau::Value::Number(value) => Ok(Some(value)),
@@ -843,11 +820,10 @@ fn optional_f64_field(
 }
 
 fn optional_bool_field(
-    vm: &luau::Vm,
     table: &luau::Table,
     field: &'static str,
 ) -> luau::runtime::Result<Option<bool>> {
-    match table.get_raw(vm, field)? {
+    match table.get(field)? {
         luau::Value::Nil => Ok(None),
         luau::Value::Boolean(value) => Ok(Some(value)),
         other => Err(luau_field_type_error(field, "boolean", other.type_name())),

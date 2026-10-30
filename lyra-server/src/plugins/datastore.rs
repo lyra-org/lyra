@@ -52,12 +52,8 @@ impl DataStoreHandle {
         args(keys: Vec<String>),
         returns(Vec<Option<JsonValue>>)
     )]
-    fn get_many(
-        &self,
-        vm: &luau::Vm,
-        keys: luau::Table,
-    ) -> luau::runtime::Result<luau::ScheduledFuture> {
-        let keys = read_string_array(vm, &keys)?;
+    fn get_many(&self, keys: luau::Table) -> luau::runtime::Result<luau::ScheduledFuture> {
+        let keys = read_string_array(&keys)?;
         let handle = self.clone();
         Ok(luau::ScheduledFuture::new(async move {
             read_values(&handle.db, handle.datastore_id, keys).await
@@ -232,10 +228,13 @@ fn datastore_db_id(datastore: DataStore) -> luau::runtime::Result<agdb::DbId> {
         .ok_or_else(|| luau::Error::Runtime("datastore missing db_id".to_string()))
 }
 
-fn read_string_array(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<String>> {
-    let entries = table.reader(vm)?.array_values_raw()?;
-    let mut values = Vec::with_capacity(entries.len());
-    for value in entries {
+fn read_string_array(table: &luau::Table) -> luau::runtime::Result<Vec<String>> {
+    let len = i32::try_from(table.len()?).map_err(|_| {
+        luau::Error::Runtime("table array part exceeded supported integer indexes".to_string())
+    })?;
+    let mut values = Vec::with_capacity(len as usize);
+    for index in 1..=len {
+        let value = table.get_integer(index)?;
         let luau::Value::String(value) = value else {
             return Err(luau::Error::Runtime(
                 "datastore key arrays must contain only strings".to_string(),
@@ -251,7 +250,7 @@ fn read_json_entries(
     table: &luau::Table,
 ) -> luau::runtime::Result<Vec<(String, serde_json::Value)>> {
     let mut entries = Vec::new();
-    for (key, value) in table.pairs_raw(vm)? {
+    for (key, value) in table.pairs()? {
         let luau::Value::String(key) = key else {
             return Err(luau::Error::Runtime(
                 "datastore entry keys must be strings".to_string(),

@@ -139,21 +139,21 @@ struct PlaylistReplaceRequest {
 impl<'vm> luau::FromLuau<'vm> for PlaylistCreateRequest {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let table: luau::Table = reader.read()?;
-        parse_create_request(reader.vm(), table)
+        parse_create_request(table)
     }
 }
 
 impl<'vm> luau::FromLuau<'vm> for PlaylistUpdateRequest {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let table: luau::Table = reader.read()?;
-        parse_update_request(reader.vm(), table)
+        parse_update_request(table)
     }
 }
 
 impl<'vm> luau::FromLuau<'vm> for PlaylistReplaceRequest {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let table: luau::Table = reader.read()?;
-        parse_replace_request(reader.vm(), table)
+        parse_replace_request(table)
     }
 }
 
@@ -163,7 +163,7 @@ struct IdSequence(Vec<DbId>);
 impl<'vm> luau::FromLuau<'vm> for IdSequence {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let table: luau::Table = reader.read()?;
-        args::id_sequence(reader.vm(), &table).map(Self)
+        args::id_sequence(&table).map(Self)
     }
 }
 
@@ -179,7 +179,7 @@ struct EntryIds(Vec<String>);
 impl<'vm> luau::FromLuau<'vm> for EntryIds {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let table: luau::Table = reader.read()?;
-        args::strings(reader.vm(), &table).map(Self)
+        args::strings(&table).map(Self)
     }
 }
 
@@ -668,25 +668,19 @@ fn playlist_link_to_info(
     Ok(Some(link.into()))
 }
 
-fn parse_create_request(
-    vm: &luau::Vm,
-    table: luau::Table,
-) -> luau::runtime::Result<PlaylistCreateRequest> {
+fn parse_create_request(table: luau::Table) -> luau::runtime::Result<PlaylistCreateRequest> {
     Ok(PlaylistCreateRequest {
-        name: luau::table::required_string_field(vm, &table, "name")?,
-        description: luau::table::optional_string_field(vm, &table, "description")?,
-        is_public: luau::table::optional_bool_field(vm, &table, "is_public")?,
-        created_at: args::optional_u64(vm, &table, "created_at")?,
-        updated_at: args::optional_u64(vm, &table, "updated_at")?,
-        track_ids: args::optional_id_sequence(vm, &table, "track_ids")?,
+        name: table.required_string_field("name")?,
+        description: table.optional_string_field("description")?,
+        is_public: table.optional_bool_field("is_public")?,
+        created_at: args::optional_u64(&table, "created_at")?,
+        updated_at: args::optional_u64(&table, "updated_at")?,
+        track_ids: args::optional_id_sequence(&table, "track_ids")?,
     })
 }
 
-fn parse_update_request(
-    vm: &luau::Vm,
-    table: luau::Table,
-) -> luau::runtime::Result<PlaylistUpdateRequest> {
-    let playlist_id = match table.get_raw(vm, "playlist_id")? {
+fn parse_update_request(table: luau::Table) -> luau::runtime::Result<PlaylistUpdateRequest> {
+    let playlist_id = match table.get("playlist_id")? {
         luau::Value::Nil => {
             return Err(crate::plugins::runtime_error(
                 "missing required field: playlist_id",
@@ -696,17 +690,14 @@ fn parse_update_request(
     };
     Ok(PlaylistUpdateRequest {
         playlist_id,
-        fields: parse_fields(vm, &table)?,
+        fields: parse_fields(&table)?,
     })
 }
 
-fn parse_replace_request(
-    vm: &luau::Vm,
-    table: luau::Table,
-) -> luau::runtime::Result<PlaylistReplaceRequest> {
-    let fields = match table.get_raw(vm, "fields")? {
+fn parse_replace_request(table: luau::Table) -> luau::runtime::Result<PlaylistReplaceRequest> {
+    let fields = match table.get("fields")? {
         luau::Value::Nil => PlaylistFields::default(),
-        luau::Value::Table(fields) => parse_fields(vm, &fields)?,
+        luau::Value::Table(fields) => parse_fields(&fields)?,
         other => {
             return Err(crate::plugins::runtime_error(format!(
                 "fields must be a table, got {}",
@@ -714,8 +705,8 @@ fn parse_replace_request(
             )));
         }
     };
-    let track_ids = match table.get_raw(vm, "track_ids")? {
-        luau::Value::Table(track_ids) => args::id_sequence(vm, &track_ids)?,
+    let track_ids = match table.get("track_ids")? {
+        luau::Value::Table(track_ids) => args::id_sequence(&track_ids)?,
         other => {
             return Err(crate::plugins::runtime_error(format!(
                 "track_ids must be an array of ids, got {}",
@@ -726,12 +717,12 @@ fn parse_replace_request(
     Ok(PlaylistReplaceRequest { fields, track_ids })
 }
 
-fn parse_fields(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<PlaylistFields> {
+fn parse_fields(table: &luau::Table) -> luau::runtime::Result<PlaylistFields> {
     Ok(PlaylistFields {
-        name: luau::table::optional_string_field(vm, table, "name")?,
-        description: luau::table::optional_string_field(vm, table, "description")?,
-        is_public: luau::table::optional_bool_field(vm, table, "is_public")?,
-        updated_at: args::optional_u64(vm, table, "updated_at")?,
+        name: table.optional_string_field("name")?,
+        description: table.optional_string_field("description")?,
+        is_public: table.optional_bool_field("is_public")?,
+        updated_at: args::optional_u64(table, "updated_at")?,
     })
 }
 

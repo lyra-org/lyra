@@ -115,7 +115,7 @@ impl<'vm> luau::FromLuau<'vm> for SubmittedPlays {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let plays: luau::Table = reader.read()?;
         let vm = reader.vm();
-        let plays = args::array_values(vm, &plays)?;
+        let plays = args::array_values(&plays)?;
         if plays.len() > MAX_SUBMITTED_PLAYS {
             return Err(crate::plugins::runtime_error(format!(
                 "plays cap exceeded: {} > {MAX_SUBMITTED_PLAYS}",

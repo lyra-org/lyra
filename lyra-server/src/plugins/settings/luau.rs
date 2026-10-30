@@ -57,16 +57,11 @@ impl SettingsBuilder {
         args(key: String, props: SettingsStringProps),
         returns(Option<String>)
     )]
-    fn string(
-        &self,
-        vm: &luau::Vm,
-        key: String,
-        props: luau::Table,
-    ) -> luau::runtime::Result<luau::Value> {
+    fn string(&self, key: String, props: luau::Table) -> luau::runtime::Result<luau::Value> {
         let key = register_key(self, key)?;
         let field = FieldDefinition::String {
             key,
-            props: build_field_props(vm, &props, parse_string_default(vm, &props)?)?,
+            props: build_field_props(&props, parse_string_default(&props)?)?,
         };
         let value = primitive_value_for_field(&field, self.stored_values.get(field.key()))?;
         push_field(self, field)?;
@@ -78,15 +73,10 @@ impl SettingsBuilder {
         args(key: String, props: SettingsNumberProps),
         returns(Option<f64>)
     )]
-    fn number(
-        &self,
-        vm: &luau::Vm,
-        key: String,
-        props: luau::Table,
-    ) -> luau::runtime::Result<luau::Value> {
+    fn number(&self, key: String, props: luau::Table) -> luau::runtime::Result<luau::Value> {
         let key = register_key(self, key)?;
-        let min = optional_number(vm, &props, "min")?;
-        let max = optional_number(vm, &props, "max")?;
+        let min = optional_number(&props, "min")?;
+        let max = optional_number(&props, "max")?;
         if let (Some(min), Some(max)) = (min, max)
             && min > max
         {
@@ -94,7 +84,7 @@ impl SettingsBuilder {
                 "min must be less than or equal to max".to_string(),
             ));
         }
-        let default_value = parse_number_default(vm, &props)?;
+        let default_value = parse_number_default(&props)?;
         if let Some(default) = default_value.as_ref().and_then(|value| value.as_f64()) {
             if let Some(min) = min
                 && default < min
@@ -113,7 +103,7 @@ impl SettingsBuilder {
         }
         let field = FieldDefinition::Number {
             key,
-            props: build_field_props(vm, &props, default_value)?,
+            props: build_field_props(&props, default_value)?,
             min,
             max,
         };
@@ -127,16 +117,11 @@ impl SettingsBuilder {
         args(key: String, props: SettingsBoolProps),
         returns(Option<bool>)
     )]
-    fn bool(
-        &self,
-        vm: &luau::Vm,
-        key: String,
-        props: luau::Table,
-    ) -> luau::runtime::Result<luau::Value> {
+    fn bool(&self, key: String, props: luau::Table) -> luau::runtime::Result<luau::Value> {
         let key = register_key(self, key)?;
         let field = FieldDefinition::Bool {
             key,
-            props: build_field_props(vm, &props, parse_bool_default(vm, &props)?)?,
+            props: build_field_props(&props, parse_bool_default(&props)?)?,
         };
         let value = primitive_value_for_field(&field, self.stored_values.get(field.key()))?;
         push_field(self, field)?;
@@ -148,18 +133,13 @@ impl SettingsBuilder {
         args(key: String, props: SettingsChoiceProps),
         returns(Option<String>)
     )]
-    fn choice(
-        &self,
-        vm: &luau::Vm,
-        key: String,
-        props: luau::Table,
-    ) -> luau::runtime::Result<luau::Value> {
+    fn choice(&self, key: String, props: luau::Table) -> luau::runtime::Result<luau::Value> {
         let key = register_key(self, key)?;
-        let options = parse_choice_options(vm, &props)?;
-        let default_value = parse_choice_default(vm, &props, &options)?;
+        let options = parse_choice_options(&props)?;
+        let default_value = parse_choice_default(&props, &options)?;
         let field = FieldDefinition::Choice {
             key,
-            props: build_field_props(vm, &props, default_value)?,
+            props: build_field_props(&props, default_value)?,
             options,
         };
         let value = primitive_value_for_field(&field, self.stored_values.get(field.key()))?;
@@ -420,20 +400,19 @@ fn require_non_empty_string(value: String, field_name: &str) -> luau::runtime::R
 }
 
 fn build_field_props(
-    vm: &luau::Vm,
     props: &luau::Table,
     default_value: Option<serde_json::Value>,
 ) -> luau::runtime::Result<FieldProps> {
     Ok(FieldProps {
-        label: require_non_empty_string(required_string(vm, props, "label")?, "label")?,
-        description: optional_string(vm, props, "description")?,
-        required: optional_bool(vm, props, "required")?.unwrap_or(false),
+        label: require_non_empty_string(required_string(props, "label")?, "label")?,
+        description: optional_string(props, "description")?,
+        required: optional_bool(props, "required")?.unwrap_or(false),
         default_value,
     })
 }
 
-fn required_string(vm: &luau::Vm, table: &luau::Table, key: &str) -> luau::runtime::Result<String> {
-    match table.get_raw(vm, key)? {
+fn required_string(table: &luau::Table, key: &str) -> luau::runtime::Result<String> {
+    match table.get(key)? {
         luau::Value::String(value) => {
             String::from_utf8(value).map_err(crate::plugins::runtime_error)
         }
@@ -444,12 +423,8 @@ fn required_string(vm: &luau::Vm, table: &luau::Table, key: &str) -> luau::runti
     }
 }
 
-fn optional_string(
-    vm: &luau::Vm,
-    table: &luau::Table,
-    key: &str,
-) -> luau::runtime::Result<Option<String>> {
-    match table.get_raw(vm, key)? {
+fn optional_string(table: &luau::Table, key: &str) -> luau::runtime::Result<Option<String>> {
+    match table.get(key)? {
         luau::Value::Nil => Ok(None),
         luau::Value::String(value) => String::from_utf8(value)
             .map(Some)
@@ -461,12 +436,8 @@ fn optional_string(
     }
 }
 
-fn optional_bool(
-    vm: &luau::Vm,
-    table: &luau::Table,
-    key: &str,
-) -> luau::runtime::Result<Option<bool>> {
-    match table.get_raw(vm, key)? {
+fn optional_bool(table: &luau::Table, key: &str) -> luau::runtime::Result<Option<bool>> {
+    match table.get(key)? {
         luau::Value::Nil => Ok(None),
         luau::Value::Boolean(value) => Ok(Some(value)),
         other => Err(luau::Error::Runtime(format!(
@@ -476,12 +447,8 @@ fn optional_bool(
     }
 }
 
-fn optional_number(
-    vm: &luau::Vm,
-    table: &luau::Table,
-    key: &str,
-) -> luau::runtime::Result<Option<f64>> {
-    match table.get_raw(vm, key)? {
+fn optional_number(table: &luau::Table, key: &str) -> luau::runtime::Result<Option<f64>> {
+    match table.get(key)? {
         luau::Value::Nil => Ok(None),
         luau::Value::Integer(value) => Ok(Some(value as f64)),
         luau::Value::Number(value) => Ok(Some(value)),
@@ -492,11 +459,8 @@ fn optional_number(
     }
 }
 
-fn parse_string_default(
-    vm: &luau::Vm,
-    props: &luau::Table,
-) -> luau::runtime::Result<Option<serde_json::Value>> {
-    match props.get_raw(vm, "default")? {
+fn parse_string_default(props: &luau::Table) -> luau::runtime::Result<Option<serde_json::Value>> {
+    match props.get("default")? {
         luau::Value::Nil => Ok(None),
         luau::Value::String(value) => String::from_utf8(value)
             .map(serde_json::Value::String)
@@ -508,11 +472,8 @@ fn parse_string_default(
     }
 }
 
-fn parse_number_default(
-    vm: &luau::Vm,
-    props: &luau::Table,
-) -> luau::runtime::Result<Option<serde_json::Value>> {
-    match props.get_raw(vm, "default")? {
+fn parse_number_default(props: &luau::Table) -> luau::runtime::Result<Option<serde_json::Value>> {
+    match props.get("default")? {
         luau::Value::Nil => Ok(None),
         luau::Value::Integer(value) => Ok(Some(serde_json::json!(value))),
         luau::Value::Number(value) => Ok(Some(serde_json::json!(value))),
@@ -522,11 +483,8 @@ fn parse_number_default(
     }
 }
 
-fn parse_bool_default(
-    vm: &luau::Vm,
-    props: &luau::Table,
-) -> luau::runtime::Result<Option<serde_json::Value>> {
-    match props.get_raw(vm, "default")? {
+fn parse_bool_default(props: &luau::Table) -> luau::runtime::Result<Option<serde_json::Value>> {
+    match props.get("default")? {
         luau::Value::Nil => Ok(None),
         luau::Value::Boolean(value) => Ok(Some(serde_json::Value::Bool(value))),
         _ => Err(luau::Error::Runtime(
@@ -535,17 +493,14 @@ fn parse_bool_default(
     }
 }
 
-fn parse_choice_options(
-    vm: &luau::Vm,
-    props: &luau::Table,
-) -> luau::runtime::Result<Vec<ChoiceOption>> {
-    let luau::Value::Table(options_table) = props.get_raw(vm, "options")? else {
+fn parse_choice_options(props: &luau::Table) -> luau::runtime::Result<Vec<ChoiceOption>> {
+    let luau::Value::Table(options_table) = props.get("options")? else {
         return Err(luau::Error::Runtime(
             "choice settings require an options array".to_string(),
         ));
     };
     let mut entries = options_table
-        .pairs_raw(vm)?
+        .pairs()?
         .into_iter()
         .filter_map(|(key, value)| Some((sequence_index(key)?, value)))
         .collect::<Vec<_>>();
@@ -559,10 +514,8 @@ fn parse_choice_options(
                 "choice options must be tables".to_string(),
             ));
         };
-        let value =
-            require_non_empty_string(required_string(vm, &option_table, "value")?, "value")?;
-        let label =
-            require_non_empty_string(required_string(vm, &option_table, "label")?, "label")?;
+        let value = require_non_empty_string(required_string(&option_table, "value")?, "value")?;
+        let label = require_non_empty_string(required_string(&option_table, "label")?, "label")?;
         if !seen_values.insert(value.clone()) {
             return Err(luau::Error::Runtime(format!(
                 "choice option value '{value}' is already declared"
@@ -571,7 +524,7 @@ fn parse_choice_options(
         options.push(ChoiceOption {
             value,
             label,
-            description: optional_string(vm, &option_table, "description")?,
+            description: optional_string(&option_table, "description")?,
         });
     }
 
@@ -584,11 +537,10 @@ fn parse_choice_options(
 }
 
 fn parse_choice_default(
-    vm: &luau::Vm,
     props: &luau::Table,
     options: &[ChoiceOption],
 ) -> luau::runtime::Result<Option<serde_json::Value>> {
-    match props.get_raw(vm, "default")? {
+    match props.get("default")? {
         luau::Value::Nil => Ok(None),
         luau::Value::String(value) => {
             let value = String::from_utf8(value).map_err(crate::plugins::runtime_error)?;

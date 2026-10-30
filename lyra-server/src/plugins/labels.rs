@@ -54,7 +54,7 @@ struct LabelForReleaseInfo;
 impl<'vm> luau::FromLuau<'vm> for LabelResolveRequestData {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let request: luau::Table = reader.read()?;
-        parse_label_resolve_request(reader.vm(), &request)
+        parse_label_resolve_request(&request)
     }
 }
 
@@ -204,25 +204,21 @@ impl LabelExternalIdData {
 }
 
 fn parse_label_resolve_request(
-    vm: &luau::Vm,
     table: &luau::Table,
 ) -> luau::runtime::Result<LabelResolveRequestData> {
     Ok(LabelResolveRequestData {
-        name: required_string(vm, table, "name")?,
-        external_id: optional_external_id(vm, table)?,
+        name: required_string(table, "name")?,
+        external_id: optional_external_id(table)?,
     })
 }
 
-fn optional_external_id(
-    vm: &luau::Vm,
-    table: &luau::Table,
-) -> luau::runtime::Result<Option<LabelExternalIdData>> {
-    match table.get_raw(vm, "external_id")? {
+fn optional_external_id(table: &luau::Table) -> luau::runtime::Result<Option<LabelExternalIdData>> {
+    match table.get("external_id")? {
         luau::Value::Nil => Ok(None),
         luau::Value::Table(table) => Ok(Some(LabelExternalIdData {
-            provider_id: required_string(vm, &table, "provider_id")?,
-            id_type: required_string(vm, &table, "id_type")?,
-            id_value: required_string(vm, &table, "id_value")?,
+            provider_id: required_string(&table, "provider_id")?,
+            id_type: required_string(&table, "id_type")?,
+            id_value: required_string(&table, "id_value")?,
         })),
         other => Err(crate::plugins::runtime_error(format!(
             "external_id must be a table, got {}",
@@ -231,8 +227,9 @@ fn optional_external_id(
     }
 }
 
-fn required_string(vm: &luau::Vm, table: &luau::Table, key: &str) -> luau::runtime::Result<String> {
-    luau::table::optional_string_field(vm, table, key)?
+fn required_string(table: &luau::Table, key: &str) -> luau::runtime::Result<String> {
+    table
+        .optional_string_field(key)?
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| crate::plugins::runtime_error(format!("{key} must be a non-empty string")))
 }

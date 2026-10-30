@@ -68,10 +68,9 @@ struct QueryRequest {
 impl<'vm> luau::FromLuau<'vm> for QueryRequest {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let request: luau::Table = reader.read()?;
-        let vm = reader.vm();
-        let id = args::resolve_id(required_value(vm, &request, "id")?)?;
-        let includes = parse_includes(vm, request.get_raw(vm, "include")?)?;
-        let library_id = args::optional_positive_id(vm, &request, "library_id")?;
+        let id = args::resolve_id(required_value(&request, "id")?)?;
+        let includes = parse_includes(request.get("include")?)?;
+        let library_id = args::optional_positive_id(&request, "library_id")?;
         Ok(Self {
             id,
             includes,
@@ -89,11 +88,10 @@ struct QueryManyRequest {
 impl<'vm> luau::FromLuau<'vm> for QueryManyRequest {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let request: luau::Table = reader.read()?;
-        let vm = reader.vm();
-        let ids = match required_value(vm, &request, "ids")? {
+        let ids = match required_value(&request, "ids")? {
             luau::Value::Table(table) => {
                 let mut ids = Vec::new();
-                for (_, value) in table.pairs_raw(vm)? {
+                for (_, value) in table.pairs()? {
                     let key = match &value {
                         luau::Value::Integer(value) if *value > 0 => value.to_string(),
                         luau::Value::Number(value)
@@ -116,8 +114,8 @@ impl<'vm> luau::FromLuau<'vm> for QueryManyRequest {
                 )));
             }
         };
-        let includes = parse_includes(vm, request.get_raw(vm, "include")?)?;
-        let library_id = args::optional_positive_id(vm, &request, "library_id")?;
+        let includes = parse_includes(request.get("include")?)?;
+        let library_id = args::optional_positive_id(&request, "library_id")?;
         Ok(Self {
             ids,
             includes,
@@ -424,7 +422,7 @@ async fn project_with_links(
     Ok(projections)
 }
 
-fn parse_includes(vm: &luau::Vm, value: luau::Value) -> luau::runtime::Result<Vec<EntityInclude>> {
+fn parse_includes(value: luau::Value) -> luau::runtime::Result<Vec<EntityInclude>> {
     let mut include_values = Vec::new();
     match value {
         luau::Value::Nil => {}
@@ -432,7 +430,7 @@ fn parse_includes(vm: &luau::Vm, value: luau::Value) -> luau::runtime::Result<Ve
             include_values.push(String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?)
         }
         luau::Value::Table(table) => {
-            for (_, value) in table.pairs_raw(vm)? {
+            for (_, value) in table.pairs()? {
                 let luau::Value::String(bytes) = value else {
                     return Err(crate::plugins::runtime_error(
                         "include entries must be strings when include is an array",
@@ -471,12 +469,8 @@ fn parse_includes(vm: &luau::Vm, value: luau::Value) -> luau::runtime::Result<Ve
     Ok(includes)
 }
 
-fn required_value(
-    vm: &luau::Vm,
-    table: &luau::Table,
-    key: &str,
-) -> luau::runtime::Result<luau::Value> {
-    let value = table.get_raw(vm, key)?;
+fn required_value(table: &luau::Table, key: &str) -> luau::runtime::Result<luau::Value> {
+    let value = table.get(key)?;
     if matches!(value, luau::Value::Nil) {
         Err(crate::plugins::runtime_error(format!(
             "missing required field: {key}"
@@ -542,10 +536,10 @@ fn install_string_table(
 ) -> luau::runtime::Result<()> {
     let table = vm.create_table()?;
     for (name, value) in entries {
-        table.set_raw(vm, name, luau::Value::String(value.as_bytes().to_vec()))?;
+        table.set(name, luau::Value::String(value.as_bytes().to_vec()))?;
     }
-    table.set_readonly(vm, true)?;
-    root.set_table_raw(vm, key, &table)
+    table.set_readonly(true)?;
+    root.set_table(key, &table)
 }
 
 #[cfg(feature = "docgen")]

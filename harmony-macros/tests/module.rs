@@ -32,7 +32,7 @@ impl luau::FromCallFrame for Greeting {
 struct DemoModule;
 
 fn install_greeting_count(spec: ModuleSpec) -> ModuleSpec {
-    spec.initializer(|vm, _origin, table| table.set_raw(vm, "greeting_count", 3_i64.into()))
+    spec.initializer(|_vm, _origin, table| table.set("greeting_count", 3_i64))
 }
 
 fn describe_greeting_count(descriptor: &mut ModuleDescriptor) {

@@ -66,9 +66,7 @@ pub(super) async fn provider_new(
     let db = db::get_optional(&vm)?;
     let origin = context.origin;
     let display_name = match &options {
-        Some(options) => {
-            optional_table_string(&vm, options, "display_name", "metadata.Provider.new")?
-        }
+        Some(options) => optional_table_string(options, "display_name", "metadata.Provider.new")?,
         None => None,
     };
     let generation = crate::plugins::STATE.generation();
@@ -270,7 +268,7 @@ fn declare_option_callback(
     config: luau::Table,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(vm, context, &provider.plugin_id, &provider.provider_id)?;
-    let option = parse_option_declaration(vm, &config)?;
+    let option = parse_option_declaration(&config)?;
 
     let provider = provider.clone();
     Ok(luau::ScheduledFuture::new(async move {
@@ -328,7 +326,7 @@ fn cover_callback(
         ));
     }
 
-    let (timeout, require) = parse_cover_spec(vm, &config)?;
+    let (timeout, require) = parse_cover_spec(&config)?;
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
     let context = context.clone();
     let provider = provider.clone();
@@ -370,7 +368,7 @@ fn lyrics_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(vm, context, &provider.plugin_id, &provider.provider_id)?;
 
-    let (timeout, require) = parse_lyrics_spec(vm, &config)?;
+    let (timeout, require) = parse_lyrics_spec(&config)?;
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
     let context = context.clone();
     let provider = provider.clone();
@@ -409,7 +407,7 @@ fn similar_releases_callback(
     handler: luau::Function,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(vm, context, &provider.plugin_id, &provider.provider_id)?;
-    let (timeout, require) = parse_similar_releases_spec(vm, &config)?;
+    let (timeout, require) = parse_similar_releases_spec(&config)?;
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
     let context = context.clone();
     let provider = provider.clone();
@@ -484,12 +482,12 @@ fn ensure_artist_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(vm, context, &provider.plugin_id, &provider.provider_id)?;
     let artist = ProviderArtist {
-        id_type: required_table_string(vm, &request, "id_type", "provider:ensure_artist")?,
-        id_value: required_table_string(vm, &request, "id_value", "provider:ensure_artist")?,
-        artist_name: optional_table_string(vm, &request, "artist_name", "provider:ensure_artist")?,
-        sort_name: optional_table_string(vm, &request, "sort_name", "provider:ensure_artist")?,
+        id_type: required_table_string(&request, "id_type", "provider:ensure_artist")?,
+        id_value: required_table_string(&request, "id_value", "provider:ensure_artist")?,
+        artist_name: optional_table_string(&request, "artist_name", "provider:ensure_artist")?,
+        sort_name: optional_table_string(&request, "sort_name", "provider:ensure_artist")?,
         artist_type: optional_artist_type(vm, &request, "artist_type")?,
-        description: optional_table_string(vm, &request, "description", "provider:ensure_artist")?,
+        description: optional_table_string(&request, "description", "provider:ensure_artist")?,
     };
     let provider_id = provider.provider_id.clone();
     let db = db::get_optional(vm)?;
@@ -532,7 +530,7 @@ fn mark_unmatched_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(vm, context, &provider.plugin_id, &provider.provider_id)?;
     let node_id = args::positive_id(node_id, "node_id")?;
-    let id_types = string_array_from_table(vm, &id_types_table)?;
+    let id_types = string_array_from_table(&id_types_table)?;
     let provider_id = provider.provider_id.clone();
     if id_types.is_empty() {
         return Err(crate::plugins::runtime_error(

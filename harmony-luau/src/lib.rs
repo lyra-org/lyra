@@ -19,7 +19,7 @@ use std::fmt::{
 pub mod runtime;
 #[cfg(feature = "serde")]
 mod serde_value;
-pub mod table;
+mod table;
 
 pub use runtime::{
     ArgReader,
@@ -54,7 +54,6 @@ pub use runtime::{
     SourceBytes,
     StandardLibraries,
     Table,
-    TableReader,
     TaskGroupId,
     Thread,
     ThreadData,

@@ -21,9 +21,9 @@ use lyra_db::ResolveId;
 use crate::plugins::types::LuauNodeId;
 
 /// The ids of a Luau array in array order, each once.
-pub(crate) fn unique_ids(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
+pub(crate) fn unique_ids(table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
     let mut seen = HashSet::new();
-    Ok(id_sequence(vm, table)?
+    Ok(id_sequence(table)?
         .into_iter()
         .filter(|id| seen.insert(*id))
         .collect())
@@ -31,8 +31,8 @@ pub(crate) fn unique_ids(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::R
 
 /// The ids of a Luau array in array order, repeats included. Every entry must be a positive
 /// integer.
-pub(crate) fn id_sequence(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
-    array_values(vm, table)?
+pub(crate) fn id_sequence(table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
+    array_values(table)?
         .into_iter()
         .map(|(index, value)| match value {
             luau::Value::Integer(value) if value > 0 => Ok(DbId(value)),
@@ -50,11 +50,8 @@ pub(crate) fn id_sequence(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::
 }
 
 /// The integers of a Luau array in array order, each within the range of `T`.
-pub(crate) fn integers<T: TryFrom<i64>>(
-    vm: &luau::Vm,
-    table: &luau::Table,
-) -> luau::runtime::Result<Vec<T>> {
-    array_values(vm, table)?
+pub(crate) fn integers<T: TryFrom<i64>>(table: &luau::Table) -> luau::runtime::Result<Vec<T>> {
+    array_values(table)?
         .into_iter()
         .map(|(index, value)| {
             let integer = match value {
@@ -78,31 +75,28 @@ pub(crate) fn integers<T: TryFrom<i64>>(
 
 /// [`unique_ids`] of the optional array field `key`, empty when absent.
 pub(crate) fn optional_unique_ids(
-    vm: &luau::Vm,
     table: &luau::Table,
     key: &str,
 ) -> luau::runtime::Result<Vec<DbId>> {
-    optional_id_array(vm, table, key, unique_ids)
+    optional_id_array(table, key, unique_ids)
 }
 
 /// [`id_sequence`] of the optional array field `key`, empty when absent.
 pub(crate) fn optional_id_sequence(
-    vm: &luau::Vm,
     table: &luau::Table,
     key: &str,
 ) -> luau::runtime::Result<Vec<DbId>> {
-    optional_id_array(vm, table, key, id_sequence)
+    optional_id_array(table, key, id_sequence)
 }
 
 fn optional_id_array(
-    vm: &luau::Vm,
     table: &luau::Table,
     key: &str,
-    read: fn(&luau::Vm, &luau::Table) -> luau::runtime::Result<Vec<DbId>>,
+    read: fn(&luau::Table) -> luau::runtime::Result<Vec<DbId>>,
 ) -> luau::runtime::Result<Vec<DbId>> {
-    match table.get_raw(vm, key)? {
+    match table.get(key)? {
         luau::Value::Nil => Ok(Vec::new()),
-        luau::Value::Table(table) => read(vm, &table),
+        luau::Value::Table(table) => read(&table),
         other => Err(crate::plugins::runtime_error(format!(
             "{key} must be an array of ids, got {}",
             other.type_name()
@@ -157,7 +151,7 @@ pub(crate) struct UniqueIds(pub(crate) Vec<DbId>);
 impl<'vm> luau::FromLuau<'vm> for UniqueIds {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let table: luau::Table = reader.read()?;
-        unique_ids(reader.vm(), &table).map(Self)
+        unique_ids(&table).map(Self)
     }
 }
 
@@ -168,18 +162,18 @@ impl LuauTypeInfo for UniqueIds {
 }
 
 pub(crate) fn optional_positive_id(
-    vm: &luau::Vm,
     table: &luau::Table,
     key: &str,
 ) -> luau::runtime::Result<Option<DbId>> {
-    luau::table::optional_i64_field(vm, table, key)?
+    table
+        .optional_i64_field(key)?
         .map(|value| positive_id(value, key))
         .transpose()
 }
 
 /// The strings of a Luau array in array order.
-pub(crate) fn strings(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<String>> {
-    array_values(vm, table)?
+pub(crate) fn strings(table: &luau::Table) -> luau::runtime::Result<Vec<String>> {
+    array_values(table)?
         .into_iter()
         .map(|(index, value)| match value {
             luau::Value::String(bytes) => {
@@ -214,12 +208,8 @@ pub(crate) fn resolve_id(value: luau::Value) -> luau::runtime::Result<ResolveId>
     }
 }
 
-pub(crate) fn optional_u64(
-    vm: &luau::Vm,
-    table: &luau::Table,
-    key: &str,
-) -> luau::runtime::Result<Option<u64>> {
-    match table.get_raw(vm, key)? {
+pub(crate) fn optional_u64(table: &luau::Table, key: &str) -> luau::runtime::Result<Option<u64>> {
+    match table.get(key)? {
         luau::Value::Nil => Ok(None),
         luau::Value::Integer(value) if value >= 0 => Ok(Some(value as u64)),
         luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value >= 0.0 => {
@@ -234,12 +224,11 @@ pub(crate) fn optional_u64(
 
 /// `table[key]` as a boolean; `owner` names the table in errors, as `provider:id spec`.
 pub(crate) fn optional_bool(
-    vm: &luau::Vm,
     table: &luau::Table,
     key: &str,
     owner: &str,
 ) -> luau::runtime::Result<Option<bool>> {
-    match table.get_raw(vm, key)? {
+    match table.get(key)? {
         luau::Value::Nil => Ok(None),
         luau::Value::Boolean(value) => Ok(Some(value)),
         other => Err(crate::plugins::runtime_error(format!(
@@ -251,12 +240,11 @@ pub(crate) fn optional_bool(
 
 /// `table[key]` as an integer; `owner` names the table in errors.
 pub(crate) fn optional_i64(
-    vm: &luau::Vm,
     table: &luau::Table,
     key: &str,
     owner: &str,
 ) -> luau::runtime::Result<Option<i64>> {
-    match table.get_raw(vm, key)? {
+    match table.get(key)? {
         luau::Value::Nil => Ok(None),
         luau::Value::Integer(value) => Ok(Some(value)),
         luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 => {
@@ -272,13 +260,12 @@ pub(crate) fn optional_i64(
 /// `table[key]` as a timeout in milliseconds, `default` without one; `owner` names the table in
 /// errors.
 pub(crate) fn optional_timeout(
-    vm: &luau::Vm,
     table: &luau::Table,
     key: &str,
     owner: &str,
     default: std::time::Duration,
 ) -> luau::runtime::Result<std::time::Duration> {
-    let Some(value) = optional_i64(vm, table, key, owner)? else {
+    let Some(value) = optional_i64(table, key, owner)? else {
         return Ok(default);
     };
     if value < 1 {
@@ -300,12 +287,9 @@ fn describe(value: &luau::Value) -> String {
 
 /// The entries of a Luau array, each with its index. A table with any other key, or with a
 /// hole, is not an array.
-pub(crate) fn array_values(
-    vm: &luau::Vm,
-    table: &luau::Table,
-) -> luau::runtime::Result<Vec<(i64, luau::Value)>> {
+pub(crate) fn array_values(table: &luau::Table) -> luau::runtime::Result<Vec<(i64, luau::Value)>> {
     let mut values = table
-        .pairs_raw(vm)?
+        .pairs()?
         .into_iter()
         .map(|(key, value)| array_index(key).map(|index| (index, value)))
         .collect::<Option<Vec<_>>>()
@@ -409,7 +393,7 @@ mod tests {
     fn array(vm: &luau::Vm, values: Vec<luau::Value>) -> luau::runtime::Result<luau::Table> {
         let table = vm.create_table()?;
         for (index, value) in values.into_iter().enumerate() {
-            table.set_key_raw(vm, luau::Value::Integer(index as i64 + 1), value)?;
+            table.set_key(luau::Value::Integer(index as i64 + 1), value)?;
         }
         Ok(table)
     }
@@ -428,10 +412,10 @@ mod tests {
         )?;
 
         assert_eq!(
-            id_sequence(&vm, &table)?,
+            id_sequence(&table)?,
             vec![DbId(3), DbId(1), DbId(3), DbId(2)]
         );
-        assert_eq!(unique_ids(&vm, &table)?, vec![DbId(3), DbId(1), DbId(2)]);
+        assert_eq!(unique_ids(&table)?, vec![DbId(3), DbId(1), DbId(2)]);
         Ok(())
     }
 
@@ -439,16 +423,16 @@ mod tests {
     fn array_readers_reject_tables_that_are_not_arrays() -> luau::runtime::Result<()> {
         let vm = luau::Vm::new()?;
         let keyed = vm.create_table()?;
-        keyed.set_raw(&vm, "foo", luau::Value::Integer(5))?;
+        keyed.set("foo", luau::Value::Integer(5))?;
         let mixed = array(&vm, vec![luau::Value::Integer(1)])?;
-        mixed.set_raw(&vm, "foo", luau::Value::Integer(5))?;
+        mixed.set("foo", luau::Value::Integer(5))?;
         let holed = vm.create_table()?;
-        holed.set_key_raw(&vm, luau::Value::Integer(2), luau::Value::Integer(5))?;
+        holed.set_key(luau::Value::Integer(2), luau::Value::Integer(5))?;
 
         for table in [keyed, mixed, holed] {
-            assert!(id_sequence(&vm, &table).is_err());
+            assert!(id_sequence(&table).is_err());
         }
-        assert!(id_sequence(&vm, &vm.create_table()?)?.is_empty());
+        assert!(id_sequence(&vm.create_table()?)?.is_empty());
         Ok(())
     }
 
@@ -463,7 +447,7 @@ mod tests {
             luau::Value::Integer(-1),
         ] {
             let table = array(&vm, vec![luau::Value::Integer(1), invalid])?;
-            let error = unique_ids(&vm, &table).expect_err("invalid id entry");
+            let error = unique_ids(&table).expect_err("invalid id entry");
             assert!(
                 error
                     .to_string()

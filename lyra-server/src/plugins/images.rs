@@ -248,26 +248,23 @@ async fn compose_impl(
         mime_type: "image/jpeg".to_string(),
     })
 }
-fn parse_compose_options(
-    vm: &luau::Vm,
-    table: &luau::Table,
-) -> luau::runtime::Result<ComposeOptions> {
+fn parse_compose_options(table: &luau::Table) -> luau::runtime::Result<ComposeOptions> {
     Ok(ComposeOptions {
-        sources: parse_sources(vm, table)?,
-        width: parse_optional_u32(vm, table, "width")?,
-        height: parse_optional_u32(vm, table, "height")?,
-        quality: parse_optional_u8(vm, table, "quality")?,
+        sources: parse_sources(table)?,
+        width: parse_optional_u32(table, "width")?,
+        height: parse_optional_u32(table, "height")?,
+        quality: parse_optional_u8(table, "quality")?,
     })
 }
-fn parse_sources(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<String>> {
-    let luau::Value::Table(sources) = table.get_raw(vm, "sources")? else {
+fn parse_sources(table: &luau::Table) -> luau::runtime::Result<Vec<String>> {
+    let luau::Value::Table(sources) = table.get("sources")? else {
         return Err(luau::Error::Runtime(
             "images.compose options.sources must be an array".to_string(),
         ));
     };
 
     let mut indexed = Vec::new();
-    for (key, value) in sources.pairs_raw(vm)? {
+    for (key, value) in sources.pairs()? {
         let index = match key {
             luau::Value::Integer(value) if value > 0 => value,
             luau::Value::Number(value) if value > 0.0 => value as i64,
@@ -291,11 +288,10 @@ fn parse_sources(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Ve
     Ok(indexed.into_iter().map(|(_, value)| value).collect())
 }
 fn parse_optional_u32(
-    vm: &luau::Vm,
     table: &luau::Table,
     field: &'static str,
 ) -> luau::runtime::Result<Option<u32>> {
-    match table.get_raw(vm, field)? {
+    match table.get(field)? {
         luau::Value::Nil => Ok(None),
         luau::Value::Integer(value) if value >= 0 && value <= i64::from(u32::MAX) => {
             Ok(Some(value as u32))
@@ -310,11 +306,10 @@ fn parse_optional_u32(
     }
 }
 fn parse_optional_u8(
-    vm: &luau::Vm,
     table: &luau::Table,
     field: &'static str,
 ) -> luau::runtime::Result<Option<u8>> {
-    parse_optional_u32(vm, table, field)?.map_or(Ok(None), |value| {
+    parse_optional_u32(table, field)?.map_or(Ok(None), |value| {
         u8::try_from(value).map(Some).map_err(|_| {
             luau::Error::Runtime(format!("images.compose options.{field} must fit in u8"))
         })
@@ -353,7 +348,7 @@ impl ImagesModule {
 impl<'vm> luau::FromLuau<'vm> for ComposeOptions {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let table: luau::Table = reader.read()?;
-        parse_compose_options(reader.vm(), &table)
+        parse_compose_options(&table)
     }
 }
 

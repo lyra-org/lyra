@@ -114,34 +114,30 @@ pub(crate) struct PagedQuery<C: Catalog> {
 }
 
 pub(crate) fn read_query<C: Catalog>(
-    vm: &luau::Vm,
     table: &luau::Table,
     filter: C::Filter,
 ) -> luau::runtime::Result<PagedQuery<C>> {
     let mut query = Query::new(filter);
     query.names = NameRange::new(
-        luau::table::optional_string_field(vm, table, "sort_name_prefix")?,
-        luau::table::optional_string_field(vm, table, "sort_name_at_least")?,
-        luau::table::optional_string_field(vm, table, "sort_name_below")?,
+        table.optional_string_field("sort_name_prefix")?,
+        table.optional_string_field("sort_name_at_least")?,
+        table.optional_string_field("sort_name_below")?,
     );
-    query.search = luau::table::optional_string_field(vm, table, "search")?;
-    query.sort = read_sort(vm, table)?;
-    query.seed = args::optional_u64(vm, table, "seed")?.unwrap_or(0);
+    query.search = table.optional_string_field("search")?;
+    query.sort = read_sort(table)?;
+    query.seed = args::optional_u64(table, "seed")?.unwrap_or(0);
     Ok(PagedQuery {
         query,
-        offset: args::optional_u64(vm, table, "offset")?.unwrap_or(0),
-        limit: args::optional_u64(vm, table, "limit")?,
+        offset: args::optional_u64(table, "offset")?.unwrap_or(0),
+        limit: args::optional_u64(table, "limit")?,
     })
 }
 
-fn read_sort<K: SortKey>(
-    vm: &luau::Vm,
-    table: &luau::Table,
-) -> luau::runtime::Result<Vec<(K, Direction)>> {
-    let Some(terms) = luau::table::optional_table_field(vm, table, "sort")? else {
+fn read_sort<K: SortKey>(table: &luau::Table) -> luau::runtime::Result<Vec<(K, Direction)>> {
+    let Some(terms) = table.optional_table_field("sort")? else {
         return Ok(Vec::new());
     };
-    args::array_values(vm, &terms)?
+    args::array_values(&terms)?
         .into_iter()
         .map(|(index, term)| {
             let luau::Value::Table(term) = term else {
@@ -150,9 +146,9 @@ fn read_sort<K: SortKey>(
                     term.type_name()
                 )));
             };
-            let key =
-                K::parse(&luau::table::required_string_field(vm, &term, "key")?).map_err(error)?;
-            let direction = luau::table::optional_string_field(vm, &term, "order")?
+            let key = K::parse(&term.required_string_field("key")?).map_err(error)?;
+            let direction = term
+                .optional_string_field("order")?
                 .as_deref()
                 .map(Direction::parse)
                 .transpose()
@@ -165,29 +161,28 @@ fn read_sort<K: SortKey>(
 
 /// The ids of the optional array field `key`, or `None` when absent.
 pub(crate) fn optional_ids(
-    vm: &luau::Vm,
     table: &luau::Table,
     key: &str,
 ) -> luau::runtime::Result<Option<Vec<DbId>>> {
-    luau::table::optional_table_field(vm, table, key)?
-        .map(|ids| args::unique_ids(vm, &ids))
+    table
+        .optional_table_field(key)?
+        .map(|ids| args::unique_ids(&ids))
         .transpose()
 }
 
-pub(crate) fn read_years(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<u32>> {
-    Ok(luau::table::optional_table_field(vm, table, "years")?
-        .map(|years| args::integers(vm, &years))
+pub(crate) fn read_years(table: &luau::Table) -> luau::runtime::Result<Vec<u32>> {
+    Ok(table
+        .optional_table_field("years")?
+        .map(|years| args::integers(&years))
         .transpose()?
         .unwrap_or_default())
 }
 
 /// The caller's rating bounds from `min_rating` and `max_rating`.
-pub(crate) fn read_rating(
-    vm: &luau::Vm,
-    table: &luau::Table,
-) -> luau::runtime::Result<RatingFilter> {
+pub(crate) fn read_rating(table: &luau::Table) -> luau::runtime::Result<RatingFilter> {
     let bound = |key| {
-        luau::table::optional_i64_field(vm, table, key)?
+        table
+            .optional_i64_field(key)?
             .map(|value| {
                 u8::try_from(value)
                     .ok()
@@ -208,11 +203,11 @@ pub(crate) fn read_rating(
 
 /// The `artist_ids` filter with its `credit_role` and `exclude_credit_role`.
 pub(crate) fn read_artist_credit(
-    vm: &luau::Vm,
     table: &luau::Table,
 ) -> luau::runtime::Result<Option<ArtistCredit>> {
     let role = |key| {
-        luau::table::optional_string_field(vm, table, key)?
+        table
+            .optional_string_field(key)?
             .as_deref()
             .map(CreditRole::parse)
             .transpose()
@@ -220,7 +215,7 @@ pub(crate) fn read_artist_credit(
     };
     let role_filter = role("credit_role")?;
     let excluding = role("exclude_credit_role")?;
-    let Some(artists) = luau::table::optional_table_field(vm, table, "artist_ids")? else {
+    let Some(artists) = table.optional_table_field("artist_ids")? else {
         if role_filter.is_some() || excluding.is_some() {
             return Err(crate::plugins::runtime_error(
                 "credit_role and exclude_credit_role need artist_ids",
@@ -229,7 +224,7 @@ pub(crate) fn read_artist_credit(
         return Ok(None);
     };
     Ok(Some(ArtistCredit {
-        artists: args::unique_ids(vm, &artists)?,
+        artists: args::unique_ids(&artists)?,
         role: role_filter.unwrap_or(CreditRole::Any),
         excluding,
     }))

@@ -70,7 +70,7 @@ impl<'vm> luau::FromLuau<'vm> for ArtistQuery {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let opts: luau::Table = reader.read()?;
         let filter = read_filter(reader.vm(), &opts)?;
-        catalog::read_query::<Artists>(reader.vm(), &opts, filter).map(Self)
+        catalog::read_query::<Artists>(&opts, filter).map(Self)
     }
 }
 
@@ -247,28 +247,29 @@ fn to_artist_relation_info(relation: ResolvedRelation) -> ArtistRelationInfo {
 
 fn read_filter(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<ArtistFilter> {
     let role = |key| {
-        luau::table::optional_string_field(vm, table, key)?
+        table
+            .optional_string_field(key)?
             .as_deref()
             .map(CreditRole::parse)
             .transpose()
             .map_err(catalog::error)
     };
     Ok(ArtistFilter {
-        ids: catalog::optional_ids(vm, table, "ids")?,
-        exclude_ids: args::optional_unique_ids(vm, table, "exclude_ids")?,
-        library: args::optional_positive_id(vm, table, "library_id")?,
-        releases: catalog::optional_ids(vm, table, "release_ids")?,
-        tracks: catalog::optional_ids(vm, table, "track_ids")?,
-        genres: args::optional_unique_ids(vm, table, "genre_ids")?,
+        ids: catalog::optional_ids(table, "ids")?,
+        exclude_ids: args::optional_unique_ids(table, "exclude_ids")?,
+        library: args::optional_positive_id(table, "library_id")?,
+        releases: catalog::optional_ids(table, "release_ids")?,
+        tracks: catalog::optional_ids(table, "track_ids")?,
+        genres: args::optional_unique_ids(table, "genre_ids")?,
         credit_role: role("credit_role")?,
         exclude_credit_role: role("exclude_credit_role")?,
         credit_types: parse_optional_credit_types(vm, table, "credit_types")?,
         exclude_credit_types: parse_optional_credit_types(vm, table, "exclude_credit_types")?
             .unwrap_or_default(),
         artist_type: parse_optional_artist_type(vm, table, "artist_type")?,
-        favorite: luau::table::optional_bool_field(vm, table, "favorite")?,
-        listened: luau::table::optional_bool_field(vm, table, "listened")?,
-        rating: catalog::read_rating(vm, table)?,
+        favorite: table.optional_bool_field("favorite")?,
+        listened: table.optional_bool_field("listened")?,
+        rating: catalog::read_rating(table)?,
     })
 }
 
@@ -277,7 +278,7 @@ fn parse_optional_artist_type(
     table: &luau::Table,
     key: &str,
 ) -> luau::runtime::Result<Option<ArtistType>> {
-    let value = table.get_raw(vm, key)?;
+    let value = table.get(key)?;
     if matches!(value, luau::Value::Nil) {
         return Ok(None);
     }
@@ -291,9 +292,9 @@ fn parse_optional_credit_types(
     table: &luau::Table,
     key: &str,
 ) -> luau::runtime::Result<Option<Vec<CreditType>>> {
-    match table.get_raw(vm, key)? {
+    match table.get(key)? {
         luau::Value::Nil => Ok(None),
-        luau::Value::Table(table) => args::array_values(vm, &table)?
+        luau::Value::Table(table) => args::array_values(&table)?
             .into_iter()
             .map(|(_, value)| {
                 crate::plugins::types::LuauCreditType::_harmony_userdata_class()

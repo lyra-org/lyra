@@ -52,8 +52,8 @@ struct ReleaseQuery(catalog::PagedQuery<Releases>);
 impl<'vm> luau::FromLuau<'vm> for ReleaseQuery {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let opts: luau::Table = reader.read()?;
-        let filter = read_filter(reader.vm(), &opts)?;
-        catalog::read_query::<Releases>(reader.vm(), &opts, filter).map(Self)
+        let filter = read_filter(&opts)?;
+        catalog::read_query::<Releases>(&opts, filter).map(Self)
     }
 }
 
@@ -69,11 +69,10 @@ struct ChainsArgument(Vec<Vec<DbId>>);
 impl<'vm> luau::FromLuau<'vm> for ChainsArgument {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let chains: luau::Table = reader.read()?;
-        let vm = reader.vm();
-        args::array_values(vm, &chains)?
+        args::array_values(&chains)?
             .into_iter()
             .map(|(index, chain)| match chain {
-                luau::Value::Table(chain) => args::id_sequence(vm, &chain),
+                luau::Value::Table(chain) => args::id_sequence(&chain),
                 _ => Err(crate::plugins::runtime_error(format!(
                     "chain {index} must be an array of track ids"
                 ))),
@@ -254,7 +253,7 @@ impl ReleasesModule {
                 "releases.similar release_db_id must be a positive integer",
             ));
         }
-        let request = parse_similar_options(vm, opts.0)?;
+        let request = parse_similar_options(opts.0)?;
         let principal = crate::plugins::auth::require_dispatch_principal(context)?;
         let provider_vm = vm.clone();
 
@@ -291,7 +290,6 @@ struct SimilarReleaseRequest {
 }
 
 fn parse_similar_options(
-    vm: &luau::Vm,
     opts: Option<luau::Table>,
 ) -> luau::runtime::Result<SimilarReleaseRequest> {
     let Some(opts) = opts else {
@@ -299,7 +297,7 @@ fn parse_similar_options(
             limit: release_service::DEFAULT_SIMILAR_RELEASE_LIMIT,
         });
     };
-    let limit = parse_optional_similar_positive_integer(vm, &opts, "limit")?
+    let limit = parse_optional_similar_positive_integer(&opts, "limit")?
         .map(|value| {
             usize::try_from(value).map_err(|_| {
                 crate::plugins::runtime_error("releases.similar opts.limit is too large")
@@ -317,11 +315,10 @@ fn parse_similar_options(
 }
 
 fn parse_optional_similar_positive_integer(
-    vm: &luau::Vm,
     opts: &luau::Table,
     field: &str,
 ) -> luau::runtime::Result<Option<i64>> {
-    let value = luau::table::optional_i64_field(vm, opts, field).map_err(|_| {
+    let value = opts.optional_i64_field(field).map_err(|_| {
         crate::plugins::runtime_error(format!(
             "releases.similar opts.{field} must be a positive integer"
         ))
@@ -337,18 +334,18 @@ fn parse_optional_similar_positive_integer(
     Ok(Some(value))
 }
 
-fn read_filter(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<ReleaseFilter> {
+fn read_filter(table: &luau::Table) -> luau::runtime::Result<ReleaseFilter> {
     Ok(ReleaseFilter {
-        ids: catalog::optional_ids(vm, table, "ids")?,
-        exclude_ids: args::optional_unique_ids(vm, table, "exclude_ids")?,
-        exclude_artists: args::optional_unique_ids(vm, table, "exclude_artist_ids")?,
-        library: args::optional_positive_id(vm, table, "library_id")?,
-        artists: catalog::read_artist_credit(vm, table)?,
-        genres: args::optional_unique_ids(vm, table, "genre_ids")?,
-        years: catalog::read_years(vm, table)?,
-        favorite: luau::table::optional_bool_field(vm, table, "favorite")?,
-        listened: luau::table::optional_bool_field(vm, table, "listened")?,
-        rating: catalog::read_rating(vm, table)?,
+        ids: catalog::optional_ids(table, "ids")?,
+        exclude_ids: args::optional_unique_ids(table, "exclude_ids")?,
+        exclude_artists: args::optional_unique_ids(table, "exclude_artist_ids")?,
+        library: args::optional_positive_id(table, "library_id")?,
+        artists: catalog::read_artist_credit(table)?,
+        genres: args::optional_unique_ids(table, "genre_ids")?,
+        years: catalog::read_years(table)?,
+        favorite: table.optional_bool_field("favorite")?,
+        listened: table.optional_bool_field("listened")?,
+        rating: catalog::read_rating(table)?,
     })
 }
 
@@ -495,15 +492,15 @@ mod tests {
     fn similar_options_read_fields_directly_from_table() -> luau::runtime::Result<()> {
         let vm = luau::Vm::new()?;
         let empty = vm.create_table()?;
-        let defaults = parse_similar_options(&vm, Some(empty))?;
+        let defaults = parse_similar_options(Some(empty))?;
         assert_eq!(
             defaults.limit,
             release_service::DEFAULT_SIMILAR_RELEASE_LIMIT
         );
 
         let opts = vm.create_table()?;
-        opts.set_raw(&vm, "limit", luau::Value::from(7_i64))?;
-        let parsed = parse_similar_options(&vm, Some(opts))?;
+        opts.set("limit", luau::Value::from(7_i64))?;
+        let parsed = parse_similar_options(Some(opts))?;
         assert_eq!(parsed.limit, 7);
         Ok(())
     }
@@ -512,12 +509,12 @@ mod tests {
     fn similar_options_reject_invalid_integer_fields() -> luau::runtime::Result<()> {
         let vm = luau::Vm::new()?;
         let opts = vm.create_table()?;
-        opts.set_raw(&vm, "limit", luau::Value::from(0_i64))?;
-        assert!(parse_similar_options(&vm, Some(opts)).is_err());
+        opts.set("limit", luau::Value::from(0_i64))?;
+        assert!(parse_similar_options(Some(opts)).is_err());
 
         let opts = vm.create_table()?;
-        opts.set_raw(&vm, "limit", luau::Value::Number(4.5))?;
-        assert!(parse_similar_options(&vm, Some(opts)).is_err());
+        opts.set("limit", luau::Value::Number(4.5))?;
+        assert!(parse_similar_options(Some(opts)).is_err());
         Ok(())
     }
 }

@@ -28,7 +28,7 @@ struct PublicIds(Vec<String>);
 impl<'vm> luau::FromLuau<'vm> for PublicIds {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let table: luau::Table = reader.read()?;
-        parse_strings(reader.vm(), &table).map(Self)
+        parse_strings(&table).map(Self)
     }
 }
 
@@ -152,9 +152,9 @@ async fn find_node_ids_by_ids(
     let db = db.read().await;
     lyra_db::lookup::find_node_ids_by_ids(&*db, ids).map_err(crate::plugins::runtime_error)
 }
-fn parse_strings(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<String>> {
+fn parse_strings(table: &luau::Table) -> luau::runtime::Result<Vec<String>> {
     let mut seen = HashSet::new();
-    Ok(args::strings(vm, table)?
+    Ok(args::strings(table)?
         .into_iter()
         .map(|id| id.trim().to_string())
         .filter(|id| !id.is_empty() && seen.insert(id.clone()))

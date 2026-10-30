@@ -48,8 +48,8 @@ struct TrackQuery(catalog::PagedQuery<Tracks>);
 impl<'vm> luau::FromLuau<'vm> for TrackQuery {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let opts: luau::Table = reader.read()?;
-        let filter = read_filter(reader.vm(), &opts)?;
-        catalog::read_query::<Tracks>(reader.vm(), &opts, filter).map(Self)
+        let filter = read_filter(&opts)?;
+        catalog::read_query::<Tracks>(&opts, filter).map(Self)
     }
 }
 
@@ -165,19 +165,19 @@ impl TracksModule {
     }
 }
 
-fn read_filter(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<TrackFilter> {
+fn read_filter(table: &luau::Table) -> luau::runtime::Result<TrackFilter> {
     Ok(TrackFilter {
-        ids: catalog::optional_ids(vm, table, "ids")?,
-        exclude_ids: args::optional_unique_ids(vm, table, "exclude_ids")?,
-        exclude_artists: args::optional_unique_ids(vm, table, "exclude_artist_ids")?,
-        library: args::optional_positive_id(vm, table, "library_id")?,
-        releases: catalog::optional_ids(vm, table, "release_ids")?,
-        artists: catalog::read_artist_credit(vm, table)?,
-        genres: args::optional_unique_ids(vm, table, "genre_ids")?,
-        years: catalog::read_years(vm, table)?,
-        favorite: luau::table::optional_bool_field(vm, table, "favorite")?,
-        listened: luau::table::optional_bool_field(vm, table, "listened")?,
-        rating: catalog::read_rating(vm, table)?,
+        ids: catalog::optional_ids(table, "ids")?,
+        exclude_ids: args::optional_unique_ids(table, "exclude_ids")?,
+        exclude_artists: args::optional_unique_ids(table, "exclude_artist_ids")?,
+        library: args::optional_positive_id(table, "library_id")?,
+        releases: catalog::optional_ids(table, "release_ids")?,
+        artists: catalog::read_artist_credit(table)?,
+        genres: args::optional_unique_ids(table, "genre_ids")?,
+        years: catalog::read_years(table)?,
+        favorite: table.optional_bool_field("favorite")?,
+        listened: table.optional_bool_field("listened")?,
+        rating: catalog::read_rating(table)?,
     })
 }
 
