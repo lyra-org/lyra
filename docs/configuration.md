@@ -65,7 +65,7 @@ Copy [`config.example.json`](../config.example.json) to `config.json`, keeping o
 
 - `published_url` accepts a public HTTP or HTTPS origin, such as `https://music.example.com`.
 - `covers_path` is relative to the data directory. `db.path` is relative to `LYRA_DB_DIR`, or the data directory when unset.
-- `instance_stats` shows users averages computed across all users, such as average ratings.
+- `instance_stats` shows users averages computed across all users, such as average ratings. When off, genre covers also follow only the user's own listens.
 - `db.kind` accepts `mmap`, `file`, or `memory`. `memory` never writes the database to disk.
 - Durations are in seconds. `sync.interval_secs` sets how often provider metadata is refreshed; `0` disables periodic refreshes, but one still runs at startup.
 - The HLS disk budget is in bytes; `null` or `0` means no budget.
