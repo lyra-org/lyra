@@ -3,10 +3,9 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::{
-    HashMap,
-    HashSet,
-};
+#[cfg(feature = "docgen")]
+use std::collections::HashMap;
+use std::collections::HashSet;
 
 use agdb::DbId;
 use harmony_luau as luau;

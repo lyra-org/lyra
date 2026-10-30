@@ -5,6 +5,7 @@
 
 use agdb::DbId;
 use harmony_luau as luau;
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     DescribeInterface,
     FieldDescriptor,
@@ -42,6 +43,7 @@ pub(crate) struct LabelsModule;
 struct LabelResolveRequest;
 #[cfg(feature = "docgen")]
 struct LabelExternalId;
+#[cfg(feature = "docgen")]
 struct LabelInfo;
 #[cfg(feature = "docgen")]
 struct LabelForReleaseInfo;
@@ -293,6 +295,7 @@ impl LuauTypeInfo for LabelResolveRequest {
     }
 }
 
+#[cfg(feature = "docgen")]
 impl LuauTypeInfo for LabelInfo {
     fn luau_type() -> LuauType {
         LuauType::literal("LabelInfo")
@@ -306,6 +309,7 @@ impl LuauTypeInfo for LabelForReleaseInfo {
     }
 }
 
+#[cfg(feature = "docgen")]
 fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
     FieldDescriptor {
         name,
@@ -339,6 +343,7 @@ impl DescribeInterface for LabelResolveRequest {
     }
 }
 
+#[cfg(feature = "docgen")]
 impl DescribeInterface for LabelInfo {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("LabelInfo", None);

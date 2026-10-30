@@ -23,12 +23,15 @@ use harmony_luau::{
     ModuleFunctionDescriptor,
     ParameterDescriptor,
 };
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     DescribeTypeAlias,
     FunctionParameter,
+    TypeAliasDescriptor,
+};
+use harmony_luau::{
     LuauType,
     LuauTypeInfo,
-    TypeAliasDescriptor,
 };
 
 use crate::plugins::args;
@@ -55,14 +58,17 @@ use lyra_db::{
 use serde::Deserialize;
 
 pub(crate) struct ListensModule;
+#[cfg(feature = "docgen")]
 struct ListenUpdateHandler;
 
+#[cfg(feature = "docgen")]
 impl LuauTypeInfo for ListenUpdateHandler {
     fn luau_type() -> LuauType {
         LuauType::literal("ListenUpdateHandler")
     }
 }
 
+#[cfg(feature = "docgen")]
 impl DescribeTypeAlias for ListenUpdateHandler {
     fn type_alias_descriptor() -> TypeAliasDescriptor {
         TypeAliasDescriptor::new(
