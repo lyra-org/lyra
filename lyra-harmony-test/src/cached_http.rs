@@ -518,7 +518,7 @@ fn set_rate_limit_callback(
     plugin_id: String,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let options_table: luau::Table = frame.args.read_named("options")?;
-    let domain = required_string_field(&options_table, "domain")?;
+    let domain = options_table.required_string_field("domain")?;
     let requests_per_second =
         optional_f64_field(&options_table, "requests_per_second")?.unwrap_or(1.0);
     if !requests_per_second.is_finite() || requests_per_second <= 0.0 {
@@ -599,7 +599,7 @@ async fn execute_single_request(options: &RequestOptions) -> anyhow::Result<Live
 
 fn request_options_from_luau(table: &luau::Table) -> luau::runtime::Result<RequestOptions> {
     Ok(RequestOptions {
-        url: required_string_field(table, "url")?,
+        url: table.required_string_field("url")?,
         method: optional_method_field(table, "method")?.unwrap_or(CachedHttpMethod::Get),
         body: optional_binary_field(table, "body")?,
         headers: optional_string_map_field(table, "headers")?.unwrap_or_default(),
@@ -620,18 +620,6 @@ fn response_value(status_code: u16, body: &str, retries: u32) -> luau::Value {
     table.set_field("retries", luau::Value::Number(f64::from(retries)));
     table.set_field("rate_limited", retries > 0);
     luau::Value::TableData(table)
-}
-
-fn required_string_field(
-    table: &luau::Table,
-    field: &'static str,
-) -> luau::runtime::Result<String> {
-    match table.get(field)? {
-        luau::Value::String(value) => String::from_utf8(value)
-            .map_err(|error| luau::Error::Runtime(format!("'{field}' must be UTF-8: {error}"))),
-        luau::Value::Nil => Err(luau::Error::Runtime(format!("missing '{field}' field"))),
-        other => Err(field_type_error(field, "string", other.type_name())),
-    }
 }
 
 fn optional_f64_field(
