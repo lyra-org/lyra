@@ -1296,8 +1296,9 @@ async fn resolve_update_source(
     })
 }
 
-/// The message plugins report when listing or downloading their releases
-/// failed, remembering a host that rate-limited it in `limited_hosts`.
+/// The message plugins, or repositories, report when listing or
+/// downloading releases failed, remembering a host that rate-limited it in
+/// `limited_hosts`.
 fn update_failure(error: ResolveError, limited_hosts: &mut HashMap<String, String>) -> String {
     let limited_host = match &error {
         ResolveError::Fetch(FetchError::RateLimited(limited)) => Some(limited.host.clone()),
@@ -1733,6 +1734,79 @@ pub(crate) async fn refresh_repository(
         },
         &installed_now(),
     ))
+}
+
+/// A subscription that could not be refreshed.
+#[derive(Debug, Clone)]
+pub(crate) struct FailedRefresh {
+    /// The subscription's id.
+    pub(crate) id: String,
+    pub(crate) error: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct RefreshReport {
+    /// Every subscription with its stored plugins after the refresh; a
+    /// failed one keeps what it stored before.
+    pub(crate) repositories: Vec<RepositoryView>,
+    pub(crate) failed: Vec<FailedRefresh>,
+}
+
+/// Lists every subscription again, one at a time, and stores what each
+/// offers, installing nothing. Once a host rate-limits a request, its
+/// other subscriptions fail with the same error without being listed. A
+/// subscription removed in the meantime is skipped.
+pub(crate) async fn refresh_repositories() -> Result<RefreshReport, PluginRepoError> {
+    let client = http_client(&server_build())?;
+    let host = crate::plugins::plugin_host();
+    let ids: Vec<String> = repo_db::list(&*STATE.db.read().await)?
+        .into_iter()
+        .map(|repository| repository.id)
+        .collect();
+    // Hosts that rate-limited a request, with the error their later
+    // subscriptions fail with unasked.
+    let mut limited_hosts: HashMap<String, String> = HashMap::new();
+    let mut failed = Vec::new();
+    for id in ids {
+        let _check = CHECK_LOCK.lock().await;
+        let Some(repository) = repo_db::get_by_id(&*STATE.db.read().await, &id)? else {
+            continue;
+        };
+        let spec = match RepoSpec::parse(&repository.origin, repository.git_ref.as_deref()) {
+            Ok(spec) => spec,
+            Err(error) => {
+                failed.push(FailedRefresh {
+                    id,
+                    error: error.to_string(),
+                });
+                continue;
+            }
+        };
+        if let Some(error) = limited_hosts.get(&spec.host) {
+            failed.push(FailedRefresh {
+                id,
+                error: error.clone(),
+            });
+            continue;
+        }
+        match list_plugins(&client, &spec, &host).await {
+            Ok(listing) => {
+                store_listed(
+                    &mut *STATE.db.write().await,
+                    repository,
+                    &StoredListing::of(&listing),
+                )?;
+            }
+            Err(error) => failed.push(FailedRefresh {
+                id,
+                error: update_failure(error, &mut limited_hosts),
+            }),
+        }
+    }
+    Ok(RefreshReport {
+        repositories: list_repositories(true).await?,
+        failed,
+    })
 }
 
 /// Forgets a subscription. Plugins installed from it stay on disk and
@@ -3611,6 +3685,101 @@ mod tests {
                 reason: "its repository did not list it at the last refresh".into()
             },
             "a plugin the index references elsewhere is not offered from the index's origin"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn refreshing_every_repository_stores_listings_and_spares_rate_limited_hosts()
+    -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        let seeded = repo_db::list(&*STATE.db.read().await)?;
+        for repository in seeded {
+            repo_db::remove(&mut *STATE.db.write().await, repository.db_id.unwrap())?;
+        }
+        let forge = catalog_forge(
+            HOST_REQUIREMENT,
+            HOST_REQUIREMENT,
+            changed_at(HOST_REQUIREMENT),
+        )
+        .await?;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let limited = format!("http://{}", listener.local_addr()?);
+        let limited_requests = Arc::new(Mutex::new(Vec::<String>::new()));
+        let router = axum::Router::new().fallback({
+            let requests = limited_requests.clone();
+            move |uri: axum::http::Uri| async move {
+                requests.lock().unwrap().push(uri.path().to_string());
+                (
+                    axum::http::StatusCode::TOO_MANY_REQUESTS,
+                    [("retry-after", "30")],
+                )
+            }
+        });
+        tokio::spawn(async move { axum::serve(listener, router).await });
+        for (id, origin) in [
+            ("catalog", forge.origin.clone()),
+            ("first", format!("{limited}/o/r")),
+            ("second", format!("{limited}/o/s")),
+        ] {
+            repo_db::create(
+                &mut *STATE.db.write().await,
+                &repo_db::PluginRepository {
+                    db_id: None,
+                    id: id.into(),
+                    origin,
+                    name: id.into(),
+                    description: String::new(),
+                    git_ref: None,
+                    resolved_ref: None,
+                    commit: None,
+                    refreshed_at_ms: None,
+                },
+                &[],
+            )?;
+        }
+
+        let report = refresh_repositories().await?;
+
+        let wait = "rate limiting requests. Try again in 30 seconds.";
+        let failed: Vec<_> = report
+            .failed
+            .iter()
+            .map(|failed| (failed.id.as_str(), failed.error.ends_with(wait)))
+            .collect();
+        assert_eq!(failed, [("first", true), ("second", true)], "{report:?}");
+        assert_eq!(
+            limited_requests.lock().unwrap().len(),
+            1,
+            "a rate-limited host is asked once: {:?}",
+            limited_requests.lock().unwrap()
+        );
+        let view = |id: &str| {
+            report
+                .repositories
+                .iter()
+                .find(|view| view.repository.id == id)
+                .expect("every subscription is returned")
+        };
+        let catalog = view("catalog");
+        assert!(catalog.repository.refreshed_at_ms.is_some());
+        assert_eq!(
+            catalog
+                .plugins
+                .iter()
+                .flatten()
+                .map(|plugin| (&*plugin.id, &*plugin.version))
+                .collect::<Vec<_>>(),
+            [("changed", "2.0.0"), ("same", "1.0.0")]
+        );
+        assert_eq!(view("first").repository.refreshed_at_ms, None);
+        assert_eq!(view("second").plugins.as_deref().map(<[_]>::len), Some(0));
+        assert!(forge.downloads().is_empty(), "{:?}", forge.downloads());
+        let stored = get_repository("catalog", true).await?;
+        assert_eq!(
+            shown(&stored.plugins.expect("requested")),
+            shown(catalog.plugins.as_deref().expect("included"))
         );
         Ok(())
     }

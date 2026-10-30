@@ -702,6 +702,24 @@ struct PluginRepositoryResponse {
     plugins: Option<Vec<PluginPreviewResponse>>,
 }
 
+/// A subscribed repository that could not be refreshed.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct FailedRefreshResponse {
+    /// The repository's `id`.
+    id: String,
+    error: String,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct RefreshPluginRepositoriesResponse {
+    /// Every subscribed repository with its `plugins`, as stored after the
+    /// refresh; one that failed keeps what it stored before.
+    repositories: Vec<PluginRepositoryResponse>,
+    failed: Vec<FailedRefreshResponse>,
+}
+
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
 struct PluginRepositoryQuery {
@@ -1391,6 +1409,30 @@ async fn refresh_plugin_repository(
     Ok(Json(repository_response(repository)))
 }
 
+async fn refresh_plugin_repositories(
+    headers: HeaderMap,
+) -> Result<Json<RefreshPluginRepositoriesResponse>, AppError> {
+    let _principal = require_manage_plugins(bearer_credential(&headers)).await?;
+    let report = repositories_service::refresh_repositories()
+        .await
+        .map_err(map_repository_error)?;
+    Ok(Json(RefreshPluginRepositoriesResponse {
+        repositories: report
+            .repositories
+            .into_iter()
+            .map(repository_response)
+            .collect(),
+        failed: report
+            .failed
+            .into_iter()
+            .map(|failure| FailedRefreshResponse {
+                id: failure.id,
+                error: failure.error,
+            })
+            .collect(),
+    }))
+}
+
 async fn delete_plugin_repository(
     headers: HeaderMap,
     Path(repository_id): Path<String>,
@@ -1597,6 +1639,13 @@ fn refresh_plugin_repository_docs(op: TransformOperation) -> TransformOperation 
 }
 
 #[cfg(feature = "docgen")]
+fn refresh_plugin_repositories_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Refresh plugin repositories").description(
+        "Re-resolves every subscribed repository, one at a time as the daily check does, and stores what each offers; nothing is installed. Once a repository's host rate-limits a request, its other repositories are reported `failed` with the same error without being contacted. Returns every subscribed repository as the repository list does, with its `plugins`, and the `id` and `error` of each that failed, which keeps what it stored before.",
+    )
+}
+
+#[cfg(feature = "docgen")]
 fn delete_plugin_repository_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Remove plugin repository")
         .description(
@@ -1653,6 +1702,7 @@ pub fn plugin_routes() -> Router {
         .route("/reload", post(reload_plugins))
         .route("/repositories", get(list_plugin_repositories))
         .route("/repositories", post(add_plugin_repository))
+        .route("/repositories/refresh", post(refresh_plugin_repositories))
         .route(
             "/repositories/{repository_id}/refresh",
             post(refresh_plugin_repository),
@@ -1705,6 +1755,13 @@ pub(crate) fn plugin_openapi_routes() -> aide::axum::ApiRouter {
         .api_route(
             "/repositories",
             post_with(add_plugin_repository, add_plugin_repository_docs),
+        )
+        .api_route(
+            "/repositories/refresh",
+            post_with(
+                refresh_plugin_repositories,
+                refresh_plugin_repositories_docs,
+            ),
         )
         .api_route(
             "/repositories/{repository_id}/refresh",

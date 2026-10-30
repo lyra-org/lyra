@@ -189,7 +189,8 @@ operation stops and reports how long the forge asked to wait; it never
 falls back to other requests. Update checks report the affected plugins
 as failed rather than as having an update. Once a host rate-limits an
 update check, plugins from its other repositories are reported as failed
-too, without being checked.
+too, without being checked; refreshing every repository at once reports
+that host's other repositories as failed in the same way.
 A tag and a branch with the same name resolve to the tag's commit, but
 the ref tracks like a branch. A branch ref tracks new releases and is
 re-read on update; a tag or commit ref is pinned and never changes. When
@@ -249,7 +250,9 @@ document, which `cargo run -p lyra-docs -- print openapi` prints. The
 server keeps what each subscription offered at its last refresh, update
 check, or daily check, and shows subscribed repositories and their
 plugins from it without contacting the forge, judging each plugin's
-status against the plugins installed at the time. An
+status against the plugins installed at the time. Every repository can be
+refreshed in one request, one at a time as the daily check does, which
+stores what each offers and installs nothing. An
 install names each plugin with the release commit its preview showed, so
 the scopes approved are the scopes granted: a plugin whose offered release
 has changed since fails to install.
