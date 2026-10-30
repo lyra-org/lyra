@@ -2036,6 +2036,7 @@ fn plugin_executor_exposes_lyra_editions_module() -> Result<()> {
 
 #[tokio::test]
 async fn plugin_executor_drives_async_lyra_images_compose() -> Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
     let test_dir = std::env::temp_dir().join(format!(
         "lyra-raw-images-{}-{}",
         std::process::id(),
@@ -2044,6 +2045,12 @@ async fn plugin_executor_drives_async_lyra_images_compose() -> Result<()> {
             .as_nanos()
     ));
     std::fs::create_dir_all(&test_dir)?;
+    crate::plugins::testing::init_library_test_state(test_dir.clone()).await?;
+    lyra_db::test_db::insert_library(
+        &mut *crate::services::STATE.db.write().await,
+        "Images",
+        &test_dir.to_string_lossy(),
+    )?;
     let source_path = test_dir.join("source.png");
     image::RgbImage::from_pixel(2, 2, image::Rgb([255, 0, 0])).save(&source_path)?;
 

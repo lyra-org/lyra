@@ -6,7 +6,6 @@
 use super::*;
 use crate::plugins::executor::ApiResponseKind;
 use crate::routes::AppError;
-use crate::services::auth::Principal;
 use crate::services::auth::media_tokens::MediaTokenPurpose;
 use crate::services::delivery::{
     DeliveryTarget,
@@ -22,26 +21,6 @@ pub(super) fn header_pairs(headers: &HeaderMap) -> Vec<(String, String)> {
             Some((name.as_str().to_string(), value.to_str().ok()?.to_string()))
         })
         .collect()
-}
-
-/// Plugins may name any filesystem path in a file response, so resolve the
-/// target (following symlinks) and refuse anything outside the roots of the
-/// libraries the principal can see and the configured cover storage root.
-async fn confine_file_response_path(path: &str, principal: Option<&Principal>) -> Result<PathBuf> {
-    let canonical = tokio::fs::canonicalize(path)
-        .await
-        .with_context(|| format!("failed to resolve file response path '{path}'"))?;
-    let mut roots = crate::services::libraries::library_roots(principal).await?;
-    roots.push(crate::services::covers::configured_covers_root());
-    for root in roots {
-        let Ok(root) = tokio::fs::canonicalize(&root).await else {
-            continue;
-        };
-        if canonical.starts_with(&root) {
-            return Ok(canonical);
-        }
-    }
-    bail!("file response path '{path}' is outside library and cover roots");
 }
 
 pub(super) async fn plugin_api_response_to_axum(
@@ -177,7 +156,8 @@ pub(super) async fn plugin_api_response_to_axum(
         if trimmed.is_empty() {
             bail!("file path must not be empty");
         }
-        let confined = confine_file_response_path(trimmed, principal).await?;
+        let confined =
+            crate::services::libraries::confine_to_media_roots(trimmed, principal).await?;
         if let Some(transform) = parse_image_transform_options(response.transform.as_ref())? {
             let owned_path = confined
                 .to_str()

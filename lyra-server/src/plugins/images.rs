@@ -29,6 +29,11 @@ use image::{
 };
 use serde::Deserialize;
 
+use crate::{
+    plugins::auth::DispatchPrincipal,
+    services::auth::Principal,
+};
+
 const CACHE_DIR: &str = ".lyra/cache/images";
 const DEFAULT_QUALITY: u8 = 90;
 
@@ -167,15 +172,28 @@ fn file_hash(data: &[u8]) -> String {
     blake3::hash(data).to_hex().to_string()
 }
 
-async fn compose_impl(options: ComposeOptions) -> Result<ComposeResult> {
-    let sources: Vec<String> = options
+async fn compose_impl(
+    options: ComposeOptions,
+    principal: Option<&Principal>,
+) -> Result<ComposeResult> {
+    let requested: Vec<&String> = options
         .sources
-        .into_iter()
-        .filter(|p| !p.is_empty())
+        .iter()
+        .filter(|path| !path.is_empty())
         .collect();
-
-    if sources.is_empty() {
+    if requested.is_empty() {
         return Err(anyhow!("sources must be a non-empty array of file paths"));
+    }
+
+    let mut sources = Vec::with_capacity(requested.len());
+    for path in requested {
+        match crate::services::libraries::confine_to_media_roots(path, principal).await {
+            Ok(confined) => sources.push(confined.to_string_lossy().into_owned()),
+            Err(err) => tracing::warn!(path, %err, "skipping image source in compose"),
+        }
+    }
+    if sources.is_empty() {
+        return Err(anyhow!("no source is inside the library and cover roots"));
     }
 
     let width: u32 = options.width.unwrap_or(600);
@@ -318,11 +336,14 @@ pub(crate) struct ImagesModule;
 #[harmony_macros::module(id = "lyra/images", docs_feature = "docgen")]
 impl ImagesModule {
     #[harmony(
-        description = "Compose multiple source images into a single grid image. Returns a cached result with path, hash, and mime_type.",
+        description = "Compose multiple source images into a single grid image. Returns a cached result with path, hash, and mime_type. Sources outside the roots of the libraries the caller can see and the cover storage root are skipped.",
         returns(ComposeResult)
     )]
-    async fn compose(options: ComposeOptions) -> luau::runtime::Result<luau::OwnedTable> {
-        let result = compose_impl(options)
+    async fn compose(
+        options: ComposeOptions,
+        #[context] principal: DispatchPrincipal,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let result = compose_impl(options, principal.0.as_ref())
             .await
             .map_err(|error| luau::Error::Runtime(error.to_string()))?;
         Ok(result.into_luau_table())
@@ -419,6 +440,36 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        plugins::testing::init_library_test_state,
+        services::testing::runtime_test_lock,
+    };
+
+    #[tokio::test]
+    async fn compose_reads_no_image_outside_library_and_cover_roots() -> Result<()> {
+        let _guard = runtime_test_lock().await;
+        let library = tempfile::TempDir::new()?;
+        init_library_test_state(library.path().to_path_buf()).await?;
+        let outside = tempfile::TempDir::new()?;
+        let image = outside.path().join("cover.png");
+        DynamicImage::new_rgb8(4, 4).save(&image)?;
+
+        let Err(error) = compose_impl(
+            ComposeOptions {
+                sources: vec![image.to_string_lossy().into_owned()],
+                width: None,
+                height: None,
+                quality: None,
+            },
+            None,
+        )
+        .await
+        else {
+            panic!("an image outside every root is not composed");
+        };
+        assert!(error.to_string().contains("no source is inside"), "{error}");
+        Ok(())
+    }
 
     #[test]
     fn cache_key_differs_for_different_sources() {
