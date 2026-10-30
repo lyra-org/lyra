@@ -39,7 +39,6 @@ pub mod providers;
 pub mod ratings;
 pub mod releases;
 pub mod roles;
-pub mod search;
 pub mod server;
 pub mod settings;
 pub mod sync_runs;

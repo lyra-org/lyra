@@ -264,7 +264,17 @@ pub(crate) fn order<C: Catalog>(
     viewer: &Viewer,
     query: &Query<C>,
 ) -> Result<Vec<DbId>, CatalogError> {
-    let (entries, _) = sorted(db, viewer, query, None)?;
+    leading(db, viewer, query, None)
+}
+
+/// The first `keep` matching ids in order, or every one without a `keep`.
+pub(crate) fn leading<C: Catalog>(
+    db: &DbAny,
+    viewer: &Viewer,
+    query: &Query<C>,
+    keep: Option<usize>,
+) -> Result<Vec<DbId>, CatalogError> {
+    let (entries, _) = sorted(db, viewer, query, keep)?;
     Ok(entries.into_iter().map(|entry| entry.row.id).collect())
 }
 

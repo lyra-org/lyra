@@ -132,6 +132,27 @@ pub(crate) struct ArtistListOptions {
     page_request: super::SnapshotPageRequest,
 }
 
+impl ArtistListOptions {
+    /// The options `GET /api/artists?query=` runs with only `inc`, rating bounds and paging, so a
+    /// search cursor resumes on that endpoint. Any other filter or sort would change the cursor key.
+    pub(crate) fn for_query(
+        inc: Option<Vec<String>>,
+        query: String,
+        rating_filter: lyra_db::ratings::RatingFilter,
+        page_request: super::SnapshotPageRequest,
+    ) -> Self {
+        Self {
+            inc,
+            query: Some(query),
+            library_id: None,
+            sort_by: None,
+            sort_order: None,
+            rating_filter,
+            page_request,
+        }
+    }
+}
+
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
 #[non_exhaustive]
@@ -363,6 +384,14 @@ pub(crate) async fn list_artist_responses(
     principal: &Principal,
     options: ArtistListOptions,
 ) -> Result<PageResponse<ArtistResponse>, AppError> {
+    artist_page(&*STATE.db.read().await, principal, options)
+}
+
+pub(crate) fn artist_page(
+    db: &DbAny,
+    principal: &Principal,
+    options: ArtistListOptions,
+) -> Result<PageResponse<ArtistResponse>, AppError> {
     let ArtistListOptions {
         inc,
         query,
@@ -372,7 +401,6 @@ pub(crate) async fn list_artist_responses(
         rating_filter,
         page_request,
     } = options;
-    let db = &*STATE.db.read().await;
     let includes = parse_inc(inc)?;
     let search_term = super::parse_text_query(query);
     let (min_rating, max_rating) = rating_filter.bounds();
@@ -411,7 +439,7 @@ pub(crate) async fn list_artist_responses(
         query.search = search_term;
         query.sort = sort;
         query.seed = rand::random();
-        let ids = catalog::order(db, &viewer, &query)?;
+        let ids = catalog::leading(db, &viewer, &query, page_request.rank_limit())?;
         let page = page_request.start(&snapshot_key, super::public_ids(db, &ids)?)?;
         (
             Artists::hydrate(db, &ids[..page.item_ids.len()])?,

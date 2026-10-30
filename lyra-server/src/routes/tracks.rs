@@ -5,7 +5,10 @@
 
 mod lyrics;
 
-use agdb::DbId;
+use agdb::{
+    DbAny,
+    DbId,
+};
 #[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
@@ -144,6 +147,28 @@ pub(crate) struct TrackListOptions {
     page_request: super::SnapshotPageRequest,
 }
 
+impl TrackListOptions {
+    /// The options `GET /api/tracks?query=` runs with only `inc`, rating bounds and paging, so a
+    /// search cursor resumes on that endpoint. Any other filter or sort would change the cursor key.
+    pub(crate) fn for_query(
+        inc: Option<Vec<String>>,
+        query: String,
+        rating_filter: lyra_db::ratings::RatingFilter,
+        page_request: super::SnapshotPageRequest,
+    ) -> Self {
+        Self {
+            inc,
+            query: Some(query),
+            library_id: None,
+            release_id: None,
+            sort_by: None,
+            sort_order: None,
+            rating_filter,
+            page_request,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct TrackRouteIncludes {
     pub(crate) service: track_service::TrackIncludes,
@@ -261,6 +286,14 @@ pub(crate) async fn list_track_responses(
     principal: &Principal,
     options: TrackListOptions,
 ) -> Result<PageResponse<TrackResponse>, AppError> {
+    track_page(&*STATE.db.read().await, principal, options)
+}
+
+pub(crate) fn track_page(
+    db: &DbAny,
+    principal: &Principal,
+    options: TrackListOptions,
+) -> Result<PageResponse<TrackResponse>, AppError> {
     let TrackListOptions {
         inc,
         query,
@@ -271,7 +304,6 @@ pub(crate) async fn list_track_responses(
         rating_filter,
         page_request,
     } = options;
-    let db = &*STATE.db.read().await;
     let includes = parse_inc(inc)?;
     let search_term = super::parse_text_query(query);
     let (min_rating, max_rating) = rating_filter.bounds();
@@ -314,7 +346,7 @@ pub(crate) async fn list_track_responses(
         query.search = search_term;
         query.sort = sort;
         query.seed = rand::random();
-        let ids = catalog::order(db, &viewer, &query)?;
+        let ids = catalog::leading(db, &viewer, &query, page_request.rank_limit())?;
         let page = page_request.start(&snapshot_key, super::public_ids(db, &ids)?)?;
         (
             Tracks::hydrate(db, &ids[..page.item_ids.len()])?,

@@ -45,7 +45,10 @@ use crate::{
     },
     services::STATE,
     services::{
-        auth::require_authenticated,
+        auth::{
+            Principal,
+            require_authenticated,
+        },
         catalog::{
             self,
             pipeline::Catalog,
@@ -300,11 +303,54 @@ pub(crate) fn detail_to_release_response(
     })
 }
 
-async fn get_releases(
-    headers: HeaderMap,
-    Query(list_query): Query<ReleaseListQuery>,
-) -> Result<Json<PageResponse<ReleaseResponse>>, AppError> {
-    let ReleaseListQuery {
+pub(crate) struct ReleaseListOptions {
+    inc: Option<Vec<String>>,
+    query: Option<String>,
+    year: Option<u32>,
+    library_id: Option<String>,
+    genre_id: Option<Vec<String>>,
+    sort_by: Option<Vec<String>>,
+    sort_order: Option<String>,
+    rating_filter: lyra_db::ratings::RatingFilter,
+    page_request: super::SnapshotPageRequest,
+}
+
+impl ReleaseListOptions {
+    /// The options `GET /api/releases?query=` runs with only `inc`, rating bounds and paging, so a
+    /// search cursor resumes on that endpoint. Any other filter or sort would change the cursor key.
+    pub(crate) fn for_query(
+        inc: Option<Vec<String>>,
+        query: String,
+        rating_filter: lyra_db::ratings::RatingFilter,
+        page_request: super::SnapshotPageRequest,
+    ) -> Self {
+        Self {
+            inc,
+            query: Some(query),
+            year: None,
+            library_id: None,
+            genre_id: None,
+            sort_by: None,
+            sort_order: None,
+            rating_filter,
+            page_request,
+        }
+    }
+}
+
+pub(crate) async fn list_release_responses(
+    principal: &Principal,
+    options: ReleaseListOptions,
+) -> Result<PageResponse<ReleaseResponse>, AppError> {
+    release_page(&*STATE.db.read().await, principal, options)
+}
+
+pub(crate) fn release_page(
+    db: &DbAny,
+    principal: &Principal,
+    options: ReleaseListOptions,
+) -> Result<PageResponse<ReleaseResponse>, AppError> {
+    let ReleaseListOptions {
         inc,
         query,
         year,
@@ -312,16 +358,12 @@ async fn get_releases(
         genre_id,
         sort_by,
         sort_order,
-        rating,
-        page,
-    } = list_query;
-    let page_request = page.resolve_snapshot();
-    let principal = require_authenticated(bearer_credential(&headers)).await?;
-    let rating_filter = rating.parse()?;
+        rating_filter,
+        page_request,
+    } = options;
     let include_entry_paths =
         lyra_db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
 
-    let db = &*STATE.db.read().await;
     let (includes, include_covers, include_genres, include_artist_covers) =
         parse_release_includes(inc)?;
     let search_term = super::parse_text_query(query);
@@ -342,7 +384,7 @@ async fn get_releases(
     let sort = super::parse_catalog_sort(sort_by, sort_order)?;
     let library = crate::services::auth::access::resolve_optional_library_filter(
         db,
-        &principal,
+        principal,
         library_id.as_deref(),
     )?;
 
@@ -352,7 +394,7 @@ async fn get_releases(
             &page.item_ids,
             lyra_db::releases::get_by_id,
             |db, release_db_id| {
-                crate::services::auth::access::entity_accessible(db, &principal, release_db_id)
+                crate::services::auth::access::entity_accessible(db, principal, release_db_id)
             },
         )?;
         (release_items, page.next_cursor)
@@ -369,7 +411,7 @@ async fn get_releases(
         query.search = search_term;
         query.sort = sort;
         query.seed = rand::random();
-        let ids = catalog::order(db, &viewer, &query)?;
+        let ids = catalog::leading(db, &viewer, &query, page_request.rank_limit())?;
         let page = page_request.start(&snapshot_key, super::public_ids(db, &ids)?)?;
         (
             Releases::hydrate(db, &ids[..page.item_ids.len()])?,
@@ -390,7 +432,44 @@ async fn get_releases(
         )?);
     }
 
-    Ok(Json(PageResponse { items, next_cursor }))
+    Ok(PageResponse { items, next_cursor })
+}
+
+async fn get_releases(
+    headers: HeaderMap,
+    Query(list_query): Query<ReleaseListQuery>,
+) -> Result<Json<PageResponse<ReleaseResponse>>, AppError> {
+    let ReleaseListQuery {
+        inc,
+        query,
+        year,
+        library_id,
+        genre_id,
+        sort_by,
+        sort_order,
+        rating,
+        page,
+    } = list_query;
+    let page_request = page.resolve_snapshot();
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
+    let rating_filter = rating.parse()?;
+    Ok(Json(
+        list_release_responses(
+            &principal,
+            ReleaseListOptions {
+                inc,
+                query,
+                year,
+                library_id,
+                genre_id,
+                sort_by,
+                sort_order,
+                rating_filter,
+                page_request,
+            },
+        )
+        .await?,
+    ))
 }
 
 async fn get_release(

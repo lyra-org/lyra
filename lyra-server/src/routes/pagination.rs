@@ -18,6 +18,8 @@ use super::AppError;
 pub(crate) struct SnapshotPageRequest {
     limit: usize,
     cursor: Option<String>,
+    /// Whether a first page longer than `limit` keeps a snapshot to resume from.
+    snapshot: bool,
     generation: std::sync::Arc<crate::services::state::GenerationState>,
 }
 
@@ -29,19 +31,33 @@ impl super::PageQuery {
                 .unwrap_or(super::DEFAULT_PAGE_LIMIT)
                 .clamp(1, super::PAGE_HARD_LIMIT) as usize,
             cursor: self.cursor,
+            snapshot: true,
             generation: STATE.generation(),
         }
     }
 }
 
 impl SnapshotPageRequest {
-    #[cfg(test)]
     pub(crate) fn first_page(limit: usize) -> Self {
         Self {
             limit: limit.clamp(1, super::PAGE_HARD_LIMIT as usize),
             cursor: None,
+            snapshot: true,
             generation: STATE.generation(),
         }
+    }
+
+    /// A first page that never continues, so it keeps no snapshot.
+    pub(crate) fn only_page(limit: usize) -> Self {
+        Self {
+            snapshot: false,
+            ..Self::first_page(limit)
+        }
+    }
+
+    /// How many leading items a fresh page ranks, or `None` when it ranks every item to snapshot.
+    pub(crate) fn rank_limit(&self) -> Option<usize> {
+        (!self.snapshot).then_some(self.limit)
     }
 
     pub(crate) fn resume(&self, key: &SnapshotKey) -> Result<Option<SnapshotPage>, AppError> {
@@ -59,8 +75,15 @@ impl SnapshotPageRequest {
     pub(crate) fn start(
         &self,
         key: &SnapshotKey,
-        item_ids: Vec<String>,
+        mut item_ids: Vec<String>,
     ) -> Result<SnapshotPage, AppError> {
+        if !self.snapshot {
+            item_ids.truncate(self.limit);
+            return Ok(SnapshotPage {
+                item_ids,
+                next_cursor: None,
+            });
+        }
         self.generation
             .pagination
             .start(key, item_ids, self.limit)

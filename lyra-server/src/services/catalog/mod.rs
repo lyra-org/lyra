@@ -35,6 +35,7 @@ pub(crate) use pipeline::{
     PersonalData,
     Query,
     counts,
+    leading,
     order,
     page,
 };

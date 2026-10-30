@@ -1064,17 +1064,7 @@ mod tests {
                 ids.sort();
                 Ok(ids)
             };
-            let searched = |db: &DbAny| -> anyhow::Result<Vec<DbId>> {
-                let mut ids: Vec<DbId> = lyra_db::search::collect_candidates(db, None)?
-                    .artists
-                    .into_iter()
-                    .map(|candidate| candidate.db_id)
-                    .collect();
-                ids.sort();
-                Ok(ids)
-            };
             assert_eq!(browsed(&db, ArtistFilter::default())?, vec![combined]);
-            assert_eq!(searched(&db)?, vec![combined]);
 
             enable_provider(&mut db, "provider", 0)?;
             save_credits(
@@ -1084,7 +1074,6 @@ mod tests {
                 &[(lyra_db::CreditType::Artist, &[alpha, beta])],
             )?;
             assert_eq!(browsed(&db, ArtistFilter::default())?, vec![alpha, beta]);
-            assert_eq!(searched(&db)?, vec![alpha, beta]);
             assert!(
                 lyra_db::artists::get_by_id(&db, combined)?.is_some_and(|artist| !artist.credited),
                 "the combined artist survives, uncredited"
@@ -1103,7 +1092,6 @@ mod tests {
                 Vec::new(),
             )?;
             assert_eq!(browsed(&db, ArtistFilter::default())?, vec![combined]);
-            assert_eq!(searched(&db)?, vec![combined]);
             Ok(())
         }
 
