@@ -28,6 +28,7 @@ pub use runtime::{
     ByteString,
     CallContext,
     CallFrame,
+    CallSite,
     CapabilityId,
     Chunk,
     ChunkOrigin,

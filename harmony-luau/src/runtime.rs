@@ -835,10 +835,12 @@ impl Vm {
                     vm: Rc::downgrade(&self.inner),
                     vm_id: self.inner.id,
                     callback,
-                    origin: options.origin.clone(),
+                    site: CallSite {
+                        origin: options.origin.clone(),
+                        function_name: options.function_name.clone(),
+                    },
                     capability: options.capability.clone(),
                     task_group: options.task_group,
-                    function_name: options.function_name.clone(),
                     argument_names: options.argument_names.clone(),
                     use_thread_context_origin: options.use_thread_context_origin,
                 },
@@ -2682,6 +2684,7 @@ impl_into_luau_return_tuple!(A, B, C, D);
 
 pub struct ScheduledFuture {
     start_delay: Option<Duration>,
+    site: Option<CallSite>,
     state: ScheduledFutureState,
 }
 
@@ -2710,6 +2713,20 @@ impl ScheduledFuture {
         self.start_delay.take()
     }
 
+    /// Marks the future as finishing a call to `site`, whose errors it raises as that call would.
+    pub fn for_call(mut self, site: CallSite) -> Self {
+        self.site = Some(site);
+        self
+    }
+
+    /// The message to raise in the waiting thread for the future's `error`.
+    pub fn error_message(&self, error: &Error) -> String {
+        match &self.site {
+            Some(site) => site.error_message(error),
+            None => error.to_string(),
+        }
+    }
+
     fn with_start_delay<F, T>(start_delay: Option<Duration>, future: F) -> Self
     where
         F: Future<Output = Result<T>> + 'static,
@@ -2717,6 +2734,7 @@ impl ScheduledFuture {
     {
         Self {
             start_delay,
+            site: None,
             state: ScheduledFutureState::Future(Box::pin(async move {
                 future.await?.into_luau_return()
             })),
@@ -2793,10 +2811,9 @@ struct CallbackSlot {
     vm: RcWeak<VmInner>,
     vm_id: u64,
     callback: NativeFn,
-    origin: ChunkOrigin,
+    site: CallSite,
     capability: Option<CapabilityId>,
     task_group: TaskGroupId,
-    function_name: Option<Arc<str>>,
     argument_names: Vec<Arc<str>>,
     use_thread_context_origin: bool,
 }
@@ -2892,6 +2909,7 @@ pub struct CallFrame<'vm> {
     pub context: CallContext,
     pub args: ArgReader<'vm>,
     pub returns: ReturnWriter<'vm>,
+    pub site: CallSite,
 }
 
 impl<'vm> CallFrame<'vm> {
@@ -2988,8 +3006,8 @@ unsafe fn call_native_function(
         let task_group = match &thread_context {
             Some(context)
                 if slot.use_thread_context_origin
-                    || slot.origin.plugin.is_none()
-                    || slot.origin.plugin == context.origin.plugin =>
+                    || slot.site.origin.plugin.is_none()
+                    || slot.site.origin.plugin == context.origin.plugin =>
             {
                 context.task_group
             }
@@ -2999,9 +3017,9 @@ unsafe fn call_native_function(
             thread_context
                 .as_ref()
                 .map(|context| context.origin.clone())
-                .unwrap_or_else(|| slot.origin.clone())
+                .unwrap_or_else(|| slot.site.origin.clone())
         } else {
-            slot.origin.clone()
+            slot.site.origin.clone()
         };
         let frame = CallFrame {
             vm: &vm,
@@ -3021,13 +3039,14 @@ unsafe fn call_native_function(
             },
             args: ArgReader::stack(&vm, state, argc, slot.argument_names.clone()),
             returns: returns.clone(),
+            site: slot.site.clone(),
         };
 
         catch_unwind(AssertUnwindSafe(|| (slot.callback)(frame)))
     };
     match result {
         Ok(Ok(())) => {}
-        Ok(Err(error)) => return Err(format_callback_error(slot, &error)),
+        Ok(Err(error)) => return Err(slot.site.error_message(&error)),
         Err(_) => return Err("Harmony callback panicked".to_string()),
     }
     for value in &return_state.values {
@@ -3044,24 +3063,34 @@ unsafe fn call_native_function(
     Ok(CallbackExit::Yield(count))
 }
 
-/// Prefixes a callback's error with where it came from, except running out of memory, which keeps
-/// Luau's own message so callers further out still see [`Error::OutOfMemory`].
-fn format_callback_error(slot: &CallbackSlot, error: &Error) -> String {
-    if matches!(error, Error::OutOfMemory) {
-        return error.to_string();
+/// The native function a call went to, which names where its errors came from.
+#[derive(Clone, Debug)]
+pub struct CallSite {
+    origin: ChunkOrigin,
+    function_name: Option<Arc<str>>,
+}
+
+impl CallSite {
+    /// The message the call raises for `error`: prefixed with where it came from, except running
+    /// out of memory, which keeps Luau's own message so callers further out still see
+    /// [`Error::OutOfMemory`].
+    pub fn error_message(&self, error: &Error) -> String {
+        if matches!(error, Error::OutOfMemory) {
+            return error.to_string();
+        }
+        let module = self
+            .origin
+            .module
+            .as_ref()
+            .map(|module| module.0.as_ref())
+            .unwrap_or("<unknown module>");
+        let function = self
+            .function_name
+            .as_deref()
+            .unwrap_or("<unknown function>");
+        let plugin = self.origin.plugin.as_deref().unwrap_or("<non-plugin>");
+        format!("module '{module}' function '{function}' plugin '{plugin}': {error}")
     }
-    let module = slot
-        .origin
-        .module
-        .as_ref()
-        .map(|module| module.0.as_ref())
-        .unwrap_or("<unknown module>");
-    let function = slot
-        .function_name
-        .as_deref()
-        .unwrap_or("<unknown function>");
-    let plugin = slot.origin.plugin.as_deref().unwrap_or("<non-plugin>");
-    format!("module '{module}' function '{function}' plugin '{plugin}': {error}")
 }
 
 fn current_unix_seconds() -> i64 {
