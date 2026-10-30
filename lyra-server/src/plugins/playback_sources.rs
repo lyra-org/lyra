@@ -24,6 +24,7 @@ use crate::plugins::args::{
     ResolveIdArg,
     UniqueIds,
 };
+use crate::plugins::auth::DispatchPrincipal;
 use crate::plugins::types::EntryInfo;
 use crate::{
     plugins::db::Db,
@@ -55,15 +56,6 @@ struct DeliveryDescription;
 
 #[cfg(feature = "docgen")]
 struct SourceDescription;
-
-/// The dispatch's principal, when it has one.
-struct DispatchPrincipal(Option<Principal>);
-
-impl luau::FromCallFrame for DispatchPrincipal {
-    fn from_call_frame(_vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
-        crate::plugins::auth::dispatch_principal(context).map(Self)
-    }
-}
 
 pub(crate) struct PlaybackSourcesModule;
 

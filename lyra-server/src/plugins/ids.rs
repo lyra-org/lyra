@@ -17,19 +17,10 @@ use harmony_luau::{
 use crate::plugins::{
     args,
     args::UniqueIds,
-    db,
+    db::OptionalDb,
 };
 
 pub(crate) struct IdsModule;
-
-/// [`db::get_optional`], as a module function takes it from its call.
-struct OptionalDb(Option<lyra_db::DbAsync>);
-
-impl luau::FromCallFrame for OptionalDb {
-    fn from_call_frame(vm: &luau::Vm, _context: &luau::CallContext) -> luau::runtime::Result<Self> {
-        db::get_optional(vm).map(Self)
-    }
-}
 
 /// An array of strings, trimmed, without blanks or repeats.
 struct PublicIds(Vec<String>);

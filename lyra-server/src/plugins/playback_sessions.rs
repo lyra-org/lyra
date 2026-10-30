@@ -3,8 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::sync::Arc;
-
 use harmony_luau as luau;
 #[cfg(feature = "docgen")]
 use harmony_luau::FunctionParameter;
@@ -120,19 +118,6 @@ impl DescribeTypeAlias for PlaybackUpdateHandler {
     }
 }
 
-/// The plugin calling `report_session`.
-struct ReportingPlugin(Arc<str>);
-
-impl luau::FromCallFrame for ReportingPlugin {
-    fn from_call_frame(_vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
-        context.origin.plugin.clone().map(Self).ok_or_else(|| {
-            luau::Error::Runtime(
-                "playback_sessions.report_session must be called from plugin Luau code".into(),
-            )
-        })
-    }
-}
-
 pub(crate) struct PlaybackSessionsModule;
 
 #[harmony_macros::module(id = "lyra/playback_sessions", docs_feature = "docgen")]
@@ -162,10 +147,14 @@ impl PlaybackSessionsModule {
         request: args::Json<PlaybackSessionReportRequest>,
         #[context] db: Db,
         #[context] principal: Principal,
-        #[context] plugin_id: ReportingPlugin,
+        #[context] origin: luau::ChunkOrigin,
     ) -> luau::runtime::Result<(Option<String>, Option<String>)> {
         let request = request.0;
-        let plugin_id = plugin_id.0;
+        let plugin_id = origin.plugin.ok_or_else(|| {
+            luau::Error::Runtime(
+                "playback_sessions.report_session must be called from plugin Luau code".into(),
+            )
+        })?;
         let session_key = require_non_empty_string(request.session_key, "session_key")?;
         let track_db_id = args::positive_id(request.track_id, "track_id")?;
         if let Some(play_id) = request.play_id.as_deref()

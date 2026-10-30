@@ -70,6 +70,23 @@ pub(crate) fn runtime_error(error: impl std::fmt::Display) -> harmony_luau::Erro
     harmony_luau::Error::Runtime(error.to_string())
 }
 
+/// The plugin whose code makes the call, which must be its current run. Outside plugin code
+/// the call fails, named as `function_name`.
+pub(crate) fn current_plugin(
+    vm: &harmony_luau::Vm,
+    context: &harmony_luau::CallContext,
+    function_name: &str,
+) -> harmony_luau::runtime::Result<crate::services::plugin_scope::PluginId> {
+    let Some(plugin_id) = context.origin.plugin.clone() else {
+        return Err(runtime_error(format!(
+            "{function_name} must be called from plugin Luau code"
+        )));
+    };
+    let plugin_id = crate::services::plugin_scope::PluginId::new(plugin_id)?;
+    harmony_core::ensure_current_plugin_run(vm, context)?;
+    Ok(plugin_id)
+}
+
 pub(crate) struct OptionConfig;
 
 impl LuauTypeInfo for OptionConfig {

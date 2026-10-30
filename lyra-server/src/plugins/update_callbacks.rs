@@ -10,12 +10,9 @@ use std::marker::PhantomData;
 use harmony_core::CallContext;
 use harmony_luau as luau;
 
-use crate::{
-    plugins::callback_table::{
-        CallbackTable,
-        PluginCallback,
-    },
-    services::plugin_scope::PluginId,
+use crate::plugins::callback_table::{
+    CallbackTable,
+    PluginCallback,
 };
 
 #[derive(Clone)]
@@ -66,13 +63,7 @@ pub(crate) fn register<Payload: 'static>(
     function: luau::Function,
     function_name: &str,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let plugin_id = context.origin.plugin.clone().ok_or_else(|| {
-        luau::Error::Runtime(format!(
-            "{function_name} must be called from plugin Luau code"
-        ))
-    })?;
-    let validated_plugin_id = PluginId::new(plugin_id.to_string())?;
-    harmony_core::ensure_current_plugin_run(vm, context)?;
+    let validated_plugin_id = crate::plugins::current_plugin(vm, context, function_name)?;
     let vm = vm.clone();
     let context = context.clone();
     Ok(luau::ScheduledFuture::new(async move {

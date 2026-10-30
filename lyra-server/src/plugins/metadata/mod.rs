@@ -17,7 +17,6 @@ use self::layer::MetadataLayer;
 use self::provider::ProviderOptions;
 use self::provider::{
     MetadataProvider,
-    ProviderHost,
     provider_new,
 };
 
@@ -52,8 +51,9 @@ impl MetadataModule {
     async fn provider_new(
         id: String,
         options: Option<luau::Table>,
-        #[context] host: ProviderHost,
+        #[context] vm: luau::Vm,
+        #[context] context: luau::CallContext,
     ) -> luau::runtime::Result<luau::Value> {
-        provider_new(id, options, host).await
+        provider_new(id, options, vm, context).await
     }
 }

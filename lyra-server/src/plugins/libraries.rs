@@ -25,28 +25,17 @@ use crate::{
             ResolveIdArg,
             UniqueIds,
         },
+        auth::DispatchPrincipal,
         db::Db,
     },
-    services::auth::{
-        Principal,
-        access::{
-            self,
-            LibraryFull,
-            LibraryView,
-        },
+    services::auth::access::{
+        self,
+        LibraryFull,
+        LibraryView,
     },
 };
 
 pub(crate) struct LibrariesModule;
-
-/// The dispatch's principal, or `None` for a server-side dispatch.
-struct Caller(Option<Principal>);
-
-impl luau::FromCallFrame for Caller {
-    fn from_call_frame(_vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
-        crate::plugins::auth::dispatch_principal(context).map(Self)
-    }
-}
 
 #[harmony_macros::module(id = "lyra/libraries", docs_feature = "docgen")]
 impl LibrariesModule {
@@ -54,7 +43,7 @@ impl LibrariesModule {
     async fn list(
         id: Option<ResolveIdArg>,
         #[context] db: Db,
-        #[context] caller: Caller,
+        #[context] caller: DispatchPrincipal,
     ) -> luau::runtime::Result<luau::Value> {
         let id = id.map(|id| id.0);
         let principal = caller.0;
@@ -113,7 +102,7 @@ impl LibrariesModule {
     async fn get_for_entity(
         entity_id: i64,
         #[context] db: Db,
-        #[context] caller: Caller,
+        #[context] caller: DispatchPrincipal,
     ) -> luau::runtime::Result<luau::Value> {
         let db = db.read().await;
         let libraries = if let Some(principal) = caller.0 {
@@ -138,7 +127,7 @@ impl LibrariesModule {
     async fn get_for_entities(
         entity_ids: UniqueIds,
         #[context] db: Db,
-        #[context] caller: Caller,
+        #[context] caller: DispatchPrincipal,
     ) -> luau::runtime::Result<luau::OwnedTable> {
         let ids = entity_ids.0;
         let db = db.read().await;

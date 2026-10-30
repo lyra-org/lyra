@@ -244,38 +244,21 @@ async fn load_user_stored_values(
     .map_err(crate::plugins::runtime_error)
 }
 
-/// What a settings declaration takes from its call: the calling plugin, which must be the
-/// current run, and the handles its deferred callback needs.
-pub(crate) struct SettingsHost {
-    plugin_id: PluginId,
-    db: Option<DbAsync>,
-    vm: luau::Vm,
-    context: luau::CallContext,
-}
-
-impl luau::FromCallFrame for SettingsHost {
-    fn from_call_frame(vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
-        let plugin_id = current_plugin_id(context)?;
-        harmony_core::ensure_current_plugin_run(vm, context)?;
-        Ok(Self {
-            plugin_id,
-            db: crate::plugins::db::get_optional(vm)?,
-            vm: vm.clone(),
-            context: context.clone(),
-        })
-    }
+/// The plugin declaring settings, which must be the current run, and its database.
+fn declaring_plugin(
+    vm: &luau::Vm,
+    context: &luau::CallContext,
+) -> luau::runtime::Result<(PluginId, Option<DbAsync>)> {
+    let plugin_id = crate::plugins::current_plugin(vm, context, "plugins.*")?;
+    Ok((plugin_id, crate::plugins::db::get_optional(vm)?))
 }
 
 pub(crate) async fn declare_settings(
     callback: luau::Function,
-    host: SettingsHost,
+    vm: luau::Vm,
+    context: luau::CallContext,
 ) -> luau::runtime::Result<luau::OwnedTable> {
-    let SettingsHost {
-        plugin_id,
-        db,
-        vm,
-        context,
-    } = host;
+    let (plugin_id, db) = declaring_plugin(&vm, &context)?;
     let generation = crate::plugins::STATE.generation();
     let _registration = generation
         .registries
@@ -310,14 +293,10 @@ pub(crate) async fn declare_settings(
 
 pub(crate) async fn declare_user_settings(
     callback: luau::Function,
-    host: SettingsHost,
+    vm: luau::Vm,
+    context: luau::CallContext,
 ) -> luau::runtime::Result<luau::UserData> {
-    let SettingsHost {
-        plugin_id,
-        db,
-        vm,
-        context,
-    } = host;
+    let (plugin_id, db) = declaring_plugin(&vm, &context)?;
     let generation = crate::plugins::STATE.generation();
     let _registration = generation
         .registries

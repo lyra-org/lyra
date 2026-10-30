@@ -19,7 +19,6 @@ use crate::plugins::settings::descriptors::{
 };
 use crate::plugins::settings::{
     self,
-    SettingsHost,
     UserSettingsAccessor,
 };
 
@@ -59,17 +58,19 @@ impl PluginsModule {
     #[harmony(args(callback: SettingsCallback), returns(SettingsConfig))]
     async fn declare_settings(
         callback: luau::Function,
-        #[context] host: SettingsHost,
+        #[context] vm: luau::Vm,
+        #[context] context: luau::CallContext,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        settings::declare_settings(callback, host).await
+        settings::declare_settings(callback, vm, context).await
     }
 
     #[harmony(args(callback: SettingsCallback), returns(UserSettingsAccessor))]
     async fn declare_user_settings(
         callback: luau::Function,
-        #[context] host: SettingsHost,
+        #[context] vm: luau::Vm,
+        #[context] context: luau::CallContext,
     ) -> luau::runtime::Result<luau::UserData> {
-        settings::declare_user_settings(callback, host).await
+        settings::declare_user_settings(callback, vm, context).await
     }
 
     fn id(origin: &ChunkOrigin) -> luau::runtime::Result<String> {

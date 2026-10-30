@@ -202,21 +202,6 @@ pub(crate) fn to_plugin_auth(auth: ServiceResolvedAuth) -> ResolvedAuth {
 
 pub(crate) struct AuthModule;
 
-/// The plugin the call runs for, which functions that act for one require.
-struct OriginPlugin(Option<Arc<str>>);
-
-impl OriginPlugin {
-    fn require(self, message: &str) -> luau::runtime::Result<Arc<str>> {
-        self.0.ok_or_else(|| crate::plugins::runtime_error(message))
-    }
-}
-
-impl luau::FromCallFrame for OriginPlugin {
-    fn from_call_frame(_vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
-        Ok(Self(context.origin.plugin.clone()))
-    }
-}
-
 /// The dispatch's principal slot, when the dispatch has one.
 struct CurrentDispatchAuth(Option<Arc<DispatchAuth>>);
 
@@ -264,9 +249,11 @@ impl AuthModule {
     )]
     async fn get_session_data(
         token: String,
-        #[context] plugin: OriginPlugin,
+        #[context] origin: luau::ChunkOrigin,
     ) -> luau::runtime::Result<luau::Value> {
-        let plugin_id = plugin.require("session data requires plugin origin")?;
+        let plugin_id = origin
+            .plugin
+            .ok_or_else(|| crate::plugins::runtime_error("session data requires plugin origin"))?;
         let value = crate::services::auth::sessions::get_plugin_data(&token, &plugin_id).await?;
         harmony_luau::serializable_to_luau_owned(value)
     }
@@ -278,9 +265,11 @@ impl AuthModule {
     async fn set_session_data(
         token: String,
         data: JsonArg,
-        #[context] plugin: OriginPlugin,
+        #[context] origin: luau::ChunkOrigin,
     ) -> luau::runtime::Result<luau::Value> {
-        let plugin_id = plugin.require("session data requires plugin origin")?;
+        let plugin_id = origin
+            .plugin
+            .ok_or_else(|| crate::plugins::runtime_error("session data requires plugin origin"))?;
         crate::services::auth::sessions::set_plugin_data(&token, &plugin_id, data.0).await?;
         Ok(luau::Value::Nil)
     }
@@ -332,10 +321,12 @@ impl AuthModule {
     async fn list_sessions(
         query: Option<SessionListQuery>,
         #[context] principal: ServicePrincipal,
-        #[context] plugin: OriginPlugin,
+        #[context] origin: luau::ChunkOrigin,
     ) -> luau::runtime::Result<luau::Value> {
         let query = query.unwrap_or_default();
-        let plugin_id = plugin.require("session listing requires plugin origin")?;
+        let plugin_id = origin.plugin.ok_or_else(|| {
+            crate::plugins::runtime_error("session listing requires plugin origin")
+        })?;
         let owners = match (query.user_id.as_deref(), query.all_users) {
             (Some(_), true) => {
                 return Err(crate::plugins::runtime_error(
@@ -504,6 +495,16 @@ pub(crate) fn require_dispatch_principal(
 impl luau::FromCallFrame for ServicePrincipal {
     fn from_call_frame(_vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
         require_dispatch_principal(context)
+    }
+}
+
+/// [`dispatch_principal`], as a module function takes it from its call: `None` for a
+/// server-side dispatch.
+pub(crate) struct DispatchPrincipal(pub(crate) Option<ServicePrincipal>);
+
+impl luau::FromCallFrame for DispatchPrincipal {
+    fn from_call_frame(_vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
+        dispatch_principal(context).map(Self)
     }
 }
 

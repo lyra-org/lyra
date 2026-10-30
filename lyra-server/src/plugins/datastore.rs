@@ -100,21 +100,6 @@ impl DataStoreHandle {
     }
 }
 
-/// What a module function needs to hand a store to Luau, taken from its call.
-struct HandleFactory {
-    vm: luau::Vm,
-    origin: harmony_core::ChunkOrigin,
-}
-
-impl luau::FromCallFrame for HandleFactory {
-    fn from_call_frame(vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
-        Ok(Self {
-            vm: vm.clone(),
-            origin: context.origin.clone(),
-        })
-    }
-}
-
 #[harmony_macros::module(
     id = "lyra/datastore",
     name = "DataStore",
@@ -129,13 +114,14 @@ impl DataStoreModule {
     async fn get_or_create(
         name: String,
         #[context] db: Db,
-        #[context] factory: HandleFactory,
+        #[context] vm: luau::Vm,
+        #[context] origin: luau::ChunkOrigin,
     ) -> luau::runtime::Result<luau::UserData> {
         let db = db.clone();
         let datastore_id = get_or_create(&db, name).await?;
         let userdata = DataStoreHandle::_harmony_userdata_class().create(
-            &factory.vm,
-            &factory.origin,
+            &vm,
+            &origin,
             DataStoreHandle { db, datastore_id },
         )?;
         Ok(userdata)

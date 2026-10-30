@@ -46,33 +46,6 @@ use super::parsing::{
     string_array_from_table,
 };
 
-/// What `Provider.new` takes from its call: the calling plugin, which must be the current run,
-/// and the handles its registration needs.
-pub(super) struct ProviderHost {
-    plugin_id: PluginId,
-    db: Option<lyra_db::DbAsync>,
-    vm: luau::Vm,
-    origin: luau::ChunkOrigin,
-}
-
-impl luau::FromCallFrame for ProviderHost {
-    fn from_call_frame(vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
-        let plugin_id = context.origin.plugin.clone().ok_or_else(|| {
-            crate::plugins::runtime_error(
-                "metadata.Provider.new must be called from plugin Lua code",
-            )
-        })?;
-        let plugin_id = PluginId::new(plugin_id.to_string())?;
-        harmony_core::ensure_current_plugin_run(vm, context)?;
-        Ok(Self {
-            plugin_id,
-            db: db::get_optional(vm)?,
-            vm: vm.clone(),
-            origin: context.origin.clone(),
-        })
-    }
-}
-
 #[cfg(feature = "docgen")]
 pub(super) struct ProviderOptions;
 
@@ -86,14 +59,12 @@ impl luau::LuauTypeInfo for ProviderOptions {
 pub(super) async fn provider_new(
     provider_id: String,
     options: Option<luau::Table>,
-    host: ProviderHost,
+    vm: luau::Vm,
+    context: luau::CallContext,
 ) -> luau::runtime::Result<luau::Value> {
-    let ProviderHost {
-        plugin_id,
-        db,
-        vm,
-        origin,
-    } = host;
+    let plugin_id = crate::plugins::current_plugin(&vm, &context, "metadata.Provider.new")?;
+    let db = db::get_optional(&vm)?;
+    let origin = context.origin;
     let display_name = match &options {
         Some(options) => {
             optional_table_string(&vm, options, "display_name", "metadata.Provider.new")?

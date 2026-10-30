@@ -26,9 +26,12 @@ use crate::plugins::args::{
     UniqueIds,
 };
 use crate::{
-    plugins::db::{
-        Db,
-        ViewerDb,
+    plugins::{
+        auth::DispatchPrincipal,
+        db::{
+            Db,
+            ViewerDb,
+        },
     },
     services::auth::Principal,
 };
@@ -48,15 +51,6 @@ struct LabelInfo;
 #[cfg(feature = "docgen")]
 struct LabelForReleaseInfo;
 
-/// The dispatch principal, which is absent for the system.
-struct Caller(Option<Principal>);
-
-impl luau::FromCallFrame for Caller {
-    fn from_call_frame(_vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
-        crate::plugins::auth::dispatch_principal(context).map(Self)
-    }
-}
-
 impl<'vm> luau::FromLuau<'vm> for LabelResolveRequestData {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let request: luau::Table = reader.read()?;
@@ -73,7 +67,7 @@ impl LabelsModule {
     #[harmony(args(request: LabelResolveRequest))]
     async fn resolve(
         request: LabelResolveRequestData,
-        #[context] caller: Caller,
+        #[context] caller: DispatchPrincipal,
         #[context] db: Db,
     ) -> luau::runtime::Result<i64> {
         if !can_mutate_global(caller.0.as_ref()) {

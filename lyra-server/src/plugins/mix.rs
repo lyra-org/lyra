@@ -270,31 +270,6 @@ impl Mixer {
     }
 }
 
-/// What `Mixer.new` takes from its call: the calling plugin, which must be the current run, and
-/// the handles its registration needs.
-struct MixerHost {
-    plugin_id: PluginId,
-    vm: luau::Vm,
-    origin: harmony_core::ChunkOrigin,
-}
-
-impl luau::FromCallFrame for MixerHost {
-    fn from_call_frame(vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
-        let Some(plugin_id) = context.origin.plugin.clone() else {
-            return Err(crate::plugins::runtime_error(
-                "mix.Mixer.new must be called from plugin Luau code",
-            ));
-        };
-        let plugin_id = PluginId::new(plugin_id.to_string())?;
-        harmony_core::ensure_current_plugin_run(vm, context)?;
-        Ok(Self {
-            plugin_id,
-            vm: vm.clone(),
-            origin: context.origin.clone(),
-        })
-    }
-}
-
 /// The documented types of the module's arguments and returns.
 #[cfg(feature = "docgen")]
 macro_rules! documented_type {
@@ -323,7 +298,11 @@ documented_type!(
     LuauType::Optional(Box::new(LuauType::literal("{ Track }")))
 );
 
-#[harmony_macros::module(id = "lyra/mix", docs_feature = "docgen", userdata(LuauMixSeedType, Mixer))]
+#[harmony_macros::module(
+    id = "lyra/mix",
+    docs_feature = "docgen",
+    userdata(LuauMixSeedType, Mixer)
+)]
 impl MixModule {
     #[harmony(
         name = "Mixer.new",
@@ -334,14 +313,11 @@ impl MixModule {
     async fn mixer_new(
         id: String,
         options: Option<luau::Table>,
-        #[context] host: MixerHost,
-        #[context] db: Db,
+        #[context] vm: luau::Vm,
+        #[context] context: luau::CallContext,
     ) -> luau::runtime::Result<luau::UserData> {
-        let MixerHost {
-            plugin_id,
-            vm,
-            origin,
-        } = host;
+        let plugin_id = crate::plugins::current_plugin(&vm, &context, "mix.Mixer.new")?;
+        let db = crate::plugins::db::get(&vm)?;
         let display_name = match &options {
             Some(options) => optional_display_name(&vm, options)?,
             None => None,
@@ -360,7 +336,7 @@ impl MixModule {
         lyra_db::mixers::register(&mut db, &id, display_name.as_deref())?;
 
         drop(db);
-        Mixer::_harmony_userdata_class().create(&vm, &origin, Mixer { plugin_id, id })
+        Mixer::_harmony_userdata_class().create(&vm, &context.origin, Mixer { plugin_id, id })
     }
 
     #[harmony(
