@@ -1,6 +1,6 @@
 [package]
 name = "lyra-harmony-test"
-version = "0.0.1"
+version.workspace = true
 edition = "2024"
 license-file = "../LICENSE"
 

@@ -1,6 +1,6 @@
 [package]
 name = "lyra-server"
-version = "0.0.1-dev"
+version.workspace = true
 edition = "2024"
 default-run = "lyra"
 license-file = "../LICENSE"

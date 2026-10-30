@@ -71,13 +71,20 @@ Use a path visible to the server. `path` is required. `name` defaults to `Music`
 
 ## Versions and releases
 
-Between releases, `main` carries the next version with a `-dev` suffix, such as `0.0.2-dev`, in `lyra-server/Cargo.toml`, and every plugin manifest in the repository declares the same `lyra` version. Tests check that they match.
+The `lyra-*` crates share the server version, set once under `[workspace.package]` in the root
+`Cargo.toml`. Between releases, `main` carries the next version with a `-dev` suffix, such as
+`0.0.2-dev`, and every plugin manifest in the repository declares the same `lyra` version. Tests
+check that they match.
 
 To release a version:
 
-1. Set the server version and every in-repository `lyra` to it, and bump `version` in each plugin whose files changed since the previous release.
+1. Set the workspace version and every in-repository `lyra` to it, and bump `version` in each plugin whose files changed since the previous release.
 2. Commit, then add that commit to the top of `versions.json` as described in [plugin repositories](plugin-repositories.md#releases).
-3. Move `main` to the next `-dev` version, in the server and every in-repository `lyra`.
+3. Move `main` to the next `-dev` version, in the workspace and every in-repository `lyra`.
+
+The `harmony-*` crates have their own version, released when Harmony is ready rather than with
+each Lyra release. Plugins depend on the server version only, so a Lyra release may ship a `-dev`
+Harmony version.
 
 ## Docker builds
 
