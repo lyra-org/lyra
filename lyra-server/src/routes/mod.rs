@@ -84,6 +84,7 @@ pub(crate) use pagination::{
     public_ids,
 };
 pub use playlists::playlist_routes;
+pub(crate) use plugins::RESERVED_PLUGIN_IDS;
 pub use plugins::plugin_routes;
 pub use providers::{
     entity_routes,

@@ -523,4 +523,27 @@ mod tests {
             "ratings check must require bearer auth",
         );
     }
+
+    #[cfg(feature = "docgen")]
+    #[test]
+    fn fixed_plugin_route_segments_are_reserved_plugin_ids() {
+        let api = build_openapi_spec();
+        let paths = api.paths.as_ref().expect("OpenAPI paths");
+        for path in paths.paths.keys() {
+            let Some(rest) = path
+                .strip_prefix("/api/plugins/")
+                .or_else(|| path.strip_prefix("/api/me/plugins/"))
+            else {
+                continue;
+            };
+            let segment = rest.split('/').next().unwrap_or_default();
+            if segment.is_empty() || segment.starts_with('{') {
+                continue;
+            }
+            assert!(
+                super::super::RESERVED_PLUGIN_IDS.contains(&segment),
+                "{path} shadows plugin id '{segment}', which is not reserved"
+            );
+        }
+    }
 }

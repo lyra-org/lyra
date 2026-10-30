@@ -1693,6 +1693,18 @@ fn delete_user_settings_docs(op: TransformOperation) -> TransformOperation {
         .description("Deletes all user-scoped settings for the authenticated user.")
 }
 
+/// The fixed segments `plugin_routes` serves beside `/{plugin_id}`. A plugin
+/// with one of these ids would share a path with a fixed route, which takes
+/// precedence, and could not be uninstalled, so Lyra refuses to load it.
+pub(crate) const RESERVED_PLUGIN_IDS: &[&str] = &[
+    "settings",
+    "resolve",
+    "install",
+    "update",
+    "reload",
+    "repositories",
+];
+
 pub fn plugin_routes() -> Router {
     Router::new()
         .route("/", get(list_plugins))
@@ -2700,5 +2712,99 @@ mod tests {
             _ => panic!("expected Ready"),
         }
         Ok(())
+    }
+
+    /// The `plugin_id` the route `router` matches for `method` and `uri`
+    /// reads, if it matches one that takes a plugin id at all.
+    async fn routed_plugin_id(router: Router, method: &str, uri: &str) -> Option<String> {
+        use axum::{
+            body::{
+                Body,
+                to_bytes,
+            },
+            extract::{
+                FromRequestParts,
+                RawPathParams,
+            },
+            http::Request,
+            middleware::{
+                self,
+                Next,
+            },
+            response::Response,
+        };
+        use tower::ServiceExt;
+
+        // Answers in place of the handler, so no route needs server state.
+        async fn echo_plugin_id(request: Request<Body>, _next: Next) -> Response {
+            let (mut parts, _) = request.into_parts();
+            let params = RawPathParams::from_request_parts(&mut parts, &())
+                .await
+                .expect("route layers run on matched routes");
+            let plugin_id = params
+                .iter()
+                .find_map(|(name, value)| (name == "plugin_id").then(|| value.to_string()))
+                .unwrap_or_default();
+            Response::new(Body::from(plugin_id))
+        }
+
+        let response = router
+            .route_layer(middleware::from_fn(echo_plugin_id))
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("routers are infallible");
+        if response.status() != StatusCode::OK {
+            return None;
+        }
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let plugin_id = String::from_utf8(body.to_vec()).expect("utf-8 plugin id");
+        (!plugin_id.is_empty()).then_some(plugin_id)
+    }
+
+    /// Whether every per-plugin route reads `id` as its plugin id.
+    async fn plugin_id_is_addressable(id: &str) -> bool {
+        let settings = [
+            ("GET", "/settings"),
+            ("PATCH", "/settings"),
+            ("DELETE", "/settings"),
+        ];
+        let plugin_requests = [("DELETE", ""), ("POST", "/restart")]
+            .into_iter()
+            .chain(settings)
+            .map(|request| (plugin_routes(), request));
+        let me_requests = settings
+            .into_iter()
+            .map(|request| (me_plugin_settings_routes(), request));
+        for (router, (method, suffix)) in plugin_requests.chain(me_requests) {
+            let routed = routed_plugin_id(router, method, &format!("/{id}{suffix}")).await;
+            if routed.as_deref() != Some(id) {
+                return false;
+            }
+        }
+        true
+    }
+
+    #[tokio::test]
+    async fn reserved_plugin_ids_are_the_ones_fixed_routes_shadow() {
+        for id in RESERVED_PLUGIN_IDS {
+            assert!(
+                !plugin_id_is_addressable(id).await,
+                "'{id}' reaches every plugin route, so it need not be reserved"
+            );
+        }
+        for id in ["demo", "restart", "plugins", "Update"] {
+            assert!(
+                plugin_id_is_addressable(id).await,
+                "'{id}' is shadowed by a fixed route but not reserved"
+            );
+        }
     }
 }

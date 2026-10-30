@@ -402,6 +402,7 @@ pub(crate) fn plugin_host() -> PluginHost {
             .collect(),
     )
     .expect("lyra is not a fixed manifest field")
+    .with_reserved_ids(crate::routes::RESERVED_PLUGIN_IDS.iter().copied())
 }
 
 /// What one plugin newly reaches once a candidate is installed.

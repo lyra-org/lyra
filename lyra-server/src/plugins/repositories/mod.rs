@@ -2843,6 +2843,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn plugins_with_reserved_ids_are_previewed_with_the_reason_and_fail_to_install()
+    -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        lyra_db::server::ensure(&mut *STATE.db.write().await)?;
+        let forge = catalog_forge_with_same(
+            manifest_json("same", "1.0.0", HOST_REQUIREMENT),
+            manifest_json("update", "2.0.0", HOST_REQUIREMENT),
+        )
+        .await?;
+        let reason = "invalid plugin id 'update': 'update' is reserved by lyra";
+
+        let plugins_dir = tempfile::TempDir::new()?;
+        let preview = build_preview(
+            &list(&forge.origin, None, &BuildInfo::default()).await?,
+            plugins_dir.path(),
+        );
+        let reserved = preview
+            .plugins
+            .iter()
+            .find(|plugin| plugin.id == "update")
+            .expect("listed under its id");
+        assert!(reserved.commit.is_none(), "{reserved:?}");
+        assert!(
+            reserved
+                .error
+                .as_deref()
+                .is_some_and(|error| error.ends_with(reason)),
+            "{reserved:?}"
+        );
+
+        let report = install_to_disk(
+            &forge.origin,
+            None,
+            Selection::All,
+            &BuildInfo::default(),
+            plugins_dir.path(),
+        )
+        .await?;
+        let installed: Vec<_> = report.installed.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(installed, ["same"]);
+        let [failed] = &report.failed[..] else {
+            panic!("expected one failure: {report:?}");
+        };
+        assert_eq!(failed.id, "update");
+        assert!(failed.error.ends_with(reason), "{failed:?}");
+        assert!(!plugins_dir.path().join("update").exists());
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn release_problems_read_the_same_in_previews_status_and_updates() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         crate::plugins::testing::init_default_test_state()?;

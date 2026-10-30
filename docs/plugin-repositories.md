@@ -29,6 +29,12 @@ Every plugin directory contains a `plugin.json`:
 }
 ```
 
+`id` names the plugin and its installed directory. It uses ASCII letters,
+digits, `_`, and `-`, and must not be `self` or one of the fixed segments of
+the plugin API: `settings`, `resolve`, `install`, `update`, `reload`, and
+`repositories`. A plugin with a reserved id fails to load, and previews list
+it with the reason.
+
 `version` is the plugin's own [semantic version](https://semver.org/).
 `lyra` is a Cargo-style version requirement on the server: a bare version
 is a caret requirement, so `"0.0.1"` accepts only 0.0.1 and `"0.3"` accepts

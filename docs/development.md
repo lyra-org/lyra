@@ -10,7 +10,11 @@ Before submitting changes, run the lint check used by CI and the server tests:
 ```bash
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked -p lyra-server
+cargo test --locked -p lyra-server --features docgen
 ```
+
+The `docgen` run adds the tests that check routes against the generated OpenAPI
+document, such as the reserved plugin ids.
 
 To run Clippy with the image’s build dependencies:
 
