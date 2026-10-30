@@ -5,6 +5,10 @@ Install [rustup](https://rustup.rs/) before working from a checkout. Cargo uses
 Local builds also require FFmpeg 8 development libraries, Clang, pkg-config, and
 C/C++ build tools; the [Dockerfile](../Dockerfile) records the Linux build dependencies.
 
+Plugin test traces are stored with [Git LFS](https://git-lfs.com/). Run `git lfs install` once
+before cloning, or `git lfs pull` in a checkout made without it; otherwise the traces are pointer
+files and the plugin scenarios fail.
+
 Before submitting changes, run the lint check used by CI and the server tests:
 
 ```bash

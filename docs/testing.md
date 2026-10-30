@@ -33,6 +33,7 @@ plugins/<plugin>/tests/
   the narrow scope within it live in `lyra-harmony-test/parent-scopes/tests`. All three also run
   under `cargo test`.
 - Files starting with `_` are helpers for other tests and never run on their own.
+- `cache/` is stored with Git LFS; see [development](development.md).
 
 ## Running
 
