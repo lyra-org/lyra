@@ -2849,6 +2849,24 @@ pub trait FromCallFrame: Sized {
     fn from_call_frame(vm: &Vm, context: &CallContext) -> Result<Self>;
 }
 
+impl FromCallFrame for Vm {
+    fn from_call_frame(vm: &Vm, _context: &CallContext) -> Result<Self> {
+        Ok(vm.clone())
+    }
+}
+
+impl FromCallFrame for CallContext {
+    fn from_call_frame(_vm: &Vm, context: &CallContext) -> Result<Self> {
+        Ok(context.clone())
+    }
+}
+
+impl FromCallFrame for ChunkOrigin {
+    fn from_call_frame(_vm: &Vm, context: &CallContext) -> Result<Self> {
+        Ok(context.origin.clone())
+    }
+}
+
 pub struct CallFrame<'vm> {
     pub vm: &'vm Vm,
     pub thread: Thread,
