@@ -266,12 +266,19 @@ has changed since fails to install.
 Previews, and updates held for the scopes they reach, describe what the
 scopes reached let a plugin do, and which plugins' scopes each effect
 comes through: send data off the server, add endpoints or listen on the
-network, handle credentials, read or change personal data, either of the
-users it acts for or of every user, or change the shared library. A risk
-level summarises them: `high` for plugins that add endpoints, handle
-credentials, or can send data off the server and touch every user's
-personal data, `elevated` for plugins that can send data off the server
-and touch personal or library data, and `standard` otherwise. Filtering or
+network, sign users in and manage their sessions, read or change personal
+data, either of the users it acts for or of every user, or change the
+shared library. Each effect names its kind, the data it concerns by a
+stable id such as `listening_history`, and whose data it reaches, and
+carries a `description` in English generated from those, such as "Reads
+every user's listening history". A risk level summarises them: `high` for
+plugins that add endpoints, sign users in, or can send data off the server
+and touch every user's personal data, `elevated` for plugins that can send
+data off the server and touch personal or library data, and `standard`
+otherwise. `risk_reasons` lists, in English, what sets the level, such as
+"Can send every user's listening history off the server", or why nothing
+raises it. Descriptions and reasons are for display; clients act on the
+kinds, data ids and levels. Filtering or
 sorting the catalog by a user's favorites, listens or ratings needs the
 scope that gates that data. A preview counts a dependency both as installed and
 as the repository offers it, since installing them together replaces the

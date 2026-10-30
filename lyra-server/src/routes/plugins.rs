@@ -49,6 +49,8 @@ use crate::{
             Effect,
             PluginEffect,
             Risk,
+            RiskAssessment,
+            RiskReason,
             ScopeGain,
             Users,
         },
@@ -222,6 +224,10 @@ struct ScopeGainResponse {
     /// The plugin's risk once it reaches them, from everything it reaches
     /// then.
     risk: RiskResponse,
+    /// Why `risk` is what it is, in English for display, never to be parsed:
+    /// what the plugin could then do that sets the level, or why nothing
+    /// raises it.
+    risk_reasons: Vec<String>,
     /// What the newly reached scopes let the plugin do.
     effects: Vec<EffectResponse>,
     /// Scopes the plugin would newly reach.
@@ -472,6 +478,9 @@ struct PluginPreviewResponse {
 #[derive(Serialize)]
 struct PluginAccessResponse {
     risk: RiskResponse,
+    /// Why `risk` is what it is, in English for display, never to be parsed:
+    /// what the plugin can do that sets the level, or why nothing raises it.
+    risk_reasons: Vec<String>,
     effects: Vec<EffectResponse>,
     /// Each scope reached, with the plugins declaring it.
     scopes: Vec<ReachedScopeResponse>,
@@ -507,10 +516,10 @@ impl From<Risk> for RiskResponse {
 }
 
 /// `egress`: sends data off the server. `exposes`: adds endpoints to the
-/// server or listens on the network. `authority`: handles credentials and
-/// sign-in sessions. `reads_personal` and `writes_personal`: reads or
-/// changes the personal `data` of the `users` it names.
-/// `writes_library`: changes the shared library's `data`.
+/// server or listens on the network. `authority`: signs users in, checks
+/// their credentials and manages their sessions. `reads_personal` and
+/// `writes_personal`: reads or changes the personal `data` of the `users` it
+/// names. `writes_library`: changes the shared library's `data`.
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -523,13 +532,17 @@ enum EffectKind {
     WritesLibrary,
 }
 
+/// One thing a plugin can do. `kind`, `data` and `users` are the
+/// machine-readable truth; `description` says the same in English for
+/// display and is not to be parsed.
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
 struct EffectResponse {
     kind: EffectKind,
-    /// The data the effect concerns, for the kinds that name one.
+    /// The stable id of the data the effect concerns, for the kinds that
+    /// name one, such as `listening_history` or `record_labels`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    data: Option<String>,
+    data: Option<&'static str>,
     /// Whose personal data it reaches, for the personal kinds.
     #[serde(skip_serializing_if = "Option::is_none")]
     users: Option<UsersResponse>,
@@ -537,6 +550,9 @@ struct EffectResponse {
     /// dependencies.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     via: Vec<String>,
+    /// The effect as a sentence-case list item, such as "Reads every user's
+    /// listening history".
+    description: String,
 }
 
 /// `acting`: the users the plugin acts for. `all`: every user's, whoever
@@ -565,18 +581,19 @@ impl From<PluginEffect> for EffectResponse {
             Effect::Exposes => (EffectKind::Exposes, None, None),
             Effect::Authority => (EffectKind::Authority, None, None),
             Effect::ReadsPersonal(data, users) => {
-                (EffectKind::ReadsPersonal, Some(data), Some(users))
+                (EffectKind::ReadsPersonal, Some(data.id()), Some(users))
             }
             Effect::WritesPersonal(data, users) => {
-                (EffectKind::WritesPersonal, Some(data), Some(users))
+                (EffectKind::WritesPersonal, Some(data.id()), Some(users))
             }
-            Effect::WritesLibrary(data) => (EffectKind::WritesLibrary, Some(data), None),
+            Effect::WritesLibrary(data) => (EffectKind::WritesLibrary, Some(data.id()), None),
         };
         Self {
             kind,
-            data: data.map(ToString::to_string),
+            data,
             users: users.map(Into::into),
-            via: effect.via.into_iter().collect(),
+            via: effect.plugins().into_iter().map(Into::into).collect(),
+            description: effect.effect.description(),
         }
     }
 }
@@ -588,9 +605,19 @@ struct ReachedScopeResponse {
     via: Vec<String>,
 }
 
+fn risk_reasons(assessment: &RiskAssessment) -> Vec<String> {
+    assessment
+        .reasons
+        .iter()
+        .copied()
+        .map(RiskReason::description)
+        .collect()
+}
+
 fn plugin_access_response(access: repositories_service::PluginAccess) -> PluginAccessResponse {
     PluginAccessResponse {
-        risk: access.risk.into(),
+        risk: access.risk.risk.into(),
+        risk_reasons: risk_reasons(&access.risk),
         effects: access.effects.into_iter().map(Into::into).collect(),
         scopes: access
             .scopes
@@ -610,7 +637,8 @@ fn scope_gain_responses(gains: BTreeMap<String, ScopeGain>) -> Vec<ScopeGainResp
         .into_iter()
         .map(|(plugin, gain)| ScopeGainResponse {
             plugin,
-            risk: gain.risk.into(),
+            risk: gain.risk.risk.into(),
+            risk_reasons: risk_reasons(&gain.risk),
             effects: gain.effects.into_iter().map(Into::into).collect(),
             scopes: gain.growth.scopes.into_iter().collect(),
             unresolved_dependencies: gain.growth.unresolved.into_iter().collect(),
@@ -2185,10 +2213,12 @@ mod tests {
                 "gains": [{
                     "plugin": "scoped",
                     "risk": "standard",
+                    "risk_reasons": ["No listed effects that raise its risk"],
                     "effects": [{
                         "kind": "writes_library",
                         "data": "metadata",
                         "via": ["scoped"],
+                        "description": "Changes the library's metadata",
                     }],
                     "scopes": ["lyra.metadata"],
                     "unresolved_dependencies": [],
@@ -2611,7 +2641,22 @@ mod tests {
             (&"foo".into(), &"Foo".into(), &"Does foo".into())
         );
         assert_eq!(plugin["status"], "available");
-        assert_eq!(plugin["access"]["effects"][0]["kind"], "writes_library");
+        assert_eq!(
+            (&plugin["access"]["risk"], &plugin["access"]["risk_reasons"]),
+            (
+                &"standard".into(),
+                &serde_json::json!(["No listed effects that raise its risk"])
+            )
+        );
+        assert_eq!(
+            plugin["access"]["effects"][0],
+            serde_json::json!({
+                "kind": "writes_library",
+                "data": "metadata",
+                "via": ["foo"],
+                "description": "Changes the library's metadata",
+            })
+        );
 
         let Ok(Json(listed)) = list_plugin_repositories(headers.clone(), inc(&["plugins"])).await
         else {

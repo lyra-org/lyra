@@ -62,18 +62,36 @@ use crate::plugins::{
 /// library is not listed: every plugin may.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Effect {
-    /// Sends data off the server.
     Egress,
-    /// Adds endpoints to the server or listens on the network.
     Exposes,
-    /// Handles credentials and sign-in sessions.
     Authority,
-    /// Reads the named personal data of these users.
-    ReadsPersonal(&'static str, Users),
-    /// Changes the named personal data of these users.
-    WritesPersonal(&'static str, Users),
-    /// Changes the named data of the shared library.
-    WritesLibrary(&'static str),
+    ReadsPersonal(PersonalKind, Users),
+    WritesPersonal(PersonalKind, Users),
+    WritesLibrary(LibraryKind),
+}
+
+impl Effect {
+    /// The effect as a list item for admins, in English.
+    pub(crate) fn description(self) -> String {
+        match self {
+            Self::Egress => "Sends data off the server".into(),
+            Self::Exposes => "Adds endpoints to the server or listens on the network".into(),
+            Self::Authority => {
+                "Signs users in to Lyra, checks their credentials and manages their sessions".into()
+            }
+            Self::ReadsPersonal(data, Users::Acting) => {
+                format!("Reads the {} of the users it acts for", data.noun())
+            }
+            Self::ReadsPersonal(data, Users::All) => format!("Reads every user's {}", data.noun()),
+            Self::WritesPersonal(data, Users::Acting) => {
+                format!("Changes the {} of the users it acts for", data.noun())
+            }
+            Self::WritesPersonal(data, Users::All) => {
+                format!("Changes every user's {}", data.noun())
+            }
+            Self::WritesLibrary(data) => format!("Changes the library's {}", data.noun()),
+        }
+    }
 }
 
 /// Whose personal data an effect reaches.
@@ -83,6 +101,62 @@ pub(crate) enum Users {
     Acting,
     /// Every user's, whoever the plugin acts for.
     All,
+}
+
+/// Declares a kind of data an effect names, each variant with a stable id
+/// and the noun phrase descriptions use.
+macro_rules! data_kinds {
+    ($(#[$meta:meta])* $kind:ident { $($variant:ident => ($id:literal, $noun:literal)),+ $(,)? }) => {
+        $(#[$meta])*
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+        pub(crate) enum $kind {
+            $($variant),+
+        }
+
+        impl $kind {
+            #[cfg(test)]
+            pub(crate) const ALL: &[$kind] = &[$($kind::$variant),+];
+
+            pub(crate) fn id(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $id),+
+                }
+            }
+
+            pub(crate) fn noun(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $noun),+
+                }
+            }
+        }
+    };
+}
+
+data_kinds! {
+    /// Data each user keeps apart from the shared library.
+    PersonalKind {
+        Favorites => ("favorites", "favorites"),
+        ListeningHistory => ("listening_history", "listening history"),
+        RecentListens => ("recent_listens", "recent listens"),
+        Playlists => ("playlists", "playlists"),
+        Ratings => ("ratings", "ratings"),
+        Tags => ("tags", "tags"),
+        Lyrics => ("personal_lyrics", "personal lyrics"),
+        PlaybackActivity => ("playback_activity", "playback activity"),
+        PlaybackSessions => ("playback_sessions", "playback sessions"),
+        AccountDetails => ("account_details", "account details"),
+    }
+}
+
+data_kinds! {
+    /// Data of the shared library.
+    LibraryKind {
+        Genres => ("genres", "genres"),
+        RecordLabels => ("record_labels", "record labels"),
+        Lyrics => ("lyrics", "lyrics"),
+        Metadata => ("metadata", "metadata"),
+        TrackChains => ("track_chains", "track chains"),
+    }
 }
 
 pub(crate) struct ScopeDef {
@@ -101,7 +175,7 @@ macro_rules! scopes {
             effects: $effects:expr $(,)?
         }
     ),+ $(,)?) => {
-        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
         pub(crate) enum Scope {
             $($scope),+
         }
@@ -197,14 +271,14 @@ scopes! {
         id: "lyra.favorites",
         module: favorites::FavoritesModule::module_spec,
         effects: &[
-            Effect::ReadsPersonal("favorites", Users::Acting),
-            Effect::WritesPersonal("favorites", Users::Acting),
+            Effect::ReadsPersonal(PersonalKind::Favorites, Users::Acting),
+            Effect::WritesPersonal(PersonalKind::Favorites, Users::Acting),
         ],
     },
     Genres => {
         id: "lyra.genres",
         module: genres::GenresModule::module_spec,
-        effects: &[Effect::WritesLibrary("genres")],
+        effects: &[Effect::WritesLibrary(LibraryKind::Genres)],
     },
     Ids => {
         id: "lyra.ids",
@@ -219,7 +293,7 @@ scopes! {
     Labels => {
         id: "lyra.labels",
         module: labels::LabelsModule::module_spec,
-        effects: &[Effect::WritesLibrary("record labels")],
+        effects: &[Effect::WritesLibrary(LibraryKind::RecordLabels)],
     },
     Libraries => {
         id: "lyra.libraries",
@@ -230,8 +304,8 @@ scopes! {
         id: "lyra.listens",
         module: listens::ListensModule::module_spec,
         effects: &[
-            Effect::ReadsPersonal("listening history", Users::All),
-            Effect::WritesPersonal("listening history", Users::Acting),
+            Effect::ReadsPersonal(PersonalKind::ListeningHistory, Users::All),
+            Effect::WritesPersonal(PersonalKind::ListeningHistory, Users::Acting),
         ],
     },
     Locale => {
@@ -243,28 +317,28 @@ scopes! {
         id: "lyra.lyrics",
         module: lyrics::LyricsModule::module_spec,
         effects: &[
-            Effect::ReadsPersonal("lyrics", Users::Acting),
-            Effect::WritesPersonal("lyrics", Users::All),
-            Effect::WritesLibrary("lyrics"),
+            Effect::ReadsPersonal(PersonalKind::Lyrics, Users::Acting),
+            Effect::WritesPersonal(PersonalKind::Lyrics, Users::All),
+            Effect::WritesLibrary(LibraryKind::Lyrics),
         ],
     },
     Metadata => {
         id: "lyra.metadata",
         module: metadata::MetadataModule::module_spec,
-        effects: &[Effect::WritesLibrary("metadata")],
+        effects: &[Effect::WritesLibrary(LibraryKind::Metadata)],
     },
     Mix => {
         id: "lyra.mix",
         module: mix::MixModule::module_spec,
-        effects: &[Effect::ReadsPersonal("recent listens", Users::Acting)],
+        effects: &[Effect::ReadsPersonal(PersonalKind::RecentListens, Users::Acting)],
     },
     PlaybackSessions => {
         id: "lyra.playback_sessions",
         module: playback_sessions::PlaybackSessionsModule::module_spec,
         effects: &[
-            Effect::ReadsPersonal("what is playing", Users::All),
-            Effect::WritesPersonal("playback on their devices", Users::Acting),
-            Effect::WritesPersonal("listening history", Users::Acting),
+            Effect::ReadsPersonal(PersonalKind::PlaybackActivity, Users::All),
+            Effect::WritesPersonal(PersonalKind::PlaybackSessions, Users::Acting),
+            Effect::WritesPersonal(PersonalKind::ListeningHistory, Users::Acting),
         ],
     },
     PlaybackSources => {
@@ -276,8 +350,8 @@ scopes! {
         id: "lyra.playlists",
         module: playlists::PlaylistsModule::module_spec,
         effects: &[
-            Effect::ReadsPersonal("playlists", Users::Acting),
-            Effect::WritesPersonal("playlists", Users::Acting),
+            Effect::ReadsPersonal(PersonalKind::Playlists, Users::Acting),
+            Effect::WritesPersonal(PersonalKind::Playlists, Users::Acting),
         ],
     },
     Plugins => {
@@ -289,14 +363,14 @@ scopes! {
         id: "lyra.ratings",
         module: ratings::RatingsModule::module_spec,
         effects: &[
-            Effect::ReadsPersonal("ratings", Users::Acting),
-            Effect::WritesPersonal("ratings", Users::Acting),
+            Effect::ReadsPersonal(PersonalKind::Ratings, Users::Acting),
+            Effect::WritesPersonal(PersonalKind::Ratings, Users::Acting),
         ],
     },
     Releases => {
         id: "lyra.releases",
         module: releases::ReleasesModule::module_spec,
-        effects: &[Effect::WritesLibrary("track chains")],
+        effects: &[Effect::WritesLibrary(LibraryKind::TrackChains)],
     },
     Server => {
         id: "lyra.server",
@@ -307,8 +381,8 @@ scopes! {
         id: "lyra.tags",
         module: tags::TagsModule::module_spec,
         effects: &[
-            Effect::ReadsPersonal("tags", Users::Acting),
-            Effect::WritesPersonal("tags", Users::Acting),
+            Effect::ReadsPersonal(PersonalKind::Tags, Users::Acting),
+            Effect::WritesPersonal(PersonalKind::Tags, Users::Acting),
         ],
     },
     TrackSources => {
@@ -324,7 +398,7 @@ scopes! {
     Users => {
         id: "lyra.users",
         module: users::UsersModule::module_spec,
-        effects: &[Effect::ReadsPersonal("user accounts", Users::All)],
+        effects: &[Effect::ReadsPersonal(PersonalKind::AccountDetails, Users::All)],
     },
 }
 
@@ -338,42 +412,145 @@ impl Scope {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Risk {
     Standard,
-    /// Can send data off the server and touch personal or library data.
     Elevated,
-    /// Adds endpoints, handles credentials, or can send data off the server
-    /// and touch every user's personal data.
     High,
 }
 
-impl Risk {
-    pub(crate) fn of<'a>(effects: impl IntoIterator<Item = &'a Effect>) -> Self {
-        let mut egress = false;
-        let mut touches_data = false;
-        let mut touches_all_users = false;
-        for effect in effects {
-            match effect {
-                Effect::Exposes | Effect::Authority => return Self::High,
-                Effect::Egress => egress = true,
-                Effect::ReadsPersonal(_, users) | Effect::WritesPersonal(_, users) => {
-                    touches_data = true;
-                    touches_all_users |= *users == Users::All;
-                }
-                Effect::WritesLibrary(_) => touches_data = true,
-            }
+/// Why a plugin has the risk it has.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum RiskReason {
+    /// It lists no effects at all.
+    NoEffects,
+    /// None of the effects it lists raises its risk.
+    NoRaisingEffects,
+    Exposes,
+    Authority,
+    /// It can send data off the server and read this personal data.
+    SendsPersonal(PersonalKind, Users),
+    /// It can send data off the server and change this personal data.
+    ChangesPersonal(PersonalKind, Users),
+    /// It can send data off the server and change this library data.
+    ChangesLibrary(LibraryKind),
+}
+
+impl RiskReason {
+    fn risk(self) -> Risk {
+        match self {
+            Self::NoEffects | Self::NoRaisingEffects => Risk::Standard,
+            Self::Exposes
+            | Self::Authority
+            | Self::SendsPersonal(_, Users::All)
+            | Self::ChangesPersonal(_, Users::All) => Risk::High,
+            Self::SendsPersonal(_, Users::Acting)
+            | Self::ChangesPersonal(_, Users::Acting)
+            | Self::ChangesLibrary(_) => Risk::Elevated,
         }
-        match (egress, touches_all_users, touches_data) {
-            (true, true, _) => Self::High,
-            (true, false, true) => Self::Elevated,
-            _ => Self::Standard,
+    }
+
+    /// The reason as a list item for admins, in English.
+    pub(crate) fn description(self) -> String {
+        match self {
+            Self::NoEffects => "No listed effects beyond reading the shared library".into(),
+            Self::NoRaisingEffects => "No listed effects that raise its risk".into(),
+            Self::Exposes => "Can add endpoints to the server or listen on the network".into(),
+            Self::Authority => {
+                "Can sign users in to Lyra, check their credentials and manage their sessions"
+                    .into()
+            }
+            Self::SendsPersonal(data, Users::Acting) => format!(
+                "Can send the {} of the users it acts for off the server",
+                data.noun()
+            ),
+            Self::SendsPersonal(data, Users::All) => {
+                format!("Can send every user's {} off the server", data.noun())
+            }
+            Self::ChangesPersonal(data, Users::Acting) => format!(
+                "Can change the {} of the users it acts for and send data off the server",
+                data.noun()
+            ),
+            Self::ChangesPersonal(data, Users::All) => format!(
+                "Can change every user's {} and send data off the server",
+                data.noun()
+            ),
+            Self::ChangesLibrary(data) => format!(
+                "Can change the library's {} and send data off the server",
+                data.noun()
+            ),
         }
     }
 }
 
-/// One thing a plugin can do, and the plugins whose scopes let it.
+/// A plugin's risk, with the reasons that set it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RiskAssessment {
+    pub(crate) risk: Risk,
+    /// Every reason at `risk`, none below it.
+    pub(crate) reasons: Vec<RiskReason>,
+}
+
+impl RiskAssessment {
+    /// High for adding endpoints, handling sign-in, or sending data off the
+    /// server with every user's personal data; elevated for sending data off
+    /// the server with personal or library data; else standard.
+    pub(crate) fn of<'a>(effects: impl IntoIterator<Item = &'a Effect>) -> Self {
+        let effects: Vec<Effect> = effects.into_iter().copied().collect();
+        let egress = effects.contains(&Effect::Egress);
+        let mut reasons: Vec<RiskReason> = effects
+            .iter()
+            .filter_map(|effect| match *effect {
+                Effect::Egress => None,
+                Effect::Exposes => Some(RiskReason::Exposes),
+                Effect::Authority => Some(RiskReason::Authority),
+                Effect::ReadsPersonal(data, users) => {
+                    egress.then_some(RiskReason::SendsPersonal(data, users))
+                }
+                Effect::WritesPersonal(data, users) => {
+                    egress.then_some(RiskReason::ChangesPersonal(data, users))
+                }
+                Effect::WritesLibrary(data) => egress.then_some(RiskReason::ChangesLibrary(data)),
+            })
+            .collect();
+        let risk = reasons
+            .iter()
+            .map(|reason| reason.risk())
+            .max()
+            .unwrap_or(Risk::Standard);
+        reasons.retain(|reason| reason.risk() == risk);
+        if reasons.is_empty() {
+            reasons.push(if effects.is_empty() {
+                RiskReason::NoEffects
+            } else {
+                RiskReason::NoRaisingEffects
+            });
+        }
+        reasons.sort();
+        reasons.dedup();
+        Self { risk, reasons }
+    }
+}
+
+/// A plugin whose scope gives an effect.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct EffectSource {
+    pub(crate) plugin: String,
+    pub(crate) scope: Scope,
+}
+
+/// One thing a plugin can do, and the plugins and scopes that let it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PluginEffect {
     pub(crate) effect: Effect,
-    pub(crate) via: BTreeSet<String>,
+    pub(crate) via: BTreeSet<EffectSource>,
+}
+
+impl PluginEffect {
+    /// The plugins whose scopes give the effect.
+    pub(crate) fn plugins(&self) -> BTreeSet<&str> {
+        self.via
+            .iter()
+            .map(|source| source.plugin.as_str())
+            .collect()
+    }
 }
 
 /// The effects of `scopes`, each scope id paired with the plugins that
@@ -381,7 +558,7 @@ pub(crate) struct PluginEffect {
 pub(crate) fn effects_of<'a>(
     scopes: impl IntoIterator<Item = (&'a str, &'a BTreeSet<String>)>,
 ) -> Vec<PluginEffect> {
-    let mut merged: BTreeMap<Effect, BTreeSet<String>> = BTreeMap::new();
+    let mut merged: BTreeMap<Effect, BTreeSet<EffectSource>> = BTreeMap::new();
     for (id, via) in scopes {
         let Some(scope) = Scope::from_id(id) else {
             continue;
@@ -390,7 +567,10 @@ pub(crate) fn effects_of<'a>(
             merged
                 .entry(*effect)
                 .or_default()
-                .extend(via.iter().cloned());
+                .extend(via.iter().map(|plugin| EffectSource {
+                    plugin: plugin.clone(),
+                    scope,
+                }));
         }
     }
     merged
@@ -432,7 +612,7 @@ pub(crate) struct ScopeGain {
     pub(crate) effects: Vec<PluginEffect>,
     /// Its risk once the candidate is installed, from everything it
     /// reaches then.
-    pub(crate) risk: Risk,
+    pub(crate) risk: RiskAssessment,
 }
 
 /// What installing `candidate` among `plugins`, replacing the one with its
@@ -464,7 +644,7 @@ pub(crate) fn scope_gains<P: ScopedPlugin>(
                     .iter()
                     .map(|(scope, via)| (scope.as_str(), via)),
             );
-            let risk = Risk::of(all.iter().map(|effect| &effect.effect));
+            let risk = RiskAssessment::of(all.iter().map(|effect| &effect.effect));
             Some((
                 id,
                 ScopeGain {
@@ -486,7 +666,12 @@ mod tests {
 
     use super::{
         Effect,
+        EffectSource,
+        LibraryKind,
+        PersonalKind,
         Risk,
+        RiskAssessment,
+        RiskReason,
         Scope,
         Users,
         effects_of,
@@ -494,6 +679,18 @@ mod tests {
 
     fn via(ids: &[&str]) -> BTreeSet<String> {
         ids.iter().map(ToString::to_string).collect()
+    }
+
+    fn risk(effects: &[Effect]) -> Risk {
+        RiskAssessment::of(effects).risk
+    }
+
+    fn reasons(effects: &[Effect]) -> Vec<String> {
+        RiskAssessment::of(effects)
+            .reasons
+            .into_iter()
+            .map(RiskReason::description)
+            .collect()
     }
 
     #[test]
@@ -507,34 +704,240 @@ mod tests {
 
         assert_eq!(effects.len(), 2);
         assert_eq!(effects[0].effect, Effect::Egress);
-        assert_eq!(effects[0].via, via(&["helper", "plugin"]));
+        assert_eq!(
+            effects[0].via,
+            BTreeSet::from([
+                EffectSource {
+                    plugin: "helper".into(),
+                    scope: Scope::HarmonyNet,
+                },
+                EffectSource {
+                    plugin: "plugin".into(),
+                    scope: Scope::HarmonyHttp,
+                },
+            ])
+        );
+        assert_eq!(effects[0].plugins(), BTreeSet::from(["helper", "plugin"]));
         assert_eq!(effects[1].effect, Effect::Exposes);
-        assert_eq!(effects[1].via, via(&["helper"]));
+        assert_eq!(effects[1].plugins(), BTreeSet::from(["helper"]));
     }
 
     #[test]
     fn risk_rises_with_what_a_plugin_can_do() {
-        assert_eq!(Risk::of(&[Effect::Egress]), Risk::Standard);
+        let history = PersonalKind::ListeningHistory;
+        assert_eq!(risk(&[]), Risk::Standard);
+        assert_eq!(risk(&[Effect::Egress]), Risk::Standard);
         assert_eq!(
-            Risk::of(&[Effect::ReadsPersonal("listening history", Users::All)]),
+            risk(&[Effect::ReadsPersonal(history, Users::All)]),
             Risk::Standard
         );
         assert_eq!(
-            Risk::of(&[
+            risk(&[
                 Effect::Egress,
-                Effect::ReadsPersonal("listening history", Users::Acting)
+                Effect::ReadsPersonal(history, Users::Acting)
             ]),
             Risk::Elevated
         );
         assert_eq!(
-            Risk::of(&[
-                Effect::Egress,
-                Effect::ReadsPersonal("listening history", Users::All)
-            ]),
+            risk(&[Effect::Egress, Effect::WritesLibrary(LibraryKind::Genres)]),
+            Risk::Elevated
+        );
+        assert_eq!(
+            risk(&[Effect::Egress, Effect::ReadsPersonal(history, Users::All)]),
             Risk::High
         );
-        assert_eq!(Risk::of(&[Effect::Exposes]), Risk::High);
-        assert_eq!(Risk::of(&[Effect::Authority]), Risk::High);
+        assert_eq!(
+            risk(&[Effect::Egress, Effect::WritesPersonal(history, Users::All)]),
+            Risk::High
+        );
+        assert_eq!(risk(&[Effect::Exposes]), Risk::High);
+        assert_eq!(risk(&[Effect::Authority]), Risk::High);
+    }
+
+    #[test]
+    fn risk_reasons_are_the_ones_at_its_level() {
+        let history = PersonalKind::ListeningHistory;
+        assert_eq!(
+            reasons(&[]),
+            ["No listed effects beyond reading the shared library"]
+        );
+        assert_eq!(
+            reasons(&[Effect::Egress]),
+            ["No listed effects that raise its risk"]
+        );
+        assert_eq!(
+            reasons(&[Effect::ReadsPersonal(history, Users::All)]),
+            ["No listed effects that raise its risk"]
+        );
+        assert_eq!(
+            reasons(&[Effect::Exposes]),
+            ["Can add endpoints to the server or listen on the network"]
+        );
+        assert_eq!(
+            reasons(&[Effect::Authority]),
+            ["Can sign users in to Lyra, check their credentials and manage their sessions"]
+        );
+        assert_eq!(
+            reasons(&[
+                Effect::Egress,
+                Effect::ReadsPersonal(history, Users::Acting),
+                Effect::WritesPersonal(history, Users::Acting),
+                Effect::WritesLibrary(LibraryKind::TrackChains),
+            ]),
+            [
+                "Can send the listening history of the users it acts for off the server",
+                "Can change the listening history of the users it acts for and send data off \
+                 the server",
+                "Can change the library's track chains and send data off the server",
+            ]
+        );
+        assert_eq!(
+            reasons(&[
+                Effect::Egress,
+                Effect::Exposes,
+                Effect::ReadsPersonal(history, Users::All),
+                Effect::WritesPersonal(PersonalKind::Lyrics, Users::All),
+                Effect::ReadsPersonal(PersonalKind::Favorites, Users::Acting),
+            ]),
+            [
+                "Can add endpoints to the server or listen on the network",
+                "Can send every user's listening history off the server",
+                "Can change every user's personal lyrics and send data off the server",
+            ],
+            "only the reasons at the plugin's level explain it"
+        );
+    }
+
+    #[test]
+    fn every_scope_describes_its_effects() {
+        let described: Vec<(&str, Vec<String>)> = Scope::ALL
+            .iter()
+            .map(|scope| scope.def())
+            .filter(|def| !def.effects.is_empty())
+            .map(|def| {
+                (
+                    def.id,
+                    def.effects
+                        .iter()
+                        .map(|effect| effect.description())
+                        .collect(),
+                )
+            })
+            .collect();
+        let expected: &[(&str, &[&str])] = &[
+            ("harmony.http", &["Sends data off the server"]),
+            (
+                "harmony.net",
+                &[
+                    "Sends data off the server",
+                    "Adds endpoints to the server or listens on the network",
+                ],
+            ),
+            (
+                "lyra.api",
+                &["Adds endpoints to the server or listens on the network"],
+            ),
+            (
+                "lyra.auth",
+                &["Signs users in to Lyra, checks their credentials and manages their sessions"],
+            ),
+            (
+                "lyra.favorites",
+                &[
+                    "Reads the favorites of the users it acts for",
+                    "Changes the favorites of the users it acts for",
+                ],
+            ),
+            ("lyra.genres", &["Changes the library's genres"]),
+            ("lyra.labels", &["Changes the library's record labels"]),
+            (
+                "lyra.listens",
+                &[
+                    "Reads every user's listening history",
+                    "Changes the listening history of the users it acts for",
+                ],
+            ),
+            (
+                "lyra.lyrics",
+                &[
+                    "Reads the personal lyrics of the users it acts for",
+                    "Changes every user's personal lyrics",
+                    "Changes the library's lyrics",
+                ],
+            ),
+            ("lyra.metadata", &["Changes the library's metadata"]),
+            (
+                "lyra.mix",
+                &["Reads the recent listens of the users it acts for"],
+            ),
+            (
+                "lyra.playback_sessions",
+                &[
+                    "Reads every user's playback activity",
+                    "Changes the playback sessions of the users it acts for",
+                    "Changes the listening history of the users it acts for",
+                ],
+            ),
+            (
+                "lyra.playlists",
+                &[
+                    "Reads the playlists of the users it acts for",
+                    "Changes the playlists of the users it acts for",
+                ],
+            ),
+            (
+                "lyra.ratings",
+                &[
+                    "Reads the ratings of the users it acts for",
+                    "Changes the ratings of the users it acts for",
+                ],
+            ),
+            ("lyra.releases", &["Changes the library's track chains"]),
+            (
+                "lyra.tags",
+                &[
+                    "Reads the tags of the users it acts for",
+                    "Changes the tags of the users it acts for",
+                ],
+            ),
+            ("lyra.users", &["Reads every user's account details"]),
+        ];
+        assert_eq!(
+            described,
+            expected
+                .iter()
+                .map(|(id, effects)| (*id, effects.iter().map(ToString::to_string).collect()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn data_kinds_have_stable_ids() {
+        let ids: Vec<&str> = PersonalKind::ALL
+            .iter()
+            .map(|kind| kind.id())
+            .chain(LibraryKind::ALL.iter().map(|kind| kind.id()))
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                "favorites",
+                "listening_history",
+                "recent_listens",
+                "playlists",
+                "ratings",
+                "tags",
+                "personal_lyrics",
+                "playback_activity",
+                "playback_sessions",
+                "account_details",
+                "genres",
+                "record_labels",
+                "lyrics",
+                "metadata",
+                "track_chains",
+            ]
+        );
     }
 
     #[test]

@@ -554,8 +554,8 @@ mod tests {
     use super::*;
     use crate::plugins::scopes::{
         Effect,
-        PluginEffect,
         Risk,
+        RiskAssessment,
     };
 
     fn dependencies(requirements: &[(&str, &str)]) -> BTreeMap<String, Dependency> {
@@ -646,7 +646,7 @@ mod tests {
         ScopeGain {
             growth,
             effects: Vec::new(),
-            risk: Risk::Standard,
+            risk: RiskAssessment::of(&[]),
         }
     }
 
@@ -926,17 +926,21 @@ mod tests {
         let Some(Hold::AddsScopes { gains }) = holds(&installed, &candidates).remove("a") else {
             panic!("a is held for its scopes");
         };
-        let egress = vec![PluginEffect {
-            effect: Effect::Egress,
-            via: ["a".to_string()].into(),
-        }];
+        let effects = |id: &str| {
+            gains[id]
+                .effects
+                .iter()
+                .map(|effect| (effect.effect, effect.plugins()))
+                .collect::<Vec<_>>()
+        };
+        let egress = vec![(Effect::Egress, ["a"].into())];
         assert_eq!(
-            (&gains["a"].effects, gains["a"].risk),
-            (&egress, Risk::Standard)
+            (effects("a"), gains["a"].risk.risk),
+            (egress.clone(), Risk::Standard)
         );
         assert_eq!(
-            (&gains["b"].effects, gains["b"].risk),
-            (&egress, Risk::Elevated),
+            (effects("b"), gains["b"].risk.risk),
+            (egress, Risk::Elevated),
             "b sends data off the server through a, and touches its favorites"
         );
     }

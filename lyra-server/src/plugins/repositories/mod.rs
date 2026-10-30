@@ -57,7 +57,7 @@ use tokio::sync::{
 
 use crate::plugins::scopes::{
     PluginEffect,
-    Risk,
+    RiskAssessment,
     ScopeGain,
     effects_of,
     scope_gains,
@@ -283,7 +283,7 @@ pub(crate) struct PluginAccess {
     /// Each scope it reaches, with the plugins that declare it.
     pub(crate) scopes: BTreeMap<String, BTreeSet<String>>,
     pub(crate) effects: Vec<PluginEffect>,
-    pub(crate) risk: Risk,
+    pub(crate) risk: RiskAssessment,
     /// Dependencies, direct or not, that are neither installed nor in the
     /// repository, so what they can do is unknown.
     pub(crate) unresolved: BTreeSet<String>,
@@ -317,7 +317,7 @@ fn plugin_access(
     let mut widens = scope_gains(installed, plugin);
     widens.remove(plugin.id());
     PluginAccess {
-        risk: Risk::of(effects.iter().map(|effect| &effect.effect)),
+        risk: RiskAssessment::of(effects.iter().map(|effect| &effect.effect)),
         effects,
         scopes: effective.scopes,
         unresolved: effective.unresolved,
@@ -2804,14 +2804,14 @@ mod tests {
             changed
                 .effects
                 .iter()
-                .map(|effect| (effect.effect, effect.via.clone()))
+                .map(|effect| (effect.effect, effect.plugins()))
                 .collect::<Vec<_>>(),
             [(
                 crate::plugins::scopes::Effect::Egress,
-                BTreeSet::from(["changed".to_string()])
+                BTreeSet::from(["changed"])
             )]
         );
-        assert_eq!(changed.risk, Risk::Standard);
+        assert_eq!(changed.risk.risk, crate::plugins::scopes::Risk::Standard);
         assert_eq!(
             changed
                 .widens
@@ -2858,8 +2858,8 @@ mod tests {
             .and_then(|plugin| plugin.access.clone())
             .expect("previewed with access");
         assert_eq!(
-            same.risk,
-            Risk::Elevated,
+            same.risk.risk,
+            crate::plugins::scopes::Risk::Elevated,
             "installing both gives the offered dependency's HTTP access: {:?}",
             same.effects
         );
