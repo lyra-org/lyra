@@ -740,15 +740,15 @@ async fn bind_tcp_listener(options: TcpBindOptions) -> luau::runtime::Result<Tcp
 
 fn udp_bind_options_from_luau(table: &luau::Table) -> luau::runtime::Result<UdpBindOptions> {
     Ok(UdpBindOptions {
-        address: required_string_field(table, "address")?,
+        address: table.required_string_field("address")?,
         port: required_u16_field(table, "port")?,
-        broadcast: optional_bool_field(table, "broadcast")?,
+        broadcast: table.optional_bool_field("broadcast")?,
     })
 }
 
 fn tcp_connect_options_from_luau(table: &luau::Table) -> luau::runtime::Result<TcpConnectOptions> {
     Ok(TcpConnectOptions {
-        host: required_string_field(table, "host")?,
+        host: table.required_string_field("host")?,
         port: required_u16_field(table, "port")?,
         timeout: optional_f64_field(table, "timeout")?,
     })
@@ -756,14 +756,14 @@ fn tcp_connect_options_from_luau(table: &luau::Table) -> luau::runtime::Result<T
 
 fn tcp_bind_options_from_luau(table: &luau::Table) -> luau::runtime::Result<TcpBindOptions> {
     Ok(TcpBindOptions {
-        address: required_string_field(table, "address")?,
+        address: table.required_string_field("address")?,
         port: required_u16_field(table, "port")?,
     })
 }
 
 fn socket_address_from_luau(table: &luau::Table) -> luau::runtime::Result<SocketAddress> {
     Ok(SocketAddress {
-        address: required_string_field(table, "address")?,
+        address: table.required_string_field("address")?,
         port: required_u16_field(table, "port")?,
     })
 }
@@ -773,18 +773,6 @@ fn socket_address_value(address: SocketAddress) -> luau::Value {
     table.set_field("address", address.address);
     table.set_field("port", luau::Value::Integer(address.port.into()));
     luau::Value::TableData(table)
-}
-
-fn required_string_field(
-    table: &luau::Table,
-    field: &'static str,
-) -> luau::runtime::Result<String> {
-    match table.get(field)? {
-        luau::Value::String(value) => String::from_utf8(value)
-            .map_err(|error| luau_runtime_error(format!("'{field}' must be valid UTF-8: {error}"))),
-        luau::Value::Nil => Err(luau_runtime_error(format!("missing '{field}' field"))),
-        other => Err(luau_field_type_error(field, "string", other.type_name())),
-    }
 }
 
 fn required_u16_field(table: &luau::Table, field: &'static str) -> luau::runtime::Result<u16> {
@@ -816,17 +804,6 @@ fn optional_f64_field(
         luau::Value::Integer(value) => Ok(Some(value as f64)),
         luau::Value::Number(value) => Ok(Some(value)),
         other => Err(luau_field_type_error(field, "number", other.type_name())),
-    }
-}
-
-fn optional_bool_field(
-    table: &luau::Table,
-    field: &'static str,
-) -> luau::runtime::Result<Option<bool>> {
-    match table.get(field)? {
-        luau::Value::Nil => Ok(None),
-        luau::Value::Boolean(value) => Ok(Some(value)),
-        other => Err(luau_field_type_error(field, "boolean", other.type_name())),
     }
 }
 
