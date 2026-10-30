@@ -75,7 +75,7 @@ impl PluginsModule {
 
     fn id(origin: &ChunkOrigin) -> luau::runtime::Result<String> {
         origin.plugin.as_deref().map(str::to_string).ok_or_else(|| {
-            luau::Error::Runtime("plugins.id must be called from plugin Lua code".to_string())
+            luau::Error::Runtime("plugins.id must be called from plugin Luau code".to_string())
         })
     }
 
@@ -83,7 +83,7 @@ impl PluginsModule {
     fn manifest(vm: &luau::Vm, origin: &ChunkOrigin) -> luau::runtime::Result<luau::OwnedTable> {
         let Some(plugin_id) = origin.plugin.as_deref() else {
             return Err(luau::Error::Runtime(
-                "plugins.manifest must be called from plugin Lua code".to_string(),
+                "plugins.manifest must be called from plugin Luau code".to_string(),
             ));
         };
         let manifests = vm.data().get::<PluginManifestModuleStore>()?;

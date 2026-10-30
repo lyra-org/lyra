@@ -337,7 +337,7 @@ fn settings_builder(stored_values: HashMap<String, serde_json::Value>) -> Settin
 fn current_plugin_id(context: &luau::CallContext) -> luau::runtime::Result<PluginId> {
     let Some(plugin_id) = context.origin.plugin.as_ref() else {
         return Err(luau::Error::Runtime(
-            "plugins.* must be called from plugin Lua code".to_string(),
+            "plugins.* must be called from plugin Luau code".to_string(),
         ));
     };
     PluginId::new(plugin_id.clone()).map_err(crate::plugins::runtime_error)
