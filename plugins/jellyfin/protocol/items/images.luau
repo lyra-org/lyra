@@ -5,11 +5,12 @@
 -- www.meshiplaw.com/lyra.
 
 local covers = require("@lyra/covers")
+local entities = require("@lyra/entities")
+local genres = require("@lyra/genres")
 
 local identifiers = require("./identifiers")
+local playlist_access = require("../playlist_access")
 local requests = require("./requests")
-
-type RawCoverInfo = covers.CoverInfo
 
 export type ResolvedCoverInfo = {
 	path: string,
@@ -21,8 +22,8 @@ export type ResolvedCoverInfo = {
 
 local module = {}
 
-function module.normalize_cover_info(raw_cover: RawCoverInfo?): ResolvedCoverInfo?
-	if type(raw_cover) ~= "table" then
+function module.normalize_cover_info(raw_cover: covers.Cover?): ResolvedCoverInfo?
+	if raw_cover == nil then
 		return nil
 	end
 
@@ -41,19 +42,56 @@ function module.normalize_cover_info(raw_cover: RawCoverInfo?): ResolvedCoverInf
 	}
 end
 
+local function normalize_all(raw_covers: { [number]: covers.Cover }): { [number]: ResolvedCoverInfo }
+	local resolved: { [number]: ResolvedCoverInfo } = {}
+	for id, raw_cover in raw_covers do
+		resolved[id] = module.normalize_cover_info(raw_cover)
+	end
+	return resolved
+end
+
+-- The covers of the releases, artists and tracks the caller can see, keyed by db id.
+function module.get_cover_infos(item_ids: { number }): { [number]: ResolvedCoverInfo }
+	if #item_ids == 0 then
+		return {}
+	end
+	return normalize_all(covers.get(item_ids))
+end
+
+-- For anonymous requests to public artwork routes, which resolve covers without a caller, and
+-- for the covers of playlists and genres the caller can see. Image requests carry no credentials,
+-- so a playlist's or genre's cover is always the one the system picks from the instance's
+-- listens: the tag a listing advertises then names the image every request serves.
+function module.get_artwork_infos(item_ids: { number }): { [number]: ResolvedCoverInfo }
+	if #item_ids == 0 then
+		return {}
+	end
+	return normalize_all(covers.artwork(item_ids))
+end
+
 function module.get_cover_info(item_id: number?): ResolvedCoverInfo?
 	if item_id == nil or item_id <= 0 then
 		return nil
 	end
-	return module.normalize_cover_info(covers.get(item_id))
+	return module.get_cover_infos({ item_id })[item_id]
 end
 
--- For anonymous requests to public artwork routes, which resolve covers without a caller.
 function module.get_artwork_info(item_id: number?): ResolvedCoverInfo?
 	if item_id == nil or item_id <= 0 then
 		return nil
 	end
-	return module.normalize_cover_info(covers.artwork(item_id))
+	return module.get_artwork_infos({ item_id })[item_id]
+end
+
+-- Any item's cover, if the caller can see the item.
+function module.get_item_cover_info(item_id: number): ResolvedCoverInfo?
+	local element_type = entities.get_type(item_id)
+	if element_type == "Playlist" then
+		return if playlist_access.find(item_id) then module.get_artwork_info(item_id) else nil
+	elseif element_type == "Genre" then
+		return if genres.get({ item_id })[item_id] then module.get_artwork_info(item_id) else nil
+	end
+	return module.get_cover_info(item_id)
 end
 
 return module

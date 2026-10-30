@@ -95,7 +95,8 @@ library = "music"    # optional; the release and its tracks belong to the librar
 added = 400          # ctime
 artists = ["amy"]
 genres = ["rock"]
-cover = "cover.png"  # an image file, relative to the fixture
+cover = "cover.png"  # an image file, relative to the fixture, whose hash is the release key
+blurhash = "L00000fQfQfQ" # optional, the cover's blurhash
 
 [[tracks]]
 key = "s1"

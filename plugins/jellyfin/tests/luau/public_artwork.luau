@@ -25,8 +25,8 @@ local function status(id: number, api_key: string?): number
 end
 
 -- Artwork routes are public, as upstream: an anonymous request gets any item's image, even a
--- private playlist's collage the viewer's own reads can't see.
-assert(#covers.get_playlist_sources(ids.private) == 0)
+-- private playlist's cover the viewer's own reads can't see.
+assert(covers.get({ ids.private })[ids.private] == nil)
 assert(status(ids.private) == 200, `anonymous playlist image status {status(ids.private)}`)
 assert(status(ids.album) == 200, `anonymous release image status {status(ids.album)}`)
 

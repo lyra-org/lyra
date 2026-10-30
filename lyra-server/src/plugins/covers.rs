@@ -3,454 +3,143 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::{
-    HashMap,
-    HashSet,
-};
+#[cfg(feature = "docgen")]
+use std::collections::HashMap;
 
-use agdb::{
-    DbAny,
-    DbId,
-    QueryId,
-};
 use harmony_luau as luau;
 #[cfg(feature = "docgen")]
 use harmony_luau::{
     DescribeInterface,
     FieldDescriptor,
     InterfaceDescriptor,
+};
+use harmony_luau::{
     LuauType,
     LuauTypeInfo,
 };
 
-use crate::plugins::{
-    args::{
-        ResolveIdArg,
-        UniqueIds,
+use crate::{
+    plugins::{
+        args::UniqueIds,
+        db::{
+            SystemDb,
+            ViewerDb,
+        },
+        types::CoverInfo,
     },
-    db::{
-        SystemDb,
-        ViewerDb,
+    services::covers::{
+        display::Listens,
+        lookup,
     },
 };
-use crate::services::catalog::Viewer;
-use lyra_db::Cover;
-use lyra_db::DbAsync;
-
-enum CoverValidity {
-    Valid(Cover),
-    NotFound,
-    Unavailable,
-}
 
 pub(crate) struct CoversModule;
 
-#[cfg(feature = "docgen")]
-struct CoverInfo;
+/// The `options` argument.
+struct CoverOptions {
+    listens: Listens,
+}
 
-#[harmony_macros::module(id = "lyra/covers", docs_feature = "docgen")]
+impl<'vm> luau::FromLuau<'vm> for CoverOptions {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let options: luau::Table = reader.read()?;
+        let listens = match options.get("listens")? {
+            luau::Value::Nil => Listens::Viewer,
+            luau::Value::String(value) if value == b"caller" => Listens::Viewer,
+            luau::Value::String(value) if value == b"instance" => Listens::Instance,
+            other => {
+                return Err(crate::plugins::runtime_error(format!(
+                    "listens must be \"caller\" or \"instance\", got {}",
+                    other.type_name()
+                )));
+            }
+        };
+        Ok(Self { listens })
+    }
+}
+
+impl LuauTypeInfo for CoverOptions {
+    fn luau_type() -> LuauType {
+        LuauType::named("CoverOptions")
+    }
+}
+
+#[harmony_macros::module(
+    id = "lyra/covers",
+    description = "Item covers, read from disk by plugins that serve the image themselves. Releases and artists have their own cover, a track shows its release's, and a playlist or genre shows the cover of one release in it: a playlist's is picked deterministically from its tracks' releases, a genre's from listens when they are enough, else deterministically. A cover whose file is gone is left out and forgotten.",
+    docs_feature = "docgen"
+)]
 impl CoversModule {
     #[harmony(
-        description = "Returns an item's own cover, or for a track without one, its release's cover. Scoped to the caller's libraries and visible playlists; a client dispatch without a resolved credential is refused.",
-        returns(Option<CoverInfo>)
+        description = "The covers of the items the caller can see, keyed by id. Items without a cover, unknown ids and items of other types are absent. A playlist or genre shows a release the caller can see. Without a resolved caller, a client dispatch is refused.",
+        returns(HashMap<u64, CoverInfo>)
     )]
-    async fn get(id: ResolveIdArg, #[context] db: ViewerDb) -> luau::runtime::Result<luau::Value> {
-        cover(&db, id).await
-    }
-
-    #[harmony(
-        description = "`get` for several ids, keyed by db id. Scoped to the caller's libraries and visible playlists; a client dispatch without a resolved credential is refused.",
-        returns(HashMap<u64, Option<CoverInfo>>)
-    )]
-    async fn get_many(
+    async fn get(
         ids: UniqueIds,
+        options: Option<CoverOptions>,
         #[context] db: ViewerDb,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        covers(&db, ids).await
+        let listens = options.map_or(Listens::Viewer, |options| options.listens);
+        covers(&db, &ids, listens).await
     }
 
     #[harmony(
-        description = "Returns up to four release covers that make up a playlist's collage, in display order. Unknown or non-playlist ids yield an empty array. Scoped to the caller's libraries and visible playlists; a client dispatch without a resolved credential is refused.",
-        returns(Vec<CoverInfo>)
-    )]
-    async fn get_playlist_sources(
-        id: ResolveIdArg,
-        #[context] db: ViewerDb,
-    ) -> luau::runtime::Result<luau::OwnedTable> {
-        playlist_sources(&db, id).await
-    }
-
-    #[harmony(
-        description = "Returns the collage covers of several playlists keyed by playlist db id. Scoped to the caller's libraries and visible playlists; a client dispatch without a resolved credential is refused.",
-        returns(HashMap<u64, Vec<CoverInfo>>)
-    )]
-    async fn get_playlist_sources_many(
-        ids: UniqueIds,
-        #[context] db: ViewerDb,
-    ) -> luau::runtime::Result<luau::OwnedTable> {
-        let playlist_ids = ids.0;
-        let (resolved, stale_owners) = {
-            let (db_read, viewer) = db.read().await?;
-            let mut stale_owners = Vec::new();
-            let mut resolved = Vec::with_capacity(playlist_ids.len());
-            for playlist_id in &playlist_ids {
-                let sources =
-                    resolve_playlist_sources(&db_read, &viewer, *playlist_id, &mut stale_owners)?;
-                resolved.push((*playlist_id, sources));
-            }
-            (resolved, stale_owners)
-        };
-
-        if !stale_owners.is_empty() {
-            remove_still_stale_covers(db.handle(), stale_owners).await?;
-        }
-
-        let table = luau::OwnedTable::from_entries(
-            resolved
-                .into_iter()
-                .map(|(playlist_id, sources)| (playlist_id.0, sources_to_table(sources))),
-        );
-
-        Ok(table)
-    }
-
-    #[harmony(
-        description = "`get` read as the system. Ignores library and playlist visibility, including private playlists, so it is only for public artwork routes, which must serve nothing from it but the image bytes.",
-        returns(Option<CoverInfo>)
+        description = "`get` read as the system, with genre covers picked from the instance's listens whatever `options` says. Ignores library and playlist visibility, including private playlists, so it is only for public artwork routes, which must serve nothing from it but the image bytes.",
+        returns(HashMap<u64, CoverInfo>)
     )]
     async fn artwork(
-        id: ResolveIdArg,
-        #[context] db: SystemDb,
-    ) -> luau::runtime::Result<luau::Value> {
-        cover(&db, id).await
-    }
-
-    #[harmony(
-        description = "`get_many` read as the system. Ignores library and playlist visibility, including private playlists, so it is only for public artwork routes, which must serve nothing from it but the image bytes.",
-        returns(HashMap<u64, Option<CoverInfo>>)
-    )]
-    async fn artwork_many(
         ids: UniqueIds,
+        _options: Option<CoverOptions>,
         #[context] db: SystemDb,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        covers(&db, ids).await
-    }
-
-    #[harmony(
-        description = "`get_playlist_sources` read as the system. Ignores library and playlist visibility, including private playlists, so it is only for public artwork routes, which must serve nothing from it but the image bytes.",
-        returns(Vec<CoverInfo>)
-    )]
-    async fn artwork_playlist_sources(
-        id: ResolveIdArg,
-        #[context] db: SystemDb,
-    ) -> luau::runtime::Result<luau::OwnedTable> {
-        playlist_sources(&db, id).await
+        covers(&db, &ids, Listens::Instance).await
     }
 }
 
-async fn cover(db: &ViewerDb, id: ResolveIdArg) -> luau::runtime::Result<luau::Value> {
-    let id = id.0;
-    let (resolved_cover, stale_owners) = {
-        let (db_read, viewer) = db.read().await?;
-        let Some(QueryId::Id(item_id)) = id.to_query_id(&db_read)? else {
-            return Ok(luau::Value::Nil);
-        };
-        if !viewer.sees(&db_read, item_id)? {
-            return Ok(luau::Value::Nil);
-        }
-        let mut stale_owners = Vec::new();
-        let result = resolve_persisted_cover(&db_read, item_id, &mut stale_owners)?;
-        (result, stale_owners)
-    };
-
-    if !stale_owners.is_empty() {
-        remove_still_stale_covers(db.handle(), stale_owners).await?;
-    }
-
-    let Some((owner_id, cover)) = resolved_cover else {
-        return Ok(luau::Value::Nil);
-    };
-    Ok(cover_to_table(owner_id, cover).into())
-}
-
-async fn covers(db: &ViewerDb, ids: UniqueIds) -> luau::runtime::Result<luau::OwnedTable> {
-    let item_ids = ids.0;
-    let (resolved, stale_owners) = {
-        let (db_read, viewer) = db.read().await?;
-        let mut visible_ids = Vec::with_capacity(item_ids.len());
-        for item_id in &item_ids {
-            if viewer.sees(&db_read, *item_id)? {
-                visible_ids.push(*item_id);
-            }
-        }
-        let mut stale_owners = Vec::new();
-        let result = resolve_persisted_covers(&db_read, &visible_ids, &mut stale_owners)?;
-        (result, stale_owners)
-    };
-
-    if !stale_owners.is_empty() {
-        remove_still_stale_covers(db.handle(), stale_owners).await?;
-    }
-
-    let mut table = luau::OwnedTable::with_entry_capacity(0, 0, item_ids.len());
-    for item_id in item_ids {
-        let value = resolved
-            .get(&item_id)
-            .cloned()
-            .map(|(owner_id, cover)| luau::Value::TableData(cover_to_table(owner_id, cover)))
-            .unwrap_or(luau::Value::Nil);
-        table.set_key(item_id.0, value);
-    }
-
-    Ok(table)
-}
-
-async fn playlist_sources(
+async fn covers(
     db: &ViewerDb,
-    id: ResolveIdArg,
+    ids: &UniqueIds,
+    listens: Listens,
 ) -> luau::runtime::Result<luau::OwnedTable> {
-    let id = id.0;
-    let (sources, stale_owners) = {
-        let (db_read, viewer) = db.read().await?;
-        let Some(QueryId::Id(playlist_id)) = id.to_query_id(&db_read)? else {
-            return Ok(luau::OwnedTable::with_capacity(0, 0));
-        };
-        let mut stale_owners = Vec::new();
-        let result = resolve_playlist_sources(&db_read, &viewer, playlist_id, &mut stale_owners)?;
-        (result, stale_owners)
+    let found = {
+        let (db, viewer) = db.read().await?;
+        lookup::resolve(&db, &viewer, &ids.0, listens)?
     };
-
-    if !stale_owners.is_empty() {
-        remove_still_stale_covers(db.handle(), stale_owners).await?;
+    if !found.stale_owners.is_empty() {
+        let handle = db.handle();
+        let mut db = handle.write().await;
+        lookup::remove_stale(&mut db, &found.stale_owners)?;
     }
 
-    Ok(sources_to_table(sources))
-}
-
-const PLAYLIST_SOURCE_LIMIT: usize = 4;
-
-/// The first valid covers of a playlist's collage sources the viewer can see, in display order.
-fn resolve_playlist_sources(
-    db: &DbAny,
-    viewer: &Viewer,
-    playlist_id: DbId,
-    stale_owners: &mut Vec<DbId>,
-) -> anyhow::Result<Vec<(DbId, Cover)>> {
-    let mut sources = Vec::new();
-    if !viewer.sees_playlist(db, playlist_id)? {
-        return Ok(sources);
+    let mut table = luau::OwnedTable::with_entry_capacity(0, 0, found.covers.len());
+    for (id, cover) in found.covers {
+        table.set_key(
+            id.0,
+            harmony_luau::serializable_to_luau_owned(CoverInfo::from(cover))?,
+        );
     }
-    for (_, release_id) in lyra_db::covers::display::playlist_cover_sources(db, playlist_id)? {
-        if !viewer.sees_entity(db, release_id)? {
-            continue;
-        }
-        if let Some(source) = resolve_persisted_cover(db, release_id, stale_owners)? {
-            sources.push(source);
-            if sources.len() == PLAYLIST_SOURCE_LIMIT {
-                break;
-            }
-        }
-    }
-    Ok(sources)
-}
-
-fn sources_to_table(sources: Vec<(DbId, Cover)>) -> luau::OwnedTable {
-    luau::OwnedTable::from_array(
-        sources
-            .into_iter()
-            .map(|(owner_id, cover)| cover_to_table(owner_id, cover)),
-    )
-}
-
-fn check_cover_validity(cover: Cover) -> CoverValidity {
-    match std::fs::metadata(&cover.path) {
-        Ok(meta) if meta.is_file() => CoverValidity::Valid(cover),
-        Ok(_) => CoverValidity::NotFound,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => CoverValidity::NotFound,
-        Err(_) => CoverValidity::Unavailable,
-    }
-}
-
-fn resolve_persisted_cover(
-    db: &DbAny,
-    item_id: DbId,
-    stale_owners: &mut Vec<DbId>,
-) -> anyhow::Result<Option<(DbId, Cover)>> {
-    let resolved = resolve_persisted_covers(db, &[item_id], stale_owners)?;
-    Ok(resolved.into_values().next())
-}
-
-fn resolve_persisted_covers(
-    db: &DbAny,
-    item_ids: &[DbId],
-    stale_owners: &mut Vec<DbId>,
-) -> anyhow::Result<HashMap<DbId, (DbId, Cover)>> {
-    let mut unique_ids = Vec::new();
-    let mut seen = HashSet::new();
-    for item_id in item_ids {
-        if item_id.0 <= 0 {
-            continue;
-        }
-        if seen.insert(*item_id) {
-            if lyra_db::entities::get_element_type(db, *item_id)?.is_none() {
-                continue;
-            }
-            unique_ids.push(*item_id);
-        }
-    }
-
-    let direct_covers = lyra_db::covers::get_many(db, &unique_ids)?;
-
-    let mut resolved = HashMap::new();
-    let mut unresolved = Vec::new();
-    for item_id in unique_ids {
-        if let Some(cover) = direct_covers.get(&item_id) {
-            match check_cover_validity(cover.clone()) {
-                CoverValidity::Valid(valid) => {
-                    resolved.insert(item_id, (item_id, valid));
-                    continue;
-                }
-                CoverValidity::NotFound => stale_owners.push(item_id),
-                CoverValidity::Unavailable => {}
-            }
-        }
-        unresolved.push(item_id);
-    }
-
-    if unresolved.is_empty() {
-        return Ok(resolved);
-    }
-
-    let track_releases = lyra_db::releases::get_by_tracks(db, &unresolved)?;
-    let mut release_ids = Vec::new();
-    let mut seen_release_ids = HashSet::new();
-    for related_releases in track_releases.values() {
-        for release in related_releases {
-            let Some(release_id) = release.db_id.clone().map(Into::<DbId>::into) else {
-                continue;
-            };
-            if seen_release_ids.insert(release_id) {
-                release_ids.push(release_id);
-            }
-        }
-    }
-
-    let covers_by_release = lyra_db::covers::get_many(db, &release_ids)?;
-
-    for item_id in unresolved {
-        let Some(mut releases) = track_releases.get(&item_id).cloned() else {
-            continue;
-        };
-        releases
-            .sort_by_key(|release| release.db_id.clone().map(Into::<DbId>::into).map(|id| id.0));
-
-        for release in releases {
-            let Some(release_id) = release.db_id.clone().map(Into::<DbId>::into) else {
-                continue;
-            };
-            let Some(cover) = covers_by_release.get(&release_id) else {
-                continue;
-            };
-            match check_cover_validity(cover.clone()) {
-                CoverValidity::Valid(valid) => {
-                    resolved.insert(item_id, (release_id, valid));
-                    break;
-                }
-                CoverValidity::NotFound => stale_owners.push(release_id),
-                CoverValidity::Unavailable => {}
-            }
-        }
-    }
-
-    Ok(resolved)
-}
-
-async fn remove_still_stale_covers(
-    db: DbAsync,
-    stale_owners: Vec<DbId>,
-) -> luau::runtime::Result<()> {
-    let mut seen = HashSet::new();
-    let mut db_write = db.write().await;
-    for owner_id in stale_owners {
-        if !seen.insert(owner_id) {
-            continue;
-        }
-        let Ok(Some(cover)) = lyra_db::covers::get(&*db_write, owner_id) else {
-            continue;
-        };
-        if matches!(check_cover_validity(cover), CoverValidity::NotFound) {
-            let _ = lyra_db::covers::remove(&mut *db_write, owner_id);
-        }
-    }
-    Ok(())
-}
-
-fn cover_to_table(owner_db_id: DbId, cover: Cover) -> luau::OwnedTable {
-    let mut table = luau::OwnedTable::with_capacity(0, 5);
-    table.set_field("path", cover.path);
-    table.set_field("mime_type", cover.mime_type);
-    table.set_field("hash", cover.hash);
-    table.set_field(
-        "blurhash",
-        cover
-            .blurhash
-            .map(|value| luau::Value::String(value.into_bytes()))
-            .unwrap_or(luau::Value::Nil),
-    );
-    table.set_field("release_id", owner_db_id.0);
-    table
-}
-
-#[cfg(feature = "docgen")]
-impl LuauTypeInfo for CoverInfo {
-    fn luau_type() -> LuauType {
-        LuauType::named("CoverInfo")
-    }
-}
-
-#[cfg(feature = "docgen")]
-impl DescribeInterface for CoverInfo {
-    fn interface_descriptor() -> InterfaceDescriptor {
-        let mut descriptor = InterfaceDescriptor::new("CoverInfo", None);
-        descriptor.fields.extend([
-            FieldDescriptor {
-                name: "path",
-                ty: String::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "mime_type",
-                ty: String::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "hash",
-                ty: String::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "blurhash",
-                ty: Option::<String>::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "release_id",
-                ty: i64::luau_type(),
-                description: None,
-            },
-        ]);
-        descriptor
-    }
+    Ok(table)
 }
 
 #[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     use harmony_luau::DescribeModule;
 
+    let mut options = InterfaceDescriptor::new("CoverOptions", None);
+    options.fields.push(FieldDescriptor {
+        name: "listens",
+        ty: LuauType::optional(LuauType::union(vec![
+            LuauType::string_literal("caller"),
+            LuauType::string_literal("instance"),
+        ])),
+        description: Some(
+            "Whose listens pick a genre's cover: the caller's first, then the instance's (`caller`, the default), or only the instance's (`instance`), so every caller sees the same cover.",
+        ),
+    });
     harmony_luau::render_definition_file_with_support(
         &CoversModule::module_descriptor(),
         &[],
-        &[CoverInfo::interface_descriptor()],
+        &[options, CoverInfo::interface_descriptor()],
         &[],
     )
 }

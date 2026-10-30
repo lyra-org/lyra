@@ -1,0 +1,118 @@
+run_as = "listener"
+
+# Rock holds "Shown", which the listener can see, and "Secret", which they can't. Other users'
+# listens make Secret the instance's pick for Rock, and the public "Mix" holds both.
+
+[[users]]
+key = "owner"
+admin = true
+
+[[users]]
+key = "listener"
+
+[[api_keys]]
+key = "phone"
+user = "listener"
+
+[[users]]
+key = "bob"
+
+[[users]]
+key = "carol"
+
+[[users]]
+key = "dave"
+
+[[libraries]]
+key = "granted"
+name = "Granted"
+users = ["listener"]
+
+[[libraries]]
+key = "withheld"
+name = "Withheld"
+
+[[genres]]
+key = "rock"
+name = "Rock"
+
+[[releases]]
+key = "shown"
+title = "Shown"
+library = "granted"
+genres = ["rock"]
+cover = "cover.png"
+blurhash = "L00000fQfQfQ"
+
+[[releases]]
+key = "secret"
+title = "Secret"
+library = "withheld"
+genres = ["rock"]
+cover = "hidden_cover.png"
+blurhash = "L11111fQfQfQ"
+
+[[tracks]]
+key = "visible"
+title = "Visible"
+release = "shown"
+
+[[tracks]]
+key = "hidden"
+title = "Hidden"
+release = "secret"
+
+[[playlists]]
+key = "mix"
+owner = "owner"
+name = "Mix"
+public = true
+tracks = ["hidden", "visible"]
+
+[[listens]]
+user = "bob"
+track = "hidden"
+
+[[listens]]
+user = "bob"
+track = "hidden"
+
+[[listens]]
+user = "bob"
+track = "hidden"
+
+[[listens]]
+user = "bob"
+track = "hidden"
+
+[[listens]]
+user = "carol"
+track = "hidden"
+
+[[listens]]
+user = "carol"
+track = "hidden"
+
+[[listens]]
+user = "carol"
+track = "hidden"
+
+[[listens]]
+user = "carol"
+track = "hidden"
+
+[[listens]]
+user = "dave"
+track = "hidden"
+
+[[listens]]
+user = "dave"
+track = "hidden"
+
+[[listens]]
+user = "dave"
+track = "hidden"
+
+[[listens]]
+user = "dave"
+track = "hidden"

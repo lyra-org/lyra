@@ -6,12 +6,9 @@
 
 local api = require("@lyra/api")
 local artists_module = require("@lyra/artists")
-local covers = require("@lyra/covers")
 local entities = require("@lyra/entities")
 local favorites = require("@lyra/favorites")
 local genres = require("@lyra/genres")
-local ids_module = require("@lyra/ids")
-local images = require("@lyra/images")
 local listens = require("@lyra/listens")
 local lyrics = require("@lyra/lyrics")
 local playback_sources = require("@lyra/playback_sources")
@@ -163,7 +160,7 @@ type ItemContext = {
 	cover_prefetch_artist_ids: { [number]: boolean }?,
 	library_hex_id: string?,
 	library_hex_id_by_entity_id: { [number]: string }?,
-	playlist_cover_sources_by_playlist_id: { [number]: { covers.CoverInfo } }?,
+	cover_info_by_playlist_id: { [number]: artwork.ResolvedCoverInfo }?,
 	item_provider_ids: provider_ids.ItemProviderIds?,
 	runtime_ticks_by_playlist_id: { [number]: number }?,
 }
@@ -190,128 +187,6 @@ export type ItemInfo = item_types.SerializableItemInfo & {
 	_raw: ItemRaw?,
 	_child_count: number?,
 }
-
--- FNV-1a hash for deterministic index selection.
-local FNV_OFFSET_BASIS = 0x811c9dc5
-local FNV_PRIME = 0x01000193
-
-function helpers.fnv1a_hash(input: string): number
-	local hash = FNV_OFFSET_BASIS
-	for i = 1, #input do
-		hash = bit32.bxor(hash, string.byte(input, i))
-		hash = bit32.band(hash * FNV_PRIME, 0xFFFFFFFF)
-	end
-	return hash
-end
-
-function helpers.deterministic_pick(sorted_ids: { number }, seed: string, count: number): { number }
-	local n = #sorted_ids
-	if n == 0 then
-		return {}
-	end
-	if n <= count then
-		return sorted_ids
-	end
-
-	local hash = helpers.fnv1a_hash(seed)
-	local picked: { number } = {}
-	local used: { [number]: boolean } = {}
-	for attempt = 0, count - 1 do
-		local probe = bit32.bxor(hash, attempt * FNV_PRIME)
-		probe = bit32.band(probe * FNV_PRIME, 0xFFFFFFFF)
-		local index = (probe % n) + 1
-		-- Linear probe on collision.
-		local start = index
-		while used[index] do
-			index = (index % n) + 1
-			if index == start then
-				break
-			end
-		end
-		if not used[index] then
-			used[index] = true
-			table.insert(picked, sorted_ids[index])
-		end
-	end
-	return picked
-end
-
-function helpers.deterministic_image_tag(picked_ids: { number }, seed: string): string
-	local hash = helpers.fnv1a_hash(seed)
-	for _, id in picked_ids do
-		hash = bit32.bxor(hash, id * FNV_PRIME)
-		hash = bit32.band(hash * FNV_PRIME, 0xFFFFFFFF)
-	end
-	return string.format("%08x", hash)
-end
-
-function helpers.cover_sources_image_tag(sources: { covers.CoverInfo }): string?
-	if #sources == 0 then
-		return nil
-	end
-	local hashes: { string } = {}
-	for _, source in sources do
-		table.insert(hashes, source.hash)
-	end
-	return string.format("%08x", helpers.fnv1a_hash(table.concat(hashes, ":")))
-end
-
-function helpers.compose_cover_from_ids(item_ids: { number }, seed: string): artwork.ResolvedCoverInfo?
-	if #item_ids == 0 then
-		return nil
-	end
-
-	table.sort(item_ids)
-	local picked = helpers.deterministic_pick(item_ids, seed, 4)
-	local cover_map = covers.artwork_many(picked)
-
-	local cover_infos: { covers.CoverInfo } = {}
-	for _, id in picked do
-		local raw_cover = cover_map[id]
-		if raw_cover then
-			table.insert(cover_infos, raw_cover)
-		end
-	end
-	return helpers.compose_covers(cover_infos)
-end
-
--- Collage the given covers in order, falling back to the first one alone.
-function helpers.compose_covers(cover_infos: { covers.CoverInfo }): artwork.ResolvedCoverInfo?
-	local source_paths: { string } = {}
-	local first_cover: artwork.ResolvedCoverInfo? = nil
-	for _, raw_cover in cover_infos do
-		local resolved = artwork.normalize_cover_info(raw_cover)
-		if resolved then
-			if not first_cover then
-				first_cover = resolved
-			end
-			table.insert(source_paths, resolved.path)
-		end
-	end
-
-	if #source_paths > 1 then
-		local compose_ok, raw_result = pcall(
-			images.compose,
-			{
-				sources = source_paths,
-				width = 600,
-				height = 600,
-			} :: images.ComposeOptions
-		)
-		if compose_ok and raw_result then
-			local result = raw_result :: images.ComposeResult
-			return {
-				path = result.path,
-				mime_type = result.mime_type or "image/jpeg",
-				hash = result.hash,
-				blurhash = nil,
-				release_id = nil,
-			} :: artwork.ResolvedCoverInfo
-		end
-	end
-
-	return first_cover
-end
 
 local module = {}
 
@@ -1195,7 +1070,7 @@ function helpers.to_genre_item(
 	genre_id: string?,
 	counts: GenreCounts?,
 	library_hex_id: string?,
-	image_tag: string?
+	cover_info: artwork.ResolvedCoverInfo?
 ): ItemInfo?
 	local safe_name = requests.trim(genre_name)
 	if not safe_name or not genre_id then
@@ -1218,8 +1093,8 @@ function helpers.to_genre_item(
 		SongCount = if counts then counts.song_count else nil,
 		ChildCount = if counts then counts.release_count + counts.song_count else nil,
 		UserData = user_data.get_user_data({ key = `MusicGenre-{safe_name}`, item_hex_id = hex_id }),
-		ImageTags = if image_tag then { Primary = image_tag } else nil,
-		ImageBlurHashes = nil,
+		ImageTags = if cover_info then { Primary = cover_info.hash } else nil,
+		ImageBlurHashes = helpers.default_image_blur_hashes(cover_info),
 		LocationType = "FileSystem",
 		MediaType = "Unknown",
 	}
@@ -1333,13 +1208,11 @@ function helpers.to_playlist_item(
 	local playlist_name = requests.trim(playlist.name) or "Untitled Playlist"
 	local playlist_item_id = item_ids.encode_jellyfin_item_id(playlist.id)
 
-	local image_tag: string? = nil
+	local cover_info: artwork.ResolvedCoverInfo? = nil
 	if include_images then
-		local prefetched = if context and context.playlist_cover_sources_by_playlist_id
-			then context.playlist_cover_sources_by_playlist_id[playlist.db_id]
-			else nil
-		local sources = prefetched or covers.get_playlist_sources(playlist.db_id)
-		image_tag = helpers.cover_sources_image_tag(sources)
+		cover_info = if context and context.cover_info_by_playlist_id
+			then context.cover_info_by_playlist_id[playlist.db_id]
+			else artwork.get_artwork_info(playlist.db_id)
 	end
 
 	local item: ItemInfo = {
@@ -1354,8 +1227,8 @@ function helpers.to_playlist_item(
 			playlist.db_id
 		) or enrichment.playlist_runtime_ticks({ playlist.db_id })[playlist.db_id],
 		DateCreated = helpers.unix_to_iso8601(playlist.created_at),
-		ImageTags = if image_tag then { Primary = image_tag } else nil,
-		ImageBlurHashes = nil,
+		ImageTags = if cover_info then { Primary = cover_info.hash } else nil,
+		ImageBlurHashes = helpers.default_image_blur_hashes(cover_info),
 		UserData = helpers.build_item_user_data(
 			playlist.db_id,
 			playlist_item_id,
@@ -1951,20 +1824,11 @@ function helpers.prefetch_release_covers(context: ItemContext, seed: Realization
 	for _, release_id: number in seed.release_ids do
 		table.insert(cover_release_ids, release_id)
 	end
-	local raw_covers = covers.get_many(cover_release_ids)
-	local cover_lookup: { [number]: artwork.ResolvedCoverInfo } = {}
 	local prefetch_set: { [number]: boolean } = {}
 	for _, release_id: number in cover_release_ids do
 		prefetch_set[release_id] = true
-		local raw = raw_covers[release_id]
-		if type(raw) == "table" then
-			local info = artwork.normalize_cover_info(raw)
-			if info then
-				cover_lookup[release_id] = info
-			end
-		end
 	end
-	context.cover_info_by_release_id = cover_lookup
+	context.cover_info_by_release_id = artwork.get_cover_infos(cover_release_ids)
 	context.cover_prefetch_release_ids = prefetch_set
 end
 
@@ -1973,20 +1837,11 @@ function helpers.prefetch_artist_covers(context: ItemContext, seed: RealizationS
 		return
 	end
 
-	local raw_covers = covers.get_many(seed.artist_ids)
-	local cover_lookup: { [number]: artwork.ResolvedCoverInfo } = {}
 	local prefetch_set: { [number]: boolean } = {}
 	for _, artist_id: number in seed.artist_ids do
 		prefetch_set[artist_id] = true
-		local raw = raw_covers[artist_id]
-		if type(raw) == "table" then
-			local resolved = artwork.normalize_cover_info(raw)
-			if resolved then
-				cover_lookup[artist_id] = resolved
-			end
-		end
 	end
-	context.cover_info_by_artist_id = cover_lookup
+	context.cover_info_by_artist_id = artwork.get_cover_infos(seed.artist_ids)
 	context.cover_prefetch_artist_ids = prefetch_set
 end
 
@@ -2150,12 +2005,12 @@ function helpers.prefetch_track_lyrics(context: ItemContext, seed: RealizationSe
 	context.has_lyrics_prefetch = true
 end
 
-function helpers.prefetch_playlist_cover_sources(context: ItemContext, seed: RealizationSeedInfo): ()
+function helpers.prefetch_playlist_covers(context: ItemContext, seed: RealizationSeedInfo): ()
 	if #seed.playlist_db_ids == 0 or not helpers.should_include_images(context) then
 		return
 	end
 
-	context.playlist_cover_sources_by_playlist_id = covers.get_playlist_sources_many(seed.playlist_db_ids)
+	context.cover_info_by_playlist_id = artwork.get_artwork_infos(seed.playlist_db_ids)
 end
 
 function helpers.prefetch_playlist_runtimes(context: ItemContext, seed: RealizationSeedInfo): ()
@@ -2219,7 +2074,7 @@ function helpers.build_realization_context(stubs: { ItemInfo }, options: ItemsQu
 	helpers.prefetch_artist_people_relations(context, seed)
 	helpers.prefetch_track_stats_and_media(context, seed, options)
 	helpers.prefetch_track_lyrics(context, seed)
-	helpers.prefetch_playlist_cover_sources(context, seed)
+	helpers.prefetch_playlist_covers(context, seed)
 	helpers.prefetch_playlist_runtimes(context, seed)
 	helpers.prefetch_item_tags(context, seed, options)
 
@@ -2268,69 +2123,17 @@ function helpers.realize_stubs(stubs: { ItemInfo }, options: ItemsQueryOptions):
 	return items
 end
 
--- Resolve a composed cover image for a genre by its db_id.
--- Used by the image endpoint to serve genre covers on demand.
-function module.resolve_genre_cover(genre_db_id: number): artwork.ResolvedCoverInfo?
-	local release_ids = genres.artwork_release_ids(genre_db_id)
-	if #release_ids == 0 then
-		return nil
-	end
-
-	local genre_nanoid = ids_module.get_id(genre_db_id)
-	if not genre_nanoid then
-		return nil
-	end
-
-	return helpers.compose_cover_from_ids(release_ids, genre_nanoid)
-end
-
-function module.resolve_genre_cover_by_name(name: string): artwork.ResolvedCoverInfo?
-	local genre_info = genres.find_by_name(name)
-	if not genre_info or not genre_info.db_id then
-		return nil
-	end
-	return module.resolve_genre_cover(genre_info.db_id)
-end
-
--- Composed from the playlist's ranked cover sources, as the caller sees them when `as_caller`,
--- and otherwise without one, for anonymous requests to public artwork routes.
-function module.resolve_playlist_cover(playlist_db_id: number, as_caller: boolean): artwork.ResolvedCoverInfo?
-	local sources = if as_caller
-		then covers.get_playlist_sources(playlist_db_id)
-		else covers.artwork_playlist_sources(playlist_db_id)
-	return helpers.compose_covers(sources)
-end
-
 -- Artwork routes are public, so this resolves names without a caller; it only ever leads to
 -- image bytes. People are artists, so it serves both.
 function module.find_artist_db_id_by_name(name: string): number?
 	return artists_module.artwork_id_by_name(name)
 end
 
--- Image tags for genres, keyed by db id, for those whose cover `resolve_genre_cover` will serve:
--- it composes the covers of the same picked releases, so a genre has one when any of them does.
-function module.genre_image_tags(public_ids: { [number]: string }): { [number]: string }
-	local picks: { [number]: { number } } = {}
-	local all_picked: { number } = {}
-	for genre_db_id, public_id in public_ids do
-		local release_ids = table.clone(genres.artwork_release_ids(genre_db_id))
-		table.sort(release_ids)
-		local picked = helpers.deterministic_pick(release_ids, public_id, 4)
-		picks[genre_db_id] = picked
-		table.move(picked, 1, #picked, #all_picked + 1, all_picked)
-	end
-	local cover_map = if #all_picked > 0 then covers.artwork_many(all_picked) else {}
-
-	local tags: { [number]: string } = {}
-	for genre_db_id, picked in picks do
-		for _, release_id in picked do
-			if cover_map[release_id] then
-				tags[genre_db_id] = helpers.deterministic_image_tag(picked, public_ids[genre_db_id])
-				break
-			end
-		end
-	end
-	return tags
+-- Artwork routes are public, so this resolves names without a caller; it only ever leads to
+-- image bytes.
+function module.find_genre_db_id_by_name(name: string): number?
+	local genre_info = genres.find_by_name(name)
+	return if genre_info then genre_info.db_id else nil
 end
 
 module.realize = helpers.realize_stubs

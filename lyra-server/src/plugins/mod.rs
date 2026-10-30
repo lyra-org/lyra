@@ -29,7 +29,6 @@ pub(crate) mod executor;
 pub(crate) mod favorites;
 pub(crate) mod genres;
 pub(crate) mod ids;
-pub(crate) mod images;
 pub(crate) mod labels;
 pub(crate) mod libraries;
 pub(crate) mod lifecycle;

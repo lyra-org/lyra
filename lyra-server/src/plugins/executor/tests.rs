@@ -2039,68 +2039,6 @@ fn plugin_executor_exposes_lyra_editions_module() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn plugin_executor_drives_async_lyra_images_compose() -> Result<()> {
-    let _guard = crate::services::testing::runtime_test_lock().await;
-    let test_dir = std::env::temp_dir().join(format!(
-        "lyra-raw-images-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&test_dir)?;
-    crate::plugins::testing::init_library_test_state(test_dir.clone()).await?;
-    lyra_db::test_db::insert_library(
-        &mut *crate::services::STATE.db.write().await,
-        "Images",
-        &test_dir.to_string_lossy(),
-    )?;
-    let source_path = test_dir.join("source.png");
-    image::RgbImage::from_pixel(2, 2, image::Rgb([255, 0, 0])).save(&source_path)?;
-
-    let runtime = runtime_with_scopes(&["lyra.images"])?;
-    let source = source_path.to_string_lossy();
-    runtime.run_plugin_source(
-        "demo",
-        "init.luau",
-        format!(
-            r#"
-                local images = require("@lyra/images")
-                local result = images.compose({{
-                    sources = {{ "{source}" }},
-                    width = 2,
-                    height = 2,
-                    quality = 80,
-                }})
-
-                executor_image_path = result.path
-                executor_image_hash_len = #result.hash
-                executor_image_mime = result.mime_type
-            "#
-        )
-        .into_bytes(),
-    )?;
-
-    let values = runtime.eval_plugin_source(
-        "demo",
-        "check.luau",
-        &b"return type(executor_image_path), executor_image_hash_len, executor_image_mime"[..],
-    )?;
-    assert_eq!(
-        values,
-        vec![
-            luau::Value::String(b"string".to_vec()),
-            luau::Value::Number(64.0),
-            luau::Value::String(b"image/jpeg".to_vec()),
-        ]
-    );
-
-    let _ = std::fs::remove_file(source_path);
-    let _ = std::fs::remove_dir(test_dir);
-    Ok(())
-}
-
 #[test]
 fn plugin_executor_denies_undeclared_capability_before_cached_module_return() -> Result<()> {
     let runtime = PluginExecutor::with_manifests(Arc::from(vec![
@@ -2756,14 +2694,12 @@ fn cover_bindings_hide_inaccessible_releases() -> Result<()> {
             r#"
                 local covers = require("@lyra/covers")
                 local missing = 987654
-                local many = covers.get_many({{ {shown}, {hidden}, missing }})
-                return covers.get({shown}) ~= nil, covers.get({hidden}) == nil,
-                    many[{shown}] ~= nil, many[{hidden}] == nil,
-                    covers.get(missing) == nil, many[missing] == nil
+                local found = covers.get({{ {shown}, {hidden}, missing }})
+                return found[{shown}] ~= nil, found[{hidden}] == nil, found[missing] == nil
             "#
         ),
     )?;
-    assert_eq!(values, vec![luau::Value::Boolean(true); 6]);
+    assert_eq!(values, vec![luau::Value::Boolean(true); 3]);
     Ok(())
 }
 
@@ -2813,6 +2749,7 @@ fn cover_artwork_bindings_serve_anonymous_public_routes() -> Result<()> {
         owner,
     )?;
     database.transaction_mut(|t| lyra_db::playlists::add_track(t, playlist, track))?;
+    lyra_db::covers::display::sync_playlist_cover(&mut database, playlist)?;
 
     futures::executor::block_on(crate::plugins::api::initialize_registry(
         std::collections::HashSet::new(),
@@ -2834,11 +2771,9 @@ fn cover_artwork_bindings_serve_anonymous_public_routes() -> Result<()> {
                 local release = tonumber(ctx.params.release)
                 local playlist = tonumber(ctx.params.playlist)
                 return api.response.json(200, {
-                    cover = covers.artwork(release) ~= nil,
-                    many = covers.artwork_many({ release })[release] ~= nil,
-                    playlist_sources = #covers.artwork_playlist_sources(playlist),
-                    scoped = pcall(covers.get, release),
-                    scoped_playlist = pcall(covers.get_playlist_sources, playlist),
+                    cover = covers.artwork({ release })[release] ~= nil,
+                    playlist = covers.artwork({ playlist })[playlist].release_id == release,
+                    scoped = pcall(covers.get, { release, playlist }),
                 })
             end, "public")
         "#[..],
@@ -2862,10 +2797,8 @@ fn cover_artwork_bindings_serve_anonymous_public_routes() -> Result<()> {
         anyhow::bail!("expected JSON response body");
     };
     assert_eq!(body["cover"], true);
-    assert_eq!(body["many"], true);
-    assert_eq!(body["playlist_sources"], 1);
+    assert_eq!(body["playlist"], true);
     assert_eq!(body["scoped"], false);
-    assert_eq!(body["scoped_playlist"], false);
     Ok(())
 }
 

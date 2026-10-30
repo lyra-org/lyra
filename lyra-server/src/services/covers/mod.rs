@@ -5,6 +5,7 @@
 
 pub(crate) mod display;
 mod image;
+pub(crate) mod lookup;
 pub(crate) mod providers;
 mod resolve;
 mod sync;

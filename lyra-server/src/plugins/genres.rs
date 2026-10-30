@@ -27,7 +27,6 @@ use std::collections::HashMap;
 
 use crate::plugins::args::{
     self,
-    PositiveId,
     UniqueIds,
 };
 use crate::plugins::catalog;
@@ -186,28 +185,6 @@ impl GenresModule {
                 .collect())
         })
         .await
-    }
-
-    // Unscoped: public artwork routes compose a genre's cover without a caller.
-    #[harmony(
-        description = "The ids of the releases in this genre. Not scoped to any caller: it is only for composing the genre's artwork on public artwork routes, which must return nothing but image bytes.",
-        returns(Vec<i64>)
-    )]
-    async fn artwork_release_ids(
-        genre_id: PositiveId,
-        #[context] db: Db,
-    ) -> luau::runtime::Result<luau::Value> {
-        let genre_id = genre_id.0;
-        let db = db.read().await;
-        if lyra_db::genres::get_by_id(&*db, genre_id)?.is_none() {
-            return harmony_luau::serializable_to_luau_owned(Vec::<i64>::new());
-        }
-        let releases = lyra_db::genres::get_releases_many(&*db, &[genre_id])?
-            .remove(&genre_id)
-            .unwrap_or_default();
-        harmony_luau::serializable_to_luau_owned(
-            releases.into_iter().map(|id| id.0).collect::<Vec<_>>(),
-        )
     }
 
     #[harmony(

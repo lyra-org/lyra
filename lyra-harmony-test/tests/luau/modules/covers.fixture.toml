@@ -1,0 +1,96 @@
+run_as = "listener"
+
+# Rock holds two releases the listener can see and one they can't. The listener played B, and the
+# owner's private playlist and the public one both hold a hidden track.
+
+[[users]]
+key = "owner"
+admin = true
+
+[[users]]
+key = "listener"
+
+[[libraries]]
+key = "shown"
+name = "Shown"
+users = ["listener"]
+
+[[libraries]]
+key = "hidden"
+name = "Hidden"
+
+[[genres]]
+key = "rock"
+name = "Rock"
+
+[[releases]]
+key = "a"
+title = "A"
+library = "shown"
+genres = ["rock"]
+cover = "cover.png"
+blurhash = "L00000fQfQfQ"
+
+[[releases]]
+key = "b"
+title = "B"
+library = "shown"
+genres = ["rock"]
+cover = "cover.png"
+
+[[releases]]
+key = "secret"
+title = "Secret"
+library = "hidden"
+genres = ["rock"]
+cover = "cover.png"
+
+[[releases]]
+key = "bare"
+title = "Bare"
+library = "shown"
+
+[[tracks]]
+key = "ta"
+title = "TA"
+release = "a"
+
+[[tracks]]
+key = "tb"
+title = "TB"
+release = "b"
+
+[[tracks]]
+key = "tsecret"
+title = "TSecret"
+release = "secret"
+
+[[tracks]]
+key = "tbare"
+title = "TBare"
+release = "bare"
+
+[[playlists]]
+key = "shared"
+owner = "owner"
+name = "Shared"
+public = true
+tracks = ["tsecret", "ta"]
+
+[[playlists]]
+key = "private"
+owner = "owner"
+name = "Private"
+tracks = ["ta"]
+
+[[listens]]
+user = "listener"
+track = "tb"
+
+[[listens]]
+user = "listener"
+track = "tb"
+
+[[listens]]
+user = "listener"
+track = "tb"

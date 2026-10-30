@@ -54,7 +54,6 @@ use crate::plugins::{
     favorites,
     genres,
     ids,
-    images,
     labels,
     libraries,
     listens,
@@ -328,11 +327,6 @@ scopes! {
     Ids => {
         id: "lyra.ids",
         module: ids::IdsModule::module_spec,
-        effects: &[],
-    },
-    Images => {
-        id: "lyra.images",
-        module: images::ImagesModule::module_spec,
         effects: &[],
     },
     Labels => {
@@ -1347,15 +1341,7 @@ mod tests {
         ("lyra/chromaprint", &["compute(entry_id)"]),
         (
             "lyra/covers",
-            &[
-                "get(id)",
-                "get_many(ids)",
-                "get_playlist_sources(id)",
-                "get_playlist_sources_many(ids)",
-                "artwork(id)",
-                "artwork_many(ids)",
-                "artwork_playlist_sources(id)",
-            ],
+            &["get(ids, options)", "artwork(ids, options)"],
         ),
         (
             "lyra/datastore",
@@ -1411,7 +1397,6 @@ mod tests {
                 "add_parent(child_id, parent_id)",
                 "get(ids)",
                 "by_release(release_ids)",
-                "artwork_release_ids(genre_id)",
                 "find_by_name(name)",
             ],
         ),
@@ -1424,7 +1409,6 @@ mod tests {
                 "get_db_ids(ids)",
             ],
         ),
-        ("lyra/images", &["compose(options)"]),
         (
             "lyra/labels",
             &[

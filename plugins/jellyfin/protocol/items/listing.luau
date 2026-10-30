@@ -14,6 +14,7 @@ local playlists = require("@lyra/playlists")
 local releases = require("@lyra/releases")
 local tracks = require("@lyra/tracks")
 
+local artwork = require("./images")
 local catalog = require("./catalog")
 local constants = require("../../constants")
 local instant_mix = require("./instant_mix")
@@ -358,9 +359,10 @@ local function named_extras(options: ItemsQueryOptions, scope: Scope): { ItemInf
 	if options_module.wants_item_type(options, "musicgenre") then
 		local ids = item_ids.parse_jellyfin_ids_array(options.ids)
 		local found = genres.get(ids)
+		local cover_infos = artwork.get_artwork_infos(ids)
 		for _, id in ids do
 			local genre = found[id]
-			local item = if genre then catalog.genre_item(genre.name, genre.id, nil, nil, nil) else nil
+			local item = if genre then catalog.genre_item(genre.name, genre.id, nil, nil, cover_infos[id]) else nil
 			if item then
 				table.insert(extras, item)
 			end
@@ -590,13 +592,13 @@ function module.list_genre_items(options: ItemsQueryOptions): ({ ItemInfo }, num
 	end
 	local page = genres.query(built)
 
-	local public_ids: { [number]: string } = {}
+	local genre_ids: { number } = {}
 	for _, genre in page.items do
 		if genre.db_id then
-			public_ids[genre.db_id] = genre.id
+			table.insert(genre_ids, genre.db_id)
 		end
 	end
-	local image_tags = catalog.genre_image_tags(public_ids)
+	local cover_infos = artwork.get_artwork_infos(genre_ids)
 	local library_hex_id = catalog.library_hex_id_from_parent(options.parent_id)
 
 	local items: { ItemInfo } = {}
@@ -610,7 +612,7 @@ function module.list_genre_items(options: ItemsQueryOptions): ({ ItemInfo }, num
 			genre.id,
 			{ release_count = genre.release_count, song_count = genre.track_count },
 			library_hex_id,
-			image_tags[genre_id]
+			cover_infos[genre_id]
 		)
 		if item then
 			table.insert(items, item)

@@ -143,6 +143,8 @@ struct Release {
     genres: Vec<String>,
     /// An image file, relative to the fixture, stored as the release's cover.
     cover: Option<PathBuf>,
+    /// The cover's blurhash.
+    blurhash: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -561,6 +563,11 @@ impl Fixture {
             );
             supply_credits(&mut layer, &keys, &release.artists, &release.credits)?;
             save_local(db, release_db_id, layer)?;
+            anyhow::ensure!(
+                release.cover.is_some() || release.blurhash.is_none(),
+                "fixture release `{}` has a blurhash but no cover",
+                release.key
+            );
             if let Some(cover) = &release.cover {
                 let path = self.directory.join(cover);
                 anyhow::ensure!(
@@ -578,7 +585,7 @@ impl Fixture {
                             mime_type: services::covers::cover_mime_from_path(&path).into(),
                             path: path.to_string_lossy().into_owned(),
                             hash: release.key.clone(),
-                            blurhash: None,
+                            blurhash: release.blurhash.clone(),
                         },
                     )
                 })?;

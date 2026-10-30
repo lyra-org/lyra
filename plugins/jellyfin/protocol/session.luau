@@ -808,10 +808,9 @@ function module.handle_primary_image_request(ctx: ApiContext?): ApiResponse
 		return responses.not_found("image not found")
 	end
 	local signed_in = module.require_jellyfin_principal(ctx) ~= nil
-	local item_cover = if signed_in then artwork.get_cover_info(item_db_id) else artwork.get_artwork_info(item_db_id)
-	local cover_info = item_cover
-		or catalog.resolve_genre_cover(item_db_id)
-		or catalog.resolve_playlist_cover(item_db_id, signed_in)
+	local cover_info = if signed_in
+		then artwork.get_item_cover_info(item_db_id)
+		else artwork.get_artwork_info(item_db_id)
 	if not cover_info then
 		return responses.not_found("image not found")
 	end
@@ -862,7 +861,9 @@ function module.handle_person_image_request(ctx: ApiContext?): ApiResponse
 end
 
 function module.handle_genre_image_request(ctx: ApiContext?): ApiResponse
-	return serve_public_image_by_name(ctx, catalog.resolve_genre_cover_by_name)
+	return serve_public_image_by_name(ctx, function(name)
+		return artwork.get_artwork_info(catalog.find_genre_db_id_by_name(name))
+	end)
 end
 
 -- Whitelist of capability fields the plugin forwards to callers of

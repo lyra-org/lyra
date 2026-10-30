@@ -1,6 +1,6 @@
 run_as = "admin"
 
-# "Covered" (Rock) has a cover; "Bare" (Jazz) has none.
+# "Covered" (Rock) has a cover; "Bare" (Jazz) has none. "Mix" holds Covered's track.
 
 [[users]]
 key = "admin"
@@ -19,8 +19,20 @@ key = "covered"
 title = "Covered"
 genres = ["rock"]
 cover = "cover.png"
+blurhash = "L00000fQfQfQ"
 
 [[releases]]
 key = "bare"
 title = "Bare"
 genres = ["jazz"]
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "covered"
+
+[[playlists]]
+key = "mix"
+owner = "admin"
+name = "Mix"
+tracks = ["song"]

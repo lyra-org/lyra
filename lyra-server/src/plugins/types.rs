@@ -23,6 +23,7 @@ use harmony_luau::{
 
 use crate::services::{
     catalog::Viewer,
+    covers::ResolvedCover,
     entries::PlacedEntry,
 };
 
@@ -371,6 +372,67 @@ impl DescribeInterface for EntryInfo {
                 field("size", u64::luau_type(), None),
                 field("mtime", u64::luau_type(), None),
                 field("ctime", u64::luau_type(), None),
+            ],
+        }
+    }
+}
+
+/// [`crate::services::covers::ResolvedCover`] as plugins read it.
+#[derive(serde::Serialize)]
+pub(crate) struct CoverInfo {
+    path: String,
+    mime_type: String,
+    hash: String,
+    blurhash: Option<String>,
+    release_id: i64,
+}
+
+impl From<ResolvedCover> for CoverInfo {
+    fn from(resolved: ResolvedCover) -> Self {
+        let ResolvedCover { owner_db_id, cover } = resolved;
+        Self {
+            path: cover.path,
+            mime_type: cover.mime_type,
+            hash: cover.hash,
+            blurhash: cover.blurhash,
+            release_id: owner_db_id.0,
+        }
+    }
+}
+
+impl LuauTypeInfo for CoverInfo {
+    fn luau_type() -> LuauType {
+        LuauType::named("Cover")
+    }
+}
+
+#[cfg(feature = "docgen")]
+impl DescribeInterface for CoverInfo {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let field = |name, ty, description| FieldDescriptor {
+            name,
+            ty,
+            description,
+        };
+        InterfaceDescriptor {
+            name: "Cover",
+            description: Some("An item's cover image."),
+            fields: vec![
+                field("path", String::luau_type(), Some("The image file on disk.")),
+                field("mime_type", String::luau_type(), None),
+                field(
+                    "hash",
+                    String::luau_type(),
+                    Some("Changes whenever the image does."),
+                ),
+                field("blurhash", Option::<String>::luau_type(), None),
+                field(
+                    "release_id",
+                    LuauNodeId::luau_type(),
+                    Some(
+                        "The node the cover belongs to: the item itself, a track's release, or the release a playlist or genre shows.",
+                    ),
+                ),
             ],
         }
     }

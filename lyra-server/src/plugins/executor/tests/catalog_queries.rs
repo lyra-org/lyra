@@ -813,28 +813,21 @@ fn artwork_lookups_resolve_without_a_caller() -> Result<()> {
             r#"
                 local artists = require("@lyra/artists")
                 local genres = require("@lyra/genres")
-                local rock = assert(genres.find_by_name("ROCK")).db_id
-                local releases = genres.artwork_release_ids(rock)
                 return artists.artwork_id_by_name("AMY"),
                     artists.artwork_id_by_name("Nobody") == nil,
-                    #releases,
-                    releases[1],
-                    #genres.artwork_release_ids({amy}),
+                    assert(genres.find_by_name("ROCK")).name,
                     pcall(artists.query, {{}})
             "#,
-            amy = catalog.amy.0,
         )
         .into_bytes(),
         anonymous,
     )?;
     assert_eq!(
-        values[..6],
+        values[..4],
         [
             luau::Value::Number(catalog.amy.0 as f64),
             luau::Value::Boolean(true),
-            luau::Value::Number(1.0),
-            luau::Value::Number(catalog.album.0 as f64),
-            luau::Value::Number(0.0),
+            luau::Value::String(b"Rock".to_vec()),
             luau::Value::Boolean(false),
         ]
     );
