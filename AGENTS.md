@@ -17,8 +17,8 @@
 ## Backward Compatibility Policy
 - Current testers expect breaking changes. Optimize for one canonical current-state implementation.
 - Plugin compatibility is not guaranteed; all known plugins are maintained in this repository and updated alongside server changes.
-- Data migrations are not required; breaking existing stored data is acceptable.
-- Do not introduce compatibility bridges, migration shims, fallback paths, or dual behavior for old local states unless explicitly requested.
+- Databases from the previous release or from an earlier build of the current cycle must open: append a step to `STEPS` in `lyra-db/src/migration.rs` for any change to stored data, and never edit existing steps. Other databases are refused; add no other compatibility code for stored data.
+- Do not introduce compatibility bridges, migration shims, fallback paths, or dual behavior for old local states beyond `lyra-db/src/migration.rs` unless explicitly requested.
 - Prefer one canonical codepath, fail-fast diagnostics, and explicit recovery steps.
 
 ## Build, Test, and Development Commands

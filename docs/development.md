@@ -91,15 +91,46 @@ To release a version:
 1. Set the workspace version and every in-repository `lyra` to it, and bump `version` in each plugin whose files changed since the previous release.
 2. Commit, and tag that commit `v` followed by the version, such as `v0.0.2`.
 3. Add that commit to the top of `versions.json`, and commit.
-4. Move `main` to the next development version, such as `0.0.3-dev.0`, in the workspace and every in-repository `lyra`, and commit.
+4. Move `main` to the next development version, such as `0.0.3-dev.0`, in the workspace and every in-repository `lyra`. Set `PREVIOUS_RELEASE` in [`lyra-db/src/migration.rs`](../lyra-db/src/migration.rs) to the released version, empty `STEPS` and delete their tests, and commit.
 5. Push the commits and the tag together.
 
-CI checks the version line and every `versions.json` entry against the one before it with
-[`ci/release-checks.sh`](../ci/release-checks.sh).
+CI checks the version line, `PREVIOUS_RELEASE`, and every `versions.json` entry against the one
+before it with [`ci/release-checks.sh`](../ci/release-checks.sh).
 
 The `harmony-*` crates have their own version, released when Harmony is ready rather than with
 each Lyra release. Plugins depend on the server version only, so a Lyra release may ship a `-dev`
 Harmony version.
+
+## Database migrations
+
+The database records the version and the number of migration steps that created or last migrated
+it. A server opens databases from the previous release, `PREVIOUS_RELEASE` in
+[`lyra-db/src/migration.rs`](../lyra-db/src/migration.rs), and from any build of its own cycle up
+to its own version, running the steps in `STEPS` the database has not run yet: all of them for the
+previous release, and those past its recorded count for a build of the current cycle. It refuses
+newer databases, older releases, and development builds of earlier cycles, so upgrading from
+`0.0.2-dev.3` to `0.0.3-dev.0` goes through `0.0.2`. While `PREVIOUS_RELEASE` is unset, before the
+first release, every stamped version up to the server's own opens. CLI commands that open the
+database, such as `settings reset`, refuse one the server would migrate or restamp.
+
+Before running any step, the server copies the database and its write-ahead log beside them, named
+after the stamp they hold: `lyra.db` from `0.0.3-dev.0` with one step run is copied to
+`lyra.db.from-0.0.3-dev.0.steps-1` and `.lyra.db.from-0.0.3-dev.0.steps-1`, and a previous release
+without a step count to `lyra.db.from-0.0.2`. Backups are never overwritten: one of the same name
+with the same contents is kept as it is, and one with other contents gets a numbered sibling such
+as `lyra.db.from-0.0.2.1`.
+
+Any change to stored data, such as a renamed key, a new required value or a moved edge, needs a
+step appended to `STEPS` that rewrites the shape before it into the one after. `STEPS` is
+append-only: once a step is on `main`, never edit, reorder or remove it, since databases already
+count it as run; fix a mistake with a new step. The steps run after the current root aliases and
+indexes exist, in one transaction with them and the new stamp, so a failed step leaves the database
+as it was. Test each step by seeding the shape before it directly, running it, and reading the
+result through the current code.
+
+Steps are matched by count, not identity. Local branches that share a development version and
+append different steps treat each other's databases as already migrated, so recreate the database,
+or restore its backup, when switching between such branches.
 
 ## Docker builds
 

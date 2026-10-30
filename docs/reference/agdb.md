@@ -997,7 +997,10 @@ db.transaction_mut(|t| -> Result<(), DbError> {
             .query(),
     )?.try_into()?;
 
+    // Keep each `db_id`: inserting elements that carry one updates them in
+    // place, while `None` would insert new nodes.
     let upgraded: Vec<UserV2> = users.into_iter().map(|u| UserV2 {
+        db_id: u.db_id,
         name: u.name,
         status: if u.status == "active" { 1 } else { 0 },
     }).collect();
