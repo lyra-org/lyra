@@ -94,6 +94,9 @@ To release a version:
 4. Move `main` to the next development version, such as `0.0.3-dev.0`, in the workspace and every in-repository `lyra`, and commit.
 5. Push the commits and the tag together.
 
+CI checks the version line and every `versions.json` entry against the one before it with
+[`ci/release-checks.sh`](../ci/release-checks.sh).
+
 The `harmony-*` crates have their own version, released when Harmony is ready rather than with
 each Lyra release. Plugins depend on the server version only, so a Lyra release may ship a `-dev`
 Harmony version.

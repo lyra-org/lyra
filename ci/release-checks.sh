@@ -1,0 +1,86 @@
+#!/bin/sh
+# Checks the version line and the releases in versions.json; see "Versions and releases" in
+# docs/development.md. Needs the full history, git and jq.
+set -eu
+
+failed=0
+fail() {
+	printf 'release check: %s\n' "$*" >&2
+	failed=1
+}
+
+workspace_version() {
+	git show "$1:Cargo.toml" | awk '
+		/^\[/ { in_package = ($0 == "[workspace.package]") }
+		in_package && /^version *=/ { gsub(/^version *= *"|"$/, ""); print; exit }
+	'
+}
+
+# Paths whose changes reach the server a release runs on.
+server_changed() {
+	! git diff --quiet "$1" "$2" -- Cargo.toml Cargo.lock 'harmony-*' 'lyra-*' \
+		':(exclude)lyra-docs' ':(exclude)lyra-harmony-test'
+}
+
+plugin_manifest() {
+	git show "$1:plugins/$2/plugin.json" | jq -S 'del(.version, .lyra)'
+}
+
+# Whether a plugin changed, apart from its tests and its manifest's version fields.
+plugin_changed() {
+	if [ -n "$(git diff --name-only "$1" "$2" -- "plugins/$3" \
+		":(exclude)plugins/$3/tests" ":(exclude)plugins/$3/plugin.json")" ]; then
+		return 0
+	fi
+	[ "$(plugin_manifest "$1" "$3")" != "$(plugin_manifest "$2" "$3")" ]
+}
+
+head_version=$(workspace_version HEAD)
+if [ -n "${CI_COMMIT_TAG:-}" ]; then
+	printf '%s\n' "$head_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' ||
+		fail "release tag $CI_COMMIT_TAG is on version $head_version, which has a pre-release"
+	[ "$CI_COMMIT_TAG" = "v$head_version" ] ||
+		fail "release tag $CI_COMMIT_TAG does not match version $head_version"
+else
+	printf '%s\n' "$head_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$' ||
+		fail "version $head_version is not a development version such as 0.0.2-dev.0"
+fi
+
+entries=$(jq -r '.[] | "\(.commit) \(.lyra)"' versions.json)
+newer=""
+newer_lyra=""
+printf '%s\n' "$entries" | {
+	while read -r commit lyra; do
+		[ -n "$commit" ] || continue
+		if ! git merge-base --is-ancestor "$commit" HEAD 2>/dev/null; then
+			fail "release $commit is not in this branch's history"
+			newer=""
+			continue
+		fi
+		version=$(workspace_version "$commit")
+		[ "$lyra" = "$version" ] ||
+			fail "release $commit is offered to $lyra but has version $version"
+
+		if [ -n "$newer" ]; then
+			if server_changed "$commit" "$newer" && [ "$newer_lyra" = "$lyra" ]; then
+				fail "release $newer changes the server since $commit but keeps version $lyra"
+			fi
+			for manifest in $(git ls-tree --name-only "$newer" plugins/ | sed 's|$|/plugin.json|'); do
+				plugin=${manifest#plugins/}
+				plugin=${plugin%/plugin.json}
+				git cat-file -e "$commit:$manifest" 2>/dev/null || continue
+				git cat-file -e "$newer:$manifest" 2>/dev/null || continue
+				plugin_changed "$commit" "$newer" "$plugin" || continue
+				before=$(git show "$commit:$manifest" | jq -r .version)
+				after=$(git show "$newer:$manifest" | jq -r .version)
+				[ "$before" != "$after" ] ||
+					fail "plugin $plugin changed between $commit and $newer but keeps version $after"
+			done
+		fi
+		newer=$commit
+		newer_lyra=$lyra
+	done
+	exit "$failed"
+} || failed=1
+
+exit "$failed"
