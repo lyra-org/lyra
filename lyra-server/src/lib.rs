@@ -309,7 +309,8 @@ pub async fn run_plugins_add(build: BuildInfo, url: &str, git_ref: Option<&str>)
 
 /// A persistent database opened for a CLI subcommand: the process lock is
 /// held for as long as the value lives. Opens in `DbFile` regardless of the
-/// configured kind and skips schema init.
+/// configured kind, skips schema init, and refuses a database this version
+/// would migrate or restamp.
 struct CliDb {
     db: DbAny,
     path: std::path::PathBuf,
@@ -319,20 +320,27 @@ struct CliDb {
 /// `command` is the CLI command name (for example `db optimize`) used in
 /// diagnostics; `verb` describes the action in "nothing to <verb>" errors.
 fn open_cli_db(command: &'static str, verb: &str) -> Result<CliDb> {
-    let boot = config::load()?.boot;
-    if matches!(boot.db.kind, lyra_db::bootstrap::DbKind::Memory) {
+    open_cli_db_at(&config::load()?.boot.db, command, verb)
+}
+
+fn open_cli_db_at(
+    config: &lyra_db::bootstrap::DbConfig,
+    command: &'static str,
+    verb: &str,
+) -> Result<CliDb> {
+    if matches!(config.kind, lyra_db::bootstrap::DbKind::Memory) {
         anyhow::bail!(
             "nothing to {verb}: db kind is memory; configure DbKind::File or DbKind::Mmap to use this command"
         );
     }
 
-    let path = boot.db.path.clone();
+    let path = config.path.clone();
     if !path.is_file() {
         anyhow::bail!("nothing to {verb}: no database file at {}", path.display());
     }
 
     let lock = lyra_db::process_lock::acquire(
-        &boot.db,
+        config,
         lyra_db::process_lock::LockMode::NonBlocking { command },
     )
     .map_err(config::storage::explain_db_open_error)?;
@@ -340,6 +348,7 @@ fn open_cli_db(command: &'static str, verb: &str) -> Result<CliDb> {
         lyra_db::bootstrap::DbKind::File,
         path.to_string_lossy().as_ref(),
     )?;
+    lyra_db::bootstrap::ensure_current(&db)?;
     Ok(CliDb {
         db,
         path,
@@ -414,6 +423,57 @@ mod tests {
     #[test]
     fn missing_library_resolves_to_none() -> anyhow::Result<()> {
         assert!(configured_library(&config::ConfigFile::parse("{}")?)?.is_none());
+        Ok(())
+    }
+
+    fn cli_config(dir: &std::path::Path) -> lyra_db::bootstrap::DbConfig {
+        lyra_db::bootstrap::DbConfig {
+            kind: lyra_db::bootstrap::DbKind::File,
+            path: dir.join("lyra.db"),
+        }
+    }
+
+    #[test]
+    fn cli_opens_a_current_database() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let config = cli_config(dir.path());
+        drop(lyra_db::bootstrap::create(&config)?);
+        open_cli_db_at(&config, "settings reset", "reset")?;
+        Ok(())
+    }
+
+    #[test]
+    fn cli_refuses_a_database_that_is_not_current() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let config = cli_config(dir.path());
+        let mut db = lyra_db::bootstrap::open(config.kind, config.path.to_string_lossy().as_ref())?;
+        db.exec_mut(
+            agdb::QueryBuilder::insert()
+                .nodes()
+                .aliases("tracks")
+                .query(),
+        )?;
+        drop(db);
+        let error = open_cli_db_at(&config, "settings reset", "reset")
+            .err()
+            .expect("an unstamped database should be refused");
+        assert!(
+            error
+                .to_string()
+                .starts_with("database has no Lyra version; "),
+            "{error}"
+        );
+
+        let config = cli_config(&dir.path().join("empty"));
+        std::fs::create_dir(dir.path().join("empty"))?;
+        drop(lyra_db::bootstrap::open(
+            config.kind,
+            config.path.to_string_lossy().as_ref(),
+        )?);
+        let error = open_cli_db_at(&config, "settings reset", "reset")
+            .err()
+            .expect("an empty database should be refused");
+        assert_eq!(error.to_string(), "database is empty");
         Ok(())
     }
 }
