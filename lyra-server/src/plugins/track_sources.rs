@@ -5,6 +5,7 @@
 
 use agdb::DbId;
 use harmony_luau as luau;
+use harmony_luau::FromCallFrame;
 
 use crate::plugins::db::ViewerDb;
 
@@ -14,11 +15,13 @@ pub(crate) struct TrackSourcesModule;
 impl TrackSourcesModule {
     async fn get_primary_source_key(
         track_id: i64,
-        #[context] db: ViewerDb,
+        #[context] vm: luau::Vm,
+        #[context] context: luau::CallContext,
     ) -> luau::runtime::Result<Option<String>> {
         if track_id <= 0 {
             return Ok(None);
         }
+        let db = ViewerDb::from_call_frame(&vm, &context)?;
         let (db, viewer) = db.read().await?;
         if !viewer.sees_entity(&*db, DbId(track_id))? {
             return Ok(None);

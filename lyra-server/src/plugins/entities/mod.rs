@@ -8,6 +8,7 @@ mod types;
 
 use harmony_core::ModuleSpec;
 use harmony_luau as luau;
+use harmony_luau::FromCallFrame;
 #[cfg(feature = "docgen")]
 use harmony_luau::render_definition_file_with_support;
 #[cfg(feature = "docgen")]
@@ -128,7 +129,7 @@ impl<'vm> luau::FromLuau<'vm> for QueryManyRequest {
 /// The VM to run link generators on, when the `links` include is requested. Generators can't
 /// request links themselves, even from tasks they spawn, since those inherit the caller context.
 fn link_generator_vm(
-    vm: luau::Vm,
+    vm: &luau::Vm,
     context: &luau::CallContext,
     includes: &[EntityInclude],
 ) -> luau::runtime::Result<Option<luau::Vm>> {
@@ -144,7 +145,7 @@ fn link_generator_vm(
             "the links include cannot be requested from an id link generator",
         ));
     }
-    Ok(Some(vm))
+    Ok(Some(vm.clone()))
 }
 
 #[cfg(feature = "docgen")]
@@ -189,11 +190,10 @@ impl EntitiesModule {
     #[harmony(args(request: EntityQueryRequest), returns(EntityProjection))]
     async fn query(
         request: QueryRequest,
-        #[context] scoped: ViewerDb,
         #[context] vm: luau::Vm,
         #[context] context: luau::CallContext,
     ) -> luau::runtime::Result<luau::Value> {
-        query_entity(ProjectionKind::Any, request, scoped, vm, context).await
+        query_entity(ProjectionKind::Any, request, vm, context).await
     }
 
     #[harmony(
@@ -202,11 +202,10 @@ impl EntitiesModule {
     )]
     async fn query_release(
         request: QueryRequest,
-        #[context] scoped: ViewerDb,
         #[context] vm: luau::Vm,
         #[context] context: luau::CallContext,
     ) -> luau::runtime::Result<luau::Value> {
-        query_entity(ProjectionKind::Release, request, scoped, vm, context).await
+        query_entity(ProjectionKind::Release, request, vm, context).await
     }
 
     #[harmony(
@@ -215,11 +214,10 @@ impl EntitiesModule {
     )]
     async fn query_track(
         request: QueryRequest,
-        #[context] scoped: ViewerDb,
         #[context] vm: luau::Vm,
         #[context] context: luau::CallContext,
     ) -> luau::runtime::Result<luau::Value> {
-        query_entity(ProjectionKind::Track, request, scoped, vm, context).await
+        query_entity(ProjectionKind::Track, request, vm, context).await
     }
 
     #[harmony(
@@ -228,11 +226,10 @@ impl EntitiesModule {
     )]
     async fn query_artist(
         request: QueryRequest,
-        #[context] scoped: ViewerDb,
         #[context] vm: luau::Vm,
         #[context] context: luau::CallContext,
     ) -> luau::runtime::Result<luau::Value> {
-        query_entity(ProjectionKind::Artist, request, scoped, vm, context).await
+        query_entity(ProjectionKind::Artist, request, vm, context).await
     }
 
     async fn get_type(
@@ -254,7 +251,6 @@ impl EntitiesModule {
     )]
     async fn query_many(
         request: QueryManyRequest,
-        #[context] scoped: ViewerDb,
         #[context] vm: luau::Vm,
         #[context] context: luau::CallContext,
     ) -> luau::runtime::Result<luau::OwnedTable> {
@@ -263,7 +259,8 @@ impl EntitiesModule {
             includes,
             library_id,
         } = request;
-        let link_vm = link_generator_vm(vm, &context, &includes)?;
+        let link_vm = link_generator_vm(&vm, &context, &includes)?;
+        let scoped = ViewerDb::from_call_frame(&vm, &context)?;
         let mut keys = Vec::new();
         let projections = project_with_links(
             scoped.handle(),
@@ -316,7 +313,6 @@ fn extend_module(spec: ModuleSpec) -> ModuleSpec {
 async fn query_entity(
     kind: ProjectionKind,
     request: QueryRequest,
-    scoped: ViewerDb,
     vm: luau::Vm,
     context: luau::CallContext,
 ) -> luau::runtime::Result<luau::Value> {
@@ -325,7 +321,8 @@ async fn query_entity(
         includes,
         library_id,
     } = request;
-    let link_vm = link_generator_vm(vm, &context, &includes)?;
+    let link_vm = link_generator_vm(&vm, &context, &includes)?;
+    let scoped = ViewerDb::from_call_frame(&vm, &context)?;
     let mut projections = project_with_links(
         scoped.handle(),
         link_vm,

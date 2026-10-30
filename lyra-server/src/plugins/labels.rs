@@ -68,11 +68,12 @@ impl LabelsModule {
     async fn resolve(
         request: LabelResolveRequestData,
         #[context] caller: DispatchPrincipal,
-        #[context] db: Db,
+        #[context] vm: luau::Vm,
     ) -> luau::runtime::Result<i64> {
         if !can_mutate_global(caller.0.as_ref()) {
             return Ok(0);
         }
+        let db = crate::plugins::db::get(&vm)?;
         let label_id = {
             let mut db = db.write().await;
             lyra_db::labels::resolve(

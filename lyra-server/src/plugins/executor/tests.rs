@@ -383,6 +383,56 @@ fn plugin_executor_refuses_registrations_from_an_ended_run() -> Result<()> {
 }
 
 #[test]
+fn module_functions_answer_what_they_can_before_reading_the_database() -> Result<()> {
+    let runtime = runtime_with_scopes(&["lyra.track_sources", "lyra.chromaprint", "lyra.labels"])?;
+    let mut unresolved = CallContext {
+        origin: plugin_origin("demo", "init.luau"),
+        ..CallContext::default()
+    };
+    unresolved
+        .caller
+        .insert(crate::plugins::auth::DispatchAuth::default());
+    let values = runtime.eval_plugin_source_with_call_context(
+        br#"
+            local track_sources = require("@lyra/track_sources")
+            local chromaprint = require("@lyra/chromaprint")
+            local _, err = pcall(chromaprint.compute, 0)
+            return track_sources.get_primary_source_key(0) == nil, tostring(err)
+        "# as &[u8],
+        unresolved,
+    )?;
+    let [luau::Value::Boolean(true), luau::Value::String(message)] = values.as_slice() else {
+        panic!("unexpected values {values:?}");
+    };
+    assert!(String::from_utf8_lossy(message).contains("entry not found"));
+
+    let mut viewer = CallContext {
+        origin: plugin_origin("demo", "init.luau"),
+        ..CallContext::default()
+    };
+    seed_caller_principal(
+        &mut viewer,
+        crate::services::auth::Principal::from_parts(
+            agdb::DbId(1),
+            "viewer".to_string(),
+            "viewer".to_string(),
+            Vec::new(),
+            None,
+            Default::default(),
+        ),
+    );
+    let values = runtime.eval_plugin_source_with_call_context(
+        br#"
+            local labels = require("@lyra/labels")
+            return labels.resolve({ name = "Label" })
+        "# as &[u8],
+        viewer,
+    )?;
+    assert_eq!(values, vec![luau::Value::Number(0.0)]);
+    Ok(())
+}
+
+#[test]
 fn plugin_executor_scopes_personal_lyrics_to_the_dispatch_principal() -> Result<()> {
     let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
     crate::plugins::testing::init_default_test_state()?;

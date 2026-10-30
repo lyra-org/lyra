@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use agdb::DbId;
 use harmony_luau as luau;
+use harmony_luau::FromCallFrame;
 #[cfg(feature = "docgen")]
 use harmony_luau::{
     DescribeInterface,
@@ -30,11 +31,13 @@ impl ChromaprintModule {
     #[harmony(returns(ChromaprintResult))]
     async fn compute(
         entry_id: i64,
-        #[context] db: ViewerDb,
+        #[context] vm: luau::Vm,
+        #[context] context: luau::CallContext,
     ) -> luau::runtime::Result<luau::OwnedTable> {
         if entry_id <= 0 {
             return Err(crate::plugins::runtime_error("entry not found"));
         }
+        let db = ViewerDb::from_call_frame(&vm, &context)?;
         let path = {
             let (db, viewer) = db.read().await?;
             let entry = lyra_db::entries::get_by_id(&db, DbId(entry_id))?
