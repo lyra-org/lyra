@@ -19,6 +19,7 @@
     "lyra.ids",
     "lyra.images",
     "lyra.listens",
+    "lyra.listens.all",
     "lyra.locale",
     "lyra.lyrics",
     "lyra.metadata",

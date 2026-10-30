@@ -1253,7 +1253,11 @@ fn plugin_executor_reads_server_info_from_vm_context() -> Result<()> {
 fn plugin_executor_exposes_lyra_playback_sessions_on_update() -> Result<()> {
     let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
     crate::plugins::testing::init_default_test_state()?;
-    let runtime = runtime_with_scopes(&["lyra.playback_sessions", "harmony.task"])?;
+    let runtime = runtime_with_scopes(&[
+        "lyra.playback_sessions",
+        "lyra.playback_sessions.all",
+        "harmony.task",
+    ])?;
     runtime.run_plugin_source(
         "demo",
         "init.luau",
@@ -1299,7 +1303,7 @@ fn plugin_executor_exposes_lyra_playback_sessions_on_update() -> Result<()> {
 fn plugin_executor_exposes_lyra_listens_on_update() -> Result<()> {
     let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
     crate::plugins::testing::init_default_test_state()?;
-    let runtime = runtime_with_scopes(&["lyra.listens", "harmony.task"])?;
+    let runtime = runtime_with_scopes(&["lyra.listens", "lyra.listens.all", "harmony.task"])?;
     runtime.run_plugin_source(
         "demo",
         "init.luau",
@@ -2303,7 +2307,12 @@ fn plugin_executor_restart_keeps_one_registration_of_each_update_handler() -> Re
             "lyra": crate::plugins::testing::HOST_REQUIREMENT,
             "description": "Demo plugin",
             "entrypoint": "init.luau",
-            "scopes": ["lyra.listens", "lyra.playback_sessions"]
+            "scopes": [
+                "lyra.listens",
+                "lyra.listens.all",
+                "lyra.playback_sessions",
+                "lyra.playback_sessions.all"
+            ]
         })
         .to_string(),
     )?;
@@ -2381,7 +2390,7 @@ fn plugin_executor_failed_restart_keeps_no_update_handler() -> Result<()> {
             "lyra": crate::plugins::testing::HOST_REQUIREMENT,
             "description": "Demo plugin",
             "entrypoint": "init.luau",
-            "scopes": ["lyra.listens"]
+            "scopes": ["lyra.listens", "lyra.listens.all"]
         })
         .to_string(),
     )?;
@@ -2429,7 +2438,9 @@ fn plugin_executor_stop_drops_the_plugins_callbacks() -> Result<()> {
             "lyra.api",
             "lyra.mix",
             "lyra.playback_sessions",
+            "lyra.playback_sessions.all",
             "lyra.listens",
+            "lyra.listens.all",
         ],
         r#"
             local metadata = require("@lyra/metadata")

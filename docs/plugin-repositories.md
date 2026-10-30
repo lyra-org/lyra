@@ -49,6 +49,17 @@ outside its requirement. Installed dependencies load first, and a plugin can
 only `require` plugins it lists that loaded. Each id may appear once, and up
 to 32 dependencies are allowed.
 
+`scopes` lists the modules the plugin may `require`, each by the scope that
+gates it, such as `lyra.metadata` for `@lyra/metadata`. A plugin naming a
+scope the server doesn't know fails to load. A few functions reach every
+user's data rather than that of the users the plugin acts for, and need a
+narrow scope on top of their module's: `lyra.listens.all` for
+`listens.on_update`, `lyra.playback_sessions.all` for
+`playback_sessions.on_update`, and `lyra.lyrics.all` for
+`lyrics.delete_for_track`. A plugin declaring only the module's scope gets
+each such function as a stub raising an error that names the scope it
+lacks. Declaring a narrow scope without its module's fails to load.
+
 ## Releases
 
 A repository is installable only through the releases listed in the
@@ -277,8 +288,9 @@ and touch every user's personal data, `elevated` for plugins that can send
 data off the server and touch personal or library data, and `standard`
 otherwise. `risk_reasons` lists, in English, what sets the level, such as
 "Can send every user's listening history off the server", or why nothing
-raises it. Descriptions and reasons are for display; clients act on the
-kinds, data ids and levels. Filtering or
+raises it. A narrow scope lists the effects of its functions alone, so its
+module's scope doesn't carry them. Descriptions and reasons are for display;
+clients act on the kinds, data ids and levels. Filtering or
 sorting the catalog by a user's favorites, listens or ratings needs the
 scope that gates that data. A preview counts a dependency both as installed and
 as the repository offers it, since installing them together replaces the

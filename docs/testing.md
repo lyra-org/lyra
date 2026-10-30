@@ -29,7 +29,9 @@ plugins/<plugin>/tests/
 - Tests of the modules the server provides to every plugin live in `lyra-harmony-test/tests`,
   under a placeholder plugin manifest. Tests of what those modules refuse a plugin lacking their
   scopes live in `lyra-harmony-test/restricted/tests`, whose manifest declares only the scopes
-  they need. Both also run under `cargo test`.
+  they need, and tests of the functions they refuse a plugin declaring a module's scope but not
+  the narrow scope within it live in `lyra-harmony-test/parent-scopes/tests`. All three also run
+  under `cargo test`.
 - Files starting with `_` are helpers for other tests and never run on their own.
 
 ## Running

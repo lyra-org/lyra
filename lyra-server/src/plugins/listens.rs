@@ -145,7 +145,7 @@ impl LuauTypeInfo for SubmittedPlays {
 
 #[harmony_macros::module(
     id = "lyra/listens",
-    description = "Listen counts and submitted plays of the dispatch principal, and every user's listens as they are recorded: like `playback_sessions.on_update` for playbacks, `on_update` delivers all users' listens, not only the caller's.",
+    description = "Listen counts and submitted plays of the dispatch principal, and every user's listens as they are recorded: like `playback_sessions.on_update` for playbacks, `on_update` delivers all users' listens, not only the caller's, and needs the `lyra.listens.all` scope too.",
     docs_feature = "docgen"
 )]
 impl ListensModule {
@@ -192,7 +192,7 @@ impl ListensModule {
     }
 
     #[harmony(
-        description = "Registers a callback for every user's listens. A `recorded` update arrives once for each commit that stored listens, right after it, carrying all of that commit's listens for one user: one for a live play, up to a whole submitted batch. Each listen is announced once. Delivery is best effort: updates are dropped while the plugin runtime is saturated.",
+        description = "Registers a callback for every user's listens. A `recorded` update arrives once for each commit that stored listens, right after it, carrying all of that commit's listens for one user: one for a live play, up to a whole submitted batch. Each listen is announced once. Delivery is best effort: updates are dropped while the plugin runtime is saturated. Needs the `lyra.listens.all` scope too.",
         args(handler: ListenUpdateHandler)
     )]
     fn on_update(

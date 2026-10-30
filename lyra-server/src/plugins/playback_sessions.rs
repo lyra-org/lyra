@@ -123,7 +123,7 @@ pub(crate) struct PlaybackSessionsModule;
 #[harmony_macros::module(id = "lyra/playback_sessions", docs_feature = "docgen")]
 impl PlaybackSessionsModule {
     #[harmony(
-        description = "Registers a callback for per-track playback accounting updates.",
+        description = "Registers a callback for every user's per-track playback accounting updates. Needs the `lyra.playback_sessions.all` scope too.",
         args(handler: PlaybackUpdateHandler)
     )]
     fn on_update(

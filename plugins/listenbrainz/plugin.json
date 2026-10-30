@@ -11,7 +11,9 @@
     "harmony.serde",
     "lyra.entities",
     "lyra.listens",
+    "lyra.listens.all",
     "lyra.playback_sessions",
+    "lyra.playback_sessions.all",
     "lyra.plugins"
   ]
 }

@@ -334,7 +334,7 @@ impl LyricsModule {
     }
 
     #[harmony(
-        description = "Deletes every lyrics row for a track. Intended for trusted cleanup workflows."
+        description = "Deletes every lyrics row for a track, shared and every user's personal ones. Intended for trusted cleanup workflows. Needs the `lyra.lyrics.all` scope too."
     )]
     async fn delete_for_track(
         track_id: PositiveId,

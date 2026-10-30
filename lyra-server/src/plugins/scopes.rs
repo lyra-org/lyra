@@ -3,8 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-//! The scopes a plugin manifest may declare, the module each one gates, and
-//! what each lets a plugin do.
+//! The scopes a plugin manifest may declare, the module or functions each
+//! one gates, and what each lets a plugin do.
 
 use std::collections::{
     BTreeMap,
@@ -161,17 +161,45 @@ data_kinds! {
 
 pub(crate) struct ScopeDef {
     pub(crate) id: &'static str,
-    pub(crate) module: fn() -> ModuleSpec,
+    pub(crate) gate: Gate,
     pub(crate) effects: &'static [Effect],
 }
 
+/// What a scope lets a plugin use.
+pub(crate) enum Gate {
+    /// A whole module, through `require`.
+    Module(fn() -> ModuleSpec),
+    /// Functions of the module another scope gates, which a plugin declaring
+    /// only that scope gets as stubs raising an error. A manifest declaring
+    /// this scope must declare the other too.
+    Functions {
+        within: Scope,
+        functions: &'static [&'static str],
+    },
+}
+
+macro_rules! gate {
+    ($module:path ;) => {
+        Gate::Module($module)
+    };
+    (; $within:ident, $functions:expr) => {
+        Gate::Functions {
+            within: Scope::$within,
+            functions: $functions,
+        }
+    };
+}
+
 /// Declares every scope once: the enum, `Scope::ALL`, and each scope's
-/// definition all come from the same row, so none can miss a scope.
+/// definition all come from the same row, so none can miss a scope. A row
+/// gates either a `module` or, `within` another row's module, some of its
+/// `functions`.
 macro_rules! scopes {
     ($(
         $scope:ident => {
             id: $id:expr,
-            module: $module:path,
+            $(module: $module:path,)?
+            $(within: $within:ident, functions: $functions:expr,)?
             effects: $effects:expr $(,)?
         }
     ),+ $(,)?) => {
@@ -187,7 +215,7 @@ macro_rules! scopes {
                 match self {
                     $(Scope::$scope => ScopeDef {
                         id: $id,
-                        module: $module,
+                        gate: gate!($($module)? ; $($within, $functions)?),
                         effects: $effects,
                     }),+
                 }
@@ -304,9 +332,15 @@ scopes! {
         id: "lyra.listens",
         module: listens::ListensModule::module_spec,
         effects: &[
-            Effect::ReadsPersonal(PersonalKind::ListeningHistory, Users::All),
+            Effect::ReadsPersonal(PersonalKind::ListeningHistory, Users::Acting),
             Effect::WritesPersonal(PersonalKind::ListeningHistory, Users::Acting),
         ],
+    },
+    ListensAll => {
+        id: "lyra.listens.all",
+        within: Listens,
+        functions: &["on_update"],
+        effects: &[Effect::ReadsPersonal(PersonalKind::ListeningHistory, Users::All)],
     },
     Locale => {
         id: "lyra.locale",
@@ -318,6 +352,14 @@ scopes! {
         module: lyrics::LyricsModule::module_spec,
         effects: &[
             Effect::ReadsPersonal(PersonalKind::Lyrics, Users::Acting),
+            Effect::WritesPersonal(PersonalKind::Lyrics, Users::Acting),
+        ],
+    },
+    LyricsAll => {
+        id: "lyra.lyrics.all",
+        within: Lyrics,
+        functions: &["delete_for_track"],
+        effects: &[
             Effect::WritesPersonal(PersonalKind::Lyrics, Users::All),
             Effect::WritesLibrary(LibraryKind::Lyrics),
         ],
@@ -336,10 +378,16 @@ scopes! {
         id: "lyra.playback_sessions",
         module: playback_sessions::PlaybackSessionsModule::module_spec,
         effects: &[
-            Effect::ReadsPersonal(PersonalKind::PlaybackActivity, Users::All),
+            Effect::ReadsPersonal(PersonalKind::PlaybackActivity, Users::Acting),
             Effect::WritesPersonal(PersonalKind::PlaybackSessions, Users::Acting),
             Effect::WritesPersonal(PersonalKind::ListeningHistory, Users::Acting),
         ],
+    },
+    PlaybackSessionsAll => {
+        id: "lyra.playback_sessions.all",
+        within: PlaybackSessions,
+        functions: &["on_update"],
+        effects: &[Effect::ReadsPersonal(PersonalKind::PlaybackActivity, Users::All)],
     },
     PlaybackSources => {
         id: "lyra.playback_sources",
@@ -579,15 +627,35 @@ pub(crate) fn effects_of<'a>(
         .collect()
 }
 
-/// Every module plugins can `require`, behind its scope.
+/// Every module plugins can `require`, behind its scope, with the functions
+/// narrower scopes gate.
 pub(crate) fn gated_modules() -> Vec<GatedModule> {
     Scope::ALL
         .iter()
-        .map(|scope| {
+        .filter_map(|scope| {
             let def = scope.def();
-            GatedModule::new(def.id, (def.module)())
+            let Gate::Module(module) = def.gate else {
+                return None;
+            };
+            Some(narrowed_functions(*scope).fold(
+                GatedModule::new(def.id, module()),
+                |gated, (function, narrow)| gated.function_scope(function, narrow),
+            ))
         })
         .collect()
+}
+
+/// The functions of `parent`'s module that narrower scopes gate, each with
+/// the scope's id.
+fn narrowed_functions(parent: Scope) -> impl Iterator<Item = (&'static str, &'static str)> {
+    Scope::ALL.iter().flat_map(move |scope| {
+        let def = scope.def();
+        let functions = match def.gate {
+            Gate::Functions { within, functions } if within == parent => functions,
+            _ => &[],
+        };
+        functions.iter().map(move |function| (*function, def.id))
+    })
 }
 
 pub(crate) fn plugin_host() -> PluginHost {
@@ -600,6 +668,13 @@ pub(crate) fn plugin_host() -> PluginHost {
             .collect(),
     )
     .expect("lyra is not a fixed manifest field")
+    .with_scope_parents(Scope::ALL.iter().filter_map(|scope| {
+        let def = scope.def();
+        match def.gate {
+            Gate::Functions { within, .. } => Some((def.id, within.def().id)),
+            Gate::Module(_) => None,
+        }
+    }))
     .with_reserved_ids(crate::routes::RESERVED_PLUGIN_IDS.iter().copied())
 }
 
@@ -667,6 +742,7 @@ mod tests {
     use super::{
         Effect,
         EffectSource,
+        Gate,
         LibraryKind,
         PersonalKind,
         Risk,
@@ -853,14 +929,24 @@ mod tests {
             (
                 "lyra.listens",
                 &[
-                    "Reads every user's listening history",
+                    "Reads the listening history of the users it acts for",
                     "Changes the listening history of the users it acts for",
                 ],
+            ),
+            (
+                "lyra.listens.all",
+                &["Reads every user's listening history"],
             ),
             (
                 "lyra.lyrics",
                 &[
                     "Reads the personal lyrics of the users it acts for",
+                    "Changes the personal lyrics of the users it acts for",
+                ],
+            ),
+            (
+                "lyra.lyrics.all",
+                &[
                     "Changes every user's personal lyrics",
                     "Changes the library's lyrics",
                 ],
@@ -873,10 +959,14 @@ mod tests {
             (
                 "lyra.playback_sessions",
                 &[
-                    "Reads every user's playback activity",
+                    "Reads the playback activity of the users it acts for",
                     "Changes the playback sessions of the users it acts for",
                     "Changes the listening history of the users it acts for",
                 ],
+            ),
+            (
+                "lyra.playback_sessions.all",
+                &["Reads every user's playback activity"],
             ),
             (
                 "lyra.playlists",
@@ -944,14 +1034,139 @@ mod tests {
     fn scopes_have_unique_ids_and_modules() {
         let mut ids = HashSet::new();
         let mut modules = HashSet::new();
+        let mut functions = HashSet::new();
         for scope in Scope::ALL {
             let def = scope.def();
             assert!(ids.insert(def.id), "scope id {} is listed twice", def.id);
-            let module_id = (def.module)().id.0;
-            assert!(
-                modules.insert(module_id.clone()),
-                "module {module_id} is gated twice"
+            match def.gate {
+                Gate::Module(module) => {
+                    let module_id = module().id.0;
+                    assert!(
+                        modules.insert(module_id.clone()),
+                        "module {module_id} is gated twice"
+                    );
+                }
+                Gate::Functions {
+                    within,
+                    functions: gated,
+                } => {
+                    assert!(
+                        matches!(within.def().gate, Gate::Module(_)),
+                        "{} narrows {}, which gates no module",
+                        def.id,
+                        within.def().id
+                    );
+                    for function in gated {
+                        assert!(
+                            functions.insert((within.def().id, *function)),
+                            "{function} of {} is gated twice",
+                            within.def().id
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn narrow_scopes_need_their_parent_in_a_manifest() {
+        let load = |scopes: &str| {
+            let json = format!(
+                r#"{{"schema_version":1,"id":"demo","name":"Demo","version":"1.0.0","lyra":"{}","description":"","scopes":{scopes}}}"#,
+                crate::plugins::testing::HOST_REQUIREMENT
             );
+            harmony_core::plugin::PluginManager::load_manifest(
+                std::path::Path::new("plugin.json"),
+                json.as_bytes(),
+                &super::plugin_host(),
+            )
+        };
+        assert!(load(r#"["lyra.listens","lyra.listens.all"]"#).is_ok());
+        for (narrow, parent) in [
+            ("lyra.listens.all", "lyra.listens"),
+            ("lyra.lyrics.all", "lyra.lyrics"),
+            ("lyra.playback_sessions.all", "lyra.playback_sessions"),
+        ] {
+            let error = load(&format!(r#"["{narrow}"]"#)).unwrap_err();
+            assert!(
+                matches!(
+                    &error,
+                    harmony_core::plugin::PluginLoadError::ScopeWithoutParent {
+                        scope,
+                        parent: found,
+                        ..
+                    } if scope == narrow && found == parent
+                ),
+                "{error}"
+            );
+        }
+    }
+
+    struct Plugin(Vec<String>);
+
+    impl Plugin {
+        fn new(scopes: &[&str]) -> Self {
+            Self(scopes.iter().map(ToString::to_string).collect())
+        }
+    }
+
+    impl harmony_core::scopes::ScopedPlugin for Plugin {
+        fn id(&self) -> &str {
+            "demo"
+        }
+
+        fn scopes(&self) -> &[String] {
+            &self.0
+        }
+
+        fn dependency_ids(&self) -> impl Iterator<Item = &str> {
+            std::iter::empty()
+        }
+    }
+
+    #[test]
+    fn reaching_a_narrow_scope_is_growth_with_its_effects() {
+        let installed = [Plugin::new(&["harmony.http", "lyra.listens"])];
+        let gains = super::scope_gains(
+            &installed,
+            &Plugin::new(&["harmony.http", "lyra.listens", "lyra.listens.all"]),
+        );
+        let gain = &gains["demo"];
+        assert_eq!(
+            gain.growth.scopes,
+            BTreeSet::from(["lyra.listens.all".to_string()])
+        );
+        assert_eq!(
+            gain.effects
+                .iter()
+                .map(|effect| effect.effect)
+                .collect::<Vec<_>>(),
+            [Effect::ReadsPersonal(
+                PersonalKind::ListeningHistory,
+                Users::All
+            )]
+        );
+        assert_eq!(gain.risk.risk, Risk::High);
+        assert_eq!(
+            RiskAssessment::of(&[
+                Effect::Egress,
+                Effect::ReadsPersonal(PersonalKind::ListeningHistory, Users::Acting),
+                Effect::WritesPersonal(PersonalKind::ListeningHistory, Users::Acting),
+            ])
+            .risk,
+            Risk::Elevated,
+            "without the narrow scope, listens alone is no longer high"
+        );
+    }
+
+    #[test]
+    fn gated_modules_register() {
+        let mut registry = harmony_core::ModuleRegistry::new();
+        for module in super::gated_modules() {
+            let id = module.spec.id.0.clone();
+            registry
+                .register(module)
+                .unwrap_or_else(|error| panic!("{id}: {error}"));
         }
     }
 }

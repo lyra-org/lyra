@@ -132,7 +132,7 @@ mod tests {
 
     #[tokio::test]
     async fn runs_checked_in_luau_tests() {
-        for dir in ["tests", "restricted/tests"] {
+        for dir in ["tests", "restricted/tests", "parent-scopes/tests"] {
             let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join(dir)
                 .canonicalize()
