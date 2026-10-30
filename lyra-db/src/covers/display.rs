@@ -13,6 +13,7 @@ use std::{
 };
 
 use agdb::{
+    CountComparison,
     DbElement,
     DbError,
     DbId,
@@ -691,6 +692,43 @@ pub fn get_winner(
     )
 }
 
+/// The releases a profile holds as candidates, by ascending random score, so the
+/// first is the one its random winner points at while it stays current.
+pub fn candidates_by_random_score(
+    db: &impl DbAccess,
+    profile_db_id: DbId,
+) -> anyhow::Result<Vec<DbId>> {
+    let edges = db
+        .exec(
+            QueryBuilder::select()
+                .search()
+                .from(profile_db_id)
+                .where_()
+                .edge()
+                .and()
+                .distance(CountComparison::Equal(1))
+                .and()
+                .key(ROLE_KEY)
+                .value("candidate")
+                .query(),
+        )?
+        .elements;
+    let mut candidates = edges
+        .iter()
+        .map(|edge| {
+            (
+                u64_value(edge, RANDOM_SCORE_KEY).unwrap_or(u64::MAX),
+                edge.to,
+            )
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|(random_score, release_db_id)| (*random_score, release_db_id.0));
+    Ok(candidates
+        .into_iter()
+        .map(|(_, release_db_id)| release_db_id)
+        .collect())
+}
+
 fn winner_values(
     identity: &str,
     winner_kind: DisplayCoverWinnerKind,
@@ -917,7 +955,8 @@ pub fn sync_release_random_candidates(
 
 /// Releases reachable from a playlist's entries that currently have a cover,
 /// paired with their deterministic score and ordered by it, so the first
-/// entry is the display winner and the leading entries are the collage sources.
+/// entry is the display winner and the rest stand in for it, in order, for
+/// viewers who cannot see it.
 pub fn playlist_cover_sources(
     db: &impl DbAccess,
     playlist_db_id: DbId,
@@ -1852,7 +1891,7 @@ mod tests {
             .expect("playlist winner should still exist");
         assert_eq!(winner.release_db_id, expected);
 
-        // The collage sources share the winner's ordering.
+        // The fallback sources share the winner's ordering.
         let runner_up = if expected == release_a {
             release_b
         } else {
