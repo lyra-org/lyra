@@ -53,6 +53,7 @@ enum UserDataOption {
 
 struct HarmonyMethodOptions {
     skip: bool,
+    name: Option<LitStr>,
     args: Option<Vec<DocParameterOverride>>,
     returns: Option<Vec<Type>>,
     description: Option<LitStr>,
@@ -75,6 +76,7 @@ struct DocReturnList(Punctuated<Type, Token![,]>);
 
 enum HarmonyMethodOption {
     Skip,
+    Name(LitStr),
     Args(DocParameterList),
     Returns(DocReturnList),
     Description(LitStr),
@@ -161,9 +163,14 @@ impl Parse for HarmonyMethodOption {
             return Ok(Self::Description(input.parse()?));
         }
 
+        if ident == "name" {
+            let _: Token![=] = input.parse()?;
+            return Ok(Self::Name(input.parse()?));
+        }
+
         Err(syn::Error::new(
             ident.span(),
-            "unsupported harmony option; expected skip, args, returns, or description",
+            "unsupported harmony option; expected skip, name, args, returns, or description",
         ))
     }
 }
@@ -377,7 +384,10 @@ pub fn userdata_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
 
         let fn_name = &fn_item.sig.ident;
-        let fn_name_lit = lit_str(&fn_name.to_string(), fn_name.span());
+        let fn_name_lit = options
+            .name
+            .clone()
+            .unwrap_or_else(|| lit_str(&fn_name.to_string(), fn_name.span()));
         let description = option_lit_str_tokens(options.description.as_ref());
         let is_async = fn_item.sig.asyncness.is_some();
         let returns_future = returns_scheduled_future(&fn_item.sig.output);
@@ -496,6 +506,379 @@ pub fn userdata_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
     .into()
 }
 
+#[derive(Default)]
+struct ModuleOptions {
+    id: Option<LitStr>,
+    name: Option<LitStr>,
+    local: Option<LitStr>,
+    description: Option<LitStr>,
+    docs_feature: Option<LitStr>,
+}
+
+struct ModuleOptionList(Punctuated<ModuleOption, Token![,]>);
+
+struct ModuleOption {
+    key: Ident,
+    value: LitStr,
+}
+
+impl Parse for ModuleOptionList {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        Ok(Self(Punctuated::parse_terminated(input)?))
+    }
+}
+
+impl Parse for ModuleOption {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let key: Ident = input.parse()?;
+        let _: Token![=] = input.parse()?;
+        Ok(Self {
+            key,
+            value: input.parse()?,
+        })
+    }
+}
+
+fn parse_module_options(attr: TokenStream) -> syn::Result<ModuleOptions> {
+    let mut options = ModuleOptions::default();
+    for option in syn::parse::<ModuleOptionList>(attr)?.0 {
+        let slot = match option.key.to_string().as_str() {
+            "id" => &mut options.id,
+            "name" => &mut options.name,
+            "local" => &mut options.local,
+            "description" => &mut options.description,
+            "docs_feature" => &mut options.docs_feature,
+            _ => {
+                return Err(syn::Error::new(
+                    option.key.span(),
+                    "unsupported module option; expected id, name, local, description, or docs_feature",
+                ));
+            }
+        };
+        *slot = Some(option.value);
+    }
+    Ok(options)
+}
+
+/// How a module function's parameter is filled.
+enum ModuleParameter<'a> {
+    /// A Luau argument, read by name.
+    Argument(MethodParameter<'a>),
+    /// A value taken from the call through `FromCallFrame`.
+    Context { ident: &'a Ident, ty: &'a Type },
+    /// The VM, call context, or chunk origin of a synchronous call.
+    Frame(TokenStream2),
+}
+
+fn module_parameters(
+    inputs: &Punctuated<FnArg, Token![,]>,
+) -> syn::Result<Vec<ModuleParameter<'_>>> {
+    inputs
+        .iter()
+        .map(|argument| {
+            let FnArg::Typed(pat_type) = argument else {
+                return Err(syn::Error::new(
+                    argument.span(),
+                    "module functions are associated functions and cannot take self",
+                ));
+            };
+            let Pat::Ident(pattern) = &*pat_type.pat else {
+                return Err(syn::Error::new(
+                    pat_type.pat.span(),
+                    "module function parameters must be plain identifiers",
+                ));
+            };
+            let ty = pat_type.ty.as_ref();
+            if pat_type
+                .attrs
+                .iter()
+                .any(|attr| attr.path().is_ident("context"))
+            {
+                return Ok(ModuleParameter::Context {
+                    ident: &pattern.ident,
+                    ty,
+                });
+            }
+            if is_vm_context_type(ty) {
+                return Ok(ModuleParameter::Frame(quote! { frame.vm }));
+            }
+            if is_call_context_type(ty) {
+                return Ok(ModuleParameter::Frame(quote! { &frame.context }));
+            }
+            if is_chunk_origin_type(ty) {
+                return Ok(ModuleParameter::Frame(quote! { &frame.context.origin }));
+            }
+            Ok(ModuleParameter::Argument(MethodParameter {
+                ident: &pattern.ident,
+                ty,
+                name_lit: lit_str(&pattern.ident.to_string(), pattern.ident.span()),
+            }))
+        })
+        .collect()
+}
+
+/// Turns an inherent impl of associated functions into a Luau module: `module_spec()` registers
+/// each function, reading its parameters as Luau arguments by name, and `DescribeModule`
+/// documents them from their types. A `#[context]` parameter comes from the call through
+/// `FromCallFrame` rather than from the arguments; an `async fn` yields.
+#[proc_macro_attribute]
+pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let options = match parse_module_options(attr) {
+        Ok(options) => options,
+        Err(error) => return error.into_compile_error().into(),
+    };
+    let ast = parse_macro_input!(item as ItemImpl);
+    match module_impl(ast, options) {
+        Ok(tokens) => tokens.into(),
+        Err(error) => error.into_compile_error().into(),
+    }
+}
+
+fn module_impl(mut ast: ItemImpl, options: ModuleOptions) -> syn::Result<TokenStream2> {
+    if ast.trait_.is_some() {
+        return Err(syn::Error::new(
+            ast.impl_token.span,
+            "module must be used on an inherent impl",
+        ));
+    }
+    let Some(id) = options.id else {
+        return Err(syn::Error::new(
+            ast.impl_token.span,
+            "module requires id = \"...\"",
+        ));
+    };
+    let self_ty = ast.self_ty.clone();
+    let type_name = match self_ty.as_ref() {
+        Type::Path(path) => path
+            .path
+            .segments
+            .last()
+            .map(|segment| segment.ident.to_string())
+            .unwrap_or_default(),
+        _ => String::new(),
+    };
+    let name = options.name.unwrap_or_else(|| {
+        lit_str(
+            type_name.strip_suffix("Module").unwrap_or(&type_name),
+            id.span(),
+        )
+    });
+    let local = options.local.unwrap_or_else(|| {
+        let id_value = id.value();
+        lit_str(id_value.rsplit('/').next().unwrap_or(&id_value), id.span())
+    });
+    let description = option_lit_str_tokens(options.description.as_ref());
+
+    let mut function_specs = Vec::new();
+    let mut function_descriptors = Vec::new();
+
+    for item in &mut ast.items {
+        let ImplItem::Fn(fn_item) = item else {
+            continue;
+        };
+        let method_options = parse_harmony_method_options(&fn_item.attrs)?;
+        strip_helper_attributes(&mut fn_item.attrs);
+        if method_options.skip {
+            continue;
+        }
+
+        let fn_name = &fn_item.sig.ident;
+        let lua_name = method_options
+            .name
+            .clone()
+            .unwrap_or_else(|| lit_str(&fn_name.to_string(), fn_name.span()));
+        let is_async = fn_item.sig.asyncness.is_some();
+        let returns_future = !is_async && returns_scheduled_future(&fn_item.sig.output);
+        let parameters = module_parameters(&fn_item.sig.inputs)?;
+
+        if is_async
+            && parameters
+                .iter()
+                .any(|parameter| matches!(parameter, ModuleParameter::Frame(_)))
+        {
+            return Err(syn::Error::new(
+                fn_name.span(),
+                "async module functions cannot borrow the VM or call context; take #[context] values instead",
+            ));
+        }
+
+        let arguments = parameters
+            .iter()
+            .filter_map(|parameter| match parameter {
+                ModuleParameter::Argument(argument) => Some(argument),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let read_arguments = arguments.iter().map(|argument| {
+            let ident = argument.ident;
+            let ty = argument.ty;
+            let name = &argument.name_lit;
+            quote! { let #ident: #ty = frame.args.read_named(#name)?; }
+        });
+        let read_context = parameters
+            .iter()
+            .filter_map(|parameter| match parameter {
+                ModuleParameter::Context { ident, ty } => Some(quote! {
+                    let #ident = <#ty as ::harmony_luau::FromCallFrame>::from_call_frame(
+                        frame.vm,
+                        &frame.context,
+                    )?;
+                }),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let call_arguments = parameters.iter().map(|parameter| match parameter {
+            ModuleParameter::Argument(argument) => {
+                let ident = argument.ident;
+                quote! { #ident }
+            }
+            ModuleParameter::Context { ident, .. } => quote! { #ident },
+            ModuleParameter::Frame(tokens) => tokens.clone(),
+        });
+        let call = quote! { <#self_ty>::#fn_name(#(#call_arguments),*) };
+        let returns_result = matches!(
+            &fn_item.sig.output,
+            ReturnType::Type(_, ty) if extract_result_inner_type(ty).is_some()
+        );
+        let argument_names = arguments.iter().map(|argument| &argument.name_lit);
+
+        let spec = if is_async {
+            let output = if returns_result {
+                quote! { #call.await.map_err(::harmony_luau::Error::from) }
+            } else {
+                quote! { ::std::result::Result::<_, ::harmony_luau::Error>::Ok(#call.await) }
+            };
+            quote! {
+                ::harmony_core::FunctionSpec::new(#lua_name)
+                    #(.arg_name(#argument_names))*
+                    .call_async(::std::sync::Arc::new(|mut frame: ::harmony_luau::AsyncCallFrame<'_>| {
+                        #(#read_arguments)*
+                        #(#read_context)*
+                        ::std::result::Result::Ok(::harmony_luau::ScheduledFuture::new(async move {
+                            #output
+                        }))
+                    }))
+            }
+        } else if returns_future {
+            let output = if returns_result {
+                quote! { #call.map_err(::harmony_luau::Error::from) }
+            } else {
+                quote! { ::std::result::Result::Ok(#call) }
+            };
+            quote! {
+                ::harmony_core::FunctionSpec::new(#lua_name)
+                    #(.arg_name(#argument_names))*
+                    .call_async(::std::sync::Arc::new(|mut frame: ::harmony_luau::AsyncCallFrame<'_>| {
+                        #(#read_arguments)*
+                        #(#read_context)*
+                        #output
+                    }))
+            }
+        } else {
+            let write = if returns_result {
+                quote! { frame.returns.write(#call.map_err(::harmony_luau::Error::from)?) }
+            } else {
+                quote! { frame.returns.write(#call) }
+            };
+            quote! {
+                ::harmony_core::FunctionSpec::new(#lua_name)
+                    #(.arg_name(#argument_names))*
+                    .call(|mut frame: ::harmony_luau::CallFrame<'_>| {
+                        #(#read_arguments)*
+                        #(#read_context)*
+                        #write
+                    })
+            }
+        };
+        function_specs.push(spec);
+
+        let path = lua_name
+            .value()
+            .split('.')
+            .map(|segment| lit_str(segment, lua_name.span()))
+            .collect::<Vec<_>>();
+        let function_description = option_lit_str_tokens(method_options.description.as_ref());
+        let params = match &method_options.args {
+            Some(overrides) => overrides
+                .iter()
+                .map(|argument| {
+                    let name = lit_str(&argument.name, fn_name.span());
+                    parameter_descriptor_tokens(&name, &argument.ty)
+                })
+                .collect::<Vec<_>>(),
+            None => arguments
+                .iter()
+                .map(|argument| parameter_descriptor_tokens(&argument.name_lit, argument.ty))
+                .collect(),
+        };
+        let returns = return_descriptor_tokens(&method_options, &fn_item.sig.output);
+        let yields = is_async || returns_future;
+        function_descriptors.push(quote! {
+            ::harmony_luau::ModuleFunctionDescriptor {
+                path: vec![#(#path),*],
+                description: #function_description,
+                params: vec![#(#params),*],
+                returns: #returns,
+                yields: #yields,
+            }
+        });
+    }
+
+    for item in &mut ast.items {
+        if let ImplItem::Fn(fn_item) = item {
+            for input in &mut fn_item.sig.inputs {
+                if let FnArg::Typed(pat_type) = input {
+                    pat_type
+                        .attrs
+                        .retain(|attr| !attr.path().is_ident("context"));
+                }
+            }
+        }
+    }
+
+    let docs_cfg = options
+        .docs_feature
+        .map(|feature| quote! { #[cfg(feature = #feature)] });
+
+    Ok(quote! {
+        #ast
+
+        #[automatically_derived]
+        impl #self_ty {
+            /// The module's functions, as the host registers them.
+            pub fn module_spec() -> ::harmony_core::ModuleSpec {
+                ::harmony_core::ModuleSpec::new(#id)
+                    #(.function(#function_specs))*
+            }
+        }
+
+        #docs_cfg
+        #[automatically_derived]
+        impl ::harmony_luau::DescribeModule for #self_ty {
+            fn module_descriptor() -> ::harmony_luau::ModuleDescriptor {
+                ::harmony_luau::ModuleDescriptor {
+                    name: #name,
+                    local_name: #local,
+                    description: #description,
+                    fields: ::std::vec::Vec::new(),
+                    functions: vec![#(#function_descriptors),*],
+                }
+            }
+        }
+    })
+}
+
+fn parameter_descriptor_tokens(name: &LitStr, ty: &Type) -> TokenStream2 {
+    quote! {
+        ::harmony_luau::ParameterDescriptor {
+            name: #name,
+            ty: <#ty as ::harmony_luau::LuauTypeInfo>::luau_type(),
+            description: None,
+            variadic: false,
+        }
+    }
+}
+
 fn parse_userdata_options(attr: TokenStream) -> syn::Result<UserDataOptions> {
     if attr.is_empty() {
         return Ok(UserDataOptions::default());
@@ -515,6 +898,7 @@ fn parse_userdata_options(attr: TokenStream) -> syn::Result<UserDataOptions> {
 fn parse_harmony_method_options(attrs: &[Attribute]) -> syn::Result<HarmonyMethodOptions> {
     let mut options = HarmonyMethodOptions {
         skip: false,
+        name: None,
         args: None,
         returns: None,
         description: None,
@@ -536,6 +920,7 @@ fn parse_harmony_method_options(attrs: &[Attribute]) -> syn::Result<HarmonyMetho
         for option in parsed.0 {
             match option {
                 HarmonyMethodOption::Skip => options.skip = true,
+                HarmonyMethodOption::Name(name) => options.name = Some(name),
                 HarmonyMethodOption::Args(args) => {
                     options.args = Some(
                         args.0

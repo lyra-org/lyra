@@ -34,6 +34,7 @@ pub use runtime::{
     CompileOptions,
     ContextBag,
     Error,
+    FromCallFrame,
     FromLuau,
     Function,
     INTERRUPTED_ERROR,

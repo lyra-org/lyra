@@ -1919,6 +1919,11 @@ impl<'vm> ArgReader<'vm> {
         self.vm
     }
 
+    /// The name of the argument the next read takes, for a reader's own error messages.
+    pub fn next_name(&self) -> Arc<str> {
+        self.current_name()
+    }
+
     pub fn read<T: FromLuau<'vm>>(&mut self) -> Result<T> {
         T::read(self)
     }
@@ -2837,6 +2842,11 @@ impl LocalContextBag {
                 type_name: type_name::<T>(),
             })
     }
+}
+
+/// A value a native function takes from its call, rather than from its arguments.
+pub trait FromCallFrame: Sized {
+    fn from_call_frame(vm: &Vm, context: &CallContext) -> Result<Self>;
 }
 
 pub struct CallFrame<'vm> {

@@ -942,6 +942,8 @@ dependencies = [
 name = "harmony-macros"
 version = "0.0.1"
 dependencies = [
+ "harmony-core",
+ "harmony-luau",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
