@@ -55,6 +55,8 @@ pub(crate) enum ArtistKey {
     TotalDuration,
     ListenCount,
     LastPlayedAt,
+    /// The viewer's rating.
+    Rating,
     Relevance,
     Random,
     Id,
@@ -70,6 +72,7 @@ impl SortKey for ArtistKey {
         ("total_duration", Self::TotalDuration),
         ("listen_count", Self::ListenCount),
         ("last_played_at", Self::LastPlayedAt),
+        ("rating", Self::Rating),
         ("relevance", Self::Relevance),
         ("random", Self::Random),
         ("id", Self::Id),
@@ -249,6 +252,7 @@ impl Catalog for Artists {
                 tracks_by_artist.insert(*id, tracks);
             }
         }
+        let ratings = super::ratings(db, viewer, &ids, needs(&[ArtistKey::Rating]))?;
         let totals = track_totals(
             db,
             viewer,
@@ -280,6 +284,9 @@ impl Catalog for Artists {
                         ArtistKey::TotalDuration => Some(SortValue::Number(totals.total_duration)),
                         ArtistKey::ListenCount => Some(SortValue::Number(totals.listen_count)),
                         ArtistKey::LastPlayedAt => totals.last_played_at.map(SortValue::Number),
+                        ArtistKey::Rating => ratings
+                            .get(&id)
+                            .map(|rating| SortValue::Number((*rating).into())),
                         ArtistKey::Relevance | ArtistKey::Random | ArtistKey::Id => None,
                     })
                     .collect();

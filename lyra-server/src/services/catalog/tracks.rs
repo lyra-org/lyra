@@ -56,6 +56,8 @@ pub(crate) enum TrackKey {
     ReleaseArtistName,
     ListenCount,
     LastPlayedAt,
+    /// The viewer's rating.
+    Rating,
     Relevance,
     Random,
     Id,
@@ -75,6 +77,7 @@ impl SortKey for TrackKey {
         ("release_artist_name", Self::ReleaseArtistName),
         ("listen_count", Self::ListenCount),
         ("last_played_at", Self::LastPlayedAt),
+        ("rating", Self::Rating),
         ("relevance", Self::Relevance),
         ("random", Self::Random),
         ("id", Self::Id),
@@ -241,6 +244,7 @@ impl Catalog for Tracks {
         } else {
             HashMap::new()
         };
+        let ratings = super::ratings(db, viewer, &ids, keys.contains(&TrackKey::Rating))?;
         let artist_names = if keys.contains(&TrackKey::ArtistName) {
             lyra_db::artists::first_credited_names(db, &ids)?
         } else {
@@ -310,6 +314,9 @@ impl Catalog for Tracks {
                             .get(&id)
                             .and_then(|stats| stats.last_played)
                             .map(SortValue::Number),
+                        TrackKey::Rating => ratings
+                            .get(&id)
+                            .map(|rating| SortValue::Number((*rating).into())),
                         TrackKey::Relevance | TrackKey::Random | TrackKey::Id => None,
                     })
                     .collect();

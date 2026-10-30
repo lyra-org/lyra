@@ -474,6 +474,23 @@ pub(crate) fn track_totals(
         .collect())
 }
 
+/// The viewer's ratings of `ids`, read only when `wanted`.
+pub(crate) fn ratings(
+    db: &DbAny,
+    viewer: &Viewer,
+    ids: &[DbId],
+    wanted: bool,
+) -> Result<HashMap<DbId, u8>, CatalogError> {
+    if !wanted {
+        return Ok(HashMap::new());
+    }
+    let user = viewer.user_db_id("the rating sort key")?;
+    Ok(lyra_db::ratings::values_for_targets(db, user, ids)?
+        .into_iter()
+        .map(|(id, edge)| (id, edge.value.get()))
+        .collect())
+}
+
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum CatalogError {
     #[error("{0}")]
