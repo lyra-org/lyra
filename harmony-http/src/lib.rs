@@ -1205,7 +1205,7 @@ fn luau_field_type_error(field: &str, expected: &str, actual: &str) -> luau::Err
 impl HttpResponse {
     fn into_luau_value(self) -> luau::Value {
         let mut table = luau::OwnedTable::with_capacity(0, 9);
-        table.set_field("success", luau::Value::Boolean(self.success));
+        table.set_field("success", self.success);
         // Luau LUA_TINTEGER and LUA_TNUMBER are distinct types under raw
         // equality; `Integer(200) == 200` from a script would be false.
         table.set_field(
@@ -1214,10 +1214,7 @@ impl HttpResponse {
                 .map(|value| luau::Value::Number(f64::from(value)))
                 .unwrap_or(luau::Value::Nil),
         );
-        table.set_field(
-            "status_message",
-            luau::Value::String(self.status_message.into_bytes()),
-        );
+        table.set_field("status_message", self.status_message);
         table.set_field("headers", self.headers.into_luau_value());
         table.set_field("cookies", self.cookies.into_luau_value());
         table.set_field("body", luau::Value::String(self.body.0));
@@ -1228,7 +1225,7 @@ impl HttpResponse {
                 .unwrap_or(luau::Value::Nil),
         );
         table.set_field("retries", luau::Value::Number(f64::from(self.retries)));
-        table.set_field("rate_limited", luau::Value::Boolean(self.rate_limited));
+        table.set_field("rate_limited", self.rate_limited);
         luau::Value::TableData(table)
     }
 }
@@ -1237,7 +1234,7 @@ impl HttpHeaderMap {
     fn into_luau_value(self) -> luau::Value {
         let mut table = luau::OwnedTable::with_capacity(0, self.0.len());
         for (key, value) in self.0 {
-            table.set_field(key, luau::Value::String(value.into_bytes()));
+            table.set_field(key, value);
         }
         luau::Value::TableData(table)
     }

@@ -615,26 +615,17 @@ fn request_options_from_luau(
 
 fn response_value(status_code: u16, body: &str, retries: u32) -> luau::Value {
     let mut table = luau::OwnedTable::with_capacity(0, 8);
-    table.set_field(
-        "success",
-        luau::Value::Boolean((200..400).contains(&status_code)),
-    );
+    table.set_field("success", (200..400).contains(&status_code));
     table.set_field("status_code", luau::Value::Number(f64::from(status_code)));
     table.set_field(
         "status_message",
         luau::Value::String(status_message(status_code).as_bytes().to_vec()),
     );
     table.set_field("body", luau::Value::String(body.as_bytes().to_vec()));
-    table.set_field(
-        "headers",
-        luau::Value::TableData(luau::OwnedTable::with_capacity(0, 0)),
-    );
-    table.set_field(
-        "cookies",
-        luau::Value::TableData(luau::OwnedTable::with_capacity(0, 0)),
-    );
+    table.set_field("headers", luau::OwnedTable::with_capacity(0, 0));
+    table.set_field("cookies", luau::OwnedTable::with_capacity(0, 0));
     table.set_field("retries", luau::Value::Number(f64::from(retries)));
-    table.set_field("rate_limited", luau::Value::Boolean(retries > 0));
+    table.set_field("rate_limited", retries > 0);
     luau::Value::TableData(table)
 }
 

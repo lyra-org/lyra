@@ -799,7 +799,7 @@ fn socket_address_from_luau(
 
 fn socket_address_value(address: SocketAddress) -> luau::Value {
     let mut table = luau::OwnedTable::with_capacity(0, 2);
-    table.set_field("address", luau::Value::String(address.address.into_bytes()));
+    table.set_field("address", address.address);
     table.set_field("port", luau::Value::Integer(address.port.into()));
     luau::Value::TableData(table)
 }
