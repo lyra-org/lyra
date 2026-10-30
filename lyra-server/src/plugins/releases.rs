@@ -147,15 +147,12 @@ fn replace_chains_callback(
             .map_err(crate::plugins::runtime_error)?;
         let chains = {
             let mut db = db.write().await;
-            if !crate::services::auth::access::entity_accessible(&db, &principal, release_db_id)
-                .map_err(crate::plugins::runtime_error)?
-            {
+            if !crate::services::auth::access::entity_accessible(&db, &principal, release_db_id)? {
                 return Err(crate::plugins::runtime_error(
                     lyra_db::chains::ChainError::ReleaseNotFound,
                 ));
             }
-            lyra_db::chains::replace_for_release(&mut db, release_db_id, &chains)
-                .map_err(crate::plugins::runtime_error)?
+            lyra_db::chains::replace_for_release(&mut db, release_db_id, &chains)?
                 .map_err(crate::plugins::runtime_error)?
         };
         harmony_luau::serializable_to_luau_owned(
@@ -210,9 +207,7 @@ fn similar_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let options =
             release_service::SimilarReleaseOptions::for_principal(&principal, request.limit);
-        let releases = similar_in_vm(DbId(release_db_id), &options, provider_vm)
-            .await
-            .map_err(crate::plugins::runtime_error)?;
+        let releases = similar_in_vm(DbId(release_db_id), &options, provider_vm).await?;
         match releases {
             Some(releases) => harmony_luau::serializable_to_luau_owned(releases),
             None => Ok(luau::Value::Nil),

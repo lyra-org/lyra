@@ -93,8 +93,7 @@ impl MetadataLayer {
         let field = MetadataField::from_name(&name).ok_or_else(|| {
             crate::plugins::runtime_error(format!("unknown metadata layer field '{name}'"))
         })?;
-        let value = input_from_json(field, harmony_serde::luau_to_json(vm, &value, 0)?)
-            .map_err(crate::plugins::runtime_error)?;
+        let value = input_from_json(field, harmony_serde::luau_to_json(vm, &value, 0)?)?;
         self.state
             .lock()
             .expect("metadata layer mutex poisoned")

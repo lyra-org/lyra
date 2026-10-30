@@ -109,8 +109,7 @@ fn query_callback(
             library_id,
             |db, id_includes| {
                 let query_id = resolve_id
-                    .to_query_id(db)
-                    .map_err(crate::plugins::runtime_error)?
+                    .to_query_id(db)?
                     .ok_or_else(|| crate::plugins::runtime_error("could not resolve id"))?;
                 let viewer = scoped.viewer(db)?;
                 let projections = project_visible_entities(
@@ -120,8 +119,7 @@ fn query_callback(
                     &includes,
                     library_id,
                     id_includes,
-                )
-                .map_err(crate::plugins::runtime_error)?;
+                )?;
                 Ok(projections.into_iter().flatten().collect())
             },
         )
@@ -186,9 +184,7 @@ fn get_type_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        let db_id = resolve_id
-            .to_db_id(&db)
-            .map_err(crate::plugins::runtime_error)?;
+        let db_id = resolve_id.to_db_id(&db)?;
         let entity_type = match db_id {
             Some(id) => {
                 lyra_db::entities::get_element_type(&db, id).map_err(crate::plugins::runtime_error)
@@ -219,10 +215,7 @@ fn query_many_callback(
                 let mut resolved_keys = Vec::new();
                 let mut query_ids = Vec::new();
                 for (key, resolve_id) in ids {
-                    let Some(query_id) = resolve_id
-                        .to_query_id(db)
-                        .map_err(crate::plugins::runtime_error)?
-                    else {
+                    let Some(query_id) = resolve_id.to_query_id(db)? else {
                         continue;
                     };
                     resolved_keys.push(key);
@@ -236,8 +229,7 @@ fn query_many_callback(
                     &includes,
                     library_id,
                     id_includes,
-                )
-                .map_err(crate::plugins::runtime_error)?;
+                )?;
                 let mut visible = Vec::with_capacity(projections.len());
                 for (key, projection) in resolved_keys.into_iter().zip(projections) {
                     if let Some(projection) = projection {
@@ -307,8 +299,7 @@ async fn project_with_links(
         let projections = project(&db, &mut id_includes)?;
         let links = match (link_vm, generators, id_includes.into_link_rows()) {
             (Some(vm), Some(generators), Some(rows)) => {
-                let targets = id_link_targets(&db, rows, library_id, &generators)
-                    .map_err(crate::plugins::runtime_error)?;
+                let targets = id_link_targets(&db, rows, library_id, &generators)?;
                 Some((vm, generators, targets))
             }
             _ => None,

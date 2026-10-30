@@ -51,8 +51,7 @@ fn list_callback(frame: luau::AsyncCallFrame<'_>) -> luau::runtime::Result<luau:
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        let users = lyra_db::users::get(&db)
-            .map_err(crate::plugins::runtime_error)?
+        let users = lyra_db::users::get(&db)?
             .into_iter()
             .filter_map(|user| {
                 let user_db_id = user.db_id?;

@@ -173,14 +173,10 @@ fn artwork_release_ids_callback(
     let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        if lyra_db::genres::get_by_id(&*db, genre_id)
-            .map_err(crate::plugins::runtime_error)?
-            .is_none()
-        {
+        if lyra_db::genres::get_by_id(&*db, genre_id)?.is_none() {
             return harmony_luau::serializable_to_luau_owned(Vec::<i64>::new());
         }
-        let releases = lyra_db::genres::get_releases_many(&*db, &[genre_id])
-            .map_err(crate::plugins::runtime_error)?
+        let releases = lyra_db::genres::get_releases_many(&*db, &[genre_id])?
             .remove(&genre_id)
             .unwrap_or_default();
         harmony_luau::serializable_to_luau_owned(
@@ -240,12 +236,8 @@ fn find_by_name_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let genre = {
             let db = db.read().await;
-            match lyra_db::genres::find_by_name(&db, &trimmed)
-                .map_err(crate::plugins::runtime_error)?
-            {
-                Some(db_id) => {
-                    lyra_db::genres::get_by_id(&db, db_id).map_err(crate::plugins::runtime_error)?
-                }
+            match lyra_db::genres::find_by_name(&db, &trimmed)? {
+                Some(db_id) => lyra_db::genres::get_by_id(&db, db_id)?,
                 None => None,
             }
         };

@@ -314,9 +314,7 @@ fn get_callback(
         }
 
         let db = db.read().await;
-        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)
-            .map_err(crate::plugins::runtime_error)?
-        {
+        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)? {
             return Ok(luau::Value::Nil);
         }
         let detail = lyrics_service::get_preferred_detail(
@@ -326,8 +324,7 @@ fn get_callback(
             provider.as_deref(),
             language.as_deref(),
             require_synced.unwrap_or(false),
-        )
-        .map_err(crate::plugins::runtime_error)?;
+        )?;
 
         let value = match detail {
             Some(detail) => lyrics_detail_to_luau_value(detail)?,
@@ -340,7 +337,7 @@ fn get_callback(
 fn parse_lrc_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
     let text: String = frame.args.read_named("text")?;
     let language: Option<String> = frame.args.read_optional_named("language")?;
-    let parsed = parse_lrc_input(text, language).map_err(crate::plugins::runtime_error)?;
+    let parsed = parse_lrc_input(text, language)?;
     frame.returns.write(parsed.into_luau_table())?;
     Ok(())
 }
@@ -368,9 +365,7 @@ fn upsert_personal_callback(
                 .map_err(crate::plugins::runtime_error)?;
 
         let mut db = db.write().await;
-        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)
-            .map_err(crate::plugins::runtime_error)?
-        {
+        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)? {
             return Err(crate::plugins::runtime_error("track not found"));
         }
         let detail = lyrics_service::upsert_personal_lyrics_by_db_id(
@@ -417,9 +412,7 @@ fn delete_for_track_callback(
         crate::services::auth::require_permission(&principal, lyra_db::Permission::ManageMetadata)
             .map_err(crate::plugins::runtime_error)?;
         let mut db = db.write().await;
-        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)
-            .map_err(crate::plugins::runtime_error)?
-        {
+        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)? {
             return Ok(());
         }
         lyrics_service::delete_all_lyrics_for_track(&mut db, track_db_id)
@@ -442,9 +435,7 @@ fn has_callback(
         }
 
         let db = db.read().await;
-        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)
-            .map_err(crate::plugins::runtime_error)?
-        {
+        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)? {
             return Ok(luau::Value::Boolean(false));
         }
         let detail = lyrics_service::get_preferred_detail(
@@ -454,8 +445,7 @@ fn has_callback(
             None,
             None,
             false,
-        )
-        .map_err(crate::plugins::runtime_error)?;
+        )?;
         Ok(luau::Value::Boolean(detail.is_some()))
     }))
 }
@@ -470,25 +460,19 @@ fn has_many_callback(
     let db = db::get(frame.vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        let providers = crate::services::providers::active_providers(&*db)
-            .map_err(crate::plugins::runtime_error)?;
+        let providers = crate::services::providers::active_providers(&*db)?;
         let owner = Some(crate::plugins::auth::require_user_db_id(&principal, &db)?);
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, track_ids.len());
 
         for track_id in track_ids {
             let has_lyrics =
-                if !crate::services::auth::access::entity_accessible(&db, &principal, track_id)
-                    .map_err(crate::plugins::runtime_error)?
-                {
+                if !crate::services::auth::access::entity_accessible(&db, &principal, track_id)? {
                     false
                 } else {
-                    match lyra_db::tracks::get_by_id(&db, track_id)
-                        .map_err(crate::plugins::runtime_error)?
-                    {
+                    match lyra_db::tracks::get_by_id(&db, track_id)? {
                         Some(track) => {
                             let candidates =
-                                lyra_db::lyrics::get_visible_for_track(&db, track_id, owner)
-                                    .map_err(crate::plugins::runtime_error)?;
+                                lyra_db::lyrics::get_visible_for_track(&db, track_id, owner)?;
                             lyrics_service::pick_preferred(
                                 &candidates,
                                 &providers,

@@ -120,21 +120,14 @@ fn cover_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let (resolved_cover, stale_owners) = {
             let (db_read, viewer) = db.read().await?;
-            let Some(QueryId::Id(item_id)) = id
-                .to_query_id(&db_read)
-                .map_err(crate::plugins::runtime_error)?
-            else {
+            let Some(QueryId::Id(item_id)) = id.to_query_id(&db_read)? else {
                 return Ok(luau::Value::Nil);
             };
-            if !viewer
-                .sees(&db_read, item_id)
-                .map_err(crate::plugins::runtime_error)?
-            {
+            if !viewer.sees(&db_read, item_id)? {
                 return Ok(luau::Value::Nil);
             }
             let mut stale_owners = Vec::new();
-            let result = resolve_persisted_cover(&db_read, item_id, &mut stale_owners)
-                .map_err(crate::plugins::runtime_error)?;
+            let result = resolve_persisted_cover(&db_read, item_id, &mut stale_owners)?;
             (result, stale_owners)
         };
 
@@ -162,16 +155,12 @@ fn covers_callback(
             let (db_read, viewer) = db.read().await?;
             let mut visible_ids = Vec::with_capacity(item_ids.len());
             for item_id in &item_ids {
-                if viewer
-                    .sees(&db_read, *item_id)
-                    .map_err(crate::plugins::runtime_error)?
-                {
+                if viewer.sees(&db_read, *item_id)? {
                     visible_ids.push(*item_id);
                 }
             }
             let mut stale_owners = Vec::new();
-            let result = resolve_persisted_covers(&db_read, &visible_ids, &mut stale_owners)
-                .map_err(crate::plugins::runtime_error)?;
+            let result = resolve_persisted_covers(&db_read, &visible_ids, &mut stale_owners)?;
             (result, stale_owners)
         };
 
@@ -203,18 +192,14 @@ fn playlist_sources_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let (sources, stale_owners) = {
             let (db_read, viewer) = db.read().await?;
-            let Some(QueryId::Id(playlist_id)) = id
-                .to_query_id(&db_read)
-                .map_err(crate::plugins::runtime_error)?
-            else {
+            let Some(QueryId::Id(playlist_id)) = id.to_query_id(&db_read)? else {
                 return Ok(luau::Value::TableData(luau::OwnedTable::with_capacity(
                     0, 0,
                 )));
             };
             let mut stale_owners = Vec::new();
             let result =
-                resolve_playlist_sources(&db_read, &viewer, playlist_id, &mut stale_owners)
-                    .map_err(crate::plugins::runtime_error)?;
+                resolve_playlist_sources(&db_read, &viewer, playlist_id, &mut stale_owners)?;
             (result, stale_owners)
         };
 
@@ -240,8 +225,7 @@ fn get_playlist_sources_many_callback(
             let mut resolved = Vec::with_capacity(playlist_ids.len());
             for playlist_id in &playlist_ids {
                 let sources =
-                    resolve_playlist_sources(&db_read, &viewer, *playlist_id, &mut stale_owners)
-                        .map_err(crate::plugins::runtime_error)?;
+                    resolve_playlist_sources(&db_read, &viewer, *playlist_id, &mut stale_owners)?;
                 resolved.push((*playlist_id, sources));
             }
             (resolved, stale_owners)

@@ -234,8 +234,7 @@ async fn load_user_stored_values(
     let db =
         db.ok_or_else(|| luau::Error::Runtime("plugin settings database is unavailable".into()))?;
     let db = db.read().await;
-    let user_db_id = lyra_db::users::find_db_id_by_public_id(&*db, user_public_id)
-        .map_err(crate::plugins::runtime_error)?
+    let user_db_id = lyra_db::users::find_db_id_by_public_id(&*db, user_public_id)?
         .ok_or_else(|| crate::plugins::runtime_error("user not found"))?;
     plugin_settings_service::load_validated_user_stored_values(
         &db,
@@ -261,8 +260,7 @@ fn declare_settings_callback(
         let _registration = generation
             .registries
             .ensure_registrations_open(&plugin_id)
-            .await
-            .map_err(crate::plugins::runtime_error)?;
+            .await?;
         let stored_values = load_stored_values(db.as_ref(), &plugin_id).await?;
         let builder = settings_builder(stored_values);
         let builder_value = SettingsBuilder::_harmony_userdata_class().create_value(
@@ -279,15 +277,13 @@ fn declare_settings_callback(
             plugin_id.as_str(),
             &schema,
             &builder.stored_values,
-        )
-        .map_err(crate::plugins::runtime_error)?;
+        )?;
         let config = build_config_table(&schema.groups, &builder)?;
 
         super::settings_registry()
             .write_owned()
             .await
-            .register_schema(plugin_id, SettingsScope::Global, schema)
-            .map_err(crate::plugins::runtime_error)?;
+            .register_schema(plugin_id, SettingsScope::Global, schema)?;
 
         Ok(config)
     }))
@@ -308,8 +304,7 @@ fn declare_user_settings_callback(
         let _registration = generation
             .registries
             .ensure_registrations_open(&plugin_id)
-            .await
-            .map_err(crate::plugins::runtime_error)?;
+            .await?;
         let builder = settings_builder(HashMap::new());
         let builder_value = SettingsBuilder::_harmony_userdata_class().create_value(
             &vm,
@@ -325,8 +320,7 @@ fn declare_user_settings_callback(
         super::settings_registry()
             .write_owned()
             .await
-            .register_schema(plugin_id.clone(), SettingsScope::User, schema.clone())
-            .map_err(crate::plugins::runtime_error)?;
+            .register_schema(plugin_id.clone(), SettingsScope::User, schema.clone())?;
 
         UserSettingsAccessor::_harmony_userdata_class().create(
             &vm,
@@ -623,9 +617,7 @@ fn primitive_value_for_field(
     stored: Option<&serde_json::Value>,
 ) -> luau::runtime::Result<luau::Value> {
     if let Some(stored) = stored {
-        field
-            .validate_value(stored)
-            .map_err(crate::plugins::runtime_error)?;
+        field.validate_value(stored)?;
     }
     Ok(resolve_settings_value(stored, &field.props().default_value))
 }

@@ -106,8 +106,7 @@ fn decide_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let (public, options) =
-            crate::plugins::api::options::stream_track_options(options.as_ref())
-                .map_err(crate::plugins::runtime_error)?;
+            crate::plugins::api::options::stream_track_options(options.as_ref())?;
         let (track_id, access) =
             delivery::stream_track_access(principal.as_ref(), Default::default(), track_id, public)
                 .await
@@ -183,23 +182,19 @@ fn get_callback(
             lyra_db::Permission::ManageLibraries,
         );
         let query_id = id
-            .to_query_id(&db)
-            .map_err(crate::plugins::runtime_error)?
+            .to_query_id(&db)?
             .ok_or_else(|| crate::plugins::runtime_error("could not resolve scope"))?;
-        let tracks = lyra_db::tracks::get(&db, query_id).map_err(crate::plugins::runtime_error)?;
+        let tracks = lyra_db::tracks::get(&db, query_id)?;
 
         let mut rows = luau::OwnedTable::new();
         for track in tracks {
             let Some(track_id) = track.db_id.map(DbId::from) else {
                 continue;
             };
-            if !crate::services::auth::access::entity_accessible(&db, &principal, track_id)
-                .map_err(crate::plugins::runtime_error)?
-            {
+            if !crate::services::auth::access::entity_accessible(&db, &principal, track_id)? {
                 continue;
             }
-            let Some(source) = playback_source_service::resolve(&db, track_id, include_entry)
-                .map_err(crate::plugins::runtime_error)?
+            let Some(source) = playback_source_service::resolve(&db, track_id, include_entry)?
             else {
                 continue;
             };
@@ -235,11 +230,8 @@ fn get_many_callback(
         let mut rows = luau::OwnedTable::with_entry_capacity(0, 0, track_ids.len());
         for track_id in track_ids {
             let value =
-                if crate::services::auth::access::entity_accessible(&db, &principal, track_id)
-                    .map_err(crate::plugins::runtime_error)?
-                {
-                    playback_source_service::resolve(&db, track_id, include_entry)
-                        .map_err(crate::plugins::runtime_error)?
+                if crate::services::auth::access::entity_accessible(&db, &principal, track_id)? {
+                    playback_source_service::resolve(&db, track_id, include_entry)?
                         .map(|source| source_to_table(source, include_entry, include_full_path))
                         .transpose()?
                         .map_or(luau::Value::Nil, luau::Value::TableData)
@@ -266,8 +258,7 @@ fn streamable_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         Ok(
-            playback_source_service::resolve(&db, track_id, include_entry)
-                .map_err(crate::plugins::runtime_error)?
+            playback_source_service::resolve(&db, track_id, include_entry)?
                 .map(|source| source_to_table(source, include_entry, false))
                 .transpose()?
                 .map_or(luau::Value::Nil, luau::Value::TableData),

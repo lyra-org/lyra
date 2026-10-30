@@ -191,9 +191,7 @@ fn report_session_callback(
 
         let mut db = db.write().await;
         let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)
-            .map_err(crate::plugins::runtime_error)?
-        {
+        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)? {
             return Err(crate::plugins::runtime_error("track not found"));
         }
 

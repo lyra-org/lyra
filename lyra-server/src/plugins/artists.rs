@@ -96,8 +96,7 @@ fn artwork_id_by_name_callback(
             return Ok(luau::Value::Nil);
         }
         let db = db.read().await;
-        let id = lyra_db::artists::find_by_scan_name(&*db, name)
-            .map_err(crate::plugins::runtime_error)?;
+        let id = lyra_db::artists::find_by_scan_name(&*db, name)?;
         Ok(id.map_or(luau::Value::Nil, |id| luau::Value::from(id.0)))
     }))
 }

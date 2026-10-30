@@ -144,12 +144,8 @@ fn get_for_release_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let labels = {
             let (db, viewer) = db.read().await?;
-            if viewer
-                .sees_entity(&*db, release_id)
-                .map_err(crate::plugins::runtime_error)?
-            {
-                lyra_db::labels::get_for_release(&db, release_id)
-                    .map_err(crate::plugins::runtime_error)?
+            if viewer.sees_entity(&*db, release_id)? {
+                lyra_db::labels::get_for_release(&db, release_id)?
             } else {
                 Vec::new()
             }
@@ -167,9 +163,7 @@ fn get_for_releases_many_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let labels = {
             let (db, viewer) = db.read().await?;
-            let readable = viewer
-                .visible(&db, ids)
-                .map_err(crate::plugins::runtime_error)?;
+            let readable = viewer.visible(&db, ids)?;
             lyra_db::labels::get_for_releases_many(&db, &readable)
                 .map_err(crate::plugins::runtime_error)
         }?;
@@ -192,8 +186,7 @@ fn get_releases_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let release_ids = {
             let (db, viewer) = db.read().await?;
-            let release_ids = lyra_db::labels::get_releases(&db, label_id)
-                .map_err(crate::plugins::runtime_error)?;
+            let release_ids = lyra_db::labels::get_releases(&db, label_id)?;
             viewer
                 .visible(&db, release_ids)
                 .map_err(crate::plugins::runtime_error)
@@ -212,12 +205,8 @@ fn get_releases_many_callback(
         let release_ids = {
             let (db, viewer) = db.read().await?;
             let mut visible = Vec::new();
-            for (label_id, release_ids) in lyra_db::labels::get_releases_many(&db, &ids)
-                .map_err(crate::plugins::runtime_error)?
-            {
-                let release_ids = viewer
-                    .visible(&db, release_ids)
-                    .map_err(crate::plugins::runtime_error)?;
+            for (label_id, release_ids) in lyra_db::labels::get_releases_many(&db, &ids)? {
+                let release_ids = viewer.visible(&db, release_ids)?;
                 visible.push((label_id, release_ids));
             }
             Ok::<_, luau::runtime::Error>(visible)

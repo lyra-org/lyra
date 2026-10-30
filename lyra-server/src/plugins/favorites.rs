@@ -80,13 +80,10 @@ fn add_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let mut db = db.write().await;
-        let Some(public_target_id) = lyra_db::lookup::find_id_by_db_id(&*db, target_id)
-            .map_err(crate::plugins::runtime_error)?
-        else {
+        let Some(public_target_id) = lyra_db::lookup::find_id_by_db_id(&*db, target_id)? else {
             return Ok(luau::Value::Boolean(false));
         };
-        let outcome = favorite_service::add_for_principal(&mut db, &principal, &public_target_id)
-            .map_err(crate::plugins::runtime_error)?;
+        let outcome = favorite_service::add_for_principal(&mut db, &principal, &public_target_id)?;
         Ok(luau::Value::Boolean(matches!(
             outcome,
             favorite_service::MutationOutcome::Applied(_)
@@ -104,8 +101,7 @@ fn remove_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let mut db = db.write().await;
         let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let outcome = favorite_service::remove_by_db_id(&mut db, user_db_id, target_id)
-            .map_err(crate::plugins::runtime_error)?;
+        let outcome = favorite_service::remove_by_db_id(&mut db, user_db_id, target_id)?;
         Ok(luau::Value::Boolean(matches!(
             outcome,
             favorite_service::MutationOutcome::Applied(_)
@@ -122,13 +118,10 @@ fn has_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        let Some(public_target_id) = lyra_db::lookup::find_id_by_db_id(&*db, target_id)
-            .map_err(crate::plugins::runtime_error)?
-        else {
+        let Some(public_target_id) = lyra_db::lookup::find_id_by_db_id(&*db, target_id)? else {
             return Ok(luau::Value::Boolean(false));
         };
-        let favored = favorite_service::has_for_principal(&db, &principal, &public_target_id)
-            .map_err(crate::plugins::runtime_error)?;
+        let favored = favorite_service::has_for_principal(&db, &principal, &public_target_id)?;
         Ok(luau::Value::Boolean(favored))
     }))
 }
@@ -143,14 +136,12 @@ fn has_many_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        let public_ids_by_db_id = lyra_db::lookup::find_ids_by_db_ids(&*db, &target_ids)
-            .map_err(crate::plugins::runtime_error)?;
+        let public_ids_by_db_id = lyra_db::lookup::find_ids_by_db_ids(&*db, &target_ids)?;
         let public_ids = target_ids
             .iter()
             .filter_map(|id| public_ids_by_db_id.get(id).cloned())
             .collect::<Vec<_>>();
-        let result = favorite_service::has_many_for_principal(&db, &principal, &public_ids)
-            .map_err(crate::plugins::runtime_error)?;
+        let result = favorite_service::has_many_for_principal(&db, &principal, &public_ids)?;
 
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, target_ids.len());
         for id in target_ids {
@@ -175,13 +166,11 @@ fn list_ids_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let ids = favorite_service::list_ids(&db, user_db_id, kind)
-            .map_err(crate::plugins::runtime_error)?;
+        let ids = favorite_service::list_ids(&db, user_db_id, kind)?;
         let mut visible_ids = Vec::new();
         for id in ids {
             if kind == FavoriteKind::Playlist
-                || crate::services::auth::access::entity_accessible(&db, &principal, id)
-                    .map_err(crate::plugins::runtime_error)?
+                || crate::services::auth::access::entity_accessible(&db, &principal, id)?
             {
                 visible_ids.push(id);
             }

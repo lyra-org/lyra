@@ -239,8 +239,7 @@ impl Mixer {
             let _registration = generation
                 .registries
                 .ensure_registrations_open(&plugin_id)
-                .await
-                .map_err(crate::plugins::runtime_error)?;
+                .await?;
             mix_service::mix_registry()
                 .write_owned()
                 .await
@@ -266,8 +265,7 @@ impl Mixer {
             let _registration = generation
                 .registries
                 .ensure_registrations_open(&plugin_id)
-                .await
-                .map_err(crate::plugins::runtime_error)?;
+                .await?;
             let mut registry = mix_service::mix_registry().write_owned().await;
             let handlers = vm.data().get::<MixCallbackRegistry>()?;
             let handler = handlers.register(id.clone(), seed_type, function, context);
@@ -330,8 +328,7 @@ fn mixer_new_callback(
             "mix.Mixer.new must be called from plugin Luau code",
         ));
     };
-    let plugin_id = crate::services::plugin_scope::PluginId::new(plugin_id.to_string())
-        .map_err(crate::plugins::runtime_error)?;
+    let plugin_id = crate::services::plugin_scope::PluginId::new(plugin_id.to_string())?;
     harmony_core::ensure_current_plugin_run(frame.vm, &frame.context)?;
     let vm = frame.vm.clone();
     let origin = frame.context.origin.clone();
@@ -341,16 +338,14 @@ fn mixer_new_callback(
         let _registration = generation
             .registries
             .ensure_registrations_open(&plugin_id)
-            .await
-            .map_err(crate::plugins::runtime_error)?;
+            .await?;
         mix_service::mix_registry()
             .write_owned()
             .await
-            .register(plugin_id, id.clone())
-            .map_err(crate::plugins::runtime_error)?;
+            .register(plugin_id, id.clone())?;
 
         let mut db = db.write().await;
-        lyra_db::mixers::register(&mut db, &id).map_err(crate::plugins::runtime_error)?;
+        lyra_db::mixers::register(&mut db, &id)?;
 
         drop(db);
         Mixer::_harmony_userdata_class().create(&vm, &origin, Mixer { id })
@@ -374,9 +369,7 @@ fn consumer_callback(
         let Some(seed) = seed_public_id(db, seed).await? else {
             return tracks_to_luau(None);
         };
-        let tracks = mix_service::from_seed(variant(seed), &options)
-            .await
-            .map_err(crate::plugins::runtime_error)?;
+        let tracks = mix_service::from_seed(variant(seed), &options).await?;
         tracks_to_luau(tracks)
     }))
 }
@@ -426,9 +419,7 @@ fn instant_mix_from_audio_callback(
         let Some(seed) = seed_public_id(db, seed).await? else {
             return tracks_to_luau(None);
         };
-        let tracks = mix_service::instant_mix_from_audio(&seed, &options)
-            .await
-            .map_err(crate::plugins::runtime_error)?;
+        let tracks = mix_service::instant_mix_from_audio(&seed, &options).await?;
         tracks_to_luau(tracks)
     }))
 }

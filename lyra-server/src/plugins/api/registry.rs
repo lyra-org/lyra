@@ -55,11 +55,9 @@ impl ApiRouteStore {
             RouteKey::new_case_insensitive(method, &path)
         } else {
             RouteKey::new(method, &path)
-        }
-        .map_err(crate::plugins::runtime_error)?;
+        }?;
         let auth_mode = normalize_auth_mode(auth_mode.as_deref())?;
-        let plugin = crate::services::plugin_scope::PluginId::new(plugin_id.to_string())
-            .map_err(crate::plugins::runtime_error)?;
+        let plugin = crate::services::plugin_scope::PluginId::new(plugin_id.to_string())?;
 
         let handler = self
             .handlers
@@ -89,10 +87,9 @@ impl ApiRouteStore {
         auth_mode: Option<String>,
         context: harmony_core::CallContext,
     ) -> luau::runtime::Result<()> {
-        let key = RouteKey::new("GET", &path).map_err(crate::plugins::runtime_error)?;
+        let key = RouteKey::new("GET", &path)?;
         let auth_mode = normalize_auth_mode(auth_mode.as_deref())?;
-        let plugin = crate::services::plugin_scope::PluginId::new(plugin_id.to_string())
-            .map_err(crate::plugins::runtime_error)?;
+        let plugin = crate::services::plugin_scope::PluginId::new(plugin_id.to_string())?;
 
         let handler = self
             .handlers

@@ -81,14 +81,11 @@ fn set_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let mut db = db.write().await;
-        let Some(public_target_id) = lyra_db::lookup::find_id_by_db_id(&*db, target_id)
-            .map_err(crate::plugins::runtime_error)?
-        else {
+        let Some(public_target_id) = lyra_db::lookup::find_id_by_db_id(&*db, target_id)? else {
             return Ok(luau::Value::Boolean(false));
         };
         let outcome =
-            rating_service::set_for_principal(&mut db, &principal, &public_target_id, value)
-                .map_err(crate::plugins::runtime_error)?;
+            rating_service::set_for_principal(&mut db, &principal, &public_target_id, value)?;
         Ok(luau::Value::Boolean(matches!(
             outcome,
             rating_service::MutationOutcome::Applied(_)
@@ -106,13 +103,10 @@ fn remove_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let mut db = db.write().await;
         let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let Some(public_target_id) = lyra_db::lookup::find_id_by_db_id(&*db, target_id)
-            .map_err(crate::plugins::runtime_error)?
-        else {
+        let Some(public_target_id) = lyra_db::lookup::find_id_by_db_id(&*db, target_id)? else {
             return Ok(luau::Value::Boolean(false));
         };
-        let outcome = rating_service::remove(&mut db, user_db_id, &public_target_id)
-            .map_err(crate::plugins::runtime_error)?;
+        let outcome = rating_service::remove(&mut db, user_db_id, &public_target_id)?;
         Ok(luau::Value::Boolean(matches!(
             outcome,
             rating_service::MutationOutcome::Applied(_)
@@ -130,11 +124,9 @@ fn get_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        let public_ids_by_db_id = lyra_db::lookup::find_ids_by_db_ids(&*db, &target_ids)
-            .map_err(crate::plugins::runtime_error)?;
+        let public_ids_by_db_id = lyra_db::lookup::find_ids_by_db_ids(&*db, &target_ids)?;
         let public_ids = public_ids_by_db_id.values().cloned().collect::<Vec<_>>();
-        let values = rating_service::values_for_principal(&db, &principal, &public_ids)
-            .map_err(crate::plugins::runtime_error)?;
+        let values = rating_service::values_for_principal(&db, &principal, &public_ids)?;
 
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, target_ids.len());
         for (id, public_id) in public_ids_by_db_id {

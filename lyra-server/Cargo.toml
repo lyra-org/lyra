@@ -25,7 +25,7 @@ harmony-crypt = { path = "../harmony-crypt" }
 harmony-globals = { path = "../harmony-globals" }
 harmony-serde = { path = "../harmony-serde" }
 harmony-http = { path = "../harmony-http" }
-harmony-luau = { path = "../harmony-luau", features = ["serde"] }
+harmony-luau = { path = "../harmony-luau", features = ["anyhow", "serde"] }
 harmony-macros = { path = "../harmony-macros" }
 harmony-repository = { path = "../harmony-repository" }
 harmony-task = { path = "../harmony-task" }

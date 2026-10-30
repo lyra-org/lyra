@@ -71,7 +71,7 @@ fn provider_new_callback(
     let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
         crate::plugins::runtime_error("metadata.Provider.new must be called from plugin Lua code")
     })?;
-    let plugin_id = PluginId::new(plugin_id.to_string()).map_err(crate::plugins::runtime_error)?;
+    let plugin_id = PluginId::new(plugin_id.to_string())?;
     harmony_core::ensure_current_plugin_run(frame.vm, &frame.context)?;
     let db = db::get_optional(frame.vm)?;
 
@@ -82,18 +82,14 @@ fn provider_new_callback(
         let _registration = generation
             .registries
             .ensure_registrations_open(&plugin_id)
-            .await
-            .map_err(crate::plugins::runtime_error)?;
+            .await?;
         let mut registry = provider_registry().write_owned().await;
-        registry
-            .register(plugin_id.clone(), provider_id.clone(), display_name)
-            .map_err(crate::plugins::runtime_error)?;
+        registry.register(plugin_id.clone(), provider_id.clone(), display_name)?;
         drop(registry);
 
         if let Some(db) = db {
             let mut db_write = db.write().await;
-            lyra_db::providers::register(&mut db_write, &provider_id)
-                .map_err(crate::plugins::runtime_error)?;
+            lyra_db::providers::register(&mut db_write, &provider_id)?;
         }
 
         let provider = MetadataProvider {
@@ -252,8 +248,7 @@ fn provider_id_callback(
         let _registration = generation
             .registries
             .ensure_registrations_open(&provider.plugin_id)
-            .await
-            .map_err(crate::plugins::runtime_error)?;
+            .await?;
         let mut registry = provider_registry().write_owned().await;
         let entity = id_spec.entity;
         let replaced = registry
@@ -293,8 +288,7 @@ fn declare_option_callback(
         let _registration = generation
             .registries
             .ensure_registrations_open(&provider.plugin_id)
-            .await
-            .map_err(crate::plugins::runtime_error)?;
+            .await?;
         let mut registry = provider_registry().write_owned().await;
         registry
             .declare_option(&provider.provider_id, option)
@@ -319,8 +313,7 @@ fn search_callback(
         let _registration = generation
             .registries
             .ensure_registrations_open(&provider.plugin_id)
-            .await
-            .map_err(crate::plugins::runtime_error)?;
+            .await?;
         let mut registry = provider_registry().write_owned().await;
         let handler =
             handlers.register(provider.provider_id.clone(), entity_type, handler, context);
@@ -354,8 +347,7 @@ fn cover_callback(
         let _registration = generation
             .registries
             .ensure_registrations_open(&provider.plugin_id)
-            .await
-            .map_err(crate::plugins::runtime_error)?;
+            .await?;
         if !harmony_http::has_rate_limit_for_plugin(provider.plugin_id.as_ref()).await {
             return Err(crate::plugins::runtime_error(format!(
                 "provider:cover requires http.set_rate_limit to be configured for at least one domain before registration; call set_rate_limit in plugin init for plugin '{}'",
@@ -397,8 +389,7 @@ fn lyrics_callback(
         let _registration = generation
             .registries
             .ensure_registrations_open(&provider.plugin_id)
-            .await
-            .map_err(crate::plugins::runtime_error)?;
+            .await?;
         if !harmony_http::has_rate_limit_for_plugin(provider.plugin_id.as_ref()).await {
             return Err(crate::plugins::runtime_error(format!(
                 "provider:lyrics requires http.set_rate_limit to be configured for at least one domain before registration; call set_rate_limit in plugin init for plugin '{}'",
@@ -437,8 +428,7 @@ fn similar_releases_callback(
         let _registration = generation
             .registries
             .ensure_registrations_open(&provider.plugin_id)
-            .await
-            .map_err(crate::plugins::runtime_error)?;
+            .await?;
         let mut registry = provider_registry().write_owned().await;
         let handler = handlers.register(
             provider.provider_id.clone(),
@@ -476,8 +466,7 @@ fn refresh_callback(
         let _registration = generation
             .registries
             .ensure_registrations_open(&provider.plugin_id)
-            .await
-            .map_err(crate::plugins::runtime_error)?;
+            .await?;
         let mut registry = provider_registry().write_owned().await;
         let handler = handlers.register(
             provider.provider_id.clone(),
@@ -590,8 +579,7 @@ fn mark_unmatched_callback(
                 .collect::<Vec<_>>()
         };
         let mut db_write = db.write().await;
-        let entity_type = entity_type_for_node(&db_write, node_id)
-            .map_err(crate::plugins::runtime_error)?
+        let entity_type = entity_type_for_node(&db_write, node_id)?
             .ok_or_else(|| {
                 crate::plugins::runtime_error(format!(
                     "provider:mark_unmatched: node_id {} does not reference a release, artist, or track",

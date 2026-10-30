@@ -180,8 +180,7 @@ fn submit_callback(
         let mut db = db.write().await;
         let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
         let outcomes =
-            listen_service::record_submitted(&mut db, &principal, user_db_id, plays, now_ms)
-                .map_err(crate::plugins::runtime_error)?;
+            listen_service::record_submitted(&mut db, &principal, user_db_id, plays, now_ms)?;
         drop(db);
         let outcomes = outcomes
             .into_iter()
@@ -243,15 +242,12 @@ async fn resolve_stats(
         let mut accessible_track_ids = Vec::new();
         for track_id in track_ids {
             counts.insert(*track_id, 0);
-            if crate::services::auth::access::entity_accessible(&db, principal, *track_id)
-                .map_err(crate::plugins::runtime_error)?
-            {
+            if crate::services::auth::access::entity_accessible(&db, principal, *track_id)? {
                 accessible_track_ids.push(*track_id);
             }
         }
 
-        let stats = lyra_db::listens::get_stats(&db, &accessible_track_ids, viewer_db_id)
-            .map_err(crate::plugins::runtime_error)?;
+        let stats = lyra_db::listens::get_stats(&db, &accessible_track_ids, viewer_db_id)?;
         for stat in stats {
             counts.insert(stat.db_id, stat.count);
             if let Some(last) = stat.last_played {
@@ -275,22 +271,17 @@ async fn resolve_stats(
 
     for track_id in track_ids {
         counts.insert(*track_id, 0);
-        if !crate::services::auth::access::entity_accessible(&db, principal, *track_id)
-            .map_err(crate::plugins::runtime_error)?
-        {
+        if !crate::services::auth::access::entity_accessible(&db, principal, *track_id)? {
             continue;
         }
         let merged_ids = playback_sessions::resolve_merged_track_ids_for_play_count(
             &db,
             *track_id,
             &unique_track_id_pairs,
-        )
-        .map_err(crate::plugins::runtime_error)?;
+        )?;
         let mut accessible_merged_ids = Vec::new();
         for merged_id in merged_ids {
-            if crate::services::auth::access::entity_accessible(&db, principal, merged_id)
-                .map_err(crate::plugins::runtime_error)?
-            {
+            if crate::services::auth::access::entity_accessible(&db, principal, merged_id)? {
                 merged_unique_ids.insert(merged_id);
                 accessible_merged_ids.push(merged_id);
             }
@@ -299,8 +290,7 @@ async fn resolve_stats(
     }
 
     let merged_track_ids = merged_unique_ids.into_iter().collect::<Vec<_>>();
-    let merged_stats = lyra_db::listens::get_stats(&db, &merged_track_ids, viewer_db_id)
-        .map_err(crate::plugins::runtime_error)?;
+    let merged_stats = lyra_db::listens::get_stats(&db, &merged_track_ids, viewer_db_id)?;
     let merged_by_id: HashMap<DbId, &lyra_db::listens::ListenStats> =
         merged_stats.iter().map(|stat| (stat.db_id, stat)).collect();
 

@@ -70,8 +70,7 @@ pub(crate) fn register<Payload: 'static>(
             "{function_name} must be called from plugin Luau code"
         ))
     })?;
-    let validated_plugin_id =
-        PluginId::new(plugin_id.to_string()).map_err(crate::plugins::runtime_error)?;
+    let validated_plugin_id = PluginId::new(plugin_id.to_string())?;
     harmony_core::ensure_current_plugin_run(frame.vm, &frame.context)?;
     let vm = frame.vm.clone();
     let context = frame.context.clone();
@@ -80,8 +79,7 @@ pub(crate) fn register<Payload: 'static>(
         let _registration = generation
             .registries
             .ensure_registrations_open(&validated_plugin_id)
-            .await
-            .map_err(crate::plugins::runtime_error)?;
+            .await?;
         let callbacks = vm.data().get::<UpdateCallbackStore<Payload>>()?;
         callbacks
             .handlers

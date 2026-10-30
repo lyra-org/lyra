@@ -492,9 +492,8 @@ fn get_session_data_spec() -> FunctionSpec {
                 crate::plugins::runtime_error("session data requires plugin origin")
             })?;
             Ok(luau::ScheduledFuture::new(async move {
-                let value = crate::services::auth::sessions::get_plugin_data(&token, &plugin_id)
-                    .await
-                    .map_err(crate::plugins::runtime_error)?;
+                let value =
+                    crate::services::auth::sessions::get_plugin_data(&token, &plugin_id).await?;
                 harmony_luau::serializable_to_luau_owned(value)
             }))
         }))
@@ -512,9 +511,7 @@ fn set_session_data_spec() -> FunctionSpec {
                 crate::plugins::runtime_error("session data requires plugin origin")
             })?;
             Ok(luau::ScheduledFuture::new(async move {
-                crate::services::auth::sessions::set_plugin_data(&token, &plugin_id, value)
-                    .await
-                    .map_err(crate::plugins::runtime_error)?;
+                crate::services::auth::sessions::set_plugin_data(&token, &plugin_id, value).await?;
                 Ok(luau::Value::Nil)
             }))
         }))

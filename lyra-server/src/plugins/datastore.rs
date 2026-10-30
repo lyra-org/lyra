@@ -154,16 +154,13 @@ fn get_or_create_callback(
 async fn get_or_create(db: &DbAsync, name: String) -> luau::runtime::Result<agdb::DbId> {
     {
         let db = db.read().await;
-        if let Some(existing) =
-            lyra_db::datastore::find_by_name(&db, &name).map_err(crate::plugins::runtime_error)?
-        {
+        if let Some(existing) = lyra_db::datastore::find_by_name(&db, &name)? {
             return datastore_db_id(existing);
         }
     }
 
     let mut db = db.write().await;
-    let datastore =
-        lyra_db::datastore::get_or_create(&mut db, name).map_err(crate::plugins::runtime_error)?;
+    let datastore = lyra_db::datastore::get_or_create(&mut db, name)?;
     datastore_db_id(datastore)
 }
 
@@ -174,9 +171,7 @@ async fn read_value(
 ) -> luau::runtime::Result<luau::Value> {
     let stored_value = {
         let db = db.read().await;
-        lyra_db::datastore::get_entry(&db, datastore_id, &key)
-            .map_err(crate::plugins::runtime_error)?
-            .map(|entry| entry.value)
+        lyra_db::datastore::get_entry(&db, datastore_id, &key)?.map(|entry| entry.value)
     };
     let Some(stored_value) = stored_value else {
         return Ok(luau::Value::Nil);
@@ -219,9 +214,7 @@ async fn read_values(
         let mut out = Vec::with_capacity(keys.len());
         for key in &keys {
             out.push(
-                lyra_db::datastore::get_entry(&db, datastore_id, key)
-                    .map_err(crate::plugins::runtime_error)?
-                    .map(|entry| entry.value),
+                lyra_db::datastore::get_entry(&db, datastore_id, key)?.map(|entry| entry.value),
             );
         }
         out
@@ -256,8 +249,7 @@ async fn write_values(
     }
     let mut db = db.write().await;
     for (key, value) in prepared {
-        lyra_db::datastore::upsert_entry(&mut db, datastore_id, key, value)
-            .map_err(crate::plugins::runtime_error)?;
+        lyra_db::datastore::upsert_entry(&mut db, datastore_id, key, value)?;
     }
     Ok(())
 }

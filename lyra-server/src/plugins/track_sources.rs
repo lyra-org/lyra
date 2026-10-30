@@ -49,14 +49,10 @@ fn get_primary_source_key_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let (db, viewer) = db.read().await?;
-        if !viewer
-            .sees_entity(&*db, DbId(track_id))
-            .map_err(crate::plugins::runtime_error)?
-        {
+        if !viewer.sees_entity(&*db, DbId(track_id))? {
             return None::<String>.into_luau_return();
         }
-        let source = lyra_db::track_sources::get_primary_by_track(&db, DbId(track_id))
-            .map_err(crate::plugins::runtime_error)?;
+        let source = lyra_db::track_sources::get_primary_by_track(&db, DbId(track_id))?;
         let source_key = source
             .map(|source| source.source_key)
             .filter(|value| !value.trim().is_empty());
