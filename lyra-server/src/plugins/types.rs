@@ -102,6 +102,10 @@ mirror_userdata_enum!(LuauEntityType for crate::services::EntityType, "EntityTyp
     Release, Artist, Track,
 ]);
 
+mirror_userdata_enum!(LuauMixSeedType for crate::services::mix::MixSeedType, "SeedType", [
+    Track, Release, Artist, Genre, Playlist,
+]);
+
 mirror_userdata_enum!(LuauArtistType for lyra_db::ArtistType, "ArtistType", [
     Person, Group, Character, Orchestra, Choir,
 ]);

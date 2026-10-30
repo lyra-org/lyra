@@ -22,6 +22,7 @@ use futures::future::BoxFuture;
 
 use crate::services::{
     listens::ListenUpdatePayload,
+    mix::MixSeed,
     playback_sessions::PlaybackUpdatePayload,
 };
 
@@ -77,9 +78,9 @@ pub(crate) trait PluginDispatch: Send + Sync {
 #[derive(Clone, Debug)]
 pub(crate) struct MixHandlerRequest {
     pub(crate) handler: PluginCallbackHandle,
-    pub(crate) seed_id: Option<i64>,
+    pub(crate) seeds: Vec<MixSeed>,
+    pub(crate) query: Option<String>,
     pub(crate) limit: Option<usize>,
-    pub(crate) recent_track_ids: Vec<i64>,
     pub(crate) options: serde_json::Map<String, serde_json::Value>,
 }
 

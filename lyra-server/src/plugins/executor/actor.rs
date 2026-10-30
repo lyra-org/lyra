@@ -482,9 +482,9 @@ mod tests {
                 vm_id: 1,
                 handler_id: 1,
             },
-            seed_id: None,
+            seeds: Vec::new(),
+            query: None,
             limit: None,
-            recent_track_ids: Vec::new(),
             options: serde_json::Map::new(),
         }
     }

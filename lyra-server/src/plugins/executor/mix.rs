@@ -26,7 +26,7 @@ impl PluginExecutor {
                 .data()
                 .get::<crate::plugins::mix::MixCallbackRegistry>()?;
             let handler = handlers.get(request.handler)?;
-            let argument = mix_context_value(&request)?;
+            let argument = mix_context_value(&self.vm, &handler, &request)?;
             let thread = self.vm.create_thread(&handler.function)?;
             Ok::<_, anyhow::Error>((handler, thread, argument))
         })();
@@ -63,19 +63,33 @@ impl PluginExecutor {
     }
 }
 
-fn mix_context_value(request: &MixHandlerRequest) -> Result<luau::Value> {
-    let mut table = luau::OwnedTable::with_capacity(0, 5);
-    if let Some(seed_id) = request.seed_id {
-        table.set_field("seed_id", seed_id);
+fn mix_context_value(
+    vm: &luau::Vm,
+    handler: &crate::plugins::mix::MixCallback,
+    request: &MixHandlerRequest,
+) -> Result<luau::Value> {
+    let mut seeds = luau::OwnedTable::with_capacity(request.seeds.len(), 0);
+    for seed in &request.seeds {
+        let mut entry = luau::OwnedTable::with_capacity(0, 3);
+        entry.set_field("id", seed.db_id.0);
+        entry.set_field(
+            "type",
+            crate::plugins::types::LuauMixSeedType::_harmony_userdata_class().create_value(
+                vm,
+                &handler.function.origin,
+                seed.seed_type.into(),
+            )?,
+        );
+        entry.set_field("exclude", seed.exclude);
+        seeds.push_array(entry);
+    }
+    let mut table = luau::OwnedTable::with_capacity(0, 4);
+    table.set_field("seeds", seeds);
+    if let Some(query) = &request.query {
+        table.set_field("q", query.as_str());
     }
     if let Some(limit) = request.limit {
         table.set_field("limit", limit as i64);
-    }
-    if !request.recent_track_ids.is_empty() {
-        table.set_field(
-            "recent_track_ids",
-            luau::OwnedTable::from_array(request.recent_track_ids.iter().copied()),
-        );
     }
     if !request.options.is_empty() {
         table.set_field(

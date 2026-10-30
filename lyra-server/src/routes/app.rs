@@ -61,6 +61,7 @@ pub(crate) fn build_core_api() -> Result<CoreApi> {
         .nest("/api/stream", super::stream_routes())
         .nest("/api/download", super::download_routes())
         .nest("/api/providers", super::provider_routes())
+        .nest("/api/mix", super::mix_routes())
         .nest("/api/mixers", super::mixer_routes())
         .nest(
             "/api/entities",
@@ -110,6 +111,7 @@ pub(crate) fn build_openapi_spec() -> OpenApi {
             "/api/providers",
             super::providers::provider_openapi_routes(),
         )
+        .nest("/api/mix", super::mix::mix_openapi_routes())
         .nest("/api/mixers", super::mixers::mixer_openapi_routes())
         .nest(
             "/api/entities",
@@ -128,7 +130,6 @@ pub(crate) fn build_openapi_spec() -> OpenApi {
 fn me_routes() -> Router {
     Router::new()
         .merge(super::users::me_account_routes())
-        .route("/mix", get(super::mix::get_me_mix))
         .route(
             "/listens",
             get(super::listens::get_me_listens).post(super::listens::submit_me_listens),
@@ -146,10 +147,6 @@ fn me_openapi_routes() -> aide::axum::ApiRouter {
 
     aide::axum::ApiRouter::new()
         .merge(super::users::me_account_openapi_routes())
-        .api_route(
-            "/mix",
-            get_with(super::mix::get_me_mix, super::mix::me_mix_docs),
-        )
         .api_route(
             "/listens",
             get_with(
@@ -352,7 +349,6 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("POST", "/api/users/login"),
     ("GET", "/api/me/"),
     ("PATCH", "/api/me/"),
-    ("GET", "/api/me/mix"),
     ("GET", "/api/me/api-keys"),
     ("POST", "/api/me/api-keys"),
     ("DELETE", "/api/me/api-keys/{api_key_id}"),
@@ -403,17 +399,14 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("GET", "/api/covers/{id}"),
     ("GET", "/api/releases/"),
     ("GET", "/api/releases/{id}"),
-    ("GET", "/api/releases/{id}/mix"),
     ("POST", "/api/releases/{id}/covers/search"),
     ("GET", "/api/artists/"),
     ("GET", "/api/artists/{id}"),
-    ("GET", "/api/artists/{id}/mix"),
     ("POST", "/api/artists/{id}/covers/search"),
     ("GET", "/api/entries/"),
     ("GET", "/api/entries/{id}"),
     ("GET", "/api/genres/"),
     ("GET", "/api/genres/{id}"),
-    ("GET", "/api/genres/{id}/mix"),
     ("GET", "/api/labels/"),
     ("GET", "/api/labels/{id}"),
     ("GET", "/api/metadata/mapping"),
@@ -421,7 +414,6 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("POST", "/api/metadata/mapping/preview"),
     ("GET", "/api/tracks/"),
     ("GET", "/api/tracks/{id}"),
-    ("GET", "/api/tracks/{id}/mix"),
     ("POST", "/api/tracks/{id}/playback-url"),
     ("GET", "/api/tracks/{id}/lyrics"),
     ("GET", "/api/tracks/{id}/lyrics/candidates"),
@@ -434,7 +426,6 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("GET", "/api/playlists/"),
     ("POST", "/api/playlists/"),
     ("GET", "/api/playlists/{id}"),
-    ("GET", "/api/playlists/{id}/mix"),
     ("PATCH", "/api/playlists/{id}"),
     ("DELETE", "/api/playlists/{id}"),
     ("POST", "/api/playlists/{id}/tracks"),
@@ -449,6 +440,7 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("POST", "/api/providers/{provider_id}/search"),
     ("PATCH", "/api/providers/{provider_id}"),
     ("POST", "/api/providers/{provider_id}/sync"),
+    ("POST", "/api/mix/"),
     ("GET", "/api/mixers/"),
     ("PATCH", "/api/mixers/{mixer_id}"),
     ("GET", "/api/entities/{id}/external-ids"),

@@ -77,6 +77,7 @@ pub use libraries::library_routes;
 pub use listens::listen_routes;
 pub use metadata::metadata_routes;
 pub(crate) use metadata::reingest_request_gate;
+pub use mix::mix_routes;
 pub use mixers::mixer_routes;
 pub(crate) use pagination::{
     SnapshotPageRequest,

@@ -24,6 +24,15 @@ local module = {}
 local INSTANT_MIX_MAX_LIMIT: number = 2000
 local INSTANT_MIX_DEFAULT_LIMIT: number = 200
 
+-- The item kinds an instant mix seeds from.
+local MIX_SEED_KINDS: { [string]: boolean } = {
+	Track = true,
+	Release = true,
+	Artist = true,
+	Playlist = true,
+	Genre = true,
+}
+
 -- Slices to `[start_index, start_index + limit)`. `total_count` is pre-slice;
 -- `Limit = 0` → empty page (Jellyfin convention).
 local function realize_mix_tracks_paged(
@@ -52,7 +61,7 @@ end
 
 -- Engine sees `start_index + limit` (capped); `requested_limit` is returned
 -- separately so realize can honor `Limit = 0`.
-local function build_consumer_opts(options: ItemsQueryOptions): (mix.MixConsumerOptions, number?)
+local function engine_limits(options: ItemsQueryOptions): (number, number?)
 	local requested_limit: number? = options.limit
 	local engine_limit: number
 	if requested_limit == nil or requested_limit <= 0 then
@@ -68,11 +77,11 @@ local function build_consumer_opts(options: ItemsQueryOptions): (mix.MixConsumer
 		engine_limit = INSTANT_MIX_MAX_LIMIT
 	end
 
-	return { limit = engine_limit }, requested_limit
+	return engine_limit, requested_limit
 end
 
--- Returns `(items, total_count, start_index, found)`. Audio seeds use
--- `instant_mix_from_audio` for atomic seed-prepend; nil → 404.
+-- Returns `(items, total_count, start_index, found)`. Audio seeds pin the
+-- seed first; nil → 404.
 function module.list_instant_mix_audio(
 	item_id: number?,
 	options: ItemsQueryOptions
@@ -88,24 +97,13 @@ function module.list_instant_mix_audio(
 		return empty_items, 0, start_index, false
 	end
 
-	local consumer_opts, requested_limit = build_consumer_opts(options)
-	local mix_tracks: { tracks.Track }? = nil
-
-	if kind == "Track" then
-		mix_tracks = mix.instant_mix_from_audio(item_id, consumer_opts)
-	elseif kind == "Release" then
-		mix_tracks = mix.from_release(item_id, consumer_opts)
-	elseif kind == "Artist" then
-		mix_tracks = mix.from_artist(item_id, consumer_opts)
-	elseif kind == "Playlist" then
-		mix_tracks = mix.from_playlist(item_id, consumer_opts)
-	elseif kind == "Genre" then
-		mix_tracks = mix.from_genre(item_id, consumer_opts)
-	else
+	if not MIX_SEED_KINDS[kind] then
 		-- Unsupported seed type (folder, library) — match upstream: 200 with empty.
 		return empty_items, 0, start_index, true
 	end
 
+	local engine_limit, requested_limit = engine_limits(options)
+	local mix_tracks = mix.blend({ seeds = { item_id }, pin_seed = kind == "Track", limit = engine_limit })
 	if mix_tracks == nil then
 		return empty_items, 0, start_index, false
 	end
@@ -114,8 +112,8 @@ function module.list_instant_mix_audio(
 	return items, total_count, start_index, true
 end
 
--- Dispatches `mix.from_genre` directly; 404s on unknown name (upstream
--- Jellyfin silently returns random audio).
+-- Blends from the named genre; 404s on unknown name (upstream Jellyfin
+-- silently returns random audio).
 function module.list_instant_mix_audio_from_genre_name(
 	name: string?,
 	options: ItemsQueryOptions
@@ -135,8 +133,8 @@ function module.list_instant_mix_audio_from_genre_name(
 		return empty_items, 0, start_index, false
 	end
 
-	local consumer_opts, requested_limit = build_consumer_opts(options)
-	local mix_tracks = mix.from_genre(genre_info.db_id, consumer_opts)
+	local engine_limit, requested_limit = engine_limits(options)
+	local mix_tracks = mix.blend({ seeds = { genre_info.db_id }, limit = engine_limit })
 	if mix_tracks == nil then
 		return empty_items, 0, start_index, false
 	end

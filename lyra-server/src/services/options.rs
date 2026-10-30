@@ -54,6 +54,79 @@ pub(crate) fn provider_options(
         .collect()
 }
 
+pub(crate) const MAX_PASSED_OPTIONS: usize = 20;
+pub(crate) const MAX_OPTION_KEY_LEN: usize = 64;
+pub(crate) const MAX_OPTION_VALUE_LEN: usize = 256;
+
+/// Checks options a request passes as JSON, keyed `<owner_id>.<name>`: a bounded number of
+/// short keys, each set to a boolean, a number or a short string.
+pub(crate) fn check_passed_options(
+    passed: &std::collections::HashMap<std::string::String, serde_json::Value>,
+) -> Result<(), std::string::String> {
+    if passed.len() > MAX_PASSED_OPTIONS {
+        return Err(format!(
+            "options takes at most {MAX_PASSED_OPTIONS} entries, got {}",
+            passed.len()
+        ));
+    }
+    for (key, value) in passed {
+        if key.len() > MAX_OPTION_KEY_LEN {
+            return Err(format!(
+                "option keys must be at most {MAX_OPTION_KEY_LEN} bytes"
+            ));
+        }
+        match value {
+            serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {}
+            serde_json::Value::String(value) if value.len() <= MAX_OPTION_VALUE_LEN => {}
+            serde_json::Value::String(_) => {
+                return Err(format!(
+                    "option '{key}' must be at most {MAX_OPTION_VALUE_LEN} bytes"
+                ));
+            }
+            _ => {
+                return Err(format!(
+                    "option '{key}' must be a boolean, number, or string"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The JSON options passed for `owner_id`, keyed by declared name. Callers pass options as
+/// `<owner_id>.<name>`, so each owner gets only its own; a value that isn't its option's declared
+/// type fails.
+pub(crate) fn typed_options(
+    owner_id: &str,
+    declared: &[OptionDeclaration],
+    passed: &std::collections::HashMap<std::string::String, serde_json::Value>,
+) -> Result<serde_json::Map<std::string::String, serde_json::Value>, std::string::String> {
+    declared
+        .iter()
+        .filter_map(|decl| {
+            let key = format!("{owner_id}.{}", decl.name);
+            let value = passed.get(&key)?;
+            let value = match (&decl.option_type, value) {
+                (OptionType::Boolean, serde_json::Value::Bool(_))
+                | (OptionType::String, serde_json::Value::String(_)) => Ok(value.clone()),
+                (OptionType::Number, serde_json::Value::Number(number)) => Ok(number
+                    .as_f64()
+                    .map(|number| serde_json::json!(number))
+                    .unwrap_or(serde_json::Value::Null)),
+                (option_type, _) => Err(format!(
+                    "option '{key}' must be a {}",
+                    match option_type {
+                        OptionType::Boolean => "boolean",
+                        OptionType::String => "string",
+                        OptionType::Number => "number",
+                    }
+                )),
+            };
+            Some(value.map(|value| (decl.name.clone(), value)))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -110,5 +183,57 @@ mod tests {
         );
 
         assert!(options.is_empty());
+    }
+
+    #[test]
+    fn typed_options_take_the_owners_options_of_their_declared_types() {
+        let declared = [
+            declaration("wide", OptionType::Boolean),
+            declaration("depth", OptionType::Number),
+            declaration("mood", OptionType::String),
+        ];
+        let passed = HashMap::from([
+            ("similar.wide".to_string(), serde_json::json!(true)),
+            ("similar.depth".to_string(), serde_json::json!(3)),
+            ("similar.mood".to_string(), serde_json::json!("calm")),
+            ("other.wide".to_string(), serde_json::json!(false)),
+            ("similar.undeclared".to_string(), serde_json::json!(1)),
+        ]);
+        let options = typed_options("similar", &declared, &passed).expect("typed options");
+        assert_eq!(
+            serde_json::Value::Object(options),
+            serde_json::json!({ "wide": true, "depth": 3.0, "mood": "calm" })
+        );
+
+        let mistyped = HashMap::from([("similar.wide".to_string(), serde_json::json!("yes"))]);
+        assert_eq!(
+            typed_options("similar", &declared, &mistyped),
+            Err("option 'similar.wide' must be a boolean".to_string())
+        );
+    }
+
+    #[test]
+    fn passed_options_are_bounded_scalars() {
+        let check = |pairs: Vec<(String, serde_json::Value)>| {
+            check_passed_options(&pairs.into_iter().collect::<HashMap<_, _>>())
+        };
+        assert!(check(vec![("a.b".to_string(), serde_json::json!("x"))]).is_ok());
+        assert!(check(vec![("a.b".to_string(), serde_json::json!([1]))]).is_err());
+        assert!(
+            check(vec![(
+                "a.b".to_string(),
+                serde_json::json!("x".repeat(257))
+            )])
+            .is_err()
+        );
+        assert!(check(vec![("k".repeat(65), serde_json::json!(true))]).is_err());
+        assert!(
+            check(
+                (0..=MAX_PASSED_OPTIONS)
+                    .map(|n| (format!("a.{n}"), serde_json::json!(true)))
+                    .collect()
+            )
+            .is_err()
+        );
     }
 }

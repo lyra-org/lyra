@@ -728,7 +728,6 @@ pub fn track_routes() -> Router {
     Router::new()
         .route("/", get(get_tracks))
         .route("/{id}", get(get_track))
-        .route("/{id}/mix", get(super::mix::get_track_mix))
         .route("/{id}/playback-url", post(create_track_playback_url))
         .merge(lyrics::routes())
 }
@@ -743,10 +742,6 @@ pub(crate) fn track_openapi_routes() -> aide::axum::ApiRouter {
     aide::axum::ApiRouter::new()
         .api_route("/", get_with(get_tracks, list_tracks_docs))
         .api_route("/{id}", get_with(get_track, get_track_docs))
-        .api_route(
-            "/{id}/mix",
-            get_with(super::mix::get_track_mix, super::mix::track_mix_docs),
-        )
         .api_route(
             "/{id}/playback-url",
             post_with(create_track_playback_url, create_track_playback_url_docs),

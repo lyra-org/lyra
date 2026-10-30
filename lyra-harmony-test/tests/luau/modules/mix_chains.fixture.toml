@@ -1,0 +1,46 @@
+run_as = "owner"
+
+# "Book" holds Part I and Part II, which the test chains, and Song; "Other" holds Start and End.
+
+[[users]]
+key = "owner"
+admin = true
+
+[[releases]]
+key = "book"
+title = "Book"
+
+[[releases]]
+key = "other"
+title = "Other"
+
+[[tracks]]
+key = "part1"
+title = "Part I"
+release = "book"
+disc = 1
+track = 1
+
+[[tracks]]
+key = "part2"
+title = "Part II"
+release = "book"
+disc = 1
+track = 2
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "book"
+disc = 1
+track = 3
+
+[[tracks]]
+key = "start"
+title = "Start"
+release = "other"
+
+[[tracks]]
+key = "finish"
+title = "End"
+release = "other"

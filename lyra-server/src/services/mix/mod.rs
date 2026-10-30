@@ -11,15 +11,10 @@ use std::collections::{
 use agdb::{
     DbAny,
     DbId,
-    QueryBuilder,
 };
-use rand::seq::SliceRandom;
 
 use crate::services::STATE;
-use crate::services::auth::{
-    Principal,
-    access,
-};
+use crate::services::auth::Principal;
 use lyra_db::{
     Permission,
     Track,
@@ -27,207 +22,127 @@ use lyra_db::{
 };
 
 mod admin;
+mod builtin;
+mod dispatch;
 mod registry;
+mod request;
 
-use super::options::coerce_option_value;
 pub(crate) use admin::{
     MixerAdminError,
     MixerUpdate,
-    list_mixer_configs,
+    MixersListing,
+    list_mixers,
     update_mixer,
 };
 pub(crate) use registry::{
+    MixHandlerRegistration,
+    MixHandlerSpec,
     MixRegistries,
+    MixRequirements,
     MixSeedType,
+    MixShape,
     mix_registry,
     teardown_plugin_mixers,
+};
+use request::ResolvedSeeds;
+pub(crate) use request::{
+    MixError,
+    MixRequest,
+    MixRequestFields,
+    MixSeed,
 };
 
 const DEFAULT_LIMIT: usize = 200;
 pub(crate) const MAX_LIMIT: usize = 2000;
-const MAX_PER_ARTIST: usize = 3;
-/// Per-request budget across all plugin handlers.
-const MIX_DISPATCH_BUDGET: std::time::Duration = std::time::Duration::from_secs(15);
-/// Per-handler ceiling.
-const MIXER_HANDLER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// Per-request budget across all plugin handlers, and so the most one handler may take.
+pub(crate) const MIX_DISPATCH_BUDGET: std::time::Duration = std::time::Duration::from_secs(15);
+/// A handler's timeout unless its spec sets one.
+pub(crate) const DEFAULT_MIXER_HANDLER_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(10);
 
+/// Who a mix is for.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct MixOptions {
-    pub(crate) limit: Option<usize>,
-    /// User the mix is rendered for: used by the built-in algorithm for the
-    /// unheard/heard partition and as the owner of `MixSeed::Recent`.
-    pub(crate) viewer: Option<Principal>,
-    /// Current library visibility for the viewer. When present, built-in
-    /// candidates and recent-listen seeds are filtered before shuffle and limits.
-    pub(crate) viewer_accessible_library_ids: Option<HashSet<String>>,
-    /// Query-param options coerced via `declare_option` for `ctx.options`.
-    pub(crate) extra: HashMap<String, String>,
+pub(crate) struct MixViewer {
+    /// Every seed's access check goes by this user, as do the history seeds and the built-in
+    /// mixer's unheard-first order.
+    pub(crate) principal: Option<Principal>,
+    /// The libraries the user can see, or `None` for every one. History seeds, built-in
+    /// candidates and mixer results keep to them.
+    pub(crate) accessible_library_ids: Option<HashSet<String>>,
 }
 
-impl MixOptions {
-    /// Options rendered for `principal`, limited to the libraries it can see.
-    pub(crate) fn for_principal(
-        principal: &Principal,
-        limit: Option<usize>,
-        extra: HashMap<String, String>,
-    ) -> Self {
+impl MixViewer {
+    pub(crate) fn for_principal(principal: &Principal) -> Self {
         Self {
-            limit,
-            viewer: Some(principal.clone()),
-            viewer_accessible_library_ids: (!principal.permissions.contains(&Permission::Admin))
+            principal: Some(principal.clone()),
+            accessible_library_ids: (!principal.permissions.contains(&Permission::Admin))
                 .then(|| principal.accessible_library_ids.clone()),
-            extra,
-        }
-    }
-}
-
-/// A mix request's seed by public id. `Recent` seeds from the viewer's listen history.
-#[derive(Clone, Debug)]
-pub(crate) enum MixSeedId {
-    Track(String),
-    Release(String),
-    Artist(String),
-    Genre(String),
-    Playlist(String),
-    Recent,
-}
-
-impl MixSeedId {
-    /// The seed's current `DbId`s, resolved under `db`'s guard; `None` when the entity is gone.
-    fn resolve(&self, db: &DbAny) -> anyhow::Result<Option<MixSeed>> {
-        let resolve = |seed: fn(DbId) -> MixSeed, id: &str| -> anyhow::Result<Option<MixSeed>> {
-            Ok(lyra_db::lookup::find_node_id_by_id(db, id)?.map(seed))
-        };
-        match self {
-            Self::Track(id) => resolve(MixSeed::Track, id),
-            Self::Release(id) => resolve(MixSeed::Release, id),
-            Self::Artist(id) => resolve(MixSeed::Artist, id),
-            Self::Genre(id) => resolve(MixSeed::Genre, id),
-            Self::Playlist(id) => resolve(MixSeed::Playlist, id),
-            Self::Recent => Ok(Some(MixSeed::Recent)),
         }
     }
 
-    /// The seed resolved and visible to the viewer under `db`'s guard.
-    fn resolve_visible(&self, db: &DbAny, options: &MixOptions) -> anyhow::Result<Option<MixSeed>> {
-        let Some(seed) = self.resolve(db)? else {
-            return Ok(None);
-        };
-        Ok(seed_visible(db, &seed, options)?.then_some(seed))
+    fn principal(&self) -> anyhow::Result<&Principal> {
+        self.principal
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("mixes need a viewer"))
+    }
+
+    /// The viewer's `DbId`, verified under `db`'s guard.
+    fn require(&self, db: &DbAny) -> anyhow::Result<DbId> {
+        Ok(self.principal()?.require(db)?)
     }
 }
 
-/// A seed resolved to `DbId`s, valid only under the guard that resolved it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum MixSeed {
-    Track(DbId),
-    Release(DbId),
-    Artist(DbId),
-    Genre(DbId),
-    Playlist(DbId),
-    Recent,
-}
-
-impl MixSeed {
-    fn seed_type(&self) -> MixSeedType {
-        match self {
-            MixSeed::Track(_) => MixSeedType::Track,
-            MixSeed::Release(_) => MixSeedType::Release,
-            MixSeed::Artist(_) => MixSeedType::Artist,
-            MixSeed::Genre(_) => MixSeedType::Genre,
-            MixSeed::Playlist(_) => MixSeedType::Playlist,
-            MixSeed::Recent => MixSeedType::RecentListens,
-        }
-    }
-
-    /// The seed entity handed to mixer plugins; recent-listens seeds pass their track ids instead.
-    fn plugin_seed_id(&self) -> Option<DbId> {
-        match self {
-            MixSeed::Track(id)
-            | MixSeed::Release(id)
-            | MixSeed::Artist(id)
-            | MixSeed::Genre(id)
-            | MixSeed::Playlist(id) => Some(*id),
-            MixSeed::Recent => None,
-        }
-    }
-}
-
-fn viewer(options: &MixOptions) -> anyhow::Result<&Principal> {
-    options
-        .viewer
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("mixes need a viewer"))
-}
-
-/// The viewer's `DbId`, verified under `db`'s guard.
-fn require_viewer(db: &DbAny, options: &MixOptions) -> anyhow::Result<DbId> {
-    Ok(viewer(options)?.require(db)?)
-}
-
-/// Whether the seed exists and the viewer may see it, checked under `db`'s guard.
-fn seed_visible(db: &DbAny, seed: &MixSeed, options: &MixOptions) -> anyhow::Result<bool> {
-    let viewer = viewer(options)?;
-    Ok(match seed {
-        MixSeed::Track(id) => {
-            lyra_db::tracks::get_by_id(db, *id)?.is_some()
-                && access::entity_accessible(db, viewer, *id)?
-        }
-        MixSeed::Release(id) => {
-            lyra_db::releases::get_by_id(db, *id)?.is_some()
-                && access::entity_accessible(db, viewer, *id)?
-        }
-        MixSeed::Artist(id) => {
-            lyra_db::artists::get_by_id(db, *id)?.is_some()
-                && access::entity_accessible(db, viewer, *id)?
-        }
-        MixSeed::Genre(id) => lyra_db::genres::get_by_id(db, *id)?.is_some(),
-        MixSeed::Playlist(id) => {
-            lyra_db::playlists::get_by_id(db, *id)?.is_some()
-                && access::playlist_accessible(db, viewer, *id)?
-        }
-        MixSeed::Recent => {
-            viewer.require(db)?;
-            true
-        }
-    })
-}
-
-fn builtin_from_seed(
-    db: &DbAny,
-    seed: &MixSeed,
-    options: &MixOptions,
-) -> anyhow::Result<Vec<Track>> {
-    match seed {
-        MixSeed::Track(id) => builtin_from_track(db, *id, options),
-        MixSeed::Release(id) => builtin_from_release(db, *id, options),
-        MixSeed::Artist(id) => builtin_from_artist(db, *id, options),
-        MixSeed::Genre(id) => builtin_from_genre(db, *id, options),
-        MixSeed::Playlist(id) => builtin_from_playlist(db, *id, options),
-        MixSeed::Recent => builtin_from_recent_listens(db, require_viewer(db, options)?, options),
-    }
-}
-
-/// `Ok(None)` = missing, wrong-type or hidden seed (route 404s). The seed is resolved by
-/// public id under each guard, so a dispatch that outlives the seed's `DbId` returns `None`.
-pub(crate) async fn from_seed(
-    seed_id: MixSeedId,
-    options: &MixOptions,
-) -> anyhow::Result<Option<Vec<Track>>> {
-    let Some(seed) = seed_id.resolve_visible(&*STATE.db.read().await, options)? else {
-        return Ok(None);
+/// Mixes `request` for `viewer`. Seeds are resolved by public id under each guard taken, so a
+/// dispatch that outlives a seed's `DbId` fails with [`MixError::SeedNotFound`] as a missing or
+/// hidden seed does.
+///
+/// Blends keep each chain together, truncate to the limit and, with `pin_seed`, lead with the
+/// seed. Paths keep the mixer's order and length up to [`MAX_LIMIT`] tracks, dropping only the
+/// tracks the viewer can't see.
+pub(crate) async fn mix(request: &MixRequest, viewer: &MixViewer) -> Result<Vec<Track>, MixError> {
+    request.validate()?;
+    let resolved = {
+        let db = STATE.db.read().await;
+        ResolvedSeeds::resolve(&db, request, viewer)?
     };
-    let dispatched = dispatch_mixer(&seed, options).await?;
+    let requirements = request::requirements(request, &resolved.explicit);
+    let builtin = (request.mixer.is_none() && request.shape == MixShape::Blend)
+        .then(builtin::spec)
+        .filter(|spec| spec.covers(&requirements));
+    let choice = dispatch::choose_mixers(request, &requirements).await?;
+    if choice.candidates.is_empty() && builtin.is_none() {
+        return Err(dispatch::unsupported(request, &requirements, &choice));
+    }
+    if resolved.is_empty() && request.query().is_none() {
+        return Ok(Vec::new());
+    }
+
+    let dispatched = dispatch::dispatch(&choice.candidates, request, &resolved, viewer).await?;
     let db = STATE.db.read().await;
-    if seed_id.resolve_visible(&db, options)? != Some(seed) {
-        return Ok(None);
-    }
+    resolved.verify(&db, request, viewer)?;
+    let limit = request.limit.unwrap_or(DEFAULT_LIMIT);
     let tracks = match dispatched {
-        Some(tracks) => filter_existing_tracks(&db, tracks)?,
-        None => builtin_from_seed(&db, &seed, options)?,
+        Some(tracks) => filter_tracks_by_library_visibility(
+            &db,
+            filter_existing_tracks(&db, tracks)?,
+            viewer.accessible_library_ids.as_ref(),
+        )?,
+        None if builtin.is_some() => builtin::mix(&db, &resolved, viewer, limit)?,
+        None => Vec::new(),
     };
-    let links = chain_links(&db, &tracks, None)?;
-    Ok(Some(keep_chains_together(tracks, &links)))
+    if request.shape == MixShape::Path {
+        return Ok(tracks);
+    }
+
+    let pinned = request.pin_seed.then(|| resolved.explicit[0].db_id);
+    let links = chain_links(&db, &tracks, pinned)?;
+    let tracks = keep_chains_together(tracks, &links);
+    let Some(pinned) = pinned else {
+        return Ok(tracks);
+    };
+    let seed = lyra_db::tracks::get_by_id(&db, pinned)?
+        .ok_or_else(|| MixError::SeedNotFound(request.seeds[0].id.clone()))?;
+    Ok(pin_seed_and_truncate(seed, tracks, &links, limit))
 }
 
 /// Drops missing or wrong-type tracks, keeping the rest in provider order for the chain
@@ -256,57 +171,50 @@ fn filter_existing_tracks(db: &DbAny, tracks: Vec<Track>) -> anyhow::Result<Vec<
         .collect())
 }
 
-/// Applies server-owned mixer result policy while preserving provider order.
+/// Applies server-owned mixer result policy while preserving provider order. Blends truncate to
+/// the limit; paths keep every visible step of the handler's at most [`MAX_LIMIT`].
 fn finalize_mixer_tracks(
     db: &DbAny,
     tracks: Vec<Track>,
-    options: &MixOptions,
+    shape: MixShape,
+    viewer: &MixViewer,
+    limit: usize,
 ) -> anyhow::Result<Vec<Track>> {
     let tracks = filter_existing_tracks(db, tracks)?;
-    let mut tracks = filter_tracks_by_library_visibility(
-        db,
-        tracks,
-        options.viewer_accessible_library_ids.as_ref(),
-    )?;
-    tracks.truncate(options.limit.unwrap_or(DEFAULT_LIMIT));
+    let mut tracks =
+        filter_tracks_by_library_visibility(db, tracks, viewer.accessible_library_ids.as_ref())?;
+    if shape == MixShape::Blend {
+        tracks.truncate(limit);
+    }
     Ok(tracks)
 }
 
-/// Pins the seed at index 0 under one read guard, then truncates to `limit`.
-pub(crate) async fn instant_mix_from_audio(
-    track_id: &str,
-    options: &MixOptions,
-) -> anyhow::Result<Option<Vec<Track>>> {
-    let seed_id = MixSeedId::Track(track_id.to_string());
-    let Some(seed @ MixSeed::Track(track_db_id)) =
-        seed_id.resolve_visible(&*STATE.db.read().await, options)?
-    else {
-        return Ok(None);
+fn filter_tracks_by_library_visibility(
+    db: &DbAny,
+    mut tracks: Vec<Track>,
+    accessible_library_ids: Option<&HashSet<String>>,
+) -> anyhow::Result<Vec<Track>> {
+    let Some(accessible_library_ids) = accessible_library_ids else {
+        return Ok(tracks);
     };
-    let dispatched = dispatch_mixer(&seed, options).await?;
-
-    let db = STATE.db.read().await;
-    if seed_id.resolve_visible(&db, options)? != Some(seed) {
-        return Ok(None);
-    }
-    let Some(seed) = lyra_db::tracks::get_by_id(&db, track_db_id)? else {
-        return Ok(None);
-    };
-
-    let mix_tracks = match dispatched {
-        Some(tracks) => filter_existing_tracks(&db, tracks)?,
-        None => builtin_from_track(&db, track_db_id, options)?,
-    };
-    let links = chain_links(&db, &mix_tracks, Some(track_db_id))?;
-    let mix_tracks = keep_chains_together(mix_tracks, &links);
-
-    let effective_limit = options.limit.unwrap_or(DEFAULT_LIMIT);
-    Ok(Some(pin_seed_and_truncate(
-        seed,
-        mix_tracks,
-        &links,
-        effective_limit,
-    )))
+    let track_ids = tracks
+        .iter()
+        .filter_map(|track| track.db_id.clone().map(DbId::from))
+        .collect::<Vec<_>>();
+    let library_db_ids = lyra_db::libraries::db_ids_for_public_ids(db, accessible_library_ids)?;
+    let accessible_track_ids = lyra_db::libraries::accessible_track_ids_for_library_db_ids(
+        db,
+        &library_db_ids,
+        &track_ids,
+    )?;
+    tracks.retain(|track| {
+        track
+            .db_id
+            .clone()
+            .map(DbId::from)
+            .is_some_and(|id| accessible_track_ids.contains(&id))
+    });
+    Ok(tracks)
 }
 
 /// The chain place of each chained track among `tracks` and `extra`.
@@ -392,769 +300,56 @@ fn pin_seed_and_truncate(
     pinned
 }
 
-/// Mixer IDs with a handler for `seed_type`, highest priority first.
-async fn prioritized_mixer_ids(seed_type: MixSeedType) -> anyhow::Result<Vec<String>> {
-    let db = STATE.db.read().await;
-    let mut configs = lyra_db::mixers::get(&db)?;
-    configs.retain(|c| c.enabled);
-
-    let registry = mix_registry().read_owned().await;
-    let ids: Vec<String> = configs
-        .into_iter()
-        .filter(|c| registry.has_handler(&c.mixer_id, seed_type))
-        .map(|c| c.mixer_id)
-        .collect();
-    Ok(ids)
-}
-
-/// First non-empty mixer wins; `None` falls through to builtin. Per-handler
-/// slice is `min(remaining_budget, MIXER_HANDLER_TIMEOUT)`.
-enum HandlerOutcome {
-    Tracks(Vec<Track>),
-    FellThrough,
-}
-
-/// Runs on a separate Lua thread so timeout can cancel the coroutine, not
-/// just drop the future. Cooperative — bounded by sync-binding timeouts.
-/// For `MixSeed::Recent`, pre-resolves the user's recent track ids so plugin
-/// handlers don't have to re-query listen history.
-async fn dispatch_mixer(
-    seed: &MixSeed,
-    options: &MixOptions,
-) -> anyhow::Result<Option<Vec<Track>>> {
-    let seed_type = seed.seed_type();
-    let mixer_ids = prioritized_mixer_ids(seed_type).await?;
-    if mixer_ids.is_empty() {
-        return Ok(None);
-    }
-
-    let recent_track_ids = if let MixSeed::Recent = seed {
-        let db = STATE.db.read().await;
-        recent_listen_track_ids(
-            &db,
-            require_viewer(&db, options)?,
-            options.viewer_accessible_library_ids.as_ref(),
-        )?
-    } else {
-        Vec::new()
-    };
-
-    let deadline = tokio::time::Instant::now() + MIX_DISPATCH_BUDGET;
-
-    for mixer_id in &mixer_ids {
-        let now = tokio::time::Instant::now();
-        if now >= deadline {
-            tracing::warn!(
-                remaining = ?mixer_ids
-                    .iter()
-                    .skip_while(|id| *id != mixer_id)
-                    .count(),
-                "mix dispatch budget exhausted, falling through to builtin"
-            );
-            break;
-        }
-        let handler_timeout = (deadline - now).min(MIXER_HANDLER_TIMEOUT);
-        let handler = {
-            let registry = mix_registry().read_owned().await;
-            registry.get_seed_callback(mixer_id, seed_type)
-        };
-        let Some(handler) = handler else {
-            continue;
-        };
-
-        match run_callback_with_timeout(
-            handler,
-            seed.plugin_seed_id(),
-            recent_track_ids.clone(),
-            options,
-            handler_timeout,
-            mixer_id,
-        )
-        .await?
-        {
-            HandlerOutcome::Tracks(tracks) => {
-                let tracks = {
-                    let db = STATE.db.read().await;
-                    finalize_mixer_tracks(&db, tracks, options)?
-                };
-                if tracks.is_empty() {
-                    tracing::debug!(mixer = %mixer_id, "mixer returned no accessible tracks, trying next");
-                } else {
-                    return Ok(Some(tracks));
-                }
-            }
-            HandlerOutcome::FellThrough => {}
-        }
-    }
-
-    Ok(None)
-}
-
-/// Coerces `extra` via declared types into `ctx.options`.
-async fn run_callback_with_timeout(
-    handler: crate::services::plugin_dispatch::PluginCallbackHandle,
-    seed_id: Option<DbId>,
-    recent_track_ids: Vec<DbId>,
-    options: &MixOptions,
-    timeout: std::time::Duration,
-    mixer_id: &str,
-) -> anyhow::Result<HandlerOutcome> {
-    let Some(runtime) = crate::services::STATE.generation().plugin_dispatch.get() else {
-        return Ok(HandlerOutcome::FellThrough);
-    };
-    let request = crate::services::plugin_dispatch::MixHandlerRequest {
-        handler,
-        seed_id: seed_id.map(|id| id.0),
-        limit: options.limit,
-        recent_track_ids: recent_track_ids.into_iter().map(|id| id.0).collect(),
-        options: coerced_extra_options(mixer_id, &options.extra).await?,
-    };
-    match tokio::time::timeout(timeout, runtime.dispatch_mix_handler(request)).await {
-        Ok(Ok(result)) => {
-            let tracks = tracks_from_mixer_result_ids(result.track_ids).await?;
-            if tracks.is_empty() {
-                tracing::debug!(mixer = %mixer_id, "mixer returned empty, trying next");
-                Ok(HandlerOutcome::FellThrough)
-            } else {
-                Ok(HandlerOutcome::Tracks(tracks))
-            }
-        }
-        Ok(Err(err)) => {
-            tracing::warn!(mixer = %mixer_id, error = %err, "mixer handler crashed, trying next");
-            Ok(HandlerOutcome::FellThrough)
-        }
-        Err(_) => {
-            tracing::warn!(
-                mixer = %mixer_id,
-                timeout_ms = timeout.as_millis() as u64,
-                "mixer handler timed out; trying next"
-            );
-            Ok(HandlerOutcome::FellThrough)
-        }
-    }
-}
-
-async fn coerced_extra_options(
-    mixer_id: &str,
-    extra: &HashMap<String, String>,
-) -> anyhow::Result<serde_json::Map<String, serde_json::Value>> {
-    let mut output = serde_json::Map::new();
-    if extra.is_empty() {
-        return Ok(output);
-    }
-    let registry = mix_registry().read_owned().await;
-    let declared = registry.get_options(mixer_id);
-    for (key, raw_value) in extra {
-        if let Some(decl) = declared.iter().find(|decl| decl.name == *key) {
-            output.insert(
-                key.clone(),
-                coerce_option_value(raw_value, &decl.option_type),
-            );
-        }
-    }
-    Ok(output)
-}
-
-/// Aligned with `MAX_LIMIT`; drift causes silent truncation surprises.
-const MAX_MIXER_RESULT_IDS: usize = MAX_LIMIT;
-
-async fn tracks_from_mixer_result_ids(track_ids: Vec<i64>) -> anyhow::Result<Vec<Track>> {
-    let mut ids = Vec::new();
-    for track_id in track_ids {
-        if track_id > 0 {
-            ids.push(DbId(track_id));
-        }
-        if ids.len() >= MAX_MIXER_RESULT_IDS {
-            break;
-        }
-    }
-    tracks_from_mixer_ids(ids).await
-}
-
-async fn tracks_from_mixer_ids(track_ids: Vec<DbId>) -> anyhow::Result<Vec<Track>> {
-    if track_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let requested_count = track_ids.len();
-    let db = STATE.db.read().await;
-    let tracks_by_id = lyra_db::tracks::get_existing_by_ids(&db, &track_ids)?;
-
-    let mut tracks = Vec::with_capacity(requested_count);
-    for id in &track_ids {
-        if let Some(track) = tracks_by_id.get(id) {
-            tracks.push(track.clone());
-        }
-    }
-
-    let dropped = requested_count - tracks.len();
-    if dropped > 0 {
-        tracing::warn!(
-            dropped,
-            requested = requested_count,
-            "mixer returned track IDs that could not be resolved"
-        );
-    }
-
-    Ok(tracks)
-}
-
-// --- Built-in genre-overlap mix algorithm (fallback) ---
-
-fn expand_and_weight(
-    db: &DbAny,
-    seed_genres: &[lyra_db::genres::Genre],
-) -> anyhow::Result<Vec<(DbId, u32)>> {
-    let seed_ids: Vec<DbId> = seed_genres
-        .iter()
-        .filter_map(|g| g.db_id.clone().map(DbId::from))
-        .collect();
-    lyra_db::genres::expand_related(db, &seed_ids, 2)
-}
-
-fn builtin_from_track(
-    db: &DbAny,
-    track_db_id: DbId,
-    options: &MixOptions,
-) -> anyhow::Result<Vec<Track>> {
-    let releases = lyra_db::releases::get_by_track(db, track_db_id)?;
-    let seed_genres = collect_genres_from_releases(db, &releases)?;
-    let weighted = expand_and_weight(db, &seed_genres)?;
-    tracks_for_genres(db, &weighted, options)
-}
-
-fn builtin_from_release(
-    db: &DbAny,
-    release_db_id: DbId,
-    options: &MixOptions,
-) -> anyhow::Result<Vec<Track>> {
-    let seed_genres = lyra_db::genres::get_for_release(db, release_db_id)?;
-    if seed_genres.is_empty() {
-        return fallback_from_seed_tracks(
-            db,
-            lyra_db::tracks::get_direct(db, release_db_id)?,
-            options,
-        );
-    }
-    let weighted = expand_and_weight(db, &seed_genres)?;
-    tracks_for_genres(db, &weighted, options)
-}
-
-fn builtin_from_artist(
-    db: &DbAny,
-    artist_db_id: DbId,
-    options: &MixOptions,
-) -> anyhow::Result<Vec<Track>> {
-    let releases = lyra_db::releases::get_by_artist(db, artist_db_id)?;
-    // Release credits are the artist's primary discography: when any exist, track credits are
-    // never unioned in, so a lone album outranks any number of guest features.
-    if releases.is_empty() {
-        return builtin_from_artist_track_credits(db, artist_db_id, options);
-    }
-    let seed_genres = collect_genres_from_releases(db, &releases)?;
-    if seed_genres.is_empty() {
-        let release_ids: Vec<DbId> = releases
-            .into_iter()
-            .filter_map(|release| release.db_id.map(DbId::from))
-            .collect();
-        return fallback_from_seed_tracks(
-            db,
-            lyra_db::tracks::get_by_releases(db, &release_ids)?,
-            options,
-        );
-    }
-    let weighted = expand_and_weight(db, &seed_genres)?;
-    tracks_for_genres(db, &weighted, options)
-}
-
-const TRACK_CREDIT_SEED_COUNT: usize = 50;
-
-/// Seeds artists whose only credits are track-level — features, remixers,
-/// compilation and soundtrack contributors — from those tracks' releases.
-fn builtin_from_artist_track_credits(
-    db: &DbAny,
-    artist_db_id: DbId,
-    options: &MixOptions,
-) -> anyhow::Result<Vec<Track>> {
-    let track_ids = lyra_db::tracks::get_bounded_ids_by_artist(
-        db,
-        artist_db_id,
-        options.viewer_accessible_library_ids.as_ref(),
-        TRACK_CREDIT_SEED_COUNT,
-    )?;
-    builtin_from_seed_track_ids(db, &track_ids, options)
-}
-
-fn builtin_from_genre(
-    db: &DbAny,
-    genre_db_id: DbId,
-    options: &MixOptions,
-) -> anyhow::Result<Vec<Track>> {
-    // Existence verified by the `from_genre` wrapper under the same read guard.
-    let weighted = lyra_db::genres::expand_related(db, &[genre_db_id], 2)?;
-    tracks_for_genres(db, &weighted, options)
-}
-
-fn builtin_from_playlist(
-    db: &DbAny,
-    playlist_db_id: DbId,
-    options: &MixOptions,
-) -> anyhow::Result<Vec<Track>> {
-    let playlist_tracks = lyra_db::playlists::get_tracks(db, playlist_db_id)?;
-    if playlist_tracks.is_empty() {
-        return Ok(Vec::new());
-    }
-    let edge_ids: Vec<DbId> = playlist_tracks.iter().map(|t| t.edge_id).collect();
-    let track_ids = lyra_db::playlists::resolve_edge_targets(db, &edge_ids)?;
-    builtin_from_seed_track_ids(db, &track_ids, options)
-}
-
-const RECENT_LISTEN_COUNT: usize = 50;
-
-fn builtin_from_recent_listens(
-    db: &DbAny,
-    user_db_id: DbId,
-    options: &MixOptions,
-) -> anyhow::Result<Vec<Track>> {
-    let track_ids = recent_listen_track_ids(
-        db,
-        user_db_id,
-        options.viewer_accessible_library_ids.as_ref(),
-    )?;
-    builtin_from_seed_track_ids(db, &track_ids, options)
-}
-
-fn recent_listen_track_ids(
-    db: &DbAny,
-    user_db_id: DbId,
-    accessible_library_ids: Option<&HashSet<String>>,
-) -> anyhow::Result<Vec<DbId>> {
-    let mut listens: Vec<lyra_db::listens::Listen> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<lyra_db::listens::Listen>()
-                .search()
-                .to(user_db_id)
-                .where_()
-                .neighbor()
-                .end_where()
-                .query(),
-        )?
-        .try_into()?;
-
-    listens.sort_unstable_by_key(|listen| std::cmp::Reverse(listen.started_at_ms));
-    listens.truncate(RECENT_LISTEN_COUNT);
-
-    // Resolve through the snapshot, not the listen→track edge.
-    let mut track_ids = Vec::new();
-    let mut seen = HashSet::new();
-    for listen in &listens {
-        if listen.track_public_id.is_empty() {
-            continue;
-        }
-        let Some(track_db_id) = lyra_db::lookup::find_node_id_by_id(db, &listen.track_public_id)?
-        else {
-            continue;
-        };
-        if !lyra_db::lookup::collection_contains_id(db, "tracks", track_db_id)? {
-            continue;
-        }
-        if let Some(accessible_library_ids) = accessible_library_ids
-            && !track_accessible_to_library_set(db, track_db_id, accessible_library_ids)?
-        {
-            continue;
-        }
-        if seen.insert(track_db_id) {
-            track_ids.push(track_db_id);
-        }
-    }
-
-    Ok(track_ids)
-}
-
-fn track_accessible_to_library_set(
-    db: &DbAny,
-    track_db_id: DbId,
-    accessible_library_ids: &HashSet<String>,
-) -> anyhow::Result<bool> {
-    Ok(lyra_db::libraries::get_for_entity(db, track_db_id)?
-        .into_iter()
-        .any(|library| accessible_library_ids.contains(&library.id)))
-}
-
-/// Genres of the distinct releases containing `track_ids`.
-fn collect_genres_from_track_ids(
-    db: &DbAny,
-    track_ids: &[DbId],
-) -> anyhow::Result<Vec<lyra_db::genres::Genre>> {
-    let releases_by_track = lyra_db::releases::get_by_tracks(db, track_ids)?;
-    let mut seen_release_ids = HashSet::new();
-    let releases: Vec<lyra_db::Release> = releases_by_track
-        .into_values()
-        .flatten()
-        .filter_map(|r| {
-            let id = r.db_id.clone().map(DbId::from)?;
-            seen_release_ids.insert(id).then_some(r)
-        })
-        .collect();
-    collect_genres_from_releases(db, &releases)
-}
-
-fn collect_genres_from_releases(
-    db: &DbAny,
-    releases: &[lyra_db::Release],
-) -> anyhow::Result<Vec<lyra_db::genres::Genre>> {
-    let mut seen = HashSet::new();
-    let mut genres = Vec::new();
-    for release in releases {
-        let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
-            continue;
-        };
-        for genre in lyra_db::genres::get_for_release(db, release_db_id)? {
-            let Some(genre_db_id) = genre.db_id.clone().map(DbId::from) else {
-                continue;
-            };
-            if seen.insert(genre_db_id) {
-                genres.push(genre);
-            }
-        }
-    }
-    Ok(genres)
-}
-
-fn tracks_for_genres(
-    db: &DbAny,
-    genres: &[(DbId, u32)],
-    options: &MixOptions,
-) -> anyhow::Result<Vec<Track>> {
-    if genres.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let release_scores = release_weighted_scores(db, genres)?;
-    if release_scores.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // Group releases by score tier
-    let mut releases_by_score: HashMap<u32, Vec<DbId>> = HashMap::new();
-    for (&release_id, &score) in &release_scores {
-        releases_by_score.entry(score).or_default().push(release_id);
-    }
-    let mut tiers: Vec<u32> = releases_by_score.keys().copied().collect();
-    tiers.sort_unstable_by(|a, b| b.cmp(a));
-
-    let mut rng = rand::rng();
-    let limit = options.limit.unwrap_or(DEFAULT_LIMIT);
-    let mut all_tracks: Vec<Track> = Vec::new();
-    let mut seen = HashSet::new();
-
-    // Fetch tracks tier-by-tier
-    for tier in &tiers {
-        let Some(mut tier_releases) = releases_by_score.remove(tier) else {
-            continue;
-        };
-        tier_releases.shuffle(&mut rng);
-
-        let tier_tracks = lyra_db::tracks::get_direct_many(db, &tier_releases)?;
-        let mut tier_flat: Vec<Track> = tier_tracks.into_values().flatten().collect();
-        tier_flat.retain(|t| {
-            t.db_id
-                .clone()
-                .map(DbId::from)
-                .is_some_and(|id| seen.insert(id))
-        });
-        tier_flat.shuffle(&mut rng);
-        all_tracks.extend(tier_flat);
-    }
-    all_tracks = filter_tracks_by_library_visibility(
-        db,
-        all_tracks,
-        options.viewer_accessible_library_ids.as_ref(),
-    )?;
-
-    // Partition into unheard and heard, preserving score order within each
-    let (unheard, heard) = partition_by_listen_history(db, all_tracks, options.viewer.as_ref())?;
-
-    let mut combined = unheard;
-    combined.extend(heard);
-
-    let result = cap_per_artist(db, combined, limit)?;
-
-    Ok(result)
-}
-
-/// Mixes from seed track ids: their releases' genres, or the seed tracks themselves
-/// when those releases carry no genres.
-fn builtin_from_seed_track_ids(
-    db: &DbAny,
-    track_ids: &[DbId],
-    options: &MixOptions,
-) -> anyhow::Result<Vec<Track>> {
-    if track_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let seed_genres = collect_genres_from_track_ids(db, track_ids)?;
-    if seed_genres.is_empty() {
-        let tracks_by_id = lyra_db::tracks::get_by_ids(db, track_ids)?;
-        let tracks = track_ids
-            .iter()
-            .filter_map(|id| tracks_by_id.get(id).cloned())
-            .collect();
-        return fallback_from_seed_tracks(db, tracks, options);
-    }
-    let weighted = expand_and_weight(db, &seed_genres)?;
-    tracks_for_genres(db, &weighted, options)
-}
-
-fn fallback_from_seed_tracks(
-    db: &DbAny,
-    mut tracks: Vec<Track>,
-    options: &MixOptions,
-) -> anyhow::Result<Vec<Track>> {
-    tracks = filter_tracks_by_library_visibility(
-        db,
-        tracks,
-        options.viewer_accessible_library_ids.as_ref(),
-    )?;
-    if tracks.is_empty() {
-        return Ok(tracks);
-    }
-
-    tracks.shuffle(&mut rand::rng());
-    let (unheard, heard) = partition_by_listen_history(db, tracks, options.viewer.as_ref())?;
-    let mut combined = unheard;
-    combined.extend(heard);
-    cap_per_artist(db, combined, options.limit.unwrap_or(DEFAULT_LIMIT))
-}
-
-fn filter_tracks_by_library_visibility(
-    db: &DbAny,
-    mut tracks: Vec<Track>,
-    accessible_library_ids: Option<&HashSet<String>>,
-) -> anyhow::Result<Vec<Track>> {
-    let Some(accessible_library_ids) = accessible_library_ids else {
-        return Ok(tracks);
-    };
-    let track_ids = tracks
-        .iter()
-        .filter_map(|track| track.db_id.clone().map(DbId::from))
-        .collect::<Vec<_>>();
-    let library_db_ids = lyra_db::libraries::db_ids_for_public_ids(db, accessible_library_ids)?;
-    let accessible_track_ids = lyra_db::libraries::accessible_track_ids_for_library_db_ids(
-        db,
-        &library_db_ids,
-        &track_ids,
-    )?;
-    tracks.retain(|track| {
-        track
-            .db_id
-            .clone()
-            .map(DbId::from)
-            .is_some_and(|id| accessible_track_ids.contains(&id))
-    });
-    Ok(tracks)
-}
-
-fn release_weighted_scores(
-    db: &DbAny,
-    genres: &[(DbId, u32)],
-) -> anyhow::Result<HashMap<DbId, u32>> {
-    let mut scores: HashMap<DbId, u32> = HashMap::new();
-    for &(genre_id, weight) in genres {
-        let releases: Vec<lyra_db::Release> = db
-            .exec(
-                QueryBuilder::select()
-                    .elements::<lyra_db::Release>()
-                    .search()
-                    .from(genre_id)
-                    .where_()
-                    .neighbor()
-                    .end_where()
-                    .query(),
-            )?
-            .try_into()?;
-        for release in releases {
-            if let Some(db_id) = release.db_id.map(DbId::from) {
-                *scores.entry(db_id).or_insert(0) += weight;
-            }
-        }
-    }
-    Ok(scores)
-}
-
-fn partition_by_listen_history(
-    db: &DbAny,
-    tracks: Vec<Track>,
-    viewer: Option<&Principal>,
-) -> anyhow::Result<(Vec<Track>, Vec<Track>)> {
-    let Some(viewer) = viewer else {
-        return Ok((tracks, Vec::new()));
-    };
-    let user_db_id = viewer.require(db)?;
-
-    let track_ids: Vec<DbId> = tracks
-        .iter()
-        .filter_map(|t| t.db_id.clone().map(DbId::from))
-        .collect();
-
-    let counts = lyra_db::listens::get_counts(db, &track_ids, user_db_id)?;
-
-    let mut unheard = Vec::new();
-    let mut heard = Vec::new();
-    for track in tracks {
-        let track_db_id = track.db_id.clone().map(DbId::from);
-        let listen_count = track_db_id
-            .as_ref()
-            .and_then(|id| counts.get(id))
-            .copied()
-            .unwrap_or(0);
-        if listen_count == 0 {
-            unheard.push(track);
-        } else {
-            heard.push(track);
-        }
-    }
-
-    Ok((unheard, heard))
-}
-
-fn cap_per_artist(db: &DbAny, tracks: Vec<Track>, limit: usize) -> anyhow::Result<Vec<Track>> {
-    let track_ids: Vec<DbId> = tracks
-        .iter()
-        .filter_map(|t| t.db_id.clone().map(DbId::from))
-        .collect();
-
-    let artists_by_track = lyra_db::artists::get_many_by_owner(db, &track_ids)?;
-
-    let primary_artist_for = |track: &Track| -> Option<DbId> {
-        let track_db_id = track.db_id.clone().map(DbId::from)?;
-        artists_by_track
-            .get(&track_db_id)?
-            .first()?
-            .db_id
-            .clone()
-            .map(DbId::from)
-    };
-
-    // First pass: prefer diversity — cap per artist
-    let mut artist_counts: HashMap<DbId, usize> = HashMap::new();
-    let mut result = Vec::with_capacity(limit);
-    let mut overflow = Vec::new();
-
-    for track in tracks {
-        match primary_artist_for(&track) {
-            Some(artist_id) => {
-                let count = artist_counts.entry(artist_id).or_insert(0);
-                if *count < MAX_PER_ARTIST {
-                    *count += 1;
-                    result.push(track);
-                } else {
-                    overflow.push(track);
-                }
-            }
-            None => {
-                result.push(track);
-            }
-        }
-    }
-
-    // Second pass: if under limit, backfill from overflow
-    if result.len() < limit {
-        for track in overflow {
-            result.push(track);
-            if result.len() >= limit {
-                break;
-            }
-        }
-    }
-
-    result.truncate(limit);
-    Ok(result)
-}
-
 #[cfg(test)]
 mod tests {
+    use agdb::QueryBuilder;
+
     use super::*;
     use lyra_db::{
         fixtures::{
             connect,
-            insert_artist,
             insert_release,
             insert_track,
         },
         genres,
-        listens,
         test_db::{
-            connect_artist,
             insert_library,
             new_test_db,
         },
     };
 
-    #[tokio::test]
-    async fn seeds_hidden_from_the_viewer_yield_no_mix() -> anyhow::Result<()> {
-        let _guard = crate::services::testing::runtime_test_lock().await;
-        crate::services::testing::init_default_test_state()?;
-        let (owner, viewer, hidden_track, private_playlist) = {
-            let mut db = STATE.db.write().await;
-            let owner_id = lyra_db::test_db::insert_user(&mut db, "mix-playlist-owner")?;
-            let viewer_id = lyra_db::test_db::insert_user(&mut db, "mix-viewer")?;
-            let library = insert_library(&mut db, "Hidden Mix Library", "/tmp/lyra-hidden-mix")?;
-            let hidden_track = insert_track(&mut db, "Hidden Seed")?;
-            connect(&mut db, library, hidden_track)?;
-            let private_playlist = lyra_db::playlists::create(
-                &mut db,
-                &lyra_db::playlists::Playlist {
-                    db_id: None,
-                    id: nanoid::nanoid!(),
-                    name: "Private".to_string(),
-                    description: None,
-                    is_public: Some(false),
-                    created_at: None,
-                    updated_at: None,
-                },
-                owner_id,
-            )?;
-            let public_id = |id| {
-                lyra_db::lookup::find_id_by_db_id(&*db, id)
-                    .map(|id| id.expect("seed has a public id"))
-            };
-            (
-                Principal::for_user(&*db, owner_id, Vec::new(), HashSet::new()),
-                Principal::for_user(&*db, viewer_id, Vec::new(), HashSet::new()),
-                public_id(hidden_track)?,
-                public_id(private_playlist)?,
+    #[test]
+    fn viewers_keep_to_their_libraries_unless_admin() {
+        let principal = |permissions| {
+            Principal::from_parts(
+                DbId(7),
+                "viewer".to_string(),
+                "viewer".to_string(),
+                permissions,
+                None,
+                HashSet::from(["visible-library".to_string()]),
             )
         };
-        let viewer_options = MixOptions::for_principal(&viewer, None, HashMap::new());
+        let viewer = MixViewer::for_principal(&principal(Vec::new()));
+        assert_eq!(
+            viewer.principal.map(|viewer| viewer.user_public_id),
+            Some("viewer".to_string())
+        );
+        assert_eq!(
+            viewer.accessible_library_ids,
+            Some(HashSet::from(["visible-library".to_string()]))
+        );
+        let admin = MixViewer::for_principal(&principal(vec![Permission::Admin]));
+        assert!(admin.principal.is_some());
+        assert_eq!(admin.accessible_library_ids, None);
+    }
 
-        assert!(
-            instant_mix_from_audio(&hidden_track, &viewer_options)
-                .await?
-                .is_none()
-        );
-        assert!(
-            from_seed(MixSeedId::Track(hidden_track), &viewer_options)
-                .await?
-                .is_none()
-        );
-        assert!(
-            from_seed(
-                MixSeedId::Playlist(private_playlist.clone()),
-                &viewer_options
-            )
-            .await?
-            .is_none()
-        );
-        let owner_options = MixOptions::for_principal(&owner, None, HashMap::new());
-        assert!(
-            from_seed(MixSeedId::Playlist(private_playlist), &owner_options)
-                .await?
-                .is_some()
-        );
-        Ok(())
+    /// A blend of the seed with public id `seed`.
+    fn blend_of(seed: String) -> MixRequest {
+        MixRequest {
+            seeds: vec![request::MixSeedRequest::new(seed)],
+            ..MixRequest::default()
+        }
     }
 
     /// Mixes from a track seed while, at gap `gap`, the seed is deleted and a new track takes
@@ -1175,24 +370,26 @@ mod tests {
                 library,
             )
         };
-        let options = MixOptions::for_principal(&viewer, None, HashMap::new());
-        let (reached, mix) = crate::services::testing::run_with_recycle_at(
-            gap,
-            from_seed(MixSeedId::Track(seed_id), &options),
-            |db| {
+        let viewer = MixViewer::for_principal(&viewer);
+        let request = blend_of(seed_id);
+        let (reached, mix) =
+            crate::services::testing::run_with_recycle_at(gap, mix(&request, &viewer), |db| {
                 db.exec_mut(QueryBuilder::remove().ids(seed_db_id).query())
                     .expect("remove seed");
                 let recycled = insert_track(db, "Replacement").expect("insert replacement");
                 assert_eq!(recycled, seed_db_id, "agdb must reuse the seed DbId");
                 connect(db, library, recycled).expect("connect replacement");
-            },
-        )
-        .await;
-        Ok((reached, mix?.is_some()))
+            })
+            .await;
+        match mix {
+            Ok(_) => Ok((reached, true)),
+            Err(MixError::SeedNotFound(_)) => Ok((reached, false)),
+            Err(error) => Err(error.into()),
+        }
     }
 
     #[tokio::test]
-    async fn from_seed_drops_a_seed_whose_id_was_recycled_mid_mix() -> anyhow::Result<()> {
+    async fn mixes_drop_a_seed_whose_id_was_recycled_mid_mix() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         assert_eq!(mix_with_recycled_seed(None).await?, (false, true));
         crate::services::testing::for_each_db_gap(mix_with_recycled_seed, async |gap, mixed| {
@@ -1202,814 +399,7 @@ mod tests {
         .await
     }
 
-    #[test]
-    fn from_track_returns_genre_matched_tracks() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-
-        let rock_id = genres::resolve_by_name(&mut db, "Rock")?;
-        let jazz_id = genres::resolve_by_name(&mut db, "Jazz")?;
-
-        let release_a = insert_release(&mut db, "Rock Release")?;
-        genres::link_to_release(&mut db, rock_id, release_a)?;
-        let track_a = insert_track(&mut db, "Rock Track")?;
-        connect(&mut db, release_a, track_a)?;
-
-        let release_b = insert_release(&mut db, "Another Rock Release")?;
-        genres::link_to_release(&mut db, rock_id, release_b)?;
-        let track_b = insert_track(&mut db, "Another Rock Track")?;
-        connect(&mut db, release_b, track_b)?;
-
-        let release_c = insert_release(&mut db, "Jazz Release")?;
-        genres::link_to_release(&mut db, jazz_id, release_c)?;
-        let track_c = insert_track(&mut db, "Jazz Track")?;
-        connect(&mut db, release_c, track_c)?;
-
-        let result = builtin_from_track(&db, track_a, &MixOptions::default())?;
-
-        let titles: HashSet<&str> = result.iter().map(|t| t.track_title.as_str()).collect();
-        assert!(titles.contains("Rock Track"));
-        assert!(titles.contains("Another Rock Track"));
-        assert!(!titles.contains("Jazz Track"));
-
-        Ok(())
-    }
-
-    #[test]
-    fn from_release_returns_genre_matched_tracks() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-
-        let jazz_id = genres::resolve_by_name(&mut db, "Jazz")?;
-
-        let release_a = insert_release(&mut db, "Jazz Release A")?;
-        genres::link_to_release(&mut db, jazz_id, release_a)?;
-        let track_a = insert_track(&mut db, "Jazz A")?;
-        connect(&mut db, release_a, track_a)?;
-
-        let release_b = insert_release(&mut db, "Jazz Release B")?;
-        genres::link_to_release(&mut db, jazz_id, release_b)?;
-        let track_b = insert_track(&mut db, "Jazz B")?;
-        connect(&mut db, release_b, track_b)?;
-
-        let result = builtin_from_release(&db, release_a, &MixOptions::default())?;
-        assert_eq!(result.len(), 2);
-
-        Ok(())
-    }
-
-    #[test]
-    fn from_release_without_genres_returns_seed_tracks() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-
-        let release = insert_release(&mut db, "No Genre Release")?;
-        let track_a = insert_track(&mut db, "Seed A")?;
-        let track_b = insert_track(&mut db, "Seed B")?;
-        connect(&mut db, release, track_a)?;
-        connect(&mut db, release, track_b)?;
-
-        let result = builtin_from_release(&db, release, &MixOptions::default())?;
-        let titles: HashSet<&str> = result.iter().map(|t| t.track_title.as_str()).collect();
-        assert_eq!(titles.len(), 2);
-        assert!(titles.contains("Seed A"));
-        assert!(titles.contains("Seed B"));
-
-        Ok(())
-    }
-
-    #[test]
-    fn from_artist_returns_genre_matched_tracks() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-
-        let blues_id = genres::resolve_by_name(&mut db, "Blues")?;
-
-        let artist = insert_artist(&mut db, "BB King")?;
-        let release = insert_release(&mut db, "Live at the Regal")?;
-        connect_artist(&mut db, release, artist)?;
-        genres::link_to_release(&mut db, blues_id, release)?;
-        let track = insert_track(&mut db, "Every Day I Have the Blues")?;
-        connect(&mut db, release, track)?;
-
-        let release_b = insert_release(&mut db, "Other Blues")?;
-        genres::link_to_release(&mut db, blues_id, release_b)?;
-        let track_b = insert_track(&mut db, "Blues Track")?;
-        connect(&mut db, release_b, track_b)?;
-
-        let result = builtin_from_artist(&db, artist, &MixOptions::default())?;
-        assert_eq!(result.len(), 2);
-
-        Ok(())
-    }
-
-    #[test]
-    fn from_artist_without_genres_returns_artist_release_tracks() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-
-        let artist = insert_artist(&mut db, "No Genre Artist")?;
-        let release = insert_release(&mut db, "No Genre Release")?;
-        connect_artist(&mut db, release, artist)?;
-        let track_a = insert_track(&mut db, "Artist A")?;
-        let track_b = insert_track(&mut db, "Artist B")?;
-        connect(&mut db, release, track_a)?;
-        connect(&mut db, release, track_b)?;
-
-        let result = builtin_from_artist(&db, artist, &MixOptions::default())?;
-        let titles: HashSet<&str> = result.iter().map(|t| t.track_title.as_str()).collect();
-        assert_eq!(titles.len(), 2);
-        assert!(titles.contains("Artist A"));
-        assert!(titles.contains("Artist B"));
-
-        Ok(())
-    }
-
-    #[test]
-    fn from_artist_with_only_track_credits_returns_genre_matched_tracks() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-
-        let soul_id = genres::resolve_by_name(&mut db, "Soul")?;
-        let polka_id = genres::resolve_by_name(&mut db, "Polka")?;
-
-        let album_artist = insert_artist(&mut db, "Various Artists")?;
-        let featured = insert_artist(&mut db, "Featured Guest")?;
-
-        let compilation = insert_release(&mut db, "Soul Compilation")?;
-        connect_artist(&mut db, compilation, album_artist)?;
-        genres::link_to_release(&mut db, soul_id, compilation)?;
-        let guest_track = insert_track(&mut db, "Guest Verse")?;
-        connect(&mut db, compilation, guest_track)?;
-        connect_artist(&mut db, guest_track, featured)?;
-
-        let other_release = insert_release(&mut db, "Other Soul")?;
-        genres::link_to_release(&mut db, soul_id, other_release)?;
-        let other_track = insert_track(&mut db, "Other Soul Track")?;
-        connect(&mut db, other_release, other_track)?;
-
-        let polka_release = insert_release(&mut db, "Polka Release")?;
-        genres::link_to_release(&mut db, polka_id, polka_release)?;
-        let polka_track = insert_track(&mut db, "Polka Track")?;
-        connect(&mut db, polka_release, polka_track)?;
-
-        assert!(
-            lyra_db::releases::get_by_artist(&db, featured)?.is_empty(),
-            "fixture invariant broken: featured artist has a release-level credit"
-        );
-
-        let result = builtin_from_artist(&db, featured, &MixOptions::default())?;
-        let titles: HashSet<&str> = result.iter().map(|t| t.track_title.as_str()).collect();
-        assert!(titles.contains("Guest Verse"));
-        assert!(titles.contains("Other Soul Track"));
-        assert!(!titles.contains("Polka Track"));
-
-        Ok(())
-    }
-
-    #[test]
-    fn from_artist_with_only_track_credits_without_genres_returns_credited_tracks()
-    -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-
-        let album_artist = insert_artist(&mut db, "Soundtrack Host")?;
-        let remixer = insert_artist(&mut db, "Remixer")?;
-
-        let release = insert_release(&mut db, "No Genre Soundtrack")?;
-        connect_artist(&mut db, release, album_artist)?;
-        let remix_a = insert_track(&mut db, "Remix A")?;
-        let remix_b = insert_track(&mut db, "Remix B")?;
-        let host_track = insert_track(&mut db, "Host Track")?;
-        connect(&mut db, release, remix_a)?;
-        connect(&mut db, release, remix_b)?;
-        connect(&mut db, release, host_track)?;
-        connect_artist(&mut db, remix_a, remixer)?;
-        connect_artist(&mut db, remix_b, remixer)?;
-
-        let result = builtin_from_artist(&db, remixer, &MixOptions::default())?;
-        let titles: HashSet<&str> = result.iter().map(|t| t.track_title.as_str()).collect();
-        assert_eq!(titles, HashSet::from(["Remix A", "Remix B"]));
-
-        Ok(())
-    }
-
-    #[test]
-    fn artist_track_credit_seeds_filter_visibility_before_deterministic_cap() -> anyhow::Result<()>
-    {
-        let mut db = new_test_db()?;
-
-        let artist = insert_artist(&mut db, "Prolific Guest")?;
-        let visible_library = insert_library(&mut db, "Visible", "/music/visible")?;
-        let hidden_library = insert_library(&mut db, "Hidden", "/music/hidden")?;
-        let visible_library_public_id = lyra_db::libraries::get_by_id(&db, visible_library)?
-            .expect("visible library exists")
-            .id;
-        let visible_release = insert_release(&mut db, "Visible Release")?;
-        let hidden_release = insert_release(&mut db, "Hidden Release")?;
-        connect(&mut db, visible_library, visible_release)?;
-        connect(&mut db, hidden_library, hidden_release)?;
-
-        let mut visible_track_ids = Vec::new();
-        for index in 0..55 {
-            let track = insert_track(&mut db, &format!("Visible {index:02}"))?;
-            connect(&mut db, visible_release, track)?;
-            connect_artist(&mut db, track, artist)?;
-            visible_track_ids.push(track);
-        }
-        for index in 0..60 {
-            let track = insert_track(&mut db, &format!("Hidden {index:02}"))?;
-            connect(&mut db, hidden_release, track)?;
-            connect_artist(&mut db, track, artist)?;
-        }
-        assert!(lyra_db::releases::get_by_artist(&db, artist)?.is_empty());
-
-        let options = MixOptions {
-            viewer_accessible_library_ids: Some(HashSet::from([visible_library_public_id])),
-            ..MixOptions::default()
-        };
-        let expected_seed_ids = visible_track_ids
-            .into_iter()
-            .rev()
-            .take(TRACK_CREDIT_SEED_COUNT)
-            .collect::<Vec<_>>();
-        let first_seed_ids = lyra_db::tracks::get_bounded_ids_by_artist(
-            &db,
-            artist,
-            options.viewer_accessible_library_ids.as_ref(),
-            TRACK_CREDIT_SEED_COUNT,
-        )?;
-        let second_seed_ids = lyra_db::tracks::get_bounded_ids_by_artist(
-            &db,
-            artist,
-            options.viewer_accessible_library_ids.as_ref(),
-            TRACK_CREDIT_SEED_COUNT,
-        )?;
-        assert_eq!(first_seed_ids, expected_seed_ids);
-        assert_eq!(second_seed_ids, expected_seed_ids);
-
-        let result = builtin_from_artist(&db, artist, &options)?;
-        let result_ids = result
-            .iter()
-            .filter_map(|track| track.db_id.clone().map(DbId::from))
-            .collect::<HashSet<_>>();
-        assert_eq!(result.len(), TRACK_CREDIT_SEED_COUNT);
-        assert_eq!(result_ids, expected_seed_ids.into_iter().collect());
-        Ok(())
-    }
-
-    #[test]
-    fn from_track_with_no_genres_returns_empty() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-
-        let release = insert_release(&mut db, "No Genre Release")?;
-        let track = insert_track(&mut db, "Orphan Track")?;
-        connect(&mut db, release, track)?;
-
-        let result = builtin_from_track(&db, track, &MixOptions::default())?;
-        assert!(result.is_empty());
-
-        Ok(())
-    }
-
-    #[test]
-    fn artist_diversity_caps_per_artist() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-
-        let rock_id = genres::resolve_by_name(&mut db, "Rock")?;
-        let prolific = insert_artist(&mut db, "Prolific Artist")?;
-        let other = insert_artist(&mut db, "Other Artist")?;
-
-        // 5 tracks by the prolific artist
-        for i in 0..5 {
-            let release = insert_release(&mut db, &format!("Prolific Release {i}"))?;
-            genres::link_to_release(&mut db, rock_id, release)?;
-            let track = insert_track(&mut db, &format!("Prolific Track {i}"))?;
-            connect(&mut db, release, track)?;
-            connect_artist(&mut db, track, prolific)?;
-        }
-
-        // 2 tracks by another artist
-        for i in 0..2 {
-            let release = insert_release(&mut db, &format!("Other Release {i}"))?;
-            genres::link_to_release(&mut db, rock_id, release)?;
-            let track = insert_track(&mut db, &format!("Other Track {i}"))?;
-            connect(&mut db, release, track)?;
-            connect_artist(&mut db, track, other)?;
-        }
-
-        let seed_release = insert_release(&mut db, "Seed")?;
-        genres::link_to_release(&mut db, rock_id, seed_release)?;
-        let seed_track = insert_track(&mut db, "Seed Track")?;
-        connect(&mut db, seed_release, seed_track)?;
-        connect_artist(&mut db, seed_track, prolific)?;
-
-        // With a tight limit, the cap should prefer diversity
-        let result = builtin_from_track(
-            &db,
-            seed_track,
-            &MixOptions {
-                limit: Some(5),
-                ..Default::default()
-            },
-        )?;
-        assert_eq!(result.len(), 5);
-
-        // Prolific artist should be capped at MAX_PER_ARTIST in the first pass,
-        // so with limit=5, other artist's tracks should all appear
-        let other_count = result
-            .iter()
-            .filter(|t| t.track_title.starts_with("Other"))
-            .count();
-        assert_eq!(other_count, 2);
-
-        let prolific_count = result
-            .iter()
-            .filter(|t| t.track_title.starts_with("Prolific") || t.track_title.starts_with("Seed"))
-            .count();
-        assert_eq!(prolific_count, 3);
-
-        Ok(())
-    }
-
-    #[test]
-    fn artist_diversity_backfills_when_under_limit() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-
-        let rock_id = genres::resolve_by_name(&mut db, "Rock")?;
-        let solo = insert_artist(&mut db, "Solo Artist")?;
-
-        // 5 tracks all by the same artist — only source of tracks
-        for i in 0..5 {
-            let release = insert_release(&mut db, &format!("Solo Release {i}"))?;
-            genres::link_to_release(&mut db, rock_id, release)?;
-            let track = insert_track(&mut db, &format!("Solo Track {i}"))?;
-            connect(&mut db, release, track)?;
-            connect(&mut db, track, solo)?;
-        }
-
-        let seed_release = insert_release(&mut db, "Seed")?;
-        genres::link_to_release(&mut db, rock_id, seed_release)?;
-        let seed_track = insert_track(&mut db, "Seed Track")?;
-        connect(&mut db, seed_release, seed_track)?;
-        connect(&mut db, seed_track, solo)?;
-
-        // All 6 tracks are by the same artist, but backfill should include them all
-        let result = builtin_from_track(&db, seed_track, &MixOptions::default())?;
-        assert_eq!(result.len(), 6);
-
-        Ok(())
-    }
-
-    #[test]
-    fn limit_caps_results() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-
-        let rock_id = genres::resolve_by_name(&mut db, "Rock")?;
-
-        for i in 0..10 {
-            let release = insert_release(&mut db, &format!("Release {i}"))?;
-            genres::link_to_release(&mut db, rock_id, release)?;
-            let track = insert_track(&mut db, &format!("Track {i}"))?;
-            connect(&mut db, release, track)?;
-        }
-
-        let seed_release = insert_release(&mut db, "Seed Release")?;
-        genres::link_to_release(&mut db, rock_id, seed_release)?;
-        let seed_track = insert_track(&mut db, "Seed Track")?;
-        connect(&mut db, seed_release, seed_track)?;
-
-        let result = builtin_from_track(
-            &db,
-            seed_track,
-            &MixOptions {
-                limit: Some(5),
-                ..Default::default()
-            },
-        )?;
-        assert_eq!(result.len(), 5);
-
-        Ok(())
-    }
-
-    fn insert_user(db: &mut DbAny) -> anyhow::Result<DbId> {
-        use agdb::QueryBuilder;
-        use lyra_db::users::User;
-
-        let user = User {
-            db_id: None,
-            id: nanoid::nanoid!(),
-            username: "testuser".to_string(),
-            password: "hashed".to_string(),
-        };
-        let user_id = db
-            .exec_mut(QueryBuilder::insert().element(&user).query())?
-            .ids()[0];
-        Ok(user_id)
-    }
-
-    fn insert_listen_with_snapshot(
-        db: &mut DbAny,
-        track_db_id: DbId,
-        user_db_id: DbId,
-        track_public_id: String,
-    ) -> anyhow::Result<()> {
-        let listen = listens::Listen {
-            db_id: None,
-            id: nanoid::nanoid!(),
-            play_id: nanoid::nanoid!(),
-            track_public_id,
-            started_at_ms: 1_000_000,
-            played_ms: 180_000,
-            created_at_ms: 1_000_000,
-        };
-        db.transaction_mut(|t| listens::insert(t, &listen, track_db_id, user_db_id))?;
-        Ok(())
-    }
-
-    #[test]
-    fn recent_listen_track_ids_skips_stale_snapshot_listens() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        let user_id = insert_user(&mut db)?;
-        let track = insert_track(&mut db, "Recycled Track")?;
-
-        insert_listen_with_snapshot(&mut db, track, user_id, "tr-recycled-original".to_string())?;
-
-        let recents = recent_listen_track_ids(&db, user_id, None)?;
-        assert!(
-            recents.is_empty(),
-            "stale-snapshot listens must not surface in mix seeds: {recents:?}"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn recent_listen_track_ids_skips_kind_rebound_snapshot() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        let user_id = insert_user(&mut db)?;
-        let track = insert_track(&mut db, "Listened Track")?;
-        let release = insert_release(&mut db, "Recycled Into Release")?;
-
-        let release_public_id = lyra_db::lookup::find_id_by_db_id(&db, release)?
-            .ok_or_else(|| anyhow::anyhow!("release missing public id"))?;
-
-        insert_listen_with_snapshot(&mut db, track, user_id, release_public_id)?;
-
-        let recents = recent_listen_track_ids(&db, user_id, None)?;
-        assert!(
-            recents.is_empty(),
-            "kind-rebound listens must not surface in mix seeds: {recents:?}"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn recent_listen_track_ids_filters_by_current_library_access() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        let user_id = insert_user(&mut db)?;
-        let library_id = insert_library(&mut db, "Recent Access", "/tmp/lyra-recent-access")?;
-        let library_public_id = lyra_db::lookup::find_id_by_db_id(&db, library_id)?
-            .ok_or_else(|| anyhow::anyhow!("library missing public id"))?;
-        let track = insert_track(&mut db, "Visible Recent Track")?;
-        connect(&mut db, library_id, track)?;
-        lyra_db::fixtures::insert_listen(&mut db, user_id, track, 1_000_000)?;
-
-        let hidden = recent_listen_track_ids(&db, user_id, Some(&HashSet::new()))?;
-        assert!(
-            hidden.is_empty(),
-            "recent-listen seeds must be hidden without access to the containing library",
-        );
-
-        let visible_libraries = HashSet::from([library_public_id]);
-        let visible = recent_listen_track_ids(&db, user_id, Some(&visible_libraries))?;
-        assert_eq!(visible, vec![track]);
-        Ok(())
-    }
-
-    #[test]
-    fn unheard_tracks_appear_before_heard() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-
-        let rock_id = genres::resolve_by_name(&mut db, "Rock")?;
-        let user_id = insert_user(&mut db)?;
-
-        // Create heard tracks
-        let mut heard_track_ids = Vec::new();
-        for i in 0..3 {
-            let release = insert_release(&mut db, &format!("Heard Release {i}"))?;
-            genres::link_to_release(&mut db, rock_id, release)?;
-            let track = insert_track(&mut db, &format!("Heard Track {i}"))?;
-            connect(&mut db, release, track)?;
-            lyra_db::fixtures::insert_listen(&mut db, user_id, track, 1_000_000)?;
-            heard_track_ids.push(track);
-        }
-
-        // Create unheard tracks
-        for i in 0..3 {
-            let release = insert_release(&mut db, &format!("Unheard Release {i}"))?;
-            genres::link_to_release(&mut db, rock_id, release)?;
-            let track = insert_track(&mut db, &format!("Unheard Track {i}"))?;
-            connect(&mut db, release, track)?;
-        }
-
-        let seed_release = insert_release(&mut db, "Seed")?;
-        genres::link_to_release(&mut db, rock_id, seed_release)?;
-        let seed_track = insert_track(&mut db, "Seed Track")?;
-        connect(&mut db, seed_release, seed_track)?;
-
-        let result = builtin_from_track(
-            &db,
-            seed_track,
-            &MixOptions {
-                viewer: Some(Principal::for_user(
-                    &db,
-                    user_id,
-                    Vec::new(),
-                    HashSet::new(),
-                )),
-                ..Default::default()
-            },
-        )?;
-
-        // All 7 tracks should be present (3 heard + 3 unheard + 1 seed)
-        assert_eq!(result.len(), 7);
-
-        // The first 4 tracks should all be unheard (3 unheard + 1 seed)
-        let heard_ids: HashSet<DbId> = heard_track_ids.into_iter().collect();
-        let first_four: Vec<bool> = result[..4]
-            .iter()
-            .map(|t| {
-                t.db_id
-                    .clone()
-                    .map(DbId::from)
-                    .is_some_and(|id| heard_ids.contains(&id))
-            })
-            .collect();
-        assert!(
-            first_four.iter().all(|&is_heard| !is_heard),
-            "expected first 4 tracks to be unheard, but some were heard"
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn higher_genre_overlap_ranks_first() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-
-        let rock_id = genres::resolve_by_name(&mut db, "Rock")?;
-        let blues_id = genres::resolve_by_name(&mut db, "Blues")?;
-        let pop_id = genres::resolve_by_name(&mut db, "Pop")?;
-
-        // Seed track: Rock + Blues
-        let seed_release = insert_release(&mut db, "Seed Release")?;
-        genres::link_to_release(&mut db, rock_id, seed_release)?;
-        genres::link_to_release(&mut db, blues_id, seed_release)?;
-        let seed_track = insert_track(&mut db, "Seed Track")?;
-        connect(&mut db, seed_release, seed_track)?;
-
-        // Release with 2 genre overlap (Rock + Blues) — should rank higher
-        let high_release = insert_release(&mut db, "High Overlap")?;
-        genres::link_to_release(&mut db, rock_id, high_release)?;
-        genres::link_to_release(&mut db, blues_id, high_release)?;
-        let high_track = insert_track(&mut db, "High Overlap Track")?;
-        connect(&mut db, high_release, high_track)?;
-
-        // Release with 1 genre overlap (Rock only) — should rank lower
-        let low_release = insert_release(&mut db, "Low Overlap")?;
-        genres::link_to_release(&mut db, rock_id, low_release)?;
-        genres::link_to_release(&mut db, pop_id, low_release)?;
-        let low_track = insert_track(&mut db, "Low Overlap Track")?;
-        connect(&mut db, low_release, low_track)?;
-
-        let result = builtin_from_track(&db, seed_track, &MixOptions::default())?;
-        assert_eq!(result.len(), 3);
-
-        // Find positions of high and low overlap tracks
-        let high_pos = result
-            .iter()
-            .position(|t| t.track_title == "High Overlap Track")
-            .expect("high overlap track present");
-        let low_pos = result
-            .iter()
-            .position(|t| t.track_title == "Low Overlap Track")
-            .expect("low overlap track present");
-
-        assert!(
-            high_pos < low_pos,
-            "expected high overlap track (pos {high_pos}) before low overlap track (pos {low_pos})"
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn from_recent_listens_uses_listened_genres() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-
-        let rock_id = genres::resolve_by_name(&mut db, "Rock")?;
-        let jazz_id = genres::resolve_by_name(&mut db, "Jazz")?;
-        let user_id = insert_user(&mut db)?;
-
-        // User listened to a Rock track
-        let listened_release = insert_release(&mut db, "Listened Rock Release")?;
-        genres::link_to_release(&mut db, rock_id, listened_release)?;
-        let listened_track = insert_track(&mut db, "Listened Rock Track")?;
-        connect(&mut db, listened_release, listened_track)?;
-        lyra_db::fixtures::insert_listen(&mut db, user_id, listened_track, 1_000_000)?;
-
-        // Other Rock tracks in library (should appear in mix)
-        let rock_release = insert_release(&mut db, "Other Rock Release")?;
-        genres::link_to_release(&mut db, rock_id, rock_release)?;
-        let rock_track = insert_track(&mut db, "Other Rock Track")?;
-        connect(&mut db, rock_release, rock_track)?;
-
-        // Jazz tracks in library (should NOT appear — user hasn't listened to jazz)
-        let jazz_release = insert_release(&mut db, "Jazz Release")?;
-        genres::link_to_release(&mut db, jazz_id, jazz_release)?;
-        let jazz_track = insert_track(&mut db, "Jazz Track")?;
-        connect(&mut db, jazz_release, jazz_track)?;
-
-        let options = MixOptions {
-            viewer: Some(Principal::for_user(
-                &db,
-                user_id,
-                Vec::new(),
-                HashSet::new(),
-            )),
-            ..Default::default()
-        };
-        let result = builtin_from_recent_listens(&db, user_id, &options)?;
-
-        let titles: HashSet<&str> = result.iter().map(|t| t.track_title.as_str()).collect();
-        assert!(titles.contains("Other Rock Track"));
-        assert!(titles.contains("Listened Rock Track"));
-        assert!(!titles.contains("Jazz Track"));
-
-        Ok(())
-    }
-
-    #[test]
-    fn from_recent_listens_returns_empty_with_no_history() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        let user_id = insert_user(&mut db)?;
-
-        let options = MixOptions {
-            viewer: Some(Principal::for_user(
-                &db,
-                user_id,
-                Vec::new(),
-                HashSet::new(),
-            )),
-            ..Default::default()
-        };
-        let result = builtin_from_recent_listens(&db, user_id, &options)?;
-        assert!(result.is_empty());
-
-        Ok(())
-    }
-
-    #[test]
-    fn from_genre_returns_tracks_in_that_genre() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-
-        let rock_id = genres::resolve_by_name(&mut db, "Rock")?;
-        let jazz_id = genres::resolve_by_name(&mut db, "Jazz")?;
-
-        let release_a = insert_release(&mut db, "Rock A")?;
-        genres::link_to_release(&mut db, rock_id, release_a)?;
-        let track_a = insert_track(&mut db, "Rock Track A")?;
-        connect(&mut db, release_a, track_a)?;
-
-        let release_b = insert_release(&mut db, "Rock B")?;
-        genres::link_to_release(&mut db, rock_id, release_b)?;
-        let track_b = insert_track(&mut db, "Rock Track B")?;
-        connect(&mut db, release_b, track_b)?;
-
-        let release_c = insert_release(&mut db, "Jazz C")?;
-        genres::link_to_release(&mut db, jazz_id, release_c)?;
-        let track_c = insert_track(&mut db, "Jazz Track C")?;
-        connect(&mut db, release_c, track_c)?;
-
-        let result = builtin_from_genre(&db, rock_id, &MixOptions::default())?;
-        let titles: HashSet<&str> = result.iter().map(|t| t.track_title.as_str()).collect();
-        assert!(titles.contains("Rock Track A"));
-        assert!(titles.contains("Rock Track B"));
-        assert!(!titles.contains("Jazz Track C"));
-
-        Ok(())
-    }
-
-    #[test]
-    fn from_genre_returns_empty_for_non_genre_seed() -> anyhow::Result<()> {
-        // Real id pointing at a non-Genre node (`i64::MAX` errors instead).
-        let mut db = new_test_db()?;
-        let release_id = insert_release(&mut db, "Not A Genre")?;
-        assert!(
-            lyra_db::releases::get_by_id(&db, release_id)?.is_some(),
-            "fixture should produce a real Release node"
-        );
-        assert!(
-            lyra_db::genres::get_by_id(&db, release_id)?.is_none(),
-            "Release id should not resolve as a Genre"
-        );
-
-        let result = builtin_from_genre(&db, release_id, &MixOptions::default())?;
-        assert!(result.is_empty());
-        Ok(())
-    }
-
-    #[test]
-    fn from_playlist_uses_track_genres() -> anyhow::Result<()> {
-        use lyra_db::playlists::{
-            self,
-            Playlist,
-        };
-
-        let mut db = new_test_db()?;
-
-        let rock_id = genres::resolve_by_name(&mut db, "Rock")?;
-        let jazz_id = genres::resolve_by_name(&mut db, "Jazz")?;
-        let pop_id = genres::resolve_by_name(&mut db, "Pop")?;
-        let user_id = insert_user(&mut db)?;
-
-        // Pin the fixture invariant so a future taxonomy seeding Pop fails loudly.
-        let related_to_rock = genres::expand_related(&db, &[rock_id], 2)?;
-        let related_to_jazz = genres::expand_related(&db, &[jazz_id], 2)?;
-        assert!(
-            !related_to_rock.iter().any(|(id, _)| *id == pop_id),
-            "fixture invariant broken: Pop is reachable from Rock at depth 2"
-        );
-        assert!(
-            !related_to_jazz.iter().any(|(id, _)| *id == pop_id),
-            "fixture invariant broken: Pop is reachable from Jazz at depth 2"
-        );
-
-        let release_p1 = insert_release(&mut db, "Playlist Rock")?;
-        genres::link_to_release(&mut db, rock_id, release_p1)?;
-        let track_p1 = insert_track(&mut db, "Playlist Rock Track")?;
-        connect(&mut db, release_p1, track_p1)?;
-
-        let release_p2 = insert_release(&mut db, "Playlist Jazz")?;
-        genres::link_to_release(&mut db, jazz_id, release_p2)?;
-        let track_p2 = insert_track(&mut db, "Playlist Jazz Track")?;
-        connect(&mut db, release_p2, track_p2)?;
-
-        let release_other_rock = insert_release(&mut db, "Other Rock")?;
-        genres::link_to_release(&mut db, rock_id, release_other_rock)?;
-        let track_other_rock = insert_track(&mut db, "Other Rock Track")?;
-        connect(&mut db, release_other_rock, track_other_rock)?;
-
-        let release_other_jazz = insert_release(&mut db, "Other Jazz")?;
-        genres::link_to_release(&mut db, jazz_id, release_other_jazz)?;
-        let track_other_jazz = insert_track(&mut db, "Other Jazz Track")?;
-        connect(&mut db, release_other_jazz, track_other_jazz)?;
-
-        let release_pop = insert_release(&mut db, "Pop Release")?;
-        genres::link_to_release(&mut db, pop_id, release_pop)?;
-        let track_pop = insert_track(&mut db, "Pop Track")?;
-        connect(&mut db, release_pop, track_pop)?;
-
-        let playlist = Playlist {
-            db_id: None,
-            id: nanoid::nanoid!(),
-            name: "Mix Seed".to_string(),
-            description: None,
-            is_public: Some(true),
-            created_at: Some(0),
-            updated_at: Some(0),
-        };
-        let playlist_db_id = playlists::create(&mut db, &playlist, user_id)?;
-        playlists::add_track(&mut db, playlist_db_id, track_p1)?;
-        playlists::add_track(&mut db, playlist_db_id, track_p2)?;
-
-        let result = builtin_from_playlist(&db, playlist_db_id, &MixOptions::default())?;
-        let titles: HashSet<&str> = result.iter().map(|t| t.track_title.as_str()).collect();
-        assert!(titles.contains("Other Rock Track"));
-        assert!(titles.contains("Other Jazz Track"));
-        assert!(!titles.contains("Pop Track"));
-
-        Ok(())
-    }
-
-    #[test]
-    fn from_playlist_returns_empty_for_empty_playlist() -> anyhow::Result<()> {
-        use lyra_db::playlists::{
-            self,
-            Playlist,
-        };
-
-        let mut db = new_test_db()?;
-        let user_id = insert_user(&mut db)?;
-        let playlist = Playlist {
-            db_id: None,
-            id: nanoid::nanoid!(),
-            name: "Empty".to_string(),
-            description: None,
-            is_public: Some(true),
-            created_at: Some(0),
-            updated_at: Some(0),
-        };
-        let playlist_db_id = playlists::create(&mut db, &playlist, user_id)?;
-        let result = builtin_from_playlist(&db, playlist_db_id, &MixOptions::default())?;
-        assert!(result.is_empty());
-        Ok(())
-    }
-
-    // --- pin_seed_and_truncate (instant_mix_from_audio's novel control flow) ---
+    // --- pin_seed_and_truncate ---
 
     #[test]
     fn plugin_candidates_filter_before_limit_and_preserve_instant_pin() -> anyhow::Result<()> {
@@ -2064,11 +454,12 @@ mod tests {
         let restricted = finalize_mixer_tracks(
             &db,
             provider_candidates.clone(),
-            &MixOptions {
-                limit: Some(2),
-                viewer_accessible_library_ids: Some(HashSet::from([visible_library_public_id])),
-                ..MixOptions::default()
+            MixShape::Blend,
+            &MixViewer {
+                accessible_library_ids: Some(HashSet::from([visible_library_public_id.clone()])),
+                ..MixViewer::default()
             },
+            2,
         )?;
         assert_eq!(
             restricted
@@ -2080,11 +471,10 @@ mod tests {
 
         let unrestricted = finalize_mixer_tracks(
             &db,
-            provider_candidates,
-            &MixOptions {
-                limit: Some(2),
-                ..MixOptions::default()
-            },
+            provider_candidates.clone(),
+            MixShape::Blend,
+            &MixViewer::default(),
+            2,
         )?;
         assert_eq!(
             unrestricted
@@ -2092,6 +482,24 @@ mod tests {
                 .map(|track| track.track_title.as_str())
                 .collect::<Vec<_>>(),
             vec!["Hidden A", "Hidden B"],
+        );
+
+        let path = finalize_mixer_tracks(
+            &db,
+            provider_candidates,
+            MixShape::Path,
+            &MixViewer {
+                accessible_library_ids: Some(HashSet::from([visible_library_public_id])),
+                ..MixViewer::default()
+            },
+            2,
+        )?;
+        assert_eq!(
+            path.iter()
+                .map(|track| track.track_title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Visible B", "Visible A", "Visible Seed"],
+            "a path keeps every visible step in order, past the limit",
         );
 
         let instant = pin_seed_and_truncate(seed, restricted, &HashMap::new(), 2);
@@ -2164,7 +572,7 @@ mod tests {
         Ok(())
     }
 
-    /// An instant mix of `mix` pinned on `seed`, as `instant_mix_from_audio` orders it.
+    /// A blend of `mix` pinned on `seed`, as `pin_seed` orders it.
     fn instant(db: &DbAny, seed: DbId, mix: &[DbId]) -> anyhow::Result<Vec<DbId>> {
         let mut by_id = lyra_db::tracks::get_by_ids(db, mix)?;
         let seed_track = lyra_db::tracks::get_by_id(db, seed)?.expect("seed exists");
@@ -2247,12 +655,10 @@ mod tests {
                 chain,
             )
         };
-        let options = MixOptions::for_principal(&viewer, None, HashMap::new());
+        let viewer = MixViewer::for_principal(&viewer);
 
         for _ in 0..16 {
-            let mix = from_seed(MixSeedId::Genre(genre.clone()), &options)
-                .await?
-                .expect("genre mix");
+            let mix = mix(&blend_of(genre.clone()), &viewer).await?;
             let ids = ids_of(&mix);
             assert_eq!(ids.len(), 11);
             let start = ids

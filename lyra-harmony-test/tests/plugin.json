@@ -20,6 +20,7 @@
     "lyra.locale",
     "lyra.lyrics",
     "lyra.metadata",
+    "lyra.mix",
     "lyra.playback_sources",
     "lyra.playlists",
     "lyra.ratings",

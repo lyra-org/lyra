@@ -1,0 +1,75 @@
+run_as = "listener"
+
+# "Solo" in the listener's library holds S1 to S5; "Vault", in a library the listener can't see,
+# holds H1. The listener listened to S1 and S3.
+
+[[users]]
+key = "listener"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener"]
+
+[[libraries]]
+key = "secret"
+name = "Secret"
+
+[[genres]]
+key = "rock"
+name = "Rock"
+
+[[releases]]
+key = "solo"
+title = "Solo"
+library = "music"
+genres = ["rock"]
+
+[[releases]]
+key = "vault"
+title = "Vault"
+library = "secret"
+
+[[tracks]]
+key = "s1"
+title = "S1"
+release = "solo"
+
+[[tracks]]
+key = "s2"
+title = "S2"
+release = "solo"
+
+[[tracks]]
+key = "s3"
+title = "S3"
+release = "solo"
+
+[[tracks]]
+key = "s4"
+title = "S4"
+release = "solo"
+
+[[tracks]]
+key = "s5"
+title = "S5"
+release = "solo"
+
+[[tracks]]
+key = "h1"
+title = "H1"
+release = "vault"
+
+[[playlists]]
+key = "mix"
+owner = "listener"
+name = "Mix"
+tracks = ["s1"]
+
+[[listens]]
+user = "listener"
+track = "s1"
+
+[[listens]]
+user = "listener"
+track = "s3"

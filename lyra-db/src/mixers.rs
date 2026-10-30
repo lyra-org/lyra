@@ -85,9 +85,15 @@ pub fn upsert(db: &mut DbAny, mixer: &MixerConfig) -> anyhow::Result<DbId> {
     Ok(id)
 }
 
-/// Registers a mixer at the end of the order unless it is already stored.
-pub fn register(db: &mut DbAny, mixer_id: &str) -> anyhow::Result<()> {
-    if get_by_mixer_id(db, mixer_id)?.is_some() {
+/// Registers a mixer at the end of the order unless it is already stored, and names it
+/// `display_name`, or its id without one. A stored mixer keeps its place and is renamed.
+pub fn register(db: &mut DbAny, mixer_id: &str, display_name: Option<&str>) -> anyhow::Result<()> {
+    let display_name = display_name.unwrap_or(mixer_id);
+    if let Some(mut existing) = get_by_mixer_id(db, mixer_id)? {
+        if existing.display_name != display_name {
+            existing.display_name = display_name.to_string();
+            db.exec_mut(QueryBuilder::insert().element(&existing).query())?;
+        }
         return Ok(());
     }
     let position = u32::try_from(get(db)?.len())?;
@@ -96,7 +102,7 @@ pub fn register(db: &mut DbAny, mixer_id: &str) -> anyhow::Result<()> {
         &MixerConfig {
             db_id: None,
             mixer_id: mixer_id.to_string(),
-            display_name: mixer_id.to_string(),
+            display_name: display_name.to_string(),
             position,
             enabled: true,
         },
@@ -166,7 +172,7 @@ mod tests {
     fn mixers_register_at_the_end_and_move_without_gaps() -> anyhow::Result<()> {
         let mut db = TestDb::with_root_aliases(&["mixers"])?.into_inner();
         for mixer_id in ["a", "b", "c"] {
-            register(&mut db, mixer_id)?;
+            register(&mut db, mixer_id, None)?;
         }
 
         assert!(move_to(&mut db, "c", 0)?);
@@ -177,6 +183,26 @@ mod tests {
         assert!(set_enabled(&mut db, "a", false)?);
         assert!(!move_to(&mut db, "missing", 0)?);
         assert!(!set_enabled(&mut db, "missing", true)?);
+        Ok(())
+    }
+
+    #[test]
+    fn registering_again_renames_a_mixer_in_place() -> anyhow::Result<()> {
+        let mut db = TestDb::with_root_aliases(&["mixers"])?.into_inner();
+        register(&mut db, "a", None)?;
+        register(&mut db, "b", Some("Bee"))?;
+        assert!(move_to(&mut db, "b", 0)?);
+        register(&mut db, "b", Some("Bees"))?;
+        register(&mut db, "a", Some("Ay"))?;
+
+        let names = get(&db)?
+            .into_iter()
+            .map(|mixer| (mixer.mixer_id, mixer.display_name, mixer.position))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            [("b".into(), "Bees".into(), 0), ("a".into(), "Ay".into(), 1)]
+        );
         Ok(())
     }
 }

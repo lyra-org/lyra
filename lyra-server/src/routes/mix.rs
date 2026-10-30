@@ -3,15 +3,14 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashMap;
-
 #[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
     Json,
+    Router,
     extract::{
-        Path,
         Query,
+        rejection::JsonRejection,
     },
     http::HeaderMap,
 };
@@ -36,7 +35,8 @@ use crate::{
         },
         mix::{
             self,
-            MixSeedId,
+            MixRequestFields,
+            MixViewer,
         },
         tracks as track_service,
     },
@@ -47,169 +47,34 @@ use crate::{
 pub(crate) struct MixQueryParams {
     #[cfg_attr(
         feature = "docgen",
-        schemars(description = "Maximum number of tracks to return (default 200).")
-    )]
-    #[serde(default, deserialize_with = "routes::deserialize_optional_usize")]
-    limit: Option<usize>,
-    #[cfg_attr(
-        feature = "docgen",
         schemars(
             description = "Comma-separated or repeated values: releases, artists, release_covers, artist_covers."
         )
     )]
     #[serde(default, deserialize_with = "routes::deserialize_inc")]
     inc: Option<Vec<String>>,
-    #[serde(flatten)]
-    #[cfg_attr(feature = "docgen", schemars(skip))]
-    extra: HashMap<String, String>,
 }
 
-#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Deserialize)]
-pub(crate) struct TrackMixQueryParams {
-    #[serde(flatten)]
-    base: MixQueryParams,
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(
-            description = "Pin the seed track at index 0 (default true). Pass `false` for a fully shuffled unpinned mix."
-        )
-    )]
-    instant: Option<bool>,
-}
-
-/// Track-seeded mixes default to instant (seed pinned first).
-fn track_seed_use_instant(instant: Option<bool>) -> bool {
-    instant.unwrap_or(true)
-}
-
-fn validate_limit(limit: Option<usize>) -> Result<(), AppError> {
-    if let Some(limit) = limit {
-        if limit == 0 {
-            return Err(AppError::bad_request("limit must be > 0".to_string()));
-        }
-        if limit > mix::MAX_LIMIT {
-            return Err(AppError::bad_request(format!(
-                "limit must be <= {}, got {limit}",
-                mix::MAX_LIMIT
-            )));
-        }
-    }
-    Ok(())
-}
-
-fn mix_options(query: &MixQueryParams, principal: &Principal) -> mix::MixOptions {
-    mix::MixOptions::for_principal(principal, query.limit, sanitize_extra(query.extra.clone()))
-}
-
-async fn render_mix_response(
-    principal: &Principal,
-    query: &MixQueryParams,
-    tracks: Vec<lyra_db::Track>,
+async fn post_mix(
+    headers: HeaderMap,
+    Query(query): Query<MixQueryParams>,
+    body: Result<Json<MixRequestFields<String>>, JsonRejection>,
 ) -> Result<Json<Vec<TrackResponse>>, AppError> {
-    let includes = route_tracks::parse_inc(query.inc.clone())?;
-    let responses: Vec<TrackResponse> = {
-        let db = &*STATE.db.read().await;
-        let tracks = filter_accessible_tracks(db, principal, tracks)?;
-        let details = track_service::list_details_for_tracks(db, includes.service, tracks)?;
-        let chains = TrackChains::of(db, details.iter().map(|detail| &detail.track))?;
-        details
-            .into_iter()
-            .map(|detail| route_tracks::track_detail_to_response(db, detail, includes, &chains))
-            .collect::<anyhow::Result<Vec<_>>>()?
-    };
+    let principal = require_principal(bearer_credential(&headers)).await?;
+    let Json(body) = body.map_err(|rejection| AppError::bad_request(rejection.body_text()))?;
+    let includes = route_tracks::parse_inc(query.inc)?;
+    let tracks = mix::mix(&body.into_request(), &MixViewer::for_principal(&principal)).await?;
+
+    // Hydrated under a guard of its own, so tracks deleted or hidden since the mix drop here.
+    let db = &*STATE.db.read().await;
+    let tracks = filter_accessible_tracks(db, &principal, tracks)?;
+    let details = track_service::list_details_for_tracks(db, includes.service, tracks)?;
+    let chains = TrackChains::of(db, details.iter().map(|detail| &detail.track))?;
+    let responses = details
+        .into_iter()
+        .map(|detail| route_tracks::track_detail_to_response(db, detail, includes, &chains))
+        .collect::<anyhow::Result<Vec<_>>>()?;
     Ok(Json(responses))
-}
-
-pub(crate) async fn get_track_mix(
-    headers: HeaderMap,
-    Path(id): Path<String>,
-    Query(query): Query<TrackMixQueryParams>,
-) -> Result<Json<Vec<TrackResponse>>, AppError> {
-    let principal = require_principal(bearer_credential(&headers)).await?;
-    validate_limit(query.base.limit)?;
-
-    let options = mix_options(&query.base, &principal);
-    let mix_result = if track_seed_use_instant(query.instant) {
-        mix::instant_mix_from_audio(&id, &options).await?
-    } else {
-        mix::from_seed(MixSeedId::Track(id.clone()), &options).await?
-    };
-    let tracks = mix_result.ok_or_else(|| AppError::not_found(format!("track not found: {id}")))?;
-    render_mix_response(&principal, &query.base, tracks).await
-}
-
-pub(crate) async fn get_release_mix(
-    headers: HeaderMap,
-    Path(id): Path<String>,
-    Query(query): Query<MixQueryParams>,
-) -> Result<Json<Vec<TrackResponse>>, AppError> {
-    let principal = require_principal(bearer_credential(&headers)).await?;
-    validate_limit(query.limit)?;
-
-    let options = mix_options(&query, &principal);
-    let mix_result = mix::from_seed(MixSeedId::Release(id.clone()), &options).await?;
-    let tracks =
-        mix_result.ok_or_else(|| AppError::not_found(format!("release not found: {id}")))?;
-    render_mix_response(&principal, &query, tracks).await
-}
-
-pub(crate) async fn get_artist_mix(
-    headers: HeaderMap,
-    Path(id): Path<String>,
-    Query(query): Query<MixQueryParams>,
-) -> Result<Json<Vec<TrackResponse>>, AppError> {
-    let principal = require_principal(bearer_credential(&headers)).await?;
-    validate_limit(query.limit)?;
-
-    let options = mix_options(&query, &principal);
-    let mix_result = mix::from_seed(MixSeedId::Artist(id.clone()), &options).await?;
-    let tracks =
-        mix_result.ok_or_else(|| AppError::not_found(format!("artist not found: {id}")))?;
-    render_mix_response(&principal, &query, tracks).await
-}
-
-pub(crate) async fn get_genre_mix(
-    headers: HeaderMap,
-    Path(id): Path<String>,
-    Query(query): Query<MixQueryParams>,
-) -> Result<Json<Vec<TrackResponse>>, AppError> {
-    let principal = require_principal(bearer_credential(&headers)).await?;
-    validate_limit(query.limit)?;
-
-    let options = mix_options(&query, &principal);
-    let mix_result = mix::from_seed(MixSeedId::Genre(id.clone()), &options).await?;
-    let tracks = mix_result.ok_or_else(|| AppError::not_found(format!("genre not found: {id}")))?;
-    render_mix_response(&principal, &query, tracks).await
-}
-
-pub(crate) async fn get_playlist_mix(
-    headers: HeaderMap,
-    Path(id): Path<String>,
-    Query(query): Query<MixQueryParams>,
-) -> Result<Json<Vec<TrackResponse>>, AppError> {
-    let principal = require_principal(bearer_credential(&headers)).await?;
-    validate_limit(query.limit)?;
-
-    let options = mix_options(&query, &principal);
-    let mix_result = mix::from_seed(MixSeedId::Playlist(id.clone()), &options).await?;
-    let tracks =
-        mix_result.ok_or_else(|| AppError::not_found(format!("playlist not found: {id}")))?;
-    render_mix_response(&principal, &query, tracks).await
-}
-
-pub(crate) async fn get_me_mix(
-    headers: HeaderMap,
-    Query(query): Query<MixQueryParams>,
-) -> Result<Json<Vec<TrackResponse>>, AppError> {
-    let principal = require_principal(bearer_credential(&headers)).await?;
-    validate_limit(query.limit)?;
-
-    let options = mix_options(&query, &principal);
-    let tracks = mix::from_seed(MixSeedId::Recent, &options)
-        .await?
-        .ok_or_else(|| AppError::not_found("user not found".to_string()))?;
-    render_mix_response(&principal, &query, tracks).await
 }
 
 /// Keeps the mixer's tracks that still exist under their public id and that the principal can
@@ -233,94 +98,269 @@ fn filter_accessible_tracks(
     Ok(filtered)
 }
 
-const KNOWN_QUERY_KEYS: &[&str] = &["limit", "inc", "instant"];
-const MAX_EXTRA_KEYS: usize = 20;
-const MAX_EXTRA_KEY_LEN: usize = 64;
-const MAX_EXTRA_VALUE_LEN: usize = 256;
+#[cfg(feature = "docgen")]
+fn post_mix_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Generate mix").description(
+        "Returns tracks mixed from `seeds`, the caller's recent listens (`from_history`), or a free-text `q`. Seeds are public IDs of tracks, releases, artists, genres or playlists; `{ \"id\": ..., \"exclude\": true }` excludes a seed, mixing away from it, and a request needs at least one seed that isn't excluded, `from_history` or `q`. Every seed, excluded or not, must exist and be visible to the caller, or the request fails with 404.\n\nThe `blend` shape (default) returns tracks like the seeds. Tracks of one chain stay together and in chain order, and `pin_seed` leads with a single track seed. The `path` shape takes exactly two seeds, neither excluded, and returns the tracks leading from the first to the second in the mixer's order, up to 2000 tracks; tracks the caller can't see are left out, chains are not regrouped, and `limit` is only a step hint.\n\nEnabled mixers are tried in priority order, and only those whose declared handler takes the request's shape, seed types, explicit seed count, excluded seeds and query; the first non-empty result wins. `from_history` asks for track seeds, and the caller's recent listens fill each mixer's seeds beyond the explicit ones, most recent first. `GET /api/mixers` lists what each mixer and the built-in mixer take. Mixer `options` are keyed `<mixer_id>.<name>` and must have the option's declared type. `mixer` pins one mixer with no fallback. A request no mixer can serve fails with 400 naming what is unsupported.\n\nUse `inc` to hydrate nested data: `releases`, `artists`, `release_covers` (covers require `releases`), and `artist_covers` (covers require `artists`).",
+    )
+}
 
-fn sanitize_extra(mut extra: HashMap<String, String>) -> HashMap<String, String> {
-    extra.retain(|key, value| {
-        !KNOWN_QUERY_KEYS.contains(&key.as_str())
-            && key.len() <= MAX_EXTRA_KEY_LEN
-            && value.len() <= MAX_EXTRA_VALUE_LEN
-    });
-    if extra.len() > MAX_EXTRA_KEYS {
-        let keys_to_keep: Vec<String> = extra.keys().take(MAX_EXTRA_KEYS).cloned().collect();
-        extra.retain(|key, _| keys_to_keep.contains(key));
-    }
-    extra
+pub fn mix_routes() -> Router {
+    use axum::routing::post;
+
+    Router::new().route("/", post(post_mix))
 }
 
 #[cfg(feature = "docgen")]
-const MIX_DESCRIPTION: &str = "Returns a shuffled list of tracks similar to the seed. Tracks of one chain stay together and in chain order. Use `inc` to hydrate nested data: `releases`, `artists`, `release_covers` (covers require `releases`), and `artist_covers` (covers require `artists`).";
+pub(crate) fn mix_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::post_with;
 
-#[cfg(feature = "docgen")]
-const TRACK_MIX_DESCRIPTION: &str = "Returns a shuffled list of tracks similar to the seed. Use `inc` to hydrate nested data: `releases`, `artists`, `release_covers` (covers require `releases`), and `artist_covers` (covers require `artists`). Defaults to instant mode (`instant=true`): the seed track is pinned at index 0, then similar tracks follow. When the seed is in a chain, the chain's later tracks in the mix follow it directly and its earlier ones are left out. Pass `instant=false` for a fully shuffled unpinned mix.";
-
-#[cfg(feature = "docgen")]
-const ME_MIX_DESCRIPTION: &str = "Returns a shuffled list of tracks similar to the seed. Tracks of one chain stay together and in chain order. Use `inc` to hydrate nested data: `releases`, `artists`, `release_covers` (covers require `releases`), and `artist_covers` (covers require `artists`). Seeds from the authenticated user's recent listen history.";
-
-#[cfg(feature = "docgen")]
-pub(crate) fn track_mix_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Generate mix from track")
-        .description(TRACK_MIX_DESCRIPTION)
-}
-
-#[cfg(feature = "docgen")]
-pub(crate) fn release_mix_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Generate mix from release")
-        .description(MIX_DESCRIPTION)
-}
-
-#[cfg(feature = "docgen")]
-pub(crate) fn artist_mix_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Generate mix from artist")
-        .description(MIX_DESCRIPTION)
-}
-
-#[cfg(feature = "docgen")]
-pub(crate) fn genre_mix_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Generate mix from genre")
-        .description(MIX_DESCRIPTION)
-}
-
-#[cfg(feature = "docgen")]
-pub(crate) fn playlist_mix_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Generate mix from playlist")
-        .description(MIX_DESCRIPTION)
-}
-
-#[cfg(feature = "docgen")]
-pub(crate) fn me_mix_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Generate mix from recent listens")
-        .description(ME_MIX_DESCRIPTION)
+    aide::axum::ApiRouter::new().api_route("/", post_with(post_mix, post_mix_docs))
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
+    use axum::{
+        body::{
+            Body,
+            to_bytes,
+        },
+        http::{
+            Request,
+            StatusCode,
+            header::{
+                AUTHORIZATION,
+                CONTENT_TYPE,
+            },
+        },
+    };
+    use lyra_db::{
+        fixtures::{
+            connect,
+            insert_artist,
+            insert_release,
+            insert_track,
+        },
+        test_db::{
+            connect_artist,
+            insert_library,
+        },
+    };
+    use tower::ServiceExt;
+
     use super::*;
-    use axum::http::Uri;
+    use crate::services::{
+        mix::MixShape,
+        testing::runtime_test_lock,
+    };
 
-    #[test]
-    fn mix_query_parses_limit_with_flattened_extra_options() {
-        let uri: Uri = "/mix?limit=5&provider_knob=wide".parse().unwrap();
-        let axum::extract::Query(query) =
-            axum::extract::Query::<MixQueryParams>::try_from_uri(&uri).unwrap();
+    async fn post(
+        authorization: &str,
+        body: impl Into<Body>,
+    ) -> anyhow::Result<(StatusCode, String)> {
+        let response = mix_routes()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .header(AUTHORIZATION, authorization)
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(body.into())?,
+            )
+            .await?;
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        Ok((status, String::from_utf8(body.to_vec())?))
+    }
 
-        assert_eq!(query.limit, Some(5));
+    async fn post_json(
+        authorization: &str,
+        body: serde_json::Value,
+    ) -> anyhow::Result<(StatusCode, String)> {
+        post(authorization, body.to_string()).await
+    }
+
+    /// A user who sees only a visible library, an artist credited on a release in it and on one
+    /// in a hidden library, and a track in the hidden one.
+    struct Catalog {
+        authorization: String,
+        artist: String,
+        hidden_track: String,
+    }
+
+    async fn catalog(_test_dir: &tempfile::TempDir) -> anyhow::Result<Catalog> {
+        crate::plugins::testing::init_library_test_state(_test_dir.path().to_path_buf()).await?;
+        let (user_db_id, artist, hidden_track) = {
+            let mut db = STATE.db.write().await;
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
+            let user_db_id =
+                lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("mix-viewer")?)?;
+            let visible_library = insert_library(&mut db, "Visible Mix", "/tmp/lyra-visible-mix")?;
+            let hidden_library = insert_library(&mut db, "Hidden Mix", "/tmp/lyra-hidden-mix")?;
+            lyra_db::libraries::grant_access(
+                &mut *db,
+                user_db_id,
+                visible_library,
+                lyra_db::libraries::AccessKind::ReadWrite,
+            )?;
+
+            let artist = insert_artist(&mut db, "Release Credit Mix Artist")?;
+            let visible_release = insert_release(&mut db, "Visible Mix Release")?;
+            let hidden_release = insert_release(&mut db, "Hidden Mix Release")?;
+            connect(&mut db, visible_library, visible_release)?;
+            connect(&mut db, hidden_library, hidden_release)?;
+            connect_artist(&mut db, visible_release, artist)?;
+            connect_artist(&mut db, hidden_release, artist)?;
+
+            for index in 0..55 {
+                let track = insert_track(&mut db, &format!("Visible Track {index:02}"))?;
+                connect(&mut db, visible_release, track)?;
+            }
+            let mut hidden_track = None;
+            for index in 0..60 {
+                let track = insert_track(&mut db, &format!("Hidden Track {index:02}"))?;
+                connect(&mut db, hidden_release, track)?;
+                hidden_track.get_or_insert(track);
+            }
+            let public_id = |id| {
+                lyra_db::lookup::find_id_by_db_id(&*db, id)
+                    .map(|id| id.expect("entity has a public id"))
+            };
+            (
+                user_db_id,
+                public_id(artist)?,
+                public_id(hidden_track.expect("a hidden track"))?,
+            )
+        };
+        let session =
+            crate::services::testing::create_session(user_db_id, Default::default()).await?;
+        Ok(Catalog {
+            authorization: format!("Bearer {}", session.token),
+            artist,
+            hidden_track,
+        })
+    }
+
+    #[tokio::test]
+    async fn artist_blends_filter_release_tracks_before_shuffle_and_limit() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = tempfile::tempdir()?;
+        let catalog = catalog(&test_dir).await?;
+
+        for _ in 0..2 {
+            let (status, tracks) = post_json(
+                &catalog.authorization,
+                serde_json::json!({ "seeds": [catalog.artist], "limit": 50 }),
+            )
+            .await?;
+            assert_eq!(status, StatusCode::OK, "{tracks}");
+            let tracks: serde_json::Value = serde_json::from_str(&tracks)?;
+            let tracks = tracks.as_array().expect("mix response is an array");
+            let ids = tracks
+                .iter()
+                .map(|track| {
+                    let title = track["title"].as_str().expect("track title is a string");
+                    assert!(
+                        title.starts_with("Visible Track"),
+                        "unexpected title: {title}"
+                    );
+                    track["id"]
+                        .as_str()
+                        .expect("track id is a string")
+                        .to_string()
+                })
+                .collect::<HashSet<_>>();
+            assert_eq!(tracks.len(), 50);
+            assert_eq!(ids.len(), 50);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn mix_requests_fail_as_bad_requests_or_missing_seeds() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = tempfile::tempdir()?;
+        let catalog = catalog(&test_dir).await?;
+        let authorization = catalog.authorization.as_str();
+        let (status, body) = post_json(authorization, serde_json::json!({})).await?;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body.contains("needs a seed"), "{body}");
+
+        let (status, _) = post(authorization, "{\"seeds\": 7}").await?;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, _) = post_json(
+            authorization,
+            serde_json::json!({ "seeds": [catalog.artist], "limit": 0 }),
+        )
+        .await?;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let (status, body) = post_json(
+            authorization,
+            serde_json::json!({ "seeds": [catalog.artist, catalog.artist], "shape": "path" }),
+        )
+        .await?;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body.contains("twice"), "{body}");
+
+        let (status, _) = post_json(
+            authorization,
+            serde_json::json!({ "seeds": [catalog.hidden_track] }),
+        )
+        .await?;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) = post_json(
+            authorization,
+            serde_json::json!({
+                "seeds": [catalog.artist, { "id": catalog.hidden_track, "exclude": true }],
+            }),
+        )
+        .await?;
         assert_eq!(
-            query.extra.get("provider_knob").map(String::as_str),
-            Some("wide")
+            status,
+            StatusCode::NOT_FOUND,
+            "a seed to push away from is checked too"
         );
+
+        let (status, body) = post_json(
+            authorization,
+            serde_json::json!({ "seeds": [catalog.artist], "q": "rain" }),
+        )
+        .await?;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body, "Error: no mixer can serve this mix: query");
+        Ok(())
+    }
+
+    fn body(json: serde_json::Value) -> serde_json::Result<MixRequestFields<String>> {
+        serde_json::from_value(json)
     }
 
     #[test]
-    fn track_mix_query_parses_nested_limit_with_instant_flag() {
-        let uri: Uri = "/mix?limit=5&instant=false".parse().unwrap();
-        let axum::extract::Query(query) =
-            axum::extract::Query::<TrackMixQueryParams>::try_from_uri(&uri).unwrap();
+    fn mix_bodies_take_bare_and_excluded_seeds() -> serde_json::Result<()> {
+        let request = body(serde_json::json!({
+            "seeds": ["a", { "id": "b", "exclude": true }, { "id": "c" }],
+            "shape": "path",
+            "q": "rain",
+        }))?
+        .into_request();
 
-        assert_eq!(query.base.limit, Some(5));
-        assert_eq!(query.instant, Some(false));
+        let seeds = request
+            .seeds
+            .iter()
+            .map(|seed| (seed.id.as_str(), seed.exclude))
+            .collect::<Vec<_>>();
+        assert_eq!(seeds, [("a", false), ("b", true), ("c", false)]);
+        assert_eq!(request.shape, MixShape::Path);
+        assert_eq!(request.query(), Some("rain"));
+        Ok(())
+    }
+
+    #[test]
+    fn mix_bodies_reject_unknown_fields() {
+        assert!(body(serde_json::json!({ "seeds": ["a"], "instant": true })).is_err());
+        assert!(body(serde_json::json!({ "seeds": [{ "id": "a", "kind": "track" }] })).is_err());
     }
 }

@@ -42,7 +42,10 @@ use crate::services::{
     delivery::DeliveryError,
     entries::EntryServiceError,
     hls::HlsError,
-    mix::MixerAdminError,
+    mix::{
+        MixError,
+        MixerAdminError,
+    },
     playback_sessions::PlaybackServiceError,
     providers::{
         ProviderAdminError,
@@ -349,6 +352,18 @@ impl From<MixerAdminError> for AppError {
         match err {
             MixerAdminError::MixerNotFound(message) => Self::not_found(message),
             MixerAdminError::Internal(err) => err.into(),
+        }
+    }
+}
+
+impl From<MixError> for AppError {
+    fn from(err: MixError) -> Self {
+        match err {
+            MixError::SeedNotFound(_) => Self::not_found(err.to_string()),
+            MixError::Invalid(message) | MixError::Unsupported(message) => {
+                Self::bad_request(message)
+            }
+            MixError::Internal(err) => err.into(),
         }
     }
 }

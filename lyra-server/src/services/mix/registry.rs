@@ -6,6 +6,7 @@
 use std::{
     collections::HashMap,
     sync::Arc,
+    time::Duration,
 };
 
 use anyhow::{
@@ -22,14 +23,87 @@ use crate::services::plugin_scope::{
     ScopedRegistry,
 };
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+/// The entity types a mix can be seeded from.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Serialize)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[serde(rename_all = "lowercase")]
 pub(crate) enum MixSeedType {
     Track,
     Release,
     Artist,
     Genre,
     Playlist,
-    RecentListens,
+}
+
+impl MixSeedType {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Track => "track",
+            Self::Release => "release",
+            Self::Artist => "artist",
+            Self::Genre => "genre",
+            Self::Playlist => "playlist",
+        }
+    }
+}
+
+/// How a mix relates its seeds: a blend of tracks like them, or a path from
+/// the first seed to the second.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub(crate) enum MixShape {
+    #[default]
+    Blend,
+    Path,
+}
+
+impl MixShape {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Blend => "blend",
+            Self::Path => "path",
+        }
+    }
+}
+
+/// What a mixer's handler for one shape accepts.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct MixHandlerSpec {
+    pub(crate) seed_types: Vec<MixSeedType>,
+    /// The most explicit seeds it takes; history seeds fill what is left.
+    pub(crate) max_seeds: usize,
+    /// Whether it takes excluded seeds, to mix away from.
+    pub(crate) exclude: bool,
+    pub(crate) query: bool,
+}
+
+/// What a request needs from the handler that serves it. Only the explicit seeds count; a
+/// request with history needs track seeds too.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct MixRequirements {
+    pub(crate) seed_types: Vec<MixSeedType>,
+    pub(crate) seed_count: usize,
+    /// Whether any explicit seed is excluded.
+    pub(crate) exclude: bool,
+    pub(crate) query: bool,
+}
+
+impl MixHandlerSpec {
+    pub(crate) fn covers(&self, requirements: &MixRequirements) -> bool {
+        requirements.seed_count <= self.max_seeds
+            && requirements
+                .seed_types
+                .iter()
+                .all(|seed_type| self.seed_types.contains(seed_type))
+            && (!requirements.exclude || self.exclude)
+            && (!requirements.query || self.query)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct MixHandlerRegistration {
+    pub(crate) spec: MixHandlerSpec,
+    pub(crate) timeout: Duration,
+    pub(crate) handler: PluginCallbackHandle,
 }
 
 /// Generation-owned mix state: registered mixers bucketed by plugin.
@@ -53,13 +127,17 @@ pub(crate) struct MixRegistry {
 
 #[derive(Default)]
 struct MixerState {
-    handlers: HashMap<MixSeedType, PluginCallbackHandle>,
+    handlers: HashMap<MixShape, MixHandlerRegistration>,
     options: Vec<OptionDeclaration>,
 }
 
 impl MixRegistry {
-    /// Registers a mixer. Rejects duplicate ids across all plugin buckets.
+    /// Registers a mixer. Rejects duplicate ids across all plugin buckets, and ids with a `.`,
+    /// which separates a mixer's id from its option names in `<mixer_id>.<name>`.
     pub(crate) fn register(&mut self, plugin_id: PluginId, id: String) -> Result<()> {
+        if id.is_empty() || id.contains('.') {
+            bail!("mixer id '{id}' must be non-empty and contain no '.'");
+        }
         if let Some(existing) = self.plugin_by_mixer.get(&id) {
             bail!("mixer '{id}' already registered by plugin '{existing}'");
         }
@@ -81,30 +159,36 @@ impl MixRegistry {
         self.mixers.get_mut(&plugin_id)?.get_mut(mixer_id)
     }
 
-    pub(crate) fn set_seed_callback(
+    pub(crate) fn is_registered(&self, mixer_id: &str) -> bool {
+        self.plugin_by_mixer.contains_key(mixer_id)
+    }
+
+    pub(crate) fn plugin_id(&self, mixer_id: &str) -> Option<&PluginId> {
+        self.plugin_by_mixer.get(mixer_id)
+    }
+
+    /// Sets the mixer's handler for `shape`, returning the one it replaces.
+    pub(crate) fn set_handler(
         &mut self,
         mixer_id: &str,
-        seed_type: MixSeedType,
-        handler: PluginCallbackHandle,
-    ) {
-        if let Some(mixer) = self.state_mut(mixer_id) {
-            mixer.handlers.insert(seed_type, handler);
-        }
+        shape: MixShape,
+        registration: MixHandlerRegistration,
+    ) -> Result<Option<PluginCallbackHandle>> {
+        let Some(mixer) = self.state_mut(mixer_id) else {
+            bail!("mixer '{mixer_id}' not registered");
+        };
+        Ok(mixer
+            .handlers
+            .insert(shape, registration)
+            .map(|replaced| replaced.handler))
     }
 
-    pub(crate) fn get_seed_callback(
+    pub(crate) fn handler(
         &self,
         mixer_id: &str,
-        seed_type: MixSeedType,
-    ) -> Option<PluginCallbackHandle> {
-        self.state(mixer_id)
-            .and_then(|p| p.handlers.get(&seed_type))
-            .copied()
-    }
-
-    pub(crate) fn has_handler(&self, mixer_id: &str, seed_type: MixSeedType) -> bool {
-        self.state(mixer_id)
-            .is_some_and(|p| p.handlers.contains_key(&seed_type))
+        shape: MixShape,
+    ) -> Option<&MixHandlerRegistration> {
+        self.state(mixer_id)?.handlers.get(&shape)
     }
 
     pub(crate) fn declare_option(
@@ -112,6 +196,12 @@ impl MixRegistry {
         mixer_id: &str,
         option: OptionDeclaration,
     ) -> std::result::Result<(), String> {
+        if option.name.is_empty() || option.name.contains('.') {
+            return Err(format!(
+                "option name '{}' must be non-empty and contain no '.'",
+                option.name
+            ));
+        }
         if let Some(mixer) = self.state_mut(mixer_id) {
             if mixer.options.iter().any(|o| o.name == option.name) {
                 return Err(format!(
@@ -153,4 +243,119 @@ pub(crate) async fn teardown_plugin_mixers(plugin_id: &PluginId) {
     ScopedRegistry::from_shared(mix_registry())
         .teardown(plugin_id)
         .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spec(seed_types: &[MixSeedType], max_seeds: usize) -> MixHandlerSpec {
+        MixHandlerSpec {
+            seed_types: seed_types.to_vec(),
+            max_seeds,
+            exclude: false,
+            query: false,
+        }
+    }
+
+    fn needs(seed_types: &[MixSeedType], seed_count: usize) -> MixRequirements {
+        MixRequirements {
+            seed_types: seed_types.to_vec(),
+            seed_count,
+            exclude: false,
+            query: false,
+        }
+    }
+
+    #[test]
+    fn a_spec_covers_only_what_it_declares() {
+        let tracks = spec(&[MixSeedType::Track, MixSeedType::Release], 3);
+        assert!(tracks.covers(&needs(&[MixSeedType::Track], 3)));
+        assert!(tracks.covers(&needs(&[MixSeedType::Track, MixSeedType::Release], 2)));
+        assert!(!tracks.covers(&needs(&[MixSeedType::Track], 4)));
+        assert!(!tracks.covers(&needs(&[MixSeedType::Genre], 1)));
+        assert!(!tracks.covers(&MixRequirements {
+            exclude: true,
+            ..needs(&[MixSeedType::Track], 2)
+        }));
+        assert!(!tracks.covers(&MixRequirements {
+            query: true,
+            ..needs(&[], 0)
+        }));
+
+        let open = MixHandlerSpec {
+            exclude: true,
+            query: true,
+            ..spec(&[MixSeedType::Track], 2)
+        };
+        assert!(open.covers(&MixRequirements {
+            exclude: true,
+            query: true,
+            ..needs(&[MixSeedType::Track], 2)
+        }));
+    }
+
+    #[test]
+    fn a_registered_handler_replaces_the_shapes_previous_one() -> Result<()> {
+        let mut registry = MixRegistry::default();
+        registry.register(PluginId::new("demo".to_string())?, "demo-mixer".to_string())?;
+        let handle = |handler_id| PluginCallbackHandle {
+            vm_id: 1,
+            handler_id,
+        };
+        let registration = |handler_id| MixHandlerRegistration {
+            spec: spec(&[MixSeedType::Track], 1),
+            timeout: Duration::from_secs(1),
+            handler: handle(handler_id),
+        };
+
+        assert_eq!(
+            registry.set_handler("demo-mixer", MixShape::Blend, registration(1))?,
+            None
+        );
+        assert_eq!(
+            registry.set_handler("demo-mixer", MixShape::Blend, registration(2))?,
+            Some(handle(1))
+        );
+        assert_eq!(
+            registry
+                .handler("demo-mixer", MixShape::Blend)
+                .map(|registration| registration.handler),
+            Some(handle(2))
+        );
+        assert!(registry.handler("demo-mixer", MixShape::Path).is_none());
+        assert!(
+            registry
+                .set_handler("missing", MixShape::Blend, registration(3))
+                .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn mixer_ids_and_option_names_keep_dots_for_option_keys() -> Result<()> {
+        let mut registry = MixRegistry::default();
+        let plugin = || PluginId::new("demo".to_string());
+        assert!(
+            registry
+                .register(plugin()?, "demo.mixer".to_string())
+                .is_err()
+        );
+        assert!(registry.register(plugin()?, String::new()).is_err());
+        registry.register(plugin()?, "demo-mixer".to_string())?;
+        let option = |name: &str| OptionDeclaration {
+            name: name.to_string(),
+            label: name.to_string(),
+            option_type: crate::services::options::OptionType::Boolean,
+            default: serde_json::Value::Null,
+            requires_settings: Vec::new(),
+        };
+        assert!(
+            registry
+                .declare_option("demo-mixer", option("a.b"))
+                .is_err()
+        );
+        assert!(registry.declare_option("demo-mixer", option("ab")).is_ok());
+        Ok(())
+    }
 }

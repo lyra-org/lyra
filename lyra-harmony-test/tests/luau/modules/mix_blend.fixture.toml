@@ -1,0 +1,71 @@
+run_as = "listener"
+
+# "Solo" in the listener's library is Amy's rock album holding S1 to S3. "Vault", a rock album
+# in a library the listener can't see, holds H1. The listener owns the playlist "Mix" (S1, S2)
+# and listened to S1.
+
+[[users]]
+key = "listener"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener"]
+
+[[libraries]]
+key = "secret"
+name = "Secret"
+
+[[artists]]
+key = "amy"
+name = "Amy"
+
+[[genres]]
+key = "rock"
+name = "Rock"
+
+[[releases]]
+key = "solo"
+title = "Solo"
+library = "music"
+artists = ["amy"]
+genres = ["rock"]
+
+[[releases]]
+key = "vault"
+title = "Vault"
+library = "secret"
+genres = ["rock"]
+
+[[tracks]]
+key = "s1"
+title = "S1"
+release = "solo"
+artists = ["amy"]
+
+[[tracks]]
+key = "s2"
+title = "S2"
+release = "solo"
+artists = ["amy"]
+
+[[tracks]]
+key = "s3"
+title = "S3"
+release = "solo"
+artists = ["amy"]
+
+[[tracks]]
+key = "h1"
+title = "H1"
+release = "vault"
+
+[[playlists]]
+key = "mix"
+owner = "listener"
+name = "Mix"
+tracks = ["s1", "s2"]
+
+[[listens]]
+user = "listener"
+track = "s1"

@@ -12,8 +12,9 @@ A REST path says whose data it touches:
 |---|---|
 | `/api/me`, `/api/me/api-keys`, `/api/me/plugins` | Caller's account and settings |
 | `/api/me/favorites`, `/api/me/ratings`, `/api/me/tags`, `/api/me/playbacks` | Caller-private collections |
-| `/api/me/listens`, `/api/me/mix` | Caller-private views |
+| `/api/me/listens` | Caller-private views |
 | `/api/releases`, `/api/tracks`, `/api/playlists`, ... | Shared resources |
+| `/api/mix` | Shared tracks picked for the caller, from seeds or the caller's history |
 | `/api/users`, `/api/listens` | Cross-user admin views |
 
 ### Choosing a Path

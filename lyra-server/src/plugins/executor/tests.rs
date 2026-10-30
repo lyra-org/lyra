@@ -1337,7 +1337,7 @@ fn plugin_executor_rejects_handles_from_another_runtime() -> Result<()> {
                     api.websocket("/{name}/socket", function(_reader, sender)
                         sender:close()
                     end, "public")
-                    mix.Mixer.new("{name}"):from_track(function()
+                    mix.Mixer.new("{name}"):blend({{ seeds = {{ mix.SeedType.Track }} }}, function()
                         return {{ tracks = {{}} }}
                     end)
                 "#
@@ -1378,7 +1378,8 @@ fn plugin_executor_rejects_handles_from_another_runtime() -> Result<()> {
                 crate::services::mix::mix_registry()
                     .read_owned()
                     .await
-                    .get_seed_callback(name, crate::services::mix::MixSeedType::Track)
+                    .handler(name, crate::services::mix::MixShape::Blend)
+                    .map(|registration| registration.handler)
             })
             .context("registered mix callback")?,
             id_link: id_link.context("registered id link generator")?,
@@ -1423,9 +1424,9 @@ fn plugin_executor_rejects_handles_from_another_runtime() -> Result<()> {
         runtime
             .dispatch_mix_handler(MixHandlerRequest {
                 handler: stale.mix,
-                seed_id: Some(1),
+                seeds: Vec::new(),
+                query: None,
                 limit: Some(1),
-                recent_track_ids: Vec::new(),
                 options: serde_json::Map::new(),
             })
             .expect_err("a mix handle from another runtime must be rejected"),
@@ -1897,8 +1898,12 @@ fn plugin_executor_dispatches_registered_mix_handler() -> Result<()> {
                 label = "Boost",
                 type = "boolean",
             })
-            mixer:from_track(function(ctx)
+            mixer:blend({ seeds = { mix.SeedType.Track, mix.SeedType.Genre }, max_seeds = 2, exclude = true }, function(ctx)
                 task.wait()
+                local track, genre = ctx.seeds[1], ctx.seeds[2]
+                assert(track.id == 40 and track.type == mix.SeedType.Track and not track.exclude, "track seed")
+                assert(genre.id == 7 and genre.type == mix.SeedType.Genre and genre.exclude, "genre seed")
+                assert(ctx.q == "rain" and ctx.limit == 10, "query and limit")
                 return {
                     tracks = {
                         { track_id = ctx.options.boost and 42 or 41 },
@@ -1912,14 +1917,23 @@ fn plugin_executor_dispatches_registered_mix_handler() -> Result<()> {
         crate::services::mix::mix_registry()
             .read_owned()
             .await
-            .get_seed_callback("demo-mixer", crate::services::mix::MixSeedType::Track)
+            .handler("demo-mixer", crate::services::mix::MixShape::Blend)
+            .map(|registration| registration.handler)
     })
     .context("registered mix callback")?;
+    let seed = |id, seed_type, exclude| crate::services::mix::MixSeed {
+        db_id: agdb::DbId(id),
+        seed_type,
+        exclude,
+    };
     let result = runtime.dispatch_mix_handler(MixHandlerRequest {
         handler,
-        seed_id: Some(40),
+        seeds: vec![
+            seed(40, crate::services::mix::MixSeedType::Track, false),
+            seed(7, crate::services::mix::MixSeedType::Genre, true),
+        ],
+        query: Some("rain".to_string()),
         limit: Some(10),
-        recent_track_ids: Vec::new(),
         options: serde_json::Map::from_iter([("boost".to_string(), serde_json::Value::Bool(true))]),
     })?;
 
@@ -2372,7 +2386,7 @@ fn plugin_executor_stop_drops_the_plugins_callbacks() -> Result<()> {
             api.get("/stopped", function()
                 return api.response.json(200, {})
             end, "public")
-            mix.Mixer.new("stopped-mixer"):from_track(function()
+            mix.Mixer.new("stopped-mixer"):blend({ seeds = { mix.SeedType.Track } }, function()
                 return { tracks = {} }
             end)
             playbacks.on_update(function() end)

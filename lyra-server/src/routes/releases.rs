@@ -491,7 +491,6 @@ pub fn release_routes() -> Router {
             get(chains::get_release_chains).put(chains::replace_release_chains),
         )
         .route("/{id}/similar", get(similarity::get_similar_releases))
-        .route("/{id}/mix", get(super::mix::get_release_mix))
         .route("/{id}/covers/search", post(search_release_covers))
 }
 
@@ -518,10 +517,6 @@ pub(crate) fn release_openapi_routes() -> aide::axum::ApiRouter {
                 similarity::get_similar_releases,
                 similarity::get_similar_releases_docs,
             ),
-        )
-        .api_route(
-            "/{id}/mix",
-            get_with(super::mix::get_release_mix, super::mix::release_mix_docs),
         )
         .api_route(
             "/{id}/covers/search",

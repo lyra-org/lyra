@@ -44,7 +44,10 @@ use crate::{
             require_manage_providers,
             require_sync_metadata,
         },
-        options::OptionType,
+        options::{
+            OptionDeclaration,
+            OptionType,
+        },
         providers::provider_registry,
         providers::{
             EntityExternalIdRecord,
@@ -370,38 +373,43 @@ async fn build_provider_responses(
     providers
         .into_iter()
         .map(|(config, options, display_name)| {
-            let options = options
-                .iter()
-                .map(|opt| {
-                    let (available, unavailable_reason) = if opt.requires_settings.is_empty() {
-                        (true, None)
-                    } else {
-                        check_settings_availability(
-                            &db,
-                            &config.provider_id,
-                            &opt.requires_settings,
-                        )
-                    };
-                    OptionResponse {
-                        name: opt.name.clone(),
-                        label: opt.label.clone(),
-                        option_type: match &opt.option_type {
-                            OptionType::Boolean => "boolean".to_string(),
-                            OptionType::String => "string".to_string(),
-                            OptionType::Number => "number".to_string(),
-                        },
-                        default: opt.default.clone(),
-                        available,
-                        unavailable_reason,
-                    }
-                })
-                .collect();
+            let options = option_responses(&db, &config.provider_id, &options);
             ProviderResponse {
                 provider_id: config.provider_id,
                 display_name,
                 position: config.position,
                 enabled: config.enabled,
                 options,
+            }
+        })
+        .collect()
+}
+
+/// The declared options, each available once `plugin_id` has the settings it requires.
+pub(super) fn option_responses(
+    db: &agdb::DbAny,
+    plugin_id: &str,
+    options: &[OptionDeclaration],
+) -> Vec<OptionResponse> {
+    options
+        .iter()
+        .map(|opt| {
+            let (available, unavailable_reason) = if opt.requires_settings.is_empty() {
+                (true, None)
+            } else {
+                check_settings_availability(db, plugin_id, &opt.requires_settings)
+            };
+            OptionResponse {
+                name: opt.name.clone(),
+                label: opt.label.clone(),
+                option_type: match &opt.option_type {
+                    OptionType::Boolean => "boolean".to_string(),
+                    OptionType::String => "string".to_string(),
+                    OptionType::Number => "number".to_string(),
+                },
+                default: opt.default.clone(),
+                available,
+                unavailable_reason,
             }
         })
         .collect()
