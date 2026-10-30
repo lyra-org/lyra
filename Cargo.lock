@@ -1445,7 +1445,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "lyra-chromaprint"
-version = "0.0.1-dev"
+version = "0.0.1-dev.0"
 dependencies = [
  "base64",
  "lyra-ffmpeg",
@@ -1454,7 +1454,7 @@ dependencies = [
 
 [[package]]
 name = "lyra-db"
-version = "0.0.1-dev"
+version = "0.0.1-dev.0"
 dependencies = [
  "agdb",
  "anyhow",
@@ -1477,7 +1477,7 @@ dependencies = [
 
 [[package]]
 name = "lyra-docs"
-version = "0.0.1-dev"
+version = "0.0.1-dev.0"
 dependencies = [
  "anyhow",
  "harmony-core",
@@ -1494,7 +1494,7 @@ dependencies = [
 
 [[package]]
 name = "lyra-ffmpeg"
-version = "0.0.1-dev"
+version = "0.0.1-dev.0"
 dependencies = [
  "ffmpeg-sys-next",
  "thiserror 2.0.18",
@@ -1502,7 +1502,7 @@ dependencies = [
 
 [[package]]
 name = "lyra-harmony-test"
-version = "0.0.1-dev"
+version = "0.0.1-dev.0"
 dependencies = [
  "anyhow",
  "flate2",
@@ -1524,7 +1524,7 @@ dependencies = [
 
 [[package]]
 name = "lyra-metadata"
-version = "0.0.1-dev"
+version = "0.0.1-dev.0"
 dependencies = [
  "celes",
  "isolang",
@@ -1536,7 +1536,7 @@ dependencies = [
 
 [[package]]
 name = "lyra-server"
-version = "0.0.1-dev"
+version = "0.0.1-dev.0"
 dependencies = [
  "agdb",
  "aide",

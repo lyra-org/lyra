@@ -72,15 +72,27 @@ Use a path visible to the server. `path` is required. `name` defaults to `Music`
 ## Versions and releases
 
 The `lyra-*` crates share the server version, set once under `[workspace.package]` in the root
-`Cargo.toml`. Between releases, `main` carries the next version with a `-dev` suffix, such as
-`0.0.2-dev`, and every plugin manifest in the repository declares the same `lyra` version. Tests
-check that they match.
+`Cargo.toml`. Between releases, `main` carries the next version as a numbered development
+version, starting at `-dev.0`, such as `0.0.2-dev.0`, and every plugin manifest in the repository
+declares the same `lyra` version. Tests check that they match.
+
+Plugins reach servers only through the releases in `versions.json`, which on `main` are offered to
+the development version. To release plugins from `main`:
+
+1. If the server changed since the previous entry's commit, bump the development number, such as
+   `0.0.2-dev.0` to `0.0.2-dev.1`, in the workspace and every in-repository `lyra`, so servers built
+   before the change keep the plugins that work with them.
+2. Bump `version` in each plugin whose files changed since the previous entry's commit.
+3. Commit, then add that commit to the top of `versions.json` as described in
+   [plugin repositories](plugin-repositories.md#releases).
 
 To release a version:
 
 1. Set the workspace version and every in-repository `lyra` to it, and bump `version` in each plugin whose files changed since the previous release.
-2. Commit, then add that commit to the top of `versions.json` as described in [plugin repositories](plugin-repositories.md#releases).
-3. Move `main` to the next `-dev` version, in the workspace and every in-repository `lyra`.
+2. Commit, and tag that commit `v` followed by the version, such as `v0.0.2`.
+3. Add that commit to the top of `versions.json`, and commit.
+4. Move `main` to the next development version, such as `0.0.3-dev.0`, in the workspace and every in-repository `lyra`, and commit.
+5. Push the commits and the tag together.
 
 The `harmony-*` crates have their own version, released when Harmony is ready rather than with
 each Lyra release. Plugins depend on the server version only, so a Lyra release may ship a `-dev`
