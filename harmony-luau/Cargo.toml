@@ -6,9 +6,11 @@ license-file = "../LICENSE"
 
 [features]
 default = []
+anyhow = ["dep:anyhow"]
 serde = ["dep:serde"]
 
 [dependencies]
+anyhow = { workspace = true, optional = true }
 harmony-luau-sys = { workspace = true }
 serde = { workspace = true, optional = true }
 thiserror = { workspace = true }

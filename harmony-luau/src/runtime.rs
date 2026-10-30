@@ -111,6 +111,18 @@ pub enum Error {
     Serialize(String),
 }
 
+/// A host error raised into Luau as a runtime error with its message. Running out of memory stays
+/// [`Error::OutOfMemory`], even when the error carries context.
+#[cfg(feature = "anyhow")]
+impl From<anyhow::Error> for Error {
+    fn from(error: anyhow::Error) -> Self {
+        match error.downcast_ref::<Error>() {
+            Some(Error::OutOfMemory) => Error::OutOfMemory,
+            _ => Error::Runtime(error.to_string()),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ModuleId(pub Arc<str>);
 
@@ -3154,6 +3166,16 @@ mod tests {
 
     fn stack_top(vm: &Vm) -> i32 {
         vm.top()
+    }
+
+    #[cfg(feature = "anyhow")]
+    #[test]
+    fn host_errors_keep_their_message_and_running_out_of_memory() {
+        let error = Error::from(anyhow::anyhow!("track not found").context("loading track"));
+        assert!(matches!(error, Error::Runtime(message) if message == "loading track"));
+
+        let error = Error::from(anyhow::Error::new(Error::OutOfMemory).context("loading track"));
+        assert!(matches!(error, Error::OutOfMemory));
     }
 
     #[test]
