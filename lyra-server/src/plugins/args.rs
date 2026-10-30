@@ -213,6 +213,63 @@ pub(crate) fn optional_u64(
     }
 }
 
+/// `table[key]` as a boolean; `owner` names the table in errors, as `provider:id spec`.
+pub(crate) fn optional_bool(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    key: &str,
+    owner: &str,
+) -> luau::runtime::Result<Option<bool>> {
+    match table.get_raw(vm, key)? {
+        luau::Value::Nil => Ok(None),
+        luau::Value::Boolean(value) => Ok(Some(value)),
+        other => Err(crate::plugins::runtime_error(format!(
+            "{owner}.{key} must be a boolean, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+/// `table[key]` as an integer; `owner` names the table in errors.
+pub(crate) fn optional_i64(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    key: &str,
+    owner: &str,
+) -> luau::runtime::Result<Option<i64>> {
+    match table.get_raw(vm, key)? {
+        luau::Value::Nil => Ok(None),
+        luau::Value::Integer(value) => Ok(Some(value)),
+        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 => {
+            Ok(Some(value as i64))
+        }
+        other => Err(crate::plugins::runtime_error(format!(
+            "{owner}.{key} must be an integer number, got {}",
+            describe(&other)
+        ))),
+    }
+}
+
+/// `table[key]` as a timeout in milliseconds, `default` without one; `owner` names the table in
+/// errors.
+pub(crate) fn optional_timeout(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    key: &str,
+    owner: &str,
+    default: std::time::Duration,
+) -> luau::runtime::Result<std::time::Duration> {
+    let Some(value) = optional_i64(vm, table, key, owner)? else {
+        return Ok(default);
+    };
+    if value < 1 {
+        return Err(crate::plugins::runtime_error(format!(
+            "{owner}.{key} must be an integer >= 1"
+        )));
+    }
+    Ok(std::time::Duration::from_millis(value as u64))
+}
+
 /// A value for an error message: numbers as themselves, anything else by type.
 fn describe(value: &luau::Value) -> String {
     match value {

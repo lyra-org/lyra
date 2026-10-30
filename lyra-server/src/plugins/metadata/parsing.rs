@@ -9,6 +9,10 @@ use agdb::DbId;
 use harmony_luau as luau;
 use serde_json::Value as JsonValue;
 
+use crate::plugins::args::{
+    optional_bool,
+    optional_timeout,
+};
 use crate::services::plugin_scope::PluginId;
 use crate::services::{
     EntityType,
@@ -130,7 +134,7 @@ pub(super) fn parse_id_spec(
 ) -> luau::runtime::Result<ProviderIdSpec> {
     let id_type = required_string(vm, spec, "id_type")?;
     let entity = required_entity_type(vm, spec, "entity")?;
-    let unique = optional_bool(vm, spec, "unique")?.unwrap_or(false);
+    let unique = optional_bool(vm, spec, "unique", "provider:id spec")?.unwrap_or(false);
     let scheme = optional_table_string(vm, spec, "scheme", "provider:id")?;
     if let Some(scheme) = &scheme {
         validate_id_scheme(scheme)
@@ -154,7 +158,7 @@ pub(super) fn parse_cover_spec(
         vm,
         config,
         "timeout_ms",
-        "provider:cover",
+        "provider:cover config",
         DEFAULT_COVER_HANDLER_TIMEOUT,
     )?;
     let require = parse_provider_require(vm, config, "provider:cover")?;
@@ -169,7 +173,7 @@ pub(super) fn parse_similar_releases_spec(
         vm,
         config,
         "timeout_ms",
-        "provider:similar_releases",
+        "provider:similar_releases config",
         DEFAULT_SIMILAR_RELEASES_HANDLER_TIMEOUT,
     )?;
     if timeout > MAX_SIMILAR_RELEASES_HANDLER_TIMEOUT {
@@ -190,48 +194,11 @@ pub(super) fn parse_lyrics_spec(
         vm,
         config,
         "timeout_ms",
-        "provider:lyrics",
+        "provider:lyrics config",
         DEFAULT_HANDLER_TIMEOUT,
     )?;
     let require = parse_provider_require(vm, config, "provider:lyrics")?;
     Ok((timeout, require))
-}
-
-fn optional_i64(
-    vm: &luau::Vm,
-    table: &luau::Table,
-    key: &str,
-    method: &str,
-) -> luau::runtime::Result<Option<i64>> {
-    match table.get_raw(vm, key)? {
-        luau::Value::Nil => Ok(None),
-        luau::Value::Integer(value) => Ok(Some(value)),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 => {
-            Ok(Some(value as i64))
-        }
-        other => Err(crate::plugins::runtime_error(format!(
-            "{method} config.{key} must be an integer number, got {}",
-            other.type_name()
-        ))),
-    }
-}
-
-fn optional_timeout(
-    vm: &luau::Vm,
-    table: &luau::Table,
-    key: &str,
-    method: &str,
-    default: Duration,
-) -> luau::runtime::Result<Duration> {
-    let Some(value) = optional_i64(vm, table, key, method)? else {
-        return Ok(default);
-    };
-    if value < 1 {
-        return Err(crate::plugins::runtime_error(format!(
-            "{method} config.{key} must be an integer >= 1"
-        )));
-    }
-    Ok(Duration::from_millis(value as u64))
 }
 
 fn parse_provider_require(
@@ -394,21 +361,6 @@ pub(super) fn optional_artist_type(
     crate::plugins::types::LuauArtistType::_harmony_userdata_class()
         .read_value(vm, key, value)
         .map(|value| Some(value.into()))
-}
-
-fn optional_bool(
-    vm: &luau::Vm,
-    table: &luau::Table,
-    key: &str,
-) -> luau::runtime::Result<Option<bool>> {
-    match table.get_raw(vm, key)? {
-        luau::Value::Nil => Ok(None),
-        luau::Value::Boolean(value) => Ok(Some(value)),
-        other => Err(crate::plugins::runtime_error(format!(
-            "{key} must be a boolean, got {}",
-            other.type_name()
-        ))),
-    }
 }
 
 pub(super) fn string_array_from_table(
