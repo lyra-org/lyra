@@ -3,7 +3,7 @@
   "id": "theaudiodb",
   "name": "TheAudioDB Provider",
   "version": "0.0.1",
-  "lyra": "0.0.1-dev.0",
+  "lyra": "0.0.1-dev.1",
   "description": "Resolves artist and release artwork and metadata from TheAudioDB",
   "entrypoint": "init.luau",
   "scopes": [

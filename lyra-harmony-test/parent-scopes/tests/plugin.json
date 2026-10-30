@@ -3,7 +3,7 @@
   "id": "parent-scopes",
   "name": "Parent Scope Harness Module Tests",
   "version": "1.0.0",
-  "lyra": "0.0.1-dev.0",
+  "lyra": "0.0.1-dev.1",
   "description": "Luau tests of what server-provided plugin modules refuse a plugin declaring their scopes but not the narrow scopes within them",
   "scopes": [
     "lyra.listens",
