@@ -95,6 +95,11 @@ unsafe extern "C-unwind" {
         nargs: c_int,
         status: *mut c_int,
     ) -> c_int;
+    fn harmony_luau_gateway_resumeerror(
+        L: *mut lua_State,
+        co: *mut lua_State,
+        status: *mut c_int,
+    ) -> c_int;
     fn harmony_luau_gateway_openlibrary(L: *mut lua_State, name: *const c_char) -> c_int;
     fn harmony_luau_gateway_sandbox(L: *mut lua_State) -> c_int;
     fn harmony_luau_gateway_sandboxthread(L: *mut lua_State) -> c_int;
@@ -400,11 +405,36 @@ pub(super) unsafe fn resume(
             from,
             harmony_luau_gateway_resume(from, thread, args, &mut status),
         )?;
-        match status {
-            sys::LUA_OK => Ok(false),
-            sys::LUA_YIELD => Ok(true),
-            _ => Err(take_error(thread, status)),
-        }
+        resume_status(thread, status)
+    }
+}
+
+/// Resumes `thread` from `from` by raising `message` where it yielded, so the nearest `pcall` in
+/// that thread catches it; with none, the thread finishes with the error. Returns whether it
+/// yielded again rather than finished.
+pub(super) unsafe fn resume_error(
+    from: *mut lua_State,
+    thread: *mut lua_State,
+    message: &str,
+) -> Result<bool> {
+    let mut status = 0;
+    unsafe {
+        // Failing to push the message leaves the out-of-memory error in its place, which is
+        // raised instead.
+        push_error(thread, message);
+        check(
+            from,
+            harmony_luau_gateway_resumeerror(from, thread, &mut status),
+        )?;
+        resume_status(thread, status)
+    }
+}
+
+unsafe fn resume_status(thread: *mut lua_State, status: c_int) -> Result<bool> {
+    match status {
+        sys::LUA_OK => Ok(false),
+        sys::LUA_YIELD => Ok(true),
+        _ => Err(unsafe { take_error(thread, status) }),
     }
 }
 

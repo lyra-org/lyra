@@ -182,6 +182,11 @@ int harmony_luau_gateway_resume(lua_State* L, lua_State* co, int nargs, int* sta
     return protect(L, [&](lua_State* L) { *status = lua_resume(co, L, nargs); });
 }
 
+int harmony_luau_gateway_resumeerror(lua_State* L, lua_State* co, int* status)
+{
+    return protect(L, [&](lua_State* L) { *status = lua_resumeerror(co, L); });
+}
+
 int harmony_luau_gateway_openlibrary(lua_State* L, const char* name)
 {
     return protect(

@@ -1272,21 +1272,7 @@ impl Thread {
     }
 
     pub fn resume(&self, vm: &Vm, args: &[Value]) -> Result<ThreadStatus> {
-        if self.vm_id() != vm.inner.id {
-            return Err(Error::VmMismatch {
-                reference_vm: self.vm_id(),
-                actual_vm: vm.inner.id,
-            });
-        }
-        if self.inner.finished.get() {
-            return Err(Error::Runtime("thread already completed".to_string()));
-        }
-
-        // A thread that has not started holds just its function, which stays below the args.
-        let state = self.inner.state.as_ptr();
-        if self.is_started() {
-            unsafe { gateway::truncate(state, 0) };
-        }
+        let state = self.prepare_resume(vm)?;
         let base = unsafe { sys::lua_gettop(state) };
         for arg in args {
             if let Err(error) = vm.push_value_to(self.inner.state, arg) {
@@ -1298,6 +1284,39 @@ impl Thread {
         self.inner.started.set(true);
 
         let resumed = unsafe { gateway::resume(vm.inner.state.as_ptr(), state, args.len() as i32) };
+        self.finish_resume(vm, resumed)
+    }
+
+    /// Resumes the thread by raising `message` where it yielded, as if the call it yielded in had
+    /// raised it: the nearest `pcall` in this thread catches it, and with none the thread fails.
+    pub fn resume_error(&self, vm: &Vm, message: &str) -> Result<ThreadStatus> {
+        let state = self.prepare_resume(vm)?;
+        self.inner.started.set(true);
+        let resumed = unsafe { gateway::resume_error(vm.inner.state.as_ptr(), state, message) };
+        self.finish_resume(vm, resumed)
+    }
+
+    /// Checks the thread can resume in `vm` and clears what its last resume left on its stack. A
+    /// thread that has not started holds just its function, which stays below what is pushed.
+    fn prepare_resume(&self, vm: &Vm) -> Result<*mut sys::lua_State> {
+        if self.vm_id() != vm.inner.id {
+            return Err(Error::VmMismatch {
+                reference_vm: self.vm_id(),
+                actual_vm: vm.inner.id,
+            });
+        }
+        if self.inner.finished.get() {
+            return Err(Error::Runtime("thread already completed".to_string()));
+        }
+        let state = self.inner.state.as_ptr();
+        if self.is_started() {
+            unsafe { gateway::truncate(state, 0) };
+        }
+        Ok(state)
+    }
+
+    fn finish_resume(&self, vm: &Vm, resumed: Result<bool>) -> Result<ThreadStatus> {
+        let state = self.inner.state.as_ptr();
         let result = resumed.and_then(|yielded| {
             let top = unsafe { sys::lua_gettop(state) };
             let values = (1..=top)
@@ -3751,6 +3770,72 @@ mod tests {
             thread.resume(&vm, &[]),
             Err(Error::Runtime(message)) if message.contains("already completed")
         ));
+        assert_eq!(stack_top(&vm), 0);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn thread_resume_error_raises_where_the_thread_yielded() -> Result<()> {
+        let vm = Vm::new()?;
+        vm.open_standard_libraries(StandardLibraries::all_supported())?;
+        let function = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(
+                &br#"
+                    local ok, err = pcall(function()
+                        return coroutine.yield("waiting")
+                    end)
+                    local value = coroutine.yield("caught")
+                    return ok, err, value
+                "#[..],
+            ),
+            ChunkOrigin::default(),
+        ))?;
+        let thread = vm.create_thread(&function)?;
+
+        assert_eq!(
+            thread.resume(&vm, &[])?,
+            ThreadStatus::Yielded(vec![Value::String(b"waiting".to_vec())])
+        );
+        assert_eq!(
+            thread.resume_error(&vm, "boom")?,
+            ThreadStatus::Yielded(vec![Value::String(b"caught".to_vec())])
+        );
+        assert_eq!(
+            thread.resume(&vm, &[Value::Number(1.0)])?,
+            ThreadStatus::Completed(vec![
+                Value::Boolean(false),
+                Value::String(b"boom".to_vec()),
+                Value::Number(1.0),
+            ])
+        );
+        assert_eq!(stack_top(&vm), 0);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn thread_resume_error_fails_a_thread_without_pcall() -> Result<()> {
+        let vm = Vm::new()?;
+        vm.open_standard_libraries(StandardLibraries::all_supported())?;
+        let function = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(&b"coroutine.yield()"[..]),
+            ChunkOrigin::default(),
+        ))?;
+
+        for (message, expected) in [
+            ("boom", Error::Runtime("boom".to_string())),
+            (gateway::MEMORY_ERROR, Error::OutOfMemory),
+        ] {
+            let thread = vm.create_thread(&function)?;
+            assert_eq!(thread.resume(&vm, &[])?, ThreadStatus::Yielded(vec![]));
+            let failed = thread.resume_error(&vm, message);
+            assert_eq!(
+                failed.map_err(|error| error.to_string()),
+                Err(expected.to_string())
+            );
+            assert!(thread.resume(&vm, &[]).is_err());
+        }
         assert_eq!(stack_top(&vm), 0);
         Ok(())
     }
