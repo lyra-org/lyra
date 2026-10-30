@@ -115,6 +115,39 @@ pub(crate) fn positive_id(value: i64, name: &str) -> luau::runtime::Result<DbId>
     Ok(DbId(value))
 }
 
+/// A [`positive_id`] argument.
+pub(crate) struct PositiveId(pub(crate) DbId);
+
+impl<'vm> luau::FromLuau<'vm> for PositiveId {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let name = reader.next_name();
+        let value: i64 = reader.read()?;
+        positive_id(value, &name).map(Self)
+    }
+}
+
+impl LuauTypeInfo for PositiveId {
+    fn luau_type() -> LuauType {
+        u64::luau_type()
+    }
+}
+
+/// A [`unique_ids`] argument.
+pub(crate) struct UniqueIds(pub(crate) Vec<DbId>);
+
+impl<'vm> luau::FromLuau<'vm> for UniqueIds {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let table: luau::Table = reader.read()?;
+        unique_ids(reader.vm(), &table).map(Self)
+    }
+}
+
+impl LuauTypeInfo for UniqueIds {
+    fn luau_type() -> LuauType {
+        Vec::<u64>::luau_type()
+    }
+}
+
 pub(crate) fn optional_positive_id(
     vm: &luau::Vm,
     table: &luau::Table,

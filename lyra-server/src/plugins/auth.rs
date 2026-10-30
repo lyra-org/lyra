@@ -287,6 +287,13 @@ pub(crate) fn require_dispatch_principal(
     dispatch_principal(context)?.ok_or_else(no_dispatch_principal)
 }
 
+/// A module function's principal is the dispatch's, which it requires.
+impl luau::FromCallFrame for ServicePrincipal {
+    fn from_call_frame(_vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
+        require_dispatch_principal(context)
+    }
+}
+
 fn no_dispatch_principal() -> luau::runtime::Error {
     crate::plugins::runtime_error(
         "no authenticated caller bound to this dispatch; resolve a credential via lyra/auth \

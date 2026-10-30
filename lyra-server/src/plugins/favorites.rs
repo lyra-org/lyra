@@ -3,84 +3,36 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::sync::Arc;
+#[cfg(feature = "docgen")]
+use std::collections::HashMap;
 
 use agdb::DbId;
-use harmony_core::{
-    FunctionSpec,
-    ModuleExport,
-    ModuleSpec,
-};
 use harmony_luau as luau;
-#[cfg(feature = "docgen")]
-use harmony_luau::{
-    LuauType,
-    LuauTypeInfo,
-    ModuleDescriptor,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
-    render_definition_file_with_support,
-};
-
-use crate::plugins::args;
-use crate::{
-    plugins::db,
-    services::favorites as favorite_service,
-};
 use lyra_db::favorites::FavoriteKind;
 
-struct FavoritesModule;
+use crate::{
+    plugins::{
+        args::UniqueIds,
+        db::Db,
+    },
+    services::{
+        auth::Principal,
+        favorites as favorite_service,
+    },
+};
 
-pub(crate) fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("lyra/favorites")
-        .function(add_spec())
-        .function(remove_spec())
-        .function(has_spec())
-        .function(has_many_spec())
-        .function(list_ids_spec())
-        .install(|_| Ok(ModuleExport::new(FavoritesModule)))
-}
+pub(crate) struct FavoritesModule;
 
-fn add_spec() -> FunctionSpec {
-    FunctionSpec::new("add")
-        .arg_name("target_id")
-        .call_async(Arc::new(add_callback))
-}
-
-fn remove_spec() -> FunctionSpec {
-    FunctionSpec::new("remove")
-        .arg_name("target_id")
-        .call_async(Arc::new(remove_callback))
-}
-
-fn has_spec() -> FunctionSpec {
-    FunctionSpec::new("has")
-        .arg_name("target_id")
-        .call_async(Arc::new(has_callback))
-}
-
-fn has_many_spec() -> FunctionSpec {
-    FunctionSpec::new("has_many")
-        .arg_name("target_ids")
-        .call_async(Arc::new(has_many_callback))
-}
-
-fn list_ids_spec() -> FunctionSpec {
-    FunctionSpec::new("list_ids")
-        .arg_name("entity")
-        .call_async(Arc::new(list_ids_callback))
-}
-
-fn add_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let target_id = DbId(frame.args.read_named::<i64>("target_id")?);
-    let db = db::get(frame.vm)?;
-    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
-
-    Ok(luau::ScheduledFuture::new(async move {
+#[harmony_macros::module(id = "lyra/favorites", docs_feature = "docgen")]
+impl FavoritesModule {
+    async fn add(
+        target_id: i64,
+        #[context] db: Db,
+        #[context] principal: Principal,
+    ) -> luau::runtime::Result<bool> {
         let mut db = db.write().await;
-        let Some(public_target_id) = lyra_db::lookup::find_id_by_db_id(&*db, target_id)? else {
+        let Some(public_target_id) = lyra_db::lookup::find_id_by_db_id(&*db, DbId(target_id))?
+        else {
             return Ok(false);
         };
         let outcome = favorite_service::add_for_principal(&mut db, &principal, &public_target_id)?;
@@ -88,53 +40,46 @@ fn add_callback(
             outcome,
             favorite_service::MutationOutcome::Applied(_)
         ))
-    }))
-}
+    }
 
-fn remove_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let target_id = DbId(frame.args.read_named::<i64>("target_id")?);
-    let db = db::get(frame.vm)?;
-    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
-
-    Ok(luau::ScheduledFuture::new(async move {
+    async fn remove(
+        target_id: i64,
+        #[context] db: Db,
+        #[context] principal: Principal,
+    ) -> luau::runtime::Result<bool> {
         let mut db = db.write().await;
         let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let outcome = favorite_service::remove_by_db_id(&mut db, user_db_id, target_id)?;
+        let outcome = favorite_service::remove_by_db_id(&mut db, user_db_id, DbId(target_id))?;
         Ok(matches!(
             outcome,
             favorite_service::MutationOutcome::Applied(_)
         ))
-    }))
-}
+    }
 
-fn has_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let target_id = DbId(frame.args.read_named::<i64>("target_id")?);
-    let db = db::get(frame.vm)?;
-    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
-
-    Ok(luau::ScheduledFuture::new(async move {
+    async fn has(
+        target_id: i64,
+        #[context] db: Db,
+        #[context] principal: Principal,
+    ) -> luau::runtime::Result<bool> {
         let db = db.read().await;
-        let Some(public_target_id) = lyra_db::lookup::find_id_by_db_id(&*db, target_id)? else {
+        let Some(public_target_id) = lyra_db::lookup::find_id_by_db_id(&*db, DbId(target_id))?
+        else {
             return Ok(false);
         };
-        let favored = favorite_service::has_for_principal(&db, &principal, &public_target_id)?;
-        Ok(favored)
-    }))
-}
+        Ok(favorite_service::has_for_principal(
+            &db,
+            &principal,
+            &public_target_id,
+        )?)
+    }
 
-fn has_many_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let target_ids: luau::Table = frame.args.read_named("target_ids")?;
-    let target_ids = args::unique_ids(frame.vm, &target_ids)?;
-    let db = db::get(frame.vm)?;
-    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
-
-    Ok(luau::ScheduledFuture::new(async move {
+    #[harmony(returns(HashMap<u64, bool>))]
+    async fn has_many(
+        target_ids: UniqueIds,
+        #[context] db: Db,
+        #[context] principal: Principal,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let target_ids = target_ids.0;
         let db = db.read().await;
         let public_ids_by_db_id = lyra_db::lookup::find_ids_by_db_ids(&*db, &target_ids)?;
         let public_ids = target_ids
@@ -152,18 +97,16 @@ fn has_many_callback(
             table.set_key(id.0, favored);
         }
         Ok(table)
-    }))
-}
+    }
 
-fn list_ids_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let entity: String = frame.args.read_named("entity")?;
-    let kind = parse_kind(&entity)?;
-    let db = db::get(frame.vm)?;
-    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
-
-    Ok(luau::ScheduledFuture::new(async move {
+    #[harmony(returns(Vec<i64>))]
+    async fn list_ids(
+        entity: String,
+        #[context] db: Db,
+        #[context] principal: Principal,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let kind =
+            FavoriteKind::try_from(entity.as_str()).map_err(crate::plugins::runtime_error)?;
         let db = db.read().await;
         let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
         let ids = favorite_service::list_ids(&db, user_db_id, kind)?;
@@ -175,76 +118,20 @@ fn list_ids_callback(
                 visible_ids.push(id);
             }
         }
-        Ok(db_id_array(visible_ids))
-    }))
-}
-
-fn parse_kind(value: &str) -> luau::runtime::Result<FavoriteKind> {
-    FavoriteKind::try_from(value).map_err(crate::plugins::runtime_error)
-}
-
-fn db_id_array(ids: Vec<DbId>) -> luau::OwnedTable {
-    luau::OwnedTable::from_array(ids.into_iter().map(|id| id.0))
-}
-
-#[cfg(feature = "docgen")]
-fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
-    ParameterDescriptor {
-        name,
-        ty,
-        description: None,
-        variadic: false,
-    }
-}
-
-#[cfg(feature = "docgen")]
-fn module_descriptor() -> ModuleDescriptor {
-    ModuleDescriptor {
-        name: "Favorites",
-        local_name: "favorites",
-        description: None,
-        fields: Vec::new(),
-        functions: vec![
-            ModuleFunctionDescriptor {
-                path: vec!["add"],
-                description: None,
-                params: vec![param("target_id", i64::luau_type())],
-                returns: vec![bool::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["remove"],
-                description: None,
-                params: vec![param("target_id", i64::luau_type())],
-                returns: vec![bool::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["has"],
-                description: None,
-                params: vec![param("target_id", i64::luau_type())],
-                returns: vec![bool::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["has_many"],
-                description: None,
-                params: vec![param("target_ids", Vec::<u64>::luau_type())],
-                returns: vec![LuauType::map(u64::luau_type(), bool::luau_type())],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["list_ids"],
-                description: None,
-                params: vec![param("entity", String::luau_type())],
-                returns: vec![Vec::<i64>::luau_type()],
-                yields: true,
-            },
-        ],
+        Ok(luau::OwnedTable::from_array(
+            visible_ids.into_iter().map(|id| id.0),
+        ))
     }
 }
 
 #[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
-    render_definition_file_with_support(&module_descriptor(), &[], &[], &[])
+    use harmony_luau::DescribeModule;
+
+    harmony_luau::render_definition_file_with_support(
+        &FavoritesModule::module_descriptor(),
+        &[],
+        &[],
+        &[],
+    )
 }

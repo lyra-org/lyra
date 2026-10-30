@@ -34,6 +34,26 @@ pub(crate) fn get_optional(
     Ok(vm.data().get::<PluginDb>()?.db.clone())
 }
 
+/// [`get`], as a module function takes it from its call.
+pub(crate) struct Db(DbAsync);
+
+impl std::ops::Deref for Db {
+    type Target = DbAsync;
+
+    fn deref(&self) -> &DbAsync {
+        &self.0
+    }
+}
+
+impl harmony_luau::FromCallFrame for Db {
+    fn from_call_frame(
+        vm: &harmony_luau::Vm,
+        _context: &harmony_luau::CallContext,
+    ) -> harmony_luau::runtime::Result<Self> {
+        get(vm).map(Self)
+    }
+}
+
 /// The executor's database with the dispatch principal, so reads see only what the caller can.
 pub(crate) struct ViewerDb {
     db: DbAsync,
@@ -47,10 +67,20 @@ pub(crate) type Scope =
 pub(crate) fn scoped(
     frame: &harmony_luau::AsyncCallFrame<'_>,
 ) -> harmony_luau::runtime::Result<ViewerDb> {
-    Ok(ViewerDb {
-        db: get(frame.vm)?,
-        principal: crate::plugins::auth::dispatch_principal(&frame.context)?,
-    })
+    harmony_luau::FromCallFrame::from_call_frame(frame.vm, &frame.context)
+}
+
+/// A module function's [`ViewerDb`] is [`scoped`].
+impl harmony_luau::FromCallFrame for ViewerDb {
+    fn from_call_frame(
+        vm: &harmony_luau::Vm,
+        context: &harmony_luau::CallContext,
+    ) -> harmony_luau::runtime::Result<Self> {
+        Ok(Self {
+            db: get(vm)?,
+            principal: crate::plugins::auth::dispatch_principal(context)?,
+        })
+    }
 }
 
 /// The executor's database read as the system, which sees every library and playlist, for host

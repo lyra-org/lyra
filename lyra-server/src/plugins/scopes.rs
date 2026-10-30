@@ -186,7 +186,7 @@ scopes! {
     },
     Favorites => {
         id: "lyra.favorites",
-        module: favorites::module_spec,
+        module: favorites::FavoritesModule::module_spec,
         effects: &[
             Effect::ReadsPersonal("favorites"),
             Effect::WritesPersonal("favorites"),
@@ -273,7 +273,7 @@ scopes! {
     },
     Ratings => {
         id: "lyra.ratings",
-        module: ratings::module_spec,
+        module: ratings::RatingsModule::module_spec,
         effects: &[
             Effect::ReadsPersonal("ratings"),
             Effect::WritesPersonal("ratings"),
