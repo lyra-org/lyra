@@ -2,79 +2,75 @@
 // v1.0. If a copy of the Lyra Public License was not distributed with this file,
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
-use std::{
-    collections::HashSet,
-    sync::Arc,
-};
 
-use harmony_core::{
-    FunctionSpec,
-    ModuleExport,
-    ModuleSpec,
-};
-use harmony_luau as luau;
-#[cfg(feature = "docgen")]
-use harmony_luau::{
-    LuauType,
-    LuauTypeInfo,
-    ModuleDescriptor,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
-    render_definition_file_with_support,
+use std::collections::{
+    HashMap,
+    HashSet,
 };
 
 use agdb::DbId;
+use harmony_luau as luau;
+use harmony_luau::{
+    LuauType,
+    LuauTypeInfo,
+};
 
-use crate::plugins::args;
-use crate::plugins::db;
+use crate::plugins::{
+    args,
+    args::UniqueIds,
+    db,
+};
 
-struct IdsModule;
+pub(crate) struct IdsModule;
 
-pub(crate) fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("lyra/ids")
-        .function(get_id_spec())
-        .function(get_ids_spec())
-        .function(get_db_id_spec())
-        .function(get_db_ids_spec())
-        .install(|_| Ok(ModuleExport::new(IdsModule)))
+/// [`db::get_optional`], as a module function takes it from its call.
+struct OptionalDb(Option<lyra_db::DbAsync>);
+
+impl luau::FromCallFrame for OptionalDb {
+    fn from_call_frame(vm: &luau::Vm, _context: &luau::CallContext) -> luau::runtime::Result<Self> {
+        db::get_optional(vm).map(Self)
+    }
 }
 
-fn get_id_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("get_id").arg_name("db_id");
-    spec.call_async(Arc::new(get_id_callback))
+/// An array of strings, trimmed, without blanks or repeats.
+struct PublicIds(Vec<String>);
+
+impl<'vm> luau::FromLuau<'vm> for PublicIds {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let table: luau::Table = reader.read()?;
+        parse_strings(reader.vm(), &table).map(Self)
+    }
 }
 
-fn get_ids_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("get_ids").arg_name("db_ids");
-    spec.call_async(Arc::new(get_ids_callback))
+impl LuauTypeInfo for PublicIds {
+    fn luau_type() -> LuauType {
+        Vec::<String>::luau_type()
+    }
 }
 
-fn get_db_id_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("get_db_id").arg_name("id");
-    spec.call_async(Arc::new(get_db_id_callback))
-}
+#[harmony_macros::module(id = "lyra/ids", docs_feature = "docgen")]
+impl IdsModule {
+    #[harmony(
+        description = "Returns the public nanoid string for a given numeric database ID, or nil if not found."
+    )]
+    async fn get_id(
+        db_id: i64,
+        #[context] db: OptionalDb,
+    ) -> luau::runtime::Result<Option<String>> {
+        find_id_by_db_id(db.0, DbId(db_id)).await
+    }
 
-fn get_db_ids_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("get_db_ids").arg_name("ids");
-    spec.call_async(Arc::new(get_db_ids_callback))
-}
-fn get_id_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let db_id: i64 = frame.args.read_named("db_id")?;
-    let db = db::get_optional(frame.vm)?;
-    Ok(luau::ScheduledFuture::new(async move {
-        find_id_by_db_id(db, DbId(db_id)).await
-    }))
-}
-fn get_ids_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let table: luau::Table = frame.args.read_named("db_ids")?;
-    let ids = args::unique_ids(frame.vm, &table)?;
-    let db = db::get_optional(frame.vm)?;
-    Ok(luau::ScheduledFuture::new(async move {
-        let resolved = find_ids_by_db_ids(db, &ids).await?;
+    #[harmony(
+        description = "Returns public nanoid strings for many numeric database IDs.",
+        args(db_ids: Vec<u64>),
+        returns(HashMap<u64, Option<String>>)
+    )]
+    async fn get_ids(
+        db_ids: UniqueIds,
+        #[context] db: OptionalDb,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let ids = db_ids.0;
+        let resolved = find_ids_by_db_ids(db.0, &ids).await?;
 
         let table = luau::OwnedTable::from_entries(ids.into_iter().map(|id| {
             (
@@ -86,26 +82,29 @@ fn get_ids_callback(
             )
         }));
         Ok(table)
-    }))
-}
-fn get_db_id_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let id: String = frame.args.read_named("id")?;
-    let db = db::get_optional(frame.vm)?;
-    Ok(luau::ScheduledFuture::new(async move {
-        Ok(find_node_id_by_id(db, &id).await?.map(|id| id.0))
-    }))
-}
-fn get_db_ids_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let table: luau::Table = frame.args.read_named("ids")?;
-    let ids = parse_strings(frame.vm, &table)?;
-    let db = db::get_optional(frame.vm)?;
-    Ok(luau::ScheduledFuture::new(async move {
+    }
+
+    #[harmony(
+        description = "Returns the numeric database ID for a given public nanoid string, or nil if not found."
+    )]
+    async fn get_db_id(
+        id: String,
+        #[context] db: OptionalDb,
+    ) -> luau::runtime::Result<Option<i64>> {
+        Ok(find_node_id_by_id(db.0, &id).await?.map(|id| id.0))
+    }
+
+    #[harmony(
+        description = "Returns numeric database IDs for many public nanoid strings.",
+        returns(HashMap<String, Option<u64>>)
+    )]
+    async fn get_db_ids(
+        ids: PublicIds,
+        #[context] db: OptionalDb,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let ids = ids.0;
         let str_refs = ids.iter().map(String::as_str).collect::<Vec<_>>();
-        let resolved = find_node_ids_by_ids(db, &str_refs).await?;
+        let resolved = find_node_ids_by_ids(db.0, &str_refs).await?;
 
         let mut table = luau::OwnedTable::with_capacity(0, ids.len());
         for id in ids {
@@ -118,8 +117,9 @@ fn get_db_ids_callback(
             );
         }
         Ok(table)
-    }))
+    }
 }
+
 async fn find_id_by_db_id(
     db: Option<lyra_db::DbAsync>,
     db_id: DbId,
@@ -173,66 +173,13 @@ fn parse_strings(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Ve
 }
 
 #[cfg(feature = "docgen")]
-fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
-    ParameterDescriptor {
-        name,
-        ty,
-        description: None,
-        variadic: false,
-    }
-}
-
-#[cfg(feature = "docgen")]
-fn module_descriptor() -> ModuleDescriptor {
-    ModuleDescriptor {
-        name: "Ids",
-        local_name: "ids",
-        description: None,
-        fields: Vec::new(),
-        functions: vec![
-            ModuleFunctionDescriptor {
-                path: vec!["get_id"],
-                description: Some(
-                    "Returns the public nanoid string for a given numeric database ID, or nil if not found.",
-                ),
-                params: vec![param("db_id", i64::luau_type())],
-                returns: vec![Option::<String>::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["get_ids"],
-                description: Some("Returns public nanoid strings for many numeric database IDs."),
-                params: vec![param("db_ids", Vec::<u64>::luau_type())],
-                returns: vec![LuauType::map(
-                    u64::luau_type(),
-                    Option::<String>::luau_type(),
-                )],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["get_db_id"],
-                description: Some(
-                    "Returns the numeric database ID for a given public nanoid string, or nil if not found.",
-                ),
-                params: vec![param("id", String::luau_type())],
-                returns: vec![Option::<i64>::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["get_db_ids"],
-                description: Some("Returns numeric database IDs for many public nanoid strings."),
-                params: vec![param("ids", Vec::<String>::luau_type())],
-                returns: vec![LuauType::map(
-                    String::luau_type(),
-                    Option::<u64>::luau_type(),
-                )],
-                yields: true,
-            },
-        ],
-    }
-}
-
-#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
-    render_definition_file_with_support(&module_descriptor(), &[], &[], &[])
+    use harmony_luau::DescribeModule;
+
+    harmony_luau::render_definition_file_with_support(
+        &IdsModule::module_descriptor(),
+        &[],
+        &[],
+        &[],
+    )
 }

@@ -21,7 +21,7 @@ impl PluginDb {
     }
 }
 
-/// The executor's raw database handle. Library reads go through [`scoped`] or [`system`].
+/// The executor's raw database handle. Library reads go through [`ViewerDb`] or [`SystemDb`].
 pub(crate) fn get(vm: &harmony_luau::Vm) -> harmony_luau::runtime::Result<DbAsync> {
     get_optional(vm)?.ok_or_else(|| {
         crate::plugins::runtime_error("this module requires a database-backed plugin executor")
@@ -60,10 +60,6 @@ pub(crate) struct ViewerDb {
     principal: Option<crate::services::auth::Principal>,
 }
 
-/// How a host call reads the database: [`scoped`] or [`system`].
-pub(crate) type Scope =
-    fn(&harmony_luau::AsyncCallFrame<'_>) -> harmony_luau::runtime::Result<ViewerDb>;
-
 pub(crate) fn scoped(
     frame: &harmony_luau::AsyncCallFrame<'_>,
 ) -> harmony_luau::runtime::Result<ViewerDb> {
@@ -81,17 +77,6 @@ impl harmony_luau::FromCallFrame for ViewerDb {
             principal: crate::plugins::auth::dispatch_principal(context)?,
         })
     }
-}
-
-/// The executor's database read as the system, which sees every library and playlist, for host
-/// calls documented as unscoped.
-pub(crate) fn system(
-    frame: &harmony_luau::AsyncCallFrame<'_>,
-) -> harmony_luau::runtime::Result<ViewerDb> {
-    Ok(ViewerDb {
-        db: get(frame.vm)?,
-        principal: None,
-    })
 }
 
 impl ViewerDb {
@@ -122,8 +107,17 @@ impl ViewerDb {
     }
 }
 
-/// A module function's [`ViewerDb`] read as the [`system`].
+/// The executor's database read as the system, which sees every library and playlist, for host
+/// calls documented as unscoped.
 pub(crate) struct SystemDb(pub(crate) ViewerDb);
+
+impl std::ops::Deref for SystemDb {
+    type Target = ViewerDb;
+
+    fn deref(&self) -> &ViewerDb {
+        &self.0
+    }
+}
 
 impl harmony_luau::FromCallFrame for SystemDb {
     fn from_call_frame(

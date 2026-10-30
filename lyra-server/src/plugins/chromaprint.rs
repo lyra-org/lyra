@@ -6,11 +6,6 @@
 use std::time::Duration;
 
 use agdb::DbId;
-use harmony_core::{
-    FunctionSpec,
-    ModuleExport,
-    ModuleSpec,
-};
 use harmony_luau as luau;
 #[cfg(feature = "docgen")]
 use harmony_luau::{
@@ -19,43 +14,27 @@ use harmony_luau::{
     InterfaceDescriptor,
     LuauType,
     LuauTypeInfo,
-    ModuleDescriptor,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
-    render_definition_file_with_support,
 };
 
-use crate::plugins::db;
+use crate::plugins::db::ViewerDb;
 
 const DECODE_TIMEOUT: Duration = Duration::from_secs(30);
 
-struct ChromaprintModule;
+pub(crate) struct ChromaprintModule;
 
 #[cfg(feature = "docgen")]
 struct ChromaprintResult;
 
-pub(crate) fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("lyra/chromaprint")
-        .function(compute_spec())
-        .install(|_| Ok(ModuleExport::new(ChromaprintModule)))
-}
-
-fn compute_spec() -> FunctionSpec {
-    FunctionSpec::new("compute")
-        .arg_name("entry_id")
-        .call_async(std::sync::Arc::new(compute_callback))
-}
-
-fn compute_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let entry_id: i64 = frame.args.read_named("entry_id")?;
-    if entry_id <= 0 {
-        return Err(crate::plugins::runtime_error("entry not found"));
-    }
-    let db = db::scoped(&frame)?;
-
-    Ok(luau::ScheduledFuture::new(async move {
+#[harmony_macros::module(id = "lyra/chromaprint", docs_feature = "docgen")]
+impl ChromaprintModule {
+    #[harmony(returns(ChromaprintResult))]
+    async fn compute(
+        entry_id: i64,
+        #[context] db: ViewerDb,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        if entry_id <= 0 {
+            return Err(crate::plugins::runtime_error("entry not found"));
+        }
         let path = {
             let (db, viewer) = db.read().await?;
             let entry = lyra_db::entries::get_by_id(&db, DbId(entry_id))?
@@ -69,7 +48,7 @@ fn compute_callback(
         let mut table = luau::OwnedTable::with_capacity(0, 1);
         table.set_field("fingerprint", fingerprint);
         Ok(table)
-    }))
+    }
 }
 
 #[cfg(feature = "docgen")]
@@ -93,36 +72,11 @@ impl DescribeInterface for ChromaprintResult {
 }
 
 #[cfg(feature = "docgen")]
-fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
-    ParameterDescriptor {
-        name,
-        ty,
-        description: None,
-        variadic: false,
-    }
-}
-
-#[cfg(feature = "docgen")]
-fn module_descriptor() -> ModuleDescriptor {
-    ModuleDescriptor {
-        name: "Chromaprint",
-        local_name: "chromaprint",
-        description: None,
-        fields: Vec::new(),
-        functions: vec![ModuleFunctionDescriptor {
-            path: vec!["compute"],
-            description: None,
-            params: vec![param("entry_id", i64::luau_type())],
-            returns: vec![ChromaprintResult::luau_type()],
-            yields: true,
-        }],
-    }
-}
-
-#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
-    render_definition_file_with_support(
-        &module_descriptor(),
+    use harmony_luau::DescribeModule;
+
+    harmony_luau::render_definition_file_with_support(
+        &ChromaprintModule::module_descriptor(),
         &[],
         &[ChromaprintResult::interface_descriptor()],
         &[],

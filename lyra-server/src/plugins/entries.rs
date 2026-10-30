@@ -3,80 +3,90 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use harmony_core::{
-    FunctionSpec,
-    ModuleExport,
-    ModuleSpec,
-};
+use std::collections::HashMap;
+
+use agdb::DbId;
 use harmony_luau as luau;
 #[cfg(feature = "docgen")]
-use harmony_luau::{
-    DescribeInterface,
-    LuauType,
-    LuauTypeInfo,
-    ModuleDescriptor,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
-    render_definition_file_with_support,
+use harmony_luau::DescribeInterface;
+use serde::Serialize;
+
+use crate::{
+    plugins::{
+        args::UniqueIds,
+        catalog::{
+            self,
+            KeyedLookup,
+        },
+        db::ViewerDb,
+        types::EntryInfo,
+    },
+    services::{
+        catalog::Viewer,
+        entries::{
+            self,
+            PlacedEntry,
+        },
+    },
 };
 
-use crate::plugins::catalog;
-use crate::plugins::types::EntryInfo;
-use crate::services::entries::{
-    self,
-    PlacedEntry,
-};
+pub(crate) struct EntriesModule;
 
-struct EntriesModule;
+#[harmony_macros::module(id = "lyra/entries", docs_feature = "docgen")]
+impl EntriesModule {
+    #[harmony(
+        description = "The entries with these ids that the caller can see, keyed by id.",
+        returns(HashMap<u64, EntryInfo>)
+    )]
+    async fn get(
+        ids: UniqueIds,
+        #[context] db: ViewerDb,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        keyed(&db, &ids.0, entries::get, EntryInfo::shown_to).await
+    }
 
-pub(crate) fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("lyra/entries")
-        .function(get_spec())
-        .function(by_parent_spec())
-        .function(by_track_spec())
-        .install(|_| Ok(ModuleExport::new(EntriesModule)))
+    #[harmony(
+        description = "The entries directly under each of these libraries and directory entries that the caller can see, by name, keyed by parent id.",
+        returns(HashMap<u64, Vec<EntryInfo>>)
+    )]
+    async fn by_parent(
+        parent_ids: UniqueIds,
+        #[context] db: ViewerDb,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        keyed(&db, &parent_ids.0, entries::by_parent, show_all).await
+    }
+
+    #[harmony(
+        description = "The entries holding the audio of each of these tracks that the caller can see, keyed by track id.",
+        returns(HashMap<u64, Vec<EntryInfo>>)
+    )]
+    async fn by_track(
+        track_ids: UniqueIds,
+        #[context] db: ViewerDb,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        keyed(&db, &track_ids.0, entries::by_track, show_all).await
+    }
 }
 
-fn get_spec() -> FunctionSpec {
-    FunctionSpec::new("get")
-        .arg_name("ids")
-        .call_async(std::sync::Arc::new(get_callback))
+async fn keyed<T, R: Serialize>(
+    db: &ViewerDb,
+    ids: &[DbId],
+    lookup: KeyedLookup<T>,
+    show: fn(T, &Viewer) -> R,
+) -> luau::runtime::Result<luau::OwnedTable> {
+    let (db, viewer) = db.read().await?;
+    let found = lookup(&db, &viewer, ids).map_err(catalog::error)?;
+    let mut table = luau::OwnedTable::with_entry_capacity(0, 0, found.len());
+    for (id, value) in found {
+        table.set_key(
+            id.0,
+            harmony_luau::serializable_to_luau_owned(show(value, &viewer))?,
+        );
+    }
+    Ok(table)
 }
 
-fn by_parent_spec() -> FunctionSpec {
-    FunctionSpec::new("by_parent")
-        .arg_name("parent_ids")
-        .call_async(std::sync::Arc::new(by_parent_callback))
-}
-
-fn by_track_spec() -> FunctionSpec {
-    FunctionSpec::new("by_track")
-        .arg_name("track_ids")
-        .call_async(std::sync::Arc::new(by_track_callback))
-}
-
-fn get_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    catalog::keyed_lookup_shown(&mut frame, "ids", entries::get, EntryInfo::shown_to)
-}
-
-fn by_parent_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    catalog::keyed_lookup_shown(&mut frame, "parent_ids", entries::by_parent, show_all)
-}
-
-fn by_track_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    catalog::keyed_lookup_shown(&mut frame, "track_ids", entries::by_track, show_all)
-}
-
-fn show_all(
-    entries: Vec<PlacedEntry>,
-    viewer: &crate::services::catalog::Viewer,
-) -> Vec<EntryInfo> {
+fn show_all(entries: Vec<PlacedEntry>, viewer: &Viewer) -> Vec<EntryInfo> {
     entries
         .into_iter()
         .map(|entry| EntryInfo::shown_to(entry, viewer))
@@ -84,59 +94,11 @@ fn show_all(
 }
 
 #[cfg(feature = "docgen")]
-fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
-    ParameterDescriptor {
-        name,
-        ty,
-        description: None,
-        variadic: false,
-    }
-}
-
-#[cfg(feature = "docgen")]
-fn module_descriptor() -> ModuleDescriptor {
-    let entries = || LuauType::array(EntryInfo::luau_type());
-    ModuleDescriptor {
-        name: "Entries",
-        local_name: "entries",
-        description: None,
-        fields: Vec::new(),
-        functions: vec![
-            ModuleFunctionDescriptor {
-                path: vec!["get"],
-                description: Some(
-                    "The entries with these ids that the caller can see, keyed by id.",
-                ),
-                params: vec![param("ids", Vec::<u64>::luau_type())],
-                returns: vec![LuauType::map(u64::luau_type(), EntryInfo::luau_type())],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["by_parent"],
-                description: Some(
-                    "The entries directly under each of these libraries and directory entries that the caller can see, by name, keyed by parent id.",
-                ),
-                params: vec![param("parent_ids", Vec::<u64>::luau_type())],
-                returns: vec![LuauType::map(u64::luau_type(), entries())],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["by_track"],
-                description: Some(
-                    "The entries holding the audio of each of these tracks that the caller can see, keyed by track id.",
-                ),
-                params: vec![param("track_ids", Vec::<u64>::luau_type())],
-                returns: vec![LuauType::map(u64::luau_type(), entries())],
-                yields: true,
-            },
-        ],
-    }
-}
-
-#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
-    render_definition_file_with_support(
-        &module_descriptor(),
+    use harmony_luau::DescribeModule;
+
+    harmony_luau::render_definition_file_with_support(
+        &EntriesModule::module_descriptor(),
         &[],
         &[EntryInfo::interface_descriptor()],
         &[],

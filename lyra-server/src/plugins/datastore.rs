@@ -3,40 +3,20 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use harmony_core::{
-    FunctionSpec,
-    ModuleExport,
-    ModuleSpec,
-};
+use harmony_core::ModuleSpec;
 use harmony_luau as luau;
 use harmony_luau::JsonValue;
 #[cfg(feature = "docgen")]
 use harmony_luau::{
     DescribeTypeAlias,
     DescribeUserData,
-    LuauType,
-    LuauTypeInfo,
-    ModuleDescriptor,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
-    render_definition_file_with_support,
 };
 
-use crate::plugins::db;
+use crate::plugins::db::Db;
 use lyra_db::DataStore;
 use lyra_db::DbAsync;
 
-#[cfg(feature = "docgen")]
-fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
-    ParameterDescriptor {
-        name,
-        ty,
-        description: None,
-        variadic: false,
-    }
-}
-
-struct DataStoreModule;
+pub(crate) struct DataStoreModule;
 
 #[harmony_macros::userdata(name = "DataStore", description = "A named persistent JSON store.")]
 #[derive(Clone)]
@@ -121,34 +101,50 @@ impl DataStoreHandle {
     }
 }
 
-pub(crate) fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("lyra/datastore")
-        .function(get_or_create_spec())
-        .userdata(DataStoreHandle::_harmony_userdata_spec())
-        .install(|_| Ok(ModuleExport::new(DataStoreModule)))
+/// What a module function needs to hand a store to Luau, taken from its call.
+struct HandleFactory {
+    vm: luau::Vm,
+    origin: harmony_core::ChunkOrigin,
 }
 
-fn get_or_create_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("get_or_create").arg_name("name");
-    spec.call_async(std::sync::Arc::new(get_or_create_callback))
+impl luau::FromCallFrame for HandleFactory {
+    fn from_call_frame(vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
+        Ok(Self {
+            vm: vm.clone(),
+            origin: context.origin.clone(),
+        })
+    }
 }
 
-fn get_or_create_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let name: String = frame.args.read_named("name")?;
-    let db = db::get(frame.vm)?;
-    let vm = frame.vm.clone();
-    let origin = frame.context.origin.clone();
-    Ok(luau::ScheduledFuture::new(async move {
+fn register_handle(spec: ModuleSpec) -> ModuleSpec {
+    spec.userdata(DataStoreHandle::_harmony_userdata_spec())
+}
+
+#[harmony_macros::module(
+    id = "lyra/datastore",
+    name = "DataStore",
+    docs_feature = "docgen",
+    extend = "register_handle"
+)]
+impl DataStoreModule {
+    #[harmony(
+        description = "Returns a named data store, creating it if needed.",
+        returns(DataStoreHandle)
+    )]
+    async fn get_or_create(
+        name: String,
+        #[context] db: Db,
+        #[context] factory: HandleFactory,
+    ) -> luau::runtime::Result<luau::UserData> {
+        let db = db.clone();
         let datastore_id = get_or_create(&db, name).await?;
         let userdata = DataStoreHandle::_harmony_userdata_class().create(
-            &vm,
-            &origin,
+            &factory.vm,
+            &factory.origin,
             DataStoreHandle { db, datastore_id },
         )?;
         Ok(userdata)
-    }))
+    }
 }
 
 async fn get_or_create(db: &DbAsync, name: String) -> luau::runtime::Result<agdb::DbId> {
@@ -299,26 +295,11 @@ fn read_json_entries(
     Ok(entries)
 }
 #[cfg(feature = "docgen")]
-fn module_descriptor() -> ModuleDescriptor {
-    ModuleDescriptor {
-        name: "DataStore",
-        local_name: "datastore",
-        description: None,
-        fields: Vec::new(),
-        functions: vec![ModuleFunctionDescriptor {
-            path: vec!["get_or_create"],
-            description: Some("Returns a named data store, creating it if needed."),
-            params: vec![param("name", String::luau_type())],
-            returns: vec![DataStoreHandle::luau_type()],
-            yields: true,
-        }],
-    }
-}
-
-#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
-    render_definition_file_with_support(
-        &module_descriptor(),
+    use harmony_luau::DescribeModule;
+
+    harmony_luau::render_definition_file_with_support(
+        &DataStoreModule::module_descriptor(),
         &[JsonValue::type_alias_descriptor()],
         &[],
         &[DataStoreHandle::class_descriptor()],

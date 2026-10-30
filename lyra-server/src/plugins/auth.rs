@@ -3,29 +3,16 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use harmony_core::{
-    FunctionSpec,
-    ModuleExport,
-    ModuleSpec,
-};
 use harmony_luau as luau;
 #[cfg(feature = "docgen")]
 use harmony_luau::DescribeTypeAlias;
 use harmony_luau::JsonValue;
-#[cfg(feature = "docgen")]
-use harmony_luau::render_definition_file_with_support;
 use harmony_luau::{
     DescribeInterface,
     FieldDescriptor,
     InterfaceDescriptor,
     LuauType,
     LuauTypeInfo,
-};
-#[cfg(feature = "docgen")]
-use harmony_luau::{
-    ModuleDescriptor,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
 };
 use serde::{
     Deserialize,
@@ -212,19 +199,260 @@ pub(crate) fn to_plugin_auth(auth: ServiceResolvedAuth) -> ResolvedAuth {
     }
 }
 
-struct AuthModule;
+pub(crate) struct AuthModule;
 
-pub(crate) fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("lyra/auth")
-        .function(auth_capabilities_spec())
-        .function(resolve_auth_spec())
-        .function(login_spec())
-        .function(logout_session_spec())
-        .function(list_sessions_spec())
-        .function(revoke_session_spec())
-        .function(get_session_data_spec())
-        .function(set_session_data_spec())
-        .install(|_| Ok(ModuleExport::new(AuthModule)))
+/// The plugin the call runs for, which functions that act for one require.
+struct OriginPlugin(Option<Arc<str>>);
+
+impl OriginPlugin {
+    fn require(self, message: &str) -> luau::runtime::Result<Arc<str>> {
+        self.0.ok_or_else(|| crate::plugins::runtime_error(message))
+    }
+}
+
+impl luau::FromCallFrame for OriginPlugin {
+    fn from_call_frame(_vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
+        Ok(Self(context.origin.plugin.clone()))
+    }
+}
+
+/// The dispatch's principal slot, when the dispatch has one.
+struct CurrentDispatchAuth(Option<Arc<DispatchAuth>>);
+
+impl luau::FromCallFrame for CurrentDispatchAuth {
+    fn from_call_frame(_vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
+        Ok(Self(context.caller.get::<DispatchAuth>().ok()))
+    }
+}
+
+/// The remote client the dispatch serves, or the default address for a server-side dispatch.
+struct LoginClient(crate::services::auth::caller::ClientAddress);
+
+impl luau::FromCallFrame for LoginClient {
+    fn from_call_frame(_vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
+        Ok(Self(
+            context
+                .caller
+                .get::<DispatchClient>()
+                .map(|client| client.0)
+                .unwrap_or_default(),
+        ))
+    }
+}
+
+/// A [`JsonValue`] argument.
+struct JsonArg(serde_json::Value);
+
+impl<'vm> luau::FromLuau<'vm> for JsonArg {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let value: luau::Value = reader.read()?;
+        harmony_serde::luau_to_json(reader.vm(), &value, 0).map(Self)
+    }
+}
+
+impl LuauTypeInfo for JsonArg {
+    fn luau_type() -> LuauType {
+        JsonValue::luau_type()
+    }
+}
+
+impl<'vm> luau::FromLuau<'vm> for SessionListQuery {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let query: luau::Value = reader.read()?;
+        match harmony_serde::luau_to_json(reader.vm(), &query, 0)? {
+            // An empty table converts to an empty array.
+            serde_json::Value::Array(values) if values.is_empty() => Ok(Self::default()),
+            query => serde_json::from_value(query).map_err(crate::plugins::runtime_error),
+        }
+    }
+}
+
+#[harmony_macros::module(
+    id = "lyra/auth",
+    description = "Sessions, logins, and the principal a dispatch acts for. A coroutine acts with the auth of the call that created it, as does code a module runs when it is first required.",
+    docs_feature = "docgen"
+)]
+impl AuthModule {
+    #[harmony(
+        description = "Reads this plugin's JSON data on a live authenticated session. Invalid, revoked, or expired tokens fail.",
+        returns(JsonValue)
+    )]
+    async fn get_session_data(
+        token: String,
+        #[context] plugin: OriginPlugin,
+    ) -> luau::runtime::Result<luau::Value> {
+        let plugin_id = plugin.require("session data requires plugin origin")?;
+        let value = crate::services::auth::sessions::get_plugin_data(&token, &plugin_id).await?;
+        harmony_luau::serializable_to_luau_owned(value)
+    }
+
+    #[harmony(
+        description = "Stores up to 16 KiB of JSON for this plugin on a live session. Nil clears it; revoking the session removes the data.",
+        returns()
+    )]
+    async fn set_session_data(
+        token: String,
+        data: JsonArg,
+        #[context] plugin: OriginPlugin,
+    ) -> luau::runtime::Result<luau::Value> {
+        let plugin_id = plugin.require("session data requires plugin origin")?;
+        crate::services::auth::sessions::set_plugin_data(&token, &plugin_id, data.0).await?;
+        Ok(luau::Value::Nil)
+    }
+
+    #[harmony(
+        description = "Resolves a bearer credential to the authenticated principal and credential metadata. \
+                     On success, the calling dispatch and the tasks it spawned act as that \
+                     principal from then on.",
+        returns(Option<ResolvedAuth>)
+    )]
+    async fn resolve_auth(
+        bearer: Option<String>,
+        #[context] dispatch_auth: CurrentDispatchAuth,
+    ) -> luau::runtime::Result<luau::Value> {
+        let resolved = match resolve_auth_from_bearer(bearer.as_deref()).await {
+            Ok(Some(resolved)) => resolved,
+            Ok(None) | Err(AuthError::SessionExpired) => return Ok(luau::Value::Nil),
+            Err(err) => return Err(crate::plugins::runtime_error(err)),
+        };
+        match resolved
+            .principal
+            .require(&*crate::services::STATE.db.read().await)
+        {
+            Ok(_) => {}
+            Err(AuthError::InvalidBearerCredential) => return Ok(luau::Value::Nil),
+            Err(err) => return Err(crate::plugins::runtime_error(err)),
+        }
+        if let Some(dispatch_auth) = &dispatch_auth.0 {
+            dispatch_auth.record(resolved.principal.clone());
+        }
+        harmony_luau::serializable_to_luau_owned(to_plugin_auth(resolved))
+    }
+
+    #[harmony(description = "Revokes the session identified by the provided token.")]
+    async fn logout_session(token: Option<String>) -> luau::runtime::Result<bool> {
+        let revoked = logout_with_token(token.as_deref())
+            .await
+            .map_err(crate::plugins::runtime_error)?;
+        Ok(revoked)
+    }
+
+    #[harmony(
+        description = "Lists live sessions, oldest first, never their tokens. Without a query, lists \
+                     the calling principal's own; another user's or all users' require the \
+                     manage_users permission, and an admin's also the admin permission. All \
+                     users' leaves out the admins' without it.",
+        returns(Vec<SessionInfo>)
+    )]
+    async fn list_sessions(
+        query: Option<SessionListQuery>,
+        #[context] principal: ServicePrincipal,
+        #[context] plugin: OriginPlugin,
+    ) -> luau::runtime::Result<luau::Value> {
+        let query = query.unwrap_or_default();
+        let plugin_id = plugin.require("session listing requires plugin origin")?;
+        let owners = match (query.user_id.as_deref(), query.all_users) {
+            (Some(_), true) => {
+                return Err(crate::plugins::runtime_error(
+                    "list_sessions takes user_id or all_users, not both",
+                ));
+            }
+            (Some(user_id), false) => SessionOwners::User(user_id),
+            (None, true) => SessionOwners::All,
+            (None, false) => SessionOwners::Principal,
+        };
+        let sessions = sessions::list_sessions(&principal, owners, &plugin_id)
+            .await
+            .map_err(crate::plugins::runtime_error)?;
+        harmony_luau::serializable_to_luau_owned(
+            sessions
+                .into_iter()
+                .map(SessionInfo::from)
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    #[harmony(
+        description = "Revokes a session by its public id and reports whether it was revoked. \
+                     Another user's session counts only with the manage_users permission, and an \
+                     admin's also with the admin permission."
+    )]
+    async fn revoke_session(
+        session_id: String,
+        #[context] principal: ServicePrincipal,
+    ) -> luau::runtime::Result<bool> {
+        let revoked = sessions::revoke_session(&principal, &session_id)
+            .await
+            .map_err(crate::plugins::runtime_error)?;
+        Ok(revoked)
+    }
+
+    #[harmony(
+        description = "Attempts to log in and returns the outcome, including a principal plus \
+                     session token on success.",
+        returns(LoginOutcome)
+    )]
+    async fn login(
+        username: String,
+        password: Option<String>,
+        user_agent: Option<String>,
+        client_name: Option<String>,
+        #[context] client: LoginClient,
+    ) -> luau::runtime::Result<luau::Value> {
+        let metadata = SessionMetadata {
+            user_agent,
+            client_name,
+        };
+        let login = match login_with_password(
+            &username,
+            password.as_deref().unwrap_or(""),
+            metadata,
+            client.0,
+        )
+        .await
+        {
+            Ok(login) => login,
+            Err(AuthError::RateLimited(retry_after)) => {
+                return harmony_luau::serializable_to_luau_owned(LoginOutcome::rate_limited(
+                    retry_after,
+                ));
+            }
+            // A rejected `client_name` is caller input, not a runtime fault:
+            // report it like the other input failures rather than raising.
+            Err(AuthError::InvalidClientName(_)) => {
+                return harmony_luau::serializable_to_luau_owned(
+                    LoginOutcome::invalid_client_name(),
+                );
+            }
+            Err(err) => return Err(crate::plugins::runtime_error(err)),
+        };
+        let Some(login) = login else {
+            return harmony_luau::serializable_to_luau_owned(LoginOutcome::invalid_credentials());
+        };
+        let resolved = resolve_auth_from_bearer(Some(&login.token))
+            .await
+            .map_err(crate::plugins::runtime_error)?
+            .ok_or_else(|| {
+                crate::plugins::runtime_error("freshly issued session token failed to resolve")
+            })?;
+        harmony_luau::serializable_to_luau_owned(LoginOutcome::ok(LoginResult {
+            principal: to_plugin_principal(resolved.principal),
+            token: login.token,
+        }))
+    }
+
+    #[harmony(
+        description = "Returns the current authentication capabilities.",
+        returns(AuthCapabilities)
+    )]
+    fn capabilities(vm: &luau::Vm) -> luau::runtime::Result<luau::OwnedTable> {
+        let store = vm.data().get::<AuthCapabilitiesModuleStore>()?;
+        let capabilities = match &store.settings {
+            Some(settings) => AuthCapabilities::from_config(&settings.get().config.auth),
+            None => store.capabilities.clone(),
+        };
+        Ok(auth_capabilities_table(&capabilities))
+    }
 }
 
 /// Per-dispatch client identity resolved at the HTTP boundary, so host calls
@@ -309,225 +537,6 @@ pub(crate) fn require_user_db_id(
     principal.require(db).map_err(crate::plugins::runtime_error)
 }
 
-fn resolve_auth_spec() -> FunctionSpec {
-    FunctionSpec::new("resolve_auth")
-        .arg_name("bearer")
-        .call_async(Arc::new(resolve_auth_callback))
-}
-
-fn resolve_auth_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let bearer: Option<String> = frame.args.read_named("bearer")?;
-    let dispatch_auth = frame.context.caller.get::<DispatchAuth>().ok();
-    Ok(luau::ScheduledFuture::new(async move {
-        let resolved = match resolve_auth_from_bearer(bearer.as_deref()).await {
-            Ok(Some(resolved)) => resolved,
-            Ok(None) | Err(AuthError::SessionExpired) => return Ok(luau::Value::Nil),
-            Err(err) => return Err(crate::plugins::runtime_error(err)),
-        };
-        match resolved
-            .principal
-            .require(&*crate::services::STATE.db.read().await)
-        {
-            Ok(_) => {}
-            Err(AuthError::InvalidBearerCredential) => return Ok(luau::Value::Nil),
-            Err(err) => return Err(crate::plugins::runtime_error(err)),
-        }
-        if let Some(dispatch_auth) = &dispatch_auth {
-            dispatch_auth.record(resolved.principal.clone());
-        }
-        harmony_luau::serializable_to_luau_owned(to_plugin_auth(resolved))
-    }))
-}
-
-fn login_spec() -> FunctionSpec {
-    FunctionSpec::new("login")
-        .arg_name("username")
-        .arg_name("password")
-        .arg_name("user_agent")
-        .arg_name("client_name")
-        .call_async(Arc::new(login_callback))
-}
-
-fn login_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let username: String = frame.args.read_named("username")?;
-    let password: Option<String> = frame.args.read_named("password")?;
-    let user_agent: Option<String> = frame.args.read_named("user_agent")?;
-    let client_name: Option<String> = frame.args.read_named("client_name")?;
-    let client = frame
-        .context
-        .caller
-        .get::<DispatchClient>()
-        .map(|client| client.0)
-        .unwrap_or_default();
-    Ok(luau::ScheduledFuture::new(async move {
-        let metadata = SessionMetadata {
-            user_agent,
-            client_name,
-        };
-        let login = match login_with_password(
-            &username,
-            password.as_deref().unwrap_or(""),
-            metadata,
-            client,
-        )
-        .await
-        {
-            Ok(login) => login,
-            Err(AuthError::RateLimited(retry_after)) => {
-                return harmony_luau::serializable_to_luau_owned(LoginOutcome::rate_limited(
-                    retry_after,
-                ));
-            }
-            // A rejected `client_name` is caller input, not a runtime fault:
-            // report it like the other input failures rather than raising.
-            Err(AuthError::InvalidClientName(_)) => {
-                return harmony_luau::serializable_to_luau_owned(
-                    LoginOutcome::invalid_client_name(),
-                );
-            }
-            Err(err) => return Err(crate::plugins::runtime_error(err)),
-        };
-        let Some(login) = login else {
-            return harmony_luau::serializable_to_luau_owned(LoginOutcome::invalid_credentials());
-        };
-        let resolved = resolve_auth_from_bearer(Some(&login.token))
-            .await
-            .map_err(crate::plugins::runtime_error)?
-            .ok_or_else(|| {
-                crate::plugins::runtime_error("freshly issued session token failed to resolve")
-            })?;
-        harmony_luau::serializable_to_luau_owned(LoginOutcome::ok(LoginResult {
-            principal: to_plugin_principal(resolved.principal),
-            token: login.token,
-        }))
-    }))
-}
-
-fn logout_session_spec() -> FunctionSpec {
-    FunctionSpec::new("logout_session")
-        .arg_name("token")
-        .call_async(Arc::new(logout_session_callback))
-}
-
-fn logout_session_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let token: Option<String> = frame.args.read_named("token")?;
-    Ok(luau::ScheduledFuture::new(async move {
-        let revoked = logout_with_token(token.as_deref())
-            .await
-            .map_err(crate::plugins::runtime_error)?;
-        Ok(revoked)
-    }))
-}
-
-fn list_sessions_spec() -> FunctionSpec {
-    FunctionSpec::new("list_sessions")
-        .arg_name("query")
-        .call_async(Arc::new(list_sessions_callback))
-}
-
-fn list_sessions_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let query: Option<luau::Value> = frame.args.read_named("query")?;
-    let query: SessionListQuery = match query {
-        None => SessionListQuery::default(),
-        Some(query) => match harmony_serde::luau_to_json(frame.vm, &query, 0)? {
-            // An empty table converts to an empty array.
-            serde_json::Value::Array(values) if values.is_empty() => SessionListQuery::default(),
-            query => serde_json::from_value(query).map_err(crate::plugins::runtime_error)?,
-        },
-    };
-    let principal = require_dispatch_principal(&frame.context)?;
-    let plugin_id =
-        frame.context.origin.plugin.clone().ok_or_else(|| {
-            crate::plugins::runtime_error("session listing requires plugin origin")
-        })?;
-    Ok(luau::ScheduledFuture::new(async move {
-        let owners = match (query.user_id.as_deref(), query.all_users) {
-            (Some(_), true) => {
-                return Err(crate::plugins::runtime_error(
-                    "list_sessions takes user_id or all_users, not both",
-                ));
-            }
-            (Some(user_id), false) => SessionOwners::User(user_id),
-            (None, true) => SessionOwners::All,
-            (None, false) => SessionOwners::Principal,
-        };
-        let sessions = sessions::list_sessions(&principal, owners, &plugin_id)
-            .await
-            .map_err(crate::plugins::runtime_error)?;
-        harmony_luau::serializable_to_luau_owned(
-            sessions
-                .into_iter()
-                .map(SessionInfo::from)
-                .collect::<Vec<_>>(),
-        )
-    }))
-}
-
-fn revoke_session_spec() -> FunctionSpec {
-    FunctionSpec::new("revoke_session")
-        .arg_name("session_id")
-        .call_async(Arc::new(revoke_session_callback))
-}
-
-fn revoke_session_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let session_id: String = frame.args.read_named("session_id")?;
-    let principal = require_dispatch_principal(&frame.context)?;
-    Ok(luau::ScheduledFuture::new(async move {
-        let revoked = sessions::revoke_session(&principal, &session_id)
-            .await
-            .map_err(crate::plugins::runtime_error)?;
-        Ok(revoked)
-    }))
-}
-
-fn get_session_data_spec() -> FunctionSpec {
-    FunctionSpec::new("get_session_data")
-        .arg_name("token")
-        .call_async(Arc::new(|mut frame| {
-            let token: String = frame.args.read_named("token")?;
-            let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
-                crate::plugins::runtime_error("session data requires plugin origin")
-            })?;
-            Ok(luau::ScheduledFuture::new(async move {
-                let value =
-                    crate::services::auth::sessions::get_plugin_data(&token, &plugin_id).await?;
-                harmony_luau::serializable_to_luau_owned(value)
-            }))
-        }))
-}
-
-fn set_session_data_spec() -> FunctionSpec {
-    FunctionSpec::new("set_session_data")
-        .arg_name("token")
-        .arg_name("data")
-        .call_async(Arc::new(|mut frame| {
-            let token: String = frame.args.read_named("token")?;
-            let value: luau::Value = frame.args.read_named("data")?;
-            let value = harmony_serde::luau_to_json(frame.vm, &value, 0)?;
-            let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
-                crate::plugins::runtime_error("session data requires plugin origin")
-            })?;
-            Ok(luau::ScheduledFuture::new(async move {
-                crate::services::auth::sessions::set_plugin_data(&token, &plugin_id, value).await?;
-                Ok(luau::Value::Nil)
-            }))
-        }))
-}
-
-fn auth_capabilities_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("capabilities");
-    spec.call(auth_capabilities_callback)
-}
 #[derive(Clone)]
 pub(crate) struct AuthCapabilitiesModuleStore {
     capabilities: AuthCapabilities,
@@ -543,17 +552,6 @@ impl AuthCapabilitiesModuleStore {
             settings,
         }
     }
-}
-fn auth_capabilities_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let store = frame.vm.data().get::<AuthCapabilitiesModuleStore>()?;
-    let capabilities = match &store.settings {
-        Some(settings) => AuthCapabilities::from_config(&settings.get().config.auth),
-        None => store.capabilities.clone(),
-    };
-    frame
-        .returns
-        .write(auth_capabilities_table(&capabilities))?;
-    Ok(())
 }
 fn auth_capabilities_table(capabilities: &AuthCapabilities) -> luau::OwnedTable {
     let mut table = luau::OwnedTable::with_capacity(0, 2);
@@ -824,117 +822,11 @@ impl DescribeInterface for AuthCapabilities {
 }
 
 #[cfg(feature = "docgen")]
-fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
-    ParameterDescriptor {
-        name,
-        ty,
-        description: None,
-        variadic: false,
-    }
-}
-
-#[cfg(feature = "docgen")]
-fn module_descriptor() -> ModuleDescriptor {
-    ModuleDescriptor {
-        name: "Auth",
-        local_name: "auth",
-        description: Some(
-            "Sessions, logins, and the principal a dispatch acts for. A coroutine acts with the auth of the call that created it, as does code a module runs when it is first required.",
-        ),
-        fields: Vec::new(),
-        functions: vec![
-            ModuleFunctionDescriptor {
-                path: vec!["get_session_data"],
-                description: Some(
-                    "Reads this plugin's JSON data on a live authenticated session. Invalid, revoked, or expired tokens fail.",
-                ),
-                params: vec![param("token", String::luau_type())],
-                returns: vec![JsonValue::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["set_session_data"],
-                description: Some(
-                    "Stores up to 16 KiB of JSON for this plugin on a live session. Nil clears it; revoking the session removes the data.",
-                ),
-                params: vec![
-                    param("token", String::luau_type()),
-                    param("data", JsonValue::luau_type()),
-                ],
-                returns: vec![],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["resolve_auth"],
-                description: Some(
-                    "Resolves a bearer credential to the authenticated principal and credential metadata. \
-                     On success, the calling dispatch and the tasks it spawned act as that \
-                     principal from then on.",
-                ),
-                params: vec![param("bearer", Option::<String>::luau_type())],
-                returns: vec![Option::<ResolvedAuth>::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["logout_session"],
-                description: Some("Revokes the session identified by the provided token."),
-                params: vec![param("token", Option::<String>::luau_type())],
-                returns: vec![bool::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["list_sessions"],
-                description: Some(
-                    "Lists live sessions, oldest first, never their tokens. Without a query, lists \
-                     the calling principal's own; another user's or all users' require the \
-                     manage_users permission, and an admin's also the admin permission. All \
-                     users' leaves out the admins' without it.",
-                ),
-                params: vec![param("query", Option::<SessionListQuery>::luau_type())],
-                returns: vec![Vec::<SessionInfo>::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["revoke_session"],
-                description: Some(
-                    "Revokes a session by its public id and reports whether it was revoked. \
-                     Another user's session counts only with the manage_users permission, and an \
-                     admin's also with the admin permission.",
-                ),
-                params: vec![param("session_id", String::luau_type())],
-                returns: vec![bool::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["login"],
-                description: Some(
-                    "Attempts to log in and returns the outcome, including a principal plus \
-                     session token on success.",
-                ),
-                params: vec![
-                    param("username", String::luau_type()),
-                    param("password", Option::<String>::luau_type()),
-                    param("user_agent", Option::<String>::luau_type()),
-                    param("client_name", Option::<String>::luau_type()),
-                ],
-                returns: vec![LoginOutcome::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["capabilities"],
-                description: Some("Returns the current authentication capabilities."),
-                params: Vec::new(),
-                returns: vec![AuthCapabilities::luau_type()],
-                yields: false,
-            },
-        ],
-    }
-}
-
-#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
-    render_definition_file_with_support(
-        &module_descriptor(),
+    use harmony_luau::DescribeModule;
+
+    harmony_luau::render_definition_file_with_support(
+        &AuthModule::module_descriptor(),
         &[JsonValue::type_alias_descriptor()],
         &[
             AuthCapabilities::interface_descriptor(),

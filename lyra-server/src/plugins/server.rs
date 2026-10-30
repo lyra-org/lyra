@@ -5,11 +5,6 @@
 
 use std::sync::LazyLock;
 
-use harmony_core::{
-    FunctionSpec,
-    ModuleExport,
-    ModuleSpec,
-};
 use harmony_luau as luau;
 use harmony_luau::{
     DescribeInterface,
@@ -17,13 +12,6 @@ use harmony_luau::{
     InterfaceDescriptor,
     LuauType,
     LuauTypeInfo,
-};
-#[cfg(feature = "docgen")]
-use harmony_luau::{
-    ModuleDescriptor,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
-    render_definition_file_with_support,
 };
 use serde::Serialize;
 
@@ -43,16 +31,22 @@ pub(crate) struct ServerInfo {
     pub(crate) setup: crate::services::setup::Status,
 }
 
-struct ServerModule;
+pub(crate) struct ServerModule;
 
-pub(crate) fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("lyra/server")
-        .function(server_info_spec())
-        .install(|_| Ok(ModuleExport::new(ServerModule)))
-}
-
-fn server_info_spec() -> FunctionSpec {
-    FunctionSpec::new("info").call(server_info_callback)
+#[harmony_macros::module(id = "lyra/server", docs_feature = "docgen")]
+impl ServerModule {
+    #[harmony(
+        description = "Returns information about the running server.",
+        returns(ServerInfo)
+    )]
+    fn info(vm: &luau::Vm) -> luau::runtime::Result<luau::OwnedTable> {
+        let store = vm.data().get::<ServerInfoModuleStore>()?;
+        let mut info = store.info.clone();
+        if let Some(settings) = &store.settings {
+            info.published_url = settings.get().config.published_url.clone();
+        }
+        Ok(server_info_table(&info))
+    }
 }
 
 pub(crate) async fn load_server_info() -> anyhow::Result<ServerInfo> {
@@ -88,16 +82,6 @@ impl ServerInfoModuleStore {
     ) -> Self {
         Self { info, settings }
     }
-}
-fn server_info_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let store = frame.vm.data().get::<ServerInfoModuleStore>()?;
-    let mut info = store.info.clone();
-    if let Some(settings) = &store.settings {
-        info.published_url = settings.get().config.published_url.clone();
-    }
-    frame
-        .returns
-        .write(luau::Value::TableData(server_info_table(&info)))
 }
 fn server_info_table(info: &ServerInfo) -> luau::OwnedTable {
     let mut table = luau::OwnedTable::with_capacity(0, 7);
@@ -179,26 +163,11 @@ impl DescribeInterface for ServerInfo {
 }
 
 #[cfg(feature = "docgen")]
-fn module_descriptor() -> ModuleDescriptor {
-    ModuleDescriptor {
-        name: "Server",
-        local_name: "server",
-        description: None,
-        fields: Vec::new(),
-        functions: vec![ModuleFunctionDescriptor {
-            path: vec!["info"],
-            description: Some("Returns information about the running server."),
-            params: Vec::<ParameterDescriptor>::new(),
-            returns: vec![ServerInfo::luau_type()],
-            yields: false,
-        }],
-    }
-}
-
-#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
-    render_definition_file_with_support(
-        &module_descriptor(),
+    use harmony_luau::DescribeModule;
+
+    harmony_luau::render_definition_file_with_support(
+        &ServerModule::module_descriptor(),
         &[],
         &[ServerInfo::interface_descriptor()],
         &[],

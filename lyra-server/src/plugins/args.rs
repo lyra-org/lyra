@@ -269,6 +269,22 @@ pub(crate) fn sort_order_type() -> LuauType {
     ])
 }
 
+/// A [`resolve_id`] argument.
+pub(crate) struct ResolveIdArg(pub(crate) ResolveId);
+
+impl<'vm> luau::FromLuau<'vm> for ResolveIdArg {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let value: luau::Value = reader.read()?;
+        resolve_id(value).map(Self)
+    }
+}
+
+impl LuauTypeInfo for ResolveIdArg {
+    fn luau_type() -> LuauType {
+        resolve_id_type()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

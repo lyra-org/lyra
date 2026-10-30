@@ -217,22 +217,6 @@ pub(crate) async fn keyed_shown<T: 'static, R: Serialize + 'static>(
     Ok(table)
 }
 
-/// Reads the id array argument `name` and answers with `lookup`'s result for the dispatch's
-/// viewer, keyed by id, with each found value shaped for the viewer by `show`.
-pub(crate) fn keyed_lookup_shown<T: 'static, R: Serialize + 'static>(
-    frame: &mut luau::AsyncCallFrame<'_>,
-    name: &'static str,
-    lookup: KeyedLookup<T>,
-    show: fn(T, &Viewer) -> R,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let ids: luau::Table = frame.args.read_named(name)?;
-    let ids = args::unique_ids(frame.vm, &ids)?;
-    let db = crate::plugins::db::scoped(frame)?;
-    Ok(luau::ScheduledFuture::new(keyed_shown(
-        db, ids, lookup, show,
-    )))
-}
-
 /// A page item with counts the catalog computed for it, flattened beside its fields.
 #[derive(Serialize)]
 pub(crate) struct Counted<T> {

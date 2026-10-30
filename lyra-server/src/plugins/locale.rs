@@ -3,11 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use harmony_core::{
-    FunctionSpec,
-    ModuleExport,
-    ModuleSpec,
-};
+use harmony_core::ModuleSpec;
 use harmony_luau as luau;
 use harmony_luau::{
     DescribeInterface,
@@ -20,27 +16,19 @@ use harmony_luau::{
 use harmony_luau::{
     ModuleDescriptor,
     ModuleFieldDescriptor,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
-    render_definition_file_with_support,
 };
 
 use lyra_metadata::locale;
 
 const UNDETERMINED: &str = "und";
 
-struct LocaleModule;
+pub(crate) struct LocaleModule;
 
-pub(crate) fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("lyra/locale")
-        .function(language_spec())
-        .function(country_spec())
-        .function(parse_spec())
-        .function(tag_spec())
-        .function(languages_match_spec())
-        .initializer(install_locale_constants)
-        .install(|_| Ok(ModuleExport::new(LocaleModule)))
-}
+#[cfg(feature = "docgen")]
+struct LanguageInput;
+
+#[cfg(feature = "docgen")]
+struct CountryInput;
 
 fn install_locale_constants(
     vm: &luau::Vm,
@@ -54,80 +42,82 @@ fn install_locale_constants(
     )
 }
 
-fn language_spec() -> FunctionSpec {
-    FunctionSpec::new("language")
-        .arg_name("input")
-        .call(language_callback)
+fn install_constants(spec: ModuleSpec) -> ModuleSpec {
+    spec.initializer(install_locale_constants)
 }
 
-fn country_spec() -> FunctionSpec {
-    FunctionSpec::new("country")
-        .arg_name("input")
-        .call(country_callback)
+#[cfg(feature = "docgen")]
+fn describe_constants(descriptor: &mut ModuleDescriptor) {
+    descriptor.fields.push(ModuleFieldDescriptor {
+        path: vec!["UNDETERMINED"],
+        description: Some("The ISO 639-3 code for an undetermined language."),
+        ty: LuauType::string_literal(UNDETERMINED),
+    });
 }
 
-fn parse_spec() -> FunctionSpec {
-    FunctionSpec::new("parse")
-        .arg_name("tag")
-        .call(parse_callback)
-}
+#[harmony_macros::module(
+    id = "lyra/locale",
+    description = "Language and country normalization backed by the server's ISO 639 and ISO 3166 tables.",
+    docs_feature = "docgen",
+    extend = "install_constants",
+    describe = "describe_constants"
+)]
+impl LocaleModule {
+    #[harmony(
+        description = "Resolves an ISO 639-1 code, ISO 639-3 code, or English name to a language. Returns nil for unrecognized or blank input.",
+        args(input: Option<String>),
+        returns(Option<LanguageRecord>)
+    )]
+    fn language(input: Option<luau::Value>) -> Option<luau::OwnedTable> {
+        let language = string_value(input).and_then(|input| locale::resolve_language(&input));
+        language.map(|language| LanguageRecord::from(language).into_luau_table())
+    }
 
-fn tag_spec() -> FunctionSpec {
-    FunctionSpec::new("tag")
-        .arg_name("language")
-        .arg_name("country")
-        .call(tag_callback)
-}
+    #[harmony(
+        description = "Resolves an alpha-2 code, alpha-3 code, or name to a country. Returns nil for unrecognized or blank input.",
+        args(input: Option<String>),
+        returns(Option<CountryRecord>)
+    )]
+    fn country(input: Option<luau::Value>) -> Option<luau::OwnedTable> {
+        let country = string_value(input).and_then(|input| locale::resolve_country(&input));
+        country.map(|country| CountryRecord::from(country).into_luau_table())
+    }
 
-fn languages_match_spec() -> FunctionSpec {
-    FunctionSpec::new("languages_match")
-        .arg_name("a")
-        .arg_name("b")
-        .call(languages_match_callback)
-}
+    #[harmony(
+        description = "Splits a tag such as \"ja-JP\", \"ja_JP\", or \"en\" into its language and country. Either half is nil when it cannot be resolved.",
+        args(tag: Option<String>),
+        returns(LocaleRecord)
+    )]
+    fn parse(tag: Option<luau::Value>) -> luau::OwnedTable {
+        string_value(tag)
+            .map(|tag| parse_tag(&tag))
+            .unwrap_or_default()
+            .into_luau_table()
+    }
 
-fn language_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let input: Option<luau::Value> = frame.args.read_optional_named("input")?;
-    let language = string_value(input).and_then(|input| locale::resolve_language(&input));
-    frame
-        .returns
-        .write(language.map(|language| LanguageRecord::from(language).into_luau_table()))
-}
+    #[harmony(
+        description = "Builds a BCP 47 style tag such as \"ja-JP\", preferring the ISO 639-1 code. Returns nil when the language cannot be resolved; an unresolvable country is omitted.",
+        args(language: LanguageInput, country: Option<CountryInput>)
+    )]
+    fn tag(
+        vm: &luau::Vm,
+        language: Option<luau::Value>,
+        country: Option<luau::Value>,
+    ) -> Option<String> {
+        let language = language.and_then(|value| language_value(vm, value));
+        let country = country.and_then(|value| country_value(vm, value));
+        language.map(|language| locale_tag(language, country))
+    }
 
-fn country_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let input: Option<luau::Value> = frame.args.read_optional_named("input")?;
-    let country = string_value(input).and_then(|input| locale::resolve_country(&input));
-    frame
-        .returns
-        .write(country.map(|country| CountryRecord::from(country).into_luau_table()))
-}
-
-fn parse_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let tag: Option<luau::Value> = frame.args.read_optional_named("tag")?;
-    let parsed = string_value(tag)
-        .map(|tag| parse_tag(&tag))
-        .unwrap_or_default();
-    frame.returns.write(parsed.into_luau_table())
-}
-
-fn tag_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let language: Option<luau::Value> = frame.args.read_optional_named("language")?;
-    let country: Option<luau::Value> = frame.args.read_optional_named("country")?;
-    let language = language.and_then(|value| language_value(frame.vm, value));
-    let country = country.and_then(|value| country_value(frame.vm, value));
-    frame
-        .returns
-        .write(language.map(|language| locale_tag(language, country)))
-}
-
-fn languages_match_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let a: Option<luau::Value> = frame.args.read_optional_named("a")?;
-    let b: Option<luau::Value> = frame.args.read_optional_named("b")?;
-    let a = a.and_then(|value| language_code_value(frame.vm, value));
-    let b = b.and_then(|value| language_code_value(frame.vm, value));
-    frame
-        .returns
-        .write(languages_match(a.as_deref(), b.as_deref()))
+    #[harmony(
+        description = "Returns true when both sides resolve to the same language. \"und\" only matches \"und\"; nil or unresolvable input never matches.",
+        args(a: Option<LanguageInput>, b: Option<LanguageInput>)
+    )]
+    fn languages_match(vm: &luau::Vm, a: Option<luau::Value>, b: Option<luau::Value>) -> bool {
+        let a = a.and_then(|value| language_code_value(vm, value));
+        let b = b.and_then(|value| language_code_value(vm, value));
+        languages_match(a.as_deref(), b.as_deref())
+    }
 }
 
 // Mirrors `services::metadata::lyrics::selection::language_matches`: both
@@ -363,98 +353,25 @@ impl DescribeInterface for LocaleRecord {
 }
 
 #[cfg(feature = "docgen")]
-fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
-    ParameterDescriptor {
-        name,
-        ty,
-        description: None,
-        variadic: false,
+impl LuauTypeInfo for LanguageInput {
+    fn luau_type() -> LuauType {
+        LuauType::union(vec![LanguageRecord::luau_type(), String::luau_type()])
     }
 }
 
 #[cfg(feature = "docgen")]
-fn language_input_type() -> LuauType {
-    LuauType::union(vec![LanguageRecord::luau_type(), String::luau_type()])
-}
-
-#[cfg(feature = "docgen")]
-fn country_input_type() -> LuauType {
-    LuauType::union(vec![CountryRecord::luau_type(), String::luau_type()])
-}
-
-#[cfg(feature = "docgen")]
-fn module_descriptor() -> ModuleDescriptor {
-    ModuleDescriptor {
-        name: "Locale",
-        local_name: "locale",
-        description: Some(
-            "Language and country normalization backed by the server's ISO 639 and ISO 3166 tables.",
-        ),
-        fields: vec![ModuleFieldDescriptor {
-            path: vec!["UNDETERMINED"],
-            description: Some("The ISO 639-3 code for an undetermined language."),
-            ty: LuauType::string_literal(UNDETERMINED),
-        }],
-        functions: vec![
-            ModuleFunctionDescriptor {
-                path: vec!["language"],
-                description: Some(
-                    "Resolves an ISO 639-1 code, ISO 639-3 code, or English name to a language. Returns nil for unrecognized or blank input.",
-                ),
-                params: vec![param("input", Option::<String>::luau_type())],
-                returns: vec![Option::<LanguageRecord>::luau_type()],
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["country"],
-                description: Some(
-                    "Resolves an alpha-2 code, alpha-3 code, or name to a country. Returns nil for unrecognized or blank input.",
-                ),
-                params: vec![param("input", Option::<String>::luau_type())],
-                returns: vec![Option::<CountryRecord>::luau_type()],
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["parse"],
-                description: Some(
-                    "Splits a tag such as \"ja-JP\", \"ja_JP\", or \"en\" into its language and country. Either half is nil when it cannot be resolved.",
-                ),
-                params: vec![param("tag", Option::<String>::luau_type())],
-                returns: vec![LocaleRecord::luau_type()],
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["tag"],
-                description: Some(
-                    "Builds a BCP 47 style tag such as \"ja-JP\", preferring the ISO 639-1 code. Returns nil when the language cannot be resolved; an unresolvable country is omitted.",
-                ),
-                params: vec![
-                    param("language", language_input_type()),
-                    param("country", LuauType::optional(country_input_type())),
-                ],
-                returns: vec![Option::<String>::luau_type()],
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["languages_match"],
-                description: Some(
-                    "Returns true when both sides resolve to the same language. \"und\" only matches \"und\"; nil or unresolvable input never matches.",
-                ),
-                params: vec![
-                    param("a", LuauType::optional(language_input_type())),
-                    param("b", LuauType::optional(language_input_type())),
-                ],
-                returns: vec![bool::luau_type()],
-                yields: false,
-            },
-        ],
+impl LuauTypeInfo for CountryInput {
+    fn luau_type() -> LuauType {
+        LuauType::union(vec![CountryRecord::luau_type(), String::luau_type()])
     }
 }
 
 #[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
-    render_definition_file_with_support(
-        &module_descriptor(),
+    use harmony_luau::DescribeModule;
+
+    harmony_luau::render_definition_file_with_support(
+        &LocaleModule::module_descriptor(),
         &[],
         &[
             LanguageRecord::interface_descriptor(),

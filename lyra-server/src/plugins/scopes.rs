@@ -151,22 +151,22 @@ scopes! {
     },
     Auth => {
         id: "lyra.auth",
-        module: auth::module_spec,
+        module: auth::AuthModule::module_spec,
         effects: &[Effect::Authority],
     },
     Chromaprint => {
         id: "lyra.chromaprint",
-        module: chromaprint::module_spec,
+        module: chromaprint::ChromaprintModule::module_spec,
         effects: &[],
     },
     Covers => {
         id: "lyra.covers",
-        module: covers::module_spec,
+        module: covers::CoversModule::module_spec,
         effects: &[],
     },
     Datastore => {
         id: "lyra.datastore",
-        module: datastore::module_spec,
+        module: datastore::DataStoreModule::module_spec,
         effects: &[],
     },
     Editions => {
@@ -181,7 +181,7 @@ scopes! {
     },
     Entries => {
         id: "lyra.entries",
-        module: entries::module_spec,
+        module: entries::EntriesModule::module_spec,
         effects: &[],
     },
     Favorites => {
@@ -199,12 +199,12 @@ scopes! {
     },
     Ids => {
         id: "lyra.ids",
-        module: ids::module_spec,
+        module: ids::IdsModule::module_spec,
         effects: &[],
     },
     Images => {
         id: "lyra.images",
-        module: images::module_spec,
+        module: images::ImagesModule::module_spec,
         effects: &[],
     },
     Labels => {
@@ -214,7 +214,7 @@ scopes! {
     },
     Libraries => {
         id: "lyra.libraries",
-        module: libraries::module_spec,
+        module: libraries::LibrariesModule::module_spec,
         effects: &[],
     },
     Listens => {
@@ -224,7 +224,7 @@ scopes! {
     },
     Locale => {
         id: "lyra.locale",
-        module: locale::module_spec,
+        module: locale::LocaleModule::module_spec,
         effects: &[],
     },
     Lyrics => {
@@ -286,7 +286,7 @@ scopes! {
     },
     Server => {
         id: "lyra.server",
-        module: server::module_spec,
+        module: server::ServerModule::module_spec,
         effects: &[],
     },
     Tags => {

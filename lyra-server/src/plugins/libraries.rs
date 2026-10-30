@@ -9,78 +9,55 @@ use agdb::{
     DbId,
     QueryId,
 };
-use harmony_core::{
-    FunctionSpec,
-    ModuleExport,
-    ModuleSpec,
-};
 use harmony_luau as luau;
 use harmony_luau::{
     DescribeInterface,
     FieldDescriptor,
     InterfaceDescriptor,
-    IntoLuauReturn,
     LuauType,
     LuauTypeInfo,
 };
-#[cfg(feature = "docgen")]
-use harmony_luau::{
-    ModuleDescriptor,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
-    render_definition_file_with_support,
-};
 use serde::Serialize;
 
-use crate::plugins::args;
-use crate::plugins::db;
-use crate::services::auth::Principal;
-use crate::services::auth::access::{
-    self,
-    LibraryFull,
-    LibraryView,
+use crate::{
+    plugins::{
+        args::{
+            ResolveIdArg,
+            UniqueIds,
+        },
+        db::Db,
+    },
+    services::auth::{
+        Principal,
+        access::{
+            self,
+            LibraryFull,
+            LibraryView,
+        },
+    },
 };
 
-struct LibrariesModule;
+pub(crate) struct LibrariesModule;
 
-pub(crate) fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("lyra/libraries")
-        .function(list_spec())
-        .function(get_for_entity_spec())
-        .function(get_for_entities_spec())
-        .install(|_| Ok(ModuleExport::new(LibrariesModule)))
+/// The dispatch's principal, or `None` for a server-side dispatch.
+struct Caller(Option<Principal>);
+
+impl luau::FromCallFrame for Caller {
+    fn from_call_frame(_vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
+        crate::plugins::auth::dispatch_principal(context).map(Self)
+    }
 }
 
-fn list_spec() -> FunctionSpec {
-    FunctionSpec::new("list")
-        .arg_name("id")
-        .call_async(std::sync::Arc::new(list_callback))
-}
-
-fn get_for_entity_spec() -> FunctionSpec {
-    FunctionSpec::new("get_for_entity")
-        .arg_name("entity_id")
-        .call_async(std::sync::Arc::new(get_for_entity_callback))
-}
-
-fn get_for_entities_spec() -> FunctionSpec {
-    FunctionSpec::new("get_for_entities")
-        .arg_name("entity_ids")
-        .call_async(std::sync::Arc::new(get_for_entities_callback))
-}
-
-fn list_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let id = frame
-        .args
-        .read_optional_named::<luau::Value>("id")?
-        .map(args::resolve_id)
-        .transpose()?;
-    let db = db::get(frame.vm)?;
-    let principal = caller_principal(&frame.context)?;
-
-    Ok(luau::ScheduledFuture::new(async move {
+#[harmony_macros::module(id = "lyra/libraries", docs_feature = "docgen")]
+impl LibrariesModule {
+    #[harmony(returns(Vec<LibraryRecord>))]
+    async fn list(
+        id: Option<ResolveIdArg>,
+        #[context] db: Db,
+        #[context] caller: Caller,
+    ) -> luau::runtime::Result<luau::Value> {
+        let id = id.map(|id| id.0);
+        let principal = caller.0;
         let db = db.read().await;
         let libraries: Vec<LibraryRecord> = match (principal.as_ref(), id) {
             (Some(principal), None) => access::libraries(&db, principal)?
@@ -130,19 +107,16 @@ fn list_callback(
             }
         };
         harmony_luau::serializable_to_luau_owned(libraries)
-    }))
-}
+    }
 
-fn get_for_entity_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let entity_id: i64 = frame.args.read_named("entity_id")?;
-    let db = db::get(frame.vm)?;
-    let principal = caller_principal(&frame.context)?;
-
-    Ok(luau::ScheduledFuture::new(async move {
+    #[harmony(returns(Vec<LibraryRecord>))]
+    async fn get_for_entity(
+        entity_id: i64,
+        #[context] db: Db,
+        #[context] caller: Caller,
+    ) -> luau::runtime::Result<luau::Value> {
         let db = db.read().await;
-        let libraries = if let Some(principal) = principal {
+        let libraries = if let Some(principal) = caller.0 {
             access::libraries_for_entity(&db, &principal, DbId(entity_id))?
                 .into_iter()
                 .map(LibraryRecord::from)
@@ -158,20 +132,17 @@ fn get_for_entity_callback(
             .collect::<Vec<_>>()
         };
         harmony_luau::serializable_to_luau_owned(libraries)
-    }))
-}
+    }
 
-fn get_for_entities_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let ids_table: luau::Table = frame.args.read_named("entity_ids")?;
-    let ids = args::unique_ids(frame.vm, &ids_table)?;
-    let db = db::get(frame.vm)?;
-    let principal = caller_principal(&frame.context)?;
-
-    Ok(luau::ScheduledFuture::new(async move {
+    #[harmony(returns(HashMap<u64, LibraryRecord>))]
+    async fn get_for_entities(
+        entity_ids: UniqueIds,
+        #[context] db: Db,
+        #[context] caller: Caller,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let ids = entity_ids.0;
         let db = db.read().await;
-        let libraries: HashMap<DbId, LibraryRecord> = if let Some(principal) = principal {
+        let libraries: HashMap<DbId, LibraryRecord> = if let Some(principal) = caller.0 {
             access::libraries_for_entities(&db, &principal, &ids)?
                 .into_iter()
                 .map(|(id, library)| (id, LibraryRecord::from(library)))
@@ -196,8 +167,8 @@ fn get_for_entities_callback(
                 .unwrap_or(luau::Value::Nil);
             table.set_key(id.0, value);
         }
-        table.into_luau_return()
-    }))
+        Ok(table)
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -249,10 +220,6 @@ impl From<LibraryFull> for LibraryRecord {
     }
 }
 
-fn caller_principal(context: &luau::CallContext) -> luau::runtime::Result<Option<Principal>> {
-    crate::plugins::auth::dispatch_principal(context)
-}
-
 impl LuauTypeInfo for LibraryRecord {
     fn luau_type() -> LuauType {
         LuauType::named("Library")
@@ -299,52 +266,11 @@ impl DescribeInterface for LibraryRecord {
 }
 
 #[cfg(feature = "docgen")]
-fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
-    ParameterDescriptor {
-        name,
-        ty,
-        description: None,
-        variadic: false,
-    }
-}
-
-#[cfg(feature = "docgen")]
-fn module_descriptor() -> ModuleDescriptor {
-    ModuleDescriptor {
-        name: "Libraries",
-        local_name: "libraries",
-        description: None,
-        fields: Vec::new(),
-        functions: vec![
-            ModuleFunctionDescriptor {
-                path: vec!["list"],
-                description: None,
-                params: vec![param("id", LuauType::optional(args::resolve_id_type()))],
-                returns: vec![Vec::<LibraryRecord>::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["get_for_entity"],
-                description: None,
-                params: vec![param("entity_id", i64::luau_type())],
-                returns: vec![Vec::<LibraryRecord>::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["get_for_entities"],
-                description: None,
-                params: vec![param("entity_ids", Vec::<u64>::luau_type())],
-                returns: vec![LuauType::map(u64::luau_type(), LibraryRecord::luau_type())],
-                yields: true,
-            },
-        ],
-    }
-}
-
-#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
-    render_definition_file_with_support(
-        &module_descriptor(),
+    use harmony_luau::DescribeModule;
+
+    harmony_luau::render_definition_file_with_support(
+        &LibrariesModule::module_descriptor(),
         &[],
         &[LibraryRecord::interface_descriptor()],
         &[],

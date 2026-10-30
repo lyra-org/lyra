@@ -6,18 +6,12 @@
 use std::{
     io::Cursor,
     path::PathBuf,
-    sync::Arc,
 };
 
 use anyhow::{
     Context,
     Result,
     anyhow,
-};
-use harmony_core::{
-    FunctionSpec,
-    ModuleExport,
-    ModuleSpec,
 };
 use harmony_luau as luau;
 use harmony_luau::{
@@ -26,13 +20,6 @@ use harmony_luau::{
     InterfaceDescriptor,
     LuauType,
     LuauTypeInfo,
-};
-#[cfg(feature = "docgen")]
-use harmony_luau::{
-    ModuleDescriptor,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
-    render_definition_file_with_support,
 };
 use image::{
     DynamicImage,
@@ -180,8 +167,6 @@ fn file_hash(data: &[u8]) -> String {
     blake3::hash(data).to_hex().to_string()
 }
 
-struct ImagesModule;
-
 async fn compose_impl(options: ComposeOptions) -> Result<ComposeResult> {
     let sources: Vec<String> = options
         .sources
@@ -244,18 +229,6 @@ async fn compose_impl(options: ComposeOptions) -> Result<ComposeResult> {
         hash,
         mime_type: "image/jpeg".to_string(),
     })
-}
-fn compose_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let options_table: luau::Table = frame.args.read_named("options")?;
-    let options = parse_compose_options(frame.vm, &options_table)?;
-    Ok(luau::ScheduledFuture::new(async move {
-        let result = compose_impl(options)
-            .await
-            .map_err(|error| luau::Error::Runtime(error.to_string()))?;
-        Ok(result.into_luau_table())
-    }))
 }
 fn parse_compose_options(
     vm: &luau::Vm,
@@ -340,15 +313,27 @@ impl ComposeResult {
     }
 }
 
-pub(crate) fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("lyra/images")
-        .function(compose_spec())
-        .install(|_| Ok(ModuleExport::new(ImagesModule)))
+pub(crate) struct ImagesModule;
+
+#[harmony_macros::module(id = "lyra/images", docs_feature = "docgen")]
+impl ImagesModule {
+    #[harmony(
+        description = "Compose multiple source images into a single grid image. Returns a cached result with path, hash, and mime_type.",
+        returns(ComposeResult)
+    )]
+    async fn compose(options: ComposeOptions) -> luau::runtime::Result<luau::OwnedTable> {
+        let result = compose_impl(options)
+            .await
+            .map_err(|error| luau::Error::Runtime(error.to_string()))?;
+        Ok(result.into_luau_table())
+    }
 }
 
-fn compose_spec() -> FunctionSpec {
-    let spec = FunctionSpec::new("compose").arg_name("options");
-    spec.call_async(Arc::new(compose_callback))
+impl<'vm> luau::FromLuau<'vm> for ComposeOptions {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let table: luau::Table = reader.read()?;
+        parse_compose_options(reader.vm(), &table)
+    }
 }
 
 impl LuauTypeInfo for ComposeOptions {
@@ -417,33 +402,11 @@ impl DescribeInterface for ComposeResult {
 }
 
 #[cfg(feature = "docgen")]
-fn module_descriptor() -> ModuleDescriptor {
-    ModuleDescriptor {
-        name: "Images",
-        local_name: "images",
-        description: None,
-        fields: Vec::new(),
-        functions: vec![ModuleFunctionDescriptor {
-            path: vec!["compose"],
-            description: Some(
-                "Compose multiple source images into a single grid image. Returns a cached result with path, hash, and mime_type.",
-            ),
-            params: vec![ParameterDescriptor {
-                name: "options",
-                ty: ComposeOptions::luau_type(),
-                description: None,
-                variadic: false,
-            }],
-            returns: vec![ComposeResult::luau_type()],
-            yields: true,
-        }],
-    }
-}
-
-#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
-    render_definition_file_with_support(
-        &module_descriptor(),
+    use harmony_luau::DescribeModule;
+
+    harmony_luau::render_definition_file_with_support(
+        &ImagesModule::module_descriptor(),
         &[],
         &[
             ComposeOptions::interface_descriptor(),
