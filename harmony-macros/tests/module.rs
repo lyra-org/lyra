@@ -274,3 +274,36 @@ fn modules_register_their_userdata() -> luau::runtime::Result<()> {
     );
     Ok(())
 }
+
+#[harmony_macros::userdata(name = "Counter")]
+#[derive(Clone)]
+struct Counter;
+
+#[harmony_macros::userdata_methods]
+impl Counter {
+    fn add(&self, amount: i64, #[context] _greeting: Greeting) -> i64 {
+        amount
+    }
+
+    fn reset(&self) {}
+}
+
+#[test]
+fn userdata_specs_list_their_methods_and_arguments() {
+    let spec = Counter::_harmony_userdata_spec();
+    let methods: Vec<(&str, Vec<&str>)> = spec
+        .methods
+        .iter()
+        .map(|method| {
+            (
+                &*method.name,
+                method.arg_names.iter().map(|name| &**name).collect(),
+            )
+        })
+        .collect();
+    assert_eq!(&*spec.name, "Counter");
+    assert_eq!(methods, [("add", vec!["amount"]), ("reset", vec![])]);
+    assert!(spec.methods.iter().all(|method| method.callback.is_none()));
+    Counter.reset();
+    assert_eq!(Counter.add(2, Greeting(String::new())), 2);
+}

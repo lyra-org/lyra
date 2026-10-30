@@ -388,12 +388,16 @@ impl ModuleSpec {
 pub struct UserDataSpec {
     pub name: Arc<str>,
     pub initializer: Option<UserDataInitializer>,
+    /// The methods its instances have, by name and argument names. The
+    /// class installs them, so these carry no callback.
+    pub methods: Vec<FunctionSpec>,
 }
 
 impl fmt::Debug for UserDataSpec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("UserDataSpec")
             .field("name", &self.name)
+            .field("methods", &self.methods)
             .finish_non_exhaustive()
     }
 }
@@ -403,7 +407,13 @@ impl UserDataSpec {
         Self {
             name: name.into(),
             initializer: None,
+            methods: Vec::new(),
         }
+    }
+
+    pub fn method(mut self, method: FunctionSpec) -> Self {
+        self.methods.push(method);
+        self
     }
 
     pub fn initializer<F>(mut self, initializer: F) -> Self

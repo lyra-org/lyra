@@ -346,6 +346,7 @@ pub fn userdata_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let self_ty = ast.self_ty.clone();
     let mut class_methods = Vec::new();
+    let mut method_specs = Vec::new();
     let mut method_descriptors = Vec::new();
 
     for item in &mut ast.items {
@@ -409,6 +410,11 @@ pub fn userdata_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
         let method_argument_names = std::iter::once(lit_str("self", fn_name.span()))
             .chain(arguments.iter().map(|param| param.name_lit.clone()))
             .collect::<Vec<_>>();
+        let spec_argument_names = arguments.iter().map(|param| &param.name_lit);
+        method_specs.push(quote! {
+            ::harmony_core::FunctionSpec::new(#fn_name_lit)
+                #(.arg_name(#spec_argument_names))*
+        });
         let call = quote! { __harmony_this.#fn_name(#(#call_args),*) };
         let body = call_body(kind, &call, &fn_item.sig.output);
         let registration = match kind {
@@ -467,6 +473,7 @@ pub fn userdata_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 ::harmony_core::UserDataSpec::new(
                     <#self_ty as ::harmony_core::UserDataType>::CLASS_NAME,
                 )
+                    #(.method(#method_specs))*
             }
         }
 
