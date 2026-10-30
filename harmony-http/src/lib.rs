@@ -963,7 +963,7 @@ fn request_options_from_luau(
     table: &luau::Table,
 ) -> luau::runtime::Result<HttpRequestOptions> {
     Ok(HttpRequestOptions {
-        url: required_string_field(table, "url")?,
+        url: table.required_string_field("url")?,
         method: required_method_field(vm, table, "method")?,
         body: optional_binary_field(table, "body")?,
         headers: optional_header_map_field(table, "headers")?,
@@ -975,7 +975,7 @@ fn rate_limit_options_from_luau(
     table: &luau::Table,
 ) -> luau::runtime::Result<HttpRateLimitOptions> {
     Ok(HttpRateLimitOptions {
-        domain: required_string_field(table, "domain")?,
+        domain: table.required_string_field("domain")?,
         requests_per_second: optional_f64_field(table, "requests_per_second")?,
         retry_on: optional_u16_array_field(table, "retry_on")?,
         max_retries: optional_u32_field(table, "max_retries")?,
@@ -987,22 +987,9 @@ fn concurrency_options_from_luau(
     table: &luau::Table,
 ) -> luau::runtime::Result<HttpConcurrencyOptions> {
     Ok(HttpConcurrencyOptions {
-        host: required_string_field(table, "host")?,
+        host: table.required_string_field("host")?,
         max_in_flight: required_u32_field(table, "max_in_flight")?,
     })
-}
-
-fn required_string_field(
-    table: &luau::Table,
-    field: &'static str,
-) -> luau::runtime::Result<String> {
-    match table.get(field)? {
-        luau::Value::String(value) => String::from_utf8(value).map_err(|error| {
-            luau::Error::Runtime(format!("'{field}' must be valid UTF-8: {error}"))
-        }),
-        luau::Value::Nil => Err(luau::Error::Runtime(format!("missing '{field}' field"))),
-        other => Err(luau_field_type_error(field, "string", other.type_name())),
-    }
 }
 
 fn optional_f64_field(
