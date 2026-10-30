@@ -3,29 +3,30 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use harmony_core::{
-    FunctionSpec,
-    ModuleExport,
-    ModuleSpec,
-};
 use harmony_luau as luau;
 use harmony_luau::IntoLuauReturn;
 #[cfg(feature = "docgen")]
 use harmony_luau::{
+    DescribeModule,
     FieldDescriptor,
     InterfaceDescriptor,
     LuauType,
     LuauTypeInfo,
-    ModuleDescriptor,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
     TypeAliasDescriptor,
     render_definition_file_with_support,
 };
+#[cfg(feature = "docgen")]
+use std::collections::HashMap;
 
-use crate::plugins::args;
+use crate::plugins::args::{
+    self,
+    UniqueIds,
+};
 use crate::plugins::catalog;
-use crate::plugins::db;
+use crate::plugins::db::{
+    SystemDb,
+    ViewerDb,
+};
 #[cfg(feature = "docgen")]
 use crate::services::catalog::tracks::TrackKey;
 use crate::services::{
@@ -39,100 +40,127 @@ use crate::services::{
     },
 };
 
-struct TracksModule;
+pub(crate) struct TracksModule;
 
-pub(crate) fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("lyra/tracks")
-        .function(get_spec())
-        .function(streamable_spec())
-        .function(query_spec())
-        .function(by_release_spec())
-        .function(by_entry_spec())
-        .function(chains_spec())
-        .install(|_| Ok(ModuleExport::new(TracksModule)))
+/// The `query` argument, read with its page bounds.
+struct TrackQuery(catalog::PagedQuery<Tracks>);
+
+impl<'vm> luau::FromLuau<'vm> for TrackQuery {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let opts: luau::Table = reader.read()?;
+        let filter = read_filter(reader.vm(), &opts)?;
+        catalog::read_query::<Tracks>(reader.vm(), &opts, filter).map(Self)
+    }
 }
 
-fn get_spec() -> FunctionSpec {
-    FunctionSpec::new("get")
-        .arg_name("ids")
-        .call_async(std::sync::Arc::new(get_callback))
+impl luau::LuauTypeInfo for TrackQuery {
+    fn luau_type() -> luau::LuauType {
+        luau::LuauType::named("TrackQuery")
+    }
 }
 
-fn streamable_spec() -> FunctionSpec {
-    FunctionSpec::new("streamable")
-        .arg_name("ids")
-        .call_async(std::sync::Arc::new(streamable_callback))
+#[cfg(feature = "docgen")]
+struct Track;
+
+#[cfg(feature = "docgen")]
+impl LuauTypeInfo for Track {
+    fn luau_type() -> LuauType {
+        LuauType::named("Track")
+    }
 }
 
-fn by_release_spec() -> FunctionSpec {
-    FunctionSpec::new("by_release")
-        .arg_name("release_ids")
-        .call_async(std::sync::Arc::new(by_release_callback))
+#[cfg(feature = "docgen")]
+struct TrackChain;
+
+#[cfg(feature = "docgen")]
+impl LuauTypeInfo for TrackChain {
+    fn luau_type() -> LuauType {
+        LuauType::named("TrackChain")
+    }
 }
 
-fn by_entry_spec() -> FunctionSpec {
-    FunctionSpec::new("by_entry")
-        .arg_name("entry_ids")
-        .call_async(std::sync::Arc::new(by_entry_callback))
+#[cfg(feature = "docgen")]
+struct TrackPage;
+
+#[cfg(feature = "docgen")]
+impl LuauTypeInfo for TrackPage {
+    fn luau_type() -> LuauType {
+        LuauType::named("TrackPage")
+    }
 }
 
-fn chains_spec() -> FunctionSpec {
-    FunctionSpec::new("chains")
-        .arg_name("track_ids")
-        .call_async(std::sync::Arc::new(chains_callback))
-}
+#[harmony_macros::module(id = "lyra/tracks", docs_feature = "docgen")]
+impl TracksModule {
+    #[harmony(
+        description = "The tracks with these ids that the caller can see, keyed by id.",
+        returns(HashMap<u64, Track>)
+    )]
+    async fn get(
+        ids: UniqueIds,
+        #[context] db: ViewerDb,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        catalog::keyed_table(db, ids.0, lookups::get::<Tracks>).await
+    }
 
-fn query_spec() -> FunctionSpec {
-    FunctionSpec::new("query")
-        .arg_name("query")
-        .call_async(std::sync::Arc::new(query_callback))
-}
+    #[harmony(
+        description = "`get` read as the system. Ignores library visibility, so it is only for public streaming routes, which must serve nothing from it but the audio.",
+        returns(HashMap<u64, Track>)
+    )]
+    async fn streamable(
+        ids: UniqueIds,
+        #[context] db: SystemDb,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        catalog::keyed_table(db.0, ids.0, lookups::get::<Tracks>).await
+    }
 
-fn get_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    catalog::keyed_lookup(&mut frame, "ids", lookups::get::<Tracks>)
-}
-
-fn streamable_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    catalog::keyed_lookup_as(&mut frame, "ids", lookups::get::<Tracks>, db::system)
-}
-
-fn by_release_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    catalog::keyed_lookup(&mut frame, "release_ids", lookups::tracks_by_release)
-}
-
-fn by_entry_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    catalog::keyed_lookup(&mut frame, "entry_ids", lookups::tracks_by_entry)
-}
-
-fn chains_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    catalog::keyed_lookup(&mut frame, "track_ids", lookups::chain_places)
-}
-
-fn query_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let opts: luau::Table = frame.args.read_named("query")?;
-    let filter = read_filter(frame.vm, &opts)?;
-    let request = catalog::read_query::<Tracks>(frame.vm, &opts, filter)?;
-    let db = db::scoped(&frame)?;
-
-    Ok(luau::ScheduledFuture::new(async move {
+    #[harmony(
+        description = "The tracks the caller can see that pass every filter, sorted and paged. Without `sort`, a search ranks by relevance, a query scoped to one release is in disc and track order, and anything else is by sort name.",
+        returns(TrackPage)
+    )]
+    async fn query(
+        query: TrackQuery,
+        #[context] db: ViewerDb,
+    ) -> luau::runtime::Result<luau::ReturnValues> {
+        let request = query.0;
         let (db, viewer) = db.read().await?;
         let page =
             services::catalog::page(&db, &viewer, &request.query, request.offset, request.limit)
                 .map_err(catalog::error)?;
         catalog::page_table(page)?.into_luau_return()
-    }))
+    }
+
+    #[harmony(
+        description = "The tracks on each of these releases that the caller can see, keyed by release id.",
+        returns(HashMap<u64, Vec<Track>>)
+    )]
+    async fn by_release(
+        release_ids: UniqueIds,
+        #[context] db: ViewerDb,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        catalog::keyed_table(db, release_ids.0, lookups::tracks_by_release).await
+    }
+
+    #[harmony(
+        description = "The tracks whose audio each of these entries holds, for the entries the caller can see, keyed by entry id.",
+        returns(HashMap<u64, Vec<Track>>)
+    )]
+    async fn by_entry(
+        entry_ids: UniqueIds,
+        #[context] db: ViewerDb,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        catalog::keyed_table(db, entry_ids.0, lookups::tracks_by_entry).await
+    }
+
+    #[harmony(
+        description = "The chain of each of these tracks that the caller can see and that is in one, keyed by track id.",
+        returns(HashMap<u64, TrackChain>)
+    )]
+    async fn chains(
+        track_ids: UniqueIds,
+        #[context] db: ViewerDb,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        catalog::keyed_table(db, track_ids.0, lookups::chain_places).await
+    }
 }
 
 fn read_filter(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<TrackFilter> {
@@ -149,16 +177,6 @@ fn read_filter(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Trac
         listened: luau::table::optional_bool_field(vm, table, "listened")?,
         rating: catalog::read_rating(vm, table)?,
     })
-}
-
-#[cfg(feature = "docgen")]
-fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
-    ParameterDescriptor {
-        name,
-        ty,
-        description: None,
-        variadic: false,
-    }
 }
 
 #[cfg(feature = "docgen")]
@@ -240,84 +258,9 @@ fn track_query() -> InterfaceDescriptor {
 }
 
 #[cfg(feature = "docgen")]
-fn module_descriptor() -> ModuleDescriptor {
-    ModuleDescriptor {
-        name: "Tracks",
-        local_name: "tracks",
-        description: None,
-        fields: Vec::new(),
-        functions: vec![
-            ModuleFunctionDescriptor {
-                path: vec!["get"],
-                description: Some(
-                    "The tracks with these ids that the caller can see, keyed by id.",
-                ),
-                params: vec![param("ids", Vec::<u64>::luau_type())],
-                returns: vec![LuauType::map(u64::luau_type(), LuauType::named("Track"))],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["streamable"],
-                description: Some(
-                    "`get` read as the system. Ignores library visibility, so it is only for public streaming routes, which must serve nothing from it but the audio.",
-                ),
-                params: vec![param("ids", Vec::<u64>::luau_type())],
-                returns: vec![LuauType::map(u64::luau_type(), LuauType::named("Track"))],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["query"],
-                description: Some(
-                    "The tracks the caller can see that pass every filter, sorted and paged. Without `sort`, a search ranks by relevance, a query scoped to one release is in disc and track order, and anything else is by sort name.",
-                ),
-                params: vec![param("query", LuauType::named("TrackQuery"))],
-                returns: vec![LuauType::named("TrackPage")],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["by_release"],
-                description: Some(
-                    "The tracks on each of these releases that the caller can see, keyed by release id.",
-                ),
-                params: vec![param("release_ids", Vec::<u64>::luau_type())],
-                returns: vec![LuauType::map(
-                    u64::luau_type(),
-                    LuauType::array(LuauType::named("Track")),
-                )],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["by_entry"],
-                description: Some(
-                    "The tracks whose audio each of these entries holds, for the entries the caller can see, keyed by entry id.",
-                ),
-                params: vec![param("entry_ids", Vec::<u64>::luau_type())],
-                returns: vec![LuauType::map(
-                    u64::luau_type(),
-                    LuauType::array(LuauType::named("Track")),
-                )],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["chains"],
-                description: Some(
-                    "The chain of each of these tracks that the caller can see and that is in one, keyed by track id.",
-                ),
-                params: vec![param("track_ids", Vec::<u64>::luau_type())],
-                returns: vec![LuauType::map(
-                    u64::luau_type(),
-                    LuauType::named("TrackChain"),
-                )],
-                yields: true,
-            },
-        ],
-    }
-}
-
-#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
-        &module_descriptor(),
+        &TracksModule::module_descriptor(),
         &track_type_aliases(),
         &[track_query()],
         &[],

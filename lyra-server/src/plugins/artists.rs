@@ -3,24 +3,17 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use harmony_core::{
-    FunctionSpec,
-    ModuleExport,
-    ModuleSpec,
-};
 use harmony_luau as luau;
 use harmony_luau::IntoLuauReturn;
 #[cfg(feature = "docgen")]
 use harmony_luau::render_definition_file_with_support;
 #[cfg(feature = "docgen")]
 use harmony_luau::{
+    DescribeModule,
     FieldDescriptor,
     InterfaceDescriptor,
     LuauType,
     LuauTypeInfo,
-    ModuleDescriptor,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
     TypeAliasDescriptor,
 };
 use serde::Serialize;
@@ -32,11 +25,17 @@ use agdb::{
     DbId,
 };
 
-use crate::plugins::args;
+use crate::plugins::args::{
+    self,
+    UniqueIds,
+};
 use crate::plugins::catalog;
 use crate::services::catalog::artists::ArtistKey;
 use crate::{
-    plugins::db,
+    plugins::db::{
+        Db,
+        ViewerDb,
+    },
     services::{
         self,
         artists::{
@@ -62,128 +61,77 @@ use lyra_db::ArtistRelationType;
 use lyra_db::ArtistType;
 use lyra_db::CreditType;
 
-struct ArtistsModule;
+pub(crate) struct ArtistsModule;
 
-pub(crate) fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("lyra/artists")
-        .function(get_spec())
-        .function(query_spec())
-        .function(by_release_spec())
-        .function(by_track_spec())
-        .function(relations_spec())
-        .function(artwork_id_by_name_spec())
-        .userdata(crate::plugins::types::LuauArtistType::_harmony_userdata_spec())
+fn register_userdata(spec: harmony_core::ModuleSpec) -> harmony_core::ModuleSpec {
+    spec.userdata(crate::plugins::types::LuauArtistType::_harmony_userdata_spec())
         .userdata(crate::plugins::types::LuauArtistRelationType::_harmony_userdata_spec())
         .userdata(crate::plugins::types::LuauCreditType::_harmony_userdata_spec())
-        .install(|_| Ok(ModuleExport::new(ArtistsModule)))
 }
 
-// Unscoped: public artwork routes resolve names without a caller.
-fn artwork_id_by_name_spec() -> FunctionSpec {
-    FunctionSpec::new("artwork_id_by_name")
-        .arg_name("name")
-        .call_async(std::sync::Arc::new(artwork_id_by_name_callback))
+/// The `query` argument, read with its page bounds.
+struct ArtistQuery(catalog::PagedQuery<Artists>);
+
+impl<'vm> luau::FromLuau<'vm> for ArtistQuery {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let opts: luau::Table = reader.read()?;
+        let filter = read_filter(reader.vm(), &opts)?;
+        catalog::read_query::<Artists>(reader.vm(), &opts, filter).map(Self)
+    }
 }
 
-fn artwork_id_by_name_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let name: String = frame.args.read_named("name")?;
-    let db = db::get(frame.vm)?;
-    Ok(luau::ScheduledFuture::new(async move {
-        let name = name.trim();
-        if name.is_empty() {
-            return Ok(luau::Value::Nil);
-        }
-        let db = db.read().await;
-        let id = lyra_db::artists::find_by_scan_name(&*db, name)?;
-        Ok(id.map_or(luau::Value::Nil, |id| luau::Value::from(id.0)))
-    }))
+impl luau::LuauTypeInfo for ArtistQuery {
+    fn luau_type() -> luau::LuauType {
+        luau::LuauType::named("ArtistQuery")
+    }
 }
 
-fn query_spec() -> FunctionSpec {
-    FunctionSpec::new("query")
-        .arg_name("query")
-        .call_async(std::sync::Arc::new(query_callback))
+#[cfg(feature = "docgen")]
+struct ArtistRecord;
+
+#[cfg(feature = "docgen")]
+impl LuauTypeInfo for ArtistRecord {
+    fn luau_type() -> LuauType {
+        LuauType::named("Artist")
+    }
 }
 
-fn get_spec() -> FunctionSpec {
-    FunctionSpec::new("get")
-        .arg_name("ids")
-        .call_async(std::sync::Arc::new(get_callback))
+#[cfg(feature = "docgen")]
+struct ArtistPage;
+
+#[cfg(feature = "docgen")]
+impl LuauTypeInfo for ArtistPage {
+    fn luau_type() -> LuauType {
+        LuauType::named("ArtistPage")
+    }
 }
 
-fn by_release_spec() -> FunctionSpec {
-    FunctionSpec::new("by_release")
-        .arg_name("release_ids")
-        .call_async(std::sync::Arc::new(by_release_callback))
-}
+#[harmony_macros::module(
+    id = "lyra/artists",
+    docs_feature = "docgen",
+    extend = "register_userdata"
+)]
+impl ArtistsModule {
+    #[harmony(
+        description = "The artists with these ids that the caller can see, keyed by id.",
+        returns(HashMap<u64, ArtistRecord>)
+    )]
+    async fn get(
+        ids: UniqueIds,
+        #[context] db: ViewerDb,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        catalog::keyed_table(db, ids.0, lookups::get::<Artists>).await
+    }
 
-fn by_track_spec() -> FunctionSpec {
-    FunctionSpec::new("by_track")
-        .arg_name("track_ids")
-        .call_async(std::sync::Arc::new(by_track_callback))
-}
-
-fn relations_spec() -> FunctionSpec {
-    FunctionSpec::new("relations")
-        .arg_name("ids")
-        .call_async(std::sync::Arc::new(relations_callback))
-}
-
-fn get_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    catalog::keyed_lookup(&mut frame, "ids", lookups::get::<Artists>)
-}
-
-fn by_release_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    catalog::keyed_lookup(
-        &mut frame,
-        "release_ids",
-        lookups::artists_by_owner::<Releases>,
-    )
-}
-
-fn by_track_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    catalog::keyed_lookup(&mut frame, "track_ids", lookups::artists_by_owner::<Tracks>)
-}
-
-fn relations_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    catalog::keyed_lookup(&mut frame, "ids", relation_infos)
-}
-
-fn relation_infos(
-    db: &DbAny,
-    viewer: &Viewer,
-    ids: &[DbId],
-) -> Result<HashMap<DbId, Vec<ArtistRelationInfo>>, CatalogError> {
-    Ok(lookups::artist_relations(db, viewer, ids)?
-        .into_iter()
-        .map(|(id, relations)| {
-            (
-                id,
-                relations.into_iter().map(to_artist_relation_info).collect(),
-            )
-        })
-        .collect())
-}
-
-fn query_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let opts: luau::Table = frame.args.read_named("query")?;
-    let filter = read_filter(frame.vm, &opts)?;
-    let request = catalog::read_query::<Artists>(frame.vm, &opts, filter)?;
-    let db = db::scoped(&frame)?;
-
-    Ok(luau::ScheduledFuture::new(async move {
+    #[harmony(
+        description = "The artists the caller can see that pass every filter, sorted and paged. Artists are visible through credits on releases or tracks the caller can see. Without `sort`, a search ranks by relevance and anything else is by sort name.",
+        returns(ArtistPage)
+    )]
+    async fn query(
+        query: ArtistQuery,
+        #[context] db: ViewerDb,
+    ) -> luau::runtime::Result<luau::ReturnValues> {
+        let request = query.0;
         let (db, viewer) = db.read().await?;
         let page =
             services::catalog::page(&db, &viewer, &request.query, request.offset, request.limit)
@@ -204,7 +152,73 @@ fn query_callback(
                 })
                 .map_err(catalog::error)?;
         catalog::page_table(page)?.into_luau_return()
-    }))
+    }
+
+    #[harmony(
+        description = "The artists credited on each of these releases that the caller can see, in credit order, keyed by release id.",
+        returns(HashMap<u64, Vec<ArtistRecord>>)
+    )]
+    async fn by_release(
+        release_ids: UniqueIds,
+        #[context] db: ViewerDb,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        catalog::keyed_table(db, release_ids.0, lookups::artists_by_owner::<Releases>).await
+    }
+
+    #[harmony(
+        description = "The artists credited on each of these tracks that the caller can see, in credit order, keyed by track id.",
+        returns(HashMap<u64, Vec<ArtistRecord>>)
+    )]
+    async fn by_track(
+        track_ids: UniqueIds,
+        #[context] db: ViewerDb,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        catalog::keyed_table(db, track_ids.0, lookups::artists_by_owner::<Tracks>).await
+    }
+
+    // Unscoped: public artwork routes resolve names without a caller.
+    #[harmony(
+        description = "The id of the artist with exactly this name, ignoring case. Not scoped to any caller: it is only for resolving artwork on public artwork routes, which must return nothing but image bytes."
+    )]
+    async fn artwork_id_by_name(
+        name: String,
+        #[context] db: Db,
+    ) -> luau::runtime::Result<Option<i64>> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Ok(None);
+        }
+        let db = db.read().await;
+        let id = lyra_db::artists::find_by_scan_name(&*db, name)?;
+        Ok(id.map(|id| id.0))
+    }
+
+    #[harmony(
+        description = "The relations of each of these artists to other artists the caller can see, keyed by artist id.",
+        returns(HashMap<u64, Vec<ArtistRelationInfo>>)
+    )]
+    async fn relations(
+        ids: UniqueIds,
+        #[context] db: ViewerDb,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        catalog::keyed_table(db, ids.0, relation_infos).await
+    }
+}
+
+fn relation_infos(
+    db: &DbAny,
+    viewer: &Viewer,
+    ids: &[DbId],
+) -> Result<HashMap<DbId, Vec<ArtistRelationInfo>>, CatalogError> {
+    Ok(lookups::artist_relations(db, viewer, ids)?
+        .into_iter()
+        .map(|(id, relations)| {
+            (
+                id,
+                relations.into_iter().map(to_artist_relation_info).collect(),
+            )
+        })
+        .collect())
 }
 
 #[derive(Serialize)]
@@ -292,16 +306,6 @@ fn parse_optional_credit_types(
             "{key} must be an array of CreditType values, got {}",
             other.type_name()
         ))),
-    }
-}
-
-#[cfg(feature = "docgen")]
-fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
-    ParameterDescriptor {
-        name,
-        ty,
-        description: None,
-        variadic: false,
     }
 }
 
@@ -453,84 +457,9 @@ fn artist_interfaces() -> Vec<InterfaceDescriptor> {
 }
 
 #[cfg(feature = "docgen")]
-fn module_descriptor() -> ModuleDescriptor {
-    ModuleDescriptor {
-        name: "Artists",
-        local_name: "artists",
-        description: None,
-        fields: Vec::new(),
-        functions: vec![
-            ModuleFunctionDescriptor {
-                path: vec!["get"],
-                description: Some(
-                    "The artists with these ids that the caller can see, keyed by id.",
-                ),
-                params: vec![param("ids", Vec::<u64>::luau_type())],
-                returns: vec![LuauType::map(u64::luau_type(), LuauType::named("Artist"))],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["query"],
-                description: Some(
-                    "The artists the caller can see that pass every filter, sorted and paged. Artists are visible through credits on releases or tracks the caller can see. Without `sort`, a search ranks by relevance and anything else is by sort name.",
-                ),
-                params: vec![param("query", LuauType::named("ArtistQuery"))],
-                returns: vec![LuauType::named("ArtistPage")],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["by_release"],
-                description: Some(
-                    "The artists credited on each of these releases that the caller can see, in credit order, keyed by release id.",
-                ),
-                params: vec![param("release_ids", Vec::<u64>::luau_type())],
-                returns: vec![LuauType::map(
-                    u64::luau_type(),
-                    LuauType::array(LuauType::named("Artist")),
-                )],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["by_track"],
-                description: Some(
-                    "The artists credited on each of these tracks that the caller can see, in credit order, keyed by track id.",
-                ),
-                params: vec![param("track_ids", Vec::<u64>::luau_type())],
-                returns: vec![LuauType::map(
-                    u64::luau_type(),
-                    LuauType::array(LuauType::named("Artist")),
-                )],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["artwork_id_by_name"],
-                description: Some(
-                    "The id of the artist with exactly this name, ignoring case. Not scoped to any caller: it is only for resolving artwork on public artwork routes, which must return nothing but image bytes.",
-                ),
-                params: vec![param("name", String::luau_type())],
-                returns: vec![Option::<i64>::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["relations"],
-                description: Some(
-                    "The relations of each of these artists to other artists the caller can see, keyed by artist id.",
-                ),
-                params: vec![param("ids", Vec::<u64>::luau_type())],
-                returns: vec![LuauType::map(
-                    u64::luau_type(),
-                    LuauType::array(LuauType::named("ArtistRelationInfo")),
-                )],
-                yields: true,
-            },
-        ],
-    }
-}
-
-#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
-        &module_descriptor(),
+        &ArtistsModule::module_descriptor(),
         &artist_type_aliases(),
         &artist_interfaces(),
         &[
@@ -539,4 +468,11 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
             <crate::plugins::types::LuauCreditType as harmony_luau::DescribeUserData>::class_descriptor(),
         ],
     )
+}
+
+#[cfg(feature = "docgen")]
+impl LuauTypeInfo for ArtistRelationInfo {
+    fn luau_type() -> LuauType {
+        LuauType::named("ArtistRelationInfo")
+    }
 }

@@ -146,7 +146,7 @@ scopes! {
     },
     Artists => {
         id: "lyra.artists",
-        module: artists::module_spec,
+        module: artists::ArtistsModule::module_spec,
         effects: &[],
     },
     Auth => {
@@ -171,7 +171,7 @@ scopes! {
     },
     Editions => {
         id: "lyra.editions",
-        module: editions::module_spec,
+        module: editions::EditionsModule::module_spec,
         effects: &[],
     },
     Entities => {
@@ -194,7 +194,7 @@ scopes! {
     },
     Genres => {
         id: "lyra.genres",
-        module: genres::module_spec,
+        module: genres::GenresModule::module_spec,
         effects: &[Effect::WritesLibrary("genres")],
     },
     Ids => {
@@ -209,7 +209,7 @@ scopes! {
     },
     Labels => {
         id: "lyra.labels",
-        module: labels::module_spec,
+        module: labels::LabelsModule::module_spec,
         effects: &[Effect::WritesLibrary("record labels")],
     },
     Libraries => {
@@ -281,7 +281,7 @@ scopes! {
     },
     Releases => {
         id: "lyra.releases",
-        module: releases::module_spec,
+        module: releases::ReleasesModule::module_spec,
         effects: &[Effect::WritesLibrary("track chains")],
     },
     Server => {
@@ -304,7 +304,7 @@ scopes! {
     },
     Tracks => {
         id: "lyra.tracks",
-        module: tracks::module_spec,
+        module: tracks::TracksModule::module_spec,
         effects: &[],
     },
     Users => {

@@ -4,11 +4,6 @@
 // www.meshiplaw.com/lyra.
 
 use agdb::DbId;
-use harmony_core::{
-    FunctionSpec,
-    ModuleExport,
-    ModuleSpec,
-};
 use harmony_luau as luau;
 use harmony_luau::{
     DescribeInterface,
@@ -19,9 +14,7 @@ use harmony_luau::{
 };
 #[cfg(feature = "docgen")]
 use harmony_luau::{
-    ModuleDescriptor,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
+    DescribeModule,
     TypeAliasDescriptor,
     render_definition_file_with_support,
 };
@@ -29,10 +22,19 @@ use serde::{
     Deserialize,
     Serialize,
 };
+#[cfg(feature = "docgen")]
+use std::collections::HashMap;
 
-use crate::plugins::args;
+use crate::plugins::args::{
+    self,
+    PositiveId,
+    UniqueIds,
+};
 use crate::plugins::catalog;
-use crate::plugins::db;
+use crate::plugins::db::{
+    Db,
+    ViewerDb,
+};
 use crate::services::catalog::genres::GenreKey;
 use crate::services::{
     self,
@@ -49,40 +51,59 @@ use lyra_db::genres::{
     ResolveGenre,
 };
 
-struct GenresModule;
+pub(crate) struct GenresModule;
 
-pub(crate) fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("lyra/genres")
-        .function(query_spec())
-        .function(resolve_spec())
-        .function(add_parent_spec())
-        .function(get_spec())
-        .function(by_release_spec())
-        .function(find_by_name_spec())
-        .function(artwork_release_ids_spec())
-        .install(|_| Ok(ModuleExport::new(GenresModule)))
+/// The `query` argument, read with its page bounds.
+struct GenreQuery(catalog::PagedQuery<Genres>);
+
+impl<'vm> luau::FromLuau<'vm> for GenreQuery {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let opts: luau::Table = reader.read()?;
+        let vm = reader.vm();
+        let filter = GenreFilter {
+            ids: catalog::optional_ids(vm, &opts, "ids")?,
+            exclude_ids: args::optional_unique_ids(vm, &opts, "exclude_ids")?,
+            library: args::optional_positive_id(vm, &opts, "library_id")?,
+            releases: catalog::optional_ids(vm, &opts, "release_ids")?,
+        };
+        catalog::read_query::<Genres>(vm, &opts, filter).map(Self)
+    }
 }
 
-fn query_spec() -> FunctionSpec {
-    FunctionSpec::new("query")
-        .arg_name("query")
-        .call_async(std::sync::Arc::new(query_callback))
+impl LuauTypeInfo for GenreQuery {
+    fn luau_type() -> LuauType {
+        LuauType::named("GenreQuery")
+    }
 }
 
-fn query_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let opts: luau::Table = frame.args.read_named("query")?;
-    let filter = GenreFilter {
-        ids: catalog::optional_ids(frame.vm, &opts, "ids")?,
-        exclude_ids: args::optional_unique_ids(frame.vm, &opts, "exclude_ids")?,
-        library: args::optional_positive_id(frame.vm, &opts, "library_id")?,
-        releases: catalog::optional_ids(frame.vm, &opts, "release_ids")?,
-    };
-    let request = catalog::read_query::<Genres>(frame.vm, &opts, filter)?;
-    let db = db::scoped(&frame)?;
+#[cfg(feature = "docgen")]
+struct GenrePage;
 
-    Ok(luau::ScheduledFuture::new(async move {
+#[cfg(feature = "docgen")]
+impl LuauTypeInfo for GenrePage {
+    fn luau_type() -> LuauType {
+        LuauType::named("GenrePage")
+    }
+}
+
+impl<'vm> luau::FromLuau<'vm> for GenreResolveRequest {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let table: luau::Table = reader.read()?;
+        genre_request_from_table(reader.vm(), table)
+    }
+}
+
+#[harmony_macros::module(id = "lyra/genres", docs_feature = "docgen")]
+impl GenresModule {
+    #[harmony(
+        description = "The genres of the releases the caller can see that pass every filter, sorted and paged. Without `sort`, a search ranks by relevance and anything else is by name.",
+        returns(GenrePage)
+    )]
+    async fn query(
+        query: GenreQuery,
+        #[context] db: ViewerDb,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let request = query.0;
         let (db, viewer) = db.read().await?;
         let page =
             services::catalog::page(&db, &viewer, &request.query, request.offset, request.limit)
@@ -100,78 +121,83 @@ fn query_callback(
             GenreRecord::from,
         )
         .map_err(catalog::error)?;
-        catalog::page_table(page).map(luau::Value::TableData)
-    }))
-}
+        catalog::page_table(page)
+    }
 
-fn get_spec() -> FunctionSpec {
-    FunctionSpec::new("get")
-        .arg_name("ids")
-        .call_async(std::sync::Arc::new(get_callback))
-}
+    async fn resolve(
+        request: GenreResolveRequest,
+        #[context] db: Db,
+    ) -> luau::runtime::Result<i64> {
+        let genre_id = {
+            let mut db = db.write().await;
+            resolve_genre_from_request(&mut db, &request).map_err(crate::plugins::runtime_error)
+        }?;
+        Ok(genre_id.0)
+    }
 
-fn by_release_spec() -> FunctionSpec {
-    FunctionSpec::new("by_release")
-        .arg_name("release_ids")
-        .call_async(std::sync::Arc::new(by_release_callback))
-}
+    async fn add_parent(
+        child_id: i64,
+        parent_id: i64,
+        #[context] db: Db,
+    ) -> luau::runtime::Result<()> {
+        let mut db = db.write().await;
+        lyra_db::genres::link_to_parent(&mut db, DbId(child_id), DbId(parent_id))
+            .map_err(crate::plugins::runtime_error)
+    }
 
-fn get_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    catalog::keyed_lookup(&mut frame, "ids", |db, viewer, ids| {
-        Ok(lookups::get::<Genres>(db, viewer, ids)?
-            .into_iter()
-            .map(|(id, genre)| (id, GenreRecord::from(genre)))
-            .collect())
-    })
-}
+    #[harmony(
+        description = "The genres with these ids that the caller can see, keyed by id.",
+        returns(HashMap<u64, GenreRecord>)
+    )]
+    async fn get(
+        ids: UniqueIds,
+        #[context] db: ViewerDb,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        catalog::keyed_table(db, ids.0, |db, viewer, ids| {
+            Ok(lookups::get::<Genres>(db, viewer, ids)?
+                .into_iter()
+                .map(|(id, genre)| (id, GenreRecord::from(genre)))
+                .collect())
+        })
+        .await
+    }
 
-fn by_release_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    catalog::keyed_lookup(&mut frame, "release_ids", |db, viewer, ids| {
-        Ok(lookups::genres_by_release(db, viewer, ids)?
-            .into_iter()
-            .map(|(id, genres)| {
-                (
-                    id,
-                    genres
-                        .into_iter()
-                        .map(GenreRecord::from)
-                        .collect::<Vec<_>>(),
-                )
-            })
-            .collect())
-    })
-}
+    #[harmony(
+        description = "The genres of each of these releases that the caller can see, keyed by release id.",
+        returns(HashMap<u64, Vec<GenreRecord>>)
+    )]
+    async fn by_release(
+        release_ids: UniqueIds,
+        #[context] db: ViewerDb,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        catalog::keyed_table(db, release_ids.0, |db, viewer, ids| {
+            Ok(lookups::genres_by_release(db, viewer, ids)?
+                .into_iter()
+                .map(|(id, genres)| {
+                    (
+                        id,
+                        genres
+                            .into_iter()
+                            .map(GenreRecord::from)
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect())
+        })
+        .await
+    }
 
-fn resolve_spec() -> FunctionSpec {
-    FunctionSpec::new("resolve")
-        .arg_name("request")
-        .call_async(std::sync::Arc::new(resolve_callback))
-}
-
-fn add_parent_spec() -> FunctionSpec {
-    FunctionSpec::new("add_parent")
-        .arg_name("child_id")
-        .arg_name("parent_id")
-        .call_async(std::sync::Arc::new(add_parent_callback))
-}
-
-// Unscoped: public artwork routes compose a genre's cover without a caller.
-fn artwork_release_ids_spec() -> FunctionSpec {
-    FunctionSpec::new("artwork_release_ids")
-        .arg_name("genre_id")
-        .call_async(std::sync::Arc::new(artwork_release_ids_callback))
-}
-
-fn artwork_release_ids_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let genre_id = args::positive_id(frame.args.read_named("genre_id")?, "genre_id")?;
-    let db = db::get(frame.vm)?;
-    Ok(luau::ScheduledFuture::new(async move {
+    // Unscoped: public artwork routes compose a genre's cover without a caller.
+    #[harmony(
+        description = "The ids of the releases in this genre. Not scoped to any caller: it is only for composing the genre's artwork on public artwork routes, which must return nothing but image bytes.",
+        args(genre_id: i64),
+        returns(Vec<i64>)
+    )]
+    async fn artwork_release_ids(
+        genre_id: PositiveId,
+        #[context] db: Db,
+    ) -> luau::runtime::Result<luau::Value> {
+        let genre_id = genre_id.0;
         let db = db.read().await;
         if lyra_db::genres::get_by_id(&*db, genre_id)?.is_none() {
             return harmony_luau::serializable_to_luau_owned(Vec::<i64>::new());
@@ -182,58 +208,17 @@ fn artwork_release_ids_callback(
         harmony_luau::serializable_to_luau_owned(
             releases.into_iter().map(|id| id.0).collect::<Vec<_>>(),
         )
-    }))
-}
-
-fn find_by_name_spec() -> FunctionSpec {
-    FunctionSpec::new("find_by_name")
-        .arg_name("name")
-        .call_async(std::sync::Arc::new(find_by_name_callback))
-}
-
-fn resolve_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let request_table: luau::Table = frame.args.read_named("request")?;
-    let request = genre_request_from_table(frame.vm, request_table)?;
-    let db = db::get(frame.vm)?;
-
-    Ok(luau::ScheduledFuture::new(async move {
-        let genre_id = {
-            let mut db = db.write().await;
-            resolve_genre_from_request(&mut db, &request).map_err(crate::plugins::runtime_error)
-        }?;
-
-        Ok(luau::Value::from(genre_id.0))
-    }))
-}
-
-fn add_parent_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let child_id: i64 = frame.args.read_named("child_id")?;
-    let parent_id: i64 = frame.args.read_named("parent_id")?;
-    let db = db::get(frame.vm)?;
-
-    Ok(luau::ScheduledFuture::new(async move {
-        let mut db = db.write().await;
-        lyra_db::genres::link_to_parent(&mut db, DbId(child_id), DbId(parent_id))
-            .map_err(crate::plugins::runtime_error)
-    }))
-}
-
-fn find_by_name_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let name: String = frame.args.read_named("name")?;
-    let db = db::get(frame.vm)?;
-
-    let trimmed = name.trim().to_string();
-    if trimmed.is_empty() {
-        return Ok(luau::ScheduledFuture::new(async { Ok(luau::Value::Nil) }));
     }
 
-    Ok(luau::ScheduledFuture::new(async move {
+    #[harmony(
+        description = "The genre with exactly this name, ignoring case. Not scoped to any caller.",
+        returns(Option<GenreRecord>)
+    )]
+    async fn find_by_name(name: String, #[context] db: Db) -> luau::runtime::Result<luau::Value> {
+        let trimmed = name.trim().to_string();
+        if trimmed.is_empty() {
+            return Ok(luau::Value::Nil);
+        }
         let genre = {
             let db = db.read().await;
             match lyra_db::genres::find_by_name(&db, &trimmed)? {
@@ -243,7 +228,7 @@ fn find_by_name_callback(
         };
 
         optional_genre_value(genre)
-    }))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -450,93 +435,6 @@ impl DescribeInterface for GenreResolveRequest {
 }
 
 #[cfg(feature = "docgen")]
-fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
-    ParameterDescriptor {
-        name,
-        ty,
-        description: None,
-        variadic: false,
-    }
-}
-
-#[cfg(feature = "docgen")]
-fn module_descriptor() -> ModuleDescriptor {
-    ModuleDescriptor {
-        name: "Genres",
-        local_name: "genres",
-        description: None,
-        fields: Vec::new(),
-        functions: vec![
-            ModuleFunctionDescriptor {
-                path: vec!["query"],
-                description: Some(
-                    "The genres of the releases the caller can see that pass every filter, sorted and paged. Without `sort`, a search ranks by relevance and anything else is by name.",
-                ),
-                params: vec![param("query", LuauType::named("GenreQuery"))],
-                returns: vec![LuauType::named("GenrePage")],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["resolve"],
-                description: None,
-                params: vec![param("request", GenreResolveRequest::luau_type())],
-                returns: vec![i64::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["add_parent"],
-                description: None,
-                params: vec![
-                    param("child_id", i64::luau_type()),
-                    param("parent_id", i64::luau_type()),
-                ],
-                returns: Vec::new(),
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["get"],
-                description: Some(
-                    "The genres with these ids that the caller can see, keyed by id.",
-                ),
-                params: vec![param("ids", Vec::<u64>::luau_type())],
-                returns: vec![LuauType::map(u64::luau_type(), GenreRecord::luau_type())],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["by_release"],
-                description: Some(
-                    "The genres of each of these releases that the caller can see, keyed by release id.",
-                ),
-                params: vec![param("release_ids", Vec::<u64>::luau_type())],
-                returns: vec![LuauType::map(
-                    u64::luau_type(),
-                    Vec::<GenreRecord>::luau_type(),
-                )],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["artwork_release_ids"],
-                description: Some(
-                    "The ids of the releases in this genre. Not scoped to any caller: it is only for composing the genre's artwork on public artwork routes, which must return nothing but image bytes.",
-                ),
-                params: vec![param("genre_id", i64::luau_type())],
-                returns: vec![Vec::<i64>::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["find_by_name"],
-                description: Some(
-                    "The genre with exactly this name, ignoring case. Not scoped to any caller.",
-                ),
-                params: vec![param("name", String::luau_type())],
-                returns: vec![Option::<GenreRecord>::luau_type()],
-                yields: true,
-            },
-        ],
-    }
-}
-
-#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     let mut query = InterfaceDescriptor::new("GenreQuery", None);
     query.fields.extend([
@@ -563,7 +461,7 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
     ]);
     query.fields.extend(catalog::query_fields("GenreSortKey"));
     render_definition_file_with_support(
-        &module_descriptor(),
+        &GenresModule::module_descriptor(),
         &std::iter::once(TypeAliasDescriptor::new(
             "GenreSummary",
             LuauType::intersection(vec![

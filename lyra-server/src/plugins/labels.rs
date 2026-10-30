@@ -4,11 +4,6 @@
 // www.meshiplaw.com/lyra.
 
 use agdb::DbId;
-use harmony_core::{
-    FunctionSpec,
-    ModuleExport,
-    ModuleSpec,
-};
 use harmony_luau as luau;
 use harmony_luau::{
     DescribeInterface,
@@ -19,15 +14,21 @@ use harmony_luau::{
 };
 #[cfg(feature = "docgen")]
 use harmony_luau::{
-    ModuleDescriptor,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
+    DescribeModule,
     render_definition_file_with_support,
 };
+#[cfg(feature = "docgen")]
+use std::collections::HashMap;
 
-use crate::plugins::args;
+use crate::plugins::args::{
+    PositiveId,
+    UniqueIds,
+};
 use crate::{
-    plugins::db,
+    plugins::db::{
+        Db,
+        ViewerDb,
+    },
     services::auth::Principal,
 };
 use lyra_db::Permission;
@@ -36,7 +37,7 @@ use lyra_db::labels::{
     ResolveLabel,
 };
 
-struct LabelsModule;
+pub(crate) struct LabelsModule;
 #[cfg(feature = "docgen")]
 struct LabelResolveRequest;
 #[cfg(feature = "docgen")]
@@ -45,65 +46,37 @@ struct LabelInfo;
 #[cfg(feature = "docgen")]
 struct LabelForReleaseInfo;
 
-pub(crate) fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("lyra/labels")
-        .function(resolve_spec())
-        .function(get_by_id_spec())
-        .function(get_for_release_spec())
-        .function(get_for_releases_many_spec())
-        .function(get_releases_spec())
-        .function(get_releases_many_spec())
-        .install(|_| Ok(ModuleExport::new(LabelsModule)))
-}
+/// The dispatch principal, which is absent for the system.
+struct Caller(Option<Principal>);
 
-fn resolve_spec() -> FunctionSpec {
-    FunctionSpec::new("resolve")
-        .arg_name("request")
-        .call_async(std::sync::Arc::new(resolve_callback))
-}
-
-fn get_by_id_spec() -> FunctionSpec {
-    FunctionSpec::new("get_by_id")
-        .arg_name("label_id")
-        .call_async(std::sync::Arc::new(get_by_id_callback))
-}
-
-fn get_for_release_spec() -> FunctionSpec {
-    FunctionSpec::new("get_for_release")
-        .arg_name("release_id")
-        .call_async(std::sync::Arc::new(get_for_release_callback))
-}
-
-fn get_for_releases_many_spec() -> FunctionSpec {
-    FunctionSpec::new("get_for_releases_many")
-        .arg_name("release_ids")
-        .call_async(std::sync::Arc::new(get_for_releases_many_callback))
-}
-
-fn get_releases_spec() -> FunctionSpec {
-    FunctionSpec::new("get_releases")
-        .arg_name("label_id")
-        .call_async(std::sync::Arc::new(get_releases_callback))
-}
-
-fn get_releases_many_spec() -> FunctionSpec {
-    FunctionSpec::new("get_releases_many")
-        .arg_name("label_ids")
-        .call_async(std::sync::Arc::new(get_releases_many_callback))
-}
-
-fn resolve_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let request: luau::Table = frame.args.read_named("request")?;
-    let request = parse_label_resolve_request(frame.vm, &request)?;
-    let principal = caller_principal(&frame.context)?;
-    if !can_mutate_global(principal.as_ref()) {
-        return Ok(luau::ScheduledFuture::new(async { Ok(0_i64) }));
+impl luau::FromCallFrame for Caller {
+    fn from_call_frame(_vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
+        crate::plugins::auth::dispatch_principal(context).map(Self)
     }
+}
 
-    let db = db::get(frame.vm)?;
-    Ok(luau::ScheduledFuture::new(async move {
+impl<'vm> luau::FromLuau<'vm> for LabelResolveRequestData {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let request: luau::Table = reader.read()?;
+        parse_label_resolve_request(reader.vm(), &request)
+    }
+}
+
+#[harmony_macros::module(
+    id = "lyra/labels",
+    description = "Read and mutate release label metadata.",
+    docs_feature = "docgen"
+)]
+impl LabelsModule {
+    #[harmony(args(request: LabelResolveRequest))]
+    async fn resolve(
+        request: LabelResolveRequestData,
+        #[context] caller: Caller,
+        #[context] db: Db,
+    ) -> luau::runtime::Result<i64> {
+        if !can_mutate_global(caller.0.as_ref()) {
+            return Ok(0);
+        }
         let label_id = {
             let mut db = db.write().await;
             lyra_db::labels::resolve(
@@ -117,31 +90,26 @@ fn resolve_callback(
         }?;
 
         Ok(label_id.0)
-    }))
-}
+    }
 
-fn get_by_id_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let label_id = args::positive_id(frame.args.read_named("label_id")?, "label_id")?;
-    let db = db::get(frame.vm)?;
-    Ok(luau::ScheduledFuture::new(async move {
+    #[harmony(args(label_id: i64), returns(Option<LabelInfo>))]
+    async fn get_by_id(
+        label_id: PositiveId,
+        #[context] db: Db,
+    ) -> luau::runtime::Result<Option<luau::OwnedTable>> {
         let label = {
             let db = db.read().await;
-            lyra_db::labels::get_by_id(&db, label_id).map_err(crate::plugins::runtime_error)
+            lyra_db::labels::get_by_id(&db, label_id.0).map_err(crate::plugins::runtime_error)
         }?;
-        Ok(label
-            .map(|label| luau::Value::TableData(label_info_table(label)))
-            .unwrap_or(luau::Value::Nil))
-    }))
-}
+        Ok(label.map(label_info_table))
+    }
 
-fn get_for_release_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let release_id = args::positive_id(frame.args.read_named("release_id")?, "release_id")?;
-    let db = db::scoped(&frame)?;
-    Ok(luau::ScheduledFuture::new(async move {
+    #[harmony(args(release_id: i64), returns(Vec<LabelForReleaseInfo>))]
+    async fn get_for_release(
+        release_id: PositiveId,
+        #[context] db: ViewerDb,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let release_id = release_id.0;
         let labels = {
             let (db, viewer) = db.read().await?;
             if viewer.sees_entity(&*db, release_id)? {
@@ -151,34 +119,33 @@ fn get_for_release_callback(
             }
         };
         Ok(label_release_array(labels))
-    }))
-}
+    }
 
-fn get_for_releases_many_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let ids_table: luau::Table = frame.args.read_named("release_ids")?;
-    let ids = args::unique_ids(frame.vm, &ids_table)?;
-    let db = db::scoped(&frame)?;
-    Ok(luau::ScheduledFuture::new(async move {
+    #[harmony(
+        args(release_ids: Vec<i64>),
+        returns(HashMap<i64, Vec<LabelForReleaseInfo>>)
+    )]
+    async fn get_for_releases_many(
+        release_ids: UniqueIds,
+        #[context] db: ViewerDb,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
         let labels = {
             let (db, viewer) = db.read().await?;
-            let readable = viewer.visible(&db, ids)?;
+            let readable = viewer.visible(&db, release_ids.0)?;
             lyra_db::labels::get_for_releases_many(&db, &readable)
                 .map_err(crate::plugins::runtime_error)
         }?;
         Ok(luau::OwnedTable::from_entries(labels.into_iter().map(
             |(release_id, labels)| (release_id.0, label_release_array(labels)),
         )))
-    }))
-}
+    }
 
-fn get_releases_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let label_id = args::positive_id(frame.args.read_named("label_id")?, "label_id")?;
-    let db = db::scoped(&frame)?;
-    Ok(luau::ScheduledFuture::new(async move {
+    #[harmony(args(label_id: i64), returns(Vec<i64>))]
+    async fn get_releases(
+        label_id: PositiveId,
+        #[context] db: ViewerDb,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let label_id = label_id.0;
         let release_ids = {
             let (db, viewer) = db.read().await?;
             let release_ids = lyra_db::labels::get_releases(&db, label_id)?;
@@ -187,16 +154,14 @@ fn get_releases_callback(
                 .map_err(crate::plugins::runtime_error)
         }?;
         Ok(id_array(release_ids))
-    }))
-}
+    }
 
-fn get_releases_many_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let ids_table: luau::Table = frame.args.read_named("label_ids")?;
-    let ids = args::unique_ids(frame.vm, &ids_table)?;
-    let db = db::scoped(&frame)?;
-    Ok(luau::ScheduledFuture::new(async move {
+    #[harmony(args(label_ids: Vec<i64>), returns(HashMap<i64, Vec<i64>>))]
+    async fn get_releases_many(
+        label_ids: UniqueIds,
+        #[context] db: ViewerDb,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let ids = label_ids.0;
         let release_ids = {
             let (db, viewer) = db.read().await?;
             let mut visible = Vec::new();
@@ -206,13 +171,12 @@ fn get_releases_many_callback(
             }
             Ok::<_, luau::runtime::Error>(visible)
         }?;
-        let table = luau::OwnedTable::from_entries(
+        Ok(luau::OwnedTable::from_entries(
             release_ids
                 .into_iter()
                 .map(|(label_id, ids)| (label_id.0, id_array(ids))),
-        );
-        Ok(table)
-    }))
+        ))
+    }
 }
 
 #[derive(Clone)]
@@ -275,10 +239,6 @@ fn required_string(vm: &luau::Vm, table: &luau::Table, key: &str) -> luau::runti
     luau::table::optional_string_field(vm, table, key)?
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| crate::plugins::runtime_error(format!("{key} must be a non-empty string")))
-}
-
-fn caller_principal(context: &luau::CallContext) -> luau::runtime::Result<Option<Principal>> {
-    crate::plugins::auth::dispatch_principal(context)
 }
 
 fn can_mutate_global(principal: Option<&Principal>) -> bool {
@@ -355,16 +315,6 @@ fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
 }
 
 #[cfg(feature = "docgen")]
-fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
-    ParameterDescriptor {
-        name,
-        ty,
-        description: None,
-        variadic: false,
-    }
-}
-
-#[cfg(feature = "docgen")]
 impl DescribeInterface for LabelExternalId {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("LabelExternalId", None);
@@ -414,66 +364,9 @@ impl DescribeInterface for LabelForReleaseInfo {
 }
 
 #[cfg(feature = "docgen")]
-fn module_descriptor() -> ModuleDescriptor {
-    ModuleDescriptor {
-        name: "Labels",
-        local_name: "labels",
-        description: Some("Read and mutate release label metadata."),
-        fields: Vec::new(),
-        functions: vec![
-            ModuleFunctionDescriptor {
-                path: vec!["resolve"],
-                description: None,
-                params: vec![param("request", LabelResolveRequest::luau_type())],
-                returns: vec![i64::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["get_by_id"],
-                description: None,
-                params: vec![param("label_id", i64::luau_type())],
-                returns: vec![Option::<LabelInfo>::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["get_for_release"],
-                description: None,
-                params: vec![param("release_id", i64::luau_type())],
-                returns: vec![Vec::<LabelForReleaseInfo>::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["get_for_releases_many"],
-                description: None,
-                params: vec![param("release_ids", Vec::<i64>::luau_type())],
-                returns: vec![LuauType::map(
-                    i64::luau_type(),
-                    Vec::<LabelForReleaseInfo>::luau_type(),
-                )],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["get_releases"],
-                description: None,
-                params: vec![param("label_id", i64::luau_type())],
-                returns: vec![Vec::<i64>::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["get_releases_many"],
-                description: None,
-                params: vec![param("label_ids", Vec::<i64>::luau_type())],
-                returns: vec![LuauType::map(i64::luau_type(), Vec::<i64>::luau_type())],
-                yields: true,
-            },
-        ],
-    }
-}
-
-#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
-        &module_descriptor(),
+        &LabelsModule::module_descriptor(),
         &[],
         &[
             LabelExternalId::interface_descriptor(),

@@ -121,3 +121,18 @@ impl ViewerDb {
         self.db.clone()
     }
 }
+
+/// A module function's [`ViewerDb`] read as the [`system`].
+pub(crate) struct SystemDb(pub(crate) ViewerDb);
+
+impl harmony_luau::FromCallFrame for SystemDb {
+    fn from_call_frame(
+        vm: &harmony_luau::Vm,
+        _context: &harmony_luau::CallContext,
+    ) -> harmony_luau::runtime::Result<Self> {
+        Ok(Self(ViewerDb {
+            db: get(vm)?,
+            principal: None,
+        }))
+    }
+}

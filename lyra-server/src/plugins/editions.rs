@@ -3,91 +3,105 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use harmony_core::{
-    FunctionSpec,
-    ModuleExport,
-    ModuleSpec,
-};
 use harmony_luau as luau;
 #[cfg(feature = "docgen")]
 use harmony_luau::{
+    DescribeModule,
+    render_definition_file_with_support,
+};
+use harmony_luau::{
     LuauType,
     LuauTypeInfo,
-    ModuleDescriptor,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
-    render_definition_file_with_support,
 };
 use lyra_metadata::MediaFormat;
 
-struct EditionsModule;
+pub(crate) struct EditionsModule;
 
-pub(crate) fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("lyra/editions")
-        .function(media_formats_spec())
-        .function(media_formats_match_spec())
-        .function(barcode_spec())
-        .function(barcodes_match_spec())
-        .install(|_| Ok(ModuleExport::new(EditionsModule)))
+/// A format list given as a string or an array of strings, read leniently.
+struct MediaFormatsInput(Option<luau::Value>);
+
+impl<'vm> luau::FromLuau<'vm> for MediaFormatsInput {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        reader.read().map(Self)
+    }
 }
 
-fn media_formats_spec() -> FunctionSpec {
-    FunctionSpec::new("media_formats")
-        .arg_name("input")
-        .call(media_formats_callback)
+impl LuauTypeInfo for MediaFormatsInput {
+    fn luau_type() -> LuauType {
+        LuauType::optional(LuauType::union(vec![
+            String::luau_type(),
+            Vec::<String>::luau_type(),
+        ]))
+    }
 }
 
-fn media_formats_match_spec() -> FunctionSpec {
-    FunctionSpec::new("media_formats_match")
-        .arg_name("a")
-        .arg_name("b")
-        .call(media_formats_match_callback)
+/// A string argument that reads as nothing when it is anything else.
+struct LenientString(Option<String>);
+
+impl<'vm> luau::FromLuau<'vm> for LenientString {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let value: Option<luau::Value> = reader.read()?;
+        Ok(Self(string_value(value)))
+    }
 }
 
-fn barcode_spec() -> FunctionSpec {
-    FunctionSpec::new("barcode")
-        .arg_name("input")
-        .call(barcode_callback)
+impl LuauTypeInfo for LenientString {
+    fn luau_type() -> LuauType {
+        Option::<String>::luau_type()
+    }
 }
 
-fn barcodes_match_spec() -> FunctionSpec {
-    FunctionSpec::new("barcodes_match")
-        .arg_name("a")
-        .arg_name("b")
-        .call(barcodes_match_callback)
-}
+#[harmony_macros::module(
+    id = "lyra/editions",
+    description = "Normalizes edition formats and barcodes. Release contexts are already normalized; providers must map formats outside file-tag vocabularies to canonical names.",
+    docs_feature = "docgen"
+)]
+impl EditionsModule {
+    #[harmony(
+        description = "Parses tag values or canonical names (a string or array) into distinct formats: \"cd\", \"vinyl\", \"digital\", \"cassette\", \"sacd\", \"dvd\", \"bluray\", \"minidisc\", \"other\". Drops unrecognized values.",
+        returns(Vec<String>)
+    )]
+    fn media_formats(
+        vm: &luau::Vm,
+        input: MediaFormatsInput,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let formats = media_formats_value(vm, input.0)?;
+        Ok(luau::OwnedTable::from_array(
+            formats.into_iter().map(|format| format.as_str()),
+        ))
+    }
 
-fn media_formats_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let input: Option<luau::Value> = frame.args.read_optional_named("input")?;
-    let formats = media_formats_value(frame.vm, input)?;
-    let result = luau::OwnedTable::from_array(formats.into_iter().map(|format| format.as_str()));
-    frame.returns.write(luau::Value::TableData(result))
-}
+    #[harmony(
+        description = "Returns true when both inputs share a format parsed by `media_formats`. Unrecognized formats never match."
+    )]
+    fn media_formats_match(
+        vm: &luau::Vm,
+        a: MediaFormatsInput,
+        b: MediaFormatsInput,
+    ) -> luau::runtime::Result<bool> {
+        let a = media_formats_value(vm, a.0)?;
+        let b = media_formats_value(vm, b.0)?;
+        Ok(lyra_metadata::media_formats_match(&a, &b))
+    }
 
-fn media_formats_match_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let a: Option<luau::Value> = frame.args.read_optional_named("a")?;
-    let b: Option<luau::Value> = frame.args.read_optional_named("b")?;
-    let a = media_formats_value(frame.vm, a)?;
-    let b = media_formats_value(frame.vm, b)?;
-    frame
-        .returns
-        .write(lyra_metadata::media_formats_match(&a, &b))
-}
+    #[harmony(
+        description = "Normalizes a UPC, EAN, or GTIN to its zero-padded 14-digit form, so every spelling of one code compares equal. Returns nil for input that is not a plausible barcode."
+    )]
+    fn barcode(input: LenientString) -> Option<String> {
+        input
+            .0
+            .and_then(|input| lyra_metadata::normalize_barcode(&input))
+    }
 
-fn barcode_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let input: Option<luau::Value> = frame.args.read_optional_named("input")?;
-    let barcode = string_value(input).and_then(|input| lyra_metadata::normalize_barcode(&input));
-    frame.returns.write(barcode)
-}
-
-fn barcodes_match_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let a: Option<luau::Value> = frame.args.read_optional_named("a")?;
-    let b: Option<luau::Value> = frame.args.read_optional_named("b")?;
-    let matched = match (string_value(a), string_value(b)) {
-        (Some(a), Some(b)) => lyra_metadata::barcodes_match(&a, &b),
-        _ => false,
-    };
-    frame.returns.write(matched)
+    #[harmony(
+        description = "Returns true when both sides normalize to the same barcode. Nil or invalid input never matches."
+    )]
+    fn barcodes_match(a: LenientString, b: LenientString) -> bool {
+        match (a.0, b.0) {
+            (Some(a), Some(b)) => lyra_metadata::barcodes_match(&a, &b),
+            _ => false,
+        }
+    }
 }
 
 fn media_formats_value(
@@ -119,80 +133,6 @@ fn string_value(value: Option<luau::Value>) -> Option<String> {
 }
 
 #[cfg(feature = "docgen")]
-fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
-    ParameterDescriptor {
-        name,
-        ty,
-        description: None,
-        variadic: false,
-    }
-}
-
-#[cfg(feature = "docgen")]
-fn media_formats_input_type() -> LuauType {
-    LuauType::optional(LuauType::union(vec![
-        String::luau_type(),
-        Vec::<String>::luau_type(),
-    ]))
-}
-
-#[cfg(feature = "docgen")]
-fn module_descriptor() -> ModuleDescriptor {
-    ModuleDescriptor {
-        name: "Editions",
-        local_name: "editions",
-        description: Some(
-            "Normalizes edition formats and barcodes. Release contexts are already normalized; providers must map formats outside file-tag vocabularies to canonical names.",
-        ),
-        fields: Vec::new(),
-        functions: vec![
-            ModuleFunctionDescriptor {
-                path: vec!["media_formats"],
-                description: Some(
-                    "Parses tag values or canonical names (a string or array) into distinct formats: \"cd\", \"vinyl\", \"digital\", \"cassette\", \"sacd\", \"dvd\", \"bluray\", \"minidisc\", \"other\". Drops unrecognized values.",
-                ),
-                params: vec![param("input", media_formats_input_type())],
-                returns: vec![Vec::<String>::luau_type()],
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["media_formats_match"],
-                description: Some(
-                    "Returns true when both inputs share a format parsed by `media_formats`. Unrecognized formats never match.",
-                ),
-                params: vec![
-                    param("a", media_formats_input_type()),
-                    param("b", media_formats_input_type()),
-                ],
-                returns: vec![bool::luau_type()],
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["barcode"],
-                description: Some(
-                    "Normalizes a UPC, EAN, or GTIN to its zero-padded 14-digit form, so every spelling of one code compares equal. Returns nil for input that is not a plausible barcode.",
-                ),
-                params: vec![param("input", Option::<String>::luau_type())],
-                returns: vec![Option::<String>::luau_type()],
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["barcodes_match"],
-                description: Some(
-                    "Returns true when both sides normalize to the same barcode. Nil or invalid input never matches.",
-                ),
-                params: vec![
-                    param("a", Option::<String>::luau_type()),
-                    param("b", Option::<String>::luau_type()),
-                ],
-                returns: vec![bool::luau_type()],
-                yields: false,
-            },
-        ],
-    }
-}
-
-#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
-    render_definition_file_with_support(&module_descriptor(), &[], &[], &[])
+    render_definition_file_with_support(&EditionsModule::module_descriptor(), &[], &[], &[])
 }
