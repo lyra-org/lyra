@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 
+use harmony_core::UserDataBinding;
 use harmony_luau as luau;
 use harmony_luau::{
     DescribeInterface,
@@ -154,7 +155,7 @@ impl NetModule {
         let origin = origin.clone();
         Ok(luau::ScheduledFuture::new(async move {
             let socket = bind_udp_socket(options).await?;
-            UdpSocket::_harmony_userdata_class().create_value(&vm, &origin, socket)
+            UdpSocket::class().create_value(&vm, &origin, socket)
         }))
     }
 
@@ -173,7 +174,7 @@ impl NetModule {
         let origin = origin.clone();
         Ok(luau::ScheduledFuture::new(async move {
             let stream = connect_tcp_stream(options).await?;
-            TcpStream::_harmony_userdata_class().create_value(&vm, &origin, stream)
+            TcpStream::class().create_value(&vm, &origin, stream)
         }))
     }
 
@@ -192,7 +193,7 @@ impl NetModule {
         let origin = origin.clone();
         Ok(luau::ScheduledFuture::new(async move {
             let listener = bind_tcp_listener(options).await?;
-            TcpListener::_harmony_userdata_class().create_value(&vm, &origin, listener)
+            TcpListener::class().create_value(&vm, &origin, listener)
         }))
     }
 }
@@ -639,7 +640,7 @@ impl TcpListener {
         let origin = origin.clone();
         Ok(luau::ScheduledFuture::new(async move {
             let (stream, address) = listener.accept_inner(timeout).await?;
-            let stream = TcpStream::_harmony_userdata_class().create_value(&vm, &origin, stream)?;
+            let stream = TcpStream::class().create_value(&vm, &origin, stream)?;
             Ok((stream, address))
         }))
     }

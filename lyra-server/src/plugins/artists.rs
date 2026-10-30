@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use harmony_core::UserDataBinding;
 use harmony_luau as luau;
 use harmony_luau::IntoLuauReturn;
 #[cfg(feature = "docgen")]
@@ -282,7 +283,7 @@ fn parse_optional_artist_type(
     if matches!(value, luau::Value::Nil) {
         return Ok(None);
     }
-    crate::plugins::types::LuauArtistType::_harmony_userdata_class()
+    crate::plugins::types::LuauArtistType::class()
         .read_value(vm, key, value)
         .map(|value| Some(value.into()))
 }
@@ -297,7 +298,7 @@ fn parse_optional_credit_types(
         luau::Value::Table(table) => args::array_values(&table)?
             .into_iter()
             .map(|(_, value)| {
-                crate::plugins::types::LuauCreditType::_harmony_userdata_class()
+                crate::plugins::types::LuauCreditType::class()
                     .read_value(vm, key, value)
                     .map(Into::into)
             })

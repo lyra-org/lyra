@@ -12,6 +12,7 @@ use std::{
 };
 
 use agdb::DbId;
+use harmony_core::UserDataBinding;
 use harmony_luau as luau;
 
 use crate::plugins::types::{
@@ -262,6 +263,6 @@ impl MetadataLayer {
                 custom_fields: CustomFieldChanges::default(),
             })),
         };
-        Self::_harmony_userdata_class().create_value(vm, origin, layer)
+        Self::class().create_value(vm, origin, layer)
     }
 }

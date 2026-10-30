@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use harmony_core::UserDataBinding;
 use harmony_luau as luau;
 use harmony_luau::JsonValue;
 #[cfg(feature = "docgen")]
@@ -99,11 +100,8 @@ impl DataStoreModule {
     ) -> luau::runtime::Result<luau::UserData> {
         let db = db.clone();
         let datastore_id = get_or_create(&db, name).await?;
-        let userdata = DataStoreHandle::_harmony_userdata_class().create(
-            &vm,
-            &origin,
-            DataStoreHandle { db, datastore_id },
-        )?;
+        let userdata =
+            DataStoreHandle::class().create(&vm, &origin, DataStoreHandle { db, datastore_id })?;
         Ok(userdata)
     }
 }

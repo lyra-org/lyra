@@ -5,6 +5,7 @@
 
 use std::time::Duration;
 
+use harmony_core::UserDataBinding;
 use harmony_luau as luau;
 #[cfg(feature = "docgen")]
 use harmony_luau::{
@@ -336,7 +337,7 @@ impl MixModule {
         lyra_db::mixers::register(&mut db, &id, display_name.as_deref())?;
 
         drop(db);
-        Mixer::_harmony_userdata_class().create(&vm, &context.origin, Mixer { plugin_id, id })
+        Mixer::class().create(&vm, &context.origin, Mixer { plugin_id, id })
     }
 
     #[harmony(
@@ -411,7 +412,7 @@ fn parse_handler_spec(
         luau::Value::Nil => {}
         luau::Value::Table(seeds) => {
             for (_, value) in args::array_values(&seeds)? {
-                let seed_type = LuauMixSeedType::_harmony_userdata_class()
+                let seed_type = LuauMixSeedType::class()
                     .read_value(vm, "seeds", value)?
                     .into();
                 if !seed_types.contains(&seed_type) {

@@ -5,6 +5,7 @@
 
 use std::collections::HashSet;
 
+use harmony_core::UserDataBinding;
 use harmony_luau as luau;
 
 use crate::plugins::args;
@@ -87,7 +88,7 @@ pub(super) async fn provider_new(
         plugin_id,
         provider_id,
     };
-    MetadataProvider::_harmony_userdata_class().create_value(&vm, &origin, provider)
+    MetadataProvider::class().create_value(&vm, &origin, provider)
 }
 
 #[harmony_macros::userdata(

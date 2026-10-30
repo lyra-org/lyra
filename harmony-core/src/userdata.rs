@@ -36,6 +36,11 @@ pub trait UserDataType: Clone + 'static {
     const DESCRIPTION: Option<&'static str> = None;
 }
 
+pub trait UserDataBinding: UserDataType {
+    fn class() -> &'static UserDataClass<Self>;
+    fn spec() -> crate::UserDataSpec;
+}
+
 struct UserDataMethod<T> {
     name: &'static str,
     argument_names: Vec<Arc<str>>,

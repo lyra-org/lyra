@@ -11,6 +11,7 @@ use harmony_core::{
     LocalScheduler,
     ModuleSpec,
     TokioRuntimeContext,
+    UserDataBinding,
 };
 use harmony_luau::{
     self as luau,
@@ -290,7 +291,7 @@ impl Counter {
 
 #[test]
 fn userdata_specs_list_their_methods_and_arguments() {
-    let spec = Counter::_harmony_userdata_spec();
+    let spec = Counter::spec();
     let methods: Vec<(&str, Vec<&str>)> = spec
         .methods
         .iter()

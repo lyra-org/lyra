@@ -6,6 +6,7 @@
 use std::time::Duration;
 
 use agdb::DbId;
+use harmony_core::UserDataBinding;
 use harmony_luau as luau;
 use serde_json::Value as JsonValue;
 
@@ -333,7 +334,7 @@ fn required_entity_type(
     key: &'static str,
 ) -> luau::runtime::Result<EntityType> {
     let value = table.get(key)?;
-    crate::plugins::types::LuauEntityType::_harmony_userdata_class()
+    crate::plugins::types::LuauEntityType::class()
         .read_value(vm, key, value)
         .map(Into::into)
 }
@@ -347,7 +348,7 @@ pub(super) fn optional_artist_type(
     if matches!(value, luau::Value::Nil) {
         return Ok(None);
     }
-    crate::plugins::types::LuauArtistType::_harmony_userdata_class()
+    crate::plugins::types::LuauArtistType::class()
         .read_value(vm, key, value)
         .map(|value| Some(value.into()))
 }

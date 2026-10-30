@@ -481,14 +481,17 @@ fn plugin_executor_exposes_db_backed_lyra_artists_module() -> Result<()> {
     )?;
 
     let mut values = values;
-    let artist_type = crate::plugins::types::LuauArtistType::_harmony_userdata_class().read_value(
+    let artist_type = crate::plugins::types::LuauArtistType::class().read_value(
         &runtime.vm,
         "artist_type",
         values.remove(0),
     )?;
-    let relation_type = crate::plugins::types::LuauArtistRelationType::_harmony_userdata_class()
-        .read_value(&runtime.vm, "relation_type", values.remove(0))?;
-    let credit_type = crate::plugins::types::LuauCreditType::_harmony_userdata_class().read_value(
+    let relation_type = crate::plugins::types::LuauArtistRelationType::class().read_value(
+        &runtime.vm,
+        "relation_type",
+        values.remove(0),
+    )?;
+    let credit_type = crate::plugins::types::LuauCreditType::class().read_value(
         &runtime.vm,
         "credit_type",
         values.remove(0),
@@ -2009,7 +2012,7 @@ fn entities_links_include_resolves_templates_and_functions() -> Result<()> {
         ]
     );
     let seen = runtime.eval_plugin_source("demo", "seen.luau", &b"return seen_entity"[..])?;
-    let entity = crate::plugins::types::LuauEntityType::_harmony_userdata_class().read_value(
+    let entity = crate::plugins::types::LuauEntityType::class().read_value(
         &runtime.vm,
         "entity",
         seen[0].clone(),

@@ -6,7 +6,10 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use harmony_core::LocalScheduler;
+use harmony_core::{
+    LocalScheduler,
+    UserDataBinding,
+};
 use harmony_luau as luau;
 
 use super::{
@@ -25,7 +28,7 @@ impl PluginExecutor {
         let routes = self.vm.data().get::<crate::plugins::api::ApiRouteStore>()?;
         let handler = routes.get(request.handler)?;
         let origin = handler.context.origin.clone();
-        let reader = ApiWebSocketReader::_harmony_userdata_class().create_value(
+        let reader = ApiWebSocketReader::class().create_value(
             &self.vm,
             &origin,
             ApiWebSocketReader {
@@ -33,7 +36,7 @@ impl PluginExecutor {
                 state: request.state.clone(),
             },
         )?;
-        let sender = ApiWebSocketSender::_harmony_userdata_class().create_value(
+        let sender = ApiWebSocketSender::class().create_value(
             &self.vm,
             &origin,
             ApiWebSocketSender {

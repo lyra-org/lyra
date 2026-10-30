@@ -21,6 +21,7 @@ use anyhow::{
 use harmony_core::{
     LocalLuauTaskCompletion,
     LocalScheduler,
+    UserDataBinding,
 };
 
 use super::{
@@ -330,7 +331,7 @@ fn id_link_context(
     let mut ctx = OwnedTable::with_capacity(0, 4);
     ctx.set_field(
         "entity",
-        crate::plugins::types::LuauEntityType::_harmony_userdata_class().create_value(
+        crate::plugins::types::LuauEntityType::class().create_value(
             vm,
             &handler.function.origin,
             call.entity.into(),

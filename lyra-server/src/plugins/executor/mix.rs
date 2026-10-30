@@ -4,7 +4,10 @@
 // www.meshiplaw.com/lyra.
 
 use anyhow::Result;
-use harmony_core::LocalScheduler;
+use harmony_core::{
+    LocalScheduler,
+    UserDataBinding,
+};
 use harmony_luau as luau;
 
 use super::PluginExecutor;
@@ -74,7 +77,7 @@ fn mix_context_value(
         entry.set_field("id", seed.db_id.0);
         entry.set_field(
             "type",
-            crate::plugins::types::LuauMixSeedType::_harmony_userdata_class().create_value(
+            crate::plugins::types::LuauMixSeedType::class().create_value(
                 vm,
                 &handler.function.origin,
                 seed.seed_type.into(),

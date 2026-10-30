@@ -15,6 +15,7 @@ use std::{
     },
 };
 
+use harmony_core::UserDataBinding;
 use harmony_luau as luau;
 
 use super::{
@@ -243,11 +244,8 @@ pub(crate) async fn declare_settings(
         .await?;
     let stored_values = load_stored_values(db.as_ref(), &plugin_id).await?;
     let builder = settings_builder(stored_values);
-    let builder_value = SettingsBuilder::_harmony_userdata_class().create_value(
-        &vm,
-        &context.origin,
-        builder.clone(),
-    )?;
+    let builder_value =
+        SettingsBuilder::class().create_value(&vm, &context.origin, builder.clone())?;
 
     callback.call_with_context(&vm, &[builder_value], context)?;
 
@@ -280,11 +278,8 @@ pub(crate) async fn declare_user_settings(
         .ensure_registrations_open(&plugin_id)
         .await?;
     let builder = settings_builder(HashMap::new());
-    let builder_value = SettingsBuilder::_harmony_userdata_class().create_value(
-        &vm,
-        &context.origin,
-        builder.clone(),
-    )?;
+    let builder_value =
+        SettingsBuilder::class().create_value(&vm, &context.origin, builder.clone())?;
 
     callback.call_with_context(&vm, &[builder_value], context.clone())?;
 
@@ -296,7 +291,7 @@ pub(crate) async fn declare_user_settings(
         .await
         .register_schema(plugin_id.clone(), SettingsScope::User, schema.clone())?;
 
-    UserSettingsAccessor::_harmony_userdata_class().create(
+    UserSettingsAccessor::class().create(
         &vm,
         &context.origin,
         UserSettingsAccessor {

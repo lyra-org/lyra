@@ -12,6 +12,7 @@ use std::time::{
     SystemTime,
 };
 
+use harmony_core::UserDataBinding;
 use harmony_luau as luau;
 use harmony_luau::{
     DescribeInterface,
@@ -1083,7 +1084,7 @@ fn required_method_field(
     if matches!(value, luau::Value::Nil) {
         return Err(luau::Error::Runtime(format!("missing '{field}' field")));
     }
-    HttpMethod::_harmony_userdata_class().read_value(vm, field, value)
+    HttpMethod::class().read_value(vm, field, value)
 }
 
 fn header_map_from_luau(
@@ -1436,6 +1437,8 @@ pub fn render_luau_definition() -> Result<String, std::fmt::Error> {
 
 #[cfg(test)]
 mod tests {
+    use harmony_core::UserDataBinding;
+
     use super::HttpModule;
 
     fn max_in_flight(limiter: &super::ConcurrencyLimiter, host: &str) -> Option<usize> {
@@ -1521,11 +1524,8 @@ mod tests {
             harmony_luau::ChunkOrigin::default(),
         )?;
         assert_eq!(values.len(), 1);
-        let stored_method = super::HttpMethod::_harmony_userdata_class().read_value(
-            &vm,
-            "stored_method",
-            values.pop().unwrap(),
-        )?;
+        let stored_method =
+            super::HttpMethod::class().read_value(&vm, "stored_method", values.pop().unwrap())?;
         assert_eq!(stored_method, super::HttpMethod::Post);
         Ok(())
     }

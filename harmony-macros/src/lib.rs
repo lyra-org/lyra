@@ -285,9 +285,8 @@ fn userdata_enum(ast: ItemEnum, options: UserDataOptions) -> syn::Result<TokenSt
         }
 
         #[automatically_derived]
-        impl #type_name {
-            #[doc(hidden)]
-            pub fn _harmony_userdata_class() -> &'static ::harmony_core::UserDataClass<Self> {
+        impl ::harmony_core::UserDataBinding for #type_name {
+            fn class() -> &'static ::harmony_core::UserDataClass<Self> {
                 static CLASS: ::std::sync::LazyLock<::harmony_core::UserDataClass<#type_name>> =
                     ::std::sync::LazyLock::new(|| {
                         ::harmony_core::UserDataClass::new(
@@ -299,13 +298,13 @@ fn userdata_enum(ast: ItemEnum, options: UserDataOptions) -> syn::Result<TokenSt
                 &CLASS
             }
 
-            #[doc(hidden)]
-            pub fn _harmony_userdata_spec() -> ::harmony_core::UserDataSpec {
+            fn spec() -> ::harmony_core::UserDataSpec {
                 ::harmony_core::UserDataSpec::new(
                     <#type_name as ::harmony_core::UserDataType>::CLASS_NAME,
                 )
                     .initializer(|vm, origin, root| {
-                        #type_name::_harmony_userdata_class().install_variant_table(vm, origin, root)
+                        <#type_name as ::harmony_core::UserDataBinding>::class()
+                            .install_variant_table(vm, origin, root)
                     })
             }
         }
@@ -314,7 +313,7 @@ fn userdata_enum(ast: ItemEnum, options: UserDataOptions) -> syn::Result<TokenSt
         impl<'vm> ::harmony_luau::FromLuau<'vm> for #type_name {
             fn read(reader: &mut ::harmony_luau::ArgReader<'vm>) -> ::harmony_luau::runtime::Result<Self> {
                 let userdata = <::harmony_luau::UserData as ::harmony_luau::FromLuau<'vm>>::read(reader)?;
-                Self::_harmony_userdata_class().read_userdata(reader.vm(), &userdata)
+                <Self as ::harmony_core::UserDataBinding>::class().read_userdata(reader.vm(), &userdata)
             }
         }
 
@@ -453,9 +452,8 @@ pub fn userdata_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #ast
 
         #[automatically_derived]
-        impl #self_ty {
-            #[doc(hidden)]
-            pub fn _harmony_userdata_class() -> &'static ::harmony_core::UserDataClass<#self_ty> {
+        impl ::harmony_core::UserDataBinding for #self_ty {
+            fn class() -> &'static ::harmony_core::UserDataClass<#self_ty> {
                 static CLASS: ::std::sync::LazyLock<::harmony_core::UserDataClass<#self_ty>> =
                     ::std::sync::LazyLock::new(|| {
                         let class: ::harmony_core::UserDataClass<#self_ty> =
@@ -468,8 +466,7 @@ pub fn userdata_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 &CLASS
             }
 
-            #[doc(hidden)]
-            pub fn _harmony_userdata_spec() -> ::harmony_core::UserDataSpec {
+            fn spec() -> ::harmony_core::UserDataSpec {
                 ::harmony_core::UserDataSpec::new(
                     <#self_ty as ::harmony_core::UserDataType>::CLASS_NAME,
                 )
@@ -911,7 +908,7 @@ fn module_impl(mut ast: ItemImpl, options: ModuleOptions) -> syn::Result<TokenSt
             pub fn module_spec() -> ::harmony_core::ModuleSpec {
                 let spec = ::harmony_core::ModuleSpec::new(#id)
                     #(.function(#function_specs))*
-                    #(.userdata(<#userdata>::_harmony_userdata_spec()))*;
+                    #(.userdata(<#userdata as ::harmony_core::UserDataBinding>::spec()))*;
                 #extend
                 spec
             }

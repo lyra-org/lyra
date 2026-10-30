@@ -7,6 +7,7 @@ use harmony_core::{
     CallContext,
     MemorySourceLoader,
     ModuleSpec,
+    UserDataBinding,
     luau::RequireRuntime,
     plugin::{
         PluginLoadError,
@@ -668,7 +669,7 @@ fn plugin_executor_declares_metadata_provider_ids_and_options() -> Result<()> {
     )?;
 
     assert_eq!(values.len(), 1);
-    let entity = crate::plugins::types::LuauEntityType::_harmony_userdata_class().read_value(
+    let entity = crate::plugins::types::LuauEntityType::class().read_value(
         &runtime.vm,
         "entity",
         values[0].clone(),

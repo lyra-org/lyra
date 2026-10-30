@@ -56,6 +56,7 @@ pub use scheduler::{
 };
 pub use tokio_runtime::TokioRuntimeContext;
 pub use userdata::{
+    UserDataBinding,
     UserDataClass,
     UserDataType,
 };
