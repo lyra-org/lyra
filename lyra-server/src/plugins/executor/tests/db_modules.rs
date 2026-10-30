@@ -147,86 +147,6 @@ fn plugin_executor_exposes_db_backed_lyra_entities_module() -> Result<()> {
 }
 
 #[test]
-fn plugin_executor_exposes_db_backed_lyra_entries_module() -> Result<()> {
-    let mut db = lyra_db::test_db::new_test_db()?;
-    let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Entry Track")?;
-    let entry = lyra_db::entries::Entry {
-        db_id: None,
-        id: nanoid::nanoid!(),
-        full_path: std::path::PathBuf::from("/music/raw-entry.flac"),
-        kind: lyra_db::entries::EntryKind::File,
-        file_kind: Some("audio".to_string()),
-        name: "raw-entry.flac".to_string(),
-        hash: Some("raw-entry-hash".to_string()),
-        size: 123,
-        mtime: 456,
-        ctime: 789,
-    };
-    let entry_public_id = entry.id.clone();
-    let entry_db_id = db
-        .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
-        .ids()[0];
-    db.transaction_mut(|t| {
-        lyra_db::track_sources::upsert(
-            t,
-            track_db_id,
-            entry_db_id,
-            lyra_db::track_sources::TrackSourceUpsert {
-                source_kind: "embedded_tags".to_string(),
-                source_key: format!("entry:{}:embedded", entry_db_id.0),
-                is_primary: true,
-                start_ms: None,
-                end_ms: None,
-                format: Default::default(),
-            },
-            None,
-        )
-    })?;
-    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
-
-    let runtime = PluginExecutor::with_database(
-        Arc::from(vec![manifest("demo", &["lyra.entries"])]),
-        default_server_info(),
-        db,
-    )?;
-    let values = runtime.eval_plugin_source(
-        "demo",
-        "init.luau",
-        format!(
-            r#"
-                local entries = require("@lyra/entries")
-                local rows = entries.get({track_db_id})
-                return rows[1].db_id,
-                    rows[1].id,
-                    rows[1].kind,
-                    rows[1].name,
-                    rows[1].hash,
-                    rows[1].size,
-                    rows[1].mtime,
-                    rows[1].full_path == nil
-            "#,
-            track_db_id = track_db_id.0,
-        )
-        .into_bytes(),
-    )?;
-
-    assert_eq!(
-        values,
-        vec![
-            luau::Value::Number(entry_db_id.0 as f64),
-            luau::Value::String(entry_public_id.into_bytes()),
-            luau::Value::String(b"file".to_vec()),
-            luau::Value::String(b"raw-entry.flac".to_vec()),
-            luau::Value::String(b"raw-entry-hash".to_vec()),
-            luau::Value::Number(123.0),
-            luau::Value::Number(456.0),
-            luau::Value::Boolean(true),
-        ]
-    );
-    Ok(())
-}
-
-#[test]
 fn plugin_executor_exposes_db_backed_lyra_chromaprint_module() -> Result<()> {
     let mut db = lyra_db::test_db::new_test_db()?;
     let entry = lyra_db::entries::Entry {
@@ -766,6 +686,8 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
     let entry_db_id = db
         .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
         .ids()[0];
+    let library_db_id = lyra_db::test_db::insert_library(&mut db, "Music", "/music")?;
+    lyra_db::graph::ensure_owned_edge(&mut db, library_db_id, entry_db_id)?;
     let source_key = format!("entry:{}:embedded", entry_db_id.0);
     let source_id = db.transaction_mut(|t| {
         lyra_db::track_sources::upsert(

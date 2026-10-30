@@ -203,6 +203,26 @@ pub(crate) fn keyed_lookup_as<T: Serialize + 'static>(
     lookup: KeyedLookup<T>,
     scope: crate::plugins::db::Scope,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
+    keyed(frame, name, lookup, scope, |value, _| value)
+}
+
+/// [`keyed_lookup`] with each found value shaped for the viewer by `show`.
+pub(crate) fn keyed_lookup_shown<T: 'static, R: Serialize + 'static>(
+    frame: &mut luau::AsyncCallFrame<'_>,
+    name: &'static str,
+    lookup: KeyedLookup<T>,
+    show: fn(T, &Viewer) -> R,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    keyed(frame, name, lookup, crate::plugins::db::scoped, show)
+}
+
+fn keyed<T: 'static, R: Serialize + 'static>(
+    frame: &mut luau::AsyncCallFrame<'_>,
+    name: &'static str,
+    lookup: KeyedLookup<T>,
+    scope: crate::plugins::db::Scope,
+    show: fn(T, &Viewer) -> R,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids: luau::Table = frame.args.read_named(name)?;
     let ids = args::unique_ids(frame.vm, &ids)?;
     let db = scope(frame)?;
@@ -213,7 +233,7 @@ pub(crate) fn keyed_lookup_as<T: Serialize + 'static>(
         for (id, value) in found {
             table.set_key(
                 luau::Value::from(id.0),
-                harmony_luau::serializable_to_luau_owned(value)?,
+                harmony_luau::serializable_to_luau_owned(show(value, &viewer))?,
             );
         }
         Ok(luau::Value::TableData(table))

@@ -39,16 +39,9 @@ type AcoustIdResult = {
 }
 
 local function get_entry_db_id_for_track(track_db_id: number): number?
-	local track_entries = entries.get(track_db_id)
-	if type(track_entries) ~= "table" then
-		return nil
-	end
-	for _, entry in track_entries do
-		if type(entry) == "table" and type(entry.db_id) == "number" then
-			return entry.db_id
-		end
-	end
-	return nil
+	local track_entries = entries.by_track({ track_db_id })[track_db_id]
+	local entry = track_entries and track_entries[1]
+	return if entry then entry.db_id else nil
 end
 
 function module.select_track(tracks: { LocalTrack }): LocalTrack?

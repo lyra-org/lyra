@@ -19,13 +19,11 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-use lyra_db::{
-    Entry,
-    track_sources::{
-        SourceCodec,
-        SourceContainer,
-        SourceFormat,
-    },
+use crate::services::entries::PlacedEntry;
+use lyra_db::track_sources::{
+    SourceCodec,
+    SourceContainer,
+    SourceFormat,
 };
 
 pub(crate) struct PlaybackSource {
@@ -39,7 +37,7 @@ pub(crate) struct PlaybackSource {
     pub(crate) format: SourceFormat,
     pub(crate) start_ms: Option<u64>,
     pub(crate) end_ms: Option<u64>,
-    pub(crate) entry: Option<Entry>,
+    pub(crate) entry: Option<PlacedEntry>,
 }
 
 pub(crate) fn resolve(
@@ -81,7 +79,9 @@ pub(crate) fn resolve(
 
         let input_path = entry.full_path.to_string_lossy().into_owned();
         let full_path = entry.full_path.clone();
-        let entry = include_entry.then_some(entry);
+        let entry = include_entry
+            .then(|| PlacedEntry::locate(db, entry))
+            .transpose()?;
 
         let format = source.format();
         return Ok(Some(PlaybackSource {

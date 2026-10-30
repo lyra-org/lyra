@@ -1,0 +1,35 @@
+run_as = "manager"
+
+[[users]]
+key = "manager"
+permissions = ["manage_libraries"]
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["manager"]
+
+[[releases]]
+key = "solo"
+title = "Solo"
+library = "music"
+
+[[tracks]]
+key = "s1"
+title = "S1"
+release = "solo"
+file = "song.opus"
+folder = "Amy/Solo"
+
+[[tracks]]
+key = "s2"
+title = "S2"
+release = "solo"
+file = "song.opus"
+folder = "Amy/Solo"
+
+[[tracks]]
+key = "loose"
+title = "Loose"
+release = "solo"
+file = "song.opus"

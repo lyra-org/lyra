@@ -95,6 +95,21 @@ pub(crate) fn tracks_by_release(
     Ok(tracks)
 }
 
+/// The tracks whose audio each visible entry holds.
+pub(crate) fn tracks_by_entry(
+    db: &DbAny,
+    viewer: &Viewer,
+    entries: &[DbId],
+) -> Result<HashMap<DbId, Vec<Track>>, CatalogError> {
+    let mut tracks = HashMap::new();
+    for &entry in entries {
+        if crate::services::entries::visible_entry(db, viewer, entry)?.is_some() {
+            tracks.insert(entry, lyra_db::tracks::get_by_entry(db, entry)?);
+        }
+    }
+    Ok(tracks)
+}
+
 /// A release's chain: its tracks in play order.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct ReleaseChain {

@@ -106,7 +106,7 @@ artists = ["amy"]    # artist credits, in order
 credits = [{ artist = "amy", type = "instrumentalist", detail = "piano" }]  # any credit type, after `artists`
 file = "song.opus"   # an audio file, relative to the fixture, as the primary source
 start_ms = 1000      # optional, with end_ms: the source's span of the file, as a cue sheet's
-file = "s1.opus"     # an audio file, relative to the fixture, as the primary source
+folder = "Amy/Solo"  # optional; the directories holding the file's entry in the release's library
 
 [[playlists]]
 key = "mix"
@@ -140,7 +140,7 @@ fixture.users.owner     -- the user's public id
 fixture.libraries.music -- the library's public id
 fixture.api_keys.phone  -- an API key's secret
 fixture.sessions.laptop -- a session's token
-fixture.ids.s1          -- an entity's database id, by fixture key
+fixture.ids.s1          -- an entity's or library's database id, by fixture key
 fixture.entries.mix[1]  -- a playlist's entry ids, in order
 ```
 

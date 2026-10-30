@@ -13,6 +13,7 @@
     "lyra.auth",
     "lyra.artists",
     "lyra.editions",
+    "lyra.entries",
     "lyra.genres",
     "lyra.ids",
     "lyra.listens",

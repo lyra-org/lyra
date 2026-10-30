@@ -21,6 +21,11 @@ use harmony_luau::{
     LuauTypeInfo,
 };
 
+use crate::services::{
+    catalog::Viewer,
+    entries::PlacedEntry,
+};
+
 /// Describes `$source` to Luau as the userdata class `$name`. The field list
 /// is checked against `$source`, so a renamed or removed field fails to build.
 macro_rules! describe_record {
@@ -262,6 +267,110 @@ describe_record!(
         created_at: Option<u64> as "created_at",
     }
 );
+
+/// [`crate::services::entries::PlacedEntry`] as plugins read it. Only callers who manage
+/// libraries get `full_path`.
+#[derive(serde::Serialize)]
+pub(crate) struct EntryInfo {
+    db_id: Option<i64>,
+    id: String,
+    parent_id: i64,
+    kind: String,
+    file_kind: Option<String>,
+    name: String,
+    full_path: Option<String>,
+    hash: Option<String>,
+    size: u64,
+    mtime: u64,
+    ctime: u64,
+}
+
+impl EntryInfo {
+    pub(crate) fn new(placed: PlacedEntry, include_full_path: bool) -> Self {
+        let PlacedEntry { entry, parent_id } = placed;
+        Self {
+            db_id: entry.db_id.map(|id| id.0),
+            id: entry.id,
+            parent_id: parent_id.0,
+            kind: entry.kind.to_string(),
+            file_kind: entry.file_kind,
+            name: entry.name,
+            full_path: include_full_path.then(|| entry.full_path.to_string_lossy().into_owned()),
+            hash: entry.hash,
+            size: entry.size,
+            mtime: entry.mtime,
+            ctime: entry.ctime,
+        }
+    }
+
+    /// The entry as `viewer` reads it.
+    pub(crate) fn shown_to(placed: PlacedEntry, viewer: &Viewer) -> Self {
+        let include_full_path = match viewer {
+            Viewer::User { principal, .. } => lyra_db::roles::has_permission(
+                &principal.permissions,
+                lyra_db::Permission::ManageLibraries,
+            ),
+            Viewer::System => false,
+        };
+        Self::new(placed, include_full_path)
+    }
+}
+
+impl LuauTypeInfo for EntryInfo {
+    fn luau_type() -> LuauType {
+        LuauType::named("EntryInfo")
+    }
+}
+
+#[cfg(feature = "docgen")]
+impl DescribeInterface for EntryInfo {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let field = |name, ty, description| FieldDescriptor {
+            name,
+            ty,
+            description,
+        };
+        InterfaceDescriptor {
+            name: "EntryInfo",
+            description: Some("A file or directory in a library."),
+            fields: vec![
+                field("db_id", Option::<LuauNodeId>::luau_type(), None),
+                field("id", String::luau_type(), None),
+                field(
+                    "parent_id",
+                    LuauNodeId::luau_type(),
+                    Some("The library or directory entry holding this entry."),
+                ),
+                field(
+                    "kind",
+                    LuauType::union(vec![
+                        LuauType::string_literal("file"),
+                        LuauType::string_literal("dir"),
+                    ]),
+                    None,
+                ),
+                field(
+                    "file_kind",
+                    LuauType::optional(LuauType::union(vec![
+                        LuauType::string_literal("audio"),
+                        LuauType::string_literal("cue"),
+                    ])),
+                    None,
+                ),
+                field("name", String::luau_type(), None),
+                field(
+                    "full_path",
+                    Option::<String>::luau_type(),
+                    Some("The path on disk, for callers who manage libraries."),
+                ),
+                field("hash", Option::<String>::luau_type(), None),
+                field("size", u64::luau_type(), None),
+                field("mtime", u64::luau_type(), None),
+                field("ctime", u64::luau_type(), None),
+            ],
+        }
+    }
+}
 
 /// [`crate::services::providers::IdLink`] as described to Luau.
 #[cfg(feature = "docgen")]

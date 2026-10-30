@@ -47,6 +47,7 @@ pub(crate) fn module_spec() -> ModuleSpec {
         .function(streamable_spec())
         .function(query_spec())
         .function(by_release_spec())
+        .function(by_entry_spec())
         .function(chains_spec())
         .install(|_| Ok(ModuleExport::new(TracksModule)))
 }
@@ -75,6 +76,15 @@ fn by_release_spec() -> FunctionSpec {
         .args::<Vec<u64>>()
         .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(by_release_callback))
+}
+
+fn by_entry_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("by_entry")
+        .context::<crate::plugins::auth::DispatchAuth>()
+        .arg_name("entry_ids")
+        .args::<Vec<u64>>()
+        .returns::<luau::Table>()
+        .call_async(std::sync::Arc::new(by_entry_callback))
 }
 
 fn chains_spec() -> FunctionSpec {
@@ -111,6 +121,12 @@ fn by_release_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     catalog::keyed_lookup(&mut frame, "release_ids", lookups::tracks_by_release)
+}
+
+fn by_entry_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    catalog::keyed_lookup(&mut frame, "entry_ids", lookups::tracks_by_entry)
 }
 
 fn chains_callback(
@@ -281,6 +297,18 @@ fn module_descriptor() -> ModuleDescriptor {
                     "The tracks on each of these releases that the caller can see, keyed by release id.",
                 ),
                 params: vec![param("release_ids", Vec::<u64>::luau_type())],
+                returns: vec![LuauType::map(
+                    u64::luau_type(),
+                    LuauType::array(LuauType::named("Track")),
+                )],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["by_entry"],
+                description: Some(
+                    "The tracks whose audio each of these entries holds, for the entries the caller can see, keyed by entry id.",
+                ),
+                params: vec![param("entry_ids", Vec::<u64>::luau_type())],
                 returns: vec![LuauType::map(
                     u64::luau_type(),
                     LuauType::array(LuauType::named("Track")),

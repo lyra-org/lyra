@@ -126,6 +126,32 @@ pub fn get_by_id(db: &impl super::DbAccess, entry_db_id: DbId) -> anyhow::Result
     super::graph::fetch_typed_by_id(db, entry_db_id, "Entry")
 }
 
+/// The entries directly under `parent`, a library or a directory entry.
+pub fn children(db: &impl super::DbAccess, parent: DbId) -> anyhow::Result<Vec<Entry>> {
+    let entries: Vec<Entry> = db
+        .exec(
+            QueryBuilder::select()
+                .elements::<Entry>()
+                .search()
+                .from(parent)
+                .where_()
+                .neighbor()
+                .query(),
+        )?
+        .try_into()?;
+
+    Ok(entries)
+}
+
+/// The library or directory entry directly holding `entry_db_id`.
+pub fn parent_id(db: &impl super::DbAccess, entry_db_id: DbId) -> anyhow::Result<Option<DbId>> {
+    let mut parents = super::graph::inbound_neighbor_ids(db, entry_db_id, "Entry")?;
+    if parents.is_empty() {
+        parents = super::graph::inbound_neighbor_ids(db, entry_db_id, "Library")?;
+    }
+    Ok(parents.into_iter().next())
+}
+
 pub fn get_by_track(db: &DbAny, track_db_id: DbId) -> anyhow::Result<Vec<Entry>> {
     let entries: Vec<Entry> = db
         .exec(
@@ -403,6 +429,68 @@ mod tests {
             EntryKind::File
         );
 
+        Ok(())
+    }
+
+    fn scanned(full_path: &str, kind: EntryKind) -> Entry {
+        let full_path = PathBuf::from(full_path);
+        Entry {
+            db_id: None,
+            id: nanoid!(),
+            name: full_path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            full_path,
+            kind,
+            file_kind: (kind == EntryKind::File).then(|| "audio".to_string()),
+            hash: None,
+            size: 1,
+            mtime: 1,
+            ctime: 1,
+        }
+    }
+
+    #[test]
+    fn children_and_parents_follow_the_scanned_tree() -> anyhow::Result<()> {
+        let mut db = TestDb::initialized()?.into_inner();
+        let library_db_id = crate::test_db::insert_library(&mut db, "Music", "/music")?;
+        let library = crate::libraries::get_by_id(&db, library_db_id)?.expect("library");
+        sync_entry_group(
+            &mut db,
+            &library,
+            vec![
+                scanned("/music/Artist", EntryKind::Dir),
+                scanned("/music/Artist/Album", EntryKind::Dir),
+                scanned("/music/Artist/Album/01.flac", EntryKind::File),
+                scanned("/music/Artist/Album/02.flac", EntryKind::File),
+            ],
+        )?;
+
+        let names = |entries: Vec<Entry>| {
+            let mut names = entries
+                .into_iter()
+                .map(|entry| entry.name)
+                .collect::<Vec<_>>();
+            names.sort();
+            names
+        };
+        let top = children(&db, library_db_id)?;
+        assert_eq!(names(top.clone()), ["Artist"]);
+        let artist = top[0].db_id.expect("artist db id");
+        let album = children(&db, artist)?;
+        assert_eq!(names(album.clone()), ["Album"]);
+        let album = album[0].db_id.expect("album db id");
+        let files = children(&db, album)?;
+        assert_eq!(names(files.clone()), ["01.flac", "02.flac"]);
+
+        assert_eq!(parent_id(&db, artist)?, Some(library_db_id));
+        assert_eq!(parent_id(&db, album)?, Some(artist));
+        assert_eq!(
+            parent_id(&db, files[0].db_id.expect("file db id"))?,
+            Some(album)
+        );
+        assert!(children(&db, files[0].db_id.expect("file db id"))?.is_empty());
         Ok(())
     }
 

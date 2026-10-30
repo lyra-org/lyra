@@ -28,6 +28,7 @@ use harmony_luau::{
 };
 
 use crate::plugins::args;
+use crate::plugins::types::EntryInfo;
 use crate::{
     plugins::db,
     services::{
@@ -42,9 +43,6 @@ use crate::{
 use lyra_db::ResolveId;
 
 struct PlaybackSourcesModule;
-
-#[cfg(feature = "docgen")]
-struct EntryInfo;
 
 #[cfg(feature = "docgen")]
 struct PlaybackSourceInfo;
@@ -224,7 +222,7 @@ fn get_callback(
                 source,
                 include_entry,
                 include_full_path,
-            )));
+            )?));
         }
 
         Ok(luau::Value::TableData(rows))
@@ -257,14 +255,9 @@ fn get_many_callback(
                 {
                     playback_source_service::resolve(&db, track_id, include_entry)
                         .map_err(crate::plugins::runtime_error)?
-                        .map(|source| {
-                            luau::Value::TableData(source_to_table(
-                                source,
-                                include_entry,
-                                include_full_path,
-                            ))
-                        })
-                        .unwrap_or(luau::Value::Nil)
+                        .map(|source| source_to_table(source, include_entry, include_full_path))
+                        .transpose()?
+                        .map_or(luau::Value::Nil, luau::Value::TableData)
                 } else {
                     luau::Value::Nil
                 };
@@ -290,8 +283,9 @@ fn streamable_callback(
         Ok(
             playback_source_service::resolve(&db, track_id, include_entry)
                 .map_err(crate::plugins::runtime_error)?
-                .map(|source| luau::Value::TableData(source_to_table(source, include_entry, false)))
-                .unwrap_or(luau::Value::Nil),
+                .map(|source| source_to_table(source, include_entry, false))
+                .transpose()?
+                .map_or(luau::Value::Nil, luau::Value::TableData),
         )
     }))
 }
@@ -300,7 +294,7 @@ fn source_to_table(
     source: playback_source_service::PlaybackSource,
     include_entry: bool,
     include_full_path: bool,
-) -> luau::OwnedTable {
+) -> luau::runtime::Result<luau::OwnedTable> {
     let playback_source_service::PlaybackSource {
         track_db_id,
         source_id,
@@ -351,107 +345,21 @@ fn source_to_table(
         table.set_field(
             "entry",
             entry
-                .map(|entry| luau::Value::TableData(entry_to_table(entry, include_full_path)))
+                .map(|entry| {
+                    harmony_luau::serializable_to_luau_owned(EntryInfo::new(
+                        entry,
+                        include_full_path,
+                    ))
+                })
+                .transpose()?
                 .unwrap_or(luau::Value::Nil),
         );
     }
-    table
-}
-
-fn entry_to_table(entry: lyra_db::Entry, include_full_path: bool) -> luau::OwnedTable {
-    let mut table = luau::OwnedTable::with_capacity(0, 8);
-    table.set_field(
-        "db_id",
-        entry
-            .db_id
-            .map(|id| luau::Value::from(id.0))
-            .unwrap_or(luau::Value::Nil),
-    );
-    table.set_field("id", luau::Value::String(entry.id.into_bytes()));
-    table.set_field(
-        "full_path",
-        if include_full_path {
-            luau::Value::String(entry.full_path.to_string_lossy().into_owned().into_bytes())
-        } else {
-            luau::Value::Nil
-        },
-    );
-    table.set_field(
-        "kind",
-        luau::Value::String(entry.kind.to_string().into_bytes()),
-    );
-    table.set_field("name", luau::Value::String(entry.name.into_bytes()));
-    table.set_field(
-        "hash",
-        entry
-            .hash
-            .map(|hash| luau::Value::String(hash.into_bytes()))
-            .unwrap_or(luau::Value::Nil),
-    );
-    table.set_field("size", luau::Value::from(entry.size));
-    table.set_field("mtime", luau::Value::from(entry.mtime));
-    table
+    Ok(table)
 }
 
 fn optional_u64(value: Option<u64>) -> luau::Value {
     value.map(luau::Value::from).unwrap_or(luau::Value::Nil)
-}
-
-#[cfg(feature = "docgen")]
-impl LuauTypeInfo for EntryInfo {
-    fn luau_type() -> LuauType {
-        LuauType::named("EntryInfo")
-    }
-}
-
-#[cfg(feature = "docgen")]
-impl DescribeInterface for EntryInfo {
-    fn interface_descriptor() -> InterfaceDescriptor {
-        let mut descriptor = InterfaceDescriptor::new("EntryInfo", None);
-        descriptor.fields.extend([
-            FieldDescriptor {
-                name: "db_id",
-                ty: Option::<i64>::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "id",
-                ty: String::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "full_path",
-                ty: Option::<String>::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "kind",
-                ty: String::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "name",
-                ty: String::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "hash",
-                ty: Option::<String>::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "size",
-                ty: u64::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "mtime",
-                ty: u64::luau_type(),
-                description: None,
-            },
-        ]);
-        descriptor
-    }
 }
 
 #[cfg(feature = "docgen")]

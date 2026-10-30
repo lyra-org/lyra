@@ -116,7 +116,7 @@ struct Genre {
     name: String,
 }
 
-/// A library without folders, holding the releases that name it.
+/// A library holding the releases that name it and their tracks' files.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Library {
@@ -161,8 +161,12 @@ struct Track {
     artists: Vec<String>,
     #[serde(default)]
     credits: Vec<Credit>,
-    /// An audio file, relative to the fixture, linked as the track's primary source.
+    /// An audio file, relative to the fixture, linked as the track's primary source. Its entry sits
+    /// in the library of the track's release, or in an ungranted library of its own.
     file: Option<PathBuf>,
+    /// The directories, relative to the library, holding `file`'s entry. The entry keeps its path
+    /// on disk.
+    folder: Option<PathBuf>,
     /// Where the track starts within `file`, as a cue sheet would place it.
     start_ms: Option<u64>,
     /// Where the track ends within `file`.
@@ -281,11 +285,100 @@ impl Keys {
     }
 }
 
+/// The directory entries track files sit in, created as tracks name them.
+#[derive(Default)]
+struct Folders {
+    directories: BTreeMap<(DbId, PathBuf), DbId>,
+    loose_library: Option<DbId>,
+}
+
+impl Folders {
+    /// The library holding files whose track belongs to none.
+    fn loose_library(&mut self, db: &mut DbAny) -> anyhow::Result<DbId> {
+        if let Some(library) = self.loose_library {
+            return Ok(library);
+        }
+        let path = PathBuf::from("/fixture-files");
+        let created = lyra_db::libraries::create_system(
+            db,
+            lyra_db::libraries::LibraryInsert {
+                id: nanoid::nanoid!(),
+                name: "Fixture files".into(),
+                path_key: lyra_db::libraries::path_key_for(&path),
+                path,
+                language: None,
+                country: None,
+            },
+        )?;
+        let library = created.db_id.context("library has a db_id")?;
+        self.loose_library = Some(library);
+        Ok(library)
+    }
+
+    /// The directory entry at `folder` under `library`, or the library itself without one.
+    fn place(
+        &mut self,
+        db: &mut DbAny,
+        library: DbId,
+        folder: Option<&Path>,
+    ) -> anyhow::Result<DbId> {
+        let Some(folder) = folder else {
+            return Ok(library);
+        };
+        let root = lyra_db::libraries::get_by_id(db, library)?
+            .context("library exists")?
+            .path;
+        let mut parent = library;
+        let mut relative = PathBuf::new();
+        for component in folder.components() {
+            relative.push(component);
+            if let Some(&directory) = self.directories.get(&(library, relative.clone())) {
+                parent = directory;
+                continue;
+            }
+            let full_path = root.join(&relative);
+            let directory = lyra_db::Entry {
+                db_id: None,
+                id: nanoid::nanoid!(),
+                name: component.as_os_str().to_string_lossy().into_owned(),
+                full_path,
+                kind: lyra_db::entries::EntryKind::Dir,
+                file_kind: None,
+                hash: None,
+                size: 0,
+                mtime: 0,
+                ctime: 0,
+            };
+            let directory = db
+                .exec_mut(agdb::QueryBuilder::insert().element(&directory).query())?
+                .ids()[0];
+            lyra_db::graph::ensure_owned_edge(db, parent, directory)?;
+            self.directories
+                .insert((library, relative.clone()), directory);
+            parent = directory;
+        }
+        Ok(parent)
+    }
+}
+
 impl Fixture {
     /// Resolves the fixture's paths against `directory`, the one its file is in.
     pub fn in_directory(mut self, directory: &Path) -> Self {
         self.directory = directory.to_path_buf();
         self
+    }
+
+    /// The key of the library `track`'s release belongs to.
+    fn release_library(&self, track: &Track) -> anyhow::Result<Option<&str>> {
+        let Some(release) = &track.release else {
+            return Ok(None);
+        };
+        let release = self
+            .releases
+            .iter()
+            .find(|candidate| &candidate.key == release)
+            .with_context(|| format!("fixture has no release `{release}`"))?;
+        Ok(release.library.as_deref())
     }
 
     /// Writes the fixture into `db`, returning what the test receives and the user it runs as.
@@ -399,6 +492,7 @@ impl Fixture {
                 )?;
             }
             seeded.libraries.insert(library.key.clone(), created.id);
+            seeded.ids.insert(library.key.clone(), library_db_id.0);
             keys.libraries.insert(library.key.clone(), library_db_id);
         }
 
@@ -495,6 +589,7 @@ impl Fixture {
             );
         }
 
+        let mut folders = Folders::default();
         for track in &self.tracks {
             keys.claim(&track.key)?;
             let track_db_id = fixtures::insert_track(db, &track.title)?;
@@ -521,7 +616,17 @@ impl Fixture {
                 "fixture track {} trims no file",
                 track.key
             );
+            anyhow::ensure!(
+                track.file.is_some() || track.folder.is_none(),
+                "fixture track {} has a folder but no file",
+                track.key
+            );
             if let Some(file) = &track.file {
+                let library_db_id = match self.release_library(track)? {
+                    Some(library) => keys.library(library)?,
+                    None => folders.loose_library(db)?,
+                };
+                let parent = folders.place(db, library_db_id, track.folder.as_deref())?;
                 let path = self.directory.join(file);
                 anyhow::ensure!(
                     path.is_file(),
@@ -548,6 +653,7 @@ impl Fixture {
                 let entry_db_id = db
                     .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
                     .ids()[0];
+                lyra_db::graph::ensure_owned_edge(db, parent, entry_db_id)?;
                 db.transaction_mut(|t| {
                     lyra_db::track_sources::upsert(
                         t,

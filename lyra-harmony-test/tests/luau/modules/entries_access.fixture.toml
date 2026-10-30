@@ -1,0 +1,35 @@
+run_as = "listener"
+
+[[users]]
+key = "listener"
+
+[[libraries]]
+key = "shown"
+name = "Shown"
+users = ["listener"]
+
+[[libraries]]
+key = "hidden"
+name = "Hidden"
+
+[[releases]]
+key = "seen"
+title = "Seen"
+library = "shown"
+
+[[releases]]
+key = "unseen"
+title = "Unseen"
+library = "hidden"
+
+[[tracks]]
+key = "visible"
+title = "Visible"
+release = "seen"
+file = "song.opus"
+
+[[tracks]]
+key = "invisible"
+title = "Invisible"
+release = "unseen"
+file = "song.opus"
