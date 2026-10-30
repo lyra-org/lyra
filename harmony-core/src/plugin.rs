@@ -87,12 +87,14 @@ pub const RESERVED_HOST_NAMES: &[&str] = &[
 /// What manifests are checked against: the running host's name, which is
 /// the top-level key holding each manifest's requirement on the host, the
 /// host's version, which that requirement must match, the scope ids its
-/// modules register, and the plugin ids it addresses something else by.
+/// modules register, the scopes that only narrow another, and the plugin
+/// ids it addresses something else by.
 #[derive(Debug, Clone)]
 pub struct PluginHost {
     name: String,
     version: Version,
     scope_ids: HashSet<Arc<str>>,
+    scope_parents: HashMap<Arc<str>, Arc<str>>,
     reserved_ids: HashSet<String>,
 }
 
@@ -111,8 +113,26 @@ impl PluginHost {
             name,
             version,
             scope_ids,
+            scope_parents: HashMap::new(),
             reserved_ids: HashSet::new(),
         })
+    }
+
+    /// Scopes, each paired with its parent, that gate part of what the
+    /// parent's module offers: a manifest declaring one must declare its
+    /// parent too.
+    pub fn with_scope_parents<I, S, P>(mut self, parents: I) -> Self
+    where
+        I: IntoIterator<Item = (S, P)>,
+        S: Into<Arc<str>>,
+        P: Into<Arc<str>>,
+    {
+        self.scope_parents.extend(
+            parents
+                .into_iter()
+                .map(|(scope, parent)| (scope.into(), parent.into())),
+        );
+        self
     }
 
     /// Ids a manifest may not take, such as names the host's own interfaces
@@ -473,6 +493,11 @@ pub enum PluginLoadError {
         plugin_id: String,
         scope: String,
     },
+    ScopeWithoutParent {
+        plugin_id: String,
+        scope: String,
+        parent: String,
+    },
     TooManyDependencies {
         plugin_id: String,
         count: usize,
@@ -585,6 +610,15 @@ impl fmt::Display for PluginLoadError {
                 f,
                 "plugin '{}' declares unknown scope '{}'",
                 plugin_id, scope
+            ),
+            PluginLoadError::ScopeWithoutParent {
+                plugin_id,
+                scope,
+                parent,
+            } => write!(
+                f,
+                "plugin '{plugin_id}' declares scope '{scope}' without '{parent}', the scope it \
+                 narrows"
             ),
             PluginLoadError::TooManyDependencies {
                 plugin_id,
@@ -1132,6 +1166,17 @@ impl PluginManager {
                 });
             };
             declared_scopes.insert(interned.clone());
+        }
+        for scope in &manifest.scopes {
+            if let Some(parent) = host.scope_parents.get(scope.as_str())
+                && !declared_scopes.contains(parent)
+            {
+                return Err(PluginLoadError::ScopeWithoutParent {
+                    plugin_id: manifest.id.clone(),
+                    scope: scope.clone(),
+                    parent: parent.to_string(),
+                });
+            }
         }
 
         validate_dependencies(&manifest)?;
@@ -3231,6 +3276,37 @@ mod tests {
         assert_eq!(
             loaded.manifest.dependencies,
             dependencies(&[("other", dependency("0.2")), ("extra", optional("1"))])
+        );
+    }
+
+    #[test]
+    fn load_manifest_rejects_a_narrow_scope_without_its_parent() {
+        let host = PluginHost::new(
+            "host",
+            Version::new(0, 0, 1),
+            HashSet::from([Arc::<str>::from("net"), Arc::<str>::from("net.all")]),
+        )
+        .unwrap()
+        .with_scope_parents([("net.all", "net")]);
+        let load = |scopes: &str| {
+            let json = manifest_json("demo", "").replace(r#"["net"]"#, scopes);
+            PluginManager::load_manifest(
+                std::path::Path::new("plugin.json"),
+                json.as_bytes(),
+                &host,
+            )
+        };
+
+        assert!(load(r#"["net.all","net"]"#).is_ok());
+        let error = load(r#"["net.all"]"#).unwrap_err();
+        assert!(matches!(
+            &error,
+            PluginLoadError::ScopeWithoutParent { scope, parent, .. }
+                if scope == "net.all" && parent == "net"
+        ));
+        assert_eq!(
+            error.to_string(),
+            "plugin 'demo' declares scope 'net.all' without 'net', the scope it narrows"
         );
     }
 

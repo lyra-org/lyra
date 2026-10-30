@@ -1,6 +1,7 @@
 use std::{
     any::Any,
     collections::{
+        BTreeMap,
         HashMap,
         HashSet,
     },
@@ -289,10 +290,14 @@ impl ModuleExport {
 }
 
 /// A module and the capability a plugin's manifest must declare to `require`
-/// it. The host decides the capability; the module only describes itself.
+/// it, plus any capability single functions need on top of it. The host
+/// decides the capabilities; the module only describes itself.
 pub struct GatedModule {
     pub capability: CapabilityId,
     pub spec: ModuleSpec,
+    /// Functions, by name, that a requirer lacking their capability gets
+    /// as a stub raising an error instead.
+    pub function_scopes: BTreeMap<Arc<str>, CapabilityId>,
 }
 
 impl GatedModule {
@@ -300,7 +305,33 @@ impl GatedModule {
         Self {
             capability: CapabilityId(capability.into()),
             spec,
+            function_scopes: BTreeMap::new(),
         }
+    }
+
+    /// Gates `function` by `capability` as well as the module's own.
+    /// Registering the module fails when its spec has no such function.
+    pub fn function_scope(
+        mut self,
+        function: impl Into<Arc<str>>,
+        capability: impl Into<Arc<str>>,
+    ) -> Self {
+        self.function_scopes
+            .insert(function.into(), CapabilityId(capability.into()));
+        self
+    }
+
+    /// The function-gating capabilities `origin` lacks, by function.
+    fn withheld_functions(
+        &self,
+        origin: &ChunkOrigin,
+        policy: &dyn CapabilityPolicy,
+    ) -> BTreeMap<Arc<str>, CapabilityId> {
+        self.function_scopes
+            .iter()
+            .filter(|(_, capability)| !policy.is_allowed(origin, capability))
+            .map(|(function, capability)| (function.clone(), capability.clone()))
+            .collect()
     }
 }
 
@@ -468,6 +499,15 @@ pub enum ModuleLoadError {
     MissingInstaller {
         module_id: ModuleId,
     },
+    UnknownGatedFunction {
+        module_id: ModuleId,
+        function: Arc<str>,
+    },
+    /// A module gating single functions has no export one origin could
+    /// share with another.
+    SharedExportOfGatedFunctions {
+        module_id: ModuleId,
+    },
     CapabilityDenied(ModuleCapabilityDenied),
     InstallFailed(anyhow::Error),
     SourceResolveFailed(anyhow::Error),
@@ -498,6 +538,23 @@ impl fmt::Display for ModuleLoadError {
             }
             Self::MissingInstaller { module_id } => {
                 write!(f, "module '{}' has no installer", module_id.0)
+            }
+            Self::UnknownGatedFunction {
+                module_id,
+                function,
+            } => {
+                write!(
+                    f,
+                    "module '{}' has no function '{function}' to gate",
+                    module_id.0
+                )
+            }
+            Self::SharedExportOfGatedFunctions { module_id } => {
+                write!(
+                    f,
+                    "module '{}' gates single functions, so it has no shared export",
+                    module_id.0
+                )
             }
             Self::CapabilityDenied(error) => error.fmt(f),
             Self::InstallFailed(error) => write!(f, "module install failed: {error}"),
@@ -619,17 +676,25 @@ pub struct ModuleRegistry {
     luau_cache: HashMap<LuauModuleCacheKey, Rc<luau::Table>>,
 }
 
+/// A table is installed per origin and per functions withheld from it, so
+/// no origin gets a table built for another's capabilities.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct LuauModuleCacheKey {
     module_id: ModuleId,
     plugin: Option<Arc<str>>,
+    withheld: Vec<Arc<str>>,
 }
 
 impl LuauModuleCacheKey {
-    fn new(module_id: &ModuleId, origin: &ChunkOrigin) -> Self {
+    fn new(
+        module_id: &ModuleId,
+        origin: &ChunkOrigin,
+        withheld: &BTreeMap<Arc<str>, CapabilityId>,
+    ) -> Self {
         Self {
             module_id: module_id.clone(),
             plugin: origin.plugin.clone(),
+            withheld: withheld.keys().cloned().collect(),
         }
     }
 }
@@ -693,6 +758,18 @@ impl ModuleRegistry {
                 module_id: module.spec.id.clone(),
             });
         }
+        if let Some(function) = module.function_scopes.keys().find(|function| {
+            !module
+                .spec
+                .functions
+                .iter()
+                .any(|spec| spec.name == **function)
+        }) {
+            return Err(ModuleLoadError::UnknownGatedFunction {
+                module_id: module.spec.id.clone(),
+                function: function.clone(),
+            });
+        }
 
         self.modules.insert(module.spec.id.clone(), module);
         Ok(())
@@ -717,6 +794,12 @@ impl ModuleRegistry {
                 module_id: module_id.clone(),
                 capability: module.capability.clone(),
             }));
+        }
+
+        if !module.function_scopes.is_empty() {
+            return Err(ModuleLoadError::SharedExportOfGatedFunctions {
+                module_id: module_id.clone(),
+            });
         }
 
         if let Some(export) = self.cache.get(module_id) {
@@ -767,7 +850,8 @@ impl ModuleRegistry {
             }));
         }
 
-        let cache_key = LuauModuleCacheKey::new(module_id, origin);
+        let withheld = module.withheld_functions(origin, policy);
+        let cache_key = LuauModuleCacheKey::new(module_id, origin, &withheld);
         if let Some(export) = self.luau_cache.get(&cache_key) {
             return Ok(export.clone());
         }
@@ -778,6 +862,7 @@ impl ModuleRegistry {
                 origin,
                 &module.spec,
                 Some(&module.capability),
+                &withheld,
                 task_group,
             )
             .map_err(|error| ModuleLoadError::InstallFailed(anyhow::Error::new(error)))?,
@@ -1106,14 +1191,24 @@ pub fn install_luau_module(
     origin: &ChunkOrigin,
     module: &ModuleSpec,
 ) -> luau::runtime::Result<luau::Table> {
-    install_gated_luau_module(vm, origin, module, None, crate::TaskGroupId::default())
+    install_gated_luau_module(
+        vm,
+        origin,
+        module,
+        None,
+        &BTreeMap::new(),
+        crate::TaskGroupId::default(),
+    )
 }
 
+/// `withheld` functions are installed as stubs raising that the caller
+/// lacks their capability.
 fn install_gated_luau_module(
     vm: &luau::Vm,
     origin: &ChunkOrigin,
     module: &ModuleSpec,
     capability_id: Option<&CapabilityId>,
+    withheld: &BTreeMap<Arc<str>, CapabilityId>,
     task_group: crate::TaskGroupId,
 ) -> luau::runtime::Result<luau::Table> {
     #[derive(Clone, Copy)]
@@ -1187,9 +1282,10 @@ fn install_gated_luau_module(
         if let Some(capability_id) = capability_id {
             options = options.capability(capability_id.clone());
         }
-        let callback = match callback {
-            FunctionCallback::Sync(callback) => callback,
-            FunctionCallback::Async(callback) => async_luau_callback(callback),
+        let callback = match (withheld.get(&spec.name), callback) {
+            (Some(capability), _) => withheld_function(&module.id, &spec.name, capability),
+            (None, FunctionCallback::Sync(callback)) => callback,
+            (None, FunctionCallback::Async(callback)) => async_luau_callback(callback),
         };
         let function = vm.create_function_with_options(options, callback)?;
         table_for(&root, &nested, parent).set(leaf, &function)?;
@@ -1211,6 +1307,18 @@ fn install_gated_luau_module(
     }
     root.set_readonly(true)?;
     Ok(root)
+}
+
+/// A stub for a function the requirer lacks the capability of, named as
+/// Luau code calls it: by the module's last path segment.
+fn withheld_function(
+    module_id: &ModuleId,
+    function: &str,
+    capability: &CapabilityId,
+) -> luau::NativeFn {
+    let module = module_id.0.rsplit('/').next().unwrap_or(&module_id.0);
+    let message = format!("{module}.{function} requires the {} scope", capability.0);
+    Arc::new(move |_| Err(luau::Error::Runtime(message.clone())))
 }
 
 pub fn async_luau_callback(callback: luau::NativeAsyncFn) -> luau::NativeFn {
@@ -1395,6 +1503,7 @@ mod tests {
             &origin,
             &module,
             Some(&capability),
+            &BTreeMap::new(),
             crate::TaskGroupId::default(),
         )?;
         vm.set_global_table("module", &table)?;
@@ -1794,6 +1903,129 @@ mod tests {
         assert!(matches!(error, ModuleLoadError::CapabilityDenied(_)));
         assert!(registry.invalidate(&module_id));
         Ok(())
+    }
+
+    fn function_scoped_module(module_id: &ModuleId) -> GatedModule {
+        let answer = |name: &'static str, value: i64| {
+            FunctionSpec::new(name).call(move |mut frame| {
+                frame.returns.write(value)?;
+                Ok(())
+            })
+        };
+        GatedModule::new(
+            "demo.math",
+            ModuleSpec::new(module_id.0.clone())
+                .function(answer("answer", 42))
+                .function(answer("nested.secret", 7)),
+        )
+        .function_scope("nested.secret", "demo.math.secret")
+    }
+
+    struct ScopePolicy(&'static [(&'static str, &'static str)]);
+
+    impl CapabilityPolicy for ScopePolicy {
+        fn is_allowed(&self, origin: &ChunkOrigin, capability: &CapabilityId) -> bool {
+            self.0.iter().any(|(plugin, scope)| {
+                origin.plugin.as_deref() == Some(*plugin) && *scope == &*capability.0
+            })
+        }
+    }
+
+    #[test]
+    fn registry_withholds_functions_from_origins_lacking_their_scope() -> luau::runtime::Result<()>
+    {
+        let module_id = ModuleId(Arc::from("demo/math"));
+        let vm = luau::Vm::new()?;
+        let mut registry = ModuleRegistry::new();
+        registry
+            .register(function_scoped_module(&module_id))
+            .expect("register module");
+        let policy = ScopePolicy(&[
+            ("granted", "demo.math"),
+            ("granted", "demo.math.secret"),
+            ("module_only", "demo.math"),
+            ("secret_only", "demo.math.secret"),
+        ]);
+        let mut require = |plugin: &str| {
+            registry.require_luau_module(
+                &vm,
+                &ChunkOrigin {
+                    plugin: Some(Arc::from(plugin)),
+                    ..ChunkOrigin::default()
+                },
+                &module_id,
+                &policy,
+                crate::TaskGroupId::default(),
+            )
+        };
+
+        let module_only = require("module_only").expect("module scope suffices to require");
+        let granted = require("granted").expect("granted require");
+        assert!(matches!(
+            require("secret_only"),
+            Err(ModuleLoadError::CapabilityDenied(_))
+        ));
+        assert!(Rc::ptr_eq(
+            &module_only,
+            &require("module_only").expect("cached require")
+        ));
+
+        vm.set_global_table("module_only", &module_only)?;
+        vm.set_global_table("granted", &granted)?;
+        let eval = |source: &'static str| {
+            vm.eval(
+                Arc::<[u8]>::from(source.as_bytes()),
+                luau::ChunkOrigin::default(),
+            )
+        };
+        assert_eq!(
+            eval("return granted.answer(), granted.nested.secret(), module_only.answer()")?,
+            vec![
+                luau::Value::Number(42.0),
+                luau::Value::Number(7.0),
+                luau::Value::Number(42.0),
+            ]
+        );
+        let error = eval("return module_only.nested.secret()").expect_err("withheld function");
+        assert!(
+            error
+                .to_string()
+                .contains("math.nested.secret requires the demo.math.secret scope"),
+            "{error}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn registry_rejects_gating_a_function_the_module_lacks() {
+        let module_id = ModuleId(Arc::from("demo/math"));
+        let mut registry = ModuleRegistry::new();
+        let error = registry
+            .register(function_scoped_module(&module_id).function_scope("missing", "demo.math.all"))
+            .expect_err("unknown gated function");
+        assert_eq!(
+            error.to_string(),
+            "module 'demo/math' has no function 'missing' to gate"
+        );
+        assert!(!registry.contains(&module_id));
+    }
+
+    #[test]
+    fn modules_gating_functions_have_no_shared_export() {
+        let module_id = ModuleId(Arc::from("demo/math"));
+        let mut module = function_scoped_module(&module_id);
+        module.spec = ModuleSpec::new(module_id.0.clone())
+            .function(FunctionSpec::new("nested.secret"))
+            .install(|_| Ok(ModuleExport::new(())));
+        let mut registry = ModuleRegistry::new();
+        registry.register(module).expect("register module");
+        let error = registry
+            .require(&ChunkOrigin::default(), &module_id, &AllowAllCapabilities)
+            .expect_err("no shared export");
+        assert!(matches!(
+            error,
+            ModuleLoadError::SharedExportOfGatedFunctions { .. }
+        ));
     }
 
     #[test]

@@ -5,8 +5,9 @@
 
 //! What plugins can reach through their scopes.
 //!
-//! A scope is checked once, when a plugin `require`s the module behind it,
-//! and a plugin's own modules run as that plugin. A plugin that `require`s a
+//! A scope is checked once, when a plugin `require`s the module behind it or
+//! the module holding the functions it gates, and a plugin's own modules run
+//! as that plugin. A plugin that `require`s a
 //! dependency's modules therefore reaches whatever the dependency hands it,
 //! so its reach is its own scopes and those of every plugin it depends on,
 //! directly or not. Optional dependencies count whether or not they are
