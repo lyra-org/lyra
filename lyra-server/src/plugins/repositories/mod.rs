@@ -70,6 +70,7 @@ use lyra_db::plugin_repositories as repo_db;
 use status::{
     Candidate,
     Offered,
+    Unoffered,
     holds,
     listed_offer,
     stored_dependencies,
@@ -356,7 +357,11 @@ fn catalog_status(installed_dir: &Path, offered: &Offered) -> CatalogStatus {
         Ok(None) => return CatalogStatus::Local,
         Ok(Some(record)) => record,
         // Managed, but the release is unknowable until it is reinstalled.
-        Err(_) => return CatalogStatus::Installed(UpdateStatus::Unknown),
+        Err(error) => {
+            return CatalogStatus::Installed(UpdateStatus::Unknown {
+                reason: format!("its source record cannot be read: {error}"),
+            });
+        }
     };
     CatalogStatus::Installed(UpdateStatus::compare(&record.version, offered))
 }
@@ -398,7 +403,8 @@ fn listing_entries(listing: &RepositoryListing) -> Vec<repo_db::PluginRepository
         .map(|plugin| {
             let (offered, requires) = match listed_offer(plugin) {
                 Ok(offered) => (Some(offered), None),
-                Err(requires) => (None, requires),
+                Err(Unoffered::Incompatible { requires }) => (None, Some(requires)),
+                Err(Unoffered::Unknown { .. }) => (None, None),
             };
             repo_db::PluginRepositoryEntry {
                 db_id: None,
@@ -409,6 +415,7 @@ fn listing_entries(listing: &RepositoryListing) -> Vec<repo_db::PluginRepository
                 dependencies: offered.as_ref().map(stored_dependencies),
                 scopes: offered.map(|offered| offered.scopes),
                 requires,
+                error: plugin.offer.as_ref().err().map(ToString::to_string),
             }
         })
         .collect()
@@ -2396,6 +2403,7 @@ mod tests {
                 scopes: Some(Vec::new()),
                 dependencies: None,
                 requires: None,
+                error: None,
             })
             .collect();
         repo_db::create(
@@ -2649,12 +2657,15 @@ mod tests {
                 changed_at(HOST_REQUIREMENT),
                 UpdateStatus::UpToDate,
             ),
-            // The release fails for another reason than this server.
+            // The release fails for another reason than this server, which
+            // the preview's reason gives.
             (
                 HOST_REQUIREMENT,
                 HOST_REQUIREMENT,
                 unknown_scope.clone(),
-                UpdateStatus::Unknown,
+                UpdateStatus::Unknown {
+                    reason: String::new(),
+                },
             ),
         ] {
             let forge = catalog_forge(newest_to, older_to, changed).await?;
@@ -2671,6 +2682,21 @@ mod tests {
                 .iter()
                 .find(|plugin| plugin.id == "changed")
                 .expect("listed");
+            let expected = match expected {
+                UpdateStatus::Unknown { .. } => {
+                    let CatalogStatus::Installed(UpdateStatus::Unknown { reason }) =
+                        &changed.status
+                    else {
+                        panic!("{changed:?}");
+                    };
+                    assert!(reason.contains("unknown scope"), "{reason}");
+                    assert_eq!(changed.error.as_ref(), Some(reason));
+                    UpdateStatus::Unknown {
+                        reason: reason.clone(),
+                    }
+                }
+                expected => expected,
+            };
             assert_eq!(
                 changed.status,
                 CatalogStatus::Installed(expected.clone()),
@@ -2687,8 +2713,11 @@ mod tests {
                 ([id], [], []) if id == "changed" => UpdateStatus::UpToDate,
                 ([], [plugin], []) if plugin.id == "changed" => incompatible(&plugin.requires),
                 ([], [], [failed]) if failed.id == "changed" => {
-                    assert!(failed.error.contains("unknown scope"), "{failed:?}");
-                    UpdateStatus::Unknown
+                    let UpdateStatus::Unknown { reason } = &expected else {
+                        panic!("{failed:?}");
+                    };
+                    assert!(failed.error.ends_with(reason.as_str()), "{failed:?}");
+                    expected.clone()
                 }
                 _ => panic!("{report:?}"),
             };
@@ -3072,12 +3101,21 @@ mod tests {
             (version("1.0.1-rc.1"), UpdateStatus::UpdateAvailable),
             (version("0.9.0"), UpdateStatus::UpToDate),
             (
-                Err(Some("^0.0.7".into())),
+                Err(Unoffered::Incompatible {
+                    requires: "^0.0.7".into(),
+                }),
                 UpdateStatus::Incompatible {
                     requires: "^0.0.7".into(),
                 },
             ),
-            (Err(None), UpdateStatus::Unknown),
+            (
+                Err(Unoffered::Unknown {
+                    reason: "no releases".into(),
+                }),
+                UpdateStatus::Unknown {
+                    reason: "no releases".into(),
+                },
+            ),
         ] {
             assert_eq!(
                 status("managed", offered.clone()),
@@ -3085,9 +3123,14 @@ mod tests {
                 "{offered:?}"
             );
         }
-        assert_eq!(
-            status("broken", version("1.0.0")),
-            CatalogStatus::Installed(UpdateStatus::Unknown)
+        let CatalogStatus::Installed(UpdateStatus::Unknown { reason }) =
+            status("broken", version("1.0.0"))
+        else {
+            panic!("a broken record's status is unknown");
+        };
+        assert!(
+            reason.starts_with("its source record cannot be read"),
+            "{reason}"
         );
         Ok(())
     }
@@ -3106,6 +3149,7 @@ mod tests {
             scopes: version.map(|_| Vec::new()),
             dependencies: None,
             requires: None,
+            error: None,
         };
         repo_db::create(
             &mut db,
@@ -3123,7 +3167,11 @@ mod tests {
                 listed("current", Some("1.0.0")),
                 listed("stale", Some("1.1.0")),
                 listed("ahead", Some("0.9.0")),
-                listed("unreleased", None),
+                repo_db::PluginRepositoryEntry {
+                    error: Some("no releases: the repository has no versions.json".into()),
+                    ..listed("unreleased", None)
+                },
+                listed("unexplained", None),
                 listed("pinned", Some("2.0.0")),
                 listed("other-ref", Some("2.0.0")),
                 listed("unsubscribed", Some("2.0.0")),
@@ -3141,6 +3189,7 @@ mod tests {
             "stale",
             "ahead",
             "unreleased",
+            "unexplained",
             "pinned",
             "other-ref",
             "unsubscribed",
@@ -3151,10 +3200,10 @@ mod tests {
         .into_iter()
         .map(|id| (id, record("1.0.0")))
         .collect();
-        plugins[4].1.pinned = true;
-        plugins[5].1.git_ref = Some("stable".into());
-        plugins[6].1.origin = "https://github.com/o/elsewhere".into();
-        plugins[7].1.origin = "https://github.com/O/R".into();
+        plugins[5].1.pinned = true;
+        plugins[6].1.git_ref = Some("stable".into());
+        plugins[7].1.origin = "https://github.com/o/elsewhere".into();
+        plugins[8].1.origin = "https://github.com/O/R".into();
         for (id, plugin) in &plugins {
             let dir = plugins_dir.path().join(id);
             std::fs::create_dir_all(&dir)?;
@@ -3168,12 +3217,27 @@ mod tests {
         assert_eq!(status("current")?, UpdateStatus::UpToDate);
         assert_eq!(status("stale")?, UpdateStatus::UpdateAvailable);
         assert_eq!(status("ahead")?, UpdateStatus::UpToDate);
-        assert_eq!(status("unreleased")?, UpdateStatus::Unknown);
+        let unknown = |reason: &str| UpdateStatus::Unknown {
+            reason: reason.to_string(),
+        };
+        assert_eq!(
+            status("unreleased")?,
+            unknown("no releases: the repository has no versions.json")
+        );
+        assert_eq!(
+            status("unexplained")?,
+            unknown(status::UNSTORED_REASON),
+            "entries stored before reasons were ask for a refresh"
+        );
         assert_eq!(status("pinned")?, UpdateStatus::UpToDate);
-        assert_eq!(status("other-ref")?, UpdateStatus::Unknown);
-        assert_eq!(status("unsubscribed")?, UpdateStatus::Unknown);
+        let unsubscribed = unknown("no subscribed repository has its origin and ref");
+        assert_eq!(status("other-ref")?, unsubscribed);
+        assert_eq!(status("unsubscribed")?, unsubscribed);
         assert_eq!(status("mixed-case")?, UpdateStatus::UpdateAvailable);
-        assert_eq!(status("unlisted")?, UpdateStatus::Unknown);
+        assert_eq!(
+            status("unlisted")?,
+            unknown("its repository did not list it at the last refresh")
+        );
         assert_eq!(
             status("blocked")?,
             UpdateStatus::Incompatible {
@@ -3195,6 +3259,7 @@ mod tests {
             scopes: Some(Vec::new()),
             dependencies: None,
             requires: None,
+            error: None,
         };
         repo_db::create(
             &mut db,

@@ -48,6 +48,9 @@ pub struct PluginRepositoryEntry {
     /// The server requirement that excludes the server, when no release
     /// runs on it.
     pub requires: Option<String>,
+    /// Why there is no release the server would install, when there is
+    /// none.
+    pub error: Option<String>,
     /// The plugins the plugin depends on at that release.
     pub dependencies: Option<Vec<PluginDependency>>,
 }
@@ -404,6 +407,7 @@ mod tests {
             scopes: None,
             dependencies: None,
             requires: None,
+            error: None,
         }
     }
 

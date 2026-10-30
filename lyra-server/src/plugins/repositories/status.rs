@@ -54,8 +54,8 @@ pub(crate) enum UpdateStatus {
     /// No release the repository offers the plugin runs on this server;
     /// `requires` is the server requirement that excludes it.
     Incompatible { requires: String },
-    /// The releases on offer are unknown.
-    Unknown,
+    /// The releases on offer are unknown, for `reason`.
+    Unknown { reason: String },
 }
 
 impl UpdateStatus {
@@ -63,10 +63,12 @@ impl UpdateStatus {
         match offered {
             Ok(offered) if offered.version > *installed => Self::UpdateAvailable,
             Ok(_) => Self::UpToDate,
-            Err(Some(requires)) => Self::Incompatible {
+            Err(Unoffered::Incompatible { requires }) => Self::Incompatible {
                 requires: requires.clone(),
             },
-            Err(None) => Self::Unknown,
+            Err(Unoffered::Unknown { reason }) => Self::Unknown {
+                reason: reason.clone(),
+            },
         }
     }
 }
@@ -83,10 +85,26 @@ pub(crate) struct OfferedRelease {
     pub(crate) dependencies: BTreeMap<String, Dependency>,
 }
 
+/// Why a repository offers one plugin no release on this server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Unoffered {
+    /// `requires` is the server requirement that excludes this server.
+    Incompatible {
+        requires: String,
+    },
+    Unknown {
+        reason: String,
+    },
+}
+
 /// What a repository offers one plugin on this server: the release an
-/// install would choose, or, without one, the server requirement that
-/// excludes this server when that is the reason.
-pub(super) type Offered = Result<OfferedRelease, Option<String>>;
+/// install would choose, or why there is none.
+pub(super) type Offered = Result<OfferedRelease, Unoffered>;
+
+/// The reason given for an entry stored without one, before entries
+/// carried it.
+pub(super) const UNSTORED_REASON: &str =
+    "the repository offers no release of the plugin; refresh it for the reason";
 
 pub(super) fn listed_offer(plugin: &ListedPlugin) -> Offered {
     match &plugin.offer {
@@ -96,36 +114,58 @@ pub(super) fn listed_offer(plugin: &ListedPlugin) -> Offered {
             scopes: offer.manifest.scopes.clone(),
             dependencies: offer.manifest.dependencies.clone(),
         }),
-        Err(error) => Err(error.required_host().map(ToString::to_string)),
+        Err(error) => Err(match error.required_host() {
+            Some(requires) => Unoffered::Incompatible {
+                requires: requires.to_string(),
+            },
+            None => Unoffered::Unknown {
+                reason: error.to_string(),
+            },
+        }),
     }
 }
 
 pub(super) fn stored_offer(entry: &repo_db::PluginRepositoryEntry) -> Offered {
-    match (&entry.version, &entry.commit, &entry.requires) {
-        (Some(version), Some(commit), _) => {
-            let dependencies = entry
-                .dependencies
-                .iter()
-                .flatten()
-                .map(|dependency| {
-                    let version = VersionReq::parse(&dependency.version).map_err(|_| None)?;
-                    let optional = dependency.optional;
-                    Ok((
-                        dependency.plugin_id.clone(),
-                        Dependency { version, optional },
-                    ))
-                })
-                .collect::<Result<_, Option<String>>>()?;
-            Ok(OfferedRelease {
-                version: Version::parse(version).map_err(|_| None)?,
-                commit: commit.clone(),
-                scopes: entry.scopes.clone().unwrap_or_default(),
-                dependencies,
-            })
-        }
-        (None, _, requires) => Err(requires.clone()),
-        (Some(_), None, _) => Err(None),
-    }
+    let (Some(version), Some(commit)) = (&entry.version, &entry.commit) else {
+        return Err(match &entry.requires {
+            Some(requires) => Unoffered::Incompatible {
+                requires: requires.clone(),
+            },
+            None => Unoffered::Unknown {
+                reason: stored_error(entry),
+            },
+        });
+    };
+    let unreadable = |_| Unoffered::Unknown {
+        reason: "the stored release cannot be read; refresh the repository".to_string(),
+    };
+    let dependencies = entry
+        .dependencies
+        .iter()
+        .flatten()
+        .map(|dependency| {
+            let version = VersionReq::parse(&dependency.version).map_err(unreadable)?;
+            let optional = dependency.optional;
+            Ok((
+                dependency.plugin_id.clone(),
+                Dependency { version, optional },
+            ))
+        })
+        .collect::<Result<_, Unoffered>>()?;
+    Ok(OfferedRelease {
+        version: Version::parse(version).map_err(unreadable)?,
+        commit: commit.clone(),
+        scopes: entry.scopes.clone().unwrap_or_default(),
+        dependencies,
+    })
+}
+
+/// Why the stored `entry` has no release, as its listing gave it.
+pub(super) fn stored_error(entry: &repo_db::PluginRepositoryEntry) -> String {
+    entry
+        .error
+        .clone()
+        .unwrap_or_else(|| UNSTORED_REASON.to_string())
 }
 
 /// The dependencies a subscription stores for `offered`.
@@ -471,26 +511,33 @@ fn offered_status(
     record: &SourceRecord,
     subscriptions: &[Subscription],
 ) -> InstalledStatus {
-    let unknown = InstalledStatus {
-        status: UpdateStatus::Unknown,
+    let status = |status| InstalledStatus {
+        status,
         offered: None,
         hold: None,
     };
     if record.pinned {
-        return InstalledStatus {
-            status: UpdateStatus::UpToDate,
-            ..unknown
-        };
+        return status(UpdateStatus::UpToDate);
     }
-    let Some(entry) = find_subscription(subscriptions, &record.origin, record.git_ref.as_deref())
-        .and_then(|subscription| {
-            subscription
-                .entries
-                .iter()
-                .find(|entry| entry.plugin_id == plugin_id && entry.subpath == record.subpath)
+    let unknown = |reason: &str| {
+        status(UpdateStatus::Unknown {
+            reason: reason.to_string(),
         })
+    };
+    let Some(subscription) =
+        find_subscription(subscriptions, &record.origin, record.git_ref.as_deref())
     else {
-        return unknown;
+        return unknown("no subscribed repository has its origin and ref");
+    };
+    let Some(entry) = subscription
+        .entries
+        .iter()
+        .find(|entry| entry.plugin_id == plugin_id && entry.subpath == record.subpath)
+    else {
+        return unknown(match subscription.repository.refreshed_at_ms {
+            None => "its repository has not been refreshed yet",
+            Some(_) => "its repository did not list it at the last refresh",
+        });
     };
     let offered = stored_offer(entry);
     InstalledStatus {

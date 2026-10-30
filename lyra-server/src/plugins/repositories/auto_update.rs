@@ -476,7 +476,14 @@ mod tests {
                 false,
                 UpdateStatus::UpdateAvailable,
             ),
-            ("unknown", unknown, false, UpdateStatus::Unknown),
+            (
+                "unknown",
+                unknown,
+                false,
+                UpdateStatus::Unknown {
+                    reason: String::new(),
+                },
+            ),
         ] {
             let forge = catalog_forge(HOST_REQUIREMENT, HOST_REQUIREMENT, changed).await?;
             let plugins_dir = tempfile::TempDir::new()?;
@@ -512,7 +519,12 @@ mod tests {
                 &list_subscriptions().await?,
                 &installed_manifests(plugins_dir.path()),
             );
-            assert_eq!(installed.status, status, "{case}");
+            match (&installed.status, &status) {
+                (UpdateStatus::Unknown { reason }, UpdateStatus::Unknown { .. }) => {
+                    assert!(reason.contains("unknown scope"), "{case}: {reason}");
+                }
+                _ => assert_eq!(installed.status, status, "{case}"),
+            }
             repo_db::remove(
                 &mut *STATE.db.write().await,
                 repository.db_id.expect("stored"),

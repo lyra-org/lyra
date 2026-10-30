@@ -135,8 +135,9 @@ enum PluginSourceResponse {
     /// offered at its last refresh or update check: `up_to_date`, always for
     /// pinned plugins; `update_available`; `incompatible`, with the
     /// `requires` that excludes this server, when no release runs on it; or
-    /// `unknown` when no such subscription lists the plugin, or its
-    /// repository has no offer for it for another reason. `offered` is the
+    /// `unknown`, with the `reason`, when no such subscription lists the
+    /// plugin, or its repository has no offer for it for another reason,
+    /// such as a missing `versions.json`. `offered` is the
     /// release on offer, and `hold` why an available update to it waits for
     /// an admin.
     Repository(Box<RepositorySourceResponse>),
@@ -397,7 +398,7 @@ enum UpdateStatusResponse {
     UpToDate,
     UpdateAvailable,
     Incompatible { requires: String },
-    Unknown,
+    Unknown { reason: String },
 }
 
 /// Where a catalogue plugin stands relative to the plugins directory.
@@ -409,7 +410,7 @@ enum CatalogStatusResponse {
     UpToDate,
     UpdateAvailable,
     Incompatible { requires: String },
-    Unknown,
+    Unknown { reason: String },
     Local,
 }
 
@@ -425,10 +426,11 @@ struct PluginPreviewSourceResponse {
 /// says where it stands against the plugins directory: `available`;
 /// `up_to_date` or `update_available`, comparing the installed version with
 /// the offered release's; `incompatible`, with the `requires` that excludes
-/// this server, when no release the repository offers runs on it; `unknown`
-/// when its source record cannot be read or the repository has no offer for
-/// it for another reason, given in `error`; or `local` when it was installed
-/// without a source record and repository tooling leaves it alone.
+/// this server, when no release the repository offers runs on it; `unknown`,
+/// with the `reason`, when its source record cannot be read or the
+/// repository has no offer for it for another reason, which `error` then
+/// gives too; or `local` when it was installed without a source record and
+/// repository tooling leaves it alone.
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
 struct PluginPreviewResponse {
@@ -695,7 +697,7 @@ fn update_status_response(status: repositories_service::UpdateStatus) -> UpdateS
         UpdateStatus::UpToDate => UpdateStatusResponse::UpToDate,
         UpdateStatus::UpdateAvailable => UpdateStatusResponse::UpdateAvailable,
         UpdateStatus::Incompatible { requires } => UpdateStatusResponse::Incompatible { requires },
-        UpdateStatus::Unknown => UpdateStatusResponse::Unknown,
+        UpdateStatus::Unknown { reason } => UpdateStatusResponse::Unknown { reason },
     }
 }
 
@@ -713,7 +715,9 @@ fn catalog_status_response(status: repositories_service::CatalogStatus) -> Catal
         CatalogStatus::Installed(UpdateStatus::Incompatible { requires }) => {
             CatalogStatusResponse::Incompatible { requires }
         }
-        CatalogStatus::Installed(UpdateStatus::Unknown) => CatalogStatusResponse::Unknown,
+        CatalogStatus::Installed(UpdateStatus::Unknown { reason }) => {
+            CatalogStatusResponse::Unknown { reason }
+        }
         CatalogStatus::Local => CatalogStatusResponse::Local,
     }
 }
@@ -1460,7 +1464,7 @@ fn get_settings_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn list_plugins_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List plugins").description(
-        "Returns the loaded plugin manifests along with where each plugin was installed from: a `source` of kind `repository` (origin, ref, version, commit, pinned, status, offered, hold, installed_at, installed_automatically), `local`, or `invalid` (error) when the source record could not be read and the plugin should be uninstalled or reinstalled. `pinned` is true for tag and commit installs, which updates never move. `status` compares the installed version with the release that the subscribed repository of the same origin and ref last offered this server (`up_to_date`, `update_available`, `incompatible` with the `requires` that excludes this server, or `unknown` when it offered nothing for another reason or no such subscription lists the plugin), without contacting the forge; refreshing the repository or updating plugins stores the offered releases. `offered` is the release on offer (version, commit, scopes) and `hold` why an available update to it waits for an admin: `adds_scopes` with the `gains` of each plugin it would let reach new scopes, through its own or its dependencies', with what they let it do and its risk then, `breaks_dependents` with each dependent's id and requirement, `unmet_dependencies` with each dependency the release requires that would be missing or at another version, or `dependency_cycle` with the `plugins` it would leave depending on each other in a cycle. Dependencies are judged as if every available update were installed together. `installed_automatically` is true when the daily update check, not a request, installed the release at `installed_at`.",
+        "Returns the loaded plugin manifests along with where each plugin was installed from: a `source` of kind `repository` (origin, ref, version, commit, pinned, status, offered, hold, installed_at, installed_automatically), `local`, or `invalid` (error) when the source record could not be read and the plugin should be uninstalled or reinstalled. `pinned` is true for tag and commit installs, which updates never move. `status` compares the installed version with the release that the subscribed repository of the same origin and ref last offered this server (`up_to_date`, `update_available`, `incompatible` with the `requires` that excludes this server, or `unknown` with the `reason` when it offered nothing for another reason, such as a missing `versions.json`, or no such subscription lists the plugin), without contacting the forge; refreshing the repository or updating plugins stores the offered releases. `offered` is the release on offer (version, commit, scopes) and `hold` why an available update to it waits for an admin: `adds_scopes` with the `gains` of each plugin it would let reach new scopes, through its own or its dependencies', with what they let it do and its risk then, `breaks_dependents` with each dependent's id and requirement, `unmet_dependencies` with each dependency the release requires that would be missing or at another version, or `dependency_cycle` with the `plugins` it would leave depending on each other in a cycle. Dependencies are judged as if every available update were installed together. `installed_automatically` is true when the daily update check, not a request, installed the release at `installed_at`.",
     )
 }
 
@@ -1481,7 +1485,7 @@ fn list_all_user_settings_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn resolve_repository_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Resolve plugin repository").description(
-        "Fetches a Git repository URL and returns it in the same shape as a subscribed repository, minus `id` and `refreshed_at`: name, description, resolved ref, commit, and the plugins it provides with the release an install would choose, the capability scopes each requests, and a `status` against the plugins directory (`available`, `up_to_date`, `update_available`, `incompatible` with `requires`, `unknown`, `local`). Nothing is installed.",
+        "Fetches a Git repository URL and returns it in the same shape as a subscribed repository, minus `id` and `refreshed_at`: name, description, resolved ref, commit, and the plugins it provides with the release an install would choose, the capability scopes each requests, and a `status` against the plugins directory (`available`, `up_to_date`, `update_available`, `incompatible` with `requires`, `unknown` with `reason`, `local`). Nothing is installed.",
     )
 }
 
@@ -1857,6 +1861,72 @@ mod tests {
     }
 
     #[test]
+    fn manifest_responses_give_the_reason_a_status_is_unknown() -> anyhow::Result<()> {
+        let plugins_dir = tempfile::TempDir::new()?;
+        let origin = "https://github.com/o/r";
+        for id in ["unsubscribed", "unreleased"] {
+            let dir = plugins_dir.path().join(id);
+            std::fs::create_dir(&dir)?;
+            SourceRecord {
+                schema_version: harmony_repository::manifest::SOURCE_RECORD_SCHEMA_VERSION,
+                origin: origin.into(),
+                forge: harmony_repository::Forge::GitHub,
+                git_ref: (id == "unsubscribed").then(|| "v2".into()),
+                version: semver::Version::new(1, 0, 0),
+                commit: "a".repeat(40),
+                pinned: false,
+                subpath: None,
+                via_repository: None,
+                installed_at: None,
+                installed_automatically: false,
+            }
+            .store(&dir)?;
+        }
+        let subscriptions = [repositories_service::Subscription {
+            repository: lyra_db::plugin_repositories::PluginRepository {
+                db_id: None,
+                id: "catalog".into(),
+                origin: origin.into(),
+                name: "Catalog".into(),
+                description: String::new(),
+                git_ref: None,
+                commit: None,
+                refreshed_at_ms: Some(1),
+            },
+            entries: vec![lyra_db::plugin_repositories::PluginRepositoryEntry {
+                db_id: None,
+                plugin_id: "unreleased".into(),
+                subpath: None,
+                version: None,
+                commit: None,
+                scopes: None,
+                dependencies: None,
+                requires: None,
+                error: Some("no releases: the repository has no versions.json".into()),
+            }],
+        }];
+
+        let responses = manifest_responses(
+            &[manifest("unsubscribed"), manifest("unreleased")],
+            plugins_dir.path(),
+            &subscriptions,
+        );
+        let json = serde_json::to_value(&responses)?;
+
+        assert_eq!(json[0]["source"]["status"], "unknown");
+        assert_eq!(
+            json[0]["source"]["reason"],
+            "no subscribed repository has its origin and ref"
+        );
+        assert_eq!(json[1]["source"]["status"], "unknown");
+        assert_eq!(
+            json[1]["source"]["reason"],
+            "no releases: the repository has no versions.json"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn manifest_responses_report_offered_releases_and_holds() -> anyhow::Result<()> {
         let plugins_dir = tempfile::TempDir::new()?;
         let write_manifest = |id: &str, dependencies: serde_json::Value| {
@@ -1907,6 +1977,7 @@ mod tests {
                 scopes: Some(scopes.iter().map(ToString::to_string).collect()),
                 dependencies: None,
                 requires: None,
+                error: None,
             };
         let subscriptions = [repositories_service::Subscription {
             repository: lyra_db::plugin_repositories::PluginRepository {

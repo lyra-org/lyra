@@ -202,10 +202,10 @@ release of it that runs on the server: no `versions.json` entry accepts
 the server, or the plugin's `plugin.json` at the release does not; the
 status names the requirement that excludes the server, and updating the
 plugin reports the same without downloading anything. It is up to date
-when the offered release is not newer. Its status is unknown when no
-subscription with the same origin and ref lists it, or when the repository
-has no offer for it for another reason, such as a missing `versions.json`;
-updating it then fails with the reason. Pinned plugins are always up to
+when the offered release is not newer. Its status is unknown, and names
+the reason, when no subscription with the same origin and ref lists it, or
+when the repository has no offer for it for another reason, such as a
+missing `versions.json`; updating it then fails with the reason. Pinned plugins are always up to
 date.
 
 A plugin can use what its dependencies `require`, so it reaches its own
