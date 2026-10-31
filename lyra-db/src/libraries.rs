@@ -228,8 +228,10 @@ pub fn find_node_id_accessible_to_user(
     Ok(found)
 }
 
+/// The libraries holding the node, by database id, so the first is the one the server picks for
+/// an entity in several.
 pub fn get_for_entity(db: &impl super::DbAccess, node_id: DbId) -> anyhow::Result<Vec<Library>> {
-    let libraries: Vec<Library> = db
+    let mut libraries: Vec<Library> = db
         .exec(
             QueryBuilder::select()
                 .elements::<Library>()
@@ -242,8 +244,10 @@ pub fn get_for_entity(db: &impl super::DbAccess, node_id: DbId) -> anyhow::Resul
                 .query(),
         )?
         .try_into()?;
+    libraries.sort_by_key(|library| library.db_id.map(|id| id.0));
     Ok(libraries)
 }
+
 pub fn get_by_release(
     db: &impl super::DbAccess,
     release_db_id: DbId,
@@ -932,6 +936,25 @@ mod tests {
     use crate::test_db::new_test_db;
     use agdb::DbAny;
     use nanoid::nanoid;
+
+    #[test]
+    fn libraries_for_an_entity_come_in_db_id_order() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let first = crate::test_db::insert_library(&mut db, "First", "/tmp/lyra-order-first")?;
+        let second = crate::test_db::insert_library(&mut db, "Second", "/tmp/lyra-order-second")?;
+        let release = crate::fixtures::insert_release(&mut db, "Release")?;
+        crate::fixtures::connect(&mut db, second, release)?;
+        crate::fixtures::connect(&mut db, first, release)?;
+
+        let libraries = get_for_entity(&db, release)?
+            .into_iter()
+            .map(|library| library.db_id)
+            .collect::<Vec<_>>();
+        let mut expected = vec![Some(first), Some(second)];
+        expected.sort_by_key(|id| id.map(|id| id.0));
+        assert_eq!(libraries, expected);
+        Ok(())
+    }
 
     fn normalize_library_name_key(raw: &str) -> Result<String, LibraryNameError> {
         Ok(normalize_library_name(raw)?.1)

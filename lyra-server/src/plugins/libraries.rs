@@ -78,7 +78,10 @@ impl LibrariesModule {
         harmony_luau::serializable_to_luau_owned(libraries)
     }
 
-    #[harmony(returns(Vec<LibraryRecord>))]
+    #[harmony(
+        description = "The libraries holding the entity that the caller can see, the one the server picks for the entity first.",
+        returns(Vec<LibraryRecord>)
+    )]
     async fn get_for_entity(
         entity_id: String,
         #[context] db: Db,

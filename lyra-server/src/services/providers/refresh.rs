@@ -105,11 +105,9 @@ pub(super) fn resolve_library_id_for_entity(
     db: &DbAny,
     node_id: DbId,
 ) -> anyhow::Result<Option<DbId>> {
-    let libraries = lyra_db::libraries::get_for_entity(db, node_id)?;
-    Ok(libraries
+    Ok(lyra_db::libraries::get_for_entity(db, node_id)?
         .into_iter()
-        .filter_map(|library| library.db_id)
-        .min_by_key(|id| id.0))
+        .find_map(|library| library.db_id))
 }
 
 pub(crate) async fn refresh_entity_metadata(
