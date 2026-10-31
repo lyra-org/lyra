@@ -451,17 +451,13 @@ local function fetch_genre_details(qids: { string }): { GenreClaim }
 end
 
 local function get_artist_name(ctx: metadata.ReleaseRefreshContext): string?
-	if ctx.lookup_hints then
-		local hints = ctx.lookup_hints :: { artist_name: string?, release_title: string?, year: number? }
-		if hints.artist_name and hints.artist_name ~= "" then
-			return hints.artist_name
-		end
+	local hints = ctx.lookup_hints
+	if hints and hints.artist_name and hints.artist_name ~= "" then
+		return hints.artist_name
 	end
-	if ctx.artists then
-		local artists = ctx.artists :: { { id: string?, artist_name: string } }
-		if #artists > 0 and artists[1].artist_name ~= "" then
-			return artists[1].artist_name
-		end
+	local artists = ctx.artists
+	if artists and #artists > 0 and artists[1].artist_name ~= "" then
+		return artists[1].artist_name
 	end
 	return nil
 end
@@ -475,8 +471,8 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 
 	local artist_name = get_artist_name(ctx)
 
-	-- Cache key includes normalized title to avoid stale data if the id is reused.
-	-- Normalize: trim whitespace, lowercase — resilient to cosmetic tag edits.
+	-- The key includes the title, trimmed and lowercased, so a retitled release
+	-- is searched again while a cosmetic tag edit is not.
 	local normalized_title = string.lower(shared.trim(release_title))
 	local cache_key = `release:{release_id}:{normalized_title}`
 	local cached = cache_get(cache_key)

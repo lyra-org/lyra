@@ -144,6 +144,7 @@ struct Library {
     /// The users granted the library. Admins see every library without a grant.
     #[serde(default)]
     users: Vec<String>,
+    language: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -587,7 +588,7 @@ impl Fixture {
                     name: library.name.clone(),
                     path_key: lyra_db::libraries::path_key_for(&path),
                     path,
-                    language: None,
+                    language: library.language.clone(),
                     country: None,
                 },
             )?;

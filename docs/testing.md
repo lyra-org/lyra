@@ -84,6 +84,7 @@ commands = ["pause", "seek"]  # optional remote control commands it declares
 key = "music"
 name = "Music"
 users = ["manager"]  # users granted the library; admins see every library
+language = "jpn"     # optional ISO 639 language
 
 [[artists]]
 key = "amy"

@@ -70,7 +70,8 @@ local function ensure_wikipedia_rate_limit(host: string)
 	})
 end
 
--- The first of the artist's libraries with a resolvable language.
+-- The language of the first library holding the artist, in the order the
+-- server gives them, whose language resolves.
 local function library_language(artist_id: string): WikiLanguage?
 	local ok, artist_libraries = pcall(libraries.get_for_entity, artist_id)
 	if not ok then
@@ -333,6 +334,8 @@ local function resolve_artist(artist_name: string, mbid: string?, languages: { W
 end
 
 local module = {}
+
+module.library_language = library_language
 
 function module.register(provider: metadata.Provider)
 	provider:refresh(metadata.EntityType.Artist, function(ctx: metadata.ArtistRefreshContext)
