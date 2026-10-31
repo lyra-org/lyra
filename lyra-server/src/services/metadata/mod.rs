@@ -219,13 +219,55 @@ fn read_tagged_file(
 
 #[derive(Debug, Clone)]
 pub(crate) enum SkipReason {
-    ReadFailed(String),
+    ReadFailed(ReadError),
     TaskFailed(String),
     /// Prevents silent coalesce corruption downstream.
     RequiredFieldEmpty(Vec<mapping::MissingRequiredField>),
     /// Audio entries were claimed by an earlier cue in the batch.
     CueAlreadyClaimed,
-    CueParseFailed(String),
+    CueParseFailed(ReadError),
+}
+
+impl SkipReason {
+    /// Whether reading the file again, unchanged, may succeed.
+    pub(crate) fn is_transient(&self) -> bool {
+        match self {
+            Self::ReadFailed(error) | Self::CueParseFailed(error) => error.transient,
+            Self::TaskFailed(_) => true,
+            Self::RequiredFieldEmpty(_) | Self::CueAlreadyClaimed => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ReadError {
+    pub(crate) message: String,
+    /// The file couldn't be read at all, rather than holding contents that can't be parsed.
+    pub(crate) transient: bool,
+}
+
+impl From<&anyhow::Error> for ReadError {
+    fn from(err: &anyhow::Error) -> Self {
+        let transient = err
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<std::io::Error>())
+            .is_some_and(|io| {
+                !matches!(
+                    io.kind(),
+                    std::io::ErrorKind::InvalidData | std::io::ErrorKind::UnexpectedEof
+                )
+            });
+        Self {
+            message: format!("{err:#}"),
+            transient,
+        }
+    }
+}
+
+impl std::fmt::Display for ReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -263,7 +305,7 @@ pub(crate) fn log_skip_summary(skipped: &[SkipRecord]) {
     );
 }
 
-fn skip_reason_summary(reason: &SkipReason) -> String {
+pub(crate) fn skip_reason_summary(reason: &SkipReason) -> String {
     match reason {
         SkipReason::ReadFailed(error) => format!("read_failed: {error}"),
         SkipReason::TaskFailed(error) => format!("task_failed: {error}"),
@@ -347,7 +389,7 @@ pub(crate) async fn parse_metadata(
                 );
                 skipped.push(SkipRecord {
                     path: cue_entry.full_path.clone(),
-                    reason: SkipReason::CueParseFailed(err.to_string()),
+                    reason: SkipReason::CueParseFailed((&err).into()),
                 });
             }
         }
@@ -375,7 +417,7 @@ pub(crate) async fn parse_metadata(
                 );
                 skipped.push(SkipRecord {
                     path: path.clone(),
-                    reason: SkipReason::ReadFailed(err.to_string()),
+                    reason: SkipReason::ReadFailed((&err).into()),
                 });
                 continue;
             }
@@ -455,6 +497,29 @@ pub(crate) async fn parse_metadata(
                 .unwrap_or_default()
                 > 1;
             merge_embedded_into_cue_metadata(cue_track, embedded, preserve_cue_track_identity);
+        }
+    }
+
+    let (cue_metadata, untitled): (Vec<_>, Vec<_>) = cue_metadata.into_iter().partition(|track| {
+        track
+            .album
+            .as_deref()
+            .is_some_and(|album| !album.trim().is_empty())
+    });
+    let untitled_sheets = untitled
+        .iter()
+        .filter_map(|track| track.cue_sheet_entry_id)
+        .collect::<HashSet<_>>();
+    for cue_entry in &cue_entries {
+        if cue_entry
+            .db_id
+            .is_some_and(|entry_id| untitled_sheets.contains(&entry_id))
+        {
+            skip_required_field_empty(
+                &mut skipped,
+                &cue_entry.full_path,
+                vec![mapping::MissingRequiredField::Album],
+            );
         }
     }
 
@@ -607,6 +672,7 @@ mod tests {
             size: 0,
             mtime: 0,
             ctime: 0,
+            synced_at: None,
         }
     }
 
@@ -1067,6 +1133,73 @@ mod tests {
     async fn cued_discs_dated_by_one_cue_alone_split() -> anyhow::Result<()> {
         let releases = releases_of_cued_discs(["REM DATE 1994\n", ""]).await?;
         assert_eq!(releases, [vec![Some(1994)], vec![Some(1990)]]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_metadata_skips_cue_tracks_left_without_an_album() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let audio = dir.path().join("album.flac");
+        fixture_with_comments(&audio, "integration_track.flac", &["ALBUM"], &[])?;
+        let cue = dir.path().join(" .cue");
+        std::fs::write(
+            &cue,
+            "FILE \"album.flac\" WAVE\n  TRACK 01 AUDIO\n    INDEX 01 00:00:00\n",
+        )?;
+
+        let output = parse_metadata(
+            &mapping::default_config(),
+            vec![file_entry(1, &audio), file_entry(2, &cue)],
+        )
+        .await?;
+
+        assert!(output.metadata.is_empty());
+        assert_eq!(
+            skipped_for(&output),
+            [
+                (audio, vec![mapping::MissingRequiredField::Album]),
+                (cue, vec![mapping::MissingRequiredField::Album]),
+            ],
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_metadata_tells_unreadable_files_from_unparseable_ones() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir()?;
+        let audio = dir.path().join("Album/01.flac");
+        fixture_with_comments(&audio, "integration_track.flac", &[], &[])?;
+        let corrupt = dir.path().join("Album/02.flac");
+        std::fs::write(&corrupt, b"fLaC not really")?;
+        let cue = dir.path().join("Album/album.cue");
+        std::fs::write(&cue, [0xff, 0xfe, 0x00, b'F'])?;
+        std::fs::set_permissions(&audio, std::fs::Permissions::from_mode(0o000))?;
+        let readable_anyway = std::fs::read(&audio).is_ok();
+
+        let output = parse_metadata(
+            &mapping::default_config(),
+            vec![
+                file_entry(1, &audio),
+                file_entry(2, &corrupt),
+                file_entry(3, &cue),
+            ],
+        )
+        .await?;
+
+        let transient = |path: &std::path::Path| {
+            output
+                .skipped
+                .iter()
+                .find(|record| record.path == path)
+                .map(|record| record.reason.is_transient())
+        };
+        if !readable_anyway {
+            assert_eq!(transient(&audio), Some(true));
+        }
+        assert_eq!(transient(&corrupt), Some(false));
+        assert_eq!(transient(&cue), Some(false));
         Ok(())
     }
 

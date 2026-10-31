@@ -5,7 +5,6 @@
 
 use std::{
     collections::{
-        BTreeMap,
         HashMap,
         HashSet,
     },
@@ -26,6 +25,10 @@ use rayon::iter::{
 };
 use walkdir::WalkDir;
 
+use crate::services::metadata::ingestion::{
+    SourceDirGroup,
+    group_by_source_dir,
+};
 use lyra_db::{
     Entry,
     Library,
@@ -38,14 +41,8 @@ use lyra_db::{
 
 #[derive(Debug)]
 pub(crate) struct EntryScanPlan {
-    pub(crate) groups: Vec<ScannedEntryGroup>,
+    pub(crate) groups: Vec<SourceDirGroup>,
     pub(crate) observed_paths: HashSet<PathBuf>,
-}
-
-#[derive(Debug)]
-pub(crate) struct ScannedEntryGroup {
-    pub(crate) source_dir: PathBuf,
-    pub(crate) entries: Vec<Entry>,
 }
 
 pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<Vec<Entry>> {
@@ -117,6 +114,7 @@ pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<Vec<Entry>> {
             size,
             mtime,
             ctime,
+            synced_at: None,
         });
     }
 
@@ -158,82 +156,6 @@ pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<Vec<Entry>> {
             valid_dirs.contains(&entry.full_path)
         })
         .collect())
-}
-
-fn group_entries_by_source_dir(library_root: &Path, entries: Vec<Entry>) -> Vec<ScannedEntryGroup> {
-    let mut dirs_by_path = BTreeMap::new();
-    let mut files_by_source_dir: BTreeMap<PathBuf, Vec<Entry>> = BTreeMap::new();
-
-    for entry in entries {
-        match entry.kind {
-            EntryKind::Dir => {
-                dirs_by_path.insert(entry.full_path.clone(), entry);
-            }
-            EntryKind::File => {
-                let parent = entry
-                    .full_path
-                    .parent()
-                    .map(Path::to_path_buf)
-                    .unwrap_or_else(|| library_root.to_path_buf());
-                let source_dir = if parent != library_root
-                    && parent
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .is_some_and(folder_name_looks_like_disc)
-                {
-                    parent.parent().map(Path::to_path_buf).unwrap_or(parent)
-                } else {
-                    parent
-                };
-                files_by_source_dir
-                    .entry(source_dir)
-                    .or_default()
-                    .push(entry);
-            }
-        }
-    }
-
-    files_by_source_dir
-        .into_iter()
-        .map(|(source_dir, mut files)| {
-            let mut ancestors = BTreeMap::new();
-            for file in &files {
-                let mut current = file.full_path.parent();
-                while let Some(path) = current {
-                    if ancestors.contains_key(path) {
-                        break;
-                    }
-                    if let Some(dir) = dirs_by_path.get(path) {
-                        ancestors.insert(path.to_path_buf(), dir.clone());
-                    }
-                    if path == library_root {
-                        break;
-                    }
-                    current = path.parent();
-                }
-            }
-            let mut entries = ancestors.into_values().collect::<Vec<_>>();
-            entries.append(&mut files);
-            ScannedEntryGroup {
-                source_dir,
-                entries,
-            }
-        })
-        .collect()
-}
-
-fn folder_name_looks_like_disc(name: &str) -> bool {
-    let normalized = name
-        .to_ascii_lowercase()
-        .replace(['_', '-', '.'], " ")
-        .trim()
-        .to_string();
-    let compact = normalized.replace(' ', "");
-    compact
-        .strip_prefix("disc")
-        .or_else(|| compact.strip_prefix("disk"))
-        .or_else(|| compact.strip_prefix("cd"))
-        .is_some_and(|suffix| !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()))
 }
 
 pub(crate) fn diff_and_needs_hash(
@@ -328,7 +250,7 @@ pub(crate) fn prepare_entry_scan_plan(
         .iter()
         .map(|entry| entry.full_path.clone())
         .collect::<HashSet<_>>();
-    let groups = group_entries_by_source_dir(&library.path, enriched);
+    let groups = group_by_source_dir(&library.path, enriched);
     Ok(EntryScanPlan {
         groups,
         observed_paths,
@@ -344,10 +266,7 @@ mod tests {
         UNIX_EPOCH,
     };
 
-    use agdb::{
-        DbAny,
-        DbId,
-    };
+    use agdb::DbAny;
 
     use super::*;
     use lyra_db::entries::{
@@ -379,18 +298,19 @@ mod tests {
         lyra_db::test_db::insert_test_library_node(db, "Test", root.to_path_buf())
     }
 
-    fn full_sync(db: &mut DbAny, library: &Library) -> anyhow::Result<Vec<DbId>> {
+    fn full_sync(db: &mut DbAny, library: &Library) -> anyhow::Result<()> {
         let library_db_id = library
             .db_id
             .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
         let existing = load_existing(db, library_db_id)?;
         let plan = prepare_entry_scan_plan(library, existing)?;
-        let mut altered = Vec::new();
         for group in plan.groups {
-            altered.extend(sync_entry_group(db, library, hash_entry_group(group.entries))?.altered);
+            sync_entry_group(db, library, hash_entry_group(group.entries))?;
         }
-        altered.extend(prune_missing_entries(db, library, &plan.observed_paths)?.altered);
-        Ok(altered)
+        prune_missing_entries(db, library, &plan.observed_paths, |removed, surviving| {
+            crate::services::metadata::ingestion::albums_left_by(&library.path, removed, surviving)
+        })?;
+        Ok(())
     }
 
     #[test]
@@ -472,7 +392,7 @@ mod tests {
 
         fs::write(&track, b"track1-updated")?;
 
-        let altered = full_sync(&mut db, &library)?;
+        full_sync(&mut db, &library)?;
         let updated = load_existing(&db, library.db_id.unwrap())?;
         let updated_entry = updated
             .iter()
@@ -481,14 +401,19 @@ mod tests {
         let new_hash = updated_entry.hash.clone().unwrap();
 
         assert_ne!(old_hash, new_hash);
-        assert!(altered.contains(&entry_db_id));
+        assert_eq!(updated_entry.db_id, Some(entry_db_id));
+        assert!(
+            updated_entry.synced_at.is_none(),
+            "the changed entry kept its sync"
+        );
 
         let _ = fs::remove_dir_all(&root);
         Ok(())
     }
 
-    #[test]
-    fn sync_entry_group_preserves_disc_directories_for_metadata_grouping() -> anyhow::Result<()> {
+    #[tokio::test]
+    async fn sync_entry_group_preserves_disc_directories_for_metadata_grouping()
+    -> anyhow::Result<()> {
         let root = temp_path("disc-group");
         let album = root.join("album");
         let discs = [album.join("Disc 1"), album.join("Disc 2")];
@@ -502,23 +427,20 @@ mod tests {
         let library = new_library(&mut db, &root)?;
         let plan = prepare_entry_scan_plan(&library, Vec::new())?;
         assert_eq!(plan.groups.len(), 1);
-        let mut altered = Vec::new();
         for group in plan.groups {
-            altered.extend(sync_entry_group(&mut db, &library, group.entries)?.altered);
+            sync_entry_group(&mut db, &library, group.entries)?;
         }
 
         let entries = load_existing(&db, library.db_id.unwrap())?;
         for disc in &discs {
             assert!(entries.iter().any(|entry| &entry.full_path == disc));
         }
-        let groups = crate::services::metadata::ingestion::group_entries(
-            &db,
-            library.db_id.unwrap(),
-            altered,
-        )?;
+        let groups =
+            crate::services::metadata::ingestion::metadata_groups(&library.path, entries).await;
         assert_eq!(groups.len(), 1, "disc tracks must share one metadata group");
         assert_eq!(
             groups[0]
+                .entries
                 .iter()
                 .filter(|entry| entry.kind == EntryKind::File)
                 .count(),
@@ -566,7 +488,9 @@ mod tests {
             "group sync should not delete entries missing from other groups"
         );
 
-        prune_missing_entries(&mut db, &library, &observed_paths)?;
+        prune_missing_entries(&mut db, &library, &observed_paths, |removed, surviving| {
+            crate::services::metadata::ingestion::albums_left_by(&library.path, removed, surviving)
+        })?;
         let after_prune = load_existing(&db, library.db_id.unwrap())?;
         assert!(!after_prune.iter().any(|entry| entry.full_path == track_a));
         assert!(after_prune.iter().any(|entry| entry.full_path == track_b));

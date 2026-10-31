@@ -284,7 +284,7 @@ async fn refresh_release_metadata_inner_with_progress(
                         tracing::debug!(
                             library_db_id = library_db_id.0,
                             release_db_id = release_id.0,
-                            error = %err,
+                            error = %format_args!("{err:#}"),
                             "release disappeared during scan provider refresh"
                         );
                         None
@@ -322,7 +322,7 @@ async fn refresh_release_metadata_inner_with_progress(
                     tracing::warn!(
                         provider_id,
                         release_db_id = release_id.0,
-                        error = %err,
+                        error = %format_args!("{err:#}"),
                         "sync filter failed, skipping release for provider"
                     );
                     false
@@ -357,14 +357,14 @@ async fn refresh_release_metadata_inner_with_progress(
                             work_id,
                             SyncStageKey::ProviderRefresh,
                             details,
-                            err.to_string(),
+                            format!("{err:#}"),
                         )
                         .await;
                 }
                 tracing::warn!(
                     provider_id,
                     release_db_id = release_id.0,
-                    error = %err,
+                    error = %format_args!("{err:#}"),
                     "provider refresh handler failed during scan release refresh"
                 );
                 continue;
@@ -377,7 +377,7 @@ async fn refresh_release_metadata_inner_with_progress(
             tracing::warn!(
                 provider_id,
                 release_db_id = release_id.0,
-                error = %err,
+                error = %format_args!("{err:#}"),
                 "artist deduplication failed during scan release refresh"
             );
         }
@@ -497,7 +497,7 @@ async fn refresh_library_metadata_inner_with_progress(
                         tracing::warn!(
                             provider_id,
                             release_db_id = node_id.0,
-                            error = %err,
+                            error = %format_args!("{err:#}"),
                             "sync filter failed, skipping release for provider"
                         );
                         false
@@ -533,7 +533,7 @@ async fn refresh_library_metadata_inner_with_progress(
                                 work_id,
                                 SyncStageKey::ProviderRefresh,
                                 details,
-                                err.to_string(),
+                                format!("{err:#}"),
                             )
                             .await;
                     }
@@ -556,7 +556,7 @@ async fn refresh_library_metadata_inner_with_progress(
         if let Err(err) = deduplicate_artists_by_external_id(&mut db_write, &declared_artist_ids) {
             tracing::warn!(
                 provider_id,
-                error = %err,
+                error = %format_args!("{err:#}"),
                 "artist deduplication failed during library refresh"
             );
         }
@@ -604,7 +604,7 @@ async fn refresh_library_metadata_inner_with_progress(
                                 work_id,
                                 SyncStageKey::ProviderCover,
                                 SyncWorkDetails::new("library_provider_cover_refresh"),
-                                err.to_string(),
+                                format!("{err:#}"),
                             )
                             .await;
                     }
@@ -913,7 +913,7 @@ fn deduplicate_release_scope_locked(
     ) {
         tracing::warn!(
             library_db_id = library_db_id.0,
-            error = %err,
+            error = %format_args!("{err:#}"),
             "release deduplication by external id failed during metadata refresh callback"
         );
     }

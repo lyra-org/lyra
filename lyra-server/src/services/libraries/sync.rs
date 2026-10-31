@@ -8,14 +8,19 @@ use futures::StreamExt;
 use std::{
     collections::{
         BTreeMap,
+        HashMap,
         HashSet,
     },
-    path::Path,
+    path::{
+        Path,
+        PathBuf,
+    },
     time::Instant,
 };
 
 use super::{
     orchestrator::{
+        SyncRunControlError,
         SyncRunProgress,
         SyncRunStatus,
         SyncStageKey,
@@ -38,14 +43,15 @@ use crate::services::{
         upsert_release_cover_metadata,
     },
     metadata::{
+        TrackMetadata,
         cleanup::cleanup_orphaned_metadata,
         ingestion::{
             MetadataApplyResult,
             ParsedMetadataGroup,
+            albums_left_by,
             apply_metadata,
             coalesce_disc_groups,
-            group_entries,
-            source_directory_for_group_entries,
+            metadata_groups,
         },
         load_mapping_config,
         log_skip_summary,
@@ -54,6 +60,7 @@ use crate::services::{
             dispatch_for_track as dispatch_lyrics_for_track,
         },
         parse_metadata,
+        skip_reason_summary,
     },
     providers::{
         LibraryRefreshOptions,
@@ -63,8 +70,10 @@ use crate::services::{
 };
 use lyra_db::{
     DbAsync,
+    Entry,
     Library,
     entries::{
+        EntryKind,
         prune_missing_entries,
         sync_entry_group,
     },
@@ -78,17 +87,11 @@ fn trace_run_id(progress: Option<&SyncRunProgress>) -> String {
         .unwrap_or_default()
 }
 
-#[derive(Debug, Default)]
-struct IncrementalEntrySyncResult {
-    observed_paths: HashSet<std::path::PathBuf>,
-    altered_entries: Vec<DbId>,
-}
-
 async fn sync_entries_incremental(
     db: &DbAsync,
     library: &Library,
     progress: Option<SyncRunProgress>,
-) -> anyhow::Result<IncrementalEntrySyncResult> {
+) -> anyhow::Result<HashSet<std::path::PathBuf>> {
     let run_id = trace_run_id(progress.as_ref());
     let library_db_id = library
         .db_id
@@ -173,7 +176,7 @@ async fn sync_entries_incremental(
                                     SyncWorkDetails::new("entry_group_sync").source_dir(Some(
                                         source_dir.to_string_lossy().into_owned(),
                                     )),
-                                    err.to_string(),
+                                    format!("{err:#}"),
                                 )
                                 .await;
                         }
@@ -188,7 +191,6 @@ async fn sync_entries_incremental(
                     entry_count,
                     added = result.added,
                     updated = result.updated,
-                    touched_entries = result.altered.len(),
                     elapsed_ms = started.elapsed().as_millis() as u64,
                     stage = "entry_sync",
                     "scan entry group synced"
@@ -198,21 +200,18 @@ async fn sync_entries_incremental(
                         .complete_work(work_id, SyncStageKey::EntrySync)
                         .await;
                 }
-                Ok::<_, anyhow::Error>(result.altered)
+                Ok::<_, anyhow::Error>(())
             }
         })
         .buffer_unordered(MAX_CONCURRENT_ALBUM_PIPELINE)
         .collect::<Vec<_>>()
         .await;
 
-    let mut result = IncrementalEntrySyncResult::default();
     for group_result in group_results {
-        result.altered_entries.extend(group_result?);
+        group_result?;
     }
 
-    result.observed_paths = scan_plan.observed_paths;
-
-    Ok(result)
+    Ok(scan_plan.observed_paths)
 }
 
 async fn prune_missing_entries_for_scan(
@@ -238,7 +237,12 @@ async fn prune_missing_entries_for_scan(
     };
     let prune_write_result = {
         let mut db_write = db.write().await;
-        prune_missing_entries(&mut db_write, library, observed_paths)
+        prune_missing_entries(
+            &mut db_write,
+            library,
+            observed_paths,
+            |removed, surviving| albums_left_by(&library.path, removed, surviving),
+        )
     };
     let prune_result = match prune_write_result {
         Ok(result) => result,
@@ -249,7 +253,7 @@ async fn prune_missing_entries_for_scan(
                         work_id,
                         SyncStageKey::Cleanup,
                         SyncWorkDetails::new("prune_missing_entries"),
-                        err.to_string(),
+                        format!("{err:#}"),
                     )
                     .await;
             }
@@ -298,7 +302,7 @@ async fn cleanup_metadata_orphans(
                     work_id,
                     SyncStageKey::Cleanup,
                     SyncWorkDetails::new("cleanup_orphaned_metadata"),
-                    err.to_string(),
+                    format!("{err:#}"),
                 )
                 .await;
         }
@@ -329,43 +333,39 @@ pub(crate) async fn sync_library_pipeline(
         progress.set_status(SyncRunStatus::Running).await;
         progress.check_cancelled().await?;
     }
-    let entry_result = sync_entries_incremental(db, library, progress.clone()).await?;
+    let observed_paths = sync_entries_incremental(db, library, progress.clone()).await?;
+    prune_missing_entries_for_scan(db, library, &observed_paths, progress.clone()).await?;
     if let Some(progress) = &progress {
         progress.check_cancelled().await?;
     }
-    let artifact_plans =
-        process_metadata_for_entries(db, library, entry_result.altered_entries, progress.clone())
-            .await?;
+    let plans = process_pending_metadata(db, library, progress.clone()).await?;
     if let Some(progress) = &progress {
         let provider_count = release_refresh_provider_ids(None, false).await?.len() as u64;
         progress
             .add_stage_total(
                 SyncStageKey::ProviderRefresh,
-                artifact_plans.len() as u64 * provider_count,
+                plans.len() as u64 * provider_count,
                 SyncTotalState::Final,
             )
             .await;
         progress
             .add_stage_total(
                 SyncStageKey::LocalCoverMetadata,
-                artifact_plans.len() as u64,
+                plans.len() as u64,
                 SyncTotalState::Final,
             )
             .await;
         progress
             .add_stage_total(
                 SyncStageKey::Lyrics,
-                artifact_plans
-                    .iter()
-                    .map(|plan| plan.track_ids.len() as u64)
-                    .sum(),
+                plans.iter().map(|plan| plan.track_ids.len() as u64).sum(),
                 SyncTotalState::Final,
             )
             .await;
         progress
             .add_stage_total(
                 SyncStageKey::ProviderCover,
-                artifact_plans.len() as u64,
+                plans.len() as u64,
                 SyncTotalState::Final,
             )
             .await;
@@ -374,27 +374,18 @@ pub(crate) async fn sync_library_pipeline(
             .await;
         progress.set_determinate().await;
     }
-    futures::stream::iter(artifact_plans)
+    futures::stream::iter(plans)
         .for_each_concurrent(MAX_CONCURRENT_ALBUM_PIPELINE, |plan| {
             let db = db.clone();
             let library_path = library.path.clone();
             let progress = progress.clone();
             async move {
-                if let Some(progress) = &progress
-                    && let Err(err) = progress.check_cancelled().await
+                #[cfg(test)]
+                tests::before_release_artifacts(&plan).await;
+                if process_release_artifacts(&db, library_db_id, &library_path, &plan, progress)
+                    .await
                 {
-                    tracing::debug!(run_id = progress.run_id(), error = %err, "sync cancelled before release artifacts");
-                    return;
-                }
-                if let Err(err) =
-                    process_release_artifacts(&db, library_db_id, &library_path, plan, progress)
-                        .await
-                {
-                    tracing::warn!(
-                        library_db_id = library_db_id.0,
-                        error = %err,
-                        "scan release artifact pipeline failed"
-                    );
+                    mark_entries_synced(&db, library_db_id, &plan.entry_ids).await;
                 }
             }
         })
@@ -402,16 +393,74 @@ pub(crate) async fn sync_library_pipeline(
     if let Some(progress) = &progress {
         progress.check_cancelled().await?;
     }
-    prune_missing_entries_for_scan(db, library, &entry_result.observed_paths, progress.clone())
-        .await?;
     cleanup_metadata_orphans(db, library_db_id, progress).await?;
     Ok(())
 }
 
-async fn process_metadata_for_entries(
+async fn mark_entries_synced(db: &DbAsync, library_db_id: DbId, entry_ids: &[DbId]) {
+    let result = {
+        let mut db_write = db.write().await;
+        lyra_db::entries::mark_synced(&mut db_write, entry_ids)
+    };
+    if let Err(err) = result {
+        tracing::error!(
+            library_db_id = library_db_id.0,
+            entry_count = entry_ids.len(),
+            error = %format_args!("{err:#}"),
+            "scan entries could not be marked synced"
+        );
+    }
+}
+
+async fn until_cancelled(progress: &SyncRunProgress) -> SyncRunControlError {
+    loop {
+        if let Err(err) = progress.check_cancelled().await {
+            return err;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
+async fn is_cancelled(progress: Option<&SyncRunProgress>) -> bool {
+    match progress {
+        Some(progress) => progress.check_cancelled().await.is_err(),
+        None => false,
+    }
+}
+
+async fn fail_metadata_work(
+    progress: Option<&SyncRunProgress>,
+    work_id: u64,
+    stage: SyncStageKey,
+    details: SyncWorkDetails,
+    err: &anyhow::Error,
+) {
+    match progress {
+        Some(progress) => {
+            progress
+                .fail_work(work_id, stage, details, format!("{err:#}"))
+                .await;
+        }
+        None => tracing::warn!(
+            stage = stage.as_str(),
+            source_dir = ?details.source_dir,
+            error = %format_args!("{err:#}"),
+            "sync work failed"
+        ),
+    }
+}
+
+fn is_unsynced_file(entry: &Entry) -> bool {
+    entry.kind == EntryKind::File && entry.synced_at.is_none()
+}
+
+/// Reads the metadata groups holding unsynced files and applies the batches those files are in.
+/// Files with nothing left to do are marked synced as their group is read. A failed group, like
+/// a transiently unreadable file, is a failed unit, and its files stay unsynced for the next
+/// sync.
+async fn process_pending_metadata(
     db: &DbAsync,
     library: &Library,
-    entries: Vec<DbId>,
     progress: Option<SyncRunProgress>,
 ) -> anyhow::Result<Vec<ReleaseArtifactPlan>> {
     let run_id = trace_run_id(progress.as_ref());
@@ -419,14 +468,24 @@ async fn process_metadata_for_entries(
         .db_id
         .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
 
-    if entries.is_empty() {
+    let entries = {
+        let db_read = db.read().await;
+        lyra_db::entries::get(&db_read, library_db_id)?
+    };
+    if !entries.iter().any(is_unsynced_file) {
         return Ok(Vec::new());
     }
-
-    let groups = {
-        let db_read = db.read().await;
-        group_entries(&db_read, library_db_id, entries)?
+    let groups = match &progress {
+        Some(progress) => tokio::select! {
+            groups = metadata_groups(&library.path, entries) => groups,
+            err = until_cancelled(progress) => return Err(err.into()),
+        },
+        None => metadata_groups(&library.path, entries).await,
     };
+    let groups = groups
+        .into_iter()
+        .filter(|group| group.entries.iter().any(is_unsynced_file))
+        .collect::<Vec<_>>();
     if let Some(progress) = &progress {
         progress
             .add_stage_total(
@@ -440,70 +499,75 @@ async fn process_metadata_for_entries(
     let mapping_config = load_mapping_config(db).await?;
 
     let mut source_dirs_by_entry = BTreeMap::new();
+    let mut unsynced_entries = HashSet::new();
+    let mut unreadable_entries = HashSet::new();
     let mut parsed_groups = Vec::new();
-    for (coalesce_group_key, entries) in groups.into_iter().enumerate() {
+    for (coalesce_group_key, group) in groups.into_iter().enumerate() {
         if let Some(progress) = &progress {
             progress.check_cancelled().await?;
         }
-        let source_dir =
-            source_directory_for_group_entries(&entries).unwrap_or_else(|| library.path.clone());
-        let source_dir_text = source_dir.to_string_lossy().into_owned();
+        let source_dir = group.source_dir.clone();
+        let details = SyncWorkDetails::new("metadata_parse_group")
+            .source_dir(Some(source_dir.to_string_lossy().into_owned()));
         let work_id = if let Some(progress) = &progress {
             progress
-                .start_work(
-                    SyncStageKey::MetadataParse,
-                    SyncWorkDetails::new("metadata_parse_group")
-                        .source_dir(Some(source_dir_text.clone())),
-                )
+                .start_work(SyncStageKey::MetadataParse, details.clone())
                 .await
         } else {
             0
         };
-        let entry_source_dirs: BTreeMap<DbId, std::path::PathBuf> = entries
-            .iter()
-            .filter_map(|entry| {
-                if entry.kind != lyra_db::entries::EntryKind::File {
-                    return None;
-                }
-                let entry_db_id = entry.db_id?;
-                let parent = entry
-                    .full_path
-                    .parent()
-                    .map(std::path::Path::to_path_buf)
-                    .unwrap_or_else(|| source_dir.clone());
-                source_dirs_by_entry.insert(entry_db_id, parent.clone());
-                Some((entry_db_id, parent))
-            })
-            .collect();
-        let parse_output = match parse_metadata(&mapping_config, entries).await {
+        let mut entry_source_dirs = BTreeMap::new();
+        let mut group_unsynced = HashMap::new();
+        for entry in &group.entries {
+            let Some(entry_db_id) = entry.db_id else {
+                continue;
+            };
+            if entry.kind != EntryKind::File {
+                continue;
+            }
+            let parent = group.candidate_dir(&entry.full_path);
+            source_dirs_by_entry.insert(entry_db_id, parent.clone());
+            entry_source_dirs.insert(entry_db_id, parent);
+            if entry.synced_at.is_none() {
+                group_unsynced.insert(entry.full_path.clone(), entry_db_id);
+            }
+        }
+        let parse_output = match parse_metadata(&mapping_config, group.entries).await {
             Ok(output) => output,
             Err(err) => {
-                if let Some(progress) = &progress {
-                    progress
-                        .fail_work(
-                            work_id,
-                            SyncStageKey::MetadataParse,
-                            SyncWorkDetails::new("metadata_parse_group")
-                                .source_dir(Some(source_dir_text)),
-                            err.to_string(),
-                        )
-                        .await;
-                }
-                return Err(err);
+                fail_metadata_work(
+                    progress.as_ref(),
+                    work_id,
+                    SyncStageKey::MetadataParse,
+                    details,
+                    &err,
+                )
+                .await;
+                continue;
             }
         };
         if !parse_output.skipped.is_empty() {
             log_skip_summary(&parse_output.skipped);
         }
+        let unreadable = parse_output
+            .skipped
+            .iter()
+            .filter(|record| record.reason.is_transient())
+            .collect::<Vec<_>>();
+        unreadable_entries.extend(
+            unreadable
+                .iter()
+                .filter_map(|record| group_unsynced.get(&record.path).copied()),
+        );
         let metadata = parse_output.metadata;
-        if metadata.is_empty() {
-            if let Some(progress) = &progress {
-                progress
-                    .complete_work(work_id, SyncStageKey::MetadataParse)
-                    .await;
-            }
-            continue;
-        }
+        let read = metadata_entry_ids(&metadata).collect::<HashSet<_>>();
+        let finished = group_unsynced
+            .values()
+            .copied()
+            .filter(|entry_id| !read.contains(entry_id) && !unreadable_entries.contains(entry_id))
+            .collect::<Vec<_>>();
+        mark_entries_synced(db, library_db_id, &finished).await;
+        unsynced_entries.extend(group_unsynced.into_values());
 
         let mut metadata_by_source_dir = BTreeMap::new();
         for track in metadata {
@@ -516,7 +580,6 @@ async fn process_metadata_for_entries(
                 .or_insert_with(Vec::new)
                 .push(track);
         }
-
         for (source_dir, metadata) in metadata_by_source_dir {
             parsed_groups.push(ParsedMetadataGroup {
                 coalesce_group_key,
@@ -524,84 +587,118 @@ async fn process_metadata_for_entries(
                 metadata,
             });
         }
-        if let Some(progress) = &progress {
-            progress
-                .complete_work(work_id, SyncStageKey::MetadataParse)
+        match unreadable.first() {
+            Some(first) => {
+                let err = anyhow::anyhow!(
+                    "{} files could not be read; {}: {}",
+                    unreadable.len(),
+                    first.path.display(),
+                    skip_reason_summary(&first.reason)
+                );
+                fail_metadata_work(
+                    progress.as_ref(),
+                    work_id,
+                    SyncStageKey::MetadataParse,
+                    details,
+                    &err,
+                )
                 .await;
+            }
+            None => {
+                if let Some(progress) = &progress {
+                    progress
+                        .complete_work(work_id, SyncStageKey::MetadataParse)
+                        .await;
+                }
+            }
         }
     }
 
-    let coalesced_groups = coalesce_disc_groups(parsed_groups);
-    let coalesced_count = coalesced_groups.len();
+    let batches = coalesce_disc_groups(parsed_groups)
+        .into_iter()
+        .filter(|metadata| {
+            metadata_entry_ids(metadata).any(|entry_id| unsynced_entries.contains(&entry_id))
+        })
+        .collect::<Vec<_>>();
+    let batch_count = batches.len();
     if let Some(progress) = &progress {
         progress
             .add_stage_total(
                 SyncStageKey::MetadataApply,
-                coalesced_count as u64,
+                batch_count as u64,
                 SyncTotalState::Estimated,
             )
             .await;
     }
-    let apply_results = futures::stream::iter(coalesced_groups.into_iter().enumerate())
+    let apply_results = futures::stream::iter(batches.into_iter().enumerate())
         .map(|(group_id, metadata)| {
             let db = db.clone();
             let progress = progress.clone();
-            let run_id = run_id.clone();
             let source_dir = metadata
                 .first()
                 .and_then(|track| source_dirs_by_entry.get(&track.entry_db_id))
-                .map(std::path::PathBuf::as_path)
-                .map(std::path::Path::to_path_buf);
+                .cloned();
+            let entry_ids = metadata_entry_ids(&metadata)
+                .filter(|entry_id| !unreadable_entries.contains(entry_id))
+                .collect::<Vec<_>>();
             async move {
-                process_metadata_group(&db, library_db_id, group_id, source_dir, metadata, progress)
-                    .await
-                    .inspect_err(|err| {
-                        tracing::warn!(
-                            library_db_id = library_db_id.0,
-                            run_id = %run_id,
-                            group_id,
-                            error = %err,
-                            "scan metadata group pipeline failed"
-                        );
-                    })
+                let result = process_metadata_group(
+                    &db,
+                    library_db_id,
+                    group_id,
+                    source_dir,
+                    metadata,
+                    progress,
+                )
+                .await;
+                (entry_ids, result)
             }
         })
         .buffer_unordered(MAX_CONCURRENT_ALBUM_PIPELINE)
         .collect::<Vec<_>>()
         .await;
 
-    let mut release_ids = Vec::new();
-    let mut seen_release_ids = HashSet::new();
-    for result in apply_results {
-        let apply_result = result?;
-        for release_id in apply_result.releases {
-            if seen_release_ids.insert(release_id) {
-                release_ids.push(release_id);
-            }
+    // Batches whose tracks were one release keep it, so its artifacts run once for all of them.
+    let mut plans: Vec<ReleaseArtifactPlan> = Vec::new();
+    for (entry_ids, result) in apply_results {
+        let releases = match result {
+            Ok(apply_result) => apply_result.releases,
+            Err(err) if err.downcast_ref::<SyncRunControlError>().is_some() => return Err(err),
+            Err(_) => continue,
+        };
+        let Some(&release_id) = releases.first() else {
+            mark_entries_synced(db, library_db_id, &entry_ids).await;
+            continue;
+        };
+        match plans.iter_mut().find(|plan| plan.release_id == release_id) {
+            Some(plan) => plan.entry_ids.extend(entry_ids),
+            None => match release_artifact_plan(db, release_id, entry_ids.clone()).await? {
+                Some(plan) => plans.push(plan),
+                None => mark_entries_synced(db, library_db_id, &entry_ids).await,
+            },
         }
     }
     tracing::info!(
         library_db_id = library_db_id.0,
         run_id = %run_id,
-        group_count = coalesced_count,
+        group_count = batch_count,
         "scan metadata groups completed"
     );
-
-    let mut plans = Vec::with_capacity(release_ids.len());
-    for release_id in release_ids {
-        if let Some(plan) = release_artifact_plan(db, release_id).await? {
-            plans.push(plan);
-        }
-    }
     Ok(plans)
+}
+
+fn metadata_entry_ids(metadata: &[TrackMetadata]) -> impl Iterator<Item = DbId> + '_ {
+    metadata
+        .iter()
+        .flat_map(|track| std::iter::once(track.entry_db_id).chain(track.cue_sheet_entry_id))
 }
 
 async fn process_metadata_group(
     db: &DbAsync,
     library_db_id: DbId,
     group_id: usize,
-    source_dir: Option<std::path::PathBuf>,
-    metadata: Vec<crate::services::metadata::TrackMetadata>,
+    source_dir: Option<PathBuf>,
+    metadata: Vec<TrackMetadata>,
     progress: Option<SyncRunProgress>,
 ) -> anyhow::Result<MetadataApplyResult> {
     let run_id = trace_run_id(progress.as_ref());
@@ -632,23 +729,24 @@ async fn process_metadata_group(
         "scan group stage started"
     );
 
-    let apply_write_result = {
+    let apply_write_result = async {
+        #[cfg(test)]
+        tests::before_apply(&metadata)?;
         let mut db_write = db.write().await;
         apply_metadata(&mut db_write, library_db_id, metadata)
-    };
+    }
+    .await;
     let apply_result = match apply_write_result {
         Ok(result) => result,
         Err(err) => {
-            if let Some(progress) = &progress {
-                progress
-                    .fail_work(
-                        work_id,
-                        SyncStageKey::MetadataApply,
-                        SyncWorkDetails::new("metadata_apply_group").source_dir(source_dir_text),
-                        err.to_string(),
-                    )
-                    .await;
-            }
+            fail_metadata_work(
+                progress.as_ref(),
+                work_id,
+                SyncStageKey::MetadataApply,
+                SyncWorkDetails::new("metadata_apply_group").source_dir(source_dir_text),
+                &err,
+            )
+            .await;
             return Err(err);
         }
     };
@@ -678,6 +776,8 @@ struct ReleaseArtifactPlan {
     release_public_id: Option<String>,
     release_title: Option<String>,
     track_ids: Vec<DbId>,
+    /// The entries marked synced once the release's artifacts finish.
+    entry_ids: Vec<DbId>,
 }
 
 struct ReleaseArtifactContext<'a> {
@@ -704,6 +804,7 @@ impl ReleaseArtifactContext<'_> {
 async fn release_artifact_plan(
     db: &DbAsync,
     release_id: DbId,
+    entry_ids: Vec<DbId>,
 ) -> anyhow::Result<Option<ReleaseArtifactPlan>> {
     let db_read = db.read().await;
     let Some(release) = lyra_db::releases::get_by_id(&db_read, release_id)? else {
@@ -719,16 +820,20 @@ async fn release_artifact_plan(
         release_public_id,
         release_title: Some(release.release_title),
         track_ids,
+        entry_ids,
     }))
 }
 
+/// Runs a release's artifact stages; false when its entries need another sync: its local cover
+/// failed to persist or the run was cancelled. Provider, lyrics and provider cover failures are
+/// failed units that `/refresh` retries.
 async fn process_release_artifacts(
     db: &DbAsync,
     library_db_id: DbId,
     library_path: &Path,
-    plan: ReleaseArtifactPlan,
+    plan: &ReleaseArtifactPlan,
     progress: Option<SyncRunProgress>,
-) -> anyhow::Result<()> {
+) -> bool {
     let run_id = trace_run_id(progress.as_ref());
     let release_id = plan.release_id;
     let release_public_id = plan.release_public_id.clone();
@@ -750,8 +855,8 @@ async fn process_release_artifacts(
         provider_id: None,
     };
 
-    if let Some(progress) = &progress {
-        progress.check_cancelled().await?;
+    if is_cancelled(progress.as_ref()).await {
+        return false;
     }
     tracing::debug!(
         library_db_id = library_db_id.0,
@@ -760,7 +865,7 @@ async fn process_release_artifacts(
         stage = "provider_refresh",
         "scan release stage started"
     );
-    refresh_release_metadata_for_scan_with_progress(
+    if let Err(err) = refresh_release_metadata_for_scan_with_progress(
         library_db_id,
         release_id,
         &options,
@@ -768,24 +873,31 @@ async fn process_release_artifacts(
         release_public_id.clone(),
         release_title.clone(),
     )
-    .await?;
+    .await
+    {
+        tracing::warn!(
+            library_db_id = library_db_id.0,
+            run_id = %run_id,
+            release_db_id = release_id.0,
+            stage = "provider_refresh",
+            error = %format_args!("{:#}", anyhow::Error::from(err)),
+            "scan release provider refresh failed"
+        );
+    }
+    if is_cancelled(progress.as_ref()).await {
+        return false;
+    }
 
-    let _ = sync_local_release_cover_metadata(&context).await;
-
-    let _ = dispatch_release_lyrics(
-        library_db_id,
-        release_id,
-        &plan,
-        run_id.clone(),
-        progress.clone(),
-    )
-    .await?;
-
-    let _ = sync_provider_release_cover(&context).await;
-    Ok(())
+    let local_cover = sync_local_release_cover_metadata(&context).await;
+    dispatch_release_lyrics(library_db_id, release_id, plan, run_id, progress.clone()).await;
+    sync_provider_release_cover(&context).await;
+    local_cover.is_ok() && !is_cancelled(progress.as_ref()).await
 }
 
-async fn sync_local_release_cover_metadata(context: &ReleaseArtifactContext<'_>) -> bool {
+/// Records the release's local cover, failing when it can't be resolved or persisted.
+async fn sync_local_release_cover_metadata(
+    context: &ReleaseArtifactContext<'_>,
+) -> anyhow::Result<()> {
     let started = Instant::now();
     let details = context.details("local_cover_metadata");
     let work_id = if let Some(progress) = &context.progress {
@@ -802,78 +914,68 @@ async fn sync_local_release_cover_metadata(context: &ReleaseArtifactContext<'_>)
     };
     let resolved = {
         let db_read = context.db.read().await;
-        match resolve_cover_for_release_id(&db_read, context.release_id, cover_paths) {
-            Ok(path) => path,
-            Err(err) => {
-                tracing::warn!(
-                    library_db_id = context.library_db_id.0,
-                    run_id = %context.run_id,
-                    release_db_id = context.release_id.0,
-                    stage = "local_cover_metadata",
-                    error = %err,
-                    "scan release local cover resolution failed"
-                );
-                None
-            }
+        resolve_cover_for_release_id(&db_read, context.release_id, cover_paths)
+    };
+    let result = match resolved {
+        Ok(Some(cover_path)) => {
+            upsert_release_cover_metadata(context.db, context.release_id, &cover_path)
+                .await
+                .map(|changed| Some((cover_path, changed)))
         }
+        Ok(None) => Ok(None),
+        Err(err) => Err(err),
     };
 
-    let Some(cover_path) = resolved else {
-        tracing::debug!(
-            library_db_id = context.library_db_id.0,
-            run_id = %context.run_id,
-            release_db_id = context.release_id.0,
-            stage = "local_cover_metadata",
-            "scan release local cover not found"
-        );
-        if let Some(progress) = &context.progress {
-            progress
-                .complete_work(work_id, SyncStageKey::LocalCoverMetadata)
-                .await;
-        }
-        return false;
-    };
-
-    match upsert_release_cover_metadata(context.db, context.release_id, &cover_path).await {
-        Ok(changed) => {
+    match result {
+        Ok(synced) => {
             if let Some(progress) = &context.progress {
                 progress
                     .complete_work(work_id, SyncStageKey::LocalCoverMetadata)
                     .await;
             }
-            tracing::info!(
-                library_db_id = context.library_db_id.0,
-                run_id = %context.run_id,
-                release_db_id = context.release_id.0,
-                stage = "local_cover_metadata",
-                changed,
-                cover_path = %cover_path.display(),
-                elapsed_ms = started.elapsed().as_millis() as u64,
-                "scan release local cover metadata synced"
-            );
-            changed
+            match synced {
+                Some((cover_path, changed)) => tracing::info!(
+                    library_db_id = context.library_db_id.0,
+                    run_id = %context.run_id,
+                    release_db_id = context.release_id.0,
+                    stage = "local_cover_metadata",
+                    changed,
+                    cover_path = %cover_path.display(),
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    "scan release local cover metadata synced"
+                ),
+                None => tracing::debug!(
+                    library_db_id = context.library_db_id.0,
+                    run_id = %context.run_id,
+                    release_db_id = context.release_id.0,
+                    stage = "local_cover_metadata",
+                    "scan release local cover not found"
+                ),
+            }
+            Ok(())
         }
         Err(err) => {
-            if let Some(progress) = &context.progress {
-                progress
-                    .fail_work(
-                        work_id,
-                        SyncStageKey::LocalCoverMetadata,
-                        details,
-                        err.to_string(),
-                    )
-                    .await;
+            match &context.progress {
+                Some(progress) => {
+                    progress
+                        .fail_work(
+                            work_id,
+                            SyncStageKey::LocalCoverMetadata,
+                            details,
+                            format!("{err:#}"),
+                        )
+                        .await;
+                }
+                None => tracing::warn!(
+                    library_db_id = context.library_db_id.0,
+                    run_id = %context.run_id,
+                    release_db_id = context.release_id.0,
+                    stage = "local_cover_metadata",
+                    error = %format_args!("{err:#}"),
+                    "scan release local cover metadata sync failed"
+                ),
             }
-            tracing::warn!(
-                library_db_id = context.library_db_id.0,
-                run_id = %context.run_id,
-                release_db_id = context.release_id.0,
-                stage = "local_cover_metadata",
-                cover_path = %cover_path.display(),
-                error = %err,
-                "scan release local cover metadata sync failed"
-            );
-            false
+            Err(err)
         }
     }
 }
@@ -884,13 +986,12 @@ async fn dispatch_release_lyrics(
     plan: &ReleaseArtifactPlan,
     run_id: String,
     progress: Option<SyncRunProgress>,
-) -> anyhow::Result<usize> {
+) {
     if plan.track_ids.is_empty() {
-        return Ok(0);
+        return;
     }
 
     let started = Instant::now();
-    let track_count = plan.track_ids.len();
     futures::stream::iter(plan.track_ids.clone())
         .for_each_concurrent(MAX_CONCURRENT_DISPATCHES, |track_db_id| {
             let progress = progress.clone();
@@ -917,7 +1018,12 @@ async fn dispatch_release_lyrics(
                     Err(err) => {
                         if let Some(progress) = &progress {
                             progress
-                                .fail_work(work_id, SyncStageKey::Lyrics, details, err.to_string())
+                                .fail_work(
+                                    work_id,
+                                    SyncStageKey::Lyrics,
+                                    details,
+                                    format!("{err:#}"),
+                                )
                                 .await;
                         }
                         tracing::warn!(
@@ -925,7 +1031,7 @@ async fn dispatch_release_lyrics(
                             run_id = %run_id,
                             release_db_id = release_id.0,
                             track_db_id = track_db_id.0,
-                            error = %err,
+                            error = %format_args!("{err:#}"),
                             "lyrics dispatch failed for scanned track"
                         );
                     }
@@ -942,10 +1048,9 @@ async fn dispatch_release_lyrics(
         elapsed_ms = started.elapsed().as_millis() as u64,
         "scan release lyrics dispatch completed"
     );
-    Ok(track_count)
 }
 
-async fn sync_provider_release_cover(context: &ReleaseArtifactContext<'_>) -> bool {
+async fn sync_provider_release_cover(context: &ReleaseArtifactContext<'_>) {
     let started = Instant::now();
     let details = context.details("provider_cover");
     let work_id = if let Some(progress) = &context.progress {
@@ -987,7 +1092,7 @@ async fn sync_provider_release_cover(context: &ReleaseArtifactContext<'_>) -> bo
                     )
                     .await;
             }
-            return false;
+            return;
         }
         Err(err) => {
             if let Some(progress) = &context.progress {
@@ -996,7 +1101,7 @@ async fn sync_provider_release_cover(context: &ReleaseArtifactContext<'_>) -> bo
                         work_id,
                         SyncStageKey::ProviderCover,
                         details,
-                        err.to_string(),
+                        format!("{err:#}"),
                     )
                     .await;
             }
@@ -1005,10 +1110,10 @@ async fn sync_provider_release_cover(context: &ReleaseArtifactContext<'_>) -> bo
                 run_id = %context.run_id,
                 release_db_id = context.release_id.0,
                 stage = "provider_cover",
-                error = %err,
+                error = %format_args!("{err:#}"),
                 "scan release load failed before provider cover sync"
             );
-            return false;
+            return;
         }
     };
 
@@ -1040,7 +1145,7 @@ async fn sync_provider_release_cover(context: &ReleaseArtifactContext<'_>) -> bo
                         work_id,
                         SyncStageKey::ProviderCover,
                         details.clone(),
-                        err.to_string(),
+                        format!("{err:#}"),
                     )
                     .await;
             }
@@ -1049,7 +1154,7 @@ async fn sync_provider_release_cover(context: &ReleaseArtifactContext<'_>) -> bo
                 run_id = %context.run_id,
                 release_db_id = context.release_id.0,
                 stage = "provider_cover",
-                error = %err,
+                error = %format_args!("{err:#}"),
                 "scan release provider cover sync failed"
             );
             false
@@ -1072,7 +1177,7 @@ async fn sync_provider_release_cover(context: &ReleaseArtifactContext<'_>) -> bo
             release_db_id = context.release_id.0,
             stage = "provider_cover",
             cover_path = %cover_path.display(),
-            error = %err,
+            error = %format_args!("{err:#}"),
             "scan release provider cover metadata sync failed"
         );
     }
@@ -1086,7 +1191,6 @@ async fn sync_provider_release_cover(context: &ReleaseArtifactContext<'_>) -> bo
         elapsed_ms = started.elapsed().as_millis() as u64,
         "scan release provider cover stage completed"
     );
-    synced
 }
 
 pub(crate) async fn sync_library(db: &DbAsync, library: &Library) -> anyhow::Result<()> {
@@ -1283,6 +1387,742 @@ FILE "album.flac" WAVE
         );
         assert_eq!(after[&audio].1, before[&audio].1, "tracks were recreated");
         assert_eq!(after[&cue].0, before[&cue].0, "cue entry id changed");
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    const PNG_1X1: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x04, 0x00, 0x00, 0x00, 0xB5,
+        0x1C, 0x0C, 0x02, 0x00, 0x00, 0x00, 0x0B, 0x49, 0x44, 0x41, 0x54, 0x78, 0xDA, 0x63, 0xFC,
+        0xFF, 0x1F, 0x00, 0x03, 0x03, 0x02, 0x00, 0xEF, 0xBF, 0x55, 0x3A, 0x00, 0x00, 0x00, 0x00,
+        0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+
+    /// Copies the fixture into `dir` as the only track of an album titled `album`.
+    fn album_track(dir: &Path, album: &str) -> anyhow::Result<PathBuf> {
+        use lofty::{
+            config::WriteOptions,
+            prelude::*,
+        };
+
+        std::fs::create_dir_all(dir)?;
+        let audio = dir.join("track.flac");
+        std::fs::copy(fixture_flac(), &audio)?;
+        let mut tagged = lofty::read_from_path(&audio)?;
+        let tag = tagged
+            .primary_tag_mut()
+            .ok_or_else(|| anyhow::anyhow!("fixture has no primary tag"))?;
+        tag.set_album(album.to_string());
+        tag.save_to_path(&audio, WriteOptions::default())?;
+        Ok(audio)
+    }
+
+    async fn entry_for(library: &Library, path: &Path) -> anyhow::Result<lyra_db::Entry> {
+        let db = STATE.db.read().await;
+        lyra_db::entries::get(&db, library.db_id.expect("library db_id"))?
+            .into_iter()
+            .find(|entry| entry.full_path == path)
+            .ok_or_else(|| anyhow::anyhow!("no entry for {}", path.display()))
+    }
+
+    async fn release_of(audio_entry: DbId) -> anyhow::Result<DbId> {
+        let db = STATE.db.read().await;
+        let track = lyra_db::tracks::get_by_entry(&db, audio_entry)?
+            .into_iter()
+            .next()
+            .and_then(|track| track.db_id.map(DbId::from))
+            .ok_or_else(|| anyhow::anyhow!("entry has no track"))?;
+        lyra_db::releases::get_by_track(&db, track)?
+            .into_iter()
+            .next()
+            .and_then(|release| release.db_id.map(DbId::from))
+            .ok_or_else(|| anyhow::anyhow!("track has no release"))
+    }
+
+    async fn release_cover(audio_entry: DbId) -> anyhow::Result<Option<lyra_db::Cover>> {
+        let release = release_of(audio_entry).await?;
+        lyra_db::covers::get(&*STATE.db.read().await, release)
+    }
+
+    #[derive(Clone, Default)]
+    struct CapturedLogs(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl CapturedLogs {
+        fn text(&self) -> String {
+            String::from_utf8_lossy(&self.0.lock().expect("logs")).into_owned()
+        }
+    }
+
+    impl std::io::Write for CapturedLogs {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("logs").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLogs {
+        type Writer = Self;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    async fn empty_library(name: &str) -> anyhow::Result<(PathBuf, Library)> {
+        let (root, _) = temp_library(name)?;
+        let library = super::super::prepare_capture_library(root.clone()).await?;
+        Ok((root, library))
+    }
+
+    async fn synced(library: &Library, path: &Path) -> anyhow::Result<bool> {
+        Ok(entry_for(library, path).await?.synced_at.is_some())
+    }
+
+    /// Makes `path` unreadable, or returns false when this user reads it regardless.
+    fn deny_reads(path: &Path) -> anyhow::Result<bool> {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000))?;
+        Ok(std::fs::read(path).is_err())
+    }
+
+    fn allow_reads(path: &Path) -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644))?;
+        Ok(())
+    }
+
+    type ArtifactGate = std::sync::Arc<
+        dyn Fn(Option<String>) -> futures::future::BoxFuture<'static, ()> + Send + Sync,
+    >;
+
+    #[derive(Default)]
+    struct Hooks {
+        reject_album: Option<&'static str>,
+        applied: std::sync::Mutex<Vec<String>>,
+        before_artifacts: Option<ArtifactGate>,
+    }
+
+    tokio::task_local! {
+        static HOOKS: std::sync::Arc<Hooks>;
+    }
+
+    pub(super) fn before_apply(metadata: &[TrackMetadata]) -> anyhow::Result<()> {
+        let album = metadata[0].album.clone().unwrap_or_default();
+        HOOKS
+            .try_with(|hooks| {
+                hooks.applied.lock().expect("applied").push(album.clone());
+                if hooks.reject_album == Some(album.as_str()) {
+                    return Err(anyhow::anyhow!("'release_title' cannot be empty")
+                        .context("invalid 'local' metadata layer"));
+                }
+                Ok(())
+            })
+            .unwrap_or(Ok(()))
+    }
+
+    pub(super) async fn before_release_artifacts(plan: &ReleaseArtifactPlan) {
+        let gate = HOOKS
+            .try_with(|hooks| hooks.before_artifacts.clone())
+            .ok()
+            .flatten();
+        if let Some(gate) = gate {
+            gate(plan.release_title.clone()).await;
+        }
+    }
+
+    async fn sync_with(
+        hooks: std::sync::Arc<Hooks>,
+        library: &Library,
+        progress: Option<SyncRunProgress>,
+    ) -> anyhow::Result<()> {
+        HOOKS
+            .scope(
+                hooks,
+                sync_library_pipeline(&STATE.db.get(), library, progress),
+            )
+            .await
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn failed_album_is_retried_alone_without_starving_its_siblings() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("failed-album").await?;
+        let good = album_track(&root.join("Artist/Good"), "Good Album")?;
+        let bad = album_file(&root.join("Artist/Bad/02.flac"), "Bad Album", 2)
+            .map(|()| root.join("Artist/Bad/02.flac"))?;
+        album_file(&root.join("Artist/Other/03.flac"), "Other Album", 3)?;
+        std::fs::write(root.join("Artist/Good/cover.png"), PNG_1X1)?;
+
+        let logs = CapturedLogs::default();
+        let progress = super::super::orchestrator::begin_test_run(&library).await;
+        {
+            let _logs = tracing::subscriber::set_default(
+                tracing_subscriber::fmt()
+                    .with_writer(logs.clone())
+                    .with_ansi(false)
+                    .finish(),
+            );
+            let hooks = Hooks {
+                reject_album: Some("Bad Album"),
+                ..Hooks::default()
+            };
+            sync_with(hooks.into(), &library, Some(progress.clone())).await?;
+        }
+        let run = super::super::orchestrator::get_sync_run(progress.run_id())
+            .await?
+            .expect("run");
+        super::super::orchestrator::end_test_run(&progress).await;
+
+        assert_eq!(run.progress.failed_units, 1);
+        assert!(
+            logs.text()
+                .contains("invalid 'local' metadata layer: 'release_title' cannot be empty"),
+            "the failure lost its cause: {}",
+            logs.text()
+        );
+        assert!(snapshot(&library).await?[&bad].1.is_empty());
+        let good_entry = entry_for(&library, &good).await?;
+        assert!(good_entry.synced_at.is_some());
+        assert!(
+            release_cover(good_entry.db_id.expect("entry db_id"))
+                .await?
+                .is_some(),
+            "the good album missed its cover"
+        );
+        assert!(!synced(&library, &bad).await?);
+
+        let hooks = std::sync::Arc::new(Hooks::default());
+        sync_with(hooks.clone(), &library, None).await?;
+
+        assert_eq!(*hooks.applied.lock().expect("applied"), ["Bad Album"]);
+        assert_eq!(snapshot(&library).await?[&bad].1.len(), 1);
+        assert!(synced(&library, &bad).await?);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn changed_album_in_a_shared_folder_is_applied_alone() -> anyhow::Result<()> {
+        use lofty::{
+            config::WriteOptions,
+            prelude::*,
+        };
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("shared-folder").await?;
+        let folder = root.join("Singles");
+        let one = album_track(&folder, "One")?;
+        let two = folder.join("two.flac");
+        std::fs::copy(&one, &two)?;
+        let mut tagged = lofty::read_from_path(&two)?;
+        let tag = tagged
+            .primary_tag_mut()
+            .ok_or_else(|| anyhow::anyhow!("fixture has no primary tag"))?;
+        tag.set_album("Two".to_string());
+        tag.save_to_path(&two, WriteOptions::default())?;
+        sync(&library).await?;
+
+        shift_mtime(&two, 5)?;
+        let hooks = std::sync::Arc::new(Hooks::default());
+        sync_with(hooks.clone(), &library, None).await?;
+
+        assert_eq!(*hooks.applied.lock().expect("applied"), ["Two"]);
+        assert!(synced(&library, &one).await? && synced(&library, &two).await?);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    /// Copies the fixture to `path` as track `track` of `album`.
+    fn album_file(path: &Path, album: &str, track: u32) -> anyhow::Result<()> {
+        tagged_file(path, &(album, track, None, None))
+    }
+
+    /// A file's album, track, disc and barcode, from 2001.
+    type Tags<'a> = (&'a str, u32, Option<u32>, Option<&'a str>);
+
+    /// Copies the fixture to `path` tagged with `tags`.
+    fn tagged_file(path: &Path, tags: &Tags<'_>) -> anyhow::Result<()> {
+        let &(album, track, disc, barcode) = tags;
+        use lofty::{
+            config::WriteOptions,
+            prelude::*,
+            tag::ItemKey,
+        };
+
+        std::fs::create_dir_all(path.parent().expect("parent"))?;
+        std::fs::copy(fixture_flac(), path)?;
+        let mut tagged = lofty::read_from_path(path)?;
+        let tag = tagged
+            .primary_tag_mut()
+            .ok_or_else(|| anyhow::anyhow!("fixture has no primary tag"))?;
+        tag.set_album(album.to_string());
+        tag.set_track(track);
+        tag.insert_text(ItemKey::RecordingDate, "2001".to_string());
+        tag.remove_disk();
+        tag.remove_disk_total();
+        if let Some(disc) = disc {
+            tag.set_disk(disc);
+        }
+        tag.remove_key(ItemKey::Barcode);
+        if let Some(barcode) = barcode {
+            tag.insert_text(ItemKey::Barcode, barcode.to_string());
+        }
+        tag.save_to_path(path, WriteOptions::default())?;
+        Ok(())
+    }
+
+    /// A file under a fresh library, by its path.
+    type TaggedFile<'a> = (&'a str, Tags<'a>);
+
+    /// Syncs `files` and returns the titles of the releases they made.
+    async fn releases_from(name: &str, files: &[TaggedFile<'_>]) -> anyhow::Result<Vec<String>> {
+        let (root, library) = empty_library(name).await?;
+        for (path, tags) in files {
+            tagged_file(&root.join(path), tags)?;
+        }
+        sync(&library).await?;
+        let mut releases = BTreeMap::new();
+        for (path, _) in files {
+            let entry = entry_for(&library, &root.join(path))
+                .await?
+                .db_id
+                .expect("entry db_id");
+            let release = release_of(entry).await?;
+            releases.insert(release, release_title_of(&library, &root.join(path)).await?);
+        }
+        let _ = std::fs::remove_dir_all(root);
+        Ok(releases.into_values().collect())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sibling_discs_coalesce_by_their_tags() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let cases: [(&str, &[TaggedFile<'_>], &[&str]); 9] = [
+            (
+                "discs-same-title",
+                &[
+                    ("Box/ESCL-5394/01.flac", ("ALL TIME", 1, Some(1), None)),
+                    ("Box/ESCL-5395/01.flac", ("ALL TIME", 1, Some(2), None)),
+                ],
+                &["ALL TIME"],
+            ),
+            (
+                "discs-titled-per-disc",
+                &[
+                    (
+                        "Box/ESCL-5394/01.flac",
+                        ("ALL TIME [Disc 1]", 1, Some(1), None),
+                    ),
+                    (
+                        "Box/ESCL-5395/01.flac",
+                        ("ALL TIME [Disc 2]", 1, Some(2), None),
+                    ),
+                ],
+                &["ALL TIME [Disc 1]", "ALL TIME [Disc 2]"],
+            ),
+            (
+                "disc-folders",
+                &[
+                    ("Box/Disc 1/01.flac", ("Set", 1, None, None)),
+                    ("Box/Disc 2/01.flac", ("Set Bonus", 1, None, None)),
+                ],
+                &["Set"],
+            ),
+            (
+                "separate-albums",
+                &[
+                    ("Artist/One/01.flac", ("One", 1, None, None)),
+                    ("Artist/Two/02.flac", ("Two", 2, None, None)),
+                ],
+                &["One", "Two"],
+            ),
+            (
+                "separate-first-discs",
+                &[
+                    ("Artist/One/01.flac", ("One", 1, Some(1), None)),
+                    ("Artist/Two/02.flac", ("Two", 2, Some(1), None)),
+                ],
+                &["One", "Two"],
+            ),
+            (
+                "shared-barcode",
+                &[
+                    ("Box/A/01.flac", ("Alpha", 1, None, Some("4547366000001"))),
+                    ("Box/B/02.flac", ("Beta", 2, None, Some("4547366000001"))),
+                ],
+                &["Alpha"],
+            ),
+            (
+                "other-barcode",
+                &[
+                    ("Box/A/01.flac", ("Set", 1, Some(1), Some("4547366000001"))),
+                    ("Box/B/01.flac", ("Set", 1, Some(2), Some("4547366000002"))),
+                ],
+                &["Set", "Set"],
+            ),
+            (
+                "editions",
+                &[
+                    ("Artist/Standard/01.flac", ("Album", 1, Some(1), None)),
+                    (
+                        "Artist/Deluxe Bonus/01.flac",
+                        ("Album Deluxe", 1, Some(2), None),
+                    ),
+                ],
+                &["Album", "Album Deluxe"],
+            ),
+            (
+                "discs-in-container-folders",
+                &[
+                    ("Artist/Box/CD1/audio/01.flac", ("Set", 1, Some(1), None)),
+                    ("Artist/Box/CD2/audio/01.flac", ("Set", 1, Some(2), None)),
+                ],
+                &["Set"],
+            ),
+        ];
+        for (name, files, expected) in cases {
+            crate::services::testing::init_default_test_state()?;
+            let mut titles = releases_from(name, files).await?;
+            titles.sort();
+            assert_eq!(titles, expected, "{name}");
+        }
+        Ok(())
+    }
+
+    async fn release_title_of(library: &Library, path: &Path) -> anyhow::Result<String> {
+        let entry = entry_for(library, path).await?.db_id.expect("entry db_id");
+        let release = release_of(entry).await?;
+        Ok(
+            lyra_db::releases::get_by_id(&*STATE.db.read().await, release)?
+                .expect("release")
+                .release_title,
+        )
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn loose_tracks_in_an_artist_folder_keep_its_albums_apart() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("loose-artist").await?;
+        let files = [
+            (root.join("Artist/loose.flac"), "Loose", 1),
+            (root.join("Artist/One/01.flac"), "One", 2),
+            (root.join("Artist/Two/02.flac"), "Two", 3),
+        ];
+        for (path, album, track) in &files {
+            album_file(path, album, *track)?;
+        }
+        sync(&library).await?;
+
+        for (path, album, _) in &files {
+            assert_eq!(release_title_of(&library, path).await?, *album);
+        }
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn removing_a_nested_file_reapplies_its_album() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("nested-remove").await?;
+        let main = root.join("Album/main.flac");
+        let bonus = root.join("Album/Bonus/bonus.flac");
+        album_file(&main, "Album", 1)?;
+        album_file(&bonus, "Album", 2)?;
+        sync(&library).await?;
+
+        std::fs::remove_file(&bonus)?;
+        let hooks = std::sync::Arc::new(Hooks::default());
+        sync_with(hooks.clone(), &library, None).await?;
+
+        assert_eq!(*hooks.applied.lock().expect("applied"), ["Album"]);
+        assert!(synced(&library, &main).await?);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unlistable_cover_folder_keeps_the_other_covers() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("unlistable-cover").await?;
+        let readable = album_track(&root.join("Readable"), "Readable")?;
+        album_track(&root.join("Hidden"), "Hidden")?;
+        sync(&library).await?;
+        std::fs::write(root.join("Readable/cover.png"), PNG_1X1)?;
+        let hidden = root.join("Hidden");
+        std::fs::set_permissions(&hidden, std::fs::Permissions::from_mode(0o000))?;
+        if std::fs::read_dir(&hidden).is_ok() {
+            std::fs::set_permissions(&hidden, std::fs::Permissions::from_mode(0o755))?;
+            return Ok(());
+        }
+
+        let covers_root = configured_covers_root();
+        let result = crate::services::covers::sync_and_persist_covers_for_library(
+            &STATE.db.get(),
+            CoverPaths {
+                library_root: Some(&library.path),
+                covers_root: &covers_root,
+            },
+            library.db_id.expect("library db_id"),
+            CoverSyncOptions {
+                replace_existing: false,
+                force_refresh: false,
+            },
+            None,
+            crate::services::covers::CoverScope::Release,
+        )
+        .await;
+        std::fs::set_permissions(&hidden, std::fs::Permissions::from_mode(0o755))?;
+
+        let err = result.expect_err("the unlistable folder went unreported");
+        assert!(
+            format!("{err:#}").contains("failed to list covers"),
+            "{err:#}"
+        );
+        let entry = entry_for(&library, &readable)
+            .await?
+            .db_id
+            .expect("entry db_id");
+        assert!(
+            release_cover(entry).await?.is_some(),
+            "the readable cover was dropped"
+        );
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn deleting_a_cue_sheet_reads_its_audio_again() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cue-delete").await?;
+        let audio = album_track(&root.join("Album"), "Album")?;
+        let audio_named = root.join("Album/album.flac");
+        std::fs::rename(&audio, &audio_named)?;
+        let cue = root.join("Album/album.cue");
+        std::fs::write(&cue, CUE_SHEET)?;
+        sync(&library).await?;
+        assert_eq!(snapshot(&library).await?[&audio_named].1.len(), 2);
+
+        std::fs::remove_file(&cue)?;
+        sync(&library).await?;
+
+        let tracks = snapshot(&library).await?;
+        assert!(!tracks.contains_key(&cue));
+        assert_eq!(
+            tracks[&audio_named].1.len(),
+            1,
+            "the cue's tracks outlived it"
+        );
+        assert!(synced(&library, &audio_named).await?);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cue_sheet_claims_audio_in_another_folder() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cue-elsewhere").await?;
+        let audio = root.join("Audio/album.flac");
+        std::fs::create_dir_all(root.join("Audio"))?;
+        std::fs::copy(fixture_flac(), &audio)?;
+        std::fs::create_dir_all(root.join("Artist/Album"))?;
+        std::fs::write(
+            root.join("Artist/Album/album.cue"),
+            CUE_SHEET.replace("\"album.flac\"", "\"../../Audio/album.flac\""),
+        )?;
+        sync(&library).await?;
+        assert_eq!(snapshot(&library).await?[&audio].1.len(), 2);
+
+        shift_mtime(&audio, 5)?;
+        sync(&library).await?;
+        assert_eq!(
+            snapshot(&library).await?[&audio].1.len(),
+            2,
+            "the claimed audio was ingested on its own"
+        );
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn retag_inside_a_nested_album_is_ingested() -> anyhow::Result<()> {
+        use lofty::{
+            config::WriteOptions,
+            prelude::*,
+        };
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("nested-retag").await?;
+        let audio = album_track(&root.join("Artist/Album"), "Album")?;
+        sync(&library).await?;
+
+        let mut tagged = lofty::read_from_path(&audio)?;
+        let tag = tagged
+            .primary_tag_mut()
+            .ok_or_else(|| anyhow::anyhow!("fixture has no primary tag"))?;
+        tag.set_title("Retagged Title".to_string());
+        tag.save_to_path(&audio, WriteOptions::default())?;
+        shift_mtime(&audio, 5)?;
+        sync(&library).await?;
+
+        let entry = entry_for(&library, &audio)
+            .await?
+            .db_id
+            .expect("entry db_id");
+        let titles = lyra_db::tracks::get_by_entry(&*STATE.db.read().await, entry)?
+            .into_iter()
+            .map(|track| track.track_title)
+            .collect::<Vec<_>>();
+        assert_eq!(titles, ["Retagged Title"]);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unreadable_track_is_retried_once_readable() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("unreadable-track").await?;
+        let audio = album_track(&root.join("Album"), "Album")?;
+        if !deny_reads(&audio)? {
+            return Ok(());
+        }
+
+        let progress = super::super::orchestrator::begin_test_run(&library).await;
+        sync_library_pipeline(&STATE.db.get(), &library, Some(progress.clone())).await?;
+        let run = super::super::orchestrator::get_sync_run(progress.run_id())
+            .await?
+            .expect("run");
+        super::super::orchestrator::end_test_run(&progress).await;
+        assert_eq!(
+            run.progress.failed_units, 1,
+            "the unreadable track went unreported"
+        );
+        assert!(snapshot(&library).await?[&audio].1.is_empty());
+        assert!(!synced(&library, &audio).await?);
+
+        allow_reads(&audio)?;
+        sync(&library).await?;
+        assert_eq!(snapshot(&library).await?[&audio].1.len(), 1);
+        assert!(synced(&library, &audio).await?);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unpersisted_local_cover_is_retried() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("unpersisted-cover").await?;
+        let audio = album_track(&root.join("Album"), "Album")?;
+        let cover = root.join("Album/cover.png");
+        std::fs::write(&cover, PNG_1X1)?;
+        if !deny_reads(&cover)? {
+            return Ok(());
+        }
+
+        sync(&library).await?;
+        let entry = entry_for(&library, &audio).await?;
+        assert_eq!(snapshot(&library).await?[&audio].1.len(), 1);
+        assert!(
+            release_cover(entry.db_id.expect("entry db_id"))
+                .await?
+                .is_none()
+        );
+        assert!(entry.synced_at.is_none());
+
+        allow_reads(&cover)?;
+        sync(&library).await?;
+        let entry = entry_for(&library, &audio).await?;
+        assert!(
+            release_cover(entry.db_id.expect("entry db_id"))
+                .await?
+                .is_some()
+        );
+        assert!(entry.synced_at.is_some());
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cancelled_sync_keeps_finished_albums_synced() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cancelled-sync").await?;
+        let first = album_track(&root.join("First"), "First")?;
+        let second = album_track(&root.join("Second"), "Second")?;
+        for album in ["First", "Second"] {
+            std::fs::write(root.join(album).join("cover.png"), PNG_1X1)?;
+        }
+
+        let progress = super::super::orchestrator::begin_test_run(&library).await;
+        let gate: ArtifactGate = {
+            let (library, first, run_id) = (
+                library.clone(),
+                first.clone(),
+                progress.run_id().to_string(),
+            );
+            std::sync::Arc::new(move |title: Option<String>| {
+                let (library, first, run_id) = (library.clone(), first.clone(), run_id.clone());
+                Box::pin(async move {
+                    if title.as_deref() != Some("Second") {
+                        return;
+                    }
+                    while !synced(&library, &first).await.unwrap_or(false) {
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                    }
+                    super::super::orchestrator::cancel_sync_run(&run_id)
+                        .await
+                        .expect("cancel");
+                })
+            })
+        };
+        let hooks = Hooks {
+            before_artifacts: Some(gate),
+            ..Hooks::default()
+        };
+        let result = sync_with(hooks.into(), &library, Some(progress.clone())).await;
+        super::super::orchestrator::end_test_run(&progress).await;
+
+        let err = result.expect_err("the run finished despite its cancellation");
+        assert!(
+            err.downcast_ref::<SyncRunControlError>().is_some(),
+            "{err:#}"
+        );
+        let first_entry = entry_for(&library, &first).await?;
+        assert!(
+            first_entry.synced_at.is_some(),
+            "the finished album lost its sync"
+        );
+        assert!(
+            release_cover(first_entry.db_id.expect("entry db_id"))
+                .await?
+                .is_some()
+        );
+        assert!(
+            !synced(&library, &second).await?,
+            "the cancelled album counted as synced"
+        );
+
+        sync(&library).await?;
+        assert!(synced(&library, &second).await?);
         let _ = std::fs::remove_dir_all(root);
         Ok(())
     }

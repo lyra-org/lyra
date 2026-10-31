@@ -17,7 +17,7 @@ use crate::{
         metadata::{
             SkipReason,
             classify_entry_file_kind,
-            ingestion::group_entries,
+            ingestion::metadata_groups,
             mapping::{
                 MissingRequiredField,
                 ensure_config,
@@ -91,7 +91,7 @@ fn missing_name(m: MissingRequiredField) -> &'static str {
 pub(crate) async fn dry_run_config(
     candidate: &MetadataMappingConfig,
 ) -> anyhow::Result<DryRunReport> {
-    let groups: Vec<Vec<lyra_db::Entry>> = {
+    let libraries = {
         let db = STATE.db.read().await;
         let libraries = lyra_db::libraries::get(&db)?;
         let mut all = Vec::new();
@@ -99,18 +99,23 @@ pub(crate) async fn dry_run_config(
             let Some(library_db_id) = library.db_id else {
                 continue;
             };
-            let entry_ids = lyra_db::entries::get(&db, library_db_id)?
-                .into_iter()
-                .filter_map(|entry| entry.db_id)
-                .collect();
-            all.append(&mut group_entries(&db, library_db_id, entry_ids)?);
+            all.push((
+                library.path.clone(),
+                lyra_db::entries::get(&db, library_db_id)?,
+            ));
         }
         all
     };
 
+    let mut groups = Vec::new();
+    for (library_root, entries) in libraries {
+        groups.extend(metadata_groups(&library_root, entries).await);
+    }
+
     let mut report = DryRunReport::default();
 
-    for entries in groups {
+    for group in groups {
+        let entries = group.entries;
         report.total_files += entries
             .iter()
             .filter(|entry| classify_entry_file_kind(entry).as_deref() == Some("audio"))
@@ -120,7 +125,7 @@ pub(crate) async fn dry_run_config(
             let path = record.path.to_string_lossy().to_string();
             match record.reason {
                 SkipReason::RequiredFieldEmpty(missing) => report.push_rejected(path, missing),
-                SkipReason::ReadFailed(error) => report.push_read_failure(path, error),
+                SkipReason::ReadFailed(error) => report.push_read_failure(path, error.message),
                 SkipReason::TaskFailed(error) => {
                     report.push_read_failure(path, format!("task failed: {error}"));
                 }

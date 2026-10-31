@@ -161,6 +161,7 @@ fn plugin_executor_exposes_db_backed_lyra_chromaprint_module() -> Result<()> {
         size: 1,
         mtime: 1,
         ctime: 1,
+        synced_at: None,
     };
     let entry_db_id = db
         .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
@@ -605,6 +606,7 @@ fn plugin_executor_exposes_db_backed_lyra_track_sources_module() -> Result<()> {
         size: 1,
         mtime: 1,
         ctime: 1,
+        synced_at: None,
     };
     let entry_db_id = db
         .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
@@ -682,6 +684,7 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
         size: 19,
         mtime: 321,
         ctime: 654,
+        synced_at: None,
     };
     let entry_db_id = db
         .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?

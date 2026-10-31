@@ -4,24 +4,27 @@
 // www.meshiplaw.com/lyra.
 
 mod artists;
+mod grouping;
 mod releases;
 mod tracks;
 
 use std::{
-    collections::HashSet,
     mem,
-    path::{
-        Path,
-        PathBuf,
-    },
+    path::PathBuf,
 };
 
 use agdb::{
     DbAny,
     DbId,
-    QueryBuilder,
 };
 
+pub(crate) use self::grouping::{
+    SourceDirGroup,
+    album_groups,
+    albums_left_by,
+    group_by_source_dir,
+    metadata_groups,
+};
 use self::{
     releases::{
         ReleaseIngestResult,
@@ -31,7 +34,6 @@ use self::{
     tracks::build_existing_track_map,
 };
 use super::TrackMetadata;
-use lyra_db::Entry;
 
 #[derive(Debug)]
 pub(crate) struct ParsedMetadataGroup {
@@ -67,15 +69,6 @@ impl MetadataApplyResult {
     }
 }
 
-pub(crate) fn source_directory_for_group_entries(entries: &[Entry]) -> Option<PathBuf> {
-    entries.iter().find_map(|entry| {
-        if entry.kind != lyra_db::entries::EntryKind::File {
-            return None;
-        }
-        entry.full_path.parent().map(Path::to_path_buf)
-    })
-}
-
 pub(crate) fn coalesce_disc_groups(groups: Vec<ParsedMetadataGroup>) -> Vec<Vec<TrackMetadata>> {
     lyra_metadata::coalesce_release_groups(
         groups
@@ -87,56 +80,6 @@ pub(crate) fn coalesce_disc_groups(groups: Vec<ParsedMetadataGroup>) -> Vec<Vec<
             })
             .collect(),
     )
-}
-
-pub(crate) fn group_entries(
-    db: &DbAny,
-    library_db_id: DbId,
-    entries: Vec<DbId>,
-) -> anyhow::Result<Vec<Vec<Entry>>> {
-    if entries.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let groups: Vec<Entry> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<Entry>()
-                .search()
-                .from(library_db_id)
-                .where_()
-                .ids(entries)
-                .and()
-                // group by directory
-                .neighbor()
-                .end_where()
-                .query(),
-        )?
-        .try_into()?;
-
-    let mut seen = HashSet::new();
-    let mut grouped = Vec::new();
-    for group in groups {
-        let group_db_id = group
-            .db_id
-            .ok_or_else(|| anyhow::anyhow!("metadata group missing db_id"))?;
-        if !seen.insert(group_db_id) {
-            continue;
-        }
-
-        let entries: Vec<Entry> = db
-            .exec(
-                QueryBuilder::select()
-                    .elements::<Entry>()
-                    .search()
-                    .from(group_db_id)
-                    .query(),
-            )?
-            .try_into()?;
-        grouped.push(entries);
-    }
-
-    Ok(grouped)
 }
 
 pub(crate) fn apply_metadata(
@@ -212,6 +155,7 @@ mod tests {
     use lyra_db::track_sources::SourceFormat;
     use lyra_db::{
         Artist,
+        Entry,
         IdSource,
         Library,
         ProviderConfig,
@@ -294,6 +238,7 @@ mod tests {
             size: 0,
             mtime: 0,
             ctime: 0,
+            synced_at: None,
         };
         let qr = db.exec_mut(QueryBuilder::insert().element(&entry).query())?;
         Ok(qr.elements[0].id)
@@ -584,29 +529,26 @@ mod tests {
         let library_db_id = library
             .db_id
             .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
-        let groups = group_entries(db, library_db_id, entries)?;
+        let groups = metadata_groups(&library.path, lyra_db::entries::get(db, library_db_id)?)
+            .await
+            .into_iter()
+            .filter(|group| {
+                group
+                    .entries
+                    .iter()
+                    .any(|entry| entry.db_id.is_some_and(|id| entries.contains(&id)))
+            });
         let mapping_config = ensure_config(db)?;
         let mut parsed_groups = Vec::new();
 
-        for (coalesce_group_key, entries) in groups.into_iter().enumerate() {
-            tracing::debug!(entry_count = entries.len(), "metadata group entries");
-            let source_dir = source_directory_for_group_entries(&entries)
-                .unwrap_or_else(|| library.path.clone());
-            let entry_source_dirs: std::collections::BTreeMap<DbId, PathBuf> = entries
+        for (coalesce_group_key, group) in groups.enumerate() {
+            let entry_source_dirs: std::collections::BTreeMap<DbId, PathBuf> = group
+                .entries
                 .iter()
-                .filter_map(|entry| {
-                    if entry.kind != lyra_db::entries::EntryKind::File {
-                        return None;
-                    }
-                    let entry_db_id = entry.db_id?;
-                    let parent = entry
-                        .full_path
-                        .parent()
-                        .map(Path::to_path_buf)
-                        .unwrap_or_else(|| source_dir.clone());
-                    Some((entry_db_id, parent))
-                })
+                .filter(|entry| entry.kind == lyra_db::entries::EntryKind::File)
+                .filter_map(|entry| Some((entry.db_id?, group.candidate_dir(&entry.full_path))))
                 .collect();
+            let (source_dir, entries) = (group.source_dir, group.entries);
             let parse_output = parse_metadata(&mapping_config, entries).await?;
             if !parse_output.skipped.is_empty() {
                 crate::services::metadata::log_skip_summary(&parse_output.skipped);

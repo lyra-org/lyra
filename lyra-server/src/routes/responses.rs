@@ -570,6 +570,7 @@ mod tests {
                 size: 123,
                 mtime: 1_700_000_000,
                 ctime: 1_700_000_000,
+                synced_at: None,
             },
             false,
         ))?;

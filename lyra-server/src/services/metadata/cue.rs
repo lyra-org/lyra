@@ -425,6 +425,28 @@ pub(super) fn build_audio_lookup(audio_entries: &[Entry]) -> AudioLookup {
     }
 }
 
+/// The audio entries `lookup` holds at the paths a cue sheet's tracks name; none when the sheet
+/// can't be read, as parsing it reports.
+pub(super) async fn cue_audio_entry_ids(cue_entry: &Entry, lookup: &AudioLookup) -> Vec<DbId> {
+    let Ok(text) = tokio::fs::read_to_string(&cue_entry.full_path).await else {
+        return Vec::new();
+    };
+    parse_cue_sheet(&text)
+        .tracks
+        .iter()
+        .filter(|track| !track.file_ref.trim().is_empty())
+        .filter_map(|track| {
+            lookup
+                .by_path
+                .get(&normalize_path_for_lookup(&cue_file_path(
+                    &cue_entry.full_path,
+                    &track.file_ref,
+                )))
+        })
+        .map(|audio| audio.entry_id)
+        .collect()
+}
+
 pub(super) async fn parse_cue_metadata_for_entry(
     cue_entry: &Entry,
     audio_by_path: &HashMap<String, AudioEntryRef>,

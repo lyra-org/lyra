@@ -1188,6 +1188,7 @@ mod tests {
             size: 14,
             mtime: 0,
             ctime: 0,
+            synced_at: None,
         };
         let entry_id = db
             .exec_mut(QueryBuilder::insert().element(&entry).query())?

@@ -391,6 +391,7 @@ mod tests {
             size: 1,
             mtime: 1,
             ctime: 1,
+            synced_at: None,
         };
         let qr = db.exec_mut(QueryBuilder::insert().element(&entry).query())?;
         qr.ids()

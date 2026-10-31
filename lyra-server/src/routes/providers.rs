@@ -1043,6 +1043,7 @@ mod tests {
             size: 0,
             mtime: 0,
             ctime: 0,
+            synced_at: None,
         };
         let qr = db.exec_mut(QueryBuilder::insert().element(&entry).query())?;
         qr.elements

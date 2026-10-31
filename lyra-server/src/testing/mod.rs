@@ -126,7 +126,7 @@ pub async fn prepare_fixture(
 
     // Grouped, normalized and ordered as a library scan parses them.
     let mut path_to_entry: HashMap<PathBuf, (DbId, String)> = HashMap::new();
-    let mut tracks_by_source_dir: BTreeMap<PathBuf, Vec<services::metadata::TrackMetadata>> =
+    let mut tracks_by_entry: BTreeMap<DbId, Vec<services::metadata::TrackMetadata>> =
         BTreeMap::new();
     let processed = services::metadata::mapping::process_tags(raw_tags);
     if !processed.rejected.is_empty() {
@@ -155,17 +155,13 @@ pub async fn prepare_fixture(
                 entry
             }
         };
-        let source_dir = file_path
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| library.directory.clone());
         // Most fixtures name files that don't exist; only real ones have a format to read.
         let format = if file_path.is_file() {
             services::metadata::read_source_format(&file_path)?
         } else {
             lyra_db::track_sources::SourceFormat::default()
         };
-        tracks_by_source_dir.entry(source_dir).or_default().push(
+        tracks_by_entry.entry(entry_db_id).or_default().push(
             services::metadata::embedded_track_metadata(
                 entry_db_id,
                 &entry_public_id,
@@ -174,12 +170,38 @@ pub async fn prepare_fixture(
             ),
         );
     }
-    let parsed_groups = tracks_by_source_dir
+    // Grouped as a sync groups the library's files, so fixtures coalesce as a scan would.
+    let entries = path_to_entry
+        .iter()
+        .map(|(path, (entry_db_id, _))| {
+            let mut entry = lyra_db::entries::get_by_id(&*db, *entry_db_id)?
+                .ok_or_else(|| anyhow::anyhow!("fixture entry missing"))?;
+            entry.full_path = library.directory.join(path);
+            Ok(entry)
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let mut tracks_by_dir: BTreeMap<(usize, PathBuf), Vec<services::metadata::TrackMetadata>> =
+        BTreeMap::new();
+    for (key, group) in services::metadata::ingestion::album_groups(&library.directory, entries)
         .into_iter()
-        .map(|(source_dir, mut metadata)| {
+        .enumerate()
+    {
+        for entry in &group.entries {
+            let Some(tracks) = entry.db_id.and_then(|id| tracks_by_entry.remove(&id)) else {
+                continue;
+            };
+            tracks_by_dir
+                .entry((key, group.candidate_dir(&entry.full_path)))
+                .or_default()
+                .extend(tracks);
+        }
+    }
+    let parsed_groups = tracks_by_dir
+        .into_iter()
+        .map(|((coalesce_group_key, source_dir), mut metadata)| {
             services::metadata::sort_track_metadata(&mut metadata);
             services::metadata::ingestion::ParsedMetadataGroup {
-                coalesce_group_key: 0,
+                coalesce_group_key,
                 source_dir,
                 metadata,
             }
@@ -562,6 +584,7 @@ fn insert_file_entry(
         size: 0,
         mtime: 0,
         ctime: 0,
+        synced_at: None,
     };
 
     let qr = db.exec_mut(QueryBuilder::insert().element(&entry).query())?;
@@ -868,6 +891,31 @@ mod tests {
             .map(|artist| artist.artist_name)
             .collect();
         assert_eq!(names, vec!["Alpha".to_string(), "B\u{e9}ta".to_string()]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn fixtures_group_their_folders_the_way_a_sync_does() -> anyhow::Result<()> {
+        let library = tempfile::tempdir()?;
+        let config = LibraryFixtureConfig {
+            directory: library.path().to_path_buf(),
+            language: None,
+            country: None,
+        };
+        let disc = |folder: &str, disc: u32| lyra_metadata::RawTrackTags {
+            disc: Some(disc),
+            ..raw_track(&library.path().join(folder), 1, &["Alpha"])
+        };
+
+        let _guard = initialize_runtime(&config).await?;
+        let prepared = prepare_fixture(&config, vec![disc("Box/A", 1), disc("Box/B", 2)]).await?;
+        assert_eq!(prepared.track_ids.len(), 2);
+        drop(_guard);
+
+        let _guard = initialize_runtime(&config).await?;
+        let separate = prepare_fixture(&config, vec![disc("A", 1), disc("B", 2)]).await;
+        let err = separate.expect_err("folders under the library merged");
+        assert!(err.to_string().contains("2 release groups"), "{err:#}");
         Ok(())
     }
 }

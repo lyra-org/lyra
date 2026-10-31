@@ -92,6 +92,9 @@ pub struct Entry {
     pub size: u64,
     pub mtime: u64,
     pub ctime: u64,
+    /// When a file's metadata and release artifacts last finished, in unix seconds; absent until
+    /// they do after it changes.
+    pub synced_at: Option<u64>,
 }
 
 pub(crate) const SUPPORTED_AUDIO_EXTENSIONS: &[&str] = lofty::file::EXTENSIONS;
@@ -186,7 +189,6 @@ pub fn load_existing(db: &DbAny, library_root: DbId) -> anyhow::Result<Vec<Entry
 
 #[derive(Debug, Default)]
 pub struct EntrySyncResult {
-    pub altered: Vec<DbId>,
     pub added: usize,
     pub updated: usize,
     pub deleted: usize,
@@ -213,6 +215,10 @@ pub fn sync_entry_group(
             continue;
         }
 
+        let entry = Entry {
+            synced_at: None,
+            ..entry
+        };
         let Some(existing) = db_by_path.get(&entry.full_path) else {
             to_add.push(entry);
             continue;
@@ -236,11 +242,18 @@ pub fn sync_entry_group(
     let updated_count = to_update.len();
 
     db.transaction_mut(|t| -> anyhow::Result<EntrySyncResult> {
-        let mut altered = Vec::new();
-
         if !to_update.is_empty() {
             t.exec_mut(QueryBuilder::insert().elements(&to_update).query())?;
-            altered.extend(to_update.iter().filter_map(|entry| entry.db_id));
+            let updated = to_update
+                .iter()
+                .filter_map(|entry| entry.db_id)
+                .collect::<Vec<_>>();
+            t.exec_mut(
+                QueryBuilder::remove()
+                    .values(["synced_at"])
+                    .ids(&updated)
+                    .query(),
+            )?;
         }
 
         if !to_add.is_empty() {
@@ -264,7 +277,6 @@ pub fn sync_entry_group(
                 let entry_id = entry
                     .db_id
                     .ok_or_else(|| anyhow::anyhow!("entry missing db_id during edge insert"))?;
-                altered.push(entry_id);
 
                 let parent = entry
                     .full_path
@@ -293,7 +305,6 @@ pub fn sync_entry_group(
         }
 
         Ok(EntrySyncResult {
-            altered,
             added: added_count,
             updated: updated_count,
             deleted: 0,
@@ -301,19 +312,34 @@ pub fn sync_entry_group(
     })
 }
 
+pub fn mark_synced(db: &mut DbAny, entry_ids: &[DbId]) -> anyhow::Result<()> {
+    if entry_ids.is_empty() {
+        return Ok(());
+    }
+    db.exec_mut(
+        QueryBuilder::insert()
+            .values_uniform([("synced_at", super::users::now_secs().unsigned_abs()).into()])
+            .ids(entry_ids)
+            .query(),
+    )?;
+    Ok(())
+}
+
+/// Removes the entries missing from `observed_paths`. The surviving entries `left_behind` picks
+/// from the removed and surviving ones, and those a removed one shared a cue sheet with, lose
+/// their sync so the next one reads them again.
 pub fn prune_missing_entries(
     db: &mut DbAny,
     library: &Library,
     observed_paths: &HashSet<PathBuf>,
+    left_behind: impl FnOnce(&[Entry], &[Entry]) -> Vec<DbId>,
 ) -> anyhow::Result<EntrySyncResult> {
     let library_db_id = library
         .db_id
         .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
-    let existing = load_existing(db, library_db_id)?;
-    let to_delete = existing
+    let (to_delete, surviving): (Vec<_>, Vec<_>) = load_existing(db, library_db_id)?
         .into_iter()
-        .filter(|entry| !observed_paths.contains(&entry.full_path))
-        .collect::<Vec<_>>();
+        .partition(|entry| !observed_paths.contains(&entry.full_path));
 
     let mut dir_deletes: Vec<Entry> = to_delete
         .iter()
@@ -332,15 +358,12 @@ pub fn prune_missing_entries(
         top_level_dirs.push(entry);
     }
 
+    let mut unsynced = left_behind(&to_delete, &surviving)
+        .into_iter()
+        .collect::<HashSet<_>>();
+
     let deleted_count = to_delete.len();
     db.transaction_mut(|t| -> anyhow::Result<EntrySyncResult> {
-        for entry in &top_level_dirs {
-            let dir_id = entry
-                .db_id
-                .ok_or_else(|| anyhow::anyhow!("directory entry missing db_id"))?;
-            t.exec_mut(QueryBuilder::remove().search().from(dir_id).query())?;
-        }
-
         let ids = to_delete
             .iter()
             .map(|entry| {
@@ -349,12 +372,33 @@ pub fn prune_missing_entries(
                     .ok_or_else(|| anyhow::anyhow!("entry missing db_id during delete"))
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
+        for &entry_id in &ids {
+            unsynced.extend(crate::cue::linked_entries(t, entry_id)?);
+        }
+        for entry_id in &ids {
+            unsynced.remove(entry_id);
+        }
+        if !unsynced.is_empty() {
+            let unsynced = unsynced.into_iter().collect::<Vec<_>>();
+            t.exec_mut(
+                QueryBuilder::remove()
+                    .values(["synced_at"])
+                    .ids(&unsynced)
+                    .query(),
+            )?;
+        }
+
+        for entry in &top_level_dirs {
+            let dir_id = entry
+                .db_id
+                .ok_or_else(|| anyhow::anyhow!("directory entry missing db_id"))?;
+            t.exec_mut(QueryBuilder::remove().search().from(dir_id).query())?;
+        }
         if !ids.is_empty() {
             t.exec_mut(QueryBuilder::remove().ids(&ids).query())?;
         }
 
         Ok(EntrySyncResult {
-            altered: ids,
             added: 0,
             updated: 0,
             deleted: deleted_count,
@@ -409,6 +453,7 @@ mod tests {
             size: 42,
             mtime: 1,
             ctime: 1,
+            synced_at: None,
         };
         let entry_id = db
             .exec_mut(QueryBuilder::insert().element(&entry).query())?
@@ -448,6 +493,7 @@ mod tests {
             size: 1,
             mtime: 1,
             ctime: 1,
+            synced_at: None,
         }
     }
 
@@ -495,6 +541,99 @@ mod tests {
     }
 
     #[test]
+    fn changed_entries_wait_for_their_sync_to_finish() -> anyhow::Result<()> {
+        let mut db = TestDb::initialized()?.into_inner();
+        let library_db_id = crate::test_db::insert_library(&mut db, "Music", "/music")?;
+        let library = crate::libraries::get_by_id(&db, library_db_id)?.expect("library");
+        let track = |mtime| Entry {
+            mtime,
+            ..scanned("/music/01.flac", EntryKind::File)
+        };
+        sync_entry_group(&mut db, &library, vec![track(1)])?;
+        let entry_id = get(&db, library_db_id)?[0].db_id.expect("entry db_id");
+        let synced = |db: &DbAny| -> anyhow::Result<bool> {
+            Ok(get_by_id(db, entry_id)?.expect("entry").synced_at.is_some())
+        };
+        assert!(!synced(&db)?);
+
+        mark_synced(&mut db, &[entry_id])?;
+        assert!(synced(&db)?);
+        sync_entry_group(&mut db, &library, vec![track(1)])?;
+        assert!(synced(&db)?, "an unchanged entry lost its sync");
+
+        sync_entry_group(&mut db, &library, vec![track(2)])?;
+        assert!(!synced(&db)?, "a changed entry kept its sync");
+        Ok(())
+    }
+
+    #[test]
+    fn pruning_a_file_unsyncs_its_album_and_cue_linked_entries() -> anyhow::Result<()> {
+        let mut db = TestDb::initialized()?.into_inner();
+        let library_db_id = crate::test_db::insert_library(&mut db, "Music", "/music")?;
+        let library = crate::libraries::get_by_id(&db, library_db_id)?.expect("library");
+        let paths = [
+            "/music/Album/01.flac",
+            "/music/Album/02.flac",
+            "/music/Other/01.flac",
+            "/music/Cue/album.cue",
+            "/music/Audio/album.flac",
+        ];
+        sync_entry_group(
+            &mut db,
+            &library,
+            paths
+                .iter()
+                .map(|path| scanned(path, EntryKind::File))
+                .collect(),
+        )?;
+        let id_of = |db: &DbAny, path: &str| -> anyhow::Result<DbId> {
+            Ok(get(db, library_db_id)?
+                .into_iter()
+                .find(|entry| entry.full_path == Path::new(path))
+                .and_then(|entry| entry.db_id)
+                .expect("entry"))
+        };
+        let ids = paths
+            .iter()
+            .map(|path| id_of(&db, path))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        mark_synced(&mut db, &ids)?;
+        db.transaction_mut(|t| -> anyhow::Result<()> {
+            let sheet = crate::cue::sheets::upsert(t, ids[3], "hash")?;
+            crate::cue::tracks::upsert(t, sheet, ids[3], 1, ids[4], None, 0)?;
+            Ok(())
+        })?;
+
+        let observed = [paths[1], paths[2]]
+            .into_iter()
+            .chain(std::iter::once(paths[4]))
+            .map(PathBuf::from)
+            .collect::<HashSet<_>>();
+        prune_missing_entries(&mut db, &library, &observed, |removed, surviving| {
+            surviving
+                .iter()
+                .filter(|entry| {
+                    removed
+                        .iter()
+                        .any(|gone| gone.full_path.parent() == entry.full_path.parent())
+                })
+                .filter_map(|entry| entry.db_id)
+                .collect()
+        })?;
+
+        let synced = |path: &str| -> anyhow::Result<bool> {
+            Ok(get_by_id(&db, id_of(&db, path)?)?
+                .expect("entry")
+                .synced_at
+                .is_some())
+        };
+        assert!(!synced(paths[1])?, "the album a file left kept its sync");
+        assert!(synced(paths[2])?, "another album lost its sync");
+        assert!(!synced(paths[4])?, "the removed cue's audio kept its sync");
+        Ok(())
+    }
+
+    #[test]
     fn get_by_track_traverses_through_track_source() -> anyhow::Result<()> {
         let mut db = TestDb::initialized()?.into_inner();
 
@@ -537,6 +676,7 @@ mod tests {
             size: 1,
             mtime: 1,
             ctime: 1,
+            synced_at: None,
         };
         let entry_db_id = db
             .exec_mut(QueryBuilder::insert().element(&entry).query())?

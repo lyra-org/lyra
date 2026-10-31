@@ -928,6 +928,25 @@ pub(crate) async fn get_sync_run(run_id: &str) -> anyhow::Result<Option<SyncRunS
         .transpose()
 }
 
+#[cfg(test)]
+pub(crate) async fn end_test_run(progress: &SyncRunProgress) {
+    sync_run_states()
+        .write_owned()
+        .await
+        .remove(progress.run_id());
+}
+
+#[cfg(test)]
+pub(crate) async fn begin_test_run(library: &Library) -> SyncRunProgress {
+    let state = SyncRunState::new(SyncRunKind::LibrarySync, library.id.clone(), now_unix_ms());
+    let run_id = state.run_id.clone();
+    sync_run_states()
+        .write_owned()
+        .await
+        .insert(run_id.clone(), state);
+    SyncRunProgress::new(STATE.db.get(), run_id)
+}
+
 pub(crate) async fn cancel_sync_run(run_id: &str) -> anyhow::Result<Option<SyncRunSummary>> {
     reconcile_interrupted_runs(&STATE.db.get()).await?;
     let (summary, record) = {
@@ -1136,7 +1155,7 @@ async fn finish_run(
             }
         }
         Err(err) => {
-            let error = err.to_string();
+            let error = format!("{err:#}");
             let summary = mark_terminal(
                 &progress.db,
                 progress.run_id(),
