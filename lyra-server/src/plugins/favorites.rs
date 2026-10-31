@@ -47,7 +47,7 @@ impl FavoritesModule {
     }
 
     #[harmony(
-        description = "When the caller first favorited each of the targets, in Unix milliseconds, keyed by id. Unfavorited targets and ones the caller cannot see are absent. Raises when more than 1024 of the ids exist.",
+        description = "When the caller first favorited each of the targets, in Unix milliseconds, keyed by id. Unfavorited targets and ones the caller cannot see are absent.",
         returns(HashMap<u64, i64>)
     )]
     async fn get(

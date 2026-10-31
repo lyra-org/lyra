@@ -18,7 +18,6 @@ use agdb::{
 
 use super::DbAccess;
 
-pub const TARGETS_CAP: usize = 1024;
 pub(crate) const LIST_IDS_CAP: usize = 10_000;
 
 const KIND_KEY: &str = "favorite_kind";
@@ -172,18 +171,11 @@ pub fn has(db: &impl DbAccess, user_db_id: DbId, target_db_id: DbId) -> anyhow::
 }
 
 /// The user's favorites of `target_db_ids`, keyed by target; unfavorited targets are absent.
-/// Errs above [`TARGETS_CAP`] ids.
 pub fn for_targets(
     db: &impl DbAccess,
     user_db_id: DbId,
     target_db_ids: &[DbId],
 ) -> anyhow::Result<HashMap<DbId, FavoriteEdge>> {
-    if target_db_ids.len() > TARGETS_CAP {
-        anyhow::bail!(
-            "favorite targets cap exceeded: {} > {TARGETS_CAP}",
-            target_db_ids.len(),
-        );
-    }
     if target_db_ids.is_empty() {
         return Ok(HashMap::new());
     }
@@ -572,18 +564,6 @@ mod tests {
             "user A's favorite must not leak to user B via list_ids"
         );
 
-        Ok(())
-    }
-
-    #[test]
-    fn for_targets_caps_input() -> anyhow::Result<()> {
-        let db = new_test_db()?;
-        let oversize = vec![DbId(1); TARGETS_CAP + 1];
-        let err = for_targets(&db, DbId(1), &oversize).expect_err("expected cap error");
-        assert!(
-            err.to_string().contains("cap exceeded"),
-            "error should mention cap: got {err}",
-        );
         Ok(())
     }
 
