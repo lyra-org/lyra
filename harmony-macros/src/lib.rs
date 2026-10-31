@@ -29,6 +29,7 @@ use syn::{
     Type,
     TypePath,
     TypeReference,
+    ext::IdentExt,
     parse::{
         Parse,
         ParseStream,
@@ -457,6 +458,28 @@ fn variant_rename(attrs: &[Attribute]) -> syn::Result<Option<LitStr>> {
     Ok(rename)
 }
 
+/// Refuses serde on a string enum, whose spelling would then drift from the one the macro gives it.
+fn reject_serde(attrs: &[Attribute]) -> syn::Result<()> {
+    for attr in attrs {
+        let serde_derive = attr.path().is_ident("derive")
+            && attr
+                .parse_args_with(Punctuated::<syn::Path, Token![,]>::parse_terminated)?
+                .iter()
+                .any(|path| {
+                    path.segments.last().is_some_and(|segment| {
+                        segment.ident == "Serialize" || segment.ident == "Deserialize"
+                    })
+                });
+        if serde_derive || attr.path().is_ident("serde") {
+            return Err(syn::Error::new_spanned(
+                attr,
+                "string_enum spells its values itself; serialize through `StringEnum` instead of serde",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Turns a unit enum into one that crosses to and from Luau as the strings it is spelled as,
 /// declared as a string union: `rename_all` spells every variant (`snake_case` by default) and
 /// `#[harmony(rename = "...")]` one of them. Reading any other string fails with the accepted ones.
@@ -487,6 +510,8 @@ fn string_enum_impl(mut ast: ItemEnum, options: StringEnumOptions) -> syn::Resul
         ));
     }
 
+    reject_serde(&ast.attrs)?;
+
     let mut variants = Vec::new();
     let mut values: Vec<LitStr> = Vec::new();
     for variant in &mut ast.variants {
@@ -496,10 +521,21 @@ fn string_enum_impl(mut ast: ItemEnum, options: StringEnumOptions) -> syn::Resul
                 "string_enum variants must be unit variants",
             ));
         }
+        reject_serde(&variant.attrs)?;
+        if let Some(attr) = variant
+            .attrs
+            .iter()
+            .find(|attr| attr.path().is_ident("cfg") || attr.path().is_ident("cfg_attr"))
+        {
+            return Err(syn::Error::new_spanned(
+                attr,
+                "string_enum variants cannot be conditionally compiled",
+            ));
+        }
         let value = match variant_rename(&variant.attrs)? {
             Some(rename) => rename,
             None => lit_str(
-                &options.rename_all.apply(&variant.ident.to_string()),
+                &options.rename_all.apply(&variant.ident.unraw().to_string()),
                 variant.ident.span(),
             ),
         };
@@ -520,7 +556,7 @@ fn string_enum_impl(mut ast: ItemEnum, options: StringEnumOptions) -> syn::Resul
     let type_name = &ast.ident;
     let name = options
         .name
-        .unwrap_or_else(|| lit_str(&type_name.to_string(), type_name.span()));
+        .unwrap_or_else(|| lit_str(&type_name.unraw().to_string(), type_name.span()));
     let description = option_lit_str_tokens(options.description.as_ref());
 
     Ok(quote! {

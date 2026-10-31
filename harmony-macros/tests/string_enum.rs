@@ -28,6 +28,7 @@ enum PlayMode {
 enum HttpVerb {
     Get,
     Delete,
+    r#Type,
 }
 
 struct EnumModule;
@@ -68,7 +69,7 @@ fn variants_are_spelled_by_rule_or_rename() {
     assert_eq!(PlayMode::RepeatOne.as_str(), "repeat_one");
     assert_eq!(PlayMode::from_str("xxh3_64"), Some(PlayMode::Xxh364));
     assert_eq!(PlayMode::from_str("RepeatOne"), None);
-    assert_eq!(HttpVerb::VALUES, ["GET", "DELETE"]);
+    assert_eq!(HttpVerb::VALUES, ["GET", "DELETE", "TYPE"]);
 }
 
 #[test]
@@ -135,7 +136,7 @@ fn enums_are_described_as_string_unions() {
     );
     assert!(rendered.contains("How a track is played."), "{rendered}");
     assert!(
-        rendered.contains("export type Verb = \"GET\" | \"DELETE\"\n"),
+        rendered.contains("export type Verb = \"GET\" | \"DELETE\" | \"TYPE\"\n"),
         "{rendered}"
     );
     assert!(
