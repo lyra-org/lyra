@@ -177,8 +177,13 @@ pub(crate) fn transform_cover_image(
 }
 
 pub(crate) fn cover_hash(path: &Path) -> Option<String> {
-    let bytes = std::fs::read(path).ok()?;
-    Some(xxh3_128_hex_bytes(&bytes))
+    read_cover_hash(path).ok()
+}
+
+pub(crate) fn read_cover_hash(path: &Path) -> anyhow::Result<String> {
+    let bytes =
+        std::fs::read(path).with_context(|| format!("failed to read cover {}", path.display()))?;
+    Ok(xxh3_128_hex_bytes(&bytes))
 }
 
 pub(crate) fn cover_blurhash(path: &Path) -> Option<String> {

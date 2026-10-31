@@ -49,6 +49,7 @@ use super::{
         cover_hash,
         cover_mime_from_path,
         normalize_extension,
+        read_cover_hash,
     },
     providers::{
         artist_context_value,
@@ -507,12 +508,15 @@ impl CoverScope {
     }
 }
 
+/// Covers found for a library's releases or artists, and the errors of those whose search failed.
+type ResolvedCovers = (Vec<(DbId, PathBuf)>, Vec<anyhow::Error>);
+
 fn resolve_covers_for_library(
     scope: CoverScope,
     db: &agdb::DbAny,
     library_id: DbId,
     paths: CoverPaths<'_>,
-) -> Result<Vec<(DbId, PathBuf)>> {
+) -> Result<ResolvedCovers> {
     match scope {
         CoverScope::Release => resolve_release_covers(db, library_id, paths),
         CoverScope::Artist => resolve_artist_covers(db, library_id, paths),
@@ -523,37 +527,41 @@ pub(crate) fn resolve_release_covers(
     db: &agdb::DbAny,
     library_id: DbId,
     paths: CoverPaths<'_>,
-) -> Result<Vec<(DbId, PathBuf)>> {
+) -> Result<ResolvedCovers> {
     let releases = lyra_db::releases::get(db, library_id)?;
-    let mut resolved = Vec::new();
+    let (mut resolved, mut failed) = (Vec::new(), Vec::new());
     for release in &releases {
         let Some(release_id) = release.db_id.clone().map(Into::<DbId>::into) else {
             continue;
         };
         let tracks = lyra_db::tracks::get_direct(db, release_id)?;
-        if let Some(cover_path) = resolve_cover_for_release(db, release_id, &tracks, paths)? {
-            resolved.push((release_id, cover_path));
+        match resolve_cover_for_release(db, release_id, &tracks, paths) {
+            Ok(Some(cover_path)) => resolved.push((release_id, cover_path)),
+            Ok(None) => {}
+            Err(err) => failed.push(err),
         }
     }
-    Ok(resolved)
+    Ok((resolved, failed))
 }
 
 pub(crate) fn resolve_artist_covers(
     db: &agdb::DbAny,
     library_id: DbId,
     paths: CoverPaths<'_>,
-) -> Result<Vec<(DbId, PathBuf)>> {
+) -> Result<ResolvedCovers> {
     let artists = lyra_db::artists::get_by_library(db, library_id)?;
-    let mut resolved = Vec::new();
+    let (mut resolved, mut failed) = (Vec::new(), Vec::new());
     for artist in &artists {
         let Some(artist_id) = artist.db_id.clone().map(Into::<DbId>::into) else {
             continue;
         };
-        if let Some(cover_path) = resolve_cover_for_artist_id(db, artist_id, paths)? {
-            resolved.push((artist_id, cover_path));
+        match resolve_cover_for_artist_id(db, artist_id, paths) {
+            Ok(Some(cover_path)) => resolved.push((artist_id, cover_path)),
+            Ok(None) => {}
+            Err(err) => failed.push(err),
         }
     }
-    Ok(resolved)
+    Ok((resolved, failed))
 }
 
 pub(crate) async fn sync_release_covers_for_library(
@@ -585,7 +593,12 @@ pub(crate) async fn sync_release_covers_for_library(
             let tracks = lyra_db::tracks::get_direct(&db_read, release_id)?;
             let artists = lyra_db::artists::get(&db_read, release_id)?;
             let library = library_for_release(&db_read, release_id)?;
-            let existing_cover = resolve_cover_for_release(&db_read, release_id, &tracks, paths)?;
+            // The metadata pass after this one reports a cover search that fails.
+            let Ok(existing_cover) =
+                resolve_cover_for_release(&db_read, release_id, &tracks, paths)
+            else {
+                continue;
+            };
             let target_dir = configured_cover_dir_for_release(paths.covers_root, release_id);
 
             let mut provider_contexts = Vec::new();
@@ -748,7 +761,7 @@ pub(crate) async fn upsert_cover_metadata(
         let path = path.clone();
         move || {
             (
-                cover_hash(&path),
+                read_cover_hash(&path),
                 cover_blurhash(&path),
                 cover_mime_from_path(&path).to_string(),
             )
@@ -756,10 +769,7 @@ pub(crate) async fn upsert_cover_metadata(
     })
     .await
     .context("cover metadata computation task panicked")?;
-
-    let Some(hash) = hash else {
-        return Ok(false);
-    };
+    let hash = hash?;
 
     let path_str = path.to_string_lossy().into_owned();
     let mut db_write = db.write().await;
@@ -847,12 +857,12 @@ async fn sync_cover_metadata_from_resolved(
         return Ok(0);
     }
 
-    let computed: Vec<ComputedCover> = pending
+    let (computed, unreadable): (Vec<_>, Vec<_>) = pending
         .into_par_iter()
-        .filter_map(|p| {
-            let hash = cover_hash(&p.path)?;
+        .map(|p| {
+            let hash = read_cover_hash(&p.path)?;
             let blurhash = cover_blurhash(&p.path);
-            Some(ComputedCover {
+            Ok(ComputedCover {
                 owner_id: p.owner_id,
                 path: p.path.to_string_lossy().into_owned(),
                 mime_type: p.mime_type,
@@ -860,7 +870,10 @@ async fn sync_cover_metadata_from_resolved(
                 blurhash,
             })
         })
-        .collect();
+        .partition_map(|computed: Result<ComputedCover>| match computed {
+            Ok(computed) => rayon::iter::Either::Left(computed),
+            Err(err) => rayon::iter::Either::Right(err),
+        });
 
     let count = computed.len();
     for c in computed {
@@ -877,6 +890,12 @@ async fn sync_cover_metadata_from_resolved(
     }
 
     tracing::info!(count, entity_type, "persisted cover metadata");
+    if let Some(first) = unreadable.first() {
+        anyhow::bail!(
+            "{} {entity_type} covers could not be read; first: {first:#}",
+            unreadable.len()
+        );
+    }
     Ok(count)
 }
 
@@ -918,15 +937,28 @@ pub(crate) async fn sync_and_persist_covers_for_library(
         sync_covers_for_library_scope(scope, db, paths, library_id, options, provider_filter)
             .await?;
 
-    let resolved = {
+    let (resolved, unresolved) = {
         let db_read = db.read().await;
         resolve_covers_for_library(scope, &db_read, library_id, paths)?
     };
-    if resolved.is_empty() {
-        return Ok(0);
-    }
-
-    let persisted = sync_cover_metadata_for_scope(scope, db, &resolved).await?;
+    let persisted = if resolved.is_empty() {
+        Ok(0)
+    } else {
+        sync_cover_metadata_for_scope(scope, db, &resolved).await
+    };
+    let persisted = match (persisted, unresolved.first()) {
+        (persisted, None) => persisted?,
+        (persisted, Some(first)) => {
+            let unresolved = anyhow::anyhow!(
+                "{} {scope_name} covers could not be resolved; first: {first:#}",
+                unresolved.len()
+            );
+            return Err(match persisted {
+                Ok(_) => unresolved,
+                Err(err) => err.context(unresolved),
+            });
+        }
+    };
     tracing::debug!(
         library_id = library_id.0,
         scope = scope_name,

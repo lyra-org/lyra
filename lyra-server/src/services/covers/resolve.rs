@@ -50,9 +50,17 @@ pub(super) fn cover_path_from_db(db: &DbAny, owner_db_id: DbId) -> Result<Option
     Ok(None)
 }
 
-pub(crate) fn find_cover_in_directory(dir: &Path) -> Option<PathBuf> {
+/// The directory's cover image; none when the directory doesn't exist.
+pub(crate) fn find_cover_in_directory(dir: &Path) -> Result<Option<PathBuf>> {
     let mut candidates: Vec<(usize, PathBuf)> = Vec::new();
-    let entries = std::fs::read_dir(dir).ok()?;
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(anyhow::Error::from(err)
+                .context(format!("failed to list covers in {}", dir.display())));
+        }
+    };
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -83,7 +91,7 @@ pub(crate) fn find_cover_in_directory(dir: &Path) -> Option<PathBuf> {
             .cmp(b_pri)
             .then_with(|| a_path.to_string_lossy().cmp(&b_path.to_string_lossy()))
     });
-    candidates.into_iter().next().map(|(_, path)| path)
+    Ok(candidates.into_iter().next().map(|(_, path)| path))
 }
 
 pub(crate) fn cover_dirs_for_release(
@@ -153,12 +161,12 @@ pub(crate) fn resolve_cover_for_release(
     }
 
     let configured_dir = configured_cover_dir_for_release(paths.covers_root, release_id);
-    if let Some(cover) = find_cover_in_directory(&configured_dir) {
+    if let Some(cover) = find_cover_in_directory(&configured_dir)? {
         return Ok(Some(cover));
     }
 
     for dir in cover_dirs_for_release(db, tracks, paths.library_root)? {
-        if let Some(cover) = find_cover_in_directory(&dir) {
+        if let Some(cover) = find_cover_in_directory(&dir)? {
             return Ok(Some(cover));
         }
     }
@@ -193,7 +201,7 @@ pub(crate) fn resolve_cover_for_artist_id(
     }
 
     let configured_dir = configured_cover_dir_for_artist(paths.covers_root, artist_id);
-    if let Some(cover) = find_cover_in_directory(&configured_dir) {
+    if let Some(cover) = find_cover_in_directory(&configured_dir)? {
         return Ok(Some(cover));
     }
 
