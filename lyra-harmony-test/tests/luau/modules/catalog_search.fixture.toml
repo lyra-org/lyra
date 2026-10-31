@@ -1,0 +1,77 @@
+run_as = "owner"
+
+[[users]]
+key = "owner"
+admin = true
+
+[[artists]]
+key = "beyonce"
+name = "Beyoncé"
+
+[[artists]]
+key = "acdc"
+name = "AC/DC"
+
+[[artists]]
+key = "gnr"
+name = "Guns N’ Roses"
+
+[[artists]]
+key = "chk"
+name = "!!!"
+
+[[artists]]
+key = "boys"
+name = "$uicideboy$"
+
+[[artists]]
+key = "sigur"
+name = "Sigur Ros"
+
+[[releases]]
+key = "lemonade"
+title = "Lemonade"
+artists = ["beyonce"]
+
+[[releases]]
+key = "black"
+title = "Back in Black"
+artists = ["acdc"]
+
+[[releases]]
+key = "agaetis"
+title = "Ágætis byrjun"
+artists = ["sigur"]
+
+[[tracks]]
+key = "formation"
+title = "Formation"
+release = "lemonade"
+artists = ["beyonce"]
+
+[[tracks]]
+key = "medley"
+title = "Beyonce Medley"
+release = "black"
+artists = ["chk"]
+
+[[tracks]]
+key = "bells"
+title = "Hells Bells"
+release = "black"
+artists = ["acdc"]
+
+[[tracks]]
+key = "jungle"
+title = "Welcome to the Jungle"
+artists = ["gnr"]
+
+[[tracks]]
+key = "giuliani"
+title = "Me and Giuliani Down by the Schoolyard"
+artists = ["chk"]
+
+[[tracks]]
+key = "kill"
+title = "Kill Yourself"
+artists = ["boys"]
