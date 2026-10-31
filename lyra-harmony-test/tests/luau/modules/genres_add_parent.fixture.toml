@@ -1,0 +1,23 @@
+run_as = "owner"
+
+[[users]]
+key = "owner"
+admin = true
+
+[[genres]]
+key = "rock"
+name = "Rock"
+
+[[genres]]
+key = "punk"
+name = "Punk"
+
+[[releases]]
+key = "album"
+title = "Album"
+genres = ["punk", "rock"]
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"

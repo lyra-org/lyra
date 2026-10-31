@@ -136,12 +136,12 @@ impl GenresModule {
         #[context] db: Db,
     ) -> luau::runtime::Result<()> {
         let mut db = db.write().await;
-        let node = |id: &str, name: &str| {
-            ids::db_id(&*db, id)?
-                .ok_or_else(|| crate::plugins::runtime_error(format!("unknown {name}: {id}")))
+        let genre = |id: &str, name: &str| {
+            ids::db_id_of(&db, id, "Genre")?
+                .ok_or_else(|| crate::plugins::runtime_error(format!("{name} {id} is not a genre")))
         };
-        let child = node(&child_id, "child_id")?;
-        let parent = node(&parent_id, "parent_id")?;
+        let child = genre(&child_id, "child_id")?;
+        let parent = genre(&parent_id, "parent_id")?;
         lyra_db::genres::link_to_parent(&mut db, child, parent)
             .map_err(crate::plugins::runtime_error)
     }
