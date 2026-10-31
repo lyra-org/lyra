@@ -4,9 +4,9 @@
 // www.meshiplaw.com/lyra.
 
 //! How the database and service types plugins exchange look from Luau.
-//! Records cross as serialized tables and are only described here; the enums
-//! plugins pass back as userdata get Luau-side mirrors that convert to the
-//! types they mirror.
+//! Records cross as serialized tables and are only described here; enums get
+//! Luau-side mirrors, as userdata or as the strings they serialize to, that
+//! convert to the types they mirror.
 
 #[cfg(feature = "docgen")]
 use harmony_luau::{
@@ -79,6 +79,40 @@ macro_rules! mirror_userdata_enum {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub(crate) enum $mirror {
             $($variant),+
+        }
+
+        impl From<$mirror> for $source {
+            fn from(value: $mirror) -> Self {
+                match value {
+                    $($mirror::$variant => Self::$variant),+
+                }
+            }
+        }
+
+        impl From<$source> for $mirror {
+            fn from(value: $source) -> Self {
+                match value {
+                    $(<$source>::$variant => Self::$variant),+
+                }
+            }
+        }
+    };
+}
+
+/// Mirrors the unit enum `$source` as the Luau string union `$name`, spelled
+/// as `$source` serializes, with conversions both ways; the exhaustive
+/// matches keep the variants in step.
+macro_rules! mirror_string_enum {
+    (
+        $mirror:ident for $source:path,
+        $name:literal,
+        $(description = $description:literal,)?
+        [$($(#[$attr:meta])* $variant:ident),+ $(,)?]
+    ) => {
+        #[harmony_macros::string_enum(name = $name $(, description = $description)?)]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub(crate) enum $mirror {
+            $($(#[$attr])* $variant),+
         }
 
         impl From<$mirror> for $source {
@@ -194,28 +228,16 @@ impl LuauTypeInfo for LuauNodeId {
     }
 }
 
-/// [`lyra_db::PlaybackState`] as the strings it serializes to.
-pub(crate) struct LuauPlaybackState;
+mirror_string_enum!(LuauPlaybackState for lyra_db::PlaybackState, "PlaybackState", [
+    Playing, Paused, Stopped, Buffering, Completed,
+]);
 
-impl LuauTypeInfo for LuauPlaybackState {
-    fn luau_type() -> LuauType {
-        LuauType::union(vec![
-            LuauType::literal("\"playing\""),
-            LuauType::literal("\"paused\""),
-            LuauType::literal("\"stopped\""),
-            LuauType::literal("\"buffering\""),
-            LuauType::literal("\"completed\""),
-        ])
-    }
-}
-
-const _: fn(lyra_db::PlaybackState) = |value| match value {
-    lyra_db::PlaybackState::Playing
-    | lyra_db::PlaybackState::Paused
-    | lyra_db::PlaybackState::Stopped
-    | lyra_db::PlaybackState::Buffering
-    | lyra_db::PlaybackState::Completed => {}
-};
+mirror_string_enum!(
+    LuauPlaybackEvent for crate::services::playback_sessions::PlaybackEvent,
+    "PlaybackEvent",
+    description = "Playback event reported by plugin helpers.",
+    [Started, Progress, Stopped, Completed]
+);
 
 describe_record!(
     LuauRelease for lyra_db::Release,
@@ -490,3 +512,33 @@ const _: fn(&crate::services::providers::IdLink) = |value| {
         &value.url,
     );
 };
+
+#[cfg(test)]
+mod tests {
+    use harmony_luau::StringEnum;
+    use serde::de::DeserializeOwned;
+
+    use super::*;
+
+    /// Each string `M` accepts deserializes to the `S` that converts back to it.
+    fn assert_spelled_as_serialized<M, S>()
+    where
+        M: StringEnum + From<S>,
+        S: DeserializeOwned,
+    {
+        for value in M::VALUES {
+            let source: S = serde_json::from_value(serde_json::Value::from(*value))
+                .unwrap_or_else(|error| panic!("{} \"{value}\": {error}", M::NAME));
+            assert_eq!(M::from(source).as_str(), *value);
+        }
+    }
+
+    #[test]
+    fn string_enum_mirrors_match_their_serialized_spelling() {
+        assert_spelled_as_serialized::<LuauPlaybackState, lyra_db::PlaybackState>();
+        assert_spelled_as_serialized::<
+            LuauPlaybackEvent,
+            crate::services::playback_sessions::PlaybackEvent,
+        >();
+    }
+}

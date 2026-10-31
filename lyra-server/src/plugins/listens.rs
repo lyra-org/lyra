@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+#[cfg(feature = "docgen")]
 use std::collections::HashMap;
 
 use harmony_luau as luau;
@@ -220,24 +221,22 @@ impl ListensModule {
 
     #[harmony(
         description = "Judges the dispatch principal's plays as listens in one transaction and returns each play's outcome, keyed by `play_id`. A `play_id` repeated in the batch is judged by its first occurrence. Recorded listens reach `on_update`. Raises on a malformed play or more than 500 plays, judging none.",
-        returns(HashMap<String, LuauListenOutcome>)
+        returns(HashMap<String, ListenOutcome>)
     )]
     async fn submit(
         plays: SubmittedPlays,
         #[context] db: Db,
         #[context] principal: Principal,
-    ) -> luau::runtime::Result<luau::Value> {
+    ) -> luau::runtime::Result<luau::OwnedTable> {
         let now_ms = playback_sessions::now_ms().map_err(crate::plugins::runtime_error)?;
         let mut db = db.write_outside_catalog().await;
         let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
         let outcomes =
             listen_service::record_submitted(&mut db, &principal, user_db_id, plays.0, now_ms)?;
         drop(db);
-        let outcomes = outcomes
-            .into_iter()
-            .map(|(play_id, outcome)| (play_id, outcome_name(&outcome)))
-            .collect::<HashMap<_, _>>();
-        harmony_luau::serializable_to_luau_owned(outcomes)
+        Ok(luau::OwnedTable::from_entries(outcomes.into_iter().map(
+            |(play_id, outcome)| (play_id, ListenOutcome::from(&outcome)),
+        )))
     }
 
     #[harmony(
@@ -258,13 +257,26 @@ impl ListensModule {
     }
 }
 
-fn outcome_name(outcome: &SubmissionOutcome) -> &'static str {
-    match outcome {
-        SubmissionOutcome::Judged(RecordOutcome::Recorded(_)) => "recorded",
-        SubmissionOutcome::Judged(RecordOutcome::Duplicate) => "duplicate",
-        SubmissionOutcome::Judged(RecordOutcome::NotListened) => "not_listened",
-        SubmissionOutcome::Judged(RecordOutcome::InvalidTime) => "invalid_time",
-        SubmissionOutcome::TrackNotFound => "track_not_found",
+#[harmony_macros::string_enum(
+    description = "What the server made of one submitted play. Every outcome is final."
+)]
+enum ListenOutcome {
+    Recorded,
+    Duplicate,
+    NotListened,
+    TrackNotFound,
+    InvalidTime,
+}
+
+impl From<&SubmissionOutcome> for ListenOutcome {
+    fn from(outcome: &SubmissionOutcome) -> Self {
+        match outcome {
+            SubmissionOutcome::Judged(RecordOutcome::Recorded(_)) => Self::Recorded,
+            SubmissionOutcome::Judged(RecordOutcome::Duplicate) => Self::Duplicate,
+            SubmissionOutcome::Judged(RecordOutcome::NotListened) => Self::NotListened,
+            SubmissionOutcome::Judged(RecordOutcome::InvalidTime) => Self::InvalidTime,
+            SubmissionOutcome::TrackNotFound => Self::TrackNotFound,
+        }
     }
 }
 
@@ -412,39 +424,6 @@ impl DescribeInterface for LuauListenStats {
     }
 }
 
-/// [`SubmissionOutcome`] as described to Luau.
-#[cfg(feature = "docgen")]
-struct LuauListenOutcome;
-
-#[cfg(feature = "docgen")]
-impl LuauTypeInfo for LuauListenOutcome {
-    fn luau_type() -> LuauType {
-        LuauType::literal("ListenOutcome")
-    }
-}
-
-#[cfg(feature = "docgen")]
-impl DescribeTypeAlias for LuauListenOutcome {
-    fn type_alias_descriptor() -> TypeAliasDescriptor {
-        TypeAliasDescriptor::new(
-            "ListenOutcome",
-            LuauType::union(
-                [
-                    "recorded",
-                    "duplicate",
-                    "not_listened",
-                    "track_not_found",
-                    "invalid_time",
-                ]
-                .into_iter()
-                .map(LuauType::string_literal)
-                .collect(),
-            ),
-            Some("What the server made of one submitted play. Every outcome is final."),
-        )
-    }
-}
-
 #[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     use harmony_luau::DescribeModule;
@@ -453,7 +432,7 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &ListensModule::module_descriptor(),
         &[
             ListenUpdateHandler::type_alias_descriptor(),
-            LuauListenOutcome::type_alias_descriptor(),
+            ListenOutcome::type_alias_descriptor(),
         ],
         &[
             SubmittedPlayRequest::interface_descriptor(),
