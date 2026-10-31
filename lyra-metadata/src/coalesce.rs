@@ -16,6 +16,7 @@ use crate::{
     ParsedReleaseGroup,
     ReleaseCoalesceTrack,
     artists::normalize_unicode_nfc,
+    normalize_barcode,
 };
 
 #[derive(Debug, Clone)]
@@ -114,15 +115,55 @@ pub fn coalesce_release_groups<T: ReleaseCoalesceTrack>(
     coalesced_batches
 }
 
+/// Folders decide which candidates are compared; tags decide which merge: a shared barcode, the
+/// same title, or a disc-style folder layout. Without evidence they stay apart, and differing
+/// barcodes or tracks claiming the same disc and track keep them apart regardless.
 fn groups_can_merge<T: ReleaseCoalesceTrack>(
     left: &ReleaseGroupCandidate<T>,
     right: &ReleaseGroupCandidate<T>,
 ) -> bool {
+    if !structural_merge_allowed(left, right) {
+        return false;
+    }
+    if let (Some(left_barcode), Some(right_barcode)) =
+        (barcode(&left.tracks), barcode(&right.tracks))
+    {
+        return crate::barcodes_match(&left_barcode, &right_barcode);
+    }
     if !soft_checks_compatible(left, right) {
         return false;
     }
 
-    structural_merge_allowed(left, right)
+    let title =
+        |tracks: &[T]| representative_release_title(tracks).map(|title| normalize_text_key(&title));
+    let same_title = title(&left.tracks).is_some() && title(&left.tracks) == title(&right.tracks);
+    same_title || disc_folder_layout(left, right)
+}
+
+/// One is a disc folder of the other, or both are disc folders in the same folder.
+fn disc_folder_layout<T: ReleaseCoalesceTrack>(
+    left: &ReleaseGroupCandidate<T>,
+    right: &ReleaseGroupCandidate<T>,
+) -> bool {
+    let (left_dir, right_dir) = (Path::new(&left.source_dir), Path::new(&right.source_dir));
+    match (
+        left.inferred_disc_from_dir.is_some(),
+        right.inferred_disc_from_dir.is_some(),
+    ) {
+        (true, true) => left_dir.parent() == right_dir.parent(),
+        (true, false) => left_dir.parent() == Some(right_dir),
+        (false, true) => right_dir.parent() == Some(left_dir),
+        (false, false) => false,
+    }
+}
+
+/// The barcode every track that has one agrees on.
+fn barcode<T: ReleaseCoalesceTrack>(tracks: &[T]) -> Option<String> {
+    crate::release_barcode(tracks.iter().map(|track| {
+        track
+            .barcode()
+            .filter(|barcode| normalize_barcode(barcode).is_some())
+    }))
 }
 
 fn soft_checks_compatible<T: ReleaseCoalesceTrack>(
@@ -269,7 +310,11 @@ fn resolve_disc_track_pairs_with_fallback<T: ReleaseCoalesceTrack>(
 }
 
 fn infer_disc_from_folder_name(source_dir: &str) -> Option<u32> {
-    let name = Path::new(source_dir).file_name()?.to_string_lossy();
+    disc_number_from_folder_name(&Path::new(source_dir).file_name()?.to_string_lossy())
+}
+
+/// The disc a folder named like `Disc 2`, `CD-2` or `disk_02` holds.
+pub fn disc_number_from_folder_name(name: &str) -> Option<u32> {
     let normalized = name.trim().to_ascii_lowercase();
     for prefix in ["disc", "cd", "disk"] {
         if let Some(suffix) = normalized.strip_prefix(prefix) {

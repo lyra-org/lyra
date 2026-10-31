@@ -71,4 +71,8 @@ impl lyra_metadata::ReleaseCoalesceTrack for TrackMetadata {
     fn track(&self) -> Option<u32> {
         self.track
     }
+
+    fn barcode(&self) -> Option<&str> {
+        self.barcode.as_deref()
+    }
 }

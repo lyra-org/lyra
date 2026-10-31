@@ -24,7 +24,10 @@ pub use artists::{
     split_delimited_string,
     split_on_word,
 };
-pub use coalesce::coalesce_release_groups;
+pub use coalesce::{
+    coalesce_release_groups,
+    disc_number_from_folder_name,
+};
 pub use edition::{
     MediaFormat,
     barcodes_match,
@@ -147,6 +150,7 @@ pub trait ReleaseCoalesceTrack: Clone {
     fn year(&self) -> Option<u32>;
     fn disc(&self) -> Option<u32>;
     fn track(&self) -> Option<u32>;
+    fn barcode(&self) -> Option<&str>;
 }
 
 impl ReleaseCoalesceTrack for TrackMetadata {
@@ -176,6 +180,10 @@ impl ReleaseCoalesceTrack for TrackMetadata {
 
     fn track(&self) -> Option<u32> {
         self.track
+    }
+
+    fn barcode(&self) -> Option<&str> {
+        self.barcode.as_deref()
     }
 }
 
@@ -1065,6 +1073,72 @@ mod tests {
                 .iter()
                 .all(|track| track.album.as_deref() == Some("Release Title"))
         );
+    }
+
+    #[test]
+    fn coalesce_release_groups_keeps_differently_titled_nested_folders_apart() {
+        let group = |dir: &str, album: &str, track: u32| {
+            parsed_group(
+                0,
+                dir,
+                vec![coalesce_track(
+                    &format!("{dir}/{track:02}.flac"),
+                    album,
+                    "Artist",
+                    Some(2024),
+                    None,
+                    track,
+                )],
+            )
+        };
+        let coalesced = coalesce_release_groups(vec![
+            group("/music/Artist", "Loose", 1),
+            group("/music/Artist/One", "One", 2),
+            group("/music/Artist/Two", "Two", 3),
+        ]);
+
+        let mut albums = coalesced
+            .iter()
+            .map(|batch| {
+                assert_eq!(batch.len(), 1);
+                batch[0].album.clone().unwrap_or_default()
+            })
+            .collect::<Vec<_>>();
+        albums.sort();
+        assert_eq!(albums, ["Loose", "One", "Two"]);
+    }
+
+    #[test]
+    fn coalesce_release_groups_merges_a_disc_folder_into_its_album_folder() {
+        let coalesced = coalesce_release_groups(vec![
+            parsed_group(
+                0,
+                "/music/Album",
+                vec![coalesce_track(
+                    "/music/Album/01.flac",
+                    "Album",
+                    "Artist",
+                    Some(2024),
+                    Some(1),
+                    1,
+                )],
+            ),
+            parsed_group(
+                0,
+                "/music/Album/Disc 2",
+                vec![coalesce_track(
+                    "/music/Album/Disc 2/01.flac",
+                    "Album (Bonus)",
+                    "Artist",
+                    Some(2024),
+                    Some(2),
+                    1,
+                )],
+            ),
+        ]);
+
+        assert_eq!(coalesced.len(), 1);
+        assert_eq!(coalesced[0].len(), 2);
     }
 
     #[test]
