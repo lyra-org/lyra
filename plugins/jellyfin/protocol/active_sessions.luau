@@ -231,7 +231,7 @@ local function build_sessions_dto_list(
 		end
 		local playable_types: { JsonValue } = { "Audio" }
 		local legacy: JsonObject = {
-			Id = conn.token,
+			Id = conn.id,
 			UserId = jellyfin_user_id,
 			UserName = username,
 			DeviceId = conn.session_key,

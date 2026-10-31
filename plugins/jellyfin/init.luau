@@ -1723,7 +1723,7 @@ local function resolve_native_target(
 
 	local session_key = if ws_entry then ws_entry.session_id else nil
 	for _, conn in playback_sessions.list_connections() do
-		if conn.token == session_id or (session_key ~= nil and conn.session_key == session_key) then
+		if conn.id == session_id or (session_key ~= nil and conn.session_key == session_key) then
 			return conn, nil
 		end
 	end
@@ -1746,7 +1746,7 @@ local function dispatch_to_native(
 	end
 
 	local cmd_request: playback_sessions.SendCommandRequest = {
-		target_token = target.token,
+		connection_id = target.id,
 		action = action,
 	}
 	if position_ms ~= nil then
