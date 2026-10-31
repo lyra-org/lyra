@@ -284,18 +284,17 @@ impl Catalog for Artists {
             needs(&[ArtistKey::ListenCount, ArtistKey::LastPlayedAt]),
         )?;
 
-        Ok(ids
+        Ok(fields
             .into_iter()
-            .filter_map(|id| {
-                let artist = fields.get(&id)?;
-                let name = artist.text("artist_name")?;
-                let sort_name = artist.text("sort_name").unwrap_or(name).to_lowercase();
+            .filter_map(|(id, mut artist)| {
+                let name = artist.take_text("artist_name")?;
+                let mut row = Row::new(id, name, artist.text("sort_name"));
                 let totals = totals.get(&id).copied().unwrap_or_default();
-                let values = keys
+                row.values = keys
                     .iter()
                     .map(|key| match key {
-                        ArtistKey::Name => Some(SortValue::Text(name.to_lowercase())),
-                        ArtistKey::SortName => Some(SortValue::Text(sort_name.clone())),
+                        ArtistKey::Name => Some(SortValue::Text(row.lower_name().to_string())),
+                        ArtistKey::SortName => Some(SortValue::Text(row.sort_name().to_string())),
                         ArtistKey::DateCreated => artist
                             .number("ctime")
                             .or_else(|| artist.number("created_at"))
@@ -313,12 +312,7 @@ impl Catalog for Artists {
                         ArtistKey::Relevance | ArtistKey::Random | ArtistKey::Id => None,
                     })
                     .collect();
-                Some(Row {
-                    id,
-                    name: name.to_string(),
-                    sort_name,
-                    values,
-                })
+                Some(row)
             })
             .collect())
     }

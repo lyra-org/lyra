@@ -88,9 +88,32 @@ pub(crate) struct Row {
     pub(crate) id: DbId,
     /// The display name, which search matches against.
     pub(crate) name: String,
-    /// The lowercase sort name, which search also matches, ties break on and name ranges bound.
-    pub(crate) sort_name: String,
+    lower_name: String,
+    /// The lowercase sort title, when the entity has one.
+    sort_title: Option<String>,
     pub(crate) values: Vec<Option<SortValue>>,
+}
+
+impl Row {
+    /// A row with no values yet, sorting by `sort_title` when given and by `name` otherwise.
+    pub(crate) fn new(id: DbId, name: String, sort_title: Option<&str>) -> Self {
+        Self {
+            id,
+            lower_name: name.to_lowercase(),
+            sort_title: sort_title.map(str::to_lowercase),
+            name,
+            values: Vec::new(),
+        }
+    }
+
+    pub(crate) fn lower_name(&self) -> &str {
+        &self.lower_name
+    }
+
+    /// The lowercase sort name, which search also matches, ties break on and name ranges bound.
+    pub(crate) fn sort_name(&self) -> &str {
+        self.sort_title.as_deref().unwrap_or(&self.lower_name)
+    }
 }
 
 /// Data of the viewer's own that a query can filter or sort by.
@@ -299,7 +322,6 @@ pub(crate) fn page<C: Catalog>(
 
 struct Entry {
     row: Row,
-    lower_name: String,
     unit: ShuffleUnit,
     score: u32,
     /// Whether the display name scored `score`, which ranks ahead of a sort name scoring the same.
@@ -346,9 +368,8 @@ fn sorted<C: Catalog>(
     }
     let mut entries = C::rows(db, viewer, &query.filter, ids, &fields)?
         .into_iter()
-        .filter(|row| query.names.contains(&row.sort_name))
+        .filter(|row| query.names.contains(row.sort_name()))
         .map(|row| Entry {
-            lower_name: row.name.to_lowercase(),
             unit: ShuffleUnit {
                 id: row.id,
                 place: 0,
@@ -361,8 +382,8 @@ fn sorted<C: Catalog>(
     if let Some(term) = search {
         crate::services::search::fuzzy_retain(&mut entries, term, |entry, score| {
             let by_name = score(&entry.row.name);
-            let by_sort_name = (entry.row.sort_name != entry.lower_name)
-                .then(|| score(&entry.row.sort_name))
+            let by_sort_name = (entry.row.sort_name() != entry.row.lower_name())
+                .then(|| score(entry.row.sort_name()))
                 .flatten();
             let Some(best) = by_name.max(by_sort_name) else {
                 return false;
@@ -455,9 +476,9 @@ fn compare<K: SortKey>(
     }
 
     a.row
-        .sort_name
-        .cmp(&b.row.sort_name)
-        .then_with(|| a.lower_name.cmp(&b.lower_name))
+        .sort_name()
+        .cmp(b.row.sort_name())
+        .then_with(|| a.row.lower_name().cmp(b.row.lower_name()))
         .then_with(|| a.row.name.cmp(&b.row.name))
         .then_with(|| a.row.id.0.cmp(&b.row.id.0))
 }

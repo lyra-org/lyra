@@ -180,12 +180,12 @@ impl Catalog for Genres {
         Ok(ids
             .into_iter()
             .filter_map(|id| {
-                let name = fields.get(&id)?.text("name")?;
+                let mut row = Row::new(id, fields.get(&id)?.text("name")?.to_string(), None);
                 let totals = totals.get(&id).copied().unwrap_or_default();
-                let values = keys
+                row.values = keys
                     .iter()
                     .map(|key| match key {
-                        GenreKey::Name => Some(SortValue::Text(name.to_lowercase())),
+                        GenreKey::Name => Some(SortValue::Text(row.lower_name().to_string())),
                         GenreKey::ReleaseCount => Some(SortValue::Number(
                             release_counts.get(&id).copied().unwrap_or(0),
                         )),
@@ -196,12 +196,7 @@ impl Catalog for Genres {
                         GenreKey::Relevance | GenreKey::Random | GenreKey::Id => None,
                     })
                     .collect();
-                Some(Row {
-                    id,
-                    name: name.to_string(),
-                    sort_name: name.to_lowercase(),
-                    values,
-                })
+                Some(row)
             })
             .collect())
     }

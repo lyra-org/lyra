@@ -239,19 +239,18 @@ impl Catalog for Releases {
             HashMap::new()
         };
 
-        Ok(ids
+        Ok(fields
             .into_iter()
-            .filter_map(|id| {
-                let release = fields.get(&id)?;
-                let name = release.text("release_title")?;
-                let sort_name = release.text("sort_title").unwrap_or(name).to_lowercase();
+            .filter_map(|(id, mut release)| {
+                let name = release.take_text("release_title")?;
+                let mut row = Row::new(id, name, release.text("sort_title"));
                 let number = |key| release.number(key).map(SortValue::Number);
                 let totals = totals.get(&id).copied().unwrap_or_default();
-                let values = keys
+                row.values = keys
                     .iter()
                     .map(|key| match key {
-                        ReleaseKey::Name => Some(SortValue::Text(name.to_lowercase())),
-                        ReleaseKey::SortName => Some(SortValue::Text(sort_name.clone())),
+                        ReleaseKey::Name => Some(SortValue::Text(row.lower_name().to_string())),
+                        ReleaseKey::SortName => Some(SortValue::Text(row.sort_name().to_string())),
                         ReleaseKey::DateCreated => number("ctime").or_else(|| number("created_at")),
                         ReleaseKey::ReleaseDate => release
                             .text("release_date")
@@ -274,12 +273,7 @@ impl Catalog for Releases {
                         ReleaseKey::Relevance | ReleaseKey::Random | ReleaseKey::Id => None,
                     })
                     .collect();
-                Some(Row {
-                    id,
-                    name: name.to_string(),
-                    sort_name,
-                    values,
-                })
+                Some(row)
             })
             .collect())
     }

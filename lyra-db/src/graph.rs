@@ -201,6 +201,21 @@ impl Fields {
         self.get(key)?.string().ok().map(String::as_str)
     }
 
+    /// Moves the text out of `key`, leaving a default value behind.
+    pub fn take_text(&mut self, key: &str) -> Option<String> {
+        let kv = self
+            .0
+            .iter_mut()
+            .find(|kv| kv.key.string().is_ok_and(|stored| stored == key))?;
+        match std::mem::take(&mut kv.value) {
+            DbValue::String(text) => Some(text),
+            other => {
+                kv.value = other;
+                None
+            }
+        }
+    }
+
     pub fn number(&self, key: &str) -> Option<u64> {
         self.get(key)?.to_u64().ok()
     }

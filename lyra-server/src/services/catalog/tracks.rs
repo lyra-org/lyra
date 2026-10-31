@@ -294,18 +294,17 @@ impl Catalog for Tracks {
             HashMap::new()
         };
 
-        Ok(ids
+        Ok(fields
             .into_iter()
-            .filter_map(|id| {
-                let track = fields.get(&id)?;
-                let name = track.text("track_title")?;
-                let sort_name = track.text("sort_title").unwrap_or(name).to_lowercase();
+            .filter_map(|(id, mut track)| {
+                let name = track.take_text("track_title")?;
+                let mut row = Row::new(id, name, track.text("sort_title"));
                 let number = |key| track.number(key).map(SortValue::Number);
-                let values = keys
+                row.values = keys
                     .iter()
                     .map(|key| match key {
-                        TrackKey::Name => Some(SortValue::Text(name.to_lowercase())),
-                        TrackKey::SortName => Some(SortValue::Text(sort_name.clone())),
+                        TrackKey::Name => Some(SortValue::Text(row.lower_name().to_string())),
+                        TrackKey::SortName => Some(SortValue::Text(row.sort_name().to_string())),
                         TrackKey::DateCreated => number("ctime").or_else(|| number("created_at")),
                         TrackKey::Year => number("year"),
                         TrackKey::Duration => number("duration_ms"),
@@ -333,12 +332,7 @@ impl Catalog for Tracks {
                         TrackKey::Relevance | TrackKey::Random | TrackKey::Id => None,
                     })
                     .collect();
-                Some(Row {
-                    id,
-                    name: name.to_string(),
-                    sort_name,
-                    values,
-                })
+                Some(row)
             })
             .collect())
     }
