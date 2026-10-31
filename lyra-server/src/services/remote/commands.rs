@@ -8,10 +8,13 @@
 use tokio::task::JoinSet;
 
 use super::constants::RemoteAction;
-use super::handoffs;
+use super::control::{
+    self,
+    Controller,
+    RemoteCommand,
+};
 use super::messages::{
     ClientCommand,
-    ForwardedCommand,
     OutgoingMessage,
     ResponseMessage,
 };
@@ -19,7 +22,6 @@ use super::registry::{
     self,
     ConnectionId,
 };
-use crate::services::playback_sessions as playbacks;
 
 const MAX_IN_FLIGHT_COMMANDS: usize = 16;
 
@@ -58,19 +60,38 @@ pub(crate) async fn abort_handoff_responses(responses: &mut JoinSet<OutgoingMess
 }
 
 async fn handle_command(cmd: ClientCommand, connection_id: ConnectionId) -> ResponseMessage {
-    match cmd {
+    let (id, target, command) = match cmd {
         ClientCommand::DeclareCapabilities { id, commands } => {
-            handle_declare_capabilities(id, commands, connection_id).await
+            return handle_declare_capabilities(id, commands, connection_id).await;
         }
-        ClientCommand::Play(_)
-        | ClientCommand::Pause(_)
-        | ClientCommand::Unpause(_)
-        | ClientCommand::Stop(_)
-        | ClientCommand::Seek(_)
-        | ClientCommand::NextTrack(_)
-        | ClientCommand::PreviousTrack(_)
-        | ClientCommand::SetVolume(_)
-        | ClientCommand::HandoffQueue(_) => handle_remote_control(cmd, connection_id).await,
+        ClientCommand::Play(c) => (c.id, c.target, RemoteCommand::Play),
+        ClientCommand::Pause(c) => (c.id, c.target, RemoteCommand::Pause),
+        ClientCommand::Unpause(c) => (c.id, c.target, RemoteCommand::Unpause),
+        ClientCommand::Stop(c) => (c.id, c.target, RemoteCommand::Stop),
+        ClientCommand::Seek(c) => (
+            c.id,
+            c.target,
+            RemoteCommand::Seek {
+                position_ms: c.position_ms,
+            },
+        ),
+        ClientCommand::NextTrack(c) => (c.id, c.target, RemoteCommand::NextTrack),
+        ClientCommand::PreviousTrack(c) => (c.id, c.target, RemoteCommand::PreviousTrack),
+        ClientCommand::SetVolume(c) => {
+            (c.id, c.target, RemoteCommand::SetVolume { level: c.level })
+        }
+        ClientCommand::HandoffQueue(c) => (
+            c.id,
+            c.target,
+            RemoteCommand::HandoffQueue {
+                playback_id: c.playback_id,
+                queue_revision: c.queue_revision,
+            },
+        ),
+    };
+    match control::send(Controller::Connection(connection_id), &target, command).await {
+        Ok(()) => ResponseMessage::ok(id),
+        Err(error) => ResponseMessage::error(id, error.to_string()),
     }
 }
 
@@ -84,96 +105,6 @@ async fn handle_declare_capabilities(
         ResponseMessage::ok(id)
     } else {
         ResponseMessage::error(id, "connection not found")
-    }
-}
-
-async fn handle_remote_control(cmd: ClientCommand, connection_id: ConnectionId) -> ResponseMessage {
-    let id = cmd.id().to_string();
-    let action = match cmd.remote_action() {
-        Some(a) => a,
-        None => return ResponseMessage::error(id, "not a remote control action"),
-    };
-    let target_str = match cmd.target() {
-        Some(t) => t.to_string(),
-        None => {
-            return ResponseMessage::error(id, "target is required for remote control commands");
-        }
-    };
-
-    let (source, target_snap) =
-        registry::get_connection_and_target(connection_id, &target_str).await;
-
-    let Some(source) = source else {
-        return ResponseMessage::error(id, "source connection not found");
-    };
-    let Some(target_snap) = target_snap else {
-        return ResponseMessage::error(id, "target connection not found");
-    };
-
-    if target_snap.connection_id == connection_id {
-        return ResponseMessage::error(id, "cannot target self");
-    }
-
-    if source.user_public_id != target_snap.user_public_id {
-        return ResponseMessage::error(id, "not authorized to control target");
-    }
-
-    if !target_snap.supported_commands.contains(&action) {
-        return ResponseMessage::error(id, format!("target does not support command: {action:?}"));
-    }
-
-    if let ClientCommand::HandoffQueue(command) = &cmd {
-        return match handoffs::dispatch_and_wait(
-            Some(&source),
-            &target_snap,
-            &command.playback_id,
-            command.queue_revision,
-        )
-        .await
-        {
-            Ok(()) => ResponseMessage::ok(id),
-            Err(error) => ResponseMessage::error(id, error),
-        };
-    }
-
-    let from = Some(source.public_id.clone());
-    let forwarded = match &cmd {
-        ClientCommand::Seek(c) => ForwardedCommand::Seek {
-            from,
-            position_ms: c.position_ms,
-        },
-        ClientCommand::SetVolume(c) => ForwardedCommand::SetVolume {
-            from,
-            level: c.level.clamp(0.0, 1.0),
-        },
-        ClientCommand::Play(_) => ForwardedCommand::Play { from },
-        ClientCommand::Pause(_) => ForwardedCommand::Pause { from },
-        ClientCommand::Unpause(_) => ForwardedCommand::Unpause { from },
-        ClientCommand::Stop(_) => ForwardedCommand::Stop { from },
-        ClientCommand::NextTrack(_) => ForwardedCommand::NextTrack { from },
-        ClientCommand::PreviousTrack(_) => ForwardedCommand::PreviousTrack { from },
-        ClientCommand::DeclareCapabilities { .. } => {
-            return ResponseMessage::error(id, "not a remote control action");
-        }
-        ClientCommand::HandoffQueue(_) => {
-            return ResponseMessage::error(id, "not a direct remote control action");
-        }
-    };
-
-    let forwarded = OutgoingMessage::Command(forwarded);
-
-    match registry::send_to_connection(target_snap.connection_id, forwarded).await {
-        Ok(()) => {
-            if let Ok(now_ms) = playbacks::now_ms() {
-                let scope_key = playbacks::PlaybackScopeKey::native(
-                    &target_snap.user_public_id,
-                    &target_snap.session_key,
-                );
-                playbacks::mark_command_dispatched(&scope_key, now_ms);
-            }
-            ResponseMessage::ok(id)
-        }
-        Err(err) => ResponseMessage::error(id, err),
     }
 }
 
@@ -209,6 +140,7 @@ pub(crate) async fn respond(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::remote::messages::ForwardedCommand;
     use crate::services::remote::testing as fixture;
     use tokio::sync::watch;
 

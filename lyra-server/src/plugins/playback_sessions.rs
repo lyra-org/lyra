@@ -37,16 +37,14 @@ use crate::{
     },
     services::{
         auth::Principal,
-        playback_sessions::{
-            self as playbacks,
-            PlaybackScopeKey,
-        },
+        playback_sessions as playbacks,
         remote::{
             connections,
             constants::RemoteAction,
-            messages::{
-                ForwardedCommand,
-                OutgoingMessage,
+            control::{
+                self,
+                Controller,
+                RemoteCommand,
             },
             registry,
         },
@@ -281,91 +279,42 @@ impl PlaybackSessionsModule {
         #[context] principal: Principal,
     ) -> luau::runtime::Result<()> {
         let request = request.0;
-        // Held through the send, so a user deleted meanwhile commands nothing. Handoffs verify
-        // their owner under their own guard.
-        let db = db.read().await;
-        crate::plugins::auth::require_user_db_id(&principal, &db)?;
+        crate::plugins::auth::require_user_db_id(&principal, &*db.read().await)?;
         let connection_id = require_non_empty_string(request.connection_id, "connection_id")?;
-        let action = request.action;
-
-        let target = registry::resolve_public_id(&connection_id)
-            .await
-            .ok_or_else(|| crate::plugins::runtime_error("connection not found"))?;
-
-        if principal.user_public_id != target.user_public_id {
-            return Err(crate::plugins::runtime_error(
-                "not authorized to control target",
-            ));
-        }
-        if !target.supported_commands.contains(&action) {
-            return Err(crate::plugins::runtime_error(format!(
-                "target does not support command: {}",
-                harmony_luau::StringEnum::as_str(&LuauRemoteAction::from(action))
-            )));
-        }
-
-        if action == RemoteAction::HandoffQueue {
-            let playback_public_id = request.playback_id.as_deref().ok_or_else(|| {
-                crate::plugins::runtime_error("playback_id required for handoff_queue")
-            })?;
-            let queue_revision = request.queue_revision.ok_or_else(|| {
-                crate::plugins::runtime_error("queue_revision required for handoff_queue")
-            })?;
-            drop(db);
-            crate::services::remote::handoffs::dispatch_and_wait(
-                None,
-                &target,
-                playback_public_id,
-                queue_revision,
-            )
-            .await
-            .map_err(crate::plugins::runtime_error)?;
-            return Ok(());
-        }
-
-        let forwarded = match action {
-            RemoteAction::Seek => {
-                let position_ms = request.position_ms.ok_or_else(|| {
-                    crate::plugins::runtime_error("position_ms required for seek")
-                })?;
-                ForwardedCommand::Seek {
-                    from: None,
-                    position_ms,
-                }
-            }
-            RemoteAction::SetVolume => {
-                let level = request.level.ok_or_else(|| {
-                    crate::plugins::runtime_error("level required for set_volume")
-                })?;
-                ForwardedCommand::SetVolume {
-                    from: None,
-                    level: level.clamp(0.0, 1.0),
-                }
-            }
-            RemoteAction::Play => ForwardedCommand::Play { from: None },
-            RemoteAction::Pause => ForwardedCommand::Pause { from: None },
-            RemoteAction::Unpause => ForwardedCommand::Unpause { from: None },
-            RemoteAction::Stop => ForwardedCommand::Stop { from: None },
-            RemoteAction::NextTrack => ForwardedCommand::NextTrack { from: None },
-            RemoteAction::PreviousTrack => ForwardedCommand::PreviousTrack { from: None },
-            RemoteAction::HandoffQueue => unreachable!("handoff returns before direct dispatch"),
+        let command = match request.action {
+            RemoteAction::Play => RemoteCommand::Play,
+            RemoteAction::Pause => RemoteCommand::Pause,
+            RemoteAction::Unpause => RemoteCommand::Unpause,
+            RemoteAction::Stop => RemoteCommand::Stop,
+            RemoteAction::Seek => RemoteCommand::Seek {
+                position_ms: required(request.position_ms, "position_ms", "seek")?,
+            },
+            RemoteAction::NextTrack => RemoteCommand::NextTrack,
+            RemoteAction::PreviousTrack => RemoteCommand::PreviousTrack,
+            RemoteAction::SetVolume => RemoteCommand::SetVolume {
+                level: required(request.level, "level", "set_volume")?,
+            },
+            RemoteAction::HandoffQueue => RemoteCommand::HandoffQueue {
+                playback_id: required(request.playback_id, "playback_id", "handoff_queue")?,
+                queue_revision: required(
+                    request.queue_revision,
+                    "queue_revision",
+                    "handoff_queue",
+                )?,
+            },
         };
-
-        let forwarded = OutgoingMessage::Command(forwarded);
-        registry::send_to_connection(target.connection_id, forwarded)
-            .await
-            .map_err(|error| {
-                crate::plugins::runtime_error(format!("command dispatch failed: {error}"))
-            })?;
-        drop(db);
-
-        if let Ok(now_ms) = playbacks::now_ms() {
-            let scope_key = PlaybackScopeKey::native(&target.user_public_id, &target.session_key);
-            playbacks::mark_command_dispatched(&scope_key, now_ms);
-        }
-
-        Ok(())
+        control::send(
+            Controller::User(&principal.user_public_id),
+            &connection_id,
+            command,
+        )
+        .await
+        .map_err(crate::plugins::runtime_error)
     }
+}
+
+fn required<T>(value: Option<T>, field: &str, action: &str) -> luau::runtime::Result<T> {
+    value.ok_or_else(|| crate::plugins::runtime_error(format!("{field} required for {action}")))
 }
 
 fn playback_mutation(

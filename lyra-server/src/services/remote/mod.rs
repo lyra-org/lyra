@@ -6,6 +6,7 @@
 pub(crate) mod commands;
 pub(crate) mod connections;
 pub(crate) mod constants;
+pub(crate) mod control;
 pub(crate) mod events;
 pub(crate) mod handoffs;
 pub(crate) mod lifecycle;

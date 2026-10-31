@@ -54,3 +54,19 @@ pub(crate) enum RemoteAction {
     SetVolume,
     HandoffQueue,
 }
+
+impl RemoteAction {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Play => "play",
+            Self::Pause => "pause",
+            Self::Unpause => "unpause",
+            Self::Stop => "stop",
+            Self::Seek => "seek",
+            Self::NextTrack => "next_track",
+            Self::PreviousTrack => "previous_track",
+            Self::SetVolume => "set_volume",
+            Self::HandoffQueue => "handoff_queue",
+        }
+    }
+}

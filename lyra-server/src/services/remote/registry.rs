@@ -24,6 +24,7 @@ use super::constants::{
     MAX_CONNECTIONS_PER_USER,
     RemoteAction,
 };
+use super::control::ControlError;
 use super::handoffs::{
     AppliedProgress,
     ExpectedSourceBinding,
@@ -242,7 +243,7 @@ pub(crate) async fn set_supported_commands(
     }
 }
 
-pub(crate) async fn get_connection_and_target(
+pub(super) async fn get_connection_and_target(
     source_id: ConnectionId,
     target_public_id: &str,
 ) -> (Option<ConnectionSnapshot>, Option<ConnectionSnapshot>) {
@@ -251,19 +252,19 @@ pub(crate) async fn get_connection_and_target(
 }
 
 /// Errors if the target is not found or the message could not be queued.
-pub(crate) async fn send_to_connection(
+pub(super) async fn send_to_connection(
     target_id: ConnectionId,
     msg: OutgoingMessage,
-) -> Result<(), String> {
+) -> Result<(), ControlError> {
     let registry = REGISTRY.read().await;
     let handle = registry
         .connections
         .get(&target_id)
-        .ok_or_else(|| format!("target connection {target_id} not found"))?;
+        .ok_or(ControlError::TargetNotFound)?;
     handle
         .command_tx
         .try_send(msg)
-        .map_err(|_| "could not queue message for target connection".to_string())
+        .map_err(|_| ControlError::TargetBusy)
 }
 
 pub(super) async fn insert_handoff(
@@ -441,7 +442,7 @@ pub(super) async fn fail_handoffs_for_playback(playback_id: &str) -> usize {
         .fail_for_playback(playback_id)
 }
 
-pub(crate) async fn resolve_public_id(public_id: &str) -> Option<ConnectionSnapshot> {
+pub(super) async fn resolve_public_id(public_id: &str) -> Option<ConnectionSnapshot> {
     let registry = REGISTRY.read().await;
     let &id = registry.public_ids.get(public_id)?;
     registry.connections.get(&id).map(snapshot_from_handle)

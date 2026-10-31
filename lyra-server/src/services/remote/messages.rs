@@ -56,53 +56,6 @@ pub(crate) enum ClientCommand {
     HandoffQueue(HandoffQueueCommand),
 }
 
-impl ClientCommand {
-    pub(crate) fn id(&self) -> &str {
-        match self {
-            Self::DeclareCapabilities { id, .. } => id,
-            Self::Play(c)
-            | Self::Pause(c)
-            | Self::Unpause(c)
-            | Self::Stop(c)
-            | Self::NextTrack(c)
-            | Self::PreviousTrack(c) => &c.id,
-            Self::Seek(c) => &c.id,
-            Self::SetVolume(c) => &c.id,
-            Self::HandoffQueue(c) => &c.id,
-        }
-    }
-
-    pub(crate) fn remote_action(&self) -> Option<RemoteAction> {
-        match self {
-            Self::Play(_) => Some(RemoteAction::Play),
-            Self::Pause(_) => Some(RemoteAction::Pause),
-            Self::Unpause(_) => Some(RemoteAction::Unpause),
-            Self::Stop(_) => Some(RemoteAction::Stop),
-            Self::Seek(_) => Some(RemoteAction::Seek),
-            Self::NextTrack(_) => Some(RemoteAction::NextTrack),
-            Self::PreviousTrack(_) => Some(RemoteAction::PreviousTrack),
-            Self::SetVolume(_) => Some(RemoteAction::SetVolume),
-            Self::HandoffQueue(_) => Some(RemoteAction::HandoffQueue),
-            Self::DeclareCapabilities { .. } => None,
-        }
-    }
-
-    pub(crate) fn target(&self) -> Option<&str> {
-        match self {
-            Self::Play(c)
-            | Self::Pause(c)
-            | Self::Unpause(c)
-            | Self::Stop(c)
-            | Self::NextTrack(c)
-            | Self::PreviousTrack(c) => Some(&c.target),
-            Self::Seek(c) => Some(&c.target),
-            Self::SetVolume(c) => Some(&c.target),
-            Self::HandoffQueue(c) => Some(&c.target),
-            Self::DeclareCapabilities { .. } => None,
-        }
-    }
-}
-
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct RemoteControlCommand {
@@ -297,10 +250,11 @@ mod tests {
     #[test]
     fn parse_pause_command() {
         let json = r#"{"action":"pause","id":"abc","target":"2"}"#;
-        let cmd: ClientCommand = serde_json::from_str(json).unwrap();
-        assert_eq!(cmd.id(), "abc");
-        assert_eq!(cmd.remote_action(), Some(RemoteAction::Pause));
-        assert_eq!(cmd.target(), Some("2"));
+        let ClientCommand::Pause(cmd) = serde_json::from_str(json).unwrap() else {
+            panic!("expected a pause command");
+        };
+        assert_eq!(cmd.id, "abc");
+        assert_eq!(cmd.target, "2");
     }
 
     #[test]
