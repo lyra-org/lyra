@@ -197,7 +197,7 @@ fn split_artist_album_lookup_from_ancestors(parent_dir: &str) -> (Option<String>
     }
 }
 
-pub(crate) fn extract_year_from_file_path_for_canonical(file_path: &str) -> Option<u32> {
+pub fn extract_year_from_file_path_for_canonical(file_path: &str) -> Option<u32> {
     if file_path.is_empty() {
         return None;
     }

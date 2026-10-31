@@ -152,6 +152,7 @@ pub(crate) fn apply_mapping(
             r128_album_gain: non_empty_string(tag, ItemKey::R128AlbumGain),
         },
         title_from_tags_only: false,
+        year_from_tags_only: false,
     }
 }
 

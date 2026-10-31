@@ -21,8 +21,12 @@ use anyhow::{
 };
 use lofty::file::AudioFile;
 use lyra_metadata::{
+    extract_year,
+    extract_year_from_file_path_for_canonical,
+    normalize_release_date,
     normalize_unicode_nfc,
     normalize_unicode_nfkc,
+    split_genres,
 };
 
 use super::model::TrackMetadata;
@@ -37,8 +41,16 @@ pub(super) struct ParsedCueTrack {
     pub(super) file_ref: String,
     pub(super) title: Option<String>,
     pub(super) performer: Option<String>,
+    pub(super) comments: CueComments,
     pub(super) index00_frames: Option<u32>,
     pub(super) index01_frames: Option<u32>,
+}
+
+/// The `REM DATE` and `REM GENRE` values a sheet or one of its tracks gives.
+#[derive(Debug, Clone, Default)]
+pub(super) struct CueComments {
+    pub(super) date: Option<String>,
+    pub(super) genre: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -46,6 +58,7 @@ pub(super) struct ParsedCueSheet {
     pub(super) album_title: Option<String>,
     pub(super) album_performer: Option<String>,
     pub(super) disc_number: Option<u32>,
+    pub(super) comments: CueComments,
     pub(super) tracks: Vec<ParsedCueTrack>,
 }
 
@@ -66,6 +79,7 @@ pub(super) struct ResolvedCueTrack {
     pub(super) track_no: u32,
     pub(super) title: Option<String>,
     pub(super) performer: Option<String>,
+    pub(super) comments: CueComments,
     pub(super) audio_entry: AudioEntryRef,
     pub(super) index00_frames: Option<u32>,
     pub(super) index01_frames: u32,
@@ -118,6 +132,14 @@ fn parse_cue_file_ref(raw: &str) -> Option<String> {
     }
 
     value.split_whitespace().next().map(normalize_unicode_nfc)
+}
+
+fn parse_cue_comment(line: &str) -> Option<(&str, &str)> {
+    let rest = line
+        .get(..4)
+        .filter(|prefix| prefix.eq_ignore_ascii_case("REM "))
+        .and(line.get(4..))?;
+    rest.trim_start().split_once(char::is_whitespace)
 }
 
 fn parse_positive_u32(value: &str) -> Option<u32> {
@@ -299,6 +321,7 @@ pub(super) fn parse_cue_sheet(text: &str) -> ParsedCueSheet {
                 file_ref: current_file_ref.clone().unwrap_or_default(),
                 title: None,
                 performer: None,
+                comments: CueComments::default(),
                 index00_frames: None,
                 index01_frames: None,
             });
@@ -320,6 +343,22 @@ pub(super) fn parse_cue_sheet(text: &str) -> ParsedCueSheet {
             } else {
                 parsed.album_performer = parse_cue_value(rest);
             }
+            continue;
+        }
+
+        if let Some((key, value)) = parse_cue_comment(line) {
+            let comments = match current_track.as_mut() {
+                Some(track) => &mut track.comments,
+                None => &mut parsed.comments,
+            };
+            let slot = if key.eq_ignore_ascii_case("DATE") {
+                &mut comments.date
+            } else if key.eq_ignore_ascii_case("GENRE") {
+                &mut comments.genre
+            } else {
+                continue;
+            };
+            *slot = parse_cue_value(value).filter(|value| !value.trim().is_empty());
             continue;
         }
 
@@ -467,6 +506,7 @@ pub(super) async fn parse_cue_metadata_for_entry(
             track_no: track.track_no,
             title: track.title,
             performer: track.performer,
+            comments: track.comments,
             audio_entry,
             index00_frames: track.index00_frames,
             index01_frames,
@@ -538,6 +578,16 @@ pub(super) async fn parse_cue_metadata_for_entry(
             .performer
             .clone()
             .or_else(|| parsed_sheet.album_performer.clone());
+        let date = track
+            .comments
+            .date
+            .as_deref()
+            .or(parsed_sheet.comments.date.as_deref());
+        let genre = track
+            .comments
+            .genre
+            .clone()
+            .or_else(|| parsed_sheet.comments.genre.clone());
 
         metadata.push(TrackMetadata {
             entry_db_id: track.audio_entry.entry_id,
@@ -547,8 +597,12 @@ pub(super) async fn parse_cue_metadata_for_entry(
                 .unwrap_or_default(),
             album: album_title.clone(),
             album_artists: album_artists.clone(),
-            date: None,
-            year: None,
+            date: date.and_then(normalize_release_date),
+            year: extract_year(date, None).or_else(|| {
+                extract_year_from_file_path_for_canonical(
+                    &track.audio_entry.file_path.to_string_lossy(),
+                )
+            }),
             title: track_title,
             artists: performer.map(|value| vec![value]),
             artist_relations: Vec::new(),
@@ -557,7 +611,7 @@ pub(super) async fn parse_cue_metadata_for_entry(
             track: Some(track.track_no),
             track_total: Some(track_total),
             duration_ms,
-            genres: None,
+            genres: split_genres(genre),
             label: None,
             catalog_number: None,
             media_formats: Vec::new(),
@@ -675,8 +729,10 @@ pub(super) fn merge_embedded_into_cue_metadata(
 
     merge_opt(&mut cue.album, &embedded.album);
     merge_opt_vec(&mut cue.album_artists, &embedded.album_artists);
-    merge_opt(&mut cue.date, &embedded.date);
-    merge_opt(&mut cue.year, &embedded.year);
+    if embedded.date.is_some() || embedded.year.is_some() {
+        cue.date = embedded.date.clone();
+        cue.year = embedded.year;
+    }
     merge_opt_vec(&mut cue.genres, &embedded.genres);
     merge_opt(&mut cue.album_gain_db, &embedded.album_gain_db);
     merge_opt(&mut cue.barcode, &embedded.barcode);
@@ -877,6 +933,30 @@ FILE "01 intro.wav" WAVE
     }
 
     #[test]
+    fn parse_cue_sheet_reads_date_and_genre_comments() {
+        let cue = r#"
+rem date "1994-05-03"
+REM GENRE Progressive Rock
+REM COMMENT "ExactAudioCopy v1.6"
+FILE "album.wav" WAVE
+  TRACK 01 AUDIO
+    Rem Genre "Jazz"
+    INDEX 01 00:00:00
+  TRACK 02 AUDIO
+    REM DATE ""
+    INDEX 01 00:01:00
+"#;
+
+        let parsed = parse_cue_sheet(cue);
+        assert_eq!(parsed.comments.date.as_deref(), Some("1994-05-03"));
+        assert_eq!(parsed.comments.genre.as_deref(), Some("Progressive Rock"));
+        assert_eq!(parsed.tracks[0].comments.genre.as_deref(), Some("Jazz"));
+        assert_eq!(parsed.tracks[0].comments.date, None);
+        assert_eq!(parsed.tracks[1].comments.date, None);
+        assert_eq!(parsed.tracks[1].comments.genre, None);
+    }
+
+    #[test]
     fn infer_cue_disc_number_rejects_conflicting_signals() {
         let inferred = infer_cue_disc_number(Path::new("/music/Disc 1/Album Disc 2.cue"), None);
         assert_eq!(inferred, None);
@@ -1063,6 +1143,62 @@ FILE "02 second.wav" WAVE
         };
         assert_eq!(metadata.len(), 2);
         assert!(metadata.iter().all(|track| track.format == wav));
+        Ok(())
+    }
+
+    async fn cue_tracks_from(cue: &str) -> anyhow::Result<Vec<super::TrackMetadata>> {
+        let dir = tempfile::tempdir()?;
+        let audio_path = dir.path().join("album.wav");
+        std::fs::write(&audio_path, untagged_wav(2))?;
+        let cue_path = dir.path().join("album.cue");
+        std::fs::write(&cue_path, cue)?;
+
+        let lookup = build_audio_lookup(&[file_entry(1, &audio_path)]);
+        let (metadata, _) = parse_cue_metadata_for_entry(
+            &file_entry(2, &cue_path),
+            &lookup.by_path,
+            &lookup.by_name,
+            &lookup.by_stem,
+        )
+        .await?;
+        Ok(metadata)
+    }
+
+    #[tokio::test]
+    async fn cue_tracks_take_dates_and_genres_from_comments() -> anyhow::Result<()> {
+        let metadata = cue_tracks_from(
+            "REM DATE 1994-05-03\nREM GENRE \"Rock, Pop\"\nFILE \"album.wav\" WAVE\n  TRACK 01 AUDIO\n    INDEX 01 00:00:00\n  TRACK 02 AUDIO\n    REM DATE \"2001\"\n    REM GENRE Jazz\n    INDEX 01 00:01:00\n",
+        )
+        .await?;
+
+        assert_eq!(metadata[0].date.as_deref(), Some("1994-05-03"));
+        assert_eq!(metadata[0].year, Some(1994));
+        assert_eq!(
+            metadata[0].genres,
+            Some(vec!["Rock".to_string(), "Pop".to_string()])
+        );
+        assert_eq!(metadata[1].date.as_deref(), Some("2001"));
+        assert_eq!(metadata[1].year, Some(2001));
+        assert_eq!(metadata[1].genres, Some(vec!["Jazz".to_string()]));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cue_tracks_ignore_undated_comments() -> anyhow::Result<()> {
+        let metadata = cue_tracks_from(
+            "REM DATE unknown\nREM GENRE \"\"\nFILE \"album.wav\" WAVE\n  TRACK 01 AUDIO\n    INDEX 01 00:00:00\n  TRACK 02 AUDIO\n    REM DATE \"May 1994\"\n    INDEX 01 00:01:00\n",
+        )
+        .await?;
+
+        assert_eq!(
+            (metadata[0].date.as_deref(), metadata[0].year),
+            (None, None)
+        );
+        assert_eq!(metadata[0].genres, None);
+        assert_eq!(
+            (metadata[1].date.as_deref(), metadata[1].year),
+            (None, Some(1994))
+        );
         Ok(())
     }
 

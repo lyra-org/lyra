@@ -40,11 +40,13 @@ pub use loudness::RawGainTags;
 pub use path::{
     extract_lookup_hints_from_file_path,
     extract_lookup_hints_from_file_path_with_library_root,
+    extract_year_from_file_path_for_canonical,
     infer_lookup_hints_from_tracks,
 };
 pub use year::{
     extract_year,
     find_year_in,
+    normalize_release_date,
 };
 
 use std::{
@@ -88,6 +90,10 @@ pub struct RawTrackTags {
     /// named with it, come from tags alone.
     #[serde(skip)]
     pub title_from_tags_only: bool,
+    /// Whatever else dates this track falls back to its path's year itself,
+    /// so its year here comes from tags alone.
+    #[serde(skip)]
+    pub year_from_tags_only: bool,
 }
 
 /// Processed track metadata (pure, no database IDs).
@@ -180,6 +186,12 @@ pub struct ParsedReleaseGroup<T> {
     pub tracks: Vec<T>,
 }
 
+/// The genres a genre tag's text names.
+pub fn split_genres(genre: Option<String>) -> Option<Vec<String>> {
+    let genres = split_delimited_string(genre.into_iter().collect());
+    (!genres.is_empty()).then_some(genres)
+}
+
 /// Process raw tags into sorted, processed `TrackMetadata`.
 /// Replicates the pure logic from `parse_metadata` without file I/O.
 pub fn process_raw_tags(raw_tags: Vec<RawTrackTags>) -> Vec<TrackMetadata> {
@@ -203,16 +215,14 @@ pub fn process_raw_tags(raw_tags: Vec<RawTrackTags>) -> Vec<TrackMetadata> {
         };
 
         let date = raw.date.as_deref().and_then(year::normalize_release_date);
-        let year = extract_year(raw.date.as_deref(), raw.copyright.as_deref())
-            .or_else(|| path::extract_year_from_file_path_for_canonical(&raw.file_path));
-
-        let mut genres_vec: Vec<String> = raw.genre.map(|s| vec![s]).unwrap_or_default();
-        genres_vec = split_delimited_string(genres_vec);
-        let genres = if genres_vec.is_empty() {
-            None
-        } else {
-            Some(genres_vec)
-        };
+        let year = extract_year(raw.date.as_deref(), raw.copyright.as_deref()).or_else(|| {
+            if raw.year_from_tags_only {
+                None
+            } else {
+                path::extract_year_from_file_path_for_canonical(&raw.file_path)
+            }
+        });
+        let genres = split_genres(raw.genre);
 
         let meta = TrackMetadata {
             id: 0,
@@ -418,6 +428,7 @@ mod tests {
             duration_ms: 213_672,
             gain: Default::default(),
             title_from_tags_only: false,
+            year_from_tags_only: false,
         };
 
         let processed = process_raw_tags(vec![raw]);
@@ -456,11 +467,48 @@ mod tests {
             duration_ms: 1_000,
             gain: Default::default(),
             title_from_tags_only: true,
+            year_from_tags_only: false,
         };
 
         let processed = process_raw_tags(vec![raw]);
         assert_eq!(processed[0].title, None);
         assert_eq!(processed[0].artists, Some(vec!["Container".to_string()]));
+    }
+
+    #[test]
+    fn process_raw_tags_takes_years_from_tags_alone_when_asked() {
+        let raw = |date: Option<&str>, copyright: Option<&str>| RawTrackTags {
+            file_path: "/tmp/Album (1990)/01 - One.flac".to_string(),
+            album: Some("Album".to_string()),
+            album_artists: Vec::new(),
+            artists: vec!["Artist".to_string()],
+            title: Some("One".to_string()),
+            date: date.map(str::to_string),
+            copyright: copyright.map(str::to_string),
+            genre: None,
+            label: None,
+            catalog_number: None,
+            media: None,
+            barcode: None,
+            disc: None,
+            disc_total: None,
+            track: None,
+            track_total: None,
+            duration_ms: 1_000,
+            gain: Default::default(),
+            title_from_tags_only: false,
+            year_from_tags_only: true,
+        };
+
+        let years: Vec<_> = process_raw_tags(vec![
+            raw(None, None),
+            raw(Some("2001"), None),
+            raw(None, Some("℗ 2003 Label")),
+        ])
+        .into_iter()
+        .map(|track| track.year)
+        .collect();
+        assert_eq!(years, [None, Some(2001), Some(2003)]);
     }
 
     #[test]
@@ -485,6 +533,7 @@ mod tests {
             duration_ms: 213_672,
             gain: Default::default(),
             title_from_tags_only: false,
+            year_from_tags_only: false,
         };
 
         let processed = process_raw_tags(vec![raw]);
@@ -519,6 +568,7 @@ mod tests {
             duration_ms: 180_000,
             gain: Default::default(),
             title_from_tags_only: false,
+            year_from_tags_only: false,
         };
 
         let processed = process_raw_tags(vec![raw]);
@@ -567,6 +617,7 @@ mod tests {
             duration_ms: 240_000,
             gain: Default::default(),
             title_from_tags_only: false,
+            year_from_tags_only: false,
         };
 
         let processed = process_raw_tags(vec![raw]);
@@ -629,6 +680,7 @@ mod tests {
             duration_ms: 180_000,
             gain: Default::default(),
             title_from_tags_only: false,
+            year_from_tags_only: false,
         };
 
         let processed = process_raw_tags(vec![raw]);
@@ -684,6 +736,7 @@ mod tests {
             duration_ms: 220_000,
             gain: Default::default(),
             title_from_tags_only: false,
+            year_from_tags_only: false,
         };
 
         let processed = process_raw_tags(vec![raw]);
@@ -724,6 +777,7 @@ mod tests {
             duration_ms: 240_000,
             gain: Default::default(),
             title_from_tags_only: false,
+            year_from_tags_only: false,
         };
 
         let processed = process_raw_tags(vec![raw]);
@@ -753,6 +807,7 @@ mod tests {
             duration_ms: 240_000,
             gain: Default::default(),
             title_from_tags_only: false,
+            year_from_tags_only: false,
         };
 
         let processed = process_raw_tags(vec![raw]);
@@ -783,6 +838,7 @@ mod tests {
             duration_ms: 240_000,
             gain: Default::default(),
             title_from_tags_only: false,
+            year_from_tags_only: false,
         };
 
         let processed = process_raw_tags(vec![raw]);

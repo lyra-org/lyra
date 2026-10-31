@@ -837,6 +837,7 @@ mod tests {
             duration_ms: 180_000,
             gain: Default::default(),
             title_from_tags_only: false,
+            year_from_tags_only: false,
         }
     }
 

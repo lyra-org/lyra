@@ -30,7 +30,7 @@ pub fn extract_year(date: Option<&str>, copyright: Option<&str>) -> Option<u32> 
 }
 
 /// Accepts `YYYY`, `YYYY-MM` or `YYYY-MM-DD`, dropping any ISO 8601 time part.
-pub(crate) fn normalize_release_date(value: &str) -> Option<String> {
+pub fn normalize_release_date(value: &str) -> Option<String> {
     let value = value.trim();
     let value = value.split_once('T').map_or(value, |(date, _)| date);
     match value.len() {

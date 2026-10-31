@@ -395,9 +395,12 @@ pub(crate) async fn parse_metadata(
         let file_path = path.to_string_lossy().to_string();
         let mut raw = mapping::apply_mapping(&tag, &properties, &file_path, mapping_config);
         // Embedded tags override a cue's own, so an untitled cue-backed file's
-        // name must not supply the title or the artists derived from it.
-        raw.title_from_tags_only = cue_claimed_audio_entries.contains(&entry_db_id)
-            && mapping::missing_title(raw.title.as_deref()).is_some();
+        // name must not supply the title or the artists derived from it, nor
+        // its path a year over the cue's.
+        let cue_claimed = cue_claimed_audio_entries.contains(&entry_db_id);
+        raw.title_from_tags_only =
+            cue_claimed && mapping::missing_title(raw.title.as_deref()).is_some();
+        raw.year_from_tags_only = cue_claimed;
         entry_ids_by_path
             .entry(raw.file_path.clone())
             .or_default()
@@ -865,6 +868,205 @@ mod tests {
             .map(|track| track.title.as_deref())
             .collect();
         assert_eq!(titles, [Some("One"), Some("Two")]);
+        Ok(())
+    }
+
+    /// The one track a cue sheet of `comments` makes of a file in `folder` tagged with `added`.
+    async fn cue_track_with(
+        folder: &str,
+        added: &[(&str, &str)],
+        comments: &str,
+    ) -> anyhow::Result<TrackMetadata> {
+        let dir = tempfile::tempdir()?;
+        let audio_path = dir.path().join(folder).join("album.flac");
+        fixture_with_comments(&audio_path, "integration_track.flac", &[], added)?;
+        let cue_path = dir.path().join(folder).join("album.cue");
+        std::fs::write(
+            &cue_path,
+            format!(
+                "{comments}FILE \"album.flac\" WAVE\n  TRACK 01 AUDIO\n    TITLE \"One\"\n    INDEX 01 00:00:00\n"
+            ),
+        )?;
+
+        let mut output = parse_metadata(
+            &mapping::default_config(),
+            vec![file_entry(1, &audio_path), file_entry(2, &cue_path)],
+        )
+        .await?;
+
+        assert!(output.skipped.is_empty());
+        assert_eq!(output.metadata.len(), 1);
+        Ok(output.metadata.remove(0))
+    }
+
+    fn dated(track: &TrackMetadata) -> (Option<&str>, Option<u32>) {
+        (track.date.as_deref(), track.year)
+    }
+
+    #[tokio::test]
+    async fn parse_metadata_dates_cue_tracks_by_tag_over_cue() -> anyhow::Result<()> {
+        let track =
+            cue_track_with("Album (1990)", &[("DATE", "2001-02-03")], "REM DATE 1994\n").await?;
+        assert_eq!(dated(&track), (Some("2001-02-03"), Some(2001)));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_metadata_dates_cue_tracks_by_cue_over_path() -> anyhow::Result<()> {
+        let track = cue_track_with("Album (1990)", &[], "REM DATE \"1994-05-03\"\n").await?;
+        assert_eq!(dated(&track), (Some("1994-05-03"), Some(1994)));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_metadata_dates_cue_tracks_by_cue_alone() -> anyhow::Result<()> {
+        let track = cue_track_with("Album", &[], "rem date 1994\n").await?;
+        assert_eq!(dated(&track), (Some("1994"), Some(1994)));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_metadata_dates_cue_tracks_by_copyright_year_over_cue() -> anyhow::Result<()> {
+        let track = cue_track_with(
+            "Album (1990)",
+            &[("COPYRIGHT", "℗ 2003 Label")],
+            "REM DATE 1994\n",
+        )
+        .await?;
+        assert_eq!(dated(&track), (None, Some(2003)));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_metadata_dates_each_cue_track_by_path_without_its_own_date() -> anyhow::Result<()>
+    {
+        let dir = tempfile::tempdir()?;
+        let audio_path = dir.path().join("Album (1990)/album.flac");
+        fixture_with_comments(&audio_path, "integration_track.flac", &[], &[])?;
+        let cue_path = dir.path().join("Album (1990)/album.cue");
+        std::fs::write(
+            &cue_path,
+            "FILE \"album.flac\" WAVE\n  TRACK 01 AUDIO\n    TITLE \"One\"\n    REM DATE 1994\n    INDEX 01 00:00:00\n  TRACK 02 AUDIO\n    TITLE \"Two\"\n    INDEX 01 00:00:50\n",
+        )?;
+
+        let output = parse_metadata(
+            &mapping::default_config(),
+            vec![file_entry(1, &audio_path), file_entry(2, &cue_path)],
+        )
+        .await?;
+
+        let date_of = |title: &str| {
+            output
+                .metadata
+                .iter()
+                .find(|track| track.title.as_deref() == Some(title))
+                .map(dated)
+        };
+        assert_eq!(date_of("One"), Some((Some("1994"), Some(1994))));
+        assert_eq!(date_of("Two"), Some((None, Some(1990))));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_metadata_dates_undated_cue_tracks_by_path() -> anyhow::Result<()> {
+        let track = cue_track_with("Album (1990)", &[], "").await?;
+        assert_eq!(dated(&track), (None, Some(1990)));
+        assert_eq!(track.genres, None);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_metadata_takes_cue_track_genres_from_tags_over_cue() -> anyhow::Result<()> {
+        let tagged = cue_track_with("Album", &[("GENRE", "Jazz")], "REM GENRE Rock\n").await?;
+        assert_eq!(tagged.genres, Some(vec!["Jazz".to_string()]));
+
+        let untagged = cue_track_with("Album", &[], "REM GENRE \"Rock\"\n").await?;
+        assert_eq!(untagged.genres, Some(vec!["Rock".to_string()]));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_metadata_reads_cue_comments_as_it_reads_tags() -> anyhow::Result<()> {
+        let (date, genre) = ("1994-05-03T12:00", "Rock, Pop");
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("Album/01 - One.flac");
+        fixture_with_comments(
+            &path,
+            "integration_track.flac",
+            &[],
+            &[("DATE", date), ("GENRE", genre)],
+        )?;
+        let tagged = parse_metadata(&mapping::default_config(), vec![file_entry(1, &path)])
+            .await?
+            .metadata
+            .remove(0);
+
+        let cued = cue_track_with(
+            "Album",
+            &[],
+            &format!("REM DATE \"{date}\"\nREM GENRE \"{genre}\"\n"),
+        )
+        .await?;
+        assert_eq!(dated(&cued), dated(&tagged));
+        assert_eq!(cued.genres, tagged.genres);
+        assert_eq!(
+            tagged.genres,
+            Some(vec!["Rock".to_string(), "Pop".to_string()])
+        );
+        Ok(())
+    }
+
+    /// The releases a scan of `CD1` and `CD2` folders in `Album (1990)` coalesces into, each
+    /// disc an untagged-date image under a cue sheet holding the matching `comments`.
+    async fn releases_of_cued_discs(comments: [&str; 2]) -> anyhow::Result<Vec<Vec<Option<u32>>>> {
+        let dir = tempfile::tempdir()?;
+        let mut entries = Vec::new();
+        for (index, comments) in comments.into_iter().enumerate() {
+            let disc = dir.path().join(format!("Album (1990)/CD{}", index + 1));
+            let audio_path = disc.join("album.flac");
+            fixture_with_comments(&audio_path, "integration_track.flac", &[], &[])?;
+            let cue_path = disc.join("album.cue");
+            std::fs::write(
+                &cue_path,
+                format!(
+                    "{comments}FILE \"album.flac\" WAVE\n  TRACK 01 AUDIO\n    TITLE \"One\"\n    INDEX 01 00:00:00\n"
+                ),
+            )?;
+            let id = 2 * index as i64;
+            entries.extend([
+                file_entry(id + 1, &audio_path),
+                file_entry(id + 2, &cue_path),
+            ]);
+        }
+
+        let output = parse_metadata(&mapping::default_config(), entries).await?;
+        assert!(output.skipped.is_empty());
+        let groups = output
+            .metadata
+            .into_iter()
+            .map(|track| ingestion::ParsedMetadataGroup {
+                coalesce_group_key: 0,
+                source_dir: PathBuf::from(format!("CD{}", track.disc.unwrap_or_default())),
+                metadata: vec![track],
+            })
+            .collect();
+        Ok(ingestion::coalesce_disc_groups(groups)
+            .into_iter()
+            .map(|release| release.iter().map(|track| track.year).collect())
+            .collect())
+    }
+
+    #[tokio::test]
+    async fn cued_discs_coalesce_by_their_shared_folder_year() -> anyhow::Result<()> {
+        let releases = releases_of_cued_discs(["", ""]).await?;
+        assert_eq!(releases, [vec![Some(1990), Some(1990)]]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cued_discs_dated_by_one_cue_alone_split() -> anyhow::Result<()> {
+        let releases = releases_of_cued_discs(["REM DATE 1994\n", ""]).await?;
+        assert_eq!(releases, [vec![Some(1994)], vec![Some(1990)]]);
         Ok(())
     }
 
