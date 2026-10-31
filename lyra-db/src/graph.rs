@@ -208,8 +208,9 @@ impl Fields {
 
 /// The values `keys` hold on each of the existing `ids`, leaving out any key an element lacks.
 ///
-/// agdb rejects an explicit-id select when an element lacks a selected key, so the ids are
-/// grouped by the keys they have and each group is read once.
+/// agdb rejects an explicit-id select of keys an element lacks, so every value is read in one
+/// pass and the unwanted ones dropped; a pass costs about the same whatever it reads. Reading
+/// in id order keeps the reads close together in storage.
 pub fn select_fields(
     db: &impl DbAccess,
     ids: &[DbId],
@@ -218,43 +219,21 @@ pub fn select_fields(
     if ids.is_empty() {
         return Ok(HashMap::new());
     }
-    let mut groups: HashMap<Vec<bool>, Vec<DbId>> = HashMap::new();
-    for element in db
-        .exec(QueryBuilder::select().keys().ids(ids).query())?
+    let mut ids = ids.to_vec();
+    ids.sort_unstable();
+    Ok(db
+        .exec(QueryBuilder::select().ids(ids).query())?
         .elements
-    {
-        let present = keys
-            .iter()
-            .map(|key| {
-                element
-                    .values
-                    .iter()
-                    .any(|kv| kv.key.string().is_ok_and(|stored| stored == key))
-            })
-            .collect::<Vec<_>>();
-        groups.entry(present).or_default().push(element.id);
-    }
-
-    let mut fields = HashMap::with_capacity(ids.len());
-    for (present, group) in groups {
-        let group_keys = keys
-            .iter()
-            .zip(&present)
-            .filter(|(_, present)| **present)
-            .map(|(key, _)| DbValue::from(*key))
-            .collect::<Vec<_>>();
-        if group_keys.is_empty() {
-            fields.extend(group.into_iter().map(|id| (id, Fields(Vec::new()))));
-            continue;
-        }
-        for element in db
-            .exec(QueryBuilder::select().values(group_keys).ids(group).query())?
-            .elements
-        {
-            fields.insert(element.id, Fields(element.values));
-        }
-    }
-    Ok(fields)
+        .into_iter()
+        .map(|mut element| {
+            element.values.retain(|kv| {
+                kv.key
+                    .string()
+                    .is_ok_and(|stored| keys.contains(&stored.as_str()))
+            });
+            (element.id, Fields(element.values))
+        })
+        .collect())
 }
 
 /// Result of [`collect_related_ids_by_owner`]: per-owner related IDs and a
