@@ -3,7 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::time::{
     SystemTime,
     UNIX_EPOCH,
@@ -20,7 +20,7 @@ use crate::services::auth::{
 };
 use lyra_db::favorites::{
     FavoriteKind,
-    HAS_MANY_CAP,
+    TARGETS_CAP,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,17 +90,17 @@ pub(crate) fn has_for_principal(
     lyra_db::favorites::has(db, user_db_id, target_db_id)
 }
 
-/// The targets the caller has favorited and can see. Errs when more than [`HAS_MANY_CAP`] of
-/// the ids exist.
-pub(crate) fn favorited_for_principal(
+/// When the caller first favorited each target it can see, in Unix milliseconds; unfavorited
+/// targets are absent. Errs when more than [`TARGETS_CAP`] of the ids exist.
+pub(crate) fn favorited_at_for_principal(
     db: &DbAny,
     principal: &Principal,
     target_db_ids: &[DbId],
-) -> anyhow::Result<HashSet<DbId>> {
+) -> anyhow::Result<HashMap<DbId, i64>> {
     let existing = lyra_db::lookup::find_ids_by_db_ids(db, target_db_ids)?.len();
     anyhow::ensure!(
-        existing <= HAS_MANY_CAP,
-        "has_many cap exceeded: {existing} > {HAS_MANY_CAP}",
+        existing <= TARGETS_CAP,
+        "favorite targets cap exceeded: {existing} > {TARGETS_CAP}",
     );
     let user_db_id = principal.require(db)?;
     let mut targetable = Vec::with_capacity(target_db_ids.len());
@@ -109,13 +109,12 @@ pub(crate) fn favorited_for_principal(
             targetable.push(target_db_id);
         }
     }
-    if targetable.is_empty() {
-        return Ok(HashSet::new());
-    }
-    Ok(lyra_db::favorites::has_many(db, user_db_id, &targetable)?
-        .into_iter()
-        .filter_map(|(target_db_id, favorited)| favorited.then_some(target_db_id))
-        .collect())
+    Ok(
+        lyra_db::favorites::for_targets(db, user_db_id, &targetable)?
+            .into_iter()
+            .map(|(target_db_id, edge)| (target_db_id, edge.first_favorited_at_ms))
+            .collect(),
+    )
 }
 
 /// Favorites list for one `kind`, with target visibility filtered on hydration.
@@ -257,6 +256,7 @@ fn now_ms() -> anyhow::Result<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     use agdb::{
         DbAny,
@@ -550,7 +550,7 @@ mod tests {
     }
 
     #[test]
-    fn favorited_for_principal_returns_visible_favorites_and_caps_existing_ids()
+    fn favorited_at_for_principal_returns_visible_favorites_and_caps_existing_ids()
     -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         setup_id_index(&mut db)?;
@@ -569,7 +569,7 @@ mod tests {
         add_for_principal(&mut db, &principal, favorited)?;
         lyra_db::favorites::add(&mut db, user, hidden, FavoriteKind::Track, now_ms()?)?;
 
-        let result = favorited_for_principal(
+        let result = favorited_at_for_principal(
             &db,
             &principal,
             &[
@@ -580,28 +580,28 @@ mod tests {
                 DbId(999_999_999),
             ],
         )?;
-        assert_eq!(result, HashSet::from([favorited]));
-        assert!(favorited_for_principal(&db, &principal, &[])?.is_empty());
+        assert_eq!(result.keys().copied().collect::<Vec<_>>(), vec![favorited]);
+        assert!(favorited_at_for_principal(&db, &principal, &[])?.is_empty());
 
-        let missing = (1..=HAS_MANY_CAP as i64 + 1)
+        let missing = (1..=TARGETS_CAP as i64 + 1)
             .map(|offset| DbId(1_000_000_000 + offset))
             .collect::<Vec<_>>();
-        assert!(favorited_for_principal(&db, &principal, &missing)?.is_empty());
+        assert!(favorited_at_for_principal(&db, &principal, &missing)?.is_empty());
         let existing = db
             .exec_mut(
                 QueryBuilder::insert()
                     .nodes()
                     .values(
-                        (0..HAS_MANY_CAP)
+                        (0..TARGETS_CAP)
                             .map(|_| vec![("id", nanoid!().as_str()).into()])
                             .collect::<Vec<_>>(),
                     )
                     .query(),
             )?
             .ids();
-        assert!(favorited_for_principal(&db, &principal, &existing)?.is_empty());
+        assert!(favorited_at_for_principal(&db, &principal, &existing)?.is_empty());
         let over_cap = [existing.as_slice(), &[favorited]].concat();
-        assert!(favorited_for_principal(&db, &principal, &over_cap).is_err());
+        assert!(favorited_at_for_principal(&db, &principal, &over_cap).is_err());
 
         Ok(())
     }

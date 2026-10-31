@@ -55,6 +55,11 @@ public = true
 user = "listener"
 target = "hidden"
 
+[[favorites]]
+user = "listener"
+target = "amy"
+at = 1700000000000
+
 [[tags]]
 user = "listener"
 target = "plain"

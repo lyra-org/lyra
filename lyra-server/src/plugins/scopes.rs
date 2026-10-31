@@ -1389,8 +1389,7 @@ mod tests {
             &[
                 "add(target_id)",
                 "remove(target_id)",
-                "has(target_id)",
-                "has_many(target_ids)",
+                "get(target_ids)",
                 "list_ids(entity)",
             ],
         ),

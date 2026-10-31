@@ -44,8 +44,8 @@ local function has_favorite(user_id: string?, item_id: number?): boolean
 		return false
 	end
 
-	local ok, is_favorite = pcall(favorites.has, item_id)
-	return ok and is_favorite == true
+	local ok, favorited = pcall(favorites.get, { item_id })
+	return ok and favorited[item_id] ~= nil
 end
 
 function module.has_favorite(user_id: string?, item_id: number?): boolean

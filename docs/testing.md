@@ -127,6 +127,7 @@ track = "s1"
 [[favorites]]
 user = "owner"
 target = "mix"       # any artist, release, track or playlist key
+at = 1700000000000   # optional first favorite, in unix milliseconds
 
 [[ratings]]
 user = "owner"

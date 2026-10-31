@@ -359,11 +359,10 @@ fn plugin_executor_exposes_db_backed_lyra_favorites_module() -> Result<()> {
                 local track_db_id = {track_db_id}
 
                 executor_favorite_add = favorites.add(track_db_id)
-                executor_favorite_has = favorites.has(track_db_id)
-                executor_favorite_many = favorites.has_many({{ track_db_id, track_db_id, 999999 }})
+                executor_favorite_times = favorites.get({{ track_db_id, track_db_id, 999999 }})
                 executor_favorite_ids = favorites.list_ids("track")
                 executor_favorite_remove = favorites.remove(track_db_id)
-                executor_favorite_has_after_remove = favorites.has(track_db_id)
+                executor_favorite_after_remove = favorites.get({{ track_db_id }})
             "#,
             track_db_id = track_db_id.0,
         )
@@ -378,12 +377,11 @@ fn plugin_executor_exposes_db_backed_lyra_favorites_module() -> Result<()> {
             r#"
                 local track_db_id = {track_db_id}
                 return executor_favorite_add,
-                    executor_favorite_has,
-                    executor_favorite_many[track_db_id],
-                    executor_favorite_many[999999],
+                    type(executor_favorite_times[track_db_id]) == "number",
+                    executor_favorite_times[999999] == nil,
                     executor_favorite_ids[1],
                     executor_favorite_remove,
-                    executor_favorite_has_after_remove
+                    executor_favorite_after_remove[track_db_id] == nil
             "#,
             track_db_id = track_db_id.0,
         )
@@ -395,10 +393,9 @@ fn plugin_executor_exposes_db_backed_lyra_favorites_module() -> Result<()> {
             luau::Value::Boolean(true),
             luau::Value::Boolean(true),
             luau::Value::Boolean(true),
-            luau::Value::Boolean(false),
             luau::Value::Number(track_db_id.0 as f64),
             luau::Value::Boolean(true),
-            luau::Value::Boolean(false),
+            luau::Value::Boolean(true),
         ]
     );
     Ok(())
@@ -1565,10 +1562,11 @@ fn stale_principal_cannot_use_favorites_of_a_user_with_its_recycled_db_id() -> R
             r#"
                 local favorites = require("@lyra/favorites")
                 local function rejects(f, ...)
-                    return not pcall(f, ...)
+                    local ok, err = pcall(f, ...)
+                    return not ok
+                        and string.find(tostring(err), "invalid bearer credential", 1, true) ~= nil
                 end
-                return rejects(favorites.has, {track}),
-                    rejects(favorites.has_many, {{ {track} }}),
+                return rejects(favorites.get, {{ {track} }}),
                     rejects(favorites.list_ids, "track"),
                     rejects(favorites.add, {other}),
                     rejects(favorites.remove, {track})
@@ -1579,7 +1577,7 @@ fn stale_principal_cannot_use_favorites_of_a_user_with_its_recycled_db_id() -> R
         .into_bytes(),
         context,
     )?;
-    assert_eq!(values, vec![luau::Value::Boolean(true); 5]);
+    assert_eq!(values, vec![luau::Value::Boolean(true); 4]);
 
     let db = futures::executor::block_on(db.read());
     assert!(lyra_db::favorites::has(&*db, current_db_id, track_db_id)?);

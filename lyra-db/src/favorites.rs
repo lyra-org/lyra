@@ -18,7 +18,7 @@ use agdb::{
 
 use super::DbAccess;
 
-pub const HAS_MANY_CAP: usize = 1024;
+pub const TARGETS_CAP: usize = 1024;
 pub(crate) const LIST_IDS_CAP: usize = 10_000;
 
 const KIND_KEY: &str = "favorite_kind";
@@ -171,26 +171,28 @@ pub fn has(db: &impl DbAccess, user_db_id: DbId, target_db_id: DbId) -> anyhow::
     Ok(find_favorite_edge(db, user_db_id, target_db_id)?.is_some())
 }
 
-pub fn has_many(
+/// The user's favorites of `target_db_ids`, keyed by target; unfavorited targets are absent.
+/// Errs above [`TARGETS_CAP`] ids.
+pub fn for_targets(
     db: &impl DbAccess,
     user_db_id: DbId,
     target_db_ids: &[DbId],
-) -> anyhow::Result<HashMap<DbId, bool>> {
-    if target_db_ids.len() > HAS_MANY_CAP {
+) -> anyhow::Result<HashMap<DbId, FavoriteEdge>> {
+    if target_db_ids.len() > TARGETS_CAP {
         anyhow::bail!(
-            "has_many cap exceeded: {} > {HAS_MANY_CAP}",
+            "favorite targets cap exceeded: {} > {TARGETS_CAP}",
             target_db_ids.len(),
         );
     }
-    let favorited: HashSet<DbId> = read_outbound_favorite_edges(db, user_db_id)?
+    if target_db_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let requested: HashSet<DbId> = target_db_ids.iter().copied().collect();
+    Ok(read_outbound_favorite_edges(db, user_db_id)?
         .into_iter()
-        .filter_map(|element| (element.id.0 < 0 && element.to.0 != 0).then_some(element.to))
-        .collect();
-
-    Ok(target_db_ids
-        .iter()
-        .copied()
-        .map(|id| (id, favorited.contains(&id)))
+        .filter_map(parse_favorite_edge)
+        .filter(|edge| requested.contains(&edge.target_db_id))
+        .map(|edge| (edge.target_db_id, edge))
         .collect())
 }
 
@@ -557,7 +559,7 @@ mod tests {
     }
 
     #[test]
-    fn per_user_isolation_on_has_and_has_many_and_list() -> anyhow::Result<()> {
+    fn per_user_isolation_on_has_and_for_targets_and_list() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user_a = create_test_user(&mut db)?;
         let user_b = create_test_user(&mut db)?;
@@ -571,13 +573,15 @@ mod tests {
             "user A's favorite must not leak to user B via has"
         );
 
-        let a_map = has_many(&db, user_a, &[track])?;
-        let b_map = has_many(&db, user_b, &[track])?;
-        assert_eq!(a_map.get(&track), Some(&true));
+        let a_map = for_targets(&db, user_a, &[track])?;
+        let b_map = for_targets(&db, user_b, &[track])?;
         assert_eq!(
-            b_map.get(&track),
-            Some(&false),
-            "user A's favorite must not leak to user B via has_many"
+            a_map.get(&track).map(|edge| edge.first_favorited_at_ms),
+            Some(1000)
+        );
+        assert!(
+            b_map.is_empty(),
+            "user A's favorite must not leak to user B via for_targets"
         );
 
         let a_list = list(&db, user_a, FavoriteKind::Track)?;
@@ -599,10 +603,10 @@ mod tests {
     }
 
     #[test]
-    fn has_many_caps_input() -> anyhow::Result<()> {
+    fn for_targets_caps_input() -> anyhow::Result<()> {
         let db = new_test_db()?;
-        let oversize = vec![DbId(1); HAS_MANY_CAP + 1];
-        let err = has_many(&db, DbId(1), &oversize).expect_err("expected cap error");
+        let oversize = vec![DbId(1); TARGETS_CAP + 1];
+        let err = for_targets(&db, DbId(1), &oversize).expect_err("expected cap error");
         assert!(
             err.to_string().contains("cap exceeded"),
             "error should mention cap: got {err}",
@@ -824,17 +828,17 @@ mod tests {
         }
 
         #[bench]
-        fn has_many_user_with_100_favorites(b: &mut Bencher) {
+        fn for_targets_user_with_100_favorites(b: &mut Bencher) {
             let (db, user, tracks) = seed_user_favorites(100);
             let probe: Vec<DbId> = tracks.iter().take(10).copied().collect();
-            b.iter(|| has_many(&db, user, &probe).unwrap());
+            b.iter(|| for_targets(&db, user, &probe).unwrap());
         }
 
         #[bench]
-        fn has_many_user_with_1000_favorites(b: &mut Bencher) {
+        fn for_targets_user_with_1000_favorites(b: &mut Bencher) {
             let (db, user, tracks) = seed_user_favorites(1_000);
             let probe: Vec<DbId> = tracks.iter().take(10).copied().collect();
-            b.iter(|| has_many(&db, user, &probe).unwrap());
+            b.iter(|| for_targets(&db, user, &probe).unwrap());
         }
 
         #[bench]

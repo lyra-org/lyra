@@ -213,6 +213,8 @@ struct Listen {
 struct Favorite {
     user: String,
     target: String,
+    /// When the user first favorited the target, in Unix milliseconds.
+    at: Option<i64>,
 }
 
 /// A user's rating, written without the check that the user can see its target.
@@ -730,7 +732,13 @@ impl Fixture {
 
         for favorite in &self.favorites {
             let (target_db_id, kind) = keys.entity(&favorite.target)?;
-            lyra_db::favorites::add(db, keys.user(&favorite.user)?, target_db_id, kind, 1)?;
+            lyra_db::favorites::add(
+                db,
+                keys.user(&favorite.user)?,
+                target_db_id,
+                kind,
+                favorite.at.unwrap_or(1),
+            )?;
         }
 
         for rating in &self.ratings {

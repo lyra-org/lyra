@@ -234,9 +234,9 @@ async fn check_favorites(
     let resolved = lyra_db::lookup::find_node_ids_by_ids(&*db, &target_ids)?;
     let target_db_ids: Vec<DbId> = resolved.values().copied().collect();
     let favorited_db_ids =
-        favorite_service::favorited_for_principal(&db, &principal, &target_db_ids)?;
+        favorite_service::favorited_at_for_principal(&db, &principal, &target_db_ids)?;
     for (target_id, target_db_id) in resolved {
-        if favorited_db_ids.contains(&target_db_id) {
+        if favorited_db_ids.contains_key(&target_db_id) {
             favorited.insert(target_id, true);
         }
     }

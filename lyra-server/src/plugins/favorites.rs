@@ -46,32 +46,22 @@ impl FavoritesModule {
         Ok(outcome == favorite_service::MutationOutcome::Applied)
     }
 
-    async fn has(
-        target_id: i64,
-        #[context] db: Db,
-        #[context] principal: Principal,
-    ) -> luau::runtime::Result<bool> {
-        let db = db.read().await;
-        Ok(favorite_service::has_for_principal(
-            &db,
-            &principal,
-            DbId(target_id),
-        )?)
-    }
-
-    #[harmony(returns(HashMap<u64, bool>))]
-    async fn has_many(
+    #[harmony(
+        description = "When the caller first favorited each of the targets, in Unix milliseconds, keyed by id. Unfavorited targets and ones the caller cannot see are absent. Raises when more than 1024 of the ids exist.",
+        returns(HashMap<u64, i64>)
+    )]
+    async fn get(
         target_ids: UniqueIds,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        let target_ids = target_ids.0;
         let db = db.read().await;
-        let favorited = favorite_service::favorited_for_principal(&db, &principal, &target_ids)?;
+        let favorited =
+            favorite_service::favorited_at_for_principal(&db, &principal, &target_ids.0)?;
 
-        let mut table = luau::OwnedTable::with_entry_capacity(0, 0, target_ids.len());
-        for id in target_ids {
-            table.set_key(id.0, favorited.contains(&id));
+        let mut table = luau::OwnedTable::with_entry_capacity(0, 0, favorited.len());
+        for (id, favorited_at_ms) in favorited {
+            table.set_key(id.0, favorited_at_ms);
         }
         Ok(table)
     }
