@@ -4,6 +4,7 @@
 -- You can obtain one here:
 -- www.meshiplaw.com/lyra.
 
+local artists = require("@lyra/artists")
 local genres = require("@lyra/genres")
 local metadata = require("@lyra/metadata")
 local serde = require("@harmony/serde")
@@ -28,6 +29,7 @@ type RecordingResult = musicbrainz_api.RecordingResult
 type EnsureArtistRequest = metadata.EnsureArtistRequest
 type ArtistType = metadata.ArtistType
 type Provider = metadata.Provider
+type ArtistReader = (ids: { string }) -> { [string]: artists.Artist }
 
 type ArtistRelationType = metadata.ArtistRelationType
 type LayerRelationInput = metadata.LayerRelationInput
@@ -49,13 +51,38 @@ local is_generic_artist = text_helpers.is_generic_artist
 local compute_track_count = track_helpers.compute_track_count
 local assign_release_tracks = track_helpers.assign_release_tracks
 local should_preserve_local_track_positions = track_helpers.should_preserve_local_track_positions
+local created_before = track_helpers.created_before
 
 local provider: Provider? = nil
+local read_artists: ArtistReader = artists.get
 
 local module = {}
 
 function module.set_provider(provider_instance: Provider)
 	provider = provider_instance
+end
+
+function module.set_artist_reader(reader: ArtistReader)
+	read_artists = reader
+end
+
+-- Fills in the creation times `created_at_ms` lacks for `artist_ids`, read in
+-- one batch.
+local function read_artist_creation_times(created_at_ms: { [string]: number }, artist_ids: { string })
+	local missing: { string } = {}
+	for _, artist_id in artist_ids do
+		if created_at_ms[artist_id] == nil and not table.find(missing, artist_id) then
+			table.insert(missing, artist_id)
+		end
+	end
+	if #missing == 0 then
+		return
+	end
+	for artist_id, artist in read_artists(missing) do
+		if artist.created_at_ms ~= nil then
+			created_at_ms[artist_id] = artist.created_at_ms
+		end
+	end
 end
 
 function module.set_track_id(track_id: string, id_type: string, id_value: string)
@@ -239,6 +266,15 @@ local function artist_relation_sets(artist_id: string, response: JsonObject): { 
 		collect_artist_relation_attributes(pending.attributes, relation.attributes)
 	end
 
+	local related_artist_ids: { string } = {}
+	for _, pending_by_artist in pending_by_type do
+		for related_artist_id in pending_by_artist do
+			table.insert(related_artist_ids, related_artist_id)
+		end
+	end
+	local created_at_ms: { [string]: number } = {}
+	read_artist_creation_times(created_at_ms, related_artist_ids)
+
 	local relation_sets: { RelationSet } = {}
 	for _, mb_type in IMPORTED_RELATION_TYPES do
 		local relation_type = MB_ARTIST_RELATION_MAP[mb_type]
@@ -255,7 +291,7 @@ local function artist_relation_sets(artist_id: string, response: JsonObject): { 
 			table.insert(relations, relation)
 		end
 		table.sort(relations, function(a: LayerRelationInput, b: LayerRelationInput): boolean
-			return a.artist_id < b.artist_id
+			return created_before(created_at_ms[a.artist_id], a.artist_id, created_at_ms[b.artist_id], b.artist_id)
 		end)
 		table.insert(relation_sets, { relation_type = relation_type, relations = relations })
 	end
@@ -417,17 +453,40 @@ end
 
 -- The artist credits in the provider's order, each artist resolved to its
 -- local entity: the one tagged with that MusicBrainz artist, or one ensured.
+-- Of several tagged with the same MusicBrainz artist, the one created first
+-- gets the credit. `created_at_ms` holds the creation times known so far, and
+-- gains any read to settle such a tie.
 local function artist_role_credits(
 	mb_credits: { ReleaseArtistCredit },
 	tagged_artist_mb_ids: { [string]: string },
-	skipped_mb_ids: { [string]: boolean }
+	skipped_mb_ids: { [string]: boolean },
+	created_at_ms: { [string]: number }
 ): { string }
-	local local_ids: { [string]: string } = {}
+	local candidates: { [string]: { string } } = {}
+	local tied_artist_ids: { string } = {}
 	for artist_id, mb_id in tagged_artist_mb_ids do
-		local existing: string? = local_ids[mb_id]
-		if existing == nil or artist_id < existing then
-			local_ids[mb_id] = artist_id
+		local tagged = candidates[mb_id]
+		if tagged == nil then
+			candidates[mb_id] = { artist_id }
+			continue
 		end
+		if #tagged == 1 then
+			table.insert(tied_artist_ids, tagged[1])
+		end
+		table.insert(tagged, artist_id)
+		table.insert(tied_artist_ids, artist_id)
+	end
+	read_artist_creation_times(created_at_ms, tied_artist_ids)
+	local local_ids: { [string]: string } = {}
+	for mb_id, tagged in candidates do
+		local chosen = tagged[1]
+		for index = 2, #tagged do
+			local artist_id = tagged[index]
+			if created_before(created_at_ms[artist_id], artist_id, created_at_ms[chosen], chosen) then
+				chosen = artist_id
+			end
+		end
+		local_ids[mb_id] = chosen
 	end
 	local artist_ids: { string } = {}
 	for _, credit in mb_credits do
@@ -667,6 +726,12 @@ local function process_release(
 		end
 	end
 	local artist_credits = release["artist-credit"]
+	local artist_created_at_ms: { [string]: number } = {}
+	local_release.for_each_local_artist(release_context, function(artist: LocalArtist)
+		if artist.id ~= nil and artist.created_at_ms ~= nil then
+			artist_created_at_ms[artist.id] = artist.created_at_ms
+		end
+	end)
 	local tagged_artist_ids: { [string]: boolean } = {}
 	local tagged_artist_mb_ids: { [string]: string } = {}
 	local fetched_relations_for: { [string]: boolean } = {}
@@ -751,7 +816,7 @@ local function process_release(
 
 	if artist_credits then
 		local release_credits: CreditSets = {}
-		for _, artist_id in artist_role_credits(artist_credits, tagged_artist_mb_ids, {}) do
+		for _, artist_id in artist_role_credits(artist_credits, tagged_artist_mb_ids, {}, artist_created_at_ms) do
 			add_credit(release_credits, "artist", artist_id, nil)
 		end
 		-- An unresolved list keeps what the release stored rather than clearing it.
@@ -902,7 +967,12 @@ local function process_release(
 						end
 					end
 					for _, artist_id in
-						artist_role_credits(mb_credit_list, tagged_artist_mb_ids, character_voice_artist_ids)
+						artist_role_credits(
+							mb_credit_list,
+							tagged_artist_mb_ids,
+							character_voice_artist_ids,
+							artist_created_at_ms
+						)
 					do
 						add_credit(track_credits, "artist", artist_id, nil)
 					end

@@ -137,10 +137,12 @@ local function normalize_local_artists(artists: { metadata.ProviderCoverArtist }
 	end
 	local normalized_artists: { LocalArtist } = {}
 	for _, artist in artists do
-		table.insert(normalized_artists, {
+		local normalized: LocalArtist = {
 			id = artist.id,
 			artist_name = artist.artist_name,
-		})
+			created_at_ms = artist.created_at_ms,
+		}
+		table.insert(normalized_artists, normalized)
 	end
 	return normalized_artists
 end
@@ -151,7 +153,7 @@ local function normalize_local_tracks(tracks: { metadata.ProviderCoverTrack }?):
 		return normalized_tracks
 	end
 	for _, track in tracks do
-		table.insert(normalized_tracks, {
+		local normalized: LocalTrack = {
 			id = track.id,
 			track_title = track.track_title,
 			artists = nil,
@@ -160,8 +162,10 @@ local function normalize_local_tracks(tracks: { metadata.ProviderCoverTrack }?):
 			track = track.track,
 			track_total = track.track_total,
 			duration_ms = track.duration_ms,
+			created_at_ms = track.created_at_ms,
 			external_ids = nil,
-		})
+		}
+		table.insert(normalized_tracks, normalized)
 	end
 	return normalized_tracks
 end

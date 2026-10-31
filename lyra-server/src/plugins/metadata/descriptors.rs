@@ -326,6 +326,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
                 field("id", string()),
                 field("artist_name", string()),
                 field("sort_name", opt(string())),
+                field("created_at_ms", opt(number())),
                 field("custom_fields", opt(ty("CustomFieldsByProvider"))),
             ],
         ),
@@ -334,6 +335,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
             vec![
                 field("id", string()),
                 field("artist_name", string()),
+                field("created_at_ms", opt(number())),
                 field("custom_fields", opt(ty("CustomFieldsByProvider"))),
             ],
         ),
@@ -347,6 +349,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
                 field("track", opt(number())),
                 field("track_total", opt(number())),
                 field("duration_ms", opt(number())),
+                field("created_at_ms", opt(number())),
                 field("external_ids", ty("ExternalIdsByProvider")),
                 described_field(
                     "manual_ids",
@@ -472,6 +475,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
                 field("id", string()),
                 field("artist_name", opt(string())),
                 field("sort_name", opt(string())),
+                field("created_at_ms", opt(number())),
             ],
         ),
         interface(
@@ -484,6 +488,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
                 field("track", opt(number())),
                 field("track_total", opt(number())),
                 field("duration_ms", opt(number())),
+                field("created_at_ms", opt(number())),
             ],
         ),
         interface(

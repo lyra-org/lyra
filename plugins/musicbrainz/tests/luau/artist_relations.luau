@@ -36,6 +36,19 @@ apply.set_provider(setmetatable({
 	end,
 }) :: any)
 
+local created_at_ms: { [string]: number } = {}
+local reads = 0
+apply.set_artist_reader(function(ids: { string }): { [string]: any }
+	reads += 1
+	local found = {}
+	for _, id in ids do
+		if created_at_ms[id] ~= nil then
+			found[id] = { id = id, artist_name = id, scan_name = id, created_at_ms = created_at_ms[id] }
+		end
+	end
+	return found
+end)
+
 local function relation(kind: string, direction: string, id: string, attributes: { string }?): any
 	return {
 		["target-type"] = "artist",
@@ -88,3 +101,32 @@ assert(#voice_actors == 1 and voice_actors[1].artist_id == "a12", "the self-rela
 response = { id = "character", name = "Character", type = "Character", relations = {} }
 apply.refresh_artist_by_id("a10", "character")
 assert(#saved["a10"][metadata.ArtistRelationType.VoiceActor] == 0, "dropped relations clear")
+
+-- Related artists go in the order they were created, then by id; one without
+-- a creation time goes last. Their times are read once per response.
+artist_ids["actor-c"] = "a15"
+created_at_ms = { a11 = 30, a12 = 10, a14 = 20 }
+reads = 0
+response = {
+	id = "character",
+	name = "Character",
+	type = "Character",
+	relations = {
+		relation("voice actor", "backward", "actor-a"),
+		relation("voice actor", "backward", "actor-b"),
+		relation("voice actor", "backward", "actor-c"),
+		relation("member of band", "backward", "band"),
+	},
+}
+apply.refresh_artist_by_id("a10", "character")
+assert(reads == 1, "one read per response")
+voice_actors = saved["a10"][metadata.ArtistRelationType.VoiceActor]
+assert(#voice_actors == 3)
+assert(voice_actors[1].artist_id == "a12", "the earliest created artist goes first")
+assert(voice_actors[2].artist_id == "a11")
+assert(voice_actors[3].artist_id == "a15", "an artist without a creation time goes last")
+
+created_at_ms = { a11 = 10, a12 = 10 }
+apply.refresh_artist_by_id("a10", "character")
+voice_actors = saved["a10"][metadata.ArtistRelationType.VoiceActor]
+assert(voice_actors[1].artist_id == "a11" and voice_actors[2].artist_id == "a12", "artists created together go by id")

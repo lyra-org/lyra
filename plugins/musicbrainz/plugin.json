@@ -9,6 +9,7 @@
   "scopes": [
     "harmony.http",
     "harmony.serde",
+    "lyra.artists",
     "lyra.chromaprint",
     "lyra.datastore",
     "lyra.editions",

@@ -15,6 +15,7 @@ local module = {}
 export type LocalArtist = {
 	id: string?,
 	artist_name: string?,
+	created_at_ms: number?,
 }
 
 export type LocalTrack = {
@@ -27,6 +28,7 @@ export type LocalTrack = {
 	track_total: number?,
 	duration_ms: number?,
 	external_ids: metadata.ExternalIdsByProvider?,
+	created_at_ms: number?,
 }
 
 export type ReleaseArtist = {
@@ -208,6 +210,27 @@ function module.is_compilation(tracks: { LocalTrack }?): boolean
 	return unique > #tracks / 2
 end
 
+-- Whether entity `a` orders before `b` when nothing else tells them apart:
+-- the one created first, then by id. One without a creation time or id goes
+-- after one with it.
+function module.created_before(
+	a_created_at_ms: number?,
+	a_id: string?,
+	b_created_at_ms: number?,
+	b_id: string?
+): boolean
+	if a_created_at_ms ~= b_created_at_ms then
+		if a_created_at_ms == nil or b_created_at_ms == nil then
+			return a_created_at_ms ~= nil
+		end
+		return a_created_at_ms < b_created_at_ms
+	end
+	if a_id == nil or b_id == nil then
+		return a_id ~= nil
+	end
+	return a_id < b_id
+end
+
 function module.sort_tracks_for_refresh(track_list: { LocalTrack })
 	table.sort(track_list, function(a: LocalTrack, b: LocalTrack): boolean
 		local a_disc = a.disc or 1
@@ -225,12 +248,7 @@ function module.sort_tracks_for_refresh(track_list: { LocalTrack })
 		if a_title ~= b_title then
 			return a_title < b_title
 		end
-		local a_id = a.id
-		local b_id = b.id
-		if a_id == nil or b_id == nil then
-			return a_id ~= nil
-		end
-		return a_id < b_id
+		return module.created_before(a.created_at_ms, a.id, b.created_at_ms, b.id)
 	end)
 end
 
