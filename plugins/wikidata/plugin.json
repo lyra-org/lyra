@@ -3,7 +3,7 @@
   "id": "wikidata",
   "name": "WikiData Provider",
   "version": "0.0.1",
-  "lyra": "0.0.1-dev.1",
+  "lyra": "0.0.1-dev.2",
   "description": "Enriches album genres and artist descriptions from WikiData and Wikipedia",
   "entrypoint": "init.luau",
   "scopes": [
