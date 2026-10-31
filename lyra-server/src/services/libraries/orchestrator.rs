@@ -1399,6 +1399,48 @@ mod tests {
 
     use super::*;
 
+    #[tokio::test]
+    async fn persisting_run_records_keeps_the_catalog_index() -> anyhow::Result<()> {
+        use crate::services::{
+            STATE,
+            catalog::index::snapshot,
+            testing::{
+                init_default_test_state,
+                runtime_test_lock,
+            },
+        };
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let library_id = {
+            let mut db = STATE.db.write().await;
+            let library = lyra_db::test_db::insert_library(&mut db, "Music", "/runs")?;
+            lyra_db::fixtures::insert_release(&mut db, "Kept")?;
+            lyra_db::libraries::get_by_id(&db, library)?
+                .expect("library exists")
+                .id
+        };
+        let before = snapshot(&*STATE.db.read().await)?;
+
+        let db = STATE.db.get();
+        let mut state = SyncRunState::new(SyncRunKind::LibrarySync, library_id, 10_000);
+        persist_record(&db, state.record(None)?).await;
+        state.status = SyncRunStatus::Running;
+        persist_record(&db, state.record(None)?).await;
+        reconcile_interrupted_runs(&db).await?;
+        assert_eq!(lyra_db::sync_runs::list(&*db.read().await)?.len(), 1);
+        assert!(std::sync::Arc::ptr_eq(
+            &before,
+            &snapshot(&*STATE.db.read().await)?
+        ));
+
+        lyra_db::fixtures::insert_release(&mut *STATE.db.write().await, "Added")?;
+        assert!(!std::sync::Arc::ptr_eq(
+            &before,
+            &snapshot(&*STATE.db.read().await)?
+        ));
+        Ok(())
+    }
+
     #[test]
     fn summary_exposes_compact_raw_counts() {
         let mut state = SyncRunState::new(SyncRunKind::LibrarySync, "lib".to_string(), 10_000);

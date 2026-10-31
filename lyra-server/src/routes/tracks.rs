@@ -870,7 +870,7 @@ mod tests {
 
         {
             let mut db = STATE.db.write().await;
-            for title in ["A b l u e", "Blue"] {
+            for title in ["A Blue", "Blue"] {
                 insert_track(&mut db, title)?;
             }
         }
@@ -893,7 +893,7 @@ mod tests {
         .map_err(|err| anyhow::anyhow!("{err:?}"))?;
 
         let titles: Vec<String> = page.items.into_iter().map(|track| track.title).collect();
-        assert_eq!(titles, vec!["Blue", "A b l u e"]);
+        assert_eq!(titles, vec!["Blue", "A Blue"]);
         Ok(())
     }
 

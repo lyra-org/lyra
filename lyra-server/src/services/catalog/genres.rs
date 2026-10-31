@@ -3,33 +3,30 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::{
-    HashMap,
-    HashSet,
-};
-
 use agdb::{
     DbAny,
     DbId,
 };
 
 use super::{
-    Candidates,
     CatalogError,
     Direction,
     PersonalData,
     SortSpec,
-    Viewer,
-    all_releases,
+    index::{
+        Snapshot,
+        Table,
+        bits::Bits,
+    },
     pipeline::{
         Catalog,
+        Column,
+        Context,
         KeyKind,
-        Row,
         SortKey,
-        SortValue,
     },
     scoped_releases,
-    track_totals,
+    totals_column,
 };
 use lyra_db::genres::Genre;
 
@@ -61,7 +58,11 @@ impl SortKey for GenreKey {
         ("id", Self::Id),
     ];
     const RELEVANCE: Self = Self::Relevance;
+    const NAME_ORDER: Self = Self::Name;
 
+    fn ranked(self) -> bool {
+        matches!(self, Self::Name)
+    }
     fn kind(self) -> KeyKind {
         match self {
             Self::Relevance => KeyKind::Relevance,
@@ -107,98 +108,72 @@ impl Catalog for Genres {
         vec![(GenreKey::Name, Direction::Ascending)]
     }
 
-    fn candidates(
-        db: &DbAny,
-        viewer: &Viewer,
-        filter: &GenreFilter,
-    ) -> Result<Vec<DbId>, CatalogError> {
-        let releases = scoped_genre_releases(db, viewer, filter)?;
-        let mut genres = Candidates::default();
-        match &filter.ids {
-            Some(ids) => {
-                let releases = releases.into_iter().collect::<HashSet<_>>();
-                let ids = lyra_db::graph::existing_ids(db, ids, "Genre")?;
-                genres.restrict(
-                    lyra_db::genres::get_releases_many(db, &ids)?
-                        .into_iter()
-                        .filter(|(_, genre_releases)| {
-                            genre_releases
-                                .iter()
-                                .any(|release| releases.contains(release))
-                        })
-                        .map(|(genre, _)| genre),
-                );
-            }
-            None => genres.restrict(
-                lyra_db::genres::get_for_releases_many(db, &releases)?
-                    .into_values()
-                    .flatten()
-                    .filter_map(|genre| genre.db_id.map(DbId::from)),
-            ),
-        }
-        Ok(genres.resolve(&filter.exclude_ids, || Ok(Vec::new()))?)
+    fn table(index: &Snapshot) -> &Table {
+        &index.genres
     }
 
-    fn rows(
-        db: &DbAny,
-        viewer: &Viewer,
-        filter: &GenreFilter,
-        ids: Vec<DbId>,
-        keys: &[GenreKey],
-    ) -> Result<Vec<Row>, CatalogError> {
-        let fields = lyra_db::graph::select_fields(db, &ids, &["name"])?;
-        let needs = |wanted: &[GenreKey]| keys.iter().any(|key| wanted.contains(key));
-        let mut release_counts = HashMap::new();
-        let mut tracks_by_genre = HashMap::new();
-        if needs(&[
-            GenreKey::ReleaseCount,
-            GenreKey::TrackCount,
-            GenreKey::TotalDuration,
-            GenreKey::ListenCount,
-            GenreKey::LastPlayedAt,
-        ]) {
-            let visible = scoped_genre_releases(db, viewer, filter)?
-                .into_iter()
-                .collect::<HashSet<_>>();
-            for (genre, releases) in lyra_db::genres::get_releases_many(db, &ids)? {
-                let releases = releases
-                    .into_iter()
-                    .filter(|release| visible.contains(release))
-                    .collect::<Vec<_>>();
-                release_counts.insert(genre, releases.len() as u64);
-                tracks_by_genre.insert(genre, super::tracks_of_releases(db, releases)?);
-            }
+    fn candidates(cx: &Context<'_>, filter: &GenreFilter) -> Result<Bits, CatalogError> {
+        let index = &cx.index;
+        let mut genres = if filter.library.is_none() && filter.releases.is_none() {
+            cx.scope.genres.clone()
+        } else {
+            cx.links()
+                .genres_of_releases(&scoped_genre_releases(cx, filter))
+        };
+        if let Some(ids) = &filter.ids {
+            genres.and(&index.genres.slots(ids));
         }
-        let totals = track_totals(
-            db,
-            viewer,
-            &tracks_by_genre,
-            needs(&[GenreKey::TotalDuration]),
-            needs(&[GenreKey::ListenCount, GenreKey::LastPlayedAt]),
-        )?;
+        genres.and_not(&index.genres.slots(&filter.exclude_ids));
+        Ok(genres)
+    }
 
-        Ok(ids
-            .into_iter()
-            .filter_map(|id| {
-                let mut row = Row::new(id, fields.get(&id)?.text("name")?.to_string(), None);
-                let totals = totals.get(&id).copied().unwrap_or_default();
-                row.values = keys
+    fn column<'a>(
+        cx: &'a Context<'_>,
+        filter: &GenreFilter,
+        key: GenreKey,
+        slots: &[u32],
+    ) -> Result<Column<'a>, CatalogError> {
+        let index = &*cx.index;
+        let genres = &index.genres;
+        if key == GenreKey::Name {
+            return Ok(Column::stored(&genres.cache, key, || {
+                genres
+                    .name_rank
                     .iter()
-                    .map(|key| match key {
-                        GenreKey::Name => Some(SortValue::Text(row.lower_name().to_string())),
-                        GenreKey::ReleaseCount => Some(SortValue::Number(
-                            release_counts.get(&id).copied().unwrap_or(0),
-                        )),
-                        GenreKey::TrackCount => Some(SortValue::Number(totals.track_count)),
-                        GenreKey::TotalDuration => Some(SortValue::Number(totals.total_duration)),
-                        GenreKey::ListenCount => Some(SortValue::Number(totals.listen_count)),
-                        GenreKey::LastPlayedAt => totals.last_played_at.map(SortValue::Number),
-                        GenreKey::Relevance | GenreKey::Random | GenreKey::Id => None,
-                    })
-                    .collect();
-                Some(row)
-            })
-            .collect())
+                    .map(|rank| u64::from(*rank))
+                    .collect()
+            }));
+        }
+        let links = cx.links();
+        let scoped = scoped_genre_releases(cx, filter);
+        let releases_of = |genre: u32| {
+            links
+                .releases_of_genre(genre)
+                .filter(|release| scoped.contains(*release))
+        };
+        let tracks_of = |genre: u32| {
+            let mut tracks = releases_of(genre)
+                .flat_map(|release| links.tracks_of_release(release).iter().copied())
+                .collect::<Vec<_>>();
+            tracks.sort_unstable();
+            tracks.dedup();
+            tracks
+        };
+        let totals = |listens, value: fn(&super::TrackTotals) -> Option<u64>| {
+            totals_column(cx, genres, slots, listens, tracks_of, value)
+        };
+        Ok(match key {
+            GenreKey::ReleaseCount => Column::computed(genres.len(), slots, |genre| {
+                Some(releases_of(genre).count() as u64)
+            }),
+            GenreKey::TrackCount => totals(false, |totals| Some(totals.track_count))?,
+            GenreKey::TotalDuration => totals(false, |totals| Some(totals.total_duration))?,
+            GenreKey::ListenCount => totals(true, |totals| Some(totals.listen_count))?,
+            GenreKey::LastPlayedAt => totals(true, |totals| totals.last_played_at)?,
+            GenreKey::Name | GenreKey::Relevance | GenreKey::Random | GenreKey::Id => {
+                unreachable!("{key:?} is not a computed field key")
+            }
+        })
     }
 
     fn hydrate(db: &DbAny, ids: &[DbId]) -> anyhow::Result<Vec<Genre>> {
@@ -207,12 +182,8 @@ impl Catalog for Genres {
     }
 }
 
-/// The releases the viewer can see that the filter scopes genres to.
-fn scoped_genre_releases(
-    db: &DbAny,
-    viewer: &Viewer,
-    filter: &GenreFilter,
-) -> anyhow::Result<Vec<DbId>> {
-    scoped_releases(db, viewer, filter.library, filter.releases.as_deref(), &[])?
-        .resolve(&[], || all_releases(db))
+/// The release slots the viewer can see that the filter scopes genres to.
+fn scoped_genre_releases(cx: &Context<'_>, filter: &GenreFilter) -> Bits {
+    scoped_releases(cx, filter.library, filter.releases.as_deref(), &[])
+        .unwrap_or_else(|| Bits::full(cx.index.releases.len()))
 }

@@ -3,10 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::{
-    HashMap,
-    HashSet,
-};
+use std::collections::HashMap;
 
 use agdb::{
     DbAny,
@@ -15,26 +12,30 @@ use agdb::{
 
 use super::{
     ArtistCredit,
-    Candidates,
     CatalogError,
     CreditRole,
     Direction,
     PersonalData,
     PersonalFilter,
     SortSpec,
-    Viewer,
-    credited_owners,
+    favorited_at_column,
+    index::{
+        Snapshot,
+        Table,
+        bits::Bits,
+    },
     pipeline::{
         Catalog,
+        Column,
+        Context,
         KeyKind,
-        Row,
         ShuffleUnit,
         SortKey,
-        SortValue,
     },
+    ratings_column,
     scoped_releases,
-    tracks_of_releases,
 };
+use crate::services::search::Word;
 use lyra_db::{
     Track,
     favorites::FavoriteKind,
@@ -90,7 +91,18 @@ impl SortKey for TrackKey {
         ("id", Self::Id),
     ];
     const RELEVANCE: Self = Self::Relevance;
+    const NAME_ORDER: Self = Self::SortName;
 
+    fn ranked(self) -> bool {
+        matches!(
+            self,
+            Self::Name
+                | Self::SortName
+                | Self::ReleaseTitle
+                | Self::ArtistName
+                | Self::ReleaseArtistName
+        )
+    }
     fn kind(self) -> KeyKind {
         match self {
             Self::Relevance => KeyKind::Relevance,
@@ -168,187 +180,169 @@ impl Catalog for Tracks {
         }
     }
 
-    fn candidates(
-        db: &DbAny,
-        viewer: &Viewer,
-        filter: &TrackFilter,
-    ) -> Result<Vec<DbId>, CatalogError> {
+    fn table(index: &Snapshot) -> &Table {
+        &index.tracks
+    }
+
+    fn candidates(cx: &Context<'_>, filter: &TrackFilter) -> Result<Bits, CatalogError> {
+        let index = &cx.index;
+        let links = cx.links();
+        let len = index.tracks.len();
         let releases = scoped_releases(
-            db,
-            viewer,
+            cx,
             filter.library,
             filter.releases.as_deref(),
             &filter.genres,
-        )?;
-        let mut tracks = Candidates::default();
-        match (&filter.ids, releases.ids()) {
-            (Some(ids), Some(releases)) => {
-                let mut on_releases = Vec::new();
-                for track in lyra_db::graph::existing_ids(db, ids, "Track")? {
-                    if lyra_db::graph::inbound_neighbor_ids(db, track, "Release")?
-                        .iter()
+        );
+        let mut tracks = match (&filter.ids, &releases) {
+            (Some(ids), Some(releases)) => Bits::of(
+                len,
+                index.tracks.slots(ids).iter().filter(|track| {
+                    links
+                        .releases_of_track(*track)
                         .any(|release| releases.contains(release))
-                    {
-                        on_releases.push(track);
-                    }
-                }
-                tracks.restrict(on_releases);
-            }
-            (Some(ids), None) => tracks.restrict(lyra_db::graph::existing_ids(db, ids, "Track")?),
-            (None, Some(releases)) => {
-                tracks.restrict(tracks_of_releases(db, releases.iter().copied())?);
-            }
-            (None, None) => {}
-        }
-        let reach = |artists: &[DbId], role| match role {
-            CreditRole::Release => {
-                tracks_of_releases(db, credited_owners::<lyra_db::Release>(db, artists)?)
-            }
-            _ => credited_owners::<Track>(db, artists),
+                }),
+            ),
+            (Some(ids), None) => index.tracks.slots(ids),
+            (None, Some(releases)) => links.tracks_of_releases(releases),
+            (None, None) => Bits::full(len),
+        };
+        let reach = |artists: &Bits, role| match role {
+            CreditRole::Release => links.tracks_of_releases(&links.releases_of_artists(artists)),
+            _ => links.tracks_of_artists(artists),
         };
         if let Some(credit) = &filter.artists {
-            tracks.restrict(credit.matching(db, reach)?);
+            tracks.and(&credit.reach(index, reach));
         }
         if !filter.years.is_empty() {
-            let mut matching = HashSet::new();
-            for year in &filter.years {
-                matching.extend(lyra_db::tracks::ids_with_year(db, *year)?);
-            }
-            tracks.restrict(matching);
+            let years = filter
+                .years
+                .iter()
+                .map(|year| u64::from(*year))
+                .collect::<Vec<_>>();
+            tracks = Bits::of(
+                len,
+                tracks
+                    .iter()
+                    .filter(|track| years.contains(&index.track.year[*track as usize])),
+            );
         }
+        let mut personal = Some(tracks);
         filter.personal.restrict(
-            db,
-            viewer,
-            &mut tracks,
+            cx,
+            &index.tracks,
+            &mut personal,
+            &Bits::full(len),
             FavoriteKind::Track,
-            |user| lyra_db::listens::listened_track_ids(db, user),
-            || all_tracks(db),
+            |listened| index.tracks.slots(listened),
         )?;
+        let mut tracks = personal.unwrap_or_else(|| Bits::full(len));
 
-        let mut excluded = filter.exclude_ids.clone();
+        tracks.and_not(&index.tracks.slots(&filter.exclude_ids));
         if !filter.exclude_artists.is_empty() {
-            excluded.extend(ArtistCredit::any(filter.exclude_artists.clone()).matching(db, reach)?);
+            tracks.and_not(&ArtistCredit::any(filter.exclude_artists.clone()).reach(index, reach));
         }
-        Ok(tracks.resolve(&excluded, || all_tracks(db))?)
+        Ok(tracks)
     }
 
-    fn rows(
-        db: &DbAny,
-        viewer: &Viewer,
+    fn column<'a>(
+        cx: &'a Context<'_>,
         _filter: &TrackFilter,
-        ids: Vec<DbId>,
-        keys: &[TrackKey],
-    ) -> Result<Vec<Row>, CatalogError> {
-        let fields = lyra_db::graph::select_fields(db, &ids, &track_fields(keys))?;
-        let listens = if keys
-            .iter()
-            .any(|key| matches!(key, TrackKey::ListenCount | TrackKey::LastPlayedAt))
-        {
-            let user = viewer.user_db_id("listen sort keys")?;
-            lyra_db::listens::get_stats(db, &ids, user)?
-                .into_iter()
-                .map(|stats| (stats.db_id, stats))
+        key: TrackKey,
+        slots: &[u32],
+    ) -> Result<Column<'a>, CatalogError> {
+        let index = &*cx.index;
+        let links = cx.links();
+        let tracks = &index.tracks;
+        let stored = |compute: &dyn Fn() -> Vec<u64>| Column::stored(&tracks.cache, key, compute);
+        // Values read through other entities depend on which of them the viewer sees.
+        let linked = |compute: &dyn Fn() -> Vec<u64>| cx.linked_column(tracks, key, compute);
+        // The least of a value over each track's visible releases.
+        let least_over_releases = |value: &dyn Fn(u32) -> Option<u64>| {
+            (0..tracks.len() as u32)
+                .map(|track| {
+                    links
+                        .releases_of_track(track)
+                        .filter_map(value)
+                        .min()
+                        .unwrap_or(super::index::MISSING)
+                })
                 .collect()
-        } else {
-            HashMap::new()
         };
-        let ratings = super::ratings(
-            db,
-            viewer,
-            &ids,
-            keys.iter()
-                .any(|key| matches!(key, TrackKey::Rating | TrackKey::RatedAt)),
-        )?;
-        let favorited_at = super::favorited_at(
-            db,
-            viewer,
-            &ids,
-            FavoriteKind::Track,
-            keys.contains(&TrackKey::FavoritedAt),
-        )?;
-        let artist_names = if keys.contains(&TrackKey::ArtistName) {
-            lyra_db::artists::first_credited_names(db, &ids)?
-        } else {
-            HashMap::new()
+        let artist_name = |artist: Option<u32>| {
+            artist.map(|artist| u64::from(index.artists.name_rank[artist as usize]))
         };
-        let releases = if keys
-            .iter()
-            .any(|key| matches!(key, TrackKey::ReleaseTitle | TrackKey::ReleaseArtistName))
-        {
-            TrackReleases::of(db, &ids)?
-        } else {
-            TrackReleases::default()
-        };
-        let release_artist_names = if keys.contains(&TrackKey::ReleaseArtistName) {
-            releases.least(&lyra_db::artists::first_credited_names(
-                db,
-                &releases.release_ids(),
-            )?)
-        } else {
-            HashMap::new()
-        };
-        let release_titles = if keys.contains(&TrackKey::ReleaseTitle) {
-            let fields =
-                lyra_db::graph::select_fields(db, &releases.release_ids(), &["release_title"])?;
-            releases.least(
-                &fields
+        Ok(match key {
+            TrackKey::Name => stored(&|| {
+                tracks
+                    .name_rank
                     .iter()
-                    .filter_map(|(id, release)| {
-                        Some((*id, release.text("release_title")?.to_string()))
+                    .map(|rank| u64::from(*rank))
+                    .collect()
+            }),
+            TrackKey::SortName => stored(&|| {
+                tracks
+                    .sort_name_rank
+                    .iter()
+                    .map(|rank| u64::from(*rank))
+                    .collect()
+            }),
+            TrackKey::DateCreated => Column::Fields(&index.track.created),
+            TrackKey::Year => Column::Fields(&index.track.year),
+            TrackKey::Duration => Column::Fields(&index.track.duration),
+            TrackKey::Disc => Column::Fields(&index.track.disc),
+            TrackKey::Track => Column::Fields(&index.track.track),
+            TrackKey::ReleaseTitle => linked(&|| {
+                least_over_releases(&|release| {
+                    Some(u64::from(index.releases.name_rank[release as usize]))
+                })
+            }),
+            TrackKey::ArtistName => linked(&|| {
+                (0..tracks.len() as u32)
+                    .map(|track| {
+                        artist_name(links.track_lead(track)).unwrap_or(super::index::MISSING)
                     })
-                    .collect(),
-            )
-        } else {
-            HashMap::new()
-        };
+                    .collect()
+            }),
+            TrackKey::ReleaseArtistName => {
+                linked(&|| least_over_releases(&|release| artist_name(links.release_lead(release))))
+            }
+            TrackKey::ListenCount | TrackKey::LastPlayedAt => {
+                let user = cx.viewer.user_db_id("listen sort keys")?;
+                let ids = slots
+                    .iter()
+                    .map(|slot| tracks.id(*slot))
+                    .collect::<Vec<_>>();
+                let listens = lyra_db::listens::get_stats(cx.db, &ids, user)?
+                    .into_iter()
+                    .filter_map(|stats| Some((tracks.slot(stats.db_id)?, stats)))
+                    .collect::<HashMap<_, _>>();
+                Column::computed(tracks.len(), slots, |slot| match key {
+                    TrackKey::ListenCount => {
+                        Some(listens.get(&slot).map_or(0, |stats| stats.count))
+                    }
+                    _ => listens.get(&slot).and_then(|stats| stats.last_played),
+                })
+            }
+            TrackKey::Rating => ratings_column(cx, tracks, slots, false)?,
+            TrackKey::RatedAt => ratings_column(cx, tracks, slots, true)?,
+            TrackKey::FavoritedAt => favorited_at_column(cx, tracks, slots, FavoriteKind::Track)?,
+            TrackKey::Relevance | TrackKey::Random | TrackKey::Id => {
+                unreachable!("{key:?} is not a field key")
+            }
+        })
+    }
 
-        Ok(fields
-            .into_iter()
-            .filter_map(|(id, mut track)| {
-                let name = track.take_text("track_title")?;
-                let mut row = Row::new(id, name, track.text("sort_title"));
-                let number = |key| track.number(key).map(SortValue::Number);
-                row.values = keys
-                    .iter()
-                    .map(|key| match key {
-                        TrackKey::Name => Some(SortValue::Text(row.lower_name().to_string())),
-                        TrackKey::SortName => Some(SortValue::Text(row.sort_name().to_string())),
-                        TrackKey::DateCreated => number("ctime").or_else(|| number("created_at")),
-                        TrackKey::Year => number("year"),
-                        TrackKey::Duration => number("duration_ms"),
-                        TrackKey::Disc => number("disc"),
-                        TrackKey::Track => number("track"),
-                        TrackKey::ReleaseTitle => release_titles
-                            .get(&id)
-                            .map(|title| SortValue::Text(title.clone())),
-                        TrackKey::ArtistName => artist_names
-                            .get(&id)
-                            .map(|name| SortValue::Text(name.to_lowercase())),
-                        TrackKey::ReleaseArtistName => release_artist_names
-                            .get(&id)
-                            .map(|name| SortValue::Text(name.clone())),
-                        TrackKey::ListenCount => Some(SortValue::Number(
-                            listens.get(&id).map_or(0, |stats| stats.count),
-                        )),
-                        TrackKey::LastPlayedAt => listens
-                            .get(&id)
-                            .and_then(|stats| stats.last_played)
-                            .map(SortValue::Number),
-                        TrackKey::Rating => ratings
-                            .get(&id)
-                            .map(|edge| SortValue::Number(edge.value.get().into())),
-                        TrackKey::RatedAt => ratings
-                            .get(&id)
-                            .and_then(|edge| super::timestamp_value(edge.updated_at_ms)),
-                        TrackKey::FavoritedAt => favorited_at
-                            .get(&id)
-                            .and_then(|ms| super::timestamp_value(*ms)),
-                        TrackKey::Relevance | TrackKey::Random | TrackKey::Id => None,
-                    })
-                    .collect();
-                Some(row)
-            })
-            .collect())
+    /// A track also matches through its artists, its visible releases and their artists.
+    fn related(cx: &Context<'_>, word: &Word) -> Option<Bits> {
+        let index = &cx.index;
+        let links = cx.links();
+        let artists = links.artists_seen(index.artists.matching(word));
+        let mut releases = links.releases_of_artists(&artists);
+        releases.or(&links.releases_seen(index.releases.matching(word)));
+        let mut tracks = links.tracks_of_artists(&artists);
+        tracks.or(&links.tracks_of_releases(&releases));
+        Some(tracks)
     }
 
     fn hydrate(db: &DbAny, ids: &[DbId]) -> anyhow::Result<Vec<Track>> {
@@ -356,10 +350,12 @@ impl Catalog for Tracks {
         Ok(ids.iter().filter_map(|id| tracks.remove(id)).collect())
     }
 
-    /// A chain shuffles as one, its tracks in chain order.
-    fn shuffle_units(db: &DbAny, ids: &[DbId]) -> anyhow::Result<HashMap<DbId, ShuffleUnit>> {
-        Ok(lyra_db::chains::links_for_tracks(db, ids)?
+    /// A chain on a release the viewer sees shuffles as one, its tracks in chain order.
+    fn shuffle_units(cx: &Context<'_>, ids: &[DbId]) -> anyhow::Result<HashMap<DbId, ShuffleUnit>> {
+        let links = cx.links();
+        Ok(lyra_db::chains::links_for_tracks(cx.db, ids)?
             .into_iter()
+            .filter(|(_, link)| links.sees_release(link.release_db_id))
             .map(|(track, link)| {
                 (
                     track,
@@ -371,66 +367,4 @@ impl Catalog for Tracks {
             })
             .collect())
     }
-}
-
-/// The stored track fields that the names and `keys` read.
-fn track_fields(keys: &[TrackKey]) -> Vec<&'static str> {
-    let mut fields = vec!["track_title", "sort_title"];
-    for key in keys {
-        fields.extend_from_slice(match key {
-            TrackKey::DateCreated => &["ctime", "created_at"],
-            TrackKey::Year => &["year"],
-            TrackKey::Duration => &["duration_ms"],
-            TrackKey::Disc => &["disc"],
-            TrackKey::Track => &["track"],
-            _ => &[],
-        });
-    }
-    fields
-}
-
-/// The releases each track is on.
-#[derive(Default)]
-struct TrackReleases(HashMap<DbId, Vec<DbId>>);
-
-impl TrackReleases {
-    fn of(db: &DbAny, tracks: &[DbId]) -> anyhow::Result<Self> {
-        let mut releases = HashMap::new();
-        for track in tracks {
-            releases.insert(
-                *track,
-                lyra_db::graph::inbound_neighbor_ids(db, *track, "Release")?,
-            );
-        }
-        Ok(Self(releases))
-    }
-
-    fn release_ids(&self) -> Vec<DbId> {
-        self.0
-            .values()
-            .flatten()
-            .copied()
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect()
-    }
-
-    /// Each track's lowercased value from its releases; the least when a track is on several.
-    fn least(&self, values: &HashMap<DbId, String>) -> HashMap<DbId, String> {
-        self.0
-            .iter()
-            .filter_map(|(track, releases)| {
-                let value = releases
-                    .iter()
-                    .filter_map(|release| values.get(release))
-                    .map(|value| value.to_lowercase())
-                    .min()?;
-                Some((*track, value))
-            })
-            .collect()
-    }
-}
-
-fn all_tracks(db: &DbAny) -> anyhow::Result<Vec<DbId>> {
-    lyra_db::graph::neighbor_ids(db, "tracks", "Track")
 }

@@ -316,19 +316,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn search_applies_query_modifiers() -> anyhow::Result<()> {
+    async fn search_matches_operator_characters_literally() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         setup().await?;
         {
             let mut db = STATE.db.write().await;
-            for title in ["Blue Train", "Blue Moon", "Kind of Blue"] {
+            for title in ["!!!", "Blue Moon", "$uicideboy$"] {
                 insert_release(&mut db, title)?;
             }
         }
         let principal = principal(true, HashSet::new()).await;
 
+        let response = search(&principal, "query=%21%21%21").await?;
+        assert_eq!(names(&response).2, vec!["!!!"]);
+        let response = search(&principal, "query=%24uicideboy%24").await?;
+        assert_eq!(names(&response).2, vec!["$uicideboy$"]);
         let response = search(&principal, "query=%5Eblue%20%21moon").await?;
-        assert_eq!(names(&response).2, vec!["Blue Train"]);
+        assert_eq!(names(&response).2, vec!["Blue Moon"]);
         let response = search(&principal, "query=%5E%5E%5E").await?;
         assert!(response.releases.items.is_empty());
         Ok(())

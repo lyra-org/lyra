@@ -494,7 +494,7 @@ mod tests {
         let library_id = {
             let mut db = STATE.db.write().await;
             let library = insert_library(&mut db, "Genre Search", "/tmp/lyra-genre-search")?;
-            for genre_name in ["Ambient", "Jazz", "Rock"] {
+            for genre_name in ["Ambient", "Acid Jazz", "Rock"] {
                 let release =
                     insert_test_release(&mut db, &format!("{genre_name} Search Release"))?;
                 connect(&mut db, library, release)?;
@@ -525,7 +525,7 @@ mod tests {
         .map_err(|err| anyhow::anyhow!("{err:?}"))?;
 
         assert_eq!(first_page.items.len(), 1);
-        assert_eq!(first_page.items[0].name, "Ambient");
+        assert_eq!(first_page.items[0].name, "Acid Jazz");
         let cursor = first_page
             .next_cursor
             .ok_or_else(|| anyhow::anyhow!("expected another matching genre"))?;
@@ -557,7 +557,7 @@ mod tests {
         .map_err(|err| anyhow::anyhow!("{err:?}"))?;
 
         assert_eq!(second_page.items.len(), 1);
-        assert_eq!(second_page.items[0].name, "Jazz");
+        assert_eq!(second_page.items[0].name, "Ambient");
         assert!(second_page.next_cursor.is_none());
         Ok(())
     }
@@ -684,7 +684,7 @@ mod tests {
         {
             let mut db = STATE.db.write().await;
             let library = insert_library(&mut db, "Genre Relevance", "/tmp/lyra-genre-relevance")?;
-            for name in ["A b l u e", "Blue"] {
+            for name in ["A Blue", "Blue"] {
                 insert_genre_release(&mut db, library, name)?;
             }
         }
@@ -692,7 +692,7 @@ mod tests {
 
         assert_eq!(
             list_genre_names(headers, Some("blue"), None, None).await?,
-            vec!["Blue", "A b l u e"]
+            vec!["Blue", "A Blue"]
         );
         Ok(())
     }

@@ -958,7 +958,7 @@ mod tests {
         {
             let mut db = STATE.db.write().await;
             let library = insert_library(&mut db, "Relevance", "/tmp/lyra-relevance")?;
-            for title in ["A b l u e", "Blue"] {
+            for title in ["A Blue", "Blue"] {
                 let release = insert_test_release(&mut db, title)?;
                 connect(&mut db, library, release)?;
             }
@@ -987,7 +987,7 @@ mod tests {
             .into_iter()
             .map(|release| release.title)
             .collect();
-        assert_eq!(titles, vec!["Blue", "A b l u e"]);
+        assert_eq!(titles, vec!["Blue", "A Blue"]);
         Ok(())
     }
 

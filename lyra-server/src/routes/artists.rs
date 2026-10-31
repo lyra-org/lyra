@@ -960,7 +960,7 @@ mod tests {
 
         {
             let mut db = STATE.db.write().await;
-            for name in ["A b l u e", "Blue"] {
+            for name in ["A Blue", "Blue"] {
                 insert_credited_artist(&mut db, name)?;
             }
         }
@@ -982,7 +982,7 @@ mod tests {
         .map_err(|err| anyhow::anyhow!("{err:?}"))?;
 
         let names: Vec<String> = page.items.into_iter().map(|artist| artist.name).collect();
-        assert_eq!(names, vec!["Blue", "A b l u e"]);
+        assert_eq!(names, vec!["Blue", "A Blue"]);
         Ok(())
     }
 

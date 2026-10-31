@@ -21,7 +21,10 @@ use super::{
     Viewer,
     artists::Artists,
     genres::Genres,
-    pipeline::Catalog,
+    pipeline::{
+        Catalog,
+        Context,
+    },
     releases::Releases,
     tracks::Tracks,
 };
@@ -45,8 +48,49 @@ pub(crate) fn visible<C: Catalog>(
     if ids.is_empty() {
         return Ok(HashSet::new());
     }
-    Ok(C::candidates(db, viewer, &C::id_filter(ids.to_vec()))?
+    visible_in::<C>(&Context::new(db, viewer)?, ids)
+}
+
+fn visible_in<C: Catalog>(cx: &Context<'_>, ids: &[DbId]) -> Result<HashSet<DbId>, CatalogError> {
+    let table = C::table(&cx.index);
+    Ok(C::candidates(cx, &C::id_filter(ids.to_vec()))?
+        .iter()
+        .map(|slot| table.id(slot))
+        .collect())
+}
+
+/// Each owner's release slots, hydrated in name order.
+fn releases_by_owner(
+    cx: &Context<'_>,
+    owners: Vec<(DbId, Vec<u32>)>,
+) -> Result<HashMap<DbId, Vec<Release>>, CatalogError> {
+    let index = &cx.index;
+    let owners = owners
         .into_iter()
+        .map(|(owner, mut releases)| {
+            releases.sort_unstable_by_key(|release| index.releases.rank[*release as usize]);
+            (owner, releases)
+        })
+        .collect::<Vec<_>>();
+    let mut ids = owners
+        .iter()
+        .flat_map(|(_, releases)| releases.iter().map(|release| index.releases.id(*release)))
+        .collect::<Vec<_>>();
+    ids.sort_unstable();
+    ids.dedup();
+    let hydrated = Releases::hydrate(cx.db, &ids)?
+        .into_iter()
+        .filter_map(|release| Some((DbId::from(release.db_id.clone()?), release)))
+        .collect::<HashMap<_, _>>();
+    Ok(owners
+        .into_iter()
+        .map(|(owner, releases)| {
+            let releases = releases
+                .iter()
+                .filter_map(|release| hydrated.get(&index.releases.id(*release)).cloned())
+                .collect();
+            (owner, releases)
+        })
         .collect())
 }
 
@@ -72,7 +116,17 @@ fn visible_in_order<C: Catalog>(
     viewer: &Viewer,
     owners: &[DbId],
 ) -> Result<Vec<DbId>, CatalogError> {
-    let visible = visible::<C>(db, viewer, owners)?;
+    if owners.is_empty() {
+        return Ok(Vec::new());
+    }
+    visible_in_order_in::<C>(&Context::new(db, viewer)?, owners)
+}
+
+fn visible_in_order_in<C: Catalog>(
+    cx: &Context<'_>,
+    owners: &[DbId],
+) -> Result<Vec<DbId>, CatalogError> {
+    let visible = visible_in::<C>(cx, owners)?;
     let mut seen = HashSet::new();
     Ok(owners
         .iter()
@@ -156,9 +210,15 @@ pub(crate) fn chain_places(
     viewer: &Viewer,
     tracks: &[DbId],
 ) -> Result<HashMap<DbId, TrackChain>, CatalogError> {
-    let tracks = visible_in_order::<Tracks>(db, viewer, tracks)?;
+    if tracks.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let cx = Context::new(db, viewer)?;
+    let links = cx.links();
+    let tracks = visible_in_order_in::<Tracks>(&cx, tracks)?;
     Ok(lyra_db::chains::links_for_tracks(db, &tracks)?
         .into_iter()
+        .filter(|(_, link)| links.sees_release(link.release_db_id))
         .map(|(track, link)| {
             (
                 track,
@@ -177,20 +237,25 @@ pub(crate) fn releases_by_track(
     viewer: &Viewer,
     tracks: &[DbId],
 ) -> Result<HashMap<DbId, Vec<Release>>, CatalogError> {
-    let visible_releases = viewer.visible_releases(db)?;
-    let mut releases = HashMap::new();
-    for track in visible_in_order::<Tracks>(db, viewer, tracks)? {
-        let ids = lyra_db::graph::inbound_neighbor_ids(db, track, "Release")?
-            .into_iter()
-            .filter(|release| {
-                visible_releases
-                    .as_ref()
-                    .is_none_or(|visible| visible.contains(release))
-            })
-            .collect::<Vec<_>>();
-        releases.insert(track, Releases::hydrate(db, &ids)?);
+    if tracks.is_empty() {
+        return Ok(HashMap::new());
     }
-    Ok(releases)
+    let cx = Context::new(db, viewer)?;
+    let index = &cx.index;
+    let links = cx.links();
+    let tracks = visible_in_order_in::<Tracks>(&cx, tracks)?;
+    releases_by_owner(
+        &cx,
+        tracks
+            .into_iter()
+            .filter_map(|track| {
+                Some((
+                    track,
+                    links.releases_of_track(index.tracks.slot(track)?).collect(),
+                ))
+            })
+            .collect(),
+    )
 }
 
 /// The visible releases in each visible genre.
@@ -199,21 +264,25 @@ pub(crate) fn releases_by_genre(
     viewer: &Viewer,
     genres: &[DbId],
 ) -> Result<HashMap<DbId, Vec<Release>>, CatalogError> {
-    let visible_releases = viewer.visible_releases(db)?;
-    let genres = visible_in_order::<Genres>(db, viewer, genres)?;
-    let mut releases = HashMap::new();
-    for (genre, ids) in lyra_db::genres::get_releases_many(db, &genres)? {
-        let ids = ids
-            .into_iter()
-            .filter(|release| {
-                visible_releases
-                    .as_ref()
-                    .is_none_or(|visible| visible.contains(release))
-            })
-            .collect::<Vec<_>>();
-        releases.insert(genre, Releases::hydrate(db, &ids)?);
+    if genres.is_empty() {
+        return Ok(HashMap::new());
     }
-    Ok(releases)
+    let cx = Context::new(db, viewer)?;
+    let index = &cx.index;
+    let links = cx.links();
+    let genres = visible_in_order_in::<Genres>(&cx, genres)?;
+    releases_by_owner(
+        &cx,
+        genres
+            .into_iter()
+            .filter_map(|genre| {
+                Some((
+                    genre,
+                    links.releases_of_genre(index.genres.slot(genre)?).collect(),
+                ))
+            })
+            .collect(),
+    )
 }
 
 /// The artists credited on each visible owner, in credit order. `C` is the owners' catalog.

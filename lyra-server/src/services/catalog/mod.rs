@@ -3,21 +3,26 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-//! Catalog queries: every catalog entity is filtered, sorted and paged by [`pipeline`].
+//! Catalog queries: every catalog entity is filtered, sorted and paged by [`pipeline`] over the
+//! catalog [`index`].
 
 pub(crate) mod artists;
+#[cfg(all(test, feature = "nightly"))]
+mod benches;
 pub(crate) mod genres;
+pub(crate) mod index;
 pub(crate) mod lookups;
+#[cfg(test)]
+mod oracle;
 pub(crate) mod pipeline;
 pub(crate) mod releases;
 pub(crate) mod tracks;
+#[cfg(test)]
+mod visibility;
 
 use std::{
     cmp::Ordering,
-    collections::{
-        HashMap,
-        HashSet,
-    },
+    collections::HashSet,
 };
 
 use agdb::{
@@ -30,6 +35,17 @@ use crate::services::auth::{
     Principal,
 };
 
+use self::{
+    index::{
+        Snapshot,
+        Table,
+        bits::Bits,
+    },
+    pipeline::{
+        Column,
+        Context,
+    },
+};
 pub(crate) use pipeline::{
     NameRange,
     PersonalData,
@@ -86,7 +102,7 @@ impl Viewer {
 
     /// The user principal whose libraries limit what the viewer sees, or `None` when the viewer
     /// sees every library.
-    fn restricted(&self) -> Option<&Principal> {
+    pub(crate) fn restricted(&self) -> Option<&Principal> {
         match self {
             Self::User { principal, .. }
                 if !principal.permissions.contains(&lyra_db::Permission::Admin) =>
@@ -100,16 +116,6 @@ impl Viewer {
     /// Whether the viewer sees every release.
     pub(crate) fn sees_everything(&self) -> bool {
         self.restricted().is_none()
-    }
-
-    /// Whether the viewer can see every one of `libraries`.
-    fn sees_libraries(&self, db: &DbAny, libraries: &[DbId]) -> anyhow::Result<bool> {
-        let Some(principal) = self.restricted() else {
-            return Ok(true);
-        };
-        let accessible =
-            lyra_db::libraries::db_ids_for_public_ids(db, &principal.accessible_library_ids)?;
-        Ok(libraries.iter().all(|library| accessible.contains(library)))
     }
 
     /// The viewer's libraries, or `None` when the viewer sees every library.
@@ -199,20 +205,6 @@ impl Viewer {
                 crate::services::auth::access::artist_accessible(db, principal, artist_db_id)
             }
         }
-    }
-
-    /// The releases in the viewer's libraries, or `None` when the viewer sees every release.
-    pub(crate) fn visible_releases(&self, db: &DbAny) -> anyhow::Result<Option<HashSet<DbId>>> {
-        let Some(principal) = self.restricted() else {
-            return Ok(None);
-        };
-        let mut releases = HashSet::new();
-        for library in
-            lyra_db::libraries::db_ids_for_public_ids(db, &principal.accessible_library_ids)?
-        {
-            releases.extend(lyra_db::graph::neighbor_ids(db, library, "Release")?);
-        }
-        Ok(Some(releases))
     }
 }
 
@@ -307,113 +299,56 @@ impl ArtistCredit {
         }
     }
 
-    /// The entities the filter keeps, given the entities each single role reaches from a set of
-    /// existing artists.
-    pub(crate) fn matching(
+    /// The slots of `len` the filter keeps, given the slots each single role reaches from a set
+    /// of artist slots.
+    pub(crate) fn reach(
         &self,
-        db: &DbAny,
-        reach: impl Fn(&[DbId], CreditRole) -> anyhow::Result<HashSet<DbId>>,
-    ) -> anyhow::Result<HashSet<DbId>> {
-        let artists = lyra_db::graph::existing_ids(db, &self.artists, "Artist")?;
-        let reach_role = |role| -> anyhow::Result<HashSet<DbId>> {
-            match role {
-                CreditRole::Any => {
-                    let mut reached = reach(&artists, CreditRole::Track)?;
-                    reached.extend(reach(&artists, CreditRole::Release)?);
-                    Ok(reached)
-                }
-                role => reach(&artists, role),
+        index: &Snapshot,
+        reach: impl Fn(&Bits, CreditRole) -> Bits,
+    ) -> Bits {
+        let artists = index.artists.slots(&self.artists);
+        let reach_role = |role| match role {
+            CreditRole::Any => {
+                let mut reached = reach(&artists, CreditRole::Track);
+                reached.or(&reach(&artists, CreditRole::Release));
+                reached
             }
+            role => reach(&artists, role),
         };
-        let mut matching = reach_role(self.role)?;
+        let mut matching = reach_role(self.role);
         if let Some(excluding) = self.excluding {
-            let excluded = reach_role(excluding)?;
-            matching.retain(|id| !excluded.contains(id));
+            matching.and_not(&reach_role(excluding));
         }
-        Ok(matching)
+        matching
     }
 }
 
-/// The releases the viewer can see, narrowed to `library`, to `releases` and to releases in any
-/// of `genres` when each is given. Ids that name nothing are dropped.
+/// The release slots the viewer can see, narrowed to `library`, to `releases` and to releases in
+/// any of `genres` when each is given, or `None` for every release. Ids that name nothing are
+/// dropped.
 pub(crate) fn scoped_releases(
-    db: &DbAny,
-    viewer: &Viewer,
+    cx: &Context<'_>,
     library: Option<DbId>,
     releases: Option<&[DbId]>,
     genres: &[DbId],
-) -> anyhow::Result<Candidates> {
-    let mut scoped = Candidates::default();
-    let libraries = match library {
-        Some(library) => Some(lyra_db::graph::existing_ids(db, &[library], "Library")?),
-        None => None,
+) -> Option<Bits> {
+    let index = &cx.index;
+    let links = cx.links();
+    let mut scoped = cx.scope.restricted.then(|| cx.scope.releases.clone());
+    let mut restrict = |bits: Bits| match &mut scoped {
+        Some(scoped) => scoped.and(&bits),
+        None => scoped = Some(bits),
     };
-    // The visible releases are those of the viewer's libraries, so a scope of libraries the
-    // viewer can see already lies within them.
-    let within_visible = match &libraries {
-        Some(libraries) => viewer.sees_libraries(db, libraries)?,
-        None => false,
-    };
-    if !within_visible && let Some(visible) = viewer.visible_releases(db)? {
-        scoped.restrict(visible);
-    }
-    if let Some(libraries) = libraries {
-        let mut library_releases = Vec::new();
-        for library in libraries {
-            library_releases.extend(lyra_db::graph::neighbor_ids(db, library, "Release")?);
-        }
-        scoped.restrict(library_releases);
+    if let Some(library) = library {
+        restrict(links.releases_of_library(library));
     }
     if let Some(releases) = releases {
-        scoped.restrict(lyra_db::graph::existing_ids(db, releases, "Release")?);
+        restrict(index.releases.slots(releases));
     }
     if !genres.is_empty() {
-        let genres = lyra_db::graph::existing_ids(db, genres, "Genre")?;
-        scoped.restrict(lyra_db::genres::release_ids_matching_genre_ids(
-            db, &genres,
-        )?);
+        restrict(links.releases_of_genres(&index.genres.slots(genres)));
     }
-    Ok(scoped)
-}
-
-pub(crate) fn all_releases(db: &DbAny) -> anyhow::Result<Vec<DbId>> {
-    lyra_db::graph::neighbor_ids(db, "releases", "Release")
-}
-
-/// The owners of kind `Owner` that credit any of `artists`.
-pub(crate) fn credited_owners<Owner: agdb::DbType>(
-    db: &DbAny,
-    artists: &[DbId],
-) -> anyhow::Result<HashSet<DbId>> {
-    let mut owners = HashSet::new();
-    for artist in artists {
-        owners.extend(lyra_db::credits::owner_ids_by_artist::<Owner>(
-            db, *artist, 0, 0,
-        )?);
-    }
-    Ok(owners)
-}
-
-pub(crate) fn tracks_of_releases(
-    db: &DbAny,
-    releases: impl IntoIterator<Item = DbId>,
-) -> anyhow::Result<HashSet<DbId>> {
-    let mut tracks = HashSet::new();
-    for release in releases {
-        tracks.extend(lyra_db::graph::neighbor_ids(db, release, "Track")?);
-    }
-    Ok(tracks)
-}
-
-pub(crate) fn releases_of_tracks(
-    db: &DbAny,
-    tracks: impl IntoIterator<Item = DbId>,
-) -> anyhow::Result<HashSet<DbId>> {
-    let mut releases = HashSet::new();
-    for track in tracks {
-        releases.extend(lyra_db::graph::inbound_neighbor_ids(db, track, "Release")?);
-    }
-    Ok(releases)
+    scoped
 }
 
 /// What an entity's tracks add up to.
@@ -425,37 +360,29 @@ pub(crate) struct TrackTotals {
     pub(crate) last_played_at: Option<u64>,
 }
 
-/// Totals over each owner's tracks. Durations and listens are read only when asked for.
+/// Totals over each owner's track slots, by owner. Listens are read only when asked for.
 pub(crate) fn track_totals(
-    db: &DbAny,
-    viewer: &Viewer,
-    tracks_by_owner: &HashMap<DbId, HashSet<DbId>>,
-    durations: bool,
+    cx: &Context<'_>,
+    tracks_by_owner: &[(u32, Vec<u32>)],
     listens: bool,
-) -> Result<HashMap<DbId, TrackTotals>, CatalogError> {
-    let tracks = tracks_by_owner
-        .values()
-        .flatten()
-        .copied()
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    let durations = if durations {
-        lyra_db::graph::select_fields(db, &tracks, &["duration_ms"])?
-            .into_iter()
-            .filter_map(|(id, fields)| Some((id, fields.number("duration_ms")?)))
-            .collect()
-    } else {
-        HashMap::new()
-    };
+) -> Result<std::collections::HashMap<u32, TrackTotals>, CatalogError> {
+    let index = &cx.index;
     let listens = if listens {
-        let user = viewer.user_db_id("listen sort keys")?;
-        lyra_db::listens::get_stats(db, &tracks, user)?
+        let user = cx.viewer.user_db_id("listen sort keys")?;
+        let tracks = tracks_by_owner
+            .iter()
+            .flat_map(|(_, tracks)| tracks)
+            .copied()
+            .collect::<HashSet<_>>()
             .into_iter()
-            .map(|stats| (stats.db_id, stats))
+            .map(|slot| index.tracks.id(slot))
+            .collect::<Vec<_>>();
+        lyra_db::listens::get_stats(cx.db, &tracks, user)?
+            .into_iter()
+            .filter_map(|stats| Some((index.tracks.slot(stats.db_id)?, stats)))
             .collect()
     } else {
-        HashMap::new()
+        std::collections::HashMap::new()
     };
     Ok(tracks_by_owner
         .iter()
@@ -465,8 +392,9 @@ pub(crate) fn track_totals(
                 ..TrackTotals::default()
             };
             for track in tracks {
-                if let Some(duration) = durations.get(track) {
-                    totals.total_duration = totals.total_duration.saturating_add(*duration);
+                let duration = index.track.duration[*track as usize];
+                if duration != index::MISSING {
+                    totals.total_duration = totals.total_duration.saturating_add(duration);
                 }
                 if let Some(stats) = listens.get(track) {
                     totals.listen_count = totals.listen_count.saturating_add(stats.count);
@@ -478,41 +406,70 @@ pub(crate) fn track_totals(
         .collect())
 }
 
-/// The viewer's ratings of `ids`, read only when `wanted`.
-pub(crate) fn ratings(
-    db: &DbAny,
-    viewer: &Viewer,
-    ids: &[DbId],
-    wanted: bool,
-) -> Result<HashMap<DbId, lyra_db::ratings::RatingEdge>, CatalogError> {
-    if !wanted {
-        return Ok(HashMap::new());
-    }
-    let user = viewer.user_db_id("rating sort keys")?;
-    Ok(lyra_db::ratings::values_for_targets(db, user, ids)?)
+/// A column of one total for each of `slots`, computing the totals over the tracks `tracks_of`
+/// gives each.
+pub(crate) fn totals_column<'a>(
+    cx: &Context<'_>,
+    table: &Table,
+    slots: &[u32],
+    listens: bool,
+    tracks_of: impl Fn(u32) -> Vec<u32>,
+    value: impl Fn(&TrackTotals) -> Option<u64>,
+) -> Result<Column<'a>, CatalogError> {
+    let owners = slots
+        .iter()
+        .map(|slot| (*slot, tracks_of(*slot)))
+        .collect::<Vec<_>>();
+    let totals = track_totals(cx, &owners, listens)?;
+    Ok(Column::computed(table.len(), slots, |slot| {
+        value(&totals.get(&slot).copied().unwrap_or_default())
+    }))
 }
 
-/// When the viewer first favorited each favorite of `kind`, read only when `wanted`.
-pub(crate) fn favorited_at(
-    db: &DbAny,
-    viewer: &Viewer,
-    ids: &[DbId],
+/// The viewer's rating of each of `slots`, or with `rated_at` when they last set it.
+pub(crate) fn ratings_column<'a>(
+    cx: &Context<'_>,
+    table: &Table,
+    slots: &[u32],
+    rated_at: bool,
+) -> Result<Column<'a>, CatalogError> {
+    let user = cx.viewer.user_db_id("rating sort keys")?;
+    let ids = slots.iter().map(|slot| table.id(*slot)).collect::<Vec<_>>();
+    let ratings = lyra_db::ratings::values_for_targets(cx.db, user, &ids)?
+        .into_iter()
+        .filter_map(|(id, edge)| {
+            let value = if rated_at {
+                u64::try_from(edge.updated_at_ms).ok()?
+            } else {
+                u64::from(edge.value.get())
+            };
+            Some((table.slot(id)?, value))
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    Ok(Column::computed(table.len(), slots, |slot| {
+        ratings.get(&slot).copied()
+    }))
+}
+
+/// When the viewer first favorited each of `slots`, a favorite of `kind`.
+pub(crate) fn favorited_at_column<'a>(
+    cx: &Context<'_>,
+    table: &Table,
+    slots: &[u32],
     kind: lyra_db::favorites::FavoriteKind,
-    wanted: bool,
-) -> Result<HashMap<DbId, i64>, CatalogError> {
-    if !wanted {
-        return Ok(HashMap::new());
-    }
-    let user = viewer.user_db_id("the favorited_at sort key")?;
-    if ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-    Ok(lyra_db::favorites::first_favorited_at(db, user, kind)?)
-}
-
-/// A stored Unix-millisecond timestamp as a sort value.
-pub(crate) fn timestamp_value(ms: i64) -> Option<pipeline::SortValue> {
-    u64::try_from(ms).ok().map(pipeline::SortValue::Number)
+) -> Result<Column<'a>, CatalogError> {
+    let user = cx.viewer.user_db_id("the favorited_at sort key")?;
+    let favorited = if slots.is_empty() {
+        std::collections::HashMap::new()
+    } else {
+        lyra_db::favorites::first_favorited_at(cx.db, user, kind)?
+            .into_iter()
+            .filter_map(|(id, ms)| Some((table.slot(id)?, u64::try_from(ms).ok()?)))
+            .collect()
+    };
+    Ok(Column::computed(table.len(), slots, |slot| {
+        favorited.get(&slot).copied()
+    }))
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -529,239 +486,4 @@ impl From<agdb::DbError> for CatalogError {
     fn from(error: agdb::DbError) -> Self {
         Self::Internal(error.into())
     }
-}
-
-/// A candidate id set built by intersection, where `None` stands for every entity.
-#[derive(Default)]
-pub(crate) struct Candidates(Option<HashSet<DbId>>);
-
-impl Candidates {
-    pub(crate) fn restrict(&mut self, ids: impl IntoIterator<Item = DbId>) {
-        let ids = ids.into_iter();
-        self.0 = Some(match self.0.take() {
-            Some(current) => {
-                let ids = ids.collect::<HashSet<_>>();
-                current.into_iter().filter(|id| ids.contains(id)).collect()
-            }
-            None => ids.collect(),
-        });
-    }
-
-    pub(crate) fn ids(&self) -> Option<&HashSet<DbId>> {
-        self.0.as_ref()
-    }
-
-    /// Keeps the ids in `ids` when `wanted` is true, and the others when it is false.
-    pub(crate) fn restrict_membership(
-        &mut self,
-        ids: HashSet<DbId>,
-        wanted: bool,
-        all: impl FnOnce() -> anyhow::Result<Vec<DbId>>,
-    ) -> anyhow::Result<()> {
-        if wanted {
-            self.restrict(ids);
-            return Ok(());
-        }
-        let remaining = match &self.0 {
-            Some(current) => current
-                .iter()
-                .copied()
-                .filter(|id| !ids.contains(id))
-                .collect(),
-            None => all()?.into_iter().filter(|id| !ids.contains(id)).collect(),
-        };
-        self.0 = Some(remaining);
-        Ok(())
-    }
-
-    /// The final ids, reading every entity through `all` when nothing restricted them.
-    pub(crate) fn resolve(
-        self,
-        exclude: &[DbId],
-        all: impl FnOnce() -> anyhow::Result<Vec<DbId>>,
-    ) -> anyhow::Result<Vec<DbId>> {
-        let exclude = exclude.iter().copied().collect::<HashSet<_>>();
-        let ids = match self.0 {
-            Some(ids) => ids.into_iter().collect(),
-            None => all()?,
-        };
-        Ok(ids.into_iter().filter(|id| !exclude.contains(id)).collect())
-    }
-}
-
-#[cfg(all(test, feature = "nightly"))]
-pub(crate) mod benches {
-    extern crate test;
-
-    use std::{
-        collections::HashSet,
-        hint::black_box,
-    };
-
-    use agdb::DbAny;
-    use test::Bencher;
-
-    use super::{
-        Viewer,
-        artists::Artists,
-        page,
-        pipeline::{
-            Catalog,
-            Query,
-        },
-        releases::Releases,
-        tracks::Tracks,
-    };
-    use crate::services::auth::Principal;
-    use lyra_db::fixtures::{
-        connect,
-        insert_artist,
-        insert_release,
-        insert_track,
-    };
-    use lyra_db::test_db::{
-        connect_artist,
-        insert_library,
-        new_test_db,
-    };
-
-    /// A library of `track_count` tracks, ten per release and five releases per artist, with
-    /// releases spread across `library_count` libraries the principal is granted, and one more
-    /// release, artist and track named "Quarantined" in a library only an admin sees.
-    pub(crate) fn search_fixture(
-        track_count: usize,
-        library_count: usize,
-        admin: bool,
-    ) -> (DbAny, Principal) {
-        let mut db = new_test_db().unwrap();
-        let user_db_id = lyra_db::test_db::insert_user(&mut db, "search-bench-user").unwrap();
-        let mut principal = Principal::for_user(
-            &db,
-            user_db_id,
-            if admin {
-                vec![lyra_db::Permission::Admin]
-            } else {
-                Vec::new()
-            },
-            HashSet::new(),
-        );
-        let libraries: Vec<_> = (0..library_count)
-            .map(|i| {
-                let id = insert_library(
-                    &mut db,
-                    &format!("Library {i}"),
-                    &format!("/search-bench/{i}"),
-                )
-                .unwrap();
-                principal
-                    .accessible_library_ids
-                    .insert(lyra_db::libraries::get_by_id(&db, id).unwrap().unwrap().id);
-                id
-            })
-            .collect();
-
-        // 5% share a selective phrase.
-        for artist_idx in 0..track_count / 50 {
-            let phrase = if artist_idx % 20 == 0 {
-                "Velvet Horizon"
-            } else {
-                "Silver Moon"
-            };
-            let artist =
-                insert_artist(&mut db, &format!("{phrase} Artist {artist_idx:05}")).unwrap();
-            for release_idx in 0..5 {
-                let release_number = artist_idx * 5 + release_idx;
-                let release =
-                    insert_release(&mut db, &format!("{phrase} Release {release_number:05}"))
-                        .unwrap();
-                connect(&mut db, libraries[release_number % library_count], release).unwrap();
-                connect_artist(&mut db, release, artist).unwrap();
-                for track_idx in 0..10 {
-                    let track_number = release_number * 10 + track_idx;
-                    let track = insert_track(&mut db, &format!("{phrase} Track {track_number:06}"))
-                        .unwrap();
-                    connect(&mut db, release, track).unwrap();
-                }
-            }
-        }
-
-        let hidden_library = insert_library(&mut db, "Hidden", "/search-bench/hidden").unwrap();
-        let hidden_artist = insert_artist(&mut db, "Quarantined Artist").unwrap();
-        let hidden_release = insert_release(&mut db, "Quarantined Release").unwrap();
-        let hidden_track = insert_track(&mut db, "Quarantined Track").unwrap();
-        connect(&mut db, hidden_library, hidden_release).unwrap();
-        connect_artist(&mut db, hidden_release, hidden_artist).unwrap();
-        connect(&mut db, hidden_release, hidden_track).unwrap();
-        (db, principal)
-    }
-
-    fn searched<C: Catalog>(db: &DbAny, viewer: &Viewer, term: &str, limit: u64) -> u64
-    where
-        C::Filter: Default,
-    {
-        let mut query = Query::<C>::new(C::Filter::default());
-        query.search = Some(term.to_string());
-        page(db, viewer, &query, 0, Some(limit)).unwrap().total
-    }
-
-    fn search_all(db: &DbAny, viewer: &Viewer, term: &str, limit: u64) -> (u64, u64, u64) {
-        (
-            searched::<Tracks>(db, viewer, term, limit),
-            searched::<Artists>(db, viewer, term, limit),
-            searched::<Releases>(db, viewer, term, limit),
-        )
-    }
-
-    /// Searches tracks, artists and releases for a term every entity matches.
-    fn search(b: &mut Bencher, track_count: usize, library_count: usize, admin: bool) {
-        let (db, principal) = search_fixture(track_count, library_count, admin);
-        let viewer = Viewer::user(&db, principal).unwrap();
-        let hidden = u64::from(admin);
-        assert_eq!(
-            search_all(&db, &viewer, "quarantined", 5),
-            (hidden, hidden, hidden)
-        );
-        let visible = (
-            track_count as u64,
-            track_count as u64 / 50,
-            track_count as u64 / 10,
-        );
-        assert_eq!(
-            search_all(&db, &viewer, "a", 20),
-            (visible.0 + hidden, visible.1 + hidden, visible.2 + hidden)
-        );
-        b.iter(|| {
-            black_box(search_all(
-                black_box(&db),
-                black_box(&viewer),
-                black_box("a"),
-                20,
-            ))
-        });
-    }
-
-    macro_rules! access_cases {
-        ($name:ident, $size:expr) => {
-            mod $name {
-                use super::*;
-
-                #[bench]
-                fn admin(b: &mut Bencher) {
-                    search(b, $size, 1, true);
-                }
-                #[bench]
-                fn user_one_library(b: &mut Bencher) {
-                    search(b, $size, 1, false);
-                }
-                #[bench]
-                fn user_four_libraries(b: &mut Bencher) {
-                    search(b, $size, 4, false);
-                }
-            }
-        };
-    }
-
-    access_cases!(search_1k, 1_000);
-    access_cases!(search_10k, 10_000);
-    access_cases!(search_100k, 100_000);
 }

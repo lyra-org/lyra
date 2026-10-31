@@ -151,6 +151,7 @@ pub(crate) struct GenerationState {
     pub(crate) playback_updates: PlaybackUpdateRegistries,
     pub(crate) playback_scopes: PlaybackScopes,
     pub(crate) library_sync: LibrarySyncRegistries,
+    pub(crate) catalog_index: crate::services::catalog::index::IndexCache,
     pub(crate) hls_cleanup: HlsCleanupState,
     pub(crate) transcode_cache: Arc<crate::services::transcoding::cache::TranscodeCache>,
 }
@@ -292,6 +293,13 @@ impl StateCell {
                 .set(build_app_state(boot, created, resolved))
                 .map_err(|_| anyhow::anyhow!("application state initialized concurrently")),
         }
+    }
+}
+
+impl StateCell {
+    /// The state, or `None` before it is initialized.
+    pub(crate) fn get(&self) -> Option<&AppState> {
+        self.inner.get()
     }
 }
 

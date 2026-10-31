@@ -98,3 +98,36 @@ fn now_ms() -> Option<u64> {
         .ok()
         .map(|d| d.as_millis() as u64)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::services::{
+        STATE,
+        catalog::index::snapshot,
+        testing::{
+            init_default_test_state,
+            runtime_test_lock,
+        },
+    };
+
+    #[tokio::test]
+    async fn an_idle_sweep_keeps_the_catalog_index() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        lyra_db::fixtures::insert_release(&mut *STATE.db.write().await, "Kept")?;
+        let before = snapshot(&*STATE.db.read().await)?;
+
+        let db = STATE.db.get();
+        let now = now_ms().expect("a clock");
+        sweep_expired_datastore_entries(&db, now).await;
+        sweep_stale_playback_sessions(&db, now).await;
+        assert!(Arc::ptr_eq(&before, &snapshot(&*STATE.db.read().await)?));
+
+        lyra_db::fixtures::insert_release(&mut *STATE.db.write().await, "Added")?;
+        assert!(!Arc::ptr_eq(&before, &snapshot(&*STATE.db.read().await)?));
+        Ok(())
+    }
+}

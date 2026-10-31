@@ -271,3 +271,40 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &[DataStoreHandle::class_descriptor()],
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::services::{
+        STATE,
+        catalog::index::snapshot,
+        testing::{
+            init_default_test_state,
+            runtime_test_lock,
+        },
+    };
+
+    #[tokio::test]
+    async fn datastore_writes_keep_the_catalog_index() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        lyra_db::fixtures::insert_release(&mut *STATE.db.write().await, "Kept")?;
+        let before = snapshot(&*STATE.db.read().await)?;
+
+        let db = STATE.db.get();
+        let store = get_or_create(&db, "plugin".to_string()).await?;
+        write_value(&db, store, "key".to_string(), serde_json::json!(1)).await?;
+        write_values(
+            &db,
+            store,
+            vec![("other".to_string(), serde_json::json!(2))],
+        )
+        .await?;
+        remove_value(&db, store, "key".to_string()).await?;
+        clear_values(&db, store).await?;
+        assert!(Arc::ptr_eq(&before, &snapshot(&*STATE.db.read().await)?));
+        Ok(())
+    }
+}

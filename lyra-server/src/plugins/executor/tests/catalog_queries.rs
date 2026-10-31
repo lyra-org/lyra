@@ -70,7 +70,7 @@ fn plugin_track_query_sorts_a_release_in_album_order() -> Result<()> {
 #[test]
 fn plugin_track_query_ranks_search_matches_by_relevance() -> Result<()> {
     let mut db = test_db::new_test_db()?;
-    for title in ["Blue", "A b l u e"] {
+    for title in ["Blue", "A Blue"] {
         lyra_db::fixtures::insert_track(&mut db, title)?;
     }
 
@@ -91,7 +91,7 @@ fn plugin_track_query_ranks_search_matches_by_relevance() -> Result<()> {
         .to_vec(),
     )?;
 
-    assert_eq!(track_titles(values), vec!["Blue", "A b l u e"]);
+    assert_eq!(track_titles(values), vec!["Blue", "A Blue"]);
     Ok(())
 }
 
@@ -404,29 +404,27 @@ fn plugin_catalog_query_scopes_a_library_to_what_the_principal_sees() -> Result<
         releases(&viewer, &format!("{{ library_id = {visible} }}"))?,
         ["Seen", "Shared"]
     );
-    // A release in a library the viewer can't see stays visible through another library.
-    assert_eq!(
-        releases(&viewer, &format!("{{ library_id = {hidden} }}"))?,
-        ["Shared"]
-    );
+    // A library the viewer can't see filters to nothing, like one that doesn't exist, so it
+    // doesn't tell what the viewer's libraries share with it.
+    assert!(releases(&viewer, &format!("{{ library_id = {hidden} }}"))?.is_empty());
     assert!(releases(&viewer, "{ library_id = 999999 }")?.is_empty());
     assert_eq!(
         releases(&admin, &format!("{{ library_id = {hidden} }}"))?,
         ["Shared", "Unseen"]
     );
-    assert_eq!(
+    assert!(
         names_as(
             &runtime,
             &viewer,
             "tracks",
             "track_title",
             &format!("{{ library_id = {hidden} }}")
-        )?,
-        ["Shared"]
+        )?
+        .is_empty()
     );
     let artists = |query: &str| names_as(&runtime, &viewer, "artists", "artist_name", query);
     assert_eq!(artists("{}")?, ["Ann", "Sam"]);
-    assert_eq!(artists(&format!("{{ library_id = {hidden} }}"))?, ["Sam"]);
+    assert!(artists(&format!("{{ library_id = {hidden} }}"))?.is_empty());
     Ok(())
 }
 

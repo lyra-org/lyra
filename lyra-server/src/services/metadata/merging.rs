@@ -715,14 +715,15 @@ mod tests {
 
         fn listed_genres(db: &DbAny) -> anyhow::Result<Vec<String>> {
             use crate::services::catalog::{
+                self,
                 Viewer,
                 genres::{
                     GenreFilter,
                     Genres,
                 },
-                pipeline::Catalog,
             };
-            let ids = Genres::candidates(db, &Viewer::System, &GenreFilter::default())
+            let query = catalog::Query::<Genres>::new(GenreFilter::default());
+            let ids = catalog::order(db, &Viewer::System, &query)
                 .map_err(|error| anyhow::anyhow!("{error:?}"))?;
             let mut names: Vec<String> = ids
                 .into_iter()

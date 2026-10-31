@@ -3,7 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-//! The one sort, tie-break and page implementation for catalog queries.
+//! The one filter, search, sort and page implementation for catalog queries, over the catalog
+//! [`index`](super::index).
 
 use std::{
     cmp::Ordering,
@@ -12,6 +13,7 @@ use std::{
         HashMap,
         HashSet,
     },
+    sync::Arc,
 };
 
 use agdb::{
@@ -28,12 +30,27 @@ use lyra_db::{
 };
 
 use super::{
-    Candidates,
     CatalogError,
     Direction,
     Page,
     SortSpec,
     Viewer,
+    index::{
+        Cache,
+        CacheKey,
+        Hit,
+        MISSING,
+        Scope,
+        Scoped,
+        Snapshot,
+        Table,
+        bits::Bits,
+    },
+};
+use crate::services::search::{
+    Needle,
+    Tier,
+    Word,
 };
 
 /// What a sort key orders by.
@@ -44,7 +61,7 @@ pub(crate) enum KeyKind {
     /// A stable shuffle driven by the query's seed.
     Random,
     Id,
-    /// A value the catalog loads for each candidate.
+    /// A value the catalog computes for each candidate.
     Field,
 }
 
@@ -53,6 +70,8 @@ pub(crate) trait SortKey: Copy + Eq + std::fmt::Debug + 'static {
     const KEYS: &'static [(&'static str, Self)];
     /// The key ranking search matches, and the default order when searching.
     const RELEVANCE: Self;
+    /// The key whose ascending order is the order ties break in.
+    const NAME_ORDER: Self;
 
     fn kind(self) -> KeyKind;
 
@@ -83,44 +102,18 @@ pub(crate) trait SortKey: Copy + Eq + std::fmt::Debug + 'static {
                 ))
             })
     }
-}
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum SortValue {
-    Number(u64),
-    Text(String),
-}
-
-/// A candidate's names and the values of the requested field keys, in key order.
-pub(crate) struct Row {
-    pub(crate) id: DbId,
-    /// The display name, which search matches against.
-    pub(crate) name: String,
-    lower_name: String,
-    /// The lowercase sort title, when the entity has one.
-    sort_title: Option<String>,
-    pub(crate) values: Vec<Option<SortValue>>,
-}
-
-impl Row {
-    /// A row with no values yet, sorting by `sort_title` when given and by `name` otherwise.
-    pub(crate) fn new(id: DbId, name: String, sort_title: Option<&str>) -> Self {
-        Self {
-            id,
-            lower_name: name.to_lowercase(),
-            sort_title: sort_title.map(str::to_lowercase),
-            name,
-            values: Vec::new(),
-        }
+    /// Whether the key's values are places in a name order, which mean nothing outside it.
+    fn ranked(self) -> bool {
+        false
     }
 
-    pub(crate) fn lower_name(&self) -> &str {
-        &self.lower_name
-    }
-
-    /// The lowercase sort name, which search also matches, ties break on and name ranges bound.
-    pub(crate) fn sort_name(&self) -> &str {
-        self.sort_title.as_deref().unwrap_or(&self.lower_name)
+    /// The key's place in [`Self::KEYS`].
+    fn position(self) -> usize {
+        Self::KEYS
+            .iter()
+            .position(|(_, key)| *key == self)
+            .expect("every key is listed")
     }
 }
 
@@ -153,39 +146,161 @@ impl PersonalFilter {
         .collect()
     }
 
-    /// Narrows `candidates` to what the filter keeps. `listened` gives the user's listened
-    /// entities, and `all` every entity, for keeping what is not in a set.
+    /// Narrows `slots` to what the filter keeps, where `None` stands for every entity of `table`
+    /// and leaving entities out starts from `all`. `listened_by` gives the slots that count as
+    /// listened, given the tracks the viewer listened to.
     pub(crate) fn restrict(
         self,
-        db: &DbAny,
-        viewer: &Viewer,
-        candidates: &mut Candidates,
+        cx: &Context<'_>,
+        table: &Table,
+        slots: &mut Option<Bits>,
+        all: &Bits,
         kind: FavoriteKind,
-        listened: impl FnOnce(DbId) -> anyhow::Result<HashSet<DbId>>,
-        all: impl Fn() -> anyhow::Result<Vec<DbId>>,
+        listened_by: impl Fn(&HashSet<DbId>) -> Bits,
     ) -> Result<(), CatalogError> {
+        let mut restrict = |members: Bits, wanted: bool| match (slots.as_mut(), wanted) {
+            (Some(slots), true) => slots.and(&members),
+            (None, true) => *slots = Some(members),
+            (Some(slots), false) => slots.and_not(&members),
+            (None, false) => {
+                let mut remaining = all.clone();
+                remaining.and_not(&members);
+                *slots = Some(remaining);
+            }
+        };
         if let Some(favorite) = self.favorite {
-            let user = viewer.user_db_id("the favorite filter")?;
-            let favorites = lyra_db::favorites::target_ids(db, user, kind)?;
-            candidates.restrict_membership(favorites, favorite, &all)?;
+            let user = cx.viewer.user_db_id("the favorite filter")?;
+            let favorites = lyra_db::favorites::target_ids(cx.db, user, kind)?;
+            restrict(table.slots(&favorites), favorite);
         }
-        if let Some(wanted) = self.listened {
-            let user = viewer.user_db_id("the listened filter")?;
-            candidates.restrict_membership(listened(user)?, wanted, &all)?;
+        if let Some(listened) = self.listened {
+            let user = cx.viewer.user_db_id("the listened filter")?;
+            let tracks = lyra_db::listens::listened_track_ids(cx.db, user)?;
+            restrict(listened_by(&tracks), listened);
         }
+        let rated = |bounds| -> Result<Bits, CatalogError> {
+            let user = cx.viewer.user_db_id("the rating filter")?;
+            Ok(table.slots(&lyra_db::ratings::rated_target_ids(cx.db, user, bounds)?))
+        };
         match self.rating {
             RatingFilter::Any => {}
-            RatingFilter::Rated(bounds) => {
-                let user = viewer.user_db_id("the rating filter")?;
-                candidates.restrict(lyra_db::ratings::rated_target_ids(db, user, bounds)?);
-            }
-            RatingFilter::Unrated => {
-                let user = viewer.user_db_id("the rating filter")?;
-                let rated = lyra_db::ratings::rated_target_ids(db, user, RatingBounds::default())?;
-                candidates.restrict_membership(rated, false, &all)?;
-            }
+            RatingFilter::Rated(bounds) => restrict(rated(bounds)?, true),
+            RatingFilter::Unrated => restrict(rated(RatingBounds::default())?, false),
         }
         Ok(())
+    }
+}
+
+/// What a query reads: the index snapshot its guard sees, the database for the viewer's own
+/// data, and what the viewer may see.
+pub(crate) struct Context<'a> {
+    pub(crate) index: Arc<Snapshot>,
+    pub(crate) db: &'a DbAny,
+    pub(crate) viewer: &'a Viewer,
+    pub(crate) scope: Arc<Scope>,
+}
+
+impl<'a> Context<'a> {
+    /// The links between kinds, as far as the viewer can see them.
+    pub(crate) fn links(&self) -> Scoped<'_> {
+        Scoped::new(&self.index, &self.scope)
+    }
+
+    /// The column of `key` for `table` read through other entities, kept where
+    /// [`Self::cache_for`] says.
+    pub(crate) fn linked_column<'b, K: SortKey>(
+        &'b self,
+        table: &'b Table,
+        key: K,
+        compute: impl FnOnce() -> Vec<u64>,
+    ) -> Column<'b> {
+        let cache = self.cache_for(table);
+        let column = Column::stored(cache, key, compute);
+        self.grown(cache);
+        column
+    }
+
+    /// Keeps the retained scopes within budget after `cache` may have grown.
+    pub(crate) fn grown(&self, cache: &Cache) {
+        if std::ptr::eq(cache, &self.scope.cache) {
+            self.index.trim_scopes(&self.scope);
+        }
+    }
+
+    /// Where to keep values of `table` read through other entities: they are the same for
+    /// everyone who sees every library, and depend on the libraries otherwise.
+    pub(crate) fn cache_for<'b>(&'b self, table: &'b Table) -> &'b Cache {
+        if self.scope.restricted {
+            &self.scope.cache
+        } else {
+            &table.cache
+        }
+    }
+
+    pub(crate) fn new(db: &'a DbAny, viewer: &'a Viewer) -> Result<Self, CatalogError> {
+        Ok(Self::with(super::index::snapshot(db)?, db, viewer))
+    }
+
+    /// A context reading `index`, which must be a snapshot of `db`.
+    pub(crate) fn with(index: Arc<Snapshot>, db: &'a DbAny, viewer: &'a Viewer) -> Self {
+        let scope = index.scope(
+            viewer
+                .restricted()
+                .map(|principal| &principal.accessible_library_ids),
+        );
+        Self {
+            index,
+            db,
+            viewer,
+            scope,
+        }
+    }
+}
+
+/// Where a key's column and orders are kept.
+fn cache_key<K: SortKey>(key: K) -> CacheKey {
+    (std::any::TypeId::of::<K>(), key.position())
+}
+
+/// The values of a sort key by slot, [`MISSING`] where an entity has none.
+pub(crate) enum Column<'a> {
+    /// Values kept in a cache, which orders by them are kept in too.
+    Stored(Arc<[u64]>, &'a Cache),
+    Fields(&'a [u64]),
+    /// Values computed for the query's own slots.
+    Computed(Vec<u64>),
+}
+
+impl<'a> Column<'a> {
+    pub(crate) fn get(&self, slot: u32) -> Option<u64> {
+        let value = match self {
+            Self::Stored(values, _) => values[slot as usize],
+            Self::Fields(values) => values[slot as usize],
+            Self::Computed(values) => values[slot as usize],
+        };
+        (value != MISSING).then_some(value)
+    }
+
+    /// Values kept in `cache` under `key`, computed on first use.
+    pub(crate) fn stored<K: SortKey>(
+        cache: &'a Cache,
+        key: K,
+        compute: impl FnOnce() -> Vec<u64>,
+    ) -> Self {
+        Self::Stored(cache.column(cache_key(key), compute), cache)
+    }
+
+    /// A column over `len` slots with `value` for each of `slots`.
+    pub(crate) fn computed(
+        len: usize,
+        slots: &[u32],
+        mut value: impl FnMut(u32) -> Option<u64>,
+    ) -> Self {
+        let mut values = vec![MISSING; len];
+        for slot in slots {
+            values[*slot as usize] = value(*slot).unwrap_or(MISSING);
+        }
+        Self::Computed(values)
     }
 }
 
@@ -205,28 +320,34 @@ pub(crate) trait Catalog {
     /// The order used when a query names no keys and has no search term.
     fn default_sort(filter: &Self::Filter) -> SortSpec<Self::Key>;
 
-    /// The ids the viewer can see that pass the filter, read from edges and ids only.
-    fn candidates(
-        db: &DbAny,
-        viewer: &Viewer,
-        filter: &Self::Filter,
-    ) -> Result<Vec<DbId>, CatalogError>;
+    fn table(index: &Snapshot) -> &Table;
 
-    /// A row for each candidate id, with a value for each of `keys`.
-    fn rows(
-        db: &DbAny,
-        viewer: &Viewer,
+    /// The slots the viewer can see that pass the filter.
+    fn candidates(cx: &Context<'_>, filter: &Self::Filter) -> Result<Bits, CatalogError>;
+
+    /// The values of a field key for at least `slots`.
+    fn column<'a>(
+        cx: &'a Context<'_>,
         filter: &Self::Filter,
-        ids: Vec<DbId>,
-        keys: &[Self::Key],
-    ) -> Result<Vec<Row>, CatalogError>;
+        key: Self::Key,
+        slots: &[u32],
+    ) -> Result<Column<'a>, CatalogError>;
+
+    /// The slots whose related texts, such as their artists' names, match a search word. Only
+    /// the texts of entities the viewer can see may match.
+    fn related(_cx: &Context<'_>, _word: &Word) -> Option<Bits> {
+        None
+    }
 
     /// The entities with these ids, in this order.
     fn hydrate(db: &DbAny, ids: &[DbId]) -> anyhow::Result<Vec<Self::Item>>;
 
     /// The shuffle unit of each of `ids` that the random key moves with others. Every other id
     /// shuffles alone.
-    fn shuffle_units(_db: &DbAny, _ids: &[DbId]) -> anyhow::Result<HashMap<DbId, ShuffleUnit>> {
+    fn shuffle_units(
+        _cx: &Context<'_>,
+        _ids: &[DbId],
+    ) -> anyhow::Result<HashMap<DbId, ShuffleUnit>> {
         Ok(HashMap::new())
     }
 }
@@ -264,7 +385,7 @@ impl NameRange {
         self.prefix.is_none() && self.at_least.is_none() && self.below.is_none()
     }
 
-    fn contains(&self, sort_name: &str) -> bool {
+    pub(crate) fn contains(&self, sort_name: &str) -> bool {
         self.prefix
             .as_deref()
             .is_none_or(|prefix| sort_name.starts_with(prefix))
@@ -321,8 +442,18 @@ pub(crate) fn leading<C: Catalog>(
     query: &Query<C>,
     keep: Option<usize>,
 ) -> Result<Vec<DbId>, CatalogError> {
-    let (entries, _) = sorted(db, viewer, query, keep)?;
-    Ok(entries.into_iter().map(|entry| entry.row.id).collect())
+    leading_in(&Context::new(db, viewer)?, query, keep)
+}
+
+/// [`leading`] in an existing context.
+pub(crate) fn leading_in<C: Catalog>(
+    cx: &Context<'_>,
+    query: &Query<C>,
+    keep: Option<usize>,
+) -> Result<Vec<DbId>, CatalogError> {
+    let (slots, _) = sorted(cx, query, keep)?;
+    let table = C::table(&cx.index);
+    Ok(slots.into_iter().map(|slot| table.id(slot)).collect())
 }
 
 /// The numeric values of `keys` for each of `ids`, as the catalog computes them to sort by;
@@ -346,7 +477,8 @@ pub(crate) fn counts<C: Catalog>(
 }
 
 /// [`counts`] with a key that has no value for an item, such as a last play that never
-/// happened, left as `None`.
+/// happened, left as `None`. Only the ids the viewer can see come back, and only keys with
+/// numeric values, such as counts and times, have any: a name key reads as `None`.
 pub(crate) fn numbers<C: Catalog>(
     db: &DbAny,
     viewer: &Viewer,
@@ -354,18 +486,38 @@ pub(crate) fn numbers<C: Catalog>(
     ids: Vec<DbId>,
     keys: &[C::Key],
 ) -> Result<HashMap<DbId, Vec<Option<u64>>>, CatalogError> {
-    Ok(C::rows(db, viewer, filter, ids, keys)?
+    numbers_in::<C>(&Context::new(db, viewer)?, filter, ids, keys)
+}
+
+/// [`numbers`] in an existing context.
+pub(crate) fn numbers_in<C: Catalog>(
+    cx: &Context<'_>,
+    filter: &C::Filter,
+    ids: Vec<DbId>,
+    keys: &[C::Key],
+) -> Result<HashMap<DbId, Vec<Option<u64>>>, CatalogError> {
+    let table = C::table(&cx.index);
+    let slots = C::candidates(cx, &C::id_filter(ids))?
+        .iter()
+        .collect::<Vec<_>>();
+    let columns = keys
+        .iter()
+        .map(|key| {
+            (!key.ranked())
+                .then(|| C::column(cx, filter, *key, &slots))
+                .transpose()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(slots
         .into_iter()
-        .map(|row| {
-            let values = row
-                .values
-                .into_iter()
-                .map(|value| match value {
-                    Some(SortValue::Number(number)) => Some(number),
-                    _ => None,
-                })
-                .collect();
-            (row.id, values)
+        .map(|slot| {
+            (
+                table.id(slot),
+                columns
+                    .iter()
+                    .map(|column| column.as_ref().and_then(|column| column.get(slot)))
+                    .collect(),
+            )
         })
         .collect())
 }
@@ -378,111 +530,151 @@ pub(crate) fn page<C: Catalog>(
     offset: u64,
     limit: Option<u64>,
 ) -> Result<Page<C::Item>, CatalogError> {
+    page_in(&Context::new(db, viewer)?, query, offset, limit)
+}
+
+/// [`page`] in an existing context.
+pub(crate) fn page_in<C: Catalog>(
+    cx: &Context<'_>,
+    query: &Query<C>,
+    offset: u64,
+    limit: Option<u64>,
+) -> Result<Page<C::Item>, CatalogError> {
     let offset_len = usize::try_from(offset).unwrap_or(usize::MAX);
     // A page of no items keeps none, wherever it starts.
     let end = limit.map(|limit| match limit {
         0 => 0,
         limit => offset_len.saturating_add(usize::try_from(limit).unwrap_or(usize::MAX)),
     });
-    let (entries, total) = sorted(db, viewer, query, end)?;
-    let ids = entries
+    let (slots, total) = sorted(cx, query, end)?;
+    let table = C::table(&cx.index);
+    let ids = slots
         .into_iter()
         .skip(offset_len)
-        .map(|entry| entry.row.id)
+        .map(|slot| table.id(slot))
         .collect::<Vec<_>>();
     Ok(Page {
-        items: C::hydrate(db, &ids)?,
+        items: C::hydrate(cx.db, &ids)?,
         total: total as u64,
         offset: offset.min(total as u64),
     })
 }
 
 struct Entry {
-    row: Row,
+    hit: Hit,
     unit: ShuffleUnit,
-    score: u32,
-    /// Whether the display name scored `score`, which ranks ahead of a sort name scoring the same.
-    by_name: bool,
 }
 
-/// The matching entries in order, keeping only the first `keep` when given, and the number that
+/// The matching slots in order, keeping only the first `keep` when given, and the number that
 /// match.
 fn sorted<C: Catalog>(
-    db: &DbAny,
-    viewer: &Viewer,
+    cx: &Context<'_>,
     query: &Query<C>,
     keep: Option<usize>,
-) -> Result<(Vec<Entry>, usize), CatalogError> {
-    let search = query
-        .search
-        .as_deref()
-        .map(str::trim)
-        .filter(|term| !term.is_empty());
-    let sort = resolve_sort::<C>(&query.filter, &query.sort, search.is_some())?;
+) -> Result<(Vec<u32>, usize), CatalogError> {
+    let needle = query.search.as_deref().and_then(Needle::parse);
+    let sort = resolve_sort::<C>(&query.filter, &query.sort, needle.is_some())?;
+    // Ties break in name order, so ending on it orders nothing more.
+    let mut keys = sort.as_slice();
+    while let Some(((key, Direction::Ascending), rest)) = keys.split_last()
+        && *key == C::Key::NAME_ORDER
+    {
+        keys = rest;
+    }
 
-    let mut fields = Vec::new();
-    let columns = sort
-        .iter()
-        .map(|(key, _)| {
-            (key.kind() == KeyKind::Field).then(|| {
-                fields
-                    .iter()
-                    .position(|field| field == key)
-                    .unwrap_or_else(|| {
-                        fields.push(*key);
-                        fields.len() - 1
-                    })
+    let table = C::table(&cx.index);
+    let mut candidates = C::candidates(cx, &query.filter)?;
+    if !query.names.is_unbounded() {
+        candidates = Bits::of(
+            table.len(),
+            candidates
+                .iter()
+                .filter(|slot| query.names.contains(table.sort_name(*slot))),
+        );
+    }
+
+    let entries = match &needle {
+        Some(needle) => table
+            .search(needle, &candidates, |word| C::related(cx, word))
+            .into_iter()
+            .map(|hit| Entry {
+                unit: ShuffleUnit {
+                    id: table.id(hit.slot),
+                    place: 0,
+                },
+                hit,
             })
-        })
-        .collect::<Vec<_>>();
+            .collect::<Vec<_>>(),
+        None => {
+            let total = candidates.count();
+            if keep == Some(0) {
+                // Reading no values still raises any error the sort keys would.
+                for (key, _) in keys {
+                    if key.kind() == KeyKind::Field {
+                        C::column(cx, &query.filter, *key, &[])?;
+                    }
+                }
+                return Ok((Vec::new(), total));
+            }
+            if let Some(order) = kept_order::<C>(cx, &query.filter, keys)? {
+                let keep = keep.unwrap_or(usize::MAX).min(total);
+                let mut slots = Vec::with_capacity(keep);
+                for slot in order.iter() {
+                    if slots.len() == keep {
+                        break;
+                    }
+                    if candidates.contains(*slot) {
+                        slots.push(*slot);
+                    }
+                }
+                return Ok((slots, total));
+            }
+            candidates
+                .iter()
+                .map(|slot| Entry {
+                    hit: Hit {
+                        slot,
+                        tier: Tier::Related,
+                        own_words: 0,
+                        by_name: false,
+                    },
+                    unit: ShuffleUnit {
+                        id: table.id(slot),
+                        place: 0,
+                    },
+                })
+                .collect()
+        }
+    };
+    let mut entries = entries;
 
-    let ids = C::candidates(db, viewer, &query.filter)?;
-    // Without a search or name bounds every candidate makes a row, so keeping none needs only the
-    // count. Reading no rows still raises any error the sort keys would.
-    if keep == Some(0) && search.is_none() && query.names.is_unbounded() {
-        C::rows(db, viewer, &query.filter, Vec::new(), &fields)?;
-        return Ok((Vec::new(), ids.len()));
-    }
-    let mut entries = C::rows(db, viewer, &query.filter, ids, &fields)?
-        .into_iter()
-        .filter(|row| query.names.contains(row.sort_name()))
-        .map(|row| Entry {
-            unit: ShuffleUnit {
-                id: row.id,
-                place: 0,
-            },
-            row,
-            score: 0,
-            by_name: false,
-        })
+    let slots = entries
+        .iter()
+        .map(|entry| entry.hit.slot)
         .collect::<Vec<_>>();
-    if let Some(term) = search {
-        crate::services::search::fuzzy_retain(&mut entries, term, |entry, score| {
-            let by_name = score(&entry.row.name);
-            let by_sort_name = (entry.row.sort_name() != entry.row.lower_name())
-                .then(|| score(entry.row.sort_name()))
-                .flatten();
-            let Some(best) = by_name.max(by_sort_name) else {
-                return false;
-            };
-            entry.score = best;
-            entry.by_name = by_name == Some(best);
-            true
-        });
-    }
-
-    if sort.iter().any(|(key, _)| key.kind() == KeyKind::Random) {
-        let ids = entries.iter().map(|entry| entry.row.id).collect::<Vec<_>>();
-        let units = C::shuffle_units(db, &ids)?;
+    let columns = keys
+        .iter()
+        .map(|(key, _)| match key.kind() {
+            KeyKind::Field => C::column(cx, &query.filter, *key, &slots).map(Some),
+            _ => Ok(None),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if keys.iter().any(|(key, _)| key.kind() == KeyKind::Random) {
+        let ids = entries
+            .iter()
+            .map(|entry| entry.unit.id)
+            .collect::<Vec<_>>();
+        let units = C::shuffle_units(cx, &ids)?;
         for entry in &mut entries {
-            if let Some(&unit) = units.get(&entry.row.id) {
+            if let Some(&unit) = units.get(&entry.unit.id) {
                 entry.unit = unit;
             }
         }
     }
 
     let total = entries.len();
-    let compare = |a: &Entry, b: &Entry| compare(a, b, &sort, &columns, query.seed);
+    let compare =
+        |a: &Entry, b: &Entry| compare(a, b, keys, &columns, &table.ids, &table.rank, query.seed);
     if let Some(keep) = keep.filter(|keep| *keep < entries.len()) {
         if keep == 0 {
             entries.clear();
@@ -492,7 +684,55 @@ fn sorted<C: Catalog>(
         }
     }
     entries.sort_by(compare);
-    Ok((entries, total))
+    Ok((
+        entries.into_iter().map(|entry| entry.hit.slot).collect(),
+        total,
+    ))
+}
+
+/// The kept order of every slot under `keys`, when they are one key whose values do not depend
+/// on the viewer or filter, or none.
+fn kept_order<C: Catalog>(
+    cx: &Context<'_>,
+    filter: &C::Filter,
+    keys: &[(C::Key, Direction)],
+) -> Result<Option<Arc<[u32]>>, CatalogError> {
+    let table = C::table(&cx.index);
+    let [(key, direction)] = keys else {
+        return Ok(keys.is_empty().then(|| table.name_order()));
+    };
+    match key.kind() {
+        KeyKind::Id => {
+            let key = cache_key(*key);
+            let ids = table
+                .cache
+                .column(key, || table.ids.iter().map(|id| id.0 as u64).collect());
+            Ok(Some(table.cache.order(
+                key,
+                *direction,
+                false,
+                &ids,
+                &table.rank,
+            )))
+        }
+        KeyKind::Field => {
+            let (values, cache) = match C::column(cx, filter, *key, &[])? {
+                Column::Stored(values, cache) => (values, cache),
+                Column::Fields(values) => (Arc::from(values), &table.cache),
+                Column::Computed(_) => return Ok(None),
+            };
+            let order = cache.order(
+                cache_key(*key),
+                *direction,
+                key.missing_first(),
+                &values,
+                &table.rank,
+            );
+            cx.grown(cache);
+            Ok(Some(order))
+        }
+        KeyKind::Relevance | KeyKind::Random => Ok(None),
+    }
 }
 
 fn resolve_sort<C: Catalog>(
@@ -519,16 +759,20 @@ fn resolve_sort<C: Catalog>(
 fn compare<K: SortKey>(
     a: &Entry,
     b: &Entry,
-    sort: &SortSpec<K>,
-    columns: &[Option<usize>],
+    keys: &[(K, Direction)],
+    columns: &[Option<Column<'_>>],
+    ids: &[DbId],
+    rank: &[u32],
     seed: u64,
 ) -> Ordering {
-    for ((key, direction), column) in sort.iter().zip(columns) {
+    for ((key, direction), column) in keys.iter().zip(columns) {
         let ordering = match (key.kind(), column) {
             (KeyKind::Relevance, _) => direction.apply(
-                b.score
-                    .cmp(&a.score)
-                    .then_with(|| b.by_name.cmp(&a.by_name)),
+                b.hit
+                    .tier
+                    .cmp(&a.hit.tier)
+                    .then_with(|| b.hit.own_words.cmp(&a.hit.own_words))
+                    .then_with(|| b.hit.by_name.cmp(&a.hit.by_name)),
             ),
             // A unit keeps its place order whichever way the units run.
             (KeyKind::Random, _) => direction
@@ -538,10 +782,12 @@ fn compare<K: SortKey>(
                         .then_with(|| a.unit.id.0.cmp(&b.unit.id.0)),
                 )
                 .then_with(|| a.unit.place.cmp(&b.unit.place)),
-            (KeyKind::Id, _) => direction.apply(a.row.id.0.cmp(&b.row.id.0)),
+            (KeyKind::Id, _) => {
+                direction.apply(ids[a.hit.slot as usize].0.cmp(&ids[b.hit.slot as usize].0))
+            }
             (KeyKind::Field, Some(column)) => compare_values(
-                &a.row.values[*column],
-                &b.row.values[*column],
+                column.get(a.hit.slot),
+                column.get(b.hit.slot),
                 *direction,
                 key.missing_first(),
             ),
@@ -551,18 +797,12 @@ fn compare<K: SortKey>(
             return ordering;
         }
     }
-
-    a.row
-        .sort_name()
-        .cmp(b.row.sort_name())
-        .then_with(|| a.row.lower_name().cmp(b.row.lower_name()))
-        .then_with(|| a.row.name.cmp(&b.row.name))
-        .then_with(|| a.row.id.0.cmp(&b.row.id.0))
+    rank[a.hit.slot as usize].cmp(&rank[b.hit.slot as usize])
 }
 
 fn compare_values(
-    a: &Option<SortValue>,
-    b: &Option<SortValue>,
+    a: Option<u64>,
+    b: Option<u64>,
     direction: Direction,
     missing_first: bool,
 ) -> Ordering {
@@ -572,14 +812,14 @@ fn compare_values(
         Ordering::Greater
     };
     match (a, b) {
-        (Some(a), Some(b)) => direction.apply(a.cmp(b)),
+        (Some(a), Some(b)) => direction.apply(a.cmp(&b)),
         (None, Some(_)) => missing,
         (Some(_), None) => missing.reverse(),
         (None, None) => Ordering::Equal,
     }
 }
 
-fn shuffle(seed: u64, id: DbId) -> u64 {
+pub(crate) fn shuffle(seed: u64, id: DbId) -> u64 {
     let mut value = seed ^ (id.0 as u64);
     value = value.wrapping_add(0x9e37_79b9_7f4a_7c15);
     value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
@@ -620,6 +860,248 @@ mod tests {
         order(db, &Viewer::System, &query).expect("search runs")
     }
 
+    /// Two libraries: a viewer granted only "Shown" must not match any text that lives only in
+    /// "Hidden". "Song" sits on a release in each; "Credits" is credited only on the hidden one.
+    struct Split {
+        db: DbAny,
+        shown_id: String,
+        song: DbId,
+        hidden_release: DbId,
+        hidden_artist: DbId,
+    }
+
+    fn split() -> anyhow::Result<Split> {
+        use lyra_db::{
+            fixtures::{
+                connect,
+                connect_credit,
+                insert_artist,
+            },
+            test_db::insert_library,
+        };
+        let mut db = new_test_db()?;
+        let shown = insert_library(&mut db, "Shown", "/split/shown")?;
+        let hidden = insert_library(&mut db, "Hidden", "/split/hidden")?;
+        let shown_release = insert_release(&mut db, "Public")?;
+        let hidden_release = insert_release(&mut db, "Secretcodename")?;
+        connect(&mut db, shown, shown_release)?;
+        connect(&mut db, hidden, hidden_release)?;
+        let song = insert_track(&mut db, "Song")?;
+        connect(&mut db, shown_release, song)?;
+        connect(&mut db, hidden_release, song)?;
+        let hidden_only = insert_track(&mut db, "Lonely")?;
+        connect(&mut db, hidden_release, hidden_only)?;
+        let hidden_artist = insert_artist(&mut db, "Privateartist")?;
+        connect_credit(
+            &mut db,
+            hidden_release,
+            hidden_artist,
+            lyra_db::CreditType::Artist,
+            None,
+            0,
+        )?;
+        let shared_artist = insert_artist(&mut db, "Sharedartist")?;
+        for owner in [shown_release, hidden_release] {
+            connect_credit(
+                &mut db,
+                owner,
+                shared_artist,
+                lyra_db::CreditType::Artist,
+                None,
+                0,
+            )?;
+        }
+        lyra_db::genres::sync_release_genres(&mut db, hidden_release, &["Hiddengenre".into()])?;
+        let shown_id = lyra_db::libraries::get_by_id(&db, shown)?
+            .expect("library exists")
+            .id;
+        Ok(Split {
+            db,
+            shown_id,
+            song,
+            hidden_release,
+            hidden_artist,
+        })
+    }
+
+    fn found<C: Catalog>(db: &DbAny, viewer: &Viewer, term: &str) -> (Vec<DbId>, u64)
+    where
+        C::Filter: Default,
+    {
+        let mut query = Query::<C>::new(C::Filter::default());
+        query.search = Some(term.to_string());
+        let ids = order(db, viewer, &query).expect("search runs");
+        let total = page(db, viewer, &query, 0, Some(1))
+            .expect("search runs")
+            .total;
+        assert_eq!(ids.len() as u64, total);
+        (ids, total)
+    }
+
+    #[test]
+    fn search_matches_only_texts_the_viewer_can_see() -> anyhow::Result<()> {
+        use crate::services::{
+            auth::Principal,
+            catalog::genres::Genres,
+        };
+        let mut split = split()?;
+        let user = lyra_db::test_db::insert_user(&mut split.db, "listener")?;
+        let db = &split.db;
+        let restricted = Viewer::User {
+            principal: Principal::for_user(
+                db,
+                user,
+                Vec::new(),
+                HashSet::from([split.shown_id.clone()]),
+            ),
+            user_db_id: user,
+        };
+        let none = (Vec::new(), 0);
+
+        for term in ["secretcodename", "privateartist", "song secretcodename"] {
+            assert_eq!(found::<Tracks>(db, &restricted, term), none, "{term}");
+        }
+        assert_eq!(
+            found::<Tracks>(db, &restricted, "song"),
+            (vec![split.song], 1)
+        );
+        assert_eq!(
+            found::<Tracks>(db, &restricted, "public"),
+            (vec![split.song], 1)
+        );
+        assert_eq!(
+            found::<Tracks>(db, &restricted, "sharedartist"),
+            (vec![split.song], 1)
+        );
+        assert_eq!(found::<Releases>(db, &restricted, "privateartist"), none);
+        assert_eq!(found::<Releases>(db, &restricted, "secretcodename"), none);
+        assert_eq!(found::<Artists>(db, &restricted, "privateartist"), none);
+        assert_eq!(found::<Genres>(db, &restricted, "hiddengenre"), none);
+
+        let admin = Viewer::System;
+        assert_eq!(found::<Tracks>(db, &admin, "secretcodename").1, 2);
+        assert_eq!(found::<Tracks>(db, &admin, "privateartist").1, 2);
+        assert_eq!(
+            found::<Releases>(db, &admin, "privateartist"),
+            (vec![split.hidden_release], 1)
+        );
+        assert_eq!(
+            found::<Artists>(db, &admin, "privateartist"),
+            (vec![split.hidden_artist], 1)
+        );
+        assert_eq!(found::<Genres>(db, &admin, "hiddengenre").1, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn partial_own_name_matches_rank_above_related_matches() -> anyhow::Result<()> {
+        use lyra_db::fixtures::{
+            connect,
+            connect_credit,
+            insert_artist,
+        };
+        let mut db = new_test_db()?;
+        let radiohead = insert_artist(&mut db, "Radiohead")?;
+        let computer = insert_release(&mut db, "OK Computer")?;
+        connect_credit(
+            &mut db,
+            computer,
+            radiohead,
+            lyra_db::CreditType::Artist,
+            None,
+            0,
+        )?;
+        let mut titled = |title: &str| -> anyhow::Result<DbId> {
+            let track = insert_track(&mut db, title)?;
+            connect(&mut db, computer, track)?;
+            Ok(track)
+        };
+        let airbag = titled("Airbag")?;
+        let ok = titled("OK")?;
+        let karma = titled("Karma Police OK")?;
+        let exact = titled("Radiohead OK")?;
+        let prefix = titled("Radiohead OK Live")?;
+        let words = titled("A Radiohead Live OK")?;
+        let both = titled("OK Radiohead Karma")?;
+        let ids = search::<Tracks>(&db, Default::default(), "radiohead ok");
+        // Exact, name prefix, every word in the name, then some words in the name, each tier in
+        // name order, then matches only through the release and its artist.
+        assert_eq!(ids, [exact, prefix, words, both, karma, ok, airbag]);
+        Ok(())
+    }
+
+    /// The artist name key reads each track's first credited artist, whichever artists and role
+    /// the filter matched it through.
+    #[test]
+    fn artist_name_order_follows_the_lead_credit_under_any_credit_filter() -> anyhow::Result<()> {
+        use crate::services::catalog::{
+            ArtistCredit,
+            CreditRole,
+            tracks::TrackFilter,
+        };
+        use lyra_db::{
+            CreditType,
+            fixtures::{
+                connect,
+                connect_credit,
+                insert_artist,
+            },
+        };
+        let mut db = new_test_db()?;
+        let bach = insert_artist(&mut db, "Bach")?;
+        let release = insert_release(&mut db, "Partitas")?;
+        connect_credit(&mut db, release, bach, CreditType::Composer, None, 0)?;
+        let mut performed = |title: &str, performer: &str| -> anyhow::Result<DbId> {
+            let track = insert_track(&mut db, title)?;
+            connect(&mut db, release, track)?;
+            let performer = insert_artist(&mut db, performer)?;
+            connect_credit(
+                &mut db,
+                track,
+                performer,
+                CreditType::Instrumentalist,
+                None,
+                0,
+            )?;
+            connect_credit(&mut db, track, bach, CreditType::Composer, None, 1)?;
+            Ok(track)
+        };
+        let by_zed = performed("Allemande", "Zed")?;
+        let by_ada = performed("Courante", "Ada")?;
+        let unordered = insert_track(&mut db, "Gigue")?;
+        connect(&mut db, release, unordered)?;
+        connect_credit(
+            &mut db,
+            unordered,
+            bach,
+            CreditType::Instrumentalist,
+            None,
+            0,
+        )?;
+
+        for (role, expected) in [
+            (CreditRole::Track, vec![by_ada, unordered, by_zed]),
+            (CreditRole::Any, vec![by_ada, unordered, by_zed]),
+            (CreditRole::Release, vec![by_ada, unordered, by_zed]),
+        ] {
+            let mut query = Query::<Tracks>::new(TrackFilter {
+                artists: Some(ArtistCredit {
+                    artists: vec![bach],
+                    role,
+                    excluding: None,
+                }),
+                ..TrackFilter::default()
+            });
+            query.sort = vec![(TrackKey::ArtistName, Direction::Ascending)];
+            assert_eq!(order(&db, &Viewer::System, &query)?, expected, "{role:?}");
+            query.sort = vec![(TrackKey::ArtistName, Direction::Descending)];
+            let mut reversed = expected.clone();
+            reversed.reverse();
+            assert_eq!(order(&db, &Viewer::System, &query)?, reversed, "{role:?}");
+        }
+        Ok(())
+    }
+
     /// Inserts a `display` entity and a `transliterated` one whose sort name is `sort`.
     fn insert_pair(
         db: &mut DbAny,
@@ -658,7 +1140,7 @@ mod tests {
         let mut db = new_test_db()?;
         let tracks = insert_pair(
             &mut db,
-            "Tokyo Story",
+            "Tokyo",
             "東京",
             "Tokyo",
             insert_track,
@@ -666,7 +1148,7 @@ mod tests {
         )?;
         let releases = insert_pair(
             &mut db,
-            "Tokyo Story",
+            "Tokyo",
             "東京",
             "Tokyo",
             insert_release,
@@ -674,7 +1156,7 @@ mod tests {
         )?;
         let artists = insert_pair(
             &mut db,
-            "Tokyo Story",
+            "Tokyo",
             "東京",
             "Tokyo",
             insert_credited_artist,
@@ -689,11 +1171,11 @@ mod tests {
             ),
             (search::<Artists>(&db, Default::default(), "tokyo"), artists),
         ] {
-            assert_eq!(found, vec![by_name, by_sort]);
+            assert_eq!(found[..2], [by_name, by_sort]);
         }
         assert_eq!(
-            search::<Tracks>(&db, Default::default(), "東京"),
-            vec![tracks.1]
+            search::<Tracks>(&db, Default::default(), "東京")[0],
+            tracks.1
         );
         Ok(())
     }
@@ -703,7 +1185,7 @@ mod tests {
         let mut db = new_test_db()?;
         let (weak, strong) = insert_pair(
             &mut db,
-            "T o k y o",
+            "Tokyo Nights",
             "東京",
             "Tokyo",
             insert_track,

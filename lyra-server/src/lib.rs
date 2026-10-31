@@ -148,6 +148,7 @@ async fn serve(capture: Option<CaptureArgs>, listener: TcpListener) -> Result<()
         return services::providers::run_capture(library_db_id, &capture.output_path).await;
     }
 
+    services::catalog::index::warm();
     let core_api = routes::build_core_api()?;
     crate::plugins::settings::initialize_registry().await;
 

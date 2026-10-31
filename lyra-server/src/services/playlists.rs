@@ -23,7 +23,7 @@ use crate::services::{
         access,
     },
     catalog::Direction,
-    search::fuzzy_filter,
+    search,
 };
 use lyra_db::{
     Playlist,
@@ -352,7 +352,7 @@ pub(crate) fn list_visible(
 
     // Filter before summarising: discarded playlists should not be walked.
     if let Some(term) = search {
-        fuzzy_filter(
+        search::filter(
             &mut entries,
             term,
             |entry| entry.playlist.name.as_str(),
