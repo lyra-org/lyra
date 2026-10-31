@@ -18,11 +18,17 @@ use anyhow::bail;
 use nanoid::nanoid;
 
 use crate::services::{
-    auth::Principal,
+    auth::{
+        Principal,
+        access,
+    },
     catalog::Direction,
     search::fuzzy_filter,
 };
-use lyra_db::Playlist;
+use lyra_db::{
+    Playlist,
+    favorites::FavoriteKind,
+};
 
 #[derive(Clone, Debug)]
 pub(crate) struct PlaylistTrackLink {
@@ -218,6 +224,8 @@ pub(crate) enum SortKey {
     UpdatedAt,
     TrackCount,
     TotalDuration,
+    /// When the caller first favorited the playlist; unfavorited playlists sort last.
+    FavoritedAt,
     Id,
 }
 
@@ -227,10 +235,19 @@ impl SortKey {
     }
 }
 
+/// Which of the playlists the caller can see a list keeps.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct PlaylistFilter {
+    /// Playlists this user owns.
+    pub(crate) owner: Option<DbId>,
+    pub(crate) favorite: Option<bool>,
+}
+
 struct ListEntry {
     playlist: Playlist,
     sort_name: String,
     summary: PlaylistSummary,
+    favorited_at: Option<i64>,
     match_score: u32,
 }
 
@@ -251,12 +268,20 @@ fn compare_field(a: &ListEntry, b: &ListEntry, key: SortKey) -> Ordering {
             .summary
             .total_duration_ms
             .cmp(&b.summary.total_duration_ms),
+        SortKey::FavoritedAt => a.favorited_at.cmp(&b.favorited_at),
         SortKey::Id => a.playlist.id.cmp(&b.playlist.id),
     }
 }
 
 fn compare_entries(a: &ListEntry, b: &ListEntry, sort: &[(SortKey, Direction)]) -> Ordering {
     for &(key, direction) in sort {
+        if key == SortKey::FavoritedAt {
+            match (a.favorited_at, b.favorited_at) {
+                (Some(_), None) => return Ordering::Less,
+                (None, Some(_)) => return Ordering::Greater,
+                _ => {}
+            }
+        }
         let ord = direction.apply(compare_field(a, b, key));
         if ord != Ordering::Equal {
             return ord;
@@ -270,11 +295,13 @@ fn compare_entries(a: &ListEntry, b: &ListEntry, sort: &[(SortKey, Direction)]) 
         .then_with(|| a.playlist.id.cmp(&b.playlist.id))
 }
 
-/// The principal's playlists matching `search`, ordered by `sort` (by name when
-/// empty), with any summaries the sort computed so callers need not repeat them.
-pub(crate) fn list_owned(
+/// The playlists the principal can see that pass `filter` and match `search`, ordered by
+/// `sort` (by name when empty), with any summaries the sort computed so callers need not
+/// repeat them.
+pub(crate) fn list_visible(
     db: &DbAny,
     principal: &Principal,
+    filter: PlaylistFilter,
     sort: &[(SortKey, Direction)],
     search: Option<&str>,
 ) -> anyhow::Result<(Vec<Playlist>, HashMap<DbId, PlaylistSummary>)> {
@@ -283,15 +310,45 @@ pub(crate) fn list_owned(
     } else {
         sort
     };
-    let mut entries = get_by_user(db, principal.require(db)?)?
-        .into_iter()
-        .map(|playlist| ListEntry {
+    let user_db_id = principal.require(db)?;
+    let candidates = match filter.owner {
+        Some(owner) => get_by_user(db, owner)?,
+        None => list(db)?,
+    };
+    let favorites = match filter.favorite {
+        Some(_) => Some(lyra_db::favorites::target_ids(
+            db,
+            user_db_id,
+            FavoriteKind::Playlist,
+        )?),
+        None => None,
+    };
+    let favorited_at = if sort.iter().any(|(key, _)| *key == SortKey::FavoritedAt) {
+        lyra_db::favorites::first_favorited_at(db, user_db_id, FavoriteKind::Playlist)?
+    } else {
+        HashMap::new()
+    };
+    let mut entries = Vec::new();
+    for playlist in candidates {
+        let Some(playlist_db_id) = playlist.db_id.clone().map(DbId::from) else {
+            continue;
+        };
+        if !access::playlist_visible_to_user(db, user_db_id, playlist_db_id)? {
+            continue;
+        }
+        if let (Some(wanted), Some(favorites)) = (filter.favorite, &favorites)
+            && favorites.contains(&playlist_db_id) != wanted
+        {
+            continue;
+        }
+        entries.push(ListEntry {
             sort_name: playlist.name.to_lowercase(),
+            favorited_at: favorited_at.get(&playlist_db_id).copied(),
             playlist,
             summary: PlaylistSummary::default(),
             match_score: 0,
-        })
-        .collect::<Vec<_>>();
+        });
+    }
 
     // Filter before summarising: discarded playlists should not be walked.
     if let Some(term) = search {
@@ -609,13 +666,13 @@ mod tests {
     }
 
     #[test]
-    fn list_owned_rejects_principal_whose_db_id_was_recycled() -> anyhow::Result<()> {
+    fn list_visible_rejects_principal_whose_db_id_was_recycled() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let (alice, stale) = owner(&mut db)?;
         let replacement = lyra_db::test_db::recycle_user(&mut db, alice, "replacement")?;
         create_playlist(&mut db, replacement, "Replacement's Playlist")?;
 
-        let error = list_owned(&db, &stale, &[], None)
+        let error = list_visible(&db, &stale, PlaylistFilter::default(), &[], None)
             .expect_err("a deleted user's principal must not list its replacement's playlists");
         assert!(matches!(
             error.downcast_ref::<crate::services::auth::AuthError>(),
@@ -625,7 +682,7 @@ mod tests {
     }
 
     #[test]
-    fn list_owned_sorts_by_track_count() -> anyhow::Result<()> {
+    fn list_visible_sorts_by_track_count() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let (user_db_id, principal) = owner(&mut db)?;
         create_playlist(&mut db, user_db_id, "Zebra")?;
@@ -634,12 +691,14 @@ mod tests {
         add_tracks(&mut db, QueryId::Id(filled), &[QueryId::Id(track)], None)?;
 
         let sort = [(SortKey::TrackCount, Direction::Descending)];
-        let (ordered, summaries) = list_owned(&db, &principal, &sort, None)?;
+        let (ordered, summaries) =
+            list_visible(&db, &principal, PlaylistFilter::default(), &sort, None)?;
         assert_eq!(names(&ordered), ["Alpha", "Zebra"]);
         assert_eq!(summaries.get(&filled).map(|s| s.track_count), Some(1));
 
         // An empty sort orders by name, which needs no summaries.
-        let (ordered, summaries) = list_owned(&db, &principal, &[], None)?;
+        let (ordered, summaries) =
+            list_visible(&db, &principal, PlaylistFilter::default(), &[], None)?;
         assert_eq!(names(&ordered), ["Alpha", "Zebra"]);
         assert!(
             summaries.is_empty(),
@@ -650,15 +709,81 @@ mod tests {
     }
 
     #[test]
-    fn list_owned_filters_by_search_term() -> anyhow::Result<()> {
+    fn list_visible_filters_by_search_term() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let (user_db_id, principal) = owner(&mut db)?;
         create_playlist(&mut db, user_db_id, "Late Night Jazz")?;
         create_playlist(&mut db, user_db_id, "Morning Rock")?;
 
-        let (ordered, _) = list_owned(&db, &principal, &[], Some("jazz"))?;
+        let (ordered, _) = list_visible(
+            &db,
+            &principal,
+            PlaylistFilter::default(),
+            &[],
+            Some("jazz"),
+        )?;
         assert_eq!(names(&ordered), ["Late Night Jazz"]);
 
+        Ok(())
+    }
+
+    #[test]
+    fn list_visible_covers_public_playlists_owners_and_favorites() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (user_db_id, principal) = owner(&mut db)?;
+        let other = lyra_db::test_db::insert_user(&mut db, "playlist-other")?;
+        create_playlist(&mut db, user_db_id, "Mine")?;
+        let shared = create_playlist(&mut db, other, "Shared")?;
+        create_playlist(&mut db, other, "Private")?;
+        let mut public = lyra_db::playlists::get_by_id(&db, shared)?.expect("playlist");
+        public.is_public = Some(true);
+        lyra_db::playlists::update(&mut db, &public)?;
+        lyra_db::favorites::add(&mut db, user_db_id, shared, FavoriteKind::Playlist, 1_000)?;
+
+        let list =
+            |db: &DbAny, filter, sort: &[(SortKey, Direction)]| -> anyhow::Result<Vec<String>> {
+                let (ordered, _) = list_visible(db, &principal, filter, sort, None)?;
+                Ok(ordered.into_iter().map(|playlist| playlist.name).collect())
+            };
+        assert_eq!(
+            list(&db, PlaylistFilter::default(), &[])?,
+            ["Mine", "Shared"],
+            "another user's private playlist stays hidden, even from an admin",
+        );
+        let mine = PlaylistFilter {
+            owner: Some(user_db_id),
+            ..PlaylistFilter::default()
+        };
+        assert_eq!(list(&db, mine, &[])?, ["Mine"]);
+        let theirs = PlaylistFilter {
+            owner: Some(other),
+            ..PlaylistFilter::default()
+        };
+        assert_eq!(list(&db, theirs, &[])?, ["Shared"]);
+        let favorite = |favorite| PlaylistFilter {
+            favorite: Some(favorite),
+            ..PlaylistFilter::default()
+        };
+        assert_eq!(list(&db, favorite(true), &[])?, ["Shared"]);
+        assert_eq!(list(&db, favorite(false), &[])?, ["Mine"]);
+        for direction in [Direction::Ascending, Direction::Descending] {
+            assert_eq!(
+                list(
+                    &db,
+                    PlaylistFilter::default(),
+                    &[(SortKey::FavoritedAt, direction)]
+                )?,
+                ["Shared", "Mine"],
+                "unfavorited playlists sort last in both directions",
+            );
+        }
+
+        public.is_public = Some(false);
+        lyra_db::playlists::update(&mut db, &public)?;
+        assert!(
+            list(&db, favorite(true), &[])?.is_empty(),
+            "a favorite that turned private drops out",
+        );
         Ok(())
     }
 

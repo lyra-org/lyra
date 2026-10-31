@@ -212,7 +212,7 @@ struct PlaylistListQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Comma-separated or repeated values: name, created_at, updated_at, track_count, total_duration, id."
+            description = "Comma-separated or repeated values: name, created_at, updated_at, track_count, total_duration, favorited_at, id."
         )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
@@ -222,6 +222,21 @@ struct PlaylistListQuery {
         schemars(description = "Sort direction: ascending or descending.")
     )]
     sort_order: Option<String>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Optional user ID. Keeps only that user's playlists: all of them for the authenticated user, the public ones for anyone else."
+        )
+    )]
+    owner_id: Option<String>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Optional: `true` keeps only playlists the authenticated user has favorited, `false` only those they have not."
+        )
+    )]
+    #[serde(default, deserialize_with = "super::deserialize_optional_scalar")]
+    favorite: Option<bool>,
     #[serde(flatten)]
     page: super::PageQuery,
 }
@@ -283,10 +298,11 @@ fn parse_playlist_sort_specs(
             "updated_at" => Some(PlaylistSortKey::UpdatedAt),
             "track_count" => Some(PlaylistSortKey::TrackCount),
             "total_duration" => Some(PlaylistSortKey::TotalDuration),
+            "favorited_at" => Some(PlaylistSortKey::FavoritedAt),
             "id" => Some(PlaylistSortKey::Id),
             _ => None,
         },
-        "name, created_at, updated_at, track_count, total_duration, id",
+        "name, created_at, updated_at, track_count, total_duration, favorited_at, id",
     )
 }
 
@@ -295,6 +311,14 @@ fn now_epoch() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+/// The user an `owner_id` filter names.
+fn resolve_owner_filter(db: &agdb::DbAny, owner_id: &str) -> Result<DbId, AppError> {
+    let not_found = || AppError::not_found(format!("User not found: {owner_id}"));
+    let owner_db_id = lyra_db::lookup::find_node_id_by_id(db, owner_id)?.ok_or_else(not_found)?;
+    lyra_db::users::get_by_id(db, owner_db_id)?.ok_or_else(not_found)?;
+    Ok(owner_db_id)
 }
 
 fn resolve_owner_id(db: &agdb::DbAny, owner_db_id: Option<DbId>) -> anyhow::Result<Option<String>> {
@@ -512,6 +536,8 @@ async fn get_playlists(
         query,
         sort_by,
         sort_order,
+        owner_id,
+        favorite,
         page,
     } = query;
     let principal = require_principal(bearer_credential(&headers)).await?;
@@ -522,35 +548,46 @@ async fn get_playlists(
         .field(search_term.as_deref())
         .values(sort_by.as_deref())
         .field(sort_order.as_deref())
+        .field(owner_id.as_deref())
+        .flag(favorite)
         .finish();
     let sort = parse_playlist_sort_specs(sort_by, sort_order)?;
 
     let db = &*STATE.db.read().await;
-    let (page_playlists, next_cursor, mut summaries) =
-        if let Some(page) = page_request.resume(&snapshot_key)? {
-            let user_db_id = principal.require(db)?;
-            let playlists_page = super::load_snapshot_items(
-                db,
-                &page.item_ids,
-                lyra_db::playlists::get_by_id,
-                |db, playlist_db_id| {
-                    Ok(lyra_db::playlists::get_owner(db, playlist_db_id)? == Some(user_db_id))
-                },
-            )?;
-            (playlists_page, page.next_cursor, HashMap::new())
-        } else {
-            let (mut playlists_page, summaries) =
-                playlists::list_owned(db, &principal, &sort, search_term.as_deref())?;
-            let page = page_request.start(
-                &snapshot_key,
-                playlists_page
-                    .iter()
-                    .map(|playlist| playlist.id.clone())
-                    .collect(),
-            )?;
-            playlists_page.truncate(page.item_ids.len());
-            (playlists_page, page.next_cursor, summaries)
-        };
+    let owner = owner_id
+        .as_deref()
+        .map(|owner_id| resolve_owner_filter(db, owner_id))
+        .transpose()?;
+    let (page_playlists, next_cursor, mut summaries) = if let Some(page) =
+        page_request.resume(&snapshot_key)?
+    {
+        let playlists_page = super::load_snapshot_items(
+            db,
+            &page.item_ids,
+            lyra_db::playlists::get_by_id,
+            |db, playlist_db_id| {
+                crate::services::auth::access::playlist_accessible(db, &principal, playlist_db_id)
+            },
+        )?;
+        (playlists_page, page.next_cursor, HashMap::new())
+    } else {
+        let (mut playlists_page, summaries) = playlists::list_visible(
+            db,
+            &principal,
+            playlists::PlaylistFilter { owner, favorite },
+            &sort,
+            search_term.as_deref(),
+        )?;
+        let page = page_request.start(
+            &snapshot_key,
+            playlists_page
+                .iter()
+                .map(|playlist| playlist.id.clone())
+                .collect(),
+        )?;
+        playlists_page.truncate(page.item_ids.len());
+        (playlists_page, page.next_cursor, summaries)
+    };
 
     let playlist_db_ids = page_playlists
         .iter()
@@ -590,11 +627,13 @@ async fn get_playlists(
                 .cloned()
                 .map(|resolved| route_covers::cover_to_response(resolved.cover))
         });
+        let owner_id =
+            resolve_owner_id(db, playlists::get_owner(db, QueryId::Id(playlist_db_id))?)?;
         items.push(playlist_to_response(
             playlist,
             tracks,
             cover,
-            Some(principal.user_public_id.clone()),
+            owner_id,
             summaries.get(&playlist_db_id).copied().unwrap_or_default(),
         ));
     }
@@ -874,7 +913,7 @@ fn create_playlist_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn list_playlists_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List playlists")
-        .description("Returns a cursor-paginated page of playlists owned by the authenticated user. Track counts and durations are always included. Use `inc` to include tracks, artists, releases, covers.")
+        .description("Returns a cursor-paginated page of the playlists the authenticated user can see: their own and every public playlist. `owner_id` keeps one user's playlists; pass the authenticated user's ID for their own. `favorite=true` keeps only playlists the user has favorited and `favorite=false` the rest. `sort_by` supports `name`, `created_at`, `updated_at`, `track_count`, `total_duration`, `favorited_at` (when the user first favorited the playlist; unfavorited playlists sort last in both directions), and `id`. Track counts and durations are always included. Use `inc` to include tracks, artists, releases, covers.")
 }
 
 #[cfg(feature = "docgen")]
