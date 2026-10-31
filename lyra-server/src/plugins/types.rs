@@ -233,6 +233,13 @@ mirror_string_enum!(LuauPlaybackState for lyra_db::PlaybackState, "PlaybackState
 ]);
 
 mirror_string_enum!(
+    LuauRemoteAction for crate::services::remote::constants::RemoteAction,
+    "RemoteAction",
+    description = "A remote control command a connection can accept.",
+    [Play, Pause, Unpause, Stop, Seek, NextTrack, PreviousTrack, SetVolume, HandoffQueue]
+);
+
+mirror_string_enum!(
     LuauPlaybackEvent for crate::services::playback_sessions::PlaybackEvent,
     "PlaybackEvent",
     description = "Playback event reported by plugin helpers.",

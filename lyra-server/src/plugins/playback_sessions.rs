@@ -32,6 +32,7 @@ use crate::{
         types::{
             LuauPlaybackEvent,
             LuauPlaybackState,
+            LuauRemoteAction,
         },
     },
     services::{
@@ -69,7 +70,7 @@ struct PlaybackSessionReportRequest {
 #[derive(Clone, Debug, Deserialize)]
 struct SendCommandRequest {
     connection_id: String,
-    action: String,
+    action: RemoteAction,
     position_ms: Option<u64>,
     level: Option<f32>,
     playback_id: Option<String>,
@@ -81,7 +82,7 @@ struct PlaybackInfo {
     track_public_id: String,
     position_ms: u64,
     duration_ms: Option<u64>,
-    state: String,
+    state: lyra_db::PlaybackState,
 }
 
 #[derive(Serialize)]
@@ -89,7 +90,7 @@ struct ConnectionInfo {
     id: String,
     session_key: String,
     client_name: Option<String>,
-    supported_commands: Vec<String>,
+    supported_commands: Vec<RemoteAction>,
     playback_id: Option<String>,
     playback: Option<PlaybackInfo>,
     remote_control_degraded: bool,
@@ -256,7 +257,7 @@ impl PlaybackSessionsModule {
                     track_public_id: current.track_public_id,
                     position_ms: current.playback.position_ms,
                     duration_ms: current.playback.duration_ms,
-                    state: playback_state_string(current.playback.state),
+                    state: current.playback.state,
                 });
             result.push(ConnectionInfo {
                 playback_id: connection.playback_id().map(str::to_string),
@@ -264,11 +265,7 @@ impl PlaybackSessionsModule {
                 id: connection.id,
                 session_key: connection.session_key,
                 client_name: connection.client_name,
-                supported_commands: connection
-                    .supported_commands
-                    .iter()
-                    .map(remote_action_string)
-                    .collect(),
+                supported_commands: connection.supported_commands,
                 remote_control_degraded: connection.remote_control_degraded,
                 connected_at_ms: connection.connected_at_ms,
             });
@@ -289,11 +286,7 @@ impl PlaybackSessionsModule {
         let db = db.read().await;
         crate::plugins::auth::require_user_db_id(&principal, &db)?;
         let connection_id = require_non_empty_string(request.connection_id, "connection_id")?;
-        let action_str = require_non_empty_string(request.action, "action")?;
-        let action: RemoteAction = serde_json::from_value(serde_json::Value::String(
-            action_str.clone(),
-        ))
-        .map_err(|_| crate::plugins::runtime_error(format!("unknown action: {action_str}")))?;
+        let action = request.action;
 
         let target = registry::resolve_public_id(&connection_id)
             .await
@@ -306,7 +299,8 @@ impl PlaybackSessionsModule {
         }
         if !target.supported_commands.contains(&action) {
             return Err(crate::plugins::runtime_error(format!(
-                "target does not support command: {action_str}"
+                "target does not support command: {}",
+                harmony_luau::StringEnum::as_str(&LuauRemoteAction::from(action))
             )));
         }
 
@@ -396,20 +390,6 @@ fn require_non_empty_string(value: String, field_name: &str) -> luau::runtime::R
     Ok(value)
 }
 
-fn remote_action_string(action: &RemoteAction) -> String {
-    serde_json::to_value(action)
-        .ok()
-        .and_then(|value| value.as_str().map(String::from))
-        .unwrap_or_default()
-}
-
-fn playback_state_string(state: lyra_db::PlaybackState) -> String {
-    serde_json::to_value(state)
-        .ok()
-        .and_then(|value| value.as_str().map(String::from))
-        .unwrap_or_default()
-}
-
 #[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
@@ -418,6 +398,7 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
             PlaybackUpdateHandler::type_alias_descriptor(),
             LuauPlaybackEvent::type_alias_descriptor(),
             LuauPlaybackState::type_alias_descriptor(),
+            LuauRemoteAction::type_alias_descriptor(),
         ],
         &[
             LuauPlaybackUpdatePayload::interface_descriptor(),
@@ -487,7 +468,7 @@ impl DescribeInterface for SendCommandRequest {
             },
             FieldDescriptor {
                 name: "action",
-                ty: String::luau_type(),
+                ty: LuauRemoteAction::luau_type(),
                 description: None,
             },
             FieldDescriptor {
@@ -542,7 +523,7 @@ impl DescribeInterface for PlaybackInfo {
             },
             FieldDescriptor {
                 name: "state",
-                ty: String::luau_type(),
+                ty: LuauPlaybackState::luau_type(),
                 description: None,
             },
         ]);
@@ -580,7 +561,7 @@ impl DescribeInterface for ConnectionInfo {
             },
             FieldDescriptor {
                 name: "supported_commands",
-                ty: Vec::<String>::luau_type(),
+                ty: Vec::<LuauRemoteAction>::luau_type(),
                 description: None,
             },
             FieldDescriptor {
