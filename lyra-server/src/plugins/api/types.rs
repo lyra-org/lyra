@@ -9,10 +9,18 @@ use harmony_luau::{
     LuauTypeInfo,
 };
 
-#[cfg(feature = "docgen")]
-pub(super) struct ApiMethod;
-#[cfg(feature = "docgen")]
-pub(super) struct ApiRouteAuthMode;
+#[harmony_macros::string_enum(rename_all = "UPPERCASE", description = "HTTP method name.")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ApiMethod {
+    Get,
+    Post,
+    Put,
+    Patch,
+    Delete,
+    Head,
+    Options,
+}
+
 #[cfg(feature = "docgen")]
 pub(super) struct ApiHeaders;
 #[cfg(feature = "docgen")]
@@ -43,20 +51,6 @@ pub(super) struct TrackServeOptions;
 pub(super) struct TrackStreamOptions;
 #[cfg(feature = "docgen")]
 pub(super) struct HlsServeOptions;
-
-#[cfg(feature = "docgen")]
-impl LuauTypeInfo for ApiMethod {
-    fn luau_type() -> LuauType {
-        LuauType::literal("ApiMethod")
-    }
-}
-
-#[cfg(feature = "docgen")]
-impl LuauTypeInfo for ApiRouteAuthMode {
-    fn luau_type() -> LuauType {
-        LuauType::literal("ApiRouteAuthMode")
-    }
-}
 
 #[cfg(feature = "docgen")]
 impl LuauTypeInfo for ApiHeaders {

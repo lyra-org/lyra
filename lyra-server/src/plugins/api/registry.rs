@@ -4,6 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 use futures::future::BoxFuture;
+use harmony_luau::StringEnum;
 
 use super::*;
 use crate::{
@@ -26,10 +27,10 @@ pub(crate) struct ApiRouteStore {
 
 pub(super) struct ApiRouteRegistration {
     pub(super) plugin_id: Arc<str>,
-    pub(super) method: &'static str,
+    pub(super) method: ApiMethod,
     pub(super) path: String,
     pub(super) handler: luau::Function,
-    pub(super) auth_mode: Option<String>,
+    pub(super) auth_mode: Option<RouteAuthMode>,
     pub(super) case_insensitive: bool,
     pub(super) context: harmony_core::CallContext,
 }
@@ -52,11 +53,11 @@ impl ApiRouteStore {
             context,
         } = registration;
         let key = if case_insensitive {
-            RouteKey::new_case_insensitive(method, &path)
+            RouteKey::new_case_insensitive(method.as_str(), &path)
         } else {
-            RouteKey::new(method, &path)
+            RouteKey::new(method.as_str(), &path)
         }?;
-        let auth_mode = normalize_auth_mode(auth_mode.as_deref())?;
+        let auth_mode = auth_mode.unwrap_or(RouteAuthMode::Required);
         let plugin = crate::services::plugin_scope::PluginId::new(plugin_id.to_string())?;
 
         let handler = self
@@ -84,11 +85,11 @@ impl ApiRouteStore {
         plugin_id: Arc<str>,
         path: String,
         handler: luau::Function,
-        auth_mode: Option<String>,
+        auth_mode: Option<RouteAuthMode>,
         context: harmony_core::CallContext,
     ) -> luau::runtime::Result<()> {
         let key = RouteKey::new("GET", &path)?;
-        let auth_mode = normalize_auth_mode(auth_mode.as_deref())?;
+        let auth_mode = auth_mode.unwrap_or(RouteAuthMode::Required);
         let plugin = crate::services::plugin_scope::PluginId::new(plugin_id.to_string())?;
 
         let handler = self
@@ -148,7 +149,11 @@ pub(super) fn api_route_registry() -> Arc<tokio::sync::RwLock<ApiRouteRegistry>>
     crate::plugins::STATE.generation().api.registry.clone()
 }
 
-#[derive(Clone, Debug)]
+#[harmony_macros::string_enum(
+    name = "ApiRouteAuthMode",
+    description = "Declared plugin route auth policy. Defaults to \"required\"."
+)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum RouteAuthMode {
     Public,
     Required,

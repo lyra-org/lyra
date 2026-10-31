@@ -29,18 +29,17 @@ pub(crate) use self::route_key::{
     RouteKey,
     placeholder_offset,
 };
+use self::types::ApiMethod;
 #[cfg(feature = "docgen")]
 use self::types::{
     ApiAuth,
     ApiContext,
     ApiHandler,
     ApiHeaders,
-    ApiMethod,
     ApiPathParams,
     ApiQueryParams,
     ApiRequest,
     ApiResponse,
-    ApiRouteAuthMode,
     ApiWebSocketHandler,
     ApiWebSocketReader,
     ApiWebSocketSender,
@@ -125,16 +124,6 @@ pub(crate) async fn teardown_plugin_routes(plugin_id: &crate::services::plugin_s
         .unwrap_or_else(|err| panic!("router rebuild must not fail post-teardown: {err}"));
 }
 
-/// An HTTP method name, normalized.
-struct Method(&'static str);
-
-impl<'vm> luau::FromLuau<'vm> for Method {
-    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
-        let method: String = reader.read()?;
-        normalize_api_method(&method).map(Self)
-    }
-}
-
 /// An HTTP status code argument.
 struct Status(u16);
 
@@ -169,13 +158,13 @@ pub(crate) struct ApiModule;
 impl ApiModule {
     #[harmony(
         description = "Registers a plugin API route.",
-        args(method: ApiMethod, path: String, handler: ApiHandler, auth_mode: Option<ApiRouteAuthMode>, case_insensitive: Option<bool>)
+        args(method: ApiMethod, path: String, handler: ApiHandler, auth_mode: Option<RouteAuthMode>, case_insensitive: Option<bool>)
     )]
     fn route(
-        method: Method,
+        method: ApiMethod,
         path: String,
         handler: luau::Function,
-        auth_mode: Option<String>,
+        auth_mode: Option<RouteAuthMode>,
         case_insensitive: Option<bool>,
         context: &luau::CallContext,
         vm: &luau::Vm,
@@ -183,7 +172,7 @@ impl ApiModule {
         register_route(
             vm,
             context,
-            method.0,
+            method,
             path,
             handler,
             auth_mode,
@@ -193,12 +182,12 @@ impl ApiModule {
 
     #[harmony(
         description = "Registers a GET API route.",
-        args(path: String, handler: ApiHandler, auth_mode: Option<ApiRouteAuthMode>, case_insensitive: Option<bool>)
+        args(path: String, handler: ApiHandler, auth_mode: Option<RouteAuthMode>, case_insensitive: Option<bool>)
     )]
     fn get(
         path: String,
         handler: luau::Function,
-        auth_mode: Option<String>,
+        auth_mode: Option<RouteAuthMode>,
         case_insensitive: Option<bool>,
         context: &luau::CallContext,
         vm: &luau::Vm,
@@ -206,7 +195,7 @@ impl ApiModule {
         register_route(
             vm,
             context,
-            "GET",
+            ApiMethod::Get,
             path,
             handler,
             auth_mode,
@@ -216,12 +205,12 @@ impl ApiModule {
 
     #[harmony(
         description = "Registers a POST API route.",
-        args(path: String, handler: ApiHandler, auth_mode: Option<ApiRouteAuthMode>, case_insensitive: Option<bool>)
+        args(path: String, handler: ApiHandler, auth_mode: Option<RouteAuthMode>, case_insensitive: Option<bool>)
     )]
     fn post(
         path: String,
         handler: luau::Function,
-        auth_mode: Option<String>,
+        auth_mode: Option<RouteAuthMode>,
         case_insensitive: Option<bool>,
         context: &luau::CallContext,
         vm: &luau::Vm,
@@ -229,7 +218,7 @@ impl ApiModule {
         register_route(
             vm,
             context,
-            "POST",
+            ApiMethod::Post,
             path,
             handler,
             auth_mode,
@@ -239,12 +228,12 @@ impl ApiModule {
 
     #[harmony(
         description = "Registers a PUT API route.",
-        args(path: String, handler: ApiHandler, auth_mode: Option<ApiRouteAuthMode>, case_insensitive: Option<bool>)
+        args(path: String, handler: ApiHandler, auth_mode: Option<RouteAuthMode>, case_insensitive: Option<bool>)
     )]
     fn put(
         path: String,
         handler: luau::Function,
-        auth_mode: Option<String>,
+        auth_mode: Option<RouteAuthMode>,
         case_insensitive: Option<bool>,
         context: &luau::CallContext,
         vm: &luau::Vm,
@@ -252,7 +241,7 @@ impl ApiModule {
         register_route(
             vm,
             context,
-            "PUT",
+            ApiMethod::Put,
             path,
             handler,
             auth_mode,
@@ -262,12 +251,12 @@ impl ApiModule {
 
     #[harmony(
         description = "Registers a PATCH API route.",
-        args(path: String, handler: ApiHandler, auth_mode: Option<ApiRouteAuthMode>, case_insensitive: Option<bool>)
+        args(path: String, handler: ApiHandler, auth_mode: Option<RouteAuthMode>, case_insensitive: Option<bool>)
     )]
     fn patch(
         path: String,
         handler: luau::Function,
-        auth_mode: Option<String>,
+        auth_mode: Option<RouteAuthMode>,
         case_insensitive: Option<bool>,
         context: &luau::CallContext,
         vm: &luau::Vm,
@@ -275,7 +264,7 @@ impl ApiModule {
         register_route(
             vm,
             context,
-            "PATCH",
+            ApiMethod::Patch,
             path,
             handler,
             auth_mode,
@@ -285,12 +274,12 @@ impl ApiModule {
 
     #[harmony(
         description = "Registers a DELETE API route.",
-        args(path: String, handler: ApiHandler, auth_mode: Option<ApiRouteAuthMode>, case_insensitive: Option<bool>)
+        args(path: String, handler: ApiHandler, auth_mode: Option<RouteAuthMode>, case_insensitive: Option<bool>)
     )]
     fn delete(
         path: String,
         handler: luau::Function,
-        auth_mode: Option<String>,
+        auth_mode: Option<RouteAuthMode>,
         case_insensitive: Option<bool>,
         context: &luau::CallContext,
         vm: &luau::Vm,
@@ -298,7 +287,7 @@ impl ApiModule {
         register_route(
             vm,
             context,
-            "DELETE",
+            ApiMethod::Delete,
             path,
             handler,
             auth_mode,
@@ -308,12 +297,12 @@ impl ApiModule {
 
     #[harmony(
         description = "Registers a HEAD API route.",
-        args(path: String, handler: ApiHandler, auth_mode: Option<ApiRouteAuthMode>, case_insensitive: Option<bool>)
+        args(path: String, handler: ApiHandler, auth_mode: Option<RouteAuthMode>, case_insensitive: Option<bool>)
     )]
     fn head(
         path: String,
         handler: luau::Function,
-        auth_mode: Option<String>,
+        auth_mode: Option<RouteAuthMode>,
         case_insensitive: Option<bool>,
         context: &luau::CallContext,
         vm: &luau::Vm,
@@ -321,7 +310,7 @@ impl ApiModule {
         register_route(
             vm,
             context,
-            "HEAD",
+            ApiMethod::Head,
             path,
             handler,
             auth_mode,
@@ -331,12 +320,12 @@ impl ApiModule {
 
     #[harmony(
         description = "Registers an OPTIONS API route.",
-        args(path: String, handler: ApiHandler, auth_mode: Option<ApiRouteAuthMode>, case_insensitive: Option<bool>)
+        args(path: String, handler: ApiHandler, auth_mode: Option<RouteAuthMode>, case_insensitive: Option<bool>)
     )]
     fn options(
         path: String,
         handler: luau::Function,
-        auth_mode: Option<String>,
+        auth_mode: Option<RouteAuthMode>,
         case_insensitive: Option<bool>,
         context: &luau::CallContext,
         vm: &luau::Vm,
@@ -344,7 +333,7 @@ impl ApiModule {
         register_route(
             vm,
             context,
-            "OPTIONS",
+            ApiMethod::Options,
             path,
             handler,
             auth_mode,
@@ -354,12 +343,12 @@ impl ApiModule {
 
     #[harmony(
         description = "Registers a plugin WebSocket route.",
-        args(path: String, handler: ApiWebSocketHandler, auth_mode: Option<ApiRouteAuthMode>)
+        args(path: String, handler: ApiWebSocketHandler, auth_mode: Option<RouteAuthMode>)
     )]
     fn websocket(
         path: String,
         handler: luau::Function,
-        auth_mode: Option<String>,
+        auth_mode: Option<RouteAuthMode>,
         context: &luau::CallContext,
         vm: &luau::Vm,
     ) -> luau::runtime::Result<()> {
@@ -630,10 +619,10 @@ impl ApiModule {
 fn register_route(
     vm: &luau::Vm,
     context: &luau::CallContext,
-    method: &'static str,
+    method: ApiMethod,
     path: String,
     handler: luau::Function,
-    auth_mode: Option<String>,
+    auth_mode: Option<RouteAuthMode>,
     case_insensitive: Option<bool>,
 ) -> luau::runtime::Result<()> {
     let plugin_id = context.origin.plugin.clone().ok_or_else(|| {
@@ -780,60 +769,11 @@ fn parse_query_bool(value: &str) -> Option<bool> {
     }
 }
 
-fn normalize_api_method(method: &str) -> luau::runtime::Result<&'static str> {
-    match method.trim().to_ascii_uppercase().as_str() {
-        "GET" => Ok("GET"),
-        "POST" => Ok("POST"),
-        "PUT" => Ok("PUT"),
-        "PATCH" => Ok("PATCH"),
-        "DELETE" => Ok("DELETE"),
-        "HEAD" => Ok("HEAD"),
-        "OPTIONS" => Ok("OPTIONS"),
-        _ => Err(crate::plugins::runtime_error(format!(
-            "unsupported API method: {method}"
-        ))),
-    }
-}
-
-fn normalize_auth_mode(auth_mode: Option<&str>) -> luau::runtime::Result<RouteAuthMode> {
-    match auth_mode
-        .map(str::trim)
-        .filter(|mode| !mode.is_empty())
-        .map(str::to_ascii_lowercase)
-        .as_deref()
-    {
-        None | Some("required") => Ok(RouteAuthMode::Required),
-        Some("public") => Ok(RouteAuthMode::Public),
-        Some(other) => Err(crate::plugins::runtime_error(format!(
-            "unsupported auth mode '{other}'; expected 'public' or 'required'"
-        ))),
-    }
-}
-
 #[cfg(feature = "docgen")]
 fn support_aliases() -> Vec<TypeAliasDescriptor> {
     let mut aliases = vec![
-        TypeAliasDescriptor::new(
-            "ApiMethod",
-            LuauType::union(vec![
-                LuauType::literal("\"GET\""),
-                LuauType::literal("\"POST\""),
-                LuauType::literal("\"PUT\""),
-                LuauType::literal("\"PATCH\""),
-                LuauType::literal("\"DELETE\""),
-                LuauType::literal("\"HEAD\""),
-                LuauType::literal("\"OPTIONS\""),
-            ]),
-            Some("HTTP method name."),
-        ),
-        TypeAliasDescriptor::new(
-            "ApiRouteAuthMode",
-            LuauType::union(vec![
-                LuauType::literal("\"public\""),
-                LuauType::literal("\"required\""),
-            ]),
-            Some("Declared plugin route auth policy. Defaults to \"required\"."),
-        ),
+        ApiMethod::type_alias_descriptor(),
+        RouteAuthMode::type_alias_descriptor(),
         TypeAliasDescriptor::new(
             "ApiHeaders",
             LuauType::map(String::luau_type(), String::luau_type()),
