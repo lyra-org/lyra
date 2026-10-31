@@ -37,8 +37,12 @@ A REST path says whose data it touches:
 A shared resource looks the same to every caller. The caller's state about it, such as
 their rating or whether they favorited it, and aggregates such as average ratings come from
 batch lookups by ID (`POST /api/me/ratings/check`, `POST /api/ratings/averages`), not from
-fields on the resource. `inc` only includes related resources. List endpoints may filter and
-sort by the caller's state, as with `rated`, `favorite`, `listened` and `sort_by=rated_at`.
+fields on the resource. `inc` only includes related resources.
+
+Browsing by the caller's state goes through the shared list endpoints, which filter and sort
+by it: `rated`, `favorite`, `listened`, `sort_by=rated_at` and `sort_by=favorited_at`, as in
+`GET /api/tracks?favorite=true&sort_by=favorited_at`. `/api/me` holds no second list of the
+same entities.
 
 ### Routing
 

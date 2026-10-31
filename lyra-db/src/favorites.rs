@@ -196,47 +196,6 @@ pub fn for_targets(
         .collect())
 }
 
-/// Favorite edges for a user, by `first_favorited_at_ms DESC, target_db_id ASC`.
-pub fn list(
-    db: &impl DbAccess,
-    user_db_id: DbId,
-    kind: FavoriteKind,
-) -> anyhow::Result<Vec<FavoriteEdge>> {
-    let mut edges: Vec<FavoriteEdge> = read_outbound_favorite_edges(db, user_db_id)?
-        .into_iter()
-        .filter_map(parse_favorite_edge)
-        .filter(|edge| edge.kind == kind)
-        .collect();
-
-    edges.sort_by(|a, b| {
-        b.first_favorited_at_ms
-            .cmp(&a.first_favorited_at_ms)
-            .then_with(|| a.target_db_id.0.cmp(&b.target_db_id.0))
-    });
-
-    Ok(edges)
-}
-
-pub fn get_by_ids(
-    db: &impl DbAccess,
-    user_db_id: DbId,
-    kind: FavoriteKind,
-    edge_ids: &[DbId],
-) -> anyhow::Result<HashMap<DbId, FavoriteEdge>> {
-    if edge_ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-    Ok(db
-        .exec(QueryBuilder::select().ids(edge_ids).query())?
-        .elements
-        .into_iter()
-        .filter(|element| element.from == user_db_id)
-        .filter_map(parse_favorite_edge)
-        .filter(|edge| edge.kind == kind)
-        .map(|edge| (edge.db_id, edge))
-        .collect())
-}
-
 /// Every favorite target DbId for a user+kind. Errs above [`LIST_IDS_CAP`].
 pub fn list_ids(
     db: &impl DbAccess,
@@ -598,13 +557,13 @@ mod tests {
             "user A's favorite must not leak to user B via for_targets"
         );
 
-        let a_list = list(&db, user_a, FavoriteKind::Track)?;
-        let b_list = list(&db, user_b, FavoriteKind::Track)?;
-        assert_eq!(a_list.len(), 1);
         assert_eq!(
-            b_list.len(),
-            0,
-            "user A's favorite must not leak to user B via list"
+            first_favorited_at(&db, user_a, FavoriteKind::Track)?,
+            HashMap::from([(track, 1000)])
+        );
+        assert!(
+            first_favorited_at(&db, user_b, FavoriteKind::Track)?.is_empty(),
+            "user A's favorite must not leak to user B via first_favorited_at"
         );
 
         let b_ids = list_ids(&db, user_b, FavoriteKind::Track)?;
@@ -646,27 +605,6 @@ mod tests {
             HashMap::from([(track_a, 1000), (track_b, 2000)]),
             "a refresh keeps the first time, and other kinds stay out",
         );
-
-        Ok(())
-    }
-
-    #[test]
-    fn list_orders_by_first_favorited_desc() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        let user = create_test_user(&mut db)?;
-        let track_a = create_test_track(&mut db)?;
-        let track_b = create_test_track(&mut db)?;
-        let track_c = create_test_track(&mut db)?;
-
-        add(&mut db, user, track_a, FavoriteKind::Track, 1000)?;
-        add(&mut db, user, track_b, FavoriteKind::Track, 2000)?;
-        add(&mut db, user, track_c, FavoriteKind::Track, 3000)?;
-
-        let items = list(&db, user, FavoriteKind::Track)?;
-        assert_eq!(items.len(), 3);
-        assert_eq!(items[0].target_db_id, track_c);
-        assert_eq!(items[1].target_db_id, track_b);
-        assert_eq!(items[2].target_db_id, track_a);
 
         Ok(())
     }
@@ -807,8 +745,8 @@ mod tests {
             "favorite edge must be removed when the playlist is deleted",
         );
         assert!(
-            list(&db, user, FavoriteKind::Playlist)?.is_empty(),
-            "list must not return edges whose target has been deleted",
+            target_ids(&db, user, FavoriteKind::Playlist)?.is_empty(),
+            "no edge may remain whose target has been deleted",
         );
 
         Ok(())

@@ -356,7 +356,6 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("DELETE", "/api/me/api-keys/{api_key_id}"),
     ("GET", "/api/me/listens"),
     ("POST", "/api/me/listens"),
-    ("GET", "/api/me/favorites/"),
     ("POST", "/api/me/favorites/check"),
     ("GET", "/api/me/favorites/{target_id}"),
     ("PUT", "/api/me/favorites/{target_id}"),

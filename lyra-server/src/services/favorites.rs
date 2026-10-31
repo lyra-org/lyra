@@ -30,21 +30,6 @@ pub(crate) enum MutationOutcome {
     NotTargetable,
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct ListItem {
-    pub(crate) edge_db_id: DbId,
-    pub(crate) target_id: String,
-    pub(crate) kind: FavoriteKind,
-    pub(crate) first_favorited_at_ms: i64,
-    pub(crate) last_refreshed_at_ms: i64,
-}
-
-impl ListItem {
-    pub(crate) fn snapshot_id(&self) -> String {
-        format!("{}:{}", self.edge_db_id.0, self.target_id)
-    }
-}
-
 /// Add or refresh a favorite. Atomic over whitelist + visibility + write.
 pub(crate) fn add_for_principal(
     db: &mut DbAny,
@@ -115,84 +100,6 @@ pub(crate) fn favorited_at_for_principal(
             .map(|(target_db_id, edge)| (target_db_id, edge.first_favorited_at_ms))
             .collect(),
     )
-}
-
-/// Favorites list for one `kind`, with target visibility filtered on hydration.
-pub(crate) fn list(
-    db: &DbAny,
-    principal: &Principal,
-    kind: FavoriteKind,
-) -> anyhow::Result<Vec<ListItem>> {
-    let user_db_id = principal.require(db)?;
-    let edges = lyra_db::favorites::list(db, user_db_id, kind)?;
-    let target_db_ids: Vec<DbId> = edges.iter().map(|edge| edge.target_db_id).collect();
-    let target_ids = lyra_db::lookup::find_ids_by_db_ids(db, &target_db_ids)?;
-
-    let mut items = Vec::with_capacity(edges.len());
-    for edge in edges {
-        if target_visible_to_principal(db, principal, user_db_id, edge.target_db_id, edge.kind)?
-            && let Some(target_id) = target_ids.get(&edge.target_db_id)
-        {
-            items.push(ListItem {
-                edge_db_id: edge.db_id,
-                target_id: target_id.clone(),
-                kind: edge.kind,
-                first_favorited_at_ms: edge.first_favorited_at_ms,
-                last_refreshed_at_ms: edge.last_refreshed_at_ms,
-            });
-        }
-    }
-    Ok(items)
-}
-
-pub(crate) fn hydrate_snapshot(
-    db: &DbAny,
-    principal: &Principal,
-    kind: FavoriteKind,
-    snapshot_ids: &[String],
-) -> anyhow::Result<Vec<ListItem>> {
-    let identities = snapshot_ids
-        .iter()
-        .filter_map(|snapshot_id| {
-            let (edge_db_id, target_id) = snapshot_id.split_once(':')?;
-            Some((DbId(edge_db_id.parse::<i64>().ok()?), target_id))
-        })
-        .collect::<Vec<_>>();
-    let edge_ids = identities
-        .iter()
-        .map(|(edge_db_id, _)| *edge_db_id)
-        .collect::<Vec<_>>();
-    let user_db_id = principal.require(db)?;
-    let mut edges = lyra_db::favorites::get_by_ids(db, user_db_id, kind, &edge_ids)?;
-    let target_db_ids = edges
-        .values()
-        .map(|edge| edge.target_db_id)
-        .collect::<Vec<_>>();
-    let target_ids = lyra_db::lookup::find_ids_by_db_ids(db, &target_db_ids)?;
-
-    let mut items = Vec::with_capacity(identities.len());
-    for (edge_db_id, expected_target_id) in identities {
-        let Some(edge) = edges.remove(&edge_db_id) else {
-            continue;
-        };
-        if !target_visible_to_principal(db, principal, user_db_id, edge.target_db_id, edge.kind)? {
-            continue;
-        }
-        let Some(target_id) = target_ids.get(&edge.target_db_id) else {
-            continue;
-        };
-        if target_id != expected_target_id {
-            continue;
-        }
-        items.push(ListItem {
-            edge_db_id,
-            target_id: target_id.clone(),
-            kind: edge.kind,
-            first_favorited_at_ms: edge.first_favorited_at_ms,
-            last_refreshed_at_ms: edge.last_refreshed_at_ms,
-        });
-    }
-    Ok(items)
 }
 
 /// Flat target DbIds for user+kind, with playlist visibility applied. Errs above the DB cap.
@@ -481,71 +388,6 @@ mod tests {
         let principal = principal_for(&db, other, HashSet::new());
         let outcome = add_for_principal(&mut db, &principal, playlist)?;
         assert_eq!(outcome, MutationOutcome::Applied);
-        Ok(())
-    }
-
-    #[test]
-    fn list_filters_non_visible_playlists_after_flip() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        setup_id_index(&mut db)?;
-        let owner = create_user(&mut db, "alice")?;
-        let other = create_user(&mut db, "bob")?;
-        let pub_id = nanoid!();
-        let playlist_db_id = create_playlist(&mut db, owner, &pub_id, true)?;
-
-        let other_principal = principal_for(&db, other, HashSet::new());
-        add_for_principal(&mut db, &other_principal, playlist_db_id)?;
-        assert_eq!(
-            list(&db, &other_principal, FavoriteKind::Playlist)?.len(),
-            1,
-            "public playlist should hydrate for non-owner",
-        );
-
-        set_playlist_public(&mut db, playlist_db_id, &pub_id, false)?;
-
-        assert!(
-            list(&db, &other_principal, FavoriteKind::Playlist)?.is_empty(),
-            "flipped-to-private playlist must be dropped from non-owner's list",
-        );
-        let owner_principal = principal_for(&db, owner, HashSet::new());
-        assert_eq!(
-            list(&db, &owner_principal, FavoriteKind::Playlist)?.len(),
-            0,
-            "owner never favorited it, so it shouldn't appear on their list either",
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn list_filters_tracks_without_library_access() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        setup_id_index(&mut db)?;
-        let user = create_user(&mut db, "alice")?;
-        let library_db_id = insert_library(&mut db, "Favorites", "/tmp/lyra-favorites-list")?;
-        let library_public_id = lyra_db::lookup::find_id_by_db_id(&db, library_db_id)?
-            .expect("library should have a public id");
-        let track_public_id = nanoid!();
-        let track_db_id = create_track(&mut db, &track_public_id)?;
-        connect(&mut db, library_db_id, track_db_id)?;
-
-        let visible_principal = principal_for(&db, user, HashSet::from([library_public_id]));
-        let hidden_principal = principal_for(&db, user, HashSet::new());
-
-        let added = add_for_principal(&mut db, &visible_principal, track_db_id)?;
-        assert_eq!(added, MutationOutcome::Applied);
-        let visible_items = list(&db, &visible_principal, FavoriteKind::Track)?;
-        assert_eq!(
-            visible_items.len(),
-            1,
-            "track favorite should list while the library is accessible",
-        );
-        assert_eq!(visible_items[0].target_id, track_public_id);
-        assert!(
-            list(&db, &hidden_principal, FavoriteKind::Track)?.is_empty(),
-            "track favorite must be hidden without access to the containing library",
-        );
-
         Ok(())
     }
 
