@@ -73,6 +73,13 @@ user = "owner"
 client_name = "Lyra Web"  # optional
 seen = 300000             # optional last authenticated request, in unix milliseconds
 
+[[connections]]           # open native WebSocket connections, for the test's length
+key = "speaker"
+user = "owner"
+session_key = "living-room"   # optional; the fixture key without one
+client_name = "Speaker"       # optional
+commands = ["pause", "seek"]  # optional remote control commands it declares
+
 [[libraries]]
 key = "music"
 name = "Music"
@@ -147,6 +154,7 @@ fixture.users.owner     -- the user's public id
 fixture.libraries.music -- the library's public id
 fixture.api_keys.phone  -- an API key's secret
 fixture.sessions.laptop -- a session's token
+fixture.connections.speaker -- a connection's public id
 fixture.ids.s1          -- an entity's or library's database id, by fixture key
 fixture.entries.mix[1]  -- a playlist's entry ids, in order
 ```

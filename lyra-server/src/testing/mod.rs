@@ -475,6 +475,21 @@ pub async fn run_luau_plugin_test_file(
         Ok((runtime, Vec::new()))
     })?;
     crate::plugins::STATE.publish_runtime(runtime.clone());
+    let mut seeded = seeded;
+    let connections = match seeded.as_mut() {
+        Some(seeded) => match seeded.open_connections().await {
+            Ok(connections) => Some(connections),
+            Err(error) => {
+                return Err(match runtime.shutdown().await {
+                    Ok(()) => error,
+                    Err(shutdown) => {
+                        error.context(format!("runtime shutdown also failed: {shutdown}"))
+                    }
+                });
+            }
+        },
+        None => None,
+    };
     let result = runtime
         .run_source(crate::plugins::executor::PluginSourceRun {
             plugin_id,
@@ -492,6 +507,9 @@ pub async fn run_luau_plugin_test_file(
         .await
         .with_context(|| format!("run Luau test {}", test_path.display()));
     let shutdown = runtime.shutdown().await;
+    if let Some(connections) = connections {
+        connections.close().await;
+    }
     result.and(shutdown)
 }
 

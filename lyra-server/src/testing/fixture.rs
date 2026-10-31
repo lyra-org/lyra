@@ -50,6 +50,8 @@ pub struct Fixture {
     #[serde(default)]
     sessions: Vec<Session>,
     #[serde(default)]
+    connections: Vec<Connection>,
+    #[serde(default)]
     artists: Vec<Artist>,
     #[serde(default)]
     genres: Vec<Genre>,
@@ -100,6 +102,19 @@ struct Session {
     client_name: Option<String>,
     /// When the session last authenticated a request.
     seen: Option<i64>,
+}
+
+/// An open native WebSocket connection, registered for the test's length.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Connection {
+    key: String,
+    user: String,
+    /// The session key the client connects with; the fixture key without one.
+    session_key: Option<String>,
+    client_name: Option<String>,
+    #[serde(default)]
+    commands: Vec<services::remote::constants::RemoteAction>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -239,21 +254,78 @@ struct Tag {
 }
 
 /// What the test receives as its chunk's `...`: user and library ids, API key secrets, session
-/// tokens and entity ids by fixture key, and each playlist's entry ids in order.
+/// tokens, connection ids and entity ids by fixture key, and each playlist's entry ids in order.
 #[derive(Debug, Default, Serialize)]
 pub(crate) struct Seeded {
     users: BTreeMap<String, String>,
     libraries: BTreeMap<String, String>,
     api_keys: BTreeMap<String, String>,
     sessions: BTreeMap<String, String>,
+    connections: BTreeMap<String, String>,
     ids: BTreeMap<String, i64>,
     entries: BTreeMap<String, Vec<String>>,
+    #[serde(skip)]
+    pending_connections: Vec<PendingConnection>,
+}
+
+#[derive(Debug)]
+struct PendingConnection {
+    key: String,
+    user_public_id: String,
+    session_key: String,
+    client_name: Option<String>,
+    commands: Vec<services::remote::constants::RemoteAction>,
+}
+
+/// The fixture's registered connections, kept open until [`Self::close`].
+pub(crate) struct OpenConnections(Vec<services::remote::registry::RegisterResult>);
+
+impl OpenConnections {
+    pub(crate) async fn close(self) {
+        for connection in self.0 {
+            services::remote::registry::unregister(connection.connection_id).await;
+        }
+    }
+}
+
+impl Seeded {
+    /// Registers the fixture's connections, which needs the database unlocked, and records their
+    /// ids for the test. When one can't register, the ones before it are closed again.
+    pub(crate) async fn open_connections(&mut self) -> anyhow::Result<OpenConnections> {
+        let mut open = OpenConnections(Vec::new());
+        for pending in std::mem::take(&mut self.pending_connections) {
+            let registered = match services::remote::registry::register(
+                pending.user_public_id,
+                pending.client_name,
+                pending.session_key,
+                tokio::sync::watch::channel(None).0,
+            )
+            .await
+            {
+                Ok(registered) => registered,
+                Err(error) => {
+                    open.close().await;
+                    anyhow::bail!("register connection `{}`: {error}", pending.key);
+                }
+            };
+            services::remote::registry::set_supported_commands(
+                registered.connection_id,
+                pending.commands.into_iter().collect(),
+            )
+            .await;
+            self.connections
+                .insert(pending.key, registered.public_id.clone());
+            open.0.push(registered);
+        }
+        Ok(open)
+    }
 }
 
 struct Keys {
     users: BTreeMap<String, (DbId, String)>,
     api_keys: BTreeSet<String>,
     sessions: BTreeSet<String>,
+    connections: BTreeSet<String>,
     libraries: BTreeMap<String, DbId>,
     entities: BTreeMap<String, (DbId, lyra_db::favorites::FavoriteKind)>,
     genres: BTreeMap<String, String>,
@@ -286,6 +358,7 @@ impl Keys {
             !self.users.contains_key(key)
                 && !self.api_keys.contains(key)
                 && !self.sessions.contains(key)
+                && !self.connections.contains(key)
                 && !self.libraries.contains_key(key)
                 && !self.entities.contains_key(key)
                 && !self.genres.contains_key(key),
@@ -403,6 +476,7 @@ impl Fixture {
             users: BTreeMap::new(),
             api_keys: BTreeSet::new(),
             sessions: BTreeSet::new(),
+            connections: BTreeSet::new(),
             libraries: BTreeMap::new(),
             entities: BTreeMap::new(),
             genres: BTreeMap::new(),
@@ -477,6 +551,25 @@ impl Fixture {
             )?;
             seeded.sessions.insert(session.key.clone(), token);
             keys.sessions.insert(session.key.clone());
+        }
+
+        for connection in &self.connections {
+            keys.claim(&connection.key)?;
+            let (_, user_public_id) = keys
+                .users
+                .get(&connection.user)
+                .with_context(|| format!("fixture has no user `{}`", connection.user))?;
+            seeded.pending_connections.push(PendingConnection {
+                key: connection.key.clone(),
+                user_public_id: user_public_id.clone(),
+                session_key: connection
+                    .session_key
+                    .clone()
+                    .unwrap_or_else(|| connection.key.clone()),
+                client_name: connection.client_name.clone(),
+                commands: connection.commands.clone(),
+            });
+            keys.connections.insert(connection.key.clone());
         }
 
         for genre in &self.genres {
@@ -830,6 +923,39 @@ fn supply_credits(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn connections_that_cannot_all_open_leave_none_open() -> anyhow::Result<()> {
+        let _guard = services::testing::runtime_test_lock().await;
+        services::testing::init_default_test_state()?;
+        for connection in services::remote::registry::list_connections().await {
+            services::remote::registry::unregister(connection.connection_id).await;
+        }
+        let over_the_cap = services::remote::constants::MAX_CONNECTIONS_PER_USER + 1;
+        let fixture: Fixture = serde_json::from_value(serde_json::json!({
+            "users": [{ "key": "owner" }],
+            "connections": (0..over_the_cap)
+                .map(|index| serde_json::json!({ "key": format!("device-{index}"), "user": "owner" }))
+                .collect::<Vec<_>>(),
+        }))?;
+        let (mut seeded, _) = fixture.seed(&mut *services::STATE.db.write().await)?;
+
+        let error = seeded
+            .open_connections()
+            .await
+            .err()
+            .expect("the connection past the cap is refused");
+        assert!(
+            error.to_string().contains("too many connections"),
+            "{error}"
+        );
+        assert!(
+            services::remote::registry::list_connections()
+                .await
+                .is_empty()
+        );
+        Ok(())
+    }
 
     #[test]
     fn libraries_hold_their_releases_for_the_users_granted_them() -> anyhow::Result<()> {
