@@ -53,7 +53,7 @@ use crate::{
     },
 };
 
-use super::ratings::RatingFilterQuery;
+use super::PersonalFilterQuery;
 
 const MAX_QUERY_LEN: usize = 256;
 const DEFAULT_LIMIT: u64 = 20;
@@ -74,7 +74,7 @@ struct SearchQuery {
         feature = "docgen",
         schemars(description = "Optional per-entity page size. Defaults to 20, capped at 50.")
     )]
-    #[serde(default, deserialize_with = "super::deserialize_optional_number")]
+    #[serde(default, deserialize_with = "super::deserialize_optional_scalar")]
     limit: Option<u64>,
     #[cfg_attr(
         feature = "docgen",
@@ -113,7 +113,7 @@ struct SearchQuery {
     #[serde(default, deserialize_with = "deserialize_inc")]
     release_inc: Option<Vec<String>>,
     #[serde(flatten)]
-    rating: RatingFilterQuery,
+    personal: PersonalFilterQuery,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -145,7 +145,7 @@ async fn search_responses(
             "query exceeds {MAX_QUERY_LEN} characters"
         )));
     }
-    let rating = params.rating.parse()?;
+    let personal = params.personal.parse()?;
     let limit = page_limit(params.limit);
     let page_request = || {
         if params.paginate {
@@ -155,10 +155,11 @@ async fn search_responses(
         }
     };
     let tracks =
-        TrackListOptions::for_query(params.track_inc, query.clone(), rating, page_request());
+        TrackListOptions::for_query(params.track_inc, query.clone(), personal, page_request());
     let artists =
-        ArtistListOptions::for_query(params.artist_inc, query.clone(), rating, page_request());
-    let releases = ReleaseListOptions::for_query(params.release_inc, query, rating, page_request());
+        ArtistListOptions::for_query(params.artist_inc, query.clone(), personal, page_request());
+    let releases =
+        ReleaseListOptions::for_query(params.release_inc, query, personal, page_request());
 
     // One guard keeps the branches consistent; ranking each catalog in memory is CPU-bound.
     let db = STATE.db.read().await;
@@ -189,10 +190,13 @@ fn search_docs(op: TransformOperation) -> TransformOperation {
          prefix, `foo$` suffix, `!foo` negation, `\\` escapes a leading modifier; plain tokens \
          are fuzzy. `min_rating` and `max_rating` apply an inclusive range over the \
          authenticated user's personal ratings; either bound excludes unrated entities, and an \
-         equal pair matches an exact rating. \
+         equal pair matches an exact rating. `rated=true` keeps only rated entities and \
+         `rated=false` only unrated ones; `rated=false` cannot be combined with a bound. \
+         `favorite` and `listened` filter as on each list endpoint. \
          Without `paginate=true`, every `next_cursor` is `null`. With it, a branch with more \
          than `limit` matches returns a `next_cursor` for its list endpoint, resumed there with \
-         the same `query`, `min_rating` and `max_rating` and no other filter or sort; `limit` \
+         the same `query`, `favorite`, `listened`, `rated`, `min_rating` and `max_rating` and no \
+         other filter or sort; `limit` \
          and `inc` may differ. Each such cursor takes one of the user's limited cursor \
          snapshots and may evict their oldest.",
     )
@@ -355,7 +359,7 @@ mod tests {
             ReleaseListOptions::for_query(
                 None,
                 "blue".to_string(),
-                lyra_db::ratings::RatingFilter::default(),
+                crate::services::catalog::PersonalFilter::default(),
                 super::super::PageQuery {
                     limit: Some(10),
                     cursor: Some(cursor),
@@ -401,7 +405,7 @@ mod tests {
             ReleaseListOptions::for_query(
                 None,
                 "blue".to_string(),
-                lyra_db::ratings::RatingFilter::default(),
+                crate::services::catalog::PersonalFilter::default(),
                 super::super::PageQuery {
                     limit: Some(10),
                     cursor: Some(cursor),

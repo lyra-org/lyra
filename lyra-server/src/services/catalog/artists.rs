@@ -20,6 +20,7 @@ use super::{
     CreditRole,
     Direction,
     PersonalData,
+    PersonalFilter,
     SortSpec,
     Viewer,
     all_releases,
@@ -42,7 +43,6 @@ use lyra_db::{
     Release,
     Track,
     favorites::FavoriteKind,
-    ratings::RatingFilter,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,6 +59,10 @@ pub(crate) enum ArtistKey {
     LastPlayedAt,
     /// The viewer's rating.
     Rating,
+    /// When the viewer last set their rating.
+    RatedAt,
+    /// When the viewer first favorited the artist.
+    FavoritedAt,
     Relevance,
     Random,
     Id,
@@ -75,6 +79,8 @@ impl SortKey for ArtistKey {
         ("listen_count", Self::ListenCount),
         ("last_played_at", Self::LastPlayedAt),
         ("rating", Self::Rating),
+        ("rated_at", Self::RatedAt),
+        ("favorited_at", Self::FavoritedAt),
         ("relevance", Self::Relevance),
         ("random", Self::Random),
         ("id", Self::Id),
@@ -93,14 +99,15 @@ impl SortKey for ArtistKey {
     fn personal(self) -> Option<PersonalData> {
         match self {
             Self::ListenCount | Self::LastPlayedAt => Some(PersonalData::Listens),
-            Self::Rating => Some(PersonalData::Ratings),
+            Self::Rating | Self::RatedAt => Some(PersonalData::Ratings),
+            Self::FavoritedAt => Some(PersonalData::Favorites),
             _ => None,
         }
     }
 }
 
 /// Artists are found through the credits on releases and tracks. Every filter below except
-/// `ids`, `exclude_ids`, `artist_type`, `favorite`, `listened` and `rating` narrows the credits
+/// `ids`, `exclude_ids`, `artist_type` and `personal` narrows the credits
 /// an artist must hold.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ArtistFilter {
@@ -118,10 +125,9 @@ pub(crate) struct ArtistFilter {
     pub(crate) credit_types: Option<Vec<CreditType>>,
     pub(crate) exclude_credit_types: Vec<CreditType>,
     pub(crate) artist_type: Option<ArtistType>,
-    pub(crate) favorite: Option<bool>,
-    /// Artists with at least one listened track among their credited tracks or releases.
-    pub(crate) listened: Option<bool>,
-    pub(crate) rating: RatingFilter,
+    /// `listened` keeps artists with at least one listened track among their credited tracks or
+    /// releases.
+    pub(crate) personal: PersonalFilter,
 }
 
 impl ArtistFilter {
@@ -154,7 +160,7 @@ impl Catalog for Artists {
     type Item = Artist;
 
     fn personal(filter: &ArtistFilter) -> Vec<PersonalData> {
-        PersonalData::of_filter(filter.favorite, filter.listened, filter.rating)
+        filter.personal.reads()
     }
 
     fn id_filter(ids: Vec<DbId>) -> ArtistFilter {
@@ -198,31 +204,24 @@ impl Catalog for Artists {
                 None => lyra_db::artists::credited_ids(db, Some(artist_type))?,
             });
         }
-        if let Some(favorite) = filter.favorite {
-            let user = viewer.user_db_id("the favorite filter")?;
-            let favorites = lyra_db::favorites::target_ids(db, user, FavoriteKind::Artist)?;
-            artists.restrict_membership(favorites, favorite, || all_artists(db))?;
-        }
-        if let Some(listened) = filter.listened {
-            let user = viewer.user_db_id("the listened filter")?;
-            let tracks = lyra_db::listens::listened_track_ids(db, user)?;
-            let mut listened_artists = HashSet::new();
-            for track in &tracks {
-                listened_artists.extend(credited_artist_ids(db, *track)?);
-            }
-            for release in super::releases_of_tracks(db, tracks)? {
-                listened_artists.extend(credited_artist_ids(db, release)?);
-            }
-            artists.restrict_membership(listened_artists, listened, || all_artists(db))?;
-        }
-        if !filter.rating.is_empty() {
-            let user = viewer.user_db_id("the rating filter")?;
-            artists.restrict(lyra_db::ratings::target_ids_matching(
-                db,
-                user,
-                filter.rating,
-            )?);
-        }
+        filter.personal.restrict(
+            db,
+            viewer,
+            &mut artists,
+            FavoriteKind::Artist,
+            |user| {
+                let tracks = lyra_db::listens::listened_track_ids(db, user)?;
+                let mut listened = HashSet::new();
+                for track in &tracks {
+                    listened.extend(credited_artist_ids(db, *track)?);
+                }
+                for release in super::releases_of_tracks(db, tracks)? {
+                    listened.extend(credited_artist_ids(db, release)?);
+                }
+                Ok(listened)
+            },
+            || all_artists(db),
+        )?;
 
         Ok(artists.resolve(&filter.exclude_ids, || all_artists(db))?)
     }
@@ -275,7 +274,19 @@ impl Catalog for Artists {
                 tracks_by_artist.insert(*id, tracks);
             }
         }
-        let ratings = super::ratings(db, viewer, &ids, needs(&[ArtistKey::Rating]))?;
+        let ratings = super::ratings(
+            db,
+            viewer,
+            &ids,
+            needs(&[ArtistKey::Rating, ArtistKey::RatedAt]),
+        )?;
+        let favorited_at = super::favorited_at(
+            db,
+            viewer,
+            &ids,
+            FavoriteKind::Artist,
+            needs(&[ArtistKey::FavoritedAt]),
+        )?;
         let totals = track_totals(
             db,
             viewer,
@@ -308,7 +319,13 @@ impl Catalog for Artists {
                         ArtistKey::LastPlayedAt => totals.last_played_at.map(SortValue::Number),
                         ArtistKey::Rating => ratings
                             .get(&id)
-                            .map(|rating| SortValue::Number((*rating).into())),
+                            .map(|edge| SortValue::Number(edge.value.get().into())),
+                        ArtistKey::RatedAt => ratings
+                            .get(&id)
+                            .and_then(|edge| super::timestamp_value(edge.updated_at_ms)),
+                        ArtistKey::FavoritedAt => favorited_at
+                            .get(&id)
+                            .and_then(|ms| super::timestamp_value(*ms)),
                         ArtistKey::Relevance | ArtistKey::Random | ArtistKey::Id => None,
                     })
                     .collect();

@@ -33,9 +33,9 @@ use crate::routes::request::bearer_credential;
 use crate::{
     routes::AppError,
     routes::{
+        PersonalFilterQuery,
         covers as route_covers,
         deserialize_inc,
-        ratings::RatingFilterQuery,
         releases as route_releases,
         responses::{
             ArtistRelationResponse,
@@ -106,7 +106,7 @@ struct ArtistListQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Comma-separated or repeated values: name, sort_name, date_created, release_count, track_count, total_duration, listen_count, last_played_at, rating, relevance (with query), random, id."
+            description = "Comma-separated or repeated values: name, sort_name, date_created, release_count, track_count, total_duration, listen_count, last_played_at, rating, rated_at, favorited_at, relevance (with query), random, id."
         )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
@@ -117,7 +117,7 @@ struct ArtistListQuery {
     )]
     sort_order: Option<String>,
     #[serde(flatten)]
-    rating: RatingFilterQuery,
+    personal: PersonalFilterQuery,
     #[serde(flatten)]
     page: super::PageQuery,
 }
@@ -128,17 +128,17 @@ pub(crate) struct ArtistListOptions {
     library_id: Option<String>,
     sort_by: Option<Vec<String>>,
     sort_order: Option<String>,
-    rating_filter: lyra_db::ratings::RatingFilter,
+    personal: catalog::PersonalFilter,
     page_request: super::SnapshotPageRequest,
 }
 
 impl ArtistListOptions {
-    /// The options `GET /api/artists?query=` runs with only `inc`, rating bounds and paging, so a
+    /// The options `GET /api/artists?query=` runs with only `inc`, personal filters and paging, so a
     /// search cursor resumes on that endpoint. Any other filter or sort would change the cursor key.
     pub(crate) fn for_query(
         inc: Option<Vec<String>>,
         query: String,
-        rating_filter: lyra_db::ratings::RatingFilter,
+        personal: catalog::PersonalFilter,
         page_request: super::SnapshotPageRequest,
     ) -> Self {
         Self {
@@ -147,7 +147,7 @@ impl ArtistListOptions {
             library_id: None,
             sort_by: None,
             sort_order: None,
-            rating_filter,
+            personal,
             page_request,
         }
     }
@@ -398,21 +398,17 @@ pub(crate) fn artist_page(
         library_id,
         sort_by,
         sort_order,
-        rating_filter,
+        personal,
         page_request,
     } = options;
     let includes = parse_inc(inc)?;
     let search_term = super::parse_text_query(query);
-    let (min_rating, max_rating) = rating_filter.bounds();
-    let min_rating_context = min_rating.map(|value| value.to_string());
-    let max_rating_context = max_rating.map(|value| value.to_string());
     let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "artists")
         .field(search_term.as_deref())
         .field(library_id.as_deref())
         .values(sort_by.as_deref())
         .field(sort_order.as_deref())
-        .field(min_rating_context.as_deref())
-        .field(max_rating_context.as_deref())
+        .personal(personal)
         .finish();
     let sort = super::parse_catalog_sort(sort_by, sort_order)?;
     let library = crate::services::auth::access::resolve_optional_library_filter(
@@ -433,7 +429,7 @@ pub(crate) fn artist_page(
         let viewer = catalog::Viewer::user(db, principal.clone())?;
         let mut query = catalog::Query::<Artists>::new(ArtistFilter {
             library,
-            rating: rating_filter,
+            personal,
             ..ArtistFilter::default()
         });
         query.search = search_term;
@@ -483,12 +479,12 @@ async fn get_artists(
         library_id,
         sort_by,
         sort_order,
-        rating,
+        personal,
         page,
     } = list_query;
     let page = page.resolve_snapshot();
     let principal = require_authenticated(bearer_credential(&headers)).await?;
-    let rating_filter = rating.parse()?;
+    let personal = personal.parse()?;
     Ok(Json(
         list_artist_responses(
             &principal,
@@ -498,7 +494,7 @@ async fn get_artists(
                 library_id,
                 sort_by,
                 sort_order,
-                rating_filter,
+                personal,
                 page_request: page,
             },
         )
@@ -548,7 +544,7 @@ async fn search_artist_covers(
 #[cfg(feature = "docgen")]
 fn list_artists_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List artists").description(
-        "Returns artists as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `sort_by`, `sort_order`, `min_rating`, `max_rating`, `limit`, `cursor`. `min_rating` and `max_rating` filter artists by the authenticated user's inclusive personal rating range; either bound excludes unrated artists. `library_id` scopes results to artists credited by releases or tracks belonging to that public library ID. `sort_by` supports `sort_name`, `name`, `date_created`, `last_played_at`, `listen_count`, `release_count`, `track_count`, `total_duration`, `rating` (the authenticated user's personal rating; unrated artists sort last in both directions), and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against artist names and defaults ordering to relevance. Use `inc` to include releases, tracks, relations, and/or covers. When `inc=covers`, artist cover metadata includes a public image URL. When `inc=relations`, add `relation_covers` to include public image metadata for related artists. When `inc=releases`, use `release_artists`, `release_covers`, and/or `artist_covers` to hydrate those nested release fields. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
+        "Returns artists as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `sort_by`, `sort_order`, `rated`, `min_rating`, `max_rating`, `favorite`, `listened`, `limit`, `cursor`. `min_rating` and `max_rating` filter artists by the authenticated user's inclusive personal rating range; either bound excludes unrated artists. `rated=true` keeps only artists the user has rated and `rated=false` only those they have not; `rated=false` cannot be combined with a rating bound. `favorite=true` keeps only artists the user has favorited and `favorite=false` the rest. `listened=true` keeps only artists with at least one listened track among their credited tracks or releases and `listened=false` the rest. `library_id` scopes results to artists credited by releases or tracks belonging to that public library ID. `sort_by` supports `sort_name`, `name`, `date_created`, `last_played_at`, `listen_count`, `release_count`, `track_count`, `total_duration`, `rating` (the authenticated user's personal rating; unrated artists sort last in both directions), `rated_at` (when the authenticated user last set their rating), `favorited_at` (when they first favorited the artist), and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against artist names and defaults ordering to relevance. Use `inc` to include releases, tracks, relations, and/or covers. When `inc=covers`, artist cover metadata includes a public image URL. When `inc=relations`, add `relation_covers` to include public image metadata for related artists. When `inc=releases`, use `release_artists`, `release_covers`, and/or `artist_covers` to hydrate those nested release fields. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
     )
 }
 
@@ -978,7 +974,7 @@ mod tests {
                 library_id: None,
                 sort_by: None,
                 sort_order: None,
-                rating_filter: lyra_db::ratings::RatingFilter::default(),
+                personal: catalog::PersonalFilter::default(),
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
@@ -1039,7 +1035,7 @@ mod tests {
                 library_id: Some(visible_library_id),
                 sort_by: None,
                 sort_order: None,
-                rating_filter: lyra_db::ratings::RatingFilter::default(),
+                personal: catalog::PersonalFilter::default(),
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
@@ -1090,6 +1086,7 @@ mod tests {
             )
         };
         let exact_four = lyra_db::ratings::RatingFilter::new(
+            None,
             lyra_db::ratings::RatingValue::new(4),
             lyra_db::ratings::RatingValue::new(4),
         )
@@ -1103,7 +1100,10 @@ mod tests {
                 library_id: None,
                 sort_by: None,
                 sort_order: None,
-                rating_filter: exact_four,
+                personal: catalog::PersonalFilter {
+                    rating: exact_four,
+                    ..catalog::PersonalFilter::default()
+                },
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
@@ -1123,7 +1123,7 @@ mod tests {
             library_id: None,
             sort_by: sort_by.map(|value| vec![value.to_string()]),
             sort_order: sort_order.map(str::to_string),
-            rating_filter: lyra_db::ratings::RatingFilter::default(),
+            personal: catalog::PersonalFilter::default(),
             page_request: super::super::SnapshotPageRequest::first_page(100),
         }
     }
@@ -1308,7 +1308,7 @@ mod tests {
                 library_id: None,
                 sort_by: Some(vec!["name".to_string()]),
                 sort_order: Some("descending".to_string()),
-                rating_filter: lyra_db::ratings::RatingFilter::default(),
+                personal: catalog::PersonalFilter::default(),
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )

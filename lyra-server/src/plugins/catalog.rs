@@ -24,6 +24,7 @@ use harmony_luau::{
     TypeAliasDescriptor,
 };
 use lyra_db::ratings::{
+    InvalidRatingFilter,
     RatingFilter,
     RatingValue,
 };
@@ -45,6 +46,7 @@ use crate::{
             NameRange,
             Page,
             PersonalData,
+            PersonalFilter,
             Query,
             Viewer,
             pipeline::{
@@ -178,8 +180,9 @@ pub(crate) fn read_years(table: &luau::Table) -> luau::runtime::Result<Vec<u32>>
         .unwrap_or_default())
 }
 
-/// The caller's rating bounds from `min_rating` and `max_rating`.
-pub(crate) fn read_rating(table: &luau::Table) -> luau::runtime::Result<RatingFilter> {
+/// The caller's personal filter from `favorite`, `listened`, `rated`, `min_rating` and
+/// `max_rating`.
+pub(crate) fn read_personal(table: &luau::Table) -> luau::runtime::Result<PersonalFilter> {
     let bound = |key| {
         table
             .optional_i64_field(key)?
@@ -197,8 +200,26 @@ pub(crate) fn read_rating(table: &luau::Table) -> luau::runtime::Result<RatingFi
             })
             .transpose()
     };
-    RatingFilter::new(bound("min_rating")?, bound("max_rating")?)
-        .map_err(|_| crate::plugins::runtime_error("min_rating must not exceed max_rating"))
+    let rating = RatingFilter::new(
+        table.optional_bool_field("rated")?,
+        bound("min_rating")?,
+        bound("max_rating")?,
+    )
+    .map_err(|err| crate::plugins::runtime_error(rating_filter_message(err)))?;
+    Ok(PersonalFilter {
+        favorite: table.optional_bool_field("favorite")?,
+        listened: table.optional_bool_field("listened")?,
+        rating,
+    })
+}
+
+fn rating_filter_message(err: InvalidRatingFilter) -> &'static str {
+    match err {
+        InvalidRatingFilter::Inverted => "min_rating must not exceed max_rating",
+        InvalidRatingFilter::BoundsOnUnrated => {
+            "min_rating and max_rating cannot be combined with rated = false"
+        }
+    }
 }
 
 /// The `artist_ids` filter with its `credit_role` and `exclude_credit_role`.
@@ -353,6 +374,13 @@ pub(crate) fn query_fields(sort_key: &'static str) -> Vec<FieldDescriptor> {
 #[cfg(feature = "docgen")]
 pub(crate) fn rating_fields() -> Vec<FieldDescriptor> {
     vec![
+        FieldDescriptor {
+            name: "rated",
+            ty: Option::<bool>::luau_type(),
+            description: Some(
+                "Keeps only items the caller has rated (`true`) or has not rated (`false`). `false` cannot be combined with `min_rating` or `max_rating`.",
+            ),
+        },
         FieldDescriptor {
             name: "min_rating",
             ty: Option::<u8>::luau_type(),

@@ -33,9 +33,9 @@ use crate::routes::request::bearer_credential;
 use crate::{
     routes::AppError,
     routes::{
+        PersonalFilterQuery,
         covers as route_covers,
         deserialize_inc,
-        ratings::RatingFilterQuery,
         responses::{
             EntryResponse,
             PageResponse,
@@ -110,7 +110,7 @@ pub(crate) struct ReleaseListQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Comma-separated or repeated values: name, sort_name, date_created, release_date, year, total_duration, track_count, artist_name, listen_count, last_played_at, rating, relevance (with query), random, id."
+            description = "Comma-separated or repeated values: name, sort_name, date_created, release_date, year, total_duration, track_count, artist_name, listen_count, last_played_at, rating, rated_at, favorited_at, relevance (with query), random, id."
         )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
@@ -121,7 +121,7 @@ pub(crate) struct ReleaseListQuery {
     )]
     pub(crate) sort_order: Option<String>,
     #[serde(flatten)]
-    pub(crate) rating: RatingFilterQuery,
+    pub(crate) personal: PersonalFilterQuery,
     #[serde(flatten)]
     pub(crate) page: super::PageQuery,
 }
@@ -311,17 +311,17 @@ pub(crate) struct ReleaseListOptions {
     genre_id: Option<Vec<String>>,
     sort_by: Option<Vec<String>>,
     sort_order: Option<String>,
-    rating_filter: lyra_db::ratings::RatingFilter,
+    personal: catalog::PersonalFilter,
     page_request: super::SnapshotPageRequest,
 }
 
 impl ReleaseListOptions {
-    /// The options `GET /api/releases?query=` runs with only `inc`, rating bounds and paging, so a
+    /// The options `GET /api/releases?query=` runs with only `inc`, personal filters and paging, so a
     /// search cursor resumes on that endpoint. Any other filter or sort would change the cursor key.
     pub(crate) fn for_query(
         inc: Option<Vec<String>>,
         query: String,
-        rating_filter: lyra_db::ratings::RatingFilter,
+        personal: catalog::PersonalFilter,
         page_request: super::SnapshotPageRequest,
     ) -> Self {
         Self {
@@ -332,7 +332,7 @@ impl ReleaseListOptions {
             genre_id: None,
             sort_by: None,
             sort_order: None,
-            rating_filter,
+            personal,
             page_request,
         }
     }
@@ -358,7 +358,7 @@ pub(crate) fn release_page(
         genre_id,
         sort_by,
         sort_order,
-        rating_filter,
+        personal,
         page_request,
     } = options;
     let include_entry_paths =
@@ -368,9 +368,6 @@ pub(crate) fn release_page(
         parse_release_includes(inc)?;
     let search_term = super::parse_text_query(query);
     let year_context = year.map(|year| year.to_string());
-    let (min_rating, max_rating) = rating_filter.bounds();
-    let min_rating_context = min_rating.map(|value| value.to_string());
-    let max_rating_context = max_rating.map(|value| value.to_string());
     let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "releases")
         .field(search_term.as_deref())
         .field(year_context.as_deref())
@@ -378,8 +375,7 @@ pub(crate) fn release_page(
         .values(genre_id.as_deref())
         .values(sort_by.as_deref())
         .field(sort_order.as_deref())
-        .field(min_rating_context.as_deref())
-        .field(max_rating_context.as_deref())
+        .personal(personal)
         .finish();
     let sort = super::parse_catalog_sort(sort_by, sort_order)?;
     let library = crate::services::auth::access::resolve_optional_library_filter(
@@ -405,7 +401,7 @@ pub(crate) fn release_page(
             library,
             genres,
             years: year.into_iter().collect(),
-            rating: rating_filter,
+            personal,
             ..ReleaseFilter::default()
         });
         query.search = search_term;
@@ -447,12 +443,12 @@ async fn get_releases(
         genre_id,
         sort_by,
         sort_order,
-        rating,
+        personal,
         page,
     } = list_query;
     let page_request = page.resolve_snapshot();
     let principal = require_authenticated(bearer_credential(&headers)).await?;
-    let rating_filter = rating.parse()?;
+    let personal = personal.parse()?;
     Ok(Json(
         list_release_responses(
             &principal,
@@ -464,7 +460,7 @@ async fn get_releases(
                 genre_id,
                 sort_by,
                 sort_order,
-                rating_filter,
+                personal,
                 page_request,
             },
         )
@@ -541,7 +537,7 @@ async fn search_release_covers(
 #[cfg(feature = "docgen")]
 fn list_releases_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List releases").description(
-        "Returns releases as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `year`, `library_id`, `genre_id`, `sort_by`, `sort_order`, `min_rating`, `max_rating`, `limit`, `cursor`. `min_rating` and `max_rating` filter releases by the authenticated user's inclusive personal rating range; either bound excludes unrated releases. `library_id` scopes results to releases belonging to that public library ID. `genre_id` filters by one or more public genre IDs. `query` is a fuzzy text match against release titles and defaults ordering to relevance. `sort_by` supports `sort_name`, `name`, `date_created`, `release_date`, `last_played_at`, `listen_count`, `total_duration`, `rating` (the authenticated user's personal rating; unrated releases sort last in both directions), and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. Supported `inc` values: `artists`, `tracks`, `track_artists`, `entries`, `covers`, `artist_covers`, `genres`. When `inc=covers`, cover metadata includes a public image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits (for example, artist and producer). Track artists without direct credits inherit from the release (`source: release`). When `inc=entries`, `full_path` is included only for authenticated users with ManageLibraries permission.",
+        "Returns releases as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `year`, `library_id`, `genre_id`, `sort_by`, `sort_order`, `rated`, `min_rating`, `max_rating`, `favorite`, `listened`, `limit`, `cursor`. `min_rating` and `max_rating` filter releases by the authenticated user's inclusive personal rating range; either bound excludes unrated releases. `rated=true` keeps only releases the user has rated and `rated=false` only those they have not; `rated=false` cannot be combined with a rating bound. `favorite=true` keeps only releases the user has favorited and `favorite=false` the rest. `listened=true` keeps only releases whose every track the user has listened to and `listened=false` the rest. `library_id` scopes results to releases belonging to that public library ID. `genre_id` filters by one or more public genre IDs. `query` is a fuzzy text match against release titles and defaults ordering to relevance. `sort_by` supports `sort_name`, `name`, `date_created`, `release_date`, `last_played_at`, `listen_count`, `total_duration`, `rating` (the authenticated user's personal rating; unrated releases sort last in both directions), `rated_at` (when the authenticated user last set their rating), `favorited_at` (when they first favorited the release), and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. Supported `inc` values: `artists`, `tracks`, `track_artists`, `entries`, `covers`, `artist_covers`, `genres`. When `inc=covers`, cover metadata includes a public image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits (for example, artist and producer). Track artists without direct credits inherit from the release (`source: release`). When `inc=entries`, `full_path` is included only for authenticated users with ManageLibraries permission.",
     )
 }
 
@@ -778,7 +774,7 @@ mod tests {
                 genre_id: None,
                 sort_by: sort_by.map(|value| vec![value.to_string()]),
                 sort_order: sort_order.map(str::to_string),
-                rating: RatingFilterQuery::default(),
+                personal: PersonalFilterQuery::default(),
                 page: super::super::PageQuery::default(),
             }),
         )
@@ -862,7 +858,7 @@ mod tests {
                 genre_id: None,
                 sort_by: None,
                 sort_order: None,
-                rating: RatingFilterQuery::default(),
+                personal: PersonalFilterQuery::default(),
                 page: super::super::PageQuery {
                     limit: Some(1),
                     cursor,
@@ -979,7 +975,7 @@ mod tests {
                 genre_id: None,
                 sort_by: None,
                 sort_order: None,
-                rating: RatingFilterQuery::default(),
+                personal: PersonalFilterQuery::default(),
                 page: super::super::PageQuery::default(),
             }),
         )
@@ -1027,7 +1023,7 @@ mod tests {
                 genre_id: None,
                 sort_by: None,
                 sort_order: None,
-                rating: RatingFilterQuery::default(),
+                personal: PersonalFilterQuery::default(),
                 page: super::super::PageQuery::default(),
             }),
         )
@@ -1173,7 +1169,7 @@ mod tests {
                 genre_id: None,
                 sort_by: None,
                 sort_order: None,
-                rating: RatingFilterQuery::from_bounds(Some(4), Some(4)),
+                personal: PersonalFilterQuery::from_bounds(Some(4), Some(4)),
                 page: super::super::PageQuery::default(),
             }),
         )
@@ -1222,7 +1218,7 @@ mod tests {
                 genre_id: Some(vec![rock_genre_id]),
                 sort_by: None,
                 sort_order: None,
-                rating: RatingFilterQuery::default(),
+                personal: PersonalFilterQuery::default(),
                 page: super::super::PageQuery::default(),
             }),
         )

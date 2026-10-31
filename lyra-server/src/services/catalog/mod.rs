@@ -33,6 +33,7 @@ use crate::services::auth::{
 pub(crate) use pipeline::{
     NameRange,
     PersonalData,
+    PersonalFilter,
     Query,
     counts,
     leading,
@@ -483,15 +484,35 @@ pub(crate) fn ratings(
     viewer: &Viewer,
     ids: &[DbId],
     wanted: bool,
-) -> Result<HashMap<DbId, u8>, CatalogError> {
+) -> Result<HashMap<DbId, lyra_db::ratings::RatingEdge>, CatalogError> {
     if !wanted {
         return Ok(HashMap::new());
     }
-    let user = viewer.user_db_id("the rating sort key")?;
-    Ok(lyra_db::ratings::values_for_targets(db, user, ids)?
-        .into_iter()
-        .map(|(id, edge)| (id, edge.value.get()))
-        .collect())
+    let user = viewer.user_db_id("rating sort keys")?;
+    Ok(lyra_db::ratings::values_for_targets(db, user, ids)?)
+}
+
+/// When the viewer first favorited each favorite of `kind`, read only when `wanted`.
+pub(crate) fn favorited_at(
+    db: &DbAny,
+    viewer: &Viewer,
+    ids: &[DbId],
+    kind: lyra_db::favorites::FavoriteKind,
+    wanted: bool,
+) -> Result<HashMap<DbId, i64>, CatalogError> {
+    if !wanted {
+        return Ok(HashMap::new());
+    }
+    let user = viewer.user_db_id("the favorited_at sort key")?;
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    Ok(lyra_db::favorites::first_favorited_at(db, user, kind)?)
+}
+
+/// A stored Unix-millisecond timestamp as a sort value.
+pub(crate) fn timestamp_value(ms: i64) -> Option<pipeline::SortValue> {
+    u64::try_from(ms).ok().map(pipeline::SortValue::Number)
 }
 
 #[derive(Debug, thiserror::Error)]

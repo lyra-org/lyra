@@ -19,6 +19,7 @@ use super::{
     CreditRole,
     Direction,
     PersonalData,
+    PersonalFilter,
     SortSpec,
     Viewer,
     all_releases,
@@ -38,7 +39,6 @@ use lyra_db::{
     Release,
     Track,
     favorites::FavoriteKind,
-    ratings::RatingFilter,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,6 +57,10 @@ pub(crate) enum ReleaseKey {
     LastPlayedAt,
     /// The viewer's rating.
     Rating,
+    /// When the viewer last set their rating.
+    RatedAt,
+    /// When the viewer first favorited the release.
+    FavoritedAt,
     Relevance,
     Random,
     Id,
@@ -75,6 +79,8 @@ impl SortKey for ReleaseKey {
         ("listen_count", Self::ListenCount),
         ("last_played_at", Self::LastPlayedAt),
         ("rating", Self::Rating),
+        ("rated_at", Self::RatedAt),
+        ("favorited_at", Self::FavoritedAt),
         ("relevance", Self::Relevance),
         ("random", Self::Random),
         ("id", Self::Id),
@@ -93,7 +99,8 @@ impl SortKey for ReleaseKey {
     fn personal(self) -> Option<PersonalData> {
         match self {
             Self::ListenCount | Self::LastPlayedAt => Some(PersonalData::Listens),
-            Self::Rating => Some(PersonalData::Ratings),
+            Self::Rating | Self::RatedAt => Some(PersonalData::Ratings),
+            Self::FavoritedAt => Some(PersonalData::Favorites),
             _ => None,
         }
     }
@@ -109,10 +116,8 @@ pub(crate) struct ReleaseFilter {
     pub(crate) artists: Option<ArtistCredit>,
     pub(crate) genres: Vec<DbId>,
     pub(crate) years: Vec<u32>,
-    pub(crate) favorite: Option<bool>,
-    /// Releases whose every track the user has listened to.
-    pub(crate) listened: Option<bool>,
-    pub(crate) rating: RatingFilter,
+    /// `listened` keeps releases whose every track the user has listened to.
+    pub(crate) personal: PersonalFilter,
 }
 
 pub(crate) struct Releases;
@@ -123,7 +128,7 @@ impl Catalog for Releases {
     type Item = Release;
 
     fn personal(filter: &ReleaseFilter) -> Vec<PersonalData> {
-        PersonalData::of_filter(filter.favorite, filter.listened, filter.rating)
+        filter.personal.reads()
     }
 
     fn id_filter(ids: Vec<DbId>) -> ReleaseFilter {
@@ -163,33 +168,26 @@ impl Catalog for Releases {
             }
             releases.restrict(matching);
         }
-        if let Some(favorite) = filter.favorite {
-            let user = viewer.user_db_id("the favorite filter")?;
-            let favorites = lyra_db::favorites::target_ids(db, user, FavoriteKind::Release)?;
-            releases.restrict_membership(favorites, favorite, || all_releases(db))?;
-        }
-        if let Some(listened) = filter.listened {
-            let user = viewer.user_db_id("the listened filter")?;
-            let listened_tracks = lyra_db::listens::listened_track_ids(db, user)?;
-            let mut listened_ids = HashSet::new();
-            for release in releases_of_tracks(db, listened_tracks.iter().copied())? {
-                if lyra_db::graph::neighbor_ids(db, release, "Track")?
-                    .iter()
-                    .all(|track| listened_tracks.contains(track))
-                {
-                    listened_ids.insert(release);
+        filter.personal.restrict(
+            db,
+            viewer,
+            &mut releases,
+            FavoriteKind::Release,
+            |user| {
+                let listened_tracks = lyra_db::listens::listened_track_ids(db, user)?;
+                let mut listened = HashSet::new();
+                for release in releases_of_tracks(db, listened_tracks.iter().copied())? {
+                    if lyra_db::graph::neighbor_ids(db, release, "Track")?
+                        .iter()
+                        .all(|track| listened_tracks.contains(track))
+                    {
+                        listened.insert(release);
+                    }
                 }
-            }
-            releases.restrict_membership(listened_ids, listened, || all_releases(db))?;
-        }
-        if !filter.rating.is_empty() {
-            let user = viewer.user_db_id("the rating filter")?;
-            releases.restrict(lyra_db::ratings::target_ids_matching(
-                db,
-                user,
-                filter.rating,
-            )?);
-        }
+                Ok(listened)
+            },
+            || all_releases(db),
+        )?;
 
         let mut excluded = filter.exclude_ids.clone();
         if !filter.exclude_artists.is_empty() {
@@ -232,7 +230,19 @@ impl Catalog for Releases {
         } else {
             HashMap::new()
         };
-        let ratings = super::ratings(db, viewer, &ids, needs(&[ReleaseKey::Rating]))?;
+        let ratings = super::ratings(
+            db,
+            viewer,
+            &ids,
+            needs(&[ReleaseKey::Rating, ReleaseKey::RatedAt]),
+        )?;
+        let favorited_at = super::favorited_at(
+            db,
+            viewer,
+            &ids,
+            FavoriteKind::Release,
+            needs(&[ReleaseKey::FavoritedAt]),
+        )?;
         let artist_names = if needs(&[ReleaseKey::ArtistName]) {
             lyra_db::artists::first_credited_names(db, &ids)?
         } else {
@@ -269,7 +279,13 @@ impl Catalog for Releases {
                         ReleaseKey::LastPlayedAt => totals.last_played_at.map(SortValue::Number),
                         ReleaseKey::Rating => ratings
                             .get(&id)
-                            .map(|rating| SortValue::Number((*rating).into())),
+                            .map(|edge| SortValue::Number(edge.value.get().into())),
+                        ReleaseKey::RatedAt => ratings
+                            .get(&id)
+                            .and_then(|edge| super::timestamp_value(edge.updated_at_ms)),
+                        ReleaseKey::FavoritedAt => favorited_at
+                            .get(&id)
+                            .and_then(|ms| super::timestamp_value(*ms)),
                         ReleaseKey::Relevance | ReleaseKey::Random | ReleaseKey::Id => None,
                     })
                     .collect();

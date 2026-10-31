@@ -20,6 +20,7 @@ use super::{
     CreditRole,
     Direction,
     PersonalData,
+    PersonalFilter,
     SortSpec,
     Viewer,
     credited_owners,
@@ -37,7 +38,6 @@ use super::{
 use lyra_db::{
     Track,
     favorites::FavoriteKind,
-    ratings::RatingFilter,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,6 +59,10 @@ pub(crate) enum TrackKey {
     LastPlayedAt,
     /// The viewer's rating.
     Rating,
+    /// When the viewer last set their rating.
+    RatedAt,
+    /// When the viewer first favorited the track.
+    FavoritedAt,
     Relevance,
     Random,
     Id,
@@ -79,6 +83,8 @@ impl SortKey for TrackKey {
         ("listen_count", Self::ListenCount),
         ("last_played_at", Self::LastPlayedAt),
         ("rating", Self::Rating),
+        ("rated_at", Self::RatedAt),
+        ("favorited_at", Self::FavoritedAt),
         ("relevance", Self::Relevance),
         ("random", Self::Random),
         ("id", Self::Id),
@@ -97,7 +103,8 @@ impl SortKey for TrackKey {
     fn personal(self) -> Option<PersonalData> {
         match self {
             Self::ListenCount | Self::LastPlayedAt => Some(PersonalData::Listens),
-            Self::Rating => Some(PersonalData::Ratings),
+            Self::Rating | Self::RatedAt => Some(PersonalData::Ratings),
+            Self::FavoritedAt => Some(PersonalData::Favorites),
             _ => None,
         }
     }
@@ -119,9 +126,7 @@ pub(crate) struct TrackFilter {
     /// Tracks on a release in any of these genres.
     pub(crate) genres: Vec<DbId>,
     pub(crate) years: Vec<u32>,
-    pub(crate) favorite: Option<bool>,
-    pub(crate) listened: Option<bool>,
-    pub(crate) rating: RatingFilter,
+    pub(crate) personal: PersonalFilter,
 }
 
 impl TrackFilter {
@@ -141,7 +146,7 @@ impl Catalog for Tracks {
     type Item = Track;
 
     fn personal(filter: &TrackFilter) -> Vec<PersonalData> {
-        PersonalData::of_filter(filter.favorite, filter.listened, filter.rating)
+        filter.personal.reads()
     }
 
     fn id_filter(ids: Vec<DbId>) -> TrackFilter {
@@ -211,24 +216,14 @@ impl Catalog for Tracks {
             }
             tracks.restrict(matching);
         }
-        if let Some(favorite) = filter.favorite {
-            let user = viewer.user_db_id("the favorite filter")?;
-            let favorites = lyra_db::favorites::target_ids(db, user, FavoriteKind::Track)?;
-            tracks.restrict_membership(favorites, favorite, || all_tracks(db))?;
-        }
-        if let Some(listened) = filter.listened {
-            let user = viewer.user_db_id("the listened filter")?;
-            let listened_ids = lyra_db::listens::listened_track_ids(db, user)?;
-            tracks.restrict_membership(listened_ids, listened, || all_tracks(db))?;
-        }
-        if !filter.rating.is_empty() {
-            let user = viewer.user_db_id("the rating filter")?;
-            tracks.restrict(lyra_db::ratings::target_ids_matching(
-                db,
-                user,
-                filter.rating,
-            )?);
-        }
+        filter.personal.restrict(
+            db,
+            viewer,
+            &mut tracks,
+            FavoriteKind::Track,
+            |user| lyra_db::listens::listened_track_ids(db, user),
+            || all_tracks(db),
+        )?;
 
         let mut excluded = filter.exclude_ids.clone();
         if !filter.exclude_artists.is_empty() {
@@ -257,7 +252,20 @@ impl Catalog for Tracks {
         } else {
             HashMap::new()
         };
-        let ratings = super::ratings(db, viewer, &ids, keys.contains(&TrackKey::Rating))?;
+        let ratings = super::ratings(
+            db,
+            viewer,
+            &ids,
+            keys.iter()
+                .any(|key| matches!(key, TrackKey::Rating | TrackKey::RatedAt)),
+        )?;
+        let favorited_at = super::favorited_at(
+            db,
+            viewer,
+            &ids,
+            FavoriteKind::Track,
+            keys.contains(&TrackKey::FavoritedAt),
+        )?;
         let artist_names = if keys.contains(&TrackKey::ArtistName) {
             lyra_db::artists::first_credited_names(db, &ids)?
         } else {
@@ -328,7 +336,13 @@ impl Catalog for Tracks {
                             .map(SortValue::Number),
                         TrackKey::Rating => ratings
                             .get(&id)
-                            .map(|rating| SortValue::Number((*rating).into())),
+                            .map(|edge| SortValue::Number(edge.value.get().into())),
+                        TrackKey::RatedAt => ratings
+                            .get(&id)
+                            .and_then(|edge| super::timestamp_value(edge.updated_at_ms)),
+                        TrackKey::FavoritedAt => favorited_at
+                            .get(&id)
+                            .and_then(|ms| super::timestamp_value(*ms)),
                         TrackKey::Relevance | TrackKey::Random | TrackKey::Id => None,
                     })
                     .collect();

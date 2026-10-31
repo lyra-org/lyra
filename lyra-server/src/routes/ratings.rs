@@ -40,6 +40,7 @@ use crate::{
     },
 };
 use lyra_db::ratings::{
+    InvalidRatingFilter,
     MAX_VALUE,
     MIN_VALUE,
     RatingValue,
@@ -55,10 +56,18 @@ pub(crate) struct RatingFilterQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
+            description = "Optional: `true` keeps only entities the authenticated user has rated, `false` only those they have not. `false` cannot be combined with `min_rating` or `max_rating`."
+        )
+    )]
+    #[serde(default, deserialize_with = "super::deserialize_optional_scalar")]
+    rated: Option<bool>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
             description = "Optional inclusive minimum personal rating. Must be an integer from 1 through 5. Unrated entities are excluded."
         )
     )]
-    #[serde(default, deserialize_with = "super::deserialize_optional_number")]
+    #[serde(default, deserialize_with = "super::deserialize_optional_scalar")]
     min_rating: Option<i64>,
     #[cfg_attr(
         feature = "docgen",
@@ -66,7 +75,7 @@ pub(crate) struct RatingFilterQuery {
             description = "Optional inclusive maximum personal rating. Must be an integer from 1 through 5. Unrated entities are excluded."
         )
     )]
-    #[serde(default, deserialize_with = "super::deserialize_optional_number")]
+    #[serde(default, deserialize_with = "super::deserialize_optional_scalar")]
     max_rating: Option<i64>,
 }
 
@@ -74,6 +83,7 @@ impl RatingFilterQuery {
     #[cfg(test)]
     pub(crate) fn from_bounds(min_rating: Option<i64>, max_rating: Option<i64>) -> Self {
         Self {
+            rated: None,
             min_rating,
             max_rating,
         }
@@ -88,8 +98,14 @@ impl RatingFilterQuery {
             .max_rating
             .map(|value| parse_rating_bound("max_rating", value))
             .transpose()?;
-        lyra_db::ratings::RatingFilter::new(min, max)
-            .map_err(|_| AppError::bad_request("min_rating must not exceed max_rating"))
+        lyra_db::ratings::RatingFilter::new(self.rated, min, max).map_err(|err| match err {
+            InvalidRatingFilter::Inverted => {
+                AppError::bad_request("min_rating must not exceed max_rating")
+            }
+            InvalidRatingFilter::BoundsOnUnrated => AppError::bad_request(
+                "min_rating and max_rating cannot be combined with rated=false",
+            ),
+        })
     }
 }
 
@@ -359,6 +375,11 @@ mod tests {
         let rating = parse("min_rating=").expect("a blank bound parses");
         assert_eq!((rating.min_rating, rating.max_rating), (None, None));
         assert!(parse("min_rating=high").is_err());
+        assert_eq!(
+            parse("rated=false").expect("rated parses").rated,
+            Some(false)
+        );
+        assert!(parse("rated=maybe").is_err());
     }
 
     #[test]
@@ -372,9 +393,10 @@ mod tests {
 
     #[test]
     fn rating_filter_parses_optional_inclusive_bounds() {
-        assert!(RatingFilterQuery::default().parse().unwrap().is_empty());
+        assert!(RatingFilterQuery::default().parse().unwrap().is_any());
         assert_eq!(
             RatingFilterQuery {
+                rated: None,
                 min_rating: Some(1),
                 max_rating: None,
             }
@@ -385,6 +407,7 @@ mod tests {
         );
         assert_eq!(
             RatingFilterQuery {
+                rated: None,
                 min_rating: None,
                 max_rating: Some(5),
             }
@@ -395,6 +418,7 @@ mod tests {
         );
         assert_eq!(
             RatingFilterQuery {
+                rated: None,
                 min_rating: Some(3),
                 max_rating: Some(3),
             }
@@ -406,9 +430,33 @@ mod tests {
     }
 
     #[test]
+    fn rating_filter_rejects_bounds_on_unrated() {
+        assert_eq!(
+            RatingFilterQuery {
+                rated: Some(false),
+                min_rating: None,
+                max_rating: None,
+            }
+            .parse()
+            .unwrap(),
+            lyra_db::ratings::RatingFilter::Unrated,
+        );
+        assert!(
+            RatingFilterQuery {
+                rated: Some(false),
+                min_rating: Some(1),
+                max_rating: None,
+            }
+            .parse()
+            .is_err()
+        );
+    }
+
+    #[test]
     fn rating_filter_rejects_invalid_bounds() {
         assert!(
             RatingFilterQuery {
+                rated: None,
                 min_rating: Some(0),
                 max_rating: None,
             }
@@ -417,6 +465,7 @@ mod tests {
         );
         assert!(
             RatingFilterQuery {
+                rated: None,
                 min_rating: None,
                 max_rating: Some(6),
             }
@@ -425,6 +474,7 @@ mod tests {
         );
         assert!(
             RatingFilterQuery {
+                rated: None,
                 min_rating: Some(4),
                 max_rating: Some(3),
             }

@@ -10,6 +10,7 @@ use std::{
     collections::{
         BTreeSet,
         HashMap,
+        HashSet,
     },
 };
 
@@ -18,9 +19,16 @@ use agdb::{
     DbId,
 };
 
-use lyra_db::ratings::RatingFilter;
+use lyra_db::{
+    favorites::FavoriteKind,
+    ratings::{
+        RatingBounds,
+        RatingFilter,
+    },
+};
 
 use super::{
+    Candidates,
     CatalogError,
     Direction,
     Page,
@@ -124,21 +132,60 @@ pub(crate) enum PersonalData {
     Ratings,
 }
 
-impl PersonalData {
-    /// What `favorite`, `listened` and `rating` filters read.
-    pub(crate) fn of_filter(
-        favorite: Option<bool>,
-        listened: Option<bool>,
-        rating: RatingFilter,
-    ) -> Vec<Self> {
+/// The viewer's own favorites, listens and ratings a query keeps.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct PersonalFilter {
+    pub(crate) favorite: Option<bool>,
+    pub(crate) listened: Option<bool>,
+    pub(crate) rating: RatingFilter,
+}
+
+impl PersonalFilter {
+    /// The viewer's personal data the filter reads.
+    pub(crate) fn reads(self) -> Vec<PersonalData> {
         [
-            favorite.map(|_| Self::Favorites),
-            listened.map(|_| Self::Listens),
-            (!rating.is_empty()).then_some(Self::Ratings),
+            self.favorite.map(|_| PersonalData::Favorites),
+            self.listened.map(|_| PersonalData::Listens),
+            (!self.rating.is_any()).then_some(PersonalData::Ratings),
         ]
         .into_iter()
         .flatten()
         .collect()
+    }
+
+    /// Narrows `candidates` to what the filter keeps. `listened` gives the user's listened
+    /// entities, and `all` every entity, for keeping what is not in a set.
+    pub(crate) fn restrict(
+        self,
+        db: &DbAny,
+        viewer: &Viewer,
+        candidates: &mut Candidates,
+        kind: FavoriteKind,
+        listened: impl FnOnce(DbId) -> anyhow::Result<HashSet<DbId>>,
+        all: impl Fn() -> anyhow::Result<Vec<DbId>>,
+    ) -> Result<(), CatalogError> {
+        if let Some(favorite) = self.favorite {
+            let user = viewer.user_db_id("the favorite filter")?;
+            let favorites = lyra_db::favorites::target_ids(db, user, kind)?;
+            candidates.restrict_membership(favorites, favorite, &all)?;
+        }
+        if let Some(wanted) = self.listened {
+            let user = viewer.user_db_id("the listened filter")?;
+            candidates.restrict_membership(listened(user)?, wanted, &all)?;
+        }
+        match self.rating {
+            RatingFilter::Any => {}
+            RatingFilter::Rated(bounds) => {
+                let user = viewer.user_db_id("the rating filter")?;
+                candidates.restrict(lyra_db::ratings::rated_target_ids(db, user, bounds)?);
+            }
+            RatingFilter::Unrated => {
+                let user = viewer.user_db_id("the rating filter")?;
+                let rated = lyra_db::ratings::rated_target_ids(db, user, RatingBounds::default())?;
+                candidates.restrict_membership(rated, false, &all)?;
+            }
+        }
+        Ok(())
     }
 }
 

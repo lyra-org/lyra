@@ -68,6 +68,20 @@ same(order(artists.query({ max_rating = 1 }).items), { ids.bea }, "artist rating
 rejects(tracks.query, "min_rating must not exceed max_rating", { min_rating = 4, max_rating = 2 })
 rejects(tracks.query, "min_rating must be an integer from 1 to 5, got 0", { min_rating = 0 })
 rejects(releases.query, "max_rating must be an integer from 1 to 5, got 6", { max_rating = 6 })
+local rated_tracks = tracks.query({
+	release_ids = { ids.album },
+	rated = true,
+	sort = { { key = "rating", order = "descending" } },
+})
+same(order(rated_tracks.items), { ids.high, ids.low }, "rated")
+same(order(tracks.query({ release_ids = { ids.album }, rated = false }).items), { ids.unrated }, "unrated tracks")
+same(order(releases.query({ rated = false }).items), { ids.single }, "unrated releases")
+same(order(artists.query({ rated = false }).items), { ids.amy }, "unrated artists")
+rejects(
+	tracks.query,
+	"min_rating and max_rating cannot be combined with rated = false",
+	{ rated = false, min_rating = 1 }
+)
 
 -- Sorting: unrated items sort last in both directions.
 local function by_rating(direction: string): { number }

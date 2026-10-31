@@ -457,9 +457,16 @@ mod tests {
                 HashSet::new(),
             ),
         )?;
-        let names = |favorite| -> anyhow::Result<Vec<String>> {
+        lyra_db::ratings::upsert(
+            &mut db,
+            user,
+            uncredited,
+            lyra_db::ratings::RatingValue::new(3).unwrap(),
+            1,
+        )?;
+        let names = |personal| -> anyhow::Result<Vec<String>> {
             let query = catalog::Query::<Artists>::new(ArtistFilter {
-                favorite: Some(favorite),
+                personal,
                 ..ArtistFilter::default()
             });
             let ids = catalog::order(&db, &viewer, &query)?;
@@ -468,8 +475,26 @@ mod tests {
                 .map(|artist| artist.artist_name)
                 .collect())
         };
-        assert_eq!(names(true)?, ["Uncredited"], "favorites are not browsing");
-        assert_eq!(names(false)?, ["Credited"]);
+        let favorite = |favorite| catalog::PersonalFilter {
+            favorite: Some(favorite),
+            ..catalog::PersonalFilter::default()
+        };
+        let rated = |rated| catalog::PersonalFilter {
+            rating: lyra_db::ratings::RatingFilter::new(Some(rated), None, None).unwrap(),
+            ..catalog::PersonalFilter::default()
+        };
+        assert_eq!(
+            names(favorite(true))?,
+            ["Uncredited"],
+            "favorites are not browsing"
+        );
+        assert_eq!(names(favorite(false))?, ["Credited"]);
+        assert_eq!(
+            names(rated(true))?,
+            ["Uncredited"],
+            "ratings are not browsing"
+        );
+        assert_eq!(names(rated(false))?, ["Credited"]);
         Ok(())
     }
 

@@ -40,31 +40,29 @@ impl RatingValue {
     }
 }
 
+/// Inclusive bounds on a rating, the minimum never above the maximum.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct RatingFilter {
+pub struct RatingBounds {
     min: Option<RatingValue>,
     max: Option<RatingValue>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct InvertedRatingFilter;
-
-impl RatingFilter {
+impl RatingBounds {
     pub fn new(
         min: Option<RatingValue>,
         max: Option<RatingValue>,
-    ) -> Result<Self, InvertedRatingFilter> {
+    ) -> Result<Self, InvalidRatingFilter> {
         if min.zip(max).is_some_and(|(min, max)| min > max) {
-            return Err(InvertedRatingFilter);
+            return Err(InvalidRatingFilter::Inverted);
         }
         Ok(Self { min, max })
     }
 
-    pub fn is_empty(self) -> bool {
+    pub fn is_unbounded(self) -> bool {
         self.min.is_none() && self.max.is_none()
     }
 
-    pub fn bounds(self) -> (Option<u8>, Option<u8>) {
+    pub fn get(self) -> (Option<u8>, Option<u8>) {
         (
             self.min.map(RatingValue::get),
             self.max.map(RatingValue::get),
@@ -76,12 +74,66 @@ impl RatingFilter {
     }
 }
 
+/// Which of a user's rated and unrated targets a query keeps.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RatingFilter {
+    #[default]
+    Any,
+    /// Rated targets within the bounds.
+    Rated(RatingBounds),
+    Unrated,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum InvalidRatingFilter {
+    #[error("the minimum rating exceeds the maximum")]
+    Inverted,
+    #[error("rating bounds keep only rated targets")]
+    BoundsOnUnrated,
+}
+
+impl RatingFilter {
+    /// `rated` keeps rated (`true`) or unrated (`false`) targets; a bound implies rated.
+    pub fn new(
+        rated: Option<bool>,
+        min: Option<RatingValue>,
+        max: Option<RatingValue>,
+    ) -> Result<Self, InvalidRatingFilter> {
+        let bounds = RatingBounds::new(min, max)?;
+        match rated {
+            Some(false) if !bounds.is_unbounded() => Err(InvalidRatingFilter::BoundsOnUnrated),
+            Some(false) => Ok(Self::Unrated),
+            None if bounds.is_unbounded() => Ok(Self::Any),
+            _ => Ok(Self::Rated(bounds)),
+        }
+    }
+
+    pub fn is_any(self) -> bool {
+        self == Self::Any
+    }
+
+    pub fn rated(self) -> Option<bool> {
+        match self {
+            Self::Any => None,
+            Self::Rated(_) => Some(true),
+            Self::Unrated => Some(false),
+        }
+    }
+
+    pub fn bounds(self) -> (Option<u8>, Option<u8>) {
+        match self {
+            Self::Rated(bounds) => bounds.get(),
+            Self::Any | Self::Unrated => (None, None),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RatingEdge {
     pub(crate) target_db_id: DbId,
     pub value: RatingValue,
     pub(crate) created_at_ms: i64,
-    pub(crate) updated_at_ms: i64,
+    pub updated_at_ms: i64,
 }
 
 pub fn upsert(
@@ -176,19 +228,16 @@ pub fn averages_for_targets(
     Ok(averages)
 }
 
-pub fn target_ids_matching(
+/// The targets the user rated within `bounds`.
+pub fn rated_target_ids(
     db: &impl DbAccess,
     user_db_id: DbId,
-    filter: RatingFilter,
+    bounds: RatingBounds,
 ) -> anyhow::Result<HashSet<DbId>> {
-    anyhow::ensure!(
-        !filter.is_empty(),
-        "ratings::target_ids_matching requires at least one bound",
-    );
     Ok(read_outbound_rating_edges(db, user_db_id)?
         .into_iter()
         .filter_map(parse_rating_edge)
-        .filter(|edge| filter.contains(edge.value))
+        .filter(|edge| bounds.contains(edge.value))
         .map(|edge| edge.target_db_id)
         .collect())
 }
@@ -470,7 +519,7 @@ mod tests {
     }
 
     #[test]
-    fn target_ids_matching_applies_inclusive_range_per_user() -> anyhow::Result<()> {
+    fn rated_target_ids_applies_inclusive_bounds_per_user() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user_a = create_node(&mut db)?;
         let user_b = create_node(&mut db)?;
@@ -490,30 +539,60 @@ mod tests {
         }
         upsert(&mut db, user_b, high, RatingValue::new(4).unwrap(), 100)?;
 
-        let filter = RatingFilter::new(RatingValue::new(3), RatingValue::new(4)).unwrap();
-        let matches = target_ids_matching(&db, user_a, filter)?;
-        assert_eq!(matches, HashSet::from([middle, upper]));
-
-        let exact = RatingFilter::new(RatingValue::new(4), RatingValue::new(4)).unwrap();
+        let bounds = |min, max| RatingBounds::new(RatingValue::new(min), RatingValue::new(max));
         assert_eq!(
-            target_ids_matching(&db, user_a, exact)?,
+            rated_target_ids(&db, user_a, bounds(3, 4)?)?,
+            HashSet::from([middle, upper]),
+        );
+        assert_eq!(
+            rated_target_ids(&db, user_a, bounds(4, 4)?)?,
             HashSet::from([upper]),
         );
-
-        let at_most = RatingFilter::new(None, RatingValue::new(2)).unwrap();
         assert_eq!(
-            target_ids_matching(&db, user_a, at_most)?,
+            rated_target_ids(&db, user_a, RatingBounds::new(None, RatingValue::new(2))?)?,
             HashSet::from([low]),
+        );
+        assert_eq!(
+            rated_target_ids(&db, user_b, RatingBounds::default())?,
+            HashSet::from([high]),
         );
         Ok(())
     }
 
     #[test]
-    fn rating_filter_accepts_single_and_equal_bounds() {
-        assert!(RatingFilter::new(RatingValue::new(1), None).is_ok());
-        assert!(RatingFilter::new(None, RatingValue::new(5)).is_ok());
-        assert!(RatingFilter::new(RatingValue::new(3), RatingValue::new(3)).is_ok());
-        assert!(RatingFilter::new(RatingValue::new(4), RatingValue::new(3)).is_err());
+    fn rating_bounds_accept_single_and_equal_bounds() {
+        assert!(RatingBounds::new(RatingValue::new(1), None).is_ok());
+        assert!(RatingBounds::new(None, RatingValue::new(5)).is_ok());
+        assert!(RatingBounds::new(RatingValue::new(3), RatingValue::new(3)).is_ok());
+        assert_eq!(
+            RatingBounds::new(RatingValue::new(4), RatingValue::new(3)),
+            Err(InvalidRatingFilter::Inverted),
+        );
+    }
+
+    #[test]
+    fn rating_filter_reads_rated_alongside_bounds() {
+        assert_eq!(RatingFilter::new(None, None, None), Ok(RatingFilter::Any));
+        assert_eq!(
+            RatingFilter::new(Some(true), None, None),
+            Ok(RatingFilter::Rated(RatingBounds::default())),
+        );
+        assert_eq!(
+            RatingFilter::new(Some(true), RatingValue::new(2), None),
+            RatingFilter::new(None, RatingValue::new(2), None),
+        );
+        assert_eq!(
+            RatingFilter::new(Some(false), None, None),
+            Ok(RatingFilter::Unrated)
+        );
+        assert_eq!(
+            RatingFilter::new(Some(false), RatingValue::new(1), None),
+            Err(InvalidRatingFilter::BoundsOnUnrated),
+        );
+        assert_eq!(
+            RatingFilter::new(None, RatingValue::new(4), RatingValue::new(3)),
+            Err(InvalidRatingFilter::Inverted),
+        );
     }
 
     #[test]

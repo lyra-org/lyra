@@ -155,7 +155,7 @@ pub(crate) struct PageQuery {
         feature = "docgen",
         schemars(description = "Page size. Default 100, cap 500.")
     )]
-    #[serde(default, deserialize_with = "deserialize_optional_number")]
+    #[serde(default, deserialize_with = "deserialize_optional_scalar")]
     limit: Option<u64>,
     #[cfg_attr(
         feature = "docgen",
@@ -164,6 +164,48 @@ pub(crate) struct PageQuery {
         )
     )]
     cursor: Option<String>,
+}
+
+/// The `favorite`, `listened` and rating filters on catalog list endpoints.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+pub(crate) struct PersonalFilterQuery {
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Optional: `true` keeps only entities the authenticated user has favorited, `false` only those they have not."
+        )
+    )]
+    #[serde(default, deserialize_with = "deserialize_optional_scalar")]
+    favorite: Option<bool>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Optional: `true` keeps only entities the authenticated user has listened to, `false` only the rest. The endpoint description says what counts as listened."
+        )
+    )]
+    #[serde(default, deserialize_with = "deserialize_optional_scalar")]
+    listened: Option<bool>,
+    #[serde(flatten)]
+    rating: ratings::RatingFilterQuery,
+}
+
+impl PersonalFilterQuery {
+    #[cfg(test)]
+    pub(crate) fn from_bounds(min_rating: Option<i64>, max_rating: Option<i64>) -> Self {
+        Self {
+            rating: ratings::RatingFilterQuery::from_bounds(min_rating, max_rating),
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn parse(self) -> Result<crate::services::catalog::PersonalFilter, AppError> {
+        Ok(crate::services::catalog::PersonalFilter {
+            favorite: self.favorite,
+            listened: self.listened,
+            rating: self.rating.parse()?,
+        })
+    }
 }
 
 /// Operations that change credentials or server-wide behavior require an
@@ -194,9 +236,9 @@ where
     Option::<T>::deserialize(deserializer).map(Some)
 }
 
-/// A number given as a number or, as query strings and flattened fields give it, as a string.
-/// A blank string is no number.
-pub(crate) fn deserialize_optional_number<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+/// A number or boolean given as itself or, as query strings and flattened fields give it, as a
+/// string. A blank string is no value.
+pub(crate) fn deserialize_optional_scalar<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: Deserializer<'de>,
     T: Deserialize<'de> + std::str::FromStr,
@@ -205,7 +247,7 @@ where
     #[derive(Deserialize)]
     #[serde(untagged)]
     enum Value<T> {
-        Number(T),
+        Scalar(T),
         String(String),
     }
 
@@ -213,7 +255,7 @@ where
         return Ok(None);
     };
     match value {
-        Value::Number(value) => Ok(Some(value)),
+        Value::Scalar(value) => Ok(Some(value)),
         Value::String(value) => {
             let trimmed = value.trim();
             if trimmed.is_empty() {
@@ -228,7 +270,7 @@ pub(crate) fn deserialize_optional_usize<'de, D>(deserializer: D) -> Result<Opti
 where
     D: Deserializer<'de>,
 {
-    deserialize_optional_number::<D, u64>(deserializer)?
+    deserialize_optional_scalar::<D, u64>(deserializer)?
         .map(usize::try_from)
         .transpose()
         .map_err(|_| de::Error::custom("number is too large"))

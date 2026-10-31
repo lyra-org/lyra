@@ -17,6 +17,7 @@ end
 rejects(tracks.query, FAVORITES, { favorite = true })
 rejects(releases.query, FAVORITES, { favorite = false })
 rejects(artists.query, FAVORITES, { favorite = true })
+rejects(tracks.query, FAVORITES, { sort = { { key = "favorited_at" } } })
 
 rejects(tracks.query, LISTENS, { listened = false })
 rejects(releases.query, LISTENS, { sort = { { key = "last_played_at" } } })
@@ -24,3 +25,5 @@ rejects(genres.query, LISTENS, { sort = { { key = "listen_count" } } })
 
 rejects(tracks.query, RATINGS, { min_rating = 1 })
 rejects(artists.query, RATINGS, { sort = { { key = "rating" } } })
+rejects(tracks.query, RATINGS, { rated = false })
+rejects(releases.query, RATINGS, { sort = { { key = "rated_at" } } })

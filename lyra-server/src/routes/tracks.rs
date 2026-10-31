@@ -41,9 +41,9 @@ use crate::services::delivery::{
 use crate::{
     routes::AppError,
     routes::{
+        PersonalFilterQuery,
         covers as route_covers,
         deserialize_inc,
-        ratings::RatingFilterQuery,
         responses::{
             PageResponse,
             ReleaseResponse,
@@ -120,7 +120,7 @@ struct TrackListQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Comma-separated or repeated values: name, sort_name, date_created, year, duration, disc, track, release_title, artist_name, release_artist_name, listen_count, last_played_at, rating, relevance (with query), random, id."
+            description = "Comma-separated or repeated values: name, sort_name, date_created, year, duration, disc, track, release_title, artist_name, release_artist_name, listen_count, last_played_at, rating, rated_at, favorited_at, relevance (with query), random, id."
         )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
@@ -131,7 +131,7 @@ struct TrackListQuery {
     )]
     sort_order: Option<String>,
     #[serde(flatten)]
-    rating: RatingFilterQuery,
+    personal: PersonalFilterQuery,
     #[serde(flatten)]
     page: super::PageQuery,
 }
@@ -143,17 +143,17 @@ pub(crate) struct TrackListOptions {
     release_id: Option<String>,
     sort_by: Option<Vec<String>>,
     sort_order: Option<String>,
-    rating_filter: lyra_db::ratings::RatingFilter,
+    personal: catalog::PersonalFilter,
     page_request: super::SnapshotPageRequest,
 }
 
 impl TrackListOptions {
-    /// The options `GET /api/tracks?query=` runs with only `inc`, rating bounds and paging, so a
+    /// The options `GET /api/tracks?query=` runs with only `inc`, personal filters and paging, so a
     /// search cursor resumes on that endpoint. Any other filter or sort would change the cursor key.
     pub(crate) fn for_query(
         inc: Option<Vec<String>>,
         query: String,
-        rating_filter: lyra_db::ratings::RatingFilter,
+        personal: catalog::PersonalFilter,
         page_request: super::SnapshotPageRequest,
     ) -> Self {
         Self {
@@ -163,7 +163,7 @@ impl TrackListOptions {
             release_id: None,
             sort_by: None,
             sort_order: None,
-            rating_filter,
+            personal,
             page_request,
         }
     }
@@ -301,22 +301,18 @@ pub(crate) fn track_page(
         release_id,
         sort_by,
         sort_order,
-        rating_filter,
+        personal,
         page_request,
     } = options;
     let includes = parse_inc(inc)?;
     let search_term = super::parse_text_query(query);
-    let (min_rating, max_rating) = rating_filter.bounds();
-    let min_rating_context = min_rating.map(|value| value.to_string());
-    let max_rating_context = max_rating.map(|value| value.to_string());
     let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "tracks")
         .field(search_term.as_deref())
         .field(library_id.as_deref())
         .field(release_id.as_deref())
         .values(sort_by.as_deref())
         .field(sort_order.as_deref())
-        .field(min_rating_context.as_deref())
-        .field(max_rating_context.as_deref())
+        .personal(personal)
         .finish();
     let library = crate::services::auth::access::resolve_optional_library_filter(
         db,
@@ -340,7 +336,7 @@ pub(crate) fn track_page(
         let mut query = catalog::Query::<Tracks>::new(TrackFilter {
             library,
             releases: release.map(|release| vec![release]),
-            rating: rating_filter,
+            personal,
             ..TrackFilter::default()
         });
         query.search = search_term;
@@ -580,12 +576,12 @@ async fn get_tracks(
         release_id,
         sort_by,
         sort_order,
-        rating,
+        personal,
         page,
     } = list_query;
     let page = page.resolve_snapshot();
     let principal = require_authenticated(bearer_credential(&headers)).await?;
-    let rating_filter = rating.parse()?;
+    let personal = personal.parse()?;
     Ok(Json(
         list_track_responses(
             &principal,
@@ -596,7 +592,7 @@ async fn get_tracks(
                 release_id,
                 sort_by,
                 sort_order,
-                rating_filter,
+                personal,
                 page_request: page,
             },
         )
@@ -616,7 +612,7 @@ async fn get_track(
 #[cfg(feature = "docgen")]
 fn list_tracks_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List tracks").description(
-        "Returns tracks as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `release_id`, `sort_by`, `sort_order`, `min_rating`, `max_rating`, `limit`, `cursor`. `min_rating` and `max_rating` filter tracks by the authenticated user's inclusive personal rating range; either bound excludes unrated tracks. `library_id` scopes results to tracks belonging to that public library ID. `release_id` scopes results to one public release ID and defaults ordering to album order: disc, track, sort name, id. `sort_by` supports `name`, `sort_name`, `date_created`, `year`, `duration`, `disc`, `track`, `release_title` (the title of the track's release), `artist_name` (the first credited artist), `release_artist_name` (the first artist credited on the track's release), `listen_count`, `last_played_at`, `rating` (the authenticated user's personal rating), `relevance` (with `query`), `random`, and `id`. `random` moves the tracks of a chain as one, keeping them together and in chain order in either direction. `sort_order` supports `ascending` and `descending` and applies to every key. Tracks without a value for a key sort last in both directions, except missing disc and track numbers, which sort first. Ties fall back to sort name, name, then id. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against track titles and defaults ordering to relevance. A track in a chain carries `chain` with the chain's `id` and the track's 0-based `position` in it. Use `inc` to include releases and/or artists. When `inc=releases,release_covers`, nested release metadata includes a public cover image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
+        "Returns tracks as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `release_id`, `sort_by`, `sort_order`, `rated`, `min_rating`, `max_rating`, `favorite`, `listened`, `limit`, `cursor`. `min_rating` and `max_rating` filter tracks by the authenticated user's inclusive personal rating range; either bound excludes unrated tracks. `rated=true` keeps only tracks the user has rated and `rated=false` only those they have not; `rated=false` cannot be combined with a rating bound. `favorite=true` keeps only tracks the user has favorited and `favorite=false` the rest. `listened=true` keeps only tracks the user has listened to at least once and `listened=false` the rest. `library_id` scopes results to tracks belonging to that public library ID. `release_id` scopes results to one public release ID and defaults ordering to album order: disc, track, sort name, id. `sort_by` supports `name`, `sort_name`, `date_created`, `year`, `duration`, `disc`, `track`, `release_title` (the title of the track's release), `artist_name` (the first credited artist), `release_artist_name` (the first artist credited on the track's release), `listen_count`, `last_played_at`, `rating` (the authenticated user's personal rating), `rated_at` (when the authenticated user last set their rating), `favorited_at` (when they first favorited the track), `relevance` (with `query`), `random`, and `id`. `random` moves the tracks of a chain as one, keeping them together and in chain order in either direction. `sort_order` supports `ascending` and `descending` and applies to every key. Tracks without a value for a key sort last in both directions, except missing disc and track numbers, which sort first. Ties fall back to sort name, name, then id. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against track titles and defaults ordering to relevance. A track in a chain carries `chain` with the chain's `id` and the track's 0-based `position` in it. Use `inc` to include releases and/or artists. When `inc=releases,release_covers`, nested release metadata includes a public cover image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
     )
 }
 
@@ -889,7 +885,7 @@ mod tests {
                 release_id: None,
                 sort_by: None,
                 sort_order: None,
-                rating_filter: lyra_db::ratings::RatingFilter::default(),
+                personal: catalog::PersonalFilter::default(),
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
@@ -944,7 +940,7 @@ mod tests {
                 release_id: None,
                 sort_by: None,
                 sort_order: None,
-                rating_filter: lyra_db::ratings::RatingFilter::default(),
+                personal: catalog::PersonalFilter::default(),
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
@@ -1001,11 +997,15 @@ mod tests {
                 release_id: None,
                 sort_by: None,
                 sort_order: None,
-                rating_filter: lyra_db::ratings::RatingFilter::new(
-                    lyra_db::ratings::RatingValue::new(5),
-                    lyra_db::ratings::RatingValue::new(5),
-                )
-                .unwrap(),
+                personal: catalog::PersonalFilter {
+                    rating: lyra_db::ratings::RatingFilter::new(
+                        None,
+                        lyra_db::ratings::RatingValue::new(5),
+                        lyra_db::ratings::RatingValue::new(5),
+                    )
+                    .unwrap(),
+                    ..catalog::PersonalFilter::default()
+                },
                 page_request: super::super::PageQuery {
                     limit: None,
                     cursor: None,
@@ -1101,6 +1101,7 @@ mod tests {
             (principal, four_star_id, five_star_id)
         };
         let rating_filter = lyra_db::ratings::RatingFilter::new(
+            None,
             lyra_db::ratings::RatingValue::new(4),
             lyra_db::ratings::RatingValue::new(5),
         )
@@ -1115,7 +1116,10 @@ mod tests {
                 release_id: None,
                 sort_by: None,
                 sort_order: None,
-                rating_filter,
+                personal: catalog::PersonalFilter {
+                    rating: rating_filter,
+                    ..catalog::PersonalFilter::default()
+                },
                 page_request: super::super::PageQuery {
                     limit: Some(1),
                     cursor: None,
@@ -1138,7 +1142,10 @@ mod tests {
                 release_id: None,
                 sort_by: None,
                 sort_order: None,
-                rating_filter,
+                personal: catalog::PersonalFilter {
+                    rating: rating_filter,
+                    ..catalog::PersonalFilter::default()
+                },
                 page_request: super::super::PageQuery {
                     limit: Some(1),
                     cursor: Some(cursor.clone()),
@@ -1160,6 +1167,7 @@ mod tests {
         );
 
         let exact_five = lyra_db::ratings::RatingFilter::new(
+            None,
             lyra_db::ratings::RatingValue::new(5),
             lyra_db::ratings::RatingValue::new(5),
         )
@@ -1173,7 +1181,10 @@ mod tests {
                 release_id: None,
                 sort_by: None,
                 sort_order: None,
-                rating_filter: exact_five,
+                personal: catalog::PersonalFilter {
+                    rating: exact_five,
+                    ..catalog::PersonalFilter::default()
+                },
                 page_request: super::super::PageQuery {
                     limit: Some(1),
                     cursor: Some(cursor),
@@ -1197,7 +1208,10 @@ mod tests {
                 release_id: None,
                 sort_by: None,
                 sort_order: None,
-                rating_filter: exact_five,
+                personal: catalog::PersonalFilter {
+                    rating: exact_five,
+                    ..catalog::PersonalFilter::default()
+                },
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
@@ -1237,7 +1251,7 @@ mod tests {
                 release_id: None,
                 sort_by: None,
                 sort_order: None,
-                rating_filter: lyra_db::ratings::RatingFilter::default(),
+                personal: catalog::PersonalFilter::default(),
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
@@ -1382,7 +1396,7 @@ mod tests {
                 release_id: Some(release_public_id),
                 sort_by: None,
                 sort_order: None,
-                rating_filter: lyra_db::ratings::RatingFilter::default(),
+                personal: catalog::PersonalFilter::default(),
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
@@ -1420,7 +1434,7 @@ mod tests {
                 release_id,
                 sort_by: sort_by.map(|value| vec![value.to_string()]),
                 sort_order: sort_order.map(str::to_string),
-                rating_filter: lyra_db::ratings::RatingFilter::default(),
+                personal: catalog::PersonalFilter::default(),
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
@@ -1595,6 +1609,193 @@ mod tests {
         Ok(())
     }
 
+    async fn filtered_titles(
+        principal: &Principal,
+        rating: lyra_db::ratings::RatingFilter,
+        favorite: Option<bool>,
+        listened: Option<bool>,
+    ) -> anyhow::Result<Vec<String>> {
+        let page = list_track_responses(
+            principal,
+            TrackListOptions {
+                inc: None,
+                query: None,
+                library_id: None,
+                release_id: None,
+                sort_by: None,
+                sort_order: None,
+                personal: catalog::PersonalFilter {
+                    favorite,
+                    listened,
+                    rating,
+                },
+                page_request: super::super::SnapshotPageRequest::first_page(100),
+            },
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        Ok(page.items.into_iter().map(|track| track.title).collect())
+    }
+
+    #[tokio::test]
+    async fn list_track_responses_filters_by_rated_favorite_and_listened() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let principal = {
+            let mut db = STATE.db.write().await;
+            let user_db_id = lyra_db::test_db::insert_user(&mut db, "track-personal-filter-user")?;
+            let other_user_db_id =
+                lyra_db::test_db::insert_user(&mut db, "track-personal-filter-other")?;
+            let rated = insert_track(&mut db, "Rated")?;
+            let favorite = insert_track(&mut db, "Favorite")?;
+            let listened = insert_track(&mut db, "Listened")?;
+            let others = insert_track(&mut db, "Others")?;
+            lyra_db::ratings::upsert(
+                &mut db,
+                user_db_id,
+                rated,
+                lyra_db::ratings::RatingValue::new(3).unwrap(),
+                1_000,
+            )?;
+            lyra_db::favorites::add(
+                &mut db,
+                user_db_id,
+                favorite,
+                lyra_db::favorites::FavoriteKind::Track,
+                1_000,
+            )?;
+            lyra_db::fixtures::insert_listen(&mut db, user_db_id, listened, 1_000)?;
+            lyra_db::ratings::upsert(
+                &mut db,
+                other_user_db_id,
+                others,
+                lyra_db::ratings::RatingValue::new(5).unwrap(),
+                1_000,
+            )?;
+            lyra_db::favorites::add(
+                &mut db,
+                other_user_db_id,
+                others,
+                lyra_db::favorites::FavoriteKind::Track,
+                1_000,
+            )?;
+            lyra_db::fixtures::insert_listen(&mut db, other_user_db_id, others, 1_000)?;
+            Principal::for_user(
+                &*db,
+                user_db_id,
+                vec![lyra_db::Permission::Admin],
+                HashSet::new(),
+            )
+        };
+        let rated = |rated| lyra_db::ratings::RatingFilter::new(Some(rated), None, None).unwrap();
+        let any = lyra_db::ratings::RatingFilter::Any;
+
+        assert_eq!(
+            filtered_titles(&principal, rated(true), None, None).await?,
+            vec!["Rated"]
+        );
+        assert_eq!(
+            filtered_titles(&principal, rated(false), None, None).await?,
+            vec!["Favorite", "Listened", "Others"]
+        );
+        assert_eq!(
+            filtered_titles(&principal, any, Some(true), None).await?,
+            vec!["Favorite"]
+        );
+        assert_eq!(
+            filtered_titles(&principal, any, Some(false), None).await?,
+            vec!["Listened", "Others", "Rated"]
+        );
+        assert_eq!(
+            filtered_titles(&principal, any, None, Some(true)).await?,
+            vec!["Listened"]
+        );
+        assert_eq!(
+            filtered_titles(&principal, rated(false), Some(false), Some(false)).await?,
+            vec!["Others"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn track_list_query_reads_personal_filters_from_the_query_string() {
+        let uri: axum::http::Uri = "/?rated=false&favorite=true&listened=false&limit=5"
+            .parse()
+            .expect("valid uri");
+        let query = Query::<TrackListQuery>::try_from_uri(&uri)
+            .expect("query parses")
+            .0;
+        assert_eq!(
+            query.personal.parse().unwrap(),
+            catalog::PersonalFilter {
+                favorite: Some(true),
+                listened: Some(false),
+                rating: lyra_db::ratings::RatingFilter::Unrated,
+            },
+        );
+
+        let uri: axum::http::Uri = "/?rated=false&min_rating=2".parse().expect("valid uri");
+        let query = Query::<TrackListQuery>::try_from_uri(&uri)
+            .expect("query parses")
+            .0;
+        assert!(query.personal.parse().is_err());
+    }
+
+    #[tokio::test]
+    async fn list_track_responses_sorts_by_rated_at_and_favorited_at() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let principal = {
+            let mut db = STATE.db.write().await;
+            let user_db_id = lyra_db::test_db::insert_user(&mut db, "track-timestamp-sort-user")?;
+            insert_track(&mut db, "Neither")?;
+            let early = insert_track(&mut db, "Early")?;
+            let late = insert_track(&mut db, "Late")?;
+            let rate = |db: &mut DbAny, track, at| {
+                lyra_db::ratings::upsert(
+                    db,
+                    user_db_id,
+                    track,
+                    lyra_db::ratings::RatingValue::new(4).unwrap(),
+                    at,
+                )
+            };
+            rate(&mut db, early, 1_000)?;
+            rate(&mut db, late, 2_000)?;
+            for (track, at) in [(late, 1_000), (early, 2_000)] {
+                lyra_db::favorites::add(
+                    &mut db,
+                    user_db_id,
+                    track,
+                    lyra_db::favorites::FavoriteKind::Track,
+                    at,
+                )?;
+            }
+            Principal::for_user(
+                &*db,
+                user_db_id,
+                vec![lyra_db::Permission::Admin],
+                HashSet::new(),
+            )
+        };
+
+        assert_eq!(
+            list_titles(&principal, None, Some("rated_at"), Some("descending")).await?,
+            vec!["Late", "Early", "Neither"]
+        );
+        assert_eq!(
+            list_titles(&principal, None, Some("favorited_at"), Some("descending")).await?,
+            vec!["Early", "Late", "Neither"]
+        );
+        assert_eq!(
+            list_titles(&principal, None, Some("favorited_at"), Some("ascending")).await?,
+            vec!["Late", "Early", "Neither"]
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     async fn list_track_responses_rejects_unknown_sort_keys() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
@@ -1641,7 +1842,7 @@ mod tests {
             release_id: None,
             sort_by: None,
             sort_order: None,
-            rating_filter: lyra_db::ratings::RatingFilter::default(),
+            personal: catalog::PersonalFilter::default(),
             page_request: super::super::PageQuery {
                 limit: Some(1),
                 cursor,

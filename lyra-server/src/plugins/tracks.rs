@@ -114,7 +114,7 @@ impl TracksModule {
     }
 
     #[harmony(
-        description = "The tracks the caller can see that pass every filter, sorted and paged. Without `sort`, a search ranks by relevance, a query scoped to one release is in disc and track order, and anything else is by sort name. Filtering by `favorite`, `listened` or a rating, or sorting by listens or rating, needs the `lyra.favorites`, `lyra.listens` or `lyra.ratings` scope respectively.",
+        description = "The tracks the caller can see that pass every filter, sorted and paged. Without `sort`, a search ranks by relevance, a query scoped to one release is in disc and track order, and anything else is by sort name. Filtering by `favorite`, `listened` or a rating, or sorting by favorite time, listens or rating, needs the `lyra.favorites`, `lyra.listens` or `lyra.ratings` scope respectively.",
         returns(TrackPage)
     )]
     async fn query(
@@ -175,9 +175,7 @@ fn read_filter(table: &luau::Table) -> luau::runtime::Result<TrackFilter> {
         artists: catalog::read_artist_credit(table)?,
         genres: args::optional_unique_ids(table, "genre_ids")?,
         years: catalog::read_years(table)?,
-        favorite: table.optional_bool_field("favorite")?,
-        listened: table.optional_bool_field("listened")?,
-        rating: catalog::read_rating(table)?,
+        personal: catalog::read_personal(table)?,
     })
 }
 

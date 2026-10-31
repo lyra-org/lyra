@@ -260,6 +260,20 @@ pub fn target_ids(
         .collect())
 }
 
+/// When the user first favorited each favorite target of `kind`.
+pub fn first_favorited_at(
+    db: &impl DbAccess,
+    user_db_id: DbId,
+    kind: FavoriteKind,
+) -> anyhow::Result<HashMap<DbId, i64>> {
+    Ok(read_outbound_favorite_edges(db, user_db_id)?
+        .into_iter()
+        .filter_map(parse_favorite_edge)
+        .filter(|edge| edge.kind == kind)
+        .map(|edge| (edge.target_db_id, edge.first_favorited_at_ms))
+        .collect())
+}
+
 fn list_ids_with_cap(
     db: &impl DbAccess,
     user_db_id: DbId,
@@ -611,6 +625,28 @@ mod tests {
             err.to_string().contains("cap exceeded"),
             "error should mention cap: got {err}",
         );
+        Ok(())
+    }
+
+    #[test]
+    fn first_favorited_at_keeps_the_first_time_and_kind() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user = create_test_user(&mut db)?;
+        let track_a = create_test_track(&mut db)?;
+        let track_b = create_test_track(&mut db)?;
+        let track_c = create_test_track(&mut db)?;
+
+        add(&mut db, user, track_a, FavoriteKind::Track, 1000)?;
+        add(&mut db, user, track_b, FavoriteKind::Track, 2000)?;
+        add(&mut db, user, track_a, FavoriteKind::Track, 3000)?;
+        add(&mut db, user, track_c, FavoriteKind::Release, 4000)?;
+
+        assert_eq!(
+            first_favorited_at(&db, user, FavoriteKind::Track)?,
+            HashMap::from([(track_a, 1000), (track_b, 2000)]),
+            "a refresh keeps the first time, and other kinds stay out",
+        );
+
         Ok(())
     }
 

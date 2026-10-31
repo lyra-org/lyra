@@ -85,6 +85,19 @@ impl SnapshotKeyBuilder {
         self
     }
 
+    pub(crate) fn flag(self, value: Option<bool>) -> Self {
+        self.field(value.map(|value| if value { "true" } else { "false" }))
+    }
+
+    pub(crate) fn personal(self, filter: crate::services::catalog::PersonalFilter) -> Self {
+        let (min_rating, max_rating) = filter.rating.bounds();
+        self.flag(filter.favorite)
+            .flag(filter.listened)
+            .flag(filter.rating.rated())
+            .field(min_rating.map(|value| value.to_string()).as_deref())
+            .field(max_rating.map(|value| value.to_string()).as_deref())
+    }
+
     pub(crate) fn values(mut self, values: Option<&[String]>) -> Self {
         match values {
             Some(values) => {
