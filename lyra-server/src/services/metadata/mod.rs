@@ -393,19 +393,11 @@ pub(crate) async fn parse_metadata(
             }
         };
         let file_path = path.to_string_lossy().to_string();
-        let raw = mapping::apply_mapping(&tag, &properties, &file_path, mapping_config);
-        if let Err(missing) = mapping::check_required_fields(&raw) {
-            tracing::warn!(
-                path = %path.display(),
-                missing = ?missing,
-                "skipping track: post-mapping required fields empty"
-            );
-            skipped.push(SkipRecord {
-                path: path.clone(),
-                reason: SkipReason::RequiredFieldEmpty(missing),
-            });
-            continue;
-        }
+        let mut raw = mapping::apply_mapping(&tag, &properties, &file_path, mapping_config);
+        // Embedded tags override a cue's own, so an untitled cue-backed file's
+        // name must not supply the title or the artists derived from it.
+        raw.title_from_tags_only = cue_claimed_audio_entries.contains(&entry_db_id)
+            && mapping::missing_title(raw.title.as_deref()).is_some();
         entry_ids_by_path
             .entry(raw.file_path.clone())
             .or_default()
@@ -413,11 +405,18 @@ pub(crate) async fn parse_metadata(
         raw_tags.push(raw);
     }
 
-    let processed = lyra_metadata::process_raw_tags(raw_tags);
-    let mut metadata = Vec::with_capacity(processed.len() + cue_metadata.len());
+    let processed = mapping::process_tags(raw_tags);
+    for rejected in processed.rejected {
+        skip_required_field_empty(
+            &mut skipped,
+            std::path::Path::new(&rejected.file_path),
+            rejected.missing,
+        );
+    }
+    let mut metadata = Vec::with_capacity(processed.tracks.len() + cue_metadata.len());
     let mut embedded_by_entry_id: HashMap<DbId, TrackMetadata> = HashMap::new();
 
-    for track in processed {
+    for track in processed.tracks {
         let path = track
             .file_path
             .clone()
@@ -459,6 +458,22 @@ pub(crate) async fn parse_metadata(
     metadata.extend(cue_metadata);
     sort_track_metadata(&mut metadata);
     Ok(ParseMetadataOutput { metadata, skipped })
+}
+
+fn skip_required_field_empty(
+    skipped: &mut Vec<SkipRecord>,
+    path: &std::path::Path,
+    missing: Vec<mapping::MissingRequiredField>,
+) {
+    tracing::warn!(
+        path = %path.display(),
+        missing = ?missing,
+        "skipping track: required fields empty"
+    );
+    skipped.push(SkipRecord {
+        path: path.to_path_buf(),
+        reason: SkipReason::RequiredFieldEmpty(missing),
+    });
 }
 
 /// A track's embedded tags as the scanner ingests them, its text NFC-normalized.
@@ -541,18 +556,19 @@ mod tests {
 
     use super::*;
 
-    fn fixture_with_comments(
-        name: &str,
+    /// Copies `fixture` to `path`, dropping the vorbis comments in `removed` and adding `added`.
+    pub(super) fn fixture_with_comments(
+        path: &std::path::Path,
         fixture: &str,
-        comments: &[(&str, &str)],
-    ) -> anyhow::Result<PathBuf> {
+        removed: &[&str],
+        added: &[(&str, &str)],
+    ) -> anyhow::Result<()> {
         let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/assets/metadata")
             .join(fixture);
-        let path =
-            std::env::temp_dir().join(format!("lyra-{name}-{}-{fixture}", std::process::id()));
-        std::fs::copy(&source, &path)?;
-        let mut file = std::fs::File::open(&path)?;
+        std::fs::create_dir_all(path.parent().expect("fixture parent"))?;
+        std::fs::copy(&source, path)?;
+        let mut file = std::fs::File::open(path)?;
         let mut vorbis = if fixture.ends_with(".opus") {
             OpusFile::read_from(&mut file, ParseOptions::new())?
                 .vorbis_comments()
@@ -563,18 +579,337 @@ mod tests {
                 .cloned()
                 .unwrap_or_default()
         };
-        for (key, value) in comments {
+        for key in removed {
+            vorbis.remove(key).for_each(drop);
+        }
+        for (key, value) in added {
             vorbis.push((*key).to_string(), (*value).to_string());
         }
-        vorbis.save_to_path(&path, WriteOptions::default())?;
-        Ok(path)
+        vorbis.save_to_path(path, WriteOptions::default())?;
+        Ok(())
+    }
+
+    pub(super) fn file_entry(db_id: i64, path: &std::path::Path) -> Entry {
+        Entry {
+            db_id: Some(DbId(db_id)),
+            id: format!("entry-{db_id}"),
+            full_path: path.to_path_buf(),
+            kind: lyra_db::entries::EntryKind::File,
+            file_kind: None,
+            name: path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            hash: None,
+            size: 0,
+            mtime: 0,
+            ctime: 0,
+        }
+    }
+
+    fn skipped_for(
+        output: &ParseMetadataOutput,
+    ) -> Vec<(PathBuf, Vec<mapping::MissingRequiredField>)> {
+        output
+            .skipped
+            .iter()
+            .map(|record| match &record.reason {
+                SkipReason::RequiredFieldEmpty(missing) => (record.path.clone(), missing.clone()),
+                reason => panic!("unexpected skip: {reason:?}"),
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn parse_metadata_infers_a_title_missing_from_tags() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("Folder Album/01 - Path Title.flac");
+        fixture_with_comments(&path, "integration_track.flac", &["TITLE"], &[])?;
+
+        let output = parse_metadata(&mapping::default_config(), vec![file_entry(1, &path)]).await?;
+
+        assert!(output.skipped.is_empty());
+        assert_eq!(output.metadata.len(), 1);
+        let track = &output.metadata[0];
+        assert_eq!(track.title.as_deref(), Some("Path Title"));
+        assert_eq!(track.album.as_deref(), Some("Integration Album"));
+        assert_eq!(track.track, Some(1));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_metadata_skips_a_folder_without_tagged_albums() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let paths = [
+            dir.path().join("Folder Album/01 - One.flac"),
+            dir.path().join("Folder Album/02 - Two.flac"),
+        ];
+        for path in &paths {
+            fixture_with_comments(path, "integration_track.flac", &["ALBUM"], &[])?;
+        }
+
+        let output = parse_metadata(
+            &mapping::default_config(),
+            vec![file_entry(1, &paths[0]), file_entry(2, &paths[1])],
+        )
+        .await?;
+
+        assert!(output.metadata.is_empty());
+        assert_eq!(
+            skipped_for(&output),
+            paths.map(|path| (path, vec![mapping::MissingRequiredField::Album])),
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_metadata_skips_a_track_whose_artist_is_only_in_its_file_name()
+    -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let tagged = dir.path().join("Folder Album/01 - One.flac");
+        let untagged = dir
+            .path()
+            .join("Folder Album/02 - Integration Artist - Two.flac");
+        fixture_with_comments(&tagged, "integration_track.flac", &[], &[])?;
+        fixture_with_comments(&untagged, "integration_track.flac", &["ARTIST"], &[])?;
+
+        let output = parse_metadata(
+            &mapping::default_config(),
+            vec![file_entry(1, &tagged), file_entry(2, &untagged)],
+        )
+        .await?;
+
+        assert_eq!(output.metadata.len(), 1);
+        assert_eq!(output.metadata[0].entry_db_id, DbId(1));
+        assert_eq!(
+            skipped_for(&output),
+            [(untagged, vec![mapping::MissingRequiredField::ArtistKey])],
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_metadata_keeps_inferred_titles_out_of_cue_tracks() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let audio_path = dir.path().join("Folder Album/album.flac");
+        fixture_with_comments(&audio_path, "integration_track.flac", &["TITLE"], &[])?;
+        let cue_path = dir.path().join("Folder Album/album.cue");
+        std::fs::write(
+            &cue_path,
+            "TITLE \"Cue Album\"\nPERFORMER \"Cue Artist\"\nFILE \"album.flac\" WAVE\n  TRACK 01 AUDIO\n    TITLE \"One\"\n    INDEX 01 00:00:00\n",
+        )?;
+
+        let output = parse_metadata(
+            &mapping::default_config(),
+            vec![file_entry(1, &audio_path), file_entry(2, &cue_path)],
+        )
+        .await?;
+
+        assert!(output.skipped.is_empty());
+        assert_eq!(output.metadata.len(), 1);
+        let track = &output.metadata[0];
+        assert_eq!(track.title.as_deref(), Some("One"));
+        assert_eq!(track.album.as_deref(), Some("Integration Album"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_metadata_keeps_inferred_titles_out_of_cue_tracks_out_of_order()
+    -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let album = dir.path().join("Folder Album");
+        let titled = album.join("titled.flac");
+        let untitled = album.join("untitled.flac");
+        fixture_with_comments(
+            &titled,
+            "integration_track.flac",
+            &[],
+            &[("TRACKNUMBER", "2")],
+        )?;
+        fixture_with_comments(
+            &untitled,
+            "integration_track.flac",
+            &["TITLE"],
+            &[("TRACKNUMBER", "1")],
+        )?;
+        for (name, title) in [("titled", "Cue Titled"), ("untitled", "Cue Untitled")] {
+            std::fs::write(
+                album.join(format!("{name}.cue")),
+                format!(
+                    "FILE \"{name}.flac\" WAVE\n  TRACK 01 AUDIO\n    TITLE \"{title}\"\n    INDEX 01 00:00:00\n"
+                ),
+            )?;
+        }
+
+        let output = parse_metadata(
+            &mapping::default_config(),
+            vec![
+                file_entry(1, &titled),
+                file_entry(2, &untitled),
+                file_entry(3, &album.join("titled.cue")),
+                file_entry(4, &album.join("untitled.cue")),
+            ],
+        )
+        .await?;
+
+        assert!(output.skipped.is_empty());
+        let title_of = |entry: i64| {
+            output
+                .metadata
+                .iter()
+                .find(|track| track.entry_db_id == DbId(entry))
+                .and_then(|track| track.title.as_deref())
+        };
+        assert_eq!(title_of(1), Some("Integration Track"));
+        assert_eq!(title_of(2), Some("Cue Untitled"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_metadata_keeps_filename_features_out_of_cue_tracks() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let audio_path = dir.path().join("Folder Album/Container (feat. Guest).flac");
+        fixture_with_comments(
+            &audio_path,
+            "integration_track.flac",
+            &["TITLE", "ARTIST"],
+            &[("ARTIST", "Container")],
+        )?;
+        std::fs::write(
+            dir.path().join("Folder Album/album.cue"),
+            "PERFORMER \"Container\"\nFILE \"Container (feat. Guest).flac\" WAVE\n  TRACK 01 AUDIO\n    TITLE \"One\"\n    INDEX 01 00:00:00\n",
+        )?;
+
+        let output = parse_metadata(
+            &mapping::default_config(),
+            vec![
+                file_entry(1, &audio_path),
+                file_entry(2, &dir.path().join("Folder Album/album.cue")),
+            ],
+        )
+        .await?;
+
+        assert!(output.skipped.is_empty());
+        assert_eq!(output.metadata.len(), 1);
+        let track = &output.metadata[0];
+        assert_eq!(track.title.as_deref(), Some("One"));
+        assert_eq!(track.artists, Some(vec!["Container".to_string()]));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_metadata_matches_file_name_artists_tagged_on_cue_audio() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let album = dir.path().join("Folder Album");
+        let image = album.join("image.flac");
+        let song = album.join("Known Artist - Song.flac");
+        fixture_with_comments(
+            &image,
+            "integration_track.flac",
+            &["ARTIST"],
+            &[("ARTIST", "Known Artist")],
+        )?;
+        fixture_with_comments(
+            &song,
+            "integration_track.flac",
+            &["TITLE", "ARTIST"],
+            &[("ALBUMARTIST", "Various Artists")],
+        )?;
+        std::fs::write(
+            album.join("image.cue"),
+            "FILE \"image.flac\" WAVE\n  TRACK 01 AUDIO\n    TITLE \"One\"\n    INDEX 01 00:00:00\n",
+        )?;
+
+        let output = parse_metadata(
+            &mapping::default_config(),
+            vec![
+                file_entry(1, &image),
+                file_entry(2, &song),
+                file_entry(3, &album.join("image.cue")),
+            ],
+        )
+        .await?;
+
+        assert!(output.skipped.is_empty());
+        let song = output
+            .metadata
+            .iter()
+            .find(|track| track.entry_db_id == DbId(2))
+            .expect("standalone track");
+        assert_eq!(song.title.as_deref(), Some("Song"));
+        assert_eq!(song.artists, Some(vec!["Known Artist".to_string()]));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_metadata_ingests_a_multi_track_cue_over_untitled_audio() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let audio_path = dir.path().join("Folder Album/album.flac");
+        fixture_with_comments(&audio_path, "integration_track.flac", &["TITLE"], &[])?;
+        let cue_path = dir.path().join("Folder Album/album.cue");
+        std::fs::write(
+            &cue_path,
+            "FILE \"album.flac\" WAVE\n  TRACK 01 AUDIO\n    TITLE \"One\"\n    INDEX 01 00:00:00\n  TRACK 02 AUDIO\n    TITLE \"Two\"\n    INDEX 01 00:00:50\n",
+        )?;
+
+        let output = parse_metadata(
+            &mapping::default_config(),
+            vec![file_entry(1, &audio_path), file_entry(2, &cue_path)],
+        )
+        .await?;
+
+        assert!(output.skipped.is_empty());
+        let titles: Vec<_> = output
+            .metadata
+            .iter()
+            .map(|track| track.title.as_deref())
+            .collect();
+        assert_eq!(titles, [Some("One"), Some("Two")]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_metadata_infers_a_blank_title_tag() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("Folder Album/01 - Path Title.flac");
+        fixture_with_comments(
+            &path,
+            "integration_track.flac",
+            &["TITLE"],
+            &[("TITLE", " ")],
+        )?;
+
+        let output = parse_metadata(&mapping::default_config(), vec![file_entry(1, &path)]).await?;
+
+        assert!(output.skipped.is_empty());
+        assert_eq!(output.metadata[0].title.as_deref(), Some("Path Title"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_metadata_skips_an_untitled_track_named_by_number_alone() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("Folder Album/01.flac");
+        fixture_with_comments(&path, "integration_track.flac", &["TITLE"], &[])?;
+
+        let output = parse_metadata(&mapping::default_config(), vec![file_entry(1, &path)]).await?;
+
+        assert!(output.metadata.is_empty());
+        assert_eq!(
+            skipped_for(&output),
+            [(path, vec![mapping::MissingRequiredField::Title])],
+        );
+        Ok(())
     }
 
     #[test]
     fn read_audio_tags_falls_back_to_unmapped_vorbis_comments() -> anyhow::Result<()> {
-        let path = fixture_with_comments(
-            "vorbis-fallbacks",
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("integration_track.flac");
+        fixture_with_comments(
+            &path,
             "integration_track.flac",
+            &[],
             &[
                 ("SOURCEMEDIA", "CD"),
                 ("MEDIATYPE", "File"),
@@ -582,7 +917,6 @@ mod tests {
             ],
         )?;
         let (tag, _, _) = read_audio_tags(path.clone())?;
-        std::fs::remove_file(&path)?;
 
         assert_eq!(tag.get_string(ItemKey::OriginalMediaType), Some("File"));
         assert_eq!(tag.get_string(ItemKey::Barcode), Some("0199957588430"));
@@ -591,9 +925,12 @@ mod tests {
 
     #[test]
     fn read_audio_tags_prefers_mapped_vorbis_comments() -> anyhow::Result<()> {
-        let path = fixture_with_comments(
-            "vorbis-mapped",
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("integration_track.flac");
+        fixture_with_comments(
+            &path,
             "integration_track.flac",
+            &[],
             &[
                 ("MEDIA", "CD"),
                 ("MEDIATYPE", "File"),
@@ -602,7 +939,6 @@ mod tests {
             ],
         )?;
         let (tag, _, _) = read_audio_tags(path.clone())?;
-        std::fs::remove_file(&path)?;
 
         assert_eq!(tag.get_string(ItemKey::OriginalMediaType), Some("CD"));
         assert_eq!(tag.get_string(ItemKey::Barcode), Some("4988031554531"));
@@ -610,13 +946,10 @@ mod tests {
     }
 
     fn processed_date(comments: &[(&str, &str)]) -> anyhow::Result<(Option<String>, Option<u32>)> {
-        let path = fixture_with_comments(
-            &format!("date-{}", comments.len()),
-            "integration_track.flac",
-            comments,
-        )?;
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("integration_track.flac");
+        fixture_with_comments(&path, "integration_track.flac", &[], comments)?;
         let (tag, properties, _) = read_audio_tags(path.clone())?;
-        std::fs::remove_file(&path)?;
 
         let raw = mapping::apply_mapping(
             &tag,
@@ -651,9 +984,12 @@ mod tests {
 
     #[test]
     fn gain_tags_resolve_to_replaygain_reference() -> anyhow::Result<()> {
-        let path = fixture_with_comments(
-            "gain-tags",
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("integration_track.flac");
+        fixture_with_comments(
+            &path,
             "integration_track.flac",
+            &[],
             &[
                 ("REPLAYGAIN_TRACK_GAIN", "-6.54 dB"),
                 ("R128_TRACK_GAIN", "-512"),
@@ -661,7 +997,6 @@ mod tests {
             ],
         )?;
         let (tag, properties, _) = read_audio_tags(path.clone())?;
-        std::fs::remove_file(&path)?;
 
         let raw = mapping::apply_mapping(
             &tag,
@@ -677,13 +1012,15 @@ mod tests {
 
     #[test]
     fn read_audio_tags_reads_opus_comments() -> anyhow::Result<()> {
-        let path = fixture_with_comments(
-            "opus-comments",
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("integration_track.opus");
+        fixture_with_comments(
+            &path,
             "integration_track.opus",
+            &[],
             &[("UPC", "0199957588430"), ("R128_TRACK_GAIN", "-512")],
         )?;
         let (tag, properties, _) = read_audio_tags(path.clone())?;
-        std::fs::remove_file(&path)?;
 
         assert_eq!(tag.get_string(ItemKey::Barcode), Some("0199957588430"));
         let raw = mapping::apply_mapping(

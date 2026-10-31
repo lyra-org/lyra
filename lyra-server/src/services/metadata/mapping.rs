@@ -3,6 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use std::collections::HashSet;
+
 use lofty::{
     properties::FileProperties,
     tag::{
@@ -122,6 +124,8 @@ pub(crate) fn apply_mapping(
             FieldName::Artists => fill_multi(&mut artists, tag, key),
         }
     }
+    // A blank title takes the inference path a missing one does.
+    let title = title.filter(|value| !value.trim().is_empty());
 
     RawTrackTags {
         file_path: file_path.to_string(),
@@ -147,6 +151,7 @@ pub(crate) fn apply_mapping(
             r128_track_gain: non_empty_string(tag, ItemKey::R128TrackGain),
             r128_album_gain: non_empty_string(tag, ItemKey::R128AlbumGain),
         },
+        title_from_tags_only: false,
     }
 }
 
@@ -161,29 +166,82 @@ pub(crate) enum MissingRequiredField {
     ArtistKey,
 }
 
-pub(crate) fn check_required_fields(
-    raw: &lyra_metadata::RawTrackTags,
-) -> Result<(), Vec<MissingRequiredField>> {
+/// The album and artist key a track's mapped tags lack. Local inference
+/// may still supply its title, but folder and file names are not safe
+/// release keys.
+pub(crate) fn missing_required_tags(raw: &RawTrackTags) -> Vec<MissingRequiredField> {
     let mut missing = Vec::new();
-    if raw.title.as_deref().unwrap_or("").trim().is_empty() {
-        missing.push(MissingRequiredField::Title);
-    }
-    if raw.album.as_deref().unwrap_or("").trim().is_empty() {
+    if is_blank(raw.album.as_deref()) {
         missing.push(MissingRequiredField::Album);
     }
-    let has_artist_key = raw
+    if raw
         .artists
         .iter()
-        .chain(raw.album_artists.iter())
-        .any(|value| !value.trim().is_empty());
-    if !has_artist_key {
+        .chain(&raw.album_artists)
+        .all(|value| value.trim().is_empty())
+    {
         missing.push(MissingRequiredField::ArtistKey);
     }
-    if missing.is_empty() {
-        Ok(())
-    } else {
-        Err(missing)
+    missing
+}
+
+pub(crate) fn missing_title(title: Option<&str>) -> Option<MissingRequiredField> {
+    is_blank(title).then_some(MissingRequiredField::Title)
+}
+
+#[derive(Debug)]
+pub(crate) struct ProcessedTags {
+    pub(crate) tracks: Vec<lyra_metadata::TrackMetadata>,
+    pub(crate) rejected: Vec<RejectedTags>,
+}
+
+#[derive(Debug)]
+pub(crate) struct RejectedTags {
+    pub(crate) file_path: String,
+    pub(crate) missing: Vec<MissingRequiredField>,
+}
+
+/// Processes a directory group's tags together, so filename artist matching
+/// spans the group. Rejects tracks missing a required tag, and tracks whose
+/// title may be inferred but wasn't.
+pub(crate) fn process_tags(raw_tags: Vec<RawTrackTags>) -> ProcessedTags {
+    let mut rejected = Vec::new();
+    let mut accepted = Vec::with_capacity(raw_tags.len());
+    for raw in raw_tags {
+        let missing = missing_required_tags(&raw);
+        if missing.is_empty() {
+            accepted.push(raw);
+        } else {
+            rejected.push(RejectedTags {
+                file_path: raw.file_path,
+                missing,
+            });
+        }
     }
+    let titles_from_tags_only: HashSet<String> = accepted
+        .iter()
+        .filter(|raw| raw.title_from_tags_only)
+        .map(|raw| raw.file_path.clone())
+        .collect();
+
+    let mut tracks = Vec::with_capacity(accepted.len());
+    for track in lyra_metadata::process_raw_tags(accepted) {
+        let file_path = track.file_path.clone().unwrap_or_default();
+        match missing_title(track.title.as_deref()) {
+            Some(missing) if !titles_from_tags_only.contains(&file_path) => {
+                rejected.push(RejectedTags {
+                    file_path,
+                    missing: vec![missing],
+                });
+            }
+            _ => tracks.push(track),
+        }
+    }
+    ProcessedTags { tracks, rejected }
+}
+
+fn is_blank(value: Option<&str>) -> bool {
+    value.unwrap_or("").trim().is_empty()
 }
 
 fn non_empty_string(tag: &Tag, key: ItemKey) -> Option<String> {
@@ -375,7 +433,8 @@ mod tests {
         assert_eq!(raw.disc_total, expected_disc_total);
         assert_eq!(raw.track, expected_track);
         assert_eq!(raw.track_total, expected_track_total);
-        assert!(check_required_fields(&raw).is_ok());
+        assert_eq!(missing_title(raw.title.as_deref()), None);
+        assert!(missing_required_tags(&raw).is_empty());
         Ok(())
     }
 

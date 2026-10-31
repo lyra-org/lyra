@@ -173,8 +173,7 @@ async fn put_metadata_mapping(
     if !body.force_partial && (report.read_failures > 0 || report.would_reject > 0) {
         return Err(AppError::bad_request(format!(
             "dry-run surfaced {} read failure(s) and {} track(s) that would be rejected \
-             on post-mapping required-field check; pass force_partial=true to replace \
-             anyway",
+             for missing required fields; pass force_partial=true to replace anyway",
             report.read_failures, report.would_reject,
         )));
     }
@@ -200,8 +199,8 @@ fn put_metadata_mapping_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Replace metadata mapping configuration")
         .description(
             "Runs a dry-run against the candidate rules. Rejected with 400 if the \
-             dry-run shows any read failures or tracks that would fail the post-mapping \
-             required-field check, unless `force_partial` is true. When accepted, returns \
+             dry-run shows any read failures or tracks that would be rejected for missing \
+             required fields, unless `force_partial` is true. When accepted, returns \
              202 immediately and performs the persist + reingest in a background task; \
              poll `GET /api/metadata/mapping` for `reingest_in_progress=false`; a failed \
              reingest restores the previous rules. Returns 409 if a metadata mapping \
@@ -224,9 +223,10 @@ async fn preview_metadata_mapping(
 fn preview_metadata_mapping_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Preview metadata mapping configuration")
         .description(
-            "Scans every audio file in the library graph, applies the candidate mapping, \
-             and reports how many files would be rejected (missing required fields) and \
-             how many reads would fail. Does not modify state.",
+            "Scans every audio file in the library graph, applies the candidate mapping \
+             and title inference from file names, and reports how many files would be \
+             rejected (missing required fields) and how many reads would fail. Does not \
+             modify state.",
         )
 }
 

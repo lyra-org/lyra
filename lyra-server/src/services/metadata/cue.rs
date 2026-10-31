@@ -732,6 +732,7 @@ pub(crate) fn sort_track_metadata(metadata: &mut [TrackMetadata]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::metadata::tests::file_entry;
 
     fn test_track(entry_id: i64) -> super::TrackMetadata {
         super::TrackMetadata {
@@ -1003,24 +1004,6 @@ FILE "02 second.wav" WAVE
             &by_stem,
         );
         assert!(resolved.is_none());
-    }
-
-    fn file_entry(db_id: i64, path: &Path) -> Entry {
-        Entry {
-            db_id: Some(DbId(db_id)),
-            id: format!("entry-{db_id}"),
-            full_path: path.to_path_buf(),
-            kind: lyra_db::entries::EntryKind::File,
-            file_kind: None,
-            name: path
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-            hash: None,
-            size: 0,
-            mtime: 0,
-            ctime: 0,
-        }
     }
 
     fn untagged_wav(seconds: u32) -> Vec<u8> {

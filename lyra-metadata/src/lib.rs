@@ -84,6 +84,10 @@ pub struct RawTrackTags {
     pub duration_ms: u64,
     #[serde(flatten)]
     pub gain: RawGainTags,
+    /// The file name doesn't name this track, so its title, and any artist
+    /// named with it, come from tags alone.
+    #[serde(skip)]
+    pub title_from_tags_only: bool,
 }
 
 /// Processed track metadata (pure, no database IDs).
@@ -179,7 +183,7 @@ pub struct ParsedReleaseGroup<T> {
 /// Process raw tags into sorted, processed `TrackMetadata`.
 /// Replicates the pure logic from `parse_metadata` without file I/O.
 pub fn process_raw_tags(raw_tags: Vec<RawTrackTags>) -> Vec<TrackMetadata> {
-    let mut paths: Vec<PathBuf> = Vec::new();
+    let mut paths: Vec<(PathBuf, bool)> = Vec::new();
     let mut processed: Vec<TrackMetadata> = Vec::new();
 
     for raw in raw_tags {
@@ -252,7 +256,7 @@ pub fn process_raw_tags(raw_tags: Vec<RawTrackTags>) -> Vec<TrackMetadata> {
             album_gain_db: raw.gain.album_gain_db(),
         };
 
-        paths.push(PathBuf::from(raw.file_path));
+        paths.push((PathBuf::from(raw.file_path), !raw.title_from_tags_only));
         processed.push(meta);
     }
 
@@ -268,14 +272,14 @@ pub fn process_raw_tags(raw_tags: Vec<RawTrackTags>) -> Vec<TrackMetadata> {
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
-    for (meta, path) in processed.iter_mut().zip(paths.iter()) {
+    for (meta, (path, stem_names_track)) in processed.iter_mut().zip(paths.iter()) {
         if meta.title.is_none()
             || meta.album.is_none()
             || meta.track.is_none()
             || meta.disc.is_none()
             || meta.artists.is_none()
         {
-            fill_from_filename(meta, path, &known_artists);
+            fill_from_filename(meta, path, &known_artists, *stem_names_track);
         }
 
         let title = meta.title.clone();
@@ -413,6 +417,7 @@ mod tests {
             track_total: Some(1),
             duration_ms: 213_672,
             gain: Default::default(),
+            title_from_tags_only: false,
         };
 
         let processed = process_raw_tags(vec![raw]);
@@ -427,6 +432,35 @@ mod tests {
                 "市ノ瀬加那".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn process_raw_tags_takes_no_features_from_an_untrusted_file_name() {
+        let raw = RawTrackTags {
+            file_path: "/tmp/Album/Container (feat. Guest).flac".to_string(),
+            album: Some("Album".to_string()),
+            album_artists: Vec::new(),
+            artists: vec!["Container".to_string()],
+            title: None,
+            date: None,
+            copyright: None,
+            genre: None,
+            label: None,
+            catalog_number: None,
+            media: None,
+            barcode: None,
+            disc: None,
+            disc_total: None,
+            track: None,
+            track_total: None,
+            duration_ms: 1_000,
+            gain: Default::default(),
+            title_from_tags_only: true,
+        };
+
+        let processed = process_raw_tags(vec![raw]);
+        assert_eq!(processed[0].title, None);
+        assert_eq!(processed[0].artists, Some(vec!["Container".to_string()]));
     }
 
     #[test]
@@ -450,6 +484,7 @@ mod tests {
             track_total: Some(1),
             duration_ms: 213_672,
             gain: Default::default(),
+            title_from_tags_only: false,
         };
 
         let processed = process_raw_tags(vec![raw]);
@@ -483,6 +518,7 @@ mod tests {
             track_total: Some(1),
             duration_ms: 180_000,
             gain: Default::default(),
+            title_from_tags_only: false,
         };
 
         let processed = process_raw_tags(vec![raw]);
@@ -530,6 +566,7 @@ mod tests {
             track_total: Some(1),
             duration_ms: 240_000,
             gain: Default::default(),
+            title_from_tags_only: false,
         };
 
         let processed = process_raw_tags(vec![raw]);
@@ -591,6 +628,7 @@ mod tests {
             track_total: Some(1),
             duration_ms: 180_000,
             gain: Default::default(),
+            title_from_tags_only: false,
         };
 
         let processed = process_raw_tags(vec![raw]);
@@ -645,6 +683,7 @@ mod tests {
             track_total: Some(4),
             duration_ms: 220_000,
             gain: Default::default(),
+            title_from_tags_only: false,
         };
 
         let processed = process_raw_tags(vec![raw]);
@@ -684,6 +723,7 @@ mod tests {
             track_total: Some(10),
             duration_ms: 240_000,
             gain: Default::default(),
+            title_from_tags_only: false,
         };
 
         let processed = process_raw_tags(vec![raw]);
@@ -712,6 +752,7 @@ mod tests {
             track_total: Some(10),
             duration_ms: 240_000,
             gain: Default::default(),
+            title_from_tags_only: false,
         };
 
         let processed = process_raw_tags(vec![raw]);
@@ -741,6 +782,7 @@ mod tests {
             track_total: Some(10),
             duration_ms: 240_000,
             gain: Default::default(),
+            title_from_tags_only: false,
         };
 
         let processed = process_raw_tags(vec![raw]);

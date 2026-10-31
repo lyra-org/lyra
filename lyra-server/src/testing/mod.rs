@@ -128,7 +128,19 @@ pub async fn prepare_fixture(
     let mut path_to_entry: HashMap<PathBuf, (DbId, String)> = HashMap::new();
     let mut tracks_by_source_dir: BTreeMap<PathBuf, Vec<services::metadata::TrackMetadata>> =
         BTreeMap::new();
-    for track in lyra_metadata::process_raw_tags(raw_tags) {
+    let processed = services::metadata::mapping::process_tags(raw_tags);
+    if !processed.rejected.is_empty() {
+        let rejected = processed
+            .rejected
+            .iter()
+            .map(|rejected| format!("{} (missing {:?})", rejected.file_path, rejected.missing))
+            .collect::<Vec<_>>();
+        anyhow::bail!(
+            "raw_tags rows a library scan would skip: {}",
+            rejected.join(", ")
+        );
+    }
+    for track in processed.tracks {
         let file_path = PathBuf::from(
             track
                 .file_path
@@ -824,6 +836,7 @@ mod tests {
             track_total: None,
             duration_ms: 180_000,
             gain: Default::default(),
+            title_from_tags_only: false,
         }
     }
 

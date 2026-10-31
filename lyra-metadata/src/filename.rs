@@ -9,7 +9,13 @@ use crate::TrackMetadata;
 
 /// Fill `None` fields on `meta` from filename and parent directory.
 /// `known_artists` = artist names collected from tag data across the directory group.
-pub fn fill_from_filename(meta: &mut TrackMetadata, file_path: &Path, known_artists: &[String]) {
+/// Without `stem_names_track`, the stem gives only disc and track numbers.
+pub fn fill_from_filename(
+    meta: &mut TrackMetadata,
+    file_path: &Path,
+    known_artists: &[String],
+    stem_names_track: bool,
+) {
     let stem = match file_path.file_stem().and_then(|s| s.to_str()) {
         Some(s) => s,
         None => return,
@@ -24,7 +30,7 @@ pub fn fill_from_filename(meta: &mut TrackMetadata, file_path: &Path, known_arti
         meta.track = track;
     }
 
-    if !remainder.is_empty() {
+    if stem_names_track && !remainder.is_empty() {
         let (artist, title) = split_artist_title(remainder, known_artists);
 
         if meta.artists.is_none()
@@ -46,6 +52,9 @@ pub fn fill_from_filename(meta: &mut TrackMetadata, file_path: &Path, known_arti
 }
 
 fn extract_prefix(stem: &str) -> (Option<u32>, Option<u32>, &str) {
+    if let Some(track) = try_track_only(stem) {
+        return (None, Some(track), "");
+    }
     if let Some((disc, track, rest)) = try_disc_dot_track_dot(stem) {
         return (Some(disc), Some(track), rest);
     }
@@ -62,6 +71,14 @@ fn extract_prefix(stem: &str) -> (Option<u32>, Option<u32>, &str) {
         return (None, Some(track), rest);
     }
     (None, None, stem)
+}
+
+/// `TT` — e.g. "01", a track number with no title
+fn try_track_only(s: &str) -> Option<u32> {
+    if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    s.parse().ok().filter(|&track| track <= 999)
 }
 
 /// `D.TT. rest` — e.g. "1.01. HELLO"
@@ -225,7 +242,7 @@ mod tests {
     fn track_space_separator() {
         let mut meta = empty_meta();
         let path = Path::new("/music/SomeAlbum/04 ライアー -Instrumental-.flac");
-        fill_from_filename(&mut meta, path, &[]);
+        fill_from_filename(&mut meta, path, &[], true);
         assert_eq!(meta.track, Some(4));
         assert_eq!(meta.disc, None);
         assert_eq!(meta.title.as_deref(), Some("ライアー -Instrumental-"));
@@ -237,7 +254,7 @@ mod tests {
         let mut meta = empty_meta();
         let path = Path::new("/music/Album/HoneyComeBear - Rainy Girl - レイニーガール.flac");
         let known = vec!["HoneyComeBear".to_string()];
-        fill_from_filename(&mut meta, path, &known);
+        fill_from_filename(&mut meta, path, &known, true);
         assert_eq!(meta.track, None);
         assert_eq!(
             meta.artists.as_deref(),
@@ -247,10 +264,39 @@ mod tests {
     }
 
     #[test]
+    fn track_number_only() {
+        let mut meta = empty_meta();
+        let path = Path::new("/music/Album/07.flac");
+        fill_from_filename(&mut meta, path, &[], true);
+        assert_eq!(meta.track, Some(7));
+        assert_eq!(meta.title, None);
+    }
+
+    #[test]
+    fn untrusted_stem_gives_only_numbers() {
+        let mut meta = empty_meta();
+        let path = Path::new("/music/Album/02 - HoneyComeBear - Rainy Girl.flac");
+        let known = vec!["HoneyComeBear".to_string()];
+        fill_from_filename(&mut meta, path, &known, false);
+        assert_eq!(meta.track, Some(2));
+        assert_eq!(meta.title, None);
+        assert_eq!(meta.artists, None);
+    }
+
+    #[test]
+    fn number_beyond_track_range_is_a_title() {
+        let mut meta = empty_meta();
+        let path = Path::new("/music/Album/1999.flac");
+        fill_from_filename(&mut meta, path, &[], true);
+        assert_eq!(meta.track, None);
+        assert_eq!(meta.title.as_deref(), Some("1999"));
+    }
+
+    #[test]
     fn track_dot_separator() {
         let mut meta = empty_meta();
         let path = Path::new("/music/Album/05. ゼロのままでいられたら.mp3");
-        fill_from_filename(&mut meta, path, &[]);
+        fill_from_filename(&mut meta, path, &[], true);
         assert_eq!(meta.track, Some(5));
         assert_eq!(meta.title.as_deref(), Some("ゼロのままでいられたら"));
     }
@@ -259,7 +305,7 @@ mod tests {
     fn disc_dot_track_dot() {
         let mut meta = empty_meta();
         let path = Path::new("/music/Album/1.01. HELLO.flac");
-        fill_from_filename(&mut meta, path, &[]);
+        fill_from_filename(&mut meta, path, &[], true);
         assert_eq!(meta.disc, Some(1));
         assert_eq!(meta.track, Some(1));
         assert_eq!(meta.title.as_deref(), Some("HELLO"));
@@ -269,7 +315,7 @@ mod tests {
     fn track_dash_separator() {
         let mut meta = empty_meta();
         let path = Path::new("/music/Album/02 - 僕らは今のなかで.flac");
-        fill_from_filename(&mut meta, path, &[]);
+        fill_from_filename(&mut meta, path, &[], true);
         assert_eq!(meta.track, Some(2));
         assert_eq!(meta.title.as_deref(), Some("僕らは今のなかで"));
     }
@@ -278,7 +324,7 @@ mod tests {
     fn no_prefix_bare_title() {
         let mut meta = empty_meta();
         let path = Path::new("/music/Album/チェリーポップ.flac");
-        fill_from_filename(&mut meta, path, &[]);
+        fill_from_filename(&mut meta, path, &[], true);
         assert_eq!(meta.track, None);
         assert_eq!(meta.title.as_deref(), Some("チェリーポップ"));
     }
@@ -287,7 +333,7 @@ mod tests {
     fn disc_dash_track() {
         let mut meta = empty_meta();
         let path = Path::new("/music/Album/1-01 - Koidatowa.flac");
-        fill_from_filename(&mut meta, path, &[]);
+        fill_from_filename(&mut meta, path, &[], true);
         assert_eq!(meta.disc, Some(1));
         assert_eq!(meta.track, Some(1));
         assert_eq!(meta.title.as_deref(), Some("Koidatowa"));
@@ -298,7 +344,7 @@ mod tests {
         let mut meta = empty_meta();
         let path = Path::new("/music/Album/1. かわにしなつき - 理想的ガール.flac");
         let known = vec!["かわにしなつき".to_string()];
-        fill_from_filename(&mut meta, path, &known);
+        fill_from_filename(&mut meta, path, &known, true);
         assert_eq!(meta.track, Some(1));
         assert_eq!(
             meta.artists.as_deref(),
@@ -311,7 +357,7 @@ mod tests {
     fn track_starting_with_digit() {
         let mut meta = empty_meta();
         let path = Path::new("/music/Album/01 1番輝く星.flac");
-        fill_from_filename(&mut meta, path, &[]);
+        fill_from_filename(&mut meta, path, &[], true);
         assert_eq!(meta.track, Some(1));
         assert_eq!(meta.title.as_deref(), Some("1番輝く星"));
     }
@@ -323,7 +369,7 @@ mod tests {
         meta.track = Some(99);
         meta.album = Some("Existing Album".to_string());
         let path = Path::new("/music/DirAlbum/05. Different Title.flac");
-        fill_from_filename(&mut meta, path, &[]);
+        fill_from_filename(&mut meta, path, &[], true);
         assert_eq!(meta.title.as_deref(), Some("Existing Title"));
         assert_eq!(meta.track, Some(99));
         assert_eq!(meta.album.as_deref(), Some("Existing Album"));
@@ -333,7 +379,7 @@ mod tests {
     fn unknown_artist_not_extracted() {
         let mut meta = empty_meta();
         let path = Path::new("/music/Album/SomeArtist - SomeTitle.flac");
-        fill_from_filename(&mut meta, path, &[]);
+        fill_from_filename(&mut meta, path, &[], true);
         assert_eq!(meta.artists, None);
         assert_eq!(meta.title.as_deref(), Some("SomeArtist - SomeTitle"));
     }
@@ -343,7 +389,7 @@ mod tests {
         let mut meta = empty_meta();
         let path = Path::new("/music/Album/honeycomebear - Song.flac");
         let known = vec!["HoneyComeBear".to_string()];
-        fill_from_filename(&mut meta, path, &known);
+        fill_from_filename(&mut meta, path, &known, true);
         assert_eq!(
             meta.artists.as_deref(),
             Some(["honeycomebear".to_string()].as_slice())

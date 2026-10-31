@@ -15,14 +15,15 @@ use crate::{
     services::{
         libraries::start_library_sync,
         metadata::{
+            SkipReason,
+            classify_entry_file_kind,
+            ingestion::group_entries,
             mapping::{
                 MissingRequiredField,
-                apply_mapping,
-                check_required_fields,
                 ensure_config,
                 update_config,
             },
-            read_audio_tags,
+            parse_metadata,
         },
     },
 };
@@ -39,6 +40,29 @@ pub(crate) struct DryRunReport {
     pub read_failures: usize,
     pub rejected_samples: Vec<RejectedSample>,
     pub read_failure_samples: Vec<ReadFailureSample>,
+}
+
+impl DryRunReport {
+    fn push_rejected(&mut self, path: String, missing: Vec<MissingRequiredField>) {
+        self.would_reject += 1;
+        if self.rejected_samples.len() < DRY_RUN_SAMPLE_LIMIT {
+            self.rejected_samples.push(RejectedSample {
+                path,
+                missing: missing
+                    .into_iter()
+                    .map(|m| missing_name(m).to_string())
+                    .collect(),
+            });
+        }
+    }
+
+    fn push_read_failure(&mut self, path: String, error: String) {
+        self.read_failures += 1;
+        if self.read_failure_samples.len() < DRY_RUN_SAMPLE_LIMIT {
+            self.read_failure_samples
+                .push(ReadFailureSample { path, error });
+        }
+    }
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -67,7 +91,7 @@ fn missing_name(m: MissingRequiredField) -> &'static str {
 pub(crate) async fn dry_run_config(
     candidate: &MetadataMappingConfig,
 ) -> anyhow::Result<DryRunReport> {
-    let entries: Vec<lyra_db::Entry> = {
+    let groups: Vec<Vec<lyra_db::Entry>> = {
         let db = STATE.db.read().await;
         let libraries = lyra_db::libraries::get(&db)?;
         let mut all = Vec::new();
@@ -75,60 +99,32 @@ pub(crate) async fn dry_run_config(
             let Some(library_db_id) = library.db_id else {
                 continue;
             };
-            let mut library_entries = lyra_db::entries::get(&db, library_db_id)?;
-            all.append(&mut library_entries);
+            let entry_ids = lyra_db::entries::get(&db, library_db_id)?
+                .into_iter()
+                .filter_map(|entry| entry.db_id)
+                .collect();
+            all.append(&mut group_entries(&db, library_db_id, entry_ids)?);
         }
         all
     };
 
     let mut report = DryRunReport::default();
 
-    for entry in entries {
-        if entry.kind != lyra_db::entries::EntryKind::File {
-            continue;
-        }
-        if !matches!(entry.file_kind.as_deref(), Some("audio")) {
-            continue;
-        }
-        report.total_files += 1;
+    for entries in groups {
+        report.total_files += entries
+            .iter()
+            .filter(|entry| classify_entry_file_kind(entry).as_deref() == Some("audio"))
+            .count();
 
-        let path = entry.full_path.clone();
-        let path_for_task = path.clone();
-        let task_result = tokio::task::spawn_blocking(move || read_audio_tags(path_for_task)).await;
-        match task_result {
-            Ok(Ok((tag, properties, _))) => {
-                let file_path = path.to_string_lossy().to_string();
-                let raw = apply_mapping(&tag, &properties, &file_path, candidate);
-                if let Err(missing) = check_required_fields(&raw) {
-                    report.would_reject += 1;
-                    if report.rejected_samples.len() < DRY_RUN_SAMPLE_LIMIT {
-                        report.rejected_samples.push(RejectedSample {
-                            path: file_path,
-                            missing: missing
-                                .into_iter()
-                                .map(|m| missing_name(m).to_string())
-                                .collect(),
-                        });
-                    }
+        for record in parse_metadata(candidate, entries).await?.skipped {
+            let path = record.path.to_string_lossy().to_string();
+            match record.reason {
+                SkipReason::RequiredFieldEmpty(missing) => report.push_rejected(path, missing),
+                SkipReason::ReadFailed(error) => report.push_read_failure(path, error),
+                SkipReason::TaskFailed(error) => {
+                    report.push_read_failure(path, format!("task failed: {error}"));
                 }
-            }
-            Ok(Err(err)) => {
-                report.read_failures += 1;
-                if report.read_failure_samples.len() < DRY_RUN_SAMPLE_LIMIT {
-                    report.read_failure_samples.push(ReadFailureSample {
-                        path: path.to_string_lossy().to_string(),
-                        error: err.to_string(),
-                    });
-                }
-            }
-            Err(err) => {
-                report.read_failures += 1;
-                if report.read_failure_samples.len() < DRY_RUN_SAMPLE_LIMIT {
-                    report.read_failure_samples.push(ReadFailureSample {
-                        path: path.to_string_lossy().to_string(),
-                        error: format!("task failed: {err}"),
-                    });
-                }
+                SkipReason::CueAlreadyClaimed | SkipReason::CueParseFailed(_) => {}
             }
         }
     }
@@ -223,5 +219,59 @@ pub(crate) async fn commit_and_reingest(
             summary.libraries_failed.len(),
         ))
         .with_context(|| format!("reingested {} libraries", summary.libraries_reingested))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::{
+        libraries::scanning::prepare_entry_scan_plan,
+        metadata::{
+            mapping::default_config,
+            tests::fixture_with_comments,
+        },
+    };
+
+    #[tokio::test]
+    async fn dry_run_rejects_only_tracks_ingestion_skips() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let dir = tempfile::tempdir()?;
+        let inferred_title = dir.path().join("Folder Album/01 - Path Title.flac");
+        let untagged_album = dir.path().join("Folder Album/02 - Two.flac");
+        fixture_with_comments(&inferred_title, "integration_track.flac", &["TITLE"], &[])?;
+        fixture_with_comments(&untagged_album, "integration_track.flac", &["ALBUM"], &[])?;
+        {
+            let mut db = STATE.db.write().await;
+            let library = db.transaction_mut(|t| {
+                lyra_db::libraries::create_system(
+                    t,
+                    lyra_db::libraries::LibraryInsert {
+                        id: nanoid::nanoid!(),
+                        name: "Music".to_string(),
+                        path: dir.path().to_path_buf(),
+                        path_key: lyra_db::libraries::path_key_for(dir.path()),
+                        language: None,
+                        country: None,
+                    },
+                )
+            })?;
+            for group in prepare_entry_scan_plan(&library, Vec::new())?.groups {
+                lyra_db::entries::sync_entry_group(&mut db, &library, group.entries)?;
+            }
+        }
+
+        let report = dry_run_config(&default_config()).await?;
+
+        assert_eq!(report.total_files, 2);
+        assert_eq!(report.read_failures, 0);
+        assert_eq!(report.would_reject, 1);
+        assert_eq!(
+            report.rejected_samples[0].path,
+            untagged_album.to_string_lossy()
+        );
+        assert_eq!(report.rejected_samples[0].missing, ["album"]);
+        Ok(())
     }
 }

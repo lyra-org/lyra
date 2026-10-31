@@ -4,30 +4,6 @@ country = "JP"
 
 directory = "."
 [[raw_tags]]
-file_path = "Yukitoki/06. Surrealisme (Instrumental).flac"
-album = "ユキトキ"
-title = "Surrealisme (Instrumental)"
-track = 6
-track_total = 6
-duration_ms = 230946
-
-[[raw_tags]]
-file_path = "Yukitoki/05. 音のない夢 (Instrumental).flac"
-album = "ユキトキ"
-title = "音のない夢 (Instrumental)"
-track = 5
-track_total = 6
-duration_ms = 252946
-
-[[raw_tags]]
-file_path = "Yukitoki/04. ユキトキ (Instrumental).flac"
-album = "ユキトキ"
-title = "ユキトキ (Instrumental)"
-track = 4
-track_total = 6
-duration_ms = 269280
-
-[[raw_tags]]
 file_path = "Yukitoki/03. Surrealisme.flac"
 album = "ユキトキ"
 artists = ["やなぎなぎ"]
