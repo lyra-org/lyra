@@ -333,6 +333,263 @@ fn userdata_enum(ast: ItemEnum, options: UserDataOptions) -> syn::Result<TokenSt
     })
 }
 
+#[derive(Clone, Copy)]
+enum RenameRule {
+    Lower,
+    Upper,
+    Pascal,
+    Camel,
+    Snake,
+    ScreamingSnake,
+    Kebab,
+    ScreamingKebab,
+}
+
+impl RenameRule {
+    const NAMES: &'static str = "lowercase, UPPERCASE, PascalCase, camelCase, snake_case, SCREAMING_SNAKE_CASE, kebab-case, or SCREAMING-KEBAB-CASE";
+
+    fn parse(value: &LitStr) -> syn::Result<Self> {
+        Ok(match value.value().as_str() {
+            "lowercase" => Self::Lower,
+            "UPPERCASE" => Self::Upper,
+            "PascalCase" => Self::Pascal,
+            "camelCase" => Self::Camel,
+            "snake_case" => Self::Snake,
+            "SCREAMING_SNAKE_CASE" => Self::ScreamingSnake,
+            "kebab-case" => Self::Kebab,
+            "SCREAMING-KEBAB-CASE" => Self::ScreamingKebab,
+            _ => {
+                return Err(syn::Error::new(
+                    value.span(),
+                    format!("unsupported rename_all rule; expected {}", Self::NAMES),
+                ));
+            }
+        })
+    }
+
+    /// Spells a PascalCase variant name under this rule.
+    fn apply(self, variant: &str) -> String {
+        match self {
+            Self::Lower => variant.to_ascii_lowercase(),
+            Self::Upper => variant.to_ascii_uppercase(),
+            Self::Pascal => variant.to_string(),
+            Self::Camel => {
+                let mut chars = variant.chars();
+                chars
+                    .next()
+                    .map(|first| first.to_ascii_lowercase().to_string() + chars.as_str())
+                    .unwrap_or_default()
+            }
+            Self::Snake => {
+                let mut snake = String::new();
+                for (index, ch) in variant.char_indices() {
+                    if index > 0 && ch.is_uppercase() {
+                        snake.push('_');
+                    }
+                    snake.push(ch.to_ascii_lowercase());
+                }
+                snake
+            }
+            Self::ScreamingSnake => Self::Snake.apply(variant).to_ascii_uppercase(),
+            Self::Kebab => Self::Snake.apply(variant).replace('_', "-"),
+            Self::ScreamingKebab => Self::ScreamingSnake.apply(variant).replace('_', "-"),
+        }
+    }
+}
+
+/// A `key = "value"` option.
+struct KeyValueOption(Ident, LitStr);
+
+impl Parse for KeyValueOption {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let key = input.parse()?;
+        let _: Token![=] = input.parse()?;
+        Ok(Self(key, input.parse()?))
+    }
+}
+
+struct StringEnumOptions {
+    name: Option<LitStr>,
+    description: Option<LitStr>,
+    rename_all: RenameRule,
+}
+
+fn parse_string_enum_options(attr: TokenStream) -> syn::Result<StringEnumOptions> {
+    let mut options = StringEnumOptions {
+        name: None,
+        description: None,
+        rename_all: RenameRule::Snake,
+    };
+    let parser = Punctuated::<KeyValueOption, Token![,]>::parse_terminated;
+    for KeyValueOption(key, value) in syn::parse::Parser::parse(parser, attr)? {
+        if key == "name" {
+            options.name = Some(value);
+        } else if key == "description" {
+            options.description = Some(value);
+        } else if key == "rename_all" {
+            options.rename_all = RenameRule::parse(&value)?;
+        } else {
+            return Err(syn::Error::new(
+                key.span(),
+                "unsupported string_enum option; expected name, description, or rename_all",
+            ));
+        }
+    }
+    Ok(options)
+}
+
+/// The `#[harmony(rename = "...")]` spelling of a variant, if it has one.
+fn variant_rename(attrs: &[Attribute]) -> syn::Result<Option<LitStr>> {
+    let mut rename = None;
+    for attr in attrs {
+        if !attr.path().is_ident("harmony") {
+            continue;
+        }
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("rename") {
+                rename = Some(meta.value()?.parse::<LitStr>()?);
+                Ok(())
+            } else {
+                Err(meta.error("unsupported string_enum variant option; expected rename"))
+            }
+        })?;
+    }
+    Ok(rename)
+}
+
+/// Turns a unit enum into one that crosses to and from Luau as the strings it is spelled as,
+/// declared as a string union: `rename_all` spells every variant (`snake_case` by default) and
+/// `#[harmony(rename = "...")]` one of them. Reading any other string fails with the accepted ones.
+#[proc_macro_attribute]
+pub fn string_enum(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let options = match parse_string_enum_options(attr) {
+        Ok(options) => options,
+        Err(error) => return error.into_compile_error().into(),
+    };
+    let ast = parse_macro_input!(item as ItemEnum);
+    match string_enum_impl(ast, options) {
+        Ok(tokens) => tokens.into(),
+        Err(error) => error.into_compile_error().into(),
+    }
+}
+
+fn string_enum_impl(mut ast: ItemEnum, options: StringEnumOptions) -> syn::Result<TokenStream2> {
+    if !ast.generics.params.is_empty() || ast.generics.where_clause.is_some() {
+        return Err(syn::Error::new(
+            ast.generics.span(),
+            "string_enum enums cannot be generic",
+        ));
+    }
+    if ast.variants.is_empty() {
+        return Err(syn::Error::new(
+            ast.ident.span(),
+            "string_enum enums need at least one variant",
+        ));
+    }
+
+    let mut variants = Vec::new();
+    let mut values: Vec<LitStr> = Vec::new();
+    for variant in &mut ast.variants {
+        if !matches!(&variant.fields, Fields::Unit) {
+            return Err(syn::Error::new_spanned(
+                &*variant,
+                "string_enum variants must be unit variants",
+            ));
+        }
+        let value = match variant_rename(&variant.attrs)? {
+            Some(rename) => rename,
+            None => lit_str(
+                &options.rename_all.apply(&variant.ident.to_string()),
+                variant.ident.span(),
+            ),
+        };
+        if values
+            .iter()
+            .any(|existing| existing.value() == value.value())
+        {
+            return Err(syn::Error::new(
+                value.span(),
+                format!("string_enum value \"{}\" is used twice", value.value()),
+            ));
+        }
+        strip_helper_attributes(&mut variant.attrs);
+        variants.push(variant.ident.clone());
+        values.push(value);
+    }
+
+    let type_name = &ast.ident;
+    let name = options
+        .name
+        .unwrap_or_else(|| lit_str(&type_name.to_string(), type_name.span()));
+    let description = option_lit_str_tokens(options.description.as_ref());
+
+    Ok(quote! {
+        #ast
+
+        #[automatically_derived]
+        impl ::harmony_luau::StringEnum for #type_name {
+            const NAME: &'static str = #name;
+            const DESCRIPTION: ::std::option::Option<&'static str> = #description;
+            const VALUES: &'static [&'static str] = &[#(#values),*];
+
+            fn as_str(&self) -> &'static str {
+                match self {
+                    #(Self::#variants => #values,)*
+                }
+            }
+
+            fn from_str(value: &str) -> ::std::option::Option<Self> {
+                match value {
+                    #(#values => ::std::option::Option::Some(Self::#variants),)*
+                    _ => ::std::option::Option::None,
+                }
+            }
+        }
+
+        #[automatically_derived]
+        impl<'vm> ::harmony_luau::FromLuau<'vm> for #type_name {
+            fn read(reader: &mut ::harmony_luau::ArgReader<'vm>) -> ::harmony_luau::runtime::Result<Self> {
+                reader.read_string_enum()
+            }
+        }
+
+        #[automatically_derived]
+        impl ::harmony_luau::ToLuau for #type_name {
+            fn write(self, writer: &mut ::harmony_luau::ReturnWriter<'_>) -> ::harmony_luau::runtime::Result<()> {
+                writer.write(<Self as ::harmony_luau::StringEnum>::as_str(&self))
+            }
+        }
+
+        #[automatically_derived]
+        impl ::harmony_luau::IntoLuauReturn for #type_name {
+            fn into_luau_return(self) -> ::harmony_luau::runtime::Result<::harmony_luau::ReturnValues> {
+                ::std::result::Result::Ok(::harmony_luau::ReturnValues::one(self.into()))
+            }
+        }
+
+        #[automatically_derived]
+        impl ::std::convert::From<#type_name> for ::harmony_luau::Value {
+            fn from(value: #type_name) -> Self {
+                ::harmony_luau::Value::from(<#type_name as ::harmony_luau::StringEnum>::as_str(&value))
+            }
+        }
+
+        #[automatically_derived]
+        impl ::harmony_luau::LuauTypeInfo for #type_name {
+            fn luau_type() -> ::harmony_luau::LuauType {
+                ::harmony_luau::LuauType::named(<Self as ::harmony_luau::StringEnum>::NAME)
+            }
+        }
+
+        #[automatically_derived]
+        impl ::harmony_luau::DescribeTypeAlias for #type_name {
+            fn type_alias_descriptor() -> ::harmony_luau::TypeAliasDescriptor {
+                <Self as ::harmony_luau::StringEnum>::type_alias()
+            }
+        }
+    })
+}
+
 #[proc_macro_attribute]
 pub fn userdata_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut ast = parse_macro_input!(item as ItemImpl);

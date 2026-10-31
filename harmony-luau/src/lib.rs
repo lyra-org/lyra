@@ -383,6 +383,33 @@ pub trait DescribeModule {
     fn module_descriptor() -> ModuleDescriptor;
 }
 
+/// A unit enum that crosses to and from Luau as one of a fixed set of strings, declared as the
+/// string union [`Self::NAME`]. `#[harmony_macros::string_enum]` implements it.
+pub trait StringEnum: Sized + 'static {
+    const NAME: &'static str;
+    const DESCRIPTION: Option<&'static str>;
+    /// Every variant's string, in declaration order.
+    const VALUES: &'static [&'static str];
+
+    fn as_str(&self) -> &'static str;
+
+    fn from_str(value: &str) -> Option<Self>;
+
+    fn type_alias() -> TypeAliasDescriptor {
+        TypeAliasDescriptor::new(
+            Self::NAME,
+            LuauType::union(
+                Self::VALUES
+                    .iter()
+                    .copied()
+                    .map(LuauType::string_literal)
+                    .collect(),
+            ),
+            Self::DESCRIPTION,
+        )
+    }
+}
+
 pub struct JsonValue;
 
 impl LuauReturn for () {

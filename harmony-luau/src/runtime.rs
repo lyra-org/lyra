@@ -83,6 +83,15 @@ pub enum Error {
     },
     #[error("argument `{0}` is missing")]
     MissingArgument(Arc<str>),
+    #[error(
+        "argument `{name}` expected one of {}, got {value:?}",
+        quoted_list(expected)
+    )]
+    UnknownEnumValue {
+        name: Arc<str>,
+        expected: &'static [&'static str],
+        value: String,
+    },
     #[error("argument `{name}` expected valid UTF-8: {error}")]
     InvalidUtf8Argument {
         name: Arc<str>,
@@ -1917,6 +1926,17 @@ impl<'vm> ArgReader<'vm> {
         T::read(self)
     }
 
+    /// Reads one of `T`'s strings, failing with the accepted ones for any other string.
+    pub fn read_string_enum<T: crate::StringEnum>(&mut self) -> Result<T> {
+        let (name, bytes) = self.next_named_borrowed_bytes("string")?;
+        let value = String::from_utf8_lossy(bytes);
+        T::from_str(&value).ok_or_else(|| Error::UnknownEnumValue {
+            name,
+            expected: T::VALUES,
+            value: value.into_owned(),
+        })
+    }
+
     pub fn read_named<T: FromLuau<'vm>>(&mut self, name: &'static str) -> Result<T> {
         self.cursor.label_current(name);
         T::read(self)
@@ -2131,6 +2151,14 @@ impl<'vm> ArgReader<'vm> {
             ))
         }
     }
+}
+
+fn quoted_list(values: &[&str]) -> String {
+    values
+        .iter()
+        .map(|value| format!("{value:?}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn stack_type_name(type_id: i32) -> &'static str {
