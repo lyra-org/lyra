@@ -1,0 +1,1 @@
+without_scopes = ["lyra.listens.all", "lyra.lyrics.all", "lyra.playback_sessions.all"]

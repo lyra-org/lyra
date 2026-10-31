@@ -3,8 +3,8 @@ local genres = require("@lyra/genres")
 local releases = require("@lyra/releases")
 local tracks = require("@lyra/tracks")
 
--- The test plugin declares `lyra.favorites`, `lyra.listens` and `lyra.ratings`; the restricted
--- harness plugin covers queries refused without them.
+-- The test plugin declares `lyra.favorites`, `lyra.listens` and `lyra.ratings`;
+-- `catalog_personal_scopes_refused` covers queries refused without them.
 assert(#tracks.query({ favorite = true }).items == 0, "favorite filters need lyra.favorites")
 assert(#tracks.query({ listened = false }).items == 1, "listened needs lyra.listens")
 assert(#tracks.query({ min_rating = 1 }).items == 0, "a rating filter needs lyra.ratings")

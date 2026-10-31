@@ -13,9 +13,10 @@ pub struct Summary {
     pub failed: usize,
 }
 
-/// Runs `tests`, which `discover` found under `root`, as the plugin owning `root`.
+/// Runs `tests`, which `discover` found under `root`, as the plugin owning `root`, or as the
+/// placeholder plugin for the harness's own tests.
 pub async fn run(root: &Path, tests: Vec<PathBuf>) -> anyhow::Result<Summary> {
-    let plugin = lyra_server::testing::PluginUnderTest::locate(root)?;
+    let plugin = plugin_under_test(root)?;
     let mut passed = 0usize;
     let mut failed = 0usize;
     for test_path in tests {
@@ -44,6 +45,21 @@ pub async fn run(root: &Path, tests: Vec<PathBuf>) -> anyhow::Result<Summary> {
         }
     }
     Ok(Summary { passed, failed })
+}
+
+fn plugin_under_test(root: &Path) -> anyhow::Result<lyra_server::testing::PluginUnderTest> {
+    let own = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+    let canonical = root
+        .canonicalize()
+        .map_err(|error| anyhow::anyhow!("canonicalize {}: {error}", root.display()))?;
+    if own
+        .canonicalize()
+        .is_ok_and(|own| canonical.starts_with(own))
+    {
+        lyra_server::testing::PluginUnderTest::placeholder(&own)
+    } else {
+        lyra_server::testing::PluginUnderTest::locate(root)
+    }
 }
 
 /// The fixture a Luau test declares in a `<test>.fixture.toml` beside it, if any.
@@ -132,15 +148,13 @@ mod tests {
 
     #[tokio::test]
     async fn runs_checked_in_luau_tests() {
-        for dir in ["tests", "restricted/tests", "parent-scopes/tests"] {
-            let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join(dir)
-                .canonicalize()
-                .expect("canonicalize checked-in Luau tests");
-            let tests = discover(&root, None).expect("discover checked-in Luau tests");
-            let summary = run(&root, tests).await.expect("run checked-in Luau tests");
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .canonicalize()
+            .expect("canonicalize checked-in Luau tests");
+        let tests = discover(&root, None).expect("discover checked-in Luau tests");
+        let summary = run(&root, tests).await.expect("run checked-in Luau tests");
 
-            assert_eq!(summary.failed, 0, "{dir}");
-        }
+        assert_eq!(summary.failed, 0);
     }
 }

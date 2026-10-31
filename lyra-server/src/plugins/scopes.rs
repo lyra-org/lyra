@@ -656,6 +656,17 @@ fn narrowed_functions(parent: Scope) -> impl Iterator<Item = (&'static str, &'st
     })
 }
 
+/// Each scope that narrows another, with the id of the one it narrows.
+pub(crate) fn scope_parents() -> impl Iterator<Item = (&'static str, &'static str)> {
+    Scope::ALL.iter().filter_map(|scope| {
+        let def = scope.def();
+        match def.gate {
+            Gate::Functions { within, .. } => Some((def.id, within.def().id)),
+            Gate::Module(_) => None,
+        }
+    })
+}
+
 pub(crate) fn plugin_host() -> PluginHost {
     PluginHost::new(
         "lyra",
@@ -666,13 +677,7 @@ pub(crate) fn plugin_host() -> PluginHost {
             .collect(),
     )
     .expect("lyra is not a fixed manifest field")
-    .with_scope_parents(Scope::ALL.iter().filter_map(|scope| {
-        let def = scope.def();
-        match def.gate {
-            Gate::Functions { within, .. } => Some((def.id, within.def().id)),
-            Gate::Module(_) => None,
-        }
-    }))
+    .with_scope_parents(scope_parents())
     .with_reserved_ids(crate::routes::RESERVED_PLUGIN_IDS.iter().copied())
 }
 

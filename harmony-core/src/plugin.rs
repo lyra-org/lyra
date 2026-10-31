@@ -60,7 +60,7 @@ use harmony_luau::{
 };
 
 pub const PLUGIN_CONFIG_FILENAME: &str = "plugin.json";
-pub(crate) const PLUGIN_SCHEMA_VERSION: u32 = 1;
+pub const PLUGIN_SCHEMA_VERSION: u32 = 1;
 
 /// Hard caps applied to `plugin.json` before `serde_json` parses it.
 /// Prevents a hostile or malformed plugin config from OOMing `discover_plugins`.

@@ -249,8 +249,61 @@ impl PluginUnderTest {
         })
     }
 
+    /// The plugin the tests under `directory` of the modules the server provides run as. It
+    /// declares every scope, so a test can go without any of them.
+    pub fn placeholder(directory: &Path) -> anyhow::Result<Self> {
+        let directory = directory
+            .canonicalize()
+            .with_context(|| format!("canonicalize {}", directory.display()))?;
+        Ok(Self {
+            manifest: harmony_core::plugin::PluginManifest {
+                schema_version: harmony_core::plugin::PLUGIN_SCHEMA_VERSION,
+                id: "test".to_string(),
+                name: "Harness Module Tests".to_string(),
+                version: semver::Version::new(1, 0, 0),
+                host_requirement: semver::VersionReq::parse(concat!(
+                    "=",
+                    env!("CARGO_PKG_VERSION")
+                ))?,
+                description: "Luau tests for server-provided plugin modules".to_string(),
+                entrypoint: None,
+                scopes: crate::plugins::scopes::Scope::ALL
+                    .iter()
+                    .map(|scope| scope.def().id.to_string())
+                    .collect(),
+                dependencies: BTreeMap::new(),
+            },
+            directory,
+        })
+    }
+
     pub fn id(&self) -> &str {
         &self.manifest.id
+    }
+
+    /// The plugin's manifest without `scopes`, which it must declare. A scope another remaining
+    /// one narrows can't go.
+    fn manifest_without(
+        &self,
+        scopes: &[String],
+    ) -> anyhow::Result<harmony_core::plugin::PluginManifest> {
+        let mut manifest = self.manifest.clone();
+        for scope in scopes {
+            anyhow::ensure!(
+                manifest.scopes.contains(scope),
+                "plugin `{}` does not declare `{scope}`",
+                manifest.id
+            );
+        }
+        manifest.scopes.retain(|scope| !scopes.contains(scope));
+        for (scope, parent) in crate::plugins::scopes::scope_parents() {
+            anyhow::ensure!(
+                !manifest.scopes.iter().any(|kept| kept == scope)
+                    || manifest.scopes.iter().any(|kept| kept == parent),
+                "`{scope}` stays declared without `{parent}`"
+            );
+        }
+        Ok(manifest)
     }
 
     pub fn directory(&self) -> &Path {
@@ -305,8 +358,9 @@ pub async fn exec_plugins(
 const LUAU_TEST_USERNAME: &str = "luau-tester";
 
 /// Runs one `.luau` file as `plugin`, without executing the plugin's entrypoint. With a fixture,
-/// the fixture is seeded, the test dispatches as its `run_as` user and receives the seeded ids
-/// as its `...`; otherwise it dispatches as a fresh non-admin user named `LUAU_TEST_USERNAME`.
+/// the fixture is seeded, the plugin goes without the fixture's `without_scopes` and the test
+/// receives the seeded ids as its `...`. The test dispatches as the fixture's `run_as` user, or
+/// otherwise as a fresh non-admin user named `LUAU_TEST_USERNAME`.
 pub async fn run_luau_plugin_test_file(
     plugin: &PluginUnderTest,
     test_path: &Path,
@@ -333,13 +387,17 @@ pub async fn run_luau_plugin_test_file(
 
     let (principal, seeded) = {
         let mut db = STATE.db.write().await;
-        let (user_db_id, seeded) = match fixture {
+        let (run_as, seeded) = match fixture {
             Some(fixture) => {
                 let (seeded, run_as) = fixture
                     .seed(&mut db)
                     .with_context(|| format!("seed fixture for {}", test_path.display()))?;
                 (run_as, Some(seeded))
             }
+            None => (None, None),
+        };
+        let user_db_id = match run_as {
+            Some(user_db_id) => user_db_id,
             None => {
                 let user = lyra_db::users::User {
                     db_id: None,
@@ -347,7 +405,7 @@ pub async fn run_luau_plugin_test_file(
                     username: LUAU_TEST_USERNAME.to_string(),
                     password: String::new(),
                 };
-                (lyra_db::users::create(&mut db, &user)?, None)
+                lyra_db::users::create(&mut db, &user)?
             }
         };
         let user = lyra_db::users::get_by_id(&db, user_db_id)?.context("test user exists")?;
@@ -361,7 +419,7 @@ pub async fn run_luau_plugin_test_file(
     let server_info = crate::plugins::server::load_server_info().await?;
     let auth_capabilities =
         crate::plugins::auth::AuthCapabilities::from_config(&STATE.config().auth);
-    let manifest = plugin.manifest.clone();
+    let manifest = plugin.manifest_without(fixture.map_or(&[], Fixture::without_scopes))?;
     let plugin_id = manifest.id.clone();
     let db = STATE.db.get();
     let source_root = isolated.source_root();

@@ -3,7 +3,7 @@ local genres = require("@lyra/genres")
 local releases = require("@lyra/releases")
 local tracks = require("@lyra/tracks")
 
--- The restricted plugin declares none of `lyra.favorites`, `lyra.listens` and `lyra.ratings`.
+-- The test goes without `lyra.favorites`, `lyra.listens` and `lyra.ratings`.
 local FAVORITES = "filtering or sorting by the caller's favorites requires the lyra.favorites scope"
 local LISTENS = "filtering or sorting by the caller's listens requires the lyra.listens scope"
 local RATINGS = "filtering or sorting by the caller's ratings requires the lyra.ratings scope"

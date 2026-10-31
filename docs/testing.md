@@ -26,12 +26,8 @@ plugins/<plugin>/tests/
 ```
 
 - A plugin's own tests live in `plugins/<plugin>/tests`.
-- Tests of the modules the server provides to every plugin live in `lyra-harmony-test/tests`,
-  under a placeholder plugin manifest. Tests of what those modules refuse a plugin lacking their
-  scopes live in `lyra-harmony-test/restricted/tests`, whose manifest declares only the scopes
-  they need, and tests of the functions they refuse a plugin declaring a module's scope but not
-  the narrow scope within it live in `lyra-harmony-test/parent-scopes/tests`. All three also run
-  under `cargo test`.
+- Tests of the modules the server provides to every plugin live in `lyra-harmony-test/tests` and
+  run as a placeholder plugin declaring every scope. They also run under `cargo test`.
 - Files starting with `_` are helpers for other tests and never run on their own.
 - `cache/` is stored with Git LFS; see [development](development.md).
 
@@ -51,10 +47,13 @@ writes what a passing scenario captured into its `expect` section.
 ## Luau fixtures
 
 A `<test>.fixture.toml` beside a Luau test seeds a fresh database before the test runs. The test
-runs as the `run_as` user and receives the seeded ids as its chunk's `...`:
+runs as the `run_as` user, or a fresh non-admin user without one, and receives the seeded ids as
+its chunk's `...`. The plugin goes without the scopes in `without_scopes`, which it must declare;
+a scope another kept one narrows can't go:
 
 ```toml
 run_as = "owner"
+without_scopes = ["lyra.ratings"]
 
 [[users]]
 key = "owner"

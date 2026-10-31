@@ -37,8 +37,12 @@ use lyra_db::{
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Fixture {
-    /// The fixture user the test runs as.
-    run_as: String,
+    /// The fixture user the test runs as, if not a fresh one.
+    #[serde(default)]
+    run_as: Option<String>,
+    /// Scopes the test plugin declares that it goes without for the test.
+    #[serde(default)]
+    without_scopes: Vec<String>,
     #[serde(default)]
     users: Vec<User>,
     #[serde(default)]
@@ -370,6 +374,10 @@ impl Fixture {
         self
     }
 
+    pub(crate) fn without_scopes(&self) -> &[String] {
+        &self.without_scopes
+    }
+
     /// The key of the library `track`'s release belongs to.
     fn release_library(&self, track: &Track) -> anyhow::Result<Option<&str>> {
         let Some(release) = &track.release else {
@@ -383,8 +391,9 @@ impl Fixture {
         Ok(release.library.as_deref())
     }
 
-    /// Writes the fixture into `db`, returning what the test receives and the user it runs as.
-    pub(crate) fn seed(&self, db: &mut DbAny) -> anyhow::Result<(Seeded, DbId)> {
+    /// Writes the fixture into `db`, returning what the test receives and the user it runs as, if
+    /// it names one.
+    pub(crate) fn seed(&self, db: &mut DbAny) -> anyhow::Result<(Seeded, Option<DbId>)> {
         let mut keys = Keys {
             users: BTreeMap::new(),
             api_keys: BTreeSet::new(),
@@ -759,7 +768,12 @@ impl Fixture {
             seeded.ids.insert(key.clone(), genre_db_id.0);
         }
 
-        Ok((seeded, keys.user(&self.run_as)?))
+        let run_as = self
+            .run_as
+            .as_deref()
+            .map(|key| keys.user(key))
+            .transpose()?;
+        Ok((seeded, run_as))
     }
 }
 
@@ -820,6 +834,7 @@ mod tests {
             ],
         }))?;
         let (seeded, viewer) = fixture.seed(&mut db)?;
+        let viewer = viewer.context("fixture runs as viewer")?;
 
         let id = |key: &str| DbId(seeded.ids[key]);
         for (library, release, track) in [
@@ -864,6 +879,7 @@ mod tests {
             "tags": [{ "user": "viewer", "target": "closed", "name": "Vinyl" }],
         }))?;
         let (seeded, viewer) = fixture.seed(&mut db)?;
+        let viewer = viewer.context("fixture runs as viewer")?;
 
         let closed = DbId(seeded.ids["closed"]);
         let tags = lyra_db::tags::get_for_targets_many(&db, viewer, &[closed])?;

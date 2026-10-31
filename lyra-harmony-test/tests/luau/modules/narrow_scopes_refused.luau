@@ -2,7 +2,7 @@ local listens = require("@lyra/listens")
 local lyrics = require("@lyra/lyrics")
 local playback_sessions = require("@lyra/playback_sessions")
 
--- The plugin declares `lyra.listens`, `lyra.lyrics` and `lyra.playback_sessions`, but none of the
+-- The test keeps `lyra.listens`, `lyra.lyrics` and `lyra.playback_sessions`, but goes without the
 -- narrow scopes within them.
 local function rejects(f: (...any) -> ...any, message: string, ...: any)
 	local ok, err = pcall(f, ...)

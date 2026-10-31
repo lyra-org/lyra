@@ -1982,10 +1982,7 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap();
-        let mut manifests = vec![
-            root.join("lyra-harmony-test/tests/plugin.json"),
-            root.join("lyra-harmony-test/restricted/tests/plugin.json"),
-        ];
+        let mut manifests = Vec::new();
         for entry in std::fs::read_dir(root.join("plugins"))? {
             let manifest = entry?.path().join("plugin.json");
             if manifest.is_file() {
