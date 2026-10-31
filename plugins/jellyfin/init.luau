@@ -1733,7 +1733,7 @@ end
 local function dispatch_to_native(
 	principal: session.Principal,
 	session_id: string,
-	action: string,
+	action: playback_sessions.RemoteAction,
 	position_ms: number?,
 	level: number?
 ): ApiResponse
@@ -1845,7 +1845,7 @@ api.post(P .. "/Sessions/{sessionId}/Playing/{command}", function(ctx: ApiContex
 		return ws_response
 	end
 
-	local native_action_map: { [string]: string } = {
+	local native_action_map: { [string]: playback_sessions.RemoteAction } = {
 		Pause = "pause",
 		Unpause = "unpause",
 		Stop = "stop",

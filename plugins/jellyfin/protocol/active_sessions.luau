@@ -63,7 +63,7 @@ local module = {}
 local entries: { [string]: SessionEntry } = {}
 module.entries = entries
 
-local JELLYFIN_COMMAND_MAP: { [string]: string } = {
+local JELLYFIN_COMMAND_MAP: { [playback_sessions.RemoteAction]: string } = {
 	play = "Play",
 	pause = "Pause",
 	unpause = "Unpause",
@@ -74,7 +74,7 @@ local JELLYFIN_COMMAND_MAP: { [string]: string } = {
 	set_volume = "SetVolume",
 }
 
-local function to_jellyfin_supported_commands(commands: { string }): { string }
+local function to_jellyfin_supported_commands(commands: { playback_sessions.RemoteAction }): { string }
 	local result = {}
 	for _, cmd in commands do
 		local mapped = JELLYFIN_COMMAND_MAP[cmd]
