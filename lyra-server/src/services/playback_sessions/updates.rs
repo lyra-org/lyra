@@ -112,6 +112,7 @@ fn broadcast_playback_event(payload: PlaybackUpdatePayload) {
     }
 }
 
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct PlaybackUpdatePayload {
     pub event: String,

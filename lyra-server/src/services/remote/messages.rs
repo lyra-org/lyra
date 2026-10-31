@@ -3,6 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use crate::services::playback_sessions::PlaybackUpdatePayload;
+use crate::services::remote::connections::Connection;
 use crate::services::remote::constants::RemoteAction;
 #[cfg(feature = "docgen")]
 use asyncapi_rust::{
@@ -13,7 +15,6 @@ use serde::{
     Deserialize,
     Serialize,
 };
-use serde_json::Value;
 
 /// Typed command envelope — each action carries its own payload shape.
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -143,7 +144,7 @@ pub(crate) enum OutgoingMessage {
     Response(ResponseMessage),
     #[cfg_attr(
         feature = "docgen",
-        asyncapi(summary = "Server-initiated playback state event")
+        asyncapi(summary = "Server-initiated event, told apart by `event`")
     )]
     Event(EventMessage),
     #[cfg_attr(
@@ -159,41 +160,41 @@ pub(crate) enum OutgoingMessage {
 pub(crate) enum ForwardedCommand {
     Play {
         #[serde(skip_serializing_if = "Option::is_none")]
-        from: Option<u64>,
+        from: Option<String>,
     },
     Pause {
         #[serde(skip_serializing_if = "Option::is_none")]
-        from: Option<u64>,
+        from: Option<String>,
     },
     Unpause {
         #[serde(skip_serializing_if = "Option::is_none")]
-        from: Option<u64>,
+        from: Option<String>,
     },
     Stop {
         #[serde(skip_serializing_if = "Option::is_none")]
-        from: Option<u64>,
+        from: Option<String>,
     },
     Seek {
         #[serde(skip_serializing_if = "Option::is_none")]
-        from: Option<u64>,
+        from: Option<String>,
         position_ms: u64,
     },
     NextTrack {
         #[serde(skip_serializing_if = "Option::is_none")]
-        from: Option<u64>,
+        from: Option<String>,
     },
     PreviousTrack {
         #[serde(skip_serializing_if = "Option::is_none")]
-        from: Option<u64>,
+        from: Option<String>,
     },
     SetVolume {
         #[serde(skip_serializing_if = "Option::is_none")]
-        from: Option<u64>,
+        from: Option<String>,
         level: f32,
     },
     HandoffQueue {
         #[serde(skip_serializing_if = "Option::is_none")]
-        from: Option<u64>,
+        from: Option<String>,
         playback_id: String,
         queue_revision: u64,
         /// The current track's play, which the target continues by reporting progress with it.
@@ -224,9 +225,29 @@ pub(crate) enum ResponseStatus {
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct EventMessage {
-    pub(crate) event: String,
-    pub(crate) data: Value,
+#[serde(tag = "event", content = "data", rename_all = "snake_case")]
+pub(crate) enum EventMessage {
+    /// A playback the connection may see changed state.
+    PlaybackStateChanged(PlaybackUpdatePayload),
+    /// Events were dropped; refetch state over REST.
+    SyncRequired(SyncRequired),
+    /// Sent first on every connection, describing the connection itself.
+    Connected(Connection),
+    /// One of the user's connections opened, declared its capabilities, or started or stopped
+    /// driving a playback.
+    ConnectionUpdated(Connection),
+    /// One of the user's connections closed.
+    ConnectionClosed(ConnectionClosed),
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub(crate) struct SyncRequired {}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct ConnectionClosed {
+    pub(crate) id: String,
 }
 
 impl ResponseMessage {
@@ -283,6 +304,35 @@ mod tests {
     }
 
     #[test]
+    fn events_keep_the_event_and_data_envelope() {
+        let closed = OutgoingMessage::Event(EventMessage::ConnectionClosed(ConnectionClosed {
+            id: "conn".to_string(),
+        }));
+        assert_eq!(
+            serde_json::to_value(&closed).unwrap(),
+            serde_json::json!({
+                "type": "event",
+                "event": "connection_closed",
+                "data": { "id": "conn" },
+            })
+        );
+        let sync = OutgoingMessage::Event(EventMessage::SyncRequired(SyncRequired {}));
+        assert_eq!(
+            serde_json::to_value(&sync).unwrap(),
+            serde_json::json!({ "type": "event", "event": "sync_required", "data": {} })
+        );
+    }
+
+    #[test]
+    fn serialize_forwarded_command_carries_the_public_source_id() {
+        let msg = OutgoingMessage::Command(ForwardedCommand::Pause {
+            from: Some("source-id".to_string()),
+        });
+        let json = serde_json::to_value(&msg).unwrap();
+        assert_eq!(json["from"], "source-id");
+    }
+
+    #[test]
     fn serialize_forwarded_command_omits_from_when_none() {
         let msg = OutgoingMessage::Command(ForwardedCommand::Pause { from: None });
         let json = serde_json::to_value(&msg).unwrap();
@@ -293,8 +343,8 @@ mod tests {
     #[test]
     fn forwarded_commands_reject_mismatched_payloads() {
         for json in [
-            r#"{"type":"command","action":"seek","from":1}"#,
-            r#"{"type":"command","action":"pause","from":1,"position_ms":30000}"#,
+            r#"{"type":"command","action":"seek","from":"a"}"#,
+            r#"{"type":"command","action":"pause","from":"a","position_ms":30000}"#,
         ] {
             assert!(
                 serde_json::from_str::<OutgoingMessage>(json).is_err(),

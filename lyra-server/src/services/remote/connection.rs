@@ -3,28 +3,42 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashSet;
+use std::collections::{
+    HashMap,
+    HashSet,
+};
 
 use tokio::task::JoinSet;
 
+use super::connections::{
+    self,
+    Connection,
+};
 use super::constants::RemoteAction;
 use super::handoffs;
 use super::messages::{
     ClientCommand,
+    ConnectionClosed,
     EventMessage,
     ForwardedCommand,
     OutgoingMessage,
     ResponseMessage,
+    SyncRequired,
 };
 use super::registry::{
     self,
     ConnectionId,
+};
+use super::signals::{
+    self,
+    ConnectionSignal,
 };
 
 use crate::services::STATE;
 use crate::services::auth::{
     self,
     AuthError,
+    Principal,
 };
 use crate::services::playback_sessions as playbacks;
 use crate::services::playback_sessions::{
@@ -113,7 +127,7 @@ async fn handle_remote_control(cmd: ClientCommand, connection_id: ConnectionId) 
     };
 
     let (source, target_snap) =
-        registry::get_connection_and_token_target(connection_id, &target_str).await;
+        registry::get_connection_and_target(connection_id, &target_str).await;
 
     let Some(source) = source else {
         return ResponseMessage::error(id, "source connection not found");
@@ -136,7 +150,7 @@ async fn handle_remote_control(cmd: ClientCommand, connection_id: ConnectionId) 
 
     if let ClientCommand::HandoffQueue(command) = &cmd {
         return match handoffs::dispatch_and_wait(
-            Some(connection_id),
+            Some(&source),
             &target_snap,
             &command.playback_id,
             command.queue_revision,
@@ -148,33 +162,22 @@ async fn handle_remote_control(cmd: ClientCommand, connection_id: ConnectionId) 
         };
     }
 
+    let from = Some(source.public_id.clone());
     let forwarded = match &cmd {
         ClientCommand::Seek(c) => ForwardedCommand::Seek {
-            from: Some(connection_id),
+            from,
             position_ms: c.position_ms,
         },
         ClientCommand::SetVolume(c) => ForwardedCommand::SetVolume {
-            from: Some(connection_id),
+            from,
             level: c.level.clamp(0.0, 1.0),
         },
-        ClientCommand::Play(_) => ForwardedCommand::Play {
-            from: Some(connection_id),
-        },
-        ClientCommand::Pause(_) => ForwardedCommand::Pause {
-            from: Some(connection_id),
-        },
-        ClientCommand::Unpause(_) => ForwardedCommand::Unpause {
-            from: Some(connection_id),
-        },
-        ClientCommand::Stop(_) => ForwardedCommand::Stop {
-            from: Some(connection_id),
-        },
-        ClientCommand::NextTrack(_) => ForwardedCommand::NextTrack {
-            from: Some(connection_id),
-        },
-        ClientCommand::PreviousTrack(_) => ForwardedCommand::PreviousTrack {
-            from: Some(connection_id),
-        },
+        ClientCommand::Play(_) => ForwardedCommand::Play { from },
+        ClientCommand::Pause(_) => ForwardedCommand::Pause { from },
+        ClientCommand::Unpause(_) => ForwardedCommand::Unpause { from },
+        ClientCommand::Stop(_) => ForwardedCommand::Stop { from },
+        ClientCommand::NextTrack(_) => ForwardedCommand::NextTrack { from },
+        ClientCommand::PreviousTrack(_) => ForwardedCommand::PreviousTrack { from },
         ClientCommand::DeclareCapabilities { .. } => {
             return ResponseMessage::error(id, "not a remote control action");
         }
@@ -199,14 +202,6 @@ async fn handle_remote_control(cmd: ClientCommand, connection_id: ConnectionId) 
         }
         Err(err) => ResponseMessage::error(id, err),
     }
-}
-
-fn playback_event_to_message(payload: PlaybackUpdatePayload) -> Option<OutgoingMessage> {
-    let data = serde_json::to_value(payload).ok()?;
-    Some(OutgoingMessage::Event(EventMessage {
-        event: "playback_state_changed".to_string(),
-        data,
-    }))
 }
 
 fn playback_event_visible_to_connection(
@@ -350,22 +345,95 @@ pub(crate) fn playback_event_message(
     accessible_library_ids: &HashSet<String>,
 ) -> Option<OutgoingMessage> {
     playback_event_visible_to_connection(&payload, user_public_id, accessible_library_ids)
-        .then(|| playback_event_to_message(payload))
-        .flatten()
+        .then_some(OutgoingMessage::Event(EventMessage::PlaybackStateChanged(
+            payload,
+        )))
 }
 
 /// Tells a connection that missed playback events to resync its state via REST, since they
 /// can't be replayed.
 pub(crate) fn sync_required_message() -> OutgoingMessage {
-    OutgoingMessage::Event(EventMessage {
-        event: "sync_required".to_string(),
-        data: serde_json::Value::Null,
-    })
+    OutgoingMessage::Event(EventMessage::SyncRequired(SyncRequired {}))
+}
+
+/// What a socket last told its client about each of the user's connections, so a signal that
+/// leaves a connection looking the same sends nothing.
+#[derive(Default)]
+pub(crate) struct ConnectionViews {
+    sent: HashMap<String, Connection>,
+}
+
+async fn current_connections(principal: &Principal) -> Option<Vec<Connection>> {
+    let now_ms = playbacks::now_ms().ok()?;
+    match connections::list(principal, now_ms).await {
+        Ok(connections) => Some(connections.iter().map(|c| c.resource()).collect()),
+        Err(error) => {
+            tracing::debug!(error = %error, "could not resolve connections for an event");
+            None
+        }
+    }
+}
+
+/// The `connected` event for a socket that just registered, which also records how every other
+/// connection of the user looks now.
+pub(crate) async fn connected_message(
+    public_id: &str,
+    principal: &Principal,
+    views: &mut ConnectionViews,
+) -> Option<OutgoingMessage> {
+    views.sent = current_connections(principal)
+        .await?
+        .into_iter()
+        .map(|connection| (connection.id.clone(), connection))
+        .collect();
+    let own = views.sent.get(public_id)?.clone();
+    Some(OutgoingMessage::Event(EventMessage::Connected(own)))
+}
+
+/// The event a signal about one of the user's connections turns into, unless the client already
+/// sees the connection this way.
+pub(crate) async fn connection_signal_message(
+    signal: ConnectionSignal,
+    principal: &Principal,
+    views: &mut ConnectionViews,
+) -> Option<OutgoingMessage> {
+    match signal {
+        ConnectionSignal::Closed { id } => {
+            views.sent.remove(&id);
+            Some(OutgoingMessage::Event(EventMessage::ConnectionClosed(
+                ConnectionClosed { id },
+            )))
+        }
+        ConnectionSignal::Changed { session_key } => {
+            let snapshot = registry::list_user_connections(&principal.user_public_id)
+                .await
+                .into_iter()
+                .find(|snapshot| snapshot.session_key == session_key)?;
+            let now_ms = playbacks::now_ms().ok()?;
+            let db = STATE.db.read().await;
+            let connection = match connections::join(&db, principal, vec![snapshot], now_ms) {
+                Ok(connections) => connections.into_iter().next()?.resource(),
+                Err(error) => {
+                    tracing::debug!(error = %error, "could not resolve a changed connection");
+                    return None;
+                }
+            };
+            drop(db);
+            if views.sent.get(&connection.id) == Some(&connection) {
+                return None;
+            }
+            views.sent.insert(connection.id.clone(), connection.clone());
+            Some(OutgoingMessage::Event(EventMessage::ConnectionUpdated(
+                connection,
+            )))
+        }
+    }
 }
 
 /// Releases what a closed connection held and pauses the playback it was driving.
 pub(crate) async fn disconnect(connection_id: ConnectionId, user_public_id: &str) {
     unsubscribe_playback_events(user_public_id);
+    signals::unsubscribe(user_public_id);
     let handle = registry::unregister(connection_id).await;
     if let Some(handle) = &handle {
         tracing::info!(
@@ -640,6 +708,198 @@ mod tests {
         assert_eq!(remaining, [kept.connection_id]);
 
         registry::unregister(kept.connection_id).await;
+        Ok(())
+    }
+
+    fn drain(rx: &mut tokio::sync::broadcast::Receiver<ConnectionSignal>) -> Vec<ConnectionSignal> {
+        std::iter::from_fn(|| rx.try_recv().ok()).collect()
+    }
+
+    fn changed(session_key: &str) -> ConnectionSignal {
+        ConnectionSignal::Changed {
+            session_key: session_key.to_string(),
+        }
+    }
+
+    fn event(message: Option<OutgoingMessage>) -> Option<serde_json::Value> {
+        message.map(|message| serde_json::to_value(message).unwrap())
+    }
+
+    #[tokio::test]
+    async fn connection_signals_reach_only_the_same_users_sockets() -> anyhow::Result<()> {
+        use super::connections::tests as fixture;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        fixture::init().await?;
+        let alice = fixture::user("alice").await?;
+        let bob = fixture::user("bob").await?;
+        let mut alice_rx = signals::subscribe(&alice.principal.user_public_id);
+        let mut bob_rx = signals::subscribe(&bob.principal.user_public_id);
+
+        let phone = fixture::connect(&alice, "phone").await?;
+        assert_eq!(drain(&mut alice_rx), [changed("phone")]);
+
+        handle_declare_capabilities(
+            "caps".into(),
+            vec![RemoteAction::Pause],
+            phone.connection_id,
+        )
+        .await;
+        assert_eq!(drain(&mut alice_rx), [changed("phone")]);
+
+        let (_, session_id) = fixture::drive_new_playback(&alice, "phone").await?;
+        assert_eq!(drain(&mut alice_rx), [changed("phone")]);
+        playbacks::bind_current_playback_session_scope(
+            &fixture::scope(&alice, "phone"),
+            session_id,
+            "unchanged".to_string(),
+            playbacks::now_ms()?,
+        );
+        assert!(
+            drain(&mut alice_rx).is_empty(),
+            "rebinding the same session is not an attach"
+        );
+        playbacks::clear_playback_session_scope(&fixture::scope(&alice, "phone"));
+        assert_eq!(drain(&mut alice_rx), [changed("phone")]);
+
+        let replacement = fixture::connect(&alice, "phone").await?;
+        assert_eq!(
+            drain(&mut alice_rx),
+            [
+                ConnectionSignal::Closed {
+                    id: phone.public_id.clone()
+                },
+                changed("phone"),
+            ],
+            "a duplicate session key evicts the old connection before announcing the new one",
+        );
+        let phone = replacement;
+
+        registry::unregister(phone.connection_id).await;
+        assert_eq!(
+            drain(&mut alice_rx),
+            [ConnectionSignal::Closed {
+                id: phone.public_id.clone()
+            }]
+        );
+        assert!(drain(&mut bob_rx).is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn sockets_hear_of_connections_only_when_they_look_different() -> anyhow::Result<()> {
+        use super::connections::tests as fixture;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        fixture::init().await?;
+        let alice = fixture::user("alice").await?;
+        let phone = fixture::connect(&alice, "phone").await?;
+        let mut views = ConnectionViews::default();
+
+        let connected =
+            event(connected_message(&phone.public_id, &alice.principal, &mut views).await)
+                .expect("connected event");
+        assert_eq!(connected["type"], "event");
+        assert_eq!(connected["event"], "connected");
+        assert_eq!(connected["data"]["id"], phone.public_id.as_str());
+        assert!(connected["data"]["playback_id"].is_null());
+
+        let speaker = fixture::connect(&alice, "speaker").await?;
+        let updated = event(
+            connection_signal_message(changed("speaker"), &alice.principal, &mut views).await,
+        )
+        .expect("a new connection is announced");
+        assert_eq!(updated["event"], "connection_updated");
+        assert_eq!(updated["data"]["id"], speaker.public_id.as_str());
+        assert!(
+            connection_signal_message(changed("speaker"), &alice.principal, &mut views)
+                .await
+                .is_none(),
+            "a connection that looks the same is not announced again",
+        );
+
+        let (playback_id, _) = fixture::drive_new_playback(&alice, "speaker").await?;
+        let attached = event(
+            connection_signal_message(changed("speaker"), &alice.principal, &mut views).await,
+        )
+        .expect("attaching a playback is announced");
+        assert_eq!(attached["data"]["playback_id"], playback_id.as_str());
+
+        assert!(
+            connection_signal_message(changed("tablet"), &alice.principal, &mut views)
+                .await
+                .is_none(),
+            "a session key without a connection announces nothing",
+        );
+
+        let closed = event(
+            connection_signal_message(
+                ConnectionSignal::Closed {
+                    id: speaker.public_id.clone(),
+                },
+                &alice.principal,
+                &mut views,
+            )
+            .await,
+        )
+        .expect("closing is announced");
+        assert_eq!(
+            closed,
+            serde_json::json!({
+                "type": "event",
+                "event": "connection_closed",
+                "data": { "id": speaker.public_id },
+            })
+        );
+
+        registry::unregister(phone.connection_id).await;
+        registry::unregister(speaker.connection_id).await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn forwarded_commands_name_the_source_by_its_public_id() -> anyhow::Result<()> {
+        use super::connections::tests as fixture;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        fixture::init().await?;
+        let alice = fixture::user("alice").await?;
+        let bob = fixture::user("bob").await?;
+        let remote = fixture::connect(&alice, "remote").await?;
+        let mut speaker = fixture::connect(&alice, "speaker").await?;
+        let bobs = fixture::connect(&bob, "speaker").await?;
+        for connection in [&remote, &speaker, &bobs] {
+            handle_declare_capabilities(
+                "caps".into(),
+                vec![RemoteAction::Pause],
+                connection.connection_id,
+            )
+            .await;
+        }
+        let pause = |target: &str| {
+            ClientCommand::Pause(super::super::messages::RemoteControlCommand {
+                id: "pause".to_string(),
+                target: target.to_string(),
+            })
+        };
+
+        let response = handle_command(pause(&speaker.public_id), remote.connection_id).await;
+        assert!(response.error.is_none(), "{:?}", response.error);
+        let OutgoingMessage::Command(ForwardedCommand::Pause { from }) =
+            speaker.command_rx.try_recv()?
+        else {
+            anyhow::bail!("speaker should receive the pause");
+        };
+        assert_eq!(from.as_deref(), Some(remote.public_id.as_str()));
+
+        let own = handle_command(pause(&remote.public_id), remote.connection_id).await;
+        assert_eq!(own.error.as_deref(), Some("cannot target self"));
+        let foreign = handle_command(pause(&bobs.public_id), remote.connection_id).await;
+        assert_eq!(
+            foreign.error.as_deref(),
+            Some("not authorized to control target")
+        );
+
+        for connection in [remote, speaker, bobs] {
+            registry::unregister(connection.connection_id).await;
+        }
         Ok(())
     }
 

@@ -4,7 +4,9 @@
 // www.meshiplaw.com/lyra.
 
 pub(crate) mod connection;
+pub(crate) mod connections;
 pub(crate) mod constants;
 pub(crate) mod handoffs;
 pub(crate) mod messages;
 pub(crate) mod registry;
+pub(crate) mod signals;

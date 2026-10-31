@@ -8,6 +8,7 @@ mod queue;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
 use agdb::DbId;
 #[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
@@ -61,6 +62,11 @@ use crate::{
             QueueSnapshot,
         },
         remote::{
+            connections::{
+                self as remote_connections,
+                Connection,
+                UserConnection,
+            },
             handoffs as remote_handoffs,
             registry as remote_registry,
         },
@@ -122,16 +128,6 @@ struct CurrentPlaybackResponse {
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
-struct ControllerResponse {
-    connection_token: String,
-    connection_session_key: String,
-    client_name: Option<String>,
-    supported_commands: Vec<crate::services::remote::constants::RemoteAction>,
-    remote_control_degraded: bool,
-}
-
-#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Serialize)]
 struct PlaybackResponse {
     id: String,
     user_id: String,
@@ -140,7 +136,7 @@ struct PlaybackResponse {
     created_at: String,
     updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    controller: Option<Option<ControllerResponse>>,
+    controller: Option<Option<Connection>>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -253,60 +249,16 @@ fn current_to_response(
     }
 }
 
-fn controlling_connection(
-    connections: &[remote_registry::ConnectionSnapshot],
-    current_session_id: Option<DbId>,
-) -> Option<&remote_registry::ConnectionSnapshot> {
-    let current_session_id = current_session_id?;
-    connections
-        .iter()
-        .filter_map(|connection| {
-            let scope_key = sessions::PlaybackScopeKey {
-                plugin_id: NATIVE_PLAYBACK_PLUGIN_ID,
-                user_public_id: &connection.user_public_id,
-                session_key: &connection.session_key,
-            };
-            let scope = sessions::get_playback_session(&scope_key)?;
-            (scope.current_playback_session_id == Some(current_session_id)).then_some((
-                scope.updated_at_ms,
-                connection.connection_id,
-                connection,
-            ))
-        })
-        .max_by_key(|&(updated_at_ms, connection_id, _)| (updated_at_ms, connection_id))
-        .map(|(_, _, connection)| connection)
-}
-
-fn controller_to_response(
-    connection: &remote_registry::ConnectionSnapshot,
-    current_ms: u64,
-) -> ControllerResponse {
-    let scope_key = sessions::PlaybackScopeKey {
-        plugin_id: NATIVE_PLAYBACK_PLUGIN_ID,
-        user_public_id: &connection.user_public_id,
-        session_key: &connection.session_key,
-    };
-    ControllerResponse {
-        connection_token: connection.token.clone(),
-        connection_session_key: connection.session_key.clone(),
-        client_name: connection.client_name.clone(),
-        supported_commands: connection.supported_commands.clone(),
-        remote_control_degraded: sessions::is_remote_control_degraded(&scope_key, current_ms),
-    }
-}
-
 fn playback_to_response(
     playback: &lyra_db::playbacks::Playback,
     current_session: Option<&playbacks::CurrentSession>,
     user_public_id: &str,
     current_ms: u64,
     inc: PlaybackInc,
-    connections: &[remote_registry::ConnectionSnapshot],
+    connections: &[UserConnection],
 ) -> PlaybackResponse {
-    let current_session_id = current_session.map(|current| current.playback_session_id);
     let controller = inc.controller.then(|| {
-        controlling_connection(connections, current_session_id)
-            .map(|connection| controller_to_response(connection, current_ms))
+        remote_connections::controller(connections, &playback.id).map(UserConnection::resource)
     });
     PlaybackResponse {
         id: playback.id.clone(),
@@ -425,12 +377,14 @@ async fn list_playbacks(
         .field(Some(if active_only { "active" } else { "all" }))
         .finish();
     let current_ms = now_ms()?;
-    let connections = if inc.controller {
-        remote_registry::list_connections().await
+    let snapshots = if inc.controller {
+        remote_registry::list_user_connections(&principal.user_public_id).await
     } else {
         Vec::new()
     };
     let db = STATE.db.read().await;
+    let connections = remote_connections::join(&db, &principal, snapshots, current_ms)
+        .map_err(map_playback_error)?;
     let (records, next_cursor) = if let Some(page) = page_request.resume(&snapshot_key)? {
         let mut records = Vec::with_capacity(page.item_ids.len());
         for id in page.item_ids {
@@ -559,13 +513,15 @@ async fn get_playback(
     let principal = require_principal(bearer_credential(&headers)).await?;
     let inc = parse_inc(query.inc)?;
     let current_ms = now_ms()?;
-    let connections = if inc.controller {
-        remote_registry::list_connections().await
+    let snapshots = if inc.controller {
+        remote_registry::list_user_connections(&principal.user_public_id).await
     } else {
         Vec::new()
     };
     let db = STATE.db.read().await;
     let record = resolve_visible_playback(&db, &principal, &id, current_ms)?;
+    let connections = remote_connections::join(&db, &principal, snapshots, current_ms)
+        .map_err(map_playback_error)?;
     Ok(Json(playback_to_response(
         &record.playback,
         record.current_session.as_ref(),
@@ -612,7 +568,7 @@ fn create_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn list_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List playbacks").description(
-        "Returns `{ items, next_cursor }` for the authenticated user's playback contexts, including plugin-reported playback, ordered by most recently updated. `active=true` filters the initial snapshot to recent non-terminal current sessions. Reported contexts expire after five minutes without a current playback observation; explicitly created playbacks are retained. A null `queue_revision` means there is no server-managed queue. `inc=controller` includes current native WebSocket controller details. Drive pagination from `next_cursor`.",
+        "Returns `{ items, next_cursor }` for the authenticated user's playback contexts, including plugin-reported playback, ordered by most recently updated. `active=true` filters the initial snapshot to recent non-terminal current sessions. Reported contexts expire after five minutes without a current playback observation; explicitly created playbacks are retained. A null `queue_revision` means there is no server-managed queue. `inc=controller` includes the WebSocket connection driving each playback as `controller`, or `null` when none is. Drive pagination from `next_cursor`.",
     )
 }
 

@@ -41,6 +41,7 @@ use crate::{
             PlaybackScopeKey,
         },
         remote::{
+            connections,
             constants::RemoteAction,
             messages::{
                 ForwardedCommand,
@@ -67,7 +68,7 @@ struct PlaybackSessionReportRequest {
 
 #[derive(Clone, Debug, Deserialize)]
 struct SendCommandRequest {
-    target_token: String,
+    connection_id: String,
     action: String,
     position_ms: Option<u64>,
     level: Option<f32>,
@@ -85,11 +86,14 @@ struct PlaybackInfo {
 
 #[derive(Serialize)]
 struct ConnectionInfo {
-    token: String,
+    id: String,
     session_key: String,
+    client_name: Option<String>,
     supported_commands: Vec<String>,
+    playback_id: Option<String>,
     playback: Option<PlaybackInfo>,
-    degraded: bool,
+    remote_control_degraded: bool,
+    connected_at_ms: u64,
 }
 
 #[cfg(feature = "docgen")]
@@ -230,70 +234,47 @@ impl PlaybackSessionsModule {
     }
 
     #[harmony(
-        description = "Lists the dispatch principal's active connections with their playback state.",
+        description = "Lists the dispatch principal's open WebSocket connections, oldest first, with the playback each drives.",
         returns(Vec<ConnectionInfo>)
     )]
     async fn list_connections(
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::Value> {
-        let connections = registry::list_connections().await;
+        let snapshots = registry::list_user_connections(&principal.user_public_id).await;
         let now_ms = playbacks::now_ms().map_err(crate::plugins::runtime_error)?;
-
-        let playbacks_list = {
+        let connections = {
             let db = db.read().await;
-            let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-            playbacks::list_playbacks(&db, user_db_id).map_err(crate::plugins::runtime_error)?
+            crate::plugins::auth::require_user_db_id(&principal, &db)?;
+            connections::join(&db, &principal, snapshots, now_ms)
+                .map_err(crate::plugins::runtime_error)?
         };
 
-        let mut result = Vec::new();
-        for conn in &connections {
-            if conn.user_public_id != principal.user_public_id {
-                continue;
-            }
-
-            let scope_key = PlaybackScopeKey {
-                plugin_id: "native",
-                user_public_id: &conn.user_public_id,
-                session_key: &conn.session_key,
-            };
-
-            let playback =
-                playbacks::get_playback_session(&scope_key).and_then(|scope| {
-                    let session_public_id = scope.current_playback_session_public_id?;
-                    let record = playbacks_list.iter().find(|playback| {
-                        playback.playback_session_public_id == session_public_id
-                    })?;
-                    if record.library_public_id.as_ref().is_some_and(|library_id| {
-                        principal.accessible_library_ids.contains(library_id)
-                    }) {
-                        Some(PlaybackInfo {
-                            track_public_id: record.track_public_id.clone(),
-                            position_ms: record.playback.position_ms,
-                            duration_ms: record.playback.duration_ms,
-                            state: playback_state_string(record.playback.state),
-                        })
-                    } else {
-                        None
-                    }
-                });
-
-            let degraded = playbacks::is_remote_control_degraded(&scope_key, now_ms);
-            let supported_commands = conn
-                .supported_commands
-                .iter()
-                .map(remote_action_string)
-                .collect();
-
-            result.push(ConnectionInfo {
-                token: conn.token.clone(),
-                session_key: conn.session_key.clone(),
-                supported_commands,
-                playback,
-                degraded,
-            });
-        }
-
+        let result = connections
+            .into_iter()
+            .map(|connection| ConnectionInfo {
+                playback_id: connection
+                    .playback
+                    .as_ref()
+                    .map(|playback| playback.playback_id.clone()),
+                playback: connection.playback.map(|playback| PlaybackInfo {
+                    track_public_id: playback.current.track_public_id,
+                    position_ms: playback.current.playback.position_ms,
+                    duration_ms: playback.current.playback.duration_ms,
+                    state: playback_state_string(playback.current.playback.state),
+                }),
+                id: connection.id,
+                session_key: connection.session_key,
+                client_name: connection.client_name,
+                supported_commands: connection
+                    .supported_commands
+                    .iter()
+                    .map(remote_action_string)
+                    .collect(),
+                remote_control_degraded: connection.remote_control_degraded,
+                connected_at_ms: connection.connected_at_ms,
+            })
+            .collect::<Vec<_>>();
         harmony_luau::serializable_to_luau_owned(&result)
     }
 
@@ -308,14 +289,14 @@ impl PlaybackSessionsModule {
         // their owner under their own guard.
         let db = db.read().await;
         crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let target_token = require_non_empty_string(request.target_token, "target_token")?;
+        let connection_id = require_non_empty_string(request.connection_id, "connection_id")?;
         let action_str = require_non_empty_string(request.action, "action")?;
         let action: RemoteAction = serde_json::from_value(serde_json::Value::String(
             action_str.clone(),
         ))
         .map_err(|_| crate::plugins::runtime_error(format!("unknown action: {action_str}")))?;
 
-        let target = registry::resolve_token(&target_token)
+        let target = registry::resolve_public_id(&connection_id)
             .await
             .ok_or_else(|| crate::plugins::runtime_error("connection not found"))?;
 
@@ -505,9 +486,9 @@ impl DescribeInterface for SendCommandRequest {
         let mut descriptor = InterfaceDescriptor::new("SendCommandRequest", None);
         descriptor.fields.extend([
             FieldDescriptor {
-                name: "target_token",
+                name: "connection_id",
                 ty: String::luau_type(),
-                description: None,
+                description: Some("The target connection's `id`."),
             },
             FieldDescriptor {
                 name: "action",
@@ -582,16 +563,24 @@ impl LuauTypeInfo for ConnectionInfo {
 
 impl DescribeInterface for ConnectionInfo {
     fn interface_descriptor() -> InterfaceDescriptor {
-        let mut descriptor = InterfaceDescriptor::new("ConnectionInfo", None);
+        let mut descriptor = InterfaceDescriptor::new(
+            "ConnectionInfo",
+            Some("One of the dispatch principal's open WebSocket connections."),
+        );
         descriptor.fields.extend([
             FieldDescriptor {
-                name: "token",
+                name: "id",
                 ty: String::luau_type(),
-                description: None,
+                description: Some("Public connection id, as `send_command` takes it."),
             },
             FieldDescriptor {
                 name: "session_key",
                 ty: String::luau_type(),
+                description: Some("The session key the client chose when it connected."),
+            },
+            FieldDescriptor {
+                name: "client_name",
+                ty: Option::<String>::luau_type(),
                 description: None,
             },
             FieldDescriptor {
@@ -600,13 +589,23 @@ impl DescribeInterface for ConnectionInfo {
                 description: None,
             },
             FieldDescriptor {
-                name: "playback",
-                ty: Option::<PlaybackInfo>::luau_type(),
-                description: None,
+                name: "playback_id",
+                ty: Option::<String>::luau_type(),
+                description: Some("The playback the connection drives; nil when it is idle or the playback is hidden from the principal."),
             },
             FieldDescriptor {
-                name: "degraded",
+                name: "playback",
+                ty: Option::<PlaybackInfo>::luau_type(),
+                description: Some("The track session of `playback_id`."),
+            },
+            FieldDescriptor {
+                name: "remote_control_degraded",
                 ty: bool::luau_type(),
+                description: Some("A command sent to the connection went unacknowledged for too long."),
+            },
+            FieldDescriptor {
+                name: "connected_at_ms",
+                ty: u64::luau_type(),
                 description: None,
             },
         ]);

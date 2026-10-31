@@ -140,6 +140,7 @@ fn me_routes() -> Router {
         .nest("/ratings", super::ratings::me_rating_routes())
         .nest("/tags", super::tags::me_tag_routes())
         .nest("/playbacks", super::playbacks::me_playback_routes())
+        .nest("/connections", super::connections::me_connection_routes())
         .nest("/plugins", super::plugins::me_plugin_settings_routes())
 }
 
@@ -164,6 +165,10 @@ fn me_openapi_routes() -> aide::axum::ApiRouter {
         .nest("/ratings", super::ratings::me_rating_openapi_routes())
         .nest("/tags", super::tags::me_tag_openapi_routes())
         .nest("/playbacks", super::playbacks::me_playback_openapi_routes())
+        .nest(
+            "/connections",
+            super::connections::me_connection_openapi_routes(),
+        )
         .nest(
             "/plugins",
             super::plugins::me_plugin_settings_openapi_routes(),
@@ -379,6 +384,7 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("GET", "/api/me/playbacks/{id}/queue"),
     ("PUT", "/api/me/playbacks/{id}/queue"),
     ("POST", "/api/me/playbacks/{id}/progress"),
+    ("GET", "/api/me/connections/"),
     ("GET", "/api/me/plugins/settings"),
     ("GET", "/api/me/plugins/{plugin_id}/settings"),
     ("PATCH", "/api/me/plugins/{plugin_id}/settings"),

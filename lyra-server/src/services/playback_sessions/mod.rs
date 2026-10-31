@@ -38,7 +38,6 @@ pub(crate) use self::sessions::{
 pub(crate) use self::workflow::{
     cleanup_after_commit,
     cleanup_evicted_playbacks,
-    list_playbacks,
     pause_playback_in_transaction,
     pause_playing_scopes_on_disconnect,
     report_playback_in_transaction,

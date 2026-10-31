@@ -5,6 +5,7 @@
 
 mod app;
 mod artists;
+mod connections;
 mod cors;
 mod covers;
 mod entity_metadata;

@@ -281,7 +281,7 @@ async fn response_keeps_initiating_and_controlling_client_names_distinct() -> an
 
     let Json(detail) = get_playback(
         fixture.headers,
-        Path(created.id),
+        Path(created.id.clone()),
         Query(PlaybackDetailQuery {
             inc: Some(vec!["controller".to_string()]),
         }),
@@ -291,6 +291,9 @@ async fn response_keeps_initiating_and_controlling_client_names_distinct() -> an
     let json = serde_json::to_value(detail)?;
     assert_eq!(json["current"]["client_name"], "Initiating Client");
     assert_eq!(json["controller"]["client_name"], "Controlling Client");
+    assert_eq!(json["controller"]["id"], registered.public_id.as_str());
+    assert_eq!(json["controller"]["playback_id"], created.id.as_str());
+    assert!(json["controller"].get("session_key").is_none());
 
     remote_registry::unregister(target_id).await;
     drop(registered.command_rx);

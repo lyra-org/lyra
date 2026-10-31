@@ -433,6 +433,7 @@ pub(crate) fn cleanup_after_commit(db: &mut DbAny, now_ms: u64) -> Vec<EvictedPl
     })
 }
 
+#[cfg(test)]
 pub(super) fn collect_playback_records(db: &DbAny) -> ServiceResult<Vec<PlaybackRecord>> {
     let playbacks = map_internal(lyra_db::playback_sessions::get(db))?;
     let mut records = Vec::new();
@@ -469,13 +470,6 @@ pub(super) fn collect_playback_records(db: &DbAny) -> ServiceResult<Vec<Playback
     }
 
     Ok(records)
-}
-
-pub(crate) fn list_playbacks(db: &DbAny, user_db_id: DbId) -> ServiceResult<Vec<PlaybackRecord>> {
-    Ok(collect_playback_records(db)?
-        .into_iter()
-        .filter(|playback| playback.user_db_id == user_db_id)
-        .collect())
 }
 
 /// Applies a report to the session, crediting playing time only for position advanced while the

@@ -553,13 +553,13 @@ pub(crate) async fn hold_registry_write_lock_for_test() -> impl Drop {
 }
 
 pub(crate) async fn dispatch_and_wait(
-    source_id: Option<ConnectionId>,
+    source: Option<&ConnectionSnapshot>,
     target: &ConnectionSnapshot,
     playback_id: &str,
     queue_revision: u64,
 ) -> Result<(), String> {
     let (handoff_token, completion_rx) = begin(
-        source_id,
+        source.map(|source| source.connection_id),
         target.connection_id,
         target.user_public_id.clone(),
         playback_id.to_string(),
@@ -585,7 +585,7 @@ pub(crate) async fn dispatch_and_wait(
         }
     };
     let command = OutgoingMessage::Command(ForwardedCommand::HandoffQueue {
-        from: source_id,
+        from: source.map(|source| source.public_id.clone()),
         playback_id: playback_id.to_string(),
         queue_revision,
         play_id,

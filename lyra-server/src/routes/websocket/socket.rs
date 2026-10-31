@@ -3,8 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashSet;
-
 use axum::extract::ws::{
     CloseFrame,
     Message,
@@ -22,11 +20,13 @@ use tokio::time::{
     interval_at,
 };
 
+use crate::services::auth::Principal;
 use crate::services::playback_sessions::subscribe_playback_events;
 use crate::services::remote::{
     connection::{
         self,
         AuthStatus,
+        ConnectionViews,
     },
     constants::{
         AUTH_CHECK_INTERVAL,
@@ -38,6 +38,7 @@ use crate::services::remote::{
     },
     messages::OutgoingMessage,
     registry::ConnectionId,
+    signals,
 };
 
 async fn send_message(socket: &mut WebSocket, msg: Message) -> bool {
@@ -68,20 +69,33 @@ async fn send(socket: &mut WebSocket, msg: OutgoingMessage) -> bool {
 pub(super) async fn run(
     mut socket: WebSocket,
     connection_id: ConnectionId,
-    user_public_id: String,
-    mut accessible_library_ids: HashSet<String>,
+    public_id: String,
+    mut principal: Principal,
     mut close: watch::Receiver<Option<CloseReason>>,
     token: Option<String>,
     mut command_rx: mpsc::Receiver<OutgoingMessage>,
 ) {
     let mut ping_interval = interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
     let mut auth_interval = interval_at(Instant::now() + AUTH_CHECK_INTERVAL, AUTH_CHECK_INTERVAL);
+    let user_public_id = principal.user_public_id.clone();
     let mut event_rx = subscribe_playback_events(&user_public_id);
+    let mut signal_rx = signals::subscribe(&user_public_id);
+    let mut connection_views = ConnectionViews::default();
     let mut awaiting_pong = false;
     let mut pong_deadline: Option<Instant> = None;
     let mut consecutive_auth_errors: u32 = 0;
     let mut sync_required_pending = false;
     let mut handoff_responses = JoinSet::new();
+
+    if let Some(connected) =
+        connection::connected_message(&public_id, &principal, &mut connection_views).await
+        && !send(&mut socket, connected).await
+    {
+        drop(event_rx);
+        drop(signal_rx);
+        connection::disconnect(connection_id, &user_public_id).await;
+        return;
+    }
 
     loop {
         let sleep = async {
@@ -150,7 +164,7 @@ pub(super) async fn run(
                         if let Some(msg) = connection::playback_event_message(
                             payload,
                             &user_public_id,
-                            &accessible_library_ids,
+                            &principal.accessible_library_ids,
                         ) {
                             if !send(&mut socket, msg).await {
                                 break;
@@ -160,6 +174,35 @@ pub(super) async fn run(
                     }
                     Err(broadcast::error::RecvError::Lagged(skipped)) => {
                         tracing::debug!(connection_id, skipped, "broadcast lagged");
+                        if !connection::mark_sync_required_pending(&mut sync_required_pending) {
+                            continue;
+                        }
+                        if !send(&mut socket, connection::sync_required_message()).await {
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+
+            result = signal_rx.recv() => {
+                match result {
+                    Ok(signal) => {
+                        if let Some(msg) = connection::connection_signal_message(
+                            signal,
+                            &principal,
+                            &mut connection_views,
+                        )
+                        .await
+                        {
+                            if !send(&mut socket, msg).await {
+                                break;
+                            }
+                            sync_required_pending = false;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        tracing::debug!(connection_id, skipped, "connection signals lagged");
                         if !connection::mark_sync_required_pending(&mut sync_required_pending) {
                             continue;
                         }
@@ -183,7 +226,7 @@ pub(super) async fn run(
                 match connection::check_auth(&token, &user_public_id).await {
                     AuthStatus::Valid(refreshed_library_ids) => {
                         consecutive_auth_errors = 0;
-                        accessible_library_ids = refreshed_library_ids;
+                        principal.accessible_library_ids = refreshed_library_ids;
                     }
                     AuthStatus::Revoked => {
                         tracing::info!(connection_id, "session revoked, closing connection");
@@ -229,5 +272,6 @@ pub(super) async fn run(
 
     connection::abort_handoff_responses(&mut handoff_responses).await;
     drop(event_rx);
+    drop(signal_rx);
     connection::disconnect(connection_id, &user_public_id).await;
 }
