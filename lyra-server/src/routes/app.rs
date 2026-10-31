@@ -57,6 +57,7 @@ pub(crate) fn build_core_api() -> Result<CoreApi> {
         .nest("/api/metadata", super::metadata_routes())
         .nest("/api/tracks", super::track_routes())
         .nest("/api/listens", super::listen_routes())
+        .nest("/api/ratings", super::rating_routes())
         .nest("/api/playlists", super::playlist_routes())
         .nest("/api/stream", super::stream_routes())
         .nest("/api/download", super::download_routes())
@@ -101,6 +102,7 @@ pub(crate) fn build_openapi_spec() -> OpenApi {
         .nest("/api/metadata", super::metadata::metadata_openapi_routes())
         .nest("/api/tracks", super::tracks::track_openapi_routes())
         .nest("/api/listens", super::listens::listen_openapi_routes())
+        .nest("/api/ratings", super::ratings::rating_openapi_routes())
         .nest(
             "/api/playlists",
             super::playlists::playlist_openapi_routes(),
@@ -423,6 +425,7 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("DELETE", "/api/tracks/{id}/lyrics/shared"),
     ("POST", "/api/tracks/{id}/lyrics/refresh"),
     ("GET", "/api/listens/"),
+    ("POST", "/api/ratings/averages"),
     ("GET", "/api/playlists/"),
     ("POST", "/api/playlists/"),
     ("GET", "/api/playlists/{id}"),
@@ -496,24 +499,23 @@ mod tests {
 
     #[cfg(feature = "docgen")]
     #[test]
-    fn ratings_check_is_documented_and_authenticated() {
+    fn rating_lookups_are_documented_and_authenticated() {
         let api = build_openapi_spec();
         let paths = api.paths.as_ref().expect("OpenAPI paths");
-        let path = paths
-            .paths
-            .get("/api/me/ratings/check")
-            .expect("ratings check path");
-        let ReferenceOr::Item(path) = path else {
-            panic!("ratings check path should be inline");
-        };
-        let operation = path.post.as_ref().expect("ratings check POST operation");
-        assert!(
-            operation
-                .security
-                .iter()
-                .any(|requirement| requirement.contains_key(BEARER_AUTH_SCHEME)),
-            "ratings check must require bearer auth",
-        );
+        for route in ["/api/me/ratings/check", "/api/ratings/averages"] {
+            let path = paths.paths.get(route).expect(route);
+            let ReferenceOr::Item(path) = path else {
+                panic!("{route} should be inline");
+            };
+            let operation = path.post.as_ref().expect(route);
+            assert!(
+                operation
+                    .security
+                    .iter()
+                    .any(|requirement| requirement.contains_key(BEARER_AUTH_SCHEME)),
+                "{route} must require bearer auth",
+            );
+        }
     }
 
     #[cfg(feature = "docgen")]

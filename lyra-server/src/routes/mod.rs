@@ -92,6 +92,7 @@ pub use providers::{
     entity_routes,
     provider_routes,
 };
+pub use ratings::rating_routes;
 pub use releases::release_routes;
 pub use roles::role_routes;
 pub use search::search_routes;

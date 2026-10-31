@@ -3,7 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use agdb::DbId;
+use agdb::{
+    DbAny,
+    DbId,
+};
 #[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
@@ -35,7 +38,10 @@ use crate::routes::targets::{
 use crate::{
     services::STATE,
     services::{
-        auth::require_authenticated,
+        auth::{
+            Principal,
+            require_authenticated,
+        },
         ratings as rating_service,
     },
 };
@@ -107,6 +113,30 @@ impl RatingFilterQuery {
             ),
         })
     }
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+struct AverageRatingsRequest {
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Target IDs to average. At most 500 submitted entries, counted before duplicate IDs are collapsed."
+        )
+    )]
+    target_ids: Vec<String>,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct AverageRatingsResponse {
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Dense `{ [submitted_id]: number | null }` map of unrounded means over every user's 1-5 rating. Duplicate IDs collapse to one key."
+        )
+    )]
+    averages: HashMap<String, Option<f64>>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -219,31 +249,66 @@ async fn check_ratings(
     headers: HeaderMap,
     Json(request): Json<CheckRatingsRequest>,
 ) -> Result<Json<CheckRatingsResponse>, AppError> {
-    let principal = require_authenticated(bearer_credential(&headers)).await?;
-    if request.target_ids.len() > CHECK_TARGET_CAP {
+    let ratings = dense_lookup(
+        &headers,
+        request.target_ids,
+        "rating check",
+        |db, principal, ids| {
+            Ok(rating_service::values_for_principal(db, principal, ids)?
+                .into_iter()
+                .map(|(id, value)| (id, value.get()))
+                .collect())
+        },
+    )
+    .await?;
+    Ok(Json(CheckRatingsResponse { ratings }))
+}
+
+async fn average_ratings(
+    headers: HeaderMap,
+    Json(request): Json<AverageRatingsRequest>,
+) -> Result<Json<AverageRatingsResponse>, AppError> {
+    let averages = dense_lookup(
+        &headers,
+        request.target_ids,
+        "average rating",
+        rating_service::averages_for_principal,
+    )
+    .await?;
+    Ok(Json(AverageRatingsResponse { averages }))
+}
+
+/// A value from `lookup` for each submitted id, `None` where it has none. Errs above
+/// [`CHECK_TARGET_CAP`] submitted ids.
+async fn dense_lookup<T>(
+    headers: &HeaderMap,
+    submitted: Vec<String>,
+    label: &str,
+    lookup: impl FnOnce(&DbAny, &Principal, &[DbId]) -> anyhow::Result<HashMap<DbId, T>>,
+) -> Result<HashMap<String, Option<T>>, AppError> {
+    let principal = require_authenticated(bearer_credential(headers)).await?;
+    if submitted.len() > CHECK_TARGET_CAP {
         return Err(AppError::bad_request(format!(
-            "rating check cap exceeded: {} > {}",
-            request.target_ids.len(),
-            CHECK_TARGET_CAP,
+            "{label} cap exceeded: {} > {CHECK_TARGET_CAP}",
+            submitted.len(),
         )));
     }
 
     let db = STATE.db.read().await;
-    let mut ratings: HashMap<String, Option<u8>> = request
-        .target_ids
-        .iter()
-        .map(|target_id| (target_id.clone(), None))
+    let mut values: HashMap<String, Option<T>> = submitted
+        .into_iter()
+        .map(|target_id| (target_id, None))
         .collect();
-    let target_ids: Vec<&str> = ratings.keys().map(String::as_str).collect();
+    let target_ids: Vec<&str> = values.keys().map(String::as_str).collect();
     let resolved = lyra_db::lookup::find_node_ids_by_ids(&*db, &target_ids)?;
     let target_db_ids: Vec<DbId> = resolved.values().copied().collect();
-    let values = rating_service::values_for_principal(&db, &principal, &target_db_ids)?;
+    let mut found = lookup(&db, &principal, &target_db_ids)?;
     for (target_id, target_db_id) in resolved {
-        if let Some(value) = values.get(&target_db_id) {
-            ratings.insert(target_id, Some(value.get()));
+        if let Some(value) = found.remove(&target_db_id) {
+            values.insert(target_id, Some(value));
         }
     }
-    Ok(Json(CheckRatingsResponse { ratings }))
+    Ok(values)
 }
 
 fn parse_rating(raw: i64) -> Result<RatingValue, AppError> {
@@ -266,8 +331,9 @@ fn set_rating_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Set a personal rating")
         .description(
             "Creates or replaces the authenticated user's 1-5 rating for a visible track, \
-             release, or artist. Returns 204 on success, 400 for malformed IDs or ratings, \
-             and 404 for missing, unsupported, or non-visible targets.",
+             release, or artist. Playlists are not ratable, though they can be favorited. \
+             Returns 204 on success, 400 for malformed IDs or ratings, and 404 for missing, \
+             unsupported, or non-visible targets.",
         )
         .response::<204, ()>()
 }
@@ -301,6 +367,33 @@ fn check_ratings_docs(op: TransformOperation) -> TransformOperation {
          returns an empty map. Unlike singular rating routes, malformed individual target IDs do \
          not return 400. Malformed JSON and requests containing more than 500 submitted IDs \
          return 400.",
+    )
+}
+
+#[cfg(feature = "docgen")]
+fn average_ratings_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Average ratings across users").description(
+        "Averages every user's rating of up to 500 submitted target IDs, counted before \
+         duplicate IDs are collapsed, and returns a dense \
+         `{ averages: { [submitted_id]: number | null } }` map of unrounded means. Mixed track, \
+         release, and artist IDs are supported. Missing, malformed, unsupported, non-visible, \
+         and unrated targets map to `null`, as does every target while the `instance_stats` \
+         server setting is off. Malformed JSON and requests containing more than 500 \
+         submitted IDs return 400.",
+    )
+}
+
+pub fn rating_routes() -> Router {
+    Router::new().route("/averages", post(average_ratings))
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn rating_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::post_with;
+
+    aide::axum::ApiRouter::new().api_route(
+        "/averages",
+        post_with(average_ratings, average_ratings_docs),
     )
 }
 
@@ -602,6 +695,123 @@ mod tests {
             )
             .await?;
         assert_eq!(malformed_json.status(), StatusCode::BAD_REQUEST);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn average_ratings_route_is_dense_capped_and_gated_by_instance_stats()
+    -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_library_test_state(std::path::PathBuf::from(".")).await?;
+
+        let (user_db_id, rated_id, unrated_id) = {
+            let mut db = STATE.db.write().await;
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
+            let user_db_id = lyra_db::users::create(
+                &mut db,
+                &lyra_db::fixtures::test_user("ratings-average-admin")?,
+            )?;
+            lyra_db::roles::ensure_user_has_role(
+                &mut db,
+                user_db_id,
+                lyra_db::roles::BUILTIN_ADMIN_ROLE,
+            )?;
+            let other_user_db_id = lyra_db::users::create(
+                &mut db,
+                &lyra_db::fixtures::test_user("ratings-average-other")?,
+            )?;
+            let library = insert_library(&mut db, "Averages", "/tmp/lyra-ratings-average-route")?;
+            let rated = insert_track(&mut db, "Rated Track")?;
+            let unrated = insert_track(&mut db, "Unrated Track")?;
+            connect(&mut db, library, rated)?;
+            connect(&mut db, library, unrated)?;
+            for (user, value) in [(user_db_id, 2), (other_user_db_id, 5)] {
+                lyra_db::ratings::upsert(
+                    &mut *db,
+                    user,
+                    rated,
+                    lyra_db::ratings::RatingValue::new(value).unwrap(),
+                    100,
+                )?;
+            }
+            (
+                user_db_id,
+                lyra_db::lookup::find_id_by_db_id(&db, rated)?.unwrap(),
+                lyra_db::lookup::find_id_by_db_id(&db, unrated)?.unwrap(),
+            )
+        };
+        let session =
+            crate::services::testing::create_session(user_db_id, Default::default()).await?;
+        let authorization = format!("Bearer {}", session.token);
+        let routes = rating_routes();
+        let request = |target_ids: serde_json::Value| -> anyhow::Result<Request<Body>> {
+            Ok(Request::builder()
+                .method("POST")
+                .uri("/averages")
+                .header(CONTENT_TYPE, "application/json")
+                .header(AUTHORIZATION, &authorization)
+                .body(Body::from(serde_json::to_vec(
+                    &serde_json::json!({ "target_ids": target_ids }),
+                )?))?)
+        };
+        let targets = serde_json::json!([
+            rated_id.clone(),
+            rated_id.clone(),
+            unrated_id.clone(),
+            "missing-id"
+        ]);
+
+        let response = routes.clone().oneshot(request(targets.clone())?).await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body)?,
+            serde_json::json!({
+                "averages": {
+                    rated_id.clone(): 3.5,
+                    unrated_id.clone(): null,
+                    "missing-id": null,
+                },
+            }),
+        );
+
+        let over_cap = routes
+            .clone()
+            .oneshot(request(serde_json::json!(vec![
+                rated_id.clone();
+                CHECK_TARGET_CAP + 1
+            ]))?)
+            .await?;
+        assert_eq!(over_cap.status(), StatusCode::BAD_REQUEST);
+
+        let unauthenticated = routes
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/averages")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"target_ids":[]}"#))?,
+            )
+            .await?;
+        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+
+        let mut config = STATE.config().as_ref().clone();
+        config.instance_stats = false;
+        crate::services::testing::publish_config(config);
+        let response = routes.oneshot(request(targets)?).await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body)?,
+            serde_json::json!({
+                "averages": {
+                    rated_id: null,
+                    unrated_id: null,
+                    "missing-id": null,
+                },
+            }),
+        );
         Ok(())
     }
 }
