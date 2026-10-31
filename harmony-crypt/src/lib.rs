@@ -11,8 +11,6 @@ use harmony_luau as luau;
 use harmony_luau::{
     DescribeModule,
     DescribeTypeAlias,
-    LuauType,
-    LuauTypeInfo,
     render_definition_file_with_support,
 };
 use sha2::{
@@ -38,8 +36,8 @@ impl CryptModule {
         description = "Hashes data with the specified algorithm and returns the hex-encoded digest.\n\nSupported algorithms: `\"md5\"`, `\"sha1\"`, `\"sha256\"`, `\"sha384\"`, `\"sha512\"`, `\"xxh3_64\"`, `\"xxh3_128\"`.",
         args(algorithm: HashAlgorithm, data: String)
     )]
-    fn hash(algorithm: String, data: luau::ByteString) -> luau::runtime::Result<String> {
-        hash_bytes(&algorithm, &data.0)
+    fn hash(algorithm: HashAlgorithm, data: luau::ByteString) -> String {
+        hash_bytes(algorithm, &data.0)
     }
 
     #[harmony(
@@ -83,39 +81,15 @@ impl CryptModule {
     }
 }
 
-fn hash_bytes(algorithm: &str, bytes: &[u8]) -> luau::runtime::Result<String> {
+fn hash_bytes(algorithm: HashAlgorithm, bytes: &[u8]) -> String {
     match algorithm {
-        "md5" => {
-            let digest = md5::compute(bytes);
-            Ok(format!("{digest:x}"))
-        }
-        "sha1" => {
-            let digest = sha1::Sha1::digest(bytes);
-            Ok(format!("{digest:x}"))
-        }
-        "sha256" => {
-            let digest = Sha256::digest(bytes);
-            Ok(format!("{digest:x}"))
-        }
-        "sha384" => {
-            let digest = Sha384::digest(bytes);
-            Ok(format!("{digest:x}"))
-        }
-        "sha512" => {
-            let digest = Sha512::digest(bytes);
-            Ok(format!("{digest:x}"))
-        }
-        "xxh3_64" => {
-            let hash = xxh3::hash64_with_seed(bytes, 0);
-            Ok(format!("{hash:016x}"))
-        }
-        "xxh3_128" => {
-            let hash = xxh3::hash128_with_seed(bytes, 0);
-            Ok(format!("{hash:032x}"))
-        }
-        _ => Err(luau::Error::Runtime(format!(
-            "unsupported hash algorithm '{algorithm}', expected one of: md5, sha1, sha256, sha384, sha512, xxh3_64, xxh3_128"
-        ))),
+        HashAlgorithm::Md5 => format!("{:x}", md5::compute(bytes)),
+        HashAlgorithm::Sha1 => format!("{:x}", sha1::Sha1::digest(bytes)),
+        HashAlgorithm::Sha256 => format!("{:x}", Sha256::digest(bytes)),
+        HashAlgorithm::Sha384 => format!("{:x}", Sha384::digest(bytes)),
+        HashAlgorithm::Sha512 => format!("{:x}", Sha512::digest(bytes)),
+        HashAlgorithm::Xxh3_64 => format!("{:016x}", xxh3::hash64_with_seed(bytes, 0)),
+        HashAlgorithm::Xxh3_128 => format!("{:032x}", xxh3::hash128_with_seed(bytes, 0)),
     }
 }
 
@@ -123,30 +97,16 @@ fn hex_bytes(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-struct HashAlgorithm;
-
-impl LuauTypeInfo for HashAlgorithm {
-    fn luau_type() -> LuauType {
-        LuauType::literal("HashAlgorithm")
-    }
-}
-
-impl DescribeTypeAlias for HashAlgorithm {
-    fn type_alias_descriptor() -> harmony_luau::TypeAliasDescriptor {
-        harmony_luau::TypeAliasDescriptor::new(
-            "HashAlgorithm",
-            LuauType::union(vec![
-                LuauType::literal("\"md5\""),
-                LuauType::literal("\"sha1\""),
-                LuauType::literal("\"sha256\""),
-                LuauType::literal("\"sha384\""),
-                LuauType::literal("\"sha512\""),
-                LuauType::literal("\"xxh3_64\""),
-                LuauType::literal("\"xxh3_128\""),
-            ]),
-            Some("Hash algorithm accepted by `crypt.hash`."),
-        )
-    }
+#[harmony_macros::string_enum(description = "Hash algorithm accepted by `crypt.hash`.")]
+#[derive(Clone, Copy)]
+enum HashAlgorithm {
+    Md5,
+    Sha1,
+    Sha256,
+    Sha384,
+    Sha512,
+    Xxh3_64,
+    Xxh3_128,
 }
 
 pub fn render_luau_definition() -> std::result::Result<String, fmt::Error> {
