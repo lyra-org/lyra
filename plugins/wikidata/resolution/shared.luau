@@ -108,8 +108,8 @@ function module.cache_get(key: string): JsonObject?
 	if not entry then
 		return nil
 	end
-	local expires_at = entry.expires_at
-	if type(expires_at) ~= "number" or expires_at <= os.time() then
+	local expires_at_ms = entry.expires_at_ms
+	if type(expires_at_ms) ~= "number" or expires_at_ms <= os.time() * 1000 then
 		return nil
 	end
 	return module.as_json_object(entry.data)
@@ -126,7 +126,7 @@ function module.cache_set(key: string, data: JsonValue, ttl: number)
 		key,
 		{
 			data = data,
-			expires_at = os.time() + ttl,
+			expires_at_ms = (os.time() + ttl) * 1000,
 		} :: JsonValue
 	)
 end

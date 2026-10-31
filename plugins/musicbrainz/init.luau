@@ -53,7 +53,7 @@ type CoverCacheContext = lookup.CoverCacheContext
 type CoverCacheEntry = {
 	context: CoverCacheContext,
 	resolved_release_id: string | false,
-	expires_at: number,
+	expires_at_ms: number,
 }
 
 type ProviderIdSpec = {
@@ -109,8 +109,8 @@ local function normalize_cover_cache_entry(value: DataStoreJsonValue): CoverCach
 	end
 
 	local context = normalize_cover_cache_context(object.context)
-	local expires_at = json_number_field(object, "expires_at")
-	if context == nil or expires_at == nil then
+	local expires_at_ms = json_number_field(object, "expires_at_ms")
+	if context == nil or expires_at_ms == nil then
 		return nil
 	end
 
@@ -127,7 +127,7 @@ local function normalize_cover_cache_entry(value: DataStoreJsonValue): CoverCach
 	return {
 		context = context,
 		resolved_release_id = resolved_release_id,
-		expires_at = math.floor(expires_at),
+		expires_at_ms = math.floor(expires_at_ms),
 	}
 end
 
@@ -253,7 +253,7 @@ local function read_cached_cover_release_id(ctx: ProviderCoverContext?): (boolea
 	if entry == nil then
 		return false, nil
 	end
-	if type(entry.expires_at) ~= "number" or entry.expires_at <= os.time() then
+	if type(entry.expires_at_ms) ~= "number" or entry.expires_at_ms <= os.time() * 1000 then
 		return false, nil
 	end
 
@@ -295,7 +295,7 @@ local function write_cover_release_cache(ctx: ProviderCoverContext?, release_id:
 		{
 			context = cache_context :: JsonValue,
 			resolved_release_id = resolved_release_id :: JsonValue,
-			expires_at = os.time() + ttl,
+			expires_at_ms = (os.time() + ttl) * 1000,
 		} :: JsonValue
 	)
 end

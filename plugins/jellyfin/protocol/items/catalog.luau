@@ -78,8 +78,8 @@ type ReleaseRecord = {
 	release_title: index<Release, "release_title">,
 	sort_title: index<Release, "sort_title">,
 	release_date: index<Release, "release_date">,
-	created_at: index<Release, "created_at">,
-	ctime: index<Release, "ctime">,
+	created_at_ms: index<Release, "created_at_ms">,
+	file_created_at_ms: index<Release, "file_created_at_ms">,
 }
 type TrackRecord = {
 	id: index<Track, "id">,
@@ -92,8 +92,8 @@ type TrackRecord = {
 	duration_ms: index<Track, "duration_ms">,
 	track_gain_db: index<Track, "track_gain_db">,
 	album_gain_db: index<Track, "album_gain_db">,
-	created_at: index<Track, "created_at">,
-	ctime: index<Track, "ctime">,
+	created_at_ms: index<Track, "created_at_ms">,
+	file_created_at_ms: index<Track, "file_created_at_ms">,
 }
 type ReleaseLike = Release | ReleaseRecord
 -- Artists list through catalog queries, which carry their counts.
@@ -406,12 +406,12 @@ function helpers.playlist_info_from_raw(raw: ItemRaw?): PlaylistInfo?
 	return nil
 end
 
-function helpers.unix_to_iso8601(unix_seconds: number | string?): string?
-	local s = tonumber(unix_seconds)
-	if not s then
+function helpers.unix_ms_to_iso8601(unix_ms: number | string?): string?
+	local ms = tonumber(unix_ms)
+	if not ms then
 		return nil
 	end
-	s = math.floor(s)
+	local s = math.floor(ms / 1000)
 	local z = math.floor(s / 86400) + 719468
 	local era = math.floor((if z >= 0 then z else z - 146096) / 146097)
 	local doe = z - era * 146097
@@ -1020,7 +1020,7 @@ function helpers.to_artist_item(
 		ParentId = if context == nil or context.include_parent_id == true then parent_id else nil,
 		SortName = sort_name,
 		RunTimeTicks = enrichment.ms_to_ticks(artist.total_duration),
-		DateCreated = helpers.unix_to_iso8601(artist.created_at),
+		DateCreated = helpers.unix_ms_to_iso8601(artist.created_at_ms),
 		AlbumCount = artist.release_count,
 		SongCount = artist.track_count,
 		ImageTags = if cover_info then { Primary = cover_info.hash } else nil,
@@ -1228,7 +1228,7 @@ function helpers.to_playlist_item(
 			if context then context.runtime_ticks_by_playlist_id else nil,
 			playlist.db_id
 		) or enrichment.playlist_runtime_ticks({ playlist.db_id })[playlist.db_id],
-		DateCreated = helpers.unix_to_iso8601(playlist.created_at),
+		DateCreated = helpers.unix_ms_to_iso8601(playlist.created_at_ms),
 		ImageTags = if cover_info then { Primary = cover_info.hash } else nil,
 		ImageBlurHashes = helpers.default_image_blur_hashes(cover_info),
 		UserData = helpers.build_item_user_data(
@@ -1282,7 +1282,7 @@ function helpers.to_release_item(
 		SortName = requests.trim(release.sort_title) or requests.trim(release.release_title) or "Unknown Album",
 		ProductionYear = enrichment.release_year(release.release_date),
 		PremiereDate = enrichment.release_date_to_premiere_date(release.release_date),
-		DateCreated = helpers.unix_to_iso8601(release.ctime or release.created_at),
+		DateCreated = helpers.unix_ms_to_iso8601(release.file_created_at_ms or release.created_at_ms),
 		Genres = helpers.genre_names(release_genres),
 		GenreItems = helpers.genre_items(release_genres),
 		Tags = helpers.tag_names(helpers.resolve_tag_infos(release.db_id, context)),
@@ -1476,7 +1476,7 @@ function helpers.to_track_item(
 		Container = container,
 		SortName = track_sort_name,
 		RunTimeTicks = enrichment.ms_to_ticks(track.duration_ms),
-		DateCreated = helpers.unix_to_iso8601(track.ctime or track.created_at),
+		DateCreated = helpers.unix_ms_to_iso8601(track.file_created_at_ms or track.created_at_ms),
 		IndexNumber = track.track,
 		ParentIndexNumber = track.disc,
 		ProductionYear = track.year or enrichment.release_year(release_date),
@@ -1542,7 +1542,7 @@ function helpers.to_release_stub(release: ReleaseLike?): ItemInfo?
 		Name = requests.trim(release.release_title) or "Unknown Album",
 		SortName = requests.trim(release.sort_title) or requests.trim(release.release_title) or "Unknown Album",
 		Album = requests.trim(release.release_title) or "Unknown Album",
-		DateCreated = helpers.unix_to_iso8601(release.ctime or release.created_at),
+		DateCreated = helpers.unix_ms_to_iso8601(release.file_created_at_ms or release.created_at_ms),
 		PremiereDate = enrichment.release_date_to_premiere_date(release.release_date),
 		ProductionYear = enrichment.release_year(release.release_date),
 	}
@@ -1561,7 +1561,7 @@ function helpers.to_track_stub(track: TrackLike?): ItemInfo?
 		SortName = helpers.track_sort_name(track),
 		IndexNumber = track.track,
 		ParentIndexNumber = track.disc,
-		DateCreated = helpers.unix_to_iso8601(track.ctime or track.created_at),
+		DateCreated = helpers.unix_ms_to_iso8601(track.file_created_at_ms or track.created_at_ms),
 	}
 	return item
 end
@@ -1576,7 +1576,7 @@ function helpers.to_artist_stub(artist: ArtistLike?): ItemInfo?
 		Id = item_ids.encode_jellyfin_item_id(artist.id),
 		Name = requests.trim(artist.artist_name) or "Unknown Artist",
 		SortName = requests.trim(artist.sort_name) or requests.trim(artist.artist_name) or "Unknown Artist",
-		DateCreated = helpers.unix_to_iso8601(artist.created_at),
+		DateCreated = helpers.unix_ms_to_iso8601(artist.created_at_ms),
 	}
 	return item
 end
@@ -1606,7 +1606,7 @@ function helpers.to_playlist_stub(playlist: PlaylistInfo?, child_count: number?)
 		Name = playlist_name,
 		SortName = playlist_name,
 		ChildCount = count,
-		DateCreated = helpers.unix_to_iso8601(playlist.created_at),
+		DateCreated = helpers.unix_ms_to_iso8601(playlist.created_at_ms),
 	}
 	return item
 end

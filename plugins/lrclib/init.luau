@@ -302,8 +302,8 @@ local function decode_cache(raw: JsonValue?): string?
 	if entry == nil then
 		return nil
 	end
-	local expires_at = json_number_field(entry, "expires_at")
-	if expires_at == nil or expires_at <= now_ms() then
+	local expires_at_ms = json_number_field(entry, "expires_at_ms")
+	if expires_at_ms == nil or expires_at_ms <= now_ms() then
 		return nil
 	end
 	return json_string_field(entry, "lrclib_id")
@@ -312,7 +312,7 @@ end
 local function encode_cache(lrclib_id: string): JsonObject
 	return {
 		lrclib_id = lrclib_id :: JsonValue,
-		expires_at = (now_ms() + CACHE_HIT_TTL_SEC * 1000) :: JsonValue,
+		expires_at_ms = (now_ms() + CACHE_HIT_TTL_SEC * 1000) :: JsonValue,
 	}
 end
 

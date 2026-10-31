@@ -1212,8 +1212,8 @@ api.post(P .. "/Playlists", function(ctx: ApiContext)
 	local create_request: PlaylistCreateRequest = {
 		name = playlist_name,
 		is_public = if request_payload.is_public ~= nil then request_payload.is_public else false,
-		created_at = session.current_unix_seconds(),
-		updated_at = session.current_unix_seconds(),
+		created_at_ms = session.current_unix_ms(),
+		updated_at_ms = session.current_unix_ms(),
 		track_ids = request_payload.ids,
 	}
 
@@ -1369,7 +1369,7 @@ api.post(P .. "/Playlists/{playlistId}", function(ctx: ApiContext)
 	local fields: PlaylistFields = {
 		name = request_payload.name,
 		is_public = request_payload.is_public,
-		updated_at = session.current_unix_seconds(),
+		updated_at_ms = session.current_unix_ms(),
 	}
 	local ok, updated
 	if request_payload.requested_ids ~= nil then
@@ -1383,7 +1383,7 @@ api.post(P .. "/Playlists/{playlistId}", function(ctx: ApiContext)
 			playlist_id = playlist_db_id,
 			name = fields.name,
 			is_public = fields.is_public,
-			updated_at = fields.updated_at,
+			updated_at_ms = fields.updated_at_ms,
 		}
 		ok, updated = pcall(playlists.update, update_request)
 	end

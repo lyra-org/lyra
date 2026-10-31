@@ -541,8 +541,8 @@ function module.require_matching_user_scope_from_id_param(ctx: ApiContext?, prin
 	return module.require_matching_user_scope(ctx, principal)
 end
 
-function module.current_unix_seconds(): number
-	return os.time()
+function module.current_unix_ms(): number
+	return os.time() * 1000
 end
 
 function module.normalize_optional_user_id(value: JsonValue): string?
@@ -1062,11 +1062,11 @@ local function to_device_info(entry: auth.SessionInfo): JsonObject?
 		AppVersion = saved_text(fields, "version"),
 		LastUserId = item_ids.encode_jellyfin_item_id(entry.user_id),
 		LastUserName = entry.username,
-		DateLastActivity = iso_timestamp(entry.last_seen_at),
+		DateLastActivity = iso_timestamp(entry.last_seen_at_ms // 1000),
 	}
 end
 
-type DeviceRow = { device: JsonObject, last_seen_at: number }
+type DeviceRow = { device: JsonObject, last_seen_at_ms: number }
 
 -- One device per login across all users, most recently active first.
 local function list_devices(): { JsonObject }
@@ -1074,12 +1074,12 @@ local function list_devices(): { JsonObject }
 	for _, entry in auth.list_sessions({ all_users = true }) do
 		local device = to_device_info(entry)
 		if device then
-			table.insert(rows, { device = device, last_seen_at = entry.last_seen_at })
+			table.insert(rows, { device = device, last_seen_at_ms = entry.last_seen_at_ms })
 		end
 	end
 	table.sort(rows, function(a: DeviceRow, b: DeviceRow): boolean
-		if a.last_seen_at ~= b.last_seen_at then
-			return a.last_seen_at > b.last_seen_at
+		if a.last_seen_at_ms ~= b.last_seen_at_ms then
+			return a.last_seen_at_ms > b.last_seen_at_ms
 		end
 		return (a.device.Id :: string) < (b.device.Id :: string)
 	end)

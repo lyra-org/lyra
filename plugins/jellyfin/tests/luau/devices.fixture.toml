@@ -21,25 +21,25 @@ user = "listener"
 [[sessions]]
 key = "listener_phone"
 user = "listener"
-seen = 300
+seen = 300000
 
 [[sessions]]
 key = "admin_web"
 user = "admin"
-seen = 200
+seen = 200000
 
 [[sessions]]
 key = "listener_tablet"
 user = "listener"
-seen = 100
+seen = 100000
 
 [[sessions]]
 key = "admin_phone"
 user = "admin"
-seen = 50
+seen = 50000
 
 [[sessions]]
 key = "listener_lyra"
 user = "listener"
 client_name = "Lyra Web"
-seen = 400
+seen = 400000
