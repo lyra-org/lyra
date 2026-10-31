@@ -57,7 +57,7 @@ struct PlaybackUpdateHandler;
 #[derive(Clone, Debug, Deserialize)]
 struct PlaybackSessionReportRequest {
     session_key: String,
-    track_id: i64,
+    track_id: String,
     play_id: Option<String>,
     event: Option<playbacks::PlaybackEvent>,
     position_ms: Option<u64>,
@@ -77,7 +77,7 @@ struct SendCommandRequest {
 
 #[derive(Serialize)]
 struct PlaybackInfo {
-    track_public_id: String,
+    track_id: String,
     position_ms: u64,
     duration_ms: Option<u64>,
     state: lyra_db::PlaybackState,
@@ -165,7 +165,6 @@ impl PlaybackSessionsModule {
             )
         })?;
         let session_key = require_non_empty_string(request.session_key, "session_key")?;
-        let track_db_id = args::positive_id(request.track_id, "track_id")?;
         if let Some(play_id) = request.play_id.as_deref()
             && !crate::services::listens::is_play_id(play_id)
         {
@@ -178,9 +177,11 @@ impl PlaybackSessionsModule {
 
         let mut db = db.write_outside_catalog().await;
         let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)? {
-            return Err(crate::plugins::runtime_error("track not found"));
-        }
+        let track_db_id =
+            crate::plugins::ids::visible_to(&db, &principal, &request.track_id, "Track")?
+                .ok_or_else(|| {
+                    crate::plugins::runtime_error(format!("track not found: {}", request.track_id))
+                })?;
 
         let update = match playbacks::report_playback_session_with_cleanup(
             &mut db,
@@ -252,7 +253,7 @@ impl PlaybackSessionsModule {
                 .current_session(&db)
                 .map_err(crate::plugins::runtime_error)?
                 .map(|current| PlaybackInfo {
-                    track_public_id: current.track_public_id,
+                    track_id: current.track_public_id,
                     position_ms: current.playback.position_ms,
                     duration_ms: current.playback.duration_ms,
                     state: current.playback.state,
@@ -382,7 +383,7 @@ impl DescribeInterface for PlaybackSessionReportRequest {
             },
             FieldDescriptor {
                 name: "track_id",
-                ty: i64::luau_type(),
+                ty: String::luau_type(),
                 description: None,
             },
             FieldDescriptor {
@@ -456,7 +457,7 @@ impl DescribeInterface for PlaybackInfo {
         let mut descriptor = InterfaceDescriptor::new("PlaybackInfo", None);
         descriptor.fields.extend([
             FieldDescriptor {
-                name: "track_public_id",
+                name: "track_id",
                 ty: String::luau_type(),
                 description: None,
             },
@@ -560,20 +561,40 @@ fn playback_request_fields<const N: usize>(leading: [FieldDescriptor; N]) -> Vec
     fields
 }
 
-const _: fn(&crate::services::playback_sessions::PlaybackUpdatePayload) = |value| {
-    let _ = (
-        &value.event,
-        &value.state,
-        &value.playback_session_public_id,
-        &value.track_public_id,
-        &value.user_public_id,
-        &value.library_public_id,
-        &value.position_ms,
-        &value.duration_ms,
-        &value.played_ms,
-        &value.updated_at_ms,
-    );
-};
+/// [`crate::services::playback_sessions::PlaybackUpdatePayload`] as plugins read it, each id
+/// named for what it identifies. The payload keeps its own names on the remote-control socket.
+#[derive(Serialize)]
+pub(crate) struct PlaybackUpdate<'a> {
+    event: &'a str,
+    state: lyra_db::PlaybackState,
+    playback_session_id: &'a str,
+    track_id: &'a str,
+    user_id: &'a str,
+    library_id: Option<&'a str>,
+    position_ms: u64,
+    duration_ms: Option<u64>,
+    played_ms: u64,
+    updated_at_ms: u64,
+}
+
+impl<'a> From<&'a crate::services::playback_sessions::PlaybackUpdatePayload>
+    for PlaybackUpdate<'a>
+{
+    fn from(payload: &'a crate::services::playback_sessions::PlaybackUpdatePayload) -> Self {
+        Self {
+            event: &payload.event,
+            state: payload.state,
+            playback_session_id: &payload.playback_session_public_id,
+            track_id: &payload.track_public_id,
+            user_id: &payload.user_public_id,
+            library_id: payload.library_public_id.as_deref(),
+            position_ms: payload.position_ms,
+            duration_ms: payload.duration_ms,
+            played_ms: payload.played_ms,
+            updated_at_ms: payload.updated_at_ms,
+        }
+    }
+}
 
 /// [`crate::services::playback_sessions::PlaybackUpdatePayload`] as described to Luau.
 #[cfg(feature = "docgen")]
@@ -600,10 +621,10 @@ impl DescribeInterface for LuauPlaybackUpdatePayload {
             fields: vec![
                 field("event", String::luau_type()),
                 field("state", LuauPlaybackState::luau_type()),
-                field("playback_session_public_id", String::luau_type()),
-                field("track_public_id", String::luau_type()),
-                field("user_public_id", String::luau_type()),
-                field("library_public_id", Option::<String>::luau_type()),
+                field("playback_session_id", String::luau_type()),
+                field("track_id", String::luau_type()),
+                field("user_id", String::luau_type()),
+                field("library_id", Option::<String>::luau_type()),
                 field("position_ms", u64::luau_type()),
                 field("duration_ms", Option::<u64>::luau_type()),
                 field("played_ms", u64::luau_type()),

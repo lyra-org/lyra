@@ -5,7 +5,7 @@ local item_ids = require("../../protocol/items/identifiers")
 
 local ids = fixture.ids
 
-local function request(handler, id: number, api_key: string?, query: { [string]: string }?, method: string?)
+local function request(handler, id: string, api_key: string?, query: { [string]: string }?, method: string?)
 	local params = { api_key = if api_key then { api_key } else nil }
 	for key, value in query or {} do
 		params[key] = { value }

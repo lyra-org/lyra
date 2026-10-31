@@ -6,7 +6,6 @@
 
 local api = require("@lyra/api")
 local http = require("@harmony/http")
-local ids = require("@lyra/ids")
 local serde = require("@harmony/serde")
 local json = serde.json
 local mix = require("@lyra/mix")
@@ -74,19 +73,10 @@ local function safe_json_decode(raw: string): JsonValue?
 	return value
 end
 
-local function resolve_hex_id(db_id: number): string?
-	local nanoid = ids.get_id(db_id)
-	if not nanoid then
-		return nil
-	end
-	return jellyfin_hex.nanoid_to_hex(nanoid)
-end
-
--- Maps AudioMuse result rows to tracks, warning about ids that don't decode or resolve.
+-- Maps AudioMuse result rows to tracks, warning about ids that don't decode.
 local function result_tracks(label: string, items: { JsonObject }): { MixResultTrack }
 	local results: { MixResultTrack } = {}
 	local decode_failed = 0
-	local orphaned = 0
 	for _, item in items do
 		if type(item) ~= "table" then
 			decode_failed += 1
@@ -97,25 +87,17 @@ local function result_tracks(label: string, items: { JsonObject }): { MixResultT
 			decode_failed += 1
 			continue
 		end
-		local nanoid = jellyfin_hex.hex_to_nanoid(result_item_id)
-		if not nanoid then
+		local track_id = jellyfin_hex.hex_to_nanoid(result_item_id)
+		if not track_id then
 			decode_failed += 1
 			continue
 		end
-		local track_db_id = ids.get_db_id(nanoid)
-		if not track_db_id then
-			orphaned += 1
-			continue
-		end
-		table.insert(results, { track_id = track_db_id })
+		table.insert(results, { track_id = track_id })
 	end
 
 	-- Encoder/version mismatch; escalate above routine orphans.
 	if decode_failed > 0 then
 		warn(`{label}: {decode_failed}/{#items} hex decode failed — possible ID format mismatch`)
-	end
-	if orphaned > 0 then
-		warn(`{label}: {#items} returned, {#results} resolved, {orphaned} orphaned`)
 	end
 
 	return results
@@ -185,8 +167,8 @@ local function query_alchemy(items: { AlchemyItem }, n: number): { MixResultTrac
 	return result_tracks(label, rows :: { JsonObject })
 end
 
-local function track_mix(seed_id: number, limit: number?): MixResult
-	local hex_id = resolve_hex_id(seed_id)
+local function track_mix(seed_id: string, limit: number?): MixResult
+	local hex_id = jellyfin_hex.nanoid_to_hex(seed_id)
 	if not hex_id then
 		warn(`track mix: seed {seed_id} could not be encoded; returning empty mix`)
 		return { tracks = {} }
@@ -219,23 +201,19 @@ local MAX_ALCHEMY_ITEMS = 100
 -- Artists are expanded rather than sent as `type = "artist"`, since AudioMuse resolves artist
 -- ids through a name map built from each track's album artist and first artist id, which a Lyra
 -- artist id doesn't reliably reach.
-local function seed_tracks(seed: mix.MixSeed): { number }
-	local seed_track_list: { tracks.Track }
+local function seed_tracks(seed: mix.MixSeed): { string }
 	if seed.type == mix.SeedType.Track then
 		return { seed.id }
-	elseif seed.type == mix.SeedType.Release then
-		seed_track_list = tracks.by_release({ seed.id })[seed.id] or {}
-	else
-		seed_track_list = tracks.query({ artist_ids = { seed.id }, credit_role = "track" }).items
 	end
-	local ids_out: { number } = {}
+	local seed_track_list: { tracks.Track } = if seed.type == mix.SeedType.Release
+		then tracks.by_release({ seed.id })[seed.id] or {}
+		else tracks.query({ artist_ids = { seed.id }, credit_role = "track" }).items
+	local ids_out: { string } = {}
 	for _, track in seed_track_list do
 		if #ids_out >= SEED_ENTITY_TRACKS then
 			break
 		end
-		if track.db_id then
-			table.insert(ids_out, track.db_id)
-		end
+		table.insert(ids_out, track.id)
 	end
 	return ids_out
 end
@@ -243,7 +221,7 @@ end
 -- Blends the seeds through AudioMuse's alchemy: excluded seeds subtract, the rest add.
 local function alchemy_mix(seeds: { mix.MixSeed }, limit: number?): MixResult
 	local items: { AlchemyItem } = {}
-	local seed_track_ids: { [number]: boolean } = {}
+	local seed_track_ids: { [string]: boolean } = {}
 	local adds = 0
 	for _, seed in seeds do
 		local op = if seed.exclude then "SUBTRACT" else "ADD"
@@ -251,7 +229,7 @@ local function alchemy_mix(seeds: { mix.MixSeed }, limit: number?): MixResult
 			if #items >= MAX_ALCHEMY_ITEMS then
 				break
 			end
-			local hex_id = if seed_track_ids[track_id] then nil else resolve_hex_id(track_id)
+			local hex_id = if seed_track_ids[track_id] then nil else jellyfin_hex.nanoid_to_hex(track_id)
 			if hex_id then
 				seed_track_ids[track_id] = true
 				table.insert(items, { id = hex_id, op = op, type = "song" })

@@ -30,7 +30,10 @@ use crate::plugins::args::{
     self,
     UniqueIds,
 };
-use crate::plugins::catalog;
+use crate::plugins::{
+    catalog,
+    ids,
+};
 use crate::services::catalog::artists::ArtistKey;
 use crate::{
     plugins::db::{
@@ -113,13 +116,13 @@ impl LuauTypeInfo for ArtistPage {
 impl ArtistsModule {
     #[harmony(
         description = "The artists with these ids that the caller can see, keyed by id.",
-        returns(HashMap<u64, ArtistRecord>)
+        returns(HashMap<String, ArtistRecord>)
     )]
     async fn get(
         ids: UniqueIds,
         #[context] db: ViewerDb,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        catalog::keyed_table(db, ids.0, lookups::get::<Artists>).await
+        catalog::keyed_table(&db, ids.0, lookups::get::<Artists>).await
     }
 
     #[harmony(
@@ -131,9 +134,10 @@ impl ArtistsModule {
         #[context] db: ViewerDb,
         #[context] scopes: catalog::PersonalScopes,
     ) -> luau::runtime::Result<luau::ReturnValues> {
-        let request = query.0;
+        let mut request = query.0;
         scopes.check(&request.query)?;
         let (db, viewer) = db.read().await?;
+        request.resolve_ids(&db)?;
         let page =
             services::catalog::page(&db, &viewer, &request.query, request.offset, request.limit)
                 .and_then(|page| {
@@ -157,24 +161,24 @@ impl ArtistsModule {
 
     #[harmony(
         description = "The artists credited on each of these releases that the caller can see, in credit order, keyed by release id.",
-        returns(HashMap<u64, Vec<ArtistRecord>>)
+        returns(HashMap<String, Vec<ArtistRecord>>)
     )]
     async fn by_release(
         release_ids: UniqueIds,
         #[context] db: ViewerDb,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        catalog::keyed_table(db, release_ids.0, lookups::artists_by_owner::<Releases>).await
+        catalog::keyed_table(&db, release_ids.0, lookups::artists_by_owner::<Releases>).await
     }
 
     #[harmony(
         description = "The artists credited on each of these tracks that the caller can see, in credit order, keyed by track id.",
-        returns(HashMap<u64, Vec<ArtistRecord>>)
+        returns(HashMap<String, Vec<ArtistRecord>>)
     )]
     async fn by_track(
         track_ids: UniqueIds,
         #[context] db: ViewerDb,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        catalog::keyed_table(db, track_ids.0, lookups::artists_by_owner::<Tracks>).await
+        catalog::keyed_table(&db, track_ids.0, lookups::artists_by_owner::<Tracks>).await
     }
 
     // Unscoped: public artwork routes resolve names without a caller.
@@ -184,25 +188,26 @@ impl ArtistsModule {
     async fn artwork_id_by_name(
         name: String,
         #[context] db: Db,
-    ) -> luau::runtime::Result<Option<i64>> {
+    ) -> luau::runtime::Result<Option<String>> {
         let name = name.trim();
         if name.is_empty() {
             return Ok(None);
         }
         let db = db.read().await;
-        let id = lyra_db::artists::find_by_scan_name(&*db, name)?;
-        Ok(id.map(|id| id.0))
+        lyra_db::artists::find_by_scan_name(&*db, name)?
+            .map(|id| ids::public_id(&*db, id))
+            .transpose()
     }
 
     #[harmony(
         description = "The relations of each of these artists to other artists the caller can see, keyed by artist id.",
-        returns(HashMap<u64, Vec<ArtistRelationInfo>>)
+        returns(HashMap<String, Vec<ArtistRelationInfo>>)
     )]
     async fn relations(
         ids: UniqueIds,
         #[context] db: ViewerDb,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        catalog::keyed_table(db, ids.0, relation_infos).await
+        catalog::keyed_table(&db, ids.0, relation_infos).await
     }
 }
 
@@ -256,12 +261,6 @@ fn read_filter(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Arti
             .map_err(catalog::error)
     };
     Ok(ArtistFilter {
-        ids: catalog::optional_ids(table, "ids")?,
-        exclude_ids: args::optional_unique_ids(table, "exclude_ids")?,
-        library: args::optional_positive_id(table, "library_id")?,
-        releases: catalog::optional_ids(table, "release_ids")?,
-        tracks: catalog::optional_ids(table, "track_ids")?,
-        genres: args::optional_unique_ids(table, "genre_ids")?,
         credit_role: role("credit_role")?,
         exclude_credit_role: role("exclude_credit_role")?,
         credit_types: parse_optional_credit_types(vm, table, "credit_types")?,
@@ -269,6 +268,7 @@ fn read_filter(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Arti
             .unwrap_or_default(),
         artist_type: parse_optional_artist_type(vm, table, "artist_type")?,
         personal: catalog::read_personal(table)?,
+        ..ArtistFilter::default()
     })
 }
 
@@ -335,7 +335,6 @@ fn string_enum(values: impl IntoIterator<Item = &'static str>) -> LuauType {
 #[cfg(feature = "docgen")]
 fn artist_type() -> LuauType {
     LuauType::object(vec![
-        field("db_id", Option::<i64>::luau_type()),
         field("id", String::luau_type()),
         field("artist_name", String::luau_type()),
         field("scan_name", String::luau_type()),
@@ -413,22 +412,22 @@ fn artist_interfaces() -> Vec<InterfaceDescriptor> {
 
     let mut query = InterfaceDescriptor::new("ArtistQuery", None);
     query.fields.extend([
-        field("ids", Option::<Vec<u64>>::luau_type()),
-        field("exclude_ids", Option::<Vec<u64>>::luau_type()),
-        field("library_id", Option::<u64>::luau_type()),
+        field("ids", Option::<Vec<String>>::luau_type()),
+        field("exclude_ids", Option::<Vec<String>>::luau_type()),
+        field("library_id", Option::<String>::luau_type()),
         described_field(
             "release_ids",
-            Option::<Vec<u64>>::luau_type(),
+            Option::<Vec<String>>::luau_type(),
             "Artists credited on these releases or their tracks.",
         ),
         described_field(
             "track_ids",
-            Option::<Vec<u64>>::luau_type(),
+            Option::<Vec<String>>::luau_type(),
             "Artists credited on these tracks.",
         ),
         described_field(
             "genre_ids",
-            Option::<Vec<u64>>::luau_type(),
+            Option::<Vec<String>>::luau_type(),
             "Artists credited on a release in these genres, or on its tracks.",
         ),
         described_field(

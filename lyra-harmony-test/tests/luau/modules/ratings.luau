@@ -13,15 +13,15 @@ local function rejects(f: (...any) -> ...any, message: string, ...: any)
 	assert(string.find(tostring(err), message, 1, true), `error {err}`)
 end
 
-local function order(items: { any }): { number }
+local function order(items: { any }): { string }
 	local result = {}
 	for _, item in items do
-		table.insert(result, item.db_id)
+		table.insert(result, item.id)
 	end
 	return result
 end
 
-local function same(actual: { number }, expected: { number }, label: string)
+local function same(actual: { string }, expected: { string }, label: string)
 	assert(#actual == #expected, `{label}: {#actual} items`)
 	for index, id in expected do
 		assert(actual[index] == id, `{label}: item {index} is {actual[index]}, expected {id}`)
@@ -35,29 +35,29 @@ assert(ratings.set(ids.album, 4), "a release is ratable")
 assert(ratings.set(ids.bea, 1), "an artist is ratable")
 assert(not ratings.set(ids.hidden, 4), "a hidden track is not ratable")
 assert(not ratings.set(ids.mix, 4), "a playlist is not ratable")
-assert(not ratings.set(999999999, 4), "a missing target is not ratable")
+assert(not ratings.set("missing-target", 4), "a missing target is not ratable")
 
 rejects(ratings.set, "rating must be an integer from 1 to 5, got 0", ids.low, 0)
 rejects(ratings.set, "rating must be an integer from 1 to 5, got 6", ids.low, 6)
-rejects(ratings.set, "target_id must be a positive id", 0, 3)
+rejects(ratings.set, "expected string", 1, 3)
 
-local got = ratings.get({ ids.low, ids.high, ids.unrated, ids.hidden, ids.album, ids.bea, ids.amy, 999999999 })
+local got = ratings.get({ ids.low, ids.high, ids.unrated, ids.hidden, ids.album, ids.bea, ids.amy, "missing-target" })
 assert(got[ids.low] == 2, `low {got[ids.low]}`)
 assert(got[ids.high] == 5, `high {got[ids.high]}`)
 assert(got[ids.album] == 4, `album {got[ids.album]}`)
 assert(got[ids.bea] == 1, `bea {got[ids.bea]}`)
 assert(got[ids.unrated] == nil, "another user's rating is not the caller's")
 assert(got[ids.hidden] == nil, "a hidden target's rating is absent")
-assert(got[ids.amy] == nil and got[999999999] == nil, "unrated and missing targets are absent")
+assert(got[ids.amy] == nil and got["missing-target"] == nil, "unrated and missing targets are absent")
 assert(next(ratings.get({})) == nil, "no ids, no ratings")
 
 -- Averages across users.
-local averages = ratings.average({ ids.low, ids.high, ids.unrated, ids.hidden, ids.amy, 999999999 })
+local averages = ratings.average({ ids.low, ids.high, ids.unrated, ids.hidden, ids.amy, "missing-target" })
 assert(averages[ids.low] == 2, `low average {averages[ids.low]}`)
 assert(averages[ids.high] == 4.5, `high average {averages[ids.high]}`)
 assert(averages[ids.unrated] == 5, "another user's rating counts toward the average")
 assert(averages[ids.hidden] == nil, "a hidden target's average is absent")
-assert(averages[ids.amy] == nil and averages[999999999] == nil, "unrated and missing targets are absent")
+assert(averages[ids.amy] == nil and averages["missing-target"] == nil, "unrated and missing targets are absent")
 assert(next(ratings.average({})) == nil, "no ids, no averages")
 
 -- Filters.
@@ -84,7 +84,7 @@ rejects(
 )
 
 -- Sorting: unrated items sort last in both directions.
-local function by_rating(direction: string): { number }
+local function by_rating(direction: string): { string }
 	return order(tracks.query({ release_ids = { ids.album }, sort = { { key = "rating", order = direction } } }).items)
 end
 same(by_rating("descending"), { ids.high, ids.low, ids.unrated }, "descending")
@@ -107,4 +107,4 @@ assert(ratings.get({ ids.low })[ids.low] == nil, "a removed rating is gone")
 assert(ratings.average({ ids.low })[ids.low] == nil, "a removed rating leaves the average")
 assert(ratings.remove(ids.hidden), "a hidden target's rating can be cleared")
 assert(not ratings.remove(ids.mix), "a playlist has no rating")
-assert(not ratings.remove(999999999), "a missing target has no rating")
+assert(not ratings.remove("missing-target"), "a missing target has no rating")

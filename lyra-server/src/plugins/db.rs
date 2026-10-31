@@ -54,18 +54,6 @@ impl harmony_luau::FromCallFrame for Db {
     }
 }
 
-/// [`get_optional`], as a module function takes it from its call.
-pub(crate) struct OptionalDb(pub(crate) Option<DbAsync>);
-
-impl harmony_luau::FromCallFrame for OptionalDb {
-    fn from_call_frame(
-        vm: &harmony_luau::Vm,
-        _context: &harmony_luau::CallContext,
-    ) -> harmony_luau::runtime::Result<Self> {
-        get_optional(vm).map(Self)
-    }
-}
-
 /// The executor's database with the dispatch principal, so reads see only what the caller can.
 pub(crate) struct ViewerDb {
     db: DbAsync,

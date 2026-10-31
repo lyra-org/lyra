@@ -79,7 +79,7 @@ impl DescribeTypeAlias for ListenUpdateHandler {
 #[derive(Deserialize)]
 struct SubmittedPlayRequest {
     play_id: String,
-    track_id: i64,
+    track_id: String,
     started_at_ms: u64,
     played_ms: u64,
 }
@@ -94,7 +94,7 @@ fn submitted_play(value: &luau::Value) -> luau::runtime::Result<SubmittedPlay> {
     }
     Ok(SubmittedPlay {
         play_id: request.play_id,
-        track: ResolveId::DbId(args::positive_id(request.track_id, "track_id")?),
+        track: ResolveId::Nanoid(request.track_id),
         started_at_ms: request.started_at_ms,
         played_ms: request.played_ms,
     })
@@ -184,7 +184,7 @@ impl LuauTypeInfo for LuauListenStats {
 impl ListensModule {
     #[harmony(
         description = "The caller's listens to each of the tracks, releases and artists, keyed by id: a release or artist totals the tracks it holds or is credited on, as the catalogs count them to sort by. Targets without listens, of another kind, and ones the caller cannot see are absent.",
-        returns(HashMap<u64, LuauListenStats>)
+        returns(HashMap<String, LuauListenStats>)
     )]
     async fn get(
         target_ids: args::UniqueIds,
@@ -203,20 +203,22 @@ impl ListensModule {
             None
         };
         let (db, viewer) = db.read().await?;
-        let stats =
-            listen_service::stats(&db, &viewer, &target_ids.0, unique_track_id_pairs.as_ref())
-                .map_err(crate::plugins::catalog::error)?;
-
-        let mut table = luau::OwnedTable::with_entry_capacity(0, 0, stats.len());
-        for (id, stats) in stats {
+        let targets = crate::plugins::ids::Resolved::of(&*db, target_ids.0)?;
+        let stats = listen_service::stats(
+            &db,
+            &viewer,
+            targets.db_ids(),
+            unique_track_id_pairs.as_ref(),
+        )
+        .map_err(crate::plugins::catalog::error)?;
+        Ok(targets.keyed(stats.into_iter().map(|(id, stats)| {
             let mut entry = luau::OwnedTable::with_capacity(0, 2);
             entry.set_field("count", stats.count as i64);
             if let Some(last_played_at_ms) = stats.last_played_at_ms {
                 entry.set_field("last_played_at_ms", last_played_at_ms as i64);
             }
-            table.set_key(id.0, entry);
-        }
-        Ok(table)
+            (id, entry)
+        })))
     }
 
     #[harmony(
@@ -373,7 +375,7 @@ impl DescribeInterface for SubmittedPlayRequest {
                     String::luau_type(),
                     listen_service::PLAY_ID_DESCRIPTION,
                 ),
-                described_field("track_id", i64::luau_type(), "The track's database id."),
+                described_field("track_id", String::luau_type(), "The track's id."),
                 described_field("started_at_ms", u64::luau_type(), "When the play started."),
                 described_field(
                     "played_ms",

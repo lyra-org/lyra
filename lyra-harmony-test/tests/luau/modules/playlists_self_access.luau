@@ -7,7 +7,7 @@ assert(type(owner_id) == "string" and #owner_id == 21)
 
 local owned = playlists.list_owned()
 assert(#owned == 1)
-assert(owned[1].db_id == playlist_id)
+assert(owned[1].id == playlist_id)
 
 local updated = playlists.update({ playlist_id = playlist_id, name = "Renamed" })
 assert(updated ~= nil and updated.name == "Renamed")

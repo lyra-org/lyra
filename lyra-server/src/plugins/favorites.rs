@@ -6,7 +6,6 @@
 #[cfg(feature = "docgen")]
 use std::collections::HashMap;
 
-use agdb::DbId;
 use harmony_luau as luau;
 use lyra_db::favorites::FavoriteKind;
 
@@ -14,6 +13,10 @@ use crate::{
     plugins::{
         args::UniqueIds,
         db::Db,
+        ids::{
+            self,
+            Resolved,
+        },
     },
     services::{
         auth::Principal,
@@ -26,29 +29,36 @@ pub(crate) struct FavoritesModule;
 #[harmony_macros::module(id = "lyra/favorites", docs_feature = "docgen")]
 impl FavoritesModule {
     async fn add(
-        target_id: i64,
+        target_id: String,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<bool> {
         let mut db = db.write().await;
-        let outcome = favorite_service::add_for_principal(&mut db, &principal, DbId(target_id))?;
+        let viewer = ids::viewer_of(&*db, &principal)?;
+        let Some(target) = ids::visible_db_id(&db, &viewer, &target_id)? else {
+            return Ok(false);
+        };
+        let outcome = favorite_service::add_for_principal(&mut db, &principal, target)?;
         Ok(outcome == favorite_service::MutationOutcome::Applied)
     }
 
     async fn remove(
-        target_id: i64,
+        target_id: String,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<bool> {
         let mut db = db.write().await;
         let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let outcome = favorite_service::remove(&mut db, user_db_id, DbId(target_id))?;
+        let Some(target) = ids::db_id(&*db, &target_id)? else {
+            return Ok(false);
+        };
+        let outcome = favorite_service::remove(&mut db, user_db_id, target)?;
         Ok(outcome == favorite_service::MutationOutcome::Applied)
     }
 
     #[harmony(
         description = "When the caller first favorited each of the targets, in Unix milliseconds, keyed by id. Unfavorited targets and ones the caller cannot see are absent.",
-        returns(HashMap<u64, i64>)
+        returns(HashMap<String, i64>)
     )]
     async fn get(
         target_ids: UniqueIds,
@@ -56,17 +66,13 @@ impl FavoritesModule {
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::OwnedTable> {
         let db = db.read().await;
+        let targets = Resolved::of(&*db, target_ids.0)?;
         let favorited =
-            favorite_service::favorited_at_for_principal(&db, &principal, &target_ids.0)?;
-
-        let mut table = luau::OwnedTable::with_entry_capacity(0, 0, favorited.len());
-        for (id, favorited_at_ms) in favorited {
-            table.set_key(id.0, favorited_at_ms);
-        }
-        Ok(table)
+            favorite_service::favorited_at_for_principal(&db, &principal, targets.db_ids())?;
+        Ok(targets.keyed(favorited))
     }
 
-    #[harmony(returns(Vec<i64>))]
+    #[harmony(returns(Vec<String>))]
     async fn list_ids(
         entity: String,
         #[context] db: Db,
@@ -85,9 +91,7 @@ impl FavoritesModule {
                 visible_ids.push(id);
             }
         }
-        Ok(luau::OwnedTable::from_array(
-            visible_ids.into_iter().map(|id| id.0),
-        ))
+        ids::public_id_list(&*db, &visible_ids)
     }
 }
 

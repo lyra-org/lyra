@@ -192,16 +192,20 @@ fn builtin_from_recent_listens(
     viewer: &MixViewer,
     limit: usize,
 ) -> anyhow::Result<Vec<Track>> {
-    let track_ids =
-        recent_listen_track_ids(db, user_db_id, viewer.accessible_library_ids.as_ref())?;
+    let track_ids = recent_listen_tracks(db, user_db_id, viewer.accessible_library_ids.as_ref())?
+        .into_iter()
+        .map(|(track_db_id, _)| track_db_id)
+        .collect::<Vec<_>>();
     builtin_from_seed_track_ids(db, &track_ids, viewer, limit)
 }
 
-pub(super) fn recent_listen_track_ids(
+/// The tracks of the user's recent listens, most recent first, each with the public id it was
+/// resolved from.
+pub(super) fn recent_listen_tracks(
     db: &DbAny,
     user_db_id: DbId,
     accessible_library_ids: Option<&HashSet<String>>,
-) -> anyhow::Result<Vec<DbId>> {
+) -> anyhow::Result<Vec<(DbId, String)>> {
     let mut listens: Vec<lyra_db::listens::Listen> = db
         .exec(
             QueryBuilder::select()
@@ -238,7 +242,7 @@ pub(super) fn recent_listen_track_ids(
             continue;
         }
         if seen.insert(track_db_id) {
-            track_ids.push(track_db_id);
+            track_ids.push((track_db_id, listen.track_public_id.clone()));
         }
     }
 
@@ -950,7 +954,7 @@ mod tests {
 
         insert_listen_with_snapshot(&mut db, track, user_id, "tr-recycled-original".to_string())?;
 
-        let recents = recent_listen_track_ids(&db, user_id, None)?;
+        let recents = recent_listen_tracks(&db, user_id, None)?;
         assert!(
             recents.is_empty(),
             "stale-snapshot listens must not surface in mix seeds: {recents:?}"
@@ -970,7 +974,7 @@ mod tests {
 
         insert_listen_with_snapshot(&mut db, track, user_id, release_public_id)?;
 
-        let recents = recent_listen_track_ids(&db, user_id, None)?;
+        let recents = recent_listen_tracks(&db, user_id, None)?;
         assert!(
             recents.is_empty(),
             "kind-rebound listens must not surface in mix seeds: {recents:?}"
@@ -989,15 +993,21 @@ mod tests {
         connect(&mut db, library_id, track)?;
         lyra_db::fixtures::insert_listen(&mut db, user_id, track, 1_000_000)?;
 
-        let hidden = recent_listen_track_ids(&db, user_id, Some(&HashSet::new()))?;
+        let hidden = recent_listen_tracks(&db, user_id, Some(&HashSet::new()))?;
         assert!(
             hidden.is_empty(),
             "recent-listen seeds must be hidden without access to the containing library",
         );
 
         let visible_libraries = HashSet::from([library_public_id]);
-        let visible = recent_listen_track_ids(&db, user_id, Some(&visible_libraries))?;
-        assert_eq!(visible, vec![track]);
+        let visible = recent_listen_tracks(&db, user_id, Some(&visible_libraries))?;
+        assert_eq!(
+            visible
+                .into_iter()
+                .map(|(track, _)| track)
+                .collect::<Vec<_>>(),
+            vec![track]
+        );
         Ok(())
     }
 

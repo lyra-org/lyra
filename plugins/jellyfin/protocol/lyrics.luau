@@ -33,7 +33,7 @@ local function ms_to_ticks(value: number?): number?
 	return math.floor(value * TICKS_PER_MS)
 end
 
-function module.resolve_audio_item(ctx: ApiContext): (number?, catalog.ItemInfo?, ApiResponse?)
+function module.resolve_audio_item(ctx: ApiContext): (string?, catalog.ItemInfo?, ApiResponse?)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
 		return nil, nil, session.unauthorized()

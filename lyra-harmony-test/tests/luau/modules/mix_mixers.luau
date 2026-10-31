@@ -4,7 +4,7 @@ local mix = require("@lyra/mix")
 local ids = fixture.ids
 local SeedType = mix.SeedType
 
-local function result(...: number): mix.MixResult
+local function result(...: string): mix.MixResult
 	local tracks = {}
 	for _, id in { ... } do
 		table.insert(tracks, { track_id = id })

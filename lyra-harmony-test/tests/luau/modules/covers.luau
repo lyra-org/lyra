@@ -6,12 +6,12 @@ local ids = fixture.ids
 
 -- Releases have their own cover and a track shows its release's. What the caller can't see, and
 -- what has no cover, is absent.
-local found = covers.get({ ids.a, ids.ta, ids.secret, ids.tsecret, ids.bare, ids.tbare, 987654 })
+local found = covers.get({ ids.a, ids.ta, ids.secret, ids.tsecret, ids.bare, ids.tbare, "missing-target" })
 assert(found[ids.a].hash == "a" and found[ids.a].blurhash == "L00000fQfQfQ")
 assert(found[ids.a].release_id == ids.a and found[ids.a].mime_type == "image/png")
 assert(found[ids.ta].release_id == ids.a, "a track shows its release's cover")
 assert(found[ids.secret] == nil and found[ids.tsecret] == nil, "unseen releases and tracks are absent")
-assert(found[ids.bare] == nil and found[ids.tbare] == nil and found[987654] == nil)
+assert(found[ids.bare] == nil and found[ids.tbare] == nil and found["missing-target"] == nil)
 
 -- A playlist shows a release the caller can see, even when the hidden one would win.
 local playlists = covers.get({ ids.shared, ids.private })

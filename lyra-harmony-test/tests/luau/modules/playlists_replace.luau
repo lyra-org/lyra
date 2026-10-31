@@ -1,6 +1,6 @@
 local fixture = ...
-local track_id: number = fixture.ids.track
-local foreign_id: number = fixture.ids.foreign
+local track_id: string = fixture.ids.track
+local foreign_id: string = fixture.ids.foreign
 local foreign_entry: string = fixture.entries.foreign[1]
 
 local playlists = require("@lyra/playlists")
@@ -9,7 +9,7 @@ local id = playlists.create({ name = "Replace me" })
 local added = playlists.add_tracks(id, { track_id, track_id })
 assert(added ~= nil and #added == 2 and added[1] ~= added[2])
 assert(playlists.add_tracks(foreign_id, { track_id }) == nil)
-assert(not pcall(playlists.add_tracks, id, { track_id, 999999999 }))
+assert(not pcall(playlists.add_tracks, id, { track_id, "missing-track" }))
 assert(#playlists.get_tracks(id) == 2, "a failed add changed the playlist")
 
 local replaced = playlists.replace(id, {
@@ -24,7 +24,7 @@ for position, entry in entries do
 	assert(entry.entry_id ~= added[1] and entry.entry_id ~= added[2])
 end
 
-assert(not pcall(playlists.replace, id, { fields = { name = "Broken" }, track_ids = { 999999999 } }))
+assert(not pcall(playlists.replace, id, { fields = { name = "Broken" }, track_ids = { "missing-track" } }))
 local unchanged = playlists.get_by_id(id)
 assert(unchanged ~= nil and unchanged.name == "Replaced")
 assert(#playlists.get_tracks(id) == 3, "a failed replace changed the playlist")
@@ -35,14 +35,14 @@ local emptied = playlists.replace(id, { track_ids = {} })
 assert(emptied ~= nil and emptied.name == "Replaced" and #playlists.get_tracks(id) == 0)
 
 local before = #playlists.get_tracks(id)
-for _, invalid in { { 0 }, { foo = 5 } } do
+for _, invalid in { { 1 }, { foo = "x" } } do
 	assert(not pcall(playlists.replace, id, { track_ids = invalid :: any }))
 	assert(not pcall(playlists.add_tracks, id, invalid :: any))
 	assert(#playlists.get_tracks(id) == before, "invalid ids changed the playlist")
 end
 
 local owned_before = #playlists.list_owned()
-assert(not pcall(playlists.create, { name = "Broken", track_ids = { track_id, 999999999 } }))
+assert(not pcall(playlists.create, { name = "Broken", track_ids = { track_id, "missing-track" } }))
 assert(#playlists.list_owned() == owned_before, "a failed create left a playlist")
 local filled = playlists.create({ name = "Filled", track_ids = { track_id, track_id } })
 local filled_entries = playlists.get_tracks(filled)

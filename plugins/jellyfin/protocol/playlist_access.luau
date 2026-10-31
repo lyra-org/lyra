@@ -12,13 +12,12 @@ type PlaylistTrackLink = playlists.PlaylistTrackLink
 
 local module = {}
 
-function module.find(playlist_id: number?): PlaylistInfo?
-	local numeric_id = if playlist_id then tonumber(playlist_id) else nil
-	if not numeric_id or numeric_id <= 0 then
+function module.find(playlist_id: string?): PlaylistInfo?
+	if not playlist_id then
 		return nil
 	end
 
-	local ok, result = pcall(playlists.get_by_id, numeric_id)
+	local ok, result = pcall(playlists.get_by_id, playlist_id)
 	if not ok then
 		return nil
 	end
@@ -28,12 +27,11 @@ end
 
 -- The owner's public id.
 function module.owner_id(playlist: PlaylistInfo?): string?
-	local raw_playlist_id = if playlist then playlist.db_id else nil
-	if raw_playlist_id == nil or raw_playlist_id <= 0 then
+	if not playlist then
 		return nil
 	end
 
-	local ok, owner_id = pcall(playlists.get_owner, raw_playlist_id)
+	local ok, owner_id = pcall(playlists.get_owner, playlist.id)
 	if not ok or type(owner_id) ~= "string" then
 		return nil
 	end
@@ -67,18 +65,16 @@ end
 -- whatever its role.
 function module.list_visible(): { PlaylistInfo }
 	local visible = module.list_owned()
-	local owned: { [number]: boolean } = {}
+	local owned: { [string]: boolean } = {}
 	for _, playlist in visible do
-		if playlist.db_id then
-			owned[playlist.db_id] = true
-		end
+		owned[playlist.id] = true
 	end
 	local ok, listed = pcall(playlists.list)
 	if not ok or type(listed) ~= "table" then
 		return visible
 	end
 	for _, playlist in listed :: { PlaylistInfo } do
-		if playlist.is_public == true and playlist.db_id and not owned[playlist.db_id] then
+		if playlist.is_public == true and not owned[playlist.id] then
 			table.insert(visible, playlist)
 		end
 	end
@@ -86,11 +82,10 @@ function module.list_visible(): { PlaylistInfo }
 end
 
 function module.load_track_refs(playlist: PlaylistInfo?): { PlaylistTrackLink }?
-	local playlist_id = if playlist then playlist.db_id else nil
-	if playlist_id == nil or playlist_id <= 0 then
+	if not playlist then
 		return nil
 	end
-	local ok, track_links = pcall(playlists.get_tracks, playlist_id)
+	local ok, track_links = pcall(playlists.get_tracks, playlist.id)
 	if not ok or type(track_links) ~= "table" then
 		return nil
 	end
@@ -105,12 +100,10 @@ function module.track_count(playlist: PlaylistInfo?): number
 	return #module.track_refs(playlist)
 end
 
-function module.track_ids(playlist: PlaylistInfo): { number }
-	local track_ids: { number } = {}
+function module.track_ids(playlist: PlaylistInfo): { string }
+	local track_ids: { string } = {}
 	for _, link: PlaylistTrackLink in module.track_refs(playlist) do
-		if link.track_id and link.track_id > 0 then
-			table.insert(track_ids, link.track_id)
-		end
+		table.insert(track_ids, link.track_id)
 	end
 	return track_ids
 end
@@ -119,7 +112,7 @@ end
 -- that name one match every entry of that track, in playlist order. Ids that match none are
 -- ignored, as upstream.
 function module.entries_of_items(playlist: PlaylistInfo, raw_ids: { string }): { string }
-	local wanted: { [number]: boolean } = {}
+	local wanted: { [string]: boolean } = {}
 	for _, raw_id in raw_ids do
 		local track_id = item_ids.decode_jellyfin_item_id(raw_id)
 		if track_id then

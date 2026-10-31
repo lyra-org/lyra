@@ -4,8 +4,8 @@ local favorites = require("@lyra/favorites")
 local tags = require("@lyra/tags")
 
 local ids = fixture.ids
-local missing = 999999999
-local tag_node = tags.get_for_target(ids.plain)[1].db_id
+local missing = "missing-target"
+local tag_node = tags.get_for_target(ids.plain)[1].id
 
 assert(favorites.add(ids.song), "a visible track is favoritable")
 assert(favorites.add(ids.song), "adding again refreshes the favorite")
@@ -19,10 +19,10 @@ assert(favorites.add(ids.shared), "another user's public playlist is favoritable
 assert(not favorites.add(ids.hidden), "a hidden track is not favoritable")
 assert(not favorites.add(missing), "a missing target is not favoritable")
 assert(not favorites.add(tag_node), "a tag is not favoritable")
-for _, id in { 0, -5 } do
-	assert(not favorites.add(id), `{id} is not favoritable`)
-	assert(not pcall(favorites.get, { id }), `{id} is not an id to look up`)
-	assert(not favorites.remove(id), `{id} has no favorite to remove`)
+for _, id in { 1, true } do
+	assert(not pcall(favorites.add, id :: any), `{id} is not an id to favorite`)
+	assert(not pcall(favorites.get, { id :: any }), `{id} is not an id to look up`)
+	assert(not pcall(favorites.remove, id :: any), `{id} is not an id to unfavorite`)
 end
 
 local favorited = favorites.get({ ids.song, ids.song, ids.plain, ids.hidden, ids.mine, ids.shared, missing, tag_node })

@@ -5,7 +5,6 @@
 -- www.meshiplaw.com/lyra.
 
 local api = require("@lyra/api")
-local ids = require("@lyra/ids")
 local playback_sessions = require("@lyra/playback_sessions")
 local tracks = require("@lyra/tracks")
 local users = require("@lyra/users")
@@ -87,57 +86,46 @@ end
 
 type Track = tracks.Track
 
--- Names come from tracks whose public id still matches, so a recycled `DbId` names nothing.
 local function resolve_now_playing_names(listing: Listing)
-	local public_ids: { string } = {}
+	local track_ids: { string } = {}
 	local seen: { [string]: boolean } = {}
-	for _, track_public_id in listing.now_playing_tracks do
-		if not seen[track_public_id] then
-			seen[track_public_id] = true
-			table.insert(public_ids, track_public_id)
+	for _, track_id in listing.now_playing_tracks do
+		if not seen[track_id] then
+			seen[track_id] = true
+			table.insert(track_ids, track_id)
 		end
 	end
-	if #public_ids == 0 then
+	if #track_ids == 0 then
 		return
 	end
 	local names: { [string]: string } = {}
-	local ids_ok, db_ids = pcall(ids.get_db_ids, public_ids)
-	if ids_ok and db_ids then
-		local track_db_ids: { number } = {}
-		for _, track_public_id in public_ids do
-			local db_id = db_ids[track_public_id]
-			if db_id then
-				table.insert(track_db_ids, db_id)
-			end
-		end
-		local ok, found = pcall(tracks.get, track_db_ids)
-		if ok and found then
-			for _, track: Track? in found do
-				if track then
-					names[track.id] = track.track_title
-				end
+	local ok, found = pcall(tracks.get, track_ids)
+	if ok and found then
+		for _, track: Track? in found do
+			if track then
+				names[track.id] = track.track_title
 			end
 		end
 	end
-	for now_playing, track_public_id in listing.now_playing_tracks do
-		now_playing.Name = names[track_public_id] or ""
+	for now_playing, track_id in listing.now_playing_tracks do
+		now_playing.Name = names[track_id] or ""
 	end
 end
 
 local function build_now_playing(
 	listing: Listing,
-	track_public_id: string?,
+	track_id: string?,
 	position_ms: number?,
 	duration_ms: number?,
 	is_paused: boolean
 ): (JsonObject, JsonObject)
 	local now_playing: JsonObject = {
-		Id = item_ids.encode_jellyfin_item_id(track_public_id),
+		Id = item_ids.encode_jellyfin_item_id(track_id),
 		Name = "",
 		Type = "Audio",
 	}
-	if track_public_id then
-		listing.now_playing_tracks[now_playing] = track_public_id
+	if track_id then
+		listing.now_playing_tracks[now_playing] = track_id
 	end
 	if duration_ms then
 		now_playing.RunTimeTicks = duration_ms * 10000
@@ -151,11 +139,11 @@ local function build_now_playing(
 end
 
 local function native_now_playing(listing: Listing, info: playback_sessions.PlaybackInfo): (JsonObject, JsonObject)
-	return build_now_playing(listing, info.track_public_id, info.position_ms, info.duration_ms, info.state == "paused")
+	return build_now_playing(listing, info.track_id, info.position_ms, info.duration_ms, info.state == "paused")
 end
 
 local function client_now_playing(listing: Listing, client: ClientPlayback): (JsonObject, JsonObject)
-	return build_now_playing(listing, client.track_public_id, client.position_ms, client.duration_ms, client.is_paused)
+	return build_now_playing(listing, client.track_id, client.position_ms, client.duration_ms, client.is_paused)
 end
 
 local function build_sessions_dto_list(

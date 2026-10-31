@@ -150,9 +150,9 @@ function module.sort(entity: Entity, options: ItemsQueryOptions): Sort
 	return { sort = terms, seed = seed }
 end
 
--- Lyra ids for Jellyfin item ids; nil when there are ids but none is a known item, so the
+-- Lyra ids for Jellyfin item ids; nil when there are ids but none is an item id, so the
 -- filter matches nothing instead of being dropped.
-local function decode(raw_ids: { string }): ({ number }?, boolean)
+local function decode(raw_ids: { string }): ({ string }?, boolean)
 	if #raw_ids == 0 then
 		return nil, true
 	end
@@ -164,18 +164,18 @@ local function decode(raw_ids: { string }): ({ number }?, boolean)
 end
 
 -- Ids in both lists; either may be nil for "no constraint".
-local function intersect(first: { number }?, second: { number }?): { number }?
+local function intersect(first: { string }?, second: { string }?): { string }?
 	if first == nil then
 		return second
 	end
 	if second == nil then
 		return first
 	end
-	local wanted: { [number]: boolean } = {}
+	local wanted: { [string]: boolean } = {}
 	for _, id in second do
 		wanted[id] = true
 	end
-	local both: { number } = {}
+	local both: { string } = {}
 	for _, id in first do
 		if wanted[id] then
 			table.insert(both, id)
@@ -185,9 +185,9 @@ local function intersect(first: { number }?, second: { number }?): { number }?
 end
 
 type Common = {
-	ids: { number }?,
-	exclude_ids: { number }?,
-	genre_ids: { number }?,
+	ids: { string }?,
+	exclude_ids: { string }?,
+	genre_ids: { string }?,
 	favorite: boolean?,
 	listened: boolean?,
 }
@@ -292,14 +292,14 @@ local function common(options: ItemsQueryOptions): Common?
 end
 
 -- Narrows the genre filter to a parent genre; false when the two can't both hold.
-local function scope_genres(genre_ids: { number }?, genre_id: number): ({ number }?, boolean)
+local function scope_genres(genre_ids: { string }?, genre_id: string): ({ string }?, boolean)
 	local scoped = intersect(genre_ids, { genre_id })
 	return scoped, scoped == nil or #scoped > 0
 end
 
 -- The artist credit of a track or release listing. Upstream ANDs its artist filters; a Lyra
 -- query takes one credit, so the most specific filter present wins.
-local function artist_credit(options: ItemsQueryOptions): ({ number }?, CreditRole?, CreditRole?, boolean)
+local function artist_credit(options: ItemsQueryOptions): ({ string }?, CreditRole?, CreditRole?, boolean)
 	if #options.contributing_artist_ids > 0 then
 		local ids, ok = decode(options.contributing_artist_ids)
 		return ids, "track", "release", ok
@@ -315,15 +315,15 @@ end
 -- Narrows the artist filter to a parent artist, keeping the filter's role, or `role` when there
 -- is no filter; false when the parent isn't among the filter's artists.
 local function scope_artist(
-	artist_ids: { number }?,
+	artist_ids: { string }?,
 	credit_role: CreditRole?,
-	artist_id: number,
+	artist_id: string,
 	role: CreditRole
-): ({ number }?, CreditRole?, boolean)
+): ({ string }?, CreditRole?, boolean)
 	if artist_ids == nil then
 		return { artist_id }, role, true
 	end
-	local scoped = intersect(artist_ids, { artist_id }) :: { number }
+	local scoped = intersect(artist_ids, { artist_id }) :: { string }
 	return scoped, credit_role, #scoped > 0
 end
 
@@ -344,7 +344,7 @@ function module.tracks(options: ItemsQueryOptions, scope: Scope): TrackQuery?
 
 	local query: TrackQuery = {}
 	local genre_ids = filters.genre_ids
-	local scope_id = scope.db_id
+	local scope_id = scope.id
 	if scope_id ~= nil then
 		local ok = true
 		if scope.entity_type == "Library" then
@@ -389,14 +389,14 @@ end
 
 -- The tracks among `ids` under `scope`, as upstream's ancestors: their library, their release, or
 -- an artist credited on them or their release; nil when `scope` holds no tracks that way.
-function module.tracks_under(ids: { number }, scope: Scope): TrackQuery?
+function module.tracks_under(ids: { string }, scope: Scope): TrackQuery?
 	local query: TrackQuery = { ids = ids }
 	if scope.entity_type == "Library" then
-		query.library_id = scope.db_id
+		query.library_id = scope.id
 	elseif scope.entity_type == "Release" then
-		query.release_ids = { scope.db_id :: number }
+		query.release_ids = { scope.id :: string }
 	elseif scope.entity_type == "Artist" then
-		query.artist_ids = { scope.db_id :: number }
+		query.artist_ids = { scope.id :: string }
 		query.credit_role = "any"
 	else
 		return nil
@@ -417,7 +417,7 @@ function module.releases(options: ItemsQueryOptions, scope: Scope): ReleaseQuery
 
 	local query: ReleaseQuery = {}
 	local genre_ids = filters.genre_ids
-	local scope_id = scope.db_id
+	local scope_id = scope.id
 	if scope_id ~= nil then
 		local ok = true
 		if scope.entity_type == "Library" then
@@ -481,7 +481,7 @@ function module.artists(options: ItemsQueryOptions, scope: Scope, role: CreditRo
 
 	local query: ArtistQuery = {}
 	local genre_ids = filters.genre_ids
-	local scope_id = scope.db_id
+	local scope_id = scope.id
 	if scope_id ~= nil then
 		local ok = true
 		if scope.entity_type == "Library" then
@@ -590,7 +590,7 @@ function module.people(options: ItemsQueryOptions, scope: Scope, appears_in: Sco
 	if appears_in == nil then
 		return query
 	end
-	local item_id = appears_in.db_id
+	local item_id = appears_in.id
 	if item_id == nil then
 		return nil
 	end
@@ -599,11 +599,11 @@ function module.people(options: ItemsQueryOptions, scope: Scope, appears_in: Sco
 	elseif appears_in.entity_type == "Track" then
 		query.track_ids = intersect(query.track_ids, { item_id })
 	elseif appears_in.entity_type == "Artist" then
-		local voices: { number } = {}
-		for _, relation in artists.relations({ item_id })[item_id] or {} do
-			local voice_id = relation.artist.db_id
-			if relation.relation_type == "voice_actor" and relation.direction == "incoming" and voice_id then
-				table.insert(voices, voice_id)
+		local voices: { string } = {}
+		local relations: { artists.ArtistRelationInfo } = artists.relations({ item_id })[item_id] or {}
+		for _, relation in relations do
+			if relation.relation_type == "voice_actor" and relation.direction == "incoming" then
+				table.insert(voices, relation.artist.id)
 			end
 		end
 		query.ids = intersect(query.ids, voices)
@@ -634,7 +634,7 @@ function module.genres(options: ItemsQueryOptions, scope: Scope): GenreQuery?
 	end
 
 	local query: GenreQuery = {}
-	local scope_id = scope.db_id
+	local scope_id = scope.id
 	if scope_id ~= nil then
 		if scope.entity_type == "Library" then
 			query.library_id = scope_id

@@ -4,7 +4,7 @@ local releases = require("@lyra/releases")
 
 local by_id = {}
 for _, release in releases.query({}).items do
-	by_id[release.db_id] = release
+	by_id[release.id] = release
 end
 
 local album = by_id[fixture.ids.album]

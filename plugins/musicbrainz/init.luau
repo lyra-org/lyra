@@ -138,7 +138,7 @@ local function normalize_local_artists(artists: { metadata.ProviderCoverArtist }
 	local normalized_artists: { LocalArtist } = {}
 	for _, artist in artists do
 		table.insert(normalized_artists, {
-			db_id = artist.db_id,
+			id = artist.id,
 			artist_name = artist.artist_name,
 		})
 	end
@@ -152,7 +152,7 @@ local function normalize_local_tracks(tracks: { metadata.ProviderCoverTrack }?):
 	end
 	for _, track in tracks do
 		table.insert(normalized_tracks, {
-			db_id = track.db_id,
+			id = track.id,
 			track_title = track.track_title,
 			artists = nil,
 			disc_total = nil,
@@ -185,13 +185,13 @@ end
 
 local function normalize_release_context(ctx: ProviderCoverContext?): ReleaseContext
 	return {
-		db_id = if ctx then ctx.db_id else nil,
+		id = if ctx then ctx.id else nil,
 		release_title = if ctx then ctx.release_title else nil,
 		lookup_hints = nil,
 		artists = normalize_local_artists(if ctx then ctx.artists else nil),
 		tracks = normalize_local_tracks(if ctx then ctx.tracks else nil),
 		library = normalize_lookup_library(if ctx then ctx.library else nil),
-		library_id = if ctx and ctx.library then ctx.library.db_id else nil,
+		library_id = if ctx and ctx.library then ctx.library.id else nil,
 		ids = normalize_lookup_ids(if ctx then ctx.ids else nil),
 		external_ids = nil,
 	}
@@ -211,9 +211,9 @@ local function get_cover_store(): DataStore?
 end
 
 local function cover_cache_key(ctx: ProviderCoverContext?): string?
-	local release_db_id = if ctx then ctx.db_id else nil
-	if type(release_db_id) == "number" then
-		return `{COVER_CACHE_KEY_PREFIX}{release_db_id}`
+	local release_entity_id = if ctx then ctx.id else nil
+	if release_entity_id ~= nil then
+		return `{COVER_CACHE_KEY_PREFIX}{release_entity_id}`
 	end
 	return nil
 end

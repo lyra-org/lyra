@@ -147,6 +147,7 @@ impl From<LookupHints> for EntityLookupHints {
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct ProjectionEntryInfo {
+    #[serde(skip_serializing)]
     pub(crate) db_id: Option<NodeId>,
     pub(crate) id: String,
     pub(crate) full_path: String,
@@ -206,6 +207,7 @@ impl From<ResolvedCreditedArtist> for CreditedArtistProjectionInfo {
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct ReleaseProjectionTrack {
+    #[serde(skip_serializing)]
     pub(crate) db_id: Option<NodeId>,
     pub(crate) id: String,
     pub(crate) track_title: String,

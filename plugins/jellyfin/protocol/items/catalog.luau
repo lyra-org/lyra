@@ -70,11 +70,10 @@ type Artist = artists_module.Artist
 type PlaylistInfo = playlists.PlaylistInfo
 type PlaybackSourceInfo = playback_sources.PlaybackSourceInfo
 type TagInfo = tags_module.TagInfo
-type TagInfoMap = { [number]: { TagInfo } }
+type TagInfoMap = { [string]: { TagInfo } }
 type UserData = user_data.UserData
 type ReleaseRecord = {
 	id: index<Release, "id">,
-	db_id: index<Release, "db_id">,
 	release_title: index<Release, "release_title">,
 	sort_title: index<Release, "sort_title">,
 	release_date: index<Release, "release_date">,
@@ -83,7 +82,6 @@ type ReleaseRecord = {
 }
 type TrackRecord = {
 	id: index<Track, "id">,
-	db_id: index<Track, "db_id">,
 	track_title: index<Track, "track_title">,
 	sort_title: index<Track, "sort_title">,
 	year: index<Track, "year">,
@@ -102,7 +100,6 @@ type TrackLike = Track | TrackRecord
 type ItemRaw = ReleaseLike | ArtistLike | TrackLike | PlaylistInfo
 type ItemKind = "release" | "artist" | "track" | "playlist"
 type LibraryInfo = {
-	db_id: number?,
 	id: string,
 	name: string,
 	path: string?,
@@ -118,15 +115,15 @@ type CoverInfo = {
 	blurhash: string?,
 	release_id: string?,
 }
-type ArtistRelationMap = { [number]: { Artist }? }
-type ArtistRelationInfoMap = { [number]: { ArtistRelationInfo }? }
-type ReleaseRelationMap = { [number]: { Release }? }
-type TrackRelationMap = { [number]: { Track }? }
-type CreditRelationMap = { [number]: { CreditedArtistProjectionInfo }? }
-type PlaybackSourceMap = { [number]: PlaybackSourceInfo? }
-type LyricsLookup = { [number]: boolean }
-type PlayCountLookup = { [number]: number }
-type LastPlayedLookup = { [number]: number }
+type ArtistRelationMap = { [string]: { Artist }? }
+type ArtistRelationInfoMap = { [string]: { ArtistRelationInfo }? }
+type ReleaseRelationMap = { [string]: { Release }? }
+type TrackRelationMap = { [string]: { Track }? }
+type CreditRelationMap = { [string]: { CreditedArtistProjectionInfo }? }
+type PlaybackSourceMap = { [string]: PlaybackSourceInfo }
+type LyricsLookup = { [string]: boolean }
+type PlayCountLookup = { [string]: number }
+type LastPlayedLookup = { [string]: number }
 type ItemContext = {
 	user_id: string?,
 	favorite_lookup: FavoriteLookup,
@@ -154,26 +151,26 @@ type ItemContext = {
 	has_release_artists_prefetch: boolean?,
 	has_release_tracks_prefetch: boolean?,
 	has_artist_relations_prefetch: boolean?,
-	genre_infos_by_release_id: { [number]: { genres.GenreInfo } }?,
+	genre_infos_by_release_id: { [string]: { genres.GenreInfo } }?,
 	tag_infos_by_item_id: TagInfoMap?,
-	cover_info_by_release_id: { [number]: artwork.ResolvedCoverInfo }?,
-	cover_prefetch_release_ids: { [number]: boolean }?,
-	cover_info_by_artist_id: { [number]: artwork.ResolvedCoverInfo }?,
-	cover_prefetch_artist_ids: { [number]: boolean }?,
+	cover_info_by_release_id: { [string]: artwork.ResolvedCoverInfo }?,
+	cover_prefetch_release_ids: { [string]: boolean }?,
+	cover_info_by_artist_id: { [string]: artwork.ResolvedCoverInfo }?,
+	cover_prefetch_artist_ids: { [string]: boolean }?,
 	library_hex_id: string?,
-	library_hex_id_by_entity_id: { [number]: string }?,
-	cover_info_by_playlist_id: { [number]: artwork.ResolvedCoverInfo }?,
+	library_hex_id_by_entity_id: { [string]: string }?,
+	cover_info_by_playlist_id: { [string]: artwork.ResolvedCoverInfo }?,
 	item_provider_ids: provider_ids.ItemProviderIds?,
-	runtime_ticks_by_playlist_id: { [number]: number }?,
+	runtime_ticks_by_playlist_id: { [string]: number }?,
 }
 type RealizationSeedInfo = {
-	track_ids: { number },
-	release_ids: { number },
-	artist_ids: { number },
-	playlist_db_ids: { number },
-	track_seen: { [number]: boolean },
-	release_seen: { [number]: boolean },
-	artist_seen: { [number]: boolean },
+	track_ids: { string },
+	release_ids: { string },
+	artist_ids: { string },
+	playlist_ids: { string },
+	track_seen: { [string]: boolean },
+	release_seen: { [string]: boolean },
+	artist_seen: { [string]: boolean },
 	has_track_stubs: boolean,
 	has_release_stubs: boolean,
 	has_artist_stubs: boolean,
@@ -208,41 +205,41 @@ function module.build_item_query_result(items: { ItemInfo }, total_count: number
 	return results.build_query_result(module.items_to_json(items), total_count, start_index)
 end
 
-function helpers.resolve_cover_info(release_db_id: number?, context: ItemContext?): artwork.ResolvedCoverInfo?
-	if release_db_id == nil or release_db_id <= 0 then
+function helpers.resolve_cover_info(release_id: string?, context: ItemContext?): artwork.ResolvedCoverInfo?
+	if release_id == nil then
 		return nil
 	end
 	if context then
 		if context.cover_info_by_release_id then
-			local cached = context.cover_info_by_release_id[release_db_id]
+			local cached = context.cover_info_by_release_id[release_id]
 			if cached then
 				return cached
 			end
 		end
 		-- If this release was part of the prefetch set, it has no cover.
-		if context.cover_prefetch_release_ids and context.cover_prefetch_release_ids[release_db_id] then
+		if context.cover_prefetch_release_ids and context.cover_prefetch_release_ids[release_id] then
 			return nil
 		end
 	end
-	return artwork.get_cover_info(release_db_id)
+	return artwork.get_cover_info(release_id)
 end
 
-function helpers.resolve_artist_cover_info(artist_db_id: number?, context: ItemContext?): artwork.ResolvedCoverInfo?
-	if artist_db_id == nil or artist_db_id <= 0 then
+function helpers.resolve_artist_cover_info(artist_id: string?, context: ItemContext?): artwork.ResolvedCoverInfo?
+	if artist_id == nil then
 		return nil
 	end
 	if context then
 		if context.cover_info_by_artist_id then
-			local cached = context.cover_info_by_artist_id[artist_db_id]
+			local cached = context.cover_info_by_artist_id[artist_id]
 			if cached then
 				return cached
 			end
 		end
-		if context.cover_prefetch_artist_ids and context.cover_prefetch_artist_ids[artist_db_id] then
+		if context.cover_prefetch_artist_ids and context.cover_prefetch_artist_ids[artist_id] then
 			return nil
 		end
 	end
-	return artwork.get_cover_info(artist_db_id)
+	return artwork.get_cover_info(artist_id)
 end
 
 function helpers.default_image_tags(): nil
@@ -272,7 +269,7 @@ function helpers.should_include_images(context: ItemContext?): boolean
 end
 
 function helpers.build_item_user_data(
-	item_id: number?,
+	item_id: string?,
 	item_hex_id: string?,
 	user_id: string?,
 	key: string?,
@@ -305,11 +302,11 @@ function helpers.lower_or_empty(value: JsonValue): string
 	return string.lower(tostring(value))
 end
 
-function helpers.resolve_release_genres(db_id: number?): { genres.GenreInfo }?
-	if db_id == nil then
+function helpers.resolve_release_genres(release_id: string?): { genres.GenreInfo }?
+	if release_id == nil then
 		return nil
 	end
-	local infos = genres.by_release({ db_id })[db_id]
+	local infos = genres.by_release({ release_id })[release_id]
 	if infos == nil or #infos == 0 then
 		return nil
 	end
@@ -447,96 +444,75 @@ function helpers.resolve_library_hex_id_from_parent(parent_id: string?): string?
 	return nil
 end
 
-function helpers.resolve_entity_library_hex_id(entity_db_id: number?, context: ItemContext?): string?
-	local _, hex = helpers.resolve_entity_library_attribution(entity_db_id, context)
+function helpers.resolve_entity_library_hex_id(entity_id: string?, context: ItemContext?): string?
+	local _, hex = helpers.resolve_entity_library_attribution(entity_id, context)
 	return hex
 end
 
 -- (in_library, library_hex_id). Truth is independent of encode success so callers gating
 -- IsFolder on it survive a transient encode failure; encode failure on a scoped entity warns.
-function helpers.resolve_entity_library_attribution(entity_db_id: number?, context: ItemContext?): (boolean, string?)
+function helpers.resolve_entity_library_attribution(entity_id: string?, context: ItemContext?): (boolean, string?)
 	if context and context.library_hex_id then
 		return true, context.library_hex_id
 	end
-	if entity_db_id and context and context.library_hex_id_by_entity_id then
-		local cached = context.library_hex_id_by_entity_id[entity_db_id]
+	if entity_id and context and context.library_hex_id_by_entity_id then
+		local cached = context.library_hex_id_by_entity_id[entity_id]
 		if cached then
 			return true, cached
 		end
 	end
-	if not entity_db_id or entity_db_id <= 0 then
+	if not entity_id then
 		return false, nil
 	end
-	local ok, libs = pcall(libraries.get_for_entity, entity_db_id)
+	local ok, libs = pcall(libraries.get_for_entity, entity_id)
 	if not ok then
-		warn(`libraries.get_for_entity failed for entity {entity_db_id}: {libs}`)
+		warn(`libraries.get_for_entity failed for entity {entity_id}: {libs}`)
 		return false, nil
 	end
 	if not libs or #libs == 0 then
 		return false, nil
 	end
 	local first = libs[1] :: libraries.Library
-	if not first.id then
-		warn(`library row for entity {entity_db_id} has no public id; ParentId will be nil`)
-		return true, nil
-	end
 	local hex = item_ids.nanoid_to_hex(first.id)
 	if hex == nil then
-		warn(`nanoid_to_hex failed for library id of entity {entity_db_id}; ParentId will be nil`)
+		warn(`nanoid_to_hex failed for library id of entity {entity_id}; ParentId will be nil`)
 		return true, nil
 	end
 	return true, hex
 end
 
-function helpers.resolve_numeric_id(value: number?): number?
-	if value == nil then
-		return nil
-	end
-	local numeric = math.floor(value)
-	if numeric > 0 then
-		return numeric
-	end
-	return nil
-end
-
-function helpers.lookup_by_id<T>(lookup: { [number]: T }?, id: number?): T?
+function helpers.lookup_by_id<T>(lookup: { [string]: T }?, id: string?): T?
 	if type(lookup) ~= "table" or id == nil then
 		return nil
 	end
 	return lookup[id]
 end
 
-function helpers.append_unique_id(id: number?, output: { number }, seen: { [number]: boolean }): number?
-	if id == nil or id <= 0 then
-		return nil
-	end
-
-	if not seen[id] then
+function helpers.append_unique_id(id: string?, output: { string }, seen: { [string]: boolean })
+	if id ~= nil and not seen[id] then
 		seen[id] = true
 		table.insert(output, id)
 	end
-	return id
 end
 
-function helpers.normalize_tag_info_map(target_ids: { number }, raw_tag_map: TagInfoMap?): TagInfoMap
+function helpers.normalize_tag_info_map(target_ids: { string }, raw_tag_map: TagInfoMap?): TagInfoMap
 	local mapped: TagInfoMap = {}
-	for _, target_id: number in target_ids do
+	for _, target_id: string in target_ids do
 		mapped[target_id] = {}
 	end
 	if type(raw_tag_map) ~= "table" then
 		return mapped
 	end
 
-	for key, infos in raw_tag_map do
-		local target_id = helpers.resolve_numeric_id(key)
-		if target_id and type(infos) == "table" then
+	for target_id, infos in raw_tag_map do
+		if type(infos) == "table" then
 			mapped[target_id] = infos
 		end
 	end
 	return mapped
 end
 
-function helpers.fetch_tag_info_map(user_id: string?, target_ids: { number }): TagInfoMap
+function helpers.fetch_tag_info_map(user_id: string?, target_ids: { string }): TagInfoMap
 	if #target_ids == 0 then
 		return {}
 	end
@@ -552,13 +528,12 @@ function helpers.fetch_tag_info_map(user_id: string?, target_ids: { number }): T
 	return helpers.normalize_tag_info_map(target_ids, raw_tag_map :: TagInfoMap)
 end
 
-function helpers.fetch_tag_infos(user_id: string?, target_id: number?): { TagInfo }?
-	local resolved_id = helpers.resolve_numeric_id(target_id)
-	if user_id == nil or resolved_id == nil then
+function helpers.fetch_tag_infos(user_id: string?, target_id: string?): { TagInfo }?
+	if user_id == nil or target_id == nil then
 		return nil
 	end
 
-	local ok, raw_tags = pcall(tags_module.get_for_target, resolved_id)
+	local ok, raw_tags = pcall(tags_module.get_for_target, target_id)
 	if not ok or type(raw_tags) ~= "table" then
 		return nil
 	end
@@ -566,24 +541,23 @@ function helpers.fetch_tag_infos(user_id: string?, target_id: number?): { TagInf
 	return raw_tags :: { TagInfo }
 end
 
-function helpers.resolve_tag_infos(target_id: number?, context: ItemContext?): { TagInfo }?
-	local resolved_id = helpers.resolve_numeric_id(target_id)
-	if resolved_id == nil then
+function helpers.resolve_tag_infos(target_id: string?, context: ItemContext?): { TagInfo }?
+	if target_id == nil then
 		return nil
 	end
 
 	if context and context.tag_infos_by_item_id then
-		local cached = context.tag_infos_by_item_id[resolved_id]
+		local cached = context.tag_infos_by_item_id[target_id]
 		if type(cached) == "table" then
 			return cached
 		end
 	end
 
-	return helpers.fetch_tag_infos(if context then context.user_id else nil, resolved_id)
+	return helpers.fetch_tag_infos(if context then context.user_id else nil, target_id)
 end
 
 function helpers.query_many_projections(
-	ids: { number },
+	ids: { string },
 	include_values: { string }?
 ): { [string]: EntityProjectionInfo }
 	if #ids == 0 then
@@ -593,10 +567,7 @@ function helpers.query_many_projections(
 		return {}
 	end
 
-	local request: EntityQueryManyRequest = { ids = {} }
-	for _, id: number in ids do
-		table.insert(request.ids, id)
-	end
+	local request: EntityQueryManyRequest = { ids = ids }
 	if type(include_values) == "table" and #include_values > 0 then
 		request.include = include_values
 	end
@@ -623,7 +594,7 @@ function helpers.projection_credits(projection: EntityProjectionInfo?): { Credit
 	return nil
 end
 
-function helpers.query_credits(entity_id: number, entity_type: "release" | "track"): { CreditedArtistProjectionInfo }?
+function helpers.query_credits(entity_id: string, entity_type: "release" | "track"): { CreditedArtistProjectionInfo }?
 	local request: EntityQueryRequest = {
 		id = entity_id,
 		include = "credits",
@@ -641,7 +612,7 @@ function helpers.query_credits(entity_id: number, entity_type: "release" | "trac
 	return helpers.projection_credits(typed_projection)
 end
 
-function helpers.query_artist_relations(artist_id: number): { ArtistRelationInfo }?
+function helpers.query_artist_relations(artist_id: string): { ArtistRelationInfo }?
 	local ok, relation_map = pcall(artists_module.relations, { artist_id })
 	if not ok or type(relation_map) ~= "table" then
 		return nil
@@ -655,54 +626,21 @@ function helpers.query_artist_relations(artist_id: number): { ArtistRelationInfo
 	return relations :: { ArtistRelationInfo }
 end
 
-function helpers.merge_artist_relation_map(destination: ArtistRelationMap, relation_map: { [number]: { Artist } })
-	for key: number, value: { Artist } in relation_map do
-		local relation_id = helpers.resolve_numeric_id(key)
-		if relation_id ~= nil and type(value) == "table" then
-			destination[relation_id] = value
-		end
+function helpers.merge_relation_map<T>(destination: { [string]: { T }? }, relation_map: { [string]: { T } })
+	for key, value in relation_map do
+		destination[key] = value
 	end
 end
 
-function helpers.merge_artist_relation_info_map(
-	destination: ArtistRelationInfoMap,
-	relation_map: { [number]: { ArtistRelationInfo } }
-)
-	for key: number, value: { ArtistRelationInfo } in relation_map do
-		local relation_id = helpers.resolve_numeric_id(key)
-		if relation_id ~= nil and type(value) == "table" then
-			destination[relation_id] = value
-		end
-	end
-end
-
-function helpers.merge_release_relation_map(destination: ReleaseRelationMap, relation_map: { [number]: { Release } })
-	for key: number, value: { Release } in relation_map do
-		local relation_id = helpers.resolve_numeric_id(key)
-		if relation_id ~= nil and type(value) == "table" then
-			destination[relation_id] = value
-		end
-	end
-end
-
-function helpers.merge_track_relation_map(destination: TrackRelationMap, relation_map: { [number]: { Track } })
-	for key: number, value: { Track } in relation_map do
-		local relation_id = helpers.resolve_numeric_id(key)
-		if relation_id ~= nil and type(value) == "table" then
-			destination[relation_id] = value
-		end
-	end
-end
-
-function helpers.ensure_relation_entries<T>(relation_map: { [number]: { T }? }, ids: { number })
-	for _, id: number in ids do
+function helpers.ensure_relation_entries<T>(relation_map: { [string]: { T }? }, ids: { string })
+	for _, id: string in ids do
 		if type(relation_map[id]) ~= "table" then
 			relation_map[id] = {}
 		end
 	end
 end
 
-function helpers.relation_map_has_entries<T>(relation_map: { [number]: { T } }): boolean
+function helpers.relation_map_has_entries<T>(relation_map: { [string]: { T } }): boolean
 	for _, value in relation_map do
 		if type(value) == "table" and #value > 0 then
 			return true
@@ -913,14 +851,14 @@ function helpers.people_from_artist_relations(relations: { ArtistRelationInfo }?
 end
 
 function helpers.resolve_people_for_item(
-	entity_id: number?,
+	entity_id: string?,
 	entity_type: "release" | "track",
 	context: ItemContext?
 ): { PersonItem }?
 	if context == nil or context.include_people ~= true then
 		return nil
 	end
-	if entity_id == nil or entity_id <= 0 then
+	if entity_id == nil then
 		return {}
 	end
 
@@ -935,19 +873,19 @@ function helpers.resolve_people_for_item(
 	return helpers.people_from_credits(credits)
 end
 
-function helpers.resolve_people_for_artist(artist_db_id: number?, context: ItemContext?): { PersonItem }?
+function helpers.resolve_people_for_artist(artist_id: string?, context: ItemContext?): { PersonItem }?
 	if context == nil or context.include_people ~= true then
 		return nil
 	end
-	if artist_db_id == nil or artist_db_id <= 0 then
+	if artist_id == nil then
 		return {}
 	end
 
-	local relations = helpers.lookup_by_id(context.artist_relations_by_artist_id, artist_db_id)
+	local relations = helpers.lookup_by_id(context.artist_relations_by_artist_id, artist_id)
 	if relations == nil then
-		relations = helpers.query_artist_relations(artist_db_id)
+		relations = helpers.query_artist_relations(artist_id)
 		if relations ~= nil then
-			context.artist_relations_by_artist_id[artist_db_id] = relations
+			context.artist_relations_by_artist_id[artist_id] = relations
 		end
 	end
 
@@ -955,7 +893,7 @@ function helpers.resolve_people_for_artist(artist_db_id: number?, context: ItemC
 end
 
 function helpers.collect_artist_projection(
-	entity_id: number?,
+	entity_id: string?,
 	entity_type: "release" | "track",
 	context: ItemContext?
 ): (string?, { string }, { ArtistProjectionItem })
@@ -1002,16 +940,16 @@ function helpers.to_artist_item(
 	favorite_lookup: FavoriteLookup?,
 	context: ItemContext?
 ): ItemInfo?
-	if not artist or not artist.db_id then
+	if not artist then
 		return nil
 	end
 
 	local sort_name = requests.trim(artist.sort_name) or requests.trim(artist.artist_name) or "Unknown Artist"
 	local artist_item_id = item_ids.encode_jellyfin_item_id(artist.id)
 	local include_images = helpers.should_include_images(context)
-	local cover_info = if include_images then helpers.resolve_artist_cover_info(artist.db_id, context) else nil
+	local cover_info = if include_images then helpers.resolve_artist_cover_info(artist.id, context) else nil
 	-- Mirrors upstream `MusicArtist.IsFolder => !IsAccessedByName`.
-	local in_library, parent_id = helpers.resolve_entity_library_attribution(artist.db_id, context)
+	local in_library, parent_id = helpers.resolve_entity_library_attribution(artist.id, context)
 	local item: ItemInfo = {
 		Id = artist_item_id,
 		Name = requests.trim(artist.artist_name) or "Unknown Artist",
@@ -1026,7 +964,7 @@ function helpers.to_artist_item(
 		ImageTags = if cover_info then { Primary = cover_info.hash } else nil,
 		ImageBlurHashes = helpers.default_image_blur_hashes(cover_info),
 		UserData = helpers.build_item_user_data(
-			artist.db_id,
+			artist.id,
 			artist_item_id,
 			user_id,
 			`Artist-{requests.trim(artist.artist_name) or ""}`,
@@ -1034,10 +972,10 @@ function helpers.to_artist_item(
 			favorite_lookup,
 			context
 		),
-		People = helpers.resolve_people_for_artist(artist.db_id, context),
+		People = helpers.resolve_people_for_artist(artist.id, context),
 		LocationType = "FileSystem",
 		MediaType = "Unknown",
-		Tags = helpers.tag_names(helpers.resolve_tag_infos(artist.db_id, context)),
+		Tags = helpers.tag_names(helpers.resolve_tag_infos(artist.id, context)),
 		Overview = if context == nil or context.include_overview == true
 			then requests.trim(artist.description)
 			else nil,
@@ -1145,9 +1083,7 @@ function helpers.to_library_view_item(lib: LibraryInfo?, include_child_count: bo
 		LockData = false,
 		PlayAccess = "Full",
 		SpecialFeatureCount = 0,
-		ChildCount = if include_child_count and lib.db_id ~= nil
-			then releases.query({ library_id = lib.db_id, limit = 0 }).total
-			else nil,
+		ChildCount = if include_child_count then releases.query({ library_id = lib.id, limit = 0 }).total else nil,
 	} :: ItemInfo
 end
 
@@ -1202,7 +1138,7 @@ function helpers.to_playlist_item(
 	child_count: number?,
 	context: ItemContext?
 ): ItemInfo?
-	if not playlist or not playlist.db_id then
+	if not playlist then
 		return nil
 	end
 
@@ -1213,8 +1149,8 @@ function helpers.to_playlist_item(
 	local cover_info: artwork.ResolvedCoverInfo? = nil
 	if include_images then
 		cover_info = if context and context.cover_info_by_playlist_id
-			then context.cover_info_by_playlist_id[playlist.db_id]
-			else artwork.get_artwork_info(playlist.db_id)
+			then context.cover_info_by_playlist_id[playlist.id]
+			else artwork.get_artwork_info(playlist.id)
 	end
 
 	local item: ItemInfo = {
@@ -1224,15 +1160,13 @@ function helpers.to_playlist_item(
 		SortName = playlist_name,
 		Path = helpers.playlist_path(playlist_name),
 		ChildCount = child_count,
-		RunTimeTicks = helpers.lookup_by_id(
-			if context then context.runtime_ticks_by_playlist_id else nil,
-			playlist.db_id
-		) or enrichment.playlist_runtime_ticks({ playlist.db_id })[playlist.db_id],
+		RunTimeTicks = helpers.lookup_by_id(if context then context.runtime_ticks_by_playlist_id else nil, playlist.id)
+			or enrichment.playlist_runtime_ticks({ playlist.id })[playlist.id],
 		DateCreated = helpers.unix_ms_to_iso8601(playlist.created_at_ms),
 		ImageTags = if cover_info then { Primary = cover_info.hash } else nil,
 		ImageBlurHashes = helpers.default_image_blur_hashes(cover_info),
 		UserData = helpers.build_item_user_data(
-			playlist.db_id,
+			playlist.id,
 			playlist_item_id,
 			user_id,
 			`Playlist-{playlist.name or ""}`,
@@ -1242,7 +1176,7 @@ function helpers.to_playlist_item(
 		),
 		LocationType = "FileSystem",
 		MediaType = "Unknown",
-		Tags = helpers.tag_names(helpers.resolve_tag_infos(playlist.db_id, context)),
+		Tags = helpers.tag_names(helpers.resolve_tag_infos(playlist.id, context)),
 	}
 	return item
 end
@@ -1253,26 +1187,23 @@ function helpers.to_release_item(
 	favorite_lookup: FavoriteLookup?,
 	context: ItemContext?
 ): ItemInfo?
-	if not release or not release.db_id then
+	if not release then
 		return nil
 	end
 
 	local include_images = helpers.should_include_images(context)
-	local release_artist, artist_names, artist_items =
-		helpers.collect_artist_projection(release.db_id, "release", context)
+	local release_artist, artist_names, artist_items = helpers.collect_artist_projection(release.id, "release", context)
 	local prefetched_release_tracks =
-		helpers.lookup_by_id(if context then context.release_tracks_by_release_id else nil, release.db_id)
+		helpers.lookup_by_id(if context then context.release_tracks_by_release_id else nil, release.id)
 	local release_tracks: { Track } = if prefetched_release_tracks ~= nil
 		then prefetched_release_tracks
-		else lookups.tracks_of_release(release.db_id)
+		else lookups.tracks_of_release(release.id)
 	local runtime_ticks = enrichment.sum_runtime_ticks(release_tracks)
 	-- Jellyfin exposes image tags by default, but honors EnableImages=false.
-	local cover_info = if include_images then helpers.resolve_cover_info(release.db_id, context) else nil
+	local cover_info = if include_images then helpers.resolve_cover_info(release.id, context) else nil
 	local release_item_id = item_ids.encode_jellyfin_item_id(release.id)
-	local release_genres = helpers.lookup_by_id(
-		if context then context.genre_infos_by_release_id else nil,
-		release.db_id
-	) or helpers.resolve_release_genres(release.db_id)
+	local release_genres = helpers.lookup_by_id(if context then context.genre_infos_by_release_id else nil, release.id)
+		or helpers.resolve_release_genres(release.id)
 	local item: ItemInfo = {
 		Id = release_item_id,
 		Name = requests.trim(release.release_title) or "Unknown Album",
@@ -1285,15 +1216,15 @@ function helpers.to_release_item(
 		DateCreated = helpers.unix_ms_to_iso8601(release.file_created_at_ms or release.created_at_ms),
 		Genres = helpers.genre_names(release_genres),
 		GenreItems = helpers.genre_items(release_genres),
-		Tags = helpers.tag_names(helpers.resolve_tag_infos(release.db_id, context)),
+		Tags = helpers.tag_names(helpers.resolve_tag_infos(release.id, context)),
 		ParentId = if #artist_items > 0
 			then artist_items[1].Id
-			else helpers.resolve_entity_library_hex_id(release.db_id, context),
+			else helpers.resolve_entity_library_hex_id(release.id, context),
 		AlbumArtist = release_artist,
 		AlbumArtists = artist_items,
 		Artists = artist_names,
 		ArtistItems = artist_items,
-		People = helpers.resolve_people_for_item(release.db_id, "release", context),
+		People = helpers.resolve_people_for_item(release.id, "release", context),
 		ChildCount = #release_tracks,
 		RunTimeTicks = runtime_ticks,
 		NormalizationGain = helpers.album_gain_db(release_tracks),
@@ -1301,7 +1232,7 @@ function helpers.to_release_item(
 		AlbumPrimaryImageTag = if cover_info then cover_info.hash else nil,
 		ImageBlurHashes = helpers.default_image_blur_hashes(cover_info),
 		UserData = helpers.build_item_user_data(
-			release.db_id,
+			release.id,
 			release_item_id,
 			user_id,
 			`{release_artist or ""}-{requests.trim(release.release_title) or ""}`,
@@ -1314,21 +1245,13 @@ function helpers.to_release_item(
 	return item
 end
 
-function helpers.resolve_release_id_number(release: Release?): number?
-	local release_id = if release then release.db_id else nil
-	if release_id == nil or release_id <= 0 then
-		return nil
-	end
-	return release_id
-end
-
 function helpers.resolve_release_for_track(
 	track: TrackLike?,
-	preferred_release_id: number?,
+	preferred_release_id: string?,
 	include_images: boolean?,
 	context: ItemContext?
 ): (Release?, CoverInfo?)
-	local track_id = if track then track.db_id else nil
+	local track_id = if track then track.id else nil
 	local prefetched_releases =
 		helpers.lookup_by_id(if context then context.track_releases_by_track_id else nil, track_id)
 	local raw_releases: { Release } = if prefetched_releases ~= nil then prefetched_releases else {}
@@ -1345,34 +1268,15 @@ function helpers.resolve_release_for_track(
 		-- Fallback when bulk relation prefetch misses this track.
 		raw_releases = lookups.releases_of_track(track_id)
 	end
-	if #raw_releases == 0 then
-		return nil, nil
-	end
-
-	local candidates: { Release } = {}
-	for _, release: Release in raw_releases do
-		if helpers.resolve_release_id_number(release) ~= nil then
-			table.insert(candidates, release)
-		end
-	end
+	local candidates = raw_releases
 	if #candidates == 0 then
 		return nil, nil
 	end
 
-	table.sort(candidates, function(a: Release, b: Release): boolean
-		local a_id = helpers.resolve_release_id_number(a) or 0
-		local b_id = helpers.resolve_release_id_number(b) or 0
-		return a_id < b_id
-	end)
-
-	local preferred_release_id_number = helpers.resolve_numeric_id(preferred_release_id)
-	if preferred_release_id_number ~= nil then
+	if preferred_release_id ~= nil then
 		for _, release in candidates do
-			local release_id = helpers.resolve_release_id_number(release)
-			if release_id == preferred_release_id_number then
-				local preferred_cover = if include_images
-					then helpers.resolve_cover_info(release.db_id, context)
-					else nil
+			if release.id == preferred_release_id then
+				local preferred_cover = if include_images then helpers.resolve_cover_info(release.id, context) else nil
 				return release, preferred_cover
 			end
 		end
@@ -1384,10 +1288,10 @@ function helpers.resolve_release_for_track(
 	end
 
 	local selected_cover_info = if selected_release
-		then helpers.resolve_cover_info(selected_release.db_id, context)
+		then helpers.resolve_cover_info(selected_release.id, context)
 		else nil
 	for _, release: Release in candidates do
-		local cover_info = helpers.resolve_cover_info(release.db_id, context)
+		local cover_info = helpers.resolve_cover_info(release.id, context)
 		if cover_info then
 			selected_release = release
 			selected_cover_info = cover_info
@@ -1400,26 +1304,26 @@ end
 
 function helpers.to_track_item(
 	track: TrackLike?,
-	preferred_release_id: number?,
+	preferred_release_id: string?,
 	user_id: string?,
 	favorite_lookup: FavoriteLookup?,
 	include_media_info: boolean?,
 	context: ItemContext?
 ): ItemInfo?
-	if not track or not track.db_id then
+	if not track then
 		return nil
 	end
 
 	local include_images = helpers.should_include_images(context)
 	local release, release_cover_info =
 		helpers.resolve_release_for_track(track, preferred_release_id, include_images, context)
-	local artist_name, artist_names, artist_items = helpers.collect_artist_projection(track.db_id, "track", context)
+	local artist_name, artist_names, artist_items = helpers.collect_artist_projection(track.id, "track", context)
 	local release_artist_name = artist_name
 	local release_artist_names = artist_names
 	local release_artist_items = artist_items
-	if release and release.db_id then
+	if release then
 		local resolved_release_artist_name, resolved_release_artist_names, resolved_release_artist_items =
-			helpers.collect_artist_projection(release.db_id, "release", context)
+			helpers.collect_artist_projection(release.id, "release", context)
 		if resolved_release_artist_name then
 			release_artist_name = resolved_release_artist_name
 		end
@@ -1437,9 +1341,9 @@ function helpers.to_track_item(
 	end
 	local has_lyrics: boolean
 	if context and context.has_lyrics_prefetch then
-		has_lyrics = context.lyrics_by_track_id[track.db_id] == true
+		has_lyrics = context.lyrics_by_track_id[track.id] == true
 	else
-		local ok, value = pcall(lyrics.has, track.db_id)
+		local ok, value = pcall(lyrics.has, track.id)
 		has_lyrics = ok and value == true
 	end
 	local media_sources: { MediaSourceInfo }? = nil
@@ -1447,7 +1351,7 @@ function helpers.to_track_item(
 	local container = nil
 	local source = nil
 	if context and context.has_source_prefetch then
-		source = helpers.lookup_by_id(context.playback_source_by_track_id, track.db_id)
+		source = helpers.lookup_by_id(context.playback_source_by_track_id, track.id)
 	else
 		source = media.resolve_playback_source_for_track(track, include_media_info == true)
 	end
@@ -1457,13 +1361,13 @@ function helpers.to_track_item(
 	else
 		container = media.jellyfin_container(source)
 	end
-	local release_id = if release and release.id then item_ids.encode_jellyfin_item_id(release.id) else nil
+	local album_id = if release then item_ids.encode_jellyfin_item_id(release.id) else nil
 	local track_item_id = item_ids.encode_jellyfin_item_id(track.id)
 	local album_primary_image_tag = if release_cover_info then release_cover_info.hash else nil
-	local release_db_id = if release then release.db_id else nil
+	local release_id = if release then release.id else nil
 	local release_date = if release then release.release_date else nil
-	local track_genres = helpers.lookup_by_id(if context then context.genre_infos_by_release_id else nil, release_db_id)
-		or helpers.resolve_release_genres(release_db_id)
+	local track_genres = helpers.lookup_by_id(if context then context.genre_infos_by_release_id else nil, release_id)
+		or helpers.resolve_release_genres(release_id)
 	local track_sort_name = helpers.track_sort_name(track)
 
 	local item: ItemInfo = {
@@ -1482,16 +1386,16 @@ function helpers.to_track_item(
 		ProductionYear = track.year or enrichment.release_year(release_date),
 		PremiereDate = enrichment.track_premiere_date(track.year, release_date),
 		Album = if release then release.release_title else nil,
-		AlbumId = release_id,
-		ParentId = release_id,
+		AlbumId = album_id,
+		ParentId = album_id,
 		AlbumArtist = release_artist_name,
 		AlbumArtists = release_artist_items,
 		Artists = artist_names,
 		ArtistItems = artist_items,
-		People = helpers.resolve_people_for_item(track.db_id, "track", context),
+		People = helpers.resolve_people_for_item(track.id, "track", context),
 		Genres = helpers.genre_names(track_genres),
 		GenreItems = helpers.genre_items(track_genres),
-		Tags = helpers.tag_names(helpers.resolve_tag_infos(track.db_id, context)),
+		Tags = helpers.tag_names(helpers.resolve_tag_infos(track.id, context)),
 		AlbumPrimaryImageTag = album_primary_image_tag,
 		ImageTags = helpers.default_image_tags(),
 		ImageBlurHashes = helpers.default_image_blur_hashes(release_cover_info),
@@ -1499,7 +1403,7 @@ function helpers.to_track_item(
 		NormalizationGain = track.track_gain_db,
 		AlbumNormalizationGain = track.album_gain_db,
 		UserData = helpers.build_item_user_data(
-			track.db_id,
+			track.id,
 			track_item_id,
 			user_id,
 			`{track.disc or 0}-{track.track or 0}{requests.trim(track.track_title) or ""}`,
@@ -1532,7 +1436,7 @@ function helpers.track_sort_name(track: TrackLike?): string
 end
 
 function helpers.to_release_stub(release: ReleaseLike?): ItemInfo?
-	if not release or not release.db_id then
+	if not release then
 		return nil
 	end
 	local item: ItemInfo = {
@@ -1550,7 +1454,7 @@ function helpers.to_release_stub(release: ReleaseLike?): ItemInfo?
 end
 
 function helpers.to_track_stub(track: TrackLike?): ItemInfo?
-	if not track or not track.db_id then
+	if not track then
 		return nil
 	end
 	local item: ItemInfo = {
@@ -1567,7 +1471,7 @@ function helpers.to_track_stub(track: TrackLike?): ItemInfo?
 end
 
 function helpers.to_artist_stub(artist: ArtistLike?): ItemInfo?
-	if not artist or not artist.db_id then
+	if not artist then
 		return nil
 	end
 	local item: ItemInfo = {
@@ -1592,7 +1496,7 @@ function helpers.to_person_stub(artist: ArtistLike?): ItemInfo?
 end
 
 function helpers.to_playlist_stub(playlist: PlaylistInfo?, child_count: number?): ItemInfo?
-	if not playlist or not playlist.db_id then
+	if not playlist then
 		return nil
 	end
 
@@ -1665,9 +1569,7 @@ function helpers.favorite_id_lookup(options: ItemsQueryOptions?): FavoriteLookup
 		local ok, ids = pcall(favorites.list_ids, kind)
 		if ok and type(ids) == "table" then
 			for _, target_id in ids do
-				if type(target_id) == "number" and target_id > 0 then
-					lookup[target_id] = true
-				end
+				lookup[target_id] = true
 			end
 		else
 			-- `favorites.list_ids` errors rather than silently truncating above the server cap.
@@ -1721,7 +1623,7 @@ function helpers.collect_realization_seed(stubs: { ItemInfo }, context: ItemCont
 		track_ids = {},
 		release_ids = {},
 		artist_ids = {},
-		playlist_db_ids = {},
+		playlist_ids = {},
 		track_seen = {},
 		release_seen = {},
 		artist_seen = {},
@@ -1732,23 +1634,22 @@ function helpers.collect_realization_seed(stubs: { ItemInfo }, context: ItemCont
 
 	for _, stub: ItemInfo in stubs do
 		local raw = stub._raw
-		local db_id = if raw then raw.db_id else nil
-		local resolved_id = helpers.resolve_numeric_id(db_id)
-		if resolved_id ~= nil then
-			context.play_count_lookup[resolved_id] = 0
+		local id = if raw then raw.id else nil
+		if id ~= nil then
+			context.play_count_lookup[id] = 0
 		end
 
 		if stub._type == "track" then
 			seed.has_track_stubs = true
-			helpers.append_unique_id(db_id, seed.track_ids, seed.track_seen)
+			helpers.append_unique_id(id, seed.track_ids, seed.track_seen)
 		elseif stub._type == "release" then
 			seed.has_release_stubs = true
-			helpers.append_unique_id(db_id, seed.release_ids, seed.release_seen)
+			helpers.append_unique_id(id, seed.release_ids, seed.release_seen)
 		elseif stub._type == "artist" then
 			seed.has_artist_stubs = true
-			helpers.append_unique_id(db_id, seed.artist_ids, seed.artist_seen)
-		elseif stub._type == "playlist" and resolved_id then
-			table.insert(seed.playlist_db_ids, resolved_id)
+			helpers.append_unique_id(id, seed.artist_ids, seed.artist_seen)
+		elseif stub._type == "playlist" and id then
+			table.insert(seed.playlist_ids, id)
 		end
 	end
 
@@ -1760,7 +1661,7 @@ function helpers.prefetch_library_hex_ids(context: ItemContext, seed: Realizatio
 		return
 	end
 
-	local all_entity_ids: { number } = {}
+	local all_entity_ids: { string } = {}
 	for _, id in seed.release_ids do
 		table.insert(all_entity_ids, id)
 	end
@@ -1773,7 +1674,7 @@ function helpers.prefetch_library_hex_ids(context: ItemContext, seed: Realizatio
 
 	local ok, lib_map = pcall(libraries.get_for_entities, all_entity_ids)
 	if ok and lib_map then
-		local hex_map: { [number]: string } = {}
+		local hex_map: { [string]: string } = {}
 		for entity_id, lib in lib_map do
 			local hex = item_ids.nanoid_to_hex(lib.id)
 			if hex then
@@ -1793,7 +1694,7 @@ function helpers.prefetch_track_artists(context: ItemContext, seed: RealizationS
 	helpers.ensure_relation_entries(context.track_releases_by_track_id, seed.track_ids)
 
 	local track_artists_map = artists_module.by_track(seed.track_ids)
-	helpers.merge_artist_relation_map(context.related_artists_by_owner_id, track_artists_map)
+	helpers.merge_relation_map(context.related_artists_by_owner_id, track_artists_map)
 	context.has_track_artists_prefetch = helpers.relation_map_has_entries(track_artists_map)
 end
 
@@ -1803,11 +1704,11 @@ function helpers.prefetch_track_releases(context: ItemContext, seed: Realization
 	end
 
 	local track_releases_map = releases.by_track(seed.track_ids)
-	helpers.merge_release_relation_map(context.track_releases_by_track_id, track_releases_map)
+	helpers.merge_relation_map(context.track_releases_by_track_id, track_releases_map)
 	context.has_track_releases_prefetch = helpers.relation_map_has_entries(track_releases_map)
 	for _, related_releases: { Release } in track_releases_map do
 		for _, release: Release in related_releases do
-			helpers.append_unique_id(release.db_id, seed.release_ids, seed.release_seen)
+			helpers.append_unique_id(release.id, seed.release_ids, seed.release_seen)
 		end
 	end
 	context.track_release_lookup_complete = true
@@ -1822,15 +1723,11 @@ function helpers.prefetch_release_covers(context: ItemContext, seed: Realization
 		return
 	end
 
-	local cover_release_ids: { number } = {}
-	for _, release_id: number in seed.release_ids do
-		table.insert(cover_release_ids, release_id)
-	end
-	local prefetch_set: { [number]: boolean } = {}
-	for _, release_id: number in cover_release_ids do
+	local prefetch_set: { [string]: boolean } = {}
+	for _, release_id: string in seed.release_ids do
 		prefetch_set[release_id] = true
 	end
-	context.cover_info_by_release_id = artwork.get_cover_infos(cover_release_ids)
+	context.cover_info_by_release_id = artwork.get_cover_infos(seed.release_ids)
 	context.cover_prefetch_release_ids = prefetch_set
 end
 
@@ -1839,8 +1736,8 @@ function helpers.prefetch_artist_covers(context: ItemContext, seed: RealizationS
 		return
 	end
 
-	local prefetch_set: { [number]: boolean } = {}
-	for _, artist_id: number in seed.artist_ids do
+	local prefetch_set: { [string]: boolean } = {}
+	for _, artist_id: string in seed.artist_ids do
 		prefetch_set[artist_id] = true
 	end
 	context.cover_info_by_artist_id = artwork.get_cover_infos(seed.artist_ids)
@@ -1857,18 +1754,17 @@ function helpers.prefetch_release_artists_and_genres(
 	end
 
 	local release_artists_map = artists_module.by_release(seed.release_ids)
-	helpers.merge_artist_relation_map(context.related_artists_by_owner_id, release_artists_map)
+	helpers.merge_relation_map(context.related_artists_by_owner_id, release_artists_map)
 	context.has_release_artists_prefetch = helpers.relation_map_has_entries(release_artists_map)
 
-	local genre_cache: { [number]: { genres.GenreInfo } } = {}
+	local genre_cache: { [string]: { genres.GenreInfo } } = {}
 	if type(options._genre_infos_by_release_id) == "table" then
 		genre_cache = options._genre_infos_by_release_id
 	else
 		local all_genres = genres.by_release(seed.release_ids)
 		if type(all_genres) == "table" then
-			for key, infos in all_genres do
-				local release_id = helpers.resolve_numeric_id(key)
-				if release_id and type(infos) == "table" and #infos > 0 then
+			for release_id, infos in all_genres do
+				if type(infos) == "table" and #infos > 0 then
 					genre_cache[release_id] = infos
 				end
 			end
@@ -1882,8 +1778,8 @@ function helpers.prefetch_credit_relations(context: ItemContext, seed: Realizati
 		return
 	end
 
-	local ids: { number } = {}
-	local seen: { [number]: boolean } = {}
+	local ids: { string } = {}
+	local seen: { [string]: boolean } = {}
 	for _, release_id in seed.release_ids do
 		helpers.append_unique_id(release_id, ids, seen)
 	end
@@ -1897,7 +1793,7 @@ function helpers.prefetch_credit_relations(context: ItemContext, seed: Realizati
 	helpers.ensure_relation_entries(context.credited_artists_by_owner_id, ids)
 	local projection_lookup = helpers.query_many_projections(ids, { "credits" })
 	for _, id in ids do
-		local credits = helpers.projection_credits(projection_lookup[tostring(id)])
+		local credits = helpers.projection_credits(projection_lookup[id])
 		if credits ~= nil then
 			context.credited_artists_by_owner_id[id] = credits
 		end
@@ -1926,7 +1822,7 @@ function helpers.prefetch_release_tracks(context: ItemContext, seed: Realization
 	end
 
 	local release_tracks_map = tracks.by_release(seed.release_ids)
-	helpers.merge_track_relation_map(context.release_tracks_by_release_id, release_tracks_map)
+	helpers.merge_relation_map(context.release_tracks_by_release_id, release_tracks_map)
 	context.has_release_tracks_prefetch = helpers.relation_map_has_entries(release_tracks_map)
 end
 
@@ -1942,7 +1838,10 @@ function helpers.prefetch_artist_people_relations(context: ItemContext, seed: Re
 		return
 	end
 
-	helpers.merge_artist_relation_info_map(context.artist_relations_by_artist_id, relation_map)
+	helpers.merge_relation_map(
+		context.artist_relations_by_artist_id,
+		relation_map :: { [string]: { ArtistRelationInfo } }
+	)
 	context.has_artist_relations_prefetch = helpers.relation_map_has_entries(relation_map)
 end
 
@@ -1977,50 +1876,43 @@ function helpers.prefetch_track_lyrics(context: ItemContext, seed: RealizationSe
 	end
 
 	local ok, lookup = pcall(lyrics.has_many, seed.track_ids)
-	if not ok or type(lookup) ~= "table" then
+	if not ok then
 		return
 	end
 
-	local resolved: LyricsLookup = {}
-	for key, value in lookup do
-		local id = helpers.resolve_numeric_id(key)
-		if id ~= nil then
-			resolved[id] = value == true
-		end
-	end
-	context.lyrics_by_track_id = resolved
+	context.lyrics_by_track_id = lookup
 	context.has_lyrics_prefetch = true
 end
 
 function helpers.prefetch_playlist_covers(context: ItemContext, seed: RealizationSeedInfo): ()
-	if #seed.playlist_db_ids == 0 or not helpers.should_include_images(context) then
+	if #seed.playlist_ids == 0 or not helpers.should_include_images(context) then
 		return
 	end
 
-	context.cover_info_by_playlist_id = artwork.get_artwork_infos(seed.playlist_db_ids)
+	context.cover_info_by_playlist_id = artwork.get_artwork_infos(seed.playlist_ids)
 end
 
 function helpers.prefetch_playlist_runtimes(context: ItemContext, seed: RealizationSeedInfo): ()
-	if #seed.playlist_db_ids == 0 then
+	if #seed.playlist_ids == 0 then
 		return
 	end
 
-	context.runtime_ticks_by_playlist_id = enrichment.playlist_runtime_ticks(seed.playlist_db_ids)
+	context.runtime_ticks_by_playlist_id = enrichment.playlist_runtime_ticks(seed.playlist_ids)
 end
 
-function helpers.collect_tag_target_ids(seed: RealizationSeedInfo): { number }
-	local target_ids: { number } = {}
-	local seen: { [number]: boolean } = {}
-	for _, id: number in seed.track_ids do
+function helpers.collect_tag_target_ids(seed: RealizationSeedInfo): { string }
+	local target_ids: { string } = {}
+	local seen: { [string]: boolean } = {}
+	for _, id: string in seed.track_ids do
 		helpers.append_unique_id(id, target_ids, seen)
 	end
-	for _, id: number in seed.release_ids do
+	for _, id: string in seed.release_ids do
 		helpers.append_unique_id(id, target_ids, seen)
 	end
-	for _, id: number in seed.artist_ids do
+	for _, id: string in seed.artist_ids do
 		helpers.append_unique_id(id, target_ids, seen)
 	end
-	for _, id: number in seed.playlist_db_ids do
+	for _, id: string in seed.playlist_ids do
 		helpers.append_unique_id(id, target_ids, seen)
 	end
 	return target_ids
@@ -2074,7 +1966,7 @@ function helpers.realize_stubs(stubs: { ItemInfo }, options: ItemsQueryOptions):
 	local context = helpers.build_realization_context(stubs, options)
 	local favorite_lookup = context.favorite_lookup
 	local parent_scope = lookups.scope(options.parent_id)
-	local scoped_release_id = if parent_scope.entity_type == "Release" then parent_scope.db_id else nil
+	local scoped_release_id = if parent_scope.entity_type == "Release" then parent_scope.id else nil
 	for _, stub: ItemInfo in stubs do
 		local item: ItemInfo? = nil
 		local raw = stub._raw
@@ -2112,15 +2004,15 @@ end
 
 -- Artwork routes are public, so this resolves names without a caller; it only ever leads to
 -- image bytes. People are artists, so it serves both.
-function module.find_artist_db_id_by_name(name: string): number?
+function module.find_artist_id_by_name(name: string): string?
 	return artists_module.artwork_id_by_name(name)
 end
 
 -- Artwork routes are public, so this resolves names without a caller; it only ever leads to
 -- image bytes.
-function module.find_genre_db_id_by_name(name: string): number?
+function module.find_genre_id_by_name(name: string): string?
 	local genre_info = genres.find_by_name(name)
-	return if genre_info then genre_info.db_id else nil
+	return if genre_info then genre_info.id else nil
 end
 
 module.realize = helpers.realize_stubs

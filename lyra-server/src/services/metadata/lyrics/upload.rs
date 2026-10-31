@@ -179,7 +179,7 @@ pub(crate) fn upsert_personal_lyrics_by_db_id(
 ) -> Result<LyricsDetail, LyricsUploadError> {
     let owner_db_id = owner.require(db).map_err(anyhow::Error::from)?;
     let track = lyra_db::tracks::get_by_id(db, track_db_id)?.ok_or_else(|| {
-        LyricsUploadError::NotFound(format!("Track not found: {}", track_db_id.0))
+        LyricsUploadError::NotFound(format!("Track not found: {expected_track_public_id}"))
     })?;
     if track.id != expected_track_public_id {
         return Err(LyricsUploadError::NotFound(format!(

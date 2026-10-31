@@ -5,7 +5,6 @@
 -- www.meshiplaw.com/lyra.
 
 local api = require("@lyra/api")
-local ids = require("@lyra/ids")
 local lyrics = require("@lyra/lyrics")
 local playback_sources = require("@lyra/playback_sources")
 local playbacks = require("@lyra/playback_sessions")
@@ -42,7 +41,7 @@ export type ClientPlayback = {
 	-- Whether the client reports over its socket rather than HTTP.
 	via_socket: boolean,
 	reported_s: number,
-	track_public_id: string,
+	track_id: string,
 	position_ms: number?,
 	duration_ms: number?,
 	is_paused: boolean,
@@ -971,9 +970,8 @@ function module.build_audio_media_source(item_id: string?, track: Track?, public
 		then media.resolve_public_playback_source(track, true)
 		else module.resolve_playback_source_for_track(track, true)
 	local has_lyrics = false
-	local track_db_id = if track then track.db_id else nil
-	if track_db_id then
-		local ok, value = pcall(lyrics.has, track_db_id)
+	if track then
+		local ok, value = pcall(lyrics.has, track.id)
 		has_lyrics = ok and value == true
 	end
 	local media_sources, _ =
@@ -1028,7 +1026,7 @@ end
 function module.ensure_payload_user_matches(auth_context: AuthContext, payload: PlaybackPayload?): boolean
 	local raw_user_id = scalar_field(payload, "UserId")
 	local payload_user_id = if type(raw_user_id) == "string" then module.trim(raw_user_id) else nil
-	if payload_user_id and item_ids.decode_jellyfin_user_id(payload_user_id) ~= auth_context.principal.user_id then
+	if payload_user_id and item_ids.decode_jellyfin_item_id(payload_user_id) ~= auth_context.principal.user_id then
 		return false
 	end
 
@@ -1043,13 +1041,11 @@ function module.report_playback_event(
 	reporter: PlaybackReporter
 ): (boolean, string?)
 	local raw_item_id = scalar_field(payload, "ItemId")
-	local item_public_id =
-		item_ids.decode_jellyfin_public_id(if type(raw_item_id) == "string" then raw_item_id else nil)
-	local item_id = if item_public_id then ids.get_db_id(item_public_id) else nil
+	local item_id = item_ids.decode_jellyfin_item_id(if type(raw_item_id) == "string" then raw_item_id else nil)
 	-- As upstream, a report naming no item records nothing and still succeeds. A track the caller
 	-- can't see reads as one that doesn't exist.
 	local track = module.resolve_track_for_playback(item_id)
-	if item_public_id == nil or item_id == nil or track == nil then
+	if item_id == nil or track == nil then
 		-- A stop ends whatever this session was playing, even when it can't name the item.
 		if event_name == "stopped" then
 			forget_session_state(session_key)
@@ -1085,11 +1081,12 @@ function module.report_playback_event(
 
 	if
 		prior_session_state
-		and prior_session_state.track_public_id ~= item_public_id
+		and prior_session_state.track_id ~= item_id
 		and not is_terminal_playback_state(normalized_state)
 	then
-		local prior_track_id = ids.get_db_id(prior_session_state.track_public_id)
-		if prior_track_id then
+		-- A track gone since has no playback left to stop.
+		local prior_track_id = prior_session_state.track_id
+		if module.resolve_track_for_playback(prior_track_id) then
 			local _, stop_error = playbacks.report_session({
 				session_key = session_key :: string,
 				track_id = prior_track_id,
@@ -1117,7 +1114,7 @@ function module.report_playback_event(
 	-- rejects it.
 	if is_terminal_playback_state(normalized_state) then
 		local current = playback_session_state_by_key[session_key]
-		if current and current.track_public_id == item_public_id then
+		if current and current.track_id == item_id then
 			forget_session_state(session_key)
 		end
 	end
@@ -1134,7 +1131,7 @@ function module.report_playback_event(
 			user_id = auth_context.principal.user_id,
 			session_info = reporter.session_info,
 			via_socket = reporter.via_socket,
-			track_public_id = item_public_id,
+			track_id = item_id,
 			playback_start_ticks = playback_start_ticks,
 			position_ms = position_ms,
 			duration_ms = duration_ms,
@@ -1169,8 +1166,7 @@ function module.resolve_playback_info_item(ctx: ApiContext?): (string?, Track?, 
 		return nil, nil, module.bad_request("missing item id")
 	end
 
-	local db_id = module.decode_jellyfin_item_id(raw_item_id)
-	local track = module.resolve_track_for_playback(db_id)
+	local track = module.resolve_track_for_playback(module.decode_jellyfin_item_id(raw_item_id))
 	if not track then
 		return nil, nil, module.not_found("item not found")
 	end
@@ -1217,9 +1213,8 @@ function module.build_playback_info(
 	end
 
 	local has_lyrics = false
-	local track_db_id = if track then track.db_id else nil
-	if track_db_id then
-		local ok, value = pcall(lyrics.has, track_db_id)
+	if track then
+		local ok, value = pcall(lyrics.has, track.id)
 		has_lyrics = ok and value == true
 	end
 	local media_sources, _ =
@@ -1279,25 +1274,25 @@ function module.build_playback_info(
 	}, nil
 end
 
-local function lookup_track(lookup: ({ number }) -> { [number]: Track }, item_id: number?): Track?
-	if not item_id or item_id <= 0 then
+local function lookup_track(lookup: ({ string }) -> { [string]: Track }, item_id: string?): Track?
+	if not item_id then
 		return nil
 	end
 
-	-- Typed-to-Track-node: release/artist db_ids resolve to nil, not the first related track.
+	-- Typed-to-Track-node: release/artist ids resolve to nil, not the first related track.
 	local ok, result = pcall(lookup, { item_id })
 	if not ok or type(result) ~= "table" then
 		return nil
 	end
-	return (result :: { [number]: Track })[item_id]
+	return (result :: { [string]: Track })[item_id]
 end
 
-function module.resolve_track_for_playback(item_id: number?): Track?
+function module.resolve_track_for_playback(item_id: string?): Track?
 	return lookup_track(tracks.get, item_id)
 end
 
 -- Reads as the system for public streaming routes, which must serve nothing from it but the audio.
-function module.resolve_track_for_public_stream(item_id: number?): Track?
+function module.resolve_track_for_public_stream(item_id: string?): Track?
 	return lookup_track(tracks.streamable, item_id)
 end
 

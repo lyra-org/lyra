@@ -79,7 +79,6 @@ use harmony_luau::{
     TypeAliasDescriptor,
 };
 
-use crate::plugins::args::PositiveId;
 #[cfg(feature = "docgen")]
 use crate::plugins::auth::{
     AuthCredential,
@@ -521,39 +520,30 @@ impl ApiModule {
     #[harmony(
         name = "response.stream_track",
         description = "Builds a streamed-track response.",
-        args(track_id: i64, options: Option<TrackStreamOptions>),
+        args(track_id: String, options: Option<TrackStreamOptions>),
         returns(ApiResponse)
     )]
-    fn response_stream_track(
-        track_id: PositiveId,
-        options: Option<luau::Value>,
-    ) -> luau::OwnedTable {
+    fn response_stream_track(track_id: String, options: Option<luau::Value>) -> luau::OwnedTable {
         track_response("stream_track", track_id, options)
     }
 
     #[harmony(
         name = "response.download_track",
         description = "Builds a download-track response.",
-        args(track_id: i64, options: Option<TrackServeOptions>),
+        args(track_id: String, options: Option<TrackServeOptions>),
         returns(ApiResponse)
     )]
-    fn response_download_track(
-        track_id: PositiveId,
-        options: Option<luau::Value>,
-    ) -> luau::OwnedTable {
+    fn response_download_track(track_id: String, options: Option<luau::Value>) -> luau::OwnedTable {
         track_response("download_track", track_id, options)
     }
 
     #[harmony(
         name = "response.hls_playlist",
         description = "Builds an HLS playlist response.",
-        args(track_id: i64, options: Option<HlsServeOptions>),
+        args(track_id: String, options: Option<HlsServeOptions>),
         returns(ApiResponse)
     )]
-    fn response_hls_playlist(
-        track_id: PositiveId,
-        options: Option<luau::Value>,
-    ) -> luau::OwnedTable {
+    fn response_hls_playlist(track_id: String, options: Option<luau::Value>) -> luau::OwnedTable {
         track_response("hls_playlist", track_id, options)
     }
 
@@ -643,12 +633,12 @@ fn register_route(
 
 fn track_response(
     kind: &'static str,
-    track_id: PositiveId,
+    track_id: String,
     options: Option<luau::Value>,
 ) -> luau::OwnedTable {
     let options = optional_value(options);
     let mut response = kind_table(kind);
-    response.set_field("track_id", track_id.0.0);
+    response.set_field("track_id", track_id);
     if !is_nil(&options) {
         response.set_field("options", options);
     }
@@ -871,7 +861,7 @@ fn api_response_aliases() -> Vec<TypeAliasDescriptor> {
             "ApiStreamTrackResponse",
             "stream_track",
             [
-                field("track_id", i64::luau_type()),
+                field("track_id", String::luau_type()),
                 field(
                     "options",
                     LuauType::optional(TrackStreamOptions::luau_type()),
@@ -882,7 +872,7 @@ fn api_response_aliases() -> Vec<TypeAliasDescriptor> {
             "ApiDownloadTrackResponse",
             "download_track",
             [
-                field("track_id", i64::luau_type()),
+                field("track_id", String::luau_type()),
                 field(
                     "options",
                     LuauType::optional(TrackServeOptions::luau_type()),
@@ -893,7 +883,7 @@ fn api_response_aliases() -> Vec<TypeAliasDescriptor> {
             "ApiHlsPlaylistResponse",
             "hls_playlist",
             [
-                field("track_id", i64::luau_type()),
+                field("track_id", String::luau_type()),
                 field("options", LuauType::optional(HlsServeOptions::luau_type())),
             ],
         ),

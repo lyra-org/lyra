@@ -15,7 +15,7 @@ for _, cover in covers.artwork({ ids.shown, ids.secret }) do
 	hash_by_path[cover.path] = cover.hash
 end
 
-local function served_hash(id: number, api_key: string?): string?
+local function served_hash(id: string, api_key: string?): string?
 	local response = session.handle_primary_image_request({
 		plugin_id = "jellyfin",
 		request = {
@@ -47,7 +47,7 @@ local caller_pick = covers.get({ ids.rock }, { listens = "instance" })[ids.rock]
 assert(caller_pick.release_id == ids.shown, "the listener's own pick is the release they see")
 assert(covers.artwork({ ids.rock })[ids.rock].release_id == ids.secret, "the instance picks Secret")
 
-local function assert_consistent(item: any, id: number, what: string)
+local function assert_consistent(item: any, id: string, what: string)
 	local tag = item.ImageTags and item.ImageTags.Primary
 	assert(tag ~= nil, `{what} has an image tag`)
 	assert(served_hash(id) == tag, `{what}: tag {tag}, anonymous image {served_hash(id)}`)

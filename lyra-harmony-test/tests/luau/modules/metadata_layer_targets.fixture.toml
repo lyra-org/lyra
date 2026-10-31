@@ -1,0 +1,25 @@
+run_as = "owner"
+
+[[users]]
+key = "owner"
+admin = true
+
+[[artists]]
+key = "singer"
+name = "Singer"
+
+[[genres]]
+key = "rock"
+name = "Rock"
+
+[[releases]]
+key = "album"
+title = "Album"
+genres = ["rock"]
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+disc = 1
+track = 1

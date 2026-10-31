@@ -25,6 +25,7 @@ use crate::{
             SystemDb,
             ViewerDb,
         },
+        ids::Resolved,
         types::CoverInfo,
     },
     services::covers::{
@@ -72,7 +73,7 @@ impl LuauTypeInfo for CoverOptions {
 impl CoversModule {
     #[harmony(
         description = "The covers of the items the caller can see, keyed by id. Items without a cover, unknown ids and items of other types are absent. A playlist or genre shows a release the caller can see. Without a resolved caller, a client dispatch is refused.",
-        returns(HashMap<u64, CoverInfo>)
+        returns(HashMap<String, CoverInfo>)
     )]
     async fn get(
         ids: UniqueIds,
@@ -85,7 +86,7 @@ impl CoversModule {
 
     #[harmony(
         description = "`get` read as the system, with genre covers picked from the instance's listens whatever `options` says. Ignores library and playlist visibility, including private playlists, so it is only for public artwork routes, which must serve nothing from it but the image bytes.",
-        returns(HashMap<u64, CoverInfo>)
+        returns(HashMap<String, CoverInfo>)
     )]
     async fn artwork(
         ids: UniqueIds,
@@ -101,22 +102,29 @@ async fn covers(
     ids: &UniqueIds,
     listens: Listens,
 ) -> luau::runtime::Result<luau::OwnedTable> {
-    let found = {
+    let (table, stale_owners) = {
         let (db, viewer) = db.read().await?;
-        lookup::resolve(&db, &viewer, &ids.0, listens)?
+        let ids = Resolved::of(&*db, ids.0.clone())?;
+        let found = lookup::resolve(&db, &viewer, ids.db_ids(), listens)?;
+        let owner_ids = found
+            .covers
+            .values()
+            .map(|cover| cover.owner_db_id)
+            .collect::<Vec<_>>();
+        let owners = crate::plugins::ids::public_ids(&*db, &owner_ids)?;
+        let mut covers = Vec::with_capacity(found.covers.len());
+        for (id, cover) in found.covers {
+            covers.push((
+                id,
+                harmony_luau::serializable_to_luau_owned(CoverInfo::new(cover, &owners)?)?,
+            ));
+        }
+        (ids.keyed(covers), found.stale_owners)
     };
-    if !found.stale_owners.is_empty() {
+    if !stale_owners.is_empty() {
         let handle = db.handle();
         let mut db = handle.write().await;
-        lookup::remove_stale(&mut db, &found.stale_owners)?;
-    }
-
-    let mut table = luau::OwnedTable::with_entry_capacity(0, 0, found.covers.len());
-    for (id, cover) in found.covers {
-        table.set_key(
-            id.0,
-            harmony_luau::serializable_to_luau_owned(CoverInfo::from(cover))?,
-        );
+        lookup::remove_stale(&mut db, &stale_owners)?;
     }
     Ok(table)
 }

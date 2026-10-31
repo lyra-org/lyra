@@ -13,12 +13,12 @@ local normalize_overlap_title = text_helpers.normalize_overlap_title
 local module = {}
 
 export type LocalArtist = {
-	db_id: number?,
+	id: string?,
 	artist_name: string?,
 }
 
 export type LocalTrack = {
-	db_id: number?,
+	id: string?,
 	track_title: string,
 	artists: { LocalArtist }?,
 	disc: number?,
@@ -225,7 +225,12 @@ function module.sort_tracks_for_refresh(track_list: { LocalTrack })
 		if a_title ~= b_title then
 			return a_title < b_title
 		end
-		return (a.db_id or math.huge) < (b.db_id or math.huge)
+		local a_id = a.id
+		local b_id = b.id
+		if a_id == nil or b_id == nil then
+			return a_id ~= nil
+		end
+		return a_id < b_id
 	end)
 end
 

@@ -262,7 +262,7 @@ local function cache_key(ctx: ProviderLyricsContext): string
 end
 
 local function attempt_key(ctx: ProviderLyricsContext): string
-	return `{ATTEMPT_KEY_PREFIX}{ctx.track_db_id}`
+	return `{ATTEMPT_KEY_PREFIX}{ctx.track_id}`
 end
 
 type AttemptStatus = "miss" | "instrumental" | "hit"

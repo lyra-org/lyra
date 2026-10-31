@@ -28,7 +28,6 @@ use crate::{
         self,
         JsonArg,
     },
-    plugins::db::Db,
     plugins::types::LuauMixSeedType,
     services::auth::Principal,
     services::mix::{
@@ -348,9 +347,8 @@ impl MixModule {
     async fn blend(
         request: JsonArg,
         #[context] principal: Principal,
-        #[context] db: Db,
     ) -> luau::runtime::Result<luau::Value> {
-        consume(MixShape::Blend, request, principal, db).await
+        consume(MixShape::Blend, request, principal).await
     }
 
     #[harmony(
@@ -361,9 +359,8 @@ impl MixModule {
     async fn path(
         request: JsonArg,
         #[context] principal: Principal,
-        #[context] db: Db,
     ) -> luau::runtime::Result<luau::Value> {
-        consume(MixShape::Path, request, principal, db).await
+        consume(MixShape::Path, request, principal).await
     }
 }
 
@@ -481,25 +478,14 @@ fn describe_key(key: &luau::Value) -> String {
     }
 }
 
-/// Mixes `request`, a REST body with seeds by database id, in the shape the function called names.
+/// Mixes `request`, a REST body, in the shape the function called names.
 async fn consume(
     shape: MixShape,
     request: JsonArg,
     principal: Principal,
-    db: Db,
 ) -> luau::runtime::Result<luau::Value> {
     let label = format!("mix.{}", shape.as_str());
     let fields = request_fields(request.0, &label)?;
-    let fields = {
-        let db = db.read().await;
-        fields.with_public_ids(|id| {
-            let id = args::positive_id(id, "seeds[].id")?;
-            lyra_db::lookup::find_id_by_db_id(&*db, id).map_err(crate::plugins::runtime_error)
-        })?
-    };
-    let Some(fields) = fields else {
-        return tracks_to_luau(None);
-    };
     let request = MixRequest {
         shape,
         ..fields.into_request()
@@ -516,7 +502,7 @@ async fn consume(
 fn request_fields(
     mut json: serde_json::Value,
     label: &str,
-) -> luau::runtime::Result<MixRequestFields<i64>> {
+) -> luau::runtime::Result<MixRequestFields> {
     // An empty Luau table reads as an empty array; the request and its options are objects.
     let empty_as_object = |value: &mut serde_json::Value| {
         if value.as_array().is_some_and(Vec::is_empty) {
@@ -527,7 +513,7 @@ fn request_fields(
     if let Some(options) = json.get_mut("options") {
         empty_as_object(options);
     }
-    let fields: MixRequestFields<i64> = serde_json::from_value(json)
+    let fields: MixRequestFields = serde_json::from_value(json)
         .map_err(|error| crate::plugins::runtime_error(format!("{label}: request: {error}")))?;
     if fields.shape.is_some() {
         return Err(crate::plugins::runtime_error(format!(
@@ -657,8 +643,8 @@ fn support_aliases() -> Vec<TypeAliasDescriptor> {
         },
         TypeAliasDescriptor {
             name: "MixSeedInput",
-            description: Some("A seed's database id, or a seed entry that can exclude it."),
-            ty: LuauType::union(vec![f64::luau_type(), LuauType::literal("MixSeedEntry")]),
+            description: Some("A seed's id, or a seed entry that can exclude it."),
+            ty: LuauType::union(vec![String::luau_type(), LuauType::literal("MixSeedEntry")]),
         },
     ]
 }
@@ -666,11 +652,6 @@ fn support_aliases() -> Vec<TypeAliasDescriptor> {
 #[cfg(feature = "docgen")]
 fn track_type() -> LuauType {
     LuauType::object(vec![
-        FieldDescriptor {
-            name: "db_id",
-            ty: Option::<i64>::luau_type(),
-            description: None,
-        },
         FieldDescriptor {
             name: "id",
             ty: String::luau_type(),
@@ -851,7 +832,7 @@ fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
             "MixSeed",
             "A seed handed to a mix handler.",
             vec![
-                field("id", f64::luau_type(), Some("The seed's database id.")),
+                field("id", String::luau_type(), Some("The seed's id.")),
                 field("type", LuauType::literal("SeedType"), None),
                 field(
                     "exclude",
@@ -875,7 +856,7 @@ fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
         interface(
             "MixResultTrack",
             "A track entry in a mix result.",
-            vec![field("track_id", f64::luau_type(), None)],
+            vec![field("track_id", String::luau_type(), None)],
         ),
         interface(
             "MixResult",
@@ -890,7 +871,7 @@ fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
             "MixSeedEntry",
             "A seed, optionally excluded to mix away from it.",
             vec![
-                field("id", f64::luau_type(), Some("The seed's database id.")),
+                field("id", String::luau_type(), Some("The seed's id.")),
                 field(
                     "exclude",
                     opt(bool::luau_type()),
@@ -900,12 +881,12 @@ fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
         ),
         interface(
             "MixRequest",
-            "A blend request for `mix.blend`, as `POST /api/mix` takes it with seeds by database id; it needs a seed that isn't excluded, `from_history`, or `q`.",
+            "A blend request for `mix.blend`, as `POST /api/mix` takes it; it needs a seed that isn't excluded, `from_history`, or `q`.",
             vec![
                 field(
                     "seeds",
                     opt(LuauType::literal("{ MixSeedInput }")),
-                    Some("Tracks, releases, artists, genres or playlists, by database id."),
+                    Some("Tracks, releases, artists, genres or playlists, by id."),
                 ),
                 field(
                     "from_history",
@@ -933,12 +914,12 @@ fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
         ),
         interface(
             "MixPathRequest",
-            "A path request for `mix.path`, as `POST /api/mix` takes it with seeds by database id.",
+            "A path request for `mix.path`, as `POST /api/mix` takes it.",
             vec![
                 field(
                     "seeds",
                     LuauType::literal("{ MixSeedInput }"),
-                    Some("The start and end, by database id."),
+                    Some("The start and end, by id."),
                 ),
                 field("q", opt(String::luau_type()), Some("A free-text query.")),
                 mixer_field(),

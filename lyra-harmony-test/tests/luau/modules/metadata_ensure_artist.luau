@@ -6,7 +6,7 @@ local ArtistType = metadata.ArtistType
 local provider = metadata.Provider.new("ensure-artist-test")
 provider:id({ id_type = "artist_id", entity = metadata.EntityType.Artist })
 
-local function artist_type(id: number): string?
+local function artist_type(id: string): string?
 	return artists.get({ id })[id].artist_type
 end
 

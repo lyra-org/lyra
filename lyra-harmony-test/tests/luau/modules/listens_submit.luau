@@ -4,7 +4,7 @@ local listens = require("@lyra/listens")
 
 local started_at_ms = math.floor(os.time() * 1000) - 600000
 
-local function play(play_id: string, track_id: number, played_ms: number): listens.SubmittedPlay
+local function play(play_id: string, track_id: string, played_ms: number): listens.SubmittedPlay
 	return {
 		play_id = play_id,
 		track_id = track_id,
@@ -19,7 +19,7 @@ local outcomes = listens.submit({
 	play("short-play-0000001", fixture.ids.long, 29999),
 	play("short-track-play-1", fixture.ids.short, 12000),
 	play("hidden-track-play1", fixture.ids.hidden, 60000),
-	play("missing-track-play", 999999999, 60000),
+	play("missing-track-play", "missing-track", 60000),
 	{
 		play_id = "ancient-play-00001",
 		track_id = fixture.ids.long,
@@ -50,7 +50,10 @@ local function rejects(plays: any, message: string)
 end
 
 rejects({ play("bad id", fixture.ids.long, 60000) }, "plays[1]: malformed play_id")
-rejects({ play("valid-play-0000002", fixture.ids.long, 60000), play("zero-track-play-01", 0, 60000) }, "plays[2]")
+rejects(
+	{ play("valid-play-0000002", fixture.ids.long, 60000), play("number-track-play-1", 1 :: any, 60000) },
+	"plays[2]"
+)
 rejects({ { play_id = "missing-fields-001" } }, "plays[1]")
 rejects({ first = play("keyed-play-000001", fixture.ids.long, 60000) }, "expected an array")
 

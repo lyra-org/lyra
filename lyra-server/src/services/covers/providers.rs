@@ -447,7 +447,6 @@ pub(crate) fn library_for_release(db: &DbAny, release_id: DbId) -> Result<Option
 
 fn library_context_value(library: &Library) -> Value {
     serde_json::json!({
-        "db_id": library.db_id.map(|id| id.0),
         "id": library.id,
         "name": library.name,
         "directory": library.path.to_string_lossy().to_string(),
@@ -962,7 +961,7 @@ mod tests {
         let context =
             release_context_value(&release, &[track], &[artist], &external_ids, Some(&library))?;
 
-        assert_eq!(context["library"]["db_id"], json!(99));
+        assert_eq!(context["library"]["id"], json!(library.id));
         assert_eq!(context["library"]["language"], json!("jpn"));
         assert_eq!(context["ids"]["release_id"], json!("release-123"));
         assert_eq!(context["ids"]["release_group_id"], json!("group-123"));

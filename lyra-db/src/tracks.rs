@@ -26,6 +26,7 @@ use super::NodeId;
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(DbElement, Serialize, Deserialize, Clone, Debug)]
 pub struct Track {
+    #[serde(skip_serializing)]
     pub db_id: Option<NodeId>,
     pub id: String,
     pub track_title: String,

@@ -194,7 +194,7 @@ pub(super) fn parse_api_response(
     let path = table.optional_string_field("path")?;
     let transform = harmony_serde::optional_json_field(&table, "transform")?;
     let options = harmony_serde::optional_json_field(&table, "options")?;
-    let track_id = table.optional_i64_field("track_id")?;
+    let track_id = table.optional_string_field("track_id")?;
 
     let body = match kind {
         ApiResponseKind::Json => Some(ApiResponseBody::Json(

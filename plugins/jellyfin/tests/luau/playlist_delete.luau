@@ -5,7 +5,7 @@ local session = require("../../protocol/session")
 
 -- As upstream, an admin deletes any playlist it can see; another user's private one isn't found.
 
-local function delete(id: number): number
+local function delete(id: string): number
 	local response = session.handle_delete_item_route({
 		plugin_id = "jellyfin",
 		request = {

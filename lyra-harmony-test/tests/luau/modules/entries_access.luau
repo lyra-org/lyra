@@ -11,10 +11,10 @@ assert(file.name == "song.opus" and file.full_path == nil)
 
 local held = entries.by_track({ fixture.ids.visible, fixture.ids.invisible })
 assert(held[fixture.ids.invisible] == nil, "an unseen track's entries are hidden")
-assert(held[fixture.ids.visible][1].db_id == file.db_id)
+assert(held[fixture.ids.visible][1].id == file.id)
 
 -- The hidden library's file is unreachable by id too.
 local hidden = entries.by_parent({ fixture.ids.hidden })
 assert(next(hidden) == nil)
 assert(next(entries.get({ fixture.ids.invisible })) == nil, "a track id is not an entry")
-assert(tracks.by_entry({ file.db_id })[file.db_id][1].db_id == fixture.ids.visible)
+assert(tracks.by_entry({ file.id })[file.id][1].id == fixture.ids.visible)

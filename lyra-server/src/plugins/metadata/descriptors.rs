@@ -120,10 +120,7 @@ fn metadata_type_aliases() -> Vec<TypeAliasDescriptor> {
             "SimilarReleaseCandidate",
             union([
                 LuauType::object(vec![field("external_id", ty("ExternalReleaseRef"))]),
-                LuauType::object(vec![
-                    field("release_db_id", number()),
-                    field("release_id", string()),
-                ]),
+                LuauType::object(vec![field("release_id", string())]),
             ]),
         ),
         alias(
@@ -225,7 +222,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
         interface(
             "LayerCreditInput",
             vec![
-                described_field("artist_id", number(), "The credited artist's database id."),
+                described_field("artist_id", string(), "The credited artist's id."),
                 described_field(
                     "detail",
                     opt(string()),
@@ -236,7 +233,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
         interface(
             "LayerRelationInput",
             vec![
-                described_field("artist_id", number(), "The related artist's database id."),
+                described_field("artist_id", string(), "The related artist's id."),
                 described_field(
                     "attributes",
                     opt(string()),
@@ -326,7 +323,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
         interface(
             "ReleaseRefreshArtist",
             vec![
-                field("db_id", opt(number())),
+                field("id", string()),
                 field("artist_name", string()),
                 field("sort_name", opt(string())),
                 field("custom_fields", opt(ty("CustomFieldsByProvider"))),
@@ -335,7 +332,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
         interface(
             "ReleaseRefreshTrackArtist",
             vec![
-                field("db_id", opt(number())),
+                field("id", string()),
                 field("artist_name", string()),
                 field("custom_fields", opt(ty("CustomFieldsByProvider"))),
             ],
@@ -343,7 +340,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
         interface(
             "ReleaseRefreshTrack",
             vec![
-                field("db_id", opt(number())),
+                field("id", string()),
                 field("track_title", string()),
                 field("sort_title", opt(string())),
                 field("disc", opt(number())),
@@ -364,7 +361,6 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
         interface(
             "ReleaseRefreshContext",
             vec![
-                field("db_id", opt(number())),
                 field("id", opt(string())),
                 field("release_title", opt(string())),
                 field("sort_title", opt(string())),
@@ -383,14 +379,13 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
                 field("custom_fields", opt(ty("CustomFieldsByProvider"))),
                 field("artists", opt(array(ty("ReleaseRefreshArtist")))),
                 field("tracks", opt(array(ty("ReleaseRefreshTrack")))),
-                field("library_id", opt(number())),
+                field("library_id", opt(string())),
                 field("options", opt(map(string(), ty("OptionValue")))),
             ],
         ),
         interface(
             "ArtistRefreshContext",
             vec![
-                field("db_id", opt(number())),
                 field("id", opt(string())),
                 field("artist_name", opt(string())),
                 field("sort_name", opt(string())),
@@ -411,7 +406,6 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
         interface(
             "TrackRefreshRelease",
             vec![
-                field("db_id", opt(number())),
                 field("id", opt(string())),
                 field("release_title", opt(string())),
                 field("sort_title", opt(string())),
@@ -422,7 +416,6 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
         interface(
             "TrackRefreshContext",
             vec![
-                field("db_id", opt(number())),
                 field("id", opt(string())),
                 field("track_title", opt(string())),
                 field("sort_title", opt(string())),
@@ -466,7 +459,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
         interface(
             "ProviderCoverLibrary",
             vec![
-                field("db_id", opt(number())),
+                field("id", string()),
                 field("name", opt(string())),
                 field("directory", opt(string())),
                 field("language", opt(string())),
@@ -476,7 +469,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
         interface(
             "ProviderCoverArtist",
             vec![
-                field("db_id", opt(number())),
+                field("id", string()),
                 field("artist_name", opt(string())),
                 field("sort_name", opt(string())),
             ],
@@ -484,7 +477,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
         interface(
             "ProviderCoverTrack",
             vec![
-                field("db_id", opt(number())),
+                field("id", string()),
                 field("track_title", string()),
                 field("sort_title", opt(string())),
                 field("disc", opt(number())),
@@ -496,7 +489,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
         interface(
             "ProviderCoverContext",
             vec![
-                field("db_id", opt(number())),
+                field("id", string()),
                 field("release_title", opt(string())),
                 field("sort_title", opt(string())),
                 field("release_date", opt(string())),
@@ -530,7 +523,6 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
         interface(
             "SimilarReleaseContext",
             vec![
-                field("db_id", number()),
                 field("id", string()),
                 field("release_title", string()),
                 field("sort_title", opt(string())),
@@ -557,7 +549,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
         interface(
             "ProviderLyricsContext",
             vec![
-                field("track_db_id", number()),
+                field("track_id", string()),
                 field("track_name", string()),
                 field("artist_name", string()),
                 field("album_name", opt(string())),
@@ -767,17 +759,17 @@ fn provider_class() -> ClassDescriptor {
         method(
             "ensure_artist",
             vec![param("request", ty("EnsureArtistRequest"))],
-            vec![opt(number())],
+            vec![string()],
         ),
         method(
             "mark_unmatched",
             vec![
-                param("node_id", number()),
+                param("node_id", string()),
                 param("id_types", array(string())),
             ],
             vec![],
         ),
-        method("layer", vec![param("node_id", number())], vec![ty("Layer")]),
+        method("layer", vec![param("node_id", string())], vec![ty("Layer")]),
     ]);
     class
 }

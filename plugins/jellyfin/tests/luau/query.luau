@@ -1,4 +1,5 @@
 local enrichment = require("../../protocol/items/enrichment")
+local item_ids = require("../../protocol/items/identifiers")
 local options = require("../../protocol/items/options")
 local query = require("../../protocol/items/query")
 
@@ -22,7 +23,8 @@ local function keys(entity: query.Entity, params: { [string]: string }): string
 	return table.concat(values, ",")
 end
 
-local root: query.Scope = { db_id = nil, entity_type = nil }
+local root: query.Scope = { id = nil, entity_type = nil }
+local parent_id = string.rep("p", 21)
 
 -- A track's SortName is disc, track and title.
 assert(keys("track", {}) == "disc ascending,track ascending,sort_name ascending", keys("track", {}))
@@ -96,22 +98,26 @@ assert(ranged ~= nil)
 assert(ranged.sort_name_prefix == "b" and ranged.sort_name_at_least == "a" and ranged.sort_name_below == "c")
 assert(ranged.search == "x" and ranged.credit_role == "release")
 
--- Ids that name no item match nothing rather than everything.
-assert(query.tracks(parse({ ArtistIds = "0123456789abcdef0123456789abcdef" }), root) == nil)
-assert(query.tracks(parse({ GenreIds = "0123456789abcdef0123456789abcdef" }), root) == nil)
+-- Ids that name no item match nothing rather than everything: the filter keeps them.
+local unknown_hex = "0123456789abcdef0123456789abcdef"
+local unknown_id = item_ids.decode_jellyfin_item_id(unknown_hex)
+local by_artist_id = query.tracks(parse({ ArtistIds = unknown_hex }), root)
+assert(by_artist_id ~= nil and by_artist_id.artist_ids ~= nil and by_artist_id.artist_ids[1] == unknown_id)
+local by_genre_id = query.tracks(parse({ GenreIds = unknown_hex }), root)
+assert(by_genre_id ~= nil and by_genre_id.genre_ids ~= nil and by_genre_id.genre_ids[1] == unknown_id)
 
 local paged = query.tracks(parse({ StartIndex = "20", Limit = "10", Years = "1999,2001" }), root)
 assert(paged ~= nil and paged.offset == 20 and paged.limit == 10)
 assert(paged.years ~= nil and #paged.years == 2)
 
 -- A parent that isn't a library, release, artist or genre has no tracks.
-assert(query.tracks(parse({}), { db_id = 7, entity_type = "Playlist" }) == nil)
-local in_library = query.tracks(parse({}), { db_id = 7, entity_type = "Library" })
-assert(in_library ~= nil and in_library.library_id == 7)
-local on_release = query.tracks(parse({}), { db_id = 7, entity_type = "Release" })
-assert(on_release ~= nil and on_release.release_ids ~= nil and on_release.release_ids[1] == 7)
+assert(query.tracks(parse({}), { id = parent_id, entity_type = "Playlist" }) == nil)
+local in_library = query.tracks(parse({}), { id = parent_id, entity_type = "Library" })
+assert(in_library ~= nil and in_library.library_id == parent_id)
+local on_release = query.tracks(parse({}), { id = parent_id, entity_type = "Release" })
+assert(on_release ~= nil and on_release.release_ids ~= nil and on_release.release_ids[1] == parent_id)
 assert(keys("track", { SortBy = "Album" }, true) == "release_title ascending")
-local by_artist = query.releases(parse({}), { db_id = 7, entity_type = "Artist" })
+local by_artist = query.releases(parse({}), { id = parent_id, entity_type = "Artist" })
 assert(by_artist ~= nil and by_artist.credit_role == "release" and by_artist.artist_ids ~= nil)
 
 -- IncludeItemTypes wins over ExcludeItemTypes.

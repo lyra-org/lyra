@@ -458,7 +458,7 @@ local function get_artist_name(ctx: metadata.ReleaseRefreshContext): string?
 		end
 	end
 	if ctx.artists then
-		local artists = ctx.artists :: { { db_id: number?, artist_name: string } }
+		local artists = ctx.artists :: { { id: string?, artist_name: string } }
 		if #artists > 0 and artists[1].artist_name ~= "" then
 			return artists[1].artist_name
 		end
@@ -468,17 +468,17 @@ end
 
 provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 	local release_title = ctx.release_title
-	local release_db_id = ctx.db_id
-	if not release_title or release_title == "" or not release_db_id then
+	local release_id = ctx.id
+	if not release_title or release_title == "" or not release_id then
 		return nil
 	end
 
 	local artist_name = get_artist_name(ctx)
 
-	-- Cache key includes normalized title to avoid stale data if the DB ID is reused.
+	-- Cache key includes normalized title to avoid stale data if the id is reused.
 	-- Normalize: trim whitespace, lowercase — resilient to cosmetic tag edits.
 	local normalized_title = string.lower(shared.trim(release_title))
-	local cache_key = `release:{release_db_id}:{normalized_title}`
+	local cache_key = `release:{release_id}:{normalized_title}`
 	local cached = cache_get(cache_key)
 	if cached then
 		return nil
@@ -496,7 +496,7 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 
 	if #genre_qids == 0 then
 		-- No genre claims, but still store the QID so we don't re-search.
-		local release_layer = provider:layer(release_db_id)
+		local release_layer = provider:layer(release_id)
 		release_layer:set_id("qid", release_qid)
 		release_layer:save()
 		cache_set(
@@ -510,7 +510,7 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 	-- Step 2
 	local genre_details = fetch_genre_details(genre_qids)
 	if #genre_details == 0 then
-		local release_layer = provider:layer(release_db_id)
+		local release_layer = provider:layer(release_id)
 		release_layer:set_id("qid", release_qid)
 		release_layer:save()
 		cache_set(
@@ -523,7 +523,7 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 
 	-- Step 3: Resolve genre identities before saving their names to the layer.
 	local genre_names: { JsonValue } = {}
-	local genre_db_ids: { [string]: number } = {} -- QID → db_id mapping
+	local genre_ids: { [string]: string } = {} -- QID → genre id
 	local all_genres_ok = true
 	local GENRE_SUFFIXES = { " music", " song" }
 
@@ -549,7 +549,7 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 			end
 		end
 
-		local resolve_ok, genre_db_id = pcall(genres.resolve, {
+		local resolve_ok, genre_id = pcall(genres.resolve, {
 			name = genre.label,
 			external_id = {
 				provider_id = "wikidata",
@@ -559,9 +559,9 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 			aliases = alias_inputs,
 		})
 
-		if resolve_ok and genre_db_id then
+		if resolve_ok and genre_id then
 			table.insert(genre_names, layer_name :: JsonValue)
-			genre_db_ids[genre.qid] = genre_db_id
+			genre_ids[genre.qid] = genre_id
 		else
 			all_genres_ok = false
 		end
@@ -583,7 +583,7 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 		local seen_parent_qids: { [string]: boolean } = {}
 		for _, genre in current_level do
 			for _, parent_qid in genre.parent_qids do
-				if not genre_db_ids[parent_qid] and not seen_parent_qids[parent_qid] then
+				if not genre_ids[parent_qid] and not seen_parent_qids[parent_qid] then
 					seen_parent_qids[parent_qid] = true
 					table.insert(parent_qids_to_resolve, parent_qid)
 				end
@@ -620,9 +620,9 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 				},
 				aliases = parent_alias_inputs,
 			}
-			local parent_ok, parent_db_id = pcall(genres.resolve, parent_request)
-			if parent_ok and parent_db_id then
-				genre_db_ids[parent.qid] = parent_db_id
+			local parent_ok, parent_id = pcall(genres.resolve, parent_request)
+			if parent_ok and parent_id then
+				genre_ids[parent.qid] = parent_id
 			end
 			table.insert(all_fetched_genres, parent)
 		end
@@ -633,14 +633,14 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 
 	-- Link child → parent relationships across all fetched levels.
 	for _, genre in all_fetched_genres do
-		local child_db_id = genre_db_ids[genre.qid]
-		if not child_db_id then
+		local child_id = genre_ids[genre.qid]
+		if not child_id then
 			continue
 		end
 		for _, parent_qid in genre.parent_qids do
-			local parent_db_id = genre_db_ids[parent_qid]
-			if parent_db_id then
-				pcall(genres.add_parent, child_db_id, parent_db_id)
+			local parent_id = genre_ids[parent_qid]
+			if parent_id then
+				pcall(genres.add_parent, child_id, parent_id)
 			end
 		end
 	end
@@ -649,7 +649,7 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 	-- don't write the QID — the sync filter checks external_ids.wikidata.qid, so
 	-- writing it would permanently skip the release and prevent retry.
 	if all_genres_ok and #genre_names > 0 then
-		local release_layer = provider:layer(release_db_id)
+		local release_layer = provider:layer(release_id)
 		release_layer:set_field("genres", genre_names)
 		release_layer:set_id("qid", release_qid)
 		release_layer:save()

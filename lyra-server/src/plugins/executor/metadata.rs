@@ -415,23 +415,12 @@ fn decode_similar_release_candidate(value: harmony_luau::Value) -> Result<Simila
     let harmony_luau::Value::Table(candidate) = value else {
         bail!("similar release candidate must be a table");
     };
-    let local_id = candidate.get("release_db_id")?;
+    let local_id = candidate.get("release_id")?;
     let external = candidate.get("external_id")?;
     match (local_id, external) {
-        (harmony_luau::Value::Integer(db_id), harmony_luau::Value::Nil) if db_id > 0 => {
-            let release_id = bounded_luau_string(candidate.get("release_id")?, "release_id")?;
+        (release_id @ harmony_luau::Value::String(_), harmony_luau::Value::Nil) => {
             Ok(SimilarReleaseCandidate::Local {
-                release_db_id: db_id,
-                release_id,
-            })
-        }
-        (harmony_luau::Value::Number(db_id), harmony_luau::Value::Nil)
-            if db_id.is_finite() && db_id.fract() == 0.0 && db_id > 0.0 =>
-        {
-            let release_id = bounded_luau_string(candidate.get("release_id")?, "release_id")?;
-            Ok(SimilarReleaseCandidate::Local {
-                release_db_id: db_id as i64,
-                release_id,
+                release_id: bounded_luau_string(release_id, "release_id")?,
             })
         }
         (harmony_luau::Value::Nil, harmony_luau::Value::Table(external)) => {
@@ -446,9 +435,9 @@ fn decode_similar_release_candidate(value: harmony_luau::Value) -> Result<Simila
                 },
             ))
         }
-        _ => bail!(
-            "similar release candidate must contain exactly one valid release_db_id/release_id pair or external_id"
-        ),
+        _ => {
+            bail!("similar release candidate must contain exactly one of release_id or external_id")
+        }
     }
 }
 

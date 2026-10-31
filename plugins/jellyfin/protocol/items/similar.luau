@@ -22,31 +22,27 @@ type ItemInfo = catalog.ItemInfo
 local module = {}
 
 -- The genres of these releases, each once.
-local function genres_of(release_db_ids: { number }): { number }
-	local ids: { number } = {}
-	local seen: { [number]: boolean } = {}
-	if #release_db_ids == 0 then
+local function genres_of(release_ids: { string }): { string }
+	local ids: { string } = {}
+	local seen: { [string]: boolean } = {}
+	if #release_ids == 0 then
 		return ids
 	end
-	for _, release_genres in genres.by_release(release_db_ids) do
+	for _, release_genres in genres.by_release(release_ids) do
 		for _, genre in release_genres do
-			local id = genre.db_id
-			if id and not seen[id] then
-				seen[id] = true
-				table.insert(ids, id)
+			if not seen[genre.id] then
+				seen[genre.id] = true
+				table.insert(ids, genre.id)
 			end
 		end
 	end
 	return ids
 end
 
-local function ids_of<T>(items: { T }): { number }
-	local ids: { number } = {}
+local function ids_of<T>(items: { T }): { string }
+	local ids: { string } = {}
 	for _, item in items do
-		local id = (item :: any).db_id
-		if id then
-			table.insert(ids, id)
-		end
+		table.insert(ids, (item :: any).id :: string)
 	end
 	return ids
 end
@@ -58,10 +54,10 @@ local DEFAULT_LIMIT = 50
 
 -- Returns `(items, total_count, start_index, found)`; an item the caller can't see isn't found.
 function module.list_similar_items(
-	item_id: number?,
+	item_id: string?,
 	options: ItemsQueryOptions
 ): ({ ItemInfo }, number, number, boolean)
-	if not item_id or item_id <= 0 then
+	if not item_id then
 		return {}, 0, 0, false
 	end
 

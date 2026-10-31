@@ -20,6 +20,7 @@ use std::{
 };
 
 use crate::services::entries::PlacedEntry;
+use lyra_db::Track;
 use lyra_db::track_sources::{
     SourceCodec,
     SourceContainer,
@@ -27,8 +28,9 @@ use lyra_db::track_sources::{
 };
 
 pub(crate) struct PlaybackSource {
-    pub(crate) track_db_id: DbId,
-    pub(crate) source_id: DbId,
+    pub(crate) track_id: String,
+    pub(crate) source_db_id: DbId,
+    pub(crate) source_id: String,
     pub(crate) source_kind: String,
     pub(crate) source_key: String,
     pub(crate) is_primary: bool,
@@ -40,14 +42,16 @@ pub(crate) struct PlaybackSource {
     pub(crate) entry: Option<PlacedEntry>,
 }
 
+/// The source `track` plays from: its primary source when that file is there, else the first
+/// other audio file of it that is.
 pub(crate) fn resolve(
     db: &DbAny,
-    track_db_id: DbId,
+    track: &Track,
     include_entry: bool,
 ) -> anyhow::Result<Option<PlaybackSource>> {
-    if lyra_db::tracks::get_by_id(db, track_db_id)?.is_none() {
+    let Some(track_db_id) = track.db_id.clone().map(DbId::from) else {
         return Ok(None);
-    }
+    };
 
     let primary_source_id = lyra_db::track_sources::get_primary_by_track(db, track_db_id)?
         .and_then(|source| source.db_id);
@@ -85,8 +89,9 @@ pub(crate) fn resolve(
 
         let format = source.format();
         return Ok(Some(PlaybackSource {
-            track_db_id,
-            source_id,
+            track_id: track.id.clone(),
+            source_db_id: source_id,
+            source_id: source.id,
             source_kind: source.source_kind,
             source_key: source.source_key,
             is_primary: source.is_primary,

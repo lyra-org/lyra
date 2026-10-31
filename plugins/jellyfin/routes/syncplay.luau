@@ -294,8 +294,7 @@ local function syncplay_mark_queue_updated(group: SyncPlayGroup)
 end
 
 local function syncplay_item_accessible(_principal: session.Principal, item_id: string): boolean
-	local db_id = item_ids.decode_jellyfin_item_id(item_id)
-	return playback.resolve_track_for_playback(db_id) ~= nil
+	return playback.resolve_track_for_playback(item_ids.decode_jellyfin_item_id(item_id)) ~= nil
 end
 
 local function syncplay_group_accessible(principal: session.Principal, group: SyncPlayGroup): boolean

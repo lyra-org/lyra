@@ -22,7 +22,7 @@ local function persons(params: { [string]: string }): string
 	return `{table.concat(names, ",")} ({total})`
 end
 
-local function people(id: number): string
+local function people(id: string): string
 	local items = listing.list_items(parse({ Ids = item_ids.encode_jellyfin_item_id(id), Fields = "People" }))
 	local names = {}
 	for _, person in items[1].People do

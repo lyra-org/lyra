@@ -19,7 +19,14 @@ use std::collections::HashMap;
 use crate::services::EntityType;
 use crate::services::providers::IdSchemes;
 
+use lyra_db::{
+    Artist,
+    NodeId,
+    Release,
+};
+
 use super::{
+    CreditedArtistProjectionInfo,
     EntityInclude,
     EntityProjectionInfo,
     projection::{
@@ -109,27 +116,97 @@ fn custom_fields_value_for_entity(db: &DbAny, entity_id: DbId) -> anyhow::Result
     }
 }
 
-fn attach_custom_fields_to_context(db: &DbAny, context: &mut Value) -> anyhow::Result<()> {
+/// The database id of each entity in `projection`, by its public id, taken before the projection
+/// is serialized without them.
+fn projection_db_ids(projection: &EntityProjectionInfo) -> HashMap<String, DbId> {
+    fn add(ids: &mut HashMap<String, DbId>, db_id: &Option<NodeId>, id: &str) {
+        if let Some(db_id) = db_id.clone() {
+            ids.insert(id.to_string(), db_id.into());
+        }
+    }
+    fn add_artists<'a>(
+        ids: &mut HashMap<String, DbId>,
+        artists: impl IntoIterator<Item = &'a Artist>,
+    ) {
+        for artist in artists {
+            add(ids, &artist.db_id, &artist.id);
+        }
+    }
+    fn add_credits(
+        ids: &mut HashMap<String, DbId>,
+        credits: &Option<Vec<CreditedArtistProjectionInfo>>,
+    ) {
+        add_artists(ids, credits.iter().flatten().map(|credit| &credit.artist));
+    }
+    fn add_releases(ids: &mut HashMap<String, DbId>, releases: &Option<Vec<Release>>) {
+        for release in releases.iter().flatten() {
+            add(ids, &release.db_id, &release.id);
+        }
+    }
+
+    let mut ids = HashMap::new();
+    match projection {
+        EntityProjectionInfo::Release(projection) => {
+            add(&mut ids, &projection.entity.db_id, &projection.entity.id);
+            let includes = &projection.includes;
+            add_artists(&mut ids, includes.artists.iter().flatten());
+            for track in includes.tracks.iter().flatten() {
+                add(&mut ids, &track.db_id, &track.id);
+                add_artists(&mut ids, &track.artists);
+            }
+            add_credits(&mut ids, &includes.credits);
+        }
+        EntityProjectionInfo::Track(projection) => {
+            add(&mut ids, &projection.entity.db_id, &projection.entity.id);
+            let includes = &projection.includes;
+            add_releases(&mut ids, &includes.releases);
+            add_artists(&mut ids, includes.artists.iter().flatten());
+            for entry in includes.entries.iter().flatten() {
+                add(&mut ids, &entry.db_id, &entry.id);
+            }
+            add_credits(&mut ids, &includes.credits);
+        }
+        EntityProjectionInfo::Artist(projection) => {
+            add(&mut ids, &projection.entity.db_id, &projection.entity.id);
+            let includes = &projection.includes;
+            add_releases(&mut ids, &includes.releases);
+            for track in includes.tracks.iter().flatten() {
+                add(&mut ids, &track.db_id, &track.id);
+            }
+        }
+    }
+    ids
+}
+
+/// The entity an object of a serialized projection describes, by its public `id`.
+fn object_entity(object: &Map<String, Value>, ids: &HashMap<String, DbId>) -> Option<DbId> {
+    ids.get(object.get("id")?.as_str()?).copied()
+}
+
+fn attach_custom_fields_to_context(
+    db: &DbAny,
+    context: &mut Value,
+    ids: &HashMap<String, DbId>,
+) -> anyhow::Result<()> {
     fn attach(
         db: &DbAny,
         value: &mut Value,
-        cache: &mut HashMap<i64, Option<Value>>,
+        ids: &HashMap<String, DbId>,
+        cache: &mut HashMap<DbId, Option<Value>>,
     ) -> anyhow::Result<()> {
         match value {
             Value::Object(object) => {
                 for (key, child) in object.iter_mut() {
                     if key != "custom_fields" {
-                        attach(db, child, cache)?;
+                        attach(db, child, ids, cache)?;
                     }
                 }
 
-                if let Some(entity_id) = object.get("db_id").and_then(|v| v.as_i64())
-                    && entity_id > 0
-                {
+                if let Some(entity_id) = object_entity(object, ids) {
                     let custom_fields = if let Some(cached) = cache.get(&entity_id) {
                         cached.clone()
                     } else {
-                        let loaded = custom_fields_value_for_entity(db, DbId(entity_id))?;
+                        let loaded = custom_fields_value_for_entity(db, entity_id)?;
                         cache.insert(entity_id, loaded.clone());
                         loaded
                     };
@@ -140,7 +217,7 @@ fn attach_custom_fields_to_context(db: &DbAny, context: &mut Value) -> anyhow::R
             }
             Value::Array(items) => {
                 for child in items {
-                    attach(db, child, cache)?;
+                    attach(db, child, ids, cache)?;
                 }
             }
             _ => {}
@@ -150,25 +227,28 @@ fn attach_custom_fields_to_context(db: &DbAny, context: &mut Value) -> anyhow::R
     }
 
     let mut cache = HashMap::new();
-    attach(db, context, &mut cache)
+    attach(db, context, ids, &mut cache)
 }
 
 /// Adds `manual_ids`, the user-set values among `external_ids`, to each entity
 /// in the context, so a provider can tell a user's choice from its own match.
-fn attach_manual_ids_to_context(db: &DbAny, value: &mut Value) -> anyhow::Result<()> {
+fn attach_manual_ids_to_context(
+    db: &DbAny,
+    value: &mut Value,
+    ids: &HashMap<String, DbId>,
+) -> anyhow::Result<()> {
     match value {
         Value::Object(object) => {
             for (key, child) in object.iter_mut() {
                 if key != "external_ids" {
-                    attach_manual_ids_to_context(db, child)?;
+                    attach_manual_ids_to_context(db, child, ids)?;
                 }
             }
 
             if object.contains_key("external_ids")
-                && let Some(entity_id) = object.get("db_id").and_then(Value::as_i64)
-                && entity_id > 0
+                && let Some(entity_id) = object_entity(object, ids)
             {
-                let manual = lyra_db::external_ids::get_for_entity(db, DbId(entity_id))?
+                let manual = lyra_db::external_ids::get_for_entity(db, entity_id)?
                     .into_iter()
                     .filter(|id| id.source == lyra_db::IdSource::Manual)
                     .collect::<Vec<_>>();
@@ -182,7 +262,7 @@ fn attach_manual_ids_to_context(db: &DbAny, value: &mut Value) -> anyhow::Result
         }
         Value::Array(items) => {
             for child in items {
-                attach_manual_ids_to_context(db, child)?;
+                attach_manual_ids_to_context(db, child, ids)?;
             }
         }
         _ => {}
@@ -214,6 +294,15 @@ fn flatten_projection_for_provider_context(
     }
 }
 
+/// `projection` flattened for a provider, with each entity's custom fields and manual ids.
+fn provider_context(db: &DbAny, projection: EntityProjectionInfo) -> anyhow::Result<Value> {
+    let ids = projection_db_ids(&projection);
+    let mut context = flatten_projection_for_provider_context(projection)?;
+    attach_custom_fields_to_context(db, &mut context, &ids)?;
+    attach_manual_ids_to_context(db, &mut context, &ids)?;
+    Ok(context)
+}
+
 pub(crate) fn build_release_context(
     db: &DbAny,
     entity_id: DbId,
@@ -242,13 +331,12 @@ pub(crate) fn build_release_context(
         &PreFetchedIncludes::default(),
         &mut IdIncludes::new(schemes, &[]),
     )?;
-    let mut context =
-        flatten_projection_for_provider_context(EntityProjectionInfo::Release(projection))?;
-    if let (Value::Object(map), Some(lib_id)) = (&mut context, library_id) {
-        map.insert("library_id".to_string(), serde_json::json!(lib_id.0));
+    let mut context = provider_context(db, EntityProjectionInfo::Release(projection))?;
+    if let (Value::Object(map), Some(lib_id)) = (&mut context, library_id)
+        && let Some(library_public_id) = lyra_db::lookup::find_id_by_db_id(db, lib_id)?
+    {
+        map.insert("library_id".to_string(), Value::String(library_public_id));
     }
-    attach_custom_fields_to_context(db, &mut context)?;
-    attach_manual_ids_to_context(db, &mut context)?;
     Ok(context)
 }
 
@@ -265,10 +353,7 @@ fn build_track_context(db: &DbAny, entity_id: DbId, schemes: &IdSchemes) -> anyh
         None,
         &mut IdIncludes::new(schemes, &[]),
     )?;
-    let mut context = flatten_projection_for_provider_context(projection)?;
-    attach_custom_fields_to_context(db, &mut context)?;
-    attach_manual_ids_to_context(db, &mut context)?;
-    Ok(context)
+    provider_context(db, projection)
 }
 
 fn build_artist_context(db: &DbAny, entity_id: DbId, schemes: &IdSchemes) -> anyhow::Result<Value> {
@@ -279,10 +364,7 @@ fn build_artist_context(db: &DbAny, entity_id: DbId, schemes: &IdSchemes) -> any
         None,
         &mut IdIncludes::new(schemes, &[]),
     )?;
-    let mut context = flatten_projection_for_provider_context(projection)?;
-    attach_custom_fields_to_context(db, &mut context)?;
-    attach_manual_ids_to_context(db, &mut context)?;
-    Ok(context)
+    provider_context(db, projection)
 }
 
 pub(crate) fn build_entity_provider_context(
@@ -312,5 +394,49 @@ pub(crate) fn build_entity_provider_context(
             EntityType::Artist,
             build_artist_context(db, entity_id, schemes)?,
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use lyra_db::fixtures::{
+        connect,
+        insert_release,
+        insert_track,
+    };
+    use lyra_db::metadata::custom_fields::ProviderCustomFields;
+    use lyra_db::test_db::new_test_db;
+
+    use super::*;
+
+    #[test]
+    fn custom_fields_reach_the_context_as_stored() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release = insert_release(&mut db, "Release")?;
+        let track = insert_track(&mut db, "Track")?;
+        connect(&mut db, release, track)?;
+        for node in [release, track] {
+            lyra_db::metadata::custom_fields::upsert(
+                &mut db,
+                node,
+                &ProviderCustomFields {
+                    db_id: None,
+                    provider_id: "provider".to_string(),
+                    version: 1,
+                    fields: r#"{"reference":{"db_id":"remote-123"}}"#.to_string(),
+                    updated_at_ms: 0,
+                },
+            )?;
+        }
+
+        let context = build_release_context(&db, release, None, &IdSchemes::default())?;
+
+        let expected =
+            serde_json::json!({ "provider": { "v1": { "reference": { "db_id": "remote-123" } } } });
+        assert_eq!(context["custom_fields"], expected);
+        assert_eq!(context["tracks"][0]["custom_fields"], expected);
+        assert!(context.get("db_id").is_none());
+        assert!(context["tracks"][0].get("db_id").is_none());
+        Ok(())
     }
 }

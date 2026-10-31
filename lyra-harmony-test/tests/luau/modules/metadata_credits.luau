@@ -43,6 +43,6 @@ local function rejects(credits: any, message: string)
 	assert(string.find(tostring(err), message, 1, true), tostring(err))
 end
 
-rejects({ { artist_id = -1 } }, "positive")
+rejects({ { artist_id = 1 } }, "expected a string")
 rejects({ { name = "Artist" } }, "artist_id")
-rejects({ { artist_id = 1, join_phrase = " & " } }, "join_phrase")
+rejects({ { artist_id = fixture.ids.first, join_phrase = " & " } }, "join_phrase")

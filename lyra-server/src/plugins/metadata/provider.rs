@@ -8,7 +8,6 @@ use std::collections::HashSet;
 use harmony_core::UserDataBinding;
 use harmony_luau as luau;
 
-use crate::plugins::args;
 use crate::plugins::db;
 use crate::services::plugin_scope::PluginId;
 use crate::services::{
@@ -174,7 +173,7 @@ impl MetadataProvider {
         declare_option_callback(self, vm, context, config)
     }
 
-    #[harmony(returns(i64))]
+    #[harmony(returns(String))]
     fn ensure_artist(
         &self,
         vm: &luau::Vm,
@@ -188,7 +187,7 @@ impl MetadataProvider {
         &self,
         vm: &luau::Vm,
         context: &luau::CallContext,
-        node_id: i64,
+        node_id: String,
         id_types: luau::Table,
     ) -> luau::runtime::Result<luau::ScheduledFuture> {
         mark_unmatched_callback(self, vm, context, node_id, id_types)
@@ -200,7 +199,7 @@ impl MetadataProvider {
         vm: &luau::Vm,
         context: &luau::CallContext,
         origin: &luau::ChunkOrigin,
-        node_id: i64,
+        node_id: String,
     ) -> luau::runtime::Result<luau::Value> {
         layer_callback(self, vm, context, origin, node_id)
     }
@@ -518,7 +517,7 @@ fn ensure_artist_callback(
                 EnsureArtistError::Internal(error) => crate::plugins::runtime_error(error),
             },
         )?;
-        Ok(artist_db_id.0)
+        crate::plugins::ids::public_id(&*db_write, artist_db_id)
     }))
 }
 
@@ -526,11 +525,10 @@ fn mark_unmatched_callback(
     provider: &MetadataProvider,
     vm: &luau::Vm,
     context: &luau::CallContext,
-    node_id: i64,
+    node_id: String,
     id_types_table: luau::Table,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(vm, context, &provider.plugin_id, &provider.provider_id)?;
-    let node_id = args::positive_id(node_id, "node_id")?;
     let id_types = string_array_from_table(&id_types_table)?;
     let provider_id = provider.provider_id.clone();
     if id_types.is_empty() {
@@ -568,13 +566,14 @@ fn mark_unmatched_callback(
                 .collect::<Vec<_>>()
         };
         let mut db_write = db.write().await;
-        let entity_type = entity_type_for_node(&db_write, node_id)?
-            .ok_or_else(|| {
-                crate::plugins::runtime_error(format!(
-                    "provider:mark_unmatched: node_id {} does not reference a release, artist, or track",
-                    node_id.0
-                ))
-            })?;
+        let not_an_entity = || {
+            crate::plugins::runtime_error(format!(
+                "provider:mark_unmatched: node_id {node_id} does not reference a release, artist, or track"
+            ))
+        };
+        let node_id =
+            crate::plugins::ids::db_id(&*db_write, &node_id)?.ok_or_else(not_an_entity)?;
+        let entity_type = entity_type_for_node(&db_write, node_id)?.ok_or_else(not_an_entity)?;
 
         {
             for (id_type, entities) in normalized_id_types.iter().zip(registered_entities) {
@@ -602,10 +601,9 @@ fn layer_callback(
     vm: &luau::Vm,
     context: &luau::CallContext,
     origin: &luau::ChunkOrigin,
-    node_id: i64,
+    node_id: String,
 ) -> luau::runtime::Result<luau::Value> {
     ensure_provider_owner(vm, context, &provider.plugin_id, &provider.provider_id)?;
-    let node_id = args::positive_id(node_id, "node_id")?;
     let db = db::get_optional(vm)?;
     MetadataLayer::new_value(vm, origin, db, node_id, provider.provider_id.clone())
 }

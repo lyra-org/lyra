@@ -27,7 +27,7 @@ local function sorted(list: string): string
 	return table.concat(parts, ",")
 end
 
-local function mix_of(item_id: number?, params: { [string]: string }?): (string, number, boolean)
+local function mix_of(item_id: string?, params: { [string]: string }?): (string, number, boolean)
 	local items, total, _, found = instant_mix.list_instant_mix_audio(item_id, query(params or {}))
 	return names(items, total, found)
 end
@@ -47,7 +47,7 @@ assert(listed == "S2" and total == 1, `paged: {listed} ({total})`)
 
 -- A hidden or unknown seed is not found; a library lists nothing.
 assert(not select(3, mix_of(ids.h1)), "hidden seed")
-assert(not select(3, mix_of(999999999)), "unknown seed")
+assert(not select(3, mix_of(string.rep("u", 21))), "unknown seed")
 listed, total, found = mix_of(ids.music)
 assert(found and listed == "" and total == 0, `library: {listed}`)
 

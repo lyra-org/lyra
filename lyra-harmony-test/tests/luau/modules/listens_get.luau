@@ -5,7 +5,7 @@ local listens = require("@lyra/listens")
 local ids = fixture.ids
 
 local stats = listens.get({ ids.first, ids.second, ids.album, ids.amy })
-local function expect(id: number, count: number, last_played_at_ms: number, what: string)
+local function expect(id: string, count: number, last_played_at_ms: number, what: string)
 	local entry = stats[id]
 	assert(entry ~= nil, `{what} has listens`)
 	assert(entry.count == count, `{what} count {entry.count}`)
@@ -16,7 +16,7 @@ expect(ids.second, 1, 3000, "another track")
 expect(ids.album, 3, 5000, "a release totals its tracks")
 expect(ids.amy, 3, 5000, "an artist totals the tracks it is credited on")
 
-local absent = listens.get({ ids.unplayed, ids.hidden, ids.mine, 999999999 })
+local absent = listens.get({ ids.unplayed, ids.hidden, ids.mine, "missing-track" })
 assert(next(absent) == nil, "unlistened, hidden, other kinds and missing ids are absent")
 assert(next(listens.get({})) == nil, "no ids, no stats")
 

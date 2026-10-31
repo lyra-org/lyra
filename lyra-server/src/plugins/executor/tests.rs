@@ -118,6 +118,11 @@ fn runtime_with_scopes(scopes: &[&str]) -> Result<PluginExecutor> {
     PluginExecutor::with_manifests(Arc::from(vec![manifest("demo", scopes)]))
 }
 
+/// The public id plugins name a node by.
+fn public_id(db: &impl lyra_db::DbAccess, db_id: agdb::DbId) -> Result<String> {
+    lyra_db::lookup::find_id_by_db_id(db, db_id)?.context("node has a public id")
+}
+
 fn seed_caller_principal(context: &mut CallContext, principal: crate::services::auth::Principal) {
     let dispatch_auth = crate::plugins::auth::DispatchAuth::default();
     dispatch_auth.record(principal);
@@ -385,28 +390,7 @@ fn plugin_executor_refuses_registrations_from_an_ended_run() -> Result<()> {
 
 #[test]
 fn module_functions_answer_what_they_can_before_reading_the_database() -> Result<()> {
-    let runtime = runtime_with_scopes(&["lyra.track_sources", "lyra.chromaprint", "lyra.labels"])?;
-    let mut unresolved = CallContext {
-        origin: plugin_origin("demo", "init.luau"),
-        ..CallContext::default()
-    };
-    unresolved
-        .caller
-        .insert(crate::plugins::auth::DispatchAuth::default());
-    let values = runtime.eval_plugin_source_with_call_context(
-        br#"
-            local track_sources = require("@lyra/track_sources")
-            local chromaprint = require("@lyra/chromaprint")
-            local _, err = pcall(chromaprint.compute, 0)
-            return track_sources.get_primary_source_key(0) == nil, tostring(err)
-        "# as &[u8],
-        unresolved,
-    )?;
-    let [luau::Value::Boolean(true), luau::Value::String(message)] = values.as_slice() else {
-        panic!("unexpected values {values:?}");
-    };
-    assert!(String::from_utf8_lossy(message).contains("entry not found"));
-
+    let runtime = runtime_with_scopes(&["lyra.labels"])?;
     let mut viewer = CallContext {
         origin: plugin_origin("demo", "init.luau"),
         ..CallContext::default()
@@ -425,11 +409,11 @@ fn module_functions_answer_what_they_can_before_reading_the_database() -> Result
     let values = runtime.eval_plugin_source_with_call_context(
         br#"
             local labels = require("@lyra/labels")
-            return labels.resolve({ name = "Label" })
+            return labels.resolve({ name = "Label" }) == nil
         "# as &[u8],
         viewer,
     )?;
-    assert_eq!(values, vec![luau::Value::Number(0.0)]);
+    assert_eq!(values, vec![luau::Value::Boolean(true)]);
     Ok(())
 }
 
@@ -527,9 +511,9 @@ fn plugin_executor_scopes_personal_lyrics_to_the_dispatch_principal() -> Result<
         format!(
             r#"
                 local lyrics = require("@lyra/lyrics")
-                local track_id = {track_id}
+                local track_id = {track_public_id:?}
                 local provider = lyrics.get(track_id, nil, false, "test_provider")
-                local personal = lyrics.upsert_personal(track_id, {track_public_id:?}, {{
+                local personal = lyrics.upsert_personal(track_id, {{
                     content_type = "text/plain",
                     body = "alice lyrics",
                     language = "eng",
@@ -546,8 +530,6 @@ fn plugin_executor_scopes_personal_lyrics_to_the_dispatch_principal() -> Result<
                     automatic.plain_text,
                     selected_provider.plain_text
             "#,
-            track_id = track_db_id.0,
-            track_public_id = track_public_id,
         )
         .into_bytes(),
         alice_context,
@@ -579,9 +561,9 @@ fn plugin_executor_scopes_personal_lyrics_to_the_dispatch_principal() -> Result<
         format!(
             r#"
                 local lyrics = require("@lyra/lyrics")
-                local track_id = {track_id}
+                local track_id = {track_public_id:?}
                 local before = lyrics.get(track_id, nil, false, nil)
-                lyrics.upsert_personal(track_id, {track_public_id:?}, {{
+                lyrics.upsert_personal(track_id, {{
                     content_type = "text/plain",
                     body = "bob lyrics",
                     language = "eng",
@@ -589,8 +571,6 @@ fn plugin_executor_scopes_personal_lyrics_to_the_dispatch_principal() -> Result<
                 local after = lyrics.get(track_id, nil, false, nil)
                 return before.plain_text, after.plain_text
             "#,
-            track_id = track_db_id.0,
-            track_public_id = track_public_id,
         )
         .into_bytes(),
         bob_context,
@@ -615,9 +595,8 @@ fn plugin_executor_scopes_personal_lyrics_to_the_dispatch_principal() -> Result<
         format!(
             r#"
                 local lyrics = require("@lyra/lyrics")
-                return lyrics.delete_personal_for_track({track_id})
+                return lyrics.delete_personal_for_track({track_public_id:?})
             "#,
-            track_id = track_db_id.0,
         )
         .into_bytes(),
         inaccessible_alice_context,
@@ -946,14 +925,11 @@ fn plugin_executor_bounds_similar_release_result_before_json_conversion() -> Res
 fn releases_similar_dispatches_provider_on_current_executor() -> Result<()> {
     let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
     crate::plugins::testing::init_default_test_state()?;
-    let (seed, candidate, candidate_public_id) = futures::executor::block_on(async {
+    let (seed, candidate_public_id) = futures::executor::block_on(async {
         let mut db = crate::services::STATE.db.write().await;
         let seed = lyra_db::fixtures::insert_release(&mut db, "Seed")?;
         let candidate = lyra_db::fixtures::insert_release(&mut db, "Candidate")?;
-        let public_id = lyra_db::releases::get_by_id(&db, candidate)?
-            .context("candidate release")?
-            .id;
-        Ok::<_, anyhow::Error>((seed, candidate, public_id))
+        Ok::<_, anyhow::Error>((public_id(&*db, seed)?, public_id(&*db, candidate)?))
     })?;
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.metadata", "lyra.releases"])]),
@@ -966,15 +942,11 @@ fn releases_similar_dispatches_provider_on_current_executor() -> Result<()> {
             local releases = require("@lyra/releases")
             local provider = metadata.Provider.new("in-vm-similar-provider")
             provider:similar_releases({{}}, function()
-                return {{ candidates = {{{{
-                    release_db_id = {},
-                    release_id = {:?},
-                }}}} }}
+                return {{ candidates = {{{{ release_id = {candidate_public_id:?} }}}} }}
             end)
-            local matches = releases.similar({})
+            local matches = releases.similar({seed:?})
             return matches[1].id
         "#,
-        candidate.0, candidate_public_id, seed.0
     );
 
     let values = runtime.eval_plugin_source_with_call_context(
@@ -995,7 +967,8 @@ fn releases_similar_requires_a_dispatch_principal() -> Result<()> {
     crate::plugins::testing::init_default_test_state()?;
     let seed = futures::executor::block_on(async {
         let mut db = crate::services::STATE.db.write().await;
-        lyra_db::fixtures::insert_release(&mut db, "Seed")
+        let seed = lyra_db::fixtures::insert_release(&mut db, "Seed")?;
+        public_id(&*db, seed)
     })?;
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.releases"])]),
@@ -1008,10 +981,9 @@ fn releases_similar_requires_a_dispatch_principal() -> Result<()> {
         format!(
             r#"
                 local releases = require("@lyra/releases")
-                local ok, err = pcall(releases.similar, {})
+                local ok, err = pcall(releases.similar, {seed:?})
                 return ok, string.find(tostring(err), "no authenticated caller", 1, true) ~= nil
             "#,
-            seed.0
         )
         .as_bytes(),
     )?;
@@ -1027,14 +999,11 @@ fn releases_similar_requires_a_dispatch_principal() -> Result<()> {
 fn awaited_background_similar_provider_result_survives_executor_polling() -> Result<()> {
     let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
     crate::plugins::testing::init_default_test_state()?;
-    let (seed, candidate, candidate_public_id) = futures::executor::block_on(async {
+    let (seed, candidate_public_id) = futures::executor::block_on(async {
         let mut db = crate::services::STATE.db.write().await;
         let seed = lyra_db::fixtures::insert_release(&mut db, "Seed")?;
         let candidate = lyra_db::fixtures::insert_release(&mut db, "Candidate")?;
-        let public_id = lyra_db::releases::get_by_id(&db, candidate)?
-            .context("candidate release")?
-            .id;
-        Ok::<_, anyhow::Error>((seed, candidate, public_id))
+        Ok::<_, anyhow::Error>((public_id(&*db, seed)?, public_id(&*db, candidate)?))
     })?;
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest(
@@ -1052,20 +1021,16 @@ fn awaited_background_similar_provider_result_survives_executor_polling() -> Res
             local provider = metadata.Provider.new("background-similar-provider")
             provider:similar_releases({{}}, function()
                 task.wait(0)
-                return {{ candidates = {{{{
-                    release_db_id = {},
-                    release_id = {:?},
-                }}}} }}
+                return {{ candidates = {{{{ release_id = {candidate_public_id:?} }}}} }}
             end)
             similar_done = false
             similar_result_id = nil
             task.spawn(function()
-                local matches = releases.similar({})
+                local matches = releases.similar({seed:?})
                 similar_result_id = matches[1].id
                 similar_done = true
             end)
         "#,
-        candidate.0, candidate_public_id, seed.0
     );
     runtime.eval_plugin_source_with_call_context(
         source.into_bytes(),
@@ -1097,7 +1062,8 @@ fn cancelling_awaited_similar_release_call_keeps_executor_usable() -> Result<()>
     crate::plugins::testing::init_default_test_state()?;
     let seed = futures::executor::block_on(async {
         let mut db = crate::services::STATE.db.write().await;
-        lyra_db::fixtures::insert_release(&mut db, "Seed")
+        let seed = lyra_db::fixtures::insert_release(&mut db, "Seed")?;
+        public_id(&*db, seed)
     })?;
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest(
@@ -1124,11 +1090,10 @@ fn cancelling_awaited_similar_release_call_keeps_executor_usable() -> Result<()>
             end)
             similar_resumed = false
             similar_thread = task.spawn(function()
-                releases.similar({})
+                releases.similar({seed:?})
                 similar_resumed = true
             end)
         "#,
-        seed.0
     );
     runtime.eval_plugin_source_with_call_context(
         source.into_bytes(),
@@ -1268,7 +1233,7 @@ fn plugin_executor_exposes_lyra_playback_sessions_on_update() -> Result<()> {
 
             playbacks.on_update(function(update)
                 task.wait()
-                executor_playback_update = update.event .. ":" .. update.track_public_id
+                executor_playback_update = update.event .. ":" .. update.track_id
             end)
         "#[..],
     )?;
@@ -1956,12 +1921,12 @@ fn plugin_executor_dispatches_registered_mix_handler() -> Result<()> {
             mixer:blend({ seeds = { mix.SeedType.Track, mix.SeedType.Genre }, max_seeds = 2, exclude = true }, function(ctx)
                 task.wait()
                 local track, genre = ctx.seeds[1], ctx.seeds[2]
-                assert(track.id == 40 and track.type == mix.SeedType.Track and not track.exclude, "track seed")
-                assert(genre.id == 7 and genre.type == mix.SeedType.Genre and genre.exclude, "genre seed")
+                assert(track.id == "track-40" and track.type == mix.SeedType.Track and not track.exclude, "track seed")
+                assert(genre.id == "genre-7" and genre.type == mix.SeedType.Genre and genre.exclude, "genre seed")
                 assert(ctx.q == "rain" and ctx.limit == 10, "query and limit")
                 return {
                     tracks = {
-                        { track_id = ctx.options.boost and 42 or 41 },
+                        { track_id = ctx.options.boost and "track-42" or "track-41" },
                     },
                 }
             end)
@@ -1976,23 +1941,24 @@ fn plugin_executor_dispatches_registered_mix_handler() -> Result<()> {
             .map(|registration| registration.handler)
     })
     .context("registered mix callback")?;
-    let seed = |id, seed_type, exclude| crate::services::mix::MixSeed {
-        db_id: agdb::DbId(id),
+    let seed = |id: &str, seed_type, exclude| crate::services::mix::MixSeed {
+        db_id: agdb::DbId(1),
+        id: id.to_string(),
         seed_type,
         exclude,
     };
     let result = runtime.dispatch_mix_handler(MixHandlerRequest {
         handler,
         seeds: vec![
-            seed(40, crate::services::mix::MixSeedType::Track, false),
-            seed(7, crate::services::mix::MixSeedType::Genre, true),
+            seed("track-40", crate::services::mix::MixSeedType::Track, false),
+            seed("genre-7", crate::services::mix::MixSeedType::Genre, true),
         ],
         query: Some("rain".to_string()),
         limit: Some(10),
         options: serde_json::Map::from_iter([("boost".to_string(), serde_json::Value::Bool(true))]),
     })?;
 
-    assert_eq!(result.track_ids, vec![42]);
+    assert_eq!(result.track_ids, vec!["track-42"]);
     Ok(())
 }
 
@@ -2565,6 +2531,7 @@ fn playlist_bulk_bindings_refuse_inaccessible_tracks() -> Result<()> {
     let owner = lyra_db::fixtures::test_user("playlist-viewer")?;
     let owner_id = lyra_db::users::create(&mut db, &owner)?;
     let hidden_track = lyra_db::fixtures::insert_track(&mut db, "Hidden Track")?;
+    let hidden_track = public_id(&db, hidden_track)?;
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.playlists"])]),
         default_server_info(),
@@ -2590,11 +2557,10 @@ fn playlist_bulk_bindings_refuse_inaccessible_tracks() -> Result<()> {
             r#"
                 local playlists = require("@lyra/playlists")
                 local id = playlists.create({{ name = "Viewer" }})
-                local added = pcall(playlists.add_tracks, id, {{ {hidden_track} }})
-                local replaced = pcall(playlists.replace, id, {{ track_ids = {{ {hidden_track} }} }})
+                local added = pcall(playlists.add_tracks, id, {{ "{hidden_track}" }})
+                local replaced = pcall(playlists.replace, id, {{ track_ids = {{ "{hidden_track}" }} }})
                 return added, replaced, #playlists.get_tracks(id)
             "#,
-            hidden_track = hidden_track.0,
         )
         .into_bytes(),
         context,
@@ -2683,9 +2649,9 @@ fn cover_bindings_hide_inaccessible_releases() -> Result<()> {
             )?;
             Ok(())
         })?;
-        releases.push(release.0);
+        releases.push(public_id(&fixture.db, release)?);
     }
-    let [shown, hidden] = releases[..] else {
+    let [shown, hidden] = &releases[..] else {
         unreachable!()
     };
     let values = fixture.eval(
@@ -2693,9 +2659,9 @@ fn cover_bindings_hide_inaccessible_releases() -> Result<()> {
         format!(
             r#"
                 local covers = require("@lyra/covers")
-                local missing = 987654
-                local found = covers.get({{ {shown}, {hidden}, missing }})
-                return found[{shown}] ~= nil, found[{hidden}] == nil, found[missing] == nil
+                local missing = "missing"
+                local found = covers.get({{ "{shown}", "{hidden}", missing }})
+                return found["{shown}"] ~= nil, found["{hidden}"] == nil, found[missing] == nil
             "#
         ),
     )?;
@@ -2750,6 +2716,8 @@ fn cover_artwork_bindings_serve_anonymous_public_routes() -> Result<()> {
     )?;
     database.transaction_mut(|t| lyra_db::playlists::add_track(t, playlist, track))?;
     lyra_db::covers::display::sync_playlist_cover(&mut database, playlist)?;
+    let release = public_id(&database, release)?;
+    let playlist = public_id(&database, playlist)?;
 
     futures::executor::block_on(crate::plugins::api::initialize_registry(
         std::collections::HashSet::new(),
@@ -2768,8 +2736,8 @@ fn cover_artwork_bindings_serve_anonymous_public_routes() -> Result<()> {
             local covers = require("@lyra/covers")
 
             api.get("/artwork/{release}/{playlist}", function(ctx)
-                local release = tonumber(ctx.params.release)
-                local playlist = tonumber(ctx.params.playlist)
+                local release = ctx.params.release
+                local playlist = ctx.params.playlist
                 return api.response.json(200, {
                     cover = covers.artwork({ release })[release] ~= nil,
                     playlist = covers.artwork({ playlist })[playlist].release_id == release,
@@ -2786,10 +2754,10 @@ fn cover_artwork_bindings_serve_anonymous_public_routes() -> Result<()> {
     .context("registered API handler")?;
     let result = runtime.dispatch_api_handler(ApiHandlerRequest {
         params: HashMap::from([
-            ("release".to_string(), release.0.to_string()),
-            ("playlist".to_string(), playlist.0.to_string()),
+            ("release".to_string(), release.clone()),
+            ("playlist".to_string(), playlist.clone()),
         ]),
-        ..api_request(handler, &format!("/artwork/{}/{}", release.0, playlist.0))
+        ..api_request(handler, &format!("/artwork/{release}/{playlist}"))
     })?;
 
     assert_eq!(result.status, 200);
@@ -2849,6 +2817,8 @@ fn streamable_bindings_serve_anonymous_public_routes() -> Result<()> {
         )?;
         Ok(())
     })?;
+    let track = public_id(&database, track)?;
+    let release = public_id(&database, release)?;
 
     futures::executor::block_on(crate::plugins::api::initialize_registry(
         std::collections::HashSet::new(),
@@ -2871,8 +2841,8 @@ fn streamable_bindings_serve_anonymous_public_routes() -> Result<()> {
             local tracks = require("@lyra/tracks")
 
             api.get("/stream/{track}/{release}", function(ctx)
-                local track = tonumber(ctx.params.track)
-                local release = tonumber(ctx.params.release)
+                local track = ctx.params.track
+                local release = ctx.params.release
                 local source = playback_sources.streamable(track, true)
                 return api.response.json(200, {
                     track = tracks.streamable({ track, release })[track] ~= nil,
@@ -2894,10 +2864,10 @@ fn streamable_bindings_serve_anonymous_public_routes() -> Result<()> {
     .context("registered API handler")?;
     let result = runtime.dispatch_api_handler(ApiHandlerRequest {
         params: HashMap::from([
-            ("track".to_string(), track.0.to_string()),
-            ("release".to_string(), release.0.to_string()),
+            ("track".to_string(), track.clone()),
+            ("release".to_string(), release.clone()),
         ]),
-        ..api_request(handler, &format!("/stream/{}/{}", track.0, release.0))
+        ..api_request(handler, &format!("/stream/{track}/{release}"))
     })?;
 
     assert_eq!(result.status, 200);
@@ -2930,10 +2900,11 @@ fn label_bindings_hide_inaccessible_releases() -> Result<()> {
                 external_id: None,
             }],
         )?;
-        releases.push(release.0);
+        releases.push(public_id(&fixture.db, release)?);
     }
     let label = lyra_db::labels::find_by_name(&fixture.db, "Label")?.context("label exists")?;
-    let [shown, hidden] = releases[..] else {
+    let label = public_id(&fixture.db, label)?;
+    let [shown, hidden] = &releases[..] else {
         unreachable!()
     };
     let values = fixture.eval(
@@ -2941,15 +2912,14 @@ fn label_bindings_hide_inaccessible_releases() -> Result<()> {
         format!(
             r#"
                 local labels = require("@lyra/labels")
-                local releases = labels.get_releases({label})
-                local many = labels.get_releases_many({{ {label} }})[{label}]
+                local releases = labels.get_releases("{label}")
+                local many = labels.get_releases_many({{ "{label}" }})["{label}"]
                 return #releases, releases[1], #many, many[1],
-                    #labels.get_for_release({hidden}), #labels.get_for_release({shown})
+                    #labels.get_for_release("{hidden}"), #labels.get_for_release("{shown}")
             "#,
-            label = label.0,
         ),
     )?;
-    let shown = luau::Value::Number(shown as f64);
+    let shown = luau::Value::String(shown.clone().into_bytes());
     assert_eq!(
         values,
         vec![
@@ -3006,9 +2976,9 @@ fn track_source_bindings_hide_inaccessible_tracks() -> Result<()> {
             )?;
             Ok(())
         })?;
-        ids.push((track.0, entry_id.0));
+        ids.push((public_id(&fixture.db, track)?, entry.id));
     }
-    let [(shown, _), (hidden, hidden_entry)] = ids[..] else {
+    let [(shown, _), (hidden, hidden_entry)] = &ids[..] else {
         unreachable!()
     };
     let values = fixture.eval(
@@ -3017,9 +2987,9 @@ fn track_source_bindings_hide_inaccessible_tracks() -> Result<()> {
             r#"
                 local track_sources = require("@lyra/track_sources")
                 local chromaprint = require("@lyra/chromaprint")
-                local _, fingerprint_error = pcall(chromaprint.compute, {hidden_entry})
-                return track_sources.get_primary_source_key({shown}),
-                    track_sources.get_primary_source_key({hidden}) == nil,
+                local _, fingerprint_error = pcall(chromaprint.compute, "{hidden_entry}")
+                return track_sources.get_primary_source_key("{shown}"),
+                    track_sources.get_primary_source_key("{hidden}") == nil,
                     string.find(tostring(fingerprint_error), "entry not found", 1, true) ~= nil
             "#
         ),

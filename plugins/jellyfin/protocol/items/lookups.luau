@@ -19,12 +19,12 @@ type Release = releases.Release
 type Track = tracks.Track
 
 -- An item a listing is scoped to, and what kind of entity it is.
-export type Scope = { db_id: number?, entity_type: string? }
+export type Scope = { id: string?, entity_type: string? }
 
 local module = {}
 
-function module.scope_entity_type(scope: number?): string?
-	if scope == nil or scope <= 0 then
+function module.scope_entity_type(scope: string?): string?
+	if scope == nil then
 		return nil
 	end
 	local ok, element_type = pcall(entities.get_type, scope)
@@ -33,7 +33,7 @@ end
 
 -- The kind of entity `item_id` is, when the caller can see it. A playlist is visible as upstream
 -- shows it, to its owner or as a public one, whatever the caller's role.
-function module.visible_kind(item_id: number, user_id: string?): string?
+function module.visible_kind(item_id: string, user_id: string?): string?
 	local kind = module.scope_entity_type(item_id)
 	local visible: boolean
 	if kind == "Release" then
@@ -54,18 +54,19 @@ end
 
 -- The scope a Jellyfin item id names; empty for no id or an unknown one.
 function module.scope(item_id: string?): Scope
-	local db_id = if item_id then item_ids.decode_jellyfin_item_id(item_id) else nil
-	return { db_id = db_id, entity_type = module.scope_entity_type(db_id) }
+	local id = if item_id then item_ids.decode_jellyfin_item_id(item_id) else nil
+	local entity_type = module.scope_entity_type(id)
+	return { id = if entity_type then id else nil, entity_type = entity_type }
 end
 
-function module.tracks_of_release(release_id: number?): { Track }
+function module.tracks_of_release(release_id: string?): { Track }
 	if release_id == nil then
 		return {}
 	end
 	return tracks.by_release({ release_id })[release_id] or {}
 end
 
-function module.releases_of_track(track_id: number?): { Release }
+function module.releases_of_track(track_id: string?): { Release }
 	if track_id == nil then
 		return {}
 	end

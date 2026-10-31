@@ -70,36 +70,29 @@ local function ensure_wikipedia_rate_limit(host: string)
 	})
 end
 
--- Lowest library db_id with a resolvable language, matching the server's
--- library selection for shared entities.
-local function library_language(artist_db_id: number): WikiLanguage?
-	local ok, artist_libraries = pcall(libraries.get_for_entity, artist_db_id)
+-- The first of the artist's libraries with a resolvable language.
+local function library_language(artist_id: string): WikiLanguage?
+	local ok, artist_libraries = pcall(libraries.get_for_entity, artist_id)
 	if not ok then
 		return nil
 	end
-	local chosen: WikiLanguage? = nil
-	local chosen_db_id: number? = nil
 	for _, library in artist_libraries do
 		local language = locale.language(library.language)
-		if not language or not library.db_id then
-			continue
-		end
-		if chosen_db_id and library.db_id >= chosen_db_id then
+		if not language then
 			continue
 		end
 		local codes = WIKI_CODES[language.iso3]
 		local site = if codes then codes.site else language.iso2
 		local term = if codes then codes.term else language.iso2
 		if site and term then
-			chosen = { site = site, term = term, iso3 = language.iso3 }
-			chosen_db_id = library.db_id
+			return { site = site, term = term, iso3 = language.iso3 }
 		end
 	end
-	return chosen
+	return nil
 end
 
-local function preferred_languages(artist_db_id: number): { WikiLanguage }
-	local preferred = library_language(artist_db_id)
+local function preferred_languages(artist_id: string): { WikiLanguage }
+	local preferred = library_language(artist_id)
 	if not preferred or preferred.site == ENGLISH.site then
 		return { ENGLISH }
 	end
@@ -343,8 +336,8 @@ local module = {}
 
 function module.register(provider: metadata.Provider)
 	provider:refresh(metadata.EntityType.Artist, function(ctx: metadata.ArtistRefreshContext)
-		local artist_db_id = ctx.db_id
-		if not artist_db_id then
+		local artist_id = ctx.id
+		if not artist_id then
 			return nil
 		end
 
@@ -354,12 +347,12 @@ function module.register(provider: metadata.Provider)
 			return nil
 		end
 
-		local cache_key = `artist:{artist_db_id}:{string.lower(artist_name)}`
+		local cache_key = `artist:{artist_id}:{string.lower(artist_name)}`
 		if shared.cache_get(cache_key) then
 			return nil
 		end
 
-		local languages = preferred_languages(artist_db_id)
+		local languages = preferred_languages(artist_id)
 		local match, failed = resolve_artist(artist_name, mbid, languages)
 		if failed then
 			return nil
@@ -371,7 +364,7 @@ function module.register(provider: metadata.Provider)
 
 		local description = entity_description(match.entity, languages)
 
-		local artist_layer = provider:layer(artist_db_id)
+		local artist_layer = provider:layer(artist_id)
 		artist_layer:set_id("qid", match.qid)
 		if description then
 			artist_layer:set_field("description", description.text)

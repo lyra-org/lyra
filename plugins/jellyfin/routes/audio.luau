@@ -251,10 +251,7 @@ function module.handle_universal_route(ctx: ApiContext): ApiResponse
 	if not track then
 		return responses.not_found("item not found")
 	end
-	local track_id = track.db_id
-	if track_id == nil or track_id <= 0 then
-		return responses.not_found("item not found")
-	end
+	local track_id = track.id
 
 	local source = media.resolve_playback_source_for_track(track)
 	local source_channels = if source then source.channel_count else nil
@@ -403,10 +400,10 @@ function module.handle_stream_route(ctx: ApiContext): ApiResponse
 		return responses.not_found("media source not found")
 	end
 	local track = playback.resolve_track_for_public_stream(item_ids.decode_jellyfin_item_id(item_id))
-	local track_id = if track then track.db_id else nil
-	if track == nil or track_id == nil or track_id <= 0 then
+	if track == nil then
 		return responses.not_found("item not found")
 	end
+	local track_id = track.id
 
 	if jellyfin_boolean(requests.parse_query_string(query, { "static" }, nil)) == true then
 		return api.response.stream_track(track_id, { public = true })
@@ -435,7 +432,7 @@ end
 
 type ResolvedAudioHlsPlaylistRequest = {
 	track: Track,
-	track_id: number,
+	track_id: string,
 	query: ApiQueryParams?,
 	selected_codec: string,
 	options: api.HlsServeOptions,
@@ -608,10 +605,7 @@ local function resolve_audio_hls_playlist_request(ctx: ApiContext): (ResolvedAud
 	if not track then
 		return nil, responses.not_found("item not found")
 	end
-	local track_id = track.db_id
-	if track_id == nil or track_id <= 0 then
-		return nil, responses.not_found("item not found")
-	end
+	local track_id = track.id
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
 	local options, selected_codec, options_err = resolve_audio_hls_query_options(query, track)
@@ -680,12 +674,6 @@ function module.register()
 		if track_id == nil or item == nil then
 			return responses.not_found("item not found")
 		end
-		local raw_track = item._raw
-		local track_public_id = if raw_track then raw_track.id else nil
-		if type(track_public_id) ~= "string" then
-			return responses.not_found("item not found")
-		end
-
 		local body = if ctx and ctx.request then ctx.request.body_raw else nil
 		if type(body) ~= "string" or #body == 0 then
 			return responses.bad_request("No lyrics uploaded")
@@ -699,7 +687,7 @@ function module.register()
 			return responses.bad_request("Extension is required on filename")
 		end
 
-		local ok, lyric_info = pcall(lyrics.upsert_personal, track_id, track_public_id, {
+		local ok, lyric_info = pcall(lyrics.upsert_personal, track_id, {
 			content_type = content_type,
 			body = body,
 			language = nil,

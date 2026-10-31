@@ -262,7 +262,7 @@ pub(crate) struct Seeded {
     api_keys: BTreeMap<String, String>,
     sessions: BTreeMap<String, String>,
     connections: BTreeMap<String, String>,
-    ids: BTreeMap<String, i64>,
+    ids: BTreeMap<String, String>,
     entries: BTreeMap<String, Vec<String>>,
     #[serde(skip)]
     pending_connections: Vec<PendingConnection>,
@@ -600,8 +600,8 @@ impl Fixture {
                     lyra_db::libraries::AccessKind::ReadWrite,
                 )?;
             }
+            seeded.ids.insert(library.key.clone(), created.id.clone());
             seeded.libraries.insert(library.key.clone(), created.id);
-            seeded.ids.insert(library.key.clone(), library_db_id.0);
             keys.libraries.insert(library.key.clone(), library_db_id);
         }
 
@@ -866,16 +866,16 @@ impl Fixture {
             )?;
         }
 
+        let public_id = |db_id: DbId| {
+            lyra_db::lookup::find_id_by_db_id(db, db_id)?.context("fixture node has a public id")
+        };
         for (key, (db_id, _)) in &keys.entities {
-            seeded.ids.insert(key.clone(), db_id.0);
-        }
-        for (key, db_id) in &keys.libraries {
-            seeded.ids.insert(key.clone(), db_id.0);
+            seeded.ids.insert(key.clone(), public_id(*db_id)?);
         }
         for (key, name) in &keys.genres {
             let genre_db_id = lyra_db::genres::find_by_name(db, name)?
                 .with_context(|| format!("fixture genre `{key}` is on no release"))?;
-            seeded.ids.insert(key.clone(), genre_db_id.0);
+            seeded.ids.insert(key.clone(), public_id(genre_db_id)?);
         }
 
         let run_as = self
@@ -957,6 +957,13 @@ mod tests {
         Ok(())
     }
 
+    /// The node a fixture key's seeded id names.
+    fn node(db: &agdb::DbAny, seeded: &Seeded, key: &str) -> DbId {
+        lyra_db::lookup::find_node_id_by_id(db, &seeded.ids[key])
+            .expect("lookup")
+            .expect("seeded node")
+    }
+
     #[test]
     fn libraries_hold_their_releases_for_the_users_granted_them() -> anyhow::Result<()> {
         let mut db = lyra_db::test_db::new_test_db()?;
@@ -979,7 +986,7 @@ mod tests {
         let (seeded, viewer) = fixture.seed(&mut db)?;
         let viewer = viewer.context("fixture runs as viewer")?;
 
-        let id = |key: &str| DbId(seeded.ids[key]);
+        let id = |key: &str| node(&db, &seeded, key);
         for (library, release, track) in [
             ("shared", "open", "open_song"),
             ("private", "closed", "closed_song"),
@@ -1024,7 +1031,7 @@ mod tests {
         let (seeded, viewer) = fixture.seed(&mut db)?;
         let viewer = viewer.context("fixture runs as viewer")?;
 
-        let closed = DbId(seeded.ids["closed"]);
+        let closed = node(&db, &seeded, "closed");
         let tags = lyra_db::tags::get_for_targets_many(&db, viewer, &[closed])?;
         assert_eq!(
             tags[&closed]
@@ -1046,7 +1053,7 @@ mod tests {
         }))?;
         let (seeded, _) = fixture.seed(&mut db)?;
 
-        let song = lyra_db::tracks::get_by_id(&db, DbId(seeded.ids["song"]))?.context("song")?;
+        let song = lyra_db::tracks::get_by_id(&db, node(&db, &seeded, "song"))?.context("song")?;
         assert_eq!(song.duration_ms, Some(180_000));
         Ok(())
     }

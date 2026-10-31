@@ -106,6 +106,7 @@ use super::{
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(DbElement, Serialize, Deserialize, Clone, Debug)]
 pub struct Artist {
+    #[serde(skip_serializing)]
     pub db_id: Option<NodeId>,
     pub id: String,
     pub artist_name: String,

@@ -42,7 +42,7 @@ function module.jellyfin_codec(source: PlaybackSourceInfo?): string?
 	return if source then source.codec else nil
 end
 
-function module.resolve_entry_for_track(track: { db_id: number? }?): EntryInfo?
+function module.resolve_entry_for_track(track: { id: string }?): EntryInfo?
 	local source = module.resolve_playback_source_for_track(track, true)
 	if source and type(source.entry) == "table" then
 		return source.entry
@@ -51,15 +51,12 @@ function module.resolve_entry_for_track(track: { db_id: number? }?): EntryInfo?
 	return nil
 end
 
-function module.resolve_playback_source_for_track(
-	track: { db_id: number? }?,
-	include_entry: boolean?
-): PlaybackSourceInfo?
-	if not track or not track.db_id then
+function module.resolve_playback_source_for_track(track: { id: string }?, include_entry: boolean?): PlaybackSourceInfo?
+	if not track then
 		return nil
 	end
 
-	local ok, source_items = pcall(playback_sources.get, track.db_id, include_entry == true)
+	local ok, source_items = pcall(playback_sources.get, track.id, include_entry == true)
 	if not ok or type(source_items) ~= "table" then
 		return nil
 	end
@@ -73,12 +70,12 @@ function module.resolve_playback_source_for_track(
 end
 
 -- Reads as the system for public streaming routes, which must serve nothing from it but the audio.
-function module.resolve_public_playback_source(track: { db_id: number? }?, include_entry: boolean?): PlaybackSourceInfo?
-	if not track or not track.db_id then
+function module.resolve_public_playback_source(track: { id: string }?, include_entry: boolean?): PlaybackSourceInfo?
+	if not track then
 		return nil
 	end
 
-	local ok, source = pcall(playback_sources.streamable, track.db_id, include_entry == true)
+	local ok, source = pcall(playback_sources.streamable, track.id, include_entry == true)
 	if not ok or type(source) ~= "table" then
 		return nil
 	end

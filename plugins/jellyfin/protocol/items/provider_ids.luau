@@ -58,36 +58,36 @@ export type ItemProviderIds = {
 }
 
 export type PageEntityIds = {
-	release_ids: { number },
-	track_ids: { number },
-	artist_ids: { number },
+	release_ids: { string },
+	track_ids: { string },
+	artist_ids: { string },
 }
 
 local module = {}
 
-local function append_unique(id: number?, ids: { number | string }, seen: { [number]: boolean })
-	if id ~= nil and id > 0 and not seen[id] then
+local function append_unique(id: string, ids: { string }, seen: { [string]: boolean })
+	if not seen[id] then
 		seen[id] = true
 		table.insert(ids, id)
 	end
 end
 
 -- Page entities plus the artists credited on its releases and tracks.
-local function page_entity_ids(page: PageEntityIds, artists_by_owner_id: { [number]: { Artist }? }): { number | string }
-	local ids: { number | string } = {}
-	local seen: { [number]: boolean } = {}
-	for _, owner_ids: { number } in { page.release_ids, page.track_ids } do
-		for _, owner_id: number in owner_ids do
+local function page_entity_ids(page: PageEntityIds, artists_by_owner_id: { [string]: { Artist }? }): { string }
+	local ids: { string } = {}
+	local seen: { [string]: boolean } = {}
+	for _, owner_ids: { string } in { page.release_ids, page.track_ids } do
+		for _, owner_id: string in owner_ids do
 			append_unique(owner_id, ids, seen)
 			local owner_artists = artists_by_owner_id[owner_id]
 			if owner_artists ~= nil then
 				for _, artist: Artist in owner_artists do
-					append_unique(artist.db_id, ids, seen)
+					append_unique(artist.id, ids, seen)
 				end
 			end
 		end
 	end
-	for _, artist_id: number in page.artist_ids do
+	for _, artist_id: string in page.artist_ids do
 		append_unique(artist_id, ids, seen)
 	end
 	return ids
@@ -96,10 +96,10 @@ end
 -- One batch query for the page. Credited artists are only needed for ProviderIds.
 function module.fetch(
 	page: PageEntityIds,
-	artists_by_owner_id: { [number]: { Artist }? },
+	artists_by_owner_id: { [string]: { Artist }? },
 	include_provider_ids: boolean,
 	include_external_urls: boolean,
-	library_id: number?
+	library_id: string?
 ): ItemProviderIds?
 	local ids = page_entity_ids(page, if include_provider_ids then artists_by_owner_id else {})
 	if #ids == 0 then

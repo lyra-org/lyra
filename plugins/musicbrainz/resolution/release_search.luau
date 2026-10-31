@@ -133,18 +133,18 @@ function module.search_and_fetch_release(local_release_info: LocalRelease): bool
 	local preferred_language = local_release_info.preferred_language
 	local preferred_country = local_release_info.preferred_country
 
-	local marked_artist_ids: { [number]: boolean } = {}
+	local marked_artist_ids: { [string]: boolean } = {}
 	local function mark_artist_unmatched(artist: LocalArtist)
-		if artist.db_id and not marked_artist_ids[artist.db_id] then
-			marked_artist_ids[artist.db_id] = true
-			apply.mark_unmatched(artist.db_id, { "artist_id" })
+		if artist.id and not marked_artist_ids[artist.id] then
+			marked_artist_ids[artist.id] = true
+			apply.mark_unmatched(artist.id, { "artist_id" })
 		end
 	end
 	local function mark_lookup_ids_unmatched(): boolean
 		for_each_local_artist(release_context, mark_artist_unmatched)
 		for _, track: LocalTrack in release_context.tracks do
-			if track.db_id then
-				apply.mark_unmatched(track.db_id, { "recording_id", "release_track_id", "work_id" })
+			if track.id then
+				apply.mark_unmatched(track.id, { "recording_id", "release_track_id", "work_id" })
 			end
 		end
 		return false

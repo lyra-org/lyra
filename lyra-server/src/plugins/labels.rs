@@ -3,7 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use agdb::DbId;
 use harmony_luau as luau;
 #[cfg(feature = "docgen")]
 use harmony_luau::{
@@ -21,16 +20,17 @@ use harmony_luau::{
 #[cfg(feature = "docgen")]
 use std::collections::HashMap;
 
-use crate::plugins::args::{
-    PositiveId,
-    UniqueIds,
-};
+use crate::plugins::args::UniqueIds;
 use crate::{
     plugins::{
         auth::DispatchPrincipal,
         db::{
             Db,
             ViewerDb,
+        },
+        ids::{
+            self,
+            Resolved,
         },
     },
     services::auth::Principal,
@@ -64,114 +64,117 @@ impl<'vm> luau::FromLuau<'vm> for LabelResolveRequestData {
     docs_feature = "docgen"
 )]
 impl LabelsModule {
-    #[harmony(args(request: LabelResolveRequest))]
+    #[harmony(
+        args(request: LabelResolveRequest),
+        description = "The id of the label matching the request, created when there is none. Returns nil when the caller cannot manage libraries."
+    )]
     async fn resolve(
         request: LabelResolveRequestData,
         #[context] caller: DispatchPrincipal,
         #[context] vm: luau::Vm,
-    ) -> luau::runtime::Result<i64> {
+    ) -> luau::runtime::Result<Option<String>> {
         if !can_mutate_global(caller.0.as_ref()) {
-            return Ok(0);
+            return Ok(None);
         }
         let db = crate::plugins::db::get(&vm)?;
-        let label_id = {
-            let mut db = db.write().await;
-            lyra_db::labels::resolve(
-                &mut db,
-                &ResolveLabel {
-                    name: &request.name,
-                    external_id: request.external_id_ref(),
-                },
-            )
-            .map_err(crate::plugins::runtime_error)
-        }?;
-
-        Ok(label_id.0)
+        let mut db = db.write().await;
+        let label_id = lyra_db::labels::resolve(
+            &mut db,
+            &ResolveLabel {
+                name: &request.name,
+                external_id: request.external_id_ref(),
+            },
+        )
+        .map_err(crate::plugins::runtime_error)?;
+        ids::public_id(&*db, label_id).map(Some)
     }
 
     #[harmony(returns(Option<LabelInfo>))]
     async fn get_by_id(
-        label_id: PositiveId,
+        label_id: String,
         #[context] db: Db,
     ) -> luau::runtime::Result<Option<luau::OwnedTable>> {
-        let label = {
-            let db = db.read().await;
-            lyra_db::labels::get_by_id(&db, label_id.0).map_err(crate::plugins::runtime_error)
-        }?;
+        let db = db.read().await;
+        let Some(label_id) = ids::db_id(&*db, &label_id)? else {
+            return Ok(None);
+        };
+        let label =
+            lyra_db::labels::get_by_id(&db, label_id).map_err(crate::plugins::runtime_error)?;
         Ok(label.map(label_info_table))
     }
 
     #[harmony(returns(Vec<LabelForReleaseInfo>))]
     async fn get_for_release(
-        release_id: PositiveId,
+        release_id: String,
         #[context] db: ViewerDb,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        let release_id = release_id.0;
         let labels = {
             let (db, viewer) = db.read().await?;
-            if viewer.sees_entity(&*db, release_id)? {
-                lyra_db::labels::get_for_release(&db, release_id)?
-            } else {
-                Vec::new()
+            match ids::db_id(&*db, &release_id)? {
+                Some(release_id) if viewer.sees_entity(&*db, release_id)? => {
+                    lyra_db::labels::get_for_release(&db, release_id)?
+                }
+                _ => Vec::new(),
             }
         };
         Ok(label_release_array(labels))
     }
 
     #[harmony(
-        returns(HashMap<i64, Vec<LabelForReleaseInfo>>)
+        description = "The labels of each of these releases that the caller can see, keyed by release id.",
+        returns(HashMap<String, Vec<LabelForReleaseInfo>>)
     )]
     async fn get_for_releases_many(
         release_ids: UniqueIds,
         #[context] db: ViewerDb,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        let labels = {
-            let (db, viewer) = db.read().await?;
-            let readable = viewer.visible(&db, release_ids.0)?;
-            lyra_db::labels::get_for_releases_many(&db, &readable)
-                .map_err(crate::plugins::runtime_error)
-        }?;
-        Ok(luau::OwnedTable::from_entries(labels.into_iter().map(
-            |(release_id, labels)| (release_id.0, label_release_array(labels)),
-        )))
+        let (db, viewer) = db.read().await?;
+        let releases = Resolved::of(&*db, release_ids.0)?;
+        let readable = viewer.visible(&db, releases.db_ids().to_vec())?;
+        let labels = lyra_db::labels::get_for_releases_many(&db, &readable)
+            .map_err(crate::plugins::runtime_error)?;
+        Ok(releases.keyed(
+            labels
+                .into_iter()
+                .map(|(release_id, labels)| (release_id, label_release_array(labels))),
+        ))
     }
 
-    #[harmony(returns(Vec<i64>))]
+    #[harmony(
+        description = "The ids of the label's releases that the caller can see.",
+        returns(Vec<String>)
+    )]
     async fn get_releases(
-        label_id: PositiveId,
+        label_id: String,
         #[context] db: ViewerDb,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        let label_id = label_id.0;
-        let release_ids = {
-            let (db, viewer) = db.read().await?;
-            let release_ids = lyra_db::labels::get_releases(&db, label_id)?;
-            viewer
-                .visible(&db, release_ids)
-                .map_err(crate::plugins::runtime_error)
-        }?;
-        Ok(id_array(release_ids))
+        let (db, viewer) = db.read().await?;
+        let Some(label_id) = ids::db_id(&*db, &label_id)? else {
+            return Ok(luau::OwnedTable::new());
+        };
+        let release_ids = lyra_db::labels::get_releases(&db, label_id)?;
+        let release_ids = viewer
+            .visible(&db, release_ids)
+            .map_err(crate::plugins::runtime_error)?;
+        ids::public_id_list(&*db, &release_ids)
     }
 
-    #[harmony(returns(HashMap<i64, Vec<i64>>))]
+    #[harmony(
+        description = "The ids of each label's releases that the caller can see, keyed by label id.",
+        returns(HashMap<String, Vec<String>>)
+    )]
     async fn get_releases_many(
         label_ids: UniqueIds,
         #[context] db: ViewerDb,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        let ids = label_ids.0;
-        let release_ids = {
-            let (db, viewer) = db.read().await?;
-            let mut visible = Vec::new();
-            for (label_id, release_ids) in lyra_db::labels::get_releases_many(&db, &ids)? {
-                let release_ids = viewer.visible(&db, release_ids)?;
-                visible.push((label_id, release_ids));
-            }
-            Ok::<_, luau::runtime::Error>(visible)
-        }?;
-        Ok(luau::OwnedTable::from_entries(
-            release_ids
-                .into_iter()
-                .map(|(label_id, ids)| (label_id.0, id_array(ids))),
-        ))
+        let (db, viewer) = db.read().await?;
+        let labels = Resolved::of(&*db, label_ids.0)?;
+        let mut releases = Vec::new();
+        for (label_id, release_ids) in lyra_db::labels::get_releases_many(&db, labels.db_ids())? {
+            let release_ids = viewer.visible(&db, release_ids)?;
+            releases.push((label_id, ids::public_id_list(&*db, &release_ids)?));
+        }
+        Ok(labels.keyed(releases))
     }
 }
 
@@ -241,8 +244,7 @@ fn can_mutate_global(principal: Option<&Principal>) -> bool {
 }
 
 fn label_info_table(label: lyra_db::labels::Label) -> luau::OwnedTable {
-    let mut table = luau::OwnedTable::with_capacity(0, 3);
-    table.set_field("db_id", label.db_id.map(|id| DbId::from(id).0));
+    let mut table = luau::OwnedTable::with_capacity(0, 2);
     table.set_field("id", label.id);
     table.set_field("name", label.name);
     table
@@ -261,14 +263,6 @@ fn label_release_array(labels: Vec<lyra_db::labels::LabelForRelease>) -> luau::O
             .into_iter()
             .enumerate()
             .map(|(index, label)| (index as i64 + 1, label_for_release_table(label))),
-    )
-}
-
-fn id_array(ids: Vec<DbId>) -> luau::OwnedTable {
-    luau::OwnedTable::from_entries(
-        ids.into_iter()
-            .enumerate()
-            .map(|(index, id)| (index as i64 + 1, id.0)),
     )
 }
 
@@ -339,7 +333,6 @@ impl DescribeInterface for LabelInfo {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("LabelInfo", None);
         descriptor.fields.extend([
-            field("db_id", Option::<i64>::luau_type()),
             field("id", String::luau_type()),
             field("name", String::luau_type()),
         ]);

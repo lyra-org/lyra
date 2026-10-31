@@ -164,22 +164,6 @@ pub(crate) fn tracks_by_entry(
     Ok(tracks)
 }
 
-/// A release's chain: its tracks in play order.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct ReleaseChain {
-    pub(crate) id: String,
-    pub(crate) track_ids: Vec<i64>,
-}
-
-impl From<lyra_db::chains::ReleaseChain> for ReleaseChain {
-    fn from(chain: lyra_db::chains::ReleaseChain) -> Self {
-        Self {
-            id: chain.id,
-            track_ids: chain.track_db_ids.into_iter().map(|id| id.0).collect(),
-        }
-    }
-}
-
 /// A track's chain and its 0-based place in it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct TrackChain {
@@ -192,14 +176,10 @@ pub(crate) fn chains_by_release(
     db: &DbAny,
     viewer: &Viewer,
     releases: &[DbId],
-) -> Result<HashMap<DbId, Vec<ReleaseChain>>, CatalogError> {
+) -> Result<HashMap<DbId, Vec<lyra_db::chains::ReleaseChain>>, CatalogError> {
     let mut chains = HashMap::new();
     for release in visible_in_order::<Releases>(db, viewer, releases)? {
-        let release_chains = lyra_db::chains::get_for_release(db, release)?;
-        chains.insert(
-            release,
-            release_chains.into_iter().map(ReleaseChain::from).collect(),
-        );
+        chains.insert(release, lyra_db::chains::get_for_release(db, release)?);
     }
     Ok(chains)
 }

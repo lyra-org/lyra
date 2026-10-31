@@ -125,28 +125,6 @@ pub(crate) fn system_library_by_id(
     Ok(lyra_db::libraries::get_by_id(db, library_db_id)?.map(LibraryFull::from))
 }
 
-pub(crate) fn libraries_by_alias(
-    db: &impl lyra_db::DbAccess,
-    principal: &Principal,
-    alias: &str,
-) -> anyhow::Result<Vec<LibraryView>> {
-    Ok(filter_accessible_libraries(
-        lyra_db::libraries::get_by_alias(db, alias)?,
-        principal,
-    ))
-}
-
-pub(crate) fn system_libraries_by_alias(
-    db: &impl lyra_db::DbAccess,
-    _ctx: &SystemContext,
-    alias: &str,
-) -> anyhow::Result<Vec<LibraryFull>> {
-    Ok(lyra_db::libraries::get_by_alias(db, alias)?
-        .into_iter()
-        .map(LibraryFull::from)
-        .collect())
-}
-
 pub(crate) fn libraries_for_entity(
     db: &impl lyra_db::DbAccess,
     principal: &Principal,

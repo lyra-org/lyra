@@ -3,172 +3,153 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-#[cfg(feature = "docgen")]
+//! The public ids plugins name nodes by, resolved to the database ids the services take.
+//! Database ids never reach Luau: agdb reuses them after deletions.
+
 use std::collections::HashMap;
-use std::collections::HashSet;
 
-use agdb::DbId;
+use agdb::{
+    DbAny,
+    DbId,
+};
 use harmony_luau as luau;
-use harmony_luau::{
-    LuauType,
-    LuauTypeInfo,
-};
+use lyra_db::DbAccess;
 
-use crate::plugins::{
-    args,
-    args::UniqueIds,
-    db::OptionalDb,
-};
+use crate::services::catalog::Viewer;
 
-pub(crate) struct IdsModule;
-
-/// An array of strings, trimmed, without blanks or repeats.
-struct PublicIds(Vec<String>);
-
-impl<'vm> luau::FromLuau<'vm> for PublicIds {
-    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
-        let table: luau::Table = reader.read()?;
-        parse_strings(&table).map(Self)
-    }
+/// Public ids resolved to the nodes they name, in the order given. Ids that name no node are
+/// left out.
+pub(crate) struct Resolved {
+    db_ids: Vec<DbId>,
+    public: HashMap<DbId, String>,
 }
 
-impl LuauTypeInfo for PublicIds {
-    fn luau_type() -> LuauType {
-        Vec::<String>::luau_type()
-    }
-}
-
-#[harmony_macros::module(id = "lyra/ids", docs_feature = "docgen")]
-impl IdsModule {
-    #[harmony(
-        description = "Returns the public nanoid string for a given numeric database ID, or nil if not found."
-    )]
-    async fn get_id(
-        db_id: i64,
-        #[context] db: OptionalDb,
-    ) -> luau::runtime::Result<Option<String>> {
-        find_id_by_db_id(db.0, DbId(db_id)).await
-    }
-
-    #[harmony(
-        description = "Returns public nanoid strings for many numeric database IDs.",
-        returns(HashMap<u64, Option<String>>)
-    )]
-    async fn get_ids(
-        db_ids: UniqueIds,
-        #[context] db: OptionalDb,
-    ) -> luau::runtime::Result<luau::OwnedTable> {
-        let ids = db_ids.0;
-        let resolved = find_ids_by_db_ids(db.0, &ids).await?;
-
-        let table = luau::OwnedTable::from_entries(ids.into_iter().map(|id| {
-            (
-                id.0,
-                resolved
-                    .get(&id)
-                    .map(|value| luau::Value::String(value.clone().into_bytes()))
-                    .unwrap_or(luau::Value::Nil),
-            )
-        }));
-        Ok(table)
-    }
-
-    #[harmony(
-        description = "Returns the numeric database ID for a given public nanoid string, or nil if not found."
-    )]
-    async fn get_db_id(
-        id: String,
-        #[context] db: OptionalDb,
-    ) -> luau::runtime::Result<Option<i64>> {
-        Ok(find_node_id_by_id(db.0, &id).await?.map(|id| id.0))
-    }
-
-    #[harmony(
-        description = "Returns numeric database IDs for many public nanoid strings.",
-        returns(HashMap<String, Option<u64>>)
-    )]
-    async fn get_db_ids(
-        ids: PublicIds,
-        #[context] db: OptionalDb,
-    ) -> luau::runtime::Result<luau::OwnedTable> {
-        let ids = ids.0;
-        let str_refs = ids.iter().map(String::as_str).collect::<Vec<_>>();
-        let resolved = find_node_ids_by_ids(db.0, &str_refs).await?;
-
-        let mut table = luau::OwnedTable::with_capacity(0, ids.len());
+impl Resolved {
+    pub(crate) fn of(db: &impl DbAccess, ids: Vec<String>) -> luau::runtime::Result<Self> {
+        let mut db_ids = Vec::with_capacity(ids.len());
+        let mut public = HashMap::with_capacity(ids.len());
         for id in ids {
-            table.set_field(
-                id.as_str(),
-                resolved
-                    .get(&id)
-                    .map(|db_id| luau::Value::from(db_id.0))
-                    .unwrap_or(luau::Value::Nil),
-            );
+            if let Some(db_id) = db_id(db, &id)? {
+                db_ids.push(db_id);
+                public.insert(db_id, id);
+            }
         }
-        Ok(table)
+        Ok(Self { db_ids, public })
+    }
+
+    pub(crate) fn db_ids(&self) -> &[DbId] {
+        &self.db_ids
+    }
+
+    /// The public id `db_id` was resolved from.
+    pub(crate) fn public(&self, db_id: DbId) -> Option<&str> {
+        self.public.get(&db_id).map(String::as_str)
+    }
+
+    /// A Luau table of `values`, keyed by the public ids their database ids were resolved from.
+    pub(crate) fn keyed<V: Into<luau::Value>>(
+        &self,
+        values: impl IntoIterator<Item = (DbId, V)>,
+    ) -> luau::OwnedTable {
+        let mut table = luau::OwnedTable::new();
+        for (db_id, value) in values {
+            if let Some(id) = self.public(db_id) {
+                table.set_field(id, value);
+            }
+        }
+        table
     }
 }
 
-async fn find_id_by_db_id(
-    db: Option<lyra_db::DbAsync>,
-    db_id: DbId,
-) -> luau::runtime::Result<Option<String>> {
-    let Some(db) = db else {
+/// The node `id` names.
+pub(crate) fn db_id(db: &impl DbAccess, id: &str) -> luau::runtime::Result<Option<DbId>> {
+    lyra_db::lookup::find_node_id_by_id(db, id).map_err(crate::plugins::runtime_error)
+}
+
+/// The public ids of these nodes. Nodes without one are absent.
+pub(crate) fn public_ids(
+    db: &impl DbAccess,
+    db_ids: &[DbId],
+) -> luau::runtime::Result<HashMap<DbId, String>> {
+    lyra_db::lookup::find_ids_by_db_ids(db, db_ids).map_err(crate::plugins::runtime_error)
+}
+
+/// The public id of a node.
+pub(crate) fn public_id(db: &impl DbAccess, db_id: DbId) -> luau::runtime::Result<String> {
+    lyra_db::lookup::find_id_by_db_id(db, db_id)
+        .map_err(crate::plugins::runtime_error)?
+        .ok_or_else(|| crate::plugins::runtime_error("the node has no public id"))
+}
+
+/// The public ids of `db_ids` as a Luau list, in order. Nodes without one are left out.
+pub(crate) fn public_id_list(
+    db: &impl DbAccess,
+    db_ids: &[DbId],
+) -> luau::runtime::Result<luau::OwnedTable> {
+    let public_ids = public_ids(db, db_ids)?;
+    Ok(luau::OwnedTable::from_array(
+        db_ids.iter().filter_map(|id| public_ids.get(id).cloned()),
+    ))
+}
+
+/// What kind of node `db_id` is, as its stored type names it, such as `"Track"`.
+pub(crate) fn kind(db: &DbAny, db_id: DbId) -> luau::runtime::Result<Option<String>> {
+    lyra_db::entities::get_element_type(db, db_id).map_err(crate::plugins::runtime_error)
+}
+
+/// The node `id` names when it is a `kind`, such as `"Genre"`.
+pub(crate) fn db_id_of(db: &DbAny, id: &str, kind: &str) -> luau::runtime::Result<Option<DbId>> {
+    let Some(db_id) = db_id(db, id)? else {
         return Ok(None);
     };
-    let db = db.read().await;
-    lyra_db::lookup::find_id_by_db_id(&*db, db_id).map_err(crate::plugins::runtime_error)
+    Ok((self::kind(db, db_id)?.as_deref() == Some(kind)).then_some(db_id))
 }
 
-async fn find_ids_by_db_ids(
-    db: Option<lyra_db::DbAsync>,
-    ids: &[DbId],
-) -> luau::runtime::Result<std::collections::HashMap<DbId, String>> {
-    let Some(db) = db else {
-        return Ok(std::collections::HashMap::new());
-    };
-    let db = db.read().await;
-    lyra_db::lookup::find_ids_by_db_ids(&*db, ids).map_err(crate::plugins::runtime_error)
-}
-
-async fn find_node_id_by_id(
-    db: Option<lyra_db::DbAsync>,
+/// The node `id` names when `viewer` can see it, so a hidden node reads as missing.
+pub(crate) fn visible_db_id(
+    db: &DbAny,
+    viewer: &Viewer,
     id: &str,
 ) -> luau::runtime::Result<Option<DbId>> {
-    let Some(db) = db else {
+    let Some(db_id) = db_id(db, id)? else {
         return Ok(None);
     };
-    let db = db.read().await;
-    lyra_db::lookup::find_node_id_by_id(&*db, id).map_err(crate::plugins::runtime_error)
+    let visible = viewer
+        .sees(db, db_id)
+        .map_err(crate::plugins::runtime_error)?;
+    Ok(visible.then_some(db_id))
 }
 
-async fn find_node_ids_by_ids(
-    db: Option<lyra_db::DbAsync>,
-    ids: &[&str],
-) -> luau::runtime::Result<std::collections::HashMap<String, DbId>> {
-    let Some(db) = db else {
-        return Ok(std::collections::HashMap::new());
+/// [`visible_db_id`] for a node that must be a `kind`, such as `"Track"`.
+pub(crate) fn visible_db_id_of(
+    db: &DbAny,
+    viewer: &Viewer,
+    id: &str,
+    kind: &str,
+) -> luau::runtime::Result<Option<DbId>> {
+    let Some(db_id) = db_id_of(db, id, kind)? else {
+        return Ok(None);
     };
-    let db = db.read().await;
-    lyra_db::lookup::find_node_ids_by_ids(&*db, ids).map_err(crate::plugins::runtime_error)
-}
-fn parse_strings(table: &luau::Table) -> luau::runtime::Result<Vec<String>> {
-    let mut seen = HashSet::new();
-    Ok(args::strings(table)?
-        .into_iter()
-        .map(|id| id.trim().to_string())
-        .filter(|id| !id.is_empty() && seen.insert(id.clone()))
-        .collect())
+    let visible = viewer
+        .sees(db, db_id)
+        .map_err(crate::plugins::runtime_error)?;
+    Ok(visible.then_some(db_id))
 }
 
-#[cfg(feature = "docgen")]
-pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
-    use harmony_luau::DescribeModule;
+/// The caller's viewer, verified under the guard `db` was read through.
+pub(crate) fn viewer_of(
+    db: &impl DbAccess,
+    principal: &crate::services::auth::Principal,
+) -> luau::runtime::Result<Viewer> {
+    Viewer::user(db, principal.clone()).map_err(crate::plugins::runtime_error)
+}
 
-    harmony_luau::render_definition_file_with_support(
-        &IdsModule::module_descriptor(),
-        &[],
-        &[],
-        &[],
-    )
+/// [`visible_db_id_of`] for the dispatch principal's viewer.
+pub(crate) fn visible_to(
+    db: &DbAny,
+    principal: &crate::services::auth::Principal,
+    id: &str,
+    kind: &str,
+) -> luau::runtime::Result<Option<DbId>> {
+    visible_db_id_of(db, &viewer_of(db, principal)?, id, kind)
 }

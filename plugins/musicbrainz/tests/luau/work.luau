@@ -1,14 +1,14 @@
 local apply = require("../../resolution/apply")
 local local_release = require("../../resolution/local_release")
 
-local work_ids: { [number]: string } = {}
+local work_ids: { [string]: string } = {}
 local function noop() end
 apply.set_provider(setmetatable({
-	layer = function(_self: any, db_id: number): any
+	layer = function(_self: any, node_id: string): any
 		return setmetatable({
 			set_id = function(_layer: any, id_type: string, id_value: string)
 				if id_type == "work_id" then
-					work_ids[db_id] = id_value
+					work_ids[node_id] = id_value
 				end
 			end,
 		}, {
@@ -26,12 +26,12 @@ apply.set_provider(setmetatable({
 local function applied_work_id(relations: { any }?): string?
 	table.clear(work_ids)
 	local info = local_release.from_context({
-		db_id = 1,
+		id = "release",
 		release_title = "The Album",
 		artists = {},
 		tracks = {
-			{ db_id = 2, track_title = "Song 1", disc = 1, track = 1 },
-			{ db_id = 3, track_title = "Song 2", disc = 1, track = 2 },
+			{ id = "track-a", track_title = "Song 1", disc = 1, track = 1 },
+			{ id = "track-b", track_title = "Song 2", disc = 1, track = 2 },
 		},
 		library = { language = "eng", country = "XW" },
 	} :: any)
@@ -56,8 +56,8 @@ local function applied_work_id(relations: { any }?): string?
 		},
 	}
 	assert(apply.process_release(release :: any, info), "the release applies")
-	assert(work_ids[3] == nil, "a recording whose relations weren't fetched keeps its work")
-	return work_ids[2]
+	assert(work_ids["track-b"] == nil, "a recording whose relations weren't fetched keeps its work")
+	return work_ids["track-a"]
 end
 
 local performance = { ["target-type"] = "work", type = "performance", work = { id = "work" } }

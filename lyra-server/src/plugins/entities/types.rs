@@ -23,7 +23,6 @@ use crate::plugins::types::{
     LuauArtist,
     LuauCreditType,
     LuauIdLink,
-    LuauNodeId,
     LuauRelease,
     LuauTrack,
 };
@@ -130,7 +129,6 @@ describe_interface!(LuauEntityLookupHints for EntityLookupHints, "EntityLookupHi
 });
 
 describe_interface!(LuauProjectionEntryInfo for ProjectionEntryInfo, "ProjectionEntryInfo", {
-    db_id: Option<LuauNodeId> as "db_id",
     id: String as "id",
     full_path: String as "full_path",
     kind: String as "kind",
@@ -152,7 +150,6 @@ describe_interface!(LuauCreditedArtistProjectionInfo for CreditedArtistProjectio
 });
 
 describe_interface!(LuauReleaseProjectionTrack for ReleaseProjectionTrack, "ReleaseProjectionTrack", {
-    db_id: Option<LuauNodeId> as "db_id",
     id: String as "id",
     track_title: String as "track_title",
     sort_title: Option<String> as "sort_title",

@@ -118,16 +118,10 @@ pub(crate) async fn validate_and_get_track_source(
     }
     let track = lyra_db::tracks::get_by_id(db, track_db_id)?.ok_or_else(not_found)?;
 
-    let source = playback_source_service::resolve(db, track_db_id, false)?.ok_or_else(|| {
+    let source = playback_source_service::resolve(db, &track, false)?.ok_or_else(|| {
         DeliveryError::not_found(format!("Playable source not found for track: {track_id}"))
     })?;
-    let source_public_id =
-        lyra_db::lookup::find_id_by_db_id(db, source.source_id)?.ok_or_else(|| {
-            DeliveryError::not_found(format!(
-                "Playable source has no public id: {}",
-                source.source_id.0
-            ))
-        })?;
+    let source_public_id = source.source_id;
     let version =
         SourceVersion::read(source_public_id.clone(), &source.full_path).map_err(|err| {
             tracing::warn!(
@@ -147,7 +141,7 @@ pub(crate) async fn validate_and_get_track_source(
     }
 
     Ok(ValidatedTrackSource {
-        source_id: source.source_id,
+        source_id: source.source_db_id,
         source_public_id,
         version,
         track_public_id: track.id.clone(),

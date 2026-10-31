@@ -58,10 +58,10 @@ function module.set_provider(provider_instance: Provider)
 	provider = provider_instance
 end
 
-function module.set_track_id(track_db_id: number, id_type: string, id_value: string)
+function module.set_track_id(track_id: string, id_type: string, id_value: string)
 	local current_provider = provider
 	if current_provider ~= nil then
-		local track_layer = current_provider:layer(track_db_id)
+		local track_layer = current_provider:layer(track_id)
 		track_layer:set_id(id_type, id_value)
 		track_layer:save()
 	end
@@ -69,10 +69,10 @@ end
 
 -- Does nothing once a request has failed on this refresh: an outage must not
 -- discard a match that a later refresh would confirm.
-function module.mark_unmatched(db_id: number, id_types: { string })
+function module.mark_unmatched(node_id: string, id_types: { string })
 	local current_provider = provider
 	if current_provider ~= nil and not musicbrainz_api.request_failed() then
-		current_provider:mark_unmatched(db_id, id_types)
+		current_provider:mark_unmatched(node_id, id_types)
 	end
 end
 
@@ -97,12 +97,16 @@ local function artist_type_for_musicbrainz(mb_artist_type: string?): ArtistType?
 	return nil
 end
 
-local function set_artist_metadata(db_id: number?, mb_artist: ReleaseArtist?, relation_sets: { RelationSet }?): boolean
+local function set_artist_metadata(
+	artist_id: string?,
+	mb_artist: ReleaseArtist?,
+	relation_sets: { RelationSet }?
+): boolean
 	local current_provider = provider
-	if not db_id or mb_artist == nil or not mb_artist.id or current_provider == nil then
+	if not artist_id or mb_artist == nil or not mb_artist.id or current_provider == nil then
 		return false
 	end
-	local artist_layer = current_provider:layer(db_id)
+	local artist_layer = current_provider:layer(artist_id)
 	artist_layer:set_field("artist_name", mb_artist.name)
 	if mb_artist["sort-name"] then
 		artist_layer:set_field("sort_name", mb_artist["sort-name"])
@@ -119,7 +123,7 @@ local function set_artist_metadata(db_id: number?, mb_artist: ReleaseArtist?, re
 	return true
 end
 
-local function ensure_artist_entity(mb_artist: ReleaseArtist?): number?
+local function ensure_artist_entity(mb_artist: ReleaseArtist?): string?
 	local current_provider = provider
 	if mb_artist == nil or not mb_artist.id or current_provider == nil then
 		return nil
@@ -154,7 +158,7 @@ local MB_ARTIST_RELATION_MAP: { [string]: ArtistRelationType? } = {
 local IMPORTED_RELATION_TYPES: { string } = { "voice actor", "member of band" }
 
 type PendingArtistRelation = {
-	artist_db_id: number,
+	artist_id: string,
 	attributes: { [string]: string },
 }
 
@@ -192,8 +196,8 @@ end
 -- which this response does not describe in full, so only backward ones count.
 -- One that resolves to the artist itself is left out, since an artist cannot
 -- relate to itself.
-local function artist_relation_sets(artist_db_id: number, response: JsonObject): { RelationSet }
-	local pending_by_type: { [string]: { [number]: PendingArtistRelation } } = {}
+local function artist_relation_sets(artist_id: string, response: JsonObject): { RelationSet }
+	local pending_by_type: { [string]: { [string]: PendingArtistRelation } } = {}
 	for _, relation in normalize_relations(json_array_field(response, "relations")) do
 		if relation["target-type"] ~= "artist" or relation.direction ~= "backward" then
 			continue
@@ -212,13 +216,13 @@ local function artist_relation_sets(artist_db_id: number, response: JsonObject):
 			continue
 		end
 
-		local related_artist_db_id = ensure_artist_entity({
+		local related_artist_id = ensure_artist_entity({
 			id = related_artist.id,
 			name = related_artist.name,
 			["sort-name"] = related_artist["sort-name"],
 			["type"] = related_artist["type"],
 		})
-		if related_artist_db_id == nil or related_artist_db_id == artist_db_id then
+		if related_artist_id == nil or related_artist_id == artist_id then
 			continue
 		end
 
@@ -227,10 +231,10 @@ local function artist_relation_sets(artist_db_id: number, response: JsonObject):
 			pending_by_artist = {}
 			pending_by_type[mb_type] = pending_by_artist
 		end
-		local pending = pending_by_artist[related_artist_db_id]
+		local pending = pending_by_artist[related_artist_id]
 		if pending == nil then
-			pending = { artist_db_id = related_artist_db_id, attributes = {} }
-			pending_by_artist[related_artist_db_id] = pending
+			pending = { artist_id = related_artist_id, attributes = {} }
+			pending_by_artist[related_artist_id] = pending
 		end
 		collect_artist_relation_attributes(pending.attributes, relation.attributes)
 	end
@@ -242,10 +246,10 @@ local function artist_relation_sets(artist_db_id: number, response: JsonObject):
 			continue
 		end
 		local relations: { LayerRelationInput } = {}
-		local pending_by_artist: { [number]: PendingArtistRelation } = pending_by_type[mb_type] or {}
+		local pending_by_artist: { [string]: PendingArtistRelation } = pending_by_type[mb_type] or {}
 		for _, pending in pending_by_artist do
 			local relation: LayerRelationInput = {
-				artist_id = pending.artist_db_id,
+				artist_id = pending.artist_id,
 				attributes = artist_relation_attributes_string(pending.attributes),
 			}
 			table.insert(relations, relation)
@@ -258,16 +262,12 @@ local function artist_relation_sets(artist_db_id: number, response: JsonObject):
 	return relation_sets
 end
 
-local function import_artist_relations_from_response(artist_db_id: number, response: JsonObject): boolean
-	return set_artist_metadata(
-		artist_db_id,
-		normalize_release_artist(response),
-		artist_relation_sets(artist_db_id, response)
-	)
+local function import_artist_relations_from_response(artist_id: string, response: JsonObject): boolean
+	return set_artist_metadata(artist_id, normalize_release_artist(response), artist_relation_sets(artist_id, response))
 end
 
 local function fetch_and_set_artist_relations(
-	from_artist_db_id: number,
+	from_artist_id: string,
 	mb_artist_id: string,
 	mb_artist_type: string?
 ): boolean
@@ -280,16 +280,16 @@ local function fetch_and_set_artist_relations(
 		return false
 	end
 
-	return import_artist_relations_from_response(from_artist_db_id, response)
+	return import_artist_relations_from_response(from_artist_id, response)
 end
 
-local function refresh_artist_by_id(artist_db_id: number, mb_artist_id: string): boolean
+local function refresh_artist_by_id(artist_id: string, mb_artist_id: string): boolean
 	local response = mb_get(`/artist/{mb_artist_id}?inc=artist-rels`)
 	if response == nil then
 		return false
 	end
 
-	return import_artist_relations_from_response(artist_db_id, response)
+	return import_artist_relations_from_response(artist_id, response)
 end
 
 type Work = { id: string?, relations: { Relation }? }
@@ -391,7 +391,7 @@ type LayerCreditInput = metadata.LayerCreditInput
 -- Credits gathered for one release or track, by role name.
 type CreditSets = { [string]: { LayerCreditInput } }
 
-local function add_credit(sets: CreditSets, role_name: string, artist_id: number, detail: string?)
+local function add_credit(sets: CreditSets, role_name: string, artist_id: string, detail: string?)
 	local credits = sets[role_name]
 	if credits == nil then
 		credits = {}
@@ -419,16 +419,17 @@ end
 -- local entity: the one tagged with that MusicBrainz artist, or one ensured.
 local function artist_role_credits(
 	mb_credits: { ReleaseArtistCredit },
-	tagged_artist_mb_ids: { [number]: string },
+	tagged_artist_mb_ids: { [string]: string },
 	skipped_mb_ids: { [string]: boolean }
-): { number }
-	local local_ids: { [string]: number } = {}
-	for db_id, mb_id in tagged_artist_mb_ids do
-		if local_ids[mb_id] == nil or db_id < local_ids[mb_id] then
-			local_ids[mb_id] = db_id
+): { string }
+	local local_ids: { [string]: string } = {}
+	for artist_id, mb_id in tagged_artist_mb_ids do
+		local existing: string? = local_ids[mb_id]
+		if existing == nil or artist_id < existing then
+			local_ids[mb_id] = artist_id
 		end
 	end
-	local artist_ids: { number } = {}
+	local artist_ids: { string } = {}
 	for _, credit in mb_credits do
 		local mb_artist = credit.artist
 		local mb_id = mb_artist and mb_artist.id
@@ -570,14 +571,14 @@ local function process_release(
 	if current_provider == nil then
 		return false
 	end
-	local release_db_id = release_context.db_id
+	local release_entity_id = release_context.id
 	local release_id = release.id
-	if release_db_id == nil or release_id == nil then
+	if release_entity_id == nil or release_id == nil then
 		return false
 	end
 
 	local rg_info = release_group_info or release["release-group"]
-	local release_layer = current_provider:layer(release_db_id)
+	local release_layer = current_provider:layer(release_entity_id)
 	local release_title = release.title
 	local release_track_count = compute_track_count(release)
 
@@ -666,27 +667,27 @@ local function process_release(
 		end
 	end
 	local artist_credits = release["artist-credit"]
-	local tagged_artist_ids: { [number]: boolean } = {}
-	local tagged_artist_mb_ids: { [number]: string } = {}
+	local tagged_artist_ids: { [string]: boolean } = {}
+	local tagged_artist_mb_ids: { [string]: string } = {}
 	local fetched_relations_for: { [string]: boolean } = {}
 
-	local function maybe_fetch_artist_relations(db_id: number, mb_artist: ReleaseArtist)
+	local function maybe_fetch_artist_relations(artist_id: string, mb_artist: ReleaseArtist)
 		if mb_artist.id == nil or fetched_relations_for[mb_artist.id] then
 			return
 		end
 		fetched_relations_for[mb_artist.id] = true
-		fetch_and_set_artist_relations(db_id, mb_artist.id, mb_artist["type"])
+		fetch_and_set_artist_relations(artist_id, mb_artist.id, mb_artist["type"])
 	end
 
-	local function tag_local_artist(db_id: number?, mb_artist: ReleaseArtist?): boolean
-		if not db_id or mb_artist == nil or mb_artist.id == nil then
+	local function tag_local_artist(artist_id: string?, mb_artist: ReleaseArtist?): boolean
+		if not artist_id or mb_artist == nil or mb_artist.id == nil then
 			return false
 		end
 		ensure_artist_entity(mb_artist)
-		if set_artist_metadata(db_id, mb_artist) then
-			tagged_artist_ids[db_id] = true
-			tagged_artist_mb_ids[db_id] = mb_artist.id
-			maybe_fetch_artist_relations(db_id, mb_artist)
+		if set_artist_metadata(artist_id, mb_artist) then
+			tagged_artist_ids[artist_id] = true
+			tagged_artist_mb_ids[artist_id] = mb_artist.id
+			maybe_fetch_artist_relations(artist_id, mb_artist)
 			return true
 		end
 		return false
@@ -697,20 +698,20 @@ local function process_release(
 		local mb_release_artists_by_name = build_credit_lookup(artist_credits)
 
 		for _, local_artist: LocalArtist in release_context.artists do
-			if local_artist.db_id and not tagged_artist_ids[local_artist.db_id] then
+			if local_artist.id and not tagged_artist_ids[local_artist.id] then
 				local local_name = string.lower(local_artist.artist_name or "")
 				local matched = match_credit(local_name, artist_credits, mb_release_artists_by_name)
-				if matched and matched.id and tag_local_artist(local_artist.db_id, matched) then
+				if matched and matched.id and tag_local_artist(local_artist.id, matched) then
 					matched_release_mb_artist_ids[matched.id] = true
 				end
 			end
 		end
 
-		local untagged_ids: { [number]: boolean } = {}
+		local untagged_ids: { [string]: boolean } = {}
 		local untagged_first: LocalArtist? = nil
 		local unique_untagged = 0
 		for _, local_artist: LocalArtist in release_context.artists do
-			local local_artist_id = local_artist.db_id
+			local local_artist_id = local_artist.id
 			if local_artist_id and not tagged_artist_ids[local_artist_id] and not untagged_ids[local_artist_id] then
 				untagged_ids[local_artist_id] = true
 				unique_untagged += 1
@@ -729,7 +730,7 @@ local function process_release(
 			and first_mb_artist ~= nil
 			and first_mb_artist.id ~= nil
 			and not matched_release_mb_artist_ids[first_mb_artist.id]
-			and tag_local_artist(untagged_first.db_id, first_mb_artist)
+			and tag_local_artist(untagged_first.id, first_mb_artist)
 		then
 			matched_release_mb_artist_ids[first_mb_artist.id] = true
 		end
@@ -765,7 +766,7 @@ local function process_release(
 		local inferred_disc_total = 0
 		for i: number, local_track: LocalTrack in local_tracks do
 			local mb_track = assignments[i]
-			if mb_track and local_track.db_id then
+			if mb_track and local_track.id then
 				local assigned_disc = mb_track.disc
 				if assigned_disc and assigned_disc > inferred_disc_total then
 					inferred_disc_total = assigned_disc
@@ -789,8 +790,8 @@ local function process_release(
 
 		for i: number, local_track: LocalTrack in local_tracks do
 			local mb_track = assignments[i]
-			if mb_track and local_track.db_id then
-				local track_layer = current_provider:layer(local_track.db_id)
+			if mb_track and local_track.id then
+				local track_layer = current_provider:layer(local_track.id)
 				track_layer:set_field("track_title", mb_track.title)
 				if preserve_local_position then
 					if local_track.disc ~= nil then
@@ -862,7 +863,7 @@ local function process_release(
 					end
 
 					for _, track_artist: LocalArtist in local_track.artists do
-						local track_artist_id = track_artist.db_id
+						local track_artist_id = track_artist.id
 						if track_artist_id ~= nil then
 							local previously_tagged_mb_id = tagged_artist_mb_ids[track_artist_id]
 							if previously_tagged_mb_id then
@@ -889,7 +890,7 @@ local function process_release(
 					end
 
 					for _, mb_artist: ReleaseArtist in unmatched_mb_artists do
-						if local_track.db_id and mb_artist.id and not matched_mb_artist_ids[mb_artist.id] then
+						if local_track.id and mb_artist.id and not matched_mb_artist_ids[mb_artist.id] then
 							local ensured_artist_id = ensure_artist_entity(mb_artist)
 							if ensured_artist_id then
 								tagged_artist_ids[ensured_artist_id] = true
@@ -922,13 +923,13 @@ local function process_release(
 			local mb_credit_list = assigned and assigned.artist_credits
 			local mb_track_artist = mb_credit_list and mb_credit_list[1] and mb_credit_list[1].artist
 			if mb_track_artist and mb_track_artist.id then
-				local updated_ids: { [number]: boolean } = {}
+				local updated_ids: { [string]: boolean } = {}
 				local function apply_track_artist(entity: LocalArtist)
-					if entity.db_id == nil or updated_ids[entity.db_id] then
+					if entity.id == nil or updated_ids[entity.id] then
 						return
 					end
-					updated_ids[entity.db_id] = true
-					if tag_local_artist(entity.db_id, mb_track_artist) then
+					updated_ids[entity.id] = true
+					if tag_local_artist(entity.id, mb_track_artist) then
 						track_artist_count += 1
 					end
 				end

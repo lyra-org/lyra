@@ -86,7 +86,7 @@ pub(crate) struct MixHandlerRequest {
 
 #[derive(Clone, Debug)]
 pub(crate) struct MixHandlerResult {
-    pub(crate) track_ids: Vec<i64>,
+    pub(crate) track_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -126,10 +126,7 @@ pub(crate) struct SimilarReleaseExternalRef {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum SimilarReleaseCandidate {
     External(SimilarReleaseExternalRef),
-    Local {
-        release_db_id: i64,
-        release_id: String,
-    },
+    Local { release_id: String },
 }
 
 #[derive(Clone, Debug)]

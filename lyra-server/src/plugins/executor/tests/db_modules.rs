@@ -1,75 +1,10 @@
 use super::*;
 
 #[test]
-fn plugin_executor_exposes_db_backed_lyra_ids_module() -> Result<()> {
-    let mut db = lyra_db::test_db::new_test_db()?;
-    let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw ID Track")?;
-    let track_public_id = lyra_db::lookup::find_id_by_db_id(&db, track_db_id)?
-        .context("inserted track has public id")?;
-    let db = lyra_db::DbAsync::new(db);
-
-    let runtime = PluginExecutor::with_database(
-        Arc::from(vec![manifest("demo", &["lyra.ids"])]),
-        default_server_info(),
-        db,
-    )?;
-    runtime.run_plugin_source(
-        "demo",
-        "init.luau",
-        format!(
-            r#"
-                local ids = require("@lyra/ids")
-                local track_db_id = {track_db_id}
-                local track_public_id = "{track_public_id}"
-
-                executor_public_id = ids.get_id(track_db_id)
-                executor_public_ids = ids.get_ids({{ track_db_id, track_db_id, 999999 }})
-                executor_db_id = ids.get_db_id(track_public_id)
-                executor_db_ids = ids.get_db_ids({{ track_public_id, " ", track_public_id, "missing-public-id" }})
-            "#,
-            track_db_id = track_db_id.0,
-        )
-        .into_bytes(),
-    )?;
-
-    let values = runtime.eval_plugin_source(
-        "demo",
-        "check.luau",
-        format!(
-            r#"
-                local track_db_id = {track_db_id}
-                local track_public_id = "{track_public_id}"
-
-                return executor_public_id,
-                    executor_public_ids[track_db_id],
-                    executor_public_ids[999999] == nil,
-                    executor_db_id,
-                    executor_db_ids[track_public_id],
-                    executor_db_ids["missing-public-id"] == nil
-            "#,
-            track_db_id = track_db_id.0,
-        )
-        .into_bytes(),
-    )?;
-    assert_eq!(
-        values,
-        vec![
-            luau::Value::String(track_public_id.as_bytes().to_vec()),
-            luau::Value::String(track_public_id.as_bytes().to_vec()),
-            luau::Value::Boolean(true),
-            luau::Value::Number(track_db_id.0 as f64),
-            luau::Value::Number(track_db_id.0 as f64),
-            luau::Value::Boolean(true),
-        ]
-    );
-    Ok(())
-}
-
-#[test]
-fn id_list_arguments_reject_ids_that_are_not_positive() -> Result<()> {
+fn id_list_arguments_reject_entries_that_are_not_strings() -> Result<()> {
     let db = lyra_db::test_db::new_test_db()?;
     let runtime = PluginExecutor::with_database(
-        Arc::from(vec![manifest("demo", &["lyra.ids"])]),
+        Arc::from(vec![manifest("demo", &["lyra.tracks"])]),
         default_server_info(),
         lyra_db::DbAsync::new(db),
     )?;
@@ -77,12 +12,12 @@ fn id_list_arguments_reject_ids_that_are_not_positive() -> Result<()> {
         "demo",
         "init.luau",
         r#"
-            local ids = require("@lyra/ids")
+            local tracks = require("@lyra/tracks")
             local function rejected(list)
-                local ok, err = pcall(ids.get_ids, list)
-                return not ok and string.find(tostring(err), "must be a positive integer", 1, true) ~= nil
+                local ok, err = pcall(tracks.get, list)
+                return not ok and string.find(tostring(err), "must be a string", 1, true) ~= nil
             end
-            return rejected({ 1, -1 }), rejected({ 0 }), rejected({ "1" }), rejected({ 1.5 })
+            return rejected({ "a", 1 }), rejected({ 0 }), rejected({ true }), rejected({ {} })
         "#
         .as_bytes()
         .to_vec(),
@@ -113,21 +48,19 @@ fn plugin_executor_exposes_db_backed_lyra_entities_module() -> Result<()> {
         format!(
             r#"
                 local entities = require("@lyra/entities")
-                local track_db_id = {track_db_id}
-                local track_public_id = "{track_public_id}"
+                local track_id = "{track_public_id}"
 
-                local by_db = entities.query_track({{ id = track_db_id }})
-                local by_public = entities.query_track({{ id = track_public_id }})
-                local many = entities.query_many({{ ids = {{ track_public_id, track_db_id }} }})
+                local fetched = entities.query_track({{ id = track_id }})
+                local many = entities.query_many({{ ids = {{ track_id, "missing" }} }})
 
-                return by_db.entity.track_title,
-                    by_public.entity.id,
-                    many[track_public_id].entity.track_title,
-                    many[tostring(track_db_id)].entity.track_title,
-                    entities.get_type(track_public_id),
+                return fetched.entity.track_title,
+                    fetched.entity.id,
+                    many[track_id].entity.track_title,
+                    many["missing"] == nil,
+                    entities.get_type(track_id),
+                    entities.get_type("missing") == nil,
                     entities.CreditType.Artist
             "#,
-            track_db_id = track_db_id.0,
         )
         .into_bytes(),
     )?;
@@ -138,8 +71,9 @@ fn plugin_executor_exposes_db_backed_lyra_entities_module() -> Result<()> {
             luau::Value::String(b"Raw Entity Track".to_vec()),
             luau::Value::String(track_public_id.as_bytes().to_vec()),
             luau::Value::String(b"Raw Entity Track".to_vec()),
-            luau::Value::String(b"Raw Entity Track".to_vec()),
+            luau::Value::Boolean(true),
             luau::Value::String(b"Track".to_vec()),
+            luau::Value::Boolean(true),
             luau::Value::String(b"artist".to_vec()),
         ]
     );
@@ -163,9 +97,7 @@ fn plugin_executor_exposes_db_backed_lyra_chromaprint_module() -> Result<()> {
         file_created_at_ms: 1,
         synced_at_ms: None,
     };
-    let entry_db_id = db
-        .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
-        .ids()[0];
+    db.exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?;
     let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
@@ -180,11 +112,11 @@ fn plugin_executor_exposes_db_backed_lyra_chromaprint_module() -> Result<()> {
             r#"
                 local chromaprint = require("@lyra/chromaprint")
                 -- The one-second asset decodes but is too short to fingerprint.
-                local ok, err = pcall(chromaprint.compute, {entry_db_id})
+                local ok, err = pcall(chromaprint.compute, "{entry_id}")
                 executor_chromaprint_result =
                     not ok and string.find(tostring(err), "too short to fingerprint", 1, true) ~= nil
             "#,
-            entry_db_id = entry_db_id.0,
+            entry_id = entry.id,
         )
         .into_bytes(),
     )?;
@@ -265,6 +197,7 @@ fn plugin_executor_exposes_db_backed_lyra_listens_module() -> Result<()> {
     ] {
         lyra_db::fixtures::insert_listen(&mut db, listener_db_id, track_db_id, started_at_ms)?;
     }
+    let track_id = public_id(&db, track_db_id)?;
     let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
@@ -291,10 +224,8 @@ fn plugin_executor_exposes_db_backed_lyra_listens_module() -> Result<()> {
         format!(
             r#"
                 local listens = require("@lyra/listens")
-                local track_db_id = {track_db_id}
-                executor_listen_stats = listens.get({{ track_db_id }})
+                executor_listen_stats = listens.get({{ "{track_id}", "missing" }})
             "#,
-            track_db_id = track_db_id.0,
         )
         .into_bytes(),
         context,
@@ -305,17 +236,21 @@ fn plugin_executor_exposes_db_backed_lyra_listens_module() -> Result<()> {
         "check.luau",
         format!(
             r#"
-                local track_db_id = {track_db_id}
-                return executor_listen_stats[track_db_id].count,
-                    executor_listen_stats[track_db_id].last_played_at_ms
+                local track_id = "{track_id}"
+                return executor_listen_stats[track_id].count,
+                    executor_listen_stats[track_id].last_played_at_ms,
+                    executor_listen_stats["missing"] == nil
             "#,
-            track_db_id = track_db_id.0,
         )
         .into_bytes(),
     )?;
     assert_eq!(
         values,
-        vec![luau::Value::Number(2.0), luau::Value::Number(2500.0)]
+        vec![
+            luau::Value::Number(2.0),
+            luau::Value::Number(2500.0),
+            luau::Value::Boolean(true),
+        ]
     );
     Ok(())
 }
@@ -331,6 +266,7 @@ fn plugin_executor_exposes_db_backed_lyra_favorites_module() -> Result<()> {
         .context("inserted library has public id")?;
     let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Favorite Track")?;
     lyra_db::fixtures::connect(&mut db, library_db_id, track_db_id)?;
+    let track_id = public_id(&db, track_db_id)?;
     let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
@@ -357,15 +293,14 @@ fn plugin_executor_exposes_db_backed_lyra_favorites_module() -> Result<()> {
         format!(
             r#"
                 local favorites = require("@lyra/favorites")
-                local track_db_id = {track_db_id}
+                local track_id = "{track_id}"
 
-                executor_favorite_add = favorites.add(track_db_id)
-                executor_favorite_times = favorites.get({{ track_db_id, track_db_id, 999999 }})
+                executor_favorite_add = favorites.add(track_id)
+                executor_favorite_times = favorites.get({{ track_id, track_id, "missing" }})
                 executor_favorite_ids = favorites.list_ids("track")
-                executor_favorite_remove = favorites.remove(track_db_id)
-                executor_favorite_after_remove = favorites.get({{ track_db_id }})
+                executor_favorite_remove = favorites.remove(track_id)
+                executor_favorite_after_remove = favorites.get({{ track_id }})
             "#,
-            track_db_id = track_db_id.0,
         )
         .into_bytes(),
         context,
@@ -376,15 +311,14 @@ fn plugin_executor_exposes_db_backed_lyra_favorites_module() -> Result<()> {
         "check.luau",
         format!(
             r#"
-                local track_db_id = {track_db_id}
+                local track_id = "{track_id}"
                 return executor_favorite_add,
-                    type(executor_favorite_times[track_db_id]) == "number",
-                    executor_favorite_times[999999] == nil,
+                    type(executor_favorite_times[track_id]) == "number",
+                    executor_favorite_times["missing"] == nil,
                     executor_favorite_ids[1],
                     executor_favorite_remove,
-                    executor_favorite_after_remove[track_db_id] == nil
+                    executor_favorite_after_remove[track_id] == nil
             "#,
-            track_db_id = track_db_id.0,
         )
         .into_bytes(),
     )?;
@@ -394,7 +328,7 @@ fn plugin_executor_exposes_db_backed_lyra_favorites_module() -> Result<()> {
             luau::Value::Boolean(true),
             luau::Value::Boolean(true),
             luau::Value::Boolean(true),
-            luau::Value::Number(track_db_id.0 as f64),
+            luau::Value::String(track_id.into_bytes()),
             luau::Value::Boolean(true),
             luau::Value::Boolean(true),
         ]
@@ -424,6 +358,10 @@ fn plugin_executor_exposes_db_backed_lyra_artists_module() -> Result<()> {
         lyra_db::ArtistRelationType::VoiceActor,
         Some("Lead".to_string()),
     )?;
+    let library_id = public_id(&db, library_db_id)?;
+    let release_id = public_id(&db, release_db_id)?;
+    let actor_id = public_id(&db, actor_db_id)?;
+    let artist_id = public_id(&db, artist_db_id)?;
     let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
@@ -437,21 +375,22 @@ fn plugin_executor_exposes_db_backed_lyra_artists_module() -> Result<()> {
         format!(
             r#"
                 local artists = require("@lyra/artists")
-                local library_db_id = {library_db_id}
-                local release_db_id = {release_db_id}
-                local actor_db_id = {actor_db_id}
+                local library_id = "{library_id}"
+                local release_id = "{release_id}"
+                local actor_id = "{actor_id}"
+                local artist_id = "{artist_id}"
 
-                local fetched = artists.get({{ {artist_db_id} }})
-                local by_library = artists.query({{ library_id = library_db_id }})
-                local many = artists.by_release({{ release_db_id }})
-                local relations = artists.relations({{ actor_db_id }})
+                local fetched = artists.get({{ artist_id }})
+                local by_library = artists.query({{ library_id = library_id }})
+                local many = artists.by_release({{ release_id }})
+                local relations = artists.relations({{ actor_id }})
                 local queried = artists.query({{
                     search = "Module",
                     artist_type = artists.ArtistType.Person,
                     sort = {{ {{ key = "name" }} }},
                 }})
                 local credited = artists.query({{
-                    release_ids = {{ release_db_id }},
+                    release_ids = {{ release_id }},
                     artist_type = artists.ArtistType.Person,
                     credit_types = {{ artists.CreditType.Artist }},
                 }})
@@ -459,21 +398,17 @@ fn plugin_executor_exposes_db_backed_lyra_artists_module() -> Result<()> {
                 return artists.ArtistType.Person,
                     artists.ArtistRelationType.VoiceActor,
                     artists.CreditType.Artist,
-                    fetched[{artist_db_id}].artist_name,
+                    fetched[artist_id].artist_name,
                     by_library.items[1].artist_name,
-                    many[release_db_id][1].artist_name,
-                    relations[actor_db_id][1].relation_type,
-                    relations[actor_db_id][1].direction,
-                    relations[actor_db_id][1].artist.artist_name,
+                    many[release_id][1].artist_name,
+                    relations[actor_id][1].relation_type,
+                    relations[actor_id][1].direction,
+                    relations[actor_id][1].artist.artist_name,
                     queried.items[1].artist_name,
                     credited.items[1].artist_name,
                     queried.total,
                     credited.total
             "#,
-            library_db_id = library_db_id.0,
-            release_db_id = release_db_id.0,
-            actor_db_id = actor_db_id.0,
-            artist_db_id = artist_db_id.0,
         )
         .into_bytes(),
     )?;
@@ -536,8 +471,8 @@ fn plugin_executor_exposes_db_backed_lyra_tracks_module() -> Result<()> {
             .to(track_db_id)
             .query(),
     )?;
-    let track_public_id = lyra_db::lookup::find_id_by_db_id(&db, track_db_id)?
-        .context("inserted track has public id")?;
+    let track_public_id = public_id(&db, track_db_id)?;
+    let release_id = public_id(&db, release_db_id)?;
     let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
@@ -551,28 +486,26 @@ fn plugin_executor_exposes_db_backed_lyra_tracks_module() -> Result<()> {
         format!(
             r#"
                 local tracks = require("@lyra/tracks")
-                local release_db_id = {release_db_id}
-                local track_db_id = {track_db_id}
+                local release_id = "{release_id}"
+                local track_id = "{track_public_id}"
 
                 local all = tracks.query({{}})
-                local fetched = tracks.get({{ track_db_id }})
-                local related = tracks.by_release({{ release_db_id }})
+                local fetched = tracks.get({{ track_id }})
+                local related = tracks.by_release({{ release_id }})
                 local queried = tracks.query({{
-                    release_ids = {{ release_db_id }},
+                    release_ids = {{ release_id }},
                     search = "Module",
                     sort = {{ {{ key = "name" }} }},
                     limit = 5,
                 }})
 
                 return all.items[1] ~= nil,
-                    fetched[track_db_id].id,
-                    related[release_db_id][1].track_title,
+                    fetched[track_id].id,
+                    related[release_id][1].track_title,
                     queried.items[1].track_title,
                     queried.total,
                     queried.offset
             "#,
-            release_db_id = release_db_id.0,
-            track_db_id = track_db_id.0,
         )
         .into_bytes(),
     )?;
@@ -628,6 +561,7 @@ fn plugin_executor_exposes_db_backed_lyra_track_sources_module() -> Result<()> {
             None,
         )
     })?;
+    let track_id = public_id(&db, track_db_id)?;
     let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
@@ -641,12 +575,10 @@ fn plugin_executor_exposes_db_backed_lyra_track_sources_module() -> Result<()> {
         format!(
             r#"
                 local track_sources = require("@lyra/track_sources")
-                local track_db_id = {track_db_id}
 
-                return track_sources.get_primary_source_key(track_db_id),
-                    track_sources.get_primary_source_key(-1) == nil
+                return track_sources.get_primary_source_key("{track_id}"),
+                    track_sources.get_primary_source_key("missing") == nil
             "#,
-            track_db_id = track_db_id.0,
         )
         .into_bytes(),
     )?;
@@ -712,6 +644,8 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
             None,
         )
     })?;
+    let track_id = public_id(&db, track_db_id)?;
+    let source_id = public_id(&db, source_id)?;
     let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
@@ -741,12 +675,11 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
         format!(
             r#"
                 local playback_sources = require("@lyra/playback_sources")
-                local track_db_id = {track_db_id}
+                local track_id = "{track_id}"
 
-                executor_playback_source_rows = playback_sources.get(track_db_id, true)
-                executor_playback_source_many = playback_sources.get_many({{ track_db_id, track_db_id, 999999 }}, true)
+                executor_playback_source_rows = playback_sources.get(track_id, true)
+                executor_playback_source_many = playback_sources.get_many({{ track_id, track_id, "missing" }}, true)
             "#,
-            track_db_id = track_db_id.0,
         )
         .into_bytes(),
         context,
@@ -757,9 +690,8 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
         "check.luau",
         format!(
             r#"
-                local track_db_id = {track_db_id}
                 local first = executor_playback_source_rows[1]
-                local many = executor_playback_source_many[track_db_id]
+                local many = executor_playback_source_many["{track_id}"]
 
                 return first.track_id,
                     first.source_id,
@@ -775,9 +707,8 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
                     first.container,
                     first.codec,
                     many.entry.name,
-                    executor_playback_source_many[999999] == nil
+                    executor_playback_source_many["missing"] == nil
             "#,
-            track_db_id = track_db_id.0,
         )
         .into_bytes(),
     )?;
@@ -786,8 +717,8 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
     assert_eq!(
         values,
         vec![
-            luau::Value::Number(track_db_id.0 as f64),
-            luau::Value::Number(source_id.0 as f64),
+            luau::Value::String(track_id.into_bytes()),
+            luau::Value::String(source_id.into_bytes()),
             luau::Value::String(b"embedded_tags".to_vec()),
             luau::Value::String(source_key.into_bytes()),
             luau::Value::Boolean(true),
@@ -814,6 +745,7 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
     let expected_owner = user_public_id.clone();
     let user_db_id = lyra_db::users::create(&mut db, &user)?;
     let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Playlist Track")?;
+    let track_id = public_id(&db, track_db_id)?;
     let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
@@ -840,7 +772,7 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
         format!(
             r#"
                 local playlists = require("@lyra/playlists")
-                local track_db_id = {track_db_id}
+                local track_id = "{track_id}"
 
                 executor_playlist_id = playlists.create({{
                     name = "Raw Playlist",
@@ -852,7 +784,7 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
                 executor_playlist = playlists.get_by_id(executor_playlist_id)
                 executor_playlist_owner = playlists.get_owner(executor_playlist_id)
                 executor_user_playlists = playlists.list_owned()
-                executor_playlist_entry_id = playlists.add_track(executor_playlist_id, track_db_id)
+                executor_playlist_entry_id = playlists.add_track(executor_playlist_id, track_id)
                 executor_playlist_tracks = playlists.get_tracks(executor_playlist_id)
                 executor_playlist_tracks_many = playlists.get_tracks_many({{ executor_playlist_id, executor_playlist_id }})
                 executor_updated_playlist = playlists.update({{
@@ -865,7 +797,6 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
                 playlists.remove_track(executor_playlist_id, executor_playlist_entry_id)
                 executor_playlist_tracks_after_remove = playlists.get_tracks(executor_playlist_id)
             "#,
-            track_db_id = track_db_id.0,
         )
         .into_bytes(),
         context,
@@ -877,7 +808,7 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
         r#"
                 return executor_playlist_id ~= nil,
                     executor_playlist.name,
-                    executor_playlist.db_id ~= nil,
+                    executor_playlist.id == executor_playlist_id,
                     executor_playlist_owner,
                     executor_user_playlists[1].name,
                     executor_playlist_entry_id ~= nil,
@@ -901,9 +832,9 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
             luau::Value::String(expected_owner.into_bytes()),
             luau::Value::String(b"Raw Playlist".to_vec()),
             luau::Value::Boolean(true),
-            luau::Value::Number(track_db_id.0 as f64),
+            luau::Value::String(track_id.clone().into_bytes()),
             luau::Value::Boolean(true),
-            luau::Value::Number(track_db_id.0 as f64),
+            luau::Value::String(track_id.into_bytes()),
             luau::Value::String(b"Raw Updated Playlist".to_vec()),
             luau::Value::Boolean(true),
             luau::Value::Boolean(true),
@@ -923,6 +854,10 @@ fn plugin_executor_exposes_db_backed_lyra_releases_module() -> Result<()> {
     lyra_db::test_db::connect_artist(&mut db, release_db_id, album_artist_id)?;
     let guest_artist_id = lyra_db::fixtures::insert_artist(&mut db, "Raw Guest Artist")?;
     lyra_db::test_db::connect_artist(&mut db, track_db_id, guest_artist_id)?;
+    let release_id = public_id(&db, release_db_id)?;
+    let track_id = public_id(&db, track_db_id)?;
+    let album_artist_id = public_id(&db, album_artist_id)?;
+    let guest_artist_id = public_id(&db, guest_artist_id)?;
     let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
@@ -936,12 +871,12 @@ fn plugin_executor_exposes_db_backed_lyra_releases_module() -> Result<()> {
         format!(
             r#"
                 local releases = require("@lyra/releases")
-                local release_db_id = {release_db_id}
-                local track_db_id = {track_db_id}
-                local album_artist_id = {album_artist_id}
-                local guest_artist_id = {guest_artist_id}
+                local release_id = "{release_id}"
+                local track_id = "{track_id}"
+                local album_artist_id = "{album_artist_id}"
+                local guest_artist_id = "{guest_artist_id}"
 
-                local fetched = releases.get({{ release_db_id }})
+                local fetched = releases.get({{ release_id }})
                 local all = releases.query({{}})
                 local by_artist = releases.query({{
                     artist_ids = {{ album_artist_id }},
@@ -952,26 +887,22 @@ fn plugin_executor_exposes_db_backed_lyra_releases_module() -> Result<()> {
                     credit_role = "track",
                     exclude_credit_role = "release",
                 }})
-                local many = releases.by_track({{ track_db_id }})
+                local many = releases.by_track({{ track_id }})
                 local queried = releases.query({{
                     search = "Module",
                     sort = {{ {{ key = "name" }} }},
                     limit = 5,
                 }})
 
-                return fetched[release_db_id].release_title,
+                return fetched[release_id].release_title,
                     all.total,
                     by_artist.items[1].release_title,
                     appearances.items[1].release_title,
-                    many[track_db_id][1].release_title,
+                    many[track_id][1].release_title,
                     queried.items[1].release_title,
                     queried.total,
                     queried.offset
             "#,
-            release_db_id = release_db_id.0,
-            track_db_id = track_db_id.0,
-            album_artist_id = album_artist_id.0,
-            guest_artist_id = guest_artist_id.0,
         )
         .into_bytes(),
     )?;
@@ -998,8 +929,8 @@ fn plugin_executor_exposes_db_backed_lyra_libraries_module() -> Result<()> {
     let library_db_id = lyra_db::test_db::insert_library(&mut db, "Raw Library", "/tmp/raw-lib")?;
     let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Library Track")?;
     lyra_db::fixtures::connect(&mut db, library_db_id, track_db_id)?;
-    let library_public_id = lyra_db::lookup::find_id_by_db_id(&db, library_db_id)?
-        .context("inserted library has public id")?;
+    let library_id = public_id(&db, library_db_id)?;
+    let track_id = public_id(&db, track_db_id)?;
     let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
@@ -1013,25 +944,23 @@ fn plugin_executor_exposes_db_backed_lyra_libraries_module() -> Result<()> {
         format!(
             r#"
                 local libraries = require("@lyra/libraries")
-                local library_db_id = {library_db_id}
-                local library_public_id = "{library_public_id}"
-                local track_db_id = {track_db_id}
+                local library_id = "{library_id}"
+                local track_id = "{track_id}"
 
                 local all = libraries.list()
-                local by_id = libraries.list(library_db_id)
-                local by_public = libraries.list(library_public_id)
-                local for_entity = libraries.get_for_entity(track_db_id)
-                local many = libraries.get_for_entities({{ track_db_id, library_db_id }})
+                local by_id = libraries.list(library_id)
+                local for_entity = libraries.get_for_entity(track_id)
+                local many = libraries.get_for_entities({{ track_id, library_id, "missing" }})
 
                 return all[1].name,
                     by_id[1].path,
-                    by_public[1].db_id,
+                    by_id[1].id,
+                    #libraries.list("missing"),
                     for_entity[1].name,
-                    many[track_db_id].name,
-                    many[library_db_id].name
+                    many[track_id].name,
+                    many[library_id].name,
+                    many["missing"] == nil
             "#,
-            library_db_id = library_db_id.0,
-            track_db_id = track_db_id.0,
         )
         .into_bytes(),
     )?;
@@ -1041,17 +970,19 @@ fn plugin_executor_exposes_db_backed_lyra_libraries_module() -> Result<()> {
         vec![
             luau::Value::String(b"Raw Library".to_vec()),
             luau::Value::String(b"/tmp/raw-lib".to_vec()),
-            luau::Value::Number(library_db_id.0 as f64),
+            luau::Value::String(library_id.into_bytes()),
+            luau::Value::Number(0.0),
             luau::Value::String(b"Raw Library".to_vec()),
             luau::Value::String(b"Raw Library".to_vec()),
             luau::Value::String(b"Raw Library".to_vec()),
+            luau::Value::Boolean(true),
         ]
     );
     Ok(())
 }
 
 #[test]
-fn libraries_expose_db_ids_of_accessible_libraries_to_a_dispatch_principal() -> Result<()> {
+fn libraries_expose_only_accessible_libraries_to_a_dispatch_principal() -> Result<()> {
     let mut db = lyra_db::test_db::new_test_db()?;
     let shared_db_id = lyra_db::test_db::insert_library(&mut db, "Shared Library", "/tmp/shared")?;
     let hidden_db_id = lyra_db::test_db::insert_library(&mut db, "Hidden Library", "/tmp/hidden")?;
@@ -1059,8 +990,10 @@ fn libraries_expose_db_ids_of_accessible_libraries_to_a_dispatch_principal() -> 
     let hidden_track_db_id = lyra_db::fixtures::insert_track(&mut db, "Hidden Track")?;
     lyra_db::fixtures::connect(&mut db, shared_db_id, shared_track_db_id)?;
     lyra_db::fixtures::connect(&mut db, hidden_db_id, hidden_track_db_id)?;
-    let shared_public_id = lyra_db::lookup::find_id_by_db_id(&db, shared_db_id)?
-        .context("inserted library has public id")?;
+    let shared_public_id = public_id(&db, shared_db_id)?;
+    let hidden_public_id = public_id(&db, hidden_db_id)?;
+    let shared_track_id = public_id(&db, shared_track_db_id)?;
+    let hidden_track_id = public_id(&db, hidden_track_db_id)?;
     let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
@@ -1080,7 +1013,7 @@ fn libraries_expose_db_ids_of_accessible_libraries_to_a_dispatch_principal() -> 
             "viewer".to_string(),
             Vec::new(),
             None,
-            std::collections::HashSet::from([shared_public_id]),
+            std::collections::HashSet::from([shared_public_id.clone()]),
         ),
     );
     let values = runtime.eval_plugin_source_with_call_context(
@@ -1088,34 +1021,31 @@ fn libraries_expose_db_ids_of_accessible_libraries_to_a_dispatch_principal() -> 
             r#"
                 local libraries = require("@lyra/libraries")
                 local all = libraries.list()
-                local for_entity = libraries.get_for_entity({shared_track_db_id})
-                local many = libraries.get_for_entities({{ {shared_track_db_id}, {hidden_track_db_id} }})
+                local for_entity = libraries.get_for_entity("{shared_track_id}")
+                local many = libraries.get_for_entities({{ "{shared_track_id}", "{hidden_track_id}" }})
                 return #all,
-                    all[1].db_id,
+                    all[1].id,
                     all[1].path,
-                    for_entity[1].db_id,
-                    many[{shared_track_db_id}].db_id,
-                    many[{hidden_track_db_id}],
-                    #libraries.list({hidden_db_id}),
-                    #libraries.get_for_entity({hidden_track_db_id})
+                    for_entity[1].id,
+                    many["{shared_track_id}"].id,
+                    many["{hidden_track_id}"],
+                    #libraries.list("{hidden_public_id}"),
+                    #libraries.get_for_entity("{hidden_track_id}")
             "#,
-            shared_track_db_id = shared_track_db_id.0,
-            hidden_track_db_id = hidden_track_db_id.0,
-            hidden_db_id = hidden_db_id.0,
         )
         .into_bytes(),
         context,
     )?;
 
-    let shared_db_id = luau::Value::Number(shared_db_id.0 as f64);
+    let shared_id = luau::Value::String(shared_public_id.into_bytes());
     assert_eq!(
         values,
         vec![
             luau::Value::Number(1.0),
-            shared_db_id.clone(),
+            shared_id.clone(),
             luau::Value::Nil,
-            shared_db_id.clone(),
-            shared_db_id,
+            shared_id.clone(),
+            shared_id,
             luau::Value::Nil,
             luau::Value::Number(0.0),
             luau::Value::Number(0.0),
@@ -1131,6 +1061,7 @@ fn libraries_refuse_a_client_dispatch_without_a_principal() -> Result<()> {
         lyra_db::test_db::insert_library(&mut db, "Private Library", "/tmp/private")?;
     let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Private Track")?;
     lyra_db::fixtures::connect(&mut db, library_db_id, track_db_id)?;
+    let track_id = public_id(&db, track_db_id)?;
     let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
@@ -1154,10 +1085,9 @@ fn libraries_refuse_a_client_dispatch_without_a_principal() -> Result<()> {
                     return not ok and string.find(tostring(err), "no authenticated caller", 1, true) ~= nil
                 end
                 return refused(libraries.list),
-                    refused(libraries.get_for_entity, {track_db_id}),
-                    refused(libraries.get_for_entities, {{ {track_db_id} }})
+                    refused(libraries.get_for_entity, "{track_id}"),
+                    refused(libraries.get_for_entities, {{ "{track_id}" }})
             "#,
-            track_db_id = track_db_id.0,
         )
         .into_bytes(),
         context,
@@ -1172,6 +1102,7 @@ fn plugin_executor_exposes_db_backed_lyra_genres_module() -> Result<()> {
     let mut db = lyra_db::test_db::new_test_db()?;
     let release_db_id = lyra_db::fixtures::insert_release(&mut db, "Raw Genre Release")?;
     lyra_db::genres::sync_release_genres(&mut db, release_db_id, &["Synthpop".to_string()])?;
+    let release_id = public_id(&db, release_db_id)?;
     let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
@@ -1185,7 +1116,7 @@ fn plugin_executor_exposes_db_backed_lyra_genres_module() -> Result<()> {
         format!(
             r#"
                 local genres = require("@lyra/genres")
-                local release_db_id = {release_db_id}
+                local release_id = "{release_id}"
 
                 local parent_id = genres.resolve({{
                     name = "Electronic",
@@ -1205,16 +1136,15 @@ fn plugin_executor_exposes_db_backed_lyra_genres_module() -> Result<()> {
                 local by_id = genres.get({{ child_id, parent_id }})
                 local by_name = genres.find_by_name(" synthpop ")
                 local queried = genres.query({{ search = "synth" }})
-                local for_release = genres.by_release({{ release_db_id }})
+                local for_release = genres.by_release({{ release_id }})
 
                 return by_id[child_id].name,
                     by_id[parent_id] == nil,
                     by_name.name,
                     queried.items[1].name,
                     queried.total,
-                    for_release[release_db_id][1].name
+                    for_release[release_id][1].name
             "#,
-            release_db_id = release_db_id.0,
         )
         .into_bytes(),
     )?;
@@ -1261,6 +1191,7 @@ fn plugin_executor_exposes_db_backed_lyra_tags_module() -> Result<()> {
             .to(track_db_id)
             .query(),
     )?;
+    let track_id = public_id(&db, track_db_id)?;
     let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
@@ -1287,18 +1218,17 @@ fn plugin_executor_exposes_db_backed_lyra_tags_module() -> Result<()> {
         format!(
             r##"
                 local tags = require("@lyra/tags")
-                local track_id = {track_db_id}
+                local track_id = "{track_id}"
 
                 executor_tag_name = tags.add(track_id, " Workout ", "#335577")
                 executor_has = tags.has(track_id, "Workout")
-                executor_has_many = tags.has_many({{ track_id, track_id, 999999 }}, "Workout")
+                executor_has_many = tags.has_many({{ track_id, track_id, "missing" }}, "Workout")
                 executor_for_target = tags.get_for_target(track_id)
-                executor_for_targets = tags.get_for_targets_many({{ track_id, 999999 }})
+                executor_for_targets = tags.get_for_targets_many({{ track_id, "missing" }})
                 executor_tagged = tags.get_tagged("Workout")
                 tags.remove(track_id, "Workout")
                 executor_has_after_remove = tags.has(track_id, "Workout")
             "##,
-            track_db_id = track_db_id.0,
         )
         .into_bytes(),
         context,
@@ -1309,20 +1239,19 @@ fn plugin_executor_exposes_db_backed_lyra_tags_module() -> Result<()> {
         "check.luau",
         format!(
             r#"
-                local track_id = {track_db_id}
+                local track_id = "{track_id}"
 
                 return executor_tag_name,
                     executor_has,
                     executor_has_many[track_id],
-                    executor_has_many[999999] == false,
+                    executor_has_many["missing"] == nil,
                     executor_for_target[1].tag,
                     executor_for_target[1].color,
                     executor_for_targets[track_id][1].tag,
-                    executor_for_targets[999999] ~= nil and #executor_for_targets[999999] == 0,
+                    executor_for_targets["missing"] == nil,
                     executor_tagged[1],
                     executor_has_after_remove
             "#,
-            track_db_id = track_db_id.0,
         )
         .into_bytes(),
     )?;
@@ -1337,7 +1266,7 @@ fn plugin_executor_exposes_db_backed_lyra_tags_module() -> Result<()> {
             luau::Value::String(b"#335577".to_vec()),
             luau::Value::String(b"Workout".to_vec()),
             luau::Value::Boolean(true),
-            luau::Value::Number(track_db_id.0 as f64),
+            luau::Value::String(track_id.into_bytes()),
             luau::Value::Boolean(false),
         ]
     );
@@ -1406,6 +1335,7 @@ fn plugin_executor_reports_playback_acceptance_rejection_and_internal_failure() 
     let user = lyra_db::fixtures::test_user("report-user")?;
     let user_db_id = lyra_db::users::create(&mut db, &user)?;
     let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Reported Track")?;
+    let track_id = public_id(&db, track_db_id)?;
     let db = lyra_db::DbAsync::new(db);
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("reporter", &["lyra.playback_sessions"])]),
@@ -1433,13 +1363,12 @@ fn plugin_executor_reports_playback_acceptance_rejection_and_internal_failure() 
         local sessions = require("@lyra/playback_sessions")
         function report(key, state)
             return sessions.report_session({{
-                track_id = {}, session_key = key, state = state,
+                track_id = "{track_id}", session_key = key, state = state,
             }})
         end
         accepted_id, accepted_error = report("player", "playing")
         ignored_id, ignored_error = report("unknown", "stopped")
     "#,
-            track_db_id.0
         )
         .into_bytes(),
         context.clone(),
@@ -1548,6 +1477,8 @@ fn stale_principal_cannot_use_favorites_of_a_user_with_its_recycled_db_id() -> R
         lyra_db::favorites::FavoriteKind::Track,
         1,
     )?;
+    let track = public_id(&db, track_db_id)?;
+    let other = public_id(&db, other_track_db_id)?;
     let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
@@ -1569,13 +1500,11 @@ fn stale_principal_cannot_use_favorites_of_a_user_with_its_recycled_db_id() -> R
                     return not ok
                         and string.find(tostring(err), "invalid bearer credential", 1, true) ~= nil
                 end
-                return rejects(favorites.get, {{ {track} }}),
+                return rejects(favorites.get, {{ "{track}" }}),
                     rejects(favorites.list_ids, "track"),
-                    rejects(favorites.add, {other}),
-                    rejects(favorites.remove, {track})
+                    rejects(favorites.add, "{other}"),
+                    rejects(favorites.remove, "{track}")
             "#,
-            track = track_db_id.0,
-            other = other_track_db_id.0,
         )
         .into_bytes(),
         context,
@@ -1609,6 +1538,7 @@ fn stale_principal_cannot_use_playlists_of_a_user_with_its_recycled_db_id() -> R
             track_db_ids: Vec::new(),
         },
     )?;
+    let playlist_id = public_id(&db, playlist_db_id)?;
     let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
@@ -1625,7 +1555,7 @@ fn stale_principal_cannot_use_playlists_of_a_user_with_its_recycled_db_id() -> R
         format!(
             r#"
                 local playlists = require("@lyra/playlists")
-                local playlist_id = {playlist_id}
+                local playlist_id = "{playlist_id}"
                 local function rejects(f, ...)
                     return not pcall(f, ...)
                 end
@@ -1636,7 +1566,6 @@ fn stale_principal_cannot_use_playlists_of_a_user_with_its_recycled_db_id() -> R
                     rejects(playlists.delete, playlist_id),
                     rejects(playlists.create, {{ name = "Stale" }})
             "#,
-            playlist_id = playlist_db_id.0,
         )
         .into_bytes(),
         context,
@@ -1656,6 +1585,7 @@ fn stale_principal_cannot_report_playback_for_a_user_with_its_recycled_db_id() -
     crate::plugins::testing::init_default_test_state()?;
     let mut db = lyra_db::test_db::new_test_db()?;
     let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Reported Track")?;
+    let track_id = public_id(&db, track_db_id)?;
     let (mut stale, current_db_id) = recycled_user_principal(&mut db, Default::default())?;
     stale.permissions = vec![lyra_db::Permission::Admin];
     let db = lyra_db::DbAsync::new(db);
@@ -1674,11 +1604,10 @@ fn stale_principal_cannot_report_playback_for_a_user_with_its_recycled_db_id() -
             r#"
                 local sessions = require("@lyra/playback_sessions")
                 local ok, err = pcall(sessions.report_session, {{
-                    track_id = {track_id}, session_key = "player", state = "playing",
+                    track_id = "{track_id}", session_key = "player", state = "playing",
                 }})
                 return ok, string.find(tostring(err), "invalid bearer credential", 1, true) ~= nil
             "#,
-            track_id = track_db_id.0,
         )
         .into_bytes(),
         context,
@@ -1734,7 +1663,7 @@ fn entities_links_include_resolves_templates_and_functions() -> Result<()> {
                 IdSource::Resolved,
             )?;
         }
-        Ok::<_, anyhow::Error>(release)
+        public_id(&*db, release)
     })?;
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.metadata", "lyra.entities"])]),
@@ -1762,8 +1691,8 @@ fn entities_links_include_resolves_templates_and_functions() -> Result<()> {
                 error("boom")
             end)
 
-            local without = entities.query_release({{ id = {release} }})
-            local with = entities.query_release({{ id = {release}, include = {{ "links", "tracks" }} }})
+            local without = entities.query_release({{ id = "{release}" }})
+            local with = entities.query_release({{ id = "{release}", include = {{ "links", "tracks" }} }})
             local urls = {{}}
             for _, link in with.includes.links do
                 table.insert(urls, link.url)
@@ -1778,7 +1707,6 @@ fn entities_links_include_resolves_templates_and_functions() -> Result<()> {
                 with.includes.links[2].scheme,
                 with.includes.links[2].label
         "#,
-        release = release.0,
     );
 
     let values = runtime.eval_plugin_source("demo", "init.luau", source.as_bytes())?;
@@ -1812,7 +1740,7 @@ fn entities_links_include_resolves_templates_and_functions() -> Result<()> {
     Ok(())
 }
 
-fn insert_release_with_ids(provider_id: &str, ids: &[(&str, &str)]) -> Result<agdb::DbId> {
+fn insert_release_with_ids(provider_id: &str, ids: &[(&str, &str)]) -> Result<String> {
     futures::executor::block_on(async {
         use lyra_db::external_ids::{
             self,
@@ -1831,7 +1759,7 @@ fn insert_release_with_ids(provider_id: &str, ids: &[(&str, &str)]) -> Result<ag
                 IdSource::Resolved,
             )?;
         }
-        Ok(release)
+        public_id(&*db, release)
     })
 }
 
@@ -1846,21 +1774,20 @@ fn link_runtime() -> Result<PluginExecutor> {
     )
 }
 
-fn release_link_urls(runtime: &PluginExecutor, release: agdb::DbId) -> Result<String> {
+fn release_link_urls(runtime: &PluginExecutor, release: &str) -> Result<String> {
     let values = runtime.eval_plugin_source(
         "demo",
         "links.luau",
         format!(
             r#"
                 local entities = require("@lyra/entities")
-                local release = entities.query_release({{ id = {release}, include = "links" }})
+                local release = entities.query_release({{ id = "{release}", include = "links" }})
                 local urls = {{}}
                 for _, link in release.includes.links do
                     table.insert(urls, link.url)
                 end
                 return table.concat(urls, " ")
             "#,
-            release = release.0,
         )
         .as_bytes(),
     )?;
@@ -1904,7 +1831,7 @@ fn entities_links_isolate_failing_slow_and_unsafe_generators() -> Result<()> {
             provider:id({ id_type = "z_slow_id", entity = ET.Release }, function(id)
                 slow_runs += 1
                 task.spawn(function()
-                    local ok, err = pcall(entities.query, { id = 1, include = "links" })
+                    local ok, err = pcall(entities.query, { id = "any", include = "links" })
                     spawned_links_error = if ok then "allowed" else tostring(err)
                 end)
                 task.wait(60)
@@ -1921,7 +1848,7 @@ fn entities_links_isolate_failing_slow_and_unsafe_generators() -> Result<()> {
     )?;
 
     let started = std::time::Instant::now();
-    let urls = release_link_urls(&runtime, release)?;
+    let urls = release_link_urls(&runtime, &release)?;
     assert!(started.elapsed() >= crate::services::providers::ID_LINK_BATCH_TIMEOUT);
     assert!(started.elapsed() < std::time::Duration::from_secs(10));
     assert_eq!(
@@ -1936,7 +1863,7 @@ fn entities_links_isolate_failing_slow_and_unsafe_generators() -> Result<()> {
         "{spawned:?}"
     );
 
-    assert_eq!(release_link_urls(&runtime, release)?, urls);
+    assert_eq!(release_link_urls(&runtime, &release)?, urls);
     let runs =
         runtime.eval_plugin_source("demo", "runs.luau", &b"return busy_runs, slow_runs"[..])?;
     assert_eq!(
@@ -1971,7 +1898,7 @@ fn entities_links_skip_generators_registered_on_another_vm() -> Result<()> {
     let old = link_runtime()?;
     register(&old, "old")?;
     assert_eq!(
-        release_link_urls(&old, release)?,
+        release_link_urls(&old, &release)?,
         "https://old.example.test/x"
     );
 
@@ -1983,12 +1910,12 @@ fn entities_links_skip_generators_registered_on_another_vm() -> Result<()> {
     register(&new, "new")?;
 
     assert_eq!(
-        release_link_urls(&old, release)?,
+        release_link_urls(&old, &release)?,
         "",
         "the old VM must not run the new VM's handler ids"
     );
     assert_eq!(
-        release_link_urls(&new, release)?,
+        release_link_urls(&new, &release)?,
         "https://new.example.test/x"
     );
     Ok(())
@@ -2028,7 +1955,7 @@ fn entities_links_time_out_and_suspend_a_busy_generator_within_the_batch_deadlin
     };
     let ids = releases
         .iter()
-        .map(|release| release.0.to_string())
+        .map(|release| format!(r#""{release}""#))
         .collect::<Vec<_>>()
         .join(", ");
 

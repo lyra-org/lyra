@@ -16,18 +16,19 @@ use harmony_luau::{
     TypeAliasDescriptor,
     render_definition_file_with_support,
 };
-#[cfg(feature = "docgen")]
 use std::collections::HashMap;
 
 use crate::plugins::args::{
     self,
-    PositiveId,
     UniqueIds,
 };
-use crate::plugins::catalog;
 use crate::plugins::db::{
     Db,
     ViewerDb,
+};
+use crate::plugins::{
+    catalog,
+    ids,
 };
 use crate::services::catalog::releases::ReleaseKey;
 use crate::services::{
@@ -40,18 +41,26 @@ use crate::services::{
             Releases,
         },
     },
-    releases as release_service,
+    releases::{
+        self as release_service,
+        chains as chain_service,
+    },
 };
 
 pub(crate) struct ReleasesModule;
 
+/// The `query` argument, read with its page bounds.
 /// The `query` argument, read with its page bounds.
 struct ReleaseQuery(catalog::PagedQuery<Releases>);
 
 impl<'vm> luau::FromLuau<'vm> for ReleaseQuery {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let opts: luau::Table = reader.read()?;
-        let filter = read_filter(&opts)?;
+        let filter = ReleaseFilter {
+            years: catalog::read_years(&opts)?,
+            personal: catalog::read_personal(&opts)?,
+            ..ReleaseFilter::default()
+        };
         catalog::read_query::<Releases>(&opts, filter).map(Self)
     }
 }
@@ -63,7 +72,7 @@ impl luau::LuauTypeInfo for ReleaseQuery {
 }
 
 /// The `chains` argument: arrays of track ids.
-struct ChainsArgument(Vec<Vec<DbId>>);
+struct ChainsArgument(Vec<Vec<String>>);
 
 impl<'vm> luau::FromLuau<'vm> for ChainsArgument {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
@@ -83,7 +92,7 @@ impl<'vm> luau::FromLuau<'vm> for ChainsArgument {
 
 impl luau::LuauTypeInfo for ChainsArgument {
     fn luau_type() -> luau::LuauType {
-        Vec::<Vec<u64>>::luau_type()
+        Vec::<Vec<String>>::luau_type()
     }
 }
 
@@ -136,13 +145,13 @@ impl LuauTypeInfo for ReleasePage {
 impl ReleasesModule {
     #[harmony(
         description = "The releases with these ids that the caller can see, keyed by id.",
-        returns(HashMap<u64, Release>)
+        returns(HashMap<String, Release>)
     )]
     async fn get(
         ids: UniqueIds,
         #[context] db: ViewerDb,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        catalog::keyed_table(db, ids.0, lookups::get::<Releases>).await
+        catalog::keyed_table(&db, ids.0, lookups::get::<Releases>).await
     }
 
     #[harmony(
@@ -154,9 +163,10 @@ impl ReleasesModule {
         #[context] db: ViewerDb,
         #[context] scopes: catalog::PersonalScopes,
     ) -> luau::runtime::Result<luau::ReturnValues> {
-        let request = query.0;
+        let mut request = query.0;
         scopes.check(&request.query)?;
         let (db, viewer) = db.read().await?;
+        request.resolve_ids(&db)?;
         let page =
             services::catalog::page(&db, &viewer, &request.query, request.offset, request.limit)
                 .and_then(|page| {
@@ -179,35 +189,42 @@ impl ReleasesModule {
 
     #[harmony(
         description = "The releases the caller can see that hold each of these tracks, keyed by track id.",
-        returns(HashMap<u64, Vec<Release>>)
+        returns(HashMap<String, Vec<Release>>)
     )]
     async fn by_track(
         track_ids: UniqueIds,
         #[context] db: ViewerDb,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        catalog::keyed_table(db, track_ids.0, lookups::releases_by_track).await
+        catalog::keyed_table(&db, track_ids.0, lookups::releases_by_track).await
     }
 
     #[harmony(
         description = "The releases the caller can see in each of these genres, keyed by genre id.",
-        returns(HashMap<u64, Vec<Release>>)
+        returns(HashMap<String, Vec<Release>>)
     )]
     async fn by_genre(
         genre_ids: UniqueIds,
         #[context] db: ViewerDb,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        catalog::keyed_table(db, genre_ids.0, lookups::releases_by_genre).await
+        catalog::keyed_table(&db, genre_ids.0, lookups::releases_by_genre).await
     }
 
     #[harmony(
         description = "The chains on each of these releases that the caller can see, ordered by where their first track sits, keyed by release id.",
-        returns(HashMap<u64, Vec<ReleaseChain>>)
+        returns(HashMap<String, Vec<ReleaseChain>>)
     )]
     async fn chains(
         release_ids: UniqueIds,
         #[context] db: ViewerDb,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        catalog::keyed_table(db, release_ids.0, lookups::chains_by_release).await
+        catalog::keyed_table(&db, release_ids.0, |db, viewer, ids| {
+            let mut chains = HashMap::new();
+            for (release, release_chains) in lookups::chains_by_release(db, viewer, ids)? {
+                chains.insert(release, chain_service::public_chains(db, release_chains)?);
+            }
+            Ok(chains)
+        })
+        .await
     }
 
     #[harmony(
@@ -215,31 +232,21 @@ impl ReleasesModule {
         returns(Vec<ReleaseChain>)
     )]
     async fn replace_chains(
-        release_id: PositiveId,
+        release_id: String,
         chains: ChainsArgument,
         #[context] principal: Principal,
         #[context] db: Db,
     ) -> luau::runtime::Result<luau::Value> {
-        let release_db_id = release_id.0;
-        let chains = chains.0;
         crate::services::auth::require_permission(&principal, lyra_db::Permission::ManageMetadata)
             .map_err(crate::plugins::runtime_error)?;
-        let chains = {
-            let mut db = db.write().await;
-            if !crate::services::auth::access::entity_accessible(&db, &principal, release_db_id)? {
-                return Err(crate::plugins::runtime_error(
-                    lyra_db::chains::ChainError::ReleaseNotFound,
-                ));
-            }
-            lyra_db::chains::replace_for_release(&mut db, release_db_id, &chains)?
-                .map_err(crate::plugins::runtime_error)?
-        };
-        harmony_luau::serializable_to_luau_owned(
-            chains
-                .into_iter()
-                .map(lookups::ReleaseChain::from)
-                .collect::<Vec<_>>(),
-        )
+        let mut db = db.write().await;
+        let release_db_id =
+            ids::visible_to(&db, &principal, &release_id, "Release")?.ok_or_else(|| {
+                crate::plugins::runtime_error(format!("release not found: {release_id}"))
+            })?;
+        let chains = chain_service::replace(&mut db, release_db_id, &chains.0)
+            .map_err(crate::plugins::runtime_error)?;
+        harmony_luau::serializable_to_luau_owned(chains)
     }
 
     #[harmony(
@@ -249,7 +256,7 @@ impl ReleasesModule {
     fn similar(
         vm: &luau::Vm,
         context: &luau::CallContext,
-        release_db_id: i64,
+        release_id: String,
         opts: SimilarOptions,
     ) -> luau::runtime::Result<luau::ScheduledFuture> {
         if context
@@ -261,20 +268,18 @@ impl ReleasesModule {
                 "releases.similar cannot be called from a metadata provider callback",
             ));
         }
-        if release_db_id <= 0 {
-            return Err(crate::plugins::runtime_error(
-                "releases.similar release_db_id must be a positive integer",
-            ));
-        }
         let request = parse_similar_options(opts.0)?;
         let principal = crate::plugins::auth::require_dispatch_principal(context)?;
+        let db = crate::plugins::db::get(vm)?;
         let provider_vm = vm.clone();
 
         Ok(luau::ScheduledFuture::new(async move {
+            let Some(release_db_id) = ids::db_id(&*db.read().await, &release_id)? else {
+                return Ok(luau::Value::Nil);
+            };
             let options =
                 release_service::SimilarReleaseOptions::for_principal(&principal, request.limit);
-            let releases = similar_in_vm(DbId(release_db_id), &options, provider_vm).await?;
-            match releases {
+            match similar_in_vm(release_db_id, &options, provider_vm).await? {
                 Some(releases) => harmony_luau::serializable_to_luau_owned(releases),
                 None => Ok(luau::Value::Nil),
             }
@@ -347,19 +352,6 @@ fn parse_optional_similar_positive_integer(
     Ok(Some(value))
 }
 
-fn read_filter(table: &luau::Table) -> luau::runtime::Result<ReleaseFilter> {
-    Ok(ReleaseFilter {
-        ids: catalog::optional_ids(table, "ids")?,
-        exclude_ids: args::optional_unique_ids(table, "exclude_ids")?,
-        exclude_artists: args::optional_unique_ids(table, "exclude_artist_ids")?,
-        library: args::optional_positive_id(table, "library_id")?,
-        artists: catalog::read_artist_credit(table)?,
-        genres: args::optional_unique_ids(table, "genre_ids")?,
-        years: catalog::read_years(table)?,
-        personal: catalog::read_personal(table)?,
-    })
-}
-
 #[cfg(feature = "docgen")]
 fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
     FieldDescriptor {
@@ -386,7 +378,6 @@ fn string_enum(values: impl IntoIterator<Item = &'static str>) -> LuauType {
 #[cfg(feature = "docgen")]
 fn release_type() -> LuauType {
     LuauType::object(vec![
-        field("db_id", Option::<i64>::luau_type()),
         field("id", String::luau_type()),
         field("release_title", String::luau_type()),
         field("sort_title", Option::<String>::luau_type()),
@@ -446,7 +437,7 @@ fn release_type_aliases() -> Vec<TypeAliasDescriptor> {
                 field("id", String::luau_type()),
                 described_field(
                     "track_ids",
-                    Vec::<u64>::luau_type(),
+                    Vec::<String>::luau_type(),
                     "The chain's tracks in play order.",
                 ),
             ]),
@@ -469,10 +460,10 @@ fn release_type_aliases() -> Vec<TypeAliasDescriptor> {
 fn release_query() -> InterfaceDescriptor {
     let mut descriptor = InterfaceDescriptor::new("ReleaseQuery", None);
     descriptor.fields.extend([
-        field("ids", Option::<Vec<u64>>::luau_type()),
-        field("exclude_ids", Option::<Vec<u64>>::luau_type()),
-        field("library_id", Option::<u64>::luau_type()),
-        field("genre_ids", Option::<Vec<u64>>::luau_type()),
+        field("ids", Option::<Vec<String>>::luau_type()),
+        field("exclude_ids", Option::<Vec<String>>::luau_type()),
+        field("library_id", Option::<String>::luau_type()),
+        field("genre_ids", Option::<Vec<String>>::luau_type()),
         field("years", Option::<Vec<u32>>::luau_type()),
         field("favorite", Option::<bool>::luau_type()),
         described_field(

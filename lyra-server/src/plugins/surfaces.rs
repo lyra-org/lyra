@@ -17,7 +17,6 @@ use crate::plugins::{
     entries,
     favorites,
     genres,
-    ids,
     labels,
     libraries,
     listens,
@@ -122,7 +121,6 @@ fn surfaces() -> &'static [Surface] {
             entities::get_module,
             entities::render_luau_definition
         ),
-        surface!("lyra/ids", ids::get_module, ids::render_luau_definition),
         surface!(
             "lyra/labels",
             labels::module_spec,

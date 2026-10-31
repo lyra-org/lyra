@@ -14,13 +14,13 @@ local constants = require("../../constants")
 local requests = require("./requests")
 
 type ApiQueryParams = api.ApiQueryParams
-type TagInfoMap = { [number]: { tags_module.TagInfo } }
+type TagInfoMap = { [string]: { tags_module.TagInfo } }
 
 local DEFAULT_ITEMS_FIELDS = constants.DEFAULT_ITEMS_FIELDS
 local ITEM_ID_HEX_LENGTH = constants.ITEM_ID_HEX_LENGTH
 local ITEM_ID_HEX_PATTERN = constants.ITEM_ID_HEX_PATTERN
 
-export type FavoriteLookup = { [number]: boolean }
+export type FavoriteLookup = { [string]: boolean }
 
 -- Ids are Jellyfin item ids (hex); translation to Lyra ids happens when a query is built.
 export type ItemsQueryOptions = {
@@ -71,7 +71,7 @@ export type ItemsQueryOptions = {
 	group_items: boolean,
 	user_id: string?,
 	_favorite_id_lookup: FavoriteLookup?,
-	_genre_infos_by_release_id: { [number]: { genres.GenreInfo } }?,
+	_genre_infos_by_release_id: { [string]: { genres.GenreInfo } }?,
 	_tag_infos_by_item_id: TagInfoMap?,
 }
 

@@ -34,6 +34,9 @@ export type Principal = auth.Principal
 type ResolvedAuth = auth.ResolvedAuth
 type PlaylistInfo = playlists.PlaylistInfo
 type PlaylistTrackLink = playlists.PlaylistTrackLink
+type PlaylistCreateRequest = playlists.PlaylistCreateRequest
+type PlaylistFields = playlists.PlaylistFields
+type PlaylistUpdateRequest = playlists.PlaylistUpdateRequest
 type UserIdentity = {
 	user_id: string,
 	username: string,
@@ -45,7 +48,6 @@ type AuthenticateRequest = {
 }
 type PlaylistRouteRequest = {
 	name: string?,
-	ids: { number },
 	requested_ids: (string | { string })?,
 	has_invalid_ids: boolean,
 	user_id: string?,
@@ -312,7 +314,7 @@ local function resolve_jellyfin_auth(ctx: ApiContext?): (ResolvedAuth?, string?)
 	local principal = resolved_auth.principal
 
 	if requested_user_id then
-		local decoded_user_id = item_ids.decode_jellyfin_user_id(requested_user_id)
+		local decoded_user_id = item_ids.decode_jellyfin_item_id(requested_user_id)
 		if decoded_user_id ~= principal.user_id then
 			return nil, token
 		end
@@ -518,13 +520,13 @@ end
 function module.require_matching_user_scope(ctx: ApiContext?, principal: Principal): boolean
 	local params = if ctx then ctx.params else nil
 	local path_user_id = if params then requests.trim(params.userId) else nil
-	if path_user_id and item_ids.decode_jellyfin_user_id(path_user_id) ~= principal.user_id then
+	if path_user_id and item_ids.decode_jellyfin_item_id(path_user_id) ~= principal.user_id then
 		return false
 	end
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
 	local query_user_id = requests.parse_query_string(query, { "userId", "UserId", "userid" }, nil)
-	if query_user_id and item_ids.decode_jellyfin_user_id(query_user_id) ~= principal.user_id then
+	if query_user_id and item_ids.decode_jellyfin_item_id(query_user_id) ~= principal.user_id then
 		return false
 	end
 
@@ -534,7 +536,7 @@ end
 function module.require_matching_user_scope_from_id_param(ctx: ApiContext?, principal: Principal): boolean
 	local params = if ctx then ctx.params else nil
 	local path_user_id = if params then requests.trim(params.id) else nil
-	if path_user_id and item_ids.decode_jellyfin_user_id(path_user_id) ~= principal.user_id then
+	if path_user_id and item_ids.decode_jellyfin_item_id(path_user_id) ~= principal.user_id then
 		return false
 	end
 
@@ -575,7 +577,6 @@ function module.parse_playlist_request_body(ctx: ApiContext?): (PlaylistRouteReq
 	local requested_ids = jellyfin_ids_input(raw_ids)
 	return {
 		name = json_text_value(request_object.Name or request_object.name),
-		ids = item_ids.parse_jellyfin_ids_array(requested_ids),
 		requested_ids = requested_ids,
 		has_invalid_ids = has_non_string_ids(raw_ids)
 			or raw_ids_contain_null(if request then request.body_raw else nil),
@@ -585,9 +586,9 @@ function module.parse_playlist_request_body(ctx: ApiContext?): (PlaylistRouteReq
 		nil
 end
 
-function module.parse_playlist_query_track_ids(query: ApiQueryParams?): { number }
+function module.parse_playlist_query_track_ids(query: ApiQueryParams?): { string }
 	local raw_ids = requests.parse_query_string(query, { "ids", "Ids" }, nil)
-	return item_ids.parse_jellyfin_ids_csv(raw_ids)
+	return item_ids.visible_track_ids(item_ids.parse_jellyfin_ids_csv(raw_ids))
 end
 
 function module.parse_playlist_query_entry_ids(query: ApiQueryParams?, playlist: PlaylistInfo): { string }
@@ -603,7 +604,7 @@ function module.parse_playlist_query_entry_ids(query: ApiQueryParams?, playlist:
 end
 
 function module.ensure_user_scope_matches_principal(requested_user_id: string?, principal: Principal): boolean
-	if requested_user_id and item_ids.decode_jellyfin_user_id(requested_user_id) ~= principal.user_id then
+	if requested_user_id and item_ids.decode_jellyfin_item_id(requested_user_id) ~= principal.user_id then
 		return false
 	end
 
@@ -653,13 +654,13 @@ function module.handle_delete_item_route(ctx: ApiContext): ApiResponse
 	end
 
 	local playlist = playlist_access.find(item_ids.decode_jellyfin_item_id(ctx.params.id))
-	if not playlist or playlist.db_id == nil or not playlist_access.can_view(playlist, principal.user_id) then
+	if not playlist or not playlist_access.can_view(playlist, principal.user_id) then
 		return responses.not_found("item not found")
 	end
 	if not playlist_access.can_edit(playlist, principal.user_id) and not module.is_admin(principal) then
 		return module.unauthorized()
 	end
-	local ok, deleted = pcall(playlists.delete, playlist.db_id)
+	local ok, deleted = pcall(playlists.delete, playlist.id)
 	if not ok then
 		return responses.bad_request("failed to delete playlist")
 	end
@@ -669,6 +670,134 @@ function module.handle_delete_item_route(ctx: ApiContext): ApiResponse
 	return api.response.empty(204)
 end
 
+function module.handle_create_playlist_route(ctx: ApiContext): ApiResponse
+	local principal = module.require_jellyfin_principal(ctx)
+	if not principal then
+		return module.unauthorized()
+	end
+
+	local request_payload, parse_err = module.parse_playlist_request_body(ctx)
+	if not request_payload then
+		return parse_err or responses.bad_request("invalid playlist request body")
+	end
+	if not module.ensure_user_scope_matches_principal(request_payload.user_id, principal) then
+		return module.unauthorized()
+	end
+
+	local playlist_name = request_payload.name or "New Playlist"
+	local create_request: PlaylistCreateRequest = {
+		name = playlist_name,
+		is_public = if request_payload.is_public ~= nil then request_payload.is_public else false,
+		created_at_ms = module.current_unix_ms(),
+		updated_at_ms = module.current_unix_ms(),
+		track_ids = item_ids.visible_track_ids(item_ids.parse_jellyfin_ids_array(request_payload.requested_ids)),
+	}
+
+	local ok, playlist_id = pcall(playlists.create, create_request)
+	if not ok then
+		return responses.bad_request("failed to create playlist")
+	end
+
+	local jellyfin_playlist_id = item_ids.encode_jellyfin_item_id(playlist_id)
+	if not jellyfin_playlist_id then
+		return responses.bad_request("failed to encode playlist id")
+	end
+	return api.response.json(200, {
+		Id = jellyfin_playlist_id,
+	})
+end
+function module.handle_add_playlist_items_route(ctx: ApiContext): ApiResponse
+	local principal = module.require_jellyfin_principal(ctx)
+	if not principal then
+		return module.unauthorized()
+	end
+
+	if not module.require_matching_user_scope(ctx, principal) then
+		return module.unauthorized()
+	end
+
+	local playlist, playlist_err = module.resolve_playlist_for_route(ctx)
+	if not playlist then
+		return playlist_err or responses.bad_request("playlist not found")
+	end
+
+	local can_edit, edit_err = module.ensure_playlist_editable(playlist, principal)
+	if not can_edit then
+		return edit_err or responses.bad_request("playlist is read-only")
+	end
+
+	local query = if ctx and ctx.request then ctx.request.query else nil
+	local track_ids = module.parse_playlist_query_track_ids(query)
+	if #track_ids == 0 then
+		return responses.bad_request("missing ids query parameter")
+	end
+
+	-- Upstream inserts at the 0-based `position`, from the start when it's negative, and appends
+	-- without it.
+	local position = requests.parse_query_int(query, { "position", "Position" }, nil, nil, nil)
+	if position ~= nil then
+		position = math.max(position, 0)
+	end
+	local added, entry_ids = pcall(playlists.add_tracks, playlist.id, track_ids, position)
+	if not added or entry_ids == nil then
+		return responses.bad_request("failed to add track to playlist")
+	end
+
+	return api.response.empty(204)
+end
+function module.handle_update_playlist_route(ctx: ApiContext): ApiResponse
+	local principal = module.require_jellyfin_principal(ctx)
+	if not principal then
+		return module.unauthorized()
+	end
+
+	local playlist, playlist_err = module.resolve_playlist_for_route(ctx)
+	if not playlist then
+		return playlist_err or responses.bad_request("playlist not found")
+	end
+
+	local can_edit, edit_err = module.ensure_playlist_editable(playlist, principal)
+	if not can_edit then
+		return edit_err or responses.bad_request("playlist is read-only")
+	end
+
+	local request_payload, parse_err = module.parse_playlist_request_body(ctx)
+	if not request_payload then
+		return parse_err or responses.bad_request("invalid playlist request body")
+	end
+	if not module.ensure_user_scope_matches_principal(request_payload.user_id, principal) then
+		return module.unauthorized()
+	end
+	if request_payload.has_invalid_ids then
+		return responses.bad_request("invalid playlist item ids")
+	end
+	local fields: PlaylistFields = {
+		name = request_payload.name,
+		is_public = request_payload.is_public,
+		updated_at_ms = module.current_unix_ms(),
+	}
+	local ok, updated
+	if request_payload.requested_ids ~= nil then
+		local replacement_ids = item_ids.decode_jellyfin_ids_exact(request_payload.requested_ids)
+		if replacement_ids == nil then
+			return responses.bad_request("invalid playlist item ids")
+		end
+		ok, updated = pcall(playlists.replace, playlist.id, { fields = fields, track_ids = replacement_ids })
+	else
+		local update_request: PlaylistUpdateRequest = {
+			playlist_id = playlist.id,
+			name = fields.name,
+			is_public = fields.is_public,
+			updated_at_ms = fields.updated_at_ms,
+		}
+		ok, updated = pcall(playlists.update, update_request)
+	end
+	if not ok or updated == nil then
+		return responses.bad_request("failed to update playlist")
+	end
+
+	return api.response.empty(204)
+end
 local function playlist_item_ids(playlist: PlaylistInfo): { string }
 	local encoded_ids: { string } = {}
 	for _, track_ref: PlaylistTrackLink in playlist_access.track_refs(playlist) do
@@ -803,14 +932,12 @@ function module.handle_primary_image_request(ctx: ApiContext?): ApiResponse
 		return responses.bad_request("missing image id")
 	end
 
-	local item_db_id = item_ids.decode_jellyfin_item_id(image_id)
-	if not item_db_id then
+	local item_id = item_ids.decode_jellyfin_item_id(image_id)
+	if not item_id then
 		return responses.not_found("image not found")
 	end
 	local signed_in = module.require_jellyfin_principal(ctx) ~= nil
-	local cover_info = if signed_in
-		then artwork.get_item_cover_info(item_db_id)
-		else artwork.get_artwork_info(item_db_id)
+	local cover_info = if signed_in then artwork.get_item_cover_info(item_id) else artwork.get_artwork_info(item_id)
 	if not cover_info then
 		return responses.not_found("image not found")
 	end
@@ -850,19 +977,19 @@ end
 
 function module.handle_artist_image_request(ctx: ApiContext?): ApiResponse
 	return serve_public_image_by_name(ctx, function(name)
-		return artwork.get_artwork_info(catalog.find_artist_db_id_by_name(name))
+		return artwork.get_artwork_info(catalog.find_artist_id_by_name(name))
 	end)
 end
 
 function module.handle_person_image_request(ctx: ApiContext?): ApiResponse
 	return serve_public_image_by_name(ctx, function(name)
-		return artwork.get_artwork_info(catalog.find_artist_db_id_by_name(name))
+		return artwork.get_artwork_info(catalog.find_artist_id_by_name(name))
 	end)
 end
 
 function module.handle_genre_image_request(ctx: ApiContext?): ApiResponse
 	return serve_public_image_by_name(ctx, function(name)
-		return artwork.get_artwork_info(catalog.find_genre_db_id_by_name(name))
+		return artwork.get_artwork_info(catalog.find_genre_id_by_name(name))
 	end)
 end
 
@@ -1174,7 +1301,7 @@ function module.delete_devices_response(ctx: ApiContext?): ApiResponse
 	return api.response.empty(204)
 end
 
-local function resolve_item_file_track_id(ctx: ApiContext?): (number?, ApiResponse?)
+local function resolve_item_file_track_id(ctx: ApiContext?): (string?, ApiResponse?)
 	local principal = module.require_jellyfin_principal(ctx)
 	if not principal then
 		return nil, module.unauthorized()
@@ -1195,12 +1322,7 @@ local function resolve_item_file_track_id(ctx: ApiContext?): (number?, ApiRespon
 		return nil, responses.not_found("item not found")
 	end
 
-	local track_id = track.db_id
-	if track_id == nil or track_id <= 0 then
-		return nil, responses.not_found("item not found")
-	end
-
-	return track_id, nil
+	return track.id, nil
 end
 
 function module.handle_item_file_stream_request(ctx: ApiContext?): ApiResponse

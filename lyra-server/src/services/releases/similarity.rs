@@ -367,7 +367,6 @@ fn build_seed_context(
         provider_contexts.insert(
             handler.provider_id.clone(),
             serde_json::json!({
-                "db_id": seed_db_id.0,
                 "id": release.id,
                 "release_title": release.release_title,
                 "sort_title": release.sort_title,
@@ -444,15 +443,12 @@ fn resolve_candidates(
             continue;
         }
         let owners = match candidate {
-            SimilarReleaseCandidate::Local {
-                release_db_id,
-                release_id,
-            } if DbId(release_db_id) != seed_db_id
-                && release_identity_is_current(db, DbId(release_db_id), &release_id)? =>
-            {
-                vec![DbId(release_db_id)]
+            SimilarReleaseCandidate::Local { ref release_id } => {
+                match local_release(db, release_id)? {
+                    Some(release_db_id) if release_db_id != seed_db_id => vec![release_db_id],
+                    _ => continue,
+                }
             }
-            SimilarReleaseCandidate::Local { .. } => continue,
             SimilarReleaseCandidate::External(ref external) => {
                 let owners = lyra_db::external_ids::get_owners(
                     db,
@@ -585,6 +581,14 @@ fn release_identity_is_current(db: &DbAny, db_id: DbId, public_id: &str) -> Resu
     )
 }
 
+/// The release `release_id` names, if it names one.
+fn local_release(db: &DbAny, release_id: &str) -> Result<Option<DbId>> {
+    let Some(db_id) = lyra_db::lookup::find_node_id_by_id(db, release_id)? else {
+        return Ok(None);
+    };
+    Ok(lyra_db::releases::get_by_id(db, db_id)?.map(|_| db_id))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -658,16 +662,15 @@ mod tests {
     }
 
     #[test]
-    fn local_candidate_requires_matching_public_identity() -> Result<()> {
+    fn local_candidate_must_name_a_release() -> Result<()> {
         let mut db = new_test_db()?;
         let seed = insert_release(&mut db, "Seed")?;
-        let candidate = insert_release(&mut db, "Candidate")?;
+        insert_release(&mut db, "Candidate")?;
         let selected = HashSet::from([seed]);
 
         let resolved = resolve_candidates(
             &db,
             vec![SimilarReleaseCandidate::Local {
-                release_db_id: candidate.0,
                 release_id: "stale-release-id".to_string(),
             }],
             CandidateResolution {
@@ -687,7 +690,6 @@ mod tests {
     #[test]
     fn invalid_external_candidate_does_not_drop_valid_batch_entries() {
         let local = SimilarReleaseCandidate::Local {
-            release_db_id: 7,
             release_id: "release-7".to_string(),
         };
         let registered = SimilarReleaseCandidate::External(SimilarReleaseExternalRef {

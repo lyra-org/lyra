@@ -228,19 +228,6 @@ pub fn find_node_id_accessible_to_user(
     Ok(found)
 }
 
-pub fn get_by_alias(db: &impl super::DbAccess, alias: &str) -> anyhow::Result<Vec<Library>> {
-    let libraries: Vec<Library> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<Library>()
-                .search()
-                .from(alias)
-                .query(),
-        )?
-        .try_into()?;
-
-    Ok(libraries)
-}
 pub fn get_for_entity(db: &impl super::DbAccess, node_id: DbId) -> anyhow::Result<Vec<Library>> {
     let libraries: Vec<Library> = db
         .exec(

@@ -211,7 +211,7 @@ pub(crate) struct ApiHandlerResponse {
     pub(crate) body: Option<ApiResponseBody>,
     pub(crate) path: Option<String>,
     pub(crate) transform: Option<serde_json::Value>,
-    pub(crate) track_id: Option<i64>,
+    pub(crate) track_id: Option<String>,
     pub(crate) options: Option<serde_json::Value>,
     /// Principal acting for the dispatch: seeded from boundary bearer auth
     /// and overwritten by `auth.resolve_auth`.

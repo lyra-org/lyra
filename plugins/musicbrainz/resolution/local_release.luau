@@ -30,13 +30,13 @@ export type ReleaseIds = {
 }
 
 export type ReleaseContext = {
-	db_id: number?,
+	id: string?,
 	lookup_hints: LookupHints?,
 	release_title: string?,
 	artists: { LocalArtist }?,
 	tracks: { LocalTrack },
 	library: LookupHintLibrary?,
-	library_id: number?,
+	library_id: string?,
 	media_formats: { string }?,
 	barcode: string?,
 	ids: ReleaseIds?,

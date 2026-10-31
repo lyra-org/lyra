@@ -4,7 +4,7 @@
 -- You can obtain one here:
 -- www.meshiplaw.com/lyra.
 
-local ids = require("@lyra/ids")
+local tracks = require("@lyra/tracks")
 
 local constants = require("../../constants")
 local encoding = require("../../encoding")
@@ -19,30 +19,15 @@ local module = {}
 module.nanoid_to_hex = encoding.nanoid_to_hex
 module.hex_to_nanoid = encoding.hex_to_nanoid
 
-function module.encode_jellyfin_item_id(value: number | string?): string?
-	if value == nil then
-		return nil
+function module.encode_jellyfin_item_id(value: string?): string?
+	if value ~= nil and #value == NANOID_LENGTH then
+		return module.nanoid_to_hex(value)
 	end
-
-	if type(value) == "string" then
-		if #value == NANOID_LENGTH then
-			return module.nanoid_to_hex(value)
-		end
-		return nil
-	end
-
-	if type(value) == "number" then
-		local nanoid = ids.get_id(value)
-		if nanoid then
-			return module.nanoid_to_hex(nanoid)
-		end
-		return nil
-	end
-
 	return nil
 end
 
-local function hex_to_nanoid_safe(value: string?): string?
+-- The public id a Jellyfin item or user id encodes.
+function module.decode_jellyfin_item_id(value: string?): string?
 	local text = requests.trim(value)
 	if not text then
 		return nil
@@ -56,55 +41,20 @@ local function hex_to_nanoid_safe(value: string?): string?
 	return nil
 end
 
-function module.decode_jellyfin_item_id(value: string?): number?
-	local nanoid = hex_to_nanoid_safe(value)
-	if nanoid then
-		return ids.get_db_id(nanoid)
-	end
-	return nil
-end
-
--- The public id an item id encodes, without resolving it to a `DbId`.
-function module.decode_jellyfin_public_id(value: string?): string?
-	return hex_to_nanoid_safe(value)
-end
-
--- User ids are public ids end to end; never map them through `ids.get_db_id`.
-function module.decode_jellyfin_user_id(value: string?): string?
-	return hex_to_nanoid_safe(value)
-end
-
-local function batch_decode_hex_ids(hex_values: { string }): { number }
-	local nanoids: { string } = {}
+local function decode_unique(hex_values: { string }): { string }
+	local result: { string } = {}
 	local seen: { [string]: boolean } = {}
 	for _, raw_hex in hex_values do
-		local nanoid = hex_to_nanoid_safe(raw_hex)
-		if nanoid and not seen[nanoid] then
-			seen[nanoid] = true
-			table.insert(nanoids, nanoid)
-		end
-	end
-
-	if #nanoids == 0 then
-		return {}
-	end
-
-	local ok, db_id_map = pcall(ids.get_db_ids, nanoids)
-	if not ok or type(db_id_map) ~= "table" then
-		return {}
-	end
-
-	local result: { number } = {}
-	for _, nanoid in nanoids do
-		local db_id = db_id_map[nanoid]
-		if db_id then
-			table.insert(result, db_id)
+		local id = module.decode_jellyfin_item_id(raw_hex)
+		if id and not seen[id] then
+			seen[id] = true
+			table.insert(result, id)
 		end
 	end
 	return result
 end
 
-function module.parse_jellyfin_ids_csv(raw_ids: string?): { number }
+function module.parse_jellyfin_ids_csv(raw_ids: string?): { string }
 	if type(raw_ids) ~= "string" then
 		return {}
 	end
@@ -116,10 +66,10 @@ function module.parse_jellyfin_ids_csv(raw_ids: string?): { number }
 			table.insert(values, item)
 		end
 	end
-	return batch_decode_hex_ids(values)
+	return decode_unique(values)
 end
 
-function module.parse_jellyfin_ids_array(raw_ids: string | { string }?): { number }
+function module.parse_jellyfin_ids_array(raw_ids: string | { string }?): { string }
 	if type(raw_ids) == "string" then
 		return module.parse_jellyfin_ids_csv(raw_ids)
 	end
@@ -128,36 +78,34 @@ function module.parse_jellyfin_ids_array(raw_ids: string | { string }?): { numbe
 		return {}
 	end
 
-	return batch_decode_hex_ids(raw_ids)
+	return decode_unique(raw_ids)
 end
 
--- Keeps order and duplicates; nil when any id is not a known item.
-function module.resolve_jellyfin_ids_exact(raw_ids: string | { string }): { number }?
-	local values = if type(raw_ids) == "string" then requests.split_csv_preserving_quotes(raw_ids) else raw_ids
-	local nanoids: { string } = {}
-	for _, raw_id in values do
-		local nanoid = hex_to_nanoid_safe(requests.unquote(raw_id))
-		if not nanoid then
-			return nil
-		end
-		table.insert(nanoids, nanoid)
-	end
-	if #nanoids == 0 then
+-- The ids among `item_ids` that name a track the caller can see, in order.
+function module.visible_track_ids(item_ids: { string }): { string }
+	if #item_ids == 0 then
 		return {}
 	end
-
-	local ok, db_id_map = pcall(ids.get_db_ids, nanoids)
-	if not ok or type(db_id_map) ~= "table" then
-		return nil
+	local found = tracks.get(item_ids)
+	local result: { string } = {}
+	for _, id in item_ids do
+		if found[id] then
+			table.insert(result, id)
+		end
 	end
+	return result
+end
 
-	local result: { number } = {}
-	for _, nanoid in nanoids do
-		local db_id = db_id_map[nanoid]
-		if not db_id then
+-- Keeps order and duplicates; nil when any id is malformed.
+function module.decode_jellyfin_ids_exact(raw_ids: string | { string }): { string }?
+	local values = if type(raw_ids) == "string" then requests.split_csv_preserving_quotes(raw_ids) else raw_ids
+	local result: { string } = {}
+	for _, raw_id in values do
+		local id = module.decode_jellyfin_item_id(requests.unquote(raw_id))
+		if not id then
 			return nil
 		end
-		table.insert(result, db_id)
+		table.insert(result, id)
 	end
 	return result
 end

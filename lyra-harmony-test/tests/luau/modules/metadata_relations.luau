@@ -53,5 +53,5 @@ local function rejects(relations: any, message: string)
 	assert(string.find(tostring(err), message, 1, true), tostring(err))
 end
 
-rejects({ { artist_id = -1 } }, "positive")
+rejects({ { artist_id = 1 } }, "expected a string")
 rejects({ { id = first } }, "artist_id")

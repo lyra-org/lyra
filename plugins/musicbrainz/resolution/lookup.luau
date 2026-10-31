@@ -194,11 +194,11 @@ end
 local function try_acoustid(local_release_info: LocalRelease): boolean
 	local tracks = local_release_info.context.tracks
 	local track = acoustid.select_track(tracks)
-	local track_db_id = track and track.db_id
-	if not track or not track_db_id or not track.duration_ms then
+	local track_id = track and track.id
+	if not track or not track_id or not track.duration_ms then
 		return false
 	end
-	local fingerprint = acoustid.compute_fingerprint(track_db_id)
+	local fingerprint = acoustid.compute_fingerprint(track_id)
 	if not fingerprint then
 		return false
 	end
@@ -212,7 +212,7 @@ local function try_acoustid(local_release_info: LocalRelease): boolean
 	end
 	local acoustid_track_id = result.track_id
 	if acoustid_track_id then
-		apply.set_track_id(track_db_id, "acoustid_track_id", acoustid_track_id)
+		apply.set_track_id(track_id, "acoustid_track_id", acoustid_track_id)
 	end
 	return true
 end
@@ -220,8 +220,8 @@ end
 function module.register_refresh(provider_instance: Provider): ()
 	apply.set_provider(provider_instance)
 	provider_instance:refresh(metadata.EntityType.Artist, function(ctx: ArtistRefreshContext)
-		local artist_db_id = ctx.db_id
-		if artist_db_id == nil then
+		local artist_entity_id = ctx.id
+		if artist_entity_id == nil then
 			return nil
 		end
 
@@ -230,7 +230,7 @@ function module.register_refresh(provider_instance: Provider): ()
 			return nil
 		end
 
-		apply.refresh_artist_by_id(artist_db_id, artist_id)
+		apply.refresh_artist_by_id(artist_entity_id, artist_id)
 		return nil
 	end, function(ctx: ArtistRefreshContext): boolean
 		return musicbrainz_artist_id(ctx.external_ids) ~= nil
@@ -261,9 +261,9 @@ function module.register_refresh(provider_instance: Provider): ()
 		if ctx.options and ctx.options.acoustid_fingerprint == true and try_acoustid(local_release_info) then
 			return nil
 		end
-		local release_db_id = release.db_id
-		if release_db_id ~= nil then
-			apply.mark_unmatched(release_db_id, { "release_id", "release_group_id" })
+		local release_entity_id = release.id
+		if release_entity_id ~= nil then
+			apply.mark_unmatched(release_entity_id, { "release_id", "release_group_id" })
 		end
 		return nil
 	end, function(ctx: metadata.ReleaseRefreshContext): boolean

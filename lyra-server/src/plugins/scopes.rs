@@ -53,7 +53,6 @@ use crate::plugins::{
     entries,
     favorites,
     genres,
-    ids,
     labels,
     libraries,
     listens,
@@ -323,11 +322,6 @@ scopes! {
         id: "lyra.genres",
         module: genres::GenresModule::module_spec,
         effects: &[Effect::WritesLibrary(LibraryKind::Genres)],
-    },
-    Ids => {
-        id: "lyra.ids",
-        module: ids::IdsModule::module_spec,
-        effects: &[],
     },
     Labels => {
         id: "lyra.labels",
@@ -791,7 +785,7 @@ mod tests {
         let effects = effects_of([
             ("harmony.http", &own),
             ("harmony.net", &dependency),
-            ("lyra.ids", &own),
+            ("lyra.libraries", &own),
         ]);
 
         assert_eq!(effects.len(), 2);
@@ -1405,15 +1399,6 @@ mod tests {
             ],
         ),
         (
-            "lyra/ids",
-            &[
-                "get_id(db_id)",
-                "get_ids(db_ids)",
-                "get_db_id(id)",
-                "get_db_ids(ids)",
-            ],
-        ),
-        (
             "lyra/labels",
             &[
                 "resolve(request)",
@@ -1455,7 +1440,7 @@ mod tests {
             &[
                 "get(track_id, language, require_synced, provider)",
                 "parse_lrc(text, language)",
-                "upsert_personal(track_id, track_public_id, upload)",
+                "upsert_personal(track_id, upload)",
                 "delete_personal_for_track(track_id)",
                 "delete_for_track(track_id) [lyra.lyrics.all]",
                 "has(track_id)",
@@ -1570,7 +1555,7 @@ mod tests {
                 "by_genre(genre_ids)",
                 "chains(release_ids)",
                 "replace_chains(release_id, chains)",
-                "similar(release_db_id, opts)",
+                "similar(release_id, opts)",
             ],
         ),
         ("lyra/server", &["info()"]),

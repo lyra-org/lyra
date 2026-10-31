@@ -1,12 +1,12 @@
 local fixture = ...
-local a: number = fixture.ids.a
-local b: number = fixture.ids.b
-local c: number = fixture.ids.c
-local mix: number = fixture.ids.mix
+local a: string = fixture.ids.a
+local b: string = fixture.ids.b
+local c: string = fixture.ids.c
+local mix: string = fixture.ids.mix
 
 local playlists = require("@lyra/playlists")
 
-local function order(): { number }
+local function order(): { string }
 	local ids = {}
 	for position, entry in playlists.get_tracks(mix) do
 		assert(entry.position == position - 1, `position {entry.position} at index {position}`)
@@ -15,7 +15,7 @@ local function order(): { number }
 	return ids
 end
 
-local function assert_order(expected: { number })
+local function assert_order(expected: { string })
 	local actual = order()
 	assert(
 		table.concat(actual, ",") == table.concat(expected, ","),

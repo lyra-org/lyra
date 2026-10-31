@@ -7,7 +7,6 @@
 
 use std::collections::HashSet;
 
-use agdb::DbId;
 use harmony_luau as luau;
 use harmony_luau::{
     JsonValue,
@@ -16,33 +15,26 @@ use harmony_luau::{
 };
 use serde::de::DeserializeOwned;
 
-use lyra_db::ResolveId;
-
-use crate::plugins::types::LuauNodeId;
-
-/// The ids of a Luau array in array order, each once.
-pub(crate) fn unique_ids(table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
+/// The public ids of a Luau array in array order, each once.
+pub(crate) fn unique_ids(table: &luau::Table) -> luau::runtime::Result<Vec<String>> {
     let mut seen = HashSet::new();
     Ok(id_sequence(table)?
         .into_iter()
-        .filter(|id| seen.insert(*id))
+        .filter(|id| seen.insert(id.clone()))
         .collect())
 }
 
-/// The ids of a Luau array in array order, repeats included. Every entry must be a positive
-/// integer.
-pub(crate) fn id_sequence(table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
+/// The public ids of a Luau array in array order, repeats included. Every entry must be a
+/// string.
+pub(crate) fn id_sequence(table: &luau::Table) -> luau::runtime::Result<Vec<String>> {
     array_values(table)?
         .into_iter()
         .map(|(index, value)| match value {
-            luau::Value::Integer(value) if value > 0 => Ok(DbId(value)),
-            luau::Value::Number(value)
-                if value.is_finite() && value.fract() == 0.0 && value > 0.0 =>
-            {
-                Ok(DbId(value as i64))
+            luau::Value::String(bytes) => {
+                String::from_utf8(bytes).map_err(crate::plugins::runtime_error)
             }
             other => Err(crate::plugins::runtime_error(format!(
-                "id entry {index} must be a positive integer, got {}",
+                "id entry {index} must be a string, got {}",
                 describe(&other)
             ))),
         })
@@ -77,7 +69,7 @@ pub(crate) fn integers<T: TryFrom<i64>>(table: &luau::Table) -> luau::runtime::R
 pub(crate) fn optional_unique_ids(
     table: &luau::Table,
     key: &str,
-) -> luau::runtime::Result<Vec<DbId>> {
+) -> luau::runtime::Result<Vec<String>> {
     optional_id_array(table, key, unique_ids)
 }
 
@@ -85,15 +77,15 @@ pub(crate) fn optional_unique_ids(
 pub(crate) fn optional_id_sequence(
     table: &luau::Table,
     key: &str,
-) -> luau::runtime::Result<Vec<DbId>> {
+) -> luau::runtime::Result<Vec<String>> {
     optional_id_array(table, key, id_sequence)
 }
 
 fn optional_id_array(
     table: &luau::Table,
     key: &str,
-    read: fn(&luau::Table) -> luau::runtime::Result<Vec<DbId>>,
-) -> luau::runtime::Result<Vec<DbId>> {
+    read: fn(&luau::Table) -> luau::runtime::Result<Vec<String>>,
+) -> luau::runtime::Result<Vec<String>> {
     match table.get(key)? {
         luau::Value::Nil => Ok(Vec::new()),
         luau::Value::Table(table) => read(&table),
@@ -104,49 +96,8 @@ fn optional_id_array(
     }
 }
 
-pub(crate) fn positive_id(value: i64, name: &str) -> luau::runtime::Result<DbId> {
-    if value <= 0 {
-        return Err(crate::plugins::runtime_error(format!(
-            "{name} must be a positive id, got {value}"
-        )));
-    }
-    Ok(DbId(value))
-}
-
-/// A [`positive_id`] argument.
-pub(crate) struct PositiveId(pub(crate) DbId);
-
-impl<'vm> luau::FromLuau<'vm> for PositiveId {
-    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
-        let name = reader.next_name();
-        let value: i64 = reader.read()?;
-        positive_id(value, &name).map(Self)
-    }
-}
-
-impl LuauTypeInfo for PositiveId {
-    fn luau_type() -> LuauType {
-        LuauNodeId::luau_type()
-    }
-}
-
-/// A node id argument, taken as given.
-pub(crate) struct NodeIdArg(pub(crate) DbId);
-
-impl<'vm> luau::FromLuau<'vm> for NodeIdArg {
-    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
-        Ok(Self(DbId(reader.read()?)))
-    }
-}
-
-impl LuauTypeInfo for NodeIdArg {
-    fn luau_type() -> LuauType {
-        LuauNodeId::luau_type()
-    }
-}
-
 /// A [`unique_ids`] argument.
-pub(crate) struct UniqueIds(pub(crate) Vec<DbId>);
+pub(crate) struct UniqueIds(pub(crate) Vec<String>);
 
 impl<'vm> luau::FromLuau<'vm> for UniqueIds {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
@@ -157,18 +108,24 @@ impl<'vm> luau::FromLuau<'vm> for UniqueIds {
 
 impl LuauTypeInfo for UniqueIds {
     fn luau_type() -> LuauType {
-        Vec::<LuauNodeId>::luau_type()
+        Vec::<String>::luau_type()
     }
 }
 
-pub(crate) fn optional_positive_id(
-    table: &luau::Table,
-    key: &str,
-) -> luau::runtime::Result<Option<DbId>> {
-    table
-        .optional_i64_field(key)?
-        .map(|value| positive_id(value, key))
-        .transpose()
+/// A [`id_sequence`] argument.
+pub(crate) struct IdSequence(pub(crate) Vec<String>);
+
+impl<'vm> luau::FromLuau<'vm> for IdSequence {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let table: luau::Table = reader.read()?;
+        id_sequence(&table).map(Self)
+    }
+}
+
+impl LuauTypeInfo for IdSequence {
+    fn luau_type() -> LuauType {
+        Vec::<String>::luau_type()
+    }
 }
 
 /// The strings of a Luau array in array order.
@@ -185,27 +142,6 @@ pub(crate) fn strings(table: &luau::Table) -> luau::runtime::Result<Vec<String>>
             ))),
         })
         .collect()
-}
-
-pub(crate) fn resolve_id(value: luau::Value) -> luau::runtime::Result<ResolveId> {
-    match value {
-        luau::Value::Integer(value) => Ok(ResolveId::DbId(DbId(value))),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 => {
-            Ok(ResolveId::DbId(DbId(value as i64)))
-        }
-        luau::Value::String(bytes) => {
-            let text = String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?;
-            if lyra_db::bootstrap::ROOT_COLLECTION_ALIASES.contains(&text.as_str()) {
-                Ok(ResolveId::Alias(text))
-            } else {
-                Ok(ResolveId::Nanoid(text))
-            }
-        }
-        other => Err(crate::plugins::runtime_error(format!(
-            "expected integer or string id, got {}",
-            other.type_name()
-        ))),
-    }
 }
 
 pub(crate) fn optional_u64(table: &luau::Table, key: &str) -> luau::runtime::Result<Option<u64>> {
@@ -317,32 +253,12 @@ fn array_index(value: luau::Value) -> Option<i64> {
     }
 }
 
-pub(crate) fn resolve_id_type() -> LuauType {
-    LuauType::union(vec![i64::luau_type(), String::luau_type()])
-}
-
 #[cfg(feature = "docgen")]
 pub(crate) fn sort_order_type() -> LuauType {
     LuauType::union(vec![
         LuauType::string_literal("ascending"),
         LuauType::string_literal("descending"),
     ])
-}
-
-/// A [`resolve_id`] argument.
-pub(crate) struct ResolveIdArg(pub(crate) ResolveId);
-
-impl<'vm> luau::FromLuau<'vm> for ResolveIdArg {
-    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
-        let value: luau::Value = reader.read()?;
-        resolve_id(value).map(Self)
-    }
-}
-
-impl LuauTypeInfo for ResolveIdArg {
-    fn luau_type() -> LuauType {
-        resolve_id_type()
-    }
 }
 
 /// A Luau value converted to JSON.
@@ -395,24 +311,20 @@ mod tests {
         Ok(table)
     }
 
+    fn string(value: &str) -> luau::Value {
+        luau::Value::String(value.as_bytes().to_vec())
+    }
+
     #[test]
     fn id_readers_keep_array_order() -> luau::runtime::Result<()> {
         let vm = luau::Vm::new()?;
         let table = array(
             &vm,
-            vec![
-                luau::Value::Integer(3),
-                luau::Value::Number(1.0),
-                luau::Value::Integer(3),
-                luau::Value::Integer(2),
-            ],
+            vec![string("c"), string("a"), string("c"), string("b")],
         )?;
 
-        assert_eq!(
-            id_sequence(&table)?,
-            vec![DbId(3), DbId(1), DbId(3), DbId(2)]
-        );
-        assert_eq!(unique_ids(&table)?, vec![DbId(3), DbId(1), DbId(2)]);
+        assert_eq!(id_sequence(&table)?, vec!["c", "a", "c", "b"]);
+        assert_eq!(unique_ids(&table)?, vec!["c", "a", "b"]);
         Ok(())
     }
 
@@ -420,11 +332,11 @@ mod tests {
     fn array_readers_reject_tables_that_are_not_arrays() -> luau::runtime::Result<()> {
         let vm = luau::Vm::new()?;
         let keyed = vm.create_table()?;
-        keyed.set("foo", luau::Value::Integer(5))?;
-        let mixed = array(&vm, vec![luau::Value::Integer(1)])?;
-        mixed.set("foo", luau::Value::Integer(5))?;
+        keyed.set("foo", string("a"))?;
+        let mixed = array(&vm, vec![string("a")])?;
+        mixed.set("foo", string("b"))?;
         let holed = vm.create_table()?;
-        holed.set_integer(2, luau::Value::Integer(5))?;
+        holed.set_integer(2, string("a"))?;
 
         for table in [keyed, mixed, holed] {
             assert!(id_sequence(&table).is_err());
@@ -434,22 +346,16 @@ mod tests {
     }
 
     #[test]
-    fn id_readers_reject_entries_that_are_not_positive_integers() -> luau::runtime::Result<()> {
+    fn id_readers_reject_entries_that_are_not_strings() -> luau::runtime::Result<()> {
         let vm = luau::Vm::new()?;
         for invalid in [
-            luau::Value::String(b"7".to_vec()),
+            luau::Value::Integer(7),
             luau::Value::Number(1.5),
             luau::Value::Boolean(true),
-            luau::Value::Integer(0),
-            luau::Value::Integer(-1),
         ] {
-            let table = array(&vm, vec![luau::Value::Integer(1), invalid])?;
+            let table = array(&vm, vec![string("a"), invalid])?;
             let error = unique_ids(&table).expect_err("invalid id entry");
-            assert!(
-                error
-                    .to_string()
-                    .contains("id entry 2 must be a positive integer")
-            );
+            assert!(error.to_string().contains("id entry 2 must be a string"));
         }
         Ok(())
     }

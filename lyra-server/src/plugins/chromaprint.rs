@@ -5,7 +5,6 @@
 
 use std::time::Duration;
 
-use agdb::DbId;
 use harmony_luau as luau;
 use harmony_luau::FromCallFrame;
 #[cfg(feature = "docgen")]
@@ -17,7 +16,10 @@ use harmony_luau::{
     LuauTypeInfo,
 };
 
-use crate::plugins::db::ViewerDb;
+use crate::plugins::{
+    db::ViewerDb,
+    ids,
+};
 
 const DECODE_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -30,19 +32,17 @@ struct ChromaprintResult;
 impl ChromaprintModule {
     #[harmony(returns(ChromaprintResult))]
     async fn compute(
-        entry_id: i64,
+        entry_id: String,
         #[context] vm: luau::Vm,
         #[context] context: luau::CallContext,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        if entry_id <= 0 {
-            return Err(crate::plugins::runtime_error("entry not found"));
-        }
         let db = ViewerDb::from_call_frame(&vm, &context)?;
         let path = {
             let (db, viewer) = db.read().await?;
-            let entry = lyra_db::entries::get_by_id(&db, DbId(entry_id))?
-                .filter(|_| viewer.sees_entity(&*db, DbId(entry_id)).unwrap_or(false))
-                .ok_or_else(|| crate::plugins::runtime_error("entry not found"))?;
+            let not_found = || crate::plugins::runtime_error("entry not found");
+            let entry_id =
+                ids::visible_db_id_of(&db, &viewer, &entry_id, "Entry")?.ok_or_else(not_found)?;
+            let entry = lyra_db::entries::get_by_id(&db, entry_id)?.ok_or_else(not_found)?;
             entry.full_path
         };
         let fingerprint =

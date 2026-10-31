@@ -3,8 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashMap;
-
 use agdb::{
     DbAny,
     DbId,
@@ -22,6 +20,11 @@ use serde::{
 };
 
 use crate::routes::request::bearer_credential;
+use crate::services::releases::chains::{
+    self,
+    PublicChain,
+    ReplaceChainsError,
+};
 use crate::{
     routes::AppError,
     services::{
@@ -33,13 +36,7 @@ use crate::{
         },
     },
 };
-use lyra_db::{
-    Permission,
-    chains::{
-        ChainError,
-        ReleaseChain,
-    },
-};
+use lyra_db::Permission;
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
@@ -88,25 +85,16 @@ fn visible_release(db: &DbAny, principal: &Principal, id: &str) -> Result<DbId, 
     Ok(release_db_id)
 }
 
-fn chains_response(db: &DbAny, chains: Vec<ReleaseChain>) -> anyhow::Result<ReleaseChainsResponse> {
-    let track_db_ids = chains
-        .iter()
-        .flat_map(|chain| chain.track_db_ids.iter().copied())
-        .collect::<Vec<_>>();
-    let public_ids = lyra_db::lookup::find_ids_by_db_ids(db, &track_db_ids)?;
-    Ok(ReleaseChainsResponse {
+fn chains_response(chains: Vec<PublicChain>) -> ReleaseChainsResponse {
+    ReleaseChainsResponse {
         chains: chains
             .into_iter()
             .map(|chain| ReleaseChainResponse {
                 id: chain.id,
-                track_ids: chain
-                    .track_db_ids
-                    .iter()
-                    .filter_map(|track_db_id| public_ids.get(track_db_id).cloned())
-                    .collect(),
+                track_ids: chain.track_ids,
             })
             .collect(),
-    })
+    }
 }
 
 pub(super) async fn get_release_chains(
@@ -117,7 +105,7 @@ pub(super) async fn get_release_chains(
     let db = &*STATE.db.read().await;
     let release_db_id = visible_release(db, &principal, &id)?;
     let chains = lyra_db::chains::get_for_release(db, release_db_id)?;
-    Ok(Json(chains_response(db, chains)?))
+    Ok(Json(chains_response(chains::public_chains(db, chains)?)))
 }
 
 pub(super) async fn replace_release_chains(
@@ -130,40 +118,18 @@ pub(super) async fn replace_release_chains(
     let mut db = STATE.db.write().await;
     let release_db_id = visible_release(&db, &principal, &id)?;
 
-    let not_on_release =
-        |track_id: &str| AppError::bad_request(format!("track {track_id} is not on release {id}"));
-    let mut track_ids = HashMap::new();
-    let mut chains = Vec::with_capacity(request.chains.len());
-    for chain in &request.chains {
-        let mut track_db_ids = Vec::with_capacity(chain.len());
-        for track_id in chain {
-            let track_db_id = lyra_db::lookup::find_node_id_by_id(&*db, track_id)?
-                .ok_or_else(|| not_on_release(track_id))?;
-            track_ids.insert(track_db_id, track_id.as_str());
-            track_db_ids.push(track_db_id);
-        }
-        chains.push(track_db_ids);
-    }
-
-    let track_id = |track_db_id: DbId| track_ids.get(&track_db_id).copied().unwrap_or_default();
-    let chains = lyra_db::chains::replace_for_release(&mut db, release_db_id, &chains)?.map_err(
-        |error| match error {
-            ChainError::ReleaseNotFound => AppError::not_found(format!("Release not found: {id}")),
-            ChainError::TooShort => {
-                AppError::bad_request("a chain needs at least two tracks".to_string())
+    let chains =
+        chains::replace(&mut db, release_db_id, &request.chains).map_err(|error| match error {
+            ReplaceChainsError::ReleaseNotFound => {
+                AppError::not_found(format!("Release not found: {id}"))
             }
-            ChainError::DuplicateTrack(track_db_id) => AppError::bad_request(format!(
-                "track {} is listed more than once",
-                track_id(track_db_id)
-            )),
-            ChainError::TrackNotOnRelease(track_db_id) => not_on_release(track_id(track_db_id)),
-            ChainError::ChainedElsewhere(track_db_id) => AppError::bad_request(format!(
-                "track {} is already in a chain on another release",
-                track_id(track_db_id)
-            )),
-        },
-    )?;
-    Ok(Json(chains_response(&db, chains)?))
+            ReplaceChainsError::TrackNotOnRelease(track_id) => {
+                AppError::bad_request(format!("track {track_id} is not on release {id}"))
+            }
+            ReplaceChainsError::Internal(error) => error.into(),
+            error => AppError::bad_request(error.to_string()),
+        })?;
+    Ok(Json(chains_response(chains)))
 }
 
 #[cfg(feature = "docgen")]

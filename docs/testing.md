@@ -155,7 +155,7 @@ fixture.libraries.music -- the library's public id
 fixture.api_keys.phone  -- an API key's secret
 fixture.sessions.laptop -- a session's token
 fixture.connections.speaker -- a connection's public id
-fixture.ids.s1          -- an entity's or library's database id, by fixture key
+fixture.ids.s1          -- an entity's or library's public id, by fixture key
 fixture.entries.mix[1]  -- a playlist's entry ids, in order
 ```
 

@@ -18,6 +18,7 @@ use std::collections::HashMap;
 
 #[derive(DbElement, Serialize, Clone, Debug)]
 pub struct Cover {
+    #[serde(skip_serializing)]
     pub db_id: Option<DbId>,
     pub id: String,
     pub path: String,

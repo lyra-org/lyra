@@ -58,7 +58,7 @@ pub(crate) const MAX_CONCURRENT_DISPATCHES: usize = 4;
 
 #[derive(Clone, Debug)]
 struct LyricsTrackContext {
-    track_db_id: i64,
+    track_id: String,
     track_name: String,
     artist_name: String,
     album_name: Option<String>,
@@ -71,7 +71,7 @@ struct LyricsTrackContext {
 
 fn track_context_to_json(context: &LyricsTrackContext) -> serde_json::Value {
     serde_json::json!({
-        "track_db_id": context.track_db_id,
+        "track_id": context.track_id,
         "track_name": context.track_name,
         "artist_name": context.artist_name,
         "album_name": context.album_name,
@@ -548,7 +548,7 @@ async fn build_track_context(
         .collect();
 
     let context = LyricsTrackContext {
-        track_db_id: track_db_id.0,
+        track_id: track.id.clone(),
         track_name: track.track_title.clone(),
         artist_name: primary_artist.clone(),
         album_name,
@@ -637,7 +637,7 @@ mod tests {
     #[test]
     fn require_paths_check_identifiers() {
         let context = LyricsTrackContext {
-            track_db_id: 1,
+            track_id: "track-1".to_string(),
             track_name: "Track".to_string(),
             artist_name: "Artist".to_string(),
             album_name: None,

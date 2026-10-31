@@ -3,30 +3,29 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use agdb::DbId;
 use harmony_luau as luau;
 use harmony_luau::FromCallFrame;
 
-use crate::plugins::db::ViewerDb;
+use crate::plugins::{
+    db::ViewerDb,
+    ids,
+};
 
 pub(crate) struct TrackSourcesModule;
 
 #[harmony_macros::module(id = "lyra/track_sources", docs_feature = "docgen")]
 impl TrackSourcesModule {
     async fn get_primary_source_key(
-        track_id: i64,
+        track_id: String,
         #[context] vm: luau::Vm,
         #[context] context: luau::CallContext,
     ) -> luau::runtime::Result<Option<String>> {
-        if track_id <= 0 {
-            return Ok(None);
-        }
         let db = ViewerDb::from_call_frame(&vm, &context)?;
         let (db, viewer) = db.read().await?;
-        if !viewer.sees_entity(&*db, DbId(track_id))? {
+        let Some(track_id) = ids::visible_db_id_of(&db, &viewer, &track_id, "Track")? else {
             return Ok(None);
-        }
-        let source = lyra_db::track_sources::get_primary_by_track(&db, DbId(track_id))?;
+        };
+        let source = lyra_db::track_sources::get_primary_by_track(&db, track_id)?;
         Ok(source
             .map(|source| source.source_key)
             .filter(|value| !value.trim().is_empty()))

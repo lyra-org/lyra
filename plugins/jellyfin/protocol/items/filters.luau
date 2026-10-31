@@ -38,8 +38,8 @@ local BATCH_SIZE = 500
 
 local module = {}
 
-local function batched<T>(ids: { number }, fetch: ({ number }) -> { [number]: T }): { [number]: T }
-	local merged: { [number]: T } = {}
+local function batched<T>(ids: { string }, fetch: ({ string }) -> { [string]: T }): { [string]: T }
+	local merged: { [string]: T } = {}
 	for first = 1, #ids, BATCH_SIZE do
 		local chunk = table.move(ids, first, math.min(first + BATCH_SIZE - 1, #ids), 1, {})
 		for id, value in fetch(chunk) do
@@ -49,8 +49,8 @@ local function batched<T>(ids: { number }, fetch: ({ number }) -> { [number]: T 
 	return merged
 end
 
-local function keys(set: { [number]: boolean }): { number }
-	local list: { number } = {}
+local function keys<K>(set: { [K]: boolean }): { K }
+	local list: { K } = {}
 	for key in set do
 		table.insert(list, key)
 	end
@@ -73,8 +73,8 @@ function module.collect(options: ItemsQueryOptions): FilterValues?
 	listed.sort_by = {}
 	listed.recursive = true
 
-	local tagged: { number } = {}
-	local genre_releases: { [number]: boolean } = {}
+	local tagged: { string } = {}
+	local genre_releases: { [string]: boolean } = {}
 	local years: { [number]: boolean } = {}
 	local function add_year(year: number?)
 		if year and year > 0 then
@@ -88,11 +88,9 @@ function module.collect(options: ItemsQueryOptions): FilterValues?
 	if release_query then
 		release_query.offset, release_query.limit = 0, nil
 		for _, release in releases.query(release_query).items do
-			if release.db_id then
-				table.insert(tagged, release.db_id)
-				genre_releases[release.db_id] = true
-				add_year(enrichment.release_year(release.release_date))
-			end
+			table.insert(tagged, release.id)
+			genre_releases[release.id] = true
+			add_year(enrichment.release_year(release.release_date))
 		end
 	end
 
@@ -101,23 +99,17 @@ function module.collect(options: ItemsQueryOptions): FilterValues?
 	if track_query then
 		track_query.offset, track_query.limit = 0, nil
 		local found = tracks.query(track_query).items
-		local track_ids: { number } = {}
+		local track_ids: { string } = {}
 		for _, track in found do
-			if track.db_id then
-				table.insert(track_ids, track.db_id)
-			end
+			table.insert(track_ids, track.id)
 		end
 		local releases_by_track = batched(track_ids, releases.by_track)
 		for _, track in found do
-			local track_id = track.db_id
-			if track_id == nil then
-				continue
-			end
-			table.insert(tagged, track_id)
-			local track_releases = releases_by_track[track_id]
+			table.insert(tagged, track.id)
+			local track_releases = releases_by_track[track.id]
 			local release = if track_releases then track_releases[1] else nil
-			if release and release.db_id then
-				genre_releases[release.db_id] = true
+			if release then
+				genre_releases[release.id] = true
 			end
 			add_year(track.year or enrichment.release_year(if release then release.release_date else nil))
 		end
@@ -130,9 +122,7 @@ function module.collect(options: ItemsQueryOptions): FilterValues?
 	if artist_query then
 		artist_query.offset, artist_query.limit = 0, nil
 		for _, artist in artists.query(artist_query).items do
-			if artist.db_id then
-				table.insert(tagged, artist.db_id)
-			end
+			table.insert(tagged, artist.id)
 		end
 	end
 

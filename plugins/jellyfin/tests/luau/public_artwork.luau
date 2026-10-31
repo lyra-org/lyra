@@ -6,7 +6,7 @@ local session = require("../../protocol/session")
 
 local ids = fixture.ids
 
-local function primary_image(id: number, api_key: string?)
+local function primary_image(id: string, api_key: string?)
 	return session.handle_primary_image_request({
 		plugin_id = "jellyfin",
 		request = {
@@ -20,7 +20,7 @@ local function primary_image(id: number, api_key: string?)
 	} :: any)
 end
 
-local function status(id: number, api_key: string?): number
+local function status(id: string, api_key: string?): number
 	return primary_image(id, api_key).status
 end
 

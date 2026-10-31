@@ -124,7 +124,7 @@ export type SerializableItemInfo = {
 
 export type ItemKind = "release" | "artist" | "track" | "playlist"
 
-export type ItemRaw = { db_id: number? }
+export type ItemRaw = { id: string }
 
 export type ItemInfo = SerializableItemInfo & {
 	_type: ItemKind?,

@@ -25,11 +25,13 @@ use crate::{
     plugins::{
         args::{
             Json,
-            NodeIdArg,
-            PositiveId,
             UniqueIds,
         },
         db::Db,
+        ids::{
+            self,
+            Resolved,
+        },
     },
     services::{
         auth::Principal,
@@ -42,7 +44,6 @@ use crate::{
         },
     },
 };
-use lyra_db::NodeId;
 use lyra_db::lyrics::{
     LyricsDetail,
     LyricsInput,
@@ -155,7 +156,6 @@ struct PersonalLyricsUploadInput {
 
 #[derive(Serialize)]
 struct LyricsInfo {
-    db_id: Option<NodeId>,
     id: String,
     provider_id: Option<String>,
     language: String,
@@ -188,7 +188,6 @@ fn lyrics_detail_to_info(detail: LyricsDetail) -> LyricsInfo {
     let kind = lyrics.kind;
     let is_provider = kind == LyricsKind::Provider;
     LyricsInfo {
-        db_id: lyrics.db_id,
         id: lyrics.id,
         provider_id: lyrics.provider_id,
         language: lyrics.language,
@@ -241,22 +240,17 @@ impl LyricsModule {
         returns(Option<LyricsInfo>)
     )]
     async fn get(
-        track_id: NodeIdArg,
+        track_id: String,
         language: Option<String>,
         require_synced: Option<bool>,
         provider: Option<String>,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::Value> {
-        let track_db_id = track_id.0;
-        if track_db_id.0 <= 0 {
-            return Ok(luau::Value::Nil);
-        }
-
         let db = db.read().await;
-        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)? {
+        let Some(track_db_id) = ids::visible_to(&db, &principal, &track_id, "Track")? else {
             return Ok(luau::Value::Nil);
-        }
+        };
         let detail = lyrics_service::get_preferred_detail(
             &db,
             track_db_id,
@@ -288,13 +282,11 @@ impl LyricsModule {
         returns(LyricsInfo)
     )]
     async fn upsert_personal(
-        track_id: PositiveId,
-        track_public_id: String,
+        track_id: String,
         upload: Json<PersonalLyricsUploadInput>,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::Value> {
-        let track_db_id = track_id.0;
         let now = lyrics_service::now_ms().map_err(crate::plugins::runtime_error)?;
         let PersonalLyricsUploadInput {
             content_type,
@@ -306,13 +298,12 @@ impl LyricsModule {
                 .map_err(crate::plugins::runtime_error)?;
 
         let mut db = db.write().await;
-        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)? {
-            return Err(crate::plugins::runtime_error("track not found"));
-        }
+        let track_db_id = ids::visible_to(&db, &principal, &track_id, "Track")?
+            .ok_or_else(|| crate::plugins::runtime_error(format!("track not found: {track_id}")))?;
         let detail = lyrics_service::upsert_personal_lyrics_by_db_id(
             &mut db,
             track_db_id,
-            &track_public_id,
+            &track_id,
             &principal,
             input,
         )
@@ -324,12 +315,15 @@ impl LyricsModule {
         description = "Deletes the authenticated caller's personal lyrics for a track. Shared and provider lyrics are left intact."
     )]
     async fn delete_personal_for_track(
-        track_id: PositiveId,
+        track_id: String,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<bool> {
         let mut db = db.write().await;
-        lyrics_service::delete_personal_lyrics_for_track_by_db_id(&mut db, track_id.0, &principal)
+        let Some(track_db_id) = ids::db_id(&*db, &track_id)? else {
+            return Ok(false);
+        };
+        lyrics_service::delete_personal_lyrics_for_track_by_db_id(&mut db, track_db_id, &principal)
             .map_err(crate::plugins::runtime_error)
     }
 
@@ -337,36 +331,30 @@ impl LyricsModule {
         description = "Deletes every lyrics row for a track, shared and every user's personal ones. Intended for trusted cleanup workflows. Needs the `lyra.lyrics.all` scope too."
     )]
     async fn delete_for_track(
-        track_id: PositiveId,
+        track_id: String,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<()> {
-        let track_db_id = track_id.0;
         crate::services::auth::require_permission(&principal, lyra_db::Permission::ManageMetadata)
             .map_err(crate::plugins::runtime_error)?;
         let mut db = db.write().await;
-        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)? {
+        let Some(track_db_id) = ids::visible_to(&db, &principal, &track_id, "Track")? else {
             return Ok(());
-        }
+        };
         lyrics_service::delete_all_lyrics_for_track(&mut db, track_db_id)
             .map_err(crate::plugins::runtime_error)
     }
 
     #[harmony(description = "Returns true when the track has preferred lyrics available.")]
     async fn has(
-        track_id: NodeIdArg,
+        track_id: String,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<bool> {
-        let track_db_id = track_id.0;
-        if track_db_id.0 <= 0 {
-            return Ok(false);
-        }
-
         let db = db.read().await;
-        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)? {
+        let Some(track_db_id) = ids::visible_to(&db, &principal, &track_id, "Track")? else {
             return Ok(false);
-        }
+        };
         let detail = lyrics_service::get_preferred_detail(
             &db,
             track_db_id,
@@ -379,46 +367,39 @@ impl LyricsModule {
     }
 
     #[harmony(
-        description = "Returns preferred-lyrics availability for many tracks.",
-        returns(HashMap<u64, bool>)
+        description = "Whether each of the tracks has preferred lyrics available, keyed by id. Tracks the caller cannot see are absent.",
+        returns(HashMap<String, bool>)
     )]
     async fn has_many(
         track_ids: UniqueIds,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        let track_ids = track_ids.0;
         let db = db.read().await;
+        let tracks = Resolved::of(&*db, track_ids.0)?;
         let providers = crate::services::providers::active_providers(&*db)?;
         let owner = Some(crate::plugins::auth::require_user_db_id(&principal, &db)?);
-        let mut table = luau::OwnedTable::with_entry_capacity(0, 0, track_ids.len());
-
-        for track_id in track_ids {
-            let has_lyrics =
-                if !crate::services::auth::access::entity_accessible(&db, &principal, track_id)? {
-                    false
-                } else {
-                    match lyra_db::tracks::get_by_id(&db, track_id)? {
-                        Some(track) => {
-                            let candidates =
-                                lyra_db::lyrics::get_visible_for_track(&db, track_id, owner)?;
-                            lyrics_service::pick_preferred(
-                                &candidates,
-                                &providers,
-                                None,
-                                None,
-                                track.duration_ms,
-                                false,
-                            )
-                            .is_some()
-                        }
-                        None => false,
-                    }
-                };
-            table.set_key(track_id.0, has_lyrics);
+        let mut found = Vec::with_capacity(tracks.db_ids().len());
+        for &track_id in tracks.db_ids() {
+            if !crate::services::auth::access::entity_accessible(&db, &principal, track_id)? {
+                continue;
+            }
+            let Some(track) = lyra_db::tracks::get_by_id(&db, track_id)? else {
+                continue;
+            };
+            let candidates = lyra_db::lyrics::get_visible_for_track(&db, track_id, owner)?;
+            let has_lyrics = lyrics_service::pick_preferred(
+                &candidates,
+                &providers,
+                None,
+                None,
+                track.duration_ms,
+                false,
+            )
+            .is_some();
+            found.push((track_id, has_lyrics));
         }
-
-        Ok(table)
+        Ok(tracks.keyed(found))
     }
 }
 
@@ -529,11 +510,6 @@ impl DescribeInterface for LyricsInfo {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("LyricsInfo", None);
         descriptor.fields.extend([
-            FieldDescriptor {
-                name: "db_id",
-                ty: Option::<crate::plugins::types::LuauNodeId>::luau_type(),
-                description: None,
-            },
             FieldDescriptor {
                 name: "id",
                 ty: String::luau_type(),

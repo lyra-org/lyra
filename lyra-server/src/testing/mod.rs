@@ -692,11 +692,10 @@ fn snapshot_entity<T: Serialize>(
 fn serialize_fields<T: Serialize>(
     entity: &T,
 ) -> anyhow::Result<BTreeMap<String, serde_json::Value>> {
-    let mut fields = match serde_json::to_value(entity)? {
+    let fields = match serde_json::to_value(entity)? {
         serde_json::Value::Object(map) => map.into_iter().collect::<BTreeMap<_, _>>(),
         _ => anyhow::bail!("entity serialization did not produce an object"),
     };
-    fields.remove("db_id");
     Ok(fields)
 }
 

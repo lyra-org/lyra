@@ -38,9 +38,7 @@ pub(super) async fn plugin_api_response_to_axum(
                 .ok_or_else(|| anyhow::anyhow!("stream_track response requires track_id"))?;
             let (public, options) = stream_track_options(response.options.as_ref())?;
             let (track_id, access) =
-                match stream_track_access(principal, response.client, agdb::DbId(track_id), public)
-                    .await
-                {
+                match stream_track_access(principal, response.client, &track_id, public).await {
                     Ok(resolved) => resolved,
                     Err(error) => return Ok(AppError::from(error).into_response()),
                 };
@@ -66,7 +64,7 @@ pub(super) async fn plugin_api_response_to_axum(
                 .ok_or_else(|| anyhow::anyhow!("download_track response requires track_id"))?;
             let (track_id, access) = match require_plugin_track_access(
                 principal,
-                agdb::DbId(track_id),
+                &track_id,
                 MediaTokenPurpose::Download,
             )
             .await
@@ -105,7 +103,7 @@ pub(super) async fn plugin_api_response_to_axum(
                 .ok_or_else(|| anyhow::anyhow!("hls_playlist response requires track_id"))?;
             let (track_id, access) = match require_plugin_track_access(
                 principal,
-                agdb::DbId(track_id),
+                &track_id,
                 MediaTokenPurpose::HlsPlaylist,
             )
             .await
@@ -272,10 +270,10 @@ mod tests {
 
     async fn status_of(
         principal: Option<&Principal>,
-        track_db_id: agdb::DbId,
+        track_id: &str,
         purpose: MediaTokenPurpose,
     ) -> Result<(), StatusCode> {
-        require_plugin_track_access(principal, track_db_id, purpose)
+        require_plugin_track_access(principal, track_id, purpose)
             .await
             .map(|_| ())
             .map_err(|error| AppError::from(error).into_response().status())
@@ -300,7 +298,7 @@ mod tests {
         std::fs::create_dir_all(&test_dir)?;
         init_library_test_state(test_dir.clone()).await?;
 
-        let (user_db_id, user_public_id, library_public_id, track_db_id) = {
+        let (user_db_id, user_public_id, library_public_id, track_id) = {
             let mut db = STATE.db.write().await;
             let user = lyra_db::fixtures::test_user("plugin-bridge-user")?;
             let user_public_id = user.id.clone();
@@ -314,7 +312,9 @@ mod tests {
                 .context("inserted library has public id")?;
             let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Plugin Bridge Track")?;
             lyra_db::fixtures::connect(&mut db, library_db_id, track_db_id)?;
-            (user_db_id, user_public_id, library_public_id, track_db_id)
+            let track_id = lyra_db::lookup::find_id_by_db_id(&*db, track_db_id)?
+                .context("inserted track has public id")?;
+            (user_db_id, user_public_id, library_public_id, track_id)
         };
 
         let principal = |permissions: Vec<Permission>, library_ids: HashSet<String>| {
@@ -330,7 +330,7 @@ mod tests {
         let accessible_libraries = HashSet::from([library_public_id.clone()]);
 
         assert_eq!(
-            status_of(None, track_db_id, MediaTokenPurpose::Stream).await,
+            status_of(None, &track_id, MediaTokenPurpose::Stream).await,
             Err(StatusCode::UNAUTHORIZED),
             "responses without a resolved principal must not serve tracks"
         );
@@ -339,7 +339,7 @@ mod tests {
         assert_eq!(
             status_of(
                 Some(&no_library_access),
-                track_db_id,
+                &track_id,
                 MediaTokenPurpose::Stream
             )
             .await,
@@ -349,20 +349,20 @@ mod tests {
 
         let with_access = principal(Vec::new(), accessible_libraries.clone());
         assert_eq!(
-            status_of(Some(&with_access), track_db_id, MediaTokenPurpose::Stream).await,
+            status_of(Some(&with_access), &track_id, MediaTokenPurpose::Stream).await,
             Ok(()),
             "library access must allow streaming"
         );
 
         assert_eq!(
-            status_of(Some(&with_access), track_db_id, MediaTokenPurpose::Download).await,
+            status_of(Some(&with_access), &track_id, MediaTokenPurpose::Download).await,
             Err(StatusCode::FORBIDDEN),
             "downloads require the download permission even with library access"
         );
 
         let downloader = principal(vec![Permission::Download], accessible_libraries.clone());
         assert_eq!(
-            status_of(Some(&downloader), track_db_id, MediaTokenPurpose::Download).await,
+            status_of(Some(&downloader), &track_id, MediaTokenPurpose::Download).await,
             Ok(()),
             "download permission plus library access must allow downloads"
         );
@@ -371,10 +371,7 @@ mod tests {
         Ok(())
     }
 
-    fn stream_response(
-        track_db_id: agdb::DbId,
-        options: Option<serde_json::Value>,
-    ) -> ApiHandlerResponse {
+    fn stream_response(track_id: &str, options: Option<serde_json::Value>) -> ApiHandlerResponse {
         ApiHandlerResponse {
             kind: ApiResponseKind::StreamTrack,
             status: 200,
@@ -382,7 +379,7 @@ mod tests {
             body: None,
             path: None,
             transform: None,
-            track_id: Some(track_db_id.0),
+            track_id: Some(track_id.to_string()),
             options,
             principal: None,
             client: ClientAddress::default(),
@@ -396,21 +393,23 @@ mod tests {
         std::fs::create_dir_all(&test_dir)?;
         init_library_test_state(test_dir.clone()).await?;
 
-        let (track_db_id, track_public_id, release_db_id) = {
+        let (track_id, release_id) = {
             let mut db = STATE.db.write().await;
             let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Public Stream Track")?;
-            let track_public_id = lyra_db::lookup::find_id_by_db_id(&*db, track_db_id)?
+            let track_id = lyra_db::lookup::find_id_by_db_id(&*db, track_db_id)?
                 .context("inserted track has public id")?;
             let release_db_id =
                 lyra_db::fixtures::insert_release(&mut db, "Public Stream Release")?;
-            (track_db_id, track_public_id, release_db_id)
+            let release_id = lyra_db::lookup::find_id_by_db_id(&*db, release_db_id)?
+                .context("inserted release has public id")?;
+            (track_id, release_id)
         };
 
-        let (track_id, access) =
-            stream_track_access(None, ClientAddress::default(), track_db_id, true)
+        let (served_id, access) =
+            stream_track_access(None, ClientAddress::default(), &track_id, true)
                 .await
                 .map_err(|error| anyhow::anyhow!("public access failed: {error:?}"))?;
-        assert_eq!(track_id, track_public_id);
+        assert_eq!(served_id, track_id);
         assert!(matches!(
             access,
             crate::services::delivery::TrackAccess::PublicPluginRoute(_)
@@ -425,19 +424,18 @@ mod tests {
             None,
             HashSet::new(),
         );
-        let (_, access) =
-            stream_track_access(Some(&caller), address("10.0.0.1"), track_db_id, true)
-                .await
-                .map_err(|error| anyhow::anyhow!("public access failed: {error:?}"))?;
+        let (_, access) = stream_track_access(Some(&caller), address("10.0.0.1"), &track_id, true)
+            .await
+            .map_err(|error| anyhow::anyhow!("public access failed: {error:?}"))?;
         assert_eq!(
             access.caller(),
             Caller::User("caller-public-id".to_string()),
             "an authenticated caller's transcodes count against them on a public route"
         );
-        let (_, first) = stream_track_access(None, address("10.0.0.1"), track_db_id, true)
+        let (_, first) = stream_track_access(None, address("10.0.0.1"), &track_id, true)
             .await
             .map_err(|error| anyhow::anyhow!("public access failed: {error:?}"))?;
-        let (_, second) = stream_track_access(None, address("10.0.0.2"), track_db_id, true)
+        let (_, second) = stream_track_access(None, address("10.0.0.2"), &track_id, true)
             .await
             .map_err(|error| anyhow::anyhow!("public access failed: {error:?}"))?;
         assert_eq!(first.caller(), Caller::Client(address("10.0.0.1")));
@@ -447,28 +445,24 @@ mod tests {
             "anonymous clients each get their own allowance"
         );
 
-        let unknown =
-            stream_track_access(None, ClientAddress::default(), agdb::DbId(i64::MAX), true)
-                .await
-                .map(|_| ())
-                .map_err(|error| AppError::from(error).into_response().status());
+        let unknown = stream_track_access(None, ClientAddress::default(), "missing-track-id", true)
+            .await
+            .map(|_| ())
+            .map_err(|error| AppError::from(error).into_response().status());
         assert_eq!(unknown, Err(StatusCode::NOT_FOUND));
 
         let headers = axum::http::HeaderMap::new();
         let private =
-            plugin_api_response_to_axum(stream_response(track_db_id, None), &Method::GET, &headers)
+            plugin_api_response_to_axum(stream_response(&track_id, None), &Method::GET, &headers)
                 .await?;
         assert_eq!(
             private.status(),
             StatusCode::UNAUTHORIZED,
             "streams without the public option still need a principal"
         );
-        let private_head = plugin_api_response_to_axum(
-            stream_response(track_db_id, None),
-            &Method::HEAD,
-            &headers,
-        )
-        .await?;
+        let private_head =
+            plugin_api_response_to_axum(stream_response(&track_id, None), &Method::HEAD, &headers)
+                .await?;
         assert_eq!(
             private_head.status(),
             StatusCode::UNAUTHORIZED,
@@ -476,7 +470,7 @@ mod tests {
         );
 
         let public = plugin_api_response_to_axum(
-            stream_response(release_db_id, Some(serde_json::json!({ "public": true }))),
+            stream_response(&release_id, Some(serde_json::json!({ "public": true }))),
             &Method::GET,
             &headers,
         )
@@ -488,7 +482,7 @@ mod tests {
         );
 
         let malformed = plugin_api_response_to_axum(
-            stream_response(track_db_id, Some(serde_json::json!({ "public": "yes" }))),
+            stream_response(&track_id, Some(serde_json::json!({ "public": "yes" }))),
             &Method::GET,
             &headers,
         )

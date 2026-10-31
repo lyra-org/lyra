@@ -93,9 +93,6 @@ type ApiResponse = api.ApiResponse
 type JsonValue = api.JsonValue
 type JsonObject = { [string]: JsonValue }
 type ResolvedAuth = auth.ResolvedAuth
-type PlaylistCreateRequest = playlists.PlaylistCreateRequest
-type PlaylistFields = playlists.PlaylistFields
-type PlaylistUpdateRequest = playlists.PlaylistUpdateRequest
 type PlaybackPayload = { [string]: string | number | boolean? }
 type PublicUser = users.PublicUser
 
@@ -490,7 +487,7 @@ api.get(P .. "/Users/{id}", function(ctx: ApiContext): ApiResponse
 
 	local params = if ctx then ctx.params else nil
 	local raw_user_id = if params then params.id else nil
-	local user_id = item_ids.decode_jellyfin_user_id(raw_user_id)
+	local user_id = item_ids.decode_jellyfin_item_id(raw_user_id)
 	if not user_id then
 		return responses.not_found("user not found")
 	end
@@ -517,7 +514,7 @@ local function handle_user_configuration_post(ctx: ApiContext, raw_user_id: stri
 
 	local user_id = principal.user_id
 	if raw_user_id then
-		local decoded = item_ids.decode_jellyfin_user_id(raw_user_id)
+		local decoded = item_ids.decode_jellyfin_item_id(raw_user_id)
 		if not decoded then
 			return responses.not_found("user not found")
 		end
@@ -1194,86 +1191,9 @@ api.get(P .. "/Playlists/{playlistId}/Items", function(ctx: ApiContext)
 	local items, total_count, start_index = listing.list_playlist_track_items(playlist, options)
 	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
 end, "public", true)
-api.post(P .. "/Playlists", function(ctx: ApiContext)
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-
-	local request_payload, parse_err = session.parse_playlist_request_body(ctx)
-	if not request_payload then
-		return parse_err or responses.bad_request("invalid playlist request body")
-	end
-	if not session.ensure_user_scope_matches_principal(request_payload.user_id, principal) then
-		return session.unauthorized()
-	end
-
-	local playlist_name = request_payload.name or "New Playlist"
-	local create_request: PlaylistCreateRequest = {
-		name = playlist_name,
-		is_public = if request_payload.is_public ~= nil then request_payload.is_public else false,
-		created_at_ms = session.current_unix_ms(),
-		updated_at_ms = session.current_unix_ms(),
-		track_ids = request_payload.ids,
-	}
-
-	local ok, playlist_id = pcall(playlists.create, create_request)
-	if not ok then
-		return responses.bad_request("failed to create playlist")
-	end
-
-	local jellyfin_playlist_id = item_ids.encode_jellyfin_item_id(playlist_id)
-	if not jellyfin_playlist_id then
-		return responses.bad_request("failed to encode playlist id")
-	end
-	return api.response.json(200, {
-		Id = jellyfin_playlist_id,
-	})
-end, "public", true)
+api.post(P .. "/Playlists", session.handle_create_playlist_route, "public", true)
 api.delete(P .. "/Items/{id}", session.handle_delete_item_route, "public", true)
-api.post(P .. "/Playlists/{playlistId}/Items", function(ctx: ApiContext)
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-
-	if not session.require_matching_user_scope(ctx, principal) then
-		return session.unauthorized()
-	end
-
-	local playlist, playlist_err = session.resolve_playlist_for_route(ctx)
-	if not playlist then
-		return playlist_err or responses.bad_request("playlist not found")
-	end
-
-	local can_edit, edit_err = session.ensure_playlist_editable(playlist, principal)
-	if not can_edit then
-		return edit_err or responses.bad_request("playlist is read-only")
-	end
-
-	local query = if ctx and ctx.request then ctx.request.query else nil
-	local track_ids = session.parse_playlist_query_track_ids(query)
-	if #track_ids == 0 then
-		return responses.bad_request("missing ids query parameter")
-	end
-
-	local playlist_db_id = playlist.db_id
-	if playlist_db_id == nil then
-		return responses.not_found("playlist not found")
-	end
-	-- Upstream inserts at the 0-based `position`, from the start when it's negative, and appends
-	-- without it.
-	local position = requests.parse_query_int(query, { "position", "Position" }, nil, nil, nil)
-	if position ~= nil then
-		position = math.max(position, 0)
-	end
-	local added, entry_ids = pcall(playlists.add_tracks, playlist_db_id, track_ids, position)
-	if not added or entry_ids == nil then
-		return responses.bad_request("failed to add track to playlist")
-	end
-
-	return api.response.empty(204)
-end, "public", true)
+api.post(P .. "/Playlists/{playlistId}/Items", session.handle_add_playlist_items_route, "public", true)
 api.delete(P .. "/Playlists/{playlistId}/Items", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -1310,7 +1230,7 @@ api.post(P .. "/Playlists/{playlistId}/Items/{itemId}/Move/{newIdx}", function(c
 		return session.unauthorized()
 	end
 	local playlist, playlist_err = session.resolve_playlist_for_route(ctx)
-	if not playlist or playlist.db_id == nil then
+	if not playlist then
 		return playlist_err or responses.not_found("playlist not found")
 	end
 	local can_edit, edit_err = session.ensure_playlist_editable(playlist, principal)
@@ -1327,7 +1247,7 @@ api.post(P .. "/Playlists/{playlistId}/Items/{itemId}/Move/{newIdx}", function(c
 	if entry_id == nil then
 		return api.response.empty(204)
 	end
-	local ok, moved = pcall(playlists.move_track, playlist.db_id, entry_id, position)
+	local ok, moved = pcall(playlists.move_track, playlist.id, entry_id, position)
 	if not ok then
 		return responses.bad_request("failed to move playlist entry")
 	end
@@ -1336,63 +1256,7 @@ api.post(P .. "/Playlists/{playlistId}/Items/{itemId}/Move/{newIdx}", function(c
 	end
 	return api.response.empty(204)
 end, "public", true)
-api.post(P .. "/Playlists/{playlistId}", function(ctx: ApiContext)
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-
-	local playlist, playlist_err = session.resolve_playlist_for_route(ctx)
-	if not playlist then
-		return playlist_err or responses.bad_request("playlist not found")
-	end
-
-	local can_edit, edit_err = session.ensure_playlist_editable(playlist, principal)
-	if not can_edit then
-		return edit_err or responses.bad_request("playlist is read-only")
-	end
-
-	local request_payload, parse_err = session.parse_playlist_request_body(ctx)
-	if not request_payload then
-		return parse_err or responses.bad_request("invalid playlist request body")
-	end
-	if not session.ensure_user_scope_matches_principal(request_payload.user_id, principal) then
-		return session.unauthorized()
-	end
-	local playlist_db_id = playlist.db_id
-	if playlist_db_id == nil then
-		return responses.bad_request("playlist not found")
-	end
-	if request_payload.has_invalid_ids then
-		return responses.bad_request("invalid playlist item ids")
-	end
-	local fields: PlaylistFields = {
-		name = request_payload.name,
-		is_public = request_payload.is_public,
-		updated_at_ms = session.current_unix_ms(),
-	}
-	local ok, updated
-	if request_payload.requested_ids ~= nil then
-		local replacement_ids = item_ids.resolve_jellyfin_ids_exact(request_payload.requested_ids)
-		if replacement_ids == nil then
-			return responses.bad_request("invalid playlist item ids")
-		end
-		ok, updated = pcall(playlists.replace, playlist_db_id, { fields = fields, track_ids = replacement_ids })
-	else
-		local update_request: PlaylistUpdateRequest = {
-			playlist_id = playlist_db_id,
-			name = fields.name,
-			is_public = fields.is_public,
-			updated_at_ms = fields.updated_at_ms,
-		}
-		ok, updated = pcall(playlists.update, update_request)
-	end
-	if not ok or updated == nil then
-		return responses.bad_request("failed to update playlist")
-	end
-
-	return api.response.empty(204)
-end, "public", true)
+api.post(P .. "/Playlists/{playlistId}", session.handle_update_playlist_route, "public", true)
 api.get(P .. "/Playlists/{playlistId}", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -1433,7 +1297,7 @@ api.get(P .. "/Playlists/{playlistId}/Users/{userId}", function(ctx: ApiContext)
 		return responses.bad_request("missing user id")
 	end
 
-	local target_user_id = item_ids.decode_jellyfin_user_id(requested_user_id)
+	local target_user_id = item_ids.decode_jellyfin_item_id(requested_user_id)
 	if not target_user_id then
 		return responses.not_found("user not found")
 	end
@@ -1771,7 +1635,7 @@ api.get(P .. "/Sessions", function(ctx: ApiContext)
 	local request = if ctx then ctx.request else nil
 	local query = if request then request.query else nil
 	local controllable = requests.parse_query_string(query, { "controllableByUserId", "ControllableByUserId" }, nil)
-	local controllable_user_id = if controllable then item_ids.decode_jellyfin_user_id(controllable) else nil
+	local controllable_user_id = if controllable then item_ids.decode_jellyfin_item_id(controllable) else nil
 	if controllable and not controllable_user_id then
 		return api.response.json(200, {})
 	end
@@ -2081,7 +1945,7 @@ api.post(P .. "/Items/{id}/PlaybackInfo", function(ctx: ApiContext)
 	local requested_user_id = if request_object then request_object.UserId else nil
 	if
 		type(requested_user_id) == "string"
-		and item_ids.decode_jellyfin_user_id(requested_user_id) ~= principal.user_id
+		and item_ids.decode_jellyfin_item_id(requested_user_id) ~= principal.user_id
 	then
 		return session.unauthorized()
 	end

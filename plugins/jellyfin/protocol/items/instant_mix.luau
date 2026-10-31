@@ -83,12 +83,12 @@ end
 -- Returns `(items, total_count, start_index, found)`. Audio seeds pin the
 -- seed first; nil → 404.
 function module.list_instant_mix_audio(
-	item_id: number?,
+	item_id: string?,
 	options: ItemsQueryOptions
 ): ({ ItemInfo }, number, number, boolean)
 	local empty_items: { ItemInfo } = {}
 	local start_index = options.start_index or 0
-	if not item_id or item_id <= 0 then
+	if not item_id then
 		return empty_items, 0, start_index, false
 	end
 
@@ -129,12 +129,12 @@ function module.list_instant_mix_audio_from_genre_name(
 	end
 
 	local genre_info = genres.find_by_name(trimmed)
-	if not genre_info or not genre_info.db_id then
+	if not genre_info then
 		return empty_items, 0, start_index, false
 	end
 
 	local engine_limit, requested_limit = engine_limits(options)
-	local mix_tracks = mix.blend({ seeds = { genre_info.db_id }, limit = engine_limit })
+	local mix_tracks = mix.blend({ seeds = { genre_info.id }, limit = engine_limit })
 	if mix_tracks == nil then
 		return empty_items, 0, start_index, false
 	end

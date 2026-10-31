@@ -21,6 +21,7 @@ use super::entities::{
     relations,
 };
 
+pub(crate) mod chains;
 mod similarity;
 
 pub(crate) use similarity::{

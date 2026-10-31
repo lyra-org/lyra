@@ -44,7 +44,7 @@ struct CapturedEntity {
 }
 
 struct IdEdit {
-    real_entity_id: i64,
+    real_entity_id: String,
     id_type: String,
     values: Vec<String>,
 }
@@ -584,23 +584,28 @@ fn collect_all_id_types(capture: &CaptureFile) -> Vec<String> {
     types.into_keys().collect()
 }
 
-/// Collect (real_db_id, label) pairs from a context, deduped, in display order.
-fn collect_entities(context: &serde_json::Value) -> Vec<(i64, String)> {
+/// The public id of a context entity.
+fn entity_id(entity: &serde_json::Value) -> Option<&str> {
+    entity.get("id").and_then(|v| v.as_str())
+}
+
+/// Collect (real_entity_id, label) pairs from a context, deduped, in display order.
+fn collect_entities(context: &serde_json::Value) -> Vec<(String, String)> {
     let mut entities = Vec::new();
     let mut seen = HashSet::new();
 
-    if let Some(id) = context.get("db_id").and_then(|v| v.as_i64()) {
+    if let Some(id) = entity_id(context) {
         seen.insert(id);
-        entities.push((id, "Release".to_string()));
+        entities.push((id.to_string(), "Release".to_string()));
     }
 
     if let Some(artists_array) = context.get("artists").and_then(|v| v.as_array()) {
         for artist_entry in artists_array {
-            if let Some(id) = artist_entry.get("db_id").and_then(|v| v.as_i64())
+            if let Some(id) = entity_id(artist_entry)
                 && seen.insert(id)
             {
                 let name = artist_display_name(artist_entry);
-                entities.push((id, format!("Artist ({name})")));
+                entities.push((id.to_string(), format!("Artist ({name})")));
             }
         }
     }
@@ -609,22 +614,22 @@ fn collect_entities(context: &serde_json::Value) -> Vec<(i64, String)> {
         for (i, track) in tracks.iter().enumerate() {
             if let Some(track_artists_array) = track.get("artists").and_then(|v| v.as_array()) {
                 for artist_entry in track_artists_array {
-                    if let Some(id) = artist_entry.get("db_id").and_then(|v| v.as_i64())
+                    if let Some(id) = entity_id(artist_entry)
                         && seen.insert(id)
                     {
                         let name = artist_display_name(artist_entry);
-                        entities.push((id, format!("Artist ({name})")));
+                        entities.push((id.to_string(), format!("Artist ({name})")));
                     }
                 }
             }
-            if let Some(id) = track.get("db_id").and_then(|v| v.as_i64())
+            if let Some(id) = entity_id(track)
                 && seen.insert(id)
             {
                 let title = track
                     .get("track_title")
                     .and_then(|v| v.as_str())
                     .unwrap_or("?");
-                entities.push((id, format!("Track {} \u{2014} {title}", i + 1)));
+                entities.push((id.to_string(), format!("Track {} \u{2014} {title}", i + 1)));
             }
         }
     }
@@ -674,7 +679,7 @@ fn interactive_ids(
 
         // Show current IDs for this entity
         if let Some(results) = plugin_results
-            && let Some(entity) = results.get(&real_id.to_string())
+            && let Some(entity) = results.get(real_id)
             && !entity.ids.is_empty()
         {
             println!("  Current IDs:");
@@ -695,7 +700,7 @@ fn interactive_ids(
 
         // Show current value for this specific ID
         let current = plugin_results
-            .and_then(|r| r.get(&real_id.to_string()))
+            .and_then(|r| r.get(real_id))
             .and_then(|e| e.ids.get(&id_type));
 
         if let Some(val) = current {
@@ -723,7 +728,7 @@ fn interactive_ids(
         };
 
         edits.push(IdEdit {
-            real_entity_id: *real_id,
+            real_entity_id: real_id.clone(),
             id_type,
             values: final_values,
         });
@@ -746,27 +751,14 @@ fn interactive_ids(
 }
 
 /// Determine a display label for an entity ID based on context.
-fn entity_label(context: &serde_json::Value, entity_id_str: &str) -> String {
-    let target_id: i64 = match entity_id_str.parse() {
-        Ok(id) => id,
-        Err(_) => return "Unknown".to_string(),
-    };
-
-    if context
-        .get("db_id")
-        .and_then(|v| v.as_i64())
-        .is_some_and(|id| id == target_id)
-    {
+fn entity_label(context: &serde_json::Value, target_id: &str) -> String {
+    if entity_id(context) == Some(target_id) {
         return "Release".to_string();
     }
 
     if let Some(artists_array) = context.get("artists").and_then(|v| v.as_array()) {
         for artist_entry in artists_array {
-            if artist_entry
-                .get("db_id")
-                .and_then(|v| v.as_i64())
-                .is_some_and(|id| id == target_id)
-            {
+            if entity_id(artist_entry) == Some(target_id) {
                 let name = artist_display_name(artist_entry);
                 return format!("Artist ({name})");
             }
@@ -775,11 +767,7 @@ fn entity_label(context: &serde_json::Value, entity_id_str: &str) -> String {
 
     if let Some(tracks) = context.get("tracks").and_then(|v| v.as_array()) {
         for track in tracks {
-            if track
-                .get("db_id")
-                .and_then(|v| v.as_i64())
-                .is_some_and(|id| id == target_id)
-            {
+            if entity_id(track) == Some(target_id) {
                 let title = track
                     .get("track_title")
                     .and_then(|v| v.as_str())
@@ -789,11 +777,7 @@ fn entity_label(context: &serde_json::Value, entity_id_str: &str) -> String {
 
             if let Some(track_artists_array) = track.get("artists").and_then(|v| v.as_array()) {
                 for artist_entry in track_artists_array {
-                    if artist_entry
-                        .get("db_id")
-                        .and_then(|v| v.as_i64())
-                        .is_some_and(|id| id == target_id)
-                    {
+                    if entity_id(artist_entry) == Some(target_id) {
                         let name = artist_display_name(artist_entry);
                         return format!("Artist ({name})");
                     }
@@ -1066,8 +1050,7 @@ fn write_full_expect(
         }
 
         for (entity_id_str, entity) in entities {
-            let real_id: i64 = entity_id_str.parse().unwrap_or(0);
-            seen_entity_ids.insert(real_id);
+            seen_entity_ids.insert(entity_id_str.as_str());
 
             let mut ids: BTreeMap<String, Vec<String>> = entity
                 .ids
@@ -1076,7 +1059,7 @@ fn write_full_expect(
                 .collect();
 
             if let Some(edits) = amend_edits {
-                for edit in edits.iter().filter(|e| e.real_entity_id == real_id) {
+                for edit in edits.iter().filter(|e| e.real_entity_id == *entity_id_str) {
                     ids.insert(edit.id_type.clone(), edit.values.clone());
                 }
             }
@@ -1106,7 +1089,7 @@ fn write_full_expect(
 
     if let Some(edits) = amend_edits {
         for edit in edits {
-            if seen_entity_ids.contains(&edit.real_entity_id) {
+            if seen_entity_ids.contains(edit.real_entity_id.as_str()) {
                 continue;
             }
             let target = classify_expect_target_from_edit(&edit.id_type, &edit.values);
@@ -1269,7 +1252,7 @@ fn escape_toml_key(value: &str) -> String {
 fn is_internal_field(name: &str) -> bool {
     matches!(
         name,
-        "locked" | "created_at_ms" | "file_created_at_ms" | "library_id" | "db_id"
+        "locked" | "created_at_ms" | "file_created_at_ms" | "library_id"
     )
 }
 

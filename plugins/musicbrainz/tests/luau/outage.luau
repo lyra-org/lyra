@@ -1,10 +1,10 @@
 local apply = require("../../resolution/apply")
 local musicbrainz_api = require("../../resolution/musicbrainz_api")
 
-local unmatched: { number } = {}
+local unmatched: { string } = {}
 apply.set_provider({
-	mark_unmatched = function(_self: any, db_id: number, _id_types: { string })
-		table.insert(unmatched, db_id)
+	mark_unmatched = function(_self: any, node_id: string, _id_types: { string })
+		table.insert(unmatched, node_id)
 	end,
 } :: any)
 
@@ -14,7 +14,7 @@ local function unmatches_after(ok: boolean, response: any): boolean
 	table.clear(unmatched)
 	local resumed, err = coroutine.resume(coroutine.create(function()
 		musicbrainz_api.response_object(ok, response)
-		apply.mark_unmatched(1, { "release_id" })
+		apply.mark_unmatched("release", { "release_id" })
 	end))
 	assert(resumed, tostring(err))
 	return #unmatched > 0

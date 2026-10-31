@@ -38,17 +38,17 @@ type AcoustIdResult = {
 	score: number,
 }
 
-local function get_entry_db_id_for_track(track_db_id: number): number?
-	local track_entries = entries.by_track({ track_db_id })[track_db_id]
+local function get_entry_id_for_track(track_id: string): string?
+	local track_entries = entries.by_track({ track_id })[track_id]
 	local entry = track_entries and track_entries[1]
-	return if entry then entry.db_id else nil
+	return if entry then entry.id else nil
 end
 
 function module.select_track(tracks: { LocalTrack }): LocalTrack?
 	local best: LocalTrack? = nil
 	local best_duration = -1
 	for _, track in tracks do
-		if track.db_id == nil then
+		if track.id == nil then
 			continue
 		end
 		local duration = track.duration_ms or 0
@@ -63,9 +63,9 @@ function module.select_track(tracks: { LocalTrack }): LocalTrack?
 	if best then
 		return best
 	end
-	-- fallback: pick the longest track with a db_id regardless of minimum
+	-- fallback: pick the longest track with an id regardless of minimum
 	for _, track in tracks do
-		if track.db_id == nil then
+		if track.id == nil then
 			continue
 		end
 		local duration = track.duration_ms or 0
@@ -77,12 +77,12 @@ function module.select_track(tracks: { LocalTrack }): LocalTrack?
 	return best
 end
 
-function module.compute_fingerprint(track_db_id: number): string?
-	local entry_db_id = get_entry_db_id_for_track(track_db_id)
-	if entry_db_id == nil then
+function module.compute_fingerprint(track_id: string): string?
+	local entry_id = get_entry_id_for_track(track_id)
+	if entry_id == nil then
 		return nil
 	end
-	local ok, result = pcall(chromaprint.compute, entry_db_id)
+	local ok, result = pcall(chromaprint.compute, entry_id)
 	if not ok or type(result) ~= "table" then
 		return nil
 	end

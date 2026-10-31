@@ -286,7 +286,6 @@ async fn dispatcher_queue_delay_does_not_consume_handler_timeout() -> Result<()>
                 tokio::time::sleep(Duration::from_millis(75)).await;
                 Ok(SimilarReleasesDispatchResult {
                     candidates: vec![SimilarReleaseCandidate::Local {
-                        release_db_id: candidate.0,
                         release_id: candidate_public_id,
                     }],
                 })
@@ -345,7 +344,6 @@ async fn in_vm_dispatch_is_not_wrapped_in_provider_call_lock() -> Result<()> {
                         || async move {
                             Ok(SimilarReleasesDispatchResult {
                                 candidates: vec![SimilarReleaseCandidate::Local {
-                                    release_db_id: candidate.0,
                                     release_id: candidate_public_id,
                                 }],
                             })
@@ -381,7 +379,7 @@ async fn recursive_similar_call_fails_without_blocking_executor() -> Result<()> 
             local releases = require("@lyra/releases")
             local provider = metadata.Provider.new("similartest")
             provider:similar_releases({}, function(ctx)
-                return releases.similar(ctx.db_id)
+                return releases.similar(ctx.id)
             end)
         "#,
     )?;

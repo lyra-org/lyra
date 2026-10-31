@@ -74,7 +74,7 @@ fn mix_context_value(
     let mut seeds = luau::OwnedTable::with_capacity(request.seeds.len(), 0);
     for seed in &request.seeds {
         let mut entry = luau::OwnedTable::with_capacity(0, 3);
-        entry.set_field("id", seed.db_id.0);
+        entry.set_field("id", seed.id.as_str());
         entry.set_field(
             "type",
             crate::plugins::types::LuauMixSeedType::class().create_value(
@@ -146,10 +146,11 @@ pub(super) fn parse_mix_result(
         let luau::Value::Table(entry) = value else {
             continue;
         };
-        let track_id = match entry.get("track_id")? {
-            luau::Value::Integer(track_id) => track_id,
-            luau::Value::Number(track_id) => track_id as i64,
-            _ => continue,
+        let luau::Value::String(track_id) = entry.get("track_id")? else {
+            continue;
+        };
+        let Ok(track_id) = String::from_utf8(track_id) else {
+            continue;
         };
         entries.push((index, track_id));
         if entries.len() >= crate::services::mix::MAX_LIMIT {

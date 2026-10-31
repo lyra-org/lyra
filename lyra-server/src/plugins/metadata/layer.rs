@@ -4,14 +4,16 @@
 // www.meshiplaw.com/lyra.
 
 use std::{
-    collections::HashMap,
+    collections::{
+        BTreeMap,
+        HashMap,
+    },
     sync::{
         Arc,
         Mutex,
     },
 };
 
-use agdb::DbId;
 use harmony_core::UserDataBinding;
 use harmony_luau as luau;
 
@@ -22,14 +24,17 @@ use crate::plugins::types::{
 use serde_json::Value as JsonValue;
 
 use super::parsing::parse_custom_field_version;
-use crate::plugins::args;
+use crate::plugins::ids;
 use crate::services::metadata::layers::json::input_from_json;
 use crate::services::metadata::layers::{
     CustomFieldChanges,
     ProviderValues,
 };
+use lyra_db::ArtistRelationType;
+use lyra_db::CreditType;
 use lyra_db::DbAsync;
 use lyra_db::MetadataField;
+use lyra_db::entities::MetadataEntityType;
 use lyra_db::metadata::layers::FieldInputs;
 use lyra_db::metadata::layers::LayerCredits;
 use lyra_db::metadata::layers::LayerRelations;
@@ -39,14 +44,14 @@ use lyra_db::metadata::layers::edges::LayerRelationInput;
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CreditEntry {
-    artist_id: i64,
+    artist_id: String,
     detail: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RelationEntry {
-    artist_id: i64,
+    artist_id: String,
     attributes: Option<String>,
 }
 
@@ -59,11 +64,12 @@ pub(super) struct MetadataLayer {
 
 #[derive(Clone)]
 struct LayerBuilderState {
-    node_id: DbId,
+    node_id: String,
     provider_id: String,
     fields: FieldInputs,
-    relations: LayerRelations,
-    credits: LayerCredits,
+    /// Relations and credits by artist public id, resolved when the layer is saved.
+    relations: BTreeMap<ArtistRelationType, Vec<(String, Option<String>)>>,
+    credits: BTreeMap<CreditType, Vec<(String, Option<String>)>>,
     external_ids: HashMap<String, String>,
     custom_fields: CustomFieldChanges,
 }
@@ -109,16 +115,18 @@ impl MetadataLayer {
                     "credits must be a list of {{ artist_id, detail? }}: {error}"
                 ))
             })?;
-        let mut inputs = Vec::with_capacity(entries.len());
-        for entry in entries {
-            inputs.push(LayerCreditInput {
-                artist_id: args::positive_id(entry.artist_id, "artist_id")?,
-                detail: entry
-                    .detail
-                    .map(|detail| detail.trim().to_string())
-                    .filter(|detail| !detail.is_empty()),
-            });
-        }
+        let inputs = entries
+            .into_iter()
+            .map(|entry| {
+                (
+                    entry.artist_id,
+                    entry
+                        .detail
+                        .map(|detail| detail.trim().to_string())
+                        .filter(|detail| !detail.is_empty()),
+                )
+            })
+            .collect();
         self.state
             .lock()
             .expect("metadata layer mutex poisoned")
@@ -144,16 +152,18 @@ impl MetadataLayer {
                 "relations must be a list of {{ artist_id, attributes? }}: {error}"
             ))
         })?;
-        let mut inputs = Vec::with_capacity(entries.len());
-        for entry in entries {
-            inputs.push(LayerRelationInput {
-                artist_id: args::positive_id(entry.artist_id, "artist_id")?,
-                attributes: entry
-                    .attributes
-                    .map(|attributes| attributes.trim().to_string())
-                    .filter(|attributes| !attributes.is_empty()),
-            });
-        }
+        let inputs = entries
+            .into_iter()
+            .map(|entry| {
+                (
+                    entry.artist_id,
+                    entry
+                        .attributes
+                        .map(|attributes| attributes.trim().to_string())
+                        .filter(|attributes| !attributes.is_empty()),
+                )
+            })
+            .collect();
         self.state
             .lock()
             .expect("metadata layer mutex poisoned")
@@ -175,14 +185,46 @@ impl MetadataLayer {
             .clone();
         Ok(luau::ScheduledFuture::new(async move {
             let mut db = db.write().await;
+            let node_id = layer.target(&db)?;
+            let artist_id = |id: &str| {
+                ids::db_id_of(&db, id, "Artist")?.ok_or_else(|| {
+                    crate::plugins::runtime_error(format!("artist_id {id} is not an artist"))
+                })
+            };
+            let mut relations = LayerRelations::new();
+            for (relation_type, entries) in layer.relations {
+                let inputs = entries
+                    .into_iter()
+                    .map(|(id, attributes)| {
+                        Ok(LayerRelationInput {
+                            artist_id: artist_id(&id)?,
+                            attributes,
+                        })
+                    })
+                    .collect::<luau::runtime::Result<Vec<_>>>()?;
+                relations.insert(relation_type, inputs);
+            }
+            let mut credits = LayerCredits::new();
+            for (role, entries) in layer.credits {
+                let inputs = entries
+                    .into_iter()
+                    .map(|(id, detail)| {
+                        Ok(LayerCreditInput {
+                            artist_id: artist_id(&id)?,
+                            detail,
+                        })
+                    })
+                    .collect::<luau::runtime::Result<Vec<_>>>()?;
+                credits.insert(role, inputs);
+            }
             crate::services::metadata::layers::save_provider_layer(
                 &mut db,
-                layer.node_id,
+                node_id,
                 &layer.provider_id,
                 &ProviderValues {
                     fields: layer.fields,
-                    relations: layer.relations,
-                    credits: layer.credits,
+                    relations,
+                    credits,
                 },
                 &layer.external_ids,
                 &layer.custom_fields,
@@ -243,12 +285,42 @@ impl MetadataLayer {
     }
 }
 
+impl LayerBuilderState {
+    /// The release, track or artist the layer describes, checked against what the layer sets.
+    fn target(&self, db: &agdb::DbAny) -> luau::runtime::Result<agdb::DbId> {
+        let not_an_entity = || {
+            crate::plugins::runtime_error(format!(
+                "node_id {} is not a release, track or artist",
+                self.node_id
+            ))
+        };
+        let node_id = ids::db_id(db, &self.node_id)?.ok_or_else(not_an_entity)?;
+        let kind = lyra_db::entities::metadata_entity_type(db, node_id)
+            .map_err(crate::plugins::runtime_error)?
+            .ok_or_else(not_an_entity)?;
+        let is_artist = kind == MetadataEntityType::Artist;
+        if is_artist && !self.credits.is_empty() {
+            return Err(crate::plugins::runtime_error(format!(
+                "node_id {} is an artist, which has no credits",
+                self.node_id
+            )));
+        }
+        if !is_artist && !self.relations.is_empty() {
+            return Err(crate::plugins::runtime_error(format!(
+                "node_id {} is not an artist, so it has no relations",
+                self.node_id
+            )));
+        }
+        Ok(node_id)
+    }
+}
+
 impl MetadataLayer {
     pub(super) fn new_value(
         vm: &luau::Vm,
         origin: &luau::ChunkOrigin,
         db: Option<DbAsync>,
-        node_id: DbId,
+        node_id: String,
         provider_id: String,
     ) -> luau::runtime::Result<luau::Value> {
         let layer = Self {
@@ -257,8 +329,8 @@ impl MetadataLayer {
                 node_id,
                 provider_id,
                 fields: FieldInputs::new(),
-                relations: LayerRelations::new(),
-                credits: LayerCredits::new(),
+                relations: BTreeMap::new(),
+                credits: BTreeMap::new(),
                 external_ids: HashMap::new(),
                 custom_fields: CustomFieldChanges::default(),
             })),

@@ -1,0 +1,14 @@
+run_as = "owner"
+
+[[users]]
+key = "owner"
+admin = true
+
+[[releases]]
+key = "album"
+title = "Album"
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"

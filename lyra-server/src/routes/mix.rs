@@ -58,7 +58,7 @@ pub(crate) struct MixQueryParams {
 async fn post_mix(
     headers: HeaderMap,
     Query(query): Query<MixQueryParams>,
-    body: Result<Json<MixRequestFields<String>>, JsonRejection>,
+    body: Result<Json<MixRequestFields>, JsonRejection>,
 ) -> Result<Json<Vec<TrackResponse>>, AppError> {
     let principal = require_principal(bearer_credential(&headers)).await?;
     let Json(body) = body.map_err(|rejection| AppError::bad_request(rejection.body_text()))?;
@@ -334,7 +334,7 @@ mod tests {
         Ok(())
     }
 
-    fn body(json: serde_json::Value) -> serde_json::Result<MixRequestFields<String>> {
+    fn body(json: serde_json::Value) -> serde_json::Result<MixRequestFields> {
         serde_json::from_value(json)
     }
 

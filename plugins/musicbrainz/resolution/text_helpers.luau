@@ -44,7 +44,7 @@ export type LookupHintReleaseContext = {
 	artists: { LookupHintArtist }?,
 	tracks: { LookupHintTrack }?,
 	library: LookupHintLibrary?,
-	library_id: number?,
+	library_id: string?,
 	[string]: JsonValue,
 }
 

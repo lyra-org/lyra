@@ -113,6 +113,7 @@ impl TryFrom<DbValue> for ReleaseType {
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(DbElement, Serialize, Deserialize, Clone, Debug)]
 pub struct Release {
+    #[serde(skip_serializing)]
     pub db_id: Option<NodeId>,
     pub id: String,
     pub release_title: String,

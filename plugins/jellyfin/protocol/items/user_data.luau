@@ -15,13 +15,13 @@ local RESOLVE_MERGE_TRACK_COUNT = constants.RESOLVE_MERGE_TRACK_COUNT
 type JsonObject = { [string]: api.JsonValue }
 
 export type UserDataOpts = {
-	item_id: number?,
+	item_id: string?,
 	user_id: string?,
 	include_favorite: boolean?,
 	include_play_count: boolean?,
-	favorite_lookup: { [number]: boolean }?,
-	play_count_lookup: { [number]: number }?,
-	last_played_lookup: { [number]: number }?,
+	favorite_lookup: { [string]: boolean }?,
+	play_count_lookup: { [string]: number }?,
+	last_played_lookup: { [string]: number }?,
 	key: string?,
 	item_hex_id: string?,
 }
@@ -39,8 +39,8 @@ export type UserData = {
 local module = {}
 
 -- Favorites belong to the dispatch principal; `user_id` only says a user is present.
-local function has_favorite(user_id: string?, item_id: number?): boolean
-	if not user_id or not item_id or item_id <= 0 then
+local function has_favorite(user_id: string?, item_id: string?): boolean
+	if not user_id or not item_id then
 		return false
 	end
 
@@ -48,12 +48,12 @@ local function has_favorite(user_id: string?, item_id: number?): boolean
 	return ok and favorited[item_id] ~= nil
 end
 
-function module.has_favorite(user_id: string?, item_id: number?): boolean
+function module.has_favorite(user_id: string?, item_id: string?): boolean
 	return has_favorite(user_id, item_id)
 end
 
-function module.add_favorite(item_id: number?): boolean
-	if not item_id or item_id <= 0 then
+function module.add_favorite(item_id: string?): boolean
+	if not item_id then
 		return false
 	end
 
@@ -61,8 +61,8 @@ function module.add_favorite(item_id: number?): boolean
 	return ok and applied == true
 end
 
-function module.remove_favorite(item_id: number?): boolean
-	if not item_id or item_id <= 0 then
+function module.remove_favorite(item_id: string?): boolean
+	if not item_id then
 		return false
 	end
 
@@ -109,7 +109,7 @@ function module.get_user_data(opts: UserDataOpts?): UserData
 
 	local play_count = 0
 	local should_include_play_count = opts.include_play_count ~= false
-	if should_include_play_count and item_id ~= nil and item_id > 0 then
+	if should_include_play_count and item_id ~= nil then
 		local lookup_count: number? = nil
 		if type(opts.play_count_lookup) == "table" then
 			lookup_count = opts.play_count_lookup[item_id]
@@ -119,7 +119,7 @@ function module.get_user_data(opts: UserDataOpts?): UserData
 			play_count = tonumber(lookup_count) or 0
 		else
 			local ok, stats = pcall(listens.get, { item_id }, { merge_unique_external_ids = RESOLVE_MERGE_TRACK_COUNT })
-			local entry = if ok then (stats :: { [number]: listens.ListenStats })[item_id] else nil
+			local entry = if ok then (stats :: { [string]: listens.ListenStats })[item_id] else nil
 			if entry ~= nil then
 				play_count = entry.count
 			end
@@ -136,7 +136,7 @@ function module.get_user_data(opts: UserDataOpts?): UserData
 	end
 
 	local last_played_date: string? = nil
-	if item_id ~= nil and item_id > 0 and type(opts.last_played_lookup) == "table" then
+	if item_id ~= nil and type(opts.last_played_lookup) == "table" then
 		last_played_date = ms_to_iso8601(opts.last_played_lookup[item_id])
 	end
 

@@ -115,6 +115,8 @@ pub fn find_ids_by_db_ids(
     Ok(map)
 }
 
+/// The nodes `ids` name. agdb's index search matches one value per query, so each id is looked up
+/// on its own, all under the caller's guard.
 pub fn find_node_ids_by_ids(
     db: &impl DbAccess,
     ids: &[&str],

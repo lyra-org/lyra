@@ -3,7 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use agdb::DbId;
+use agdb::{
+    DbId,
+    QueryId,
+};
 use axum::http::StatusCode;
 use harmony_luau as luau;
 #[cfg(feature = "docgen")]
@@ -20,12 +23,16 @@ use harmony_luau::{
 
 use crate::plugins::args::{
     JsonArg,
-    PositiveId,
-    ResolveIdArg,
     UniqueIds,
 };
 use crate::plugins::auth::DispatchPrincipal;
-use crate::plugins::types::EntryInfo;
+use crate::plugins::{
+    ids::{
+        self,
+        Resolved,
+    },
+    types::EntryInfo,
+};
 use crate::{
     plugins::db::Db,
     services::{
@@ -40,9 +47,7 @@ use crate::{
         playback_sources as playback_source_service,
     },
 };
-use lyra_db::ResolveId;
 
-#[cfg(feature = "docgen")]
 use std::collections::HashMap;
 
 #[cfg(feature = "docgen")]
@@ -61,46 +66,53 @@ pub(crate) struct PlaybackSourcesModule;
 
 #[harmony_macros::module(id = "lyra/playback_sources", docs_feature = "docgen")]
 impl PlaybackSourcesModule {
-    #[harmony(returns(Vec<PlaybackSourceInfo>))]
+    #[harmony(
+        description = "The playback sources of the tracks the caller can see under the node with `id`, or of every such track without one. An unknown id gives an empty list.",
+        returns(Vec<PlaybackSourceInfo>)
+    )]
     async fn get(
-        id: Option<ResolveIdArg>,
+        id: Option<String>,
         include_entry: Option<bool>,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        let id = id
-            .map(|id| id.0)
-            .unwrap_or_else(|| ResolveId::alias("tracks"));
         let include_entry = include_entry.unwrap_or(false);
         let db = db.read().await;
         let include_full_path = lyra_db::roles::has_permission(
             &principal.permissions,
             lyra_db::Permission::ManageLibraries,
         );
-        let query_id = id
-            .to_query_id(&db)?
-            .ok_or_else(|| crate::plugins::runtime_error("could not resolve scope"))?;
-        let tracks = lyra_db::tracks::get(&db, query_id)?;
-
-        let mut rows = luau::OwnedTable::new();
-        for track in tracks {
-            let Some(track_id) = track.db_id.map(DbId::from) else {
+        let query_id = match id {
+            Some(id) => match ids::db_id(&*db, &id)? {
+                Some(id) => QueryId::Id(id),
+                None => return Ok(luau::OwnedTable::new()),
+            },
+            None => QueryId::from("tracks"),
+        };
+        let mut sources = Vec::new();
+        for track in lyra_db::tracks::get(&db, query_id)? {
+            let Some(track_id) = track.db_id.clone().map(DbId::from) else {
                 continue;
             };
             if !crate::services::auth::access::entity_accessible(&db, &principal, track_id)? {
                 continue;
             }
-            let Some(source) = playback_source_service::resolve(&db, track_id, include_entry)?
-            else {
-                continue;
-            };
+            sources.extend(playback_source_service::resolve(
+                &db,
+                &track,
+                include_entry,
+            )?);
+        }
+        let parents = entry_parents(&db, &sources)?;
+        let mut rows = luau::OwnedTable::new();
+        for source in sources {
             rows.push_array(luau::Value::TableData(source_to_table(
                 source,
+                &parents,
                 include_entry,
                 include_full_path,
             )?));
         }
-
         Ok(rows)
     }
 
@@ -109,27 +121,37 @@ impl PlaybackSourcesModule {
         returns(Option<PlaybackSourceInfo>)
     )]
     async fn streamable(
-        track_id: PositiveId,
+        track_id: String,
         include_entry: Option<bool>,
         #[context] db: Db,
     ) -> luau::runtime::Result<luau::Value> {
         let include_entry = include_entry.unwrap_or(false);
         let db = db.read().await;
-        Ok(
-            playback_source_service::resolve(&db, track_id.0, include_entry)?
-                .map(|source| source_to_table(source, include_entry, false))
-                .transpose()?
-                .map_or(luau::Value::Nil, luau::Value::TableData),
-        )
+        let Some(track_id) = ids::db_id_of(&db, &track_id, "Track")? else {
+            return Ok(luau::Value::Nil);
+        };
+        let Some(track) = lyra_db::tracks::get_by_id(&db, track_id)? else {
+            return Ok(luau::Value::Nil);
+        };
+        let Some(source) = playback_source_service::resolve(&db, &track, include_entry)? else {
+            return Ok(luau::Value::Nil);
+        };
+        let parents = entry_parents(&db, std::slice::from_ref(&source))?;
+        Ok(luau::Value::TableData(source_to_table(
+            source,
+            &parents,
+            include_entry,
+            false,
+        )?))
     }
 
     #[harmony(
         description = "What `api.response.stream_track(track_id, options)` would deliver, without serving anything: whether the source file is served as it is or transcoded, why, and the delivered format. Raises the error the stream would answer with when the request cannot be served.",
-        args(track_id: i64, options: Option<DeliveryRequest>),
+        args(track_id: String, options: Option<DeliveryRequest>),
         returns(DeliveryDescription)
     )]
     async fn decide(
-        track_id: PositiveId,
+        track_id: String,
         options: Option<JsonArg>,
         #[context] principal: DispatchPrincipal,
     ) -> luau::runtime::Result<luau::Value> {
@@ -139,7 +161,7 @@ impl PlaybackSourcesModule {
         let (track_id, access) = delivery::stream_track_access(
             principal.0.as_ref(),
             Default::default(),
-            track_id.0,
+            &track_id,
             public,
         )
         .await
@@ -153,35 +175,45 @@ impl PlaybackSourcesModule {
         )
     }
 
-    #[harmony(returns(HashMap<u64, Option<PlaybackSourceInfo>>))]
+    #[harmony(
+        description = "The playback source of each of these tracks, keyed by track id. Tracks without one and tracks the caller cannot see are absent.",
+        returns(HashMap<String, PlaybackSourceInfo>)
+    )]
     async fn get_many(
         track_ids: UniqueIds,
         include_entry: Option<bool>,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        let track_ids = track_ids.0;
         let include_entry = include_entry.unwrap_or(false);
         let db = db.read().await;
+        let tracks = Resolved::of(&*db, track_ids.0)?;
         let include_full_path = lyra_db::roles::has_permission(
             &principal.permissions,
             lyra_db::Permission::ManageLibraries,
         );
-        let mut rows = luau::OwnedTable::with_entry_capacity(0, 0, track_ids.len());
-        for track_id in track_ids {
-            let value =
-                if crate::services::auth::access::entity_accessible(&db, &principal, track_id)? {
-                    playback_source_service::resolve(&db, track_id, include_entry)?
-                        .map(|source| source_to_table(source, include_entry, include_full_path))
-                        .transpose()?
-                        .map_or(luau::Value::Nil, luau::Value::TableData)
-                } else {
-                    luau::Value::Nil
-                };
-            rows.set_key(track_id.0, value);
+        let found = lyra_db::tracks::get_existing_by_ids(&*db, tracks.db_ids())?;
+        let mut sources = Vec::with_capacity(found.len());
+        for &track_id in tracks.db_ids() {
+            let Some(track) = found.get(&track_id) else {
+                continue;
+            };
+            if !crate::services::auth::access::entity_accessible(&db, &principal, track_id)? {
+                continue;
+            }
+            if let Some(source) = playback_source_service::resolve(&db, track, include_entry)? {
+                sources.push((track_id, source));
+            }
         }
-
-        Ok(rows)
+        let parents = entry_parents(&db, sources.iter().map(|(_, source)| source))?;
+        let mut rows = Vec::with_capacity(sources.len());
+        for (track_id, source) in sources {
+            rows.push((
+                track_id,
+                source_to_table(source, &parents, include_entry, include_full_path)?,
+            ));
+        }
+        Ok(tracks.keyed(rows))
     }
 }
 
@@ -223,13 +255,27 @@ fn internal_error_status(error: anyhow::Error) -> (StatusCode, String) {
     }
 }
 
+/// The public ids of the parents of the entries `sources` hold, for [`source_to_table`].
+fn entry_parents<'a>(
+    db: &agdb::DbAny,
+    sources: impl IntoIterator<Item = &'a playback_source_service::PlaybackSource>,
+) -> luau::runtime::Result<HashMap<DbId, String>> {
+    EntryInfo::parents(
+        db,
+        sources
+            .into_iter()
+            .filter_map(|source| source.entry.as_ref()),
+    )
+}
+
 fn source_to_table(
     source: playback_source_service::PlaybackSource,
+    parents: &HashMap<DbId, String>,
     include_entry: bool,
     include_full_path: bool,
 ) -> luau::runtime::Result<luau::OwnedTable> {
     let playback_source_service::PlaybackSource {
-        track_db_id,
+        track_id,
         source_id,
         source_kind,
         source_key,
@@ -242,8 +288,8 @@ fn source_to_table(
     } = source;
 
     let mut table = luau::OwnedTable::with_capacity(0, 15);
-    table.set_field("track_id", track_db_id.0);
-    table.set_field("source_id", source_id.0);
+    table.set_field("track_id", track_id);
+    table.set_field("source_id", source_id);
     table.set_field("source_kind", source_kind);
     table.set_field("source_key", source_key);
     table.set_field("is_primary", is_primary);
@@ -270,8 +316,9 @@ fn source_to_table(
                 .map(|entry| {
                     harmony_luau::serializable_to_luau_owned(EntryInfo::new(
                         entry,
+                        parents,
                         include_full_path,
-                    ))
+                    )?)
                 })
                 .transpose()?
                 .unwrap_or(luau::Value::Nil),
@@ -298,12 +345,12 @@ impl DescribeInterface for PlaybackSourceInfo {
         descriptor.fields.extend([
             FieldDescriptor {
                 name: "track_id",
-                ty: i64::luau_type(),
+                ty: String::luau_type(),
                 description: None,
             },
             FieldDescriptor {
                 name: "source_id",
-                ty: i64::luau_type(),
+                ty: String::luau_type(),
                 description: None,
             },
             FieldDescriptor {

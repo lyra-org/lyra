@@ -5,10 +5,7 @@
 
 use std::collections::HashMap;
 
-use agdb::{
-    DbId,
-    QueryId,
-};
+use agdb::DbId;
 use harmony_luau as luau;
 use harmony_luau::{
     DescribeInterface,
@@ -21,12 +18,13 @@ use serde::Serialize;
 
 use crate::{
     plugins::{
-        args::{
-            ResolveIdArg,
-            UniqueIds,
-        },
+        args::UniqueIds,
         auth::DispatchPrincipal,
         db::Db,
+        ids::{
+            self,
+            Resolved,
+        },
     },
     services::auth::access::{
         self,
@@ -39,13 +37,15 @@ pub(crate) struct LibrariesModule;
 
 #[harmony_macros::module(id = "lyra/libraries", docs_feature = "docgen")]
 impl LibrariesModule {
-    #[harmony(returns(Vec<LibraryRecord>))]
+    #[harmony(
+        description = "The libraries the caller can see, or only the one with `id`. A library the caller cannot see, or an unknown id, gives an empty list.",
+        returns(Vec<LibraryRecord>)
+    )]
     async fn list(
-        id: Option<ResolveIdArg>,
+        id: Option<String>,
         #[context] db: Db,
         #[context] caller: DispatchPrincipal,
     ) -> luau::runtime::Result<luau::Value> {
-        let id = id.map(|id| id.0);
         let principal = caller.0;
         let db = db.read().await;
         let libraries: Vec<LibraryRecord> = match (principal.as_ref(), id) {
@@ -59,54 +59,37 @@ impl LibrariesModule {
                     .map(LibraryRecord::from)
                     .collect::<Vec<_>>()
             }
-            (principal, Some(resolve_id)) => {
-                let query_id = resolve_id
-                    .to_query_id(&db)?
-                    .ok_or_else(|| crate::plugins::runtime_error("could not resolve id"))?;
-                match (principal, query_id) {
-                    (Some(principal), QueryId::Id(id)) => {
-                        access::library_by_id(&db, principal, id)?
-                            .into_iter()
-                            .map(LibraryRecord::from)
-                            .collect::<Vec<_>>()
-                    }
-                    (None, QueryId::Id(id)) => access::system_library_by_id(
-                        &db,
-                        &crate::services::libraries::system_context(),
-                        id,
-                    )?
+            (principal, Some(id)) => match (principal, ids::db_id(&*db, &id)?) {
+                (_, None) => Vec::new(),
+                (Some(principal), Some(id)) => access::library_by_id(&db, principal, id)?
                     .into_iter()
                     .map(LibraryRecord::from)
                     .collect::<Vec<_>>(),
-                    (Some(principal), QueryId::Alias(alias)) => {
-                        access::libraries_by_alias(&db, principal, alias.as_str())?
-                            .into_iter()
-                            .map(LibraryRecord::from)
-                            .collect::<Vec<_>>()
-                    }
-                    (None, QueryId::Alias(alias)) => access::system_libraries_by_alias(
-                        &db,
-                        &crate::services::libraries::system_context(),
-                        alias.as_str(),
-                    )?
-                    .into_iter()
-                    .map(LibraryRecord::from)
-                    .collect::<Vec<_>>(),
-                }
-            }
+                (None, Some(id)) => access::system_library_by_id(
+                    &db,
+                    &crate::services::libraries::system_context(),
+                    id,
+                )?
+                .into_iter()
+                .map(LibraryRecord::from)
+                .collect::<Vec<_>>(),
+            },
         };
         harmony_luau::serializable_to_luau_owned(libraries)
     }
 
     #[harmony(returns(Vec<LibraryRecord>))]
     async fn get_for_entity(
-        entity_id: i64,
+        entity_id: String,
         #[context] db: Db,
         #[context] caller: DispatchPrincipal,
     ) -> luau::runtime::Result<luau::Value> {
         let db = db.read().await;
+        let Some(entity_id) = ids::db_id(&*db, &entity_id)? else {
+            return harmony_luau::serializable_to_luau_owned(Vec::<LibraryRecord>::new());
+        };
         let libraries = if let Some(principal) = caller.0 {
-            access::libraries_for_entity(&db, &principal, DbId(entity_id))?
+            access::libraries_for_entity(&db, &principal, entity_id)?
                 .into_iter()
                 .map(LibraryRecord::from)
                 .collect::<Vec<_>>()
@@ -114,7 +97,7 @@ impl LibrariesModule {
             access::system_libraries_for_entity(
                 &db,
                 &crate::services::libraries::system_context(),
-                DbId(entity_id),
+                entity_id,
             )?
             .into_iter()
             .map(LibraryRecord::from)
@@ -123,16 +106,19 @@ impl LibrariesModule {
         harmony_luau::serializable_to_luau_owned(libraries)
     }
 
-    #[harmony(returns(HashMap<u64, LibraryRecord>))]
+    #[harmony(
+        description = "The library of each of these entities, keyed by entity id. Entities in no library the caller can see are absent.",
+        returns(HashMap<String, LibraryRecord>)
+    )]
     async fn get_for_entities(
         entity_ids: UniqueIds,
         #[context] db: Db,
         #[context] caller: DispatchPrincipal,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        let ids = entity_ids.0;
         let db = db.read().await;
+        let entities = Resolved::of(&*db, entity_ids.0)?;
         let libraries: HashMap<DbId, LibraryRecord> = if let Some(principal) = caller.0 {
-            access::libraries_for_entities(&db, &principal, &ids)?
+            access::libraries_for_entities(&db, &principal, entities.db_ids())?
                 .into_iter()
                 .map(|(id, library)| (id, LibraryRecord::from(library)))
                 .collect::<HashMap<_, _>>()
@@ -140,29 +126,22 @@ impl LibrariesModule {
             access::system_libraries_for_entities(
                 &db,
                 &crate::services::libraries::system_context(),
-                &ids,
+                entities.db_ids(),
             )?
             .into_iter()
             .map(|(id, library)| (id, LibraryRecord::from(library)))
             .collect::<HashMap<_, _>>()
         };
-        let mut table = luau::OwnedTable::with_entry_capacity(0, 0, ids.len());
-        for id in ids {
-            let value = libraries
-                .get(&id)
-                .cloned()
-                .map(harmony_luau::serializable_to_luau_owned)
-                .transpose()?
-                .unwrap_or(luau::Value::Nil);
-            table.set_key(id.0, value);
+        let mut values = Vec::with_capacity(libraries.len());
+        for (id, library) in libraries {
+            values.push((id, harmony_luau::serializable_to_luau_owned(library)?));
         }
-        Ok(table)
+        Ok(entities.keyed(values))
     }
 }
 
 #[derive(Clone, Serialize)]
 pub(crate) struct LibraryRecord {
-    db_id: Option<i64>,
     id: String,
     name: String,
     path: Option<String>,
@@ -173,7 +152,6 @@ pub(crate) struct LibraryRecord {
 impl From<lyra_db::libraries::Library> for LibraryRecord {
     fn from(library: lyra_db::libraries::Library) -> Self {
         Self {
-            db_id: library.db_id.map(|id| id.0),
             id: library.id,
             name: library.name,
             path: Some(library.path.to_string_lossy().to_string()),
@@ -186,7 +164,6 @@ impl From<lyra_db::libraries::Library> for LibraryRecord {
 impl From<LibraryView> for LibraryRecord {
     fn from(library: LibraryView) -> Self {
         Self {
-            db_id: library.db_id.map(|id| id.0),
             id: library.id,
             name: library.name,
             path: None,
@@ -199,7 +176,6 @@ impl From<LibraryView> for LibraryRecord {
 impl From<LibraryFull> for LibraryRecord {
     fn from(library: LibraryFull) -> Self {
         Self {
-            db_id: library.db_id.map(|id| id.0),
             id: library.id,
             name: library.name,
             path: Some(library.path.to_string_lossy().to_string()),
@@ -219,11 +195,6 @@ impl DescribeInterface for LibraryRecord {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("Library", None);
         descriptor.fields.extend([
-            FieldDescriptor {
-                name: "db_id",
-                ty: Option::<i64>::luau_type(),
-                description: None,
-            },
             FieldDescriptor {
                 name: "id",
                 ty: String::luau_type(),

@@ -5,7 +5,7 @@ local tracks = require("@lyra/tracks")
 local ids = fixture.ids
 local book = ids.book
 
-local function describe(chains: { { number } }): string
+local function describe(chains: { { string } }): string
 	local parts = {}
 	for _, chain in chains do
 		local members = {}
@@ -45,7 +45,7 @@ for seed = 1, 8 do
 	local page = tracks.query({ release_ids = { book }, sort = { { key = "random" } }, seed = seed })
 	local order = {}
 	for index, track in page.items do
-		order[track.db_id] = index
+		order[track.id] = index
 	end
 	assert(order[ids.blessing] == order[ids.awakening] + 1, `seed {seed}`)
 	assert(order[ids.idol] == order[ids.worship] + 1, `seed {seed}`)

@@ -20,7 +20,7 @@ use super::{
     MixSeedType,
     MixShape,
     MixViewer,
-    builtin::recent_listen_track_ids,
+    builtin::recent_listen_tracks,
 };
 use crate::services::{
     auth::access,
@@ -31,17 +31,16 @@ use crate::services::{
 pub(crate) const MAX_SEEDS: usize = 50;
 pub(crate) const MAX_QUERY_LEN: usize = 512;
 
-/// A mix request as clients send it, seeds identified by `Id`: public ids over REST, database
-/// ids from Luau.
+/// A mix request as clients send it, seeds by public id.
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "docgen", schemars(rename = "MixRequest"))]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct MixRequestFields<Id> {
+pub(crate) struct MixRequestFields {
     /// Tracks, releases, artists, genres or playlists to mix from; the server tells their types
     /// apart. An excluded seed is one to mix away from.
     #[serde(default)]
-    pub(crate) seeds: Vec<MixSeedField<Id>>,
+    pub(crate) seeds: Vec<MixSeedField>,
     /// Adds the caller's recent listens as track seeds, most recent first, up to what the
     /// serving mixer takes beyond the explicit seeds.
     #[serde(default)]
@@ -68,17 +67,17 @@ pub(crate) struct MixRequestFields<Id> {
 #[cfg_attr(feature = "docgen", schemars(rename = "MixSeed"))]
 #[derive(Deserialize)]
 #[serde(untagged)]
-pub(crate) enum MixSeedField<Id> {
-    Id(Id),
-    Entry(MixSeedEntryField<Id>),
+pub(crate) enum MixSeedField {
+    Id(String),
+    Entry(MixSeedEntryField),
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "docgen", schemars(rename = "MixSeedEntry"))]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct MixSeedEntryField<Id> {
-    pub(crate) id: Id,
+pub(crate) struct MixSeedEntryField {
+    pub(crate) id: String,
     /// Mixes away from the seed instead of toward it (default false).
     #[serde(default)]
     pub(crate) exclude: bool,
@@ -95,43 +94,7 @@ pub(crate) enum MixShapeField {
     Path,
 }
 
-impl<Id> MixRequestFields<Id> {
-    /// The request with each seed by the public id `public_id` finds for it; `Ok(None)` when a
-    /// seed has none.
-    pub(crate) fn with_public_ids<E>(
-        self,
-        mut public_id: impl FnMut(Id) -> Result<Option<String>, E>,
-    ) -> Result<Option<MixRequestFields<String>>, E> {
-        let mut seeds = Vec::with_capacity(self.seeds.len());
-        for seed in self.seeds {
-            let seed = match seed {
-                MixSeedField::Id(id) => public_id(id)?.map(MixSeedField::Id),
-                MixSeedField::Entry(seed) => public_id(seed.id)?.map(|id| {
-                    MixSeedField::Entry(MixSeedEntryField {
-                        id,
-                        exclude: seed.exclude,
-                    })
-                }),
-            };
-            let Some(seed) = seed else {
-                return Ok(None);
-            };
-            seeds.push(seed);
-        }
-        Ok(Some(MixRequestFields {
-            seeds,
-            from_history: self.from_history,
-            q: self.q,
-            shape: self.shape,
-            mixer: self.mixer,
-            options: self.options,
-            pin_seed: self.pin_seed,
-            limit: self.limit,
-        }))
-    }
-}
-
-impl MixRequestFields<String> {
+impl MixRequestFields {
     /// The request, a blend unless it names a shape.
     pub(crate) fn into_request(self) -> MixRequest {
         MixRequest {
@@ -288,10 +251,11 @@ impl MixRequest {
 }
 
 /// A seed as mixers receive it, resolved under one guard; its `DbId` is valid only under that
-/// guard.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// guard, so handlers get its public `id`.
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct MixSeed {
     pub(crate) db_id: DbId,
+    pub(crate) id: String,
     pub(crate) seed_type: MixSeedType,
     /// Mixes away from the seed instead of toward it.
     pub(crate) exclude: bool,
@@ -301,7 +265,7 @@ pub(crate) struct MixSeed {
 pub(super) struct ResolvedSeeds {
     pub(super) explicit: Vec<MixSeed>,
     /// The viewer's recent listens, most recent first, without the explicit track seeds.
-    history: Vec<DbId>,
+    history: Vec<MixSeed>,
 }
 
 impl ResolvedSeeds {
@@ -322,7 +286,7 @@ impl ResolvedSeeds {
             return Err(invalid(PIN_SEED_NEEDS));
         }
         let mut history = if request.from_history {
-            recent_listen_track_ids(
+            recent_listen_tracks(
                 db,
                 viewer.require(db)?,
                 viewer.accessible_library_ids.as_ref(),
@@ -330,11 +294,20 @@ impl ResolvedSeeds {
         } else {
             Vec::new()
         };
-        history.retain(|track| {
+        history.retain(|(track, _)| {
             !explicit
                 .iter()
                 .any(|seed| seed.seed_type == MixSeedType::Track && seed.db_id == *track)
         });
+        let history = history
+            .into_iter()
+            .map(|(db_id, id)| MixSeed {
+                db_id,
+                id,
+                seed_type: MixSeedType::Track,
+                exclude: false,
+            })
+            .collect();
         Ok(Self { explicit, history })
     }
 
@@ -364,12 +337,8 @@ impl ResolvedSeeds {
         let room = max_seeds.saturating_sub(self.explicit.len());
         self.explicit
             .iter()
-            .copied()
-            .chain(self.history.iter().take(room).map(|&db_id| MixSeed {
-                db_id,
-                seed_type: MixSeedType::Track,
-                exclude: false,
-            }))
+            .chain(self.history.iter().take(room))
+            .cloned()
             .collect()
     }
 }
@@ -417,6 +386,7 @@ fn resolve_visible(
     };
     Ok(seed_type.map(|seed_type| MixSeed {
         db_id,
+        id: seed.id.clone(),
         seed_type,
         exclude: seed.exclude,
     }))
@@ -562,12 +532,17 @@ mod tests {
     fn history_fills_what_a_handler_takes_beyond_the_explicit_seeds() {
         let seed = |id, seed_type| MixSeed {
             db_id: DbId(id),
+            id: id.to_string(),
             seed_type,
             exclude: false,
         };
         let seeds = ResolvedSeeds {
             explicit: vec![seed(1, MixSeedType::Release)],
-            history: vec![DbId(5), DbId(4), DbId(3)],
+            history: vec![
+                seed(5, MixSeedType::Track),
+                seed(4, MixSeedType::Track),
+                seed(3, MixSeedType::Track),
+            ],
         };
         let ids = |max_seeds| {
             seeds

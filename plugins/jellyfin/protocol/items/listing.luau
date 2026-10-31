@@ -115,26 +115,26 @@ local function playlist_source(options: ItemsQueryOptions, scope: Scope): Source
 	end
 	local only_playlists = #options.include_item_types == 1
 		and string.lower(options.include_item_types[1]) == "playlist"
-	if scope.db_id ~= nil and not only_playlists then
+	if scope.id ~= nil and not only_playlists then
 		return nil
 	end
 
-	local wanted: { [number]: boolean }? = nil
+	local wanted: { [string]: boolean }? = nil
 	if #options.ids > 0 then
 		wanted = {}
 		for _, id in item_ids.parse_jellyfin_ids_array(options.ids) do
-			(wanted :: { [number]: boolean })[id] = true
+			(wanted :: { [string]: boolean })[id] = true
 		end
 	end
-	local excluded: { [number]: boolean } = {}
+	local excluded: { [string]: boolean } = {}
 	for _, id in item_ids.parse_jellyfin_ids_array(options.exclude_item_ids) do
 		excluded[id] = true
 	end
-	local favorite: { [number]: boolean }? = nil
+	local favorite: { [string]: boolean }? = nil
 	if is_favorite ~= nil then
 		favorite = {}
 		for _, id in favorites.list_ids("playlist") do
-			(favorite :: { [number]: boolean })[id] = true
+			(favorite :: { [string]: boolean })[id] = true
 		end
 	end
 	local search = if options.search_term then string.lower(options.search_term) else nil
@@ -154,10 +154,9 @@ local function playlist_source(options: ItemsQueryOptions, scope: Scope): Source
 
 	local shown: { PlaylistInfo } = {}
 	for _, playlist in candidates do
-		local id = playlist.db_id
+		local id = playlist.id
 		if
-			id == nil
-			or excluded[id]
+			excluded[id]
 			or (favorite ~= nil and (favorite[id] == true) ~= is_favorite)
 			or (search ~= nil and string.find(string.lower(playlist.name or ""), search, 1, true) == nil)
 		then
@@ -166,16 +165,16 @@ local function playlist_source(options: ItemsQueryOptions, scope: Scope): Source
 		table.insert(shown, playlist)
 	end
 
-	local shown_ids: { number } = {}
+	local shown_ids: { string } = {}
 	for _, playlist in shown do
-		table.insert(shown_ids, playlist.db_id :: number)
+		table.insert(shown_ids, playlist.id)
 	end
-	local entries: { [number]: { playlists.PlaylistTrackLink } } = if #shown_ids > 0
+	local entries: { [string]: { playlists.PlaylistTrackLink } } = if #shown_ids > 0
 		then playlists.get_tracks_many(shown_ids)
 		else {}
-	local under: { [number]: boolean }? = nil
-	if scope.db_id ~= nil then
-		local track_ids: { number } = {}
+	local under: { [string]: boolean }? = nil
+	if scope.id ~= nil then
+		local track_ids: { string } = {}
 		for _, links in entries do
 			for _, link in links do
 				table.insert(track_ids, link.track_id)
@@ -187,15 +186,13 @@ local function playlist_source(options: ItemsQueryOptions, scope: Scope): Source
 		end
 		under = {}
 		for _, track in tracks.query(scoped).items do
-			if track.db_id then
-				(under :: { [number]: boolean })[track.db_id] = true
-			end
+			(under :: { [string]: boolean })[track.id] = true
 		end
 	end
 	-- As upstream, a playlist is played once none of the tracks the caller can see is unplayed.
-	local unplayed: { [number]: boolean } = {}
+	local unplayed: { [string]: boolean } = {}
 	if is_played ~= nil then
-		local track_ids: { number } = {}
+		local track_ids: { string } = {}
 		for _, links in entries do
 			for _, link in links do
 				table.insert(track_ids, link.track_id)
@@ -203,15 +200,13 @@ local function playlist_source(options: ItemsQueryOptions, scope: Scope): Source
 		end
 		if #track_ids > 0 then
 			for _, track in tracks.query({ ids = track_ids, listened = false }).items do
-				if track.db_id then
-					unplayed[track.db_id] = true
-				end
+				unplayed[track.id] = true
 			end
 		end
 	end
 	local stubs: { ItemInfo } = {}
 	for _, playlist in shown do
-		local links = entries[playlist.db_id :: number]
+		local links = entries[playlist.id]
 		if under ~= nil then
 			local found = false
 			for _, link in links or {} do
@@ -280,12 +275,12 @@ local function in_request_order(
 	options: ItemsQueryOptions,
 	extras: { ItemInfo }
 ): ({ ItemInfo }, number)
-	local found: { [number]: ItemInfo } = {}
+	local found: { [string]: ItemInfo } = {}
 	for _, source in sources do
 		for _, stub in (source(0, nil)) do
 			local raw = stub._raw
-			if raw and raw.db_id then
-				found[raw.db_id] = stub
+			if raw then
+				found[raw.id] = stub
 			end
 		end
 	end
@@ -351,7 +346,7 @@ end
 local function named_extras(options: ItemsQueryOptions, scope: Scope): { ItemInfo }
 	local extras: { ItemInfo } = {}
 	if #options.ids == 0 then
-		if scope.db_id == nil and names_item_type(options, "manualplaylistsfolder") then
+		if scope.id == nil and names_item_type(options, "manualplaylistsfolder") then
 			table.insert(extras, playlists_folder(options))
 		end
 		return extras
@@ -403,15 +398,15 @@ local CHILD_TYPES: { [string]: { string } } = {
 -- tracks those ids name, so the listing's filters and `SortBy` apply; nil when there are none the
 -- caller can see.
 local function playlist_children(options: ItemsQueryOptions, scope: Scope): ItemsQueryOptions?
-	local playlist = playlist_access.find(scope.db_id)
+	local playlist = playlist_access.find(scope.id)
 	if not playlist or not playlist_access.can_view(playlist, options.user_id) then
 		return nil
 	end
-	local wanted: { [number]: boolean }? = nil
+	local wanted: { [string]: boolean }? = nil
 	if #options.ids > 0 then
 		wanted = {}
 		for _, id in item_ids.parse_jellyfin_ids_array(options.ids) do
-			(wanted :: { [number]: boolean })[id] = true
+			(wanted :: { [string]: boolean })[id] = true
 		end
 	end
 	local ids: { string } = {}
@@ -592,27 +587,21 @@ function module.list_genre_items(options: ItemsQueryOptions): ({ ItemInfo }, num
 	end
 	local page = genres.query(built)
 
-	local genre_ids: { number } = {}
+	local genre_ids: { string } = {}
 	for _, genre in page.items do
-		if genre.db_id then
-			table.insert(genre_ids, genre.db_id)
-		end
+		table.insert(genre_ids, genre.id)
 	end
 	local cover_infos = artwork.get_artwork_infos(genre_ids)
 	local library_hex_id = catalog.library_hex_id_from_parent(options.parent_id)
 
 	local items: { ItemInfo } = {}
 	for _, genre in page.items do
-		local genre_id = genre.db_id
-		if genre_id == nil then
-			continue
-		end
 		local item = catalog.genre_item(
 			genre.name,
 			genre.id,
 			{ release_count = genre.release_count, song_count = genre.track_count },
 			library_hex_id,
-			cover_infos[genre_id]
+			cover_infos[genre.id]
 		)
 		if item then
 			table.insert(items, item)
@@ -677,12 +666,12 @@ end
 -- for an item the caller can't see.
 function module.playable_track_ids(item_id: string, user_id: string): { string }
 	local scope = lookups.scope(item_id)
-	local kind = if scope.db_id then lookups.visible_kind(scope.db_id, user_id) else nil
+	local kind = if scope.id then lookups.visible_kind(scope.id, user_id) else nil
 	if kind == nil then
 		return {}
 	end
 	if kind == "Track" then
-		return { item_ids.encode_jellyfin_item_id(scope.db_id) :: string }
+		return { item_ids.encode_jellyfin_item_id(scope.id) :: string }
 	end
 
 	local options = options_module.for_user(options_module.parse(nil), user_id)
@@ -793,8 +782,8 @@ function module.find_genre_by_name(name: string, user_id: string): ItemInfo?
 end
 
 -- `with_provider_ids` adds ProviderIds and ExternalUrls, as single-item responses carry.
-function module.find_item_by_id(item_id: number?, user_id: string?, with_provider_ids: boolean?): ItemInfo?
-	local item_hex_id = if item_id and item_id > 0 then item_ids.encode_jellyfin_item_id(item_id) else nil
+function module.find_item_by_id(item_id: string?, user_id: string?, with_provider_ids: boolean?): ItemInfo?
+	local item_hex_id = item_ids.encode_jellyfin_item_id(item_id)
 	if not item_hex_id then
 		return nil
 	end
@@ -817,25 +806,21 @@ end
 local ANCESTORS_MAX_DEPTH = 8
 
 -- Visited-set prevents cycle duplicates; boolean return distinguishes "missing" from "no ancestors".
-function module.ancestors_chain(item_id: number, user_id: string): ({ ItemInfo }, boolean)
+function module.ancestors_chain(item_id: string, user_id: string): ({ ItemInfo }, boolean)
 	local chain: { ItemInfo } = {}
-	if item_id <= 0 then
-		return chain, false
-	end
-
 	local current = module.find_item_by_id(item_id, user_id)
 	if not current then
 		return chain, false
 	end
 
-	local visited: { [number]: boolean } = { [item_id] = true }
+	local visited: { [string]: boolean } = { [item_id] = true }
 	while current and #chain < ANCESTORS_MAX_DEPTH do
-		local parent_db_id = item_ids.decode_jellyfin_item_id(current.ParentId)
-		if not parent_db_id or visited[parent_db_id] then
+		local parent_id = item_ids.decode_jellyfin_item_id(current.ParentId)
+		if not parent_id or visited[parent_id] then
 			break
 		end
-		visited[parent_db_id] = true
-		local parent = module.find_item_by_id(parent_db_id, user_id)
+		visited[parent_id] = true
+		local parent = module.find_item_by_id(parent_id, user_id)
 		if not parent then
 			break
 		end
@@ -850,16 +835,16 @@ function module.list_playlist_track_items(
 	playlist: PlaylistInfo?,
 	options: ItemsQueryOptions
 ): ({ ItemInfo }, number, number)
-	if not playlist or not playlist.db_id then
+	if not playlist then
 		return {}, 0, options.start_index
 	end
 
 	local track_refs = playlist_access.track_refs(playlist)
-	local track_ids: { number } = {}
+	local track_ids: { string } = {}
 	for _, track_ref in track_refs do
 		table.insert(track_ids, track_ref.track_id)
 	end
-	local tracks_by_id: { [number]: tracks.Track } = if #track_ids > 0 then tracks.get(track_ids) else {}
+	local tracks_by_id: { [string]: tracks.Track } = if #track_ids > 0 then tracks.get(track_ids) else {}
 
 	local entries: { tracks.Track } = {}
 	for _, track_ref in track_refs do

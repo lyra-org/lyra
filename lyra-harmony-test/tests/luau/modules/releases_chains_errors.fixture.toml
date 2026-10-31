@@ -1,0 +1,57 @@
+run_as = "editor"
+
+[[users]]
+key = "editor"
+permissions = ["manage_metadata"]
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["editor"]
+
+[[libraries]]
+key = "private"
+name = "Private"
+
+[[releases]]
+key = "book"
+title = "Book"
+library = "music"
+
+[[releases]]
+key = "other"
+title = "Other"
+library = "music"
+
+[[releases]]
+key = "secret"
+title = "Secret"
+library = "private"
+
+[[tracks]]
+key = "first"
+title = "First"
+release = "book"
+disc = 1
+track = 1
+
+[[tracks]]
+key = "second"
+title = "Second"
+release = "book"
+disc = 1
+track = 2
+
+[[tracks]]
+key = "elsewhere"
+title = "Elsewhere"
+release = "other"
+disc = 1
+track = 1
+
+[[tracks]]
+key = "hidden"
+title = "Hidden"
+release = "secret"
+disc = 1
+track = 1

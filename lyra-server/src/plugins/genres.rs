@@ -25,14 +25,14 @@ use serde::{
 #[cfg(feature = "docgen")]
 use std::collections::HashMap;
 
-use crate::plugins::args::{
-    self,
-    UniqueIds,
-};
-use crate::plugins::catalog;
+use crate::plugins::args::UniqueIds;
 use crate::plugins::db::{
     Db,
     ViewerDb,
+};
+use crate::plugins::{
+    catalog,
+    ids,
 };
 use crate::services::catalog::genres::GenreKey;
 use crate::services::{
@@ -53,18 +53,13 @@ use lyra_db::genres::{
 pub(crate) struct GenresModule;
 
 /// The `query` argument, read with its page bounds.
+/// The `query` argument, read with its page bounds.
 struct GenreQuery(catalog::PagedQuery<Genres>);
 
 impl<'vm> luau::FromLuau<'vm> for GenreQuery {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let opts: luau::Table = reader.read()?;
-        let filter = GenreFilter {
-            ids: catalog::optional_ids(&opts, "ids")?,
-            exclude_ids: args::optional_unique_ids(&opts, "exclude_ids")?,
-            library: args::optional_positive_id(&opts, "library_id")?,
-            releases: catalog::optional_ids(&opts, "release_ids")?,
-        };
-        catalog::read_query::<Genres>(&opts, filter).map(Self)
+        catalog::read_query::<Genres>(&opts, GenreFilter::default()).map(Self)
     }
 }
 
@@ -102,9 +97,10 @@ impl GenresModule {
         #[context] db: ViewerDb,
         #[context] scopes: catalog::PersonalScopes,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        let request = query.0;
+        let mut request = query.0;
         scopes.check(&request.query)?;
         let (db, viewer) = db.read().await?;
+        request.resolve_ids(&db)?;
         let page =
             services::catalog::page(&db, &viewer, &request.query, request.offset, request.limit)
                 .map_err(catalog::error)?;
@@ -127,33 +123,38 @@ impl GenresModule {
     async fn resolve(
         request: GenreResolveRequest,
         #[context] db: Db,
-    ) -> luau::runtime::Result<i64> {
-        let genre_id = {
-            let mut db = db.write().await;
-            resolve_genre_from_request(&mut db, &request).map_err(crate::plugins::runtime_error)
-        }?;
-        Ok(genre_id.0)
+    ) -> luau::runtime::Result<String> {
+        let mut db = db.write().await;
+        let genre_id =
+            resolve_genre_from_request(&mut db, &request).map_err(crate::plugins::runtime_error)?;
+        ids::public_id(&*db, genre_id)
     }
 
     async fn add_parent(
-        child_id: i64,
-        parent_id: i64,
+        child_id: String,
+        parent_id: String,
         #[context] db: Db,
     ) -> luau::runtime::Result<()> {
         let mut db = db.write().await;
-        lyra_db::genres::link_to_parent(&mut db, DbId(child_id), DbId(parent_id))
+        let node = |id: &str, name: &str| {
+            ids::db_id(&*db, id)?
+                .ok_or_else(|| crate::plugins::runtime_error(format!("unknown {name}: {id}")))
+        };
+        let child = node(&child_id, "child_id")?;
+        let parent = node(&parent_id, "parent_id")?;
+        lyra_db::genres::link_to_parent(&mut db, child, parent)
             .map_err(crate::plugins::runtime_error)
     }
 
     #[harmony(
         description = "The genres with these ids that the caller can see, keyed by id.",
-        returns(HashMap<u64, GenreRecord>)
+        returns(HashMap<String, GenreRecord>)
     )]
     async fn get(
         ids: UniqueIds,
         #[context] db: ViewerDb,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        catalog::keyed_table(db, ids.0, |db, viewer, ids| {
+        catalog::keyed_table(&db, ids.0, |db, viewer, ids| {
             Ok(lookups::get::<Genres>(db, viewer, ids)?
                 .into_iter()
                 .map(|(id, genre)| (id, GenreRecord::from(genre)))
@@ -164,13 +165,13 @@ impl GenresModule {
 
     #[harmony(
         description = "The genres of each of these releases that the caller can see, keyed by release id.",
-        returns(HashMap<u64, Vec<GenreRecord>>)
+        returns(HashMap<String, Vec<GenreRecord>>)
     )]
     async fn by_release(
         release_ids: UniqueIds,
         #[context] db: ViewerDb,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        catalog::keyed_table(db, release_ids.0, |db, viewer, ids| {
+        catalog::keyed_table(&db, release_ids.0, |db, viewer, ids| {
             Ok(lookups::genres_by_release(db, viewer, ids)?
                 .into_iter()
                 .map(|(id, genres)| {
@@ -269,7 +270,6 @@ fn resolve_genre_from_request(
 
 #[derive(Serialize)]
 pub(crate) struct GenreRecord {
-    db_id: Option<i64>,
     id: String,
     name: String,
 }
@@ -277,7 +277,6 @@ pub(crate) struct GenreRecord {
 impl From<lyra_db::genres::Genre> for GenreRecord {
     fn from(genre: lyra_db::genres::Genre) -> Self {
         Self {
-            db_id: genre.db_id.map(DbId::from).map(|id| id.0),
             id: genre.id,
             name: genre.name,
         }
@@ -303,11 +302,6 @@ impl DescribeInterface for GenreRecord {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("GenreInfo", None);
         descriptor.fields.extend([
-            FieldDescriptor {
-                name: "db_id",
-                ty: Option::<i64>::luau_type(),
-                description: None,
-            },
             FieldDescriptor {
                 name: "id",
                 ty: String::luau_type(),
@@ -414,22 +408,22 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
     query.fields.extend([
         FieldDescriptor {
             name: "ids",
-            ty: Option::<Vec<u64>>::luau_type(),
+            ty: Option::<Vec<String>>::luau_type(),
             description: None,
         },
         FieldDescriptor {
             name: "exclude_ids",
-            ty: Option::<Vec<u64>>::luau_type(),
+            ty: Option::<Vec<String>>::luau_type(),
             description: None,
         },
         FieldDescriptor {
             name: "library_id",
-            ty: Option::<u64>::luau_type(),
+            ty: Option::<String>::luau_type(),
             description: None,
         },
         FieldDescriptor {
             name: "release_ids",
-            ty: Option::<Vec<u64>>::luau_type(),
+            ty: Option::<Vec<String>>::luau_type(),
             description: Some("Genres of these releases."),
         },
     ]);

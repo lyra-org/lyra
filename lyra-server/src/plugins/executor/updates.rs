@@ -24,7 +24,8 @@ use crate::{
 
 impl PluginExecutor {
     pub(crate) fn dispatch_playback_update(&self, payload: PlaybackUpdatePayload) -> Result<()> {
-        self.run_update_callbacks(&payload, |plugin_id, error| {
+        let update = crate::plugins::playback_sessions::PlaybackUpdate::from(&payload);
+        self.run_update_callbacks::<PlaybackUpdatePayload>(&update, |plugin_id, error| {
             tracing::warn!(
                 playback_session_public_id = %payload.playback_session_public_id,
                 event = %payload.event,
@@ -36,7 +37,7 @@ impl PluginExecutor {
     }
 
     pub(crate) fn dispatch_listen_update(&self, payload: ListenUpdatePayload) -> Result<()> {
-        self.run_update_callbacks(&payload, |plugin_id, error| {
+        self.run_update_callbacks::<ListenUpdatePayload>(&payload, |plugin_id, error| {
             tracing::warn!(
                 user_id = %payload.user_id,
                 listens = payload.listens.len(),
@@ -48,10 +49,11 @@ impl PluginExecutor {
         })
     }
 
-    /// Runs every callback registered for `Payload` updates to completion, one after another.
-    fn run_update_callbacks<Payload: Serialize + 'static>(
+    /// Runs every callback registered for `Payload` updates to completion, one after another,
+    /// handing each `payload` as plugins read it.
+    fn run_update_callbacks<Payload: 'static>(
         &self,
-        payload: &Payload,
+        payload: &impl Serialize,
         on_error: impl Fn(&str, &anyhow::Error),
     ) -> Result<()> {
         let handlers = self

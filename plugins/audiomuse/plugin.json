@@ -10,7 +10,6 @@
     "harmony.http",
     "harmony.serde",
     "lyra.api",
-    "lyra.ids",
     "lyra.mix",
     "lyra.plugins",
     "lyra.tracks"

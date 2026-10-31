@@ -26,8 +26,10 @@ use harmony_luau::{
 #[cfg(feature = "docgen")]
 use std::collections::HashMap;
 
-use crate::plugins::args;
-use crate::plugins::args::ResolveIdArg;
+use crate::plugins::{
+    args,
+    ids,
+};
 use crate::{
     plugins::db::{
         Db,
@@ -48,8 +50,8 @@ use crate::{
         },
     },
 };
+use agdb::QueryId;
 use lyra_db::DbAsync;
-use lyra_db::ResolveId;
 
 #[derive(Clone, Copy)]
 enum ProjectionKind {
@@ -60,17 +62,27 @@ enum ProjectionKind {
 }
 
 struct QueryRequest {
-    id: ResolveId,
+    id: String,
     includes: Vec<EntityInclude>,
-    library_id: Option<agdb::DbId>,
+    library_id: Option<String>,
 }
 
 impl<'vm> luau::FromLuau<'vm> for QueryRequest {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let request: luau::Table = reader.read()?;
-        let id = args::resolve_id(required_value(&request, "id")?)?;
+        let id = match required_value(&request, "id")? {
+            luau::Value::String(bytes) => {
+                String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?
+            }
+            other => {
+                return Err(crate::plugins::runtime_error(format!(
+                    "id must be a string, got {}",
+                    other.type_name()
+                )));
+            }
+        };
         let includes = parse_includes(request.get("include")?)?;
-        let library_id = args::optional_positive_id(&request, "library_id")?;
+        let library_id = request.optional_string_field("library_id")?;
         Ok(Self {
             id,
             includes,
@@ -80,42 +92,25 @@ impl<'vm> luau::FromLuau<'vm> for QueryRequest {
 }
 
 struct QueryManyRequest {
-    ids: Vec<(String, ResolveId)>,
+    ids: Vec<String>,
     includes: Vec<EntityInclude>,
-    library_id: Option<agdb::DbId>,
+    library_id: Option<String>,
 }
 
 impl<'vm> luau::FromLuau<'vm> for QueryManyRequest {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let request: luau::Table = reader.read()?;
         let ids = match required_value(&request, "ids")? {
-            luau::Value::Table(table) => {
-                let mut ids = Vec::new();
-                for (_, value) in table.pairs()? {
-                    let key = match &value {
-                        luau::Value::Integer(value) if *value > 0 => value.to_string(),
-                        luau::Value::Number(value)
-                            if value.is_finite() && value.fract() == 0.0 && *value > 0.0 =>
-                        {
-                            (*value as i64).to_string()
-                        }
-                        luau::Value::String(bytes) => String::from_utf8(bytes.clone())
-                            .map_err(crate::plugins::runtime_error)?,
-                        _ => continue,
-                    };
-                    ids.push((key, args::resolve_id(value)?));
-                }
-                ids
-            }
+            luau::Value::Table(table) => args::unique_ids(&table)?,
             other => {
                 return Err(crate::plugins::runtime_error(format!(
-                    "ids must be an array of integer or string values, got {}",
+                    "ids must be an array of ids, got {}",
                     other.type_name()
                 )));
             }
         };
         let includes = parse_includes(request.get("include")?)?;
-        let library_id = args::optional_positive_id(&request, "library_id")?;
+        let library_id = request.optional_string_field("library_id")?;
         Ok(Self {
             ids,
             includes,
@@ -230,12 +225,9 @@ impl EntitiesModule {
         query_entity(ProjectionKind::Artist, request, vm, context).await
     }
 
-    async fn get_type(
-        id: ResolveIdArg,
-        #[context] db: Db,
-    ) -> luau::runtime::Result<Option<String>> {
+    async fn get_type(id: String, #[context] db: Db) -> luau::runtime::Result<Option<String>> {
         let db = db.read().await;
-        match id.0.to_db_id(&db)? {
+        match ids::db_id(&*db, &id)? {
             Some(id) => {
                 lyra_db::entities::get_element_type(&db, id).map_err(crate::plugins::runtime_error)
             }
@@ -265,15 +257,15 @@ impl EntitiesModule {
             link_vm,
             &includes,
             library_id,
-            |db, id_includes| {
+            |db, library_id, id_includes| {
                 let mut resolved_keys = Vec::new();
                 let mut query_ids = Vec::new();
-                for (key, resolve_id) in ids {
-                    let Some(query_id) = resolve_id.to_query_id(db)? else {
+                for key in ids {
+                    let Some(db_id) = ids::db_id(db, &key)? else {
                         continue;
                     };
                     resolved_keys.push(key);
-                    query_ids.push(query_id);
+                    query_ids.push(QueryId::Id(db_id));
                 }
                 let viewer = scoped.viewer(db)?;
                 let projections = project_visible_entities(
@@ -315,7 +307,7 @@ async fn query_entity(
     context: luau::CallContext,
 ) -> luau::runtime::Result<luau::Value> {
     let QueryRequest {
-        id: resolve_id,
+        id,
         includes,
         library_id,
     } = request;
@@ -326,9 +318,9 @@ async fn query_entity(
         link_vm,
         &includes,
         library_id,
-        |db, id_includes| {
-            let query_id = resolve_id
-                .to_query_id(db)?
+        |db, library_id, id_includes| {
+            let query_id = ids::db_id(db, &id)?
+                .map(QueryId::Id)
                 .ok_or_else(|| crate::plugins::runtime_error("could not resolve id"))?;
             let viewer = scoped.viewer(db)?;
             let projections = project_visible_entities(
@@ -385,9 +377,10 @@ async fn project_with_links(
     db: DbAsync,
     link_vm: Option<luau::Vm>,
     includes: &[EntityInclude],
-    library_id: Option<agdb::DbId>,
+    library_id: Option<String>,
     project: impl FnOnce(
         &agdb::DbAny,
+        Option<agdb::DbId>,
         &mut IdIncludes<'_>,
     ) -> luau::runtime::Result<Vec<EntityProjectionInfo>>,
 ) -> luau::runtime::Result<Vec<EntityProjectionInfo>> {
@@ -401,8 +394,12 @@ async fn project_with_links(
     };
     let (mut projections, links) = {
         let db = db.read().await;
+        let library_id = match library_id {
+            Some(library_id) => ids::db_id(&*db, &library_id)?,
+            None => None,
+        };
         let mut id_includes = IdIncludes::new(&schemes, includes);
-        let projections = project(&db, &mut id_includes)?;
+        let projections = project(&db, library_id, &mut id_includes)?;
         let links = match (link_vm, generators, id_includes.into_link_rows()) {
             (Some(vm), Some(generators), Some(rows)) => {
                 let targets = id_link_targets(&db, rows, library_id, &generators)?;
@@ -564,7 +561,6 @@ fn string_enum(values: impl IntoIterator<Item = &'static str>) -> LuauType {
 #[cfg(feature = "docgen")]
 fn track_type() -> LuauType {
     LuauType::object(vec![
-        field("db_id", Option::<i64>::luau_type()),
         field("id", String::luau_type()),
         field("track_title", String::luau_type()),
         field("sort_title", Option::<String>::luau_type()),
@@ -585,7 +581,6 @@ fn track_type() -> LuauType {
 #[cfg(feature = "docgen")]
 fn release_type() -> LuauType {
     LuauType::object(vec![
-        field("db_id", Option::<i64>::luau_type()),
         field("id", String::luau_type()),
         field("release_title", String::luau_type()),
         field("sort_title", Option::<String>::luau_type()),
@@ -603,7 +598,6 @@ fn release_type() -> LuauType {
 #[cfg(feature = "docgen")]
 fn artist_type() -> LuauType {
     LuauType::object(vec![
-        field("db_id", Option::<i64>::luau_type()),
         field("id", String::luau_type()),
         field("artist_name", String::luau_type()),
         field("scan_name", String::luau_type()),
@@ -675,24 +669,24 @@ fn entity_type_aliases() -> Vec<TypeAliasDescriptor> {
         TypeAliasDescriptor::new(
             "EntityQueryRequest",
             LuauType::object(vec![
-                field("id", args::resolve_id_type()),
+                field("id", String::luau_type()),
                 field(
                     "include",
                     LuauType::optional(LuauType::named("EntityIncludeSelector")),
                 ),
-                field("library_id", Option::<i64>::luau_type()),
+                field("library_id", Option::<String>::luau_type()),
             ]),
             None,
         ),
         TypeAliasDescriptor::new(
             "EntityQueryManyRequest",
             LuauType::object(vec![
-                field("ids", LuauType::array(args::resolve_id_type())),
+                field("ids", Vec::<String>::luau_type()),
                 field(
                     "include",
                     LuauType::optional(LuauType::named("EntityIncludeSelector")),
                 ),
-                field("library_id", Option::<i64>::luau_type()),
+                field("library_id", Option::<String>::luau_type()),
             ]),
             None,
         ),

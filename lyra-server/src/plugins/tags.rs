@@ -5,9 +5,6 @@
 #[cfg(feature = "docgen")]
 use std::collections::HashMap;
 
-#[cfg(feature = "docgen")]
-use crate::plugins::types::LuauNodeId;
-use agdb::DbId;
 use harmony_luau as luau;
 use harmony_luau::{
     DescribeInterface,
@@ -20,26 +17,24 @@ use serde::Serialize;
 
 use crate::{
     plugins::{
-        args::{
-            NodeIdArg,
-            UniqueIds,
-        },
+        args::UniqueIds,
         db::Db,
+        ids::{
+            self,
+            Resolved,
+        },
     },
     services::{
         auth::Principal,
         tags as tag_service,
     },
 };
-use lyra_db::NodeId;
-
 /// `lyra/tags` plugin bindings, scoped to the dispatch principal. Tag names are normalized via
 /// [`lyra_db::tags::normalize_tag_name`]; return values use the canonical form.
 pub(crate) struct TagsModule;
 
 #[derive(Debug, Serialize)]
 struct TagInfo {
-    db_id: Option<NodeId>,
     id: String,
     tag: String,
     color: String,
@@ -48,7 +43,6 @@ struct TagInfo {
 
 fn tag_to_info(tag: lyra_db::Tag) -> TagInfo {
     TagInfo {
-        db_id: tag.db_id,
         id: tag.id,
         tag: tag.tag,
         color: tag.color,
@@ -60,7 +54,7 @@ fn tag_to_info(tag: lyra_db::Tag) -> TagInfo {
 impl TagsModule {
     #[harmony(description = "Returns the canonical tag name. color is ignored on reuse.")]
     async fn add(
-        target_id: NodeIdArg,
+        target_id: String,
         tag: String,
         color: String,
         #[context] db: Db,
@@ -70,40 +64,48 @@ impl TagsModule {
         let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
         let tag =
             tag_service::NewTag::parse(&tag, &color).map_err(crate::plugins::runtime_error)?;
-        tag_service::create(&mut db, user_id, target_id.0, &tag)
+        let target = ids::db_id(&*db, &target_id)?.ok_or_else(|| {
+            crate::plugins::runtime_error(format!("unknown target_id: {target_id}"))
+        })?;
+        tag_service::create(&mut db, user_id, target, &tag)
             .map_err(crate::plugins::runtime_error)?;
         Ok(tag.into_name())
     }
 
     #[harmony(description = "Removes a tag from a target.")]
     async fn remove(
-        target_id: NodeIdArg,
+        target_id: String,
         tag: String,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<()> {
         let mut db = db.write().await;
         let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        tag_service::remove_target(&mut db, user_id, target_id.0, &tag)
+        let Some(target) = ids::db_id(&*db, &target_id)? else {
+            return Ok(());
+        };
+        tag_service::remove_target(&mut db, user_id, target, &tag)
             .map_err(crate::plugins::runtime_error)
     }
 
     #[harmony(description = "Returns whether a target has a tag.")]
     async fn has(
-        target_id: NodeIdArg,
+        target_id: String,
         tag: String,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<bool> {
         let db = db.read().await;
         let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        tag_service::has_target(&db, user_id, target_id.0, &tag)
-            .map_err(crate::plugins::runtime_error)
+        let Some(target) = ids::db_id(&*db, &target_id)? else {
+            return Ok(false);
+        };
+        tag_service::has_target(&db, user_id, target, &tag).map_err(crate::plugins::runtime_error)
     }
 
     #[harmony(
-        description = "Batch check.",
-        returns(HashMap<u64, bool>)
+        description = "Whether each of the targets has the tag, keyed by id. Unknown targets are absent.",
+        returns(HashMap<String, bool>)
     )]
     async fn has_many(
         target_ids: UniqueIds,
@@ -111,14 +113,17 @@ impl TagsModule {
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        let target_ids = target_ids.0;
         let db = db.read().await;
         let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let result = tag_service::has_targets(&db, user_id, &target_ids, &tag)
+        let targets = Resolved::of(&*db, target_ids.0)?;
+        let result = tag_service::has_targets(&db, user_id, targets.db_ids(), &tag)
             .map_err(crate::plugins::runtime_error)?;
-        Ok(luau::OwnedTable::from_entries(target_ids.into_iter().map(
-            |id| (id.0, result.get(&id).copied().unwrap_or(false)),
-        )))
+        Ok(targets.keyed(
+            targets
+                .db_ids()
+                .iter()
+                .map(|id| (*id, result.get(id).copied().unwrap_or(false))),
+        ))
     }
 
     #[harmony(
@@ -126,45 +131,46 @@ impl TagsModule {
         returns(Vec<TagInfo>)
     )]
     async fn get_for_target(
-        target_id: NodeIdArg,
+        target_id: String,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::OwnedTable> {
         let db = db.read().await;
         let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let tags = tag_service::get_for_target(&db, user_id, target_id.0)
+        let Some(target) = ids::db_id(&*db, &target_id)? else {
+            return Ok(luau::OwnedTable::new());
+        };
+        let tags = tag_service::get_for_target(&db, user_id, target)
             .map_err(crate::plugins::runtime_error)?;
         Ok(tag_info_array(tags.into_iter().map(tag_to_info).collect()))
     }
 
     #[harmony(
-        description = "Returns tags for many targets.",
-        returns(HashMap<u64, Vec<TagInfo>>)
+        description = "The tags of each of the targets, keyed by id. Unknown targets are absent.",
+        returns(HashMap<String, Vec<TagInfo>>)
     )]
     async fn get_for_targets_many(
         target_ids: UniqueIds,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        let target_ids = target_ids.0;
         let db = db.read().await;
         let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let mut result = tag_service::get_for_targets_many(&db, user_id, &target_ids)
+        let targets = Resolved::of(&*db, target_ids.0)?;
+        let mut result = tag_service::get_for_targets_many(&db, user_id, targets.db_ids())
             .map_err(crate::plugins::runtime_error)?;
-        Ok(luau::OwnedTable::from_entries(target_ids.into_iter().map(
-            |id| {
-                let tags = result.remove(&id).unwrap_or_default();
-                (
-                    id.0,
-                    tag_info_array(tags.into_iter().map(tag_to_info).collect()),
-                )
-            },
-        )))
+        Ok(targets.keyed(targets.db_ids().iter().map(|id| {
+            let tags = result.remove(id).unwrap_or_default();
+            (
+                *id,
+                tag_info_array(tags.into_iter().map(tag_to_info).collect()),
+            )
+        })))
     }
 
     #[harmony(
         description = "Returns target IDs tagged with the given tag.",
-        returns(Vec<LuauNodeId>)
+        returns(Vec<String>)
     )]
     async fn get_tagged(
         tag: String,
@@ -173,9 +179,9 @@ impl TagsModule {
     ) -> luau::runtime::Result<luau::OwnedTable> {
         let db = db.read().await;
         let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let (ids, _canonical) =
+        let (tagged, _canonical) =
             tag_service::get_tagged(&db, user_id, &tag).map_err(crate::plugins::runtime_error)?;
-        Ok(luau::OwnedTable::from_array(ids.into_iter().map(|id| id.0)))
+        ids::public_id_list(&*db, &tagged)
     }
 }
 
@@ -184,16 +190,7 @@ fn tag_info_array(tags: Vec<TagInfo>) -> luau::OwnedTable {
 }
 
 fn tag_info_table(tag: TagInfo) -> luau::OwnedTable {
-    let mut table = luau::OwnedTable::with_capacity(0, 5);
-    table.set_field(
-        "db_id",
-        tag.db_id
-            .map(|id| {
-                let id: DbId = id.into();
-                luau::Value::from(id.0)
-            })
-            .unwrap_or(luau::Value::Nil),
-    );
+    let mut table = luau::OwnedTable::with_capacity(0, 4);
     table.set_field("id", tag.id);
     table.set_field("tag", tag.tag);
     table.set_field("color", tag.color);
@@ -211,11 +208,6 @@ impl DescribeInterface for TagInfo {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("TagInfo", None);
         descriptor.fields.extend([
-            FieldDescriptor {
-                name: "db_id",
-                ty: Option::<crate::plugins::types::LuauNodeId>::luau_type(),
-                description: None,
-            },
             FieldDescriptor {
                 name: "id",
                 ty: String::luau_type(),

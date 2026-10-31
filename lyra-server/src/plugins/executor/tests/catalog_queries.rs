@@ -44,6 +44,7 @@ fn plugin_track_query_sorts_a_release_in_album_order() -> Result<()> {
         lyra_db::fixtures::connect(&mut db, release_db_id, track_db_id)?;
     }
 
+    let release_id = public_id(&db, release_db_id)?;
     let runtime = tracks_runtime(db)?;
     let values = runtime.eval_plugin_source(
         "demo",
@@ -51,14 +52,13 @@ fn plugin_track_query_sorts_a_release_in_album_order() -> Result<()> {
         format!(
             r#"
                 local tracks = require("@lyra/tracks")
-                local result = tracks.query({{ release_ids = {{ {release_db_id} }} }})
+                local result = tracks.query({{ release_ids = {{ "{release_id}" }} }})
                 local titles = {{}}
                 for _, track in result.items do
                     table.insert(titles, track.track_title)
                 end
                 return table.unpack(titles)
             "#,
-            release_db_id = release_db_id.0,
         )
         .into_bytes(),
     )?;
@@ -179,9 +179,9 @@ fn plugin_track_query_follows_the_dispatch_principal() -> Result<()> {
 struct Catalog {
     runtime: PluginExecutor,
     admin: crate::services::auth::Principal,
-    album: agdb::DbId,
-    amy: agdb::DbId,
-    zed: agdb::DbId,
+    album: String,
+    amy: String,
+    zed: String,
 }
 
 fn catalog() -> Result<Catalog> {
@@ -229,6 +229,11 @@ fn catalog() -> Result<Catalog> {
         admin_db_id,
         vec![lyra_db::Permission::Admin],
         Default::default(),
+    );
+    let (album, amy, zed) = (
+        public_id(&db, album)?,
+        public_id(&db, amy)?,
+        public_id(&db, zed)?,
     );
     Ok(Catalog {
         runtime: tracks_runtime(db)?,
@@ -394,22 +399,22 @@ fn plugin_catalog_query_scopes_a_library_to_what_the_principal_sees() -> Result<
         vec![lyra_db::Permission::Admin],
         Default::default(),
     );
+    let (visible, hidden) = (public_id(&db, visible)?, public_id(&db, hidden)?);
     let runtime = tracks_runtime(db)?;
     let releases =
         |principal, query: &str| names_as(&runtime, principal, "releases", "release_title", query);
-    let (visible, hidden) = (visible.0, hidden.0);
 
     assert_eq!(releases(&viewer, "{}")?, ["Seen", "Shared"]);
     assert_eq!(
-        releases(&viewer, &format!("{{ library_id = {visible} }}"))?,
+        releases(&viewer, &format!(r#"{{ library_id = "{visible}" }}"#))?,
         ["Seen", "Shared"]
     );
     // A library the viewer can't see filters to nothing, like one that doesn't exist, so it
     // doesn't tell what the viewer's libraries share with it.
-    assert!(releases(&viewer, &format!("{{ library_id = {hidden} }}"))?.is_empty());
-    assert!(releases(&viewer, "{ library_id = 999999 }")?.is_empty());
+    assert!(releases(&viewer, &format!(r#"{{ library_id = "{hidden}" }}"#))?.is_empty());
+    assert!(releases(&viewer, r#"{ library_id = "missing" }"#)?.is_empty());
     assert_eq!(
-        releases(&admin, &format!("{{ library_id = {hidden} }}"))?,
+        releases(&admin, &format!(r#"{{ library_id = "{hidden}" }}"#))?,
         ["Shared", "Unseen"]
     );
     assert!(
@@ -418,20 +423,20 @@ fn plugin_catalog_query_scopes_a_library_to_what_the_principal_sees() -> Result<
             &viewer,
             "tracks",
             "track_title",
-            &format!("{{ library_id = {hidden} }}")
+            &format!(r#"{{ library_id = "{hidden}" }}"#)
         )?
         .is_empty()
     );
     let artists = |query: &str| names_as(&runtime, &viewer, "artists", "artist_name", query);
     assert_eq!(artists("{}")?, ["Ann", "Sam"]);
-    assert!(artists(&format!("{{ library_id = {hidden} }}"))?.is_empty());
+    assert!(artists(&format!(r#"{{ library_id = "{hidden}" }}"#))?.is_empty());
     Ok(())
 }
 
 #[test]
 fn track_query_filters_by_credit_role() -> Result<()> {
     let catalog = catalog()?;
-    let amy = format!("artist_ids = {{ {} }}", catalog.amy.0);
+    let amy = format!(r#"artist_ids = {{ "{}" }}"#, catalog.amy);
     for (role, expected) in [
         ("", vec!["Alpha", "Bravo", "Charlie", "Delta"]),
         (r#", credit_role = "track""#, vec!["Alpha", "Delta"]),
@@ -511,8 +516,8 @@ fn track_query_sorts_each_key_in_its_own_direction() -> Result<()> {
     );
     assert_eq!(
         catalog.titles(&format!(
-            r#"{{ release_ids = {{ {} }}, sort = {{ {{ key = "release_title" }} }} }}"#,
-            catalog.album.0
+            r#"{{ release_ids = {{ "{}" }}, sort = {{ {{ key = "release_title" }} }} }}"#,
+            catalog.album
         ))?,
         vec!["Alpha", "Bravo", "Charlie"]
     );
@@ -567,7 +572,7 @@ fn track_query_rejects_relevance_without_a_search() -> Result<()> {
 #[test]
 fn track_query_ignores_ids_that_do_not_exist() -> Result<()> {
     let catalog = catalog()?;
-    let stale = 999_999;
+    let stale = r#""missing""#;
     assert!(
         catalog
             .titles(&format!("{{ ids = {{ {stale} }} }}"))?
@@ -616,6 +621,13 @@ fn track_query_treats_missing_and_hidden_ids_alike() -> Result<()> {
             .into_iter()
             .find_map(|genre| genre.db_id.map(agdb::DbId::from))
             .context("hidden genre")?;
+    let hidden_release = hidden_release.context("hidden release")?;
+    let hidden_ids = [
+        ("library_id", public_id(&db, hidden_library)?),
+        ("genre_ids", public_id(&db, hidden_genre)?),
+        ("artist_ids", public_id(&db, hidden_artist)?),
+        ("release_ids", public_id(&db, hidden_release)?),
+    ];
     let user = test_db::insert_user(&mut db, "oracle-viewer")?;
     let visible_library_id = lyra_db::libraries::get_by_id(&db, visible_library)?
         .context("library exists")?
@@ -646,20 +658,14 @@ fn track_query_treats_missing_and_hidden_ids_alike() -> Result<()> {
         )
     };
     let empty = vec![luau::Value::Boolean(true), luau::Value::Number(0.0)];
-    let missing = 999_999;
-    for (field, hidden) in [
-        ("library_id", format!("{}", hidden_library.0)),
-        ("genre_ids", format!("{{ {} }}", hidden_genre.0)),
-        ("artist_ids", format!("{{ {} }}", hidden_artist.0)),
-        (
-            "release_ids",
-            format!("{{ {} }}", hidden_release.context("release")?.0),
-        ),
-    ] {
-        let missing = if field == "library_id" {
-            format!("{missing}")
+    for (field, hidden) in hidden_ids {
+        let (hidden, missing) = if field == "library_id" {
+            (format!(r#""{hidden}""#), r#""missing""#.to_string())
         } else {
-            format!("{{ {missing} }}")
+            (
+                format!(r#"{{ "{hidden}" }}"#),
+                r#"{ "missing" }"#.to_string(),
+            )
         };
         assert_eq!(
             total(format!("{{ {field} = {hidden} }}"))?,
@@ -687,16 +693,16 @@ fn release_query_filters_and_sorts_by_its_tracks() -> Result<()> {
         catalog.release_titles("{ listened = false }")?,
         vec!["Album", "Other"]
     );
-    let amy = catalog.amy.0;
+    let amy = &catalog.amy;
     assert_eq!(
         catalog.release_titles(&format!(
-            r#"{{ artist_ids = {{ {amy} }}, credit_role = "release" }}"#
+            r#"{{ artist_ids = {{ "{amy}" }}, credit_role = "release" }}"#
         ))?,
         vec!["Album"]
     );
     assert_eq!(
         catalog.release_titles(&format!(
-            r#"{{ artist_ids = {{ {amy} }}, credit_role = "track", exclude_credit_role = "release" }}"#
+            r#"{{ artist_ids = {{ "{amy}" }}, credit_role = "track", exclude_credit_role = "release" }}"#
         ))?,
         vec!["Other"]
     );
@@ -740,7 +746,7 @@ fn genre_query_follows_releases_and_ranks_searches() -> Result<()> {
         vec!["Jazz", "Rock", "Rockabilly"]
     );
     assert_eq!(
-        catalog.genre_names(&format!("{{ release_ids = {{ {} }} }}", catalog.album.0))?,
+        catalog.genre_names(&format!(r#"{{ release_ids = {{ "{}" }} }}"#, catalog.album))?,
         vec!["Rock"]
     );
     assert_eq!(
@@ -757,18 +763,18 @@ fn genre_query_follows_releases_and_ranks_searches() -> Result<()> {
 #[test]
 fn track_and_release_queries_leave_out_excluded_artists() -> Result<()> {
     let catalog = catalog()?;
-    let (amy, zed) = (catalog.amy.0, catalog.zed.0);
+    let (amy, zed) = (&catalog.amy, &catalog.zed);
     assert_eq!(
-        catalog.titles(&format!("{{ exclude_artist_ids = {{ {zed} }} }}"))?,
+        catalog.titles(&format!(r#"{{ exclude_artist_ids = {{ "{zed}" }} }}"#))?,
         vec!["Alpha", "Bravo", "Charlie", "Delta"]
     );
     assert_eq!(
-        catalog.release_titles(&format!("{{ exclude_artist_ids = {{ {zed} }} }}"))?,
+        catalog.release_titles(&format!(r#"{{ exclude_artist_ids = {{ "{zed}" }} }}"#))?,
         vec!["Album"]
     );
     assert!(
         catalog
-            .release_titles(&format!("{{ exclude_artist_ids = {{ {amy} }} }}"))?
+            .release_titles(&format!(r#"{{ exclude_artist_ids = {{ "{amy}" }} }}"#))?
             .is_empty()
     );
     Ok(())
@@ -821,7 +827,7 @@ fn artwork_lookups_resolve_without_a_caller() -> Result<()> {
     assert_eq!(
         values[..4],
         [
-            luau::Value::Number(catalog.amy.0 as f64),
+            luau::Value::String(catalog.amy.clone().into_bytes()),
             luau::Value::Boolean(true),
             luau::Value::String(b"Rock".to_vec()),
             luau::Value::Boolean(false),

@@ -3,7 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use agdb::DbId;
 use lyra_db::Track;
 
 use super::{
@@ -259,28 +258,32 @@ pub(super) async fn dispatch(
 /// path a mixer can return.
 const MAX_MIXER_RESULT_IDS: usize = MAX_LIMIT;
 
-async fn tracks_from_mixer_result_ids(track_ids: Vec<i64>) -> anyhow::Result<Vec<Track>> {
-    let ids = track_ids
+async fn tracks_from_mixer_result_ids(track_ids: Vec<String>) -> anyhow::Result<Vec<Track>> {
+    let track_ids = track_ids
         .into_iter()
-        .filter(|track_id| *track_id > 0)
         .take(MAX_MIXER_RESULT_IDS)
-        .map(DbId)
         .collect::<Vec<_>>();
-    if ids.is_empty() {
+    if track_ids.is_empty() {
         return Ok(Vec::new());
     }
 
     let db = STATE.db.read().await;
+    let mut ids = Vec::with_capacity(track_ids.len());
+    for track_id in &track_ids {
+        if let Some(id) = lyra_db::lookup::find_node_id_by_id(&*db, track_id)? {
+            ids.push(id);
+        }
+    }
     let tracks_by_id = lyra_db::tracks::get_existing_by_ids(&db, &ids)?;
     let tracks = ids
         .iter()
         .filter_map(|id| tracks_by_id.get(id).cloned())
         .collect::<Vec<_>>();
-    let dropped = ids.len() - tracks.len();
+    let dropped = track_ids.len() - tracks.len();
     if dropped > 0 {
         tracing::warn!(
             dropped,
-            requested = ids.len(),
+            requested = track_ids.len(),
             "mixer returned track IDs that could not be resolved"
         );
     }

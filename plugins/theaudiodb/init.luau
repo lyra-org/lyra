@@ -34,7 +34,7 @@ type ArtistCoverContext = {
 	ids: ProviderExternalIdMap?,
 }
 type ArtistRefreshContext = {
-	db_id: number?,
+	id: string?,
 	artist_name: string?,
 	sort_name: string?,
 	external_ids: ExternalIdsByProvider?,
@@ -817,9 +817,9 @@ local function should_refresh_existing(ctx: metadata.ReleaseRefreshContext): boo
 end
 
 local function refresh_artist_match(ctx: ArtistRefreshContext): JsonObject?
-	local theaudiodb_ids = own_ids(ctx.external_ids)
-	if theaudiodb_ids ~= nil then
-		local existing_artist_id = theaudiodb_ids.artist_id
+	local own = own_ids(ctx.external_ids)
+	if own ~= nil then
+		local existing_artist_id = own.artist_id
 		if existing_artist_id ~= nil and existing_artist_id ~= "" then
 			return lookup_artist_by_id(existing_artist_id)
 		end
@@ -881,9 +881,9 @@ local function refresh_album_match_from_recording_ids(
 end
 
 local function refresh_album_match(ctx: metadata.ReleaseRefreshContext): JsonObject?
-	local theaudiodb_ids = own_ids(ctx.external_ids)
-	if theaudiodb_ids ~= nil then
-		local existing_album_id = theaudiodb_ids.album_id
+	local own = own_ids(ctx.external_ids)
+	if own ~= nil then
+		local existing_album_id = own.album_id
 		if existing_album_id ~= nil and existing_album_id ~= "" then
 			return lookup_album_by_id(existing_album_id)
 		end
@@ -922,12 +922,12 @@ local function refresh_album_match(ctx: metadata.ReleaseRefreshContext): JsonObj
 	return nil
 end
 
-local function matching_artist_db_id(artists: { metadata.ReleaseRefreshArtist }?, album_artist_name: string?): number?
+local function matching_artist_id(artists: { metadata.ReleaseRefreshArtist }?, album_artist_name: string?): string?
 	if artists == nil or #artists == 0 then
 		return nil
 	end
 	if #artists == 1 then
-		return artists[1].db_id
+		return artists[1].id
 	end
 	local target = normalize_text(album_artist_name)
 	if target == "" then
@@ -935,7 +935,7 @@ local function matching_artist_db_id(artists: { metadata.ReleaseRefreshArtist }?
 	end
 	for _, artist in artists do
 		if normalize_text(artist.artist_name) == target then
-			return artist.db_id
+			return artist.id
 		end
 	end
 	return nil
@@ -943,8 +943,8 @@ end
 
 provider:refresh(ET.Artist, function(ctx: metadata.ReleaseRefreshContext)
 	local artist_ctx = ctx :: ArtistRefreshContext
-	local artist_db_id = artist_ctx.db_id
-	if artist_db_id == nil then
+	local artist_id = artist_ctx.id
+	if artist_id == nil then
 		return nil
 	end
 
@@ -953,13 +953,13 @@ provider:refresh(ET.Artist, function(ctx: metadata.ReleaseRefreshContext)
 		return nil
 	end
 
-	local artist_id = json_string_field(artist, "idArtist")
-	if artist_id == nil then
+	local audiodb_artist_id = json_string_field(artist, "idArtist")
+	if audiodb_artist_id == nil then
 		return nil
 	end
 
-	local artist_layer = provider:layer(artist_db_id)
-	artist_layer:set_id("artist_id", artist_id)
+	local artist_layer = provider:layer(artist_id)
+	artist_layer:set_id("artist_id", audiodb_artist_id)
 	artist_layer:save()
 	return nil
 end, function(ctx: metadata.ReleaseRefreshContext): boolean
@@ -968,8 +968,8 @@ end, function(ctx: metadata.ReleaseRefreshContext): boolean
 		return #artist_lookup_names(artist_ctx) > 0 or identifier(artist_ctx.identifiers, "musicbrainz:artist") ~= nil
 	end
 
-	local theaudiodb_ids = own_ids(artist_ctx.external_ids)
-	if theaudiodb_ids ~= nil and theaudiodb_ids.artist_id ~= nil and theaudiodb_ids.artist_id ~= "" then
+	local own = own_ids(artist_ctx.external_ids)
+	if own ~= nil and own.artist_id ~= nil and own.artist_id ~= "" then
 		return false
 	end
 
@@ -977,8 +977,8 @@ end, function(ctx: metadata.ReleaseRefreshContext): boolean
 end)
 
 provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
-	local release_db_id = ctx.db_id
-	if release_db_id == nil then
+	local release_id = ctx.id
+	if release_id == nil then
 		return nil
 	end
 
@@ -992,7 +992,7 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 		return nil
 	end
 
-	local release_layer = provider:layer(release_db_id)
+	local release_layer = provider:layer(release_id)
 	release_layer:set_id("album_id", album_id)
 
 	local genres = genre_values(json_string_field(album, "strGenre"))
@@ -1002,10 +1002,10 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 
 	release_layer:save()
 
-	local artist_db_id = matching_artist_db_id(ctx.artists, json_string_field(album, "strArtist"))
+	local artist_id = matching_artist_id(ctx.artists, json_string_field(album, "strArtist"))
 	local audiodb_artist_id = json_string_field(album, "idArtist")
-	if artist_db_id ~= nil and audiodb_artist_id ~= nil then
-		local artist_layer = provider:layer(artist_db_id)
+	if artist_id ~= nil and audiodb_artist_id ~= nil then
+		local artist_layer = provider:layer(artist_id)
 		artist_layer:set_id("artist_id", audiodb_artist_id)
 		artist_layer:save()
 	end
@@ -1018,8 +1018,8 @@ end, function(ctx: metadata.ReleaseRefreshContext): boolean
 	if should_refresh_existing(ctx) then
 		return true
 	end
-	local theaudiodb_ids = own_ids(ctx.external_ids)
-	if theaudiodb_ids ~= nil and theaudiodb_ids.album_id ~= nil and theaudiodb_ids.album_id ~= "" then
+	local own = own_ids(ctx.external_ids)
+	if own ~= nil and own.album_id ~= nil and own.album_id ~= "" then
 		return false
 	end
 	if identifier(ctx.identifiers, "musicbrainz:release-group") ~= nil then

@@ -18,10 +18,7 @@ use harmony_luau::{
 #[cfg(feature = "docgen")]
 use std::collections::HashMap;
 
-use crate::plugins::args::{
-    self,
-    UniqueIds,
-};
+use crate::plugins::args::UniqueIds;
 use crate::plugins::catalog;
 use crate::plugins::db::{
     SystemDb,
@@ -48,7 +45,11 @@ struct TrackQuery(catalog::PagedQuery<Tracks>);
 impl<'vm> luau::FromLuau<'vm> for TrackQuery {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let opts: luau::Table = reader.read()?;
-        let filter = read_filter(&opts)?;
+        let filter = TrackFilter {
+            years: catalog::read_years(&opts)?,
+            personal: catalog::read_personal(&opts)?,
+            ..TrackFilter::default()
+        };
         catalog::read_query::<Tracks>(&opts, filter).map(Self)
     }
 }
@@ -93,24 +94,24 @@ impl LuauTypeInfo for TrackPage {
 impl TracksModule {
     #[harmony(
         description = "The tracks with these ids that the caller can see, keyed by id.",
-        returns(HashMap<u64, Track>)
+        returns(HashMap<String, Track>)
     )]
     async fn get(
         ids: UniqueIds,
         #[context] db: ViewerDb,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        catalog::keyed_table(db, ids.0, lookups::get::<Tracks>).await
+        catalog::keyed_table(&db, ids.0, lookups::get::<Tracks>).await
     }
 
     #[harmony(
         description = "`get` read as the system. Ignores library visibility, so it is only for public streaming routes, which must serve nothing from it but the audio.",
-        returns(HashMap<u64, Track>)
+        returns(HashMap<String, Track>)
     )]
     async fn streamable(
         ids: UniqueIds,
         #[context] db: SystemDb,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        catalog::keyed_table(db.0, ids.0, lookups::get::<Tracks>).await
+        catalog::keyed_table(&db.0, ids.0, lookups::get::<Tracks>).await
     }
 
     #[harmony(
@@ -122,9 +123,10 @@ impl TracksModule {
         #[context] db: ViewerDb,
         #[context] scopes: catalog::PersonalScopes,
     ) -> luau::runtime::Result<luau::ReturnValues> {
-        let request = query.0;
+        let mut request = query.0;
         scopes.check(&request.query)?;
         let (db, viewer) = db.read().await?;
+        request.resolve_ids(&db)?;
         let page =
             services::catalog::page(&db, &viewer, &request.query, request.offset, request.limit)
                 .map_err(catalog::error)?;
@@ -133,50 +135,36 @@ impl TracksModule {
 
     #[harmony(
         description = "The tracks on each of these releases that the caller can see, keyed by release id.",
-        returns(HashMap<u64, Vec<Track>>)
+        returns(HashMap<String, Vec<Track>>)
     )]
     async fn by_release(
         release_ids: UniqueIds,
         #[context] db: ViewerDb,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        catalog::keyed_table(db, release_ids.0, lookups::tracks_by_release).await
+        catalog::keyed_table(&db, release_ids.0, lookups::tracks_by_release).await
     }
 
     #[harmony(
         description = "The tracks whose audio each of these entries holds, for the entries the caller can see, keyed by entry id.",
-        returns(HashMap<u64, Vec<Track>>)
+        returns(HashMap<String, Vec<Track>>)
     )]
     async fn by_entry(
         entry_ids: UniqueIds,
         #[context] db: ViewerDb,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        catalog::keyed_table(db, entry_ids.0, lookups::tracks_by_entry).await
+        catalog::keyed_table(&db, entry_ids.0, lookups::tracks_by_entry).await
     }
 
     #[harmony(
         description = "The chain of each of these tracks that the caller can see and that is in one, keyed by track id.",
-        returns(HashMap<u64, TrackChain>)
+        returns(HashMap<String, TrackChain>)
     )]
     async fn chains(
         track_ids: UniqueIds,
         #[context] db: ViewerDb,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        catalog::keyed_table(db, track_ids.0, lookups::chain_places).await
+        catalog::keyed_table(&db, track_ids.0, lookups::chain_places).await
     }
-}
-
-fn read_filter(table: &luau::Table) -> luau::runtime::Result<TrackFilter> {
-    Ok(TrackFilter {
-        ids: catalog::optional_ids(table, "ids")?,
-        exclude_ids: args::optional_unique_ids(table, "exclude_ids")?,
-        exclude_artists: args::optional_unique_ids(table, "exclude_artist_ids")?,
-        library: args::optional_positive_id(table, "library_id")?,
-        releases: catalog::optional_ids(table, "release_ids")?,
-        artists: catalog::read_artist_credit(table)?,
-        genres: args::optional_unique_ids(table, "genre_ids")?,
-        years: catalog::read_years(table)?,
-        personal: catalog::read_personal(table)?,
-    })
 }
 
 #[cfg(feature = "docgen")]
@@ -191,7 +179,6 @@ fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
 #[cfg(feature = "docgen")]
 fn track_type() -> LuauType {
     LuauType::object(vec![
-        field("db_id", Option::<i64>::luau_type()),
         field("id", String::luau_type()),
         field("track_title", String::luau_type()),
         field("sort_title", Option::<String>::luau_type()),
@@ -240,11 +227,11 @@ fn track_type_aliases() -> Vec<TypeAliasDescriptor> {
 fn track_query() -> InterfaceDescriptor {
     let mut descriptor = InterfaceDescriptor::new("TrackQuery", None);
     descriptor.fields.extend([
-        field("ids", Option::<Vec<u64>>::luau_type()),
-        field("exclude_ids", Option::<Vec<u64>>::luau_type()),
-        field("library_id", Option::<u64>::luau_type()),
-        field("release_ids", Option::<Vec<u64>>::luau_type()),
-        field("genre_ids", Option::<Vec<u64>>::luau_type()),
+        field("ids", Option::<Vec<String>>::luau_type()),
+        field("exclude_ids", Option::<Vec<String>>::luau_type()),
+        field("library_id", Option::<String>::luau_type()),
+        field("release_ids", Option::<Vec<String>>::luau_type()),
+        field("genre_ids", Option::<Vec<String>>::luau_type()),
         field("years", Option::<Vec<u32>>::luau_type()),
         field("favorite", Option::<bool>::luau_type()),
         field("listened", Option::<bool>::luau_type()),

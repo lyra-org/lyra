@@ -16,6 +16,10 @@ use harmony_luau::{
     FieldDescriptor,
     InterfaceDescriptor,
 };
+use std::collections::HashMap;
+
+use agdb::DbId;
+use harmony_luau as luau;
 use harmony_luau::{
     LuauType,
     LuauTypeInfo,
@@ -219,15 +223,6 @@ const _: fn(lyra_db::releases::ReleaseType) = |value| match value {
     | lyra_db::releases::ReleaseType::Unknown => {}
 };
 
-/// [`lyra_db::NodeId`]: a database id, a number in Luau.
-pub(crate) struct LuauNodeId;
-
-impl LuauTypeInfo for LuauNodeId {
-    fn luau_type() -> LuauType {
-        f64::luau_type()
-    }
-}
-
 mirror_string_enum!(LuauPlaybackState for lyra_db::PlaybackState, "PlaybackState", [
     Playing, Paused, Stopped, Buffering, Completed,
 ]);
@@ -250,7 +245,6 @@ describe_record!(
     LuauRelease for lyra_db::Release,
     "Release",
     fields {
-        db_id: Option<LuauNodeId> as "db_id",
         id: String as "id",
         release_title: String as "release_title",
         sort_title: Option<String> as "sort_title",
@@ -268,7 +262,6 @@ describe_record!(
     LuauTrack for lyra_db::Track,
     "Track",
     fields {
-        db_id: Option<LuauNodeId> as "db_id",
         id: String as "id",
         track_title: String as "track_title",
         sort_title: Option<String> as "sort_title",
@@ -290,7 +283,6 @@ describe_record!(
     LuauArtist for lyra_db::Artist,
     "Artist",
     fields {
-        db_id: Option<LuauNodeId> as "db_id",
         id: String as "id",
         artist_name: String as "artist_name",
         scan_name: String as "scan_name",
@@ -306,9 +298,8 @@ describe_record!(
 /// libraries get `full_path`.
 #[derive(serde::Serialize)]
 pub(crate) struct EntryInfo {
-    db_id: Option<i64>,
     id: String,
-    parent_id: i64,
+    parent_id: String,
     kind: String,
     file_kind: Option<String>,
     name: String,
@@ -320,12 +311,20 @@ pub(crate) struct EntryInfo {
 }
 
 impl EntryInfo {
-    pub(crate) fn new(placed: PlacedEntry, include_full_path: bool) -> Self {
+    /// The entry, with `parents` holding the public id of its parent.
+    pub(crate) fn new(
+        placed: PlacedEntry,
+        parents: &HashMap<DbId, String>,
+        include_full_path: bool,
+    ) -> luau::runtime::Result<Self> {
         let PlacedEntry { entry, parent_id } = placed;
-        Self {
-            db_id: entry.db_id.map(|id| id.0),
+        let parent_id = parents
+            .get(&parent_id)
+            .cloned()
+            .ok_or_else(|| crate::plugins::runtime_error("an entry's parent has no public id"))?;
+        Ok(Self {
             id: entry.id,
-            parent_id: parent_id.0,
+            parent_id,
             kind: entry.kind.to_string(),
             file_kind: entry.file_kind,
             name: entry.name,
@@ -334,19 +333,32 @@ impl EntryInfo {
             size: entry.size,
             file_modified_at_ms: entry.file_modified_at_ms,
             file_created_at_ms: entry.file_created_at_ms,
-        }
+        })
     }
 
-    /// The entry as `viewer` reads it.
-    pub(crate) fn shown_to(placed: PlacedEntry, viewer: &Viewer) -> Self {
-        let include_full_path = match viewer {
+    /// The public ids of the parents of `entries`, for [`EntryInfo::new`].
+    pub(crate) fn parents<'a>(
+        db: &impl lyra_db::DbAccess,
+        entries: impl IntoIterator<Item = &'a PlacedEntry>,
+    ) -> luau::runtime::Result<HashMap<DbId, String>> {
+        let mut parent_ids = entries
+            .into_iter()
+            .map(|placed| placed.parent_id)
+            .collect::<Vec<_>>();
+        parent_ids.sort_unstable_by_key(|id| id.0);
+        parent_ids.dedup();
+        crate::plugins::ids::public_ids(db, &parent_ids)
+    }
+
+    /// Whether `viewer` reads entries with their `full_path`.
+    pub(crate) fn shows_full_path(viewer: &Viewer) -> bool {
+        match viewer {
             Viewer::User { principal, .. } => lyra_db::roles::has_permission(
                 &principal.permissions,
                 lyra_db::Permission::ManageLibraries,
             ),
             Viewer::System => false,
-        };
-        Self::new(placed, include_full_path)
+        }
     }
 }
 
@@ -368,11 +380,10 @@ impl DescribeInterface for EntryInfo {
             name: "EntryInfo",
             description: Some("A file or directory in a library."),
             fields: vec![
-                field("db_id", Option::<LuauNodeId>::luau_type(), None),
                 field("id", String::luau_type(), None),
                 field(
                     "parent_id",
-                    LuauNodeId::luau_type(),
+                    String::luau_type(),
                     Some("The library or directory entry holding this entry."),
                 ),
                 field(
@@ -413,19 +424,27 @@ pub(crate) struct CoverInfo {
     mime_type: String,
     hash: String,
     blurhash: Option<String>,
-    release_id: i64,
+    release_id: String,
 }
 
-impl From<ResolvedCover> for CoverInfo {
-    fn from(resolved: ResolvedCover) -> Self {
+impl CoverInfo {
+    /// The cover, with `owners` holding the public id of the node it belongs to.
+    pub(crate) fn new(
+        resolved: ResolvedCover,
+        owners: &HashMap<DbId, String>,
+    ) -> luau::runtime::Result<Self> {
         let ResolvedCover { owner_db_id, cover } = resolved;
-        Self {
+        let release_id = owners
+            .get(&owner_db_id)
+            .cloned()
+            .ok_or_else(|| crate::plugins::runtime_error("a cover's owner has no public id"))?;
+        Ok(Self {
             path: cover.path,
             mime_type: cover.mime_type,
             hash: cover.hash,
             blurhash: cover.blurhash,
-            release_id: owner_db_id.0,
-        }
+            release_id,
+        })
     }
 }
 
@@ -457,7 +476,7 @@ impl DescribeInterface for CoverInfo {
                 field("blurhash", Option::<String>::luau_type(), None),
                 field(
                     "release_id",
-                    LuauNodeId::luau_type(),
+                    String::luau_type(),
                     Some(
                         "The node the cover belongs to: the item itself, a track's release, or the release a playlist or genre shows.",
                     ),

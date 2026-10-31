@@ -25,23 +25,25 @@ use crate::plugins::args;
 use crate::{
     plugins::{
         args::{
-            ResolveIdArg,
+            IdSequence,
             UniqueIds,
         },
         db::Db,
+        ids::{
+            self,
+            Resolved,
+        },
     },
     services::{
         auth::Principal,
         playlists as playlist_service,
     },
 };
-use lyra_db::ResolveId;
 
 pub(crate) struct PlaylistsModule;
 
 #[derive(Serialize)]
 struct PlaylistInfo {
-    db_id: Option<i64>,
     id: String,
     name: String,
     description: Option<String>,
@@ -53,7 +55,6 @@ struct PlaylistInfo {
 impl From<lyra_db::Playlist> for PlaylistInfo {
     fn from(playlist: lyra_db::Playlist) -> Self {
         Self {
-            db_id: playlist.db_id.map(|id| DbId::from(id).0),
             id: playlist.id,
             name: playlist.name,
             description: playlist.description,
@@ -67,18 +68,8 @@ impl From<lyra_db::Playlist> for PlaylistInfo {
 #[derive(Clone, Serialize)]
 struct PlaylistTrackLink {
     entry_id: String,
-    track_id: i64,
+    track_id: String,
     position: u64,
-}
-
-impl From<playlist_service::PlaylistTrackLink> for PlaylistTrackLink {
-    fn from(link: playlist_service::PlaylistTrackLink) -> Self {
-        Self {
-            entry_id: link.entry_id,
-            track_id: link.track_db_id.0,
-            position: link.position,
-        }
-    }
 }
 
 struct PlaylistCreateRequest {
@@ -87,11 +78,15 @@ struct PlaylistCreateRequest {
     is_public: Option<bool>,
     created_at_ms: Option<u64>,
     updated_at_ms: Option<u64>,
-    track_ids: Vec<DbId>,
+    track_ids: Vec<String>,
 }
 
 impl PlaylistCreateRequest {
-    fn into_service_request(self, user_db_id: DbId) -> playlist_service::CreatePlaylistRequest {
+    fn into_service_request(
+        self,
+        user_db_id: DbId,
+        track_db_ids: Vec<DbId>,
+    ) -> playlist_service::CreatePlaylistRequest {
         playlist_service::CreatePlaylistRequest {
             user_db_id,
             name: self.name,
@@ -99,7 +94,7 @@ impl PlaylistCreateRequest {
             is_public: self.is_public,
             created_at_ms: self.created_at_ms,
             updated_at_ms: self.updated_at_ms,
-            track_db_ids: self.track_ids,
+            track_db_ids,
         }
     }
 }
@@ -127,13 +122,13 @@ impl PlaylistFields {
 }
 
 struct PlaylistUpdateRequest {
-    playlist_id: ResolveId,
+    playlist_id: String,
     fields: PlaylistFields,
 }
 
 struct PlaylistReplaceRequest {
     fields: PlaylistFields,
-    track_ids: Vec<DbId>,
+    track_ids: Vec<String>,
 }
 
 impl<'vm> luau::FromLuau<'vm> for PlaylistCreateRequest {
@@ -158,21 +153,6 @@ impl<'vm> luau::FromLuau<'vm> for PlaylistReplaceRequest {
 }
 
 /// A track id array argument, repeats included.
-struct IdSequence(Vec<DbId>);
-
-impl<'vm> luau::FromLuau<'vm> for IdSequence {
-    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
-        let table: luau::Table = reader.read()?;
-        args::id_sequence(&table).map(Self)
-    }
-}
-
-impl LuauTypeInfo for IdSequence {
-    fn luau_type() -> LuauType {
-        Vec::<u64>::luau_type()
-    }
-}
-
 /// A string array argument.
 struct EntryIds(Vec<String>);
 
@@ -236,16 +216,16 @@ impl PlaylistsModule {
 
     #[harmony(returns(Option<PlaylistInfo>))]
     async fn get_by_id(
-        id: ResolveIdArg,
+        id: String,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::Value> {
         let db = db.read().await;
         let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let query_id =
-            id.0.to_query_id(&db)?
-                .ok_or_else(|| crate::plugins::runtime_error("could not resolve id"))?;
-        let Some(playlist) = playlist_service::get(&db, query_id)? else {
+        let Some(playlist_db_id) = ids::db_id(&*db, &id)? else {
+            return Ok(luau::Value::Nil);
+        };
+        let Some(playlist) = playlist_service::get(&db, QueryId::Id(playlist_db_id))? else {
             return Ok(luau::Value::Nil);
         };
         let Some(playlist_db_id) = playlist.db_id.clone().map(DbId::from) else {
@@ -281,16 +261,13 @@ impl PlaylistsModule {
 
     #[harmony(description = "The owning user's public id.")]
     async fn get_owner(
-        playlist_id: ResolveIdArg,
+        playlist_id: String,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<Option<String>> {
         let db = db.read().await;
         let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let Some(playlist_id) = playlist_id.0.to_query_id(&db)? else {
-            return Ok(None);
-        };
-        let QueryId::Id(playlist_db_id) = playlist_id else {
+        let Some(playlist_db_id) = ids::db_id(&*db, &playlist_id)? else {
             return Ok(None);
         };
         if !crate::services::auth::access::playlist_accessible_as(
@@ -311,52 +288,43 @@ impl PlaylistsModule {
 
     #[harmony(returns(Vec<PlaylistTrackLink>))]
     async fn get_tracks(
-        playlist_id: ResolveIdArg,
+        playlist_id: String,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::Value> {
         let db = db.read().await;
         let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let playlist_id = playlist_id
-            .0
-            .to_query_id(&db)?
-            .ok_or_else(|| crate::plugins::runtime_error("could not resolve playlist id"))?;
-        let QueryId::Id(playlist_db_id) = playlist_id else {
+        let Some(playlist_db_id) = ids::db_id(&*db, &playlist_id)? else {
             return harmony_luau::serializable_to_luau_owned(Vec::<PlaylistTrackLink>::new());
         };
         let links = visible_track_links(&db, &principal, user_db_id, playlist_db_id)?;
         harmony_luau::serializable_to_luau_owned(links)
     }
 
-    #[harmony(returns(HashMap<u64, Vec<PlaylistTrackLink>>))]
+    #[harmony(
+        description = "The tracks of each of these playlists that the caller can see, keyed by playlist id. Playlists the caller cannot see are absent.",
+        returns(HashMap<String, Vec<PlaylistTrackLink>>)
+    )]
     async fn get_tracks_many(
         playlist_ids: UniqueIds,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        let playlist_ids = playlist_ids.0;
         let db = db.read().await;
         let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let result = playlist_service::get_tracks_many(&db, &playlist_ids)?;
-        let mut table = luau::OwnedTable::with_entry_capacity(0, 0, playlist_ids.len());
-        for id in playlist_ids {
-            let links = if crate::services::auth::access::playlist_accessible_as(
+        let playlists = Resolved::of(&*db, playlist_ids.0)?;
+        let mut result = playlist_service::get_tracks_many(&db, playlists.db_ids())?;
+        let mut values = Vec::with_capacity(playlists.db_ids().len());
+        for &id in playlists.db_ids() {
+            if !crate::services::auth::access::playlist_accessible_as(
                 &db, &principal, user_db_id, id,
             )? {
-                result
-                    .get(&id)
-                    .cloned()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter_map(|link| playlist_link_to_info(&db, &principal, link).transpose())
-                    .collect::<luau::runtime::Result<Vec<_>>>()?
-            } else {
-                Vec::new()
-            };
-            let value = harmony_luau::serializable_to_luau_owned(links)?;
-            table.set_key(id.0, value);
+                continue;
+            }
+            let links = visible_links(&db, &principal, result.remove(&id).unwrap_or_default())?;
+            values.push((id, harmony_luau::serializable_to_luau_owned(links)?));
         }
-        Ok(table)
+        Ok(playlists.keyed(values))
     }
 
     #[harmony(
@@ -366,13 +334,13 @@ impl PlaylistsModule {
         request: PlaylistCreateRequest,
         #[context] db: Db,
         #[context] principal: Principal,
-    ) -> luau::runtime::Result<i64> {
+    ) -> luau::runtime::Result<String> {
         let mut db = db.write().await;
         let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        require_accessible_tracks(&db, &principal, &request.track_ids)?;
-        let request = request.into_service_request(user_db_id);
+        let track_db_ids = accessible_tracks(&db, &principal, &request.track_ids)?;
+        let request = request.into_service_request(user_db_id, track_db_ids);
         let playlist_id = playlist_service::create(&mut db, &request)?;
-        Ok(playlist_id.0)
+        ids::public_id(&*db, playlist_id)
     }
 
     #[harmony(
@@ -385,7 +353,7 @@ impl PlaylistsModule {
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::Value> {
         let mut db = db.write().await;
-        let Some(QueryId::Id(playlist_db_id)) = request.playlist_id.to_query_id(&db)? else {
+        let Some(playlist_db_id) = ids::db_id(&*db, &request.playlist_id)? else {
             return Ok(luau::Value::Nil);
         };
         if !crate::services::auth::access::playlist_owned(&db, &principal, playlist_db_id)? {
@@ -406,12 +374,12 @@ impl PlaylistsModule {
         description = "Returns true when deleted, or false if the playlist is missing or the caller neither owns it nor is an admin."
     )]
     async fn delete(
-        playlist_id: ResolveIdArg,
+        playlist_id: String,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<bool> {
         let mut db = db.write().await;
-        let Some(QueryId::Id(playlist_db_id)) = playlist_id.0.to_query_id(&db)? else {
+        let Some(playlist_db_id) = ids::db_id(&*db, &playlist_id)? else {
             return Ok(false);
         };
         if !crate::services::auth::access::playlist_deletable(&db, &principal, playlist_db_id)? {
@@ -426,20 +394,20 @@ impl PlaylistsModule {
         returns(Option<PlaylistInfo>)
     )]
     async fn replace(
-        playlist_id: ResolveIdArg,
+        playlist_id: String,
         request: PlaylistReplaceRequest,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::Value> {
         let mut db = db.write().await;
-        let Some(playlist_db_id) = owned_playlist(&db, &principal, playlist_id.0)? else {
+        let Some(playlist_db_id) = owned_playlist(&db, &principal, &playlist_id)? else {
             return Ok(luau::Value::Nil);
         };
-        require_accessible_tracks(&db, &principal, &request.track_ids)?;
+        let track_db_ids = accessible_tracks(&db, &principal, &request.track_ids)?;
         let update = request
             .fields
             .into_service_request(QueryId::Id(playlist_db_id));
-        playlist_service::replace(&mut db, &update, &request.track_ids)?
+        playlist_service::replace(&mut db, &update, &track_db_ids)?
             .map(PlaylistInfo::from)
             .map(harmony_luau::serializable_to_luau_owned)
             .transpose()
@@ -451,20 +419,21 @@ impl PlaylistsModule {
         returns(Option<Vec<String>>)
     )]
     async fn add_tracks(
-        playlist_id: ResolveIdArg,
+        playlist_id: String,
         track_ids: IdSequence,
         position: Option<PlaylistPosition>,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::Value> {
-        let track_ids = track_ids.0;
         let position = position.map(|position| position.0);
         let mut db = db.write().await;
-        let Some(playlist_db_id) = owned_playlist(&db, &principal, playlist_id.0)? else {
+        let Some(playlist_db_id) = owned_playlist(&db, &principal, &playlist_id)? else {
             return Ok(luau::Value::Nil);
         };
-        require_accessible_tracks(&db, &principal, &track_ids)?;
-        let track_ids = track_ids.into_iter().map(QueryId::Id).collect::<Vec<_>>();
+        let track_ids = accessible_tracks(&db, &principal, &track_ids.0)?
+            .into_iter()
+            .map(QueryId::Id)
+            .collect::<Vec<_>>();
         let entry_ids = playlist_service::add_tracks(
             &mut db,
             QueryId::Id(playlist_db_id),
@@ -481,19 +450,16 @@ impl PlaylistsModule {
         description = "Returns the entry ID, or nil if the playlist or track is missing or inaccessible."
     )]
     async fn add_track(
-        playlist_id: ResolveIdArg,
-        track_id: ResolveIdArg,
+        playlist_id: String,
+        track_id: String,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<Option<String>> {
         let mut db = db.write().await;
-        let Some(QueryId::Id(playlist_db_id)) = playlist_id.0.to_query_id(&db)? else {
+        let Some(playlist_db_id) = owned_playlist(&db, &principal, &playlist_id)? else {
             return Ok(None);
         };
-        if !crate::services::auth::access::playlist_owned(&db, &principal, playlist_db_id)? {
-            return Ok(None);
-        }
-        let Some(QueryId::Id(track_db_id)) = track_id.0.to_query_id(&db)? else {
+        let Some(track_db_id) = ids::db_id(&*db, &track_id)? else {
             return Ok(None);
         };
         if lyra_db::tracks::get_by_id(&db, track_db_id)?.is_none()
@@ -513,14 +479,14 @@ impl PlaylistsModule {
         description = "Returns true when removed, or false if the playlist is not owned by the caller or the entry is not in it."
     )]
     async fn remove_track(
-        playlist_id: ResolveIdArg,
+        playlist_id: String,
         entry_id: String,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<bool> {
         let mut db = db.write().await;
         let Some(playlist_db_id) =
-            owned_playlist_with_entry(&db, &principal, playlist_id.0, &entry_id)?
+            owned_playlist_with_entry(&db, &principal, &playlist_id, &entry_id)?
         else {
             return Ok(false);
         };
@@ -532,14 +498,14 @@ impl PlaylistsModule {
         description = "Removes the entries in one transaction. Returns false, removing nothing, if the playlist is not owned by the caller or an entry is not in it."
     )]
     async fn remove_tracks(
-        playlist_id: ResolveIdArg,
+        playlist_id: String,
         entry_ids: EntryIds,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<bool> {
         let entry_ids = entry_ids.0;
         let mut db = db.write().await;
-        let Some(playlist_db_id) = owned_playlist(&db, &principal, playlist_id.0)? else {
+        let Some(playlist_db_id) = owned_playlist(&db, &principal, &playlist_id)? else {
             return Ok(false);
         };
         for entry_id in &entry_ids {
@@ -555,7 +521,7 @@ impl PlaylistsModule {
         description = "Moves an entry to a zero-based position, clamping past the end. Returns false if the playlist is not owned by the caller or the entry is not in it. A move to the current position succeeds."
     )]
     async fn move_track(
-        playlist_id: ResolveIdArg,
+        playlist_id: String,
         entry_id: String,
         new_position: PlaylistPosition,
         #[context] db: Db,
@@ -563,7 +529,7 @@ impl PlaylistsModule {
     ) -> luau::runtime::Result<bool> {
         let mut db = db.write().await;
         let Some(playlist_db_id) =
-            owned_playlist_with_entry(&db, &principal, playlist_id.0, &entry_id)?
+            owned_playlist_with_entry(&db, &principal, &playlist_id, &entry_id)?
         else {
             return Ok(false);
         };
@@ -576,9 +542,9 @@ impl PlaylistsModule {
 fn owned_playlist(
     db: &DbAny,
     principal: &Principal,
-    playlist_id: ResolveId,
+    playlist_id: &str,
 ) -> luau::runtime::Result<Option<DbId>> {
-    let Some(QueryId::Id(playlist_db_id)) = playlist_id.to_query_id(db)? else {
+    let Some(playlist_db_id) = ids::db_id(db, playlist_id)? else {
         return Ok(None);
     };
     Ok(
@@ -587,22 +553,27 @@ fn owned_playlist(
     )
 }
 
-fn require_accessible_tracks(
+/// The tracks `track_ids` name, in order, raising when one is missing or inaccessible.
+fn accessible_tracks(
     db: &DbAny,
     principal: &Principal,
-    track_ids: &[DbId],
-) -> luau::runtime::Result<()> {
-    let accessible = crate::services::auth::access::accessible_entities(db, principal, track_ids)?;
+    track_ids: &[String],
+) -> luau::runtime::Result<Vec<DbId>> {
+    let not_found =
+        |track_id: &str| crate::plugins::runtime_error(format!("track not found: {track_id}"));
+    let mut track_db_ids = Vec::with_capacity(track_ids.len());
     for track_id in track_ids {
-        let exists = lyra_db::tracks::get_by_id(db, *track_id)?.is_some();
-        if !exists || !accessible.contains(track_id) {
-            return Err(crate::plugins::runtime_error(format!(
-                "track not found: {}",
-                track_id.0
-            )));
+        track_db_ids.push(ids::db_id(db, track_id)?.ok_or_else(|| not_found(track_id))?);
+    }
+    let accessible =
+        crate::services::auth::access::accessible_entities(db, principal, &track_db_ids)?;
+    for (track_id, track_db_id) in track_ids.iter().zip(&track_db_ids) {
+        let exists = lyra_db::tracks::get_by_id(db, *track_db_id)?.is_some();
+        if !exists || !accessible.contains(track_db_id) {
+            return Err(not_found(track_id));
         }
     }
-    Ok(())
+    Ok(track_db_ids)
 }
 
 /// A non-negative integer playlist position read from `value`.
@@ -627,7 +598,7 @@ fn playlist_position(value: luau::Value, name: &str) -> luau::runtime::Result<u6
 fn owned_playlist_with_entry(
     db: &DbAny,
     principal: &Principal,
-    playlist_id: ResolveId,
+    playlist_id: &str,
     entry_id: &str,
 ) -> luau::runtime::Result<Option<DbId>> {
     let Some(playlist_db_id) = owned_playlist(db, principal, playlist_id)? else {
@@ -651,21 +622,33 @@ fn visible_track_links(
         return Ok(Vec::new());
     }
     let links = playlist_service::get_tracks(db, QueryId::Id(playlist_db_id))?;
-    links
-        .into_iter()
-        .filter_map(|link| playlist_link_to_info(db, principal, link).transpose())
-        .collect()
+    visible_links(db, principal, links)
 }
 
-fn playlist_link_to_info(
+/// The links whose tracks the caller can see, with the tracks' public ids.
+fn visible_links(
     db: &DbAny,
     principal: &Principal,
-    link: playlist_service::PlaylistTrackLink,
-) -> luau::runtime::Result<Option<PlaylistTrackLink>> {
-    if !crate::services::auth::access::entity_accessible(db, principal, link.track_db_id)? {
-        return Ok(None);
-    }
-    Ok(Some(link.into()))
+    links: Vec<playlist_service::PlaylistTrackLink>,
+) -> luau::runtime::Result<Vec<PlaylistTrackLink>> {
+    let track_db_ids = links
+        .iter()
+        .map(|link| link.track_db_id)
+        .collect::<Vec<_>>();
+    let accessible =
+        crate::services::auth::access::accessible_entities(db, principal, &track_db_ids)?;
+    let public_ids = ids::public_ids(db, &track_db_ids)?;
+    Ok(links
+        .into_iter()
+        .filter(|link| accessible.contains(&link.track_db_id))
+        .filter_map(|link| {
+            Some(PlaylistTrackLink {
+                track_id: public_ids.get(&link.track_db_id)?.clone(),
+                entry_id: link.entry_id,
+                position: link.position,
+            })
+        })
+        .collect())
 }
 
 fn parse_create_request(table: luau::Table) -> luau::runtime::Result<PlaylistCreateRequest> {
@@ -680,14 +663,7 @@ fn parse_create_request(table: luau::Table) -> luau::runtime::Result<PlaylistCre
 }
 
 fn parse_update_request(table: luau::Table) -> luau::runtime::Result<PlaylistUpdateRequest> {
-    let playlist_id = match table.get("playlist_id")? {
-        luau::Value::Nil => {
-            return Err(crate::plugins::runtime_error(
-                "missing required field: playlist_id",
-            ));
-        }
-        value => args::resolve_id(value)?,
-    };
+    let playlist_id = table.required_string_field("playlist_id")?;
     Ok(PlaylistUpdateRequest {
         playlist_id,
         fields: parse_fields(&table)?,
@@ -736,7 +712,6 @@ impl DescribeInterface for PlaylistInfo {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("PlaylistInfo", None);
         descriptor.fields.extend([
-            field("db_id", Option::<i64>::luau_type()),
             field("id", String::luau_type()),
             field("name", String::luau_type()),
             field("description", Option::<String>::luau_type()),
@@ -759,7 +734,7 @@ impl DescribeInterface for PlaylistTrackLink {
         let mut descriptor = InterfaceDescriptor::new("PlaylistTrackLink", None);
         descriptor.fields.extend([
             field("entry_id", String::luau_type()),
-            field("track_id", i64::luau_type()),
+            field("track_id", String::luau_type()),
             field("position", u64::luau_type()),
         ]);
         descriptor
@@ -781,7 +756,7 @@ impl DescribeInterface for PlaylistCreateRequest {
             field("is_public", Option::<bool>::luau_type()),
             field("created_at_ms", Option::<u64>::luau_type()),
             field("updated_at_ms", Option::<u64>::luau_type()),
-            field("track_ids", Option::<Vec<u64>>::luau_type()),
+            field("track_ids", Option::<Vec<String>>::luau_type()),
         ]);
         descriptor
     }
@@ -817,7 +792,7 @@ impl DescribeInterface for PlaylistReplaceRequest {
         let mut descriptor = InterfaceDescriptor::new("PlaylistReplaceRequest", None);
         descriptor.fields.extend([
             field("fields", Option::<PlaylistFields>::luau_type()),
-            field("track_ids", Vec::<u64>::luau_type()),
+            field("track_ids", Vec::<String>::luau_type()),
         ]);
         descriptor
     }
@@ -833,7 +808,7 @@ impl DescribeInterface for PlaylistUpdateRequest {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("PlaylistUpdateRequest", None);
         descriptor.fields.extend([
-            field("playlist_id", args::resolve_id_type()),
+            field("playlist_id", String::luau_type()),
             field("name", Option::<String>::luau_type()),
             field("description", Option::<String>::luau_type()),
             field("is_public", Option::<bool>::luau_type()),

@@ -53,7 +53,7 @@ local function require_non_empty_string(value: string?): string?
 	return nil
 end
 
-local function query_release_projection(entity_id: number, include: string | { string }): ReleaseProjectionInfo?
+local function query_release_projection(entity_id: string, include: string | { string }): ReleaseProjectionInfo?
 	local request: EntityQueryRequest = {
 		id = entity_id,
 		include = include,
@@ -65,7 +65,7 @@ local function query_release_projection(entity_id: number, include: string | { s
 	return projection
 end
 
-local function query_artist_projection(entity_id: number, include: string | { string }): ArtistProjectionInfo?
+local function query_artist_projection(entity_id: string, include: string | { string }): ArtistProjectionInfo?
 	local request: EntityQueryRequest = {
 		id = entity_id,
 		include = include,
@@ -77,9 +77,9 @@ local function query_artist_projection(entity_id: number, include: string | { st
 	return projection
 end
 
-local function query_track_projection(track_public_id: string): (TrackProjection?, TrackProjectionIncludes?)
+local function query_track_projection(track_id: string): (TrackProjection?, TrackProjectionIncludes?)
 	local request: EntityQueryRequest = {
-		id = track_public_id,
+		id = track_id,
 		include = { "artists", "releases", "identifiers" },
 	}
 	local ok, projection = pcall(entities.query_track, request)
@@ -109,16 +109,12 @@ local function resolve_release_metadata(releases_list: { ReleaseProjection }?): 
 	end
 
 	for _, release in releases_list do
-		local release_db_id = release.db_id
-		local release_name = release.release_title
-		if release_db_id ~= nil then
-			local release_projection = query_release_projection(release_db_id, "identifiers")
-			local identifiers = if release_projection then release_projection.includes.identifiers else nil
-			local release_mbid = if identifiers then identifiers["musicbrainz:release"] else nil
-			local release_group_mbid = if identifiers then identifiers["musicbrainz:release-group"] else nil
+		local release_projection = query_release_projection(release.id, "identifiers")
+		local identifiers = if release_projection then release_projection.includes.identifiers else nil
+		local release_mbid = if identifiers then identifiers["musicbrainz:release"] else nil
+		local release_group_mbid = if identifiers then identifiers["musicbrainz:release-group"] else nil
 
-			return release_name, release_mbid, release_group_mbid
-		end
+		return release.release_title, release_mbid, release_group_mbid
 	end
 
 	return nil, nil, nil
@@ -132,15 +128,12 @@ local function collect_artist_mbids(artists_list: { ArtistProjection }?): { stri
 	end
 
 	for _, artist in artists_list do
-		local artist_id = artist.db_id
-		if artist_id ~= nil then
-			local artist_projection = query_artist_projection(artist_id, "identifiers")
-			local identifiers = if artist_projection then artist_projection.includes.identifiers else nil
-			local artist_mbid = if identifiers then identifiers["musicbrainz:artist"] else nil
-			if artist_mbid ~= nil and not seen[artist_mbid] then
-				seen[artist_mbid] = true
-				table.insert(mbids, artist_mbid)
-			end
+		local artist_projection = query_artist_projection(artist.id, "identifiers")
+		local identifiers = if artist_projection then artist_projection.includes.identifiers else nil
+		local artist_mbid = if identifiers then identifiers["musicbrainz:artist"] else nil
+		if artist_mbid ~= nil and not seen[artist_mbid] then
+			seen[artist_mbid] = true
+			table.insert(mbids, artist_mbid)
 		end
 	end
 
@@ -183,8 +176,8 @@ local function build_additional_info(
 	return additional_info
 end
 
-local function build_track_metadata(track_public_id: string): TrackMetadata?
-	local track, includes = query_track_projection(track_public_id)
+local function build_track_metadata(track_id: string): TrackMetadata?
+	local track, includes = query_track_projection(track_id)
 	local artists_list = if includes then includes.artists else nil
 	local releases_list = if includes then includes.releases else nil
 	local identifiers = if includes then includes.identifiers else nil
@@ -231,8 +224,8 @@ local function submit_listens(token: string, document: JsonValue)
 	end
 end
 
-local function user_token(user_public_id: string): string?
-	local ok, settings = pcall(user_config.get, user_config, user_public_id)
+local function user_token(user_id: string): string?
+	local ok, settings = pcall(user_config.get, user_config, user_id)
 	if not ok then
 		return nil
 	end
@@ -243,15 +236,13 @@ playbacks.on_update(function(update: PlaybackUpdatePayload)
 	if update.event ~= "started" then
 		return
 	end
-	local token = user_token(update.user_public_id)
+	local token = user_token(update.user_id)
 	if not token then
 		return
 	end
-	local track_metadata = build_track_metadata(update.track_public_id)
+	local track_metadata = build_track_metadata(update.track_id)
 	if not track_metadata then
-		warn(
-			`skipping ListenBrainz playing_now for track_public_id={update.track_public_id}: missing artist_name or track_name`
-		)
+		warn(`skipping ListenBrainz playing_now for track_id={update.track_id}: missing artist_name or track_name`)
 		return
 	end
 	submit_listens(token, documents.playing_now(track_metadata))

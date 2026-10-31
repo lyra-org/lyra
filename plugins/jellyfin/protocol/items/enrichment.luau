@@ -11,8 +11,8 @@ type Track = tracks.Track
 
 local module = {}
 
-local function append_unique_id(id: number?, output: { number }, seen: { [number]: boolean })
-	if id ~= nil and id > 0 and not seen[id] then
+local function append_unique_id(id: string, output: { string }, seen: { [string]: boolean })
+	if not seen[id] then
 		seen[id] = true
 		table.insert(output, id)
 	end
@@ -61,29 +61,29 @@ function module.track_premiere_date(track_year: number?, release_date: string?):
 end
 
 -- Duplicate entries count once per occurrence.
-function module.playlist_runtime_ticks(playlist_db_ids: { number }): { [number]: number }
-	local runtime_ticks: { [number]: number } = {}
-	if #playlist_db_ids == 0 then
+function module.playlist_runtime_ticks(playlist_ids: { string }): { [string]: number }
+	local runtime_ticks: { [string]: number } = {}
+	if #playlist_ids == 0 then
 		return runtime_ticks
 	end
 
-	local links_by_playlist = playlists.get_tracks_many(playlist_db_ids)
-	local track_ids: { number } = {}
-	local track_seen: { [number]: boolean } = {}
+	local links_by_playlist = playlists.get_tracks_many(playlist_ids)
+	local track_ids: { string } = {}
+	local track_seen: { [string]: boolean } = {}
 	for _, links in links_by_playlist do
 		for _, link in links do
 			append_unique_id(link.track_id, track_ids, track_seen)
 		end
 	end
-	local tracks_by_id: { [number]: Track } = if #track_ids > 0 then tracks.get(track_ids) else {}
+	local tracks_by_id: { [string]: Track } = if #track_ids > 0 then tracks.get(track_ids) else {}
 
-	for _, playlist_db_id in playlist_db_ids do
+	for _, playlist_id in playlist_ids do
 		local total_ticks = 0
-		for _, link in links_by_playlist[playlist_db_id] or {} do
+		for _, link in links_by_playlist[playlist_id] or {} do
 			local track = tracks_by_id[link.track_id]
 			total_ticks += module.ms_to_ticks(if track then track.duration_ms else nil) or 0
 		end
-		runtime_ticks[playlist_db_id] = total_ticks
+		runtime_ticks[playlist_id] = total_ticks
 	end
 	return runtime_ticks
 end

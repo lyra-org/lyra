@@ -9,12 +9,12 @@ type Params = { [string]: string }
 
 local ids = fixture.ids
 
-local function hex(id: number): string
+local function hex(id: string): string
 	return item_ids.encode_jellyfin_item_id(id)
 end
 
 -- `Name:Type` for each item a listing returns, then its total when it has one.
-local function list(list_items: (options.ItemsQueryOptions) -> any, params: Params, parent: number?): string
+local function list(list_items: (options.ItemsQueryOptions) -> any, params: Params, parent: string?): string
 	local raw: { [string]: { string } } = {}
 	for key, value in params do
 		raw[key] = { value }
@@ -31,7 +31,7 @@ local function list(list_items: (options.ItemsQueryOptions) -> any, params: Para
 	return if total then `{listed} ({total})` else listed
 end
 
-local function items(params: Params, parent: number?): string
+local function items(params: Params, parent: string?): string
 	return list(listing.list_items, params, parent)
 end
 
@@ -127,7 +127,7 @@ end
 -- Under a parent, playlists list when they are the only type named, and only those with a track
 -- under the parent.
 do
-	local function under(parent: number, filter: Params?): string
+	local function under(parent: string, filter: Params?): string
 		return items(with({ IncludeItemTypes = "Playlist", Recursive = "true" }, filter or {}), parent)
 	end
 	check(under(ids.compilation), "Mix:Playlist (1)")
