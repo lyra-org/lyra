@@ -1,23 +1,3 @@
-FROM node:24-bookworm-slim AS web
-
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /web
-
-ARG LYRA_WEB_GIT_HASH
-RUN printf '%s\n' "$LYRA_WEB_GIT_HASH" | grep -Eq '^[0-9a-f]{40}$' \
-    && git init . \
-    && git remote add origin https://github.com/lyra-org/lyra-web.git \
-    && git fetch --depth 1 origin "$LYRA_WEB_GIT_HASH" \
-    && git checkout --detach FETCH_HEAD \
-    && test "$(git rev-parse HEAD)" = "$LYRA_WEB_GIT_HASH"
-
-RUN npm install --global "$(node -p 'require("./package.json").packageManager')" \
-    && pnpm install --frozen-lockfile \
-    && pnpm run check \
-    && pnpm run build
-
 FROM debian:trixie-slim AS ffmpeg
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -80,9 +60,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-ARG LYRA_GIT_HASH=unknown
-ENV LYRA_GIT_HASH=${LYRA_GIT_HASH}
-
 WORKDIR /build
 
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
@@ -119,15 +96,40 @@ FROM build-env AS clippy
 COPY . .
 RUN cargo clippy --locked --workspace --all-targets -- -D warnings
 
-FROM build-env AS builder
+FROM build-env AS deps
 
 # Pre-compile dependencies. Stubs cause final link to fail — that's expected.
 RUN cargo build --release -p lyra-server || true
+
+# Kaniko carries declared ARGs into later stages' cache keys, so stages
+# declaring per-build ARGs come after the dependency layers.
+FROM node:24-bookworm-slim AS web
+
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /web
+
+ARG LYRA_WEB_GIT_HASH
+RUN printf '%s\n' "$LYRA_WEB_GIT_HASH" | grep -Eq '^[0-9a-f]{40}$' \
+    && git init . \
+    && git remote add origin https://github.com/lyra-org/lyra-web.git \
+    && git fetch --depth 1 origin "$LYRA_WEB_GIT_HASH" \
+    && git checkout --detach FETCH_HEAD \
+    && test "$(git rev-parse HEAD)" = "$LYRA_WEB_GIT_HASH"
+
+RUN npm install --global "$(node -p 'require("./package.json").packageManager')" \
+    && pnpm install --frozen-lockfile \
+    && pnpm run check \
+    && pnpm run build
+
+FROM deps AS builder
 
 COPY . .
 
 RUN find harmony-* lyra-* -name '*.rs' -exec touch {} +
 
+ARG LYRA_GIT_HASH=unknown
 RUN cargo build --release --locked -p lyra-server
 
 FROM debian:trixie-slim

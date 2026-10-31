@@ -78,7 +78,6 @@ clippy:
         --target=clippy \
         --skip-unused-stages=true \
         --no-push \
-        --build-arg LYRA_GIT_HASH=$CI_COMMIT_SHA \
         --cache=true \
         --cache-repo=$BUILDCACHE \
         --insecure-registry=$INTERNAL_REGISTRY
