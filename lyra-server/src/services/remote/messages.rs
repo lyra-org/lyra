@@ -233,8 +233,8 @@ pub(crate) enum EventMessage {
     SyncRequired(SyncRequired),
     /// Sent first on every connection, describing the connection itself.
     Connected(Connection),
-    /// One of the user's connections opened, declared its capabilities, or started or stopped
-    /// driving a playback.
+    /// One of the user's connections opened, declared its capabilities, started or stopped
+    /// driving a playback, or had its remote control degrade or recover.
     ConnectionUpdated(Connection),
     /// One of the user's connections closed.
     ConnectionClosed(ConnectionClosed),

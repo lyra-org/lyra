@@ -205,9 +205,11 @@ fn previous_session_playback_is_expired(state: &SessionBindingState, now_ms: u64
         .is_some_and(|expires_at_ms| expires_at_ms < now_ms)
 }
 
+/// `playback_id` is the reported playback the scope's sessions belong to.
 fn updated_playback_session_state(
     session: &PlaybackSessionScope,
     state: &SessionBindingState,
+    playback_id: Option<&str>,
 ) -> Option<PlaybackSessionScope> {
     if state.current_playback_session_id.is_none() && state.previous_playback_session_id.is_none() {
         return None;
@@ -216,6 +218,9 @@ fn updated_playback_session_state(
     let mut updated = session.clone();
     updated.current_playback_session_id = state.current_playback_session_id;
     updated.current_playback_session_public_id = state.current_playback_session_public_id.clone();
+    updated.current_playback_id = state
+        .current_playback_session_id
+        .and(playback_id.map(str::to_string));
     updated.previous_playback_session_id = state.previous_playback_session_id;
     updated.previous_playback_session_public_id = state.previous_playback_session_public_id.clone();
     updated.previous_demoted_at_ms = state.previous_demoted_at_ms;
@@ -913,6 +918,7 @@ fn report_playback_session_in_transaction(
         Some(PlaybackSessionScope {
             current_playback_session_id: current_id,
             current_playback_session_public_id: current_public_id,
+            current_playback_id: current_id.map(|_| root.id.clone()),
             previous_playback_session_id: previous_id,
             previous_playback_session_public_id: previous
                 .map(|previous| previous.session_public_id.clone()),
@@ -1034,7 +1040,11 @@ fn report_playback_session_in_transaction(
                         ))?;
                     }
                     let session = session.as_ref().and_then(|session| {
-                        updated_playback_session_state(session, &session_state)
+                        updated_playback_session_state(
+                            session,
+                            &session_state,
+                            root.as_ref().map(|root| root.id.as_str()),
+                        )
                     });
                     return Ok(SessionReport::ignored(session));
                 }
@@ -1184,7 +1194,11 @@ fn report_playback_session_in_transaction(
                     // A report for a play whose session was replaced cannot bring it back.
                     Err(PlaybackServiceError::PlayConflict(_)) => {
                         let session = session.as_ref().and_then(|session| {
-                            updated_playback_session_state(session, &session_state)
+                            updated_playback_session_state(
+                                session,
+                                &session_state,
+                                root.as_ref().map(|root| root.id.as_str()),
+                            )
                         });
                         return Ok(SessionReport::ignored(session));
                     }
@@ -1267,6 +1281,7 @@ fn report_playback_session_in_transaction(
         let scope = session.get_or_insert(PlaybackSessionScope {
             current_playback_session_id: None,
             current_playback_session_public_id: None,
+            current_playback_id: None,
             previous_playback_session_id: None,
             previous_playback_session_public_id: None,
             previous_demoted_at_ms: None,
@@ -1279,9 +1294,13 @@ fn report_playback_session_in_transaction(
             scope.updated_at_ms = now_ms;
         }
     }
-    let session = session
-        .as_ref()
-        .and_then(|session| updated_playback_session_state(session, &session_state));
+    let session = session.as_ref().and_then(|session| {
+        updated_playback_session_state(
+            session,
+            &session_state,
+            root.as_ref().map(|root| root.id.as_str()),
+        )
+    });
     Ok(SessionReport {
         playback,
         scope: session,

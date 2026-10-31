@@ -90,7 +90,6 @@ pub(crate) struct PlaybackDetail {
 
 #[derive(Clone, Debug)]
 pub(crate) struct CurrentSession {
-    pub(crate) playback_session_id: DbId,
     pub(crate) track_db_id: DbId,
     pub(crate) track_public_id: String,
     pub(crate) playback: lyra_db::PlaybackSession,
@@ -99,7 +98,6 @@ pub(crate) struct CurrentSession {
 impl From<&playback_sessions::PlaybackRecord> for CurrentSession {
     fn from(record: &playback_sessions::PlaybackRecord) -> Self {
         Self {
-            playback_session_id: record.playback_session_id,
             track_db_id: record.track_db_id,
             track_public_id: record.track_public_id.clone(),
             playback: record.playback.clone(),
@@ -149,6 +147,24 @@ pub(crate) struct PlaybackUpdate {
     pub(crate) evicted_playbacks: Vec<playback_sessions::EvictedPlaybackRecord>,
 }
 
+/// The native scope of the connection that reports a playback, which then drives it.
+pub(crate) struct ReportingConnection {
+    pub(crate) user_public_id: String,
+    pub(crate) session_key: String,
+}
+
+impl ReportingConnection {
+    fn bind(&self, playback_id: &str, session: &playback_sessions::PlaybackRecord, now_ms: u64) {
+        playback_sessions::bind_current_playback_session_scope(
+            &playback_sessions::PlaybackScopeKey::native(&self.user_public_id, &self.session_key),
+            playback_id,
+            session.playback_session_id,
+            session.playback_session_public_id.clone(),
+            now_ms,
+        );
+    }
+}
+
 pub(crate) struct CreatePlaybackRequest {
     pub(crate) id: String,
     pub(crate) play_id: String,
@@ -157,6 +173,7 @@ pub(crate) struct CreatePlaybackRequest {
     pub(crate) queue: ValidatedQueue,
     pub(crate) mutation: playback_sessions::PlaybackMutation,
     pub(crate) now_ms: u64,
+    pub(crate) reporting_connection: Option<ReportingConnection>,
 }
 
 pub(crate) struct ReportProgressRequest {
@@ -169,6 +186,7 @@ pub(crate) struct ReportProgressRequest {
     pub(crate) mutation: playback_sessions::PlaybackMutation,
     pub(crate) now_ms: u64,
     pub(crate) require_full_queue_access: bool,
+    pub(crate) reporting_connection: Option<ReportingConnection>,
 }
 
 pub(crate) struct CompensateProgressRequest {
@@ -192,6 +210,7 @@ pub(crate) fn create_playback(
         queue,
         mutation,
         now_ms,
+        reporting_connection,
     } = request;
     let ValidatedQueue {
         snapshot,
@@ -242,6 +261,11 @@ pub(crate) fn create_playback(
         Ok::<_, PlaybackError>((playback, session))
     })?;
     session.announce_recorded_listen();
+    if let Some(connection) = &reporting_connection
+        && !session.playback.playback.state.is_terminal()
+    {
+        connection.bind(&playback.id, &session.playback, now_ms);
+    }
     let evicted_playbacks = playback_sessions::cleanup_after_commit(db, now_ms);
 
     Ok(PlaybackUpdate {
@@ -267,6 +291,7 @@ pub(crate) fn report_progress(
         mutation,
         now_ms,
         require_full_queue_access,
+        reporting_connection,
     } = request;
 
     let (playback, session, displaced_session) = db.transaction_mut(|t| {
@@ -379,6 +404,13 @@ pub(crate) fn report_progress(
         displaced.announce_recorded_listen();
     }
 
+    // Bound before the displaced session is cleared, so the reporter moves straight from the
+    // replaced track session to its successor.
+    if let Some(connection) = &reporting_connection
+        && !session.playback.playback.state.is_terminal()
+    {
+        connection.bind(&playback.id, &session.playback, now_ms);
+    }
     if session.playback.playback.state.is_terminal() {
         playback_sessions::clear_session_bindings_for_playback(
             session.playback.playback_session_id,
@@ -543,7 +575,6 @@ fn get_current_session(
         return Ok(None);
     };
     Ok(Some(CurrentSession {
-        playback_session_id,
         track_db_id,
         track_public_id,
         playback,
@@ -644,6 +675,21 @@ pub(crate) fn list_visible_projections(
     active_only: bool,
     now_ms: u64,
 ) -> Result<Vec<lyra_db::playbacks::PlaybackListProjection>, PlaybackError> {
+    Ok(
+        list_visible_projections_with_current(db, principal, active_only, now_ms)?
+            .into_iter()
+            .map(|(projection, _)| projection)
+            .collect(),
+    )
+}
+
+/// [`list_visible_projections`], each with the database id of its current track session.
+pub(crate) fn list_visible_projections_with_current(
+    db: &DbAny,
+    principal: &Principal,
+    active_only: bool,
+    now_ms: u64,
+) -> Result<Vec<(lyra_db::playbacks::PlaybackListProjection, Option<DbId>)>, PlaybackError> {
     let user_db_id = principal.require(db).map_err(anyhow::Error::from)?;
     let projections = lyra_db::playbacks::list_projections_for_user(db, user_db_id)?;
     if projections.len() > lyra_db::playbacks::MAX_PLAYBACKS_PER_USER
@@ -700,7 +746,7 @@ pub(crate) fn list_visible_projections(
         {
             continue;
         }
-        visible.push(projection);
+        visible.push((projection, current.map(|(session_id, _)| session_id)));
     }
     Ok(visible)
 }
@@ -1123,6 +1169,7 @@ mod tests {
                     state: Some(lyra_db::PlaybackState::Playing),
                 },
                 now_ms: 30_000,
+                reporting_connection: None,
             },
         )?;
         assert_eq!(update.session.playback.played_ms, 0);
@@ -1158,6 +1205,7 @@ mod tests {
                 },
                 mutation: playback_sessions::PlaybackMutation::default(),
                 now_ms: 1,
+                reporting_connection: None,
             },
         )?;
         let playback_db_id = created.playback.db_id.expect("persisted playback");
@@ -1220,6 +1268,7 @@ mod tests {
                     state: Some(lyra_db::PlaybackState::Playing),
                 },
                 now_ms: 1_000,
+                reporting_connection: None,
             },
         )?;
         let replaced = replace_queue(

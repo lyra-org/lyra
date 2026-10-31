@@ -135,6 +135,12 @@ pub(super) async fn report_progress(
             mutation,
             now_ms: current_ms,
             require_full_queue_access: request.handoff_token.is_some(),
+            // A handoff binds its target only once the handoff completes.
+            reporting_connection: if progress_claim.is_none() {
+                reporting_connection(principal, connection_session_key.as_deref())
+            } else {
+                None
+            },
         },
     )
     .map_err(map_playback_error);
@@ -158,21 +164,6 @@ pub(super) async fn report_progress(
         })
     });
 
-    if committed_progress.is_none()
-        && let Some(session_key) = connection_session_key.as_deref()
-        && !update.session.playback.state.is_terminal()
-    {
-        sessions::bind_current_playback_session_scope(
-            &sessions::PlaybackScopeKey {
-                plugin_id: NATIVE_PLAYBACK_PLUGIN_ID,
-                user_public_id: &principal.user_public_id,
-                session_key,
-            },
-            update.session.playback_session_id,
-            update.session.playback_session_public_id.clone(),
-            current_ms,
-        );
-    }
     let response = playback_to_response(
         &update.playback,
         Some(&playbacks::CurrentSession::from(&update.session)),

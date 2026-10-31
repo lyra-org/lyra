@@ -23,11 +23,11 @@ use tokio::sync::watch;
 use crate::services::{
     auth,
     remote::{
-        connection,
         constants::{
             CloseReason,
             MAX_MESSAGE_SIZE,
         },
+        lifecycle,
         registry,
     },
 };
@@ -95,7 +95,7 @@ async fn ws_upgrade(
                 }
             };
 
-            match connection::confirm_registration(result.connection_id, &user_public_id).await {
+            match lifecycle::confirm_registration(result.connection_id, &user_public_id).await {
                 Ok(true) => {}
                 Ok(false) => {
                     tracing::info!(

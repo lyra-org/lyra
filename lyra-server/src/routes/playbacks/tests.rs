@@ -169,7 +169,6 @@ fn active_filter_requires_recent_non_terminal_current_session() {
         updated_at_ms: 1,
     };
     let current = playbacks::CurrentSession {
-        playback_session_id: DbId(2),
         track_db_id: DbId(3),
         track_public_id: "track".to_string(),
         playback: lyra_db::PlaybackSession {
@@ -639,6 +638,7 @@ async fn queue_replacement_cannot_overtake_committed_handoff_finish() -> anyhow:
                 },
                 now_ms: current_ms,
                 require_full_queue_access: true,
+                reporting_connection: None,
             },
         )?;
         claim.commit(handoffs::AppliedProgress {
@@ -685,11 +685,8 @@ async fn queue_replacement_cannot_overtake_committed_handoff_finish() -> anyhow:
         .await?
         .map_err(|error| anyhow::anyhow!("{error:?}"))?;
     assert_eq!(replaced.revision, 2);
-    let target_scope = sessions::PlaybackScopeKey {
-        plugin_id: NATIVE_PLAYBACK_PLUGIN_ID,
-        user_public_id: &fixture.user_public_id,
-        session_key: "target-session",
-    };
+    let target_scope =
+        sessions::PlaybackScopeKey::native(&fixture.user_public_id, "target-session");
     assert_eq!(
         sessions::get_playback_session(&target_scope)
             .and_then(|scope| scope.current_playback_session_id),
@@ -780,6 +777,7 @@ async fn a_listen_is_announced_even_when_its_handoff_then_fails() -> anyhow::Res
                 },
                 now_ms: current_ms,
                 require_full_queue_access: true,
+                reporting_connection: None,
             },
         )?;
         claim.commit(handoffs::AppliedProgress {

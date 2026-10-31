@@ -3,7 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-//! A user's WebSocket connections joined with the playback each one drives.
+//! The connection resource: a user's WebSocket connections joined with the playback each drives.
 
 use std::collections::HashMap;
 
@@ -34,8 +34,6 @@ use crate::services::playbacks::{
     PlaybackError,
 };
 
-const NATIVE_PLUGIN_ID: &str = "native";
-
 /// One of the caller's open WebSocket connections.
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -52,11 +50,11 @@ pub(crate) struct Connection {
     pub(crate) connected_at: String,
 }
 
-/// The playback a connection drives, with the track session it is reporting.
+/// The playback a connection drives and the track session it reports for it.
 #[derive(Clone, Debug)]
 pub(crate) struct ConnectionPlayback {
     pub(crate) playback_id: String,
-    pub(crate) current: CurrentSession,
+    pub(crate) session_id: DbId,
 }
 
 #[derive(Clone, Debug)]
@@ -67,6 +65,9 @@ pub(crate) struct UserConnection {
     pub(crate) supported_commands: Vec<RemoteAction>,
     pub(crate) playback: Option<ConnectionPlayback>,
     pub(crate) remote_control_degraded: bool,
+    /// When the connection degrades unless it acknowledges the command it was sent; `None` once
+    /// degraded or with nothing pending.
+    pub(crate) degrades_at_ms: Option<u64>,
     pub(crate) connected_at_ms: u64,
     connection_id: ConnectionId,
     bound_at_ms: u64,
@@ -78,13 +79,37 @@ impl UserConnection {
             id: self.id.clone(),
             client_name: self.client_name.clone(),
             supported_commands: self.supported_commands.clone(),
-            playback_id: self
-                .playback
-                .as_ref()
-                .map(|playback| playback.playback_id.clone()),
+            playback_id: self.playback_id().map(str::to_string),
             remote_control_degraded: self.remote_control_degraded,
             connected_at: crate::services::timestamps::unix_ms_to_rfc3339_u64(self.connected_at_ms),
         }
+    }
+
+    pub(crate) fn playback_id(&self) -> Option<&str> {
+        self.playback
+            .as_ref()
+            .map(|playback| playback.playback_id.as_str())
+    }
+
+    /// The track session the connection reports for its playback, if it still exists.
+    pub(crate) fn current_session(&self, db: &DbAny) -> anyhow::Result<Option<CurrentSession>> {
+        let Some(session_id) = self.playback.as_ref().map(|playback| playback.session_id) else {
+            return Ok(None);
+        };
+        let Some(playback) = lyra_db::playback_sessions::get_by_id(db, session_id)? else {
+            return Ok(None);
+        };
+        let Some(track_db_id) = lyra_db::playback_sessions::get_track_id(db, session_id)? else {
+            return Ok(None);
+        };
+        let Some(track_public_id) = lyra_db::lookup::find_id_by_db_id(db, track_db_id)? else {
+            return Ok(None);
+        };
+        Ok(Some(CurrentSession {
+            track_db_id,
+            track_public_id,
+            playback,
+        }))
     }
 }
 
@@ -113,51 +138,47 @@ pub(crate) fn join(
         .map(|snapshot| {
             let scope_key = scope_key(&snapshot);
             let scope = playback_sessions::get_playback_session(&scope_key);
-            let degraded = playback_sessions::is_remote_control_degraded(&scope_key, now_ms);
-            (snapshot, scope, degraded)
+            let degraded_at_ms = playback_sessions::remote_control_degraded_at_ms(&scope_key);
+            (snapshot, scope, degraded_at_ms)
         })
         .collect::<Vec<_>>();
 
     let playback_by_session = if bound.iter().any(|(_, scope, _)| {
         scope
             .as_ref()
-            .is_some_and(|s| s.current_playback_session_id.is_some())
+            .is_some_and(|scope| scope.current_playback_session_id.is_some())
     }) {
         visible_playbacks_by_current_session(db, principal, now_ms)?
     } else {
         HashMap::new()
     };
 
-    let mut connections = Vec::with_capacity(bound.len());
-    for (snapshot, scope, remote_control_degraded) in bound {
-        let playback = match scope
-            .as_ref()
-            .and_then(|scope| scope.current_playback_session_id)
-            .and_then(|session_id| Some((session_id, playback_by_session.get(&session_id)?)))
-        {
-            Some((session_id, (playback_db_id, playback_id))) => {
-                playbacks::get_visible_detail(db, *playback_db_id, principal, now_ms)?
-                    .and_then(|detail| detail.current_session)
-                    .filter(|current| current.playback_session_id == session_id)
-                    .map(|current| ConnectionPlayback {
-                        playback_id: playback_id.clone(),
-                        current,
+    let mut connections = bound
+        .into_iter()
+        .map(|(snapshot, scope, degraded_at_ms)| {
+            let playback = scope
+                .as_ref()
+                .and_then(|scope| scope.current_playback_session_id)
+                .and_then(|session_id| {
+                    Some(ConnectionPlayback {
+                        playback_id: playback_by_session.get(&session_id)?.clone(),
+                        session_id,
                     })
+                });
+            UserConnection {
+                id: snapshot.public_id,
+                session_key: snapshot.session_key,
+                client_name: snapshot.client_name,
+                supported_commands: snapshot.supported_commands,
+                playback,
+                remote_control_degraded: degraded_at_ms.is_some_and(|at_ms| now_ms >= at_ms),
+                degrades_at_ms: degraded_at_ms.filter(|at_ms| now_ms < *at_ms),
+                connected_at_ms: snapshot.connected_at_ms,
+                connection_id: snapshot.connection_id,
+                bound_at_ms: scope.map_or(0, |scope| scope.updated_at_ms),
             }
-            None => None,
-        };
-        connections.push(UserConnection {
-            id: snapshot.public_id,
-            session_key: snapshot.session_key,
-            client_name: snapshot.client_name,
-            supported_commands: snapshot.supported_commands,
-            playback,
-            remote_control_degraded,
-            connected_at_ms: snapshot.connected_at_ms,
-            connection_id: snapshot.connection_id,
-            bound_at_ms: scope.map_or(0, |scope| scope.updated_at_ms),
-        });
-    }
+        })
+        .collect::<Vec<_>>();
     connections.sort_by(|left, right| {
         left.connected_at_ms
             .cmp(&right.connected_at_ms)
@@ -174,157 +195,44 @@ pub(crate) fn controller<'a>(
 ) -> Option<&'a UserConnection> {
     connections
         .iter()
-        .filter(|connection| {
-            connection
-                .playback
-                .as_ref()
-                .is_some_and(|playback| playback.playback_id == playback_id)
-        })
+        .filter(|connection| connection.playback_id() == Some(playback_id))
         .max_by_key(|connection| (connection.bound_at_ms, connection.connection_id))
 }
 
 fn scope_key(snapshot: &ConnectionSnapshot) -> PlaybackScopeKey<'_> {
-    PlaybackScopeKey {
-        plugin_id: NATIVE_PLUGIN_ID,
-        user_public_id: &snapshot.user_public_id,
-        session_key: &snapshot.session_key,
-    }
+    PlaybackScopeKey::native(&snapshot.user_public_id, &snapshot.session_key)
 }
 
+/// The public id of each playback the principal can see, keyed by its current track session.
 fn visible_playbacks_by_current_session(
     db: &DbAny,
     principal: &Principal,
     now_ms: u64,
-) -> Result<HashMap<DbId, (DbId, String)>, PlaybackError> {
-    let projections = playbacks::list_visible_projections(db, principal, false, now_ms)?;
-    let playback_ids = projections
-        .iter()
-        .map(|projection| projection.db_id)
-        .collect::<Vec<_>>();
-    let current = lyra_db::playbacks::current_session_ids(db, &playback_ids)?;
-    Ok(projections
-        .into_iter()
-        .filter_map(|projection| {
-            let session_id = *current.get(&projection.db_id)?;
-            Some((session_id, (projection.db_id, projection.id)))
-        })
-        .collect())
+) -> Result<HashMap<DbId, String>, PlaybackError> {
+    Ok(
+        playbacks::list_visible_projections_with_current(db, principal, false, now_ms)?
+            .into_iter()
+            .filter_map(|(projection, session_id)| Some((session_id?, projection.id)))
+            .collect(),
+    )
 }
 
 #[cfg(test)]
-pub(super) mod tests {
+mod tests {
     use super::*;
-    use crate::services::playback_sessions::PlaybackMutation;
-    use crate::services::playbacks::QueueSnapshot;
+    use crate::services::remote::testing as fixture;
     use crate::services::testing;
-    use lyra_db::PlaybackState;
-    use tokio::sync::watch;
-
-    pub(in crate::services::remote) struct TestUser {
-        pub(in crate::services::remote) db_id: DbId,
-        pub(in crate::services::remote) principal: Principal,
-    }
-
-    pub(in crate::services::remote) async fn init() -> anyhow::Result<()> {
-        testing::init_library_test_state(std::path::PathBuf::from(".")).await?;
-        for connection in registry::list_connections().await {
-            registry::unregister(connection.connection_id).await;
-        }
-        Ok(())
-    }
-
-    pub(in crate::services::remote) async fn user(name: &str) -> anyhow::Result<TestUser> {
-        let db_id = {
-            let mut db = STATE.db.write().await;
-            let user = lyra_db::fixtures::test_user(&format!("{name}-{}", nanoid::nanoid!()))?;
-            let db_id = lyra_db::users::create(&mut db, &user)?;
-            lyra_db::roles::ensure_builtin_roles(&mut db)?;
-            lyra_db::roles::ensure_user_has_role(
-                &mut db,
-                db_id,
-                lyra_db::roles::BUILTIN_ADMIN_ROLE,
-            )?;
-            db_id
-        };
-        Ok(TestUser {
-            db_id,
-            principal: testing::user_principal(db_id).await?,
-        })
-    }
-
-    pub(in crate::services::remote) async fn connect(
-        user: &TestUser,
-        session_key: &str,
-    ) -> anyhow::Result<registry::RegisterResult> {
-        registry::register(
-            user.principal.user_public_id.clone(),
-            Some(format!("{session_key} client")),
-            session_key.to_string(),
-            watch::channel(None).0,
-        )
-        .await
-        .map_err(|error| anyhow::anyhow!(error.to_string()))
-    }
-
-    pub(in crate::services::remote) fn scope<'a>(
-        user: &'a TestUser,
-        session_key: &'a str,
-    ) -> PlaybackScopeKey<'a> {
-        PlaybackScopeKey {
-            plugin_id: NATIVE_PLUGIN_ID,
-            user_public_id: &user.principal.user_public_id,
-            session_key,
-        }
-    }
-
-    /// Creates a playback for the user and binds the session key's native scope to it.
-    pub(in crate::services::remote) async fn drive_new_playback(
-        user: &TestUser,
-        session_key: &str,
-    ) -> anyhow::Result<(String, DbId)> {
-        let now_ms = playback_sessions::now_ms()?;
-        let mut db = STATE.db.write().await;
-        let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Track")?;
-        let track_id =
-            lyra_db::lookup::find_id_by_db_id(&*db, track_db_id)?.expect("track has a public id");
-        let queue =
-            playbacks::validate_queue(&*db, &user.principal, QueueSnapshot::single(track_id))?;
-        let update = playbacks::create_playback(
-            &mut db,
-            playbacks::CreatePlaybackRequest {
-                id: nanoid::nanoid!(),
-                play_id: format!("connection-play-{}", nanoid::nanoid!(8)),
-                user_db_id: user.db_id,
-                client_name: None,
-                queue,
-                mutation: PlaybackMutation {
-                    position_ms: Some(0),
-                    duration_ms: Some(100_000),
-                    state: Some(PlaybackState::Playing),
-                },
-                now_ms,
-            },
-        )?;
-        drop(db);
-        playback_sessions::bind_current_playback_session_scope(
-            &scope(user, session_key),
-            update.session.playback_session_id,
-            update.session.playback_session_public_id.clone(),
-            now_ms,
-        );
-        Ok((update.playback.id, update.session.playback_session_id))
-    }
 
     #[tokio::test]
     async fn list_joins_each_connection_of_the_principal_with_its_playback() -> anyhow::Result<()> {
         let _guard = testing::runtime_test_lock().await;
-        init().await?;
-        let alice = user("alice").await?;
-        let bob = user("bob").await?;
-        let idle = connect(&alice, "idle").await?;
-        let driving = connect(&alice, "driving").await?;
-        let bobs = connect(&bob, "driving").await?;
-        let (playback_id, _) = drive_new_playback(&alice, "driving").await?;
+        fixture::init().await?;
+        let alice = fixture::user("alice").await?;
+        let bob = fixture::user("bob").await?;
+        let idle = fixture::connect(&alice, "idle").await?;
+        let driving = fixture::connect(&alice, "driving").await?;
+        let bobs = fixture::connect(&bob, "driving").await?;
+        let (playback_id, _) = fixture::drive_new_playback(&alice, "driving").await?;
 
         let now_ms = playback_sessions::now_ms()?;
         let listed = list(&alice.principal, now_ms).await?;

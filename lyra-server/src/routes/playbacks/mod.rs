@@ -74,7 +74,6 @@ use crate::{
 };
 use lyra_db::PlaybackState;
 
-const NATIVE_PLAYBACK_PLUGIN_ID: &str = "native";
 #[cfg(feature = "docgen")]
 use crate::services::listens::PLAY_ID_DESCRIPTION;
 #[cfg(test)]
@@ -202,6 +201,16 @@ fn require_play_id(play_id: &str) -> Result<(), AppError> {
 
 fn connection_session_key(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn reporting_connection(
+    principal: &Principal,
+    session_key: Option<&str>,
+) -> Option<playbacks::ReportingConnection> {
+    connection_session_key(session_key).map(|session_key| playbacks::ReportingConnection {
+        user_public_id: principal.user_public_id.clone(),
+        session_key: session_key.to_string(),
+    })
 }
 
 #[cfg(test)]
@@ -378,13 +387,16 @@ async fn list_playbacks(
         .finish();
     let current_ms = now_ms()?;
     let snapshots = if inc.controller {
-        remote_registry::list_user_connections(&principal.user_public_id).await
+        Some(remote_registry::list_user_connections(&principal.user_public_id).await)
     } else {
-        Vec::new()
+        None
     };
     let db = STATE.db.read().await;
-    let connections = remote_connections::join(&db, &principal, snapshots, current_ms)
-        .map_err(map_playback_error)?;
+    let connections = snapshots
+        .map(|snapshots| remote_connections::join(&db, &principal, snapshots, current_ms))
+        .transpose()
+        .map_err(map_playback_error)?
+        .unwrap_or_default();
     let (records, next_cursor) = if let Some(page) = page_request.resume(&snapshot_key)? {
         let mut records = Vec::with_capacity(page.item_ids.len());
         for id in page.item_ids {
@@ -474,23 +486,13 @@ async fn create_playback(
                 state: request.state.or(Some(PlaybackState::Playing)),
             },
             now_ms: current_ms,
+            reporting_connection: reporting_connection(
+                &auth.principal,
+                request.connection_session_key.as_deref(),
+            ),
         },
     )
     .map_err(map_playback_error)?;
-    if let Some(session_key) = connection_session_key(request.connection_session_key.as_deref())
-        && !update.session.playback.state.is_terminal()
-    {
-        sessions::bind_current_playback_session_scope(
-            &sessions::PlaybackScopeKey {
-                plugin_id: NATIVE_PLAYBACK_PLUGIN_ID,
-                user_public_id: &auth.principal.user_public_id,
-                session_key,
-            },
-            update.session.playback_session_id,
-            update.session.playback_session_public_id.clone(),
-            current_ms,
-        );
-    }
     let response = playback_to_response(
         &update.playback,
         Some(&playbacks::CurrentSession::from(&update.session)),
@@ -514,14 +516,17 @@ async fn get_playback(
     let inc = parse_inc(query.inc)?;
     let current_ms = now_ms()?;
     let snapshots = if inc.controller {
-        remote_registry::list_user_connections(&principal.user_public_id).await
+        Some(remote_registry::list_user_connections(&principal.user_public_id).await)
     } else {
-        Vec::new()
+        None
     };
     let db = STATE.db.read().await;
     let record = resolve_visible_playback(&db, &principal, &id, current_ms)?;
-    let connections = remote_connections::join(&db, &principal, snapshots, current_ms)
-        .map_err(map_playback_error)?;
+    let connections = snapshots
+        .map(|snapshots| remote_connections::join(&db, &principal, snapshots, current_ms))
+        .transpose()
+        .map_err(map_playback_error)?
+        .unwrap_or_default();
     Ok(Json(playback_to_response(
         &record.playback,
         record.current_session.as_ref(),

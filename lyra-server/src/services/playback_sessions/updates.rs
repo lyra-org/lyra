@@ -13,7 +13,10 @@ use serde::{
     Deserialize,
     Serialize,
 };
-use tokio::sync::broadcast;
+use tokio::sync::{
+    broadcast,
+    watch,
+};
 
 use crate::services::playback_sessions as playbacks;
 use lyra_db::PlaybackState;
@@ -28,6 +31,9 @@ const DEFAULT_DISPATCH_CALLER: &str = "route";
 pub(crate) struct PlaybackUpdateRegistries {
     event_broadcasts: Mutex<HashMap<String, broadcast::Sender<PlaybackUpdatePayload>>>,
     dispatch_buckets: Mutex<HashMap<String, DispatchBucket>>,
+    /// Per user, a notice that the user's connections may look different: one registered,
+    /// declared capabilities or closed, or a native scope's binding changed. Notices coalesce.
+    connection_changes: Mutex<HashMap<String, watch::Sender<()>>>,
 }
 
 impl Default for PlaybackUpdateRegistries {
@@ -35,6 +41,7 @@ impl Default for PlaybackUpdateRegistries {
         Self {
             event_broadcasts: Mutex::new(HashMap::new()),
             dispatch_buckets: Mutex::new(HashMap::new()),
+            connection_changes: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -93,6 +100,35 @@ pub(crate) fn unsubscribe_playback_events(user_public_id: &str) {
         .is_some_and(|sender| sender.receiver_count() == 0)
     {
         broadcasts.remove(user_public_id);
+    }
+}
+
+/// Waits for the next change to the user's connections after this call.
+pub(crate) fn watch_connection_changes(user_public_id: &str) -> watch::Receiver<()> {
+    let generation = crate::services::STATE.generation();
+    let mut watchers = generation
+        .playback_updates
+        .connection_changes
+        .lock()
+        .expect("connection change mutex poisoned");
+    watchers
+        .entry(user_public_id.to_string())
+        .or_insert_with(|| watch::channel(()).0)
+        .subscribe()
+}
+
+pub(crate) fn notify_connection_change(user_public_id: &str) {
+    let generation = crate::services::STATE.generation();
+    let mut watchers = generation
+        .playback_updates
+        .connection_changes
+        .lock()
+        .expect("connection change mutex poisoned");
+    let remove_idle = watchers
+        .get(user_public_id)
+        .is_some_and(|sender| sender.send(()).is_err());
+    if remove_idle {
+        watchers.remove(user_public_id);
     }
 }
 

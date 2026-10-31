@@ -3,10 +3,13 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-pub(crate) mod connection;
+pub(crate) mod commands;
 pub(crate) mod connections;
 pub(crate) mod constants;
+pub(crate) mod events;
 pub(crate) mod handoffs;
+pub(crate) mod lifecycle;
 pub(crate) mod messages;
 pub(crate) mod registry;
-pub(crate) mod signals;
+#[cfg(test)]
+pub(crate) mod testing;

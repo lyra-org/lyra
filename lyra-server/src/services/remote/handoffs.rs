@@ -628,6 +628,7 @@ mod tests {
                 },
                 mutation: playback_sessions::PlaybackMutation::default(),
                 now_ms: 1,
+                reporting_connection: None,
             },
         )?;
         Ok(AppliedProgress {
@@ -725,6 +726,7 @@ mod tests {
     #[tokio::test]
     async fn dropped_progress_claim_aborts_handoff() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
         for connection in registry::list_connections().await {
             registry::unregister(connection.connection_id).await;
         }
@@ -815,11 +817,8 @@ mod tests {
                 .expect("completion sender should remain live")
                 .is_ok()
         );
-        let target_scope = playback_sessions::PlaybackScopeKey {
-            plugin_id: "native",
-            user_public_id: &applied.user_public_id,
-            session_key: "target-session",
-        };
+        let target_scope =
+            playback_sessions::PlaybackScopeKey::native(&applied.user_public_id, "target-session");
         assert_eq!(
             playback_sessions::get_playback_session(&target_scope)
                 .and_then(|scope| scope.current_playback_session_id),
@@ -860,13 +859,11 @@ mod tests {
         )
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let source_scope = playback_sessions::PlaybackScopeKey {
-            plugin_id: "native",
-            user_public_id: &applied.user_public_id,
-            session_key: "source-session",
-        };
+        let source_scope =
+            playback_sessions::PlaybackScopeKey::native(&applied.user_public_id, "source-session");
         playback_sessions::bind_current_playback_session_scope(
             &source_scope,
+            &applied.playback_public_id,
             playback_session_id,
             playback_session_public_id,
             1,
@@ -883,6 +880,7 @@ mod tests {
         let newer_source_playback_id = DbId(playback_session_id.0 + 10_000);
         playback_sessions::bind_current_playback_session_scope(
             &source_scope,
+            &applied.playback_public_id,
             newer_source_playback_id,
             "newer-source-playback".to_string(),
             2,
@@ -910,11 +908,8 @@ mod tests {
             source_after.previous_playback_session_id,
             Some(playback_session_id)
         );
-        let target_scope = playback_sessions::PlaybackScopeKey {
-            plugin_id: "native",
-            user_public_id: &applied.user_public_id,
-            session_key: "target-session",
-        };
+        let target_scope =
+            playback_sessions::PlaybackScopeKey::native(&applied.user_public_id, "target-session");
         assert_eq!(
             playback_sessions::get_playback_session(&target_scope)
                 .and_then(|scope| scope.current_playback_session_id),
@@ -986,11 +981,8 @@ mod tests {
             .is_some()
         );
         drop(db);
-        let target_scope = playback_sessions::PlaybackScopeKey {
-            plugin_id: "native",
-            user_public_id: &durable.user_public_id,
-            session_key: "target-session",
-        };
+        let target_scope =
+            playback_sessions::PlaybackScopeKey::native(&durable.user_public_id, "target-session");
         assert!(playback_sessions::get_playback_session(&target_scope).is_none());
         registry::unregister(target.connection_id).await;
         drop(target.command_rx);
@@ -1032,11 +1024,7 @@ mod tests {
             registry::FinishProgress::Failed
         ));
         assert!(completion_rx.await?.is_err());
-        let target_scope = playback_sessions::PlaybackScopeKey {
-            plugin_id: "native",
-            user_public_id: "user",
-            session_key: "target-session",
-        };
+        let target_scope = playback_sessions::PlaybackScopeKey::native("user", "target-session");
         assert!(playback_sessions::get_playback_session(&target_scope).is_none());
         drop(target.command_rx);
         Ok(())

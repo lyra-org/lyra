@@ -243,26 +243,24 @@ impl PlaybackSessionsModule {
     ) -> luau::runtime::Result<luau::Value> {
         let snapshots = registry::list_user_connections(&principal.user_public_id).await;
         let now_ms = playbacks::now_ms().map_err(crate::plugins::runtime_error)?;
-        let connections = {
-            let db = db.read().await;
-            crate::plugins::auth::require_user_db_id(&principal, &db)?;
-            connections::join(&db, &principal, snapshots, now_ms)
+        let db = db.read().await;
+        crate::plugins::auth::require_user_db_id(&principal, &db)?;
+        let connections = connections::join(&db, &principal, snapshots, now_ms)
+            .map_err(crate::plugins::runtime_error)?;
+        let mut result = Vec::with_capacity(connections.len());
+        for connection in connections {
+            let playback = connection
+                .current_session(&db)
                 .map_err(crate::plugins::runtime_error)?
-        };
-
-        let result = connections
-            .into_iter()
-            .map(|connection| ConnectionInfo {
-                playback_id: connection
-                    .playback
-                    .as_ref()
-                    .map(|playback| playback.playback_id.clone()),
-                playback: connection.playback.map(|playback| PlaybackInfo {
-                    track_public_id: playback.current.track_public_id,
-                    position_ms: playback.current.playback.position_ms,
-                    duration_ms: playback.current.playback.duration_ms,
-                    state: playback_state_string(playback.current.playback.state),
-                }),
+                .map(|current| PlaybackInfo {
+                    track_public_id: current.track_public_id,
+                    position_ms: current.playback.position_ms,
+                    duration_ms: current.playback.duration_ms,
+                    state: playback_state_string(current.playback.state),
+                });
+            result.push(ConnectionInfo {
+                playback_id: connection.playback_id().map(str::to_string),
+                playback,
                 id: connection.id,
                 session_key: connection.session_key,
                 client_name: connection.client_name,
@@ -273,8 +271,9 @@ impl PlaybackSessionsModule {
                     .collect(),
                 remote_control_degraded: connection.remote_control_degraded,
                 connected_at_ms: connection.connected_at_ms,
-            })
-            .collect::<Vec<_>>();
+            });
+        }
+        drop(db);
         harmony_luau::serializable_to_luau_owned(&result)
     }
 
@@ -367,11 +366,7 @@ impl PlaybackSessionsModule {
         drop(db);
 
         if let Ok(now_ms) = playbacks::now_ms() {
-            let scope_key = PlaybackScopeKey {
-                plugin_id: "native",
-                user_public_id: &target.user_public_id,
-                session_key: &target.session_key,
-            };
+            let scope_key = PlaybackScopeKey::native(&target.user_public_id, &target.session_key);
             playbacks::mark_command_dispatched(&scope_key, now_ms);
         }
 

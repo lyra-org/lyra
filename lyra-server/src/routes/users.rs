@@ -1083,6 +1083,7 @@ mod tests {
         for user_public_id in [target_id.as_str(), bystander_id.as_str()] {
             bind_current_playback_session_scope(
                 &scope(user_public_id),
+                "playback",
                 agdb::DbId(1),
                 "playback".to_string(),
                 1,

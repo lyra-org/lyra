@@ -30,7 +30,6 @@ use super::handoffs::{
     PendingHandoffs,
 };
 use super::messages::OutgoingMessage;
-use super::signals;
 use crate::services::playback_sessions;
 
 pub(crate) type ConnectionId = u64;
@@ -141,7 +140,6 @@ impl ConnectionRegistry {
         let handle = self.connections.remove(&id)?;
         self.public_ids.remove(&handle.public_id);
         self.pending_handoffs.fail_for_connection(id);
-        signals::closed(&handle.user_public_id, &handle.public_id);
         Some(handle)
     }
 
@@ -215,12 +213,12 @@ pub(crate) async fn register(
     let connection_id = registry.insert(
         user_public_id.clone(),
         client_name,
-        session_key.clone(),
+        session_key,
         connected_at_ms,
         close,
         command_tx,
     )?;
-    signals::changed(&user_public_id, &session_key);
+    playback_sessions::notify_connection_change(&user_public_id);
     let public_id = registry.connections[&connection_id].public_id.clone();
     Ok(RegisterResult {
         connection_id,
@@ -237,7 +235,7 @@ pub(crate) async fn set_supported_commands(
     let mut registry = REGISTRY.write().await;
     if let Some(handle) = registry.connections.get_mut(&connection_id) {
         handle.supported_commands = commands;
-        signals::changed(&handle.user_public_id, &handle.session_key);
+        playback_sessions::notify_connection_change(&handle.user_public_id);
         true
     } else {
         false
@@ -285,11 +283,10 @@ pub(super) async fn insert_handoff(
     let source_binding = source_id
         .and_then(|source_id| registry.connections.get(&source_id))
         .and_then(|source| {
-            let scope_key = playback_sessions::PlaybackScopeKey {
-                plugin_id: "native",
-                user_public_id: &source.user_public_id,
-                session_key: &source.session_key,
-            };
+            let scope_key = playback_sessions::PlaybackScopeKey::native(
+                &source.user_public_id,
+                &source.session_key,
+            );
             playback_sessions::snapshot_current_binding(&scope_key).map(|snapshot| {
                 ExpectedSourceBinding {
                     user_public_id: source.user_public_id.clone(),
@@ -386,11 +383,8 @@ pub(super) async fn finish_handoff_progress(
         return FinishProgress::Failed;
     };
     playback_sessions::bind_current_playback_session_scope(
-        &playback_sessions::PlaybackScopeKey {
-            plugin_id: "native",
-            user_public_id: &target.user_public_id,
-            session_key: &target.session_key,
-        },
+        &playback_sessions::PlaybackScopeKey::native(&target.user_public_id, &target.session_key),
+        &applied.playback_public_id,
         applied
             .expected_session
             .db_id
@@ -400,11 +394,10 @@ pub(super) async fn finish_handoff_progress(
     );
     if let Some(source) = ready.source_binding {
         playback_sessions::clear_current_binding_if_unchanged(
-            &playback_sessions::PlaybackScopeKey {
-                plugin_id: "native",
-                user_public_id: &source.user_public_id,
-                session_key: &source.session_key,
-            },
+            &playback_sessions::PlaybackScopeKey::native(
+                &source.user_public_id,
+                &source.session_key,
+            ),
             &source.snapshot,
         );
     }
@@ -455,7 +448,9 @@ pub(crate) async fn resolve_public_id(public_id: &str) -> Option<ConnectionSnaps
 }
 
 pub(crate) async fn unregister(connection_id: ConnectionId) -> Option<ConnectionHandle> {
-    REGISTRY.write().await.remove(connection_id)
+    let handle = REGISTRY.write().await.remove(connection_id)?;
+    playback_sessions::notify_connection_change(&handle.user_public_id);
+    Some(handle)
 }
 
 fn request_close(close: &CloseSender, reason: CloseReason) {
@@ -706,6 +701,7 @@ mod tests {
     #[tokio::test]
     async fn close_user_connections_only_signals_that_user() {
         let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state().expect("test state");
         for connection in list_connections().await {
             unregister(connection.connection_id).await;
         }

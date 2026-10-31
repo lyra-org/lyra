@@ -14,10 +14,7 @@ use axum::{
 
 use crate::routes::request::bearer_credential;
 use crate::{
-    routes::{
-        AppError,
-        responses::PageResponse,
-    },
+    routes::AppError,
     services::{
         auth::require_principal,
         playback_sessions,
@@ -28,22 +25,19 @@ use crate::{
     },
 };
 
-async fn list_connections(headers: HeaderMap) -> Result<Json<PageResponse<Connection>>, AppError> {
+async fn list_connections(headers: HeaderMap) -> Result<Json<Vec<Connection>>, AppError> {
     let principal = require_principal(bearer_credential(&headers)).await?;
     let now_ms = playback_sessions::now_ms()?;
     let connections = connections::list(&principal, now_ms)
         .await
         .map_err(anyhow::Error::from)?;
-    Ok(Json(PageResponse {
-        items: connections.iter().map(|c| c.resource()).collect(),
-        next_cursor: None,
-    }))
+    Ok(Json(connections.iter().map(|c| c.resource()).collect()))
 }
 
 #[cfg(feature = "docgen")]
 fn list_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List connections").description(
-        "Returns `{ items, next_cursor }` for the authenticated user's open WebSocket connections, oldest first, including idle ones. A user holds at most eight, so `next_cursor` is always `null`. `playback_id` is the playback a connection drives, or `null` when it is idle. Use `id` as a remote control command's `target`.",
+        "Returns the authenticated user's open WebSocket connections, at most eight, oldest first, including idle ones. `playback_id` is the playback a connection drives, or `null` when it is idle. Use `id` as a remote control command's `target`. A socket that lists connections after its `connected` event and applies the `connection_updated` and `connection_closed` events from then on stays current.",
     )
 }
 
@@ -97,15 +91,14 @@ mod tests {
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
 
-        let Json(page) = list_connections(headers)
+        let Json(connections) = list_connections(headers)
             .await
             .map_err(|error| anyhow::anyhow!("{error:?}"))?;
-        let json = serde_json::to_value(&page)?;
+        let json = serde_json::to_value(&connections)?;
 
         registry::unregister(own.connection_id).await;
         registry::unregister(foreign.connection_id).await;
-        assert_eq!(json["next_cursor"], serde_json::Value::Null);
-        let items = json["items"].as_array().expect("items");
+        let items = json.as_array().expect("a list");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["id"], own.public_id.as_str());
         assert_eq!(items[0]["client_name"], "Speaker");

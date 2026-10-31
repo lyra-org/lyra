@@ -22,6 +22,8 @@ use lyra_db::{
 pub(crate) struct PlaybackSessionScope {
     pub(crate) current_playback_session_id: Option<DbId>,
     pub(crate) current_playback_session_public_id: Option<String>,
+    /// The public id of the playback the current track session belongs to.
+    pub(crate) current_playback_id: Option<String>,
     pub(crate) previous_playback_session_id: Option<DbId>,
     pub(crate) previous_playback_session_public_id: Option<String>,
     pub(crate) previous_demoted_at_ms: Option<u64>,
@@ -44,6 +46,19 @@ pub(crate) struct PlaybackScopeKey<'a> {
     pub(crate) plugin_id: &'a str,
     pub(crate) user_public_id: &'a str,
     pub(crate) session_key: &'a str,
+}
+
+/// The plugin id of scopes reported by Lyra's own clients, keyed by their connection session key.
+pub(crate) const NATIVE_PLUGIN_ID: &str = "native";
+
+impl<'a> PlaybackScopeKey<'a> {
+    pub(crate) fn native(user_public_id: &'a str, session_key: &'a str) -> Self {
+        Self {
+            plugin_id: NATIVE_PLUGIN_ID,
+            user_public_id,
+            session_key,
+        }
+    }
 }
 
 impl PlaybackScopeKey<'_> {
@@ -78,45 +93,69 @@ impl OwnedPlaybackScopeKey {
 #[derive(Default)]
 pub(crate) struct PlaybackScopes(Arc<RwLock<HashMap<OwnedPlaybackScopeKey, PlaybackSessionScope>>>);
 
-const NATIVE_PLUGIN_ID: &str = "native";
+/// What a native scope shows of the connection with its session key: the playback it drives and
+/// when a command it hasn't acknowledged was sent, from which `remote_control_degraded` follows.
+#[derive(Debug, Default, PartialEq)]
+struct ConnectionView {
+    playback_id: Option<String>,
+    command_dispatched_at_ms: Option<u64>,
+}
 
-/// Tells the user's connections that a native scope's current playback changed, so the
-/// connection with its session key may now drive a different playback or none.
-fn signal_native_binding_change(
+fn connection_view(scope: Option<&PlaybackSessionScope>) -> ConnectionView {
+    scope.map_or_else(ConnectionView::default, |scope| ConnectionView {
+        playback_id: scope.current_playback_id.clone(),
+        command_dispatched_at_ms: scope.command_dispatched_at_ms,
+    })
+}
+
+/// Whether a change to a scope changes how a connection looks, which only native scopes back.
+fn connection_view_changed(
     key: &OwnedPlaybackScopeKey,
-    before: Option<DbId>,
-    after: Option<DbId>,
-) {
-    if key.plugin_id == NATIVE_PLUGIN_ID && before != after {
-        crate::services::remote::signals::changed(&key.user_public_id, &key.session_key);
+    before: &ConnectionView,
+    after: &ConnectionView,
+) -> bool {
+    key.plugin_id == NATIVE_PLUGIN_ID && before != after
+}
+
+/// Called with the scopes lock released.
+fn notify_binding_changes(user_public_ids: impl IntoIterator<Item = String>) {
+    let mut notified = Vec::<String>::new();
+    for user_public_id in user_public_ids {
+        if !notified.contains(&user_public_id) {
+            super::updates::notify_connection_change(&user_public_id);
+            notified.push(user_public_id);
+        }
     }
 }
 
-fn current_session_id(
-    scopes: &HashMap<OwnedPlaybackScopeKey, PlaybackSessionScope>,
-    key: &OwnedPlaybackScopeKey,
-) -> Option<DbId> {
-    scopes
-        .get(key)
-        .and_then(|scope| scope.current_playback_session_id)
-}
-
+/// Removes the scopes `remove` picks, returning how many went and the users whose connections
+/// look different without them.
 fn remove_scopes_where(
     scopes: &mut HashMap<OwnedPlaybackScopeKey, PlaybackSessionScope>,
     remove: impl Fn(&OwnedPlaybackScopeKey, &PlaybackSessionScope) -> bool,
-) -> usize {
+) -> (usize, Vec<String>) {
     let removed = scopes
         .iter()
         .filter(|(key, scope)| remove(key, scope))
         .map(|(key, _)| key.clone())
         .collect::<Vec<_>>();
+    let mut changed = Vec::new();
     for key in &removed {
-        let before = scopes
-            .remove(key)
-            .and_then(|scope| scope.current_playback_session_id);
-        signal_native_binding_change(key, before, None);
+        let before = connection_view(scopes.remove(key).as_ref());
+        if connection_view_changed(key, &before, &ConnectionView::default()) {
+            changed.push(key.user_public_id.clone());
+        }
     }
-    removed.len()
+    (removed.len(), changed)
+}
+
+/// Unbinds the scope's current track session. A command sent to it goes unacknowledged by
+/// nothing once the scope drives no playback, so it stops counting against the connection too.
+fn clear_current_binding(scope: &mut PlaybackSessionScope) {
+    scope.current_playback_session_id = None;
+    scope.current_playback_session_public_id = None;
+    scope.current_playback_id = None;
+    scope.command_dispatched_at_ms = None;
 }
 
 fn playback_scopes() -> Arc<RwLock<HashMap<OwnedPlaybackScopeKey, PlaybackSessionScope>>> {
@@ -161,8 +200,7 @@ pub(crate) fn apply_reported_scope(
     let mut scopes = scopes_handle
         .write()
         .expect("playback session scopes RwLock poisoned");
-    let before = current_session_id(&scopes, &key);
-    let after = session.current_playback_session_id;
+    let before = connection_view(scopes.get(&key));
     if let Some(previous) = scopes.get(&key) {
         if current_observed {
             session.current_binding_epoch = previous.current_binding_epoch.wrapping_add(1);
@@ -173,13 +211,18 @@ pub(crate) fn apply_reported_scope(
             session.command_dispatched_at_ms = previous.command_dispatched_at_ms;
         }
     }
+    let after = connection_view(Some(&session));
     scopes.insert(key.clone(), session);
     drop(scopes);
-    signal_native_binding_change(&key, before, after);
+    if connection_view_changed(&key, &before, &after) {
+        notify_binding_changes([key.user_public_id]);
+    }
 }
 
+/// Binds the scope's current track session, a session of the playback `playback_id`.
 pub(crate) fn bind_current_playback_session_scope(
     scope: &PlaybackScopeKey<'_>,
+    playback_id: &str,
     playback_session_id: DbId,
     playback_session_public_id: String,
     now_ms: u64,
@@ -189,12 +232,13 @@ pub(crate) fn bind_current_playback_session_scope(
     let mut scopes = scopes_handle
         .write()
         .expect("playback session scopes RwLock poisoned");
-    let before = current_session_id(&scopes, &key);
+    let before = connection_view(scopes.get(&key));
     let entry = scopes
         .entry(key.clone())
         .or_insert_with(|| PlaybackSessionScope {
             current_playback_session_id: None,
             current_playback_session_public_id: None,
+            current_playback_id: None,
             previous_playback_session_id: None,
             previous_playback_session_public_id: None,
             previous_demoted_at_ms: None,
@@ -208,21 +252,23 @@ pub(crate) fn bind_current_playback_session_scope(
     entry.command_dispatched_at_ms = None;
     entry.current_binding_epoch = entry.current_binding_epoch.wrapping_add(1);
 
-    if entry.current_playback_session_id == Some(playback_session_id) {
-        entry.current_playback_session_public_id = Some(playback_session_public_id);
-        return;
+    if entry.current_playback_session_id != Some(playback_session_id) {
+        entry.previous_playback_session_id = entry.current_playback_session_id;
+        entry.previous_playback_session_public_id =
+            entry.current_playback_session_public_id.clone();
+        entry.previous_demoted_at_ms = entry.current_playback_session_id.map(|_| now_ms);
+        entry.previous_expires_at_ms = entry
+            .current_playback_session_id
+            .map(|_| now_ms.saturating_add(super::PREVIOUS_PLAYBACK_GRACE_MS));
+        entry.current_playback_session_id = Some(playback_session_id);
     }
-
-    entry.previous_playback_session_id = entry.current_playback_session_id;
-    entry.previous_playback_session_public_id = entry.current_playback_session_public_id.clone();
-    entry.previous_demoted_at_ms = entry.current_playback_session_id.map(|_| now_ms);
-    entry.previous_expires_at_ms = entry
-        .current_playback_session_id
-        .map(|_| now_ms.saturating_add(super::PREVIOUS_PLAYBACK_GRACE_MS));
-    entry.current_playback_session_id = Some(playback_session_id);
     entry.current_playback_session_public_id = Some(playback_session_public_id);
+    entry.current_playback_id = Some(playback_id.to_string());
+    let after = connection_view(Some(entry));
     drop(scopes);
-    signal_native_binding_change(&key, before, Some(playback_session_id));
+    if connection_view_changed(&key, &before, &after) {
+        notify_binding_changes([key.user_public_id]);
+    }
 }
 
 pub(crate) struct BoundPlayback {
@@ -290,11 +336,11 @@ pub(crate) fn clear_playback_session_scope(scope: &PlaybackScopeKey<'_>) {
     let mut scopes = scopes_handle
         .write()
         .expect("playback session scopes RwLock poisoned");
-    let before = scopes
-        .remove(&key)
-        .and_then(|scope| scope.current_playback_session_id);
+    let before = connection_view(scopes.remove(&key).as_ref());
     drop(scopes);
-    signal_native_binding_change(&key, before, None);
+    if connection_view_changed(&key, &before, &ConnectionView::default()) {
+        notify_binding_changes([key.user_public_id]);
+    }
 }
 
 pub(crate) fn clear_playback_scopes_for_user(user_public_id: &str) {
@@ -302,7 +348,10 @@ pub(crate) fn clear_playback_scopes_for_user(user_public_id: &str) {
     let mut scopes = scopes_handle
         .write()
         .expect("playback session scopes RwLock poisoned");
-    remove_scopes_where(&mut scopes, |key, _| key.user_public_id == user_public_id);
+    let (_, changed) =
+        remove_scopes_where(&mut scopes, |key, _| key.user_public_id == user_public_id);
+    drop(scopes);
+    notify_binding_changes(changed);
 }
 
 pub(crate) fn snapshot_current_binding(
@@ -325,6 +374,7 @@ pub(crate) fn clear_current_binding_if_unchanged(
     let mut scopes = scopes_handle
         .write()
         .expect("playback session scopes RwLock poisoned");
+    let before = connection_view(scopes.get(&key));
     let Some(scope) = scopes.get_mut(&key) else {
         return false;
     };
@@ -333,13 +383,15 @@ pub(crate) fn clear_current_binding_if_unchanged(
             == Some(expected.playback_session_public_id.as_str())
         && scope.current_binding_epoch == expected.epoch
     {
-        scope.current_playback_session_id = None;
-        scope.current_playback_session_public_id = None;
+        clear_current_binding(scope);
         if scope.previous_playback_session_id.is_none() {
             scopes.remove(&key);
         }
+        let after = connection_view(scopes.get(&key));
         drop(scopes);
-        signal_native_binding_change(&key, Some(expected.playback_session_id), None);
+        if connection_view_changed(&key, &before, &after) {
+            notify_binding_changes([key.user_public_id]);
+        }
         return true;
     }
     false
@@ -373,36 +425,30 @@ pub(crate) fn clear_session_bindings_for_playback(
     let mut scopes = scopes_handle
         .write()
         .expect("playback session scopes RwLock poisoned");
-    let mut cleared = 0usize;
     let mut to_remove = Vec::new();
+    let mut touched = Vec::new();
 
     for (key, scope) in scopes.iter_mut() {
-        let mut binding_changed = false;
-
-        if scope.current_playback_session_id == Some(playback_session_id)
+        let current = scope.current_playback_session_id == Some(playback_session_id)
             && scope.current_playback_session_public_id.as_deref()
-                == Some(playback_session_public_id)
-        {
-            scope.current_playback_session_id = None;
-            scope.current_playback_session_public_id = None;
-            binding_changed = true;
-            signal_native_binding_change(key, Some(playback_session_id), None);
-        }
-        if scope.previous_playback_session_id == Some(playback_session_id)
+                == Some(playback_session_public_id);
+        let previous = scope.previous_playback_session_id == Some(playback_session_id)
             && scope.previous_playback_session_public_id.as_deref()
-                == Some(playback_session_public_id)
-        {
+                == Some(playback_session_public_id);
+        if !current && !previous {
+            continue;
+        }
+        touched.push((key.clone(), connection_view(Some(scope))));
+
+        if current {
+            clear_current_binding(scope);
+        }
+        if previous {
             scope.previous_playback_session_id = None;
             scope.previous_playback_session_public_id = None;
             scope.previous_demoted_at_ms = None;
             scope.previous_expires_at_ms = None;
-            binding_changed = true;
         }
-        if !binding_changed {
-            continue;
-        }
-
-        cleared += 1;
         if scope.current_playback_session_id.is_none()
             && scope.previous_playback_session_id.is_none()
         {
@@ -413,8 +459,17 @@ pub(crate) fn clear_session_bindings_for_playback(
     for key in to_remove {
         scopes.remove(&key);
     }
+    let changed = touched
+        .iter()
+        .filter(|(key, before)| {
+            connection_view_changed(key, before, &connection_view(scopes.get(key)))
+        })
+        .map(|(key, _)| key.user_public_id.clone())
+        .collect::<Vec<_>>();
+    drop(scopes);
+    notify_binding_changes(changed);
 
-    cleared
+    touched.len()
 }
 
 pub(crate) fn clear_session_bindings_for_playbacks(playbacks: &[EvictedPlayback]) -> usize {
@@ -460,7 +515,11 @@ pub(crate) fn cleanup_stale_scopes(now_ms: u64, stale_ttl_ms: u64) -> usize {
     let mut scopes = scopes_handle
         .write()
         .expect("playback session scopes RwLock poisoned");
-    remove_scopes_where(&mut scopes, |_, scope| scope.updated_at_ms < cutoff_ms)
+    let (removed, changed) =
+        remove_scopes_where(&mut scopes, |_, scope| scope.updated_at_ms < cutoff_ms);
+    drop(scopes);
+    notify_binding_changes(changed);
+    removed
 }
 
 const COMMAND_DEGRADED_TIMEOUT_MS: u64 = 30_000;
@@ -473,12 +532,26 @@ pub(crate) fn mark_command_dispatched(scope: &PlaybackScopeKey<'_>, now_ms: u64)
     let mut scopes = scopes_handle
         .write()
         .expect("playback session scopes RwLock poisoned");
-    if let Some(session) = scopes.get_mut(&key) {
-        session.command_dispatched_at_ms = Some(now_ms);
+    let Some(session) = scopes.get_mut(&key) else {
+        return;
+    };
+    let before = connection_view(Some(session));
+    session.command_dispatched_at_ms = Some(now_ms);
+    let after = connection_view(Some(session));
+    drop(scopes);
+    if connection_view_changed(&key, &before, &after) {
+        notify_binding_changes([key.user_public_id]);
     }
 }
 
+#[cfg(test)]
 pub(crate) fn is_remote_control_degraded(scope: &PlaybackScopeKey<'_>, now_ms: u64) -> bool {
+    remote_control_degraded_at_ms(scope).is_some_and(|degraded_at_ms| now_ms >= degraded_at_ms)
+}
+
+/// When the scope degrades unless the command sent to it is acknowledged first; `None` while no
+/// command is pending.
+pub(crate) fn remote_control_degraded_at_ms(scope: &PlaybackScopeKey<'_>) -> Option<u64> {
     let key = scope.owned();
     let scopes_handle = playback_scopes();
     let scopes = scopes_handle
@@ -487,7 +560,5 @@ pub(crate) fn is_remote_control_degraded(scope: &PlaybackScopeKey<'_>, now_ms: u
     scopes
         .get(&key)
         .and_then(|s| s.command_dispatched_at_ms)
-        .is_some_and(|dispatched_at| {
-            now_ms.saturating_sub(dispatched_at) >= COMMAND_DEGRADED_TIMEOUT_MS
-        })
+        .map(|dispatched_at| dispatched_at.saturating_add(COMMAND_DEGRADED_TIMEOUT_MS))
 }

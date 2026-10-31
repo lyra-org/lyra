@@ -20,8 +20,6 @@ mod updates;
 mod workflow;
 
 pub(crate) use self::sessions::PlaybackScopes;
-#[cfg(test)]
-pub(crate) use self::sessions::clear_playback_session_scope;
 pub(crate) use self::sessions::{
     CurrentBindingSnapshot,
     PlaybackScopeKey,
@@ -30,10 +28,16 @@ pub(crate) use self::sessions::{
     clear_playback_scopes_for_user,
     clear_session_bindings_for_playback,
     get_playback_session,
-    is_remote_control_degraded,
     mark_command_dispatched,
+    remote_control_degraded_at_ms,
     snapshot_current_binding,
     with_no_current_binding_for_playback,
+};
+#[cfg(test)]
+pub(crate) use self::sessions::{
+    NATIVE_PLUGIN_ID,
+    clear_playback_session_scope,
+    is_remote_control_degraded,
 };
 pub(crate) use self::workflow::{
     cleanup_after_commit,
@@ -54,8 +58,10 @@ pub(crate) use updates::{
     dispatch_evicted_updates_for_caller,
     dispatch_playback_update,
     dispatch_playback_update_for_caller,
+    notify_connection_change,
     subscribe_playback_events,
     unsubscribe_playback_events,
+    watch_connection_changes,
 };
 
 pub(crate) const ACTIVE_SESSION_TTL_MS: u64 = 5 * 60 * 1000;
@@ -828,7 +834,7 @@ mod tests {
         let started = report_playback_session(
             &mut db,
             SessionPlaybackReportRequest {
-                plugin_id: "native",
+                plugin_id: NATIVE_PLUGIN_ID,
                 user_db_id,
                 session_key: "browser:1",
                 track_db_id,
@@ -1710,7 +1716,7 @@ mod tests {
         let native_started = report_playback_session(
             &mut db,
             SessionPlaybackReportRequest {
-                plugin_id: "native",
+                plugin_id: NATIVE_PLUGIN_ID,
                 user_db_id,
                 session_key: "device:1",
                 track_db_id: native_track_db_id,
@@ -1758,11 +1764,8 @@ mod tests {
         };
         assert!(get_playback_session(&demo_scope).is_none());
 
-        let native_scope = PlaybackScopeKey {
-            plugin_id: "native",
-            user_public_id: &user_public_id(&db, user_db_id),
-            session_key: "device:1",
-        };
+        let native_user_public_id = user_public_id(&db, user_db_id);
+        let native_scope = PlaybackScopeKey::native(&native_user_public_id, "device:1");
         assert!(get_playback_session(&native_scope).is_none());
 
         let persisted =
