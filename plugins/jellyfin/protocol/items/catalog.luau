@@ -1268,7 +1268,7 @@ function helpers.resolve_release_for_track(
 		-- Fallback when bulk relation prefetch misses this track.
 		raw_releases = lookups.releases_of_track(track_id)
 	end
-	local candidates = raw_releases
+	local candidates = lookups.releases_by_added(raw_releases)
 	if #candidates == 0 then
 		return nil, nil
 	end

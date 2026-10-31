@@ -65,4 +65,35 @@ function module.releases_of_track(track_id: string?): { Release }
 	return releases.by_track({ track_id })[track_id] or {}
 end
 
+-- Whether `a` was added before `b`: by creation time, a release without one after those with one,
+-- then by id.
+local function added_before(a: Release, b: Release): boolean
+	local a_at, b_at = a.created_at_ms, b.created_at_ms
+	if a_at ~= b_at then
+		if a_at == nil or b_at == nil then
+			return b_at == nil
+		end
+		return a_at < b_at
+	end
+	return a.id < b.id
+end
+
+-- A track's releases, the one added first leading.
+function module.releases_by_added(track_releases: { Release }): { Release }
+	local sorted = table.clone(track_releases)
+	table.sort(sorted, added_before)
+	return sorted
+end
+
+-- The release among a track's releases that was added first.
+function module.first_added_release(track_releases: { Release }?): Release?
+	local first: Release? = nil
+	for _, release in track_releases or {} do
+		if first == nil or added_before(release, first) then
+			first = release
+		end
+	end
+	return first
+end
+
 return module

@@ -106,8 +106,7 @@ function module.collect(options: ItemsQueryOptions): FilterValues?
 		local releases_by_track = batched(track_ids, releases.by_track)
 		for _, track in found do
 			table.insert(tagged, track.id)
-			local track_releases = releases_by_track[track.id]
-			local release = if track_releases then track_releases[1] else nil
+			local release = lookups.first_added_release(releases_by_track[track.id])
 			if release then
 				genre_releases[release.id] = true
 			end
