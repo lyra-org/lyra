@@ -3,10 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::{
-    path::PathBuf,
-    sync::Arc,
-};
+use std::path::PathBuf;
 
 use agdb::{
     CountComparison,
@@ -14,7 +11,6 @@ use agdb::{
     QueryBuilder,
 };
 use serde::Deserialize;
-use tokio::sync::RwLock;
 
 use super::{
     DbAccess,
@@ -78,7 +74,7 @@ impl Created {
     /// The database while nothing else shares it yet, for setup that must
     /// finish before it is published.
     pub fn unshared_mut(&mut self) -> Option<&mut DbAny> {
-        Arc::get_mut(&mut self.db).map(RwLock::get_mut)
+        self.db.unshared_mut()
     }
 }
 
@@ -242,7 +238,7 @@ pub(crate) fn create_with(config: &DbConfig, migration: &Migration) -> anyhow::R
     set_up(&mut db, migration, &plan)?;
     optimize_storage(&mut db, config);
     Ok(Created {
-        db: Arc::new(RwLock::new(db)),
+        db: DbAsync::new(db),
         lock,
     })
 }

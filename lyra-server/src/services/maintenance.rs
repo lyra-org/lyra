@@ -52,7 +52,8 @@ async fn run(db: DbAsync, shutdown: &Notify) {
 }
 
 async fn sweep_expired_datastore_entries(db: &DbAsync, now_ms: u64) {
-    let mut db_write = db.write().await;
+    // Removes plugin datastore entries only.
+    let mut db_write = db.write_outside_catalog().await;
     match lyra_db::datastore::sweep_expired_entries(&mut db_write, now_ms) {
         Ok(0) => {}
         Ok(removed) => {
@@ -68,7 +69,8 @@ async fn sweep_stale_playback_sessions(db: &DbAsync, now_ms: u64) {
     // Drop the write guard before dispatch to cut contention; the sends
     // themselves are non-blocking.
     let evicted = {
-        let mut db_write = db.write().await;
+        // Removes playbacks and playback sessions only.
+        let mut db_write = db.write_outside_catalog().await;
         if let Err(err) =
             db_write.transaction_mut(|t| lyra_db::playbacks::expire_reported(t, now_ms))
         {

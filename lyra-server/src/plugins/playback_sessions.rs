@@ -167,7 +167,7 @@ impl PlaybackSessionsModule {
         let current_ms = playbacks::now_ms().map_err(crate::plugins::runtime_error)?;
         let mutation = playback_mutation(request.position_ms, request.duration_ms, request.state);
 
-        let mut db = db.write().await;
+        let mut db = db.write_outside_catalog().await;
         let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
         if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)? {
             return Err(crate::plugins::runtime_error("track not found"));

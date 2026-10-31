@@ -6,7 +6,7 @@ fn plugin_executor_exposes_db_backed_lyra_ids_module() -> Result<()> {
     let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw ID Track")?;
     let track_public_id = lyra_db::lookup::find_id_by_db_id(&db, track_db_id)?
         .context("inserted track has public id")?;
-    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+    let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.ids"])]),
@@ -71,7 +71,7 @@ fn id_list_arguments_reject_ids_that_are_not_positive() -> Result<()> {
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.ids"])]),
         default_server_info(),
-        std::sync::Arc::new(tokio::sync::RwLock::new(db)),
+        lyra_db::DbAsync::new(db),
     )?;
     let values = runtime.eval_plugin_source(
         "demo",
@@ -100,7 +100,7 @@ fn plugin_executor_exposes_db_backed_lyra_entities_module() -> Result<()> {
     let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Entity Track")?;
     let track_public_id = lyra_db::lookup::find_id_by_db_id(&db, track_db_id)?
         .context("inserted track has public id")?;
-    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+    let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.entities"])]),
@@ -165,7 +165,7 @@ fn plugin_executor_exposes_db_backed_lyra_chromaprint_module() -> Result<()> {
     let entry_db_id = db
         .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
         .ids()[0];
-    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+    let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.chromaprint"])]),
@@ -206,7 +206,7 @@ fn plugin_executor_exposes_db_backed_lyra_users_module() -> Result<()> {
     let alice_public_id = alice.id.clone();
     let alice_id = lyra_db::users::create(&mut db, &alice)?;
     lyra_db::roles::ensure_user_has_role(&mut db, alice_id, lyra_db::roles::BUILTIN_ADMIN_ROLE)?;
-    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+    let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.users"])]),
@@ -264,7 +264,7 @@ fn plugin_executor_exposes_db_backed_lyra_listens_module() -> Result<()> {
     ] {
         lyra_db::fixtures::insert_listen(&mut db, listener_db_id, track_db_id, started_at_ms)?;
     }
-    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+    let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.listens"])]),
@@ -330,7 +330,7 @@ fn plugin_executor_exposes_db_backed_lyra_favorites_module() -> Result<()> {
         .context("inserted library has public id")?;
     let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Favorite Track")?;
     lyra_db::fixtures::connect(&mut db, library_db_id, track_db_id)?;
-    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+    let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.favorites"])]),
@@ -423,7 +423,7 @@ fn plugin_executor_exposes_db_backed_lyra_artists_module() -> Result<()> {
         lyra_db::ArtistRelationType::VoiceActor,
         Some("Lead".to_string()),
     )?;
-    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+    let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.artists"])]),
@@ -537,7 +537,7 @@ fn plugin_executor_exposes_db_backed_lyra_tracks_module() -> Result<()> {
     )?;
     let track_public_id = lyra_db::lookup::find_id_by_db_id(&db, track_db_id)?
         .context("inserted track has public id")?;
-    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+    let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.tracks"])]),
@@ -626,7 +626,7 @@ fn plugin_executor_exposes_db_backed_lyra_track_sources_module() -> Result<()> {
             None,
         )
     })?;
-    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+    let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.track_sources"])]),
@@ -709,7 +709,7 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
             None,
         )
     })?;
-    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+    let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.playback_sources"])]),
@@ -811,7 +811,7 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
     let expected_owner = user_public_id.clone();
     let user_db_id = lyra_db::users::create(&mut db, &user)?;
     let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Playlist Track")?;
-    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+    let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.playlists"])]),
@@ -920,7 +920,7 @@ fn plugin_executor_exposes_db_backed_lyra_releases_module() -> Result<()> {
     lyra_db::test_db::connect_artist(&mut db, release_db_id, album_artist_id)?;
     let guest_artist_id = lyra_db::fixtures::insert_artist(&mut db, "Raw Guest Artist")?;
     lyra_db::test_db::connect_artist(&mut db, track_db_id, guest_artist_id)?;
-    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+    let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.releases"])]),
@@ -997,7 +997,7 @@ fn plugin_executor_exposes_db_backed_lyra_libraries_module() -> Result<()> {
     lyra_db::fixtures::connect(&mut db, library_db_id, track_db_id)?;
     let library_public_id = lyra_db::lookup::find_id_by_db_id(&db, library_db_id)?
         .context("inserted library has public id")?;
-    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+    let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.libraries"])]),
@@ -1058,7 +1058,7 @@ fn libraries_expose_db_ids_of_accessible_libraries_to_a_dispatch_principal() -> 
     lyra_db::fixtures::connect(&mut db, hidden_db_id, hidden_track_db_id)?;
     let shared_public_id = lyra_db::lookup::find_id_by_db_id(&db, shared_db_id)?
         .context("inserted library has public id")?;
-    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+    let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.libraries"])]),
@@ -1128,7 +1128,7 @@ fn libraries_refuse_a_client_dispatch_without_a_principal() -> Result<()> {
         lyra_db::test_db::insert_library(&mut db, "Private Library", "/tmp/private")?;
     let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Private Track")?;
     lyra_db::fixtures::connect(&mut db, library_db_id, track_db_id)?;
-    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+    let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.libraries"])]),
@@ -1169,7 +1169,7 @@ fn plugin_executor_exposes_db_backed_lyra_genres_module() -> Result<()> {
     let mut db = lyra_db::test_db::new_test_db()?;
     let release_db_id = lyra_db::fixtures::insert_release(&mut db, "Raw Genre Release")?;
     lyra_db::genres::sync_release_genres(&mut db, release_db_id, &["Synthpop".to_string()])?;
-    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+    let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.genres"])]),
@@ -1258,7 +1258,7 @@ fn plugin_executor_exposes_db_backed_lyra_tags_module() -> Result<()> {
             .to(track_db_id)
             .query(),
     )?;
-    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+    let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.tags"])]),
@@ -1344,7 +1344,7 @@ fn plugin_executor_exposes_db_backed_lyra_tags_module() -> Result<()> {
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_datastore_module() -> Result<()> {
     let db = lyra_db::test_db::new_test_db()?;
-    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+    let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.datastore"])]),
@@ -1403,7 +1403,7 @@ fn plugin_executor_reports_playback_acceptance_rejection_and_internal_failure() 
     let user = lyra_db::fixtures::test_user("report-user")?;
     let user_db_id = lyra_db::users::create(&mut db, &user)?;
     let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Reported Track")?;
-    let db = Arc::new(tokio::sync::RwLock::new(db));
+    let db = lyra_db::DbAsync::new(db);
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("reporter", &["lyra.playback_sessions"])]),
         default_server_info(),
@@ -1545,7 +1545,7 @@ fn stale_principal_cannot_use_favorites_of_a_user_with_its_recycled_db_id() -> R
         lyra_db::favorites::FavoriteKind::Track,
         1,
     )?;
-    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+    let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.favorites"])]),
@@ -1606,7 +1606,7 @@ fn stale_principal_cannot_use_playlists_of_a_user_with_its_recycled_db_id() -> R
             track_db_ids: Vec::new(),
         },
     )?;
-    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+    let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.playlists"])]),
@@ -1655,7 +1655,7 @@ fn stale_principal_cannot_report_playback_for_a_user_with_its_recycled_db_id() -
     let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Reported Track")?;
     let (mut stale, current_db_id) = recycled_user_principal(&mut db, Default::default())?;
     stale.permissions = vec![lyra_db::Permission::Admin];
-    let db = Arc::new(tokio::sync::RwLock::new(db));
+    let db = lyra_db::DbAsync::new(db);
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("reporter", &["lyra.playback_sessions"])]),
         default_server_info(),

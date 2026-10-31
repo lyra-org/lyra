@@ -23,10 +23,7 @@ use agdb::{
     DbId,
 };
 use anyhow::Result;
-use tokio::sync::{
-    OwnedRwLockReadGuard,
-    OwnedRwLockWriteGuard,
-};
+use tokio::sync::OwnedRwLockReadGuard;
 
 use crate::services::{
     auth::media_tokens::MediaTokenStore,
@@ -111,8 +108,14 @@ impl DbHandle {
         self.get().read_owned().await
     }
 
-    pub(crate) async fn write(&self) -> OwnedRwLockWriteGuard<DbAny> {
+    pub(crate) async fn write(&self) -> lyra_db::OwnedDbWriteGuard {
         self.get().write_owned().await
+    }
+
+    /// A write lock for changes that leave the catalog as it is; see
+    /// [`lyra_db::DbAsync::write_outside_catalog`].
+    pub(crate) async fn write_outside_catalog(&self) -> lyra_db::OwnedDbWriteGuard {
+        self.get().write_outside_catalog_owned().await
     }
 }
 

@@ -174,11 +174,15 @@ pub(crate) fn libraries_for_entities(
     principal: &Principal,
     entity_ids: &[DbId],
 ) -> anyhow::Result<HashMap<DbId, LibraryView>> {
-    Ok(lyra_db::libraries::get_for_entities(db, entity_ids)?
+    let allowed = lyra_db::libraries::db_ids_for_public_ids(db, &principal.accessible_library_ids)?
         .into_iter()
-        .filter(|(_, library)| principal_can_access_library(principal, library))
-        .map(|(entity_id, library)| (entity_id, LibraryView::from(library)))
-        .collect())
+        .collect::<HashSet<_>>();
+    Ok(
+        lyra_db::libraries::get_for_entities(db, entity_ids, Some(&allowed))?
+            .into_iter()
+            .map(|(entity_id, library)| (entity_id, LibraryView::from(library)))
+            .collect(),
+    )
 }
 
 pub(crate) fn system_libraries_for_entities(
@@ -186,7 +190,7 @@ pub(crate) fn system_libraries_for_entities(
     _ctx: &SystemContext,
     entity_ids: &[DbId],
 ) -> anyhow::Result<HashMap<DbId, LibraryFull>> {
-    Ok(lyra_db::libraries::get_for_entities(db, entity_ids)?
+    Ok(lyra_db::libraries::get_for_entities(db, entity_ids, None)?
         .into_iter()
         .map(|(entity_id, library)| (entity_id, LibraryFull::from(library)))
         .collect())
@@ -402,6 +406,59 @@ mod tests {
         playlists::Playlist,
         test_db::new_test_db,
     };
+
+    #[test]
+    fn a_shared_entity_reports_a_library_the_viewer_can_see() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let shown = lyra_db::test_db::insert_library(&mut db, "Shown", "/access/shown")?;
+        let hidden = lyra_db::test_db::insert_library(&mut db, "Hidden", "/access/hidden")?;
+        let release = lyra_db::fixtures::insert_release(&mut db, "Shared")?;
+        let track = insert_track(&mut db, "Song")?;
+        connect(&mut db, shown, release)?;
+        connect(&mut db, release, track)?;
+        let public = |db: &DbAny, library| -> anyhow::Result<String> {
+            Ok(lyra_db::libraries::get_by_id(db, library)?
+                .expect("library exists")
+                .id)
+        };
+        let (shown_id, hidden_id) = (public(&db, shown)?, public(&db, hidden)?);
+        let user = create_user(&mut db, "listener")?;
+        let viewer = Principal::for_user(&db, user, Vec::new(), HashSet::from([shown_id.clone()]));
+        let nobody = Principal::for_user(&db, user, Vec::new(), HashSet::new());
+        let named = |db: &DbAny, principal: &Principal| -> anyhow::Result<Vec<(DbId, String)>> {
+            let mut found = libraries_for_entities(db, principal, &[release, track])?
+                .into_iter()
+                .map(|(id, library)| (id, library.id))
+                .collect::<Vec<_>>();
+            found.sort();
+            Ok(found)
+        };
+        let in_shown = vec![(release, shown_id.clone()), (track, shown_id.clone())];
+
+        assert_eq!(named(&db, &viewer)?, in_shown);
+        connect(&mut db, hidden, release)?;
+        assert_eq!(
+            named(&db, &viewer)?,
+            in_shown,
+            "the hidden library changes nothing"
+        );
+        assert!(named(&db, &nobody)?.is_empty());
+
+        let admin = Principal::for_user(
+            &db,
+            user,
+            vec![lyra_db::Permission::Admin],
+            HashSet::from([shown_id.clone(), hidden_id.clone()]),
+        );
+        let found = named(&db, &admin)?;
+        assert_eq!(found.len(), 2);
+        assert!(
+            found
+                .iter()
+                .all(|(_, library)| *library == shown_id || *library == hidden_id)
+        );
+        Ok(())
+    }
 
     fn principal(db: &DbAny, user_db_id: DbId, permissions: Vec<lyra_db::Permission>) -> Principal {
         Principal::for_user(db, user_db_id, permissions, HashSet::new())

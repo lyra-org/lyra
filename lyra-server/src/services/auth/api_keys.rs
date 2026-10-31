@@ -228,7 +228,7 @@ pub(crate) async fn resolve_api_key(key: &str) -> anyhow::Result<Option<Resolved
 
     let now = lyra_db::users::now_secs();
     if should_persist_last_used(api_key_id, now) {
-        let mut db_write = STATE.db.write().await;
+        let mut db_write = STATE.db.write_outside_catalog().await;
         // Re-verify under write lock: key may have been revoked between read and write.
         let fresh_id = match lyra_db::api_keys::find_by_key_hash(&db_write, &key_hash)? {
             Some(fresh) => fresh.db_id.map(Into::into),

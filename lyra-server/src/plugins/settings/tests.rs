@@ -42,7 +42,7 @@ fn declare_settings_registers_global_and_user_schemas() -> Result<()> {
     let user = lyra_db::fixtures::test_user("settings-test")?;
     let user_public_id = user.id.clone();
     lyra_db::users::create(&mut db, &user)?;
-    let db = Arc::new(tokio::sync::RwLock::new(db));
+    let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.plugins"])]),

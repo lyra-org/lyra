@@ -654,7 +654,7 @@ async fn queue_replacement_cannot_overtake_committed_handoff_finish() -> anyhow:
         .await
         .expect("handoff finish should report after acquiring the DB read guard");
     assert!(
-        STATE.db.get().try_write_owned().is_err(),
+        STATE.db.get().try_write().is_err(),
         "handoff finish must retain the DB guard while waiting for the registry"
     );
 

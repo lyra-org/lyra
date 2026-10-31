@@ -277,41 +277,32 @@ pub fn get_by_release(
     Ok(libraries)
 }
 
+/// One library holding each entity, chosen among `allowed` when given, so a caller limited to
+/// some libraries never sees the choice fall on, or fail for, one it cannot see. A library maps
+/// to itself.
 pub fn get_for_entities(
     db: &impl super::DbAccess,
     entity_ids: &[DbId],
+    allowed: Option<&HashSet<DbId>>,
 ) -> anyhow::Result<HashMap<DbId, Library>> {
     let unique_ids = super::dedup_positive_ids(entity_ids);
     if unique_ids.is_empty() {
         return Ok(HashMap::new());
     }
 
-    let all_libraries = get(db)?;
-    if all_libraries.is_empty() {
+    let libraries_by_id: HashMap<DbId, Library> = get(db)?
+        .into_iter()
+        .filter_map(|lib| Some((lib.db_id?, lib)))
+        .filter(|(id, _)| allowed.is_none_or(|allowed| allowed.contains(id)))
+        .collect();
+    if libraries_by_id.is_empty() {
         return Ok(HashMap::new());
     }
 
-    let library_id_set: HashSet<DbId> = all_libraries.iter().filter_map(|lib| lib.db_id).collect();
-    let libraries_by_id: HashMap<DbId, &Library> = all_libraries
-        .iter()
-        .filter_map(|lib| lib.db_id.map(|id| (id, lib)))
-        .collect();
-
-    let mut resolved_cache: HashMap<DbId, DbId> = HashMap::new();
     let mut result = HashMap::new();
-
     for entity_id in unique_ids {
-        if library_id_set.contains(&entity_id) {
-            if let Some(&lib) = libraries_by_id.get(&entity_id) {
-                result.insert(entity_id, lib.clone());
-            }
-            continue;
-        }
-
-        if let Some(&lib_id) = resolved_cache.get(&entity_id) {
-            if let Some(&lib) = libraries_by_id.get(&lib_id) {
-                result.insert(entity_id, lib.clone());
-            }
+        if let Some(lib) = libraries_by_id.get(&entity_id) {
+            result.insert(entity_id, lib.clone());
             continue;
         }
 
@@ -326,20 +317,12 @@ pub fn get_for_entities(
                 .value("Library")
                 .query(),
         )?;
-
-        for ancestor in &ancestors.elements {
-            if ancestor.id.0 > 0 && library_id_set.contains(&ancestor.id) {
-                if let Some(&lib) = libraries_by_id.get(&ancestor.id) {
-                    result.insert(entity_id, lib.clone());
-                    for node in &ancestors.elements {
-                        if node.id.0 > 0 && node.id != ancestor.id {
-                            resolved_cache.insert(node.id, ancestor.id);
-                        }
-                    }
-                    resolved_cache.insert(entity_id, ancestor.id);
-                }
-                break;
-            }
+        if let Some(lib) = ancestors
+            .elements
+            .iter()
+            .find_map(|ancestor| libraries_by_id.get(&ancestor.id))
+        {
+            result.insert(entity_id, lib.clone());
         }
     }
 

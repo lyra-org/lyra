@@ -16,7 +16,7 @@ fn tracks_runtime(db: agdb::DbAny) -> Result<PluginExecutor> {
             ],
         )]),
         default_server_info(),
-        std::sync::Arc::new(tokio::sync::RwLock::new(db)),
+        lyra_db::DbAsync::new(db),
     )
 }
 

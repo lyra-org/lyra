@@ -50,7 +50,7 @@ pub(super) async fn report_progress(
             "connection_session_key is required with handoff_token",
         ));
     }
-    let mut db = STATE.db.write().await;
+    let mut db = STATE.db.write_outside_catalog().await;
     let user_db_id = principal.require(&db)?;
     let record = resolve_visible_playback(&db, principal, &id, current_ms)?;
     require_revision(

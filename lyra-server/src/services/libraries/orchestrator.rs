@@ -1299,7 +1299,8 @@ async fn reconcile_interrupted_runs(db: &DbAsync) -> anyhow::Result<()> {
         let states = sync_run_states().read_owned().await;
         states.keys().cloned().collect::<Vec<_>>()
     };
-    let mut db_write = db.write().await;
+    // Updates sync run records only.
+    let mut db_write = db.write_outside_catalog().await;
     let records = lyra_db::sync_runs::list(&db_write)?;
     for mut record in records {
         if live_run_ids.iter().any(|id| id == &record.id) {
@@ -1329,7 +1330,8 @@ async fn reconcile_interrupted_runs(db: &DbAsync) -> anyhow::Result<()> {
 async fn persist_record(db: &DbAsync, mut record: lyra_db::sync_runs::SyncRunRecord) {
     let run_id = record.id.clone();
     let result = async {
-        let mut db_write = db.write().await;
+        // Writes sync run records only.
+        let mut db_write = db.write_outside_catalog().await;
         if lyra_db::lookup::find_node_id_by_id(&*db_write, &record.library_id)?.is_none() {
             return Ok(());
         }

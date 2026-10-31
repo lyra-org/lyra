@@ -2116,7 +2116,7 @@ fn plugin_executor_discovers_and_executes_plugins_from_directory() -> Result<()>
 fn plugin_executor_executes_checked_in_plugins_from_repo() -> Result<()> {
     let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
     crate::plugins::testing::init_default_test_state()?;
-    let db = std::sync::Arc::new(tokio::sync::RwLock::new(lyra_db::test_db::new_test_db()?));
+    let db = lyra_db::DbAsync::new(lyra_db::test_db::new_test_db()?);
     let plugins_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .context("lyra-server manifest directory has parent")?
@@ -2149,7 +2149,7 @@ fn plugin_executor_handle_discovers_and_executes_on_runtime_thread() -> Result<(
     )?;
 
     let db = lyra_db::test_db::new_test_db()?;
-    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+    let db = lyra_db::DbAsync::new(db);
     let (runtime, errors) = PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
         plugin.plugins_dir(),
         default_server_info(),
@@ -2518,7 +2518,7 @@ fn plugin_executor_handle_restart_runs_new_entrypoint_on_runtime_thread() -> Res
     let plugin = temp_plugin("demo", &[], "return nil")?;
 
     let db = lyra_db::test_db::new_test_db()?;
-    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+    let db = lyra_db::DbAsync::new(db);
     let (runtime, errors) = PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
         plugin.plugins_dir(),
         default_server_info(),
@@ -2568,7 +2568,7 @@ fn playlist_bulk_bindings_refuse_inaccessible_tracks() -> Result<()> {
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.playlists"])]),
         default_server_info(),
-        Arc::new(tokio::sync::RwLock::new(db)),
+        lyra_db::DbAsync::new(db),
     )?;
     let mut context = CallContext {
         origin: plugin_origin("demo", "playlist-test.luau"),
@@ -2649,7 +2649,7 @@ impl LibraryAccessFixture {
         let runtime = PluginExecutor::with_database(
             Arc::from(vec![manifest("demo", scopes)]),
             default_server_info(),
-            Arc::new(tokio::sync::RwLock::new(self.db)),
+            lyra_db::DbAsync::new(self.db),
         )?;
         let mut context = CallContext {
             origin: plugin_origin("demo", "library-access.luau"),
@@ -2758,7 +2758,7 @@ fn cover_artwork_bindings_serve_anonymous_public_routes() -> Result<()> {
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.api", "lyra.covers"])]),
         default_server_info(),
-        Arc::new(tokio::sync::RwLock::new(database)),
+        lyra_db::DbAsync::new(database),
     )?;
     runtime.run_plugin_source(
         "demo",
@@ -2859,7 +2859,7 @@ fn streamable_bindings_serve_anonymous_public_routes() -> Result<()> {
             &["lyra.api", "lyra.tracks", "lyra.playback_sources"],
         )]),
         default_server_info(),
-        Arc::new(tokio::sync::RwLock::new(database)),
+        lyra_db::DbAsync::new(database),
     )?;
     runtime.run_plugin_source(
         "demo",

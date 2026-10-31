@@ -228,7 +228,7 @@ impl ListensModule {
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::Value> {
         let now_ms = playback_sessions::now_ms().map_err(crate::plugins::runtime_error)?;
-        let mut db = db.write().await;
+        let mut db = db.write_outside_catalog().await;
         let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
         let outcomes =
             listen_service::record_submitted(&mut db, &principal, user_db_id, plays.0, now_ms)?;

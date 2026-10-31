@@ -763,14 +763,14 @@ pub(crate) async fn upsert_cover_metadata(
 
     let path_str = path.to_string_lossy().into_owned();
     let mut db_write = db.write().await;
+    // An unchanged cover needs no mutable access, which would count as a catalog change.
+    if let Some(existing) = lyra_db::covers::get(&*db_write, owner_id)?
+        && existing.hash == hash
+        && existing.path == path_str
+    {
+        return Ok(false);
+    }
     db_write.transaction_mut(|t| {
-        if let Some(existing) = lyra_db::covers::get(t, owner_id)?
-            && existing.hash == hash
-            && existing.path == path_str
-        {
-            return Ok(false);
-        }
-
         let cover = Cover {
             db_id: None,
             id: nanoid!(),
@@ -938,15 +938,11 @@ pub(crate) async fn sync_and_persist_covers_for_library(
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs as std_fs,
-        sync::Arc,
-    };
+    use std::fs as std_fs;
 
     use super::*;
     use lyra_db::fixtures::insert_release;
     use lyra_db::test_db::new_test_db;
-    use tokio::sync::RwLock;
 
     const PNG_1X1: &[u8] = &[
         0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
@@ -964,7 +960,7 @@ mod tests {
 
     #[tokio::test]
     async fn sync_release_cover_for_tracks_returns_false_without_providers() -> anyhow::Result<()> {
-        let db = Arc::new(RwLock::new(new_test_db()?));
+        let db = lyra_db::DbAsync::new(new_test_db()?);
         let release = Release {
             db_id: None,
             id: nanoid!(),
@@ -998,7 +994,7 @@ mod tests {
 
     #[tokio::test]
     async fn upsert_release_cover_metadata_is_idempotent_for_same_file() -> anyhow::Result<()> {
-        let db = Arc::new(RwLock::new(new_test_db()?));
+        let db = lyra_db::DbAsync::new(new_test_db()?);
         let release_id = {
             let mut db_write = db.write().await;
             insert_release(&mut db_write, "Release")?

@@ -202,7 +202,7 @@ pub(crate) async fn touch_last_seen(session_public_id: &str) {
         return;
     }
 
-    let mut db_write = STATE.db.write().await;
+    let mut db_write = STATE.db.write_outside_catalog().await;
     // Resolve under the write lock: the session may have been revoked since auth.
     let session_id = match lyra_db::users::find_session_by_public_id(&*db_write, session_public_id)
     {

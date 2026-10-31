@@ -46,6 +46,8 @@ pub struct ReleaseChain {
 pub struct ChainLink {
     pub chain_db_id: DbId,
     pub chain_id: String,
+    /// The release the chain hangs off.
+    pub release_db_id: DbId,
     pub position: u64,
 }
 
@@ -153,6 +155,14 @@ pub fn links_for_tracks(
             .map(|(_, chain, _)| *chain)
             .collect::<Vec<_>>(),
     );
+    let mut releases = HashMap::new();
+    for chain_db_id in &chain_db_ids {
+        if let Some(release) =
+            super::graph::inbound_neighbor_ids(db, *chain_db_id, "Release")?.first()
+        {
+            releases.insert(*chain_db_id, *release);
+        }
+    }
     let chains: HashMap<DbId, Chain> = super::graph::bulk_fetch_typed(db, chain_db_ids, "Chain")?;
     Ok(positions
         .into_iter()
@@ -163,6 +173,7 @@ pub fn links_for_tracks(
                 ChainLink {
                     chain_db_id,
                     chain_id: chain.id.clone(),
+                    release_db_id: *releases.get(&chain_db_id)?,
                     position,
                 },
             ))

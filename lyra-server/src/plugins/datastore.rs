@@ -114,7 +114,8 @@ async fn get_or_create(db: &DbAsync, name: String) -> luau::runtime::Result<agdb
         }
     }
 
-    let mut db = db.write().await;
+    // Writes the plugin's datastore and its entries only.
+    let mut db = db.write_outside_catalog().await;
     let datastore = lyra_db::datastore::get_or_create(&mut db, name)?;
     datastore_db_id(datastore)
 }
@@ -143,7 +144,8 @@ async fn write_value(
     json: serde_json::Value,
 ) -> luau::runtime::Result<()> {
     let json = serde_json::to_string(&json).map_err(crate::plugins::runtime_error)?;
-    let mut db = db.write().await;
+    // Writes the plugin's datastore and its entries only.
+    let mut db = db.write_outside_catalog().await;
     lyra_db::datastore::upsert_entry(&mut db, datastore_id, key, json)
         .map(|_| ())
         .map_err(crate::plugins::runtime_error)
@@ -154,7 +156,8 @@ async fn remove_value(
     datastore_id: agdb::DbId,
     key: String,
 ) -> luau::runtime::Result<bool> {
-    let mut db = db.write().await;
+    // Writes the plugin's datastore and its entries only.
+    let mut db = db.write_outside_catalog().await;
     lyra_db::datastore::remove_entry(&mut db, datastore_id, &key)
         .map_err(crate::plugins::runtime_error)
 }
@@ -202,7 +205,8 @@ async fn write_values(
             serde_json::to_string(&value).map_err(crate::plugins::runtime_error)?,
         ));
     }
-    let mut db = db.write().await;
+    // Writes the plugin's datastore and its entries only.
+    let mut db = db.write_outside_catalog().await;
     for (key, value) in prepared {
         lyra_db::datastore::upsert_entry(&mut db, datastore_id, key, value)?;
     }
@@ -210,7 +214,8 @@ async fn write_values(
 }
 
 async fn clear_values(db: &DbAsync, datastore_id: agdb::DbId) -> luau::runtime::Result<u64> {
-    let mut db = db.write().await;
+    // Writes the plugin's datastore and its entries only.
+    let mut db = db.write_outside_catalog().await;
     lyra_db::datastore::clear_entries(&mut db, datastore_id)
         .map(|removed| removed as u64)
         .map_err(crate::plugins::runtime_error)
