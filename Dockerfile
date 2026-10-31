@@ -40,9 +40,22 @@ RUN ./configure \
     --disable-static \
     --disable-programs \
     --disable-doc \
+    --disable-everything \
+    --disable-autodetect \
+    --disable-network \
+    --disable-avdevice \
+    --disable-avfilter \
+    --disable-swscale \
     --enable-libmp3lame \
     --enable-libopus \
     --enable-libvorbis \
+    --enable-protocol=file \
+    --enable-demuxer=aac,aiff,ape,flac,mov,mp3,mpc,mpc8,ogg,wav,wv \
+    --enable-parser=aac,flac,mpegaudio,opus,vorbis \
+    --enable-decoder=aac,alac,ape,flac,mp1,mp1float,mp2,mp2float,mp3,mp3float,mpc7,mpc8,opus,speex,vorbis,wavpack,pcm_s8,pcm_u8,pcm_s16le,pcm_s16be,pcm_s24le,pcm_s24be,pcm_s32le,pcm_s32be,pcm_f32le,pcm_f32be,pcm_f64le,pcm_f64be,pcm_mulaw,pcm_alaw,adpcm_ima_wav,adpcm_ms,adpcm_ima_qt,gsm_ms \
+    --enable-encoder=aac,alac,flac,libmp3lame,libopus,libvorbis,pcm_s16le,pcm_s16be,pcm_s24le,pcm_s24be,wmav2 \
+    --enable-muxer=adts,aiff,asf,caf,flac,hls,ipod,mp3,mp4,mpegts,ogg,pcm_s16le,wav,webm \
+    --enable-bsf=aac_adtstoasc \
     && make -j"$(nproc)" \
     && make install
 
