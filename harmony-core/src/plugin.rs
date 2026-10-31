@@ -65,7 +65,6 @@ pub(crate) const PLUGIN_SCHEMA_VERSION: u32 = 1;
 /// Hard caps applied to `plugin.json` before `serde_json` parses it.
 /// Prevents a hostile or malformed plugin config from OOMing `discover_plugins`.
 pub const PLUGIN_CONFIG_MAX_BYTES: u64 = 64 * 1024;
-pub(crate) const PLUGIN_CONFIG_MAX_SCOPES: usize = 32;
 pub(crate) const PLUGIN_CONFIG_MAX_SCOPE_LEN: usize = 128;
 pub(crate) const PLUGIN_CONFIG_MAX_DEPENDENCIES: usize = 32;
 
@@ -479,11 +478,6 @@ pub enum PluginLoadError {
         plugin_id: String,
         directory: String,
     },
-    TooManyScopes {
-        plugin_id: String,
-        count: usize,
-        max: usize,
-    },
     ScopeEntryTooLong {
         plugin_id: String,
         scope: String,
@@ -584,15 +578,6 @@ impl fmt::Display for PluginLoadError {
                 "plugin id '{}' does not match directory basename '{}'; runtime identity is \
                  derived from the directory for required modules, so they must match",
                 plugin_id, directory
-            ),
-            PluginLoadError::TooManyScopes {
-                plugin_id,
-                count,
-                max,
-            } => write!(
-                f,
-                "plugin '{}' declares {} scopes, exceeds cap of {}",
-                plugin_id, count, max
             ),
             PluginLoadError::ScopeEntryTooLong {
                 plugin_id,
@@ -1136,14 +1121,6 @@ impl PluginManager {
                 requirement: manifest.host_requirement,
                 host: host.name.clone(),
                 host_version: host.version.clone(),
-            });
-        }
-
-        if manifest.scopes.len() > PLUGIN_CONFIG_MAX_SCOPES {
-            return Err(PluginLoadError::TooManyScopes {
-                plugin_id: manifest.id,
-                count: manifest.scopes.len(),
-                max: PLUGIN_CONFIG_MAX_SCOPES,
             });
         }
 
@@ -3350,10 +3327,6 @@ mod tests {
 
     #[test]
     fn load_manifest_rejects_manifest_level_errors() {
-        let too_many_scopes = format!(
-            r#"{{"schema_version":1,"id":"demo","name":"d","version":"1.0.0","host":"*","description":"","scopes":[{}]}}"#,
-            vec![r#""net""#; super::PLUGIN_CONFIG_MAX_SCOPES + 1].join(",")
-        );
         let long_scope = format!(
             r#"{{"schema_version":1,"id":"demo","name":"d","version":"1.0.0","host":"*","description":"","scopes":["{}"]}}"#,
             "s".repeat(super::PLUGIN_CONFIG_MAX_SCOPE_LEN + 1)
@@ -3382,10 +3355,6 @@ mod tests {
         assert!(matches!(
             err(manifest_json("not/valid", "").as_bytes()),
             PluginLoadError::InvalidPluginId { .. }
-        ));
-        assert!(matches!(
-            err(too_many_scopes.as_bytes()),
-            PluginLoadError::TooManyScopes { .. }
         ));
         assert!(matches!(
             err(long_scope.as_bytes()),
