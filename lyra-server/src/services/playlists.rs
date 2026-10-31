@@ -44,8 +44,8 @@ pub(crate) struct CreatePlaylistRequest {
     pub(crate) name: String,
     pub(crate) description: Option<String>,
     pub(crate) is_public: Option<bool>,
-    pub(crate) created_at: Option<u64>,
-    pub(crate) updated_at: Option<u64>,
+    pub(crate) created_at_ms: Option<u64>,
+    pub(crate) updated_at_ms: Option<u64>,
     pub(crate) track_db_ids: Vec<DbId>,
 }
 
@@ -56,7 +56,7 @@ pub(crate) struct UpdatePlaylistRequest {
     /// Outer `None` leaves the description untouched; `Some(None)` clears it.
     pub(crate) description: Option<Option<String>>,
     pub(crate) is_public: Option<bool>,
-    pub(crate) updated_at: Option<u64>,
+    pub(crate) updated_at_ms: Option<u64>,
 }
 
 fn resolve_optional_id(db: &DbAny, query_id: QueryId) -> anyhow::Result<Option<DbId>> {
@@ -258,10 +258,10 @@ fn compare_field(a: &ListEntry, b: &ListEntry, key: SortKey) -> Ordering {
             .cmp(&b.sort_name)
             .then_with(|| a.playlist.name.cmp(&b.playlist.name)),
         SortKey::CreatedAt => {
-            lyra_db::compare_option(&a.playlist.created_at, &b.playlist.created_at)
+            lyra_db::compare_option(&a.playlist.created_at_ms, &b.playlist.created_at_ms)
         }
         SortKey::UpdatedAt => {
-            lyra_db::compare_option(&a.playlist.updated_at, &b.playlist.updated_at)
+            lyra_db::compare_option(&a.playlist.updated_at_ms, &b.playlist.updated_at_ms)
         }
         SortKey::TrackCount => a.summary.track_count.cmp(&b.summary.track_count),
         SortKey::TotalDuration => a
@@ -394,8 +394,8 @@ pub(crate) fn create(db: &mut DbAny, request: &CreatePlaylistRequest) -> anyhow:
         name: validate_name(&request.name)?,
         description: request.description.clone(),
         is_public: request.is_public,
-        created_at: request.created_at,
-        updated_at: request.updated_at,
+        created_at_ms: request.created_at_ms,
+        updated_at_ms: request.updated_at_ms,
     };
     require_tracks(db, &request.track_db_ids)?;
 
@@ -457,8 +457,8 @@ fn apply_update(playlist: &mut Playlist, request: &UpdatePlaylistRequest) -> any
     if let Some(is_public) = request.is_public {
         playlist.is_public = Some(is_public);
     }
-    if let Some(updated_at) = request.updated_at {
-        playlist.updated_at = Some(updated_at);
+    if let Some(updated_at_ms) = request.updated_at_ms {
+        playlist.updated_at_ms = Some(updated_at_ms);
     }
     Ok(())
 }
@@ -640,8 +640,8 @@ mod tests {
                 name: name.to_string(),
                 description: None,
                 is_public: None,
-                created_at: None,
-                updated_at: None,
+                created_at_ms: None,
+                updated_at_ms: None,
                 track_db_ids: Vec::new(),
             },
         )
@@ -852,8 +852,8 @@ mod tests {
                 name: "Described".to_string(),
                 description: Some("original".to_string()),
                 is_public: None,
-                created_at: None,
-                updated_at: None,
+                created_at_ms: None,
+                updated_at_ms: None,
                 track_db_ids: Vec::new(),
             },
         )?;
@@ -865,7 +865,7 @@ mod tests {
                 name: Some("Renamed".to_string()),
                 description: None,
                 is_public: None,
-                updated_at: None,
+                updated_at_ms: None,
             },
         )?
         .ok_or_else(|| anyhow::anyhow!("playlist missing"))?;
@@ -878,7 +878,7 @@ mod tests {
                 name: None,
                 description: Some(None),
                 is_public: None,
-                updated_at: None,
+                updated_at_ms: None,
             },
         )?
         .ok_or_else(|| anyhow::anyhow!("playlist missing"))?;
@@ -896,7 +896,7 @@ mod tests {
             name: name.map(str::to_string),
             description: None,
             is_public: None,
-            updated_at: None,
+            updated_at_ms: None,
         }
     }
 

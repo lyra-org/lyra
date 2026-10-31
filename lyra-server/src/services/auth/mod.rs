@@ -790,7 +790,7 @@ mod tests {
             let mut db = STATE.db.write().await;
             db.exec_mut(
                 agdb::QueryBuilder::insert()
-                    .values_uniform([("expires_at", lyra_db::users::now_secs() - 1).into()])
+                    .values_uniform([("expires_at_ms", lyra_db::users::now_ms() - 1).into()])
                     .ids(session_db_id)
                     .query(),
             )?;
@@ -829,7 +829,7 @@ mod tests {
             let alice = lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("alice")?)?;
             let bob = lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("bob")?)?;
             let mut expired = lyra_db::test_db::test_session(&hash_secret("alice-token"));
-            expired.expires_at = lyra_db::users::now_secs() - 1;
+            expired.expires_at_ms = lyra_db::users::now_ms() - 1;
             (lyra_db::users::login(&mut db, alice, &expired)?, bob)
         };
 
@@ -908,7 +908,7 @@ mod tests {
             let mut db = STATE.db.write().await;
             db.exec_mut(
                 agdb::QueryBuilder::insert()
-                    .values_uniform([("expires_at", lyra_db::users::now_secs() - 1).into()])
+                    .values_uniform([("expires_at_ms", lyra_db::users::now_ms() - 1).into()])
                     .ids(session_db_id)
                     .query(),
             )?;
@@ -995,7 +995,7 @@ mod tests {
                 api_key_user_db_id,
                 "colliding key",
                 &key_hash,
-                lyra_db::users::now_secs(),
+                lyra_db::users::now_ms(),
             )?;
         }
 

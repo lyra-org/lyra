@@ -71,7 +71,7 @@ user = "owner"
 key = "laptop"
 user = "owner"
 client_name = "Lyra Web"  # optional
-seen = 300                # optional last_seen_at, in unix seconds
+seen = 300000             # optional last authenticated request, in unix milliseconds
 
 [[libraries]]
 key = "music"
@@ -92,7 +92,7 @@ name = "Rock"
 key = "solo"
 title = "Solo"
 library = "music"    # optional; the release and its tracks belong to the library
-added = 400          # ctime
+added = 400000       # optional file creation time, in unix milliseconds
 artists = ["amy"]
 genres = ["rock"]
 cover = "cover.png"  # an image file, relative to the fixture, whose hash is the release key

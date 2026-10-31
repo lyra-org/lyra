@@ -154,7 +154,7 @@ pub(crate) struct ProjectionEntryInfo {
     pub(crate) name: String,
     pub(crate) hash: Option<String>,
     pub(crate) size: u64,
-    pub(crate) mtime: u64,
+    pub(crate) file_modified_at_ms: u64,
 }
 
 impl From<lyra_db::Entry> for ProjectionEntryInfo {
@@ -167,7 +167,7 @@ impl From<lyra_db::Entry> for ProjectionEntryInfo {
             name: value.name,
             hash: value.hash,
             size: value.size,
-            mtime: value.mtime,
+            file_modified_at_ms: value.file_modified_at_ms,
         }
     }
 }
@@ -219,8 +219,8 @@ pub(crate) struct ReleaseProjectionTrack {
     pub(crate) track_gain_db: Option<f64>,
     pub(crate) album_gain_db: Option<f64>,
     pub(crate) locked: Option<bool>,
-    pub(crate) created_at: Option<u64>,
-    pub(crate) ctime: Option<u64>,
+    pub(crate) created_at_ms: Option<u64>,
+    pub(crate) file_created_at_ms: Option<u64>,
     pub(crate) external_ids: ExternalIdsByProvider,
     pub(crate) identifiers: IdentifiersByScheme,
     pub(crate) links: Option<Vec<IdLink>>,
@@ -251,8 +251,8 @@ impl ReleaseProjectionTrack {
             track_gain_db: track.track_gain_db,
             album_gain_db: track.album_gain_db,
             locked: track.locked,
-            created_at: track.created_at,
-            ctime: track.ctime,
+            created_at_ms: track.created_at_ms,
+            file_created_at_ms: track.file_created_at_ms,
             external_ids,
             identifiers,
             links: None,
@@ -1170,8 +1170,8 @@ mod tests {
             media_formats: None,
             barcode: None,
             locked: None,
-            created_at: None,
-            ctime: None,
+            created_at_ms: None,
+            file_created_at_ms: None,
         };
         let release_id = db
             .exec_mut(QueryBuilder::insert().element(&release).query())?
@@ -1208,8 +1208,8 @@ mod tests {
             track_gain_db: None,
             album_gain_db: None,
             locked: None,
-            created_at: None,
-            ctime: None,
+            created_at_ms: None,
+            file_created_at_ms: None,
         };
         let track_id = db
             .exec_mut(QueryBuilder::insert().element(&track).query())?
@@ -1243,7 +1243,7 @@ mod tests {
             description: None,
             credited: false,
             locked: None,
-            created_at: None,
+            created_at_ms: None,
         };
         let artist_id = db
             .exec_mut(QueryBuilder::insert().element(&artist).query())?

@@ -732,12 +732,12 @@ fn track_type() -> LuauType {
             description: None,
         },
         FieldDescriptor {
-            name: "created_at",
+            name: "created_at_ms",
             ty: Option::<u64>::luau_type(),
             description: None,
         },
         FieldDescriptor {
-            name: "ctime",
+            name: "file_created_at_ms",
             ty: Option::<u64>::luau_type(),
             description: None,
         },

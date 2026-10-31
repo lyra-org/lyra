@@ -98,7 +98,7 @@ struct Session {
     key: String,
     user: String,
     client_name: Option<String>,
-    /// Unix seconds of the session's last authenticated request.
+    /// When the session last authenticated a request.
     seen: Option<i64>,
 }
 
@@ -356,9 +356,9 @@ impl Folders {
                 file_kind: None,
                 hash: None,
                 size: 0,
-                mtime: 0,
-                ctime: 0,
-                synced_at: None,
+                file_modified_at_ms: 0,
+                file_created_at_ms: 0,
+                synced_at_ms: None,
             };
             let directory = db
                 .exec_mut(agdb::QueryBuilder::insert().element(&directory).query())?
@@ -451,7 +451,7 @@ impl Fixture {
                 keys.user(&api_key.user)?,
                 &api_key.key,
                 &services::auth::hash_secret(&secret),
-                lyra_db::users::now_secs(),
+                lyra_db::users::now_ms(),
             )?;
             seeded.api_keys.insert(api_key.key.clone(), secret);
             keys.api_keys.insert(api_key.key.clone());
@@ -460,7 +460,7 @@ impl Fixture {
         for session in &self.sessions {
             keys.claim(&session.key)?;
             let token = services::auth::random_hex_secret::<16>();
-            let now = lyra_db::users::now_secs();
+            let now = lyra_db::users::now_ms();
             lyra_db::users::login(
                 db,
                 keys.user(&session.user)?,
@@ -468,9 +468,9 @@ impl Fixture {
                     db_id: None,
                     id: nanoid::nanoid!(),
                     token_hash: services::auth::hash_secret(&token),
-                    expires_at: 0,
-                    created_at: now,
-                    last_seen_at: session.seen.unwrap_or(now),
+                    expires_at_ms: 0,
+                    created_at_ms: now,
+                    last_seen_at_ms: session.seen.unwrap_or(now),
                     user_agent: None,
                     client_name: session.client_name.clone(),
                 },
@@ -553,7 +553,7 @@ impl Fixture {
             if release.added.is_some() {
                 let mut stored =
                     lyra_db::releases::get_by_id(db, release_db_id)?.context("release exists")?;
-                stored.ctime = release.added;
+                stored.file_created_at_ms = release.added;
                 db.transaction_mut(|t| lyra_db::releases::update_in_transaction(t, &stored))?;
             }
             if let Some(library) = &release.library {
@@ -617,7 +617,7 @@ impl Fixture {
             if track.added.is_some() || track.duration_ms.is_some() {
                 let mut stored =
                     lyra_db::tracks::get_by_id(db, track_db_id)?.context("track exists")?;
-                stored.ctime = track.added;
+                stored.file_created_at_ms = track.added;
                 stored.duration_ms = track.duration_ms;
                 db.transaction_mut(|t| lyra_db::tracks::update_in_transaction(t, &stored))?;
             }
@@ -668,9 +668,9 @@ impl Fixture {
                     kind: lyra_db::entries::EntryKind::File,
                     file_kind: Some("audio".into()),
                     hash: None,
-                    mtime: 0,
-                    ctime: 0,
-                    synced_at: None,
+                    file_modified_at_ms: 0,
+                    file_created_at_ms: 0,
+                    synced_at_ms: None,
                 };
                 let entry_db_id = db
                     .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
@@ -713,8 +713,8 @@ impl Fixture {
                     name: playlist.name.clone(),
                     description: None,
                     is_public: Some(playlist.public),
-                    created_at: None,
-                    updated_at: None,
+                    created_at_ms: None,
+                    updated_at_ms: None,
                     track_db_ids,
                 },
             )?;

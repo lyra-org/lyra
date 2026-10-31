@@ -582,9 +582,9 @@ fn insert_file_entry(
             .unwrap_or_else(|| full_path.to_string_lossy().to_string()),
         hash: None,
         size: 0,
-        mtime: 0,
-        ctime: 0,
-        synced_at: None,
+        file_modified_at_ms: 0,
+        file_created_at_ms: 0,
+        synced_at_ms: None,
     };
 
     let qr = db.exec_mut(QueryBuilder::insert().element(&entry).query())?;

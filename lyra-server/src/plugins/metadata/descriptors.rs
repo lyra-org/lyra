@@ -370,8 +370,8 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
                 field("sort_title", opt(string())),
                 field("release_date", opt(string())),
                 field("locked", opt(boolean())),
-                field("created_at", opt(number())),
-                field("ctime", opt(number())),
+                field("created_at_ms", opt(number())),
+                field("file_created_at_ms", opt(number())),
                 field("lookup_hints", opt(ty("ReleaseRefreshLookupHints"))),
                 field("external_ids", opt(ty("ExternalIdsByProvider"))),
                 described_field(

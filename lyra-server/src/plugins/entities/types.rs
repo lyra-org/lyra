@@ -137,7 +137,7 @@ describe_interface!(LuauProjectionEntryInfo for ProjectionEntryInfo, "Projection
     name: String as "name",
     hash: Option<String> as "hash",
     size: u64 as "size",
-    mtime: u64 as "mtime",
+    file_modified_at_ms: u64 as "file_modified_at_ms",
 });
 
 describe_interface!(LuauCreditProjectionInfo for CreditProjectionInfo, "CreditProjectionInfo", {
@@ -165,8 +165,8 @@ describe_interface!(LuauReleaseProjectionTrack for ReleaseProjectionTrack, "Rele
     track_gain_db: Option<f64> as "track_gain_db",
     album_gain_db: Option<f64> as "album_gain_db",
     locked: Option<bool> as "locked",
-    created_at: Option<u64> as "created_at",
-    ctime: Option<u64> as "ctime",
+    created_at_ms: Option<u64> as "created_at_ms",
+    file_created_at_ms: Option<u64> as "file_created_at_ms",
     external_ids: ExternalIdsByProvider as "external_ids",
     identifiers: IdentifiersByScheme as "identifiers",
     links: Option<Vec<LuauIdLink>> as "links",

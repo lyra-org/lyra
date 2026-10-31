@@ -28,7 +28,7 @@ pub struct CatalogTrack {
     pub id: DbId,
     pub title: String,
     pub sort_title: Option<String>,
-    /// `ctime`, or `created_at` without one.
+    /// `file_created_at_ms`, or `created_at_ms` without one.
     pub created: Option<u64>,
     pub year: Option<u64>,
     pub duration_ms: Option<u64>,
@@ -366,6 +366,7 @@ impl Values<'_> {
     }
 
     fn created(&self) -> Option<u64> {
-        self.number("ctime").or_else(|| self.number("created_at"))
+        self.number("file_created_at_ms")
+            .or_else(|| self.number("created_at_ms"))
     }
 }

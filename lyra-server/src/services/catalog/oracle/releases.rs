@@ -128,7 +128,9 @@ impl Old for Releases {
                     .map(|key| match key {
                         ReleaseKey::Name => Some(SortValue::Text(row.lower_name().to_string())),
                         ReleaseKey::SortName => Some(SortValue::Text(row.sort_name().to_string())),
-                        ReleaseKey::DateCreated => number("ctime").or_else(|| number("created_at")),
+                        ReleaseKey::DateCreated => {
+                            number("file_created_at_ms").or_else(|| number("created_at_ms"))
+                        }
                         ReleaseKey::ReleaseDate => release
                             .text("release_date")
                             .and_then(date_order)
@@ -167,7 +169,7 @@ fn release_fields(keys: &[ReleaseKey]) -> Vec<&'static str> {
     let mut fields = vec!["release_title", "sort_title"];
     for key in keys {
         fields.extend_from_slice(match key {
-            ReleaseKey::DateCreated => &["ctime", "created_at"],
+            ReleaseKey::DateCreated => &["file_created_at_ms", "created_at_ms"],
             ReleaseKey::ReleaseDate | ReleaseKey::Year => &["release_date"],
             _ => &[],
         });

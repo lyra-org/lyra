@@ -46,8 +46,8 @@ struct PlaylistInfo {
     name: String,
     description: Option<String>,
     is_public: Option<bool>,
-    created_at: Option<u64>,
-    updated_at: Option<u64>,
+    created_at_ms: Option<u64>,
+    updated_at_ms: Option<u64>,
 }
 
 impl From<lyra_db::Playlist> for PlaylistInfo {
@@ -58,8 +58,8 @@ impl From<lyra_db::Playlist> for PlaylistInfo {
             name: playlist.name,
             description: playlist.description,
             is_public: playlist.is_public,
-            created_at: playlist.created_at,
-            updated_at: playlist.updated_at,
+            created_at_ms: playlist.created_at_ms,
+            updated_at_ms: playlist.updated_at_ms,
         }
     }
 }
@@ -85,8 +85,8 @@ struct PlaylistCreateRequest {
     name: String,
     description: Option<String>,
     is_public: Option<bool>,
-    created_at: Option<u64>,
-    updated_at: Option<u64>,
+    created_at_ms: Option<u64>,
+    updated_at_ms: Option<u64>,
     track_ids: Vec<DbId>,
 }
 
@@ -97,8 +97,8 @@ impl PlaylistCreateRequest {
             name: self.name,
             description: self.description,
             is_public: self.is_public,
-            created_at: self.created_at,
-            updated_at: self.updated_at,
+            created_at_ms: self.created_at_ms,
+            updated_at_ms: self.updated_at_ms,
             track_db_ids: self.track_ids,
         }
     }
@@ -109,7 +109,7 @@ struct PlaylistFields {
     name: Option<String>,
     description: Option<String>,
     is_public: Option<bool>,
-    updated_at: Option<u64>,
+    updated_at_ms: Option<u64>,
 }
 
 impl PlaylistFields {
@@ -121,7 +121,7 @@ impl PlaylistFields {
             // can only set a description, never clear it.
             description: self.description.map(Some),
             is_public: self.is_public,
-            updated_at: self.updated_at,
+            updated_at_ms: self.updated_at_ms,
         }
     }
 }
@@ -673,8 +673,8 @@ fn parse_create_request(table: luau::Table) -> luau::runtime::Result<PlaylistCre
         name: table.required_string_field("name")?,
         description: table.optional_string_field("description")?,
         is_public: table.optional_bool_field("is_public")?,
-        created_at: args::optional_u64(&table, "created_at")?,
-        updated_at: args::optional_u64(&table, "updated_at")?,
+        created_at_ms: args::optional_u64(&table, "created_at_ms")?,
+        updated_at_ms: args::optional_u64(&table, "updated_at_ms")?,
         track_ids: args::optional_id_sequence(&table, "track_ids")?,
     })
 }
@@ -722,7 +722,7 @@ fn parse_fields(table: &luau::Table) -> luau::runtime::Result<PlaylistFields> {
         name: table.optional_string_field("name")?,
         description: table.optional_string_field("description")?,
         is_public: table.optional_bool_field("is_public")?,
-        updated_at: args::optional_u64(table, "updated_at")?,
+        updated_at_ms: args::optional_u64(table, "updated_at_ms")?,
     })
 }
 
@@ -741,8 +741,8 @@ impl DescribeInterface for PlaylistInfo {
             field("name", String::luau_type()),
             field("description", Option::<String>::luau_type()),
             field("is_public", Option::<bool>::luau_type()),
-            field("created_at", Option::<u64>::luau_type()),
-            field("updated_at", Option::<u64>::luau_type()),
+            field("created_at_ms", Option::<u64>::luau_type()),
+            field("updated_at_ms", Option::<u64>::luau_type()),
         ]);
         descriptor
     }
@@ -779,8 +779,8 @@ impl DescribeInterface for PlaylistCreateRequest {
             field("name", String::luau_type()),
             field("description", Option::<String>::luau_type()),
             field("is_public", Option::<bool>::luau_type()),
-            field("created_at", Option::<u64>::luau_type()),
-            field("updated_at", Option::<u64>::luau_type()),
+            field("created_at_ms", Option::<u64>::luau_type()),
+            field("updated_at_ms", Option::<u64>::luau_type()),
             field("track_ids", Option::<Vec<u64>>::luau_type()),
         ]);
         descriptor
@@ -800,7 +800,7 @@ impl DescribeInterface for PlaylistFields {
             field("name", Option::<String>::luau_type()),
             field("description", Option::<String>::luau_type()),
             field("is_public", Option::<bool>::luau_type()),
-            field("updated_at", Option::<u64>::luau_type()),
+            field("updated_at_ms", Option::<u64>::luau_type()),
         ]);
         descriptor
     }
@@ -837,7 +837,7 @@ impl DescribeInterface for PlaylistUpdateRequest {
             field("name", Option::<String>::luau_type()),
             field("description", Option::<String>::luau_type()),
             field("is_public", Option::<bool>::luau_type()),
-            field("updated_at", Option::<u64>::luau_type()),
+            field("updated_at_ms", Option::<u64>::luau_type()),
         ]);
         descriptor
     }

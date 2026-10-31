@@ -90,11 +90,11 @@ pub struct Entry {
     pub name: String,
     pub hash: Option<String>,
     pub size: u64,
-    pub mtime: u64,
-    pub ctime: u64,
-    /// When a file's metadata and release artifacts last finished, in unix seconds; absent until
-    /// they do after it changes.
-    pub synced_at: Option<u64>,
+    pub file_modified_at_ms: u64,
+    pub file_created_at_ms: u64,
+    /// When a file's metadata and release artifacts last finished; absent until they do after it
+    /// changes.
+    pub synced_at_ms: Option<u64>,
 }
 
 pub(crate) const SUPPORTED_AUDIO_EXTENSIONS: &[&str] = lofty::file::EXTENSIONS;
@@ -216,7 +216,7 @@ pub fn sync_entry_group(
         }
 
         let entry = Entry {
-            synced_at: None,
+            synced_at_ms: None,
             ..entry
         };
         let Some(existing) = db_by_path.get(&entry.full_path) else {
@@ -228,7 +228,7 @@ pub fn sync_entry_group(
             || entry.file_kind != existing.file_kind
             || entry.name != existing.name
             || entry.size != existing.size
-            || entry.mtime != existing.mtime
+            || entry.file_modified_at_ms != existing.file_modified_at_ms
             || entry.hash != existing.hash
         {
             let mut updated = entry;
@@ -250,7 +250,7 @@ pub fn sync_entry_group(
                 .collect::<Vec<_>>();
             t.exec_mut(
                 QueryBuilder::remove()
-                    .values(["synced_at"])
+                    .values(["synced_at_ms"])
                     .ids(&updated)
                     .query(),
             )?;
@@ -318,7 +318,7 @@ pub fn mark_synced(db: &mut DbAny, entry_ids: &[DbId]) -> anyhow::Result<()> {
     }
     db.exec_mut(
         QueryBuilder::insert()
-            .values_uniform([("synced_at", super::users::now_secs().unsigned_abs()).into()])
+            .values_uniform([("synced_at_ms", super::users::now_ms().unsigned_abs()).into()])
             .ids(entry_ids)
             .query(),
     )?;
@@ -382,7 +382,7 @@ pub fn prune_missing_entries(
             let unsynced = unsynced.into_iter().collect::<Vec<_>>();
             t.exec_mut(
                 QueryBuilder::remove()
-                    .values(["synced_at"])
+                    .values(["synced_at_ms"])
                     .ids(&unsynced)
                     .query(),
             )?;
@@ -451,9 +451,9 @@ mod tests {
             name: "test.flac".to_string(),
             hash: None,
             size: 42,
-            mtime: 1,
-            ctime: 1,
-            synced_at: None,
+            file_modified_at_ms: 1,
+            file_created_at_ms: 1,
+            synced_at_ms: None,
         };
         let entry_id = db
             .exec_mut(QueryBuilder::insert().element(&entry).query())?
@@ -491,9 +491,9 @@ mod tests {
             file_kind: (kind == EntryKind::File).then(|| "audio".to_string()),
             hash: None,
             size: 1,
-            mtime: 1,
-            ctime: 1,
-            synced_at: None,
+            file_modified_at_ms: 1,
+            file_created_at_ms: 1,
+            synced_at_ms: None,
         }
     }
 
@@ -545,14 +545,17 @@ mod tests {
         let mut db = TestDb::initialized()?.into_inner();
         let library_db_id = crate::test_db::insert_library(&mut db, "Music", "/music")?;
         let library = crate::libraries::get_by_id(&db, library_db_id)?.expect("library");
-        let track = |mtime| Entry {
-            mtime,
+        let track = |file_modified_at_ms| Entry {
+            file_modified_at_ms,
             ..scanned("/music/01.flac", EntryKind::File)
         };
         sync_entry_group(&mut db, &library, vec![track(1)])?;
         let entry_id = get(&db, library_db_id)?[0].db_id.expect("entry db_id");
         let synced = |db: &DbAny| -> anyhow::Result<bool> {
-            Ok(get_by_id(db, entry_id)?.expect("entry").synced_at.is_some())
+            Ok(get_by_id(db, entry_id)?
+                .expect("entry")
+                .synced_at_ms
+                .is_some())
         };
         assert!(!synced(&db)?);
 
@@ -624,7 +627,7 @@ mod tests {
         let synced = |path: &str| -> anyhow::Result<bool> {
             Ok(get_by_id(&db, id_of(&db, path)?)?
                 .expect("entry")
-                .synced_at
+                .synced_at_ms
                 .is_some())
         };
         assert!(!synced(paths[1])?, "the album a file left kept its sync");
@@ -651,8 +654,8 @@ mod tests {
             track_gain_db: None,
             album_gain_db: None,
             locked: None,
-            created_at: None,
-            ctime: None,
+            created_at_ms: None,
+            file_created_at_ms: None,
         };
         let track_db_id = db
             .exec_mut(QueryBuilder::insert().element(&track).query())?
@@ -674,9 +677,9 @@ mod tests {
             name: "test.mp3".to_string(),
             hash: None,
             size: 1,
-            mtime: 1,
-            ctime: 1,
-            synced_at: None,
+            file_modified_at_ms: 1,
+            file_created_at_ms: 1,
+            synced_at_ms: None,
         };
         let entry_db_id = db
             .exec_mut(QueryBuilder::insert().element(&entry).query())?
@@ -742,8 +745,8 @@ mod tests {
             track_gain_db: None,
             album_gain_db: None,
             locked: None,
-            created_at: None,
-            ctime: None,
+            created_at_ms: None,
+            file_created_at_ms: None,
         };
         let track_db_id = db
             .exec_mut(QueryBuilder::insert().element(&track).query())?

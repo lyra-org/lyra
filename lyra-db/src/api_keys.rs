@@ -25,8 +25,8 @@ pub struct ApiKey {
     pub id: String,
     pub name: String,
     pub(crate) key_hash: String,
-    pub created_at: i64,
-    pub last_used_at: Option<i64>,
+    pub created_at_ms: i64,
+    pub last_used_at_ms: Option<i64>,
 }
 
 pub fn create(
@@ -34,7 +34,7 @@ pub fn create(
     user_db_id: DbId,
     name: &str,
     key_hash: &str,
-    created_at: i64,
+    created_at_ms: i64,
 ) -> anyhow::Result<DbId> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -52,8 +52,8 @@ pub fn create(
         id: nanoid!(),
         name: trimmed.to_string(),
         key_hash: key_hash.to_string(),
-        created_at,
-        last_used_at: None,
+        created_at_ms,
+        last_used_at_ms: None,
     };
 
     db.transaction_mut(|t| -> anyhow::Result<DbId> {
@@ -116,8 +116,8 @@ pub fn list_for_user(db: &impl super::DbAccess, user_db_id: DbId) -> anyhow::Res
         .try_into()?;
 
     api_keys.sort_by(|a, b| {
-        a.created_at
-            .cmp(&b.created_at)
+        a.created_at_ms
+            .cmp(&b.created_at_ms)
             .then_with(|| a.name.cmp(&b.name))
             .then_with(|| a.id.cmp(&b.id))
     });
@@ -175,11 +175,11 @@ pub fn delete_by_id(db: &mut impl super::DbAccess, api_key_db_id: DbId) -> anyho
 pub fn update_last_used_at(
     db: &mut impl super::DbAccess,
     api_key_db_id: DbId,
-    last_used_at: i64,
+    last_used_at_ms: i64,
 ) -> anyhow::Result<()> {
     db.exec_mut(
         QueryBuilder::insert()
-            .values_uniform([("last_used_at", last_used_at).into()])
+            .values_uniform([("last_used_at_ms", last_used_at_ms).into()])
             .ids(api_key_db_id)
             .query(),
     )?;
@@ -315,7 +315,7 @@ mod tests {
 
         let api_key =
             get_by_id(&db, api_key_db_id)?.ok_or_else(|| anyhow!("api key should exist"))?;
-        assert_eq!(api_key.last_used_at, Some(250));
+        assert_eq!(api_key.last_used_at_ms, Some(250));
 
         Ok(())
     }

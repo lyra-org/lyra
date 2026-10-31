@@ -163,7 +163,7 @@ struct LyricsInfo {
     source: LyricsSource,
     plain_text: String,
     has_word_cues: bool,
-    updated_at: u64,
+    updated_at_ms: u64,
     lines: Vec<LyricLineInfo>,
 }
 
@@ -203,7 +203,7 @@ fn lyrics_detail_to_info(detail: LyricsDetail) -> LyricsInfo {
         },
         plain_text: lyrics.plain_text,
         has_word_cues: lyrics.has_word_cues,
-        updated_at: lyrics.updated_at,
+        updated_at_ms: lyrics.updated_at_ms,
         lines: lines
             .into_iter()
             .map(|detail| LyricLineInfo {
@@ -570,7 +570,7 @@ impl DescribeInterface for LyricsInfo {
                 description: None,
             },
             FieldDescriptor {
-                name: "updated_at",
+                name: "updated_at_ms",
                 ty: u64::luau_type(),
                 description: None,
             },

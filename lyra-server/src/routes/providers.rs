@@ -983,8 +983,8 @@ mod tests {
             track_gain_db: None,
             album_gain_db: None,
             locked: None,
-            created_at: None,
-            ctime: None,
+            created_at_ms: None,
+            file_created_at_ms: None,
         };
         let qr = db.exec_mut(QueryBuilder::insert().element(&track).query())?;
         let track_db_id = qr
@@ -1041,9 +1041,9 @@ mod tests {
                 .to_string(),
             hash: None,
             size: 0,
-            mtime: 0,
-            ctime: 0,
-            synced_at: None,
+            file_modified_at_ms: 0,
+            file_created_at_ms: 0,
+            synced_at_ms: None,
         };
         let qr = db.exec_mut(QueryBuilder::insert().element(&entry).query())?;
         qr.elements

@@ -35,15 +35,15 @@ use crate::{
 };
 
 /// The [`LayerElement`] methods every element implements alike over its
-/// `db_id`, `source_id`, and `updated_at`.
+/// `db_id`, `source_id`, and `updated_at_ms`.
 macro_rules! shared_methods {
     () => {
         fn source_id(&self) -> &str {
             &self.source_id
         }
 
-        fn updated_at(&self) -> u64 {
-            self.updated_at
+        fn updated_at_ms(&self) -> u64 {
+            self.updated_at_ms
         }
 
         fn set_db_id(&mut self, db_id: Option<DbId>) {
@@ -53,7 +53,7 @@ macro_rules! shared_methods {
         fn same_values(&self, other: &Self) -> bool {
             Self {
                 db_id: other.db_id,
-                updated_at: other.updated_at,
+                updated_at_ms: other.updated_at_ms,
                 ..self.clone()
             } == *other
         }
@@ -79,7 +79,7 @@ pub(super) trait LayerElement: DbType<ValueType = Self> + PartialEq + Sized {
         layer: &MetadataLayer,
     ) -> anyhow::Result<bool>;
     fn source_id(&self) -> &str;
-    fn updated_at(&self) -> u64;
+    fn updated_at_ms(&self) -> u64;
     fn set_db_id(&mut self, db_id: Option<DbId>);
     /// Whether both supply the same values, whenever and wherever stored.
     fn same_values(&self, other: &Self) -> bool;
@@ -90,7 +90,7 @@ pub(super) trait LayerElement: DbType<ValueType = Self> + PartialEq + Sized {
 pub(super) struct ReleaseLayer {
     db_id: Option<DbId>,
     source_id: String,
-    updated_at: u64,
+    updated_at_ms: u64,
     supplied: Vec<MetadataField>,
     supplied_credits: Vec<CreditType>,
     release_title: Option<String>,
@@ -107,7 +107,7 @@ impl LayerElement for ReleaseLayer {
         Ok(Self {
             db_id: None,
             source_id: layer.source_id.clone(),
-            updated_at: layer.updated_at,
+            updated_at_ms: layer.updated_at_ms,
             supplied: fields.keys().copied().collect(),
             supplied_credits: layer.credits.keys().copied().collect(),
             release_title: field_value(fields, MetadataField::ReleaseTitle)?,
@@ -135,7 +135,7 @@ impl LayerElement for ReleaseLayer {
             fields.insert(MetadataField::Labels, label_links(db, layer_id)?);
         }
         Ok(
-            MetadataLayer::new(self.source_id.clone(), fields, self.updated_at)
+            MetadataLayer::new(self.source_id.clone(), fields, self.updated_at_ms)
                 .with_credits(read_credits(db, layer_id, &self.supplied_credits)?),
         )
     }
@@ -171,7 +171,7 @@ impl LayerElement for ReleaseLayer {
 pub(super) struct TrackLayer {
     db_id: Option<DbId>,
     source_id: String,
-    updated_at: u64,
+    updated_at_ms: u64,
     supplied: Vec<MetadataField>,
     supplied_credits: Vec<CreditType>,
     track_title: Option<String>,
@@ -191,7 +191,7 @@ impl LayerElement for TrackLayer {
         Ok(Self {
             db_id: None,
             source_id: layer.source_id.clone(),
-            updated_at: layer.updated_at,
+            updated_at_ms: layer.updated_at_ms,
             supplied: fields.keys().copied().collect(),
             supplied_credits: layer.credits.keys().copied().collect(),
             track_title: field_value(fields, MetadataField::TrackTitle)?,
@@ -219,7 +219,7 @@ impl LayerElement for TrackLayer {
             ],
         );
         Ok(
-            MetadataLayer::new(self.source_id.clone(), fields, self.updated_at)
+            MetadataLayer::new(self.source_id.clone(), fields, self.updated_at_ms)
                 .with_credits(read_credits(db, layer_id, &self.supplied_credits)?),
         )
     }
@@ -251,7 +251,7 @@ impl LayerElement for TrackLayer {
 pub(super) struct ArtistLayer {
     db_id: Option<DbId>,
     source_id: String,
-    updated_at: u64,
+    updated_at_ms: u64,
     supplied: Vec<MetadataField>,
     supplied_relations: Vec<ArtistRelationType>,
     artist_name: Option<String>,
@@ -268,7 +268,7 @@ impl LayerElement for ArtistLayer {
         Ok(Self {
             db_id: None,
             source_id: layer.source_id.clone(),
-            updated_at: layer.updated_at,
+            updated_at_ms: layer.updated_at_ms,
             supplied: fields.keys().copied().collect(),
             supplied_relations: layer.relations.keys().copied().collect(),
             artist_name: field_value(fields, MetadataField::ArtistName)?,
@@ -290,7 +290,7 @@ impl LayerElement for ArtistLayer {
             ],
         );
         Ok(
-            MetadataLayer::new(self.source_id.clone(), fields, self.updated_at)
+            MetadataLayer::new(self.source_id.clone(), fields, self.updated_at_ms)
                 .with_relations(read_relations(db, layer_id, &self.supplied_relations)?),
         )
     }

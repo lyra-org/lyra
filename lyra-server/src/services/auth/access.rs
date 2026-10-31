@@ -582,8 +582,8 @@ mod tests {
                 name: "Private".to_string(),
                 description: None,
                 is_public: Some(false),
-                created_at: None,
-                updated_at: None,
+                created_at_ms: None,
+                updated_at_ms: None,
             },
             owner_db_id,
         )?;
@@ -595,8 +595,8 @@ mod tests {
                 name: "Public".to_string(),
                 description: None,
                 is_public: Some(true),
-                created_at: None,
-                updated_at: None,
+                created_at_ms: None,
+                updated_at_ms: None,
             },
             owner_db_id,
         )?;
@@ -625,8 +625,8 @@ mod tests {
                 name: "Private".to_string(),
                 description: None,
                 is_public: Some(false),
-                created_at: None,
-                updated_at: None,
+                created_at_ms: None,
+                updated_at_ms: None,
             },
             owner_db_id,
         )?;

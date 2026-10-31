@@ -51,7 +51,7 @@ pub struct MetadataLayer {
     pub fields: LayerFields,
     pub relations: LayerRelations,
     pub credits: LayerCredits,
-    pub updated_at: u64,
+    pub updated_at_ms: u64,
 }
 
 /// For each type `incoming` lists, `stored`'s artists followed by the incoming
@@ -75,13 +75,13 @@ pub fn union_relations(stored: &LayerRelations, incoming: LayerRelations) -> Lay
 }
 
 impl MetadataLayer {
-    pub fn new(source_id: impl Into<String>, fields: LayerFields, updated_at: u64) -> Self {
+    pub fn new(source_id: impl Into<String>, fields: LayerFields, updated_at_ms: u64) -> Self {
         Self {
             source_id: source_id.into(),
             fields,
             relations: LayerRelations::new(),
             credits: LayerCredits::new(),
-            updated_at,
+            updated_at_ms,
         }
     }
 
@@ -306,15 +306,19 @@ fn save<T: LayerElement>(
     let (layer_id, values_changed) = store(db, node_id, T::from_layer(&layer)?)?;
     let edges_changed = T::save_edges(db, layer_id, &layer)?;
     if edges_changed && !values_changed {
-        set_updated_at(db, layer_id, layer.updated_at)?;
+        set_updated_at(db, layer_id, layer.updated_at_ms)?;
     }
     Ok(values_changed || edges_changed)
 }
 
-fn set_updated_at(db: &mut impl DbAccess, layer_id: DbId, updated_at: u64) -> anyhow::Result<()> {
+fn set_updated_at(
+    db: &mut impl DbAccess,
+    layer_id: DbId,
+    updated_at_ms: u64,
+) -> anyhow::Result<()> {
     db.exec_mut(
         QueryBuilder::insert()
-            .values_uniform([("updated_at", updated_at).into()])
+            .values_uniform([("updated_at_ms", updated_at_ms).into()])
             .ids(layer_id)
             .query(),
     )?;
@@ -363,7 +367,7 @@ pub fn fill_inside_tx(
     let Some(mut to) = find(db, to_node, source_id)? else {
         return copy_inside_tx(db, from_node, to_node, source_id);
     };
-    to.updated_at = to.updated_at.max(from.updated_at);
+    to.updated_at_ms = to.updated_at_ms.max(from.updated_at_ms);
     for (field, value) in from.fields {
         to.fields.entry(field).or_insert(value);
     }
@@ -462,10 +466,10 @@ pub fn copy_inside_tx(
     let Some(from_layer) = layer_id(db, from_node, source_id)? else {
         return Ok(());
     };
-    let (to_layer, updated_at) =
+    let (to_layer, updated_at_ms) =
         with_element!(entity_type(db, to_node)?, T => copy_element::<T>(db, from_layer, to_node)?);
     edges::copy_all(db, from_layer, to_layer)?;
-    set_updated_at(db, to_layer, updated_at)
+    set_updated_at(db, to_layer, updated_at_ms)
 }
 
 /// Stores `from_layer`'s element on `to_node`. Returns the stored layer's id
@@ -482,8 +486,8 @@ fn copy_element<T: LayerElement>(
             .first()
             .context("copied metadata layer is gone")?,
     )?;
-    let updated_at = element.updated_at();
-    Ok((store(db, to_node, element)?.0, updated_at))
+    let updated_at_ms = element.updated_at_ms();
+    Ok((store(db, to_node, element)?.0, updated_at_ms))
 }
 
 /// Removes the layer `source_id` contributed to an entity. Returns false when
@@ -593,7 +597,7 @@ mod tests {
             .collect()
     }
 
-    fn layer(source_id: &str, fields: Value, updated_at: u64) -> MetadataLayer {
+    fn layer(source_id: &str, fields: Value, updated_at_ms: u64) -> MetadataLayer {
         let fields = inputs(fields)
             .into_iter()
             .map(|(field, input)| match input {
@@ -602,13 +606,18 @@ mod tests {
                 Some(_) => panic!("'{field}' needs a database to resolve"),
             })
             .collect();
-        MetadataLayer::new(source_id, fields, updated_at)
+        MetadataLayer::new(source_id, fields, updated_at_ms)
     }
 
     /// A layer whose genres and labels resolve by name.
-    fn resolved(db: &mut DbAny, source_id: &str, fields: Value, updated_at: u64) -> MetadataLayer {
+    fn resolved(
+        db: &mut DbAny,
+        source_id: &str,
+        fields: Value,
+        updated_at_ms: u64,
+    ) -> MetadataLayer {
         let fields = resolve_inputs(db, inputs(fields)).expect("test layer fields resolve");
-        MetadataLayer::new(source_id, fields, updated_at)
+        MetadataLayer::new(source_id, fields, updated_at_ms)
     }
 
     fn genre(db: &DbAny, name: &str) -> anyhow::Result<DbId> {
@@ -688,26 +697,29 @@ mod tests {
     fn a_genre_or_label_only_change_moves_updated_at() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let release_id = insert_release(&mut db, "Release")?;
-        let release = |db: &mut DbAny, genre: &str, label: &str, updated_at: u64| {
+        let release = |db: &mut DbAny, genre: &str, label: &str, updated_at_ms: u64| {
             resolved(
                 db,
                 "provider",
                 json!({"genres": [genre], "labels": [{"name": label}]}),
-                updated_at,
+                updated_at_ms,
             )
         };
         let first = release(&mut db, "Jazz", "A", 1);
         upsert(&mut db, release_id, &first)?;
 
-        for (genre, label, updated_at) in [("Rock", "A", 2), ("Rock", "B", 3)] {
-            let change = release(&mut db, genre, label, updated_at);
+        for (genre, label, updated_at_ms) in [("Rock", "A", 2), ("Rock", "B", 3)] {
+            let change = release(&mut db, genre, label, updated_at_ms);
             assert!(upsert(&mut db, release_id, &change)?);
-            assert_eq!(only_layer(&db, release_id)?.updated_at, change.updated_at);
+            assert_eq!(
+                only_layer(&db, release_id)?.updated_at_ms,
+                change.updated_at_ms
+            );
         }
         let unchanged = release(&mut db, "Rock", "B", 4);
         assert!(!upsert(&mut db, release_id, &unchanged)?);
         assert_eq!(
-            only_layer(&db, release_id)?.updated_at,
+            only_layer(&db, release_id)?.updated_at_ms,
             3,
             "a no-op save keeps the stored time"
         );
@@ -756,7 +768,7 @@ mod tests {
                 ),
             ])
         );
-        assert_eq!(filled.updated_at, 9);
+        assert_eq!(filled.updated_at_ms, 9);
         Ok(())
     }
 
@@ -965,7 +977,7 @@ mod tests {
             vec![
                 ("db_element_id", "TrackLayer").into(),
                 ("source_id", "corrupt").into(),
-                ("updated_at", 1_u64).into(),
+                ("updated_at_ms", 1_u64).into(),
                 ("supplied", vec!["year".to_string()]).into(),
                 ("supplied_credits", Vec::<String>::new()).into(),
                 ("year", "1999").into(),
@@ -1018,8 +1030,8 @@ mod tests {
         let character_id = insert_artist(&mut db, "Character")?;
         let first = insert_artist(&mut db, "First")?;
         let second = insert_artist(&mut db, "Second")?;
-        let voiced_by = |actor_id: DbId, updated_at: u64| {
-            layer("provider", json!({}), updated_at).with_relations(LayerRelations::from([(
+        let voiced_by = |actor_id: DbId, updated_at_ms: u64| {
+            layer("provider", json!({}), updated_at_ms).with_relations(LayerRelations::from([(
                 ArtistRelationType::VoiceActor,
                 vec![edges::LayerRelationInput {
                     artist_id: actor_id,
@@ -1031,7 +1043,7 @@ mod tests {
 
         assert!(upsert(&mut db, character_id, &voiced_by(second, 2))?);
 
-        assert_eq!(only_layer(&db, character_id)?.updated_at, 2);
+        assert_eq!(only_layer(&db, character_id)?.updated_at_ms, 2);
         Ok(())
     }
 
@@ -1064,8 +1076,8 @@ mod tests {
         let release_id = insert_release(&mut db, "Release")?;
         let first = insert_artist(&mut db, "First")?;
         let second = insert_artist(&mut db, "Second")?;
-        let credited = |artist_id: DbId, updated_at: u64| {
-            layer("provider", json!({}), updated_at).with_credits(LayerCredits::from([(
+        let credited = |artist_id: DbId, updated_at_ms: u64| {
+            layer("provider", json!({}), updated_at_ms).with_credits(LayerCredits::from([(
                 CreditType::Artist,
                 vec![edges::LayerCreditInput {
                     artist_id,
@@ -1077,7 +1089,7 @@ mod tests {
 
         assert!(upsert(&mut db, release_id, &credited(second, 2))?);
 
-        assert_eq!(only_layer(&db, release_id)?.updated_at, 2);
+        assert_eq!(only_layer(&db, release_id)?.updated_at_ms, 2);
         Ok(())
     }
 }

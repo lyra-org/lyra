@@ -77,12 +77,12 @@ pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<Vec<Entry>> {
         };
 
         let size = if is_file { md.len() } else { 0 };
-        let mtime = match md
+        let file_modified_at_ms = match md
             .modified()
             .ok()
             .and_then(|modified| modified.duration_since(time::UNIX_EPOCH).ok())
         {
-            Some(modified) => modified.as_secs(),
+            Some(modified) => modified.as_millis() as u64,
             None => {
                 errors.push(anyhow::anyhow!(
                     "failed to read mtime for {}",
@@ -92,12 +92,12 @@ pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<Vec<Entry>> {
             }
         };
 
-        let ctime = md
+        let file_created_at_ms = md
             .created()
             .ok()
             .and_then(|created| created.duration_since(time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs())
-            .unwrap_or(mtime);
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(file_modified_at_ms);
 
         entries.push(Entry {
             db_id: None,
@@ -112,9 +112,9 @@ pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<Vec<Entry>> {
             file_kind: file_kind.map(str::to_string),
             hash: None,
             size,
-            mtime,
-            ctime,
-            synced_at: None,
+            file_modified_at_ms,
+            file_created_at_ms,
+            synced_at_ms: None,
         });
     }
 
@@ -177,7 +177,7 @@ pub(crate) fn diff_and_needs_hash(
         if let Some(old) = db_by_path.get(&e.full_path) {
             e.db_id = old.db_id;
             e.id = old.id.clone();
-            if old.size == e.size && old.mtime == e.mtime {
+            if old.size == e.size && old.file_modified_at_ms == e.file_modified_at_ms {
                 e.hash = old.hash.clone();
             }
         }
@@ -403,7 +403,7 @@ mod tests {
         assert_ne!(old_hash, new_hash);
         assert_eq!(updated_entry.db_id, Some(entry_db_id));
         assert!(
-            updated_entry.synced_at.is_none(),
+            updated_entry.synced_at_ms.is_none(),
             "the changed entry kept its sync"
         );
 

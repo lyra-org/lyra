@@ -484,8 +484,8 @@ mod tests {
             track_gain_db: None,
             album_gain_db: None,
             locked: None,
-            created_at: None,
-            ctime: None,
+            created_at_ms: None,
+            file_created_at_ms: None,
         };
         let track_id = db
             .exec_mut(QueryBuilder::insert().element(&track).query())?

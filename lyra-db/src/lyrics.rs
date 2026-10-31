@@ -117,8 +117,8 @@ pub struct Lyrics {
     pub max_synced_ts_ms: u64,
     pub has_word_cues: bool,
     pub content_hash: String,
-    pub last_checked_at: u64,
-    pub updated_at: u64,
+    pub last_checked_at_ms: u64,
+    pub updated_at_ms: u64,
 }
 
 #[derive(DbElement, Serialize, Deserialize, Clone, Debug)]
@@ -159,7 +159,7 @@ pub struct LyricsInput {
     pub language: String,
     pub plain_text: String,
     pub lines: Vec<LineInput>,
-    pub last_checked_at: u64,
+    pub last_checked_at_ms: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -699,7 +699,7 @@ fn upsert_inner(
         u32::try_from(input.lines.iter().filter(|line| line.ts_ms > 0).count()).unwrap_or(u32::MAX);
     let max_synced_ts_ms = input.lines.iter().map(|line| line.ts_ms).max().unwrap_or(0);
     let has_word_cues = input.lines.iter().any(|line| !line.words.is_empty());
-    let now = input.last_checked_at;
+    let now = input.last_checked_at_ms;
 
     if let Some(existing_db_id) = existing_db_id {
         let existing_rows: Vec<Lyrics> = db
@@ -722,8 +722,8 @@ fn upsert_inner(
                 max_synced_ts_ms: existing.max_synced_ts_ms,
                 has_word_cues: existing.has_word_cues,
                 content_hash: existing.content_hash,
-                last_checked_at: now,
-                updated_at: existing.updated_at,
+                last_checked_at_ms: now,
+                updated_at_ms: existing.updated_at_ms,
             };
             db.exec_mut(QueryBuilder::insert().element(&bumped).query())?;
             return Ok(existing_db_id);
@@ -743,8 +743,8 @@ fn upsert_inner(
             max_synced_ts_ms,
             has_word_cues,
             content_hash,
-            last_checked_at: now,
-            updated_at: now,
+            last_checked_at_ms: now,
+            updated_at_ms: now,
         };
         db.exec_mut(QueryBuilder::insert().element(&lyrics).query())?;
 
@@ -764,8 +764,8 @@ fn upsert_inner(
         max_synced_ts_ms,
         has_word_cues,
         content_hash,
-        last_checked_at: now,
-        updated_at: now,
+        last_checked_at_ms: now,
+        updated_at_ms: now,
     };
     let lyrics_db_id = db
         .exec_mut(QueryBuilder::insert().element(&lyrics).query())?
@@ -1053,7 +1053,7 @@ mod tests {
                 language: "eng".to_string(),
                 plain_text: plain.to_string(),
                 lines: Vec::new(),
-                last_checked_at: 100,
+                last_checked_at_ms: 100,
             },
         }
     }
@@ -1098,7 +1098,7 @@ mod tests {
         assert_eq!(rows[0].synced_line_count, 0);
         assert_eq!(rows[0].max_synced_ts_ms, 0);
         assert!(!rows[0].has_word_cues);
-        assert_eq!(rows[0].last_checked_at, 100);
+        assert_eq!(rows[0].last_checked_at_ms, 100);
         assert_eq!(
             rows[0].db_id.as_ref().map(|n| DbId::from(n.clone())),
             Some(lyrics_db_id)
@@ -1322,9 +1322,9 @@ mod tests {
             name: "other.flac".to_string(),
             hash: None,
             size: 1,
-            mtime: 1,
-            ctime: 1,
-            synced_at: None,
+            file_modified_at_ms: 1,
+            file_created_at_ms: 1,
+            synced_at_ms: None,
         };
         let entry_id = db
             .exec_mut(QueryBuilder::insert().element(&entry).query())?
@@ -1777,15 +1777,18 @@ mod tests {
         )?;
 
         let mut second_input = plugin_input("abc", "plug", "hello");
-        second_input.last_checked_at = 200;
+        second_input.last_checked_at_ms = 200;
         let second = upsert_from_plugin(&mut db, track_id, second_input, None)?;
 
         assert_eq!(first, second);
 
         let rows = rows_for_track(&db, track_id)?;
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].last_checked_at, 200);
-        assert_eq!(rows[0].updated_at, 100, "updated_at must not bump on no-op");
+        assert_eq!(rows[0].last_checked_at_ms, 200);
+        assert_eq!(
+            rows[0].updated_at_ms, 100,
+            "updated_at_ms must not bump on no-op"
+        );
         Ok(())
     }
 
@@ -1808,7 +1811,7 @@ mod tests {
 
         let mut second_input = plugin_input("abc", "plug", "");
         second_input.lines = vec![line(0, "alpha"), line(500, "beta"), line(2000, "gamma")];
-        second_input.last_checked_at = 500;
+        second_input.last_checked_at_ms = 500;
         upsert_from_plugin(&mut db, track_id, second_input, bound)?;
 
         let detail = get_detail(&db, lyrics_id)?.expect("lyrics");
@@ -1817,7 +1820,7 @@ mod tests {
         assert_eq!(detail.lines[2].line.ts_ms, 2000);
         assert_eq!(detail.lyrics.line_count, 3);
         assert_eq!(detail.lyrics.max_synced_ts_ms, 2000);
-        assert_eq!(detail.lyrics.updated_at, 500);
+        assert_eq!(detail.lyrics.updated_at_ms, 500);
         Ok(())
     }
 

@@ -65,7 +65,7 @@ impl PluginLyricsInput {
                             .collect(),
                     })
                     .collect(),
-                last_checked_at: now_ms,
+                last_checked_at_ms: now_ms,
             },
         ))
     }

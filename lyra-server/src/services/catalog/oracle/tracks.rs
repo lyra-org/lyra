@@ -180,7 +180,9 @@ impl Old for Tracks {
                     .map(|key| match key {
                         TrackKey::Name => Some(SortValue::Text(row.lower_name().to_string())),
                         TrackKey::SortName => Some(SortValue::Text(row.sort_name().to_string())),
-                        TrackKey::DateCreated => number("ctime").or_else(|| number("created_at")),
+                        TrackKey::DateCreated => {
+                            number("file_created_at_ms").or_else(|| number("created_at_ms"))
+                        }
                         TrackKey::Year => number("year"),
                         TrackKey::Duration => number("duration_ms"),
                         TrackKey::Disc => number("disc"),
@@ -224,7 +226,7 @@ fn track_fields(keys: &[TrackKey]) -> Vec<&'static str> {
     let mut fields = vec!["track_title", "sort_title"];
     for key in keys {
         fields.extend_from_slice(match key {
-            TrackKey::DateCreated => &["ctime", "created_at"],
+            TrackKey::DateCreated => &["file_created_at_ms", "created_at_ms"],
             TrackKey::Year => &["year"],
             TrackKey::Duration => &["duration_ms"],
             TrackKey::Disc => &["disc"],

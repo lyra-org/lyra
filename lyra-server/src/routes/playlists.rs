@@ -308,11 +308,11 @@ fn parse_playlist_sort_specs(
     )
 }
 
-fn now_epoch() -> u64 {
+fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_secs()
+        .as_millis() as u64
 }
 
 /// The user an `owner_id` filter names.
@@ -348,11 +348,11 @@ fn playlist_to_response(
         cover,
         owner_id,
         created_at: playlist
-            .created_at
-            .map(crate::services::timestamps::unix_secs_to_rfc3339_u64),
+            .created_at_ms
+            .map(crate::services::timestamps::unix_ms_to_rfc3339_u64),
         updated_at: playlist
-            .updated_at
-            .map(crate::services::timestamps::unix_secs_to_rfc3339_u64),
+            .updated_at_ms
+            .map(crate::services::timestamps::unix_ms_to_rfc3339_u64),
     }
 }
 
@@ -497,7 +497,7 @@ async fn create_playlist(
         return Err(AppError::bad_request("playlist name cannot be empty"));
     }
 
-    let now = now_epoch();
+    let now = now_ms();
     let mut db = STATE.db.write().await;
     let user_db_id = principal.require(&db)?;
     let playlist_db_id = playlists::create(
@@ -507,8 +507,8 @@ async fn create_playlist(
             name,
             description: request.description,
             is_public: request.is_public,
-            created_at: Some(now),
-            updated_at: Some(now),
+            created_at_ms: Some(now),
+            updated_at_ms: Some(now),
             track_db_ids: Vec::new(),
         },
     )
@@ -707,7 +707,7 @@ async fn update_playlist(
             name: request.name,
             description: request.description,
             is_public: request.is_public,
-            updated_at: Some(now_epoch()),
+            updated_at_ms: Some(now_ms()),
         },
     )
     .map_err(|err| AppError::bad_request(err.to_string()))?
@@ -1062,8 +1062,8 @@ mod tests {
                 name: name.to_string(),
                 description: None,
                 is_public: None,
-                created_at: None,
-                updated_at: None,
+                created_at_ms: None,
+                updated_at_ms: None,
                 track_db_ids: Vec::new(),
             },
         )
@@ -1459,8 +1459,8 @@ mod tests {
             name: "Playlist".to_string(),
             description: None,
             is_public: Some(false),
-            created_at: Some(1),
-            updated_at: Some(1),
+            created_at_ms: Some(1),
+            updated_at_ms: Some(1),
         };
         let playlist_db_id = lyra_db::playlists::create(&mut db, &playlist, user_db_id)?;
         let pt =

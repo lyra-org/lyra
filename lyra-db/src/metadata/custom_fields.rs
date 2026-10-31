@@ -24,7 +24,7 @@ pub struct ProviderCustomFields {
     pub provider_id: String,
     pub version: u64,
     pub fields: String,
-    pub updated_at: u64,
+    pub updated_at_ms: u64,
 }
 
 pub fn get_for_entity(
@@ -138,7 +138,7 @@ pub fn copy_between_entities(
     for row in get_for_entity(db, from_node_id)? {
         let should_upsert = existing_by_key
             .get(&(row.provider_id.clone(), row.version))
-            .is_none_or(|existing| row.updated_at > existing.updated_at);
+            .is_none_or(|existing| row.updated_at_ms > existing.updated_at_ms);
         if !should_upsert {
             continue;
         }
@@ -170,13 +170,18 @@ mod tests {
             .ids()[0])
     }
 
-    fn row(provider_id: &str, version: u64, fields: &str, updated_at: u64) -> ProviderCustomFields {
+    fn row(
+        provider_id: &str,
+        version: u64,
+        fields: &str,
+        updated_at_ms: u64,
+    ) -> ProviderCustomFields {
         ProviderCustomFields {
             db_id: None,
             provider_id: provider_id.to_string(),
             version,
             fields: fields.to_string(),
-            updated_at,
+            updated_at_ms,
         }
     }
 
@@ -194,7 +199,7 @@ mod tests {
         assert_eq!(rows[0].provider_id, "musicbrainz");
         assert_eq!(rows[0].version, 1);
         assert_eq!(rows[0].fields, r#"{"a":2}"#);
-        assert_eq!(rows[0].updated_at, 200);
+        assert_eq!(rows[0].updated_at_ms, 200);
         Ok(())
     }
 

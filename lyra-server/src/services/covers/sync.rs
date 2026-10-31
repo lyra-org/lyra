@@ -1003,8 +1003,8 @@ mod tests {
             media_formats: None,
             barcode: None,
             locked: None,
-            created_at: None,
-            ctime: None,
+            created_at_ms: None,
+            file_created_at_ms: None,
         };
 
         let synced = sync_release_cover_for_tracks(

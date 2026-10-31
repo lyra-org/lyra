@@ -79,7 +79,7 @@ impl LyricsJsonRequest {
                         .collect(),
                 })
                 .collect(),
-            last_checked_at: now_ms,
+            last_checked_at_ms: now_ms,
         })
     }
 }
@@ -223,7 +223,7 @@ fn plain_text_to_input(contents: &str, language: String, now_ms: u64) -> LyricsI
         language,
         plain_text: contents.to_string(),
         lines: Vec::new(),
-        last_checked_at: now_ms,
+        last_checked_at_ms: now_ms,
     }
 }
 
@@ -283,7 +283,7 @@ pub(crate) fn lrc_to_input(
         language,
         plain_text,
         lines,
-        last_checked_at: now_ms,
+        last_checked_at_ms: now_ms,
     })
 }
 
@@ -462,7 +462,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(input.language, "eng");
-        assert_eq!(input.last_checked_at, 42);
+        assert_eq!(input.last_checked_at_ms, 42);
         assert_eq!(input.plain_text, "first\nsecond\nthird");
         assert_eq!(
             input
@@ -571,7 +571,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(input.language, "ENG");
-        assert_eq!(input.last_checked_at, 42);
+        assert_eq!(input.last_checked_at_ms, 42);
         assert_eq!(input.plain_text, "[00:01.00]not lrc\nplain lyric line");
         assert!(input.lines.is_empty());
     }

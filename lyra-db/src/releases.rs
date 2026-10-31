@@ -124,8 +124,8 @@ pub struct Release {
     /// Normalized barcode scanned from the tracks' tags.
     pub barcode: Option<String>,
     pub locked: Option<bool>,
-    pub created_at: Option<u64>,
-    pub ctime: Option<u64>,
+    pub created_at_ms: Option<u64>,
+    pub file_created_at_ms: Option<u64>,
 }
 
 impl Release {
@@ -562,8 +562,8 @@ pub fn update_in_transaction(
             ("media_formats", release.media_formats.is_none()),
             ("barcode", release.barcode.is_none()),
             ("locked", release.locked.is_none()),
-            ("created_at", release.created_at.is_none()),
-            ("ctime", release.ctime.is_none()),
+            ("created_at_ms", release.created_at_ms.is_none()),
+            ("file_created_at_ms", release.file_created_at_ms.is_none()),
         ],
         release,
     )
@@ -643,8 +643,8 @@ mod tests {
                 media_formats: None,
                 barcode: None,
                 locked: Some(true),
-                created_at: Some(1),
-                ctime: Some(2),
+                created_at_ms: Some(1),
+                file_created_at_ms: Some(2),
             },
         )?;
 
@@ -660,8 +660,8 @@ mod tests {
                 media_formats: None,
                 barcode: None,
                 locked: None,
-                created_at: None,
-                ctime: None,
+                created_at_ms: None,
+                file_created_at_ms: None,
             },
         )?;
 

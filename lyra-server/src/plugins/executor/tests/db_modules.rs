@@ -159,9 +159,9 @@ fn plugin_executor_exposes_db_backed_lyra_chromaprint_module() -> Result<()> {
         name: "integration_track.flac".to_string(),
         hash: None,
         size: 1,
-        mtime: 1,
-        ctime: 1,
-        synced_at: None,
+        file_modified_at_ms: 1,
+        file_created_at_ms: 1,
+        synced_at_ms: None,
     };
     let entry_db_id = db
         .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
@@ -604,9 +604,9 @@ fn plugin_executor_exposes_db_backed_lyra_track_sources_module() -> Result<()> {
         name: "raw-source.FLAC".to_string(),
         hash: None,
         size: 1,
-        mtime: 1,
-        ctime: 1,
-        synced_at: None,
+        file_modified_at_ms: 1,
+        file_created_at_ms: 1,
+        synced_at_ms: None,
     };
     let entry_db_id = db
         .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
@@ -682,9 +682,9 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
         name: "raw-playback-source.flac".to_string(),
         hash: Some("raw-playback-hash".to_string()),
         size: 19,
-        mtime: 321,
-        ctime: 654,
-        synced_at: None,
+        file_modified_at_ms: 321,
+        file_created_at_ms: 654,
+        synced_at_ms: None,
     };
     let entry_db_id = db
         .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
@@ -846,8 +846,8 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
                     name = "Raw Playlist",
                     description = "seed",
                     is_public = false,
-                    created_at = 10,
-                    updated_at = 20,
+                    created_at_ms = 10,
+                    updated_at_ms = 20,
                 }})
                 executor_playlist = playlists.get_by_id(executor_playlist_id)
                 executor_playlist_owner = playlists.get_owner(executor_playlist_id)
@@ -860,7 +860,7 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
                     name = "Raw Updated Playlist",
                     description = "changed",
                     is_public = true,
-                    updated_at = 30,
+                    updated_at_ms = 30,
                 }})
                 playlists.remove_track(executor_playlist_id, executor_playlist_entry_id)
                 executor_playlist_tracks_after_remove = playlists.get_tracks(executor_playlist_id)
@@ -1604,8 +1604,8 @@ fn stale_principal_cannot_use_playlists_of_a_user_with_its_recycled_db_id() -> R
             name: "Private".to_string(),
             description: None,
             is_public: Some(false),
-            created_at: Some(1),
-            updated_at: Some(1),
+            created_at_ms: Some(1),
+            updated_at_ms: Some(1),
             track_db_ids: Vec::new(),
         },
     )?;

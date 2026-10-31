@@ -389,7 +389,7 @@ pub(crate) fn has_active_scope_for_playback(
         if scope.previous_playback_session_id == Some(playback_session_id)
             && scope
                 .previous_expires_at_ms
-                .is_none_or(|expires_at| expires_at >= active_cutoff_ms)
+                .is_none_or(|expires_at_ms| expires_at_ms >= active_cutoff_ms)
         {
             return true;
         }

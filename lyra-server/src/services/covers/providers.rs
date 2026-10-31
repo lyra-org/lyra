@@ -911,8 +911,8 @@ mod tests {
             media_formats: None,
             barcode: None,
             locked: None,
-            created_at: None,
-            ctime: None,
+            created_at_ms: None,
+            file_created_at_ms: None,
         };
         let track = Track {
             db_id: Some(DbId(20).into()),
@@ -928,8 +928,8 @@ mod tests {
             track_gain_db: None,
             album_gain_db: None,
             locked: None,
-            created_at: None,
-            ctime: None,
+            created_at_ms: None,
+            file_created_at_ms: None,
         };
         let artist = Artist {
             db_id: Some(DbId(30).into()),
@@ -942,7 +942,7 @@ mod tests {
             description: None,
             credited: false,
             locked: None,
-            created_at: None,
+            created_at_ms: None,
         };
         let external_ids = HashMap::from([
             ("release_id".to_string(), "release-123".to_string()),
@@ -983,7 +983,7 @@ mod tests {
             description: Some("desc".to_string()),
             credited: false,
             locked: None,
-            created_at: None,
+            created_at_ms: None,
         };
         let external_ids = HashMap::from([("artist_id".to_string(), "artist-123".to_string())]);
 

@@ -38,7 +38,7 @@ pub(super) fn select_release_merge_winner(
     let mut winner_tracks = lyra_db::tracks::get(db, winner)?;
     let mut winner_min_disc = winner_tracks.iter().filter_map(|track| track.disc).min();
     let mut winner_track_count = winner_tracks.len();
-    let mut winner_created_at = winner_release.created_at.unwrap_or(u64::MAX);
+    let mut winner_created_at = winner_release.created_at_ms.unwrap_or(u64::MAX);
 
     for candidate in release_ids.iter().copied().skip(1) {
         let Some(candidate_release) = lyra_db::releases::get_by_id(db, candidate)? else {
@@ -47,7 +47,7 @@ pub(super) fn select_release_merge_winner(
         let candidate_tracks = lyra_db::tracks::get(db, candidate)?;
         let candidate_min_disc = candidate_tracks.iter().filter_map(|track| track.disc).min();
         let candidate_track_count = candidate_tracks.len();
-        let candidate_created_at = candidate_release.created_at.unwrap_or(u64::MAX);
+        let candidate_created_at = candidate_release.created_at_ms.unwrap_or(u64::MAX);
 
         let ordering = lyra_db::compare_option(&candidate_min_disc, &winner_min_disc)
             .then_with(|| winner_track_count.cmp(&candidate_track_count))
@@ -60,7 +60,7 @@ pub(super) fn select_release_merge_winner(
             winner_tracks = candidate_tracks;
             winner_min_disc = candidate_min_disc;
             winner_track_count = winner_tracks.len();
-            winner_created_at = winner_release.created_at.unwrap_or(u64::MAX);
+            winner_created_at = winner_release.created_at_ms.unwrap_or(u64::MAX);
         }
     }
 
@@ -113,7 +113,7 @@ fn merge_release_into_inside_tx(
         }
         let should_upsert = winner_layers_by_source
             .get(&layer.source_id)
-            .is_none_or(|existing| layer.updated_at > existing.updated_at);
+            .is_none_or(|existing| layer.updated_at_ms > existing.updated_at_ms);
         if !should_upsert {
             continue;
         }
@@ -400,7 +400,7 @@ mod tests {
                 })
                 .collect()
         };
-        for (release, roles, updated_at) in [
+        for (release, roles, updated_at_ms) in [
             (winner, &[lyra_db::CreditType::Artist][..], 1),
             (
                 loser,
@@ -411,7 +411,7 @@ mod tests {
             lyra_db::metadata::layers::upsert(
                 &mut db,
                 release,
-                &lyra_db::MetadataLayer::new("local", Default::default(), updated_at)
+                &lyra_db::MetadataLayer::new("local", Default::default(), updated_at_ms)
                     .with_credits(credits(roles)),
             )?;
         }
@@ -433,10 +433,10 @@ mod tests {
     #[test]
     fn tied_releases_merge_into_the_older_then_the_lower_id() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        let mut insert = |created_at: Option<u64>| -> anyhow::Result<DbId> {
+        let mut insert = |created_at_ms: Option<u64>| -> anyhow::Result<DbId> {
             let release_id = insert_release(&mut db, "Release")?;
             let mut release = lyra_db::releases::get_by_id(&db, release_id)?.expect("release");
-            release.created_at = created_at;
+            release.created_at_ms = created_at_ms;
             lyra_db::releases::update(&mut db, &release)?;
             Ok(release_id)
         };

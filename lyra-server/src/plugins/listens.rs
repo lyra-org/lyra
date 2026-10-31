@@ -329,11 +329,7 @@ impl DescribeInterface for LuauListenPayload {
             fields: vec![
                 described_field("listen_id", String::luau_type(), "The listen's public id."),
                 described_field("track_id", String::luau_type(), "The track's public id."),
-                described_field(
-                    "started_at_ms",
-                    u64::luau_type(),
-                    "When the play started, in Unix milliseconds.",
-                ),
+                described_field("started_at_ms", u64::luau_type(), "When the play started."),
                 described_field(
                     "played_ms",
                     u64::luau_type(),
@@ -378,11 +374,7 @@ impl DescribeInterface for SubmittedPlayRequest {
                     listen_service::PLAY_ID_DESCRIPTION,
                 ),
                 described_field("track_id", i64::luau_type(), "The track's database id."),
-                described_field(
-                    "started_at_ms",
-                    u64::luau_type(),
-                    "When the play started, in Unix milliseconds.",
-                ),
+                described_field("started_at_ms", u64::luau_type(), "When the play started."),
                 described_field(
                     "played_ms",
                     u64::luau_type(),
@@ -417,7 +409,7 @@ impl DescribeInterface for LuauListenStats {
                 described_field(
                     "last_played_at_ms",
                     Option::<u64>::luau_type(),
-                    "When the latest listen started, in Unix milliseconds.",
+                    "When the latest listen started.",
                 ),
             ],
         }

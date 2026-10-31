@@ -382,7 +382,7 @@ fn lyrics_candidate_summary(
         scope: LyricsScopeResponse::from_lyrics(lyrics),
         source: LyricsSourceResponse::from_lyrics(lyrics),
         lrc_available: lyrics_service::has_meaningful_synced(lyrics, duration_ms),
-        updated_at: crate::services::timestamps::unix_ms_to_rfc3339_u64(lyrics.updated_at),
+        updated_at: crate::services::timestamps::unix_ms_to_rfc3339_u64(lyrics.updated_at_ms),
     }
 }
 
@@ -416,7 +416,7 @@ fn lyrics_response_json(detail: lyra_db::lyrics::LyricsDetail) -> Json<LyricsRes
         source,
         plain_text: lyrics.plain_text,
         has_word_cues: lyrics.has_word_cues,
-        updated_at: crate::services::timestamps::unix_ms_to_rfc3339_u64(lyrics.updated_at),
+        updated_at: crate::services::timestamps::unix_ms_to_rfc3339_u64(lyrics.updated_at_ms),
         lines: response_lines,
     })
 }
@@ -726,7 +726,7 @@ mod tests {
                             words: Vec::new(),
                         },
                     ],
-                    last_checked_at: 1,
+                    last_checked_at_ms: 1,
                 },
                 "provider-row".to_string(),
                 "route-provider",

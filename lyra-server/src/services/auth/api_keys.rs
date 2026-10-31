@@ -20,10 +20,10 @@ use crate::{
 const API_KEY_BYTES: usize = 16;
 pub(crate) const MAX_API_KEYS_PER_USER: usize = 50;
 pub(crate) use lyra_db::api_keys::MAX_NAME_LEN as MAX_API_KEY_NAME_LEN;
-const LAST_USED_DEBOUNCE_SECS: i64 = 60;
+const LAST_USED_DEBOUNCE_MS: i64 = 60_000;
 const LAST_USED_SWEEP_THRESHOLD: usize = 1024;
 
-// Debounce last_used_at writes to avoid grabbing the DB write lock on every
+// Debounce last_used_at_ms writes to avoid grabbing the DB write lock on every
 // api-key-authed request. Only the in-memory mutex is taken on steady-state auth.
 fn last_used_cache(
     generation: &crate::services::state::GenerationState,
@@ -40,7 +40,7 @@ fn should_persist_last_used(api_key_id: DbId, now: i64) -> bool {
     let cache = last_used_cache(&generation);
     !matches!(
         cache.get(&api_key_id),
-        Some(&last) if now.saturating_sub(last) < LAST_USED_DEBOUNCE_SECS
+        Some(&last) if now.saturating_sub(last) < LAST_USED_DEBOUNCE_MS
     )
 }
 
@@ -48,7 +48,7 @@ fn record_persisted_last_used(api_key_id: DbId, now: i64) {
     let generation = STATE.generation();
     let mut cache = last_used_cache(&generation);
     if cache.len() >= LAST_USED_SWEEP_THRESHOLD {
-        let stale_cutoff = 2 * LAST_USED_DEBOUNCE_SECS;
+        let stale_cutoff = 2 * LAST_USED_DEBOUNCE_MS;
         cache.retain(|_, last| now.saturating_sub(*last) < stale_cutoff);
     }
     // Age-based retain may free nothing if all entries are fresh; hard-evict oldest to cap.
@@ -91,16 +91,16 @@ pub(crate) struct CreatedApiKey {
     pub(crate) id: String,
     pub(crate) name: String,
     pub(crate) key: String,
-    pub(crate) created_at: i64,
-    pub(crate) last_used_at: Option<i64>,
+    pub(crate) created_at_ms: i64,
+    pub(crate) last_used_at_ms: Option<i64>,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct ApiKeyInfo {
     pub(crate) id: String,
     pub(crate) name: String,
-    pub(crate) created_at: i64,
-    pub(crate) last_used_at: Option<i64>,
+    pub(crate) created_at_ms: i64,
+    pub(crate) last_used_at_ms: Option<i64>,
 }
 
 #[derive(Clone, Debug)]
@@ -118,8 +118,8 @@ fn to_api_key_info(api_key: lyra_db::api_keys::ApiKey) -> ApiKeyInfo {
     ApiKeyInfo {
         id: api_key.id,
         name: api_key.name,
-        created_at: api_key.created_at,
-        last_used_at: api_key.last_used_at,
+        created_at_ms: api_key.created_at_ms,
+        last_used_at_ms: api_key.last_used_at_ms,
     }
 }
 
@@ -141,7 +141,7 @@ pub(crate) async fn create_api_key(
 
     let key = random_hex_secret::<API_KEY_BYTES>();
     let key_hash = hash_secret(&key);
-    let created_at = lyra_db::users::now_secs();
+    let created_at_ms = lyra_db::users::now_ms();
 
     let mut db_write = STATE.db.write().await;
     let user_db_id = principal.require(&db_write).map_err(anyhow::Error::from)?;
@@ -152,7 +152,7 @@ pub(crate) async fn create_api_key(
     }
 
     let api_key_id =
-        lyra_db::api_keys::create(&mut db_write, user_db_id, name, &key_hash, created_at)?;
+        lyra_db::api_keys::create(&mut db_write, user_db_id, name, &key_hash, created_at_ms)?;
     let api_key = lyra_db::api_keys::get_by_id(&db_write, api_key_id)?
         .ok_or_else(|| anyhow::anyhow!("created api key could not be read"))?;
 
@@ -160,8 +160,8 @@ pub(crate) async fn create_api_key(
         id: api_key.id,
         name: api_key.name,
         key,
-        created_at: api_key.created_at,
-        last_used_at: api_key.last_used_at,
+        created_at_ms: api_key.created_at_ms,
+        last_used_at_ms: api_key.last_used_at_ms,
     })
 }
 
@@ -226,7 +226,7 @@ pub(crate) async fn resolve_api_key(key: &str) -> anyhow::Result<Option<Resolved
     let public_id = api_key.id;
     drop(db_read);
 
-    let now = lyra_db::users::now_secs();
+    let now = lyra_db::users::now_ms();
     if should_persist_last_used(api_key_id, now) {
         let mut db_write = STATE.db.write_outside_catalog().await;
         // Re-verify under write lock: key may have been revoked between read and write.
@@ -249,7 +249,7 @@ pub(crate) async fn resolve_api_key(key: &str) -> anyhow::Result<Option<Resolved
                 tracing::warn!(
                     error = %err,
                     api_key_id = ?api_key_id,
-                    "failed to persist api key last_used_at; continuing with successful auth",
+                    "failed to persist api key last_used_at_ms; continuing with successful auth",
                 );
             }
         }
@@ -399,7 +399,7 @@ mod tests {
         let created = create_api_key(&principal, "laptop").await?;
 
         assert_eq!(
-            list_api_keys_for_user(&principal).await?[0].last_used_at,
+            list_api_keys_for_user(&principal).await?[0].last_used_at_ms,
             None
         );
 
@@ -409,7 +409,7 @@ mod tests {
         assert_eq!(resolved.principal.user_db_id, user_db_id);
 
         let listed = list_api_keys_for_user(&principal).await?;
-        assert!(listed[0].last_used_at.is_some());
+        assert!(listed[0].last_used_at_ms.is_some());
 
         Ok(())
     }
@@ -453,8 +453,8 @@ mod tests {
             .await?
             .ok_or_else(|| anyhow::anyhow!("api key should resolve"))?;
         let first_bump = list_api_keys_for_user(&principal).await?[0]
-            .last_used_at
-            .expect("first resolve should persist last_used_at");
+            .last_used_at_ms
+            .expect("first resolve should persist last_used_at_ms");
 
         {
             let mut db = STATE.db.write().await;
@@ -472,8 +472,8 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("api key should resolve"))?;
 
         let after_second = list_api_keys_for_user(&principal).await?[0]
-            .last_used_at
-            .expect("last_used_at remains set after second resolve");
+            .last_used_at_ms
+            .expect("last_used_at_ms remains set after second resolve");
         assert_eq!(
             after_second,
             first_bump - 1,
@@ -499,12 +499,9 @@ mod tests {
         record_persisted_last_used(id, 1_000);
         assert!(!should_persist_last_used(
             id,
-            1_000 + LAST_USED_DEBOUNCE_SECS - 1
+            1_000 + LAST_USED_DEBOUNCE_MS - 1
         ));
-        assert!(should_persist_last_used(
-            id,
-            1_000 + LAST_USED_DEBOUNCE_SECS
-        ));
+        assert!(should_persist_last_used(id, 1_000 + LAST_USED_DEBOUNCE_MS));
     }
 
     #[test]
@@ -514,7 +511,7 @@ mod tests {
         for i in 0..=LAST_USED_SWEEP_THRESHOLD {
             record_persisted_last_used(DbId(10_000 + i as i64), 0);
         }
-        record_persisted_last_used(DbId(20_000), 10 * LAST_USED_DEBOUNCE_SECS);
+        record_persisted_last_used(DbId(20_000), 10 * LAST_USED_DEBOUNCE_MS);
         let generation = STATE.generation();
         let cache = last_used_cache(&generation);
         assert!(cache.contains_key(&DbId(20_000)));

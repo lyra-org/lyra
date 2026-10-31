@@ -1590,8 +1590,8 @@ mod tests {
             name: "Display Cover Playlist".to_string(),
             description: None,
             is_public: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: None,
+            updated_at_ms: None,
         };
         let playlist_db_id = crate::playlists::create(db, &playlist, user_db_id)?;
         Ok((playlist_db_id, playlist.id))

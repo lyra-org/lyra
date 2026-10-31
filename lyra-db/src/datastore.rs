@@ -156,7 +156,7 @@ pub fn clear_entries(db: &mut DbAny, datastore_id: DbId) -> anyhow::Result<usize
 }
 
 /// Removes entries across all datastores whose JSON value carries a passed
-/// `expires_at`. Entries without the field are persistent and kept. Returns
+/// `expires_at_ms`. Entries without the field are persistent and kept. Returns
 /// the number removed.
 pub fn sweep_expired_entries(db: &mut DbAny, now_ms: u64) -> anyhow::Result<usize> {
     db.transaction_mut(|t| -> anyhow::Result<usize> {
@@ -209,10 +209,10 @@ fn entry_is_expired(value_json: &str, now_ms: u64) -> bool {
     let Ok(parsed) = serde_json::from_str::<serde_json::Value>(value_json) else {
         return false;
     };
-    let Some(expires_at) = parsed.get("expires_at").and_then(|v| v.as_u64()) else {
+    let Some(expires_at_ms) = parsed.get("expires_at_ms").and_then(|v| v.as_u64()) else {
         return false;
     };
-    expires_at <= now_ms
+    expires_at_ms <= now_ms
 }
 
 pub fn find_by_name(db: &DbAny, name: &str) -> anyhow::Result<Option<DataStore>> {
@@ -340,13 +340,13 @@ mod tests {
         assert!(!entry_is_expired("{}", 1000));
         assert!(!entry_is_expired("{\"value\":\"x\"}", 1000));
 
-        assert!(entry_is_expired("{\"expires_at\":500}", 1000));
-        assert!(entry_is_expired("{\"expires_at\":1000}", 1000));
+        assert!(entry_is_expired("{\"expires_at_ms\":500}", 1000));
+        assert!(entry_is_expired("{\"expires_at_ms\":1000}", 1000));
 
-        assert!(!entry_is_expired("{\"expires_at\":2000}", 1000));
+        assert!(!entry_is_expired("{\"expires_at_ms\":2000}", 1000));
 
         assert!(!entry_is_expired("not json", 1000));
-        assert!(!entry_is_expired("{\"expires_at\":\"soon\"}", 1000));
+        assert!(!entry_is_expired("{\"expires_at_ms\":\"soon\"}", 1000));
     }
 
     #[test]
@@ -359,13 +359,13 @@ mod tests {
             &mut db,
             id,
             "stale".to_string(),
-            "{\"expires_at\":100}".to_string(),
+            "{\"expires_at_ms\":100}".to_string(),
         )?;
         upsert_entry(
             &mut db,
             id,
             "fresh".to_string(),
-            "{\"expires_at\":9999}".to_string(),
+            "{\"expires_at_ms\":9999}".to_string(),
         )?;
         upsert_entry(
             &mut db,

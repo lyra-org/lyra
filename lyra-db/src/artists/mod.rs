@@ -120,7 +120,7 @@ pub struct Artist {
     #[serde(skip)]
     pub credited: bool,
     pub locked: Option<bool>,
-    pub created_at: Option<u64>,
+    pub created_at_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -519,11 +519,11 @@ pub fn create(
         description: None,
         credited: false,
         locked: None,
-        created_at: Some(
+        created_at_ms: Some(
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
-                .as_secs(),
+                .as_millis() as u64,
         ),
     };
     let artist_db_id = db
@@ -572,7 +572,7 @@ pub fn update_in_transaction(
             ("artist_type", artist.artist_type.is_none()),
             ("description", artist.description.is_none()),
             ("locked", artist.locked.is_none()),
-            ("created_at", artist.created_at.is_none()),
+            ("created_at_ms", artist.created_at_ms.is_none()),
         ],
         artist,
     )
@@ -764,7 +764,7 @@ mod tests {
                 description: Some("A band".to_string()),
                 credited: false,
                 locked: Some(true),
-                created_at: Some(1),
+                created_at_ms: Some(1),
             },
         )?;
 
@@ -781,7 +781,7 @@ mod tests {
                 description: None,
                 credited: false,
                 locked: None,
-                created_at: None,
+                created_at_ms: None,
             },
         )?;
 

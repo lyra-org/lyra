@@ -1269,7 +1269,7 @@ fn escape_toml_key(value: &str) -> String {
 fn is_internal_field(name: &str) -> bool {
     matches!(
         name,
-        "locked" | "created_at" | "ctime" | "library_id" | "db_id"
+        "locked" | "created_at_ms" | "file_created_at_ms" | "library_id" | "db_id"
     )
 }
 

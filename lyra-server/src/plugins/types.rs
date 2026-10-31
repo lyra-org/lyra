@@ -252,8 +252,8 @@ describe_record!(
         media_formats: Option<Vec<String>> as "media_formats",
         barcode: Option<String> as "barcode",
         locked: Option<bool> as "locked",
-        created_at: Option<u64> as "created_at",
-        ctime: Option<u64> as "ctime",
+        created_at_ms: Option<u64> as "created_at_ms",
+        file_created_at_ms: Option<u64> as "file_created_at_ms",
     }
 );
 
@@ -274,8 +274,8 @@ describe_record!(
         track_gain_db: Option<f64> as "track_gain_db",
         album_gain_db: Option<f64> as "album_gain_db",
         locked: Option<bool> as "locked",
-        created_at: Option<u64> as "created_at",
-        ctime: Option<u64> as "ctime",
+        created_at_ms: Option<u64> as "created_at_ms",
+        file_created_at_ms: Option<u64> as "file_created_at_ms",
     }
 );
 
@@ -291,7 +291,7 @@ describe_record!(
         artist_type: Option<LuauArtistType> as "artist_type",
         description: Option<String> as "description",
         locked: Option<bool> as "locked",
-        created_at: Option<u64> as "created_at",
+        created_at_ms: Option<u64> as "created_at_ms",
     }
 );
 
@@ -308,8 +308,8 @@ pub(crate) struct EntryInfo {
     full_path: Option<String>,
     hash: Option<String>,
     size: u64,
-    mtime: u64,
-    ctime: u64,
+    file_modified_at_ms: u64,
+    file_created_at_ms: u64,
 }
 
 impl EntryInfo {
@@ -325,8 +325,8 @@ impl EntryInfo {
             full_path: include_full_path.then(|| entry.full_path.to_string_lossy().into_owned()),
             hash: entry.hash,
             size: entry.size,
-            mtime: entry.mtime,
-            ctime: entry.ctime,
+            file_modified_at_ms: entry.file_modified_at_ms,
+            file_created_at_ms: entry.file_created_at_ms,
         }
     }
 
@@ -392,8 +392,8 @@ impl DescribeInterface for EntryInfo {
                 ),
                 field("hash", Option::<String>::luau_type(), None),
                 field("size", u64::luau_type(), None),
-                field("mtime", u64::luau_type(), None),
-                field("ctime", u64::luau_type(), None),
+                field("file_modified_at_ms", u64::luau_type(), None),
+                field("file_created_at_ms", u64::luau_type(), None),
             ],
         }
     }

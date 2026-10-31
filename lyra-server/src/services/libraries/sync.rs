@@ -451,7 +451,7 @@ async fn fail_metadata_work(
 }
 
 fn is_unsynced_file(entry: &Entry) -> bool {
-    entry.kind == EntryKind::File && entry.synced_at.is_none()
+    entry.kind == EntryKind::File && entry.synced_at_ms.is_none()
 }
 
 /// Reads the metadata groups holding unsynced files and applies the batches those files are in.
@@ -528,7 +528,7 @@ async fn process_pending_metadata(
             let parent = group.candidate_dir(&entry.full_path);
             source_dirs_by_entry.insert(entry_db_id, parent.clone());
             entry_source_dirs.insert(entry_db_id, parent);
-            if entry.synced_at.is_none() {
+            if entry.synced_at_ms.is_none() {
                 group_unsynced.insert(entry.full_path.clone(), entry_db_id);
             }
         }
@@ -1480,7 +1480,7 @@ FILE "album.flac" WAVE
     }
 
     async fn synced(library: &Library, path: &Path) -> anyhow::Result<bool> {
-        Ok(entry_for(library, path).await?.synced_at.is_some())
+        Ok(entry_for(library, path).await?.synced_at_ms.is_some())
     }
 
     /// Makes `path` unreadable, or returns false when this user reads it regardless.
@@ -1590,7 +1590,7 @@ FILE "album.flac" WAVE
         );
         assert!(snapshot(&library).await?[&bad].1.is_empty());
         let good_entry = entry_for(&library, &good).await?;
-        assert!(good_entry.synced_at.is_some());
+        assert!(good_entry.synced_at_ms.is_some());
         assert!(
             release_cover(good_entry.db_id.expect("entry db_id"))
                 .await?
@@ -2046,7 +2046,7 @@ FILE "album.flac" WAVE
                 .await?
                 .is_none()
         );
-        assert!(entry.synced_at.is_none());
+        assert!(entry.synced_at_ms.is_none());
 
         allow_reads(&cover)?;
         sync(&library).await?;
@@ -2056,7 +2056,7 @@ FILE "album.flac" WAVE
                 .await?
                 .is_some()
         );
-        assert!(entry.synced_at.is_some());
+        assert!(entry.synced_at_ms.is_some());
         let _ = std::fs::remove_dir_all(root);
         Ok(())
     }
@@ -2108,7 +2108,7 @@ FILE "album.flac" WAVE
         );
         let first_entry = entry_for(&library, &first).await?;
         assert!(
-            first_entry.synced_at.is_some(),
+            first_entry.synced_at_ms.is_some(),
             "the finished album lost its sync"
         );
         assert!(

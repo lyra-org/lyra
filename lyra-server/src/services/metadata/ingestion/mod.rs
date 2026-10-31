@@ -236,9 +236,9 @@ mod tests {
             name,
             hash: None,
             size: 0,
-            mtime: 0,
-            ctime: 0,
-            synced_at: None,
+            file_modified_at_ms: 0,
+            file_created_at_ms: 0,
+            synced_at_ms: None,
         };
         let qr = db.exec_mut(QueryBuilder::insert().element(&entry).query())?;
         Ok(qr.elements[0].id)
@@ -259,8 +259,8 @@ mod tests {
             track_gain_db: None,
             album_gain_db: None,
             locked: Some(false),
-            created_at: None,
-            ctime: None,
+            created_at_ms: None,
+            file_created_at_ms: None,
         };
         let qr = db.exec_mut(QueryBuilder::insert().element(&track).query())?;
         Ok(qr.elements[0].id)
@@ -277,8 +277,8 @@ mod tests {
             media_formats: None,
             barcode: None,
             locked: Some(false),
-            created_at: None,
-            ctime: None,
+            created_at_ms: None,
+            file_created_at_ms: None,
         };
         let qr = db.exec_mut(QueryBuilder::insert().element(&release).query())?;
         Ok(qr.elements[0].id)
@@ -296,7 +296,7 @@ mod tests {
             description: None,
             credited: false,
             locked: Some(false),
-            created_at: None,
+            created_at_ms: None,
         };
         let qr = db.exec_mut(QueryBuilder::insert().element(&artist).query())?;
         Ok(qr.elements[0].id)
@@ -485,8 +485,8 @@ mod tests {
             name: "Ingestion Cover Regression".to_string(),
             description: None,
             is_public: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: None,
+            updated_at_ms: None,
         };
         let playlist_db_id = lyra_db::playlists::create(db, &playlist, user_db_id)?;
         db.transaction_mut(|t| -> anyhow::Result<()> {
@@ -3100,7 +3100,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                         "track": 12
                     }),
                 ),
-                updated_at: 1,
+                updated_at_ms: 1,
             },
         )?;
         lyra_db::metadata::layers::upsert(
@@ -3116,7 +3116,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                         "release_date": "1988-08-08"
                     }),
                 ),
-                updated_at: 1,
+                updated_at_ms: 1,
             },
         )?;
 
@@ -3312,7 +3312,10 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         // Duration is not a tag: an unresolved probe must not wipe the value a previous scan
         // established.
         assert_eq!(track_after.duration_ms, Some(180_000));
-        assert!(track_after.ctime.is_some(), "ctime must survive a rescan");
+        assert!(
+            track_after.file_created_at_ms.is_some(),
+            "file_created_at_ms must survive a rescan"
+        );
 
         let release_after = lyra_db::releases::get_by_id(&db, release_db_id)?
             .ok_or_else(|| anyhow!("release missing"))?;
@@ -3406,7 +3409,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                     ]
                 }),
             ),
-            updated_at: 1,
+            updated_at_ms: 1,
         };
         lyra_db::metadata::layers::upsert(&mut db, release_db_id, &layer)?;
         crate::services::metadata::merging::apply_merged_metadata_to_entity(
@@ -3583,7 +3586,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 fields: crate::services::metadata::layers::json::fields_from_json(
                     serde_json::json!({"track_title": "Provider Track", "year": 2020}),
                 ),
-                updated_at: 1,
+                updated_at_ms: 1,
             },
         )?;
         crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track_db_id)?;
@@ -3620,9 +3623,12 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         let release_layer_after = local_layer(&db, release_db_id)?;
         let track_layer_after = local_layer(&db, track_db_id)?;
         assert_eq!(release_layer_after.fields, release_layer.fields);
-        assert_eq!(release_layer_after.updated_at, release_layer.updated_at);
+        assert_eq!(
+            release_layer_after.updated_at_ms,
+            release_layer.updated_at_ms
+        );
         assert_eq!(track_layer_after.fields, track_layer.fields);
-        assert_eq!(track_layer_after.updated_at, track_layer.updated_at);
+        assert_eq!(track_layer_after.updated_at_ms, track_layer.updated_at_ms);
         assert_eq!(only_release(&db)?, release_db_id);
         assert_eq!(only_track(&db, release_db_id)?, track_db_id);
         let track_after =
@@ -3845,7 +3851,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                     ]
                 }),
             ),
-            updated_at: 1,
+            updated_at_ms: 1,
         };
         lyra_db::metadata::layers::upsert(&mut db, release_db_id, &layer)?;
         crate::services::metadata::merging::apply_merged_metadata_to_entity(

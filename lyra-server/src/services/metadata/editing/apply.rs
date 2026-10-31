@@ -15,7 +15,7 @@ use crate::services::metadata::{
     layers::{
         MANUAL_SOURCE_ID,
         json::input_from_json,
-        now_secs,
+        now_ms,
     },
     merging::{
         self,
@@ -154,7 +154,7 @@ fn apply_inside_tx(
 ) -> anyhow::Result<()> {
     let mut layer = lyra_db::metadata::layers::find(db, state.db_id, MANUAL_SOURCE_ID)?
         .unwrap_or_else(|| MetadataLayer::new(MANUAL_SOURCE_ID, Default::default(), 0));
-    layer.updated_at = now_secs();
+    layer.updated_at_ms = now_ms();
     for entry in diff {
         edit_layer(db, &mut layer, entry)?;
     }

@@ -144,7 +144,7 @@ fn tokens(
 }
 
 fn now_secs() -> i64 {
-    lyra_db::users::now_secs()
+    lyra_db::users::now_ms() / 1000
 }
 
 fn token_is_expired(grant: &MediaTokenGrant, now: Instant, now_secs: i64) -> bool {

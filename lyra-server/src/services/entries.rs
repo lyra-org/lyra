@@ -308,9 +308,9 @@ mod tests {
             name: name.to_string(),
             hash: None,
             size: 1,
-            mtime: 1,
-            ctime: 1,
-            synced_at: None,
+            file_modified_at_ms: 1,
+            file_created_at_ms: 1,
+            synced_at_ms: None,
         };
         let entry_db_id = db
             .exec_mut(QueryBuilder::insert().element(&entry).query())?

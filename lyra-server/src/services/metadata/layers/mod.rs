@@ -112,7 +112,7 @@ impl LocalLayer {
         node_id: DbId,
     ) -> anyhow::Result<()> {
         let fields = resolve_inputs(db, self.fields)?;
-        let layer = MetadataLayer::new(LOCAL_SOURCE_ID, fields, now_secs())
+        let layer = MetadataLayer::new(LOCAL_SOURCE_ID, fields, now_ms())
             .with_relations(self.relations)
             .with_credits(self.credits);
         lyra_db::metadata::layers::upsert_inside_tx(db, node_id, &layer)?;
@@ -134,10 +134,10 @@ fn ensure_supported(db: &DbAny, node_id: DbId, fields: &FieldInputs) -> anyhow::
     Ok(())
 }
 
-pub(super) fn now_secs() -> u64 {
+pub(super) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
+        .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
 }
 
@@ -218,7 +218,7 @@ fn save_provider_custom_fields(
         return Ok(());
     }
 
-    let now = now_secs();
+    let now = now_ms();
     let mut sorted_versions: Vec<u64> = custom_fields.keys().copied().collect();
     sorted_versions.sort_unstable();
     for version in sorted_versions {
@@ -231,7 +231,7 @@ fn save_provider_custom_fields(
             provider_id: provider_id.to_string(),
             version,
             fields: fields_json,
-            updated_at: now,
+            updated_at_ms: now,
         };
         lyra_db::metadata::custom_fields::upsert(db, node_id, &row)?;
     }
@@ -270,7 +270,7 @@ pub(crate) fn save_provider_layer(
             } else {
                 resolve_inputs(t, values.fields.clone())?
             };
-            let layer = MetadataLayer::new(provider_id, fields, now_secs())
+            let layer = MetadataLayer::new(provider_id, fields, now_ms())
                 .with_relations(values.relations.clone())
                 .with_credits(values.credits.clone());
             if lyra_db::metadata::layers::upsert_inside_tx(t, node_id, &layer)? {

@@ -577,8 +577,8 @@ fn track_type() -> LuauType {
         field("track_gain_db", Option::<f64>::luau_type()),
         field("album_gain_db", Option::<f64>::luau_type()),
         field("locked", Option::<bool>::luau_type()),
-        field("created_at", Option::<u64>::luau_type()),
-        field("ctime", Option::<u64>::luau_type()),
+        field("created_at_ms", Option::<u64>::luau_type()),
+        field("file_created_at_ms", Option::<u64>::luau_type()),
     ])
 }
 
@@ -595,8 +595,8 @@ fn release_type() -> LuauType {
         ),
         field("release_date", Option::<String>::luau_type()),
         field("locked", Option::<bool>::luau_type()),
-        field("created_at", Option::<u64>::luau_type()),
-        field("ctime", Option::<u64>::luau_type()),
+        field("created_at_ms", Option::<u64>::luau_type()),
+        field("file_created_at_ms", Option::<u64>::luau_type()),
     ])
 }
 
@@ -614,7 +614,7 @@ fn artist_type() -> LuauType {
         ),
         field("description", Option::<String>::luau_type()),
         field("locked", Option::<bool>::luau_type()),
-        field("created_at", Option::<u64>::luau_type()),
+        field("created_at_ms", Option::<u64>::luau_type()),
     ])
 }
 

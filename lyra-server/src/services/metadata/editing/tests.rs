@@ -349,7 +349,7 @@ fn a_manual_clear_outranks_later_provider_values() -> anyhow::Result<()> {
             fields: crate::services::metadata::layers::json::fields_from_json(
                 json!({"sort_title": "Provider sort", "year": 2024}),
             ),
-            updated_at: 10,
+            updated_at_ms: 10,
         },
     )?;
     crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track_id)?;
@@ -447,7 +447,7 @@ fn inherit_drops_the_manual_value_and_restores_the_resolved_one() -> anyhow::Res
             fields: crate::services::metadata::layers::json::fields_from_json(
                 json!({"track_title": "Resolved"}),
             ),
-            updated_at: 10,
+            updated_at_ms: 10,
         },
     )?;
     crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track_id)?;
@@ -497,7 +497,7 @@ fn inherit_graph_field_restores_provider_resolved_value() -> anyhow::Result<()> 
             &mut db,
             json!({"genres": ["Provider"]}),
         ),
-        updated_at: 10,
+        updated_at_ms: 10,
     };
     lyra_db::metadata::layers::upsert(&mut db, release_id, &layer)?;
     crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, release_id)?;
@@ -535,7 +535,7 @@ fn inherit_conflicts_when_provider_resolution_changes_after_preview() -> anyhow:
             enabled: true,
         },
     )?;
-    let provider_layer = |db: &mut DbAny, genres: &[&str], updated_at| lyra_db::MetadataLayer {
+    let provider_layer = |db: &mut DbAny, genres: &[&str], updated_at_ms| lyra_db::MetadataLayer {
         source_id: "provider".to_string(),
         relations: Default::default(),
         credits: Default::default(),
@@ -543,7 +543,7 @@ fn inherit_conflicts_when_provider_resolution_changes_after_preview() -> anyhow:
             db,
             json!({"genres": genres}),
         ),
-        updated_at,
+        updated_at_ms,
     };
     let first = provider_layer(&mut db, &["First"], 10);
     lyra_db::metadata::layers::upsert(&mut db, release_id, &first)?;
@@ -735,7 +735,7 @@ fn inherit_labels_restores_resolvable_provider_labels() -> anyhow::Result<()> {
                 }]
             }),
         ),
-        updated_at: 10,
+        updated_at_ms: 10,
     };
     lyra_db::metadata::layers::upsert(&mut db, release_id, &layer)?;
 
@@ -821,7 +821,7 @@ fn inherit_labels_takes_the_layers_own_label_not_one_with_the_same_name() -> any
                 }]
             }),
         ),
-        updated_at: 10,
+        updated_at_ms: 10,
     };
     lyra_db::metadata::layers::upsert(&mut db, release_id, &layer)?;
     let manual = preview_edit(
@@ -1069,7 +1069,7 @@ fn inherited_label_disappearance_after_preview_is_rejected() -> anyhow::Result<(
                 }]
             }),
         ),
-        updated_at: 10,
+        updated_at_ms: 10,
     };
     lyra_db::metadata::layers::upsert(&mut db, release_id, &layer)?;
     let manual_label =

@@ -10,11 +10,6 @@ use time::{
     format_description::well_known::Rfc3339,
 };
 
-pub(crate) fn unix_secs_to_rfc3339_u64(seconds: u64) -> String {
-    let seconds = i64::try_from(seconds).expect("Unix timestamp seconds should fit in i64");
-    unix_secs_to_rfc3339_i64(seconds)
-}
-
 pub(crate) fn unix_secs_to_rfc3339_i64(seconds: i64) -> String {
     OffsetDateTime::from_unix_timestamp(seconds)
         .expect("Unix timestamp seconds should be RFC3339-representable")

@@ -710,8 +710,8 @@ mod tests {
             name: "p".to_string(),
             description: None,
             is_public: Some(false),
-            created_at: None,
-            updated_at: None,
+            created_at_ms: None,
+            updated_at_ms: None,
         };
         let playlist_db_id = crate::playlists::create(&mut db, &playlist, user)?;
 

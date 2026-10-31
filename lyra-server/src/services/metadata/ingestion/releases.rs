@@ -365,17 +365,21 @@ fn persist_release_inner(
     // release field the batch does not tag, as no per-track record of it exists.
     let partial = !other_track_ids.is_empty();
 
-    let now_secs = SystemTime::now()
+    let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
+        .map(|d| d.as_millis() as u64)
         .ok();
 
     // Propagate lookup failures: a swallowed error is indistinguishable from
-    // "no ctime", and ctime drives date-added ordering.
-    let mut earliest_ctime: Option<u64> = None;
+    // "no file creation time", and that time drives date-added ordering.
+    let mut earliest_file_created_at_ms: Option<u64> = None;
     for track in release_tracks.iter() {
         if let Some(entry) = lyra_db::entries::get_by_id(db, track.meta.entry_db_id)? {
-            earliest_ctime = Some(earliest_ctime.map_or(entry.ctime, |c| c.min(entry.ctime)));
+            earliest_file_created_at_ms = Some(
+                earliest_file_created_at_ms.map_or(entry.file_created_at_ms, |c| {
+                    c.min(entry.file_created_at_ms)
+                }),
+            );
         }
     }
 
@@ -390,8 +394,8 @@ fn persist_release_inner(
             media_formats: None,
             barcode: None,
             locked: None,
-            created_at: now_secs,
-            ctime: earliest_ctime,
+            created_at_ms: now_ms,
+            file_created_at_ms: earliest_file_created_at_ms,
         });
         if media_formats.is_some() || !partial {
             release.media_formats = media_formats;
@@ -401,8 +405,8 @@ fn persist_release_inner(
         }
         // Only overwrite when the scan actually resolved one; `None` here means
         // "not determined", never "cleared".
-        if earliest_ctime.is_some() {
-            release.ctime = earliest_ctime;
+        if earliest_file_created_at_ms.is_some() {
+            release.file_created_at_ms = earliest_file_created_at_ms;
         }
         lyra_db::releases::update_in_transaction(db, &release)?;
         release_db_id
@@ -417,8 +421,8 @@ fn persist_release_inner(
             media_formats,
             barcode,
             locked: None,
-            created_at: now_secs,
-            ctime: earliest_ctime,
+            created_at_ms: now_ms,
+            file_created_at_ms: earliest_file_created_at_ms,
         };
         let insert_result = db.exec_mut(QueryBuilder::insert().element(&release).query())?;
         let release_db_id = insert_result.ids()[0];
@@ -539,7 +543,8 @@ fn persist_release_inner(
 
         let effective_disc_total = disc_total.or(inferred_disc_total);
 
-        let entry_ctime = lyra_db::entries::get_by_id(db, entry_db_id)?.map(|e| e.ctime);
+        let entry_file_created_at_ms =
+            lyra_db::entries::get_by_id(db, entry_db_id)?.map(|e| e.file_created_at_ms);
 
         let track_db_id = if let Some(track_db_id) = track.track_db_id {
             let mut existing = lyra_db::tracks::get_by_id(db, track_db_id)?.unwrap_or(Track {
@@ -556,8 +561,8 @@ fn persist_release_inner(
                 track_gain_db: None,
                 album_gain_db: None,
                 locked: None,
-                created_at: now_secs,
-                ctime: entry_ctime,
+                created_at_ms: now_ms,
+                file_created_at_ms: entry_file_created_at_ms,
             });
             // Duration and audio properties are intrinsic to the file, not tags:
             // there is no "user removed it" case, so `None` only ever means the
@@ -567,8 +572,8 @@ fn persist_release_inner(
             }
             existing.track_gain_db = track_gain_db;
             existing.album_gain_db = album_gain_db;
-            if entry_ctime.is_some() {
-                existing.ctime = entry_ctime;
+            if entry_file_created_at_ms.is_some() {
+                existing.file_created_at_ms = entry_file_created_at_ms;
             }
             lyra_db::tracks::update_in_transaction(db, &existing)?;
             track_db_id
@@ -587,8 +592,8 @@ fn persist_release_inner(
                 track_gain_db,
                 album_gain_db,
                 locked: None,
-                created_at: now_secs,
-                ctime: entry_ctime,
+                created_at_ms: now_ms,
+                file_created_at_ms: entry_file_created_at_ms,
             };
             let track_insert = db.exec_mut(QueryBuilder::insert().element(&track_db).query())?;
             let track_db_id = track_insert.ids()[0];

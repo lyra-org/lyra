@@ -478,7 +478,7 @@ fn plugin_executor_scopes_personal_lyrics_to_the_dispatch_principal() -> Result<
                 language: "eng".to_string(),
                 plain_text: "provider lyrics".to_string(),
                 lines: Vec::new(),
-                last_checked_at: 1,
+                last_checked_at_ms: 1,
             },
             "remote-one".to_string(),
             "test_provider",
@@ -1708,7 +1708,7 @@ async fn plugin_executor_treats_expired_session_as_unauthenticated() -> Result<(
 
     crate::services::STATE.db.write().await.exec_mut(
         agdb::QueryBuilder::insert()
-            .values_uniform([("expires_at", lyra_db::users::now_secs() - 1).into()])
+            .values_uniform([("expires_at_ms", lyra_db::users::now_ms() - 1).into()])
             .ids(session_id)
             .query(),
     )?;
@@ -2743,8 +2743,8 @@ fn cover_artwork_bindings_serve_anonymous_public_routes() -> Result<()> {
             name: "Private".into(),
             description: None,
             is_public: Some(false),
-            created_at: None,
-            updated_at: None,
+            created_at_ms: None,
+            updated_at_ms: None,
         },
         owner,
     )?;
@@ -2824,9 +2824,9 @@ fn streamable_bindings_serve_anonymous_public_routes() -> Result<()> {
         name: "track.flac".into(),
         hash: None,
         size: 1,
-        mtime: 1,
-        ctime: 1,
-        synced_at: None,
+        file_modified_at_ms: 1,
+        file_created_at_ms: 1,
+        synced_at_ms: None,
     };
     let entry_id = database
         .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
@@ -2979,9 +2979,9 @@ fn track_source_bindings_hide_inaccessible_tracks() -> Result<()> {
             name: format!("{name}.flac"),
             hash: None,
             size: 1,
-            mtime: 1,
-            ctime: 1,
-            synced_at: None,
+            file_modified_at_ms: 1,
+            file_created_at_ms: 1,
+            synced_at_ms: None,
         };
         let entry_id = fixture
             .db

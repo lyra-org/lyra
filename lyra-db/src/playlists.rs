@@ -29,8 +29,8 @@ pub struct Playlist {
     pub name: String,
     pub description: Option<String>,
     pub is_public: Option<bool>,
-    pub created_at: Option<u64>,
-    pub updated_at: Option<u64>,
+    pub created_at_ms: Option<u64>,
+    pub updated_at_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -150,8 +150,8 @@ pub fn update_in_transaction(
         [
             ("description", playlist.description.is_none()),
             ("is_public", playlist.is_public.is_none()),
-            ("created_at", playlist.created_at.is_none()),
-            ("updated_at", playlist.updated_at.is_none()),
+            ("created_at_ms", playlist.created_at_ms.is_none()),
+            ("updated_at_ms", playlist.updated_at_ms.is_none()),
         ],
         playlist,
     )
@@ -533,8 +533,8 @@ mod tests {
             name: "My Playlist".to_string(),
             description: Some("A test playlist".to_string()),
             is_public: Some(false),
-            created_at: Some(1000),
-            updated_at: Some(1000),
+            created_at_ms: Some(1000),
+            updated_at_ms: Some(1000),
         };
         let playlist_db_id = create(&mut db, &playlist, user_db_id)?;
 
@@ -556,8 +556,8 @@ mod tests {
             name: name.to_string(),
             description: None,
             is_public: Some(true),
-            created_at: None,
-            updated_at: None,
+            created_at_ms: None,
+            updated_at_ms: None,
         };
         let alices = create(&mut db, &playlist("Alice's"), alice)?;
         create(&mut db, &playlist("Bob's"), bob)?;
@@ -593,8 +593,8 @@ mod tests {
             name: "User A Playlist".to_string(),
             description: None,
             is_public: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: None,
+            updated_at_ms: None,
         };
         create(&mut db, &p1, user_a)?;
 
@@ -604,8 +604,8 @@ mod tests {
             name: "User B Playlist".to_string(),
             description: None,
             is_public: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: None,
+            updated_at_ms: None,
         };
         create(&mut db, &p2, user_b)?;
 
@@ -631,8 +631,8 @@ mod tests {
             name: "Owned".to_string(),
             description: None,
             is_public: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: None,
+            updated_at_ms: None,
         };
         let playlist_db_id = create(&mut db, &playlist, user_db_id)?;
 
@@ -655,8 +655,8 @@ mod tests {
             name: "Tracks Test".to_string(),
             description: None,
             is_public: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: None,
+            updated_at_ms: None,
         };
         let playlist_db_id = create(&mut db, &playlist, user_db_id)?;
 
@@ -692,8 +692,8 @@ mod tests {
             name: "Position Base".to_string(),
             description: None,
             is_public: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: None,
+            updated_at_ms: None,
         };
         let playlist_db_id = create(&mut db, &playlist, user_db_id)?;
 
@@ -724,8 +724,8 @@ mod tests {
                 name: "Bulk Base".to_string(),
                 description: None,
                 is_public: None,
-                created_at: None,
-                updated_at: None,
+                created_at_ms: None,
+                updated_at_ms: None,
             },
             user_db_id,
         )?;
@@ -751,8 +751,8 @@ mod tests {
                 name: "Inserted".to_string(),
                 description: None,
                 is_public: None,
-                created_at: None,
-                updated_at: None,
+                created_at_ms: None,
+                updated_at_ms: None,
             },
             user_db_id,
         )?;
@@ -795,8 +795,8 @@ mod tests {
                 name: "Drift Guard".to_string(),
                 description: None,
                 is_public: None,
-                created_at: None,
-                updated_at: None,
+                created_at_ms: None,
+                updated_at_ms: None,
             },
             user_db_id,
         )?;
@@ -810,8 +810,8 @@ mod tests {
                 name: "Drift Guard".to_string(),
                 description: Some("d".to_string()),
                 is_public: Some(true),
-                created_at: Some(1),
-                updated_at: Some(2),
+                created_at_ms: Some(1),
+                updated_at_ms: Some(2),
             },
         )?;
 
@@ -823,8 +823,8 @@ mod tests {
                 name: "Drift Guard".to_string(),
                 description: None,
                 is_public: None,
-                created_at: None,
-                updated_at: None,
+                created_at_ms: None,
+                updated_at_ms: None,
             },
         )?;
 
@@ -852,8 +852,8 @@ mod tests {
                 name: "Before".to_string(),
                 description: Some("keep".to_string()),
                 is_public: None,
-                created_at: None,
-                updated_at: None,
+                created_at_ms: None,
+                updated_at_ms: None,
             },
             user_db_id,
         )?;
@@ -867,8 +867,8 @@ mod tests {
                     name: "After".to_string(),
                     description: None,
                     is_public: None,
-                    created_at: None,
-                    updated_at: None,
+                    created_at_ms: None,
+                    updated_at_ms: None,
                 },
             )?;
             anyhow::bail!("force rollback")
@@ -893,8 +893,8 @@ mod tests {
             name: "Remove Test".to_string(),
             description: None,
             is_public: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: None,
+            updated_at_ms: None,
         };
         let playlist_db_id = create(&mut db, &playlist, user_db_id)?;
         let pt = add_track(&mut db, playlist_db_id, track)?;
@@ -921,8 +921,8 @@ mod tests {
             name: "Move Test".to_string(),
             description: None,
             is_public: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: None,
+            updated_at_ms: None,
         };
         let playlist_db_id = create(&mut db, &playlist, user_db_id)?;
 
@@ -958,8 +958,8 @@ mod tests {
             name: "Delete Me".to_string(),
             description: None,
             is_public: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: None,
+            updated_at_ms: None,
         };
         let playlist_db_id = create(&mut db, &playlist, user_db_id)?;
         delete(&mut db, playlist_db_id)?;
@@ -982,8 +982,8 @@ mod tests {
             name: "Entry Filter".to_string(),
             description: None,
             is_public: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: None,
+            updated_at_ms: None,
         };
         let playlist_db_id = create(&mut db, &playlist, user_db_id)?;
         add_track(&mut db, playlist_db_id, track)?;
@@ -1022,8 +1022,8 @@ mod tests {
                 name: name.to_string(),
                 description: None,
                 is_public: None,
-                created_at: None,
-                updated_at: None,
+                created_at_ms: None,
+                updated_at_ms: None,
             };
             let playlist_db_id = create(&mut db, &playlist, user_db_id)?;
             // Twice, to prove duplicate entries do not duplicate the playlist.
@@ -1053,8 +1053,8 @@ mod tests {
             name: "Dupes".to_string(),
             description: None,
             is_public: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: None,
+            updated_at_ms: None,
         };
         let playlist_db_id = create(&mut db, &playlist, user_db_id)?;
 

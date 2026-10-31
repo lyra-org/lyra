@@ -359,10 +359,10 @@ fn select_merge_winner(
         }
 
         let a_created_at = a_artist
-            .and_then(|artist| artist.created_at)
+            .and_then(|artist| artist.created_at_ms)
             .unwrap_or(u64::MAX);
         let b_created_at = b_artist
-            .and_then(|artist| artist.created_at)
+            .and_then(|artist| artist.created_at_ms)
             .unwrap_or(u64::MAX);
         match a_created_at.cmp(&b_created_at) {
             Ordering::Equal => {}
@@ -376,7 +376,7 @@ fn select_merge_winner(
     let winner_artist = artist_lookup.get(&winner);
     tracing::debug!(
         winner = winner.0,
-        winner_created_at = winner_artist.and_then(|artist| artist.created_at),
+        winner_created_at = winner_artist.and_then(|artist| artist.created_at_ms),
         winner_edges = edge_counts.get(&winner).copied().unwrap_or(0),
         "selected artist merge winner"
     );
@@ -533,7 +533,7 @@ fn migrate_metadata(
         let relations =
             lyra_db::metadata::layers::union_relations(&winner_layer.relations, loser_relations);
         let mut merged = winner_layer.clone().with_relations(relations);
-        merged.updated_at = merged.updated_at.max(layer.updated_at);
+        merged.updated_at_ms = merged.updated_at_ms.max(layer.updated_at_ms);
         lyra_db::metadata::layers::upsert_inside_tx(db, winner, &merged)?;
     }
 
@@ -899,7 +899,9 @@ mod tests {
         let second = lyra_db::fixtures::insert_artist(&mut db, "Character")?;
         let first_actor = lyra_db::fixtures::insert_artist(&mut db, "First Actor")?;
         let second_actor = lyra_db::fixtures::insert_artist(&mut db, "Second Actor")?;
-        for (character, actor, updated_at) in [(first, first_actor, 1), (second, second_actor, 2)] {
+        for (character, actor, updated_at_ms) in
+            [(first, first_actor, 1), (second, second_actor, 2)]
+        {
             lyra_db::external_ids::upsert(
                 &mut db,
                 character,
@@ -916,7 +918,7 @@ mod tests {
                     crate::services::metadata::layers::json::fields_from_json(
                         serde_json::json!({"artist_name": "Character"}),
                     ),
-                    updated_at,
+                    updated_at_ms,
                 )
                 .with_relations(std::collections::BTreeMap::from([(
                     lyra_db::ArtistRelationType::VoiceActor,
@@ -960,7 +962,7 @@ mod tests {
             .find(|layer| layer.source_id == LOCAL_SOURCE_ID)
             .expect("winner keeps its layer");
         assert_eq!(
-            local.updated_at, 2,
+            local.updated_at_ms, 2,
             "the combined layer is as recent as its newer half"
         );
 

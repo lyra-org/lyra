@@ -20,7 +20,7 @@ assert(#own == 2)
 local clients = by_client(own)
 local phone = clients.Phone
 assert(phone ~= nil and phone.user_id == amy and phone.username == "amy")
-assert(phone.last_seen_at == 100 and phone.created_at > 0)
+assert(phone.last_seen_at_ms == 100 and phone.created_at_ms > 0)
 assert(type(phone.data) == "table" and (phone.data :: any).device == "phone")
 assert(clients.none ~= nil and clients.none.data == nil)
 for _, session in own do

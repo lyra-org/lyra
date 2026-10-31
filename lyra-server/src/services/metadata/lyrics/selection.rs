@@ -87,7 +87,7 @@ pub(crate) fn eligible_candidates<'a>(
 /// Ordering (first-difference wins): personal, shared manual, language match,
 /// `has_meaningful_synced` (≥ `MIN_SYNCED_LINES` non-zero-ts lines AND
 /// `max_synced_ts_ms` ≥ 50% of duration), provider position,
-/// `updated_at`, `provider_id` asc.
+/// `updated_at_ms`, `provider_id` asc.
 ///
 /// `require_synced = true` filters plain candidates pre-rank for `format=lrc`.
 ///
@@ -141,7 +141,7 @@ pub(crate) fn pick_preferred<'a>(
                 .then_with(|| a_lang.cmp(&b_lang))
                 .then_with(|| a_synced.cmp(&b_synced))
                 .then_with(|| b_position.cmp(&a_position))
-                .then_with(|| a.updated_at.cmp(&b.updated_at))
+                .then_with(|| a.updated_at_ms.cmp(&b.updated_at_ms))
                 // Lexical tie-break inverted: max_by takes the greater, but we
                 // want the lexically-smaller provider_id to win.
                 .then_with(|| b.provider_id.cmp(&a.provider_id))
@@ -197,7 +197,7 @@ mod tests {
         kind: LyricsKind,
         line_count: u32,
         max_synced_ts_ms: u64,
-        updated_at: u64,
+        updated_at_ms: u64,
     ) -> Lyrics {
         // Tests needing the degenerate "one real ts" case build the struct explicitly.
         let synced_line_count = if max_synced_ts_ms > 0 { line_count } else { 0 };
@@ -213,8 +213,8 @@ mod tests {
             max_synced_ts_ms,
             has_word_cues: false,
             content_hash: String::new(),
-            last_checked_at: updated_at,
-            updated_at,
+            last_checked_at_ms: updated_at_ms,
+            updated_at_ms,
         }
     }
 
@@ -293,7 +293,7 @@ mod tests {
 
     #[test]
     fn synced_requires_coverage_threshold() {
-        // Synced but last ts covers only 10% of duration; plain wins on updated_at.
+        // Synced but last ts covers only 10% of duration; plain wins on updated_at_ms.
         let cands = vec![
             lyrics("thin", "plug", "eng", Provider, 2, 20_000, 2000),
             lyrics("plain", "plug", "eng", Provider, 0, 0, 3000),
@@ -318,8 +318,8 @@ mod tests {
             max_synced_ts_ms: 180_000,
             has_word_cues: false,
             content_hash: String::new(),
-            last_checked_at: 2000,
-            updated_at: 2000,
+            last_checked_at_ms: 2000,
+            updated_at_ms: 2000,
         };
         let honest_plain = lyrics("plain", "plug", "eng", Provider, 0, 0, 1000);
         let cands = vec![forged, honest_plain];
@@ -328,7 +328,7 @@ mod tests {
         assert_eq!(
             winner.map(|w| w.id.as_str()),
             Some("forged"),
-            "updated_at wins tie"
+            "updated_at_ms wins tie"
         );
         let synced_only = pick_preferred(&cands, &providers, None, Some(200_000), true);
         assert!(

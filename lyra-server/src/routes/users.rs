@@ -239,10 +239,10 @@ impl From<api_keys::ApiKeyInfo> for ApiKeyResponse {
         Self {
             id: api_key.id,
             name: api_key.name,
-            created_at: crate::services::timestamps::unix_secs_to_rfc3339_i64(api_key.created_at),
+            created_at: crate::services::timestamps::unix_ms_to_rfc3339_i64(api_key.created_at_ms),
             last_used_at: api_key
-                .last_used_at
-                .map(crate::services::timestamps::unix_secs_to_rfc3339_i64),
+                .last_used_at_ms
+                .map(crate::services::timestamps::unix_ms_to_rfc3339_i64),
         }
     }
 }
@@ -253,10 +253,10 @@ impl From<api_keys::CreatedApiKey> for CreatedApiKeyResponse {
             id: api_key.id,
             name: api_key.name,
             key: api_key.key,
-            created_at: crate::services::timestamps::unix_secs_to_rfc3339_i64(api_key.created_at),
+            created_at: crate::services::timestamps::unix_ms_to_rfc3339_i64(api_key.created_at_ms),
             last_used_at: api_key
-                .last_used_at
-                .map(crate::services::timestamps::unix_secs_to_rfc3339_i64),
+                .last_used_at_ms
+                .map(crate::services::timestamps::unix_ms_to_rfc3339_i64),
         }
     }
 }
@@ -1600,8 +1600,8 @@ mod tests {
             Some("lyra-test/1.0 (integration)")
         );
         assert_eq!(session.client_name.as_deref(), Some("Lyra Desktop"));
-        assert!(session.created_at > 0);
-        assert_eq!(session.last_seen_at, session.created_at);
+        assert!(session.created_at_ms > 0);
+        assert_eq!(session.last_seen_at_ms, session.created_at_ms);
 
         drop(db);
         let _ = std::fs::remove_dir_all(test_dir);

@@ -210,8 +210,8 @@ mod tests {
             name: "p".to_string(),
             description: None,
             is_public: Some(is_public),
-            created_at: None,
-            updated_at: None,
+            created_at_ms: None,
+            updated_at_ms: None,
         };
         lyra_db::playlists::create(db, &playlist, owner_db_id)
     }
@@ -243,8 +243,8 @@ mod tests {
                 name: "p".to_string(),
                 description: None,
                 is_public: Some(is_public),
-                created_at: None,
-                updated_at: None,
+                created_at_ms: None,
+                updated_at_ms: None,
             },
         )?;
         Ok(())

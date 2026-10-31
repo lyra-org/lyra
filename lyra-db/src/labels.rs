@@ -30,7 +30,7 @@ pub struct Label {
     pub id: String,
     pub name: String,
     pub(crate) label_scan_name: String,
-    pub(crate) created_at: Option<u64>,
+    pub(crate) created_at_ms: Option<u64>,
 }
 
 /// Values on a `release → label` edge.
@@ -100,11 +100,11 @@ pub struct LabelForRelease {
     pub catalog_number: Option<String>,
 }
 
-fn now_secs() -> u64 {
+fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system clock drift")
-        .as_secs()
+        .as_millis() as u64
 }
 
 /// Canonicalize label names so provider-emitted NFD and tag-path NFC
@@ -154,7 +154,7 @@ fn insert_label(db: &mut impl DbAccess, name: &str) -> anyhow::Result<DbId> {
         id: nanoid!(),
         name: name.to_string(),
         label_scan_name: normalize_label_name(name),
-        created_at: Some(now_secs()),
+        created_at_ms: Some(now_ms()),
     };
     let result = db.exec_mut(QueryBuilder::insert().element(&label).query())?;
     let label_id = result

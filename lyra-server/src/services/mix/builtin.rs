@@ -1292,8 +1292,8 @@ mod tests {
             name: "Mix Seed".to_string(),
             description: None,
             is_public: Some(true),
-            created_at: Some(0),
-            updated_at: Some(0),
+            created_at_ms: Some(0),
+            updated_at_ms: Some(0),
         };
         let playlist_db_id = playlists::create(&mut db, &playlist, user_id)?;
         playlists::add_track(&mut db, playlist_db_id, track_p1)?;
@@ -1324,8 +1324,8 @@ mod tests {
             name: "Empty".to_string(),
             description: None,
             is_public: Some(true),
-            created_at: Some(0),
-            updated_at: Some(0),
+            created_at_ms: Some(0),
+            updated_at_ms: Some(0),
         };
         let playlist_db_id = playlists::create(&mut db, &playlist, user_id)?;
         let result =

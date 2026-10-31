@@ -31,7 +31,7 @@ pub struct Genre {
     pub id: String,
     pub name: String,
     pub(crate) scan_name: String,
-    pub(crate) created_at: Option<u64>,
+    pub(crate) created_at_ms: Option<u64>,
 }
 
 #[derive(DbElement, Clone, Debug)]
@@ -43,11 +43,11 @@ pub(crate) struct GenreAlias {
     pub(crate) locale: Option<String>,
 }
 
-fn now_secs() -> u64 {
+fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system clock drift")
-        .as_secs()
+        .as_millis() as u64
 }
 
 fn normalize(s: &str) -> String {
@@ -106,7 +106,7 @@ fn insert_genre(db: &mut impl DbAccess, name: &str) -> anyhow::Result<DbId> {
         id: nanoid!(),
         name: name.to_string(),
         scan_name: normalize(name),
-        created_at: Some(now_secs()),
+        created_at_ms: Some(now_ms()),
     };
     let result = db.exec_mut(QueryBuilder::insert().element(&genre).query())?;
     let genre_id = result
@@ -305,7 +305,7 @@ pub fn link_to_release(
         db,
         genre_id,
         release_id,
-        now_secs().saturating_mul(1000),
+        now_ms(),
     )?;
     Ok(())
 }

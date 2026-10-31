@@ -38,8 +38,8 @@ pub fn insert_track(db: &mut DbAny, title: &str) -> anyhow::Result<DbId> {
         track_gain_db: None,
         album_gain_db: None,
         locked: None,
-        created_at: None,
-        ctime: None,
+        created_at_ms: None,
+        file_created_at_ms: None,
     };
     let track_id = db
         .exec_mut(QueryBuilder::insert().element(&track).query())?
@@ -65,8 +65,8 @@ pub fn insert_release(db: &mut DbAny, title: &str) -> anyhow::Result<DbId> {
         media_formats: None,
         barcode: None,
         locked: None,
-        created_at: None,
-        ctime: None,
+        created_at_ms: None,
+        file_created_at_ms: None,
     };
     let release_id = db
         .exec_mut(QueryBuilder::insert().element(&release).query())?
@@ -93,7 +93,7 @@ pub fn insert_artist(db: &mut DbAny, name: &str) -> anyhow::Result<DbId> {
         description: None,
         credited: false,
         locked: None,
-        created_at: None,
+        created_at_ms: None,
     };
     let artist_id = db
         .exec_mut(QueryBuilder::insert().element(&artist).query())?

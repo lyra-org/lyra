@@ -30,11 +30,11 @@ use super::NodeId;
 /// Already lowercase, so it compares directly against stored usernames.
 pub const DEFAULT_USERNAME: &str = "default";
 
-pub fn now_secs() -> i64 {
+pub fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
-        .as_secs() as i64
+        .as_millis() as i64
 }
 
 #[derive(DbElement, Clone, Debug)]
@@ -53,9 +53,9 @@ pub struct Session {
     pub id: String,
     pub token_hash: String,
     #[serde(skip)]
-    pub expires_at: i64,
-    pub created_at: i64,
-    pub last_seen_at: i64,
+    pub expires_at_ms: i64,
+    pub created_at_ms: i64,
+    pub last_seen_at_ms: i64,
     pub user_agent: Option<String>,
     pub client_name: Option<String>,
 }
@@ -238,11 +238,11 @@ pub fn revoke_session_by_id(db: &mut DbAny, session_id: DbId) -> anyhow::Result<
 pub fn update_session_last_seen(
     db: &mut impl super::DbAccess,
     session_id: DbId,
-    last_seen_at: i64,
+    last_seen_at_ms: i64,
 ) -> anyhow::Result<()> {
     db.exec_mut(
         QueryBuilder::insert()
-            .values_uniform([("last_seen_at", last_seen_at).into()])
+            .values_uniform([("last_seen_at_ms", last_seen_at_ms).into()])
             .ids(session_id)
             .query(),
     )?;
@@ -544,7 +544,7 @@ mod tests {
 
         let session = find_session_by_id(&db, session_id)?
             .ok_or_else(|| anyhow!("session must exist after touch"))?;
-        assert_eq!(session.last_seen_at, 1_234_567);
+        assert_eq!(session.last_seen_at_ms, 1_234_567);
         Ok(())
     }
 
@@ -614,7 +614,7 @@ mod tests {
                         char_end: 5,
                     }],
                 }],
-                last_checked_at: 1,
+                last_checked_at_ms: 1,
             },
             user_db_id,
             Some(2_000),
@@ -626,7 +626,7 @@ mod tests {
                 language: "eng".to_string(),
                 plain_text: "bob".to_string(),
                 lines: Vec::new(),
-                last_checked_at: 1,
+                last_checked_at_ms: 1,
             },
             bob_db_id,
             None,

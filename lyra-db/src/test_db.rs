@@ -107,14 +107,14 @@ pub fn insert_library(db: &mut DbAny, name: &str, directory: &str) -> anyhow::Re
 }
 
 pub fn test_session(token_hash: &str) -> super::users::Session {
-    let now = super::users::now_secs();
+    let now = super::users::now_ms();
     super::users::Session {
         db_id: None,
         id: nanoid!(),
         token_hash: token_hash.to_string(),
-        expires_at: 0,
-        created_at: now,
-        last_seen_at: now,
+        expires_at_ms: 0,
+        created_at_ms: now,
+        last_seen_at_ms: now,
         user_agent: None,
         client_name: None,
     }

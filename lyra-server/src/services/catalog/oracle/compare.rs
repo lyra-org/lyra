@@ -183,7 +183,7 @@ fn fixture(seed: u64) -> anyhow::Result<Fixture> {
                 rng.below(9)
             )),
         };
-        release.ctime = rng.chance(80).then(|| rng.below(5) as u64);
+        release.file_created_at_ms = rng.chance(80).then(|| rng.below(5) as u64);
         lyra_db::releases::update(&mut db, &release)?;
         for (library, _) in &libraries {
             if rng.chance(40) {
@@ -211,7 +211,7 @@ fn fixture(seed: u64) -> anyhow::Result<Fixture> {
         track.duration_ms = rng.chance(90).then(|| 1000 * rng.below(5) as u64);
         track.disc = rng.chance(60).then(|| 1 + rng.below(2) as u32);
         track.track = rng.chance(80).then(|| 1 + rng.below(6) as u32);
-        track.ctime = rng.chance(80).then(|| rng.below(5) as u64);
+        track.file_created_at_ms = rng.chance(80).then(|| rng.below(5) as u64);
         lyra_db::tracks::update(&mut db, &track)?;
         for _ in 0..rng.below(3) {
             let release = *rng.pick(&releases);

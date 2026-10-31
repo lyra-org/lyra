@@ -131,8 +131,8 @@ fn insert_track(db: &mut DbAny, index: usize, number: u32) -> anyhow::Result<DbI
         track_gain_db: Some(-7.5),
         album_gain_db: Some(-8.0),
         locked: Some(false),
-        created_at: Some(1_700_000_000_000 + index as u64),
-        ctime: Some(1_700_000_000 + (index as u64 * 31) % 86_400),
+        created_at_ms: Some(1_700_000_000_000 + index as u64),
+        file_created_at_ms: Some(1_700_000_000 + (index as u64 * 31) % 86_400),
     };
     let track_id = db
         .exec_mut(QueryBuilder::insert().element(&track).query())?

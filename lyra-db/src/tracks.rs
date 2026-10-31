@@ -40,8 +40,8 @@ pub struct Track {
     pub track_gain_db: Option<f64>,
     pub album_gain_db: Option<f64>,
     pub locked: Option<bool>,
-    pub created_at: Option<u64>,
-    pub ctime: Option<u64>,
+    pub created_at_ms: Option<u64>,
+    pub file_created_at_ms: Option<u64>,
 }
 
 impl Track {
@@ -365,8 +365,8 @@ pub fn update_in_transaction(
             ("track_gain_db", track.track_gain_db.is_none()),
             ("album_gain_db", track.album_gain_db.is_none()),
             ("locked", track.locked.is_none()),
-            ("created_at", track.created_at.is_none()),
-            ("ctime", track.ctime.is_none()),
+            ("created_at_ms", track.created_at_ms.is_none()),
+            ("file_created_at_ms", track.file_created_at_ms.is_none()),
         ],
         track,
     )
@@ -419,9 +419,9 @@ mod tests {
             name: "test.mp3".to_string(),
             hash: None,
             size: 1,
-            mtime: 1,
-            ctime: 1,
-            synced_at: None,
+            file_modified_at_ms: 1,
+            file_created_at_ms: 1,
+            synced_at_ms: None,
         };
         let entry_db_id = db
             .exec_mut(QueryBuilder::insert().element(&entry).query())?
@@ -520,8 +520,8 @@ mod tests {
                 track_gain_db: None,
                 album_gain_db: None,
                 locked: Some(true),
-                created_at: Some(6),
-                ctime: Some(7),
+                created_at_ms: Some(6),
+                file_created_at_ms: Some(7),
             },
         )?;
 
@@ -541,8 +541,8 @@ mod tests {
                 track_gain_db: None,
                 album_gain_db: None,
                 locked: None,
-                created_at: None,
-                ctime: None,
+                created_at_ms: None,
+                file_created_at_ms: None,
             },
         )?;
 
@@ -571,9 +571,9 @@ mod tests {
             name: "orphan.mp3".to_string(),
             hash: None,
             size: 1,
-            mtime: 1,
-            ctime: 1,
-            synced_at: None,
+            file_modified_at_ms: 1,
+            file_created_at_ms: 1,
+            synced_at_ms: None,
         };
         let entry_db_id = db
             .exec_mut(QueryBuilder::insert().element(&entry).query())?

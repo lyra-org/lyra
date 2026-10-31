@@ -247,8 +247,8 @@ mod tests {
             track_gain_db: None,
             album_gain_db: None,
             locked: None,
-            created_at: None,
-            ctime: None,
+            created_at_ms: None,
+            file_created_at_ms: None,
         };
         let track_id = db
             .exec_mut(QueryBuilder::insert().element(&track_node).query())?
@@ -266,9 +266,9 @@ mod tests {
             name: "song.mp3".to_string(),
             hash: None,
             size: 1,
-            mtime: 1,
-            ctime: 1,
-            synced_at: None,
+            file_modified_at_ms: 1,
+            file_created_at_ms: 1,
+            synced_at_ms: None,
         };
         let entry_id = db
             .exec_mut(QueryBuilder::insert().element(&entry).query())?
@@ -327,8 +327,8 @@ mod tests {
             track_gain_db: None,
             album_gain_db: None,
             locked: None,
-            created_at: None,
-            ctime: None,
+            created_at_ms: None,
+            file_created_at_ms: None,
         }];
 
         let dirs = cover_dirs_for_release(&db, &tracks, Some(Path::new("/music")))?;

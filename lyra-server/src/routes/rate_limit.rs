@@ -836,7 +836,7 @@ mod tests {
             let mut session = lyra_db::test_db::test_session(&crate::services::auth::hash_secret(
                 "expired-session",
             ));
-            session.expires_at = lyra_db::users::now_secs() - 1;
+            session.expires_at_ms = lyra_db::users::now_ms() - 1;
             lyra_db::users::login(&mut db, user_db_id, &session)?;
             "expired-session"
         };

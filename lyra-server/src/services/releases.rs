@@ -193,8 +193,8 @@ mod tests {
             media_formats: None,
             barcode: None,
             locked: None,
-            created_at: None,
-            ctime: None,
+            created_at_ms: None,
+            file_created_at_ms: None,
         };
 
         let result = db.exec_mut(QueryBuilder::insert().element(&release).query())?;
@@ -284,8 +284,8 @@ mod tests {
             track_gain_db: None,
             album_gain_db: None,
             locked: None,
-            created_at: None,
-            ctime: None,
+            created_at_ms: None,
+            file_created_at_ms: None,
         };
         let qr = db.exec_mut(QueryBuilder::insert().element(&track).query())?;
         let track_id = *qr.ids().first().unwrap();
@@ -315,7 +315,7 @@ mod tests {
             description: None,
             credited: false,
             locked: None,
-            created_at: None,
+            created_at_ms: None,
         };
         let qr = db.exec_mut(QueryBuilder::insert().element(&artist).query())?;
         let artist_id = *qr.ids().first().unwrap();

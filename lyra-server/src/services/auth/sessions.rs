@@ -112,10 +112,10 @@ pub(crate) enum SessionServiceError {
 type SessionServiceResult<T> = Result<T, SessionServiceError>;
 
 const SESSION_TOKEN_BYTES: usize = 16;
-const LAST_SEEN_DEBOUNCE_SECS: i64 = 60;
+const LAST_SEEN_DEBOUNCE_MS: i64 = 60_000;
 const LAST_SEEN_SWEEP_THRESHOLD: usize = 1024;
 
-// Debounce last_seen_at writes to avoid grabbing the DB write lock on every
+// Debounce last_seen_at_ms writes to avoid grabbing the DB write lock on every
 // session-authed request. Only the in-memory mutex is taken on steady-state auth.
 fn last_seen_cache(
     generation: &crate::services::state::GenerationState,
@@ -132,7 +132,7 @@ fn should_persist_last_seen(session_public_id: &str, now: i64) -> bool {
     let cache = last_seen_cache(&generation);
     !matches!(
         cache.get(session_public_id),
-        Some(&last) if now.saturating_sub(last) < LAST_SEEN_DEBOUNCE_SECS
+        Some(&last) if now.saturating_sub(last) < LAST_SEEN_DEBOUNCE_MS
     )
 }
 
@@ -140,7 +140,7 @@ fn record_persisted_last_seen(session_public_id: &str, now: i64) {
     let generation = STATE.generation();
     let mut cache = last_seen_cache(&generation);
     if cache.len() >= LAST_SEEN_SWEEP_THRESHOLD {
-        let stale_cutoff = 2 * LAST_SEEN_DEBOUNCE_SECS;
+        let stale_cutoff = 2 * LAST_SEEN_DEBOUNCE_MS;
         cache.retain(|_, last| now.saturating_sub(*last) < stale_cutoff);
     }
     if cache.len() >= LAST_SEEN_SWEEP_THRESHOLD {
@@ -169,10 +169,10 @@ pub(crate) async fn create_session_for_user(
     let metadata = metadata.normalized()?;
     let token = random_hex_secret::<SESSION_TOKEN_BYTES>();
     let token_hash = hash_secret(&token);
-    let now = lyra_db::users::now_secs();
+    let now = lyra_db::users::now_ms();
     let ttl = STATE.config().auth.session_ttl_seconds;
-    let expires_at = if ttl > 0 {
-        now.saturating_add(ttl as i64)
+    let expires_at_ms = if ttl > 0 {
+        now.saturating_add((ttl as i64).saturating_mul(1000))
     } else {
         0
     };
@@ -180,9 +180,9 @@ pub(crate) async fn create_session_for_user(
         db_id: None,
         id: nanoid!(),
         token_hash,
-        expires_at,
-        created_at: now,
-        last_seen_at: now,
+        expires_at_ms,
+        created_at_ms: now,
+        last_seen_at_ms: now,
         user_agent: metadata.user_agent,
         client_name: metadata.client_name,
     };
@@ -197,7 +197,7 @@ pub(crate) async fn create_session_for_user(
 }
 
 pub(crate) async fn touch_last_seen(session_public_id: &str) {
-    let now = lyra_db::users::now_secs();
+    let now = lyra_db::users::now_ms();
     if !should_persist_last_seen(session_public_id, now) {
         return;
     }
@@ -232,14 +232,14 @@ pub(crate) async fn touch_last_seen(session_public_id: &str) {
             tracing::warn!(
                 error = %err,
                 session_public_id,
-                "failed to persist session last_seen_at; continuing with successful auth",
+                "failed to persist session last_seen_at_ms; continuing with successful auth",
             );
         }
     }
 }
 
 pub(crate) fn is_expired(session: &Session) -> bool {
-    session.expires_at > 0 && lyra_db::users::now_secs() >= session.expires_at
+    session.expires_at_ms > 0 && lyra_db::users::now_ms() >= session.expires_at_ms
 }
 
 /// Revokes the session behind `token_hash` if it has expired, resolving it under the write lock
@@ -289,8 +289,8 @@ pub(crate) struct SessionInfo {
     pub(crate) id: String,
     pub(crate) user_id: String,
     pub(crate) username: String,
-    pub(crate) created_at: i64,
-    pub(crate) last_seen_at: i64,
+    pub(crate) created_at_ms: i64,
+    pub(crate) last_seen_at_ms: i64,
     pub(crate) client_name: Option<String>,
     pub(crate) user_agent: Option<String>,
     /// The listing plugin's own data on the session.
@@ -360,8 +360,8 @@ pub(crate) async fn list_sessions(
                 id: session.id,
                 user_id: user.id.clone(),
                 username: user.username.clone(),
-                created_at: session.created_at,
-                last_seen_at: session.last_seen_at,
+                created_at_ms: session.created_at_ms,
+                last_seen_at_ms: session.last_seen_at_ms,
                 client_name: session.client_name,
                 user_agent: session.user_agent,
                 plugin_data,
@@ -369,8 +369,8 @@ pub(crate) async fn list_sessions(
         }
     }
     sessions.sort_by(|a, b| {
-        a.created_at
-            .cmp(&b.created_at)
+        a.created_at_ms
+            .cmp(&b.created_at_ms)
             .then_with(|| a.id.cmp(&b.id))
     });
     Ok(sessions)
@@ -510,7 +510,7 @@ mod tests {
             let session_id = live_session_id(&*db, &other_token)?;
             db.exec_mut(
                 agdb::QueryBuilder::insert()
-                    .values_uniform([("expires_at", lyra_db::users::now_secs() - 1).into()])
+                    .values_uniform([("expires_at_ms", lyra_db::users::now_ms() - 1).into()])
                     .ids(session_id)
                     .query(),
             )?;
@@ -575,7 +575,7 @@ mod tests {
             let session_id = live_session_id(&*db, &expired_token)?;
             db.exec_mut(
                 agdb::QueryBuilder::insert()
-                    .values_uniform([("expires_at", lyra_db::users::now_secs() - 1).into()])
+                    .values_uniform([("expires_at_ms", lyra_db::users::now_ms() - 1).into()])
                     .ids(session_id)
                     .query(),
             )?;

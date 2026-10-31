@@ -1067,8 +1067,8 @@ mod tests {
                 name: "Owned playlist".to_string(),
                 description: None,
                 is_public: None,
-                created_at: None,
-                updated_at: None,
+                created_at_ms: None,
+                updated_at_ms: None,
             },
             user_id,
         )?;

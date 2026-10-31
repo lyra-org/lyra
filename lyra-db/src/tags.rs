@@ -845,7 +845,7 @@ mod tests {
         assert_eq!(tag.color, "blue", "color must NOT change on reuse");
         assert_eq!(
             tag.created_at_ms, 1000,
-            "created_at must NOT change on reuse",
+            "created_at_ms must NOT change on reuse",
         );
 
         let targets = get_targets(&db, first_id)?;
@@ -1040,8 +1040,8 @@ mod tests {
             name: "Tagged playlist".to_string(),
             description: None,
             is_public: Some(false),
-            created_at: None,
-            updated_at: None,
+            created_at_ms: None,
+            updated_at_ms: None,
         };
         let playlist_db_id = crate::playlists::create(&mut db, &playlist, user)?;
         let (tag_id, _) = create(&mut db, user, playlist_db_id, "Playlist", "blue", 1)?;
@@ -1071,8 +1071,8 @@ mod tests {
             name: "my playlist".to_string(),
             description: None,
             is_public: Some(true),
-            created_at: None,
-            updated_at: None,
+            created_at_ms: None,
+            updated_at_ms: None,
         };
         let playlist_db_id = crate::playlists::create(&mut db, &playlist, user)?;
         create(&mut db, user, track, "Workout", "blue", 1)?;

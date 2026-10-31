@@ -156,7 +156,7 @@ pub(crate) fn merge_layers(
     sorted_layers.sort_by(|a, b| {
         layer_rank(a)
             .cmp(&layer_rank(b))
-            .then_with(|| b.updated_at.cmp(&a.updated_at))
+            .then_with(|| b.updated_at_ms.cmp(&a.updated_at_ms))
             .then_with(|| a.source_id.cmp(&b.source_id))
     });
 
@@ -477,13 +477,13 @@ fn apply_to_artist(
 mod tests {
     use super::*;
 
-    fn make_layer(source_id: &str, fields_json: &str, updated_at: u64) -> MetadataLayer {
+    fn make_layer(source_id: &str, fields_json: &str, updated_at_ms: u64) -> MetadataLayer {
         MetadataLayer::new(
             source_id,
             crate::services::metadata::layers::json::fields_from_json(
                 serde_json::from_str(fields_json).expect("test layer fields parse"),
             ),
-            updated_at,
+            updated_at_ms,
         )
     }
 
@@ -555,8 +555,8 @@ mod tests {
             media_formats: None,
             barcode: None,
             locked: None,
-            created_at: None,
-            ctime: None,
+            created_at_ms: None,
+            file_created_at_ms: None,
         };
         let merged = merge_layers(
             vec![make_layer("provider", r#"{"release_title": "Layer"}"#, 1)],
@@ -584,8 +584,8 @@ mod tests {
             media_formats: None,
             barcode: None,
             locked: None,
-            created_at: None,
-            ctime: None,
+            created_at_ms: None,
+            file_created_at_ms: None,
         };
         let merged = merge_layers(Vec::new(), &ActiveProviders::from_configs(Vec::new()));
 
@@ -668,14 +668,14 @@ mod tests {
             node_id: DbId,
             source_id: &str,
             fields: serde_json::Value,
-            updated_at: u64,
+            updated_at_ms: u64,
         ) -> anyhow::Result<()> {
             let fields =
                 crate::services::metadata::layers::json::resolved_fields_from_json(db, fields);
             lyra_db::metadata::layers::upsert(
                 db,
                 node_id,
-                &MetadataLayer::new(source_id, fields, updated_at),
+                &MetadataLayer::new(source_id, fields, updated_at_ms),
             )?;
             Ok(())
         }

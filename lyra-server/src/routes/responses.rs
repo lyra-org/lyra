@@ -534,7 +534,9 @@ impl EntryResponse {
             name: entry.name,
             hash: entry.hash,
             size: entry.size,
-            modified_at: crate::services::timestamps::unix_secs_to_rfc3339_u64(entry.mtime),
+            modified_at: crate::services::timestamps::unix_ms_to_rfc3339_u64(
+                entry.file_modified_at_ms,
+            ),
             tracks: None,
             releases: None,
             artists: None,
@@ -568,9 +570,9 @@ mod tests {
                 name: "track.flac".to_string(),
                 hash: None,
                 size: 123,
-                mtime: 1_700_000_000,
-                ctime: 1_700_000_000,
-                synced_at: None,
+                file_modified_at_ms: 1_700_000_000_000,
+                file_created_at_ms: 1_700_000_000_000,
+                synced_at_ms: None,
             },
             false,
         ))?;

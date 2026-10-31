@@ -641,8 +641,8 @@ mod tests {
             name: "p".to_string(),
             description: None,
             is_public: Some(is_public),
-            created_at: None,
-            updated_at: None,
+            created_at_ms: None,
+            updated_at_ms: None,
         };
         let db_id = lyra_db::playlists::create(db, &playlist, owner)?;
         Ok((db_id, public_id))
@@ -764,8 +764,8 @@ mod tests {
                 name: "p".to_string(),
                 description: None,
                 is_public: Some(false),
-                created_at: None,
-                updated_at: None,
+                created_at_ms: None,
+                updated_at_ms: None,
             },
         )?;
 
@@ -797,8 +797,8 @@ mod tests {
                 name: "p".to_string(),
                 description: None,
                 is_public: Some(false),
-                created_at: None,
-                updated_at: None,
+                created_at_ms: None,
+                updated_at_ms: None,
             },
         )?;
 
@@ -816,8 +816,8 @@ mod tests {
                 name: "p".to_string(),
                 description: None,
                 is_public: Some(true),
-                created_at: None,
-                updated_at: None,
+                created_at_ms: None,
+                updated_at_ms: None,
             },
         )?;
         let (targets, _) = get_tagged(&db, bob, "Ref")?;
@@ -850,8 +850,8 @@ mod tests {
                 name: "p".to_string(),
                 description: None,
                 is_public: Some(false),
-                created_at: None,
-                updated_at: None,
+                created_at_ms: None,
+                updated_at_ms: None,
             },
         )?;
 

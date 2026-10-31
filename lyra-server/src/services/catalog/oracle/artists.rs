@@ -149,8 +149,8 @@ impl Old for Artists {
                         ArtistKey::Name => Some(SortValue::Text(row.lower_name().to_string())),
                         ArtistKey::SortName => Some(SortValue::Text(row.sort_name().to_string())),
                         ArtistKey::DateCreated => artist
-                            .number("ctime")
-                            .or_else(|| artist.number("created_at"))
+                            .number("file_created_at_ms")
+                            .or_else(|| artist.number("created_at_ms"))
                             .map(SortValue::Number),
                         ArtistKey::ReleaseCount => Some(SortValue::Number(
                             release_counts.get(&id).copied().unwrap_or(0),
@@ -354,7 +354,7 @@ fn credited_artist_ids(db: &DbAny, owner: DbId) -> anyhow::Result<Vec<DbId>> {
 fn artist_fields(keys: &[ArtistKey]) -> Vec<&'static str> {
     let mut fields = vec!["artist_name", "sort_name"];
     if keys.contains(&ArtistKey::DateCreated) {
-        fields.extend(["ctime", "created_at"]);
+        fields.extend(["file_created_at_ms", "created_at_ms"]);
     }
     fields
 }
