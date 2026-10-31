@@ -27,7 +27,6 @@ use super::DbAccess;
 use super::NodeId;
 
 pub(crate) const MAX_TAG_NAME_LEN: usize = 128;
-pub const HAS_MANY_CAP: usize = 1024;
 pub(crate) const GET_TAGGED_CAP: usize = 10_000;
 
 const TAG_EDGE_KEY: &str = "tag_edge";

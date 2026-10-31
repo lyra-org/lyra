@@ -22,7 +22,6 @@ use lyra_db::{
     Tag,
     tags::{
         CreateOutcome,
-        HAS_MANY_CAP,
         RenameConflict,
         TagNormalizeError,
     },
@@ -151,12 +150,6 @@ pub(crate) fn has_targets(
     target_db_ids: &[DbId],
     raw_tag_name: &str,
 ) -> Result<HashMap<DbId, bool>, TagServiceError> {
-    if target_db_ids.len() > HAS_MANY_CAP {
-        return Err(TagServiceError::Internal(anyhow::anyhow!(
-            "has_targets cap exceeded: {} > {HAS_MANY_CAP}",
-            target_db_ids.len()
-        )));
-    }
     let normalized =
         lyra_db::tags::normalize_tag_name(raw_tag_name).map_err(TagServiceError::BadTagName)?;
     let visibility =
@@ -193,13 +186,6 @@ pub(crate) fn get_for_targets_many(
     owner_db_id: DbId,
     target_db_ids: &[DbId],
 ) -> Result<HashMap<DbId, Vec<Tag>>, TagServiceError> {
-    if target_db_ids.len() > HAS_MANY_CAP {
-        return Err(TagServiceError::Internal(anyhow::anyhow!(
-            "get_for_targets_many cap exceeded: {} > {HAS_MANY_CAP}",
-            target_db_ids.len()
-        )));
-    }
-
     let visibility =
         TargetVisibility::for_user(db, owner_db_id).map_err(TagServiceError::Internal)?;
     let mut out: HashMap<DbId, Vec<Tag>> = target_db_ids

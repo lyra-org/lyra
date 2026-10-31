@@ -102,7 +102,7 @@ impl TagsModule {
     }
 
     #[harmony(
-        description = "Batch check. Cap 1024.",
+        description = "Batch check.",
         returns(HashMap<u64, bool>)
     )]
     async fn has_many(
