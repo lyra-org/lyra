@@ -406,7 +406,7 @@ pub(crate) async fn revoke_session(
 
 /// Whether the principal may see and revoke `owner_db_id`'s sessions: its own, anyone's with
 /// [`Permission::ManageUsers`], and an admin's only with [`Permission::Admin`] as well, like the
-/// user routes that delete an admin or reset their password.
+/// user routes that delete an admin or set their password.
 fn manages_sessions_of(
     db: &impl lyra_db::DbAccess,
     principal: &Principal,

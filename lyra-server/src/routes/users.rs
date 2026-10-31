@@ -448,7 +448,7 @@ async fn update_password(
     if lyra_db::roles::has_admin_role(&db, user_db_id)?
         && !lyra_db::roles::has_permission(&principal.permissions, Permission::Admin)
     {
-        return Err(AppError::forbidden("cannot reset an admin user's password"));
+        return Err(AppError::forbidden("cannot set an admin user's password"));
     }
 
     let revoked_api_key_ids = db.transaction_mut(|t| -> anyhow::Result<Vec<agdb::DbId>> {
@@ -1399,7 +1399,7 @@ mod tests {
             api_keys::resolve_api_key(&target_api_key.key)
                 .await?
                 .is_some(),
-            "api key should resolve before admin reset"
+            "api key should resolve before an admin sets the password"
         );
 
         let admin_headers = create_headers_with_permissions(
@@ -1413,23 +1413,23 @@ mod tests {
             admin_headers,
             Path(target_user_id),
             Json(UpdatePasswordRequest {
-                password: "reset-password-xyz".to_string(),
+                password: "admin-set-password-xyz".to_string(),
             }),
         )
         .await
-        .expect("admin password reset should succeed");
+        .expect("admin should set the password");
 
         assert!(
             api_keys::resolve_api_key(&target_api_key.key)
                 .await?
                 .is_none(),
-            "target's api key must not resolve after admin password reset"
+            "target's api key must not resolve after an admin sets the password"
         );
 
         let listed = api_keys::list_api_keys_for_user(&target_user_principal).await?;
         assert!(
             listed.is_empty(),
-            "target user should have no api keys after admin reset; got {listed:?}"
+            "target user should have no api keys after an admin sets the password; got {listed:?}"
         );
 
         let _ = std::fs::remove_dir_all(test_dir);
