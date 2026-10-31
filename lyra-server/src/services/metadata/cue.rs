@@ -102,36 +102,24 @@ fn normalize_path_for_lookup(path: &Path) -> String {
     normalize_lookup_key(&path)
 }
 
-fn parse_cue_value(raw: &str) -> Option<String> {
+/// The quoted text of a cue field, or its bare rest of line when `bare` keeps it; blank values
+/// are absent.
+fn cue_text(raw: &str, bare: impl FnOnce(&str) -> Option<&str>) -> Option<String> {
     let value = raw.trim();
-    if value.is_empty() {
-        return None;
-    }
-
-    if let Some(rest) = value.strip_prefix('"') {
-        if let Some(end) = rest.find('"') {
-            return Some(normalize_unicode_nfc(&rest[..end]));
-        }
-        return Some(normalize_unicode_nfc(rest));
-    }
-
-    Some(normalize_unicode_nfc(value))
+    let value = match value.strip_prefix('"') {
+        Some(rest) => rest.find('"').map_or(rest, |end| &rest[..end]),
+        None => bare(value)?,
+    };
+    (!value.trim().is_empty()).then(|| normalize_unicode_nfc(value))
 }
 
+fn parse_cue_value(raw: &str) -> Option<String> {
+    cue_text(raw, |value| Some(value))
+}
+
+/// A `FILE` line's file name; a bare one ends at its file type.
 fn parse_cue_file_ref(raw: &str) -> Option<String> {
-    let value = raw.trim();
-    if value.is_empty() {
-        return None;
-    }
-
-    if let Some(rest) = value.strip_prefix('"') {
-        if let Some(end) = rest.find('"') {
-            return Some(normalize_unicode_nfc(&rest[..end]));
-        }
-        return Some(normalize_unicode_nfc(rest));
-    }
-
-    value.split_whitespace().next().map(normalize_unicode_nfc)
+    cue_text(raw, |value| value.split_whitespace().next())
 }
 
 fn parse_cue_comment(line: &str) -> Option<(&str, &str)> {
@@ -292,9 +280,7 @@ pub(super) fn parse_cue_sheet(text: &str) -> ParsedCueSheet {
             if let Some(track) = current_track.as_mut()
                 && track.index01_frames.is_none()
             {
-                if let Some(file_ref) = next_file_ref.as_ref() {
-                    track.file_ref = file_ref.clone();
-                }
+                track.file_ref = next_file_ref.clone().unwrap_or_default();
                 current_file_ref = next_file_ref;
                 continue;
             }
@@ -358,7 +344,7 @@ pub(super) fn parse_cue_sheet(text: &str) -> ParsedCueSheet {
             } else {
                 continue;
             };
-            *slot = parse_cue_value(value).filter(|value| !value.trim().is_empty());
+            *slot = parse_cue_value(value);
             continue;
         }
 
@@ -463,6 +449,7 @@ pub(super) async fn parse_cue_metadata_for_entry(
             .full_path
             .file_stem()
             .and_then(|value| value.to_str())
+            .filter(|value| !value.trim().is_empty())
             .map(normalize_unicode_nfc)
     });
     let album_artists = parsed_sheet
@@ -642,16 +629,10 @@ fn probe_audio_file(path: &Path) -> Option<(u64, SourceFormat)> {
     ))
 }
 
-pub(super) fn resolve_audio_entry_for_cue_track(
-    cue_path: &Path,
-    file_ref: &str,
-    audio_by_path: &HashMap<String, AudioEntryRef>,
-    audio_by_name: &HashMap<String, AudioEntryRef>,
-    audio_by_stem: &HashMap<String, Vec<AudioEntryRef>>,
-) -> Option<AudioEntryRef> {
-    let normalized_ref = file_ref.replace('\\', "/");
-    let candidate = PathBuf::from(&normalized_ref);
-    let resolved = if candidate.is_absolute() {
+/// The path a cue sheet's file reference names, relative to the sheet, with `..` resolved.
+fn cue_file_path(cue_path: &Path, file_ref: &str) -> PathBuf {
+    let candidate = PathBuf::from(file_ref.replace('\\', "/"));
+    let joined = if candidate.is_absolute() {
         candidate
     } else {
         cue_path
@@ -659,6 +640,31 @@ pub(super) fn resolve_audio_entry_for_cue_track(
             .unwrap_or_else(|| Path::new(""))
             .join(candidate)
     };
+    let mut resolved = PathBuf::new();
+    for component in joined.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                resolved.pop();
+            }
+            std::path::Component::CurDir => {}
+            component => resolved.push(component),
+        }
+    }
+    resolved
+}
+
+pub(super) fn resolve_audio_entry_for_cue_track(
+    cue_path: &Path,
+    file_ref: &str,
+    audio_by_path: &HashMap<String, AudioEntryRef>,
+    audio_by_name: &HashMap<String, AudioEntryRef>,
+    audio_by_stem: &HashMap<String, Vec<AudioEntryRef>>,
+) -> Option<AudioEntryRef> {
+    if file_ref.trim().is_empty() {
+        return None;
+    }
+    let normalized_ref = file_ref.replace('\\', "/");
+    let resolved = cue_file_path(cue_path, file_ref);
 
     let lookup_key = normalize_path_for_lookup(&resolved);
     if let Some(audio_entry) = audio_by_path.get(&lookup_key) {
@@ -1013,6 +1019,25 @@ FILE "02 second.wav" WAVE
     }
 
     #[test]
+    fn parse_cue_sheet_does_not_carry_a_file_over_a_blank_file_line() {
+        let parsed = parse_cue_sheet(
+            "FILE \"a.wav\" WAVE\n  TRACK 01 AUDIO\n    INDEX 01 00:00:00\n  TRACK 02 AUDIO\n    INDEX 00 00:01:00\nFILE \"\" WAVE\n    INDEX 01 00:00:00\n",
+        );
+        assert_eq!(parsed.tracks[1].file_ref, "");
+    }
+
+    #[test]
+    fn cue_file_paths_resolve_parent_directories() {
+        assert_eq!(
+            cue_file_path(
+                Path::new("/music/Artist/Album/album.cue"),
+                "..\\..\\Audio\\album.flac"
+            ),
+            PathBuf::from("/music/Audio/album.flac")
+        );
+    }
+
+    #[test]
     fn resolve_audio_entry_matches_fullwidth_solidus_file_refs() {
         let audio = AudioEntryRef {
             entry_id: DbId(9),
@@ -1199,6 +1224,80 @@ FILE "02 second.wav" WAVE
             (metadata[1].date.as_deref(), metadata[1].year),
             (None, Some(1994))
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cue_tracks_fall_back_past_blank_titles_and_performers() -> anyhow::Result<()> {
+        let metadata = cue_tracks_from(
+            "PERFORMER \"\"\nTITLE \"  \"\nFILE \"album.wav\" WAVE\n  TRACK 01 AUDIO\n    TITLE \"\"\n    PERFORMER \"\"\n    INDEX 01 00:00:00\n",
+        )
+        .await?;
+
+        assert_eq!(metadata[0].album.as_deref(), Some("album"));
+        assert_eq!(metadata[0].album_artists, None);
+        assert_eq!(metadata[0].title.as_deref(), Some("Track 01"));
+        assert_eq!(metadata[0].artists, None);
+
+        let metadata = cue_tracks_from(
+            "PERFORMER \"Disc Artist\"\nFILE \"album.wav\" WAVE\n  TRACK 01 AUDIO\n    PERFORMER \" \"\n    INDEX 01 00:00:00\n",
+        )
+        .await?;
+
+        assert_eq!(metadata[0].artists, Some(vec!["Disc Artist".to_string()]));
+        Ok(())
+    }
+
+    async fn cue_tracks_in(
+        dir: &Path,
+        audio: &str,
+        cue: &str,
+        sheet: &str,
+    ) -> anyhow::Result<Vec<super::TrackMetadata>> {
+        std::fs::create_dir_all(dir)?;
+        let audio_path = dir.join(audio);
+        std::fs::write(&audio_path, untagged_wav(2))?;
+        let cue_path = dir.join(cue);
+        std::fs::write(&cue_path, sheet)?;
+
+        let lookup = build_audio_lookup(&[file_entry(1, &audio_path)]);
+        let (metadata, _) = parse_cue_metadata_for_entry(
+            &file_entry(2, &cue_path),
+            &lookup.by_path,
+            &lookup.by_name,
+            &lookup.by_stem,
+        )
+        .await?;
+        Ok(metadata)
+    }
+
+    #[tokio::test]
+    async fn cue_tracks_without_a_file_name_match_no_audio() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let metadata = cue_tracks_in(
+            &dir.path().join("Album"),
+            "Album.wav",
+            "album.cue",
+            "FILE \"\" WAVE\n  TRACK 01 AUDIO\n    INDEX 01 00:00:00\n",
+        )
+        .await?;
+
+        assert!(metadata.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cue_tracks_skip_a_blank_cue_file_stem_as_the_title() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let metadata = cue_tracks_in(
+            dir.path(),
+            "album.wav",
+            " .cue",
+            "FILE \"album.wav\" WAVE\n  TRACK 01 AUDIO\n    INDEX 01 00:00:00\n",
+        )
+        .await?;
+
+        assert_eq!(metadata[0].album, None);
         Ok(())
     }
 
