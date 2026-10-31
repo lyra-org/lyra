@@ -280,16 +280,25 @@ pub(crate) fn recompute_credited(
 }
 
 /// The artists the owners in `owner_ids` credit, each once.
-pub(crate) fn credited_artist_ids(
+pub fn credited_artist_ids(
     db: &impl super::DbAccess,
     owner_ids: &[DbId],
 ) -> anyhow::Result<Vec<DbId>> {
     let mut artist_ids = Vec::new();
     for &owner_id in owner_ids {
         artist_ids.extend(
-            links_for_owner(db, owner_id)?
-                .into_iter()
-                .map(|link| link.artist_id),
+            db.exec(
+                QueryBuilder::search()
+                    .from(owner_id)
+                    .where_()
+                    .distance(CountComparison::Equal(1))
+                    .and()
+                    .element::<Credit>()
+                    .query(),
+            )?
+            .elements
+            .into_iter()
+            .map(|edge| edge.to),
         );
     }
     Ok(super::dedup_positive_ids(&artist_ids))
