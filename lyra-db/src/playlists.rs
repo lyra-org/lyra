@@ -98,13 +98,14 @@ pub fn get(db: &DbAny) -> anyhow::Result<Vec<Playlist>> {
 }
 
 pub fn get_by_user(db: &DbAny, user_db_id: DbId) -> anyhow::Result<Vec<Playlist>> {
-    // Find edges pointing TO user_db_id that have the "owner" key
     let result = db.exec(
         QueryBuilder::select()
             .search()
             .to(user_db_id)
             .where_()
             .edge()
+            .and()
+            .distance(CountComparison::Equal(1))
             .and()
             .key("owner")
             .value(agdb::DbValue::I64(1))
@@ -114,14 +115,7 @@ pub fn get_by_user(db: &DbAny, user_db_id: DbId) -> anyhow::Result<Vec<Playlist>
 
     let mut playlists = Vec::new();
     for element in &result.elements {
-        let from_id = element.from;
-        if from_id.0 == 0 {
-            continue;
-        }
-        if from_id.0 <= 0 {
-            continue;
-        }
-        if let Some(playlist) = get_by_id(db, from_id)? {
+        if let Some(playlist) = get_by_id(db, element.from)? {
             playlists.push(playlist);
         }
     }
@@ -548,6 +542,42 @@ mod tests {
         assert_eq!(fetched.name, "My Playlist");
         assert_eq!(fetched.description.as_deref(), Some("A test playlist"));
 
+        Ok(())
+    }
+
+    #[test]
+    fn get_by_user_reads_only_the_users_own_playlists() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let alice = create_test_user(&mut db)?;
+        let bob = create_test_user(&mut db)?;
+        let playlist = |name: &str| Playlist {
+            db_id: None,
+            id: nanoid!(),
+            name: name.to_string(),
+            description: None,
+            is_public: Some(true),
+            created_at: None,
+            updated_at: None,
+        };
+        let alices = create(&mut db, &playlist("Alice's"), alice)?;
+        create(&mut db, &playlist("Bob's"), bob)?;
+        super::super::favorites::add(
+            &mut db,
+            bob,
+            alices,
+            super::super::favorites::FavoriteKind::Playlist,
+            1,
+        )?;
+
+        let names: Vec<String> = get_by_user(&db, alice)?
+            .into_iter()
+            .map(|playlist| playlist.name)
+            .collect();
+        assert_eq!(
+            names,
+            ["Alice's"],
+            "Bob's favorite of Alice's playlist must not lead to Bob's playlists"
+        );
         Ok(())
     }
 
