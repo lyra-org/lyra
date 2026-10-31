@@ -89,7 +89,9 @@ struct GenreListQuery {
     inc: Option<Vec<String>>,
     #[cfg_attr(
         feature = "docgen",
-        schemars(description = "Optional fuzzy text query matched against genre names.")
+        schemars(
+            description = "Optional text query matched against genre names and aliases; each of its words must start a word, ignoring case, accents, apostrophes and punctuation; no character is an operator, and a word in a script written without spaces, such as Japanese, matches anywhere in a word. Exact names rank first, then names starting with the query, then names holding every word, then names holding some, then matches only through related items."
+        )
     )]
     query: Option<String>,
     #[cfg_attr(
@@ -326,7 +328,7 @@ async fn get_genre(
 #[cfg(feature = "docgen")]
 fn list_genres_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List genres").description(
-        "Returns genres as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `sort_by`, `sort_order`, `limit`, `cursor`. Results are limited to genres attached to releases visible to the authenticated user. `library_id` scopes results to releases belonging to that public library ID. `sort_by` supports `name`, `last_played_at`, `listen_count`, `release_count`, `track_count`, `total_duration`, and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against genre names. `inc=covers` includes personalized display cover metadata.",
+        "Returns genres as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `sort_by`, `sort_order`, `limit`, `cursor`. Results are limited to genres attached to releases visible to the authenticated user. `library_id` scopes results to releases belonging to that public library ID. `sort_by` supports `name`, `last_played_at`, `listen_count`, `release_count`, `track_count`, `total_duration`, and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` matches genre names and aliases; each of its words must start a word, ignoring case, accents, apostrophes and punctuation; no character is an operator, and a word in a script written without spaces, such as Japanese, matches anywhere in a word. Exact names rank first, then names starting with the query, then names holding every word, then names holding some, then matches only through related items. `inc=covers` includes personalized display cover metadata.",
     )
 }
 

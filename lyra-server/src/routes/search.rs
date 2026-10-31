@@ -65,8 +65,9 @@ struct SearchQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Fuzzy text query matched against the names and sort names of tracks, \
-        artists, and releases. Required, 1-256 characters after trimming."
+            description = "Text query matched against the names and sort names of tracks, \
+        artists, and releases, and the names of related items the caller can see; see the \
+        operation description for the rules. Required, 1-256 characters after trimming."
         )
     )]
     query: String,
@@ -180,15 +181,20 @@ fn page_limit(limit: Option<u64>) -> usize {
 
 #[cfg(feature = "docgen")]
 fn search_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Cross-entity fuzzy search").description(
+    op.summary("Cross-entity search").description(
         "Returns the first page of `GET /api/tracks`, `GET /api/artists` and `GET /api/releases` \
          for `query`, ranked by relevance, as `tracks`, `artists` and `releases`. Each branch has \
          the list endpoint's item shape; `track_inc`, `artist_inc` and `release_inc` take that \
          endpoint's `inc` values. `limit` is the page size of each branch, defaulting to 20 and \
-         capped at 50. `query` is 1-256 characters after trimming, matched case-insensitively \
-         against display names and sort names. Per-token modifiers: `'foo` exact, `^foo` \
-         prefix, `foo$` suffix, `!foo` negation, `\\` escapes a leading modifier; plain tokens \
-         are fuzzy. `min_rating` and `max_rating` apply an inclusive range over the \
+         capped at 50. `query` is 1-256 characters after trimming. Each of its words must start \
+         a word of a display name or sort name, ignoring case, accents, apostrophes and \
+         punctuation: `ac dc` and `acdc` find `AC/DC`. Tracks also match through their artists \
+         and the titles and artists of their visible releases, releases through their artists, \
+         and artists through the names of duplicates merged into them. Words in scripts written \
+         without spaces, such as Japanese, match anywhere in a word. No character is an \
+         operator. Exact names rank first, then names starting with the query, then names \
+         holding every word, then names holding some, then matches only through related items. \
+         `min_rating` and `max_rating` apply an inclusive range over the \
          authenticated user's personal ratings; either bound excludes unrated entities, and an \
          equal pair matches an exact rating. `rated=true` keeps only rated entities and \
          `rated=false` only unrated ones; `rated=false` cannot be combined with a bound. \

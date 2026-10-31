@@ -357,7 +357,13 @@ pub(crate) fn query_fields(sort_key: &'static str) -> Vec<FieldDescriptor> {
         field("sort_name_prefix", Option::<String>::luau_type()),
         field("sort_name_at_least", Option::<String>::luau_type()),
         field("sort_name_below", Option::<String>::luau_type()),
-        field("search", Option::<String>::luau_type()),
+        FieldDescriptor {
+            name: "search",
+            ty: Option::<String>::luau_type(),
+            description: Some(
+                "Each word must start a word of the item's name or sort name, ignoring case, accents, apostrophes and punctuation, so `ac dc` finds `AC/DC`; no character is an operator. A word in a script written without spaces, such as Japanese, matches anywhere in a word. Tracks also match through their visible releases and those releases' and their own artists, releases through their artists, and artists and genres through their aliases. Without `sort`, results rank exact names first, then names starting with the search, then names holding every word, then names holding some, then matches only through related items.",
+            ),
+        },
         field(
             "sort",
             LuauType::optional(LuauType::array(LuauType::object(vec![

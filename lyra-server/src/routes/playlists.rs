@@ -206,7 +206,9 @@ struct PlaylistListQuery {
     inc: Option<Vec<String>>,
     #[cfg_attr(
         feature = "docgen",
-        schemars(description = "Optional fuzzy text query matched against playlist names.")
+        schemars(
+            description = "Optional text query matched against playlist names; each of its words must start a word, ignoring case, accents, apostrophes and punctuation; no character is an operator, and a word in a script written without spaces, such as Japanese, matches anywhere in a word."
+        )
     )]
     query: Option<String>,
     #[cfg_attr(
