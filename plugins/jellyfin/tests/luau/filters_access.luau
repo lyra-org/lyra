@@ -6,6 +6,7 @@ local options = require("../../protocol/items/options")
 
 local open_library = item_ids.nanoid_to_hex(fixture.libraries.open) :: string
 local closed_library = item_ids.nanoid_to_hex(fixture.libraries.closed) :: string
+local unknown_item = item_ids.nanoid_to_hex("NoSuchItemAnywhere000") :: string
 
 local function collect(params: { [string]: string }): filters.FilterValues?
 	local raw: { [string]: { string } } = {}
@@ -43,6 +44,7 @@ end
 check(legacy({}), "Rock|Vinyl|2001", "every item type")
 check(legacy({ ParentId = open_library }), "Rock|Vinyl|2001", "under the library the caller sees")
 check(legacy({ ParentId = closed_library }), "||", "under the library the caller can't see")
+check(legacy({ ParentId = unknown_item }), "||", "under an id naming nothing, as under a hidden one")
 check(legacy({ IncludeItemTypes = "MusicArtist" }), "||", "the hidden library's artist lends no tag")
 
 for _, item_type in { "MusicAlbum", "Audio", "MusicArtist" } do

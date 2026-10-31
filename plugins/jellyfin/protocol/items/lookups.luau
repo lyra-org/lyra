@@ -6,12 +6,11 @@
 
 -- Catalog lookups by scope and by relation, as the caller sees them.
 
-local artists = require("@lyra/artists")
 local entities = require("@lyra/entities")
-local genres = require("@lyra/genres")
 local releases = require("@lyra/releases")
 local tracks = require("@lyra/tracks")
 
+local constants = require("../../constants")
 local item_ids = require("./identifiers")
 local playlist_access = require("../playlist_access")
 
@@ -35,28 +34,21 @@ end
 -- shows it, to its owner or as a public one, whatever the caller's role.
 function module.visible_kind(item_id: string, user_id: string?): string?
 	local kind = module.scope_entity_type(item_id)
-	local visible: boolean
-	if kind == "Release" then
-		visible = releases.get({ item_id })[item_id] ~= nil
-	elseif kind == "Track" then
-		visible = tracks.get({ item_id })[item_id] ~= nil
-	elseif kind == "Artist" then
-		visible = artists.get({ item_id })[item_id] ~= nil
-	elseif kind == "Genre" then
-		visible = genres.get({ item_id })[item_id] ~= nil
-	elseif kind == "Playlist" then
-		visible = playlist_access.can_view(playlist_access.find(item_id), user_id)
-	else
-		visible = kind ~= nil
+	if kind == "Playlist" and not playlist_access.can_view(playlist_access.find(item_id), user_id) then
+		return nil
 	end
-	return if visible then kind else nil
+	return kind
 end
 
--- The scope a Jellyfin item id names; empty for no id or an unknown one.
+-- The scope a Jellyfin item id names: empty for no id or a synthetic folder of the plugin's own
+-- (the root and the playlists view, which name no entity), and without an entity type for an id
+-- naming nothing the caller can see, which queries scoped to it treat as matching nothing.
 function module.scope(item_id: string?): Scope
+	if constants.is_root_item_id(item_id) or constants.is_playlists_folder_id(item_id) then
+		return {}
+	end
 	local id = if item_id then item_ids.decode_jellyfin_item_id(item_id) else nil
-	local entity_type = module.scope_entity_type(id)
-	return { id = if entity_type then id else nil, entity_type = entity_type }
+	return { id = id, entity_type = module.scope_entity_type(id) }
 end
 
 function module.tracks_of_release(release_id: string?): { Track }

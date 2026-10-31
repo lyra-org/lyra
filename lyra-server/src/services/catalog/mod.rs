@@ -154,6 +154,9 @@ impl Viewer {
             None => Ok(false),
             Some("Artist") => self.sees_artist(db, node_db_id),
             Some("Playlist") => self.sees_playlist(db, node_db_id),
+            Some("Genre") => Ok(self.sees_everything()
+                || lookups::visible::<genres::Genres>(db, self, &[node_db_id])?
+                    .contains(&node_db_id)),
             Some(_) => self.sees_entity(db, node_db_id),
         }
     }

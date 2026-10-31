@@ -1,0 +1,86 @@
+run_as = "listener"
+
+# The listener is granted the library "Open", whose "Solo" (Rock) holds S1 from 2001, and not
+# "Closed", whose "Hidden" (Blues) holds H1 from 2009. The listener tagged Solo "Vinyl", and S1,
+# Hidden, H1 and Hidden's artist Ben "Lost" before losing access to Closed.
+
+[[users]]
+key = "listener"
+
+[[libraries]]
+key = "open"
+name = "Open"
+users = ["listener"]
+
+[[libraries]]
+key = "closed"
+name = "Closed"
+
+[[artists]]
+key = "amy"
+name = "Amy"
+
+[[artists]]
+key = "ben"
+name = "Ben"
+
+[[genres]]
+key = "rock"
+name = "Rock"
+
+[[genres]]
+key = "blues"
+name = "Blues"
+
+[[releases]]
+key = "solo"
+title = "Solo"
+library = "open"
+artists = ["amy"]
+genres = ["rock"]
+
+[[releases]]
+key = "hidden"
+title = "Hidden"
+library = "closed"
+artists = ["ben"]
+genres = ["blues"]
+
+[[tracks]]
+key = "s1"
+title = "S1"
+release = "solo"
+year = 2001
+artists = ["amy"]
+
+[[tracks]]
+key = "h1"
+title = "H1"
+release = "hidden"
+year = 2009
+artists = ["ben"]
+
+[[tags]]
+user = "listener"
+target = "solo"
+name = "Vinyl"
+
+[[tags]]
+user = "listener"
+target = "s1"
+name = "Vinyl"
+
+[[tags]]
+user = "listener"
+target = "hidden"
+name = "Lost"
+
+[[tags]]
+user = "listener"
+target = "h1"
+name = "Lost"
+
+[[tags]]
+user = "listener"
+target = "ben"
+name = "Lost"

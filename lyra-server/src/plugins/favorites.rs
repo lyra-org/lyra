@@ -42,6 +42,9 @@ impl FavoritesModule {
         Ok(outcome == favorite_service::MutationOutcome::Applied)
     }
 
+    #[harmony(
+        description = "Unfavorites the target. Returns false when it is not a track, release, artist or playlist the caller can see; a favorite of one the caller can no longer see is still removed, and still answers false."
+    )]
     async fn remove(
         target_id: String,
         #[context] db: Db,
@@ -52,8 +55,9 @@ impl FavoritesModule {
         let Some(target) = ids::db_id(&*db, &target_id)? else {
             return Ok(false);
         };
+        let visible = ids::visible_db_id(&db, &ids::viewer_of(&*db, &principal)?, &target_id)?;
         let outcome = favorite_service::remove(&mut db, user_db_id, target)?;
-        Ok(outcome == favorite_service::MutationOutcome::Applied)
+        Ok(visible.is_some() && outcome == favorite_service::MutationOutcome::Applied)
     }
 
     #[harmony(

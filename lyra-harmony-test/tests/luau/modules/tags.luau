@@ -15,10 +15,9 @@ assert(tags.add(ids.song, "  Mood ", "blue") == "Mood", "add returns the canonic
 assert(tags.add(ids.album, "Mood", "red") == "Mood", "a release is taggable")
 local tag_node = tags.get_for_target(ids.song)[1].id
 
-rejects(tags.add, "target is not a supported kind", ids.hidden, "Mood", "blue")
-rejects(tags.add, "target is not a supported kind", ids.theirs, "Mood", "blue")
-rejects(tags.add, "unknown target_id", missing, "Mood", "blue")
-rejects(tags.add, "target is not a supported kind", tag_node, "Mood", "blue")
+for _, id in { ids.hidden, ids.theirs, missing, tag_node } do
+	assert(tags.add(id, "Mood", "blue") == nil, `{id} can't be tagged`)
+end
 
 assert(tags.has(ids.song, "Mood"), "an attached tag is present")
 assert(not tags.has(ids.plain, "Mood"), "an untagged track is absent")
@@ -36,17 +35,19 @@ end
 
 local many = tags.has_many({ ids.song, ids.song, ids.plain, ids.hidden, missing, tag_node }, "Mood")
 assert(many[ids.song] == true, "song")
-for _, id in { ids.plain, ids.hidden, tag_node } do
-	assert(many[id] == false, `{id} maps to false`)
+assert(many[ids.plain] == false, "an untagged track maps to false")
+for _, id in { ids.hidden, missing, tag_node } do
+	assert(many[id] == nil, `{id} is absent`)
 end
-assert(many[missing] == nil, "a missing target is absent")
 
 assert(#tags.get_for_target(ids.hidden) == 0, "a hidden target lists no tags")
 assert(#tags.get_for_target(missing) == 0, "a missing target lists no tags")
-local by_target = tags.get_for_targets_many({ ids.song, ids.hidden, missing })
+local by_target = tags.get_for_targets_many({ ids.song, ids.plain, ids.hidden, ids.theirs, missing, tag_node })
 assert(#by_target[ids.song] == 1 and by_target[ids.song][1].tag == "Mood", "song tags")
-assert(#by_target[ids.hidden] == 0, "a hidden target has none")
-assert(by_target[missing] == nil, "a missing target is absent")
+assert(by_target[ids.plain] and #by_target[ids.plain] == 0, "an untagged track has none")
+for _, id in { ids.hidden, ids.theirs, missing, tag_node } do
+	assert(by_target[id] == nil, `{id} is absent`)
+end
 
 local tagged = tags.get_tagged("Mood")
 assert(#tagged == 2, `get_tagged hides the hidden target, got {#tagged}`)

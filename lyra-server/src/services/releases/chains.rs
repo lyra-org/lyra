@@ -17,6 +17,11 @@ use lyra_db::chains::{
 };
 use serde::Serialize;
 
+use crate::services::auth::{
+    Principal,
+    access,
+};
+
 /// A release's chain: the public ids of its tracks in play order.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct PublicChain {
@@ -64,9 +69,11 @@ pub(crate) enum ReplaceChainsError {
 }
 
 /// Replaces every chain on the release with `chains`, each its tracks' public ids in play order,
-/// and returns the stored chains.
+/// and returns the stored chains. A track `principal` cannot see is treated as one that does not
+/// exist, so the error names neither apart.
 pub(crate) fn replace(
     db: &mut DbAny,
+    principal: &Principal,
     release_db_id: DbId,
     chains: &[Vec<String>],
 ) -> Result<Vec<PublicChain>, ReplaceChainsError> {
@@ -75,8 +82,12 @@ pub(crate) fn replace(
     for chain in chains {
         let mut track_db_ids = Vec::with_capacity(chain.len());
         for track_id in chain {
-            let track_db_id = lyra_db::lookup::find_node_id_by_id(&*db, track_id)?
-                .ok_or_else(|| ReplaceChainsError::TrackNotOnRelease(track_id.clone()))?;
+            let not_on_release = || ReplaceChainsError::TrackNotOnRelease(track_id.clone());
+            let track_db_id =
+                lyra_db::lookup::find_node_id_by_id(&*db, track_id)?.ok_or_else(not_on_release)?;
+            if !access::entity_accessible(&*db, principal, track_db_id)? {
+                return Err(not_on_release());
+            }
             track_ids.insert(track_db_id, track_id.as_str());
             track_db_ids.push(track_db_id);
         }

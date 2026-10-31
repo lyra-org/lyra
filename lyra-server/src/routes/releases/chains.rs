@@ -119,15 +119,17 @@ pub(super) async fn replace_release_chains(
     let release_db_id = visible_release(&db, &principal, &id)?;
 
     let chains =
-        chains::replace(&mut db, release_db_id, &request.chains).map_err(|error| match error {
-            ReplaceChainsError::ReleaseNotFound => {
-                AppError::not_found(format!("Release not found: {id}"))
+        chains::replace(&mut db, &principal, release_db_id, &request.chains).map_err(|error| {
+            match error {
+                ReplaceChainsError::ReleaseNotFound => {
+                    AppError::not_found(format!("Release not found: {id}"))
+                }
+                ReplaceChainsError::TrackNotOnRelease(track_id) => {
+                    AppError::bad_request(format!("track {track_id} is not on release {id}"))
+                }
+                ReplaceChainsError::Internal(error) => error.into(),
+                error => AppError::bad_request(error.to_string()),
             }
-            ReplaceChainsError::TrackNotOnRelease(track_id) => {
-                AppError::bad_request(format!("track {track_id} is not on release {id}"))
-            }
-            ReplaceChainsError::Internal(error) => error.into(),
-            error => AppError::bad_request(error.to_string()),
         })?;
     Ok(Json(chains_response(chains)))
 }
@@ -197,6 +199,7 @@ mod tests {
         release: String,
         tracks: Vec<String>,
         other_track: String,
+        hidden_track: String,
     }
 
     async fn send(
@@ -219,7 +222,11 @@ mod tests {
         let response = routes.clone().oneshot(request).await?;
         let status = response.status();
         let body = to_bytes(response.into_body(), usize::MAX).await?;
-        Ok((status, serde_json::from_slice(&body).unwrap_or_default()))
+        Ok((
+            status,
+            serde_json::from_slice(&body)
+                .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&body).into_owned())),
+        ))
     }
 
     async fn authorization(user_db_id: agdb::DbId) -> anyhow::Result<String> {
@@ -231,7 +238,7 @@ mod tests {
     /// Urn, whose "Libera" parts make a chain, beside another release in the same library.
     async fn fixture() -> anyhow::Result<Fixture> {
         init_library_test_state(std::path::PathBuf::from(".")).await?;
-        let (users, release, tracks, other_track) = {
+        let (users, release, tracks, other_track, hidden_track) = {
             let mut db = STATE.db.write().await;
             lyra_db::roles::ensure_builtin_roles(&mut db)?;
             let role = format!("chain-manager-{}", nanoid!());
@@ -290,7 +297,19 @@ mod tests {
             for release in [urn, portal] {
                 lyra_db::graph::ensure_owned_edge(&mut *db, library, release)?;
             }
-            (users, public_id(&db, urn)?, tracks, public_id(&db, other)?)
+            let private =
+                insert_library(&mut db, "Private Chains", "/tmp/lyra-route-chains-private")?;
+            let sealed = insert_release(&mut db, "Sealed")?;
+            let hidden = insert_track(&mut db, "Sealed Track")?;
+            lyra_db::releases::link_track(&mut *db, sealed, hidden)?;
+            lyra_db::graph::ensure_owned_edge(&mut *db, private, sealed)?;
+            (
+                users,
+                public_id(&db, urn)?,
+                tracks,
+                public_id(&db, other)?,
+                public_id(&db, hidden)?,
+            )
         };
         Ok(Fixture {
             routes: Router::new()
@@ -302,6 +321,7 @@ mod tests {
             release,
             tracks,
             other_track,
+            hidden_track,
         })
     }
 
@@ -431,6 +451,27 @@ mod tests {
         }
         let (_, stored) = send(&f.routes, &f.viewer, "GET", chains_uri.clone(), None).await?;
         assert_eq!(stored, json!({ "chains": [] }));
+
+        // A track the caller can't see answers as one that doesn't exist, before the set's shape
+        // is checked, so the error can't tell them apart.
+        for missing in [f.hidden_track.as_str(), "no-such-track"] {
+            let (status, error) = send(
+                &f.routes,
+                &f.manager,
+                "PUT",
+                chains_uri.clone(),
+                body(json!([[missing]])),
+            )
+            .await?;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{missing}: {error}");
+            assert_eq!(
+                error,
+                json!(format!(
+                    "Error: track {missing} is not on release {}",
+                    f.release
+                )),
+            );
+        }
 
         let (status, _) = send(&f.routes, &f.outsider, "GET", chains_uri.clone(), None).await?;
         assert_eq!(status, StatusCode::NOT_FOUND);

@@ -256,6 +256,90 @@ fn plugin_executor_exposes_db_backed_lyra_listens_module() -> Result<()> {
 }
 
 #[test]
+fn removals_answer_hidden_targets_as_missing_and_still_clear_them() -> Result<()> {
+    let mut db = lyra_db::test_db::new_test_db()?;
+    let user = lyra_db::fixtures::test_user("hidden-removal-user")?;
+    let user_public_id = user.id.clone();
+    let user_db_id = lyra_db::users::create(&mut db, &user)?;
+    let library_db_id = lyra_db::test_db::insert_library(&mut db, "Seen", "/tmp/hidden-removal")?;
+    let library_public_id = public_id(&db, library_db_id)?;
+    let hidden_db_id = lyra_db::fixtures::insert_track(&mut db, "Hidden Favorite")?;
+    let untouched_db_id = lyra_db::fixtures::insert_track(&mut db, "Hidden Untouched")?;
+    lyra_db::favorites::add(
+        &mut db,
+        user_db_id,
+        hidden_db_id,
+        lyra_db::favorites::FavoriteKind::Track,
+        1,
+    )?;
+    let value = lyra_db::ratings::RatingValue::new(3).context("rating value")?;
+    lyra_db::ratings::upsert(&mut db, user_db_id, hidden_db_id, value, 1)?;
+    let hidden = public_id(&db, hidden_db_id)?;
+    let untouched = public_id(&db, untouched_db_id)?;
+    let db = lyra_db::DbAsync::new(db);
+
+    let runtime = PluginExecutor::with_database(
+        Arc::from(vec![manifest("demo", &["lyra.favorites", "lyra.ratings"])]),
+        default_server_info(),
+        db.clone(),
+    )?;
+    let mut context = CallContext {
+        origin: plugin_origin("demo", "init.luau"),
+        ..CallContext::default()
+    };
+    seed_caller_principal(
+        &mut context,
+        crate::services::auth::Principal::from_parts(
+            user_db_id,
+            user_public_id,
+            "hidden-removal-user".to_string(),
+            Vec::new(),
+            None,
+            std::collections::HashSet::from([library_public_id]),
+        ),
+    );
+    runtime.run_plugin_source_with_call_context(
+        format!(
+            r#"
+                local favorites = require("@lyra/favorites")
+                local ratings = require("@lyra/ratings")
+                executor_removals = {{
+                    favorites.remove("{hidden}"),
+                    ratings.remove("{hidden}"),
+                    favorites.remove("{untouched}"),
+                    ratings.remove("{untouched}"),
+                    favorites.remove("missing-target"),
+                    ratings.remove("missing-target"),
+                }}
+            "#,
+        )
+        .into_bytes(),
+        context,
+    )?;
+
+    let values = runtime.eval_plugin_source(
+        "demo",
+        "check.luau",
+        &b"return table.unpack(executor_removals)"[..],
+    )?;
+    assert_eq!(
+        values,
+        vec![luau::Value::Boolean(false); 6],
+        "a hidden target answers as a missing one, whether or not the caller marked it"
+    );
+    let db = futures::executor::block_on(db.read());
+    assert!(
+        !lyra_db::favorites::has(&*db, user_db_id, hidden_db_id)?,
+        "the caller's favorite of a hidden target is still removed"
+    );
+    assert!(
+        lyra_db::ratings::get(&*db, user_db_id, hidden_db_id)?.is_none(),
+        "the caller's rating of a hidden target is still cleared"
+    );
+    Ok(())
+}
+
+#[test]
 fn plugin_executor_exposes_db_backed_lyra_favorites_module() -> Result<()> {
     let mut db = lyra_db::test_db::new_test_db()?;
     let user = lyra_db::fixtures::test_user("favorite-user")?;

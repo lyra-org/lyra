@@ -31,10 +31,7 @@ use crate::plugins::{
     ids,
 };
 use crate::{
-    plugins::db::{
-        Db,
-        ViewerDb,
-    },
+    plugins::db::ViewerDb,
     services::{
         entities::{
             EntityInclude,
@@ -225,12 +222,16 @@ impl EntitiesModule {
         query_entity(ProjectionKind::Artist, request, vm, context).await
     }
 
-    async fn get_type(id: String, #[context] db: Db) -> luau::runtime::Result<Option<String>> {
-        let db = db.read().await;
-        match ids::db_id(&*db, &id)? {
-            Some(id) => {
-                lyra_db::entities::get_element_type(&db, id).map_err(crate::plugins::runtime_error)
-            }
+    #[harmony(
+        description = "The kind of node `id` names, such as `\"Track\"`, or nil when it names nothing the caller can see."
+    )]
+    async fn get_type(
+        id: String,
+        #[context] db: ViewerDb,
+    ) -> luau::runtime::Result<Option<String>> {
+        let (db, viewer) = db.read().await?;
+        match ids::visible_db_id(&db, &viewer, &id)? {
+            Some(id) => ids::kind(&db, id),
             None => Ok(None),
         }
     }

@@ -143,7 +143,7 @@ pub(crate) fn has_target(
         .map_err(TagServiceError::Internal)
 }
 
-/// Batch check. Non-whitelisted or non-visible targets map to `false`.
+/// Batch check, keyed by target. Non-whitelisted and non-visible targets are absent.
 pub(crate) fn has_targets(
     db: &DbAny,
     owner_db_id: DbId,
@@ -155,16 +155,11 @@ pub(crate) fn has_targets(
     let visibility =
         TargetVisibility::for_user(db, owner_db_id).map_err(TagServiceError::Internal)?;
     let visible = visible_targets(db, &visibility, target_db_ids)?;
-    let raw = lyra_db::tags::has_targets(db, owner_db_id, &visible, &normalized)
-        .map_err(TagServiceError::Internal)?;
-    let mut out: HashMap<DbId, bool> = target_db_ids
-        .iter()
-        .copied()
-        .map(|id| (id, false))
-        .collect();
-    for (id, v) in raw {
-        out.insert(id, v);
-    }
+    let mut out: HashMap<DbId, bool> = visible.iter().map(|id| (*id, false)).collect();
+    out.extend(
+        lyra_db::tags::has_targets(db, owner_db_id, &visible, &normalized)
+            .map_err(TagServiceError::Internal)?,
+    );
     Ok(out)
 }
 
@@ -181,6 +176,7 @@ pub(crate) fn get_for_target(
     lyra_db::tags::get_for_target(db, owner_db_id, target_db_id).map_err(TagServiceError::Internal)
 }
 
+/// Each target's tags, keyed by target. Non-whitelisted and non-visible targets are absent.
 pub(crate) fn get_for_targets_many(
     db: &DbAny,
     owner_db_id: DbId,
@@ -188,21 +184,15 @@ pub(crate) fn get_for_targets_many(
 ) -> Result<HashMap<DbId, Vec<Tag>>, TagServiceError> {
     let visibility =
         TargetVisibility::for_user(db, owner_db_id).map_err(TagServiceError::Internal)?;
-    let mut out: HashMap<DbId, Vec<Tag>> = target_db_ids
-        .iter()
-        .copied()
-        .map(|id| (id, Vec::new()))
-        .collect();
     let visible = visible_targets(db, &visibility, target_db_ids)?;
+    let mut out: HashMap<DbId, Vec<Tag>> = visible.iter().map(|id| (*id, Vec::new())).collect();
     if visible.is_empty() {
         return Ok(out);
     }
-
-    let raw = lyra_db::tags::get_for_targets_many(db, owner_db_id, &visible)
-        .map_err(TagServiceError::Internal)?;
-    for (id, tags) in raw {
-        out.insert(id, tags);
-    }
+    out.extend(
+        lyra_db::tags::get_for_targets_many(db, owner_db_id, &visible)
+            .map_err(TagServiceError::Internal)?,
+    );
     Ok(out)
 }
 
@@ -857,8 +847,8 @@ mod tests {
 
         let hidden = get_for_targets_many(&db, bob, &[playlist_db_id])?;
         assert!(
-            hidden[&playlist_db_id].is_empty(),
-            "non-visible playlist keeps an empty batch entry",
+            !hidden.contains_key(&playlist_db_id),
+            "a non-visible playlist is left out of the batch",
         );
         Ok(())
     }
@@ -902,10 +892,7 @@ mod tests {
             assert!(get_for_target(&db, user, target)?.is_empty());
         }
         let many = has_targets(&db, user, &[DbId(999_999_999), other_user], "X")?;
-        assert_eq!(
-            many,
-            HashMap::from([(DbId(999_999_999), false), (other_user, false)])
-        );
+        assert!(many.is_empty());
         Ok(())
     }
 

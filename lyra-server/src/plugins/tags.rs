@@ -52,24 +52,29 @@ fn tag_to_info(tag: lyra_db::Tag) -> TagInfo {
 
 #[harmony_macros::module(id = "lyra/tags", docs_feature = "docgen")]
 impl TagsModule {
-    #[harmony(description = "Returns the canonical tag name. color is ignored on reuse.")]
+    #[harmony(
+        description = "Tags the target and returns the canonical tag name; color is ignored on reuse. Returns nil when the target is not a track, release, artist or playlist the caller can see."
+    )]
     async fn add(
         target_id: String,
         tag: String,
         color: String,
         #[context] db: Db,
         #[context] principal: Principal,
-    ) -> luau::runtime::Result<String> {
+    ) -> luau::runtime::Result<Option<String>> {
         let mut db = db.write().await;
         let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
         let tag =
             tag_service::NewTag::parse(&tag, &color).map_err(crate::plugins::runtime_error)?;
-        let target = ids::db_id(&*db, &target_id)?.ok_or_else(|| {
-            crate::plugins::runtime_error(format!("unknown target_id: {target_id}"))
-        })?;
-        tag_service::create(&mut db, user_id, target, &tag)
-            .map_err(crate::plugins::runtime_error)?;
-        Ok(tag.into_name())
+        let viewer = ids::viewer_of(&*db, &principal)?;
+        let Some(target) = ids::visible_db_id(&db, &viewer, &target_id)? else {
+            return Ok(None);
+        };
+        match tag_service::create(&mut db, user_id, target, &tag) {
+            Ok(_) => Ok(Some(tag.into_name())),
+            Err(tag_service::TagServiceError::NotTargetable) => Ok(None),
+            Err(error) => Err(crate::plugins::runtime_error(error)),
+        }
     }
 
     #[harmony(description = "Removes a tag from a target.")]
@@ -97,14 +102,15 @@ impl TagsModule {
     ) -> luau::runtime::Result<bool> {
         let db = db.read().await;
         let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let Some(target) = ids::db_id(&*db, &target_id)? else {
+        let viewer = ids::viewer_of(&*db, &principal)?;
+        let Some(target) = ids::visible_db_id(&db, &viewer, &target_id)? else {
             return Ok(false);
         };
         tag_service::has_target(&db, user_id, target, &tag).map_err(crate::plugins::runtime_error)
     }
 
     #[harmony(
-        description = "Whether each of the targets has the tag, keyed by id. Unknown targets are absent.",
+        description = "Whether each of the targets has the tag, keyed by id. Targets that are missing, hidden from the caller, or not taggable are absent.",
         returns(HashMap<String, bool>)
     )]
     async fn has_many(
@@ -118,12 +124,7 @@ impl TagsModule {
         let targets = Resolved::of(&*db, target_ids.0)?;
         let result = tag_service::has_targets(&db, user_id, targets.db_ids(), &tag)
             .map_err(crate::plugins::runtime_error)?;
-        Ok(targets.keyed(
-            targets
-                .db_ids()
-                .iter()
-                .map(|id| (*id, result.get(id).copied().unwrap_or(false))),
-        ))
+        Ok(targets.keyed(result))
     }
 
     #[harmony(
@@ -137,7 +138,8 @@ impl TagsModule {
     ) -> luau::runtime::Result<luau::OwnedTable> {
         let db = db.read().await;
         let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let Some(target) = ids::db_id(&*db, &target_id)? else {
+        let viewer = ids::viewer_of(&*db, &principal)?;
+        let Some(target) = ids::visible_db_id(&db, &viewer, &target_id)? else {
             return Ok(luau::OwnedTable::new());
         };
         let tags = tag_service::get_for_target(&db, user_id, target)
@@ -146,7 +148,7 @@ impl TagsModule {
     }
 
     #[harmony(
-        description = "The tags of each of the targets, keyed by id. Unknown targets are absent.",
+        description = "The tags of each of the targets, keyed by id. Targets that are missing, hidden from the caller, or not taggable are absent.",
         returns(HashMap<String, Vec<TagInfo>>)
     )]
     async fn get_for_targets_many(
@@ -157,12 +159,11 @@ impl TagsModule {
         let db = db.read().await;
         let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
         let targets = Resolved::of(&*db, target_ids.0)?;
-        let mut result = tag_service::get_for_targets_many(&db, user_id, targets.db_ids())
+        let result = tag_service::get_for_targets_many(&db, user_id, targets.db_ids())
             .map_err(crate::plugins::runtime_error)?;
-        Ok(targets.keyed(targets.db_ids().iter().map(|id| {
-            let tags = result.remove(id).unwrap_or_default();
+        Ok(targets.keyed(result.into_iter().map(|(id, tags)| {
             (
-                *id,
+                id,
                 tag_info_array(tags.into_iter().map(tag_to_info).collect()),
             )
         })))

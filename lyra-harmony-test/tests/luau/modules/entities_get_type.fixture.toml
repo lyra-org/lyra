@@ -1,0 +1,38 @@
+run_as = "listener"
+
+[[users]]
+key = "listener"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener"]
+
+[[libraries]]
+key = "private"
+name = "Private"
+
+[[genres]]
+key = "rock"
+name = "Rock"
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+genres = ["rock"]
+
+[[releases]]
+key = "secret"
+title = "Secret"
+library = "private"
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+
+[[tracks]]
+key = "hidden"
+title = "Hidden"
+release = "secret"

@@ -244,7 +244,7 @@ impl ReleasesModule {
             ids::visible_to(&db, &principal, &release_id, "Release")?.ok_or_else(|| {
                 crate::plugins::runtime_error(format!("release not found: {release_id}"))
             })?;
-        let chains = chain_service::replace(&mut db, release_db_id, &chains.0)
+        let chains = chain_service::replace(&mut db, &principal, release_db_id, &chains.0)
             .map_err(crate::plugins::runtime_error)?;
         harmony_luau::serializable_to_luau_owned(chains)
     }

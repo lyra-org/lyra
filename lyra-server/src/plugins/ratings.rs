@@ -63,7 +63,7 @@ impl RatingsModule {
     }
 
     #[harmony(
-        description = "Clears the caller's rating of the target, even one the caller can no longer see. Returns false when the target is not a track, release or artist."
+        description = "Clears the caller's rating of the target. Returns false when it is not a track, release or artist the caller can see; a rating of one the caller can no longer see is still cleared, and still answers false."
     )]
     async fn remove(
         target_id: String,
@@ -75,8 +75,9 @@ impl RatingsModule {
         let Some(target) = ids::db_id(&*db, &target_id)? else {
             return Ok(false);
         };
+        let visible = ids::visible_db_id(&db, &ids::viewer_of(&*db, &principal)?, &target_id)?;
         let outcome = rating_service::remove(&mut db, user_db_id, target)?;
-        Ok(outcome == rating_service::MutationOutcome::Applied)
+        Ok(visible.is_some() && outcome == rating_service::MutationOutcome::Applied)
     }
 
     #[harmony(

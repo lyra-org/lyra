@@ -37,10 +37,12 @@ assert(next(favorites.get({})) == nil, "no ids, no favorites")
 local tracks = favorites.list_ids("track")
 assert(#tracks == 1 and tracks[1] == ids.song, "list_ids hides the hidden favorite")
 
-assert(favorites.remove(ids.hidden), "a hidden target's favorite can be removed")
+-- Removing a target the caller can't see answers as a missing one, whether or not it was a
+-- favorite, so removal reveals nothing about what exists.
+assert(not favorites.remove(ids.hidden), "a hidden favorite's removal answers as missing")
 assert(favorites.remove(ids.song), "a favorite can be removed")
 assert(favorites.remove(ids.song), "removing again still names a favoritable target")
 assert(favorites.get({ ids.song })[ids.song] == nil, "a removed favorite is gone")
-assert(favorites.remove(ids.theirs), "remove has no visibility gate")
+assert(not favorites.remove(ids.theirs), "another user's private playlist answers as missing")
 assert(not favorites.remove(missing), "a missing target has no favorite")
 assert(not favorites.remove(tag_node), "a tag has no favorite")
