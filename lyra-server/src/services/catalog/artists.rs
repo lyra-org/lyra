@@ -11,6 +11,7 @@ use std::collections::{
 use agdb::{
     DbAny,
     DbId,
+    QueryBuilder,
 };
 
 use super::{
@@ -124,6 +125,15 @@ pub(crate) struct ArtistFilter {
 }
 
 impl ArtistFilter {
+    /// Whether any credit on a scoped release or its tracks counts, whatever its role or type.
+    fn credits_anywhere(&self) -> bool {
+        self.tracks.is_none()
+            && self.credit_role.is_none_or(|role| role == CreditRole::Any)
+            && self.exclude_credit_role.is_none()
+            && self.credit_types.is_none()
+            && self.exclude_credit_types.is_empty()
+    }
+
     fn narrows_credits(&self) -> bool {
         self.library.is_some()
             || self.releases.is_some()
@@ -333,6 +343,9 @@ fn credited_artists(
         &filter.genres,
     )?;
     let releases = releases.resolve(&[], || all_releases(db))?;
+    if filter.credits_anywhere() {
+        return credited_anywhere(db, releases);
+    }
     let mut tracks = Candidates::default();
     tracks.restrict(tracks_of_releases(db, releases.iter().copied())?);
     if let Some(ids) = &filter.tracks {
@@ -390,6 +403,66 @@ fn credited_artists(
     Ok(artists)
 }
 
+/// The artists credited on `releases` or on their tracks, in any role.
+///
+/// Reads whichever side has fewer edges: each credited artist's credits, or every release and
+/// track the releases hold.
+fn credited_anywhere(db: &DbAny, releases: Vec<DbId>) -> anyhow::Result<HashSet<DbId>> {
+    if releases.is_empty() {
+        return Ok(HashSet::new());
+    }
+    let artists = all_artists(db)?;
+    if reads_by_artist(db, &artists, &releases)? {
+        credited_by_artist(db, artists, &releases.into_iter().collect())
+    } else {
+        credited_by_owner(db, releases)
+    }
+}
+
+/// Whether the artists' incoming edges, which hold their credits, are fewer than the releases'
+/// outgoing ones, which lead to their tracks and credits.
+fn reads_by_artist(db: &DbAny, artists: &[DbId], releases: &[DbId]) -> anyhow::Result<bool> {
+    let artist_edges = db
+        .exec(QueryBuilder::select().edge_count_to().ids(artists).query())?
+        .result;
+    let release_edges = db
+        .exec(
+            QueryBuilder::select()
+                .edge_count_from()
+                .ids(releases)
+                .query(),
+        )?
+        .result;
+    Ok(artist_edges < release_edges)
+}
+
+/// The `artists` credited on `releases` or on their tracks, read from each artist's credits.
+fn credited_by_artist(
+    db: &DbAny,
+    artists: Vec<DbId>,
+    releases: &HashSet<DbId>,
+) -> anyhow::Result<HashSet<DbId>> {
+    let mut credited = HashSet::new();
+    for artist in artists {
+        if credited_on_visible(db, artist, releases)? {
+            credited.insert(artist);
+        }
+    }
+    Ok(credited)
+}
+
+/// The artists credited on `releases` or on their tracks, read from each release and track.
+fn credited_by_owner(db: &DbAny, releases: Vec<DbId>) -> anyhow::Result<HashSet<DbId>> {
+    let mut credited = HashSet::new();
+    for owner in tracks_of_releases(db, releases.iter().copied())?
+        .into_iter()
+        .chain(releases)
+    {
+        credited.extend(credited_artist_ids(db, owner)?);
+    }
+    Ok(credited)
+}
+
 /// Whether the artist holds a credit on a visible release or on a track of one.
 fn credited_on_visible(db: &DbAny, artist: DbId, visible: &HashSet<DbId>) -> anyhow::Result<bool> {
     for owner in lyra_db::credits::crediting_owner_ids(db, artist)? {
@@ -405,10 +478,7 @@ fn credited_on_visible(db: &DbAny, artist: DbId, visible: &HashSet<DbId>) -> any
 }
 
 fn credited_artist_ids(db: &DbAny, owner: DbId) -> anyhow::Result<Vec<DbId>> {
-    Ok(lyra_db::credits::links_for_owner(db, owner)?
-        .into_iter()
-        .map(|link| link.artist_id)
-        .collect())
+    lyra_db::credits::credited_artist_ids(db, &[owner])
 }
 
 /// The stored artist fields that the names and `keys` read.
@@ -423,4 +493,148 @@ fn artist_fields(keys: &[ArtistKey]) -> Vec<&'static str> {
 /// The artists browsing reaches: those a release or track credits.
 fn all_artists(db: &DbAny) -> anyhow::Result<Vec<DbId>> {
     lyra_db::artists::credited_ids(db, None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::{
+        auth::Principal,
+        catalog::{
+            Query,
+            order,
+        },
+    };
+    use lyra_db::{
+        fixtures::{
+            connect,
+            insert_artist,
+            insert_release,
+            insert_track,
+        },
+        test_db::{
+            connect_artist,
+            insert_library,
+            insert_user,
+            new_test_db,
+        },
+    };
+
+    struct Credits {
+        db: DbAny,
+        viewer: Viewer,
+        visible_releases: Vec<DbId>,
+        visible_artists: HashSet<DbId>,
+    }
+
+    /// Artists credited in and out of the viewer's one library, with `padding` more tracks on the
+    /// visible release when `pad_releases` and more credits for a hidden artist otherwise.
+    fn credits(pad_releases: bool, padding: usize) -> anyhow::Result<Credits> {
+        let mut db = new_test_db()?;
+        let visible = insert_library(&mut db, "Visible", "/credits/visible")?;
+        let hidden = insert_library(&mut db, "Hidden", "/credits/hidden")?;
+        let release = |db: &mut DbAny, title: &str, libraries: &[DbId]| -> anyhow::Result<DbId> {
+            let release = insert_release(db, title)?;
+            for library in libraries {
+                connect(db, *library, release)?;
+            }
+            Ok(release)
+        };
+        let track = |db: &mut DbAny, title: &str, releases: &[DbId]| -> anyhow::Result<DbId> {
+            let track = insert_track(db, title)?;
+            for release in releases {
+                connect(db, *release, track)?;
+            }
+            Ok(track)
+        };
+        let shown = release(&mut db, "Shown", &[visible])?;
+        let unseen = release(&mut db, "Unseen", &[hidden])?;
+        let both = release(&mut db, "Both", &[visible, hidden])?;
+        let shown_track = track(&mut db, "Shown Track", &[shown])?;
+        let unseen_track = track(&mut db, "Unseen Track", &[unseen])?;
+        let shared_track = track(&mut db, "Shared Track", &[unseen, shown])?;
+        let loose_track = track(&mut db, "Loose Track", &[])?;
+
+        let mut visible_artists = HashSet::new();
+        for (name, owners, seen) in [
+            ("On Shown", vec![shown], true),
+            ("On Shown Track", vec![shown_track], true),
+            ("On Shared Track", vec![shared_track], true),
+            ("On Both", vec![both], true),
+            ("On Unseen And Shown Track", vec![unseen, shown_track], true),
+            ("On Unseen", vec![unseen], false),
+            ("On Unseen Track", vec![unseen_track], false),
+            ("On Loose Track", vec![loose_track], false),
+            ("Uncredited", vec![], false),
+        ] {
+            let artist = insert_artist(&mut db, name)?;
+            for owner in owners {
+                connect_artist(&mut db, owner, artist)?;
+            }
+            if seen {
+                visible_artists.insert(artist);
+            }
+        }
+        let busy = insert_artist(&mut db, "Busy")?;
+        for index in 0..padding {
+            if pad_releases {
+                track(&mut db, &format!("Padding {index}"), &[shown])?;
+            } else {
+                let padding = track(&mut db, &format!("Padding {index}"), &[unseen])?;
+                connect_artist(&mut db, padding, busy)?;
+            }
+        }
+
+        let user = insert_user(&mut db, "listener")?;
+        let library_id = lyra_db::libraries::get_by_id(&db, visible)?
+            .expect("library exists")
+            .id;
+        let principal = Principal::for_user(&db, user, Vec::new(), HashSet::from([library_id]));
+        let viewer = Viewer::user(&db, principal)?;
+        Ok(Credits {
+            db,
+            viewer,
+            visible_releases: vec![shown, both],
+            visible_artists,
+        })
+    }
+
+    #[test]
+    fn both_credit_reads_find_the_artists_credited_on_visible_releases_and_their_tracks()
+    -> anyhow::Result<()> {
+        let credits = credits(true, 0)?;
+        let db = &credits.db;
+        let by_artist = credited_by_artist(
+            db,
+            all_artists(db)?,
+            &credits.visible_releases.iter().copied().collect(),
+        )?;
+        let by_owner = credited_by_owner(db, credits.visible_releases.clone())?;
+        assert_eq!(by_artist, credits.visible_artists);
+        assert_eq!(by_owner, credits.visible_artists);
+        Ok(())
+    }
+
+    #[test]
+    fn a_restricted_viewer_browses_the_same_artists_whichever_side_is_read() -> anyhow::Result<()> {
+        for pad_releases in [true, false] {
+            let credits = credits(pad_releases, 40)?;
+            let db = &credits.db;
+            assert_eq!(
+                reads_by_artist(db, &all_artists(db)?, &credits.visible_releases)?,
+                pad_releases
+            );
+            let browsed = order(
+                db,
+                &credits.viewer,
+                &Query::<Artists>::new(Default::default()),
+            )?;
+            assert_eq!(browsed.len(), credits.visible_artists.len());
+            assert_eq!(
+                browsed.into_iter().collect::<HashSet<_>>(),
+                credits.visible_artists
+            );
+        }
+        Ok(())
+    }
 }
