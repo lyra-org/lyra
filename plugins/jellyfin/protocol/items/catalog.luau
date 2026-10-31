@@ -64,6 +64,8 @@ local ArtistCreditSource = entities.ArtistCreditSource
 type ArtistRelationInfo = artists_module.ArtistRelationInfo
 type Track = tracks.Track
 type Release = releases.Release
+-- Releases list through catalog queries, which carry their counts.
+type ReleaseSummary = releases.ReleaseSummary
 type Artist = artists_module.Artist
 type PlaylistInfo = playlists.PlaylistInfo
 type PlaybackSourceInfo = playback_sources.PlaybackSourceInfo
@@ -1609,8 +1611,8 @@ function helpers.to_playlist_stub(playlist: PlaylistInfo?, child_count: number?)
 	return item
 end
 
-function helpers.append_release_stubs(stubs: { ItemInfo }, release_items: { Release }): ()
-	for _, release: Release in release_items do
+function helpers.append_release_stubs(stubs: { ItemInfo }, release_items: { ReleaseSummary }): ()
+	for _, release: ReleaseSummary in release_items do
 		local stub = helpers.to_release_stub(release)
 		if stub then
 			table.insert(stubs, stub)
@@ -2147,7 +2149,7 @@ function module.track_stubs(items: { Track }): { ItemInfo }
 	return stubs
 end
 
-function module.release_stubs(items: { Release }): { ItemInfo }
+function module.release_stubs(items: { ReleaseSummary }): { ItemInfo }
 	local stubs: { ItemInfo } = {}
 	helpers.append_release_stubs(stubs, items)
 	return stubs

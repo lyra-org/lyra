@@ -1,0 +1,25 @@
+run_as = "owner"
+
+[[users]]
+key = "owner"
+admin = true
+
+[[releases]]
+key = "album"
+title = "Album"
+
+[[releases]]
+key = "empty"
+title = "Empty"
+
+[[tracks]]
+key = "first"
+title = "First"
+release = "album"
+duration_ms = 1500
+
+[[tracks]]
+key = "second"
+title = "Second"
+release = "album"
+duration_ms = 2500

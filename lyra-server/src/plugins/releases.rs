@@ -29,7 +29,6 @@ use crate::plugins::db::{
     Db,
     ViewerDb,
 };
-#[cfg(feature = "docgen")]
 use crate::services::catalog::releases::ReleaseKey;
 use crate::services::{
     self,
@@ -160,6 +159,20 @@ impl ReleasesModule {
         let (db, viewer) = db.read().await?;
         let page =
             services::catalog::page(&db, &viewer, &request.query, request.offset, request.limit)
+                .and_then(|page| {
+                    catalog::counted(
+                        &db,
+                        &viewer,
+                        &request.query,
+                        page,
+                        &[
+                            ("track_count", ReleaseKey::TrackCount),
+                            ("total_duration", ReleaseKey::TotalDuration),
+                        ],
+                        |release| release.db_id.clone().map(DbId::from),
+                        |release| release,
+                    )
+                })
                 .map_err(catalog::error)?;
         catalog::page_table(page)?.into_luau_return()
     }
@@ -411,6 +424,25 @@ fn release_type_aliases() -> Vec<TypeAliasDescriptor> {
         ),
         TypeAliasDescriptor::new("Release", release_type(), None),
         TypeAliasDescriptor::new(
+            "ReleaseSummary",
+            LuauType::intersection(vec![
+                LuauType::named("Release"),
+                LuauType::object(vec![
+                    described_field(
+                        "track_count",
+                        u64::luau_type(),
+                        "The tracks on the release.",
+                    ),
+                    described_field(
+                        "total_duration",
+                        u64::luau_type(),
+                        "The total duration of those tracks, in milliseconds.",
+                    ),
+                ]),
+            ]),
+            None,
+        ),
+        TypeAliasDescriptor::new(
             "ReleaseChain",
             LuauType::object(vec![
                 field("id", String::luau_type()),
@@ -430,7 +462,7 @@ fn release_type_aliases() -> Vec<TypeAliasDescriptor> {
     .chain(catalog::type_aliases::<ReleaseKey>(
         "ReleaseSortKey",
         "ReleasePage",
-        "Release",
+        "ReleaseSummary",
     ))
     .collect()
 }
