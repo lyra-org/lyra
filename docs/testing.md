@@ -123,6 +123,7 @@ tracks = ["s1", "s1"]
 [[listens]]
 user = "owner"
 track = "s1"
+at = 1700000000000  # optional start, in unix milliseconds
 
 [[favorites]]
 user = "owner"

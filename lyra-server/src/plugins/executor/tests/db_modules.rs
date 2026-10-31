@@ -291,7 +291,7 @@ fn plugin_executor_exposes_db_backed_lyra_listens_module() -> Result<()> {
             r#"
                 local listens = require("@lyra/listens")
                 local track_db_id = {track_db_id}
-                executor_listen_stats = listens.get_stats({{ track_db_id }})
+                executor_listen_stats = listens.get({{ track_db_id }})
             "#,
             track_db_id = track_db_id.0,
         )
@@ -305,8 +305,8 @@ fn plugin_executor_exposes_db_backed_lyra_listens_module() -> Result<()> {
         format!(
             r#"
                 local track_db_id = {track_db_id}
-                return executor_listen_stats.counts[track_db_id],
-                    executor_listen_stats.last_played[track_db_id]
+                return executor_listen_stats[track_db_id].count,
+                    executor_listen_stats[track_db_id].last_played_at_ms
             "#,
             track_db_id = track_db_id.0,
         )

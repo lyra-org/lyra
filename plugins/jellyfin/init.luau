@@ -1104,7 +1104,7 @@ local function handle_item_user_data_route(ctx: ApiContext): ApiResponse
 			item_hex_id = item_hex_id,
 			key = key,
 			include_favorite = true,
-			include_play_count = true,
+			include_play_count = item_type == "Audio",
 		})
 
 	return api.response.json(200, user_data.user_data_to_json(item_user_data))
@@ -1152,7 +1152,7 @@ local function handle_favorite_item_route(ctx: ApiContext, should_favorite: bool
 			item_id = target_id,
 			user_id = principal.user_id,
 			include_favorite = true,
-			include_play_count = true,
+			include_play_count = requests.trim(item.Type) == "Audio",
 		}))
 	)
 end

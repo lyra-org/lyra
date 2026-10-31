@@ -20,5 +20,5 @@ rejects(lyrics.delete_for_track, "lyrics.delete_for_track requires the lyra.lyri
 
 -- The rest of each module stays available.
 assert(lyrics.parse_lrc("[00:01.00]Hello").plain_text == "Hello")
-assert(listens.get_stats({}).counts ~= nil)
+assert(next(listens.get({})) == nil)
 assert(#playback_sessions.list_connections() == 0)

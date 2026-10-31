@@ -7,6 +7,7 @@
 
 use std::collections::{
     HashMap,
+    HashSet,
     hash_map::Entry,
 };
 
@@ -17,6 +18,7 @@ use agdb::{
 use lyra_db::{
     Listen,
     ResolveId,
+    entities::MetadataEntityType,
 };
 use nanoid::nanoid;
 
@@ -25,7 +27,27 @@ use serde::{
     Serialize,
 };
 
-use super::auth::Principal;
+use super::{
+    auth::Principal,
+    catalog::{
+        self,
+        CatalogError,
+        Viewer,
+        artists::{
+            ArtistKey,
+            Artists,
+        },
+        pipeline::Catalog,
+        releases::{
+            ReleaseKey,
+            Releases,
+        },
+        tracks::{
+            TrackKey,
+            Tracks,
+        },
+    },
+};
 
 const MIN_PLAYED_MS: u64 = 30_000;
 const SHORT_TRACK_MS: u64 = 180_000;
@@ -305,6 +327,139 @@ fn accessible_track(
         return Ok(None);
     }
     Ok(Some(track))
+}
+
+/// A viewer's listens to one track, release or artist.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ListenStats {
+    pub(crate) count: u64,
+    pub(crate) last_played_at_ms: Option<u64>,
+}
+
+/// The viewer's listens to each of the tracks, releases and artists it can see, counted as the
+/// catalog counts them to sort by: a release or artist totals the tracks it holds or is credited
+/// on. With `unique_track_id_pairs`, a track also counts the listens to every visible track that
+/// shares one of those external ids with it. Targets without listens, of another kind, or unseen
+/// are absent.
+pub(crate) fn stats(
+    db: &DbAny,
+    viewer: &Viewer,
+    target_db_ids: &[DbId],
+    unique_track_id_pairs: Option<&HashSet<(String, String)>>,
+) -> Result<HashMap<DbId, ListenStats>, CatalogError> {
+    let mut tracks = Vec::new();
+    let mut releases = Vec::new();
+    let mut artists = Vec::new();
+    for &target_db_id in target_db_ids {
+        if !viewer.sees(db, target_db_id)? {
+            continue;
+        }
+        match lyra_db::entities::metadata_entity_type(db, target_db_id)? {
+            Some(MetadataEntityType::Track) => tracks.push(target_db_id),
+            Some(MetadataEntityType::Release) => releases.push(target_db_id),
+            Some(MetadataEntityType::Artist) => artists.push(target_db_id),
+            None => {}
+        }
+    }
+    let mut stats = match unique_track_id_pairs {
+        Some(pairs) => merged_track_stats(db, viewer, tracks, pairs)?,
+        None => stats_of::<Tracks>(
+            db,
+            viewer,
+            tracks,
+            [TrackKey::ListenCount, TrackKey::LastPlayedAt],
+        )?,
+    };
+    stats.extend(stats_of::<Releases>(
+        db,
+        viewer,
+        releases,
+        [ReleaseKey::ListenCount, ReleaseKey::LastPlayedAt],
+    )?);
+    stats.extend(stats_of::<Artists>(
+        db,
+        viewer,
+        artists,
+        [ArtistKey::ListenCount, ArtistKey::LastPlayedAt],
+    )?);
+    Ok(stats)
+}
+
+fn stats_of<C: Catalog>(
+    db: &DbAny,
+    viewer: &Viewer,
+    ids: Vec<DbId>,
+    keys: [C::Key; 2],
+) -> Result<HashMap<DbId, ListenStats>, CatalogError> {
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let filter = C::id_filter(ids.clone());
+    Ok(catalog::numbers::<C>(db, viewer, &filter, ids, &keys)?
+        .into_iter()
+        .filter_map(listened)
+        .collect())
+}
+
+fn merged_track_stats(
+    db: &DbAny,
+    viewer: &Viewer,
+    tracks: Vec<DbId>,
+    unique_track_id_pairs: &HashSet<(String, String)>,
+) -> Result<HashMap<DbId, ListenStats>, CatalogError> {
+    let user_db_id = viewer.user_db_id("listen stats")?;
+    let mut merged_by_track = Vec::with_capacity(tracks.len());
+    let mut merged_ids = HashSet::new();
+    for track in tracks {
+        let mut merged = Vec::new();
+        for merged_id in super::playback_sessions::resolve_merged_track_ids_for_play_count(
+            db,
+            track,
+            unique_track_id_pairs,
+        )? {
+            if viewer.sees_entity(db, merged_id)? {
+                merged_ids.insert(merged_id);
+                merged.push(merged_id);
+            }
+        }
+        merged_by_track.push((track, merged));
+    }
+    let merged_ids = merged_ids.into_iter().collect::<Vec<_>>();
+    let by_id = lyra_db::listens::get_stats(db, &merged_ids, user_db_id)?
+        .into_iter()
+        .map(|stats| (stats.db_id, stats))
+        .collect::<HashMap<_, _>>();
+    Ok(merged_by_track
+        .into_iter()
+        .filter_map(|(track, merged)| {
+            let mut count = 0_u64;
+            let mut last_played_at_ms = None;
+            for stats in merged.iter().filter_map(|id| by_id.get(id)) {
+                count = count.saturating_add(stats.count);
+                last_played_at_ms = last_played_at_ms.max(stats.last_played);
+            }
+            (count > 0).then_some((
+                track,
+                ListenStats {
+                    count,
+                    last_played_at_ms,
+                },
+            ))
+        })
+        .collect())
+}
+
+fn listened((id, values): (DbId, Vec<Option<u64>>)) -> Option<(DbId, ListenStats)> {
+    let count = values.first().copied().flatten().unwrap_or(0);
+    (count > 0).then(|| {
+        (
+            id,
+            ListenStats {
+                count,
+                last_played_at_ms: values.get(1).copied().flatten(),
+            },
+        )
+    })
 }
 
 #[cfg(test)]

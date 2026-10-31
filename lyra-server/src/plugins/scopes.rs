@@ -1435,7 +1435,7 @@ mod tests {
         (
             "lyra/listens",
             &[
-                "get_stats(track_ids, merge_unique_external_ids)",
+                "get(target_ids, options)",
                 "submit(plays)",
                 "on_update(handler) [lyra.listens.all]",
             ],

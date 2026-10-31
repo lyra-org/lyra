@@ -1030,7 +1030,7 @@ function helpers.to_artist_item(
 			artist_item_id,
 			user_id,
 			`Artist-{requests.trim(artist.artist_name) or ""}`,
-			true,
+			false,
 			favorite_lookup,
 			context
 		),
@@ -1305,7 +1305,7 @@ function helpers.to_release_item(
 			release_item_id,
 			user_id,
 			`{release_artist or ""}-{requests.trim(release.release_title) or ""}`,
-			true,
+			false,
 			favorite_lookup,
 			context
 		),
@@ -1956,25 +1956,10 @@ function helpers.prefetch_track_stats_and_media(
 	end
 
 	if context.include_user_data == true then
-		local stats = listens.get_stats(seed.track_ids)
-		if type(stats) == "table" then
-			local play_counts = stats.counts
-			if type(play_counts) == "table" then
-				for key, value in play_counts do
-					local resolved_key = helpers.resolve_numeric_id(key)
-					if resolved_key ~= nil then
-						context.play_count_lookup[resolved_key] = tonumber(value) or 0
-					end
-				end
-			end
-			local last_played = stats.last_played
-			if type(last_played) == "table" then
-				for key, value in last_played do
-					local resolved_key = helpers.resolve_numeric_id(key)
-					if resolved_key ~= nil then
-						context.last_played_lookup[resolved_key] = tonumber(value) or 0
-					end
-				end
+		for id, stats in listens.get(seed.track_ids) do
+			context.play_count_lookup[id] = stats.count
+			if stats.last_played_at_ms ~= nil then
+				context.last_played_lookup[id] = stats.last_played_at_ms
 			end
 		end
 	end

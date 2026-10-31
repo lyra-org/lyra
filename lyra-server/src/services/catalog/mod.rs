@@ -36,6 +36,7 @@ pub(crate) use pipeline::{
     Query,
     counts,
     leading,
+    numbers,
     order,
     page,
 };

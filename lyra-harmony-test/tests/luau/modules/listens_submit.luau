@@ -37,9 +37,9 @@ assert(outcomes["ancient-play-00001"] == "invalid_time", "a play before 2010 is 
 local again = listens.submit({ play("recorded-play-0001", fixture.ids.long, 90000) })
 assert(again["recorded-play-0001"] == "duplicate", "a play counts once")
 
-local stats = listens.get_stats({ fixture.ids.long, fixture.ids.short })
-assert(stats.counts[fixture.ids.long] == 1, `long count {stats.counts[fixture.ids.long]}`)
-assert(stats.counts[fixture.ids.short] == 1, `short count {stats.counts[fixture.ids.short]}`)
+local stats = listens.get({ fixture.ids.long, fixture.ids.short })
+assert(stats[fixture.ids.long].count == 1, `long count {stats[fixture.ids.long].count}`)
+assert(stats[fixture.ids.short].count == 1, `short count {stats[fixture.ids.short].count}`)
 
 assert(next(listens.submit({})) == nil, "an empty batch judges nothing")
 
@@ -60,5 +60,5 @@ for index = 1, 501 do
 end
 rejects(too_many, "plays cap exceeded")
 
-local after = listens.get_stats({ fixture.ids.long })
-assert(after.counts[fixture.ids.long] == 1, "rejected batches record nothing")
+local after = listens.get({ fixture.ids.long })
+assert(after[fixture.ids.long].count == 1, "rejected batches record nothing")

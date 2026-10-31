@@ -278,7 +278,6 @@ pub(crate) fn leading<C: Catalog>(
     Ok(entries.into_iter().map(|entry| entry.row.id).collect())
 }
 
-/// One page of matching entities and the number that match.
 /// The numeric values of `keys` for each of `ids`, as the catalog computes them to sort by;
 /// a key with no value reads as zero.
 pub(crate) fn counts<C: Catalog>(
@@ -288,6 +287,26 @@ pub(crate) fn counts<C: Catalog>(
     ids: Vec<DbId>,
     keys: &[C::Key],
 ) -> Result<HashMap<DbId, Vec<u64>>, CatalogError> {
+    Ok(numbers::<C>(db, viewer, filter, ids, keys)?
+        .into_iter()
+        .map(|(id, values)| {
+            (
+                id,
+                values.into_iter().map(Option::unwrap_or_default).collect(),
+            )
+        })
+        .collect())
+}
+
+/// [`counts`] with a key that has no value for an item, such as a last play that never
+/// happened, left as `None`.
+pub(crate) fn numbers<C: Catalog>(
+    db: &DbAny,
+    viewer: &Viewer,
+    filter: &C::Filter,
+    ids: Vec<DbId>,
+    keys: &[C::Key],
+) -> Result<HashMap<DbId, Vec<Option<u64>>>, CatalogError> {
     Ok(C::rows(db, viewer, filter, ids, keys)?
         .into_iter()
         .map(|row| {
@@ -295,8 +314,8 @@ pub(crate) fn counts<C: Catalog>(
                 .values
                 .into_iter()
                 .map(|value| match value {
-                    Some(SortValue::Number(number)) => number,
-                    _ => 0,
+                    Some(SortValue::Number(number)) => Some(number),
+                    _ => None,
                 })
                 .collect();
             (row.id, values)
@@ -304,6 +323,7 @@ pub(crate) fn counts<C: Catalog>(
         .collect())
 }
 
+/// One page of matching entities and the number that match.
 pub(crate) fn page<C: Catalog>(
     db: &DbAny,
     viewer: &Viewer,

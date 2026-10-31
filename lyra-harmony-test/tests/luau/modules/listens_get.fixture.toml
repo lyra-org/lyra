@@ -1,0 +1,72 @@
+run_as = "listener"
+
+[[users]]
+key = "listener"
+
+[[users]]
+key = "other"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener", "other"]
+
+[[artists]]
+key = "amy"
+name = "Amy"
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+artists = ["amy"]
+
+[[tracks]]
+key = "first"
+title = "First"
+release = "album"
+
+[[tracks]]
+key = "second"
+title = "Second"
+release = "album"
+
+[[tracks]]
+key = "unplayed"
+title = "Unplayed"
+release = "album"
+
+[[tracks]]
+key = "hidden"
+title = "Hidden"
+
+[[playlists]]
+key = "mine"
+owner = "listener"
+name = "Mine"
+tracks = ["first"]
+
+[[listens]]
+user = "listener"
+track = "first"
+at = 2000
+
+[[listens]]
+user = "listener"
+track = "first"
+at = 5000
+
+[[listens]]
+user = "listener"
+track = "second"
+at = 3000
+
+[[listens]]
+user = "other"
+track = "first"
+at = 9000
+
+[[listens]]
+user = "listener"
+track = "hidden"
+at = 7000

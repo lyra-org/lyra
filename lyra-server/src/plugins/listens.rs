@@ -3,12 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::{
-    HashMap,
-    HashSet,
-};
+use std::collections::HashMap;
 
-use agdb::DbId;
 use harmony_luau as luau;
 #[cfg(feature = "docgen")]
 use harmony_luau::{
@@ -29,7 +25,10 @@ use harmony_luau::{
 
 use crate::plugins::args;
 use crate::{
-    plugins::db::Db,
+    plugins::db::{
+        Db,
+        ViewerDb,
+    },
     services::{
         auth::Principal,
         listens::{
@@ -44,10 +43,7 @@ use crate::{
         providers::provider_registry,
     },
 };
-use lyra_db::{
-    DbAsync,
-    ResolveId,
-};
+use lyra_db::ResolveId;
 use serde::Deserialize;
 
 pub(crate) struct ListensModule;
@@ -77,11 +73,6 @@ impl DescribeTypeAlias for ListenUpdateHandler {
             Some("Listen update callback."),
         )
     }
-}
-
-struct ResolvedStats {
-    counts: HashMap<DbId, u64>,
-    last_played: HashMap<DbId, u64>,
 }
 
 #[derive(Deserialize)]
@@ -143,29 +134,87 @@ impl LuauTypeInfo for SubmittedPlays {
     }
 }
 
+/// The `options` argument of `get`.
+struct ListenStatsOptions {
+    merge_unique_external_ids: bool,
+}
+
+impl<'vm> luau::FromLuau<'vm> for ListenStatsOptions {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let options: luau::Table = reader.read()?;
+        let merge_unique_external_ids = match options.get("merge_unique_external_ids")? {
+            luau::Value::Nil => false,
+            luau::Value::Boolean(value) => value,
+            other => {
+                return Err(crate::plugins::runtime_error(format!(
+                    "merge_unique_external_ids must be a boolean, got {}",
+                    other.type_name()
+                )));
+            }
+        };
+        Ok(Self {
+            merge_unique_external_ids,
+        })
+    }
+}
+
+impl LuauTypeInfo for ListenStatsOptions {
+    fn luau_type() -> LuauType {
+        LuauType::named("ListenStatsOptions")
+    }
+}
+
+/// [`listen_service::ListenStats`] as described to Luau.
+#[cfg(feature = "docgen")]
+struct LuauListenStats;
+
+#[cfg(feature = "docgen")]
+impl LuauTypeInfo for LuauListenStats {
+    fn luau_type() -> LuauType {
+        LuauType::named("ListenStats")
+    }
+}
+
 #[harmony_macros::module(
     id = "lyra/listens",
     description = "Listen counts and submitted plays of the dispatch principal, and every user's listens as they are recorded: like `playback_sessions.on_update` for playbacks, `on_update` delivers all users' listens, not only the caller's, and needs the `lyra.listens.all` scope too.",
     docs_feature = "docgen"
 )]
 impl ListensModule {
-    #[harmony(returns(HashMap<String, HashMap<u64, u64>>))]
-    async fn get_stats(
-        track_ids: args::UniqueIds,
-        merge_unique_external_ids: Option<bool>,
-        #[context] db: Db,
-        #[context] principal: Principal,
+    #[harmony(
+        description = "The caller's listens to each of the tracks, releases and artists, keyed by id: a release or artist totals the tracks it holds or is credited on, as the catalogs count them to sort by. Targets without listens, of another kind, and ones the caller cannot see are absent.",
+        returns(HashMap<u64, LuauListenStats>)
+    )]
+    async fn get(
+        target_ids: args::UniqueIds,
+        options: Option<ListenStatsOptions>,
+        #[context] db: ViewerDb,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        let stats = resolve_stats(
-            &db,
-            &track_ids.0,
-            &principal,
-            merge_unique_external_ids.unwrap_or(false),
-        )
-        .await?;
-        let mut table = luau::OwnedTable::with_capacity(0, 2);
-        table.set_field("counts", dbid_map_to_table(&stats.counts));
-        table.set_field("last_played", dbid_map_to_table(&stats.last_played));
+        let merge = options.is_some_and(|options| options.merge_unique_external_ids);
+        let unique_track_id_pairs = if merge {
+            Some(
+                provider_registry()
+                    .read_owned()
+                    .await
+                    .unique_track_id_pairs(),
+            )
+        } else {
+            None
+        };
+        let (db, viewer) = db.read().await?;
+        let stats =
+            listen_service::stats(&db, &viewer, &target_ids.0, unique_track_id_pairs.as_ref())
+                .map_err(crate::plugins::catalog::error)?;
+
+        let mut table = luau::OwnedTable::with_entry_capacity(0, 0, stats.len());
+        for (id, stats) in stats {
+            let mut entry = luau::OwnedTable::with_capacity(0, 2);
+            entry.set_field("count", stats.count as i64);
+            if let Some(last_played_at_ms) = stats.last_played_at_ms {
+                entry.set_field("last_played_at_ms", last_played_at_ms as i64);
+            }
+            table.set_key(id.0, entry);
+        }
         Ok(table)
     }
 
@@ -217,108 +266,6 @@ fn outcome_name(outcome: &SubmissionOutcome) -> &'static str {
         SubmissionOutcome::Judged(RecordOutcome::InvalidTime) => "invalid_time",
         SubmissionOutcome::TrackNotFound => "track_not_found",
     }
-}
-
-async fn resolve_stats(
-    db: &DbAsync,
-    track_ids: &[DbId],
-    principal: &Principal,
-    merge_unique_external_ids: bool,
-) -> luau::runtime::Result<ResolvedStats> {
-    let db = db.read().await;
-    let viewer_db_id = crate::plugins::auth::require_user_db_id(principal, &db)?;
-
-    if !merge_unique_external_ids {
-        let mut counts = HashMap::new();
-        let mut last_played = HashMap::new();
-        let mut accessible_track_ids = Vec::new();
-        for track_id in track_ids {
-            counts.insert(*track_id, 0);
-            if crate::services::auth::access::entity_accessible(&db, principal, *track_id)? {
-                accessible_track_ids.push(*track_id);
-            }
-        }
-
-        let stats = lyra_db::listens::get_stats(&db, &accessible_track_ids, viewer_db_id)?;
-        for stat in stats {
-            counts.insert(stat.db_id, stat.count);
-            if let Some(last) = stat.last_played {
-                last_played.insert(stat.db_id, last);
-            }
-        }
-        return Ok(ResolvedStats {
-            counts,
-            last_played,
-        });
-    }
-
-    let unique_track_id_pairs = {
-        let registry = provider_registry().read_owned().await;
-        registry.unique_track_id_pairs()
-    };
-
-    let mut requested_merged_ids = Vec::new();
-    let mut merged_unique_ids = HashSet::new();
-    let mut counts = HashMap::new();
-
-    for track_id in track_ids {
-        counts.insert(*track_id, 0);
-        if !crate::services::auth::access::entity_accessible(&db, principal, *track_id)? {
-            continue;
-        }
-        let merged_ids = playback_sessions::resolve_merged_track_ids_for_play_count(
-            &db,
-            *track_id,
-            &unique_track_id_pairs,
-        )?;
-        let mut accessible_merged_ids = Vec::new();
-        for merged_id in merged_ids {
-            if crate::services::auth::access::entity_accessible(&db, principal, merged_id)? {
-                merged_unique_ids.insert(merged_id);
-                accessible_merged_ids.push(merged_id);
-            }
-        }
-        requested_merged_ids.push((*track_id, accessible_merged_ids));
-    }
-
-    let merged_track_ids = merged_unique_ids.into_iter().collect::<Vec<_>>();
-    let merged_stats = lyra_db::listens::get_stats(&db, &merged_track_ids, viewer_db_id)?;
-    let merged_by_id: HashMap<DbId, &lyra_db::listens::ListenStats> =
-        merged_stats.iter().map(|stat| (stat.db_id, stat)).collect();
-
-    let mut last_played = HashMap::new();
-    for (requested_id, merged_ids) in requested_merged_ids {
-        let mut total_count = 0u64;
-        let mut max_last_played: Option<u64> = None;
-        for merged_id in merged_ids {
-            if let Some(stat) = merged_by_id.get(&merged_id) {
-                total_count = total_count.saturating_add(stat.count);
-                if let Some(last) = stat.last_played
-                    && last > max_last_played.unwrap_or(0)
-                {
-                    max_last_played = Some(last);
-                }
-            }
-        }
-        counts.insert(requested_id, total_count);
-        if let Some(last) = max_last_played {
-            last_played.insert(requested_id, last);
-        }
-    }
-
-    Ok(ResolvedStats {
-        counts,
-        last_played,
-    })
-}
-
-fn dbid_map_to_table(map: &HashMap<DbId, u64>) -> luau::OwnedTable {
-    let mut table = luau::OwnedTable::with_entry_capacity(0, 0, map.len());
-    for (id, value) in map {
-        let value = luau::Value::from(*value);
-        table.set_key(id.0, value);
-    }
-    table
 }
 
 /// [`ListenUpdatePayload`] as described to Luau.
@@ -434,6 +381,37 @@ impl DescribeInterface for SubmittedPlayRequest {
     }
 }
 
+#[cfg(feature = "docgen")]
+fn listen_stats_options_interface() -> InterfaceDescriptor {
+    InterfaceDescriptor {
+        name: "ListenStatsOptions",
+        description: None,
+        fields: vec![described_field(
+            "merge_unique_external_ids",
+            Option::<bool>::luau_type(),
+            "Also counts, for each track, the listens to every track the caller can see that shares an external id a provider declares unique to one recording.",
+        )],
+    }
+}
+
+#[cfg(feature = "docgen")]
+impl DescribeInterface for LuauListenStats {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        InterfaceDescriptor {
+            name: "ListenStats",
+            description: Some("The caller's listens to one track, release or artist."),
+            fields: vec![
+                described_field("count", u64::luau_type(), "The listens, at least one."),
+                described_field(
+                    "last_played_at_ms",
+                    Option::<u64>::luau_type(),
+                    "When the latest listen started, in Unix milliseconds.",
+                ),
+            ],
+        }
+    }
+}
+
 /// [`SubmissionOutcome`] as described to Luau.
 #[cfg(feature = "docgen")]
 struct LuauListenOutcome;
@@ -479,6 +457,8 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         ],
         &[
             SubmittedPlayRequest::interface_descriptor(),
+            listen_stats_options_interface(),
+            LuauListenStats::interface_descriptor(),
             LuauListenUpdatePayload::interface_descriptor(),
             LuauListenPayload::interface_descriptor(),
         ],

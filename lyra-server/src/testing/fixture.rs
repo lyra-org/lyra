@@ -206,6 +206,8 @@ struct Playlist {
 struct Listen {
     user: String,
     track: String,
+    /// When the listen started, in Unix milliseconds.
+    at: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -727,7 +729,12 @@ impl Fixture {
 
         for listen in &self.listens {
             let (track_db_id, _) = keys.entity(&listen.track)?;
-            lyra_db::fixtures::insert_listen(db, keys.user(&listen.user)?, track_db_id, 1_000)?;
+            lyra_db::fixtures::insert_listen(
+                db,
+                keys.user(&listen.user)?,
+                track_db_id,
+                listen.at.unwrap_or(1_000),
+            )?;
         }
 
         for favorite in &self.favorites {
