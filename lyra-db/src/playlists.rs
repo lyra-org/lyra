@@ -200,34 +200,9 @@ pub fn add_track(
     playlist_db_id: DbId,
     track_db_id: DbId,
 ) -> anyhow::Result<PlaylistTrack> {
-    let position = next_position(db, playlist_db_id)?;
-    let entry_id = nanoid!();
-
-    let edge_id = db
-        .exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from(playlist_db_id)
-                .to(track_db_id)
-                .query(),
-        )?
-        .ids()[0];
-
-    db.exec_mut(
-        QueryBuilder::insert()
-            .values_uniform([
-                ("position", position).into(),
-                ("entry_id", entry_id.as_str()).into(),
-            ])
-            .ids(edge_id)
-            .query(),
-    )?;
-
-    Ok(PlaylistTrack {
-        edge_id,
-        entry_id,
-        position,
-    })
+    add_tracks(db, playlist_db_id, &[track_db_id])?
+        .pop()
+        .ok_or_else(|| anyhow::anyhow!("adding a playlist entry inserted none"))
 }
 
 /// Add multiple tracks, returning a `PlaylistTrack` per track.
@@ -236,8 +211,18 @@ pub fn add_tracks(
     playlist_db_id: DbId,
     track_db_ids: &[DbId],
 ) -> anyhow::Result<Vec<PlaylistTrack>> {
-    let first_position = next_position(db, playlist_db_id)?;
-    insert_entries(db, playlist_db_id, track_db_ids, first_position)
+    let stored = stored_entries(db, playlist_db_id)?;
+    let next_stored = stored
+        .iter()
+        .map(|t| t.position.saturating_add(1))
+        .max()
+        .unwrap_or(0);
+    let mut added = insert_entries(db, playlist_db_id, track_db_ids, next_stored)?;
+    // Positions read as indexes, which a gap left by an older build may put behind the stored one.
+    for (index, entry) in (stored.len() as u64..).zip(&mut added) {
+        entry.position = index;
+    }
+    Ok(added)
 }
 
 /// Inserts `track_db_ids` in order at the 0-based `position`, clamped to the playlist's length,
@@ -248,18 +233,17 @@ pub fn insert_tracks(
     track_db_ids: &[DbId],
     position: u64,
 ) -> anyhow::Result<Vec<PlaylistTrack>> {
-    let tracks = get_tracks(db, playlist_db_id)?;
+    let tracks = stored_entries(db, playlist_db_id)?;
     let insert_at = usize::try_from(position)
         .unwrap_or(usize::MAX)
         .min(tracks.len());
-    for (i, t) in tracks.iter().enumerate() {
-        let index = if i < insert_at {
-            i
-        } else {
-            i + track_db_ids.len()
-        };
-        set_position(db, t.edge_id, index as u64)?;
-    }
+    let (before, after) = tracks.split_at(insert_at);
+    set_positions(db, before.iter().map(|t| t.edge_id), 0)?;
+    set_positions(
+        db,
+        after.iter().map(|t| t.edge_id),
+        (insert_at + track_db_ids.len()) as u64,
+    )?;
     insert_entries(db, playlist_db_id, track_db_ids, insert_at as u64)
 }
 
@@ -269,48 +253,127 @@ fn insert_entries(
     track_db_ids: &[DbId],
     first_position: u64,
 ) -> anyhow::Result<Vec<PlaylistTrack>> {
-    let positions = first_position..;
-    let mut results = Vec::with_capacity(track_db_ids.len());
-
-    for (position, &track_db_id) in positions.zip(track_db_ids) {
-        let entry_id = nanoid!();
-
-        let edge_id = db
-            .exec_mut(
-                QueryBuilder::insert()
-                    .edges()
-                    .from(playlist_db_id)
-                    .to(track_db_id)
-                    .query(),
-            )?
-            .ids()[0];
-
-        db.exec_mut(
+    if track_db_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let entries = (first_position..)
+        .zip(track_db_ids)
+        .map(|(position, _)| (position, nanoid!()))
+        .collect::<Vec<_>>();
+    let values = entries
+        .iter()
+        .map(|(position, entry_id)| {
+            vec![
+                ("position", *position).into(),
+                ("entry_id", entry_id.as_str()).into(),
+            ]
+        })
+        .collect::<Vec<_>>();
+    // One pairwise insert for every entry: an insert per entry costs a write each.
+    let edge_ids = db
+        .exec_mut(
             QueryBuilder::insert()
-                .values_uniform([
-                    ("position", position).into(),
-                    ("entry_id", entry_id.as_str()).into(),
-                ])
-                .ids(edge_id)
+                .edges()
+                .from(vec![playlist_db_id; track_db_ids.len()])
+                .to(track_db_ids)
+                .values(values)
                 .query(),
-        )?;
-
-        results.push(PlaylistTrack {
+        )?
+        .ids();
+    anyhow::ensure!(
+        edge_ids.len() == entries.len(),
+        "inserted {} playlist entries, expected {}",
+        edge_ids.len(),
+        entries.len()
+    );
+    Ok(edge_ids
+        .into_iter()
+        .zip(entries)
+        .map(|(edge_id, (position, entry_id))| PlaylistTrack {
             edge_id,
             entry_id,
             position,
-        });
-    }
-
-    Ok(results)
+        })
+        .collect())
 }
 
+/// Removes one entry edge without renumbering the rest, for tests that need a gap.
+#[cfg(test)]
 pub fn remove_track(db: &mut impl DbAccess, edge_id: DbId) -> anyhow::Result<()> {
     db.exec_mut(QueryBuilder::remove().ids(edge_id).query())?;
     Ok(())
 }
 
+/// Removes these entry edges of the playlist in one query.
+///
+/// agdb keeps a node's outgoing edges in a singly linked list and unlinks an edge by walking
+/// from the head to its predecessor, so the edges go in list order: removing a whole playlist
+/// is then linear rather than quadratic.
+pub fn remove_tracks(
+    db: &mut impl DbAccess,
+    playlist_db_id: DbId,
+    edge_ids: &[DbId],
+) -> anyhow::Result<()> {
+    if edge_ids.is_empty() {
+        return Ok(());
+    }
+    let removing = edge_ids
+        .iter()
+        .copied()
+        .collect::<std::collections::HashSet<_>>();
+    // The playlist's entry edges in list order: never its owner edge or any other.
+    let listed = db
+        .exec(
+            QueryBuilder::search()
+                .from(playlist_db_id)
+                .where_()
+                .edge()
+                .and()
+                .distance(CountComparison::Equal(1))
+                .and()
+                .keys("entry_id")
+                .query(),
+        )?
+        .ids();
+    let ordered = listed
+        .into_iter()
+        .filter(|edge_id| removing.contains(edge_id))
+        .collect::<Vec<_>>();
+    anyhow::ensure!(
+        ordered.len() == removing.len(),
+        "a playlist entry to remove is not in the playlist"
+    );
+    db.exec_mut(QueryBuilder::remove().ids(ordered).query())?;
+    renumber(db, playlist_db_id)
+}
+
+/// Numbers the playlist's entries densely from 0 in order, writing only from the first one out
+/// of place.
+fn renumber(db: &mut impl DbAccess, playlist_db_id: DbId) -> anyhow::Result<()> {
+    let entries = stored_entries(db, playlist_db_id)?;
+    let Some(first) = entries
+        .iter()
+        .zip(0u64..)
+        .position(|(entry, index)| entry.position != index)
+    else {
+        return Ok(());
+    };
+    set_positions(db, entries[first..].iter().map(|t| t.edge_id), first as u64)
+}
+
+/// The playlist's entries in order, each `position` its 0-based index, which `move_track` and
+/// `insert_tracks` take. An older build left gaps in the stored positions after removals; the
+/// index reads past them.
 pub fn get_tracks(db: &impl DbAccess, playlist_db_id: DbId) -> anyhow::Result<Vec<PlaylistTrack>> {
+    let mut tracks = stored_entries(db, playlist_db_id)?;
+    for (index, track) in (0u64..).zip(&mut tracks) {
+        track.position = index;
+    }
+    Ok(tracks)
+}
+
+/// The playlist's entries in order, with their stored positions.
+fn stored_entries(db: &impl DbAccess, playlist_db_id: DbId) -> anyhow::Result<Vec<PlaylistTrack>> {
     let result = db.exec(
         QueryBuilder::select()
             .search()
@@ -403,21 +466,24 @@ pub fn move_track(
         .min(tracks.len());
     tracks.insert(insert_at, track);
 
-    // Renumber all positions sequentially
-    for (i, t) in tracks.iter().enumerate() {
-        set_position(db, t.edge_id, i as u64)?;
-    }
-
-    Ok(())
+    set_positions(db, tracks.iter().map(|t| t.edge_id), 0)
 }
 
-fn set_position(db: &mut impl DbAccess, edge_id: DbId, position: u64) -> anyhow::Result<()> {
-    db.exec_mut(
-        QueryBuilder::insert()
-            .values_uniform([("position", position).into()])
-            .ids(edge_id)
-            .query(),
-    )?;
+/// Numbers `edge_ids` in order from `first`, in one query.
+fn set_positions(
+    db: &mut impl DbAccess,
+    edge_ids: impl IntoIterator<Item = DbId>,
+    first: u64,
+) -> anyhow::Result<()> {
+    let (ids, values): (Vec<DbId>, Vec<Vec<agdb::DbKeyValue>>) = edge_ids
+        .into_iter()
+        .zip(first..)
+        .map(|(edge_id, position)| (edge_id, vec![("position", position).into()]))
+        .unzip();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    db.exec_mut(QueryBuilder::insert().values(values).ids(ids).query())?;
     Ok(())
 }
 
@@ -461,17 +527,6 @@ pub(crate) fn get_by_track(db: &impl DbAccess, track_db_id: DbId) -> anyhow::Res
     }
 
     Ok(playlist_db_ids)
-}
-
-/// Next append slot. Positions are 0-based, matching the index base
-/// [`move_track`] renumbers with.
-fn next_position(db: &impl DbAccess, playlist_db_id: DbId) -> anyhow::Result<u64> {
-    let tracks = get_tracks(db, playlist_db_id)?;
-    Ok(tracks
-        .iter()
-        .map(|t| t.position.saturating_add(1))
-        .max()
-        .unwrap_or(0))
 }
 
 #[cfg(test)]
@@ -1004,6 +1059,139 @@ mod tests {
         let track_ids = resolve_edge_targets(&db, &[tracks[0].edge_id])?;
         assert_eq!(track_ids, [track]);
 
+        Ok(())
+    }
+
+    /// A playlist holding one entry per title, in order.
+    fn playlist_of(db: &mut DbAny, titles: &[&str]) -> anyhow::Result<(DbId, Vec<DbId>)> {
+        let user_db_id = create_test_user(db)?;
+        let playlist = Playlist {
+            db_id: None,
+            id: nanoid!(),
+            name: "Positions".to_string(),
+            description: None,
+            is_public: None,
+            created_at_ms: None,
+            updated_at_ms: None,
+        };
+        let playlist_db_id = create(db, &playlist, user_db_id)?;
+        let tracks = titles
+            .iter()
+            .map(|title| create_test_track(db, title))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        add_tracks(db, playlist_db_id, &tracks)?;
+        Ok((playlist_db_id, tracks))
+    }
+
+    /// The tracks in order, and whether the positions read as their indexes.
+    fn order(db: &DbAny, playlist_db_id: DbId) -> anyhow::Result<Vec<DbId>> {
+        let tracks = get_tracks(db, playlist_db_id)?;
+        for (index, track) in (0u64..).zip(&tracks) {
+            assert_eq!(track.position, index, "positions read as indexes");
+        }
+        let edge_ids = tracks.iter().map(|t| t.edge_id).collect::<Vec<_>>();
+        resolve_edge_targets(db, &edge_ids)
+    }
+
+    fn stored(db: &DbAny, playlist_db_id: DbId) -> anyhow::Result<Vec<u64>> {
+        Ok(stored_entries(db, playlist_db_id)?
+            .into_iter()
+            .map(|t| t.position)
+            .collect())
+    }
+
+    #[test]
+    fn removal_renumbers_so_a_move_takes_the_reported_position() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (playlist_db_id, tracks) = playlist_of(&mut db, &["A", "B", "C", "D"])?;
+        let [a, b, c, d] = tracks[..] else {
+            unreachable!()
+        };
+        let entries = get_tracks(&db, playlist_db_id)?;
+        remove_tracks(&mut db, playlist_db_id, &[entries[0].edge_id])?;
+        assert_eq!(stored(&db, playlist_db_id)?, [0, 1, 2]);
+
+        let c_entry = get_tracks(&db, playlist_db_id)?[1].clone();
+        assert_eq!(c_entry.position, 1);
+        move_track(&mut db, playlist_db_id, c_entry.edge_id, c_entry.position)?;
+        assert_eq!(
+            order(&db, playlist_db_id)?,
+            [b, c, d],
+            "a move to its own place keeps it"
+        );
+
+        let appended = add_tracks(&mut db, playlist_db_id, &[a])?;
+        assert_eq!(appended[0].position, 3);
+        assert_eq!(order(&db, playlist_db_id)?, [b, c, d, a]);
+        assert_eq!(stored(&db, playlist_db_id)?, [0, 1, 2, 3]);
+        Ok(())
+    }
+
+    #[test]
+    fn gapped_positions_read_and_take_as_indexes() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (playlist_db_id, tracks) = playlist_of(&mut db, &["A", "B", "C"])?;
+        let [a, b, c] = tracks[..] else {
+            unreachable!()
+        };
+        // An older build left gaps after removals.
+        let entries = stored_entries(&db, playlist_db_id)?;
+        for (entry, position) in entries.iter().zip([1u64, 4, 9]) {
+            db.exec_mut(
+                QueryBuilder::insert()
+                    .values_uniform([("position", position).into()])
+                    .ids(entry.edge_id)
+                    .query(),
+            )?;
+        }
+        assert_eq!(order(&db, playlist_db_id)?, [a, b, c]);
+
+        let d = create_test_track(&mut db, "D")?;
+        let appended = add_tracks(&mut db, playlist_db_id, &[d])?;
+        assert_eq!(appended[0].position, 3, "an append reports its index");
+        assert_eq!(order(&db, playlist_db_id)?, [a, b, c, d]);
+
+        let c_entry = get_tracks(&db, playlist_db_id)?[2].clone();
+        move_track(&mut db, playlist_db_id, c_entry.edge_id, 1)?;
+        assert_eq!(order(&db, playlist_db_id)?, [a, c, b, d]);
+
+        let e = create_test_track(&mut db, "E")?;
+        let inserted = insert_tracks(&mut db, playlist_db_id, &[e], 2)?;
+        assert_eq!(inserted[0].position, 2);
+        assert_eq!(order(&db, playlist_db_id)?, [a, c, e, b, d]);
+        assert_eq!(stored(&db, playlist_db_id)?, [0, 1, 2, 3, 4]);
+        Ok(())
+    }
+
+    #[test]
+    fn remove_tracks_refuses_edges_that_are_not_entries() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (playlist_db_id, _) = playlist_of(&mut db, &["A"])?;
+        let owner_edge = db
+            .exec(
+                QueryBuilder::search()
+                    .from(playlist_db_id)
+                    .where_()
+                    .edge()
+                    .and()
+                    .distance(CountComparison::Equal(1))
+                    .and()
+                    .keys("owner")
+                    .query(),
+            )?
+            .ids();
+        let entry = get_tracks(&db, playlist_db_id)?[0].edge_id;
+
+        assert!(remove_tracks(&mut db, playlist_db_id, &[entry, owner_edge[0]]).is_err());
+        assert!(
+            get_owner(&db, playlist_db_id)?.is_some(),
+            "the owner edge stays"
+        );
+        assert_eq!(
+            get_tracks(&db, playlist_db_id)?.len(),
+            1,
+            "and so does the entry"
+        );
         Ok(())
     }
 
