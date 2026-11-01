@@ -251,7 +251,7 @@ impl PluginExecutor {
                     ..CallContext::default()
                 };
                 context.caller.insert(dispatch_auth);
-                let args = (run.args)()?;
+                let args = (run.args)(&self.vm, &context.origin)?;
                 let thread = self.runtime.load_source_thread(run.source, &mut context)?;
                 let scheduler = self.vm.data().get::<harmony_core::LocalScheduler>()?;
                 scheduler.schedule_luau_thread_with_budget_and_completion(

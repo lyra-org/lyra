@@ -4,6 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 mod fixture;
+mod harness;
 
 pub use fixture::Fixture;
 
@@ -393,8 +394,9 @@ const LUAU_TEST_USERNAME: &str = "luau-tester";
 
 /// Runs one `.luau` file as `plugin`, without executing the plugin's entrypoint. With a fixture,
 /// the fixture is seeded, the plugin goes without the fixture's `without_scopes` and the test
-/// receives the seeded ids as its `...`. The test dispatches as the fixture's `run_as` user, or
-/// otherwise as a fresh non-admin user named `LUAU_TEST_USERNAME`.
+/// receives the seeded ids as its first `...`; its second is always the [`harness`]. The
+/// test dispatches as the fixture's `run_as` user, or otherwise as a fresh non-admin user named
+/// `LUAU_TEST_USERNAME`.
 pub async fn run_luau_plugin_test_file(
     plugin: &PluginUnderTest,
     test_path: &Path,
@@ -495,12 +497,12 @@ pub async fn run_luau_plugin_test_file(
             plugin_id,
             path: relative_path_text,
             source: Arc::from(source),
-            args: Box::new(move || {
-                Ok(seeded
+            args: Box::new(move |vm, origin| {
+                let fixture = seeded
                     .map(harmony_luau::serializable_to_luau_owned)
                     .transpose()?
-                    .into_iter()
-                    .collect())
+                    .unwrap_or(harmony_luau::Value::Nil);
+                Ok(vec![fixture, harness::value(vm, origin)?])
             }),
             principal,
         })

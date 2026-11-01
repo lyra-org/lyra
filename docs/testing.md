@@ -48,7 +48,7 @@ writes what a passing scenario captured into its `expect` section.
 
 A `<test>.fixture.toml` beside a Luau test seeds a fresh database before the test runs. The test
 runs as the `run_as` user, or a fresh non-admin user without one, and receives the seeded ids as
-its chunk's `...`. The plugin goes without the scopes in `without_scopes`, which it must declare;
+the first of its chunk's `...`. The plugin goes without the scopes in `without_scopes`, which it must declare;
 a scope another kept one narrows can't go:
 
 ```toml
@@ -162,3 +162,17 @@ fixture.entries.mix[1]  -- a playlist's entry ids, in order
 
 A test that needs a second user's view gets its own file and fixture with a different `run_as`.
 Without a fixture, a Luau test runs as a fresh non-admin user over an empty catalog.
+
+## Luau harness
+
+A Luau test's second `...` is a table of helpers for what a test can't reach from Luau. Its
+`sockets` opens and closes plugin websockets in place of a client:
+
+```luau
+local fixture, harness = ...
+local sockets = harness.sockets
+local sender = sockets:open() -- a sender, as an `api.websocket` handler gets it
+playback_sessions.hold_session(sender, "device")
+sockets:close(sender)         -- closes it as its client going away does, and returns once the
+                              -- host is done with it
+```

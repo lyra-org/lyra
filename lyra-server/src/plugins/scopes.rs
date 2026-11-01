@@ -1487,6 +1487,7 @@ mod tests {
             &[
                 "on_update(handler) [lyra.playback_sessions.all]",
                 "report_session(request)",
+                "hold_session(sender, session_key)",
                 "list_connections()",
                 "send_command(request)",
             ],

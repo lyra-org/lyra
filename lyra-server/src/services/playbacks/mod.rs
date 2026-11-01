@@ -27,12 +27,14 @@ use crate::services::{
 };
 
 pub(crate) mod bindings;
+pub(crate) mod holds;
 mod reported;
 mod reporting;
 
 pub(crate) use reported::{
     ReportOutcome,
     ReportedPlaybackRequest,
+    pause_after_socket_close,
     report_reported_playback,
 };
 pub(crate) use reporting::{

@@ -107,6 +107,20 @@ pub(crate) struct ApiWebSocketSender {
     state: Arc<WebSocketState>,
 }
 
+impl ApiWebSocketSender {
+    /// A sender no client reads, for tests that stand in for a client.
+    pub(crate) fn unconnected() -> Self {
+        Self {
+            outbound: tokio::sync::mpsc::channel(1).0,
+            state: WebSocketState::new(),
+        }
+    }
+
+    pub(crate) fn state(&self) -> &Arc<WebSocketState> {
+        &self.state
+    }
+}
+
 #[harmony_macros::userdata_methods]
 impl ApiWebSocketSender {
     #[harmony(description = "Sends a websocket text frame.")]

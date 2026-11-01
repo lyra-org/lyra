@@ -30,6 +30,9 @@ pub(crate) use self::route_key::{
     placeholder_offset,
 };
 use self::types::ApiMethod;
+/// The Luau type of the websocket sender `api.websocket` handlers get.
+#[cfg(feature = "docgen")]
+pub(crate) use self::types::ApiWebSocketSender as WebSocketSenderType;
 #[cfg(feature = "docgen")]
 use self::types::{
     ApiAuth,
@@ -920,6 +923,56 @@ fn response_alias(
     TypeAliasDescriptor::new(name, LuauType::object(shape), None)
 }
 
+/// The websocket sender `api.websocket` handlers get, for the definitions of modules that take one.
+#[cfg(feature = "docgen")]
+pub(crate) fn websocket_sender_interface() -> harmony_luau::InterfaceDescriptor {
+    interface(
+        "ApiWebSocketSender",
+        [
+            field(
+                "send",
+                LuauType::function(
+                    vec![
+                        FunctionParameter {
+                            name: Some("self"),
+                            ty: ApiWebSocketSender::luau_type(),
+                            variadic: false,
+                        },
+                        FunctionParameter {
+                            name: Some("text"),
+                            ty: String::luau_type(),
+                            variadic: false,
+                        },
+                    ],
+                    Vec::new(),
+                ),
+            ),
+            field(
+                "close",
+                LuauType::function(
+                    vec![FunctionParameter {
+                        name: Some("self"),
+                        ty: ApiWebSocketSender::luau_type(),
+                        variadic: false,
+                    }],
+                    Vec::new(),
+                ),
+            ),
+            field(
+                "is_closed",
+                LuauType::function(
+                    vec![FunctionParameter {
+                        name: Some("self"),
+                        ty: ApiWebSocketSender::luau_type(),
+                        variadic: false,
+                    }],
+                    vec![bool::luau_type()],
+                ),
+            ),
+        ],
+    )
+}
+
 #[cfg(feature = "docgen")]
 fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
     vec![
@@ -939,51 +992,7 @@ fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
                 ),
             )],
         ),
-        interface(
-            "ApiWebSocketSender",
-            [
-                field(
-                    "send",
-                    LuauType::function(
-                        vec![
-                            FunctionParameter {
-                                name: Some("self"),
-                                ty: ApiWebSocketSender::luau_type(),
-                                variadic: false,
-                            },
-                            FunctionParameter {
-                                name: Some("text"),
-                                ty: String::luau_type(),
-                                variadic: false,
-                            },
-                        ],
-                        Vec::new(),
-                    ),
-                ),
-                field(
-                    "close",
-                    LuauType::function(
-                        vec![FunctionParameter {
-                            name: Some("self"),
-                            ty: ApiWebSocketSender::luau_type(),
-                            variadic: false,
-                        }],
-                        Vec::new(),
-                    ),
-                ),
-                field(
-                    "is_closed",
-                    LuauType::function(
-                        vec![FunctionParameter {
-                            name: Some("self"),
-                            ty: ApiWebSocketSender::luau_type(),
-                            variadic: false,
-                        }],
-                        vec![bool::luau_type()],
-                    ),
-                ),
-            ],
-        ),
+        websocket_sender_interface(),
         interface(
             "ApiAuth",
             [

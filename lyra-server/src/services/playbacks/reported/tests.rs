@@ -1599,3 +1599,241 @@ async fn a_live_listen_is_announced_once_when_it_counts() -> anyhow::Result<()> 
     );
     Ok(())
 }
+
+fn report_for(
+    db: &mut DbAny,
+    plugin_id: &str,
+    user_db_id: DbId,
+    track_db_id: DbId,
+    position_ms: u64,
+    now_ms: u64,
+) -> anyhow::Result<PlaybackRecord> {
+    report_playback_session(
+        db,
+        ReportedPlaybackRequest {
+            plugin_id,
+            user_db_id,
+            session_key: "device:1",
+            track_db_id,
+            play_id: None,
+            client_name: None,
+            mutation: PlaybackMutation {
+                position_ms: Some(position_ms),
+                duration_ms: Some(200_000),
+                state: Some(PlaybackState::Playing),
+            },
+            now_ms,
+            active_event: ActiveEvent::Started,
+        },
+    )?
+    .ok_or_else(|| anyhow::anyhow!("the report starts a session"))
+}
+
+/// Holds the user's `device:1` session, as the plugin reports it, on a new socket.
+fn hold_device(db: &DbAny, plugin_id: &str, user_db_id: DbId) -> holds::SocketId {
+    let socket = holds::SocketId::next();
+    assert!(holds::hold(
+        socket,
+        HeldSession {
+            plugin_id: plugin_id.to_string(),
+            user_public_id: user_public_id(db, user_db_id),
+            session_key: "device:1".to_string(),
+        },
+        || true,
+    ));
+    socket
+}
+
+/// Closes the socket and pauses what its close leaves playing, returning the paused sessions.
+fn close_socket(
+    db: &mut DbAny,
+    socket: holds::SocketId,
+    now_ms: u64,
+) -> Result<(Vec<PlaybackRecord>, Vec<EvictedPlaybackRecord>), PlaybackError> {
+    pause_released_sessions(db, holds::release_socket(socket, || {}), now_ms)
+}
+
+#[tokio::test]
+async fn a_close_pauses_the_current_session_and_the_previous_at_its_demotion() -> anyhow::Result<()>
+{
+    let (mut db, _guard) = new_scoped_test_db().await?;
+    let user = insert_user(&mut db, "alice")?;
+    let a = insert_track(&mut db, "A", 200_000)?;
+    let b = insert_track(&mut db, "B", 200_000)?;
+    let socket = hold_device(&db, "demo", user);
+    let started_a = report_for(&mut db, "demo", user, a, 10_000, 1_000)?;
+    let started_b = report_for(&mut db, "demo", user, b, 20_000, 2_000)?;
+
+    let (paused, evicted) = close_socket(&mut db, socket, 5_000)?;
+
+    assert!(evicted.is_empty());
+    let paused_at = |session: &PlaybackRecord| {
+        paused
+            .iter()
+            .find(|paused| paused.playback_session_id == session.playback_session_id)
+            .map(|paused| {
+                (
+                    paused.playback.state,
+                    paused.playback.position_ms,
+                    paused.playback.played_ms,
+                    paused.playback.updated_at_ms,
+                )
+            })
+    };
+    assert_eq!(
+        paused_at(&started_a),
+        Some((PlaybackState::Paused, 10_000, 0, 2_000))
+    );
+    assert_eq!(
+        paused_at(&started_b),
+        Some((PlaybackState::Paused, 20_000, 0, 5_000))
+    );
+    let root = lyra_db::playbacks::get_reported(&db, user, "demo", "device:1", 5_000)?
+        .expect("the playback stays for the player to resume");
+    assert_eq!(root.updated_at_ms, 2_000);
+    assert_eq!(
+        lyra_db::playbacks::get_current_session_id(&db, root.db_id.unwrap())?,
+        Some(started_b.playback_session_id)
+    );
+
+    let resumed = report_playback_session(
+        &mut db,
+        ReportedPlaybackRequest {
+            plugin_id: "demo",
+            user_db_id: user,
+            session_key: "device:1",
+            track_db_id: b,
+            play_id: None,
+            client_name: None,
+            mutation: PlaybackMutation {
+                state: Some(PlaybackState::Playing),
+                ..Default::default()
+            },
+            now_ms: 6_000,
+            active_event: ActiveEvent::Progress,
+        },
+    )?
+    .expect("the player resumes");
+    assert_eq!(resumed.playback_session_id, started_b.playback_session_id);
+    assert_eq!(resumed.playback.state, PlaybackState::Playing);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_close_leaves_other_reporters_of_the_session_key_playing() -> anyhow::Result<()> {
+    let (mut db, _guard) = new_scoped_test_db().await?;
+    let user = insert_user(&mut db, "alice")?;
+    let other_user = insert_user(&mut db, "bob")?;
+    let track = insert_track(&mut db, "A", 200_000)?;
+    let own = report_for(&mut db, "demo", user, track, 0, 1_000)?;
+    let other_plugin = report_for(&mut db, "other", user, track, 0, 1_000)?;
+    let other_user_session = report_for(&mut db, "demo", other_user, track, 0, 1_000)?;
+    let socket = hold_device(&db, "demo", user);
+
+    let (paused, _) = close_socket(&mut db, socket, 2_000)?;
+
+    assert_eq!(
+        paused
+            .iter()
+            .map(|paused| paused.playback_session_id)
+            .collect::<Vec<_>>(),
+        [own.playback_session_id]
+    );
+    for untouched in [other_plugin, other_user_session] {
+        let session =
+            lyra_db::playback_sessions::get_by_id(&db, untouched.playback_session_id)?.unwrap();
+        assert_eq!(session.state, PlaybackState::Playing);
+    }
+    let socket = hold_device(&db, "demo", user);
+    let (paused, _) = close_socket(&mut db, socket, 3_000)?;
+    assert!(paused.is_empty(), "a paused session stays paused");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_close_leaves_a_playback_a_later_report_changed() -> anyhow::Result<()> {
+    let (mut db, _guard) = new_scoped_test_db().await?;
+    let user = insert_user(&mut db, "alice")?;
+    let a = insert_track(&mut db, "A", 200_000)?;
+    let b = insert_track(&mut db, "B", 200_000)?;
+    let socket = hold_device(&db, "demo", user);
+    report_for(&mut db, "demo", user, a, 0, 1_000)?;
+    let released = holds::release_socket(socket, || {});
+    // The replacement lands in the same millisecond, so only the report count tells them apart.
+    let replacement = report_for(&mut db, "demo", user, b, 0, 1_000)?;
+
+    let (paused, _) = pause_released_sessions(&mut db, released, 1_000)?;
+
+    assert!(
+        paused.is_empty(),
+        "the socket closed before the later report"
+    );
+    let session =
+        lyra_db::playback_sessions::get_by_id(&db, replacement.playback_session_id)?.unwrap();
+    assert_eq!(session.state, PlaybackState::Playing);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_close_leaves_a_resume_in_the_same_millisecond_playing() -> anyhow::Result<()> {
+    let (mut db, _guard) = new_scoped_test_db().await?;
+    let user = insert_user(&mut db, "alice")?;
+    let track = insert_track(&mut db, "A", 200_000)?;
+    let socket = hold_device(&db, "demo", user);
+    let started = report_for(&mut db, "demo", user, track, 0, 1_000)?;
+    let progress = |db: &mut DbAny, state| {
+        report_playback_session(
+            db,
+            ReportedPlaybackRequest {
+                plugin_id: "demo",
+                user_db_id: user,
+                session_key: "device:1",
+                track_db_id: track,
+                play_id: None,
+                client_name: None,
+                mutation: PlaybackMutation {
+                    state: Some(state),
+                    ..Default::default()
+                },
+                now_ms: 2_000,
+                active_event: ActiveEvent::Progress,
+            },
+        )
+    };
+    progress(&mut db, PlaybackState::Paused)?.expect("the pause is accepted");
+    let released = holds::release_socket(socket, || {});
+    progress(&mut db, PlaybackState::Playing)?.expect("the resume is accepted");
+
+    let (paused, _) = pause_released_sessions(&mut db, released, 2_000)?;
+
+    assert!(paused.is_empty(), "the resume came after the socket closed");
+    let session = lyra_db::playback_sessions::get_by_id(&db, started.playback_session_id)?.unwrap();
+    assert_eq!(session.state, PlaybackState::Playing);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_close_leaves_a_session_another_socket_holds_playing() -> anyhow::Result<()> {
+    let (mut db, _guard) = new_scoped_test_db().await?;
+    let user = insert_user(&mut db, "alice")?;
+    let track = insert_track(&mut db, "A", 200_000)?;
+    let first = hold_device(&db, "demo", user);
+    let second = hold_device(&db, "demo", user);
+    let started = report_for(&mut db, "demo", user, track, 0, 1_000)?;
+
+    let (paused, _) = close_socket(&mut db, first, 2_000)?;
+    assert!(
+        paused.is_empty(),
+        "the other socket still holds the session"
+    );
+
+    let (paused, _) = close_socket(&mut db, second, 3_000)?;
+    assert_eq!(
+        paused
+            .iter()
+            .map(|paused| paused.playback_session_id)
+            .collect::<Vec<_>>(),
+        [started.playback_session_id]
+    );
+    Ok(())
+}

@@ -299,9 +299,10 @@ where
     }
 
     dispatch_auth.clear();
-    state.mark_closed();
+    let released = state.mark_closed();
     drop(inbound_tx);
     let _ = send_ws_with_timeout(&mut socket, Message::Close(None)).await;
+    crate::services::playbacks::pause_after_socket_close(released).await;
 }
 
 #[cfg(test)]

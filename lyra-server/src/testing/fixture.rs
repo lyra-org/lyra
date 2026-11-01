@@ -254,7 +254,7 @@ struct Tag {
     name: String,
 }
 
-/// What the test receives as its chunk's `...`: user and library ids, API key secrets, session
+/// What the test receives as its chunk's first `...`: user and library ids, API key secrets, session
 /// tokens, connection ids and entity ids by fixture key, and each playlist's entry ids in order.
 #[derive(Debug, Default, Serialize)]
 pub(crate) struct Seeded {

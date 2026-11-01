@@ -21,6 +21,10 @@ use lyra_db::{
 
 use super::{
     PlaybackError,
+    holds::{
+        self,
+        HeldSession,
+    },
     reporting::{
         self,
         Transition,
@@ -32,6 +36,7 @@ use crate::services::playback_sessions::{
     EvictedPlaybackRecord,
     PREVIOUS_PLAYBACK_GRACE_MS,
     PlaybackMutation,
+    PlaybackRecord,
     PlaybackServiceError,
     ReportPlaybackRequest,
     StartPlaybackRequest,
@@ -62,12 +67,121 @@ pub(crate) fn report_reported_playback(
     request: ReportedPlaybackRequest<'_>,
 ) -> Result<ReportOutcome, PlaybackError> {
     let now_ms = request.now_ms;
+    let (plugin_id, user_db_id, session_key) =
+        (request.plugin_id, request.user_db_id, request.session_key);
     Ok(match db.transaction_mut(|t| transition(t, request))? {
         Some(transition) => {
+            let counted = holds::advance(plugin_id, session_key, || {
+                Ok(lyra_db::users::get_by_id(db, user_db_id)?.map(|user| user.id))
+            });
+            if let Err(error) = counted {
+                tracing::warn!(%error, "failed to count a report for the sessions sockets hold");
+            }
             ReportOutcome::Applied(Box::new(reporting::finish(db, transition, None, now_ms)))
         }
         None => ReportOutcome::Ignored(reporting::cleanup_after_commit(db, now_ms)),
     })
+}
+
+/// Pauses what the sessions closed sockets held left playing, for each session that no open socket
+/// holds and that took no report since its socket closed. Returns the sessions it paused.
+fn pause_released_sessions(
+    db: &mut DbAny,
+    releases: Vec<holds::Release>,
+    now_ms: u64,
+) -> Result<(Vec<PlaybackRecord>, Vec<EvictedPlaybackRecord>), PlaybackError> {
+    let unheld = releases
+        .into_iter()
+        .filter_map(holds::Release::settle)
+        .collect::<Vec<_>>();
+    let mut paused = Vec::new();
+    for HeldSession {
+        plugin_id,
+        user_public_id,
+        session_key,
+    } in unheld
+    {
+        // A user deleted since holds nothing.
+        let Some(user_db_id) = lyra_db::users::find_db_id_by_public_id(db, &user_public_id)? else {
+            continue;
+        };
+        paused.extend(disconnect_reported_session(
+            db,
+            &plugin_id,
+            user_db_id,
+            &session_key,
+            now_ms,
+        )?);
+    }
+    Ok((paused, reporting::cleanup_after_commit(db, now_ms)))
+}
+
+/// Pauses what the sessions a closed plugin socket held left playing, as
+/// [`pause_released_sessions`] does, and announces it.
+pub(crate) async fn pause_after_socket_close(releases: Vec<holds::Release>) {
+    if releases.is_empty() {
+        return;
+    }
+    let result = match playback_sessions::now_ms() {
+        Ok(now_ms) => {
+            let mut db = crate::services::STATE.db.write_outside_catalog().await;
+            pause_released_sessions(&mut db, releases, now_ms)
+        }
+        Err(error) => Err(error.into()),
+    };
+    match result {
+        Ok((paused, evicted)) => {
+            playback_sessions::dispatch_evicted_updates(evicted);
+            for record in paused {
+                let event = "progress".to_string();
+                match &record.playback.plugin_id {
+                    Some(plugin_id) => playback_sessions::dispatch_playback_update_for_caller(
+                        format!("plugin:{plugin_id}"),
+                        &record,
+                        event,
+                    ),
+                    None => playback_sessions::dispatch_playback_update(&record, event),
+                }
+            }
+        }
+        Err(error) => {
+            tracing::warn!(%error, "failed to pause playback a closed plugin socket held");
+        }
+    }
+}
+
+/// Pauses the playback the plugin reports for the user's player session, as a closed connection
+/// of Lyra's own clients pauses its playback: the playing current session at `now_ms`, and the
+/// session it replaced at the time it was replaced. Returns the sessions it paused; the playback
+/// stays, so the player can resume it.
+fn disconnect_reported_session(
+    db: &mut DbAny,
+    plugin_id: &str,
+    user_db_id: DbId,
+    session_key: &str,
+    now_ms: u64,
+) -> Result<Vec<PlaybackRecord>, PlaybackError> {
+    let mut left = Vec::new();
+    if let Some(root_db_id) =
+        lyra_db::playbacks::get_reported(db, user_db_id, plugin_id, session_key, now_ms)?
+            .and_then(|root| root.db_id)
+    {
+        let current_id = lyra_db::playbacks::get_current_session_id(db, root_db_id)?;
+        if let Some((session, _)) = current_id
+            .map(|id| reporting::stored_session(db, id))
+            .transpose()?
+            .flatten()
+        {
+            left.push((session, now_ms));
+        }
+        if let Some(previous) = lyra_db::playbacks::get_previous_session(db, root_db_id)?
+            && Some(previous.session_db_id) != current_id
+            && let Some((session, _)) = reporting::stored_session(db, previous.session_db_id)?
+        {
+            left.push((session, previous.demoted_at_ms));
+        }
+    }
+    reporting::pause_left_sessions(db, user_db_id, left)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

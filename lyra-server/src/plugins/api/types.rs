@@ -36,7 +36,7 @@ pub(super) struct ApiWebSocketHandler;
 #[cfg(feature = "docgen")]
 pub(super) struct ApiWebSocketReader;
 #[cfg(feature = "docgen")]
-pub(super) struct ApiWebSocketSender;
+pub(crate) struct ApiWebSocketSender;
 #[cfg(feature = "docgen")]
 pub(super) struct ApiAuth;
 #[cfg(feature = "docgen")]

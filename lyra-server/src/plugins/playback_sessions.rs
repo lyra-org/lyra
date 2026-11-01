@@ -25,7 +25,13 @@ use serde::{
     Serialize,
 };
 
+use harmony_core::UserDataBinding;
+
+#[cfg(feature = "docgen")]
+use crate::plugins::api::WebSocketSenderType;
 use crate::plugins::args;
+use crate::plugins::executor::ApiWebSocketSender;
+use crate::services::playbacks::holds::HeldSession;
 use crate::{
     plugins::{
         db::Db,
@@ -233,6 +239,32 @@ impl PlaybackSessionsModule {
     }
 
     #[harmony(
+        description = "Holds the player session `session_key` the plugin reports playback for, as `report_session` names it, for the dispatch principal while the websocket `sender` stays open. When the websocket closes and no other open websocket holds the session, what the plugin reported for it pauses, as a closed connection of Lyra's own clients pauses its playback: a playing track session pauses at its last reported position, and the one it replaced at the time it was replaced. A report accepted for the session after the websocket closed keeps what it reported, and the playback stays for the player to resume. Does nothing once the websocket is closed.",
+        args(sender: WebSocketSenderType, session_key: String)
+    )]
+    fn hold_session(
+        vm: &luau::Vm,
+        sender: luau::UserData,
+        session_key: String,
+        #[context] principal: Principal,
+        #[context] origin: luau::ChunkOrigin,
+    ) -> luau::runtime::Result<()> {
+        let plugin_id = origin.plugin.ok_or_else(|| {
+            luau::Error::Runtime(
+                "playback_sessions.hold_session must be called from plugin Luau code".into(),
+            )
+        })?;
+        let sender = ApiWebSocketSender::class().read_userdata(vm, &sender)?;
+        let session_key = require_non_empty_string(session_key, "session_key")?;
+        sender.state().hold_session(HeldSession {
+            plugin_id: plugin_id.to_string(),
+            user_public_id: principal.user_public_id,
+            session_key,
+        });
+        Ok(())
+    }
+
+    #[harmony(
         description = "Lists the dispatch principal's open WebSocket connections, oldest first, with the playback each drives.",
         returns(Vec<ConnectionInfo>)
     )]
@@ -355,6 +387,7 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
             SendCommandRequest::interface_descriptor(),
             ConnectionInfo::interface_descriptor(),
             PlaybackInfo::interface_descriptor(),
+            crate::plugins::api::websocket_sender_interface(),
         ],
         &[],
     )
