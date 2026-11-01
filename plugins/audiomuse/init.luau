@@ -36,15 +36,38 @@ local config = plugins.declare_settings(function(builder)
 		description = "Authentication token for the AudioMuse API.",
 		default = "",
 	})
+	builder:choice("media_server", {
+		label = "Media server",
+		description = "The API the AudioMuse server indexes Lyra through.",
+		default = "jellyfin",
+		options = {
+			{ value = "jellyfin", label = "Jellyfin" },
+			{ value = "opensubsonic", label = "OpenSubsonic" },
+		},
+	})
 end)
 
 local BASE_URL = config.base_url :: string
 local TOKEN = config.token :: string
+local MEDIA_SERVER = config.media_server :: string
 
 if not BASE_URL or BASE_URL == "" then
 	warn("base_url not configured; skipping initialization.")
 	return
 end
+
+if plugins.get(MEDIA_SERVER) == nil then
+	warn(`media server plugin {MEDIA_SERVER} is not installed; skipping initialization.`)
+	return
+end
+
+-- The track ids AudioMuse stores: Jellyfin item ids are hex encodings of Lyra ids, while
+-- OpenSubsonic song ids are Lyra ids.
+local function passthrough_id(id: string): string?
+	return id
+end
+local encode_track_id = if MEDIA_SERVER == "jellyfin" then jellyfin_hex.nanoid_to_hex else passthrough_id
+local decode_track_id = if MEDIA_SERVER == "jellyfin" then jellyfin_hex.hex_to_nanoid else passthrough_id
 
 http.set_rate_limit({
 	domain = BASE_URL,
@@ -87,7 +110,7 @@ local function result_tracks(label: string, items: { JsonObject }): { MixResultT
 			decode_failed += 1
 			continue
 		end
-		local track_id = jellyfin_hex.hex_to_nanoid(result_item_id)
+		local track_id = decode_track_id(result_item_id)
 		if not track_id then
 			decode_failed += 1
 			continue
@@ -97,7 +120,7 @@ local function result_tracks(label: string, items: { JsonObject }): { MixResultT
 
 	-- Encoder/version mismatch; escalate above routine orphans.
 	if decode_failed > 0 then
-		warn(`{label}: {decode_failed}/{#items} hex decode failed — possible ID format mismatch`)
+		warn(`{label}: {decode_failed}/{#items} id decode failed — possible ID format mismatch`)
 	end
 
 	return results
@@ -139,7 +162,7 @@ local function query_similar_tracks(item_id: string, n: number): { MixResultTrac
 	return result_tracks(label, body :: { JsonObject })
 end
 
--- An item of an alchemy blend: a song by hex id, added to or subtracted from the blend.
+-- An item of an alchemy blend: a song by AudioMuse item id, added to or subtracted from the blend.
 type AlchemyItem = { id: string, op: string, type: string }
 
 local function query_alchemy(items: { AlchemyItem }, n: number): { MixResultTrack }?
@@ -168,14 +191,14 @@ local function query_alchemy(items: { AlchemyItem }, n: number): { MixResultTrac
 end
 
 local function track_mix(seed_id: string, limit: number?): MixResult
-	local hex_id = jellyfin_hex.nanoid_to_hex(seed_id)
-	if not hex_id then
+	local item_id = encode_track_id(seed_id)
+	if not item_id then
 		warn(`track mix: seed {seed_id} could not be encoded; returning empty mix`)
 		return { tracks = {} }
 	end
 
 	local n = (limit or 50) + 1
-	local results = query_similar_tracks(hex_id, n)
+	local results = query_similar_tracks(item_id, n)
 	if not results then
 		return { tracks = {} }
 	end
@@ -229,10 +252,10 @@ local function alchemy_mix(seeds: { mix.MixSeed }, limit: number?): MixResult
 			if #items >= MAX_ALCHEMY_ITEMS then
 				break
 			end
-			local hex_id = if seed_track_ids[track_id] then nil else jellyfin_hex.nanoid_to_hex(track_id)
-			if hex_id then
+			local item_id = if seed_track_ids[track_id] then nil else encode_track_id(track_id)
+			if item_id then
 				seed_track_ids[track_id] = true
-				table.insert(items, { id = hex_id, op = op, type = "song" })
+				table.insert(items, { id = item_id, op = op, type = "song" })
 				if op == "ADD" then
 					adds += 1
 				end
