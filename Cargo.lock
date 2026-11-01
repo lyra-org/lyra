@@ -126,12 +126,13 @@ checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
 name = "asyncapi-rust"
-version = "0.2.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80ca4d85b1ab04475b03e84a38385786632200879127fd4cbc7da83c8fa7fe72"
+checksum = "b78e4b1b517a0ed363afe4ce5f3c654f9dad71ae219b493326edd0fba90931e8"
 dependencies = [
  "asyncapi-rust-codegen",
  "asyncapi-rust-models",
+ "indexmap",
  "schemars",
  "serde",
  "serde_json",
@@ -139,9 +140,9 @@ dependencies = [
 
 [[package]]
 name = "asyncapi-rust-codegen"
-version = "0.2.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc20d497b19e9f06ba3fad2938f6bf696184a72d44d8e9d44208303409e3a0af"
+checksum = "4cfe26564ef0eb43900f482d827f5a2d6360bd0361de4fd1c77d87e0f7517e2c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -153,10 +154,11 @@ dependencies = [
 
 [[package]]
 name = "asyncapi-rust-models"
-version = "0.2.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "076c77e2a619f709f613e50ea1bcb58211539cbf2f1eaa9fad140e93a15f8950"
+checksum = "0ff7f79a0864d5c8f1fbd83f9c7eb5c07d623cf50196ea54213e6592ae4ec341"
 dependencies = [
+ "indexmap",
  "serde",
  "serde_json",
 ]
