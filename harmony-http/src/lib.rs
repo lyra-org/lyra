@@ -73,6 +73,9 @@ static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     let _ = rustls::crypto::ring::default_provider().install_default();
     reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
+        // Redirects are followed in `execute_request`, so each hop runs
+        // under its own host's limits.
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .expect("Failed to create HTTP client")
 });
@@ -87,6 +90,32 @@ static DEFAULT_USER_AGENT: LazyLock<StdRwLock<Option<String>>> =
 
 pub fn shared_client() -> &'static reqwest::Client {
     &HTTP_CLIENT
+}
+
+/// Redirect hops a request follows before it fails.
+const MAX_REDIRECTS: usize = 5;
+
+fn is_http_scheme(url: &url::Url) -> bool {
+    matches!(url.scheme(), "http" | "https")
+}
+
+/// Why the redirect to `next` is refused, given the URLs the request has
+/// already visited. A request stays on http(s), and once on https it stays
+/// there.
+fn redirect_refusal(next: &url::Url, previous: &[url::Url]) -> Option<String> {
+    if previous.len() > MAX_REDIRECTS {
+        return Some(format!("more than {MAX_REDIRECTS} redirects"));
+    }
+    if !is_http_scheme(next) {
+        return Some(format!(
+            "redirect to unsupported scheme '{}'",
+            next.scheme()
+        ));
+    }
+    if next.scheme() == "http" && previous.iter().any(|url| url.scheme() == "https") {
+        return Some(format!("redirect downgrades https to http: {next}"));
+    }
+    None
 }
 
 #[derive(Clone, Debug)]
@@ -454,6 +483,7 @@ struct HttpRequestOptions {
     body: Option<LuaBinaryInput>,
     headers: Option<HttpHeaderMap>,
     cookies: Option<HttpHeaderMap>,
+    max_body_bytes: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -545,8 +575,6 @@ fn classify_reqwest_error(err: &reqwest::Error) -> (&'static str, String) {
         ("timeout", "request timed out".to_string())
     } else if err.is_connect() {
         ("connect", format!("failed to connect: {err}"))
-    } else if err.is_redirect() {
-        ("redirect", format!("too many redirects: {err}"))
     } else if err.is_request() {
         ("request", format!("request error: {err}"))
     } else if err.is_body() {
@@ -679,12 +707,48 @@ async fn execute_single_request(options: &HttpRequestOptions) -> HttpResponse {
     let headers = extract_headers(resp.headers());
     let cookies = extract_cookies(resp.headers());
 
-    let body = match resp.bytes().await {
-        Ok(bytes) => bytes.to_vec(),
-        Err(err) => return HttpResponse::from_reqwest_error(&err),
+    let body = match read_body(resp, options.max_body_bytes).await {
+        Ok(body) => body,
+        Err(response) => return response,
     };
 
     HttpResponse::success(status_code, status_message, headers, cookies, body)
+}
+
+async fn read_body(
+    mut resp: reqwest::Response,
+    max_bytes: Option<usize>,
+) -> Result<Vec<u8>, HttpResponse> {
+    let status = resp.status().as_u16();
+    let too_large = |limit: usize| {
+        HttpResponse::error(
+            "body",
+            Some(status),
+            format!("response body exceeds {limit} bytes"),
+        )
+    };
+    if let Some(limit) = max_bytes
+        && resp
+            .content_length()
+            .is_some_and(|length| length > limit as u64)
+    {
+        return Err(too_large(limit));
+    }
+    let mut body = Vec::new();
+    loop {
+        match resp.chunk().await {
+            Ok(Some(chunk)) => {
+                if let Some(limit) = max_bytes
+                    && body.len() + chunk.len() > limit
+                {
+                    return Err(too_large(limit));
+                }
+                body.extend_from_slice(&chunk);
+            }
+            Ok(None) => return Ok(body),
+            Err(err) => return Err(HttpResponse::from_reqwest_error(&err)),
+        }
+    }
 }
 
 async fn acquire_concurrency_permit(domain: Option<&str>) -> Option<OwnedSemaphorePermit> {
@@ -822,11 +886,177 @@ fn jittered_backoff(cap: Duration) -> Duration {
     Duration::from_nanos(fastrand::u64(0..=cap_nanos))
 }
 
-async fn execute_request_with_rate_limit(options: HttpRequestOptions) -> HttpResponse {
-    execute_request_loop(options, |opts| async move {
-        execute_single_request(&opts).await
-    })
-    .await
+/// Every outbound request, a plugin's own or one the host makes on its
+/// behalf, runs through here, attributed to `plugin`. Each hop of a redirect
+/// chain runs under the limits of the host it reaches.
+async fn execute_request(plugin: Option<&str>, options: HttpRequestOptions) -> HttpResponse {
+    let span = tracing::debug_span!("http_request", plugin, url = %options.url);
+    tracing::Instrument::instrument(follow_redirects(options), span).await
+}
+
+async fn follow_redirects(mut options: HttpRequestOptions) -> HttpResponse {
+    let mut visited: Vec<url::Url> = Vec::new();
+    loop {
+        let url = match url::Url::parse(&options.url) {
+            Ok(url) => url,
+            Err(err) => {
+                return HttpResponse::error("builder", None, format!("invalid URL: {err}"));
+            }
+        };
+        if visited.is_empty() {
+            if !is_http_scheme(&url) {
+                return HttpResponse::error(
+                    "request",
+                    None,
+                    format!("unsupported URL scheme '{}'", url.scheme()),
+                );
+            }
+        } else if let Some(reason) = redirect_refusal(&url, &visited) {
+            return HttpResponse::error("redirect", None, reason);
+        }
+
+        let response = execute_request_loop(options.clone(), |opts| async move {
+            execute_single_request(&opts).await
+        })
+        .await;
+        let Some(next) = redirect_target(&response, &url) else {
+            return response;
+        };
+        options = redirected(options, response.status_code, &url, &next);
+        visited.push(url);
+    }
+}
+
+/// Where a redirect response points, resolved against the URL it came from.
+fn redirect_target(response: &HttpResponse, url: &url::Url) -> Option<url::Url> {
+    if !response.success || !matches!(response.status_code, Some(301 | 302 | 303 | 307 | 308)) {
+        return None;
+    }
+    let location = response.headers.0.get("location")?;
+    url.join(location).ok()
+}
+
+/// The request to send to `next` after `status` redirected `options` away
+/// from `from`, as browsers and reqwest rewrite it: 301, 302 and 303 turn
+/// any method but GET and HEAD into a bodiless GET, and credentials stay
+/// behind on another origin.
+fn redirected(
+    mut options: HttpRequestOptions,
+    status: Option<u16>,
+    from: &url::Url,
+    next: &url::Url,
+) -> HttpRequestOptions {
+    const BODY_HEADERS: &[&str] = &[
+        "content-type",
+        "content-length",
+        "content-encoding",
+        "transfer-encoding",
+    ];
+    const CREDENTIAL_HEADERS: &[&str] = &[
+        "authorization",
+        "cookie",
+        "proxy-authorization",
+        "www-authenticate",
+    ];
+    let mut dropped: Vec<&str> = Vec::new();
+    if matches!(status, Some(301..=303))
+        && !matches!(options.method, HttpMethod::Get | HttpMethod::Head)
+    {
+        options.method = HttpMethod::Get;
+        options.body = None;
+        dropped.extend(BODY_HEADERS);
+    }
+    if from.origin() != next.origin() {
+        options.cookies = None;
+        dropped.extend(CREDENTIAL_HEADERS);
+    }
+    if let Some(headers) = options.headers.as_mut() {
+        headers
+            .0
+            .retain(|key, _| !dropped.iter().any(|name| key.eq_ignore_ascii_case(name)));
+    }
+    options.url = next.to_string();
+    options
+}
+
+/// A request the host makes on a plugin's behalf through [`request_as`].
+#[derive(Clone, Debug)]
+pub struct Request {
+    method: HttpMethod,
+    url: String,
+    max_body_bytes: Option<usize>,
+}
+
+impl Request {
+    pub fn get(url: impl Into<String>) -> Self {
+        Self {
+            method: HttpMethod::Get,
+            url: url.into(),
+            max_body_bytes: None,
+        }
+    }
+
+    /// Fails the request once its response body would exceed `limit`.
+    pub fn max_body_bytes(mut self, limit: usize) -> Self {
+        self.max_body_bytes = Some(limit);
+        self
+    }
+}
+
+/// A response with any status, as a plugin's request receives it.
+#[derive(Clone, Debug)]
+pub struct Response {
+    pub status: u16,
+    pub body: Vec<u8>,
+}
+
+/// A request that got no response, with the `error_kind` a plugin's request
+/// would report.
+#[derive(Clone, Debug)]
+pub struct Error {
+    kind: String,
+    message: String,
+}
+
+impl Error {
+    pub fn kind(&self) -> &str {
+        &self.kind
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for Error {}
+
+/// Makes `request` on behalf of `plugin_id`, as the plugin's own request
+/// would run: under the same per-host rate limits, cooldowns and
+/// concurrency caps, with the default user agent and redirect policy. The
+/// host decides whether the plugin may reach the network; this only runs the
+/// request.
+pub async fn request_as(plugin_id: &str, request: Request) -> Result<Response, Error> {
+    let options = HttpRequestOptions {
+        url: request.url,
+        method: request.method,
+        body: None,
+        headers: None,
+        cookies: None,
+        max_body_bytes: request.max_body_bytes,
+    };
+    let response = execute_request(Some(plugin_id), options).await;
+    match (response.success, response.status_code) {
+        (true, Some(status)) => Ok(Response {
+            status,
+            body: response.body.0,
+        }),
+        _ => Err(Error {
+            kind: response.error_kind.unwrap_or_else(|| "unknown".to_string()),
+            message: response.status_message,
+        }),
+    }
 }
 
 pub fn set_default_user_agent(user_agent: impl Into<String>) {
@@ -908,11 +1138,13 @@ impl HttpModule {
     )]
     fn request(
         vm: &luau::Vm,
+        origin: &luau::ChunkOrigin,
         options: luau::Table,
     ) -> luau::runtime::Result<luau::ScheduledFuture> {
         let options = request_options_from_luau(vm, &options)?;
+        let plugin_id = origin.plugin.clone();
         Ok(luau::ScheduledFuture::new(async move {
-            let response = execute_request_with_rate_limit(options).await;
+            let response = execute_request(plugin_id.as_deref(), options).await;
             Ok(response.into_luau_value())
         }))
     }
@@ -969,6 +1201,7 @@ fn request_options_from_luau(
         body: optional_binary_field(table, "body")?,
         headers: optional_header_map_field(table, "headers")?,
         cookies: optional_header_map_field(table, "cookies")?,
+        max_body_bytes: None,
     })
 }
 
@@ -1853,6 +2086,7 @@ mod tests {
             body: None,
             headers: None,
             cookies: None,
+            max_body_bytes: None,
         };
 
         let attempt_counter = Arc::new(AtomicUsize::new(0));
@@ -1914,6 +2148,247 @@ mod tests {
             .clone()
             .try_acquire_owned()
             .expect("sibling acquires immediately after main releases");
+    }
+
+    fn url(raw: &str) -> url::Url {
+        url::Url::parse(raw).expect("valid test URL")
+    }
+
+    #[test]
+    fn redirects_keep_to_http_and_never_downgrade() {
+        let refusal = |next: &str, previous: &[&str]| {
+            let previous: Vec<_> = previous.iter().map(|raw| url(raw)).collect();
+            super::redirect_refusal(&url(next), &previous)
+        };
+
+        assert_eq!(refusal("https://b.example/", &["http://a.example/"]), None);
+        assert_eq!(refusal("http://b.example/", &["http://a.example/"]), None);
+        assert!(refusal("http://b.example/", &["https://a.example/"]).is_some());
+        assert!(
+            refusal(
+                "http://c.example/",
+                &["https://a.example/", "https://b.example/"]
+            )
+            .is_some()
+        );
+        assert!(refusal("file:///etc/passwd", &["http://a.example/"]).is_some());
+        assert!(refusal("ftp://a.example/", &["https://a.example/"]).is_some());
+    }
+
+    #[test]
+    fn redirects_stop_after_the_hop_limit() {
+        let chain: Vec<_> = (0..=super::MAX_REDIRECTS)
+            .map(|hop| url(&format!("https://a.example/{hop}")))
+            .collect();
+        let next = url("https://a.example/next");
+
+        assert_eq!(
+            super::redirect_refusal(&next, &chain[..super::MAX_REDIRECTS]),
+            None
+        );
+        assert!(super::redirect_refusal(&next, &chain).is_some());
+    }
+
+    /// Serves each connection the response `respond` builds from its request
+    /// path and full request text, on a local port.
+    async fn serve(respond: fn(&str, &str, u16) -> Vec<u8>) -> u16 {
+        use tokio::io::{
+            AsyncReadExt,
+            AsyncWriteExt,
+        };
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let port = listener.local_addr().expect("test server address").port();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut buffer = vec![0; 4096];
+                    let read = stream.read(&mut buffer).await.unwrap_or(0);
+                    let request = String::from_utf8_lossy(&buffer[..read]);
+                    let path = request.split_whitespace().nth(1).unwrap_or("/").to_string();
+                    let _ = stream.write_all(&respond(&path, &request, port)).await;
+                    let _ = stream.shutdown().await;
+                });
+            }
+        });
+        port
+    }
+
+    fn ok(body: &[u8]) -> Vec<u8> {
+        let mut response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        response.extend_from_slice(body);
+        response
+    }
+
+    fn redirect(location: &str) -> Vec<u8> {
+        format!(
+            "HTTP/1.1 302 Found\r\nlocation: {location}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+        )
+        .into_bytes()
+    }
+
+    #[tokio::test]
+    async fn request_as_follows_redirects_up_to_the_limit() {
+        let port = serve(|path, _, port| {
+            let hop: usize = path.trim_start_matches('/').parse().unwrap_or(0);
+            if hop == 0 {
+                ok(b"done")
+            } else {
+                redirect(&format!("http://127.0.0.1:{port}/{}", hop - 1))
+            }
+        })
+        .await;
+        let at = |hop: usize| super::Request::get(format!("http://127.0.0.1:{port}/{hop}"));
+
+        let response = super::request_as("test", at(super::MAX_REDIRECTS))
+            .await
+            .expect("redirects within the limit are followed");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body, b"done");
+
+        let error = super::request_as("test", at(super::MAX_REDIRECTS + 1))
+            .await
+            .expect_err("one hop past the limit fails");
+        assert_eq!(error.kind(), "redirect");
+    }
+
+    #[tokio::test]
+    async fn request_as_caps_the_response_body() {
+        let port = serve(|path, _, _| match path {
+            "/declared" => ok(&[0; 64]),
+            _ => {
+                let mut response = b"HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n".to_vec();
+                response.extend_from_slice(&[0; 64]);
+                response
+            }
+        })
+        .await;
+        let request = |path: &str| super::Request::get(format!("http://127.0.0.1:{port}{path}"));
+
+        for path in ["/declared", "/streamed"] {
+            let error = super::request_as("test", request(path).max_body_bytes(63))
+                .await
+                .expect_err("a body past the cap fails");
+            assert_eq!(error.kind(), "body", "{path}");
+            let response = super::request_as("test", request(path).max_body_bytes(64))
+                .await
+                .expect("a body within the cap is read");
+            assert_eq!(response.body.len(), 64, "{path}");
+        }
+    }
+
+    fn options(method: super::HttpMethod, url: String) -> super::HttpRequestOptions {
+        super::HttpRequestOptions {
+            url,
+            method,
+            body: None,
+            headers: None,
+            cookies: None,
+            max_body_bytes: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn each_redirect_hop_runs_under_its_own_hosts_limits() {
+        use std::sync::atomic::{
+            AtomicBool,
+            Ordering,
+        };
+        static FAILED_ONCE: AtomicBool = AtomicBool::new(false);
+
+        // `127.0.0.1` and `localhost` are two hosts to the limiters.
+        let port = serve(|path, _, port| match path {
+            "/start" => redirect(&format!("http://localhost:{port}/limited")),
+            _ if !FAILED_ONCE.swap(true, Ordering::SeqCst) => {
+                b"HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                    .to_vec()
+            }
+            _ => ok(b"limited"),
+        })
+        .await;
+        super::RATE_LIMITER.write().await.set_config(
+            "localhost".to_string(),
+            super::RateLimitConfig {
+                requests_per_second: 100.0,
+                retry_status_codes: vec![503],
+                max_retries: 1,
+                initial_backoff: std::time::Duration::from_millis(1),
+            },
+            None,
+        );
+
+        let response = super::execute_request(
+            None,
+            options(
+                super::HttpMethod::Get,
+                format!("http://127.0.0.1:{port}/start"),
+            ),
+        )
+        .await;
+
+        assert_eq!(response.status_code, Some(200));
+        assert_eq!(response.body.0, b"limited");
+        assert_eq!(
+            response.retries, 1,
+            "the redirect target retries under its own host's policy"
+        );
+    }
+
+    #[tokio::test]
+    async fn redirects_keep_credentials_to_their_origin_and_rewrite_see_other() {
+        let port = serve(|path, request, port| {
+            let request = request.to_ascii_lowercase();
+            let echo = || {
+                ok(format!(
+                    "{} auth={} cookie={}",
+                    request.split_whitespace().next().unwrap_or(""),
+                    request.contains("authorization:"),
+                    request.contains("cookie:"),
+                )
+                .as_bytes())
+            };
+            match path {
+                "/same" => redirect(&format!("http://127.0.0.1:{port}/echo")),
+                "/other" => redirect(&format!("http://localhost:{port}/echo")),
+                "/see-other" => b"HTTP/1.1 303 See Other\r\nlocation: /echo\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                    .to_vec(),
+                _ => echo(),
+            }
+        })
+        .await;
+        let request = |method, path: &str| {
+            let mut options = options(method, format!("http://127.0.0.1:{port}{path}"));
+            options.headers = Some(super::HttpHeaderMap(
+                [("Authorization".to_string(), "secret".to_string())].into(),
+            ));
+            options.cookies = Some(super::HttpHeaderMap(
+                [("session".to_string(), "secret".to_string())].into(),
+            ));
+            options
+        };
+        let body = |response: super::HttpResponse| String::from_utf8(response.body.0).unwrap();
+
+        let same = super::execute_request(None, request(super::HttpMethod::Get, "/same")).await;
+        assert_eq!(body(same), "get auth=true cookie=true");
+        let other = super::execute_request(None, request(super::HttpMethod::Get, "/other")).await;
+        assert_eq!(body(other), "get auth=false cookie=false");
+        let see_other =
+            super::execute_request(None, request(super::HttpMethod::Post, "/see-other")).await;
+        assert_eq!(body(see_other), "get auth=true cookie=true");
+    }
+
+    #[tokio::test]
+    async fn request_as_refuses_other_schemes() {
+        let error = super::request_as("test", super::Request::get("file:///etc/passwd"))
+            .await
+            .expect_err("file URLs are refused");
+        assert_eq!(error.kind(), "request");
     }
 
     #[test]
