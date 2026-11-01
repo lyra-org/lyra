@@ -51,9 +51,11 @@ type PlaybackSessionState = ClientPlayback & {
 	playback_start_ticks: number,
 }
 
--- Who reported a playback event: the Jellyfin session it lists under, and its transport.
+-- Who reported a playback event: the Jellyfin session it lists under, the device it names, and
+-- its transport.
 export type PlaybackReporter = {
 	session_info: JsonObject,
+	client_name: string?,
 	via_socket: boolean,
 }
 
@@ -1104,6 +1106,7 @@ function module.report_playback_event(
 	local _, report_error = playbacks.report_session({
 		session_key = session_key :: string,
 		track_id = item_id,
+		client_name = reporter.client_name,
 		position_ms = position_ms,
 		duration_ms = duration_ms,
 		state = normalized_state,

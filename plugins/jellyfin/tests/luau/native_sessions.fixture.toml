@@ -1,0 +1,18 @@
+run_as = "listener"
+
+[[users]]
+key = "listener"
+
+[[api_keys]]
+key = "phone"
+user = "listener"
+
+[[connections]]
+key = "speaker"
+user = "listener"
+client_name = "Kitchen Speaker"
+
+[[connections]]
+key = "unnamed"
+user = "listener"
+session_key = "living-room"

@@ -427,6 +427,16 @@ function module.require_jellyfin_principal(ctx: ApiContext?): Principal?
 	return resolved_auth.principal
 end
 
+-- Lyra refuses a report whose client name is too long or holds control characters, while Jellyfin
+-- accepts any device name, so such a device reports without one.
+local function reportable_client_name(device: string): string?
+	local _, length = string.gsub(device, "[^\x80-\xBF]", "")
+	if length > 128 or string.find(device, "%c") or string.find(device, "\xC2[\x80-\x9F]") then
+		return nil
+	end
+	return device
+end
+
 local function report_client_playback(
 	resolved_auth: ResolvedAuth,
 	payload: playback.PlaybackPayload,
@@ -438,6 +448,7 @@ local function report_client_playback(
 	local session_id = module.build_session_id(principal, identity)
 	return playback.report_playback_event(resolved_auth, payload, event_name, session_id, {
 		session_info = module.build_session_info(session_id, principal, identity, module.current_iso_timestamp()),
+		client_name = reportable_client_name(identity.device),
 		via_socket = via_socket,
 	})
 end
