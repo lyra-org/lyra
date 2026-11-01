@@ -43,6 +43,12 @@ pub struct ReportedSource {
     pub(crate) session_key: String,
 }
 
+impl ReportedSource {
+    pub fn session_key(&self) -> &str {
+        &self.session_key
+    }
+}
+
 impl From<ReportedSource> for DbValue {
     fn from(source: ReportedSource) -> Self {
         (&source).into()

@@ -362,6 +362,76 @@ pub fn list_projections_for_user(
     Ok(projections)
 }
 
+/// A playback with the track session it currently plays.
+#[derive(Clone, Debug)]
+pub struct CurrentPlayback {
+    pub playback: Playback,
+    pub owner_db_id: DbId,
+    pub session: crate::PlaybackSession,
+    pub track_db_id: DbId,
+}
+
+/// Every user's playbacks whose current track session was updated at or after `since_ms`.
+pub fn list_current_since(
+    db: &impl DbAccess,
+    since_ms: u64,
+) -> anyhow::Result<Vec<CurrentPlayback>> {
+    let sessions: Vec<crate::PlaybackSession> = db
+        .exec(
+            QueryBuilder::select()
+                .elements::<crate::PlaybackSession>()
+                .search()
+                .from("playback_sessions")
+                .where_()
+                .neighbor()
+                .and()
+                .key("updated_at_ms")
+                .greater_than_or_equal(since_ms)
+                .query(),
+        )?
+        .try_into()?;
+    let mut current = Vec::new();
+    for session in sessions {
+        let Some(session_db_id) = session.db_id else {
+            continue;
+        };
+        let holders = db.exec(
+            QueryBuilder::select()
+                .search()
+                .to(session_db_id)
+                .where_()
+                .edge()
+                .and()
+                .distance(CountComparison::Equal(1))
+                .and()
+                .keys(CURRENT_SESSION_EDGE_KEY)
+                .query(),
+        )?;
+        let Some(playback_db_id) = holders
+            .elements
+            .iter()
+            .find(|edge| edge.id.0 < 0 && edge.from.0 > 0)
+            .map(|edge| edge.from)
+        else {
+            continue;
+        };
+        let (Some(playback), Some(owner_db_id), Some(track_db_id)) = (
+            get_by_id(db, playback_db_id)?,
+            get_owner_id(db, playback_db_id)?,
+            crate::playback_sessions::get_track_id(db, session_db_id)?,
+        ) else {
+            continue;
+        };
+        current.push(CurrentPlayback {
+            playback,
+            owner_db_id,
+            session,
+            track_db_id,
+        });
+    }
+    Ok(current)
+}
+
 pub fn count_for_user_up_to_limit(db: &impl DbAccess, user_db_id: DbId) -> anyhow::Result<usize> {
     let result = db.exec(
         QueryBuilder::select()
@@ -851,6 +921,53 @@ mod tests {
             track_id,
             user_id,
         )
+    }
+
+    #[test]
+    fn current_playbacks_span_users_and_skip_unheld_or_older_sessions() -> anyhow::Result<()> {
+        let (mut db, user_id, session_id) = setup()?;
+        let other_id = crate::users::create(&mut db, &test_user("other")?)?;
+        let other_session_id = insert_session(&mut db, other_id)?;
+        let mut other_session =
+            crate::playback_sessions::get_by_id(&db, other_session_id)?.expect("session");
+        other_session.updated_at_ms = 50;
+        db.transaction_mut(|t| crate::playback_sessions::update(t, &other_session))?;
+        let unheld_id = insert_session(&mut db, other_id)?;
+        db.transaction_mut(|t| insert_reported(t, user_id, "external", "a", session_id, 1))?;
+        let other_root = db.transaction_mut(|t| {
+            insert_reported(t, other_id, "external", "b", other_session_id, 50)
+        })?;
+        db.transaction_mut(|t| {
+            set_previous_session(
+                t,
+                other_root.db_id.unwrap(),
+                Some(PreviousSession {
+                    session_db_id: unheld_id,
+                    demoted_at_ms: 50,
+                    expires_at_ms: 100,
+                }),
+            )
+        })?;
+
+        let listed = |since_ms| -> anyhow::Result<Vec<(DbId, DbId)>> {
+            let mut listed = list_current_since(&db, since_ms)?
+                .into_iter()
+                .map(|current| (current.owner_db_id, current.session.db_id.unwrap()))
+                .collect::<Vec<_>>();
+            listed.sort();
+            Ok(listed)
+        };
+        let mut both = vec![(user_id, session_id), (other_id, other_session_id)];
+        both.sort();
+        assert_eq!(listed(0)?, both, "a previous session is not current");
+        assert_eq!(listed(10)?, vec![(other_id, other_session_id)]);
+        let current = list_current_since(&db, 10)?.remove(0);
+        assert_eq!(current.playback.id, other_root.id);
+        assert!(matches!(
+            &current.playback.source,
+            PlaybackSource::Reported(source) if source.session_key() == "b"
+        ));
+        Ok(())
     }
 
     #[test]
